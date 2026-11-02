@@ -1,0 +1,48 @@
+{
+ "workflowId": "wf_66658d5c69b1f284",
+ "state": {
+  "workflowId": "wf_66658d5c69b1f284",
+  "workflowName": "askloop",
+  "status": "running",
+  "inputs": {},
+  "artifacts": {},
+  "capturedOutputs": {},
+  "root": {
+   "nodeId": "wf_66658d5c69b1f284",
+   "type": "sequence",
+   "status": "pending",
+   "children": [
+    {
+     "nodeId": "ask",
+     "type": "step",
+     "status": "pending",
+     "agentName": "asker",
+     "modelId": "claude-sonnet-5.5",
+     "effortLevel": "high"
+    }
+   ]
+  },
+  "createdAt": "2026-10-12T00:23:14.312Z",
+  "planRevision": 0,
+  "parentSessionId": "sess_b24e223e-fff1-4136-b048-ebf1cfcfcad7",
+  "rootConversationId": "sess_b24e223e-fff1-4136-b048-ebf1cfcfcad7",
+  "workspacePath": "/work",
+  "memoryConfig": {
+   "mode": "read_write",
+   "reflection": true
+  },
+  "memoryConfigSource": "legacy",
+  "backgroundExecution": false,
+  "parentModelId": "claude-sonnet-5.5",
+  "parentEffortLevel": "high"
+ },
+ "nodePlan": [
+  {
+   "nodeId": "ask",
+   "type": "step",
+   "agentName": "asker",
+   "modelId": "claude-sonnet-5.5",
+   "effortLevel": "high"
+  }
+ ]
+}

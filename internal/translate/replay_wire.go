@@ -28,14 +28,15 @@ type replayInfoKiro struct {
 	PendingInteraction  *pendingInteractionBlock  `json:"pendingInteraction"`
 	InteractionResolved *interactionResolvedBlock `json:"interactionResolved"`
 	Throughput          *turnThroughput           `json:"throughput"`
-	ContextBreakdown    json.RawMessage           `json:"contextBreakdown"`
-	Kind                string                    `json:"kind"`
-	Message             string                    `json:"message"`
-	PromptTurnSummaries []promptTurnSummary       `json:"promptTurnSummaries"`
-	SteeringDocuments   []json.RawMessage         `json:"steeringDocuments"`
-	RequestIDs          []string                  `json:"requestIds"`
-	Recoveries          []string                  `json:"recoveries"`
-	ElapsedTime         float64                   `json:"elapsedTime"`
+	modelFallbackFields
+	ContextBreakdown    json.RawMessage     `json:"contextBreakdown"`
+	Kind                string              `json:"kind"`
+	Message             string              `json:"message"`
+	PromptTurnSummaries []promptTurnSummary `json:"promptTurnSummaries"`
+	SteeringDocuments   []json.RawMessage   `json:"steeringDocuments"`
+	RequestIDs          []string            `json:"requestIds"`
+	Recoveries          []string            `json:"recoveries"`
+	ElapsedTime         float64             `json:"elapsedTime"`
 }
 
 // replayTS converts KAS's RFC3339 timestamp to the epoch millis an entry's Ts

@@ -32,16 +32,15 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   confirm: vi.fn(() => Promise.resolve(true)),
 }));
 
-// Routed through the mocked client so each case answers the forge list first with mockResolvedValueOnce.
-vi.mock("./forge-store.js", async (importOriginal) => {
-  const orig = await importOriginal<Record<string, unknown>>();
+// The rows read is routed through the mocked client, so each case answers the forge list first.
+vi.mock("./actions/forge-list.js", async (importOriginal) => {
   const { apiGetTyped } = await import("./api-client.js");
-  const forgeRead = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
   return {
-    ...orig,
-    refreshForges: forgeRead,
-    ensureForges: forgeRead,
-    initForgeStore: vi.fn(),
+    ...(await importOriginal<Record<string, unknown>>()),
+    listForges: {
+      dispatch: () =>
+        Promise.resolve(apiGetTyped("/api/forges", (v: unknown) => v)).then((v) => v ?? null),
+    },
   };
 });
 
@@ -49,6 +48,12 @@ import { resetActionFramework } from "@cplieger/actions/testing";
 import { renderForgesPanel } from "./forge-auth.js";
 import { abortPoll } from "./forge-auth-oauth.js";
 import { apiGetTyped } from "./api-client.js";
+import { _resetForTest as resetForgeStore } from "./forge-store.js";
+import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const mockedApiGet = vi.mocked(apiGetTyped);
 
@@ -64,6 +69,7 @@ describe("forge-auth: the connect dialog", () => {
   const KINDS = ["github", "gitlab", "codeberg", "gitea"];
 
   beforeEach(() => {
+    resetForgeStore();
     setupDOM();
     vi.clearAllMocks();
     resetActionFramework();
@@ -76,7 +82,7 @@ describe("forge-auth: the connect dialog", () => {
 
   async function openPane(kind: string, oauth: Record<string, boolean> = {}): Promise<HTMLElement> {
     mockedApiGet.mockResolvedValueOnce({ forges: [], kinds: KINDS, oauth });
-    await renderForgesPanel({ revalidate: false });
+    await renderForgesPanel();
     panel()
       .querySelector<HTMLButtonElement>(
         `.forge-kind-section[data-kind='${kind}'] [data-forge-add]`,
@@ -108,7 +114,7 @@ describe("forge-auth: the connect dialog", () => {
 
   /** A refusal keeps the pane open: a success repaints the whole panel after
    *  the test has ended, and that repaint lands in a later test's panel. */
-  const refused = (): Response => json({ error: "refused" });
+  const refused = (): Response => json({ error: "refused" }, 400);
 
   function sentBody(spy: ReturnType<typeof vi.fn<typeof fetch>>): unknown {
     return JSON.parse(spy.mock.calls[0]![1]!.body as string);
@@ -195,6 +201,7 @@ describe("forge-auth: the connect dialog", () => {
   });
 
   it("shows Sign in busy from the press and lands a refused start's reason in place", async () => {
+    useSteppableClock();
     const slot = await openPane("github", { github: true });
     const { answer } = deferredFetch();
     const start = slot.querySelector<HTMLButtonElement>("[data-forge-device-start]")!;
@@ -207,12 +214,9 @@ describe("forge-auth: the connect dialog", () => {
     await vi.waitFor(() => {
       expect(start.dataset["asyncStatus"]).toBe("error");
     });
-    await vi.waitFor(
-      () => {
-        expect(start.disabled).toBe(false);
-      },
-      { timeout: 3000 },
-    );
+    await waitForOnClock(() => {
+      expect(start.disabled).toBe(false);
+    }, 3000);
     expect(start.hasAttribute("aria-busy")).toBe(false);
     expect(slot.querySelector(".forge-device-start .forge-card-status")?.textContent).toBe(
       "the store cannot be written",
@@ -228,8 +232,8 @@ describe("forge-auth: the connect dialog", () => {
     answer(refused());
 
     await vi.waitFor(() => expect(spy).toHaveBeenCalledOnce());
-    expect(spy.mock.calls[0]![0]).toBe("/api/forges/gitlab%3Agitlab.com/login/pat");
-    expect(sentBody(spy)).toEqual({ token: "glpat-x" });
+    expect(spy.mock.calls[0]![0]).toBe("/api/forges/login");
+    expect(sentBody(spy)).toEqual({ kind: "gitlab", host: "gitlab.com", token: "glpat-x" });
   });
 
   it("sends each connection field the user set on the token connect", async () => {
@@ -252,8 +256,10 @@ describe("forge-auth: the connect dialog", () => {
     answer(refused());
 
     await vi.waitFor(() => expect(spy).toHaveBeenCalledOnce());
-    expect(spy.mock.calls[0]![0]).toBe("/api/forges/gitlab%3Agitlab.internal%3A8080/login/pat");
+    expect(spy.mock.calls[0]![0]).toBe("/api/forges/login");
     expect(sentBody(spy)).toEqual({
+      kind: "gitlab",
+      host: "gitlab.internal:8080",
       token: "glpat-x",
       web_base_url: "http://gitlab.internal:8080",
       proxy: "http://proxy.example.com:3128",
@@ -288,7 +294,78 @@ describe("forge-auth: the connect dialog", () => {
     expect(slot.querySelector(".forge-scopes")?.textContent).toContain(scopes);
   });
 
+  function statusLine(slot: HTMLElement): string | null | undefined {
+    return slot.querySelector("form.forge-pat-form .forge-card-status")?.textContent;
+  }
+
+  it.each([
+    ["a missing token's 400", 400, { error: "a token is required", code: "token_required" }],
+    [
+      "a rejected token's 401",
+      401,
+      { error: "the forge rejected the token", kind: "unauthorized" },
+    ],
+  ] as const)("puts %s sentence on the form and expands no row", async (_, status, body) => {
+    const slot = await openPane("gitlab");
+    const { spy, answer } = deferredFetch();
+    typeToken(slot, "glpat-x");
+
+    connectButton(slot).click();
+    answer(json(body, status));
+
+    await vi.waitFor(() => expect(statusLine(slot)).toBe(body.error));
+    expect(spy).toHaveBeenCalledOnce();
+    expect(slot.querySelector("form.forge-pat-form")).not.toBeNull();
+    expect(panel().querySelector(".forge-account-row")).toBeNull();
+  });
+
+  it("refuses a saved sign-in that names no connection", async () => {
+    const slot = await openPane("gitlab");
+    const { answer } = deferredFetch();
+    typeToken(slot, "glpat-x");
+
+    connectButton(slot).click();
+    answer(json({ forge_id: "" }));
+
+    await vi.waitFor(() => expect(statusLine(slot)).toBe("the server answered no connection id"));
+    expect(slot.querySelector("form.forge-pat-form")).not.toBeNull();
+  });
+
+  it("sends a sign-in that ran out of time once, and says so", async () => {
+    useSteppableClock();
+    const slot = await openPane("gitlab");
+    const sentence = "the sign-in ran out of time before it was saved; nothing changed. Try again";
+    const spy = vi.fn<typeof fetch>(() =>
+      Promise.resolve(json({ error: sentence, code: "sign_in_timed_out" }, 504)),
+    );
+    vi.stubGlobal("fetch", spy);
+    typeToken(slot, "glpat-x");
+
+    connectButton(slot).click();
+
+    await vi.waitFor(() => expect(statusLine(slot)).toBe(sentence));
+    await vi.runAllTimersAsync();
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
+  it("sends a sign-in that met an outage three times before saying so", async () => {
+    useSteppableClock();
+    const slot = await openPane("gitlab");
+    const spy = vi.fn<typeof fetch>(() =>
+      Promise.resolve(json({ error: "the forge did not answer", kind: "transient" }, 503)),
+    );
+    vi.stubGlobal("fetch", spy);
+    typeToken(slot, "glpat-x");
+
+    connectButton(slot).click();
+
+    await waitForOnClock(() => expect(statusLine(slot)).toBe("the forge did not answer"), 3000);
+    await vi.runAllTimersAsync();
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
   it("shows Connect busy from the press and re-enables it with the refusal's sentence", async () => {
+    useSteppableClock();
     const slot = await openPane("gitlab");
     const { answer } = deferredFetch();
     typeToken(slot, "glpat-bad");
@@ -298,16 +375,13 @@ describe("forge-auth: the connect dialog", () => {
     expect(connect.disabled).toBe(true);
     expect(connect.getAttribute("aria-busy")).toBe("true");
 
-    answer(json({ error: "the token was refused", code: "reconnect_required" }));
+    answer(json({ error: "the token was refused", kind: "unauthorized" }, 401));
     await vi.waitFor(() => {
       expect(connect.dataset["asyncStatus"]).toBe("error");
     });
-    await vi.waitFor(
-      () => {
-        expect(connect.disabled).toBe(false);
-      },
-      { timeout: 3000 },
-    );
+    await waitForOnClock(() => {
+      expect(connect.disabled).toBe(false);
+    }, 3000);
     expect(connect.hasAttribute("aria-busy")).toBe(false);
     expect(slot.querySelector("form.forge-pat-form .forge-card-status")?.textContent).toBe(
       "the token was refused",
@@ -322,7 +396,7 @@ describe("forge-auth: the connect dialog", () => {
 
     connect.click();
     mockedApiGet.mockResolvedValueOnce({ forges: [], kinds: KINDS, oauth: {} });
-    await renderForgesPanel({ revalidate: false });
+    await renderForgesPanel();
 
     expect(connect.isConnected).toBe(true);
     expect(connect.disabled).toBe(true);
@@ -341,7 +415,7 @@ describe("forge-auth: the connect dialog", () => {
     mockedApiGet.mockImplementation(((url: string, decode: (v: unknown) => unknown) => {
       if (url === "/api/forges") {
         return Promise.resolve({
-          forges: [{ id, kind, host, username: "bot", connected: true, reconnect_required: false }],
+          forges: [{ id, kind, host, username: "bot", account: "acct-1", status: "connected" }],
           kinds: KINDS,
           oauth: { github: true },
         });
@@ -360,6 +434,7 @@ describe("forge-auth: the connect dialog", () => {
   function repoPage(owner: string, name: string): unknown {
     const none = { support: "unknown", source: "unknown", detail: "" };
     return {
+      account: "acct-1",
       repos: [
         {
           repo_id: `id:${owner}/${name}`,
@@ -391,11 +466,12 @@ describe("forge-auth: the connect dialog", () => {
     const { answer } = deferredFetch();
     typeToken(slot, "glpat-x");
     connectButton(slot).click();
-    const { land } = connectedPanel("gitlab:gitlab.com", "gitlab", "gitlab.com");
-    answer(json({ status: "complete" }));
+    // The id is the server's, unlike any kind:host the client could build.
+    const { land } = connectedPanel("minted-gitlab", "gitlab", "gitlab.com");
+    answer(json({ forge_id: "minted-gitlab" }));
 
     const pending = await vi.waitFor(() => {
-      const p = accountRow("gitlab:gitlab.com")?.querySelector<HTMLElement>(
+      const p = accountRow("minted-gitlab")?.querySelector<HTMLElement>(
         ".forge-account-repos[data-pending] .forge-account-repos-pending",
       );
       expect(p).toBeTruthy();
@@ -409,10 +485,10 @@ describe("forge-auth: the connect dialog", () => {
     land(repoPage("bot", "tool"));
     await vi.waitFor(() =>
       expect(
-        accountRow("gitlab:gitlab.com")?.querySelector(".forge-account-repo-name")?.textContent,
+        accountRow("minted-gitlab")?.querySelector(".forge-account-repo-name")?.textContent,
       ).toBe("bot/tool"),
     );
-    const row = accountRow("gitlab:gitlab.com")!;
+    const row = accountRow("minted-gitlab")!;
     expect(row.querySelector("[data-pending]")).toBeNull();
     expect(row.querySelector(".forge-account-repos-summary")?.getAttribute("aria-expanded")).toBe(
       "true",
@@ -439,11 +515,11 @@ describe("forge-auth: the connect dialog", () => {
                   interval: 5,
                   expires_in: 900,
                 })
-              : json({ status: "complete" }),
+              : json({ status: "complete", forge_id: "minted-github" }),
           ),
         ),
       );
-      const { land } = connectedPanel("github:github.com", "github", "github.com");
+      const { land } = connectedPanel("minted-github", "github", "github.com");
 
       slot.querySelector<HTMLButtonElement>("[data-forge-device-start]")!.click();
       await vi.advanceTimersByTimeAsync(0);
@@ -453,7 +529,7 @@ describe("forge-auth: the connect dialog", () => {
       expect(slot.childElementCount).toBe(0);
       expect(add.getAttribute("aria-expanded")).toBe("false");
       expect(
-        accountRow("github:github.com")?.querySelector(".forge-account-repos[data-pending]"),
+        accountRow("minted-github")?.querySelector(".forge-account-repos[data-pending]"),
       ).not.toBeNull();
       land(repoPage("bot", "tool"));
       await vi.advanceTimersByTimeAsync(0);
@@ -517,8 +593,10 @@ describe("forge-auth: the connect dialog", () => {
         proxy: "http://proxy.example.com:3128",
         private_addresses: true,
       });
-      expect(spy.mock.calls[1]![0]).toBe("/api/forges/gitea%3Agit.example.com%3A3000/login/pat");
+      expect(spy.mock.calls[1]![0]).toBe("/api/forges/login");
       expect(bodyOf(spy, 1)).toEqual({
+        kind: "gitea",
+        host: "git.example.com:3000",
         token: "tok-1",
         proxy: "http://proxy.example.com:3128",
         private_addresses: true,
@@ -545,6 +623,7 @@ describe("forge-auth: the connect dialog", () => {
     });
 
     it("says no supported forge answered on a family_undetected 422, sends no token connect and keeps the form filled", async () => {
+      useSteppableClock();
       const slot = await openPane("other");
       setHost(slot, "git.example.com");
       typeToken(slot, "tok-1");
@@ -568,7 +647,8 @@ describe("forge-auth: the connect dialog", () => {
         expect(statusText(slot)).toContain("git.example.com did not answer as a supported forge"),
       );
       expect(connect.dataset["asyncStatus"]).toBe("error");
-      await vi.waitFor(() => expect(connect.disabled).toBe(false), { timeout: 3000 });
+      await waitForOnClock(() => expect(connect.disabled).toBe(false), 3000);
+      await vi.runAllTimersAsync();
       expect(spy).toHaveBeenCalledOnce();
       expect(slot.querySelector<HTMLInputElement>("[data-forge-host]")!.value).toBe(
         "git.example.com",
@@ -592,6 +672,7 @@ describe("forge-auth: the connect dialog", () => {
     });
 
     it("keeps Connect busy from the press until the token connect lands, across both calls", async () => {
+      useSteppableClock();
       const slot = await openPane("other");
       setHost(slot, "git.example.com");
       typeToken(slot, "tok-1");
@@ -608,9 +689,9 @@ describe("forge-auth: the connect dialog", () => {
       expect(connect.getAttribute("aria-busy")).toBe("true");
       expect(statusText(slot)).toBe("GitHub found. Connecting...");
 
-      answer(1, json({ error: "the token was refused", code: "reconnect_required" }));
+      answer(1, json({ error: "the token was refused", kind: "unauthorized" }, 401));
       await vi.waitFor(() => expect(connect.dataset["asyncStatus"]).toBe("error"));
-      await vi.waitFor(() => expect(connect.disabled).toBe(false), { timeout: 3000 });
+      await waitForOnClock(() => expect(connect.disabled).toBe(false), 3000);
       expect(connect.hasAttribute("aria-busy")).toBe(false);
       expect(statusText(slot)).toBe("the token was refused");
     });
@@ -646,32 +727,32 @@ describe("forge-auth: the connect dialog", () => {
       mockedApiGet.mockResolvedValueOnce({
         forges: [
           {
-            id: "gitlab:git.example.com",
+            id: "minted-gitlab",
             kind: "gitlab",
             host: "git.example.com",
             username: "bot",
-            connected: true,
-            reconnect_required: false,
+            account: "acct-1",
+            status: "connected",
           },
         ],
         kinds: KINDS,
         oauth: {},
       });
-      answer(1, json({ status: "complete" }));
+      answer(1, json({ forge_id: "minted-gitlab" }));
 
       const row = await vi.waitFor(() => {
         const r = panel().querySelector<HTMLElement>(
-          ".forge-kind-section[data-kind='gitlab'] .forge-account-row[data-id='gitlab:git.example.com']",
+          ".forge-kind-section[data-kind='gitlab'] .forge-account-row[data-id='minted-gitlab']",
         );
         expect(r).not.toBeNull();
         return r!;
       });
-      expect(spy.mock.calls[1]![0]).toBe("/api/forges/gitlab%3Agit.example.com/login/pat");
+      expect(spy.mock.calls[1]![0]).toBe("/api/forges/login");
       expect(row.querySelector(".forge-account-repos-summary")?.getAttribute("aria-expanded")).toBe(
         "true",
       );
       expect(slot.childElementCount).toBe(0);
-      // Lets the background re-probe after the repaint settle inside this case.
+      // Lets the repaint's repository read settle inside this case.
       await new Promise((r) => setTimeout(r, 0));
     });
   });

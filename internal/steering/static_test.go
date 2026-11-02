@@ -241,7 +241,7 @@ func TestWriteUIGuide_NamesTheMemorySetting(t *testing.T) {
 	var b strings.Builder
 	writeUIGuide(&b)
 	out := b.String()
-	if !strings.Contains(out, `"Load MCP tools on demand", "Memory", "Spec planning", "Inline helper agents", "Steering reminders", "Work validation", "AWS CloudFormation safety check", "Workflows", "Output style", "Shell command timeout")`) {
+	if !strings.Contains(out, `"Knowledge base search", "Model fallback", "Memory", "Spec planning", "Steering reminders", "Work validation", "AWS CloudFormation safety check", "Workflows", "Output style", "Shell command timeout")`) {
 		t.Errorf("writeUIGuide output does not list the Memory setting under Agent capabilities:\n%s", out)
 	}
 	if strings.Contains(out, "Remember things between conversations") {
@@ -406,6 +406,27 @@ func TestWriteChatCapabilities(t *testing.T) {
 	// marotte captures nothing per turn.
 	if strings.Contains(out, "checkpointed server-side") {
 		t.Errorf("writeChatCapabilities repeated the retired per-turn checkpoint claim:\n%s", out)
+	}
+}
+
+func TestWriteAttachments_TeachesMermaidDiagrams(t *testing.T) {
+	var b strings.Builder
+	writeAttachments(&b, "/u", "/w")
+	out := b.String()
+	for _, want := range []string{
+		"a fenced block whose language is `mermaid`",
+		"once the fence closes it renders as a diagram in the chat",
+		"differs slightly from mermaid.js",
+		"no HTML, no `%%{init}%%` theme or config directive (marotte themes it), no `click` callback (ignored)",
+		"Prefer top-down (`flowchart TD`) to left-right so it fits a phone",
+		"split a large one",
+		"an `accTitle:` line, which becomes its accessible label and the full-screen view's title",
+		"shows its source under a notice",
+		"toggle to the source, copy it, download the SVG, or expand it full screen to zoom",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeAttachments output missing %q:\n%s", want, out)
+		}
 	}
 }
 

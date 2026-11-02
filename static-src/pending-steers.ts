@@ -13,21 +13,22 @@ import { chatNotice, subjectName } from "./notice-subject.js";
 import { ICON_ARROW_UP, ICON_HOURGLASS, ICON_EDIT, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { wireSignature } from "./paint-sig.js";
+import { sessionDrain, turnsPhrase, type QueuedSlot } from "./queue-slots.js";
 import type { PendingSteer, QueuedPrompt } from "./types.js";
 
 /** One dock row: a steer the agent has not read, or a follow-up the server holds. */
-type DockRow = { kind: "steer"; steer: PendingSteer } | { kind: "queued"; row: QueuedPrompt };
+type DockRow = { kind: "steer"; steer: PendingSteer } | { kind: "queued"; slot: QueuedSlot };
 
 export interface SteerStackSource {
   /** What the dock is about (a chat id, or a run step's key) and its rows. Reactive: the stack's
    *  render subscribes through it. */
-  read(): { id: string; steers: readonly PendingSteer[]; queued: readonly QueuedPrompt[] };
+  read(): { id: string; steers: readonly PendingSteer[]; queued: readonly QueuedSlot[] };
   /** Stop the turn and send this row first; absent where no turn is the reader's to stop. */
   sendNow?: (steerID: string) => Promise<void>;
   /** Edit: put the row's words in the box, then delete the row. */
   edit(steer: PendingSteer): Promise<void>;
   /** Edit beside a workflow's row, where the only removal is the whole buffer. */
-  editByClear(text: string): Promise<void>;
+  editByClear(steer: PendingSteer): Promise<void>;
   remove(steerID: string): Promise<void>;
   discard(waiting: number): Promise<void>;
   /** The live-region words, which name what the rows are waiting for. */
@@ -75,6 +76,7 @@ function steerSig(e: PendingSteer): string {
     pending: e.pending === true ? "1" : "",
     compacted: e.compacted === true ? "1" : "",
     unsent: e.unsent === true ? "1" : "",
+    awaitsPrompt: e.awaitsPrompt === true ? "1" : "",
     kas: "",
   };
   return join(...Object.values(parts));
@@ -95,7 +97,7 @@ function render(
   const rows: DockRow[] = [
     ...steers.map((steer): DockRow => ({ kind: "steer", steer })),
     // Below the steers: a steer is read inside this turn, a follow-up after it.
-    ...queued.map((row): DockRow => ({ kind: "queued", row })),
+    ...queued.map((slot): DockRow => ({ kind: "queued", slot })),
   ];
 
   if (rows.length === 0) {
@@ -136,13 +138,13 @@ function render(
 function rowSpec(state: StackState): ReconcileSpec<DockRow> {
   return {
     // Prefixed by kind so the two id spaces cannot meet in one keyed list.
-    key: (r) => (r.kind === "steer" ? `s:${r.steer.id}` : `q:${r.row.id}`),
-    mount: (r) => (r.kind === "steer" ? buildRow(r.steer, state) : buildQueuedRow(r.row)),
+    key: (r) => (r.kind === "steer" ? `s:${r.steer.id}` : `q:${r.slot.row.id}`),
+    mount: (r) => (r.kind === "steer" ? buildRow(r.steer, state) : buildQueuedRow(r.slot)),
     update: (el, r) => {
       if (r.kind === "steer") {
         updateRow(el, r.steer, state);
       } else {
-        updateQueuedRow(el, r.row);
+        updateQueuedRow(el, r.slot);
       }
     },
   };
@@ -310,7 +312,7 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
         "Edit this message",
         "Take it back and put it in the message box",
         () => {
-          void src.editByClear(steer.text);
+          void src.editByClear(steer);
         },
       ),
     );
@@ -429,12 +431,12 @@ function reportRefusal(chatID: string, name: string, message: string): void {
 
 /** Edit beside a workflow result: the only removal is the whole buffer. The box is filled BEFORE
  *  the clear is dispatched, so a failed clear leaves the text there. */
-async function editSteerByClear(text: string): Promise<void> {
+async function editSteerByClear(steer: PendingSteer): Promise<void> {
   const chatID = getActiveId();
   if (chatID === "") {
     return;
   }
-  setComposerValue(text);
+  setComposerValue(steer.text);
   $.promptInput.focus();
   announce("Message taken back for editing");
   await clearSteers.dispatch({ chatID });
@@ -458,7 +460,7 @@ async function discardSteers(waiting: number): Promise<void> {
     }
   }
   announce("Discarding messages the agent has not read");
-  // The stack repaints from the `steer` entry the clear produces, not from this reply, so every
+  // The stack repaints from the `removed` frames the clear produces, not from this reply, so every
   // device agrees.
   await clearSteers.dispatch({ chatID });
 }
@@ -466,7 +468,10 @@ async function discardSteers(waiting: number): Promise<void> {
 const chatSource: SteerStackSource = {
   read: () => {
     const s = activeSession.value;
-    return { id: s?.id ?? "", steers: s?.steers ?? [], queued: s?.queued ?? [] };
+    if (s === undefined) {
+      return { id: "", steers: [], queued: [] };
+    }
+    return { id: s.id, steers: s.steers ?? [], queued: sessionDrain(s).rows };
   },
   sendNow: sendSteerNow,
   edit: editSteer,
@@ -476,17 +481,22 @@ const chatSource: SteerStackSource = {
   waitingFor: "the agent",
 };
 
-/** A queued row's state in words, and the ONE spelling of it. A held row outranks a carried one:
- *  after a restart nothing is sent automatically, carried or not. */
-function queuedWord(row: QueuedPrompt): string {
-  if (row.held === true) {
-    return "Not sent \u00b7 the server restarted";
+/** A queued row's state in words, and the ONE spelling of it. A held row, carried or not, is one
+ *  no turn end sends: after a restart nothing is sent automatically. */
+function queuedWord(slot: QueuedSlot): string {
+  const { wait } = slot;
+  switch (wait.kind) {
+    case "sent":
+      return "Sent";
+    case "held":
+      return "Not sent \u00b7 the server restarted";
+    case "turns":
+      return `After ${turnsPhrase(wait.turns, wait.running)}`;
   }
-  return (row.resends ?? []).length > 0 ? "Unread \u00b7 sends next" : "After this turn";
 }
 
-function queuedName(row: QueuedPrompt): string {
-  return `${queuedWord(row)}: ${queuedShown(row)}`;
+function queuedName(slot: QueuedSlot): string {
+  return `${queuedWord(slot)}: ${queuedShown(slot.row)}`;
 }
 
 function queuedShown(row: QueuedPrompt): string {
@@ -504,7 +514,8 @@ function discardHint(row: QueuedPrompt): string {
 const queuedRowOf = new WeakMap<HTMLElement, QueuedPrompt>();
 
 /** Edit and Discard on every row: each is one `unqueue_prompt` addressing this row alone. */
-function buildQueuedRow(row: QueuedPrompt): HTMLElement {
+function buildQueuedRow(slot: QueuedSlot): HTMLElement {
+  const { row } = slot;
   const li = el(
     "li",
     { className: "steer-row", "data-state": "queued" },
@@ -537,16 +548,17 @@ function buildQueuedRow(row: QueuedPrompt): HTMLElement {
       ),
     ),
   );
-  updateQueuedRow(li, row);
+  updateQueuedRow(li, slot);
   return li;
 }
 
 /** The id never changes under one key, and neither does the row's kind, so the update is the
  *  text, the held mark and the state word. */
-function updateQueuedRow(li: HTMLElement, row: QueuedPrompt): void {
+function updateQueuedRow(li: HTMLElement, slot: QueuedSlot): void {
+  const { row } = slot;
   queuedRowOf.set(li, row);
   li.dataset["tooltip"] = row.text;
-  li.setAttribute("aria-label", queuedName(row));
+  li.setAttribute("aria-label", queuedName(slot));
   if (row.held === true) {
     li.dataset["held"] = "";
   } else {
@@ -554,7 +566,7 @@ function updateQueuedRow(li: HTMLElement, row: QueuedPrompt): void {
   }
   const label = li.querySelector(".steer-state-label");
   if (label !== null) {
-    label.textContent = queuedWord(row);
+    label.textContent = queuedWord(slot);
   }
   const text = li.querySelector(".steer-text");
   if (text !== null) {

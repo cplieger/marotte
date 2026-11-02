@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // relPaths is a result's paths relative to base, in reply order.
@@ -71,7 +72,8 @@ func TestNameSearch_ReadsNoFileContents(t *testing.T) {
 	}
 
 	v := newNameVisitor(mustQuery(t, "needle"))
-	walk := &searchWalk{ctx: t.Context(), v: v, maxDirs: maxNameSearchDirs, ignoreRules: true}
+	walk := newSearchWalk(t.Context(), v, modeNames)
+	walk.ignoreRules = true
 	grew := allocatedBy(func() { walk.addRoot(loc{m: &h.mounts[0], abs: dir}) })
 	if bound := uint64(256 << 10); grew > bound {
 		t.Errorf("a names walk over %d large files allocated %d bytes, want under %d: it read them", searchWorkers, grew, bound)
@@ -226,7 +228,7 @@ func TestNameSearch_EmptyQueryAndFilterDoesNotWalk(t *testing.T) {
 	}
 }
 
-// Driven at the counter, because the real budget is a million entries.
+// Driven at the counter, because the real budget is far too large to build a tree for.
 func TestNameSearch_EntryBudgetStopsAndSaysSo(t *testing.T) {
 	h, dir, _ := testDir(t)
 	writeTree(t, dir, map[string]string{"needle-a.txt": "", "needle-b.txt": ""})
@@ -235,9 +237,11 @@ func TestNameSearch_EntryBudgetStopsAndSaysSo(t *testing.T) {
 		spent     int
 		wantRows  int
 		truncated bool
-	}{{spent: maxSearchEntries - 2, wantRows: 2, truncated: false}, {spent: maxSearchEntries - 1, wantRows: 0, truncated: true}} {
+	}{{spent: maxNameSearchEntries - 2, wantRows: 2, truncated: false}, {spent: maxNameSearchEntries - 1, wantRows: 0, truncated: true}} {
 		v := newNameVisitor(mustQuery(t, "needle"))
-		walk := &searchWalk{ctx: t.Context(), v: v, maxDirs: maxNameSearchDirs, ignoreRules: true, entries: tc.spent}
+		walk := newSearchWalk(t.Context(), v, modeNames)
+		walk.ignoreRules = true
+		walk.entries = tc.spent
 		walk.addRoot(loc{m: &h.mounts[0], abs: dir})
 		res := v.result(walk.truncated)
 		if len(res.Matches) != tc.wantRows || res.Truncated != tc.truncated {
@@ -247,12 +251,47 @@ func TestNameSearch_EntryBudgetStopsAndSaysSo(t *testing.T) {
 	}
 }
 
+// The names cap is names mode's alone: a contents walk that has listed more entries than it still
+// reaches its match, and stops only at its own, larger budget.
+func TestSearch_NamesEntryBudgetDoesNotBoundContentsMode(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		spent         int
+		wantMatched   int
+		wantTruncated bool
+	}{
+		{name: "past_the_names_cap", spent: maxNameSearchEntries + 10, wantMatched: 1},
+		{name: "past_the_contents_cap", spent: maxSearchEntries, wantMatched: 0, wantTruncated: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, dir, _ := testDir(t)
+			writeTree(t, dir, map[string]string{"a.txt": "needle\n"})
+			walk, v := contentWalk(t.Context(), "needle", false)
+			walk.entries = tc.spent
+			walk.addRoot(loc{m: &h.mounts[0], abs: dir})
+			if v.matched != tc.wantMatched || walk.truncated != tc.wantTruncated {
+				t.Errorf("with %d entries spent: matched = %d truncated = %v, want %d and %v",
+					tc.spent, v.matched, walk.truncated, tc.wantMatched, tc.wantTruncated)
+			}
+		})
+	}
+}
+
+// A names search runs on every pause in typing: its entry budget at the measured cost of an entry
+// (10 microseconds, the slow end) must fit the names deadline, or the budget is not what bounds it.
+func TestNameSearch_EntryBudgetFitsTheDeadline(t *testing.T) {
+	const perEntry = 10 * time.Microsecond
+	if worst := time.Duration(maxNameSearchEntries) * perEntry; worst > nameSearchDeadline {
+		t.Errorf("%d entries at %v is %v, over the %v names deadline", maxNameSearchEntries, perEntry, worst, nameSearchDeadline)
+	}
+}
+
 func TestNameSearch_DeadlineStopsAndSaysSo(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	writeTree(t, dir, map[string]string{"needle.txt": ""})
-	saved := searchDeadline
-	searchDeadline = 0
-	t.Cleanup(func() { searchDeadline = saved })
+	saved := nameSearchDeadline
+	nameSearchDeadline = 0
+	t.Cleanup(func() { nameSearchDeadline = saved })
 
 	rec := searchReq(t, h, map[string]string{"path": prefix, "q": "needle"})
 	if rec.Code != http.StatusOK || rec.Body.Len() == 0 {
@@ -260,6 +299,24 @@ func TestNameSearch_DeadlineStopsAndSaysSo(t *testing.T) {
 	}
 	if res := decodeSearch(t, rec); !res.Truncated {
 		t.Errorf("truncated = false after the deadline stopped the walk: %+v", res)
+	}
+}
+
+// The names deadline is the short one: a contents search under the same tree keeps its own.
+func TestSearch_NamesDeadlineDoesNotBoundContentsMode(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	writeTree(t, dir, map[string]string{"needle.txt": "needle\n"})
+	saved := nameSearchDeadline
+	nameSearchDeadline = 0
+	t.Cleanup(func() { nameSearchDeadline = saved })
+
+	rec := searchReq(t, h, map[string]string{"path": prefix, "q": "needle", "mode": "contents"})
+	res := decodeSearch(t, rec)
+	if res.Truncated || len(res.Matches) != 1 {
+		t.Errorf("contents search = %+v, want one complete match: the names deadline must not reach it", res)
+	}
+	if saved >= deadlineFor(modeContents) {
+		t.Errorf("names deadline %v is not shorter than contents %v", saved, deadlineFor(modeContents))
 	}
 }
 
@@ -384,7 +441,7 @@ func TestFilesFilter_PathsAreRelativeToTheSearchedFolder(t *testing.T) {
 	}
 }
 
-// Driven at the counter, because the real budget is 100 000 directories.
+// Driven at the counter, because the real budget is too many directories to build.
 func TestNameSearch_DirectoryBudgetIsNamesModes(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -393,8 +450,8 @@ func TestNameSearch_DirectoryBudgetIsNamesModes(t *testing.T) {
 		wantRows   int
 	}{
 		{name: "past_the_contents_budget", dirs: maxSearchDirs, wantWalked: true, wantRows: 1},
-		{name: "the_last_directory_of_the_budget", dirs: 99_999, wantWalked: true, wantRows: 1},
-		{name: "one_directory_past_the_budget", dirs: 100_000, wantWalked: false, wantRows: 0},
+		{name: "the_last_directory_of_the_budget", dirs: maxNameSearchDirs - 1, wantWalked: true, wantRows: 1},
+		{name: "one_directory_past_the_budget", dirs: maxNameSearchDirs, wantWalked: false, wantRows: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -407,7 +464,9 @@ func TestNameSearch_DirectoryBudgetIsNamesModes(t *testing.T) {
 			}
 
 			v := newNameVisitor(mustQuery(t, "needle"))
-			walk := &searchWalk{ctx: t.Context(), v: v, maxDirs: dirBudget(modeNames), ignoreRules: true, dirs: tc.dirs}
+			walk := newSearchWalk(t.Context(), v, modeNames)
+			walk.ignoreRules = true
+			walk.dirs = tc.dirs
 			if got := walk.walk(&walkDir{f: f, abs: dir, pruneGit: true}); got != tc.wantWalked {
 				t.Errorf("names walk() with dirs=%d = %v, want %v", tc.dirs, got, tc.wantWalked)
 			}

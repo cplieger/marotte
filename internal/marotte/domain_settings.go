@@ -24,6 +24,10 @@ type EffectiveSettings struct {
 	// marotte setting key; a key is absent while that is unknown, and never present for a key the
 	// user has set.
 	KiroDefaults map[string]KiroDefault `json:"kiro_defaults"`
+	// AdditionalDirectoriesRefused maps each AdditionalDirectories entry that
+	// settings.AgentDirs.Assess refuses at this GET to its reason; it is never stored, and an
+	// entry absent from it is granted.
+	AdditionalDirectoriesRefused map[string]string `json:"additional_directories_refused"`
 	// Theme is "", "dark", "light" or "system". The empty string is a REAL value
 	// meaning nothing has been chosen, which the client resolves to the OS
 	// preference; it is deliberately not normalised to "system" here, because the
@@ -39,7 +43,7 @@ type EffectiveSettings struct {
 	// spelling, the merge dialog's default where the repository offers it. Empty
 	// means nothing picked yet.
 	LastMergeMethod string `json:"last_merge_method"`
-	// MemoryMode is the Memory dropdown's value (settings.MemoryOff and its three
+	// MemoryMode is the Memory dropdown's value ("off" and its three
 	// siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
 	MemoryMode string `json:"memory_mode"`
 	// SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli.
@@ -59,6 +63,10 @@ type EffectiveSettings struct {
 	// read as the zero value: the panel row is authoritative on write, so a client
 	// falling back to an empty list persists that emptiness on the next edit.
 	AgentIgnoreFiles []string `json:"agent_ignore_files"`
+	// AdditionalDirectories is the stored list of directories beyond the workspace that agents
+	// may read and write, default EMPTY. An entry that settings.AgentDirs.Assess refuses stays
+	// listed, grants nothing, and is a key of AdditionalDirectoriesRefused.
+	AdditionalDirectories []string `json:"additional_directories"`
 	// ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
 	// Zero is the most destructive value in the document, so absent must never
 	// resolve to it.
@@ -69,6 +77,14 @@ type EffectiveSettings struct {
 	// TerminalCommandTimeoutMs is the shell tool's default timeout in ms; 0 is
 	// unset (kiro-cli's 120 s).
 	TerminalCommandTimeoutMs int `json:"terminal_command_timeout_ms"`
+	// EngineHeapMiB is the agent engine's JavaScript heap limit in MiB; 0 is kiro-cli's default.
+	EngineHeapMiB int `json:"engine_heap_mib"`
+	// SettingsEpoch and SettingsRevision are config.json's version (settings.KeySettingsEpoch and
+	// KeySettingsRevision), both 0 before the first write and compared epoch first. A deleted or
+	// restored config.json serves a lower version, which a page holding a higher one refuses until
+	// the next write starts a later epoch.
+	SettingsEpoch    uint64 `json:"settings_epoch"`
+	SettingsRevision uint64 `json:"settings_revision"`
 	// AutoCompactionEnabled defaults TRUE: off means nothing compacts a chat
 	// until the reader presses Compact.
 	AutoCompactionEnabled bool `json:"auto_compaction_enabled"`
@@ -83,8 +99,6 @@ type EffectiveSettings struct {
 	// GuardPayloadLinks defaults to settings.defaultGuardPayloadLinks; no server path
 	// reads it.
 	GuardPayloadLinks bool `json:"guard_payload_links"`
-	// ToolSearchEnabled defaults off, matching kiro-cli.
-	ToolSearchEnabled bool `json:"tool_search_enabled"`
 	// MCPWaitForReady renders waitForReady on every server in KAS's MCP file, so
 	// a prompt waits for the servers to settle. Default off.
 	MCPWaitForReady bool `json:"mcp_wait_for_ready"`
@@ -100,14 +114,15 @@ type EffectiveSettings struct {
 	// SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
 	// unattended run's permission ask at its deadline and is fail-closed by
 	// decision. DebugLogs raises the log level. All three default off.
-	// SpecPlanningAskFirst, InlineAgents and SteeringReminders default off,
-	// matching kiro-cli. WorkflowsEnabled defaults ON (user's choice, where the
-	// TUI's default is off).
+	// SpecPlanningAskFirst and SteeringReminders default off, matching kiro-cli.
+	// WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
 	SpecPlanningAskFirst bool `json:"spec_planning_ask_first"`
-	InlineAgents         bool `json:"inline_agents_enabled"`
 	SteeringReminders    bool `json:"steering_reminders_enabled"`
 	WorkflowsEnabled     bool `json:"workflows_enabled"`
 	SupervisedDefault    bool `json:"supervised_default"`
 	ScheduledAutoApprove bool `json:"scheduled_auto_approve"`
 	DebugLogs            bool `json:"debug_logs"`
+	// ModelFallback defaults off, matching kiro-cli: on, KAS may retry a turn its model refused or
+	// could not serve on the next model of its fallback chain, or record why it declined to.
+	ModelFallback bool `json:"model_fallback_enabled"`
 }

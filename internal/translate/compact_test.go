@@ -263,10 +263,13 @@ func TestHandleV3Summarization_FailureLandsInTheTurnWithoutAWatermark(t *testing
 	if !hasEntryAppended(events, marotte.EntryKindCompactionFailed) {
 		t.Errorf("no entry_appended{compaction_failed} on the wire; events = %d", len(*events))
 	}
+	if want := (compactionFailure{chatID: "c1", turnID: turn.ID(), detail: "error"}); len(deps.compactionFailures) != 1 || deps.compactionFailures[0] != want {
+		t.Errorf("CompactionFailed calls = %+v, want one naming the turn it landed in, %+v", deps.compactionFailures, want)
+	}
 }
 
-// TestHandleV3Summarization_GenuineErrorFails pins that a genuine "error" files the entry,
-// broadcasts the banner and tells the host.
+// TestHandleV3Summarization_GenuineErrorFails pins that a genuine "error" files the entry and
+// broadcasts the banner; recorded between turns, it bounds no turn on the host.
 func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -293,8 +296,8 @@ func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
 	if !p[0].TurnScoped {
 		t.Error("the compaction error banner is not turn-scoped")
 	}
-	if len(deps.compactionFailures) != 1 || deps.compactionFailures[0].chatID != "c1" || deps.compactionFailures[0].detail != "error" {
-		t.Errorf("CompactionFailed calls = %+v, want one call for c1 with detail error", deps.compactionFailures)
+	if len(deps.compactionFailures) != 0 {
+		t.Errorf("CompactionFailed calls = %+v, want none with no turn open", deps.compactionFailures)
 	}
 }
 
@@ -326,7 +329,7 @@ func TestHandleV3Summarization_ALandedCompactionIsSilent(t *testing.T) {
 	for _, status := range []string{"success", "error"} {
 		t.Run(status, func(t *testing.T) {
 			var logs bytes.Buffer
-			t.Cleanup(captureSlog(&logs))
+			captureSlog(t, &logs)
 			deps, _, _ := depsWithStore(t, "c1")
 			tr := New(rolesOf(deps))
 
@@ -342,11 +345,12 @@ func TestHandleV3Summarization_ALandedCompactionIsSilent(t *testing.T) {
 func TestHandleCompactionFailed_BoundsAndSanitizesTheDetail(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
+	deps.turns.chatTurn("c1")
 	detail := strings.Repeat("x", maxCompactionDetailBytes) + "\nsecret tail"
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, detail, ""), FrameAttribution{})
 
-	failed := compactionFailuresOf(t, deps.between["c1"])
+	failed := compactionFailuresOf(t, deps.chatEntries("c1"))
 	if len(failed) != 1 {
 		t.Fatalf("compaction_failed entries = %d, want 1", len(failed))
 	}

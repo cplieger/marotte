@@ -105,7 +105,6 @@ func composeLocks(profile *marotte.GovernanceStatePayload, admin adminPolicy) ma
 	}
 	if admin.denied["subagent"] {
 		adm(marotte.LockWorkflows, lockReasonSubagents)
-		adm(marotte.LockInlineAgents, lockReasonSubagents)
 	}
 	if admin.denied["power"] {
 		adm(marotte.LockPowers, lockReasonPowers)

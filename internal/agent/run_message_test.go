@@ -11,8 +11,10 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/cplieger/keyenc"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
 )
@@ -55,14 +57,15 @@ func TestStepMessageVerb_PicksTheVerbFromTheLiveState(t *testing.T) {
 
 func oneStepInspect(t *testing.T, run marotte.RunStatus, step marotte.RunNodeStatus, session string) json.RawMessage {
 	t.Helper()
-	return stepTreeInspect(t, run, step, "root", "review", session)
+	return stepTreeInspect(t, "wf_1", run, step, "root", "review", session)
 }
 
-func stepTreeInspect(t *testing.T, run marotte.RunStatus, step marotte.RunNodeStatus, rootID, stepID, session string) json.RawMessage {
+func stepTreeInspect(t *testing.T, workflowID string, run marotte.RunStatus, step marotte.RunNodeStatus, rootID, stepID, session string) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
 		"state": map[string]any{
-			"status": run,
+			"workflowId": workflowID,
+			"status":     run,
 			"root": map[string]any{
 				"nodeId": rootID, "type": "sequence", "status": step,
 				"children": []any{map[string]any{
@@ -90,7 +93,12 @@ func messageHub(t *testing.T, run marotte.RunStatus, step marotte.RunNodeStatus)
 
 func stepSteersIn(t *testing.T, h *Runtime) []marotte.EntrySteer {
 	t.Helper()
-	l, err := h.runs.log.log(t.Context(), "wf_1")
+	return stepSteersAt(t, h, "wf_1")
+}
+
+func stepSteersAt(t *testing.T, h *Runtime, workflowID string) []marotte.EntrySteer {
+	t.Helper()
+	l, err := h.runs.log.log(t.Context(), workflowID)
 	if err != nil || l == nil {
 		t.Fatalf("Setup: the run log is unreadable: %v", err)
 	}
@@ -115,7 +123,7 @@ func stepSteersIn(t *testing.T, h *Runtime) []marotte.EntrySteer {
 func TestMessageStep_SteersARunningStepOnItsOwnSession(t *testing.T) {
 	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 
-	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "  use the fixture  ", "m-abc")
+	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "  use the fixture  ", "m-abc", "")
 	if err != nil {
 		t.Fatalf("MessageStep = %v, want nil", err)
 	}
@@ -134,7 +142,7 @@ func TestMessageStep_SteersARunningStepOnItsOwnSession(t *testing.T) {
 func TestMessageStep_ResumesAPausedStepWithALabelledPromptAndRecordsIt(t *testing.T) {
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 
-	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-1")
+	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-1", "")
 	if err != nil {
 		t.Fatalf("MessageStep = %v, want nil", err)
 	}
@@ -160,21 +168,27 @@ func TestMessageStep_ResumesAPausedStepWithALabelledPromptAndRecordsIt(t *testin
 	}
 }
 
-func TestMessageStep_AnswersAnOpenAskThroughTheAnswerPath(t *testing.T) {
+// askHub is messageHub with the run leased and its step waiting on a person.
+func askHub(t *testing.T) (*Runtime, *fakeBridge) {
+	t.Helper()
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
-	h.runs.asks.add(&runAsk{chatID: runChatID("wf_1"), payload: marotte.RunInputNeededPayload{
-		WorkflowID: "wf_1", AskID: "a1", NodeID: "review", StepSessionID: "sess_step",
-	}})
+	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
+	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
+	return h, br
+}
 
-	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "the main branch", "m-2")
+func TestMessageStep_AnswersAnOpenAskThroughTheAnswerPath(t *testing.T) {
+	h, br := askHub(t)
+
+	out, err := h.runs.messageStep(t.Context(), "wf_1", workflow.PathKey([]string{"root", "review"}), "the main branch", "m-2", "")
 	if err != nil {
 		t.Fatalf("MessageStep = %v, want nil", err)
 	}
 	if out.Verb != marotte.RunStepMessageAnswer {
 		t.Errorf("verb = %q, want answer", out.Verb)
 	}
-	if h.runs.asks.hasRun("wf_1") {
-		t.Error("the ask is still open, want it settled by the answer")
+	if params := br.paramsFor(marotte.MethodPrompt); params["sessionId"] != "sess_step" {
+		t.Errorf("session/prompt sessionId = %v, want the asking step's", params["sessionId"])
 	}
 	meta, _ := br.paramsFor(marotte.MethodPrompt)["_meta"].(map[string]any)
 	kiro, _ := meta["kiro"].(map[string]any)
@@ -186,10 +200,165 @@ func TestMessageStep_AnswersAnOpenAskThroughTheAnswerPath(t *testing.T) {
 	}
 }
 
+// An answer typed against an older ask at the step is refused rather than landing on a newer question.
+func TestMessageStep_AnAnswerToAnOlderAskIsStale(t *testing.T) {
+	h, br := askHub(t)
+	path := workflow.PathKey([]string{"root", "review"})
+
+	older := keyenc.Join(keyenc.Join("wf_1", path, "sess_step"), "older")
+
+	_, err := h.runs.messageStep(t.Context(), "wf_1", path, "the main branch", "m-2", older)
+	if !errors.Is(err, errAskStale) {
+		t.Fatalf("MessageStep against an older ask = %v, want errAskStale", err)
+	}
+	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
+		t.Error("the stale answer was sent")
+	}
+}
+
+// Two executions of one step share its path, as a fan-out's sessions do: the words go to the
+// execution their ask names, and words naming none are refused rather than sent to either.
+func TestMessageStep_AFanOutPathRoutesByTheAskNamed(t *testing.T) {
+	path := workflow.PathKey([]string{"root", "review"})
+	position := func(session string) string { return keyenc.Join("wf_1", path, session) }
+	askOf := func(session string) func([]workflow.Ask) string {
+		return func(asks []workflow.Ask) string {
+			i := slices.IndexFunc(asks, func(a workflow.Ask) bool { return a.StepSessionID == session })
+			if i < 0 {
+				return ""
+			}
+			return asks[i].ID
+		}
+	}
+	finished := askStepNode{id: "review", status: "completed", session: "sess_a"}
+	for name, tc := range map[string]struct {
+		pick    func([]workflow.Ask) string
+		want    string
+		wantErr error
+		steps   []askStepNode
+	}{
+		"the second execution's ask": {
+			steps: []askStepNode{parkedStep("review", "sess_a"), parkedStep("review", "sess_b")},
+			pick:  askOf("sess_b"), want: "sess_b",
+		},
+		"the first execution's ask": {
+			steps: []askStepNode{parkedStep("review", "sess_a"), parkedStep("review", "sess_b")},
+			pick:  askOf("sess_a"), want: "sess_a",
+		},
+		"an older question of the second execution": {
+			steps:   []askStepNode{parkedStep("review", "sess_a"), parkedStep("review", "sess_b")},
+			pick:    func([]workflow.Ask) string { return keyenc.Join(position("sess_b"), "older") },
+			wantErr: errAskStale,
+		},
+		"no ask named": {
+			steps:   []askStepNode{parkedStep("review", "sess_a"), parkedStep("review", "sess_b")},
+			pick:    func([]workflow.Ask) string { return "" },
+			wantErr: errAskUnnamed,
+		},
+		"an id naming no position": {
+			steps:   []askStepNode{parkedStep("review", "sess_a"), parkedStep("review", "sess_b")},
+			pick:    func([]workflow.Ask) string { return "not-an-ask-id" },
+			wantErr: errAskGone,
+		},
+		"an ask beside a finished execution": {
+			steps: []askStepNode{finished, parkedStep("review", "sess_b")},
+			pick:  askOf("sess_b"), want: "sess_b",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
+			leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
+			br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, tc.steps...))
+			askID := tc.pick(readNow(t, h, "wf_1").asks)
+
+			out, err := h.runs.messageStep(t.Context(), "wf_1", path, "the main branch", "m-fan", askID)
+
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Errorf("MessageStep = %v, want %v", err, tc.wantErr)
+				}
+				if slices.Contains(br.callLog(), marotte.MethodPrompt) {
+					t.Errorf("the refused words reached session %v", br.paramsFor(marotte.MethodPrompt)["sessionId"])
+				}
+				return
+			}
+			if err != nil || out.Verb != marotte.RunStepMessageAnswer {
+				t.Fatalf("MessageStep = %q, %v; want an answer", out.Verb, err)
+			}
+			if got := br.paramsFor(marotte.MethodPrompt)["sessionId"]; got != tc.want {
+				t.Errorf("session/prompt went to %v, want %s, the execution the ask names", got, tc.want)
+			}
+		})
+	}
+}
+
+// Another actor answered ask A (the parent agent's send_message) and the step moved on: words sent
+// against A are refused as gone, as /answer refuses them, never delivered by the step's new state.
+func TestMessageStep_WordsForAnAskItsStepNoLongerHoldsAreGone(t *testing.T) {
+	path := workflow.PathKey([]string{"root", "review"})
+	for name, tc := range map[string]struct {
+		pick func(a workflow.Ask) string
+		run  marotte.RunStatus
+		now  askStepNode
+	}{
+		"a running step, where the words would steer": {
+			pick: func(a workflow.Ask) string { return a.ID },
+			run:  marotte.RunStatusRunning, now: askStepNode{id: "review", status: "running", session: "sess_step"},
+		},
+		"a paused step on a paused run, where the words would prompt": {
+			pick: func(a workflow.Ask) string { return a.ID },
+			run:  marotte.RunStatusPaused, now: askStepNode{id: "review", status: "paused", session: "sess_step"},
+		},
+		"an id naming no position, at a running step": {
+			pick: func(workflow.Ask) string { return "not-an-ask-id" },
+			run:  marotte.RunStatusRunning, now: askStepNode{id: "review", status: "running", session: "sess_step"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, br := askHub(t)
+			asks := readNow(t, h, "wf_1").asks
+			if len(asks) != 1 {
+				t.Fatalf("Setup: asks = %+v, want the step's one", asks)
+			}
+			br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", tc.run, tc.now))
+
+			_, err := h.runs.messageStep(t.Context(), "wf_1", path, "the main branch", "m-late", tc.pick(asks[0]))
+
+			if !errors.Is(err, errAskGone) {
+				t.Errorf("MessageStep = %v, want errAskGone", err)
+			}
+			for _, m := range []string{marotte.MethodPrompt, marotte.MethodSessionSteer} {
+				if slices.Contains(br.callLog(), m) {
+					t.Errorf("the late answer went out as %s", m)
+				}
+			}
+		})
+	}
+}
+
+// A finished execution takes no words, so a steer naming no ask goes to the one live execution
+// beside it.
+func TestMessageStep_AFinishedSiblingLeavesTheLiveExecutionAddressable(t *testing.T) {
+	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
+	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
+	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusRunning,
+		askStepNode{id: "review", status: "completed", session: "sess_done"},
+		askStepNode{id: "review", status: "running", session: "sess_step"}))
+
+	out, err := h.runs.messageStep(t.Context(), "wf_1", workflow.PathKey([]string{"root", "review"}), "use the fixture", "m-live", "")
+
+	if err != nil || out.Verb != marotte.RunStepMessageSteer {
+		t.Fatalf("MessageStep = %q, %v; want a steer", out.Verb, err)
+	}
+	if got := br.paramsFor(marotte.MethodSessionSteer)["sessionId"]; got != marotte.SessionID("sess_step") {
+		t.Errorf("_session/steer went to %v, want the live execution's session", got)
+	}
+}
+
 func TestMessageStep_RefusesAFinishedStepWithItsReason(t *testing.T) {
 	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusCompleted)
 
-	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "too late", "m-3")
+	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "too late", "m-3", "")
 
 	rec := httptest.NewRecorder()
 	h.runRoutes.writeStepErr(rec, "message", "wf_1", reviewPath, err)
@@ -203,7 +372,7 @@ func TestMessageStep_RefusesAFinishedStepWithItsReason(t *testing.T) {
 
 func TestMessageStep_RefusesANotificationShapedMessage(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
-	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "[notification/info] hi", "m-4")
+	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "[notification/info] hi", "m-4", "")
 	rec := httptest.NewRecorder()
 	h.runRoutes.writeStepErr(rec, "message", "wf_1", reviewPath, err)
 	if rec.Code != http.StatusBadRequest {
@@ -214,7 +383,7 @@ func TestMessageStep_RefusesANotificationShapedMessage(t *testing.T) {
 func TestStepSteer_ATurnEndLeavesUnreadRowsNotReadInTheStepsTurn(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 	// KAS holds the steer and never reads it.
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-5"); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-5", ""); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 	h.runs.RunNodeComplete(t.Context(), "wf_1", reviewSegments, "completed", "")
@@ -234,7 +403,7 @@ func TestStepSteer_ATurnEndLeavesUnreadRowsNotReadInTheStepsTurn(t *testing.T) {
 
 func TestStepSteer_RowFramesAddressTheRunTab(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-6"); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-6", ""); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 
@@ -262,12 +431,12 @@ func TestStepSteer_RowFramesAddressTheRunTab(t *testing.T) {
 
 func TestRemoveStepSteer_DeletesARowKASHolds(t *testing.T) {
 	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-7"); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-7", ""); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 	br.setCallResult(marotte.MethodSessionSteerClear, json.RawMessage(`{"messageIds":["steer-m-7"]}`))
-	// The clear's reply lands at seq 3, and the carrier's read loop has folded that far: only the
-	// carrier's position can release the barrier.
+	// The clear's reply lands at seq 3, and the host session's lane has folded that far: only the
+	// host session's position can release the barrier.
 	gen := h.coord.turns.attachForward(runChatID("wf_1")).gen
 	br.mu.Lock()
 	br.deliveredSeq = 3
@@ -280,9 +449,8 @@ func TestRemoveStepSteer_DeletesARowKASHolds(t *testing.T) {
 	if params := br.paramsFor(marotte.MethodSessionSteerClear); params["sessionId"] != marotte.SessionID("sess_step") {
 		t.Errorf("_session/steer/clear params = %v, want the step's session", params)
 	}
-	got := stepSteersIn(t, h)
-	if len(got) != 1 || got[0].Reason != marotte.SteerReasonDeleted {
-		t.Errorf("run log steers = %+v, want one deleted note", got)
+	if got := stepSteersIn(t, h); len(got) != 0 {
+		t.Errorf("run log steers = %+v, want none for a deleted row", got)
 	}
 }
 
@@ -311,7 +479,7 @@ func reasonOf(t *testing.T, body []byte) string {
 // the step's run turn stays open for the resume.
 func TestStepSteer_APauseLeavesUnreadRowsNotRead(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-10"); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-10", ""); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 
@@ -329,7 +497,7 @@ func TestStepSteer_APauseLeavesUnreadRowsNotRead(t *testing.T) {
 // KAS ends a retry wait by re-sending node_start for the same session and path.
 func TestStepSteer_ARetryRestartKeepsTheQueuedSteer(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-11"); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-11", ""); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 
@@ -341,8 +509,8 @@ func TestStepSteer_ARetryRestartKeepsTheQueuedSteer(t *testing.T) {
 	if replay := h.bus.steers.list(""); len(replay) != 1 {
 		t.Errorf("connect replay after the restart = %d frames, want the queued row", len(replay))
 	}
-	if !h.runs.RunStepReading(marotte.StepSteerKey("sess_step")) {
-		t.Error("RunStepReading after the restart = false, want the step still reading its buffer")
+	if !h.runs.steers.recs.stepOpen(marotte.StepSteerKey("sess_step")) {
+		t.Error("step open after the restart = false, want the step still reading its buffer")
 	}
 }
 
@@ -353,7 +521,7 @@ var (
 )
 
 func reviewStep(session string) *translate.RunStep {
-	return &translate.RunStep{RunID: "wf_1", NodePath: reviewPath, NodeID: "review", SessionID: session}
+	return &translate.RunStep{RunID: "wf_1", NodePath: reviewPath, SessionID: session}
 }
 
 func runTurnsAt(t *testing.T, h *Runtime, nodePath string) (kinds [][]marotte.EntryKind, prompts []*marotte.EntryPrompt) {
@@ -385,8 +553,8 @@ func runTurnsAt(t *testing.T, h *Runtime, nodePath string) (kinds [][]marotte.En
 	return kinds, prompts
 }
 
-// A parentless run's carrier closes when the run pauses, and the paused step's turn with it. The message
-// rehosts the run and KAS opens a fresh turn for the step, which the typed words head as its prompt,
+// A parentless run's host session closes when the run pauses, and the paused step's turn with it. The message
+// reopens its host and KAS opens a fresh turn for the step, which the typed words head as its prompt,
 // whether its node_start lands while the send is in flight or after it returns.
 func TestStepMessage_AResumeAfterTheTurnClosedHeadsTheNextTurnAsItsPrompt(t *testing.T) {
 	for _, via := range []string{"answer_route", "message_route", "prompt_route"} {
@@ -396,9 +564,8 @@ func TestStepMessage_AResumeAfterTheTurnClosedHeadsTheNextTurnAsItsPrompt(t *tes
 				h.coord.runs = h.runs.log
 				h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
 				if via != "prompt_route" {
-					h.runs.asks.add(&runAsk{chatID: runChatID("wf_1"), payload: marotte.RunInputNeededPayload{
-						WorkflowID: "wf_1", AskID: "a1", NodeID: "review", StepSessionID: "sess_step",
-					}})
+					leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
+					br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 				}
 				reopen := func() { h.runs.RunNodeStart(t.Context(), reviewStep("sess_step"), "") }
 				if timing == "node_start_during_send" {
@@ -412,9 +579,9 @@ func TestStepMessage_AResumeAfterTheTurnClosedHeadsTheNextTurnAsItsPrompt(t *tes
 
 				var err error
 				if via == "answer_route" {
-					err = h.runs.answerInput(t.Context(), "wf_1", "a1", "teal")
+					err = h.runs.answerInput(t.Context(), "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "teal")
 				} else {
-					_, err = h.runs.messageStep(t.Context(), "wf_1", reviewPath, "teal", "m-12")
+					_, err = h.runs.messageStep(t.Context(), "wf_1", reviewPath, "teal", "m-12", "")
 				}
 				if err != nil {
 					t.Fatalf("%s = %v, want nil", via, err)
@@ -457,7 +624,7 @@ func TestStepMessage_ARefusedResumeLeavesTheNextTurnWithoutAPrompt(t *testing.T)
 	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
 	br.setCallErr(marotte.MethodPrompt, errors.New("bridge died"))
 
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-13"); err == nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-13", ""); err == nil {
 		t.Fatal("MessageStep with a failing send = nil, want the send's error")
 	}
 	h.runs.RunNodeStart(t.Context(), reviewStep("sess_step"), "")
@@ -472,7 +639,7 @@ func TestStepMessage_ARunEndingBeforeTheResumedTurnOpensKeepsTheWords(t *testing
 	h, _ := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	h.coord.runs = h.runs.log
 	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-14"); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-14", ""); err != nil {
 		t.Fatalf("MessageStep = %v, want nil", err)
 	}
 
@@ -490,64 +657,29 @@ func twoBranchHub(t *testing.T) (*Runtime, *fakeBridge) {
 	h, _, br := newTestHub()
 	h.runs.log = newRunLog(t.TempDir())
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-	raw, err := json.Marshal(map[string]any{
-		"state": map[string]any{
-			"status": marotte.RunStatusPaused,
-			"root": map[string]any{
-				"nodeId": "fanout", "type": "parallel", "status": "paused",
-				"children": []any{
-					map[string]any{"nodeId": "branch_a", "type": stepNodeType, "status": "paused", "sessionId": "sess_a"},
-					map[string]any{"nodeId": "branch_b", "type": stepNodeType, "status": "paused", "sessionId": "sess_b"},
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Setup: marshalling the inspect reply: %s", err)
-	}
-	br.setCallResult(methodKiroWorkflowInspect, raw)
+	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
+	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused,
+		askStepNode{id: "branch_a", status: "paused", session: "sess_a"}, parkedStep("branch_b", "sess_b")))
 	return h, br
 }
 
-// The selected execution is the one addressed: an ask answers only at the step it resolves to, and a
-// message to any other paused step resumes that step rather than answering the ask somewhere else.
+// The ask is the parked execution's own: a message to it answers there, and a message to a sibling
+// paused with no question resumes that sibling.
 func TestMessageStep_AnAskAnswersOnlyAtTheExecutionItBelongsTo(t *testing.T) {
 	cases := []struct {
 		name        string
-		ask         marotte.RunInputNeededPayload
 		path        string
 		wantVerb    marotte.RunStepMessageVerb
 		wantSession string
 	}{
-		{
-			name: "an ask naming its session answers there",
-			ask:  marotte.RunInputNeededPayload{StepSessionID: "sess_b"},
-			path: workflow.PathKey([]string{"fanout", "branch_b"}), wantVerb: marotte.RunStepMessageAnswer, wantSession: "sess_b",
-		},
-		{
-			name: "an ask naming another session is not answered here",
-			ask:  marotte.RunInputNeededPayload{StepSessionID: "sess_b"},
-			path: workflow.PathKey([]string{"fanout", "branch_a"}), wantVerb: marotte.RunStepMessagePrompt, wantSession: "sess_a",
-		},
-		{
-			name: "an ask naming its node id answers there",
-			ask:  marotte.RunInputNeededPayload{NodeID: "branch_b"},
-			path: workflow.PathKey([]string{"fanout", "branch_b"}), wantVerb: marotte.RunStepMessageAnswer, wantSession: "sess_b",
-		},
-		{
-			name: "an ask two parked steps could own answers at neither",
-			ask:  marotte.RunInputNeededPayload{},
-			path: workflow.PathKey([]string{"fanout", "branch_b"}), wantVerb: marotte.RunStepMessagePrompt, wantSession: "sess_b",
-		},
+		{"the asking branch is answered", workflow.PathKey([]string{"root", "branch_b"}), marotte.RunStepMessageAnswer, "sess_b"},
+		{"a sibling with no question is resumed", workflow.PathKey([]string{"root", "branch_a"}), marotte.RunStepMessagePrompt, "sess_a"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, br := twoBranchHub(t)
-			ask := tc.ask
-			ask.WorkflowID, ask.AskID = "wf_1", "a1"
-			h.runs.asks.add(&runAsk{chatID: runChatID("wf_1"), payload: ask})
 
-			out, err := h.runs.messageStep(t.Context(), "wf_1", tc.path, "the main branch", "m-15")
+			out, err := h.runs.messageStep(t.Context(), "wf_1", tc.path, "the main branch", "m-15", "")
 			if err != nil {
 				t.Fatalf("MessageStep(%s) = %v, want nil", tc.path, err)
 			}
@@ -557,29 +689,19 @@ func TestMessageStep_AnAskAnswersOnlyAtTheExecutionItBelongsTo(t *testing.T) {
 			if got := br.paramsFor(marotte.MethodPrompt)["sessionId"]; got != tc.wantSession {
 				t.Errorf("session/prompt sessionId = %v, want %s", got, tc.wantSession)
 			}
-			stillOpen := len(h.runs.asks.snapshotRun("wf_1")) == 1
-			if stillOpen != (tc.wantVerb != marotte.RunStepMessageAnswer) {
-				t.Errorf("ask still open = %v, want it settled only by an answer", stillOpen)
-			}
 		})
 	}
 }
 
-// An ask several parked executions could own is not guessed past by the answer route either.
-func TestAnswerInput_AnAskSeveralParkedStepsCouldOwnIsNotSent(t *testing.T) {
+// An ask id naming no wait in the fresh read is final: nothing is sent and no agent retries.
+func TestAnswerInput_AnAskIDNoWaitCarriesIsGone(t *testing.T) {
 	h, br := twoBranchHub(t)
-	h.runs.asks.add(&runAsk{chatID: runChatID("wf_1"), payload: marotte.RunInputNeededPayload{
-		WorkflowID: "wf_1", AskID: "a1",
-	}})
 
-	if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch"); err == nil {
-		t.Error("AnswerInput for an unattributable ask = nil, want a refusal")
+	if err := h.runs.answerInput(t.Context(), "wf_1", "no-such-ask", "the main branch"); !errors.Is(err, errAskGone) {
+		t.Errorf("AnswerInput for an unknown ask = %v, want errAskGone", err)
 	}
 	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
 		t.Errorf("calls = %v, want no session/prompt to a guessed step", br.callLog())
-	}
-	if !h.runs.asks.hasRun("wf_1") {
-		t.Error("the ask was consumed, want it offered again")
 	}
 }
 
@@ -597,7 +719,7 @@ func TestMessageStep_AMessageTheRecordCannotHoldIsNotSent(t *testing.T) {
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	h.runs.log = unrecordableLog(t)
 
-	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-22")
+	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-22", "")
 
 	rec := httptest.NewRecorder()
 	h.runRoutes.writeStepErr(rec, "message", "wf_1", reviewPath, err)
@@ -610,27 +732,26 @@ func TestMessageStep_AMessageTheRecordCannotHoldIsNotSent(t *testing.T) {
 }
 
 func TestAnswerInput_AnAnswerTheRecordCannotHoldIsNotSentAndTheAskStays(t *testing.T) {
-	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
+	h, br := askHub(t)
 	h.runs.log = unrecordableLog(t)
-	h.runs.asks.add(&runAsk{chatID: runChatID("wf_1"), payload: marotte.RunInputNeededPayload{
-		WorkflowID: "wf_1", AskID: "a1", NodeID: "review", StepSessionID: "sess_step",
-	}})
+	askID := readNow(t, h, "wf_1").asks[0].ID
 
-	if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch"); !errors.Is(err, errStepUnrecorded) {
+	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "the main branch"); !errors.Is(err, errStepUnrecorded) {
 		t.Errorf("AnswerInput = %v, want errStepUnrecorded", err)
 	}
 	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
 		t.Errorf("calls = %v, want no session/prompt for an unrecorded answer", br.callLog())
 	}
-	if !h.runs.asks.hasRun("wf_1") {
-		t.Error("the ask was consumed, want it offered again")
+	last := lastAsksOf(t, h, "wf_1")
+	if len(last.Asks) != 1 || last.Asks[0].Blocked != "" {
+		t.Errorf("after the refused answer the run publishes %+v, want its ask sendable again", last.Asks)
 	}
 }
 
-// A carrier's death ends the steering turns of the steps it hosted.
-func TestStepSteer_ACarrierDeathLeavesUnreadRowsNotRead(t *testing.T) {
+// A host session's end closes the steering turns of the steps it hosted.
+func TestStepSteer_AnEngineExitLeavesUnreadRowsNotRead(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-11"); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-11", ""); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 

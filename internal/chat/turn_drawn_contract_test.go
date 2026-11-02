@@ -103,6 +103,8 @@ func drawnPayload(t *testing.T, turn string, kind marotte.EntryKind, subtask str
 		return marotte.EntryTurnRevert{From: turn, FromN: 1, Through: turn}
 	case marotte.EntryKindReconciled:
 		return marotte.EntryReconciled{Turn: turn}
+	case marotte.EntryKindSteerCleared:
+		return marotte.EntrySteerCleared{Cause: marotte.SteerClearCauseBoundary, Session: "sess-a", IDs: []string{"notify-a"}}
 	case marotte.EntryKindTurnBind:
 		return marotte.EntryTurnBind{KASMessageID: "k"}
 	case marotte.EntryKindText:

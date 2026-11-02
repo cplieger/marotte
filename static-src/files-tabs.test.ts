@@ -97,6 +97,7 @@ vi.mock("./files-search.js", () => ({
 }));
 vi.mock("./files-picker.js", () => ({ setOnUploadComplete: vi.fn() }));
 vi.mock("./api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   apiPost: vi.fn(),
   apiGet: vi.fn(),
   // Linked through the settings actions, never called.
@@ -128,6 +129,7 @@ vi.mock("./store.js", () => ({
 import { $ } from "./dom.js";
 import { setWorkspaceRoot } from "./workspace.js";
 import { apiGetOrError } from "./api-client.js";
+import { uploadFiles } from "./upload.js";
 import { FB_CHECK, FB_NAME } from "./files-shared.js";
 import {
   bindFilesTab,
@@ -730,5 +732,35 @@ describe("the path field and the listing error", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(($.fbBack as HTMLButtonElement).disabled).toBe(true);
     expect(vi.mocked(apiGetOrError)).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the Upload files button", () => {
+  it("opens the dialog on an input in the document and uploads what it picks to the shown folder", async () => {
+    initFileBrowser();
+    await show("/w");
+    const file = new File(["x"], "note.txt");
+    let connected: boolean | null = null;
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(function (
+      this: HTMLInputElement,
+    ) {
+      connected = this.isConnected;
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      this.files = dt.files;
+      this.dispatchEvent(new Event("change"));
+    });
+    try {
+      $.fbUpload.click();
+    } finally {
+      click.mockRestore();
+    }
+    expect(connected).toBe(true);
+    await vi.waitFor(() => {
+      expect(uploadFiles).toHaveBeenCalledOnce();
+    });
+    const opts = vi.mocked(uploadFiles).mock.calls[0]?.[0];
+    expect(opts?.targetDir).toBe("/w");
+    expect(Array.from(opts?.files ?? [])).toEqual([file]);
   });
 });

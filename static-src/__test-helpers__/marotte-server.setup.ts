@@ -115,6 +115,7 @@ export default async function setup(
     env: {
       PATH: `${join(scratch, "bin")}:${process.env["PATH"] ?? ""}`,
       HOME: join(scratch, "home"),
+      KIRO_HOME: join(scratch, "home", ".kiro"),
       KIRO_CONFIG_DIR: join(scratch, "config"),
       KIRO_WORK_DIR: join(scratch, "work"),
       MAROTTE_TEST_PORT: String(port),

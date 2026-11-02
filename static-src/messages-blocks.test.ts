@@ -25,6 +25,7 @@ const {
   buildDetachedBody,
   updateDetachedBody,
   disposeAssistantBody,
+  disposeDetachedBody,
   resetBlockRenders,
   initBlockRenderer,
   blockElement,
@@ -39,6 +40,7 @@ const { runCardOwners, sliceTurn } = await import("./block-window.js");
 const { toolResultID } = await import("./entry-ids.js");
 const { clearAllEntrySigs, ensureToolCallSig, toolCallSigs } = await import("./store-signals.js");
 const { setActive } = await import("./store.js");
+const { tableObservationCount } = await import("./table-scroll.js");
 
 /** Part of the per-tool signal key, and the store's active chat: the live-anchor fallback scans only that chat. */
 const CHAT_ID = "c-blocks";
@@ -92,8 +94,10 @@ function sealed(
   };
 }
 
+/** A text entry as a `#k` segment of the turn's ONE say, so adjacent ones are one message (`MessageRun`). */
 function text(turnID: string, seq: number, s: string, lane?: string): Entry {
-  return sealed(turnID, seq, "text", { text: s }, lane === undefined ? {} : { lane });
+  const id = `${turnID}-say#${String(seq)}`;
+  return sealed(turnID, seq, "text", { text: s }, lane === undefined ? { id } : { id, lane });
 }
 
 function thinking(turnID: string, seq: number, s: string, lane?: string): Entry {
@@ -192,8 +196,13 @@ function retarget(entries: Entry[], turnID: string): Entry[] {
   return entries.map((e) => ({
     ...e,
     turn: turnID,
-    id: e.id.startsWith("t-") ? turnID + e.id.slice(1) : e.id,
+    id: placeholderID(e.id, turnID),
   }));
+}
+
+/** `id` with its `t` turn placeholder (`t-…`, or a minted `t:e<k>`) replaced by `turnID`. */
+function placeholderID(id: string, turnID: string): string {
+  return id.startsWith("t-") || id.startsWith("t:") ? turnID + id.slice(1) : id;
 }
 
 /** Build one turn's body from `entries`; a fresh turn id per call, so renders never share a slot. */
@@ -222,9 +231,6 @@ function update(r: Render, entries: Entry[], live = false): void {
 function shape(body: HTMLElement): string[] {
   return [...body.children].map((e) => {
     const h = e as HTMLElement;
-    if (h.classList.contains("subagent-container")) {
-      return `pipeline(${String(h.dataset["pipeline"])})`;
-    }
     if (h.classList.contains("subagent-block")) {
       return `card(${String(h.dataset["subtask"])})`;
     }
@@ -487,10 +493,22 @@ describe("sealing is invisible: the prose run", () => {
     expect(rows[0]?.textContent).toContain("one two three");
   });
 
+  it("never lets a MINTED segment bridge two named messages on a replay", () => {
+    const r = render([
+      sealed("t", 1, "text", { text: "first reply." }, { id: "a-say" }),
+      sealed("t", 2, "text", { text: " more" }, { id: "t:e2" }),
+      sealed("t", 3, "text", { text: "second reply." }, { id: "b-say" }),
+    ]);
+    const rows = [...r.body.querySelectorAll<HTMLElement>(".msg-row")];
+    expect(rows.map((row) => row.dataset["entries"])).toEqual([`a-say ${r.turnID}:e2`, "b-say"]);
+    expect(rows[0]?.textContent).toContain("first reply. more");
+    expect(rows[1]?.textContent).not.toContain("first reply");
+  });
+
   it("names its members on the row, in stream order", () => {
     const r = render([text("t", 1, "a"), text("t", 2, "b")]);
     const row = r.body.querySelector(".msg-row") as HTMLElement;
-    expect(row.dataset["entries"]).toBe(`${r.turnID}-e1 ${r.turnID}-e2`);
+    expect(row.dataset["entries"]).toBe(`${r.turnID}-say#1 ${r.turnID}-say#2`);
   });
 
   it("ends the run at an entry that RENDERS, and opens a new one after it", () => {
@@ -610,7 +628,11 @@ describe("the lane's OPEN entry is what streams, at the tail of its view", () =>
   function renderLive(entries: Entry[], open: OpenEntry[]): Render {
     const turnID = nextTurnID();
     const turn = turnOf(turnID, retarget(entries, turnID), {
-      open: open.map((o) => ({ ...o, turn: turnID })),
+      open: open.map((o) => ({
+        ...o,
+        turn: turnID,
+        id: placeholderID(o.id, turnID),
+      })),
     });
     const body = bodyHost();
     buildAssistantBody(body, turn, CHAT_ID, true);
@@ -619,10 +641,48 @@ describe("the lane's OPEN entry is what streams, at the tail of its view", () =>
 
   // A live bubble's text arrives over frames, so these cases assert run membership, not painted words.
   it("joins the run its lane's tail sits in", () => {
-    const r = renderLive([text("t", 1, "sealed ")], [openText("t", "open-1", "growing")]);
+    const r = renderLive([text("t", 1, "sealed ")], [openText("t", "t-say#2", "growing")]);
     const rows = r.body.querySelectorAll(".msg-row");
     expect(rows).toHaveLength(1);
-    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-e1 open-1`);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-say#1 ${r.turnID}-say#2`);
+  });
+
+  it("mounts a run of its OWN when the open entry is ANOTHER message, and moves the caret", () => {
+    const r = renderLive([text("t", 1, "first reply.")], [openText("t", "b-say", "second")]);
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(2);
+    expect((rows[1] as HTMLElement).dataset["entries"]).toBe("b-say");
+    const carets = r.body.querySelectorAll(".message.assistant.streaming");
+    expect(carets).toHaveLength(1);
+    expect(carets[0]?.closest(".msg-row")).toBe(rows[1]);
+  });
+
+  it("mounts a run of its OWN for another message after a MINTED segment, and moves the caret", () => {
+    // The minted segment rides the named say before it; it never bridges that say to the open one.
+    const r = renderLive(
+      [
+        sealed("t", 1, "text", { text: "first reply." }, { id: "a-say" }),
+        sealed("t", 2, "text", { text: " more" }, { id: "t:e2" }),
+      ],
+      [openText("t", "b-say", "second")],
+    );
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(2);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`a-say ${r.turnID}:e2`);
+    expect((rows[1] as HTMLElement).dataset["entries"]).toBe("b-say");
+    const carets = r.body.querySelectorAll(".message.assistant.streaming");
+    expect(carets).toHaveLength(1);
+    expect(carets[0]?.closest(".msg-row")).toBe(rows[1]);
+  });
+
+  it("joins a MINTED open entry to the named run before it", () => {
+    const r = renderLive(
+      [sealed("t", 1, "text", { text: "first reply." }, { id: "a-say" })],
+      [openText("t", "t:e2", " more")],
+    );
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`a-say ${r.turnID}:e2`);
   });
 
   it("mounts a run of its OWN when the lane's tail is not prose", () => {
@@ -639,12 +699,12 @@ describe("the lane's OPEN entry is what streams, at the tail of its view", () =>
   it("carries the caret on the open run alone", () => {
     const r = renderLive(
       [text("t", 1, "one"), callEntry("t", 2, toolCall("tool-a")), text("t", 3, "two")],
-      [openText("t", "open-1", "three")],
+      [openText("t", "t-say#4", "three")],
     );
     const carets = r.body.querySelectorAll(".message.assistant.streaming");
     expect(carets).toHaveLength(1);
     const row = carets[0]?.closest(".msg-row") as HTMLElement;
-    expect(row.dataset["entries"]).toBe(`${r.turnID}-e3 open-1`);
+    expect(row.dataset["entries"]).toBe(`${r.turnID}-say#3 ${r.turnID}-say#4`);
   });
 
   it("opens no caret on a REPLAY", () => {
@@ -674,7 +734,7 @@ describe("the lane's OPEN entry is what streams, at the tail of its view", () =>
     const rows = r.body.querySelectorAll(".msg-row");
     expect(rows).toHaveLength(1);
     // Membership, not painted words: a text assertion would pass whether or not the tail had mounted.
-    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-e1`);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-say#1`);
   });
 });
 
@@ -687,7 +747,8 @@ describe("an event kind renders a row at its own seq", () => {
       sealed("t", 4, "safety_blocked", { reason: "blocked" }),
       sealed("t", 5, "model_switched", { from: "a", to: "b" }),
       sealed("t", 6, "model_routed", { message: "Switched to it." }),
-      text("t", 7, "after"),
+      sealed("t", 7, "model_fallback", { from: "a", trigger: "availability", reason: "raceLost" }),
+      text("t", 8, "after"),
     ]);
     expect(shape(r.body)).toEqual([
       "text(before)",
@@ -696,8 +757,49 @@ describe("an event kind renders a row at its own seq", () => {
       "event(safety_blocked)",
       "event(model_switched)",
       "event(model_routed)",
+      "event(model_fallback)",
       "text(after)",
     ]);
+  });
+
+  // KAS re-pins before it sends the notice, so the switch row's "not available" guess is folded
+  // into the fallback row, on replay and on live arrival alike.
+  const repin = (seq: number): Entry =>
+    sealed("t", seq, "model_switched", { from: "opus-5", to: "sonnet-5", reason: "unavailable" });
+  const fallback = (seq: number): Entry =>
+    sealed("t", seq, "model_fallback", {
+      from: "opus-5",
+      to: "sonnet-5",
+      scope: "session",
+      trigger: "refusal",
+    });
+
+  it("draws no row for a sub-agent's fallback, and keeps the re-pin row it does not explain", () => {
+    const r = render([
+      text("t", 1, "tried"),
+      repin(2),
+      sealed("t", 3, "model_fallback", {
+        from: "opus-5",
+        to: "sonnet-5",
+        trigger: "refusal",
+        subagent: true,
+      }),
+    ]);
+    expect(shape(r.body)).toEqual(["text(tried)", "event(model_switched)"]);
+  });
+
+  it("folds the re-pin row a fallback explains when both are in the log", () => {
+    const r = render([text("t", 1, "tried"), repin(2), fallback(3)]);
+    expect(shape(r.body)).toEqual(["text(tried)", "event(model_fallback)"]);
+  });
+
+  it("removes the mounted re-pin row when its fallback arrives live", () => {
+    const before = [text("t", 1, "tried"), repin(2)];
+    const r = render(before, { live: true });
+    expect(shape(r.body)).toEqual(["text(tried)", "event(model_switched)"]);
+    update(r, [...before, fallback(3)], true);
+    expect(shape(r.body)).toEqual(["text(tried)", "event(model_fallback)"]);
+    expect(blockElement(r.turnID, 2)).toBeUndefined();
   });
 
   it("breaks a prose run, because it renders at its own position", () => {
@@ -891,7 +993,7 @@ describe("a body mounts an entry RANGE, and the grouping is derived", () => {
     const r = renderWindow(sixCalls(), { from: 5, to: 7 });
     const rows = r.body.querySelectorAll(".msg-row");
     expect(rows).toHaveLength(1);
-    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-e5 ${r.turnID}-e6`);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-say#5 ${r.turnID}-say#6`);
   });
 
   it("leaves a run's row to its HEAD's own drop", () => {
@@ -913,185 +1015,41 @@ describe("a body mounts an entry RANGE, and the grouping is derived", () => {
   });
 });
 
-describe("a pipeline's stages render inside the orchestrate call that started them", () => {
-  /** An `orchestrate_subagent` driver. `declared` is the `input.stages` length, a floor on the stage count. */
-  function driver(seq: number, id: string, declared: number, status = "completed"): Entry {
-    return callEntry(
-      "t",
-      seq,
-      toolCall(id, {
-        title: "Orchestrate Sub-agent",
-        status: status as EntryToolCall["status"],
-        input: { stages: Array.from({ length: declared }, (_, i) => ({ name: `s${String(i)}` })) },
-      }),
-    );
-  }
-
-  /** One stage of `driverID`; its tool-call id embeds the driver's, which is the whole join. */
-  function stage(seq: number, driverID: string, name: string, subtask: string): Entry {
-    return callEntry(
-      "t",
-      seq,
-      toolCall(`invoke_subagent_${driverID}_stage_${name}`, {
-        title: `Sub-agent: ${name}`,
-        agent_subtask_id: subtask,
-      }),
-    );
-  }
-
-  const box = (r: Render, pipelineID: string): HTMLElement =>
-    r.body.querySelector(`.subagent-container[data-pipeline="${pipelineID}"]`) as HTMLElement;
-
-  const inside = (r: Render, pipelineID: string): string[] =>
-    shape(box(r, pipelineID).querySelector(".subagent-body") as HTMLElement);
-
-  it("nests every stage's card inside the driver's box", () => {
+// An older engine's `orchestrate_subagent` pipeline, replayed: nothing groups it any more.
+describe("a replayed pipeline renders as ordinary cards", () => {
+  it("draws the driver as a tool card and each stage as a top-level delegate card", () => {
     const r = render([
-      driver(1, "orc-1", 2),
-      stage(2, "orc-1", "review", "sub-A"),
-      stage(3, "orc-1", "apply", "sub-B"),
+      callEntry(
+        "t",
+        1,
+        toolCall("orc-1", {
+          title: "Orchestrate Sub-agent",
+          input: { stages: [{ name: "a" }, { name: "b" }] },
+        }),
+      ),
+      callEntry(
+        "t",
+        2,
+        toolCall("invoke_subagent_orc-1_stage_a", {
+          title: "Sub-agent: a",
+          agent_subtask_id: "sub-A",
+        }),
+      ),
+      callEntry(
+        "t",
+        3,
+        toolCall("invoke_subagent_orc-1_stage_b", {
+          title: "Sub-agent: b",
+          agent_subtask_id: "sub-B",
+        }),
+      ),
     ]);
-    expect(shape(r.body)).toEqual(["pipeline(orc-1)"]);
-    expect(inside(r, "orc-1")).toEqual(["card(sub-A)", "card(sub-B)"]);
-  });
-
-  it("labels the box by its DECLARED count, which knows a stage still on its way", () => {
-    const r = render([driver(1, "orc-1", 3), stage(2, "orc-1", "review", "sub-A")]);
-    expect(box(r, "orc-1").querySelector(".subagent-name")?.textContent).toBe(
-      "Subagent pipeline · 3 stages",
-    );
-  });
-
-  it("places a stage whose invocation arrives BEFORE its driver", () => {
-    // `indexPipelines` reads the whole tool-call array, so neither arrival order strands a stage.
-    const r = render([
-      stage(1, "orc-1", "review", "sub-A"),
-      driver(2, "orc-1", 2),
-      stage(3, "orc-1", "apply", "sub-B"),
-    ]);
-    expect(shape(r.body)).toEqual(["pipeline(orc-1)"]);
-    expect(inside(r, "orc-1")).toEqual(["card(sub-A)", "card(sub-B)"]);
-  });
-
-  it("PROMOTES a lone stage: no container over one card", () => {
-    const r = render([driver(1, "orc-1", 1), stage(2, "orc-1", "only", "sub-A")]);
-    expect(shape(r.body)).toEqual(["card(sub-A)"]);
-    expect(r.body.querySelectorAll(".subagent-container")).toHaveLength(0);
-  });
-
-  it("upgrades a promoted stage into a container when a sibling arrives, KEEPING the card", () => {
-    // A re-parent, not a rebuild: the node carries its disclosure, observers and effects.
-    const first = [driver(1, "orc-1", 1), stage(2, "orc-1", "one", "sub-A")];
-    const r = render(first);
-    const card = blockElement(r.turnID, 2);
-    expect(shape(r.body)).toEqual(["card(sub-A)"]);
-    update(r, [...first, stage(3, "orc-1", "two", "sub-B")]);
-    expect(shape(r.body)).toEqual(["pipeline(orc-1)"]);
-    expect(inside(r, "orc-1")).toEqual(["card(sub-A)", "card(sub-B)"]);
-    expect(blockElement(r.turnID, 2)).toBe(card);
-  });
-
-  it("keeps the box for a driver that SETTLED having dispatched no stage", () => {
-    const r = render([driver(1, "orc-1", 1)]);
-    expect(shape(r.body)).toEqual(["pipeline(orc-1)"]);
-    expect(inside(r, "orc-1")).toEqual([]);
-  });
-
-  it("withholds that box while the driver is still RUNNING", () => {
-    // Deferring to the settle stops the fallback box displacing a live stage about to be promoted.
-    const r = render([driver(1, "orc-1", 1, "in_progress")]);
-    expect(shape(r.body)).toEqual([]);
-  });
-
-  it("resolves a stage whose NAME carries the separator to its own driver", () => {
-    // `indexOf`, not `lastIndexOf`: the driver half is machine-minted, the stage name author-supplied.
-    const r = render([driver(1, "orc-1", 2), stage(2, "orc-1", "run_stage_two", "sub-A")]);
-    expect(inside(r, "orc-1")).toEqual(["card(sub-A)"]);
-  });
-
-  it("leaves a delegate whose id is not stage-shaped OUT of the pipeline", () => {
-    const r = render([driver(1, "orc-1", 2), invocation("t", 2, "sub-A")]);
-    expect(shape(r.body)).toEqual(["pipeline(orc-1)", "card(sub-A)"]);
-    expect(inside(r, "orc-1")).toEqual([]);
+    expect(shape(r.body)).toEqual(["group(1)", "card(sub-A)", "card(sub-B)"]);
+    expect(r.body.querySelector(".subagent-container")).toBeNull();
   });
 });
 
 describe("the newest top-level box renders expanded", () => {
-  function driver(seq: number, id: string, declared: number): Entry {
-    return callEntry(
-      "t",
-      seq,
-      toolCall(id, {
-        title: "Orchestrate Sub-agent",
-        input: { stages: Array.from({ length: declared }, (_, i) => ({ name: `s${String(i)}` })) },
-      }),
-    );
-  }
-
-  function stage(seq: number, driverID: string, name: string, subtask: string): Entry {
-    return callEntry(
-      "t",
-      seq,
-      toolCall(`invoke_subagent_${driverID}_stage_${name}`, {
-        title: `Sub-agent: ${name}`,
-        agent_subtask_id: subtask,
-      }),
-    );
-  }
-
-  const pipeline = (r: Render): HTMLElement =>
-    r.body.querySelector(".subagent-container") as HTMLElement;
-
-  /** The disclosure settles on a microtask and its own MutationObserver, so the verdict is readable a task later. */
-  const settled = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
-
-  it("leaves a pipeline box open while it is the newest top-level element", async () => {
-    const r = render([driver(1, "orc-1", 2), stage(2, "orc-1", "a", "sub-A")]);
-    await settled();
-    expect(pipeline(r).classList.contains("collapsed")).toBe(false);
-  });
-
-  it("is BORN folded when the range already holds the entry after it", async () => {
-    // The verdict precedes the box, so a superseded box is built closed rather than animated shut.
-    const r = render([
-      driver(1, "orc-1", 2),
-      stage(2, "orc-1", "a", "sub-A"),
-      text("t", 3, "and so"),
-    ]);
-    await settled();
-    expect(pipeline(r).classList.contains("collapsed")).toBe(true);
-  });
-
-  it("folds when the entry after it ARRIVES, on the next pass", async () => {
-    const before = [driver(1, "orc-1", 2), stage(2, "orc-1", "a", "sub-A")];
-    const r = render(before);
-    await settled();
-    expect(pipeline(r).classList.contains("collapsed")).toBe(false);
-    update(r, [...before, text("t", 3, "and so")]);
-    await settled();
-    expect(pipeline(r).classList.contains("collapsed")).toBe(true);
-  });
-
-  it("refuses that fold while the driver is still RUNNING", async () => {
-    // A refusal to collapse, not a reason to expand: an open box with work in flight stays open.
-    const running = callEntry(
-      "t",
-      1,
-      toolCall("orc-1", {
-        title: "Orchestrate Sub-agent",
-        status: "in_progress",
-        input: { stages: [{ name: "a" }, { name: "b" }] },
-      }),
-    );
-    const before = [running, stage(2, "orc-1", "a", "sub-A")];
-    const r = render(before);
-    await settled();
-    expect(pipeline(r).classList.contains("collapsed")).toBe(false);
-    update(r, [...before, text("t", 3, "and so")]);
-    await settled();
-    expect(pipeline(r).classList.contains("collapsed")).toBe(false);
-  });
-
   it("gives a box whose HOST is another box no expanded verdict of its own", () => {
     // Only the view's root lane earns the newest-element verdict, so a delegate page's trace never does.
     const turnID = nextTurnID();
@@ -1118,17 +1076,6 @@ describe("blockElement resolves an entry's own element", () => {
     const cards = r.body.querySelectorAll(".tool-call");
     expect(blockElement(r.turnID, 1)).toBe(cards[0]);
     expect(blockElement(r.turnID, 2)).toBe(cards[1]);
-  });
-
-  it("answers the pipeline box for the driver that opened it", () => {
-    const r = render([
-      callEntry(
-        "t",
-        1,
-        toolCall("orc-1", { title: "Orchestrate Sub-agent", input: { stages: [] } }),
-      ),
-    ]);
-    expect(blockElement(r.turnID, 1)).toBe(r.body.querySelector(".subagent-container"));
   });
 
   it("answers undefined for a seq the turn does not hold", () => {
@@ -1173,7 +1120,8 @@ describe("a delegate card's status follows its invocation CALL", () => {
     expect(head.getAttribute("aria-label")).toContain("failed");
   });
 
-  it("shows an inline helper's model and effort on its card", () => {
+  // kiro-cli no longer reads `inlineAgent`, so its input marks nothing on the card.
+  it("shows no inline mark or model for an inlineAgent input", () => {
     const r = render([
       callEntry(
         "t",
@@ -1185,8 +1133,8 @@ describe("a delegate card's status follows its invocation CALL", () => {
         }),
       ),
     ]);
-    expect(cardOf(r).querySelector(".subagent-name")?.textContent).toBe("x (inline agent)");
-    expect(cardOf(r).querySelector(".subagent-detail")?.textContent).toBe("m · high");
+    expect(cardOf(r).querySelector(".subagent-name")?.textContent).toBe("x");
+    expect(cardOf(r).querySelector(".subagent-detail")?.textContent).toBe("");
   });
 
   it("shows the category a saved agent was asked to run on as its card's detail", () => {
@@ -1204,32 +1152,6 @@ describe("a delegate card's status follows its invocation CALL", () => {
     expect(cardOf(r).querySelector(".subagent-detail")?.textContent).toBe(
       "Category: auto-balanced",
     );
-  });
-
-  it("re-binds a pipeline box whose driver entry the window dropped", () => {
-    // The box outlives the entry that opened it, so without the rebind its header freezes.
-    const driverCall = toolCall("orc-1", {
-      title: "Orchestrate Sub-agent",
-      status: "in_progress",
-      input: { stages: [{ name: "a" }, { name: "b" }] },
-    });
-    const r = render([
-      callEntry("t", 1, driverCall),
-      callEntry(
-        "t",
-        2,
-        toolCall("invoke_subagent_orc-1_stage_a", {
-          title: "Sub-agent: a",
-          agent_subtask_id: "sub-A",
-        }),
-      ),
-    ]);
-    dropHead(r.turn, { from: 2, to: 3 });
-    const box = r.body.querySelector(".subagent-container") as HTMLElement;
-    expect(box).not.toBeNull();
-    const sig = ensureToolCallSig(CHAT_ID, "orc-1", driverCall);
-    sig.value = { ...driverCall, status: "completed", duration_ms: 1234 };
-    expect(box.querySelector(".subagent-icon")?.classList.contains("is-ok")).toBe(true);
   });
 });
 
@@ -1475,5 +1397,48 @@ describe("a render no chat owns settles its own cards", () => {
     const settled = retarget([running(), resultEntry("t", 2, 1, { status: "failed" })], turnID);
     updateDetachedBody(host, turnOf(turnID, settled), "", "", false);
     expect(host.querySelector(".tool-call")?.getAttribute("data-outcome")).toBe("fail");
+  });
+});
+
+describe("a render's markdown tables are let go of with the DOM that holds them", () => {
+  // The shared observer in `table-scroll.ts` keeps what it watches reachable until it is told to stop,
+  // so every discard path of rendered prose must say so. The counts are read with no frame awaited:
+  // only the render's own release can lower them before an engine reports a removed target.
+  const TABLE = "| a | b |\n|---|---|\n| 1 | 2 |\n";
+
+  it("when the render is disposed", () => {
+    const before = tableObservationCount();
+    const r = render([text("t", 1, TABLE)]);
+    expect(r.body.querySelectorAll("table"), "the table rendered").toHaveLength(1);
+    expect(tableObservationCount() - before).toBe(1);
+
+    disposeAssistantBody(r.turnID);
+
+    expect(tableObservationCount() - before).toBe(0);
+  });
+
+  it("when a detached lane is disposed, as a run step or a delegate page does before it clears the box", () => {
+    const before = tableObservationCount();
+    const turnID = nextTurnID();
+    const host = bodyHost();
+    buildDetachedBody(host, turnOf(turnID, retarget([text("t", 1, TABLE)], turnID)), "", "", false);
+    expect(host.querySelectorAll("table"), "the table rendered").toHaveLength(1);
+    expect(tableObservationCount() - before).toBe(1);
+
+    disposeDetachedBody(turnID, "");
+
+    expect(tableObservationCount() - before).toBe(0);
+  });
+
+  it("when the window drops the entry that holds one", () => {
+    const before = tableObservationCount();
+    const r = render([text("t", 1, TABLE), callEntry("t", 2, toolCall("tool-a"))]);
+    expect(tableObservationCount() - before).toBe(1);
+
+    dropHead(r.turn, { from: 2, to: 3 });
+
+    expect(r.body.querySelectorAll("table"), "the table left the page").toHaveLength(0);
+    expect(tableObservationCount() - before).toBe(0);
+    disposeAssistantBody(r.turnID);
   });
 });

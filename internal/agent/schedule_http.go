@@ -10,8 +10,9 @@ import (
 
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/schedule"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // scheduleView is a stored entry plus its resolved next run, computed server-side so the summary matches what will happen.
@@ -23,17 +24,19 @@ type scheduleView struct {
 	Name       string        `json:"name,omitempty"`
 	LastStatus string        `json:"last_status,omitempty"`
 	LastReason string        `json:"last_reason,omitempty"`
+	Model      string        `json:"model,omitempty"`
+	Effort     string        `json:"effort,omitempty"`
 	Spec       schedule.Spec `json:"spec"`
 	Enabled    bool          `json:"enabled"`
 }
 
-func (rr *runRoutes) registerSchedule(mux *http.ServeMux) {
+func (rr *runRoutes) registerSchedule(mux *http.ServeMux, write func(string, http.HandlerFunc)) {
 	if rr.runs.schedules == nil {
 		return
 	}
 	mux.HandleFunc("GET /api/schedules", rr.handleScheduleList)
-	mux.HandleFunc("POST /api/schedules", rr.handleSchedulePut)
-	mux.HandleFunc("DELETE /api/schedules/{id}", rr.handleScheduleDelete)
+	write("POST /api/schedules", rr.handleSchedulePut)
+	write("DELETE /api/schedules/{id}", rr.handleScheduleDelete)
 }
 
 // handleScheduleList: GET /api/schedules → every schedule with its next run.
@@ -51,6 +54,7 @@ func scheduleViewOf(e *schedule.Entry) scheduleView {
 	v := scheduleView{
 		Spec: e.Spec, ID: e.ID, Source: e.Source, Name: e.Name,
 		LastStatus: string(e.LastStatus), LastReason: e.LastReason, Enabled: e.Enabled,
+		Model: e.Model, Effort: e.Effort,
 	}
 	if !e.LastRunAt.IsZero() {
 		t := e.LastRunAt
@@ -66,11 +70,13 @@ func scheduleViewOf(e *schedule.Entry) scheduleView {
 }
 
 // handleSchedulePut serves POST /api/schedules: insert or replace. The source is validated against the live
-// recipe list, as in handleLaunch, so no arbitrary file can be scheduled.
+// recipe list, as in handleLaunch, so no arbitrary file can be scheduled, and the model pick as at launch.
 func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID      string        `json:"id"`
 		Source  string        `json:"source"`
+		Model   string        `json:"model"`
+		Effort  string        `json:"effort"`
 		Spec    schedule.Spec `json:"spec"`
 		Enabled bool          `json:"enabled"`
 	}
@@ -84,12 +90,17 @@ func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "unknown recipe: "+req.Source)
 		return
 	}
+	defaults := marotte.RunDefaults{Model: req.Model, Effort: req.Effort}
+	if err := rr.runs.checkRunDefaults(r.Context(), defaults); writeDefaultsErr(w, err) {
+		return
+	}
 	id := req.ID
 	if id == "" {
 		id = recipe.Source // one schedule per recipe, addressable by its source
 	}
 	entry := schedule.Entry{
 		ID: id, Source: recipe.Source, Name: recipe.Name,
+		Model: defaults.Model, Effort: defaults.Effort,
 		Spec: req.Spec, Enabled: req.Enabled,
 	}
 	if err := rr.runs.schedules.Put(r.Context(), &entry); err != nil {

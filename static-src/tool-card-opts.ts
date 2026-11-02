@@ -15,7 +15,7 @@ export interface BuildToolCardOpts {
   /** Style spans for `output`, parsed server-side. */
   outputSpans?: TextSpan[];
   diffs?: ToolDiff[];
-  /** Live mode: spinner, start timestamp, raw-input block and expand-on-fail. */
+  /** Live mode: spinner, start timestamp, raw-input block. */
   live: boolean;
   /** KAS's `_meta.kiro.disclosedContext`: the skill or steering document a
    *  `disclose_context` call loaded. */

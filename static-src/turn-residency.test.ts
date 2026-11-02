@@ -7,9 +7,10 @@
 // a run of `text` entries into ONE element.
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, onTestFinished } from "vitest";
 import { userEvent } from "vitest/browser";
 import { makeSession } from "./__test-helpers__/model.js";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type { TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 
@@ -32,8 +33,7 @@ for (const id of [
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 // The clipboard action, so what a turn's Copy hands over is observable. A REPLACING
-// factory naming both exports: real-ESM linking fails on a missing one, and the second
-// is the error explainer this graph also imports.
+// factory naming the module's one export: real-ESM linking fails on a missing one.
 const { copied } = vi.hoisted(() => ({ copied: [] as string[] }));
 vi.mock("./actions/messages.js", () => ({
   copyClipboard: {
@@ -42,7 +42,6 @@ vi.mock("./actions/messages.js", () => ({
       return Promise.resolve();
     },
   },
-  explainError: { dispatch: () => Promise.resolve(null) },
 }));
 
 // The graph's network edge, real except for the two GETs these cases drive: a
@@ -622,7 +621,7 @@ describe("the fold policy over residency", () => {
     // band's run bar is the persistent surface for one, so
     // the fold takes away nothing a reader is watching.
     expect(isFolded("u1")).toBe(true);
-    // The launcher turn carries no top-level prose, so `turnFaceProse` is "" and
+    // The launcher turn carries no top-level prose, so `turnLastMessage` is empty and
     // `syncTurnFace` appends no face at all — stated explicitly, because the run
     // card was the only other thing that could have put one here.
     expect(card("u1").querySelector(":scope > .turn-face")).toBeNull();
@@ -774,6 +773,65 @@ describe("expanding a stub", () => {
       expect(hasBody("u1")).toBe(true);
       expect(isFolded("u1")).toBe(false);
     });
+  });
+
+  it("a click on a stub's cut prompt opens the prompt and the body the toggle names", async () => {
+    const style = mountAppCSS();
+    try {
+      const id = chatID();
+      const prompt = Array.from({ length: 12 }, (_, i) => `line ${String(i + 1)}`).join("\n");
+      const long = toolTurn("u1");
+      long[0] = turnOpen("u1", 1, prompt);
+      activate(id, [long, heavyTurn("big", RESIDENT_ENTRIES + 64, 2)]);
+      const c = card("u1");
+      const text = c.querySelector<HTMLElement>(".turn-req-text")!;
+      const toggle = c.querySelector<HTMLElement>(".turn-fold-toggle")!;
+      expect(hasBody("u1")).toBe(false);
+      expect(isFolded("u1")).toBe(true);
+      expect(toggle.getAttribute("aria-controls")).toBe(`${c.id}-req ${c.id}-body`);
+      expect(c.querySelector(":scope > .turn-header > .turn-req")?.id).toBe(`${c.id}-req`);
+      await vi.waitFor(() => {
+        expect(text.hasAttribute("data-cut")).toBe(true);
+      });
+      expect(text.scrollHeight - text.clientHeight).toBeGreaterThan(1);
+
+      text.click();
+      await vi.waitFor(() => {
+        expect(hasBody("u1")).toBe(true);
+        expect(isFolded("u1")).toBe(false);
+      });
+      expect(c.querySelector(":scope > .turn-body")?.id).toBe(`${c.id}-body`);
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      expect(text.scrollHeight - text.clientHeight).toBeLessThanOrEqual(1);
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("a labelled prompt's full text opens with the turn, through the same click", async () => {
+    const style = mountAppCSS();
+    try {
+      const id = chatID();
+      const long = toolTurn("u1");
+      long[0] = sealed("u1", 0, "turn_open", {
+        prompt: { id: "u1-p", text: "the whole instruction", label: "Run task 2" },
+        source: "prompt",
+        n: 1,
+      });
+      activate(id, [long, heavyTurn("big", RESIDENT_ENTRIES + 64, 2)]);
+      const c = card("u1");
+      const full = c.querySelector<HTMLElement>(".turn-req-full")!;
+      expect(full.textContent).toBe("the whole instruction");
+      expect(getComputedStyle(full).display).toBe("none");
+
+      c.querySelector<HTMLElement>(".turn-req-text")!.click();
+      await vi.waitFor(() => {
+        expect(hasBody("u1")).toBe(true);
+        expect(getComputedStyle(full).display).not.toBe("none");
+      });
+    } finally {
+      style.remove();
+    }
   });
 
   it("a stub header keeps the disclosure contract while closed", () => {
@@ -1085,6 +1143,21 @@ describe("the cold build", () => {
 
   it("takes an evicted turn's owed slices with it instead of rebuilding the body", async () => {
     const id = chatID();
+    // The owed build waits on `scheduler.yield`; held here, so the case releases it after the fold
+    // and knows when its continuation has run.
+    const held: (() => void)[] = [];
+    const sched = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+    expect(sched?.yield, "the owed build yields through scheduler.yield").toBeTypeOf("function");
+    const yieldSpy = vi
+      .spyOn(sched as { yield: () => Promise<void> }, "yield")
+      .mockImplementation(() => {
+        return new Promise<void>((release) => {
+          held.push(release);
+        });
+      });
+    onTestFinished(() => {
+      yieldSpy.mockRestore();
+    });
     // The newest turn, over budget, so the window covers its tail and the paint
     // owes the rest of that window as a cold build.
     activate(id, [heavyTurn("u-heavy", RESIDENT_ENTRIES + 64)]);
@@ -1096,8 +1169,20 @@ describe("the cold build", () => {
     // body under a folded card.
     activate(id, [heavyTurn("u-heavy", RESIDENT_ENTRIES + 64), toolTurn("u1", 2)]);
     expect(hasBody("u-heavy")).toBe(false);
+    expect(held.length, "the cold build is owed").toBeGreaterThan(0);
 
-    await new Promise((r) => setTimeout(r, 60));
+    // Release every yield, including any the released work asks for, until none is left. A task
+    // after a release runs once every promise continuation queued by then has.
+    let released = 0;
+    for (let round = 0; released < held.length; round++) {
+      expect(round, "the owed build kept yielding").toBeLessThan(100);
+      while (released < held.length) {
+        held[released++]!();
+      }
+      await new Promise<void>((r) => {
+        setTimeout(r, 0);
+      });
+    }
     expect(hasBody("u-heavy")).toBe(false);
   });
 });

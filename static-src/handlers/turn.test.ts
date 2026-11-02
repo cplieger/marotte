@@ -338,9 +338,9 @@ describe("ERROR_ROUTES", () => {
     // than left to the unknown-code fallthrough, on the one error whose meaning is
     // "the automatic repair failed".
     ["recovery_failed", { surface: "toast" }],
-    // The ONE code that earns the send button's alert face: kiro-cli could not be
-    // spawned, so there is no ACP connection behind this chat to send to. Every
-    // other code here happened to a live agent.
+    // The ONE code that earns the send button's alert face: the chat's session could
+    // not be opened, so nothing stands behind this chat to send to. Every other
+    // code here happened to a live agent.
     ["bridge_start_failed", { surface: "agent-down" }],
     // The chat runs, just not in the requested mode, and one click on the mode
     // pill fixes it — so it reports without touching the send button.
@@ -719,9 +719,9 @@ describe("error handler", () => {
     expect(tabStatusFor(get("chat-1"))).toBe("working");
   });
 
-  // The one code that DOES earn the button's alert face: kiro-cli could not be
-  // spawned, so this chat has no ACP connection behind it and the icon is a true
-  // statement rather than a claim about one attempt.
+  // The one code that DOES earn the button's alert face: the chat's session could
+  // not be opened, so nothing stands behind this chat to send to and the icon is a
+  // true statement rather than a claim about one attempt.
   it("routes bridge_start_failed to the send button, not the toast", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");

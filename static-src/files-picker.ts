@@ -21,6 +21,7 @@ import { attachPathsToActiveChat } from "./chat.js";
 import { byId } from "./dom.js";
 import { upload } from "./actions/files.js";
 import { screenUploads } from "./upload-policy.js";
+import { openFileDialog } from "./file-dialog.js";
 import * as toast from "./toast.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { KEY_ATTR, reconcile } from "./reconcile.js";
@@ -58,18 +59,12 @@ export function initFilePicker(): void {
     closeModal(byId<HTMLDivElement>("filepicker-modal"));
   });
 
-  byId("filepicker-upload").addEventListener("click", () => {
-    const input = el("input", { type: "file", multiple: true }) as HTMLInputElement;
-    input.addEventListener("change", () => {
-      if (input.files === null || input.files.length === 0) {
-        return;
-      }
-      performUpload(input.files);
-    });
-    input.click();
+  const uploadBtn = byId<HTMLButtonElement>("filepicker-upload");
+  uploadBtn.addEventListener("click", () => {
+    openFileDialog(uploadBtn, performUpload);
   });
 
-  bindLoadingState("files.upload", byId<HTMLButtonElement>("filepicker-upload"), {
+  bindLoadingState("files.upload", uploadBtn, {
     preserveDisabled: true,
   });
 

@@ -94,18 +94,20 @@ func TestHandleGovernance_ServesWarmCache(t *testing.T) {
 	}
 }
 
-func TestCacheGovernanceFromUtility(t *testing.T) {
+// Every session door carries the governance profile; whichever lane it lands on, it is the server's copy.
+func TestApplyGovernance_CachesTheProfileFromAnySession(t *testing.T) {
 	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	raw := json.RawMessage(`{"sessionId":"s","isEnterprise":false,"disabledReason":"org policy",` +
 		`"features":{"mcpEnabled":false,"webToolsEnabled":true,"usageAnalytics":false,` +
 		`"contentCollection":true,"promptLogging":false,"codeReferenceTracker":false,` +
 		`"autonomousAgents":true}}`)
 
-	h.config.cacheGovernanceFromUtility(raw)
+	h.config.applyGovernance(raw)
 
 	got, ok := h.config.governance.get()
 	if !ok || !got.Known {
-		t.Fatalf("cache not populated from utility copy: %+v ok=%v", got, ok)
+		t.Fatalf("cache not populated from the session's copy: %+v ok=%v", got, ok)
 	}
 	if got.Features.MCPEnabled {
 		t.Error("mcp_enabled should be false (disabled by org)")
@@ -115,8 +117,8 @@ func TestCacheGovernanceFromUtility(t *testing.T) {
 	}
 
 	// An invalid copy is ignored.
-	h.config.cacheGovernanceFromUtility(json.RawMessage("{"))
+	h.config.applyGovernance(json.RawMessage("{"))
 	if got2, _ := h.config.governance.get(); got2.DisabledReason != "org policy" {
-		t.Error("invalid utility copy clobbered the cache")
+		t.Error("an invalid copy clobbered the cache")
 	}
 }

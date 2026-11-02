@@ -589,7 +589,8 @@ describe("turn card header affordance", () => {
     const folded = await turn("folded", { request: long });
     folded.style.inlineSize = "420px";
     const foldedText = folded.querySelector<HTMLElement>(".turn-req-text")!;
-    expect(css(foldedText, "-webkit-line-clamp")).toBe("4");
+    const lh = Number.parseFloat(css(foldedText, "line-height"));
+    expect(Number.parseFloat(css(foldedText, "max-block-size"))).toBeCloseTo(4 * lh, 1);
     expect(foldedText.scrollHeight, "and it really does clip").toBeGreaterThan(
       foldedText.clientHeight,
     );
@@ -597,7 +598,7 @@ describe("turn card header affordance", () => {
     const open = await turn("open", { request: long });
     open.style.inlineSize = "420px";
     const openText = open.querySelector<HTMLElement>(".turn-req-text")!;
-    expect(css(openText, "-webkit-line-clamp")).not.toBe("4");
+    expect(css(openText, "max-block-size")).toBe("none");
     expect(openText.scrollHeight, "a full prompt, however long").toBe(openText.clientHeight);
   });
 });

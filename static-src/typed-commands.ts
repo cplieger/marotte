@@ -3,7 +3,7 @@
 // summarization), so a deterministic verb owns its handler here. slash-menu.ts lists these.
 
 import { compactChat } from "./actions/chat.js";
-import { get, isEmptyChat, isThinking, setThinking } from "./store.js";
+import { dropTurnLocally, get, isBusy, isEmptyChat } from "./store.js";
 import { chatNotice } from "./notice-subject.js";
 import { loadSettings } from "./persist.js";
 
@@ -57,7 +57,7 @@ const HANDLERS: Readonly<Record<string, Verb>> = {
         );
         return true;
       }
-      if (isThinking(chatID)) {
+      if (isBusy(chatID)) {
         chatNotice(chatID, "Wait for this turn to finish, then merge.");
         return true;
       }
@@ -93,7 +93,7 @@ async function openMemories(chatID: string): Promise<void> {
 
 /** `/rewind`: the newest prompt turn, through the footer's own confirm. */
 function rewindLatest(chatID: string): boolean {
-  if (isThinking(chatID)) {
+  if (isBusy(chatID)) {
     chatNotice(chatID, "Rewind is unavailable while the agent is working.");
     return true;
   }
@@ -107,21 +107,21 @@ function rewindLatest(chatID: string): boolean {
 
 /**
  * `/drop`: end the turn CLIENT-SIDE and put the composer back in prompt mode, for a turn the
- * engine stopped answering. While `thinking` is set Send means STEER and Cancel waits on KAS, so
- * the only recovery was a reload. ONE write; the reactive chain (send-state.ts, prompt-input.ts,
- * submit.ts) does the rest, and it asks the engine for nothing. `thinking` is client-owned, and
- * `BUS_RECONCILE` already clears it. A live turn loses nothing: the next prompt 409s and steers.
+ * engine stopped answering, where Send would steer or queue and Cancel waits on KAS.
+ * `dropTurnLocally` writes the store only and asks the engine for nothing. A turn the server
+ * refuses prompts beside loses nothing: the next prompt 409s and goes through the chat's busy
+ * mode, a steer or a queued row.
  * KAS's steering buffer is NOT cleared; that is `steer_clear`, the chip row's Discard ×.
  */
 function dropTurn(chatID: string): boolean {
-  if (!isThinking(chatID)) {
+  if (!isBusy(chatID)) {
     // Already idle. Claimed anyway rather than passed through: sending "/drop"
     // to the model is worse than doing nothing, and the toast says why nothing
     // happened.
     chatNotice(chatID, "No turn is running on this chat.");
     return true;
   }
-  setThinking(chatID, false);
+  dropTurnLocally(chatID);
   chatNotice(chatID, "Dropped the turn locally. The agent was not told to stop.");
   return true;
 }

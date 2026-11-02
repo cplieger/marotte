@@ -235,6 +235,12 @@
     --c-hover: color-mix(in oklch, var(--c-text-primary) 15%, transparent);
     --c-press: color-mix(in oklch, var(--c-text-primary) 25%, transparent);
     --layer-hover: linear-gradient(var(--c-hover) 0 100%);
+
+    /* --c-hover flattened over --c-bg-tertiary into ONE colour. A control that already
+     * hovers to that rung and sits in a washed row cannot also take --layer-hover: the
+     * image lands in the first frame while the rung fades in over --dur-micro, and the
+     * reader sees two hover states in a row. */
+    --c-hover-raised: color-mix(in srgb, var(--c-text-primary) 15%, var(--c-bg-tertiary));
     --layer-press: linear-gradient(var(--c-press) 0 100%);
     --opacity-disabled: 0.4;
 
@@ -380,7 +386,8 @@
     --sidebar-w-min: 16.25rem;
 
     /* `- 1px`: a fractional `100vw` snaps the chat area a fraction under
-       --main-min-w, which hides the rail at the width chosen to keep it. */
+       --main-min-w, which moves the rail off its gutter at the width chosen to
+       keep it there. */
     --sidebar-w-max: min(32rem, 100vw - var(--main-min-w) - 1px);
     --sidebar-w: clamp(
       var(--sidebar-w-min),
@@ -405,6 +412,10 @@
     --ctl-h-sm: 1.5rem;
     --hit-floor: 1.5rem;
     --btn-h: var(--ctl-h);
+
+    /* The page switcher (`.page-header > .seg-bar`): a rung over a control on the
+     * fine pointer, the control's own height once the tier is coarse. */
+    --bar-h: max(2.5rem, var(--ctl-h));
 
     /* ---- List-row heights ------------------------------------------------ *
      * A row's height is a TOKEN, never the sum of its content: content that does
@@ -596,6 +607,18 @@
     --r-md: 0.5rem;
     --r: 0.375rem;
     --r-sm: 0.25rem;
+
+    /* ---- The bottom bar's stack ------------------------------------------ *
+     * Every box above and including the composer (decision cards, the run
+     * bar, steer rows, the run dock, the slash menu, the prompt box) is a card
+     * of the composer's radius, with one 1px `--c-border` edge, `--stack-gap`
+     * from its neighbours. A surface inside one sits `--stack-in` from its edge
+     * at the concentric corner, 12 - 1 - 4 = 7px, which keeps the composer's
+     * controls visibly rounded. */
+    --stack-r: var(--r-lg);
+    --stack-gap: var(--sp-2);
+    --stack-in: var(--sp-1);
+    --stack-in-r: calc(var(--stack-r) - 1px - var(--stack-in));
 
     /* RESERVED FOR NON-INTERACTIVE STATUS BADGES. A stadium button reads as a tag
      * rather than as something you press, so a control takes a rung above. */

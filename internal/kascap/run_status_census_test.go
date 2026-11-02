@@ -119,32 +119,34 @@ var declaredExtras = map[string]map[string]string{
 }
 
 func TestRunStatusEnumsMatchBundle(t *testing.T) {
-	src := loadBundle(t)
-	fixtureRuns, fixtureNodes := fixtureStatusValues(t)
-	for _, check := range []struct {
-		name     string
-		re       *regexp.Regexp
-		typeName string
-		fixture  []string
-	}{
-		{name: "run", re: runStatusEnumRe, typeName: "RunStatus", fixture: fixtureRuns},
-		{name: "node", re: runNodeStatusEnumRe, typeName: "RunNodeStatus", fixture: fixtureNodes},
-	} {
-		got := extractedStatusValues(t, check.name, check.re, src)
-		declared := declaredStatusValues(t, check.typeName)
-		extras := declaredExtras[check.typeName]
-		if len(declared) < len(got) || !slices.Equal(got, declared[:min(len(got), len(declared))]) {
-			t.Errorf("%s bundle enum = %v, Go declaration = %v", check.name, got, declared)
-			continue
-		}
-		for _, extra := range declared[len(got):] {
-			if _, ok := extras[extra]; !ok {
-				t.Errorf("%s declares %q, which the bundle does not: add it to declaredExtras "+
-					"with the reason, or drop it", check.name, extra)
+	forEachBundle(t, func(t *testing.T, b bundle) {
+		src := b.src
+		fixtureRuns, fixtureNodes := fixtureStatusValues(t)
+		for _, check := range []struct {
+			name     string
+			re       *regexp.Regexp
+			typeName string
+			fixture  []string
+		}{
+			{name: "run", re: runStatusEnumRe, typeName: "RunStatus", fixture: fixtureRuns},
+			{name: "node", re: runNodeStatusEnumRe, typeName: "RunNodeStatus", fixture: fixtureNodes},
+		} {
+			got := extractedStatusValues(t, check.name, check.re, src)
+			declared := declaredStatusValues(t, check.typeName)
+			extras := declaredExtras[check.typeName]
+			if len(declared) < len(got) || !slices.Equal(got, declared[:min(len(got), len(declared))]) {
+				t.Errorf("%s bundle enum = %v, Go declaration = %v", check.name, got, declared)
+				continue
+			}
+			for _, extra := range declared[len(got):] {
+				if _, ok := extras[extra]; !ok {
+					t.Errorf("%s declares %q, which the bundle does not: add it to declaredExtras "+
+						"with the reason, or drop it", check.name, extra)
+				}
+			}
+			if !slices.Equal(got, check.fixture) {
+				t.Errorf("%s bundle enum = %v, shared fixture = %v", check.name, got, check.fixture)
 			}
 		}
-		if !slices.Equal(got, check.fixture) {
-			t.Errorf("%s bundle enum = %v, shared fixture = %v", check.name, got, check.fixture)
-		}
-	}
+	})
 }

@@ -306,7 +306,10 @@ type SessionMode struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	Source      string `json:"source,omitempty"` // "bundled" | "workspace" (v3 _meta.kiro.source)
+	Source      string `json:"source,omitempty"` // "bundled" | "global" | "workspace" (v3 _meta.kiro.source)
+	// Shadows is the Source of the mode this custom agent replaces under the same id, set only on
+	// GET /api/config-template's catalog; empty when it replaces nothing.
+	Shadows string `json:"shadows,omitempty"`
 }
 
 // SessionModel describes one model the running agent can swap to, as declared by
@@ -315,13 +318,15 @@ type SessionModel struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	// DefaultEffortLevel is this MODEL's default level. Never seed Chat.Effort from it:
-	// that would pin the default to every later session through StartOpts.Effort.
-	DefaultEffortLevel string  `json:"default_effort_level,omitempty"`
-	RateMultiplier     float64 `json:"rate_multiplier,omitempty"`
-	// HasEffort reports whether this model offers effort tiers. KAS silently drops a
-	// level sent to a tierless model (`auto`), so the effort row hides.
-	HasEffort bool `json:"has_effort,omitempty"`
+	// DefaultEffortLevel is this MODEL's default level, the last rung of a chat's first level on it.
+	DefaultEffortLevel string `json:"default_effort_level,omitempty"`
+	// ThinkingOffEffortCap is the tier KAS runs xhigh and max at on this model while thinking is
+	// off (CapEffortForThinkingOff over its tiers), empty when none is lower. Server-side only.
+	ThinkingOffEffortCap string `json:"-"`
+	// EffortTiers are the model's tier ids, lowest first; empty when KAS named none. KAS
+	// silently drops a level sent to a tierless model (`auto`), so the effort row hides.
+	EffortTiers    []string `json:"effort_tiers,omitempty"`
+	RateMultiplier float64  `json:"rate_multiplier,omitempty"`
 	// ThinkingToggleable reports whether thinking can be turned off for this model;
 	// ThinkingDefaultOff, whether that is the model's default.
 	ThinkingToggleable bool `json:"thinking_toggleable,omitempty"`
@@ -338,18 +343,42 @@ type ModelChoiceMeta struct {
 		DefaultThinkingEnabled *bool `json:"defaultThinkingEnabled"`
 		// DefaultEffortLevel is the tier this MODEL defaults to.
 		DefaultEffortLevel string `json:"defaultEffortLevel"`
+		// EffortLevels are the model's tier ids, lowest first.
+		EffortLevels []string `json:"effortLevels"`
 		// RateMultiplier is the model's credit cost relative to the cheapest one.
 		RateMultiplier float64 `json:"rateMultiplier"`
-		// HasEffort reports whether the model offers reasoning-effort tiers.
-		HasEffort bool `json:"hasEffort"`
 		// ThinkingToggleable reports whether thinking can be turned off.
 		ThinkingToggleable bool `json:"thinkingToggleable"`
 	} `json:"kiro"`
 }
 
-// ThinkingDefaultOff reads a choice's defaultThinkingEnabled, absent meaning on.
-func (m *ModelChoiceMeta) ThinkingDefaultOff() bool {
+// thinkingDefaultOff reads a choice's defaultThinkingEnabled, absent meaning on.
+func (m *ModelChoiceMeta) thinkingDefaultOff() bool {
 	return m.Kiro.DefaultThinkingEnabled != nil && !*m.Kiro.DefaultThinkingEnabled
+}
+
+// SessionModel is the catalog entry of the choice id, name and description it rides on.
+func (m *ModelChoiceMeta) SessionModel(id, name, description string) SessionModel {
+	return SessionModel{
+		ID: id, Name: name, Description: description,
+		DefaultEffortLevel:   m.Kiro.DefaultEffortLevel,
+		ThinkingOffEffortCap: m.thinkingOffEffortCap(),
+		EffortTiers:          slices.Clone(m.Kiro.EffortLevels),
+		RateMultiplier:       m.Kiro.RateMultiplier,
+		ThinkingToggleable:   m.Kiro.ThinkingToggleable,
+		ThinkingDefaultOff:   m.thinkingDefaultOff(),
+	}
+}
+
+func (m *ModelChoiceMeta) thinkingOffEffortCap() string {
+	levels := make([]SessionEffortLevel, 0, len(m.Kiro.EffortLevels))
+	for _, id := range m.Kiro.EffortLevels {
+		levels = append(levels, SessionEffortLevel{ID: id})
+	}
+	if capped := CapEffortForThinkingOff(string(EffortMax), levels); capped != string(EffortMax) {
+		return capped
+	}
+	return ""
 }
 
 // SessionEffortLevel is one reasoning-effort tier the running session offers, from the
@@ -394,18 +423,14 @@ type ConfigTemplateResponse struct {
 	// catalog's lock beside the two lists it vouches for.
 	Subject      *SubjectStamp `json:"subject,omitempty"`
 	DefaultModel string        `json:"default_model,omitempty"`
-	// EffortActive is the `effortLevel` option's currentValue: the tier a fresh
-	// session would run at.
-	EffortActive string `json:"effort_active,omitempty"`
 	// Catalog has NO omitempty, so wiregen emits a required TypeScript field the
 	// retry policy can rely on.
 	Catalog       CatalogState  `json:"catalog"`
 	CatalogReason CatalogReason `json:"catalog_reason,omitempty"`
-	// The three lists are non-null on every path, so a generated decoder requiring an
-	// array cannot fail on a failure body.
-	Modes        []SessionMode        `json:"modes"`
-	Models       []SessionModel       `json:"models"`
-	EffortLevels []SessionEffortLevel `json:"effort_levels"`
+	// Both lists are non-null on every path, so a generated decoder requiring an array
+	// cannot fail on a failure body.
+	Modes  []SessionMode  `json:"modes"`
+	Models []SessionModel `json:"models"`
 }
 
 // Chat is the persisted chat header, <dir>/<id>/chat.json; the transcript is the
@@ -415,8 +440,11 @@ type Chat struct {
 	Model         string `json:"model,omitempty"`
 	ACPSessionID  string `json:"acp_session_id,omitempty"`
 	CurrentModeID string `json:"current_mode_id,omitempty"`
-	// Effort is the chat's chosen effort level. A plain string so a value another build
-	// wrote decodes rather than throws; the command boundary validates EffortLevel.
+	// Effort is the chat's uncapped effort preference for Model: a pick, its first session's seed,
+	// or a level a session reported; a model switch carries it when the new model offers it. Every
+	// session door sends it, capped while thinking is off, so turning thinking on restores it. A
+	// plain string so a value another build wrote decodes rather than throws; the command boundary
+	// validates EffortLevel.
 	Effort string `json:"effort,omitempty"`
 	// Draft is the composer text typed but not sent. NOT on ChatHeader: the autosave
 	// would put it in a chat_updated frame on every debounce, racing the typing tab's
@@ -428,14 +456,13 @@ type Chat struct {
 	// Paths, not contents: BuildPromptBlocks reads and confines them at send time.
 	Attachments []string `json:"attachments,omitempty"`
 	// ServedModelIDs is every model id the last session advertised, UNFILTERED: the
-	// only evidence at spawn, before session/new answers, that the stored model still
+	// only evidence at the session door, before session/new answers, that the stored model still
 	// runs. Empty means unknowable, and ModelServed then allows the send.
 	ServedModelIDs []string `json:"served_model_ids,omitempty"`
 	// EffortLevels is the effort vocabulary the last session advertised, per chat
 	// because it is THIS chat's model's. EMPTY means the model has no tiers.
 	EffortLevels []SessionEffortLevel `json:"effort_levels,omitempty"`
-	// EffortActive is the level the session is RUNNING at; Effort is what the chat
-	// CHOSE, empty when it never picked.
+	// EffortActive is the level the session last reported RUNNING at; Effort is the chat's.
 	EffortActive string `json:"effort_active,omitempty"`
 	// Thinking is the chat's thinking CHOICE, empty for the model's default;
 	// ThinkingActive is what the session last reported.
@@ -445,6 +472,8 @@ type Chat struct {
 	LastTurnOutcome TurnOutcome `json:"last_turn_outcome,omitempty"`
 	// PendingModel is a model pick awaiting its apply between turns.
 	PendingModel string `json:"pending_model,omitempty"`
+	// PendingEffort is the tier picked with PendingModel, applied with it; empty carries Effort.
+	PendingEffort string `json:"pending_effort,omitempty"`
 	// PriorACPSessionIDs are the KAS sessions this chat USED to run on, oldest first.
 	// Never trimmed: each still holds history on disk, so the reaper spares the whole
 	// chain. Maintained by RecordSession.
@@ -592,12 +621,26 @@ func (c *Chat) Header() ChatHeader {
 		UpdatedAt:           c.UpdatedAt,
 		TurnCount:           c.TurnCount,
 		PendingModel:        c.PendingModel,
+		PendingEffort:       c.PendingEffort,
 		SupervisedMode:      c.SupervisedMode,
 		CompactionWatermark: c.CompactionWatermark,
 		InterruptMode:       c.InterruptMode,
 		QueuedPrompts:       c.QueuedPrompts,
 		Tangent:             c.Tangent,
 	}
+}
+
+// MoveToModel points the chat at model. A move drops what the old model's session reported
+// (EffortActive, EffortLevels, ThinkingActive): each describes one model, and a door reading them
+// for the new one would send the old model's tier. The new model's next config_option_update
+// reports its own. Effort is the mover's to set.
+func (c *Chat) MoveToModel(model string) {
+	if c.Model == model {
+		return
+	}
+	c.Model = model
+	c.EffortActive, c.ThinkingActive = "", ""
+	c.EffortLevels = nil
 }
 
 // ThinkingIsOff reports whether the chat's session runs, or will run, with thinking off:
@@ -607,6 +650,12 @@ func (c *Chat) ThinkingIsOff(modelDefaultOff bool) bool {
 	if c.ThinkingActive != "" {
 		return c.ThinkingActive == ThinkingOff
 	}
+	return c.ThinkingChosenOff(modelDefaultOff)
+}
+
+// ThinkingChosenOff is ThinkingIsOff without the session's report, for a model the session does
+// not run yet: the chat's choice, else the model's default.
+func (c *Chat) ThinkingChosenOff(modelDefaultOff bool) bool {
 	if c.Thinking != "" {
 		return c.Thinking == ThinkingOff
 	}
@@ -643,22 +692,26 @@ type ChatHeader struct {
 	// Thinking and ThinkingActive mirror Chat's for the effort slider's Off stop.
 	Thinking       string `json:"thinking,omitempty"`
 	ThinkingActive string `json:"thinking_active,omitempty"`
-	// PendingModel mirrors Chat's: the model badge reads it off the header.
-	PendingModel string               `json:"pending_model,omitempty"`
-	EffortLevels []SessionEffortLevel `json:"effort_levels,omitempty"`
+	// PendingModel and PendingEffort mirror Chat's for the model badge and the pill's card.
+	PendingModel  string               `json:"pending_model,omitempty"`
+	PendingEffort string               `json:"pending_effort,omitempty"`
+	EffortLevels  []SessionEffortLevel `json:"effort_levels,omitempty"`
 	// The model and mode vocabulary is a workspace fact (agent.catalog), never here.
 	ID                  string `json:"id"`
 	CompactionWatermark string `json:"compaction_watermark,omitempty"`
 	// PriorACPSessionIDs mirrors Chat's: the retention sweep reads headers only.
 	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
 	// InterruptMode and QueuedPrompts mirror Chat's for the composer and the dock.
-	InterruptMode  InterruptMode  `json:"interrupt_mode,omitempty"`
-	QueuedPrompts  []QueuedPrompt `json:"queued_prompts,omitempty"`
-	Usage          Usage          `json:"usage"`
-	CreatedAt      int64          `json:"created_at"`
-	UpdatedAt      int64          `json:"updated_at"`
-	TurnCount      int            `json:"turn_count"`
-	SupervisedMode bool           `json:"supervised_mode,omitempty"`
+	InterruptMode InterruptMode  `json:"interrupt_mode,omitempty"`
+	QueuedPrompts []QueuedPrompt `json:"queued_prompts,omitempty"`
+	Usage         Usage          `json:"usage"`
+	CreatedAt     int64          `json:"created_at"`
+	UpdatedAt     int64          `json:"updated_at"`
+	// ReadPosition is wire-only: EntryLog.ReadPosition of the opened log, 0 when the log is not
+	// open. chat.Store fills it; Chat.Header does not.
+	ReadPosition   uint64 `json:"read_position,omitempty"`
+	TurnCount      int    `json:"turn_count"`
+	SupervisedMode bool   `json:"supervised_mode,omitempty"`
 	// Tangent mirrors Chat's for the merge controls.
 	Tangent bool `json:"tangent,omitempty"`
 }
@@ -679,9 +732,15 @@ type ResumableSession struct {
 	// Description is the agent's self-declared focus, present on a minority of rows.
 	Description string `json:"description,omitempty"`
 	// ChatID names the marotte chat that already owns this session, if any.
-	ChatID    string `json:"chat_id,omitempty"`
-	UpdatedAt int64  `json:"updated_at"`
-	CreatedAt int64  `json:"created_at,omitempty"`
+	ChatID string `json:"chat_id,omitempty"`
+	// Model, CurrentModeID, TurnCount and Credits are the owning chat's header facts, so the History row states
+	// them without the chat being open in a tab.
+	Model         string  `json:"model,omitempty"`
+	CurrentModeID string  `json:"current_mode_id,omitempty"`
+	Credits       float64 `json:"credits,omitempty"`
+	UpdatedAt     int64   `json:"updated_at"`
+	CreatedAt     int64   `json:"created_at,omitempty"`
+	TurnCount     int     `json:"turn_count,omitempty"`
 }
 
 // ReadState is one list read's outcome on GET /api/sessions. Two-valued: an empty list is
@@ -719,6 +778,9 @@ type WorkflowRun struct {
 	Status RunStatus `json:"status,omitempty"`
 	// ParentChatID is the marotte chat that launched the run, via its session chain.
 	ParentChatID string `json:"parent_chat_id,omitempty"`
+	// ParentChatName is that chat's name from its stored header, so the History row names it without the chat
+	// being open in a tab.
+	ParentChatName string `json:"parent_chat_name,omitempty"`
 	// EndReason says which bound stopped the run ("overran", "stalled", "orphaned"):
 	// KAS reports `cancelled` for a bound and a person alike. In-memory, so a run
 	// stopped before a restart falls back to the plain status.

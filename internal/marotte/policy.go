@@ -2,7 +2,7 @@ package marotte
 
 // Native Cedar policy domain types: KAS's policy is what is ENFORCED, read via
 // _kiro/permissions/list (→ {rules:[{capability, match?, exclude?, effect, scope, source}]}) and
-// explain (a pure simulation) on a live bridge, and edited through the permissions.yaml files KAS
+// explain (a pure simulation) on an observer session, and edited through the permissions.yaml files KAS
 // hot-reloads (internal/policyfile). policy/check is NOT used: it raises a real permission request.
 // effect is allow | deny | ask (deny > ask > allow); scope is kiro | administration | user |
 // workspace | agent | session, of which only user and workspace are file-editable.
@@ -30,8 +30,8 @@ type PolicyRuleCore struct {
 }
 
 // PolicyView is the GET /api/permissions response: the native policy rule
-// set plus the metadata the editor needs. Available is false when no bridge
-// could answer (the view falls back to reading the editable files directly).
+// set plus the metadata the editor needs. Available is false when the engine
+// could not answer (the view falls back to reading the editable files directly).
 // Capabilities is what the rule-adder's dropdown OFFERS: the suggested set
 // unioned with every capability the live rules already use, so it can learn a
 // name marotte shipped without.

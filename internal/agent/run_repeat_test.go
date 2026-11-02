@@ -23,7 +23,7 @@ func TestAffordance_AMaxIterationsPauseOffersExtendAndFinishNotResume(t *testing
 		{
 			name: "a repeat at its cap",
 			facts: runFacts{
-				status: "paused", hosted: true,
+				status:    "paused",
 				pauseKind: pauseKindMaxIterations, pauseNodeID: "loop",
 			},
 			want: []string{verbExtend, verbFinishLoop, verbCancel},
@@ -31,14 +31,14 @@ func TestAffordance_AMaxIterationsPauseOffersExtendAndFinishNotResume(t *testing
 		},
 		{
 			name:  "an ordinary pause",
-			facts: runFacts{status: "paused", hosted: true},
+			facts: runFacts{status: "paused"},
 			want:  []string{verbResume, verbCancel},
 		},
 		{
 			// The pause kind is stale once the run moves on.
 			name: "a running run that once paused at a cap",
 			facts: runFacts{
-				status: "running", hosted: true,
+				status:    "running",
 				pauseKind: pauseKindMaxIterations, pauseNodeID: "loop",
 			},
 			want: []string{verbPause, verbCancel},
@@ -54,17 +54,6 @@ func TestAffordance_AMaxIterationsPauseOffersExtendAndFinishNotResume(t *testing
 				t.Errorf("affordanceOf(%+v).PauseNodeID = %q, want %q", tc.facts, got.PauseNodeID, tc.node)
 			}
 		})
-	}
-}
-
-// Both repeat verbs load an unregistered run themselves, so a pre-restart pause keeps them.
-func TestAffordance_AMaxIterationsPauseIsOfferedUnhosted(t *testing.T) {
-	got := affordanceOf(&runFacts{
-		status: "paused", pauseKind: pauseKindMaxIterations, pauseNodeID: "loop",
-	})
-	want := []string{verbExtend, verbFinishLoop, verbCancel}
-	if !slices.Equal(got.Verbs, want) {
-		t.Errorf("unhosted maxIterations pause Verbs = %v, want %v", got.Verbs, want)
 	}
 }
 
@@ -93,8 +82,9 @@ func TestMaxIterationsVerbsHaveRoutes(t *testing.T) {
 func TestExtendRepeat_SendsNodeAndCountOnResume(t *testing.T) {
 	h, _, br := newTestHub()
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", ""))
 
-	if err := h.runs.extendRepeat(t.Context(), "wf_1", "loop", 5); err != nil {
+	if err := h.runs.extendRepeat(t.Context(), "wf_1", "loop", 5, callerPage); err != nil {
 		t.Fatalf("ExtendRepeat = %v, want nil", err)
 	}
 	params := br.paramsFor(methodKiroWorkflowResume)
@@ -117,7 +107,7 @@ func TestExtendRepeat_RefusesACountOutsideTheCap(t *testing.T) {
 	for _, n := range []int{0, -1, maxExtendIterations + 1} {
 		h, _, br := newTestHub()
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-		if err := h.runs.extendRepeat(t.Context(), "wf_1", "loop", n); err == nil {
+		if err := h.runs.extendRepeat(t.Context(), "wf_1", "loop", n, callerPage); err == nil {
 			t.Errorf("ExtendRepeat(n=%d) = nil, want an error", n)
 		}
 		if br.paramsFor(methodKiroWorkflowResume) != nil {
@@ -129,6 +119,7 @@ func TestExtendRepeat_RefusesACountOutsideTheCap(t *testing.T) {
 func TestFinishRepeat_SendsNodeIdAndCompleted(t *testing.T) {
 	h, _, br := newTestHub()
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	br.setCallResult(methodKiroWorkflowInspect, inspectAtCap(t))
 
 	if err := h.runs.finishRepeat(t.Context(), "wf_1", "loop"); err != nil {
 		t.Fatalf("FinishRepeat = %v, want nil", err)
@@ -150,6 +141,7 @@ func TestFinishRepeat_AnUpdatedFalseIsARefusal(t *testing.T) {
 	h, _, br := newTestHub()
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowInspect: inspectAtCap(t),
 		methodKiroWorkflowUpdate: json.RawMessage(
 			`{"workflowId":"wf_1","updated":false,"message":"Cannot update node 'loop': it is not a paused repeat."}`,
 		),
@@ -164,18 +156,10 @@ func TestFinishRepeat_AnUpdatedFalseIsARefusal(t *testing.T) {
 	}
 }
 
-// TestSetStepStatus_NeverSendsNodeId pins that KAS refuses a nodeId on an ordinary step write.
-func TestSetStepStatus_NeverSendsNodeId(t *testing.T) {
-	h, _, br := newTestHub()
-	addressableStep(t, h, br, "wf_1", "review")
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-
-	if err := h.runs.setStepStatus(t.Context(), "wf_1", "review", runStepCompleted); err != nil {
-		t.Fatalf("SetStepStatus = %v, want nil", err)
-	}
-	if got, ok := br.paramsFor(methodKiroWorkflowUpdate)["nodeId"]; ok {
-		t.Errorf(`SetStepStatus params["nodeId"] = %v, want absent`, got)
-	}
+// inspectAtCap is wf_1 paused with its repeat at its cap, as KAS answers inspect.
+func inspectAtCap(t *testing.T) json.RawMessage {
+	t.Helper()
+	return inspectReply(t, "wf_1", marotte.RunStatusPaused, "Repeat 'loop' reached maxIterations.")
 }
 
 func maxIterationsHub(t *testing.T) (*Runtime, *fakeBridge) {
@@ -183,7 +167,7 @@ func maxIterationsHub(t *testing.T) (*Runtime, *fakeBridge) {
 	h, _, br := newTestHub()
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowInspect: inspectReply(t, "wf_1", marotte.RunStatusPaused, "Repeat 'loop' reached maxIterations."),
+		methodKiroWorkflowInspect: inspectAtCap(t),
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
 			"workflowId": "wf_1", "name": "nightly", "status": "paused",
 			"pauseKind": "maxIterations", "pauseNodeId": "loop",

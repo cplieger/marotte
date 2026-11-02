@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -24,6 +25,10 @@ type storeDeps struct {
 // silently stored nothing.
 func (d *storeDeps) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
 	return d.store.Get(ctx, id)
+}
+
+func (d *storeDeps) Lookup(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool, error) {
+	return d.store.Lookup(ctx, id)
 }
 
 func (d *storeDeps) Mutate(ctx context.Context, id marotte.ChatID, fn func(*marotte.Chat, bool) bool) (string, error) {
@@ -85,7 +90,7 @@ func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 	host := newTestHost(t, store)
 	ctx := t.Context()
 
-	_, err := cmdResumeSession(ctx, newTestMembership(t, host), resumeReq(t, "c1", "sess_abc-123", "Earlier work"))
+	_, err := cmdResumeSession(ctx, newTestMembership(t, host), nil, resumeReq(t, "c1", "sess_abc-123", "Earlier work"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -125,7 +130,7 @@ func TestCmdResumeSession_RefusesToRebindAnExistingChat(t *testing.T) {
 	}
 	host := newTestHost(t, store)
 
-	_, _ = cmdResumeSession(ctx, newTestMembership(t, host), resumeReq(t, "c1", "sess_other", "Hijack"))
+	_, _ = cmdResumeSession(ctx, newTestMembership(t, host), nil, resumeReq(t, "c1", "sess_other", "Hijack"))
 
 	c, _ := store.Get(ctx, "c1")
 	if c.ACPSessionID != "sess_original" {
@@ -153,7 +158,7 @@ func TestCmdResumeSession_RejectsPathUnsafeIDs(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			host := newTestHost(t, store)
 
-			_, err := cmdResumeSession(t.Context(), newTestMembership(t, host), resumeReq(t, "c1", sid, ""))
+			_, err := cmdResumeSession(t.Context(), newTestMembership(t, host), nil, resumeReq(t, "c1", sid, ""))
 
 			if statusOf(err) != http.StatusBadRequest {
 				t.Errorf("status = %d for session id %q, want 400", statusOf(err), sid)
@@ -176,7 +181,7 @@ func TestCmdResumeSession_NameLengthCap(t *testing.T) {
 		store := testsupport.NewInMemoryChatStore()
 		host := newTestHost(t, store)
 
-		_, err := cmdResumeSession(t.Context(), newTestMembership(t, host), resumeReq(t, "c1", "sess_abc", atCap))
+		_, err := cmdResumeSession(t.Context(), newTestMembership(t, host), nil, resumeReq(t, "c1", "sess_abc", atCap))
 		if err != nil {
 			t.Fatalf("CmdResumeSession with a %d-byte name = %v, want it accepted", len(atCap), err)
 		}
@@ -193,7 +198,7 @@ func TestCmdResumeSession_NameLengthCap(t *testing.T) {
 		store := testsupport.NewInMemoryChatStore()
 		host := newTestHost(t, store)
 
-		_, err := cmdResumeSession(t.Context(), newTestMembership(t, host), resumeReq(t, "c1", "sess_abc", overCap))
+		_, err := cmdResumeSession(t.Context(), newTestMembership(t, host), nil, resumeReq(t, "c1", "sess_abc", overCap))
 
 		if statusOf(err) != http.StatusBadRequest {
 			t.Errorf("status = %d for a %d-byte name, want 400", statusOf(err), len(overCap))
@@ -202,4 +207,46 @@ func TestCmdResumeSession_NameLengthCap(t *testing.T) {
 			t.Error("a chat was created for an over-long name")
 		}
 	})
+}
+
+// stepSessionsDouble answers StepSessionOf from a fixed table, or fails.
+type stepSessionsDouble struct {
+	err   error
+	steps map[string]string
+}
+
+func (d stepSessionsDouble) StepSessionOf(_ context.Context, sessionID string) (string, bool, error) {
+	if d.err != nil {
+		return "", false, d.err
+	}
+	wf, ok := d.steps[sessionID]
+	return wf, ok, nil
+}
+
+// A step's session resumed as a chat would answer its run from a second resident, so it is refused,
+// and so is a session whose kind cannot be read; any other session is resumed.
+func TestCmdResumeSession_RefusesAWorkflowStepsSession(t *testing.T) {
+	steps := stepSessionsDouble{steps: map[string]string{"sess_step": "wf_1"}}
+	cases := []struct {
+		steps   stepSessions
+		session string
+		want    int
+	}{
+		{steps, "sess_step", http.StatusConflict},
+		{stepSessionsDouble{err: errors.New("engine down")}, "sess_chat", http.StatusServiceUnavailable},
+		{steps, "sess_chat", http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.session+" "+http.StatusText(tc.want), func(t *testing.T) {
+			store := testsupport.NewInMemoryChatStore()
+			_, err := cmdResumeSession(t.Context(), newTestMembership(t, newTestHost(t, store)), tc.steps,
+				resumeReq(t, "c1", tc.session, "Earlier work"))
+			if statusOf(err) != tc.want {
+				t.Fatalf("status = %d, want %d (%s)", statusOf(err), tc.want, errText(err))
+			}
+			if _, created := store.Get(t.Context(), "c1"); created != (tc.want == http.StatusOK) {
+				t.Errorf("chat created = %v, want it only for a resumable session", created)
+			}
+		})
+	}
 }

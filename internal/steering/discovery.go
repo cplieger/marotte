@@ -201,14 +201,8 @@ func normalizeInclusion(v string) string {
 	}
 }
 
-// ParseInclusion returns the validated inclusion mode from a steering file's front-matter
-// ("always" when absent or unknown), BOM- and CRLF-tolerant. Exported for internal/server.
-func ParseInclusion(data []byte) string {
-	return parseSteeringFrontmatter(data).Inclusion
-}
-
-// findRepoSkills scans `.kiro/skills/` for skill DIRECTORIES (holding SKILL.md, as
-// internal/server's scanSkills does), classified by SKILL.md's inclusion mode. Capped.
+// findRepoSkills scans `.kiro/skills/` for skill DIRECTORIES (holding SKILL.md), classified by
+// SKILL.md's inclusion mode. Capped.
 func findRepoSkills(repoDir string) []docEntry {
 	dir := filepath.Join(repoDir, ".kiro", "skills")
 	entries, err := os.ReadDir(dir)

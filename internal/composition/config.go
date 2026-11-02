@@ -3,20 +3,19 @@ package composition
 import (
 	"cmp"
 	"log/slog"
-	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/cplieger/envx/v2"
-	"github.com/cplieger/marotte/internal/auth"
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // Config holds all environment/flag values needed to build the app.
@@ -52,9 +51,9 @@ type Config struct {
 	// resolve before it replaces the current one — the embedded
 	// required-tools.txt, injected by main.
 	ToolCatalogRequire []string
-	// TrustedProxies are the reverse-proxy networks whose X-Forwarded-For webhttp.ClientIP may
-	// trust, from TRUSTED_PROXIES. Empty trusts nothing and logs the unspoofable socket peer.
-	TrustedProxies []*net.IPNet
+	// TrustedProxies are the reverse-proxy prefixes whose X-Forwarded-For webhttp may trust, from
+	// TRUSTED_PROXIES. Empty trusts nothing and logs the unspoofable socket peer.
+	TrustedProxies []netip.Prefix
 	// TrustedInstallUIDs names identities whose write access to the kiro-cli install tree does not
 	// invalidate pinstall's custody, from TRUSTED_INSTALL_UIDS. Empty (the default) refuses any
 	// tree another identity can write. Never compiled in: only the deployment knows which account
@@ -71,13 +70,11 @@ type Config struct {
 	// plus MAROTTE_BROWSE_ROOTS grants (colon-separated absolute paths). Everything else is denied.
 	BrowseRoots []string
 	// ACPArgs are operator kiro-cli launch flags from MAROTTE_KIRO_ACP_ARGS, filtered by
-	// bridge.ParseACPArgs and appended to every CHAT bridge's argv, never the utility bridge's. An
-	// escape hatch for a flag upstream adds, not a capability switch.
+	// bridge.ParseACPArgs and appended to the agent engine's argv. An escape hatch for a flag
+	// upstream adds, not a capability switch.
 	ACPArgs []string
-	// ToolCatalogRefresh is the engine refresh cadence (toolbelt's 24h default); AuthConfig is
-	// auth.DefaultConfig. Neither has an env override.
+	// ToolCatalogRefresh is the engine refresh cadence (toolbelt's 24h default), with no env override.
 	ToolCatalogRefresh time.Duration
-	AuthConfig         auth.Config
 	// KiroAPIKeySet records whether bridge.KiroAPIKeyVar is present. The value
 	// is never read into Config.
 	KiroAPIKeySet bool
@@ -107,7 +104,6 @@ func ConfigFromEnv() Config {
 		BrowseRoots:         browseRoots(workDir, configDir, os.Getenv("MAROTTE_BROWSE_ROOTS")),
 		ACPArgs:             bridge.ParseACPArgs(os.Getenv("MAROTTE_KIRO_ACP_ARGS")),
 		BridgeEnvAllow:      bridge.ParseEnvAllowlist(os.Getenv(bridge.EnvAllowVar)),
-		AuthConfig:          auth.DefaultConfig,
 		KiroAPIKeySet:       os.Getenv(bridge.KiroAPIKeyVar) != "",
 	}
 }
@@ -137,17 +133,24 @@ func absDir(envVar, dir string) string {
 	return abs
 }
 
+// apiKeyReachesEngine reports whether bridge.KiroAPIKeyVar is set AND allowlisted, so the agent
+// engine authenticates with the key rather than the vault's sign-in.
+func apiKeyReachesEngine(cfg *Config) bool {
+	if !cfg.KiroAPIKeySet {
+		return false
+	}
+	_, allowed := cfg.BridgeEnvAllow[bridge.KiroAPIKeyVar]
+	return allowed
+}
+
 // logBridgeEnvPosture warns once at boot when an allowlisted API key reaches
 // kiro-cli. Not allowlisted needs no line: the per-spawn drop warning names it.
 func logBridgeEnvPosture(cfg *Config) {
-	if !cfg.KiroAPIKeySet {
-		return
-	}
-	if _, allowed := cfg.BridgeEnvAllow[bridge.KiroAPIKeyVar]; !allowed {
+	if !apiKeyReachesEngine(cfg) {
 		return
 	}
 	slog.Warn(bridge.KiroAPIKeyVar + " reaches kiro-cli because " + bridge.EnvAllowVar +
-		" allows it: kiro-cli authenticates with it ahead of the kiro-cli login, " +
+		" allows it: the agent engine authenticates with it ahead of marotte's sign-in, " +
 		"so the agent runs as the key's identity, not the signed-in account marotte shows")
 }
 
@@ -188,13 +191,13 @@ func browseRoots(workDir, configDir, raw string) []string {
 
 // Unset yields nil. LENIENT and fail-SAFE: a malformed entry is logged and skipped, falling back to
 // the socket peer, never trusting a forwarded header.
-func parseTrustedProxies(raw string) []*net.IPNet {
-	nets, invalid := webhttp.ParseCIDRs(strings.Split(raw, ","))
+func parseTrustedProxies(raw string) []netip.Prefix {
+	prefixes, invalid := webhttp.ParseCIDRs(strings.Split(raw, ","))
 	if len(invalid) > 0 {
 		slog.Warn("config: ignoring malformed TRUSTED_PROXIES entries (want CIDR or IP)",
 			"entries", invalid)
 	}
-	return nets
+	return prefixes
 }
 
 // Unset yields nil, fully enforcing. Each entry ASSERTS the uid is already as privileged as this

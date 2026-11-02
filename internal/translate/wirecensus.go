@@ -29,7 +29,7 @@ const maxCensusKeys = 128
 const maxCensusNameBytes = 64
 
 // censusLedger remembers which (name, type) pairs were reported, so each novel shape is
-// reported once. Mutex-guarded because each bridge decodes on its own goroutine; a plain
+// reported once. Mutex-guarded because each session's forward decodes on its own goroutine; a plain
 // map because the cap needs an exact len().
 type censusLedger struct {
 	// reported leads: fieldalignment wants the pointer-bearing field before the mutex.

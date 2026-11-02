@@ -1,69 +1,67 @@
 package mcp
 
 import (
-	"encoding/json"
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 )
 
-// TestUnmarshalJSON_PreservesTransport verifies the parse-boundary
-// invariant: every accepted transport (stdio/http/sse) round-trips to
-// its own Server.Transport value. "sse" is preserved as TransportSSE
-// (not folded into "http") — KAS accepts a distinct {type:"sse"}
-// mcpServers entry on the v3 wire, and UnmarshalJSON assigns
-// parseTransport's return value so the parsed record passes Validate()
-// on first read.
-func TestUnmarshalJSON_PreservesTransport(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name string
-		in   string
-		want Transport
+// A save whose KAS write fails after the record landed leaves the record as it was before the save, so the server
+// the caller reported as not saved is absent at the next boot too.
+func TestPersist_ALateKASFailureRestoresTheRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		existing bool
 	}{
-		{
-			name: "sse preserved",
-			in:   `{"id":"abc","name":"linear","transport":"sse","url":"https://mcp.example.com/sse","enabled":true}`,
-			want: TransportSSE,
-		},
-		{
-			name: "http preserved",
-			in:   `{"id":"abc","name":"linear","transport":"http","url":"https://mcp.example.com","enabled":true}`,
-			want: TransportHTTP,
-		},
-		{
-			name: "stdio preserved",
-			in:   `{"id":"abc","name":"local","transport":"stdio","command":"x","enabled":true}`,
-			want: TransportStdio,
-		},
-	}
-
-	for _, tc := range cases {
+		{name: "an existing record", existing: true},
+		{name: "no record yet"},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			var s Server
-			if err := json.Unmarshal([]byte(tc.in), &s); err != nil {
-				t.Fatalf("Unmarshal: %v", err)
+			dir := t.TempDir()
+			kasDir := filepath.Join(dir, "kas")
+			var breakKAS atomic.Bool
+			// The wait resolver runs between the record write and the KAS write: replacing KAS's directory with a
+			// file there fails the KAS write alone (ENOTDIR, root-safe).
+			s, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(kasDir, "mcp.json")),
+				WithWaitForReady(func(context.Context) (bool, bool) {
+					if breakKAS.Load() {
+						if err := os.RemoveAll(kasDir); err != nil {
+							t.Errorf("Setup: remove KAS's directory: %v", err)
+						}
+						if err := os.WriteFile(kasDir, nil, 0o600); err != nil {
+							t.Errorf("Setup: block KAS's directory: %v", err)
+						}
+					}
+					return false, true
+				}))
+			if err != nil {
+				t.Fatalf("New: %v", err)
 			}
-			if s.Transport != tc.want {
-				t.Errorf("Transport = %q; want %q", s.Transport, tc.want)
+			if tc.existing {
+				if _, err := s.Create(t.Context(), &Server{Name: "kept", Transport: TransportStdio, Command: "/bin/true"}); err != nil {
+					t.Fatalf("Setup: Create(kept): %v", err)
+				}
+			} else if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+				t.Fatalf("Setup: remove the record: %v", err)
 			}
-			// And the parsed record must pass validate so it can be
-			// served from a Read or written back to disk.
-			if err := validate(&s); err != nil {
-				t.Errorf("Validate after unmarshal: %v", err)
+			before, beforeErr := os.ReadFile(s.path)
+
+			breakKAS.Store(true)
+			_, err = s.Create(t.Context(), &Server{Name: "lost", Transport: TransportStdio, Command: "/bin/true"})
+
+			if err == nil {
+				t.Fatal("Create succeeded with KAS's file unwritable")
+			}
+			after, afterErr := os.ReadFile(s.path)
+			switch {
+			case tc.existing && (afterErr != nil || !bytes.Equal(after, before)):
+				t.Errorf("record after the failed save = %q (%v), want the bytes before it %q", after, afterErr, before)
+			case !tc.existing && (beforeErr == nil || !os.IsNotExist(afterErr)):
+				t.Errorf("record after the failed save = %q (%v), want none, as before it", after, afterErr)
 			}
 		})
-	}
-}
-
-// TestUnmarshalJSON_RejectsUnknownTransport pins the parse-boundary
-// behaviour: anything outside {stdio, http, sse} is rejected at
-// unmarshal time, not at validate.
-func TestUnmarshalJSON_RejectsUnknownTransport(t *testing.T) {
-	t.Parallel()
-	var s Server
-	err := json.Unmarshal([]byte(`{"id":"x","name":"y","transport":"websocket","enabled":true}`), &s)
-	if err == nil {
-		t.Fatal("expected error for unknown transport, got nil")
 	}
 }

@@ -19,7 +19,8 @@ func requireCollaborators(h *Runtime) {
 		{name: "mcpRegistry", v: h.mcpRegistry},
 		{name: "runRoutes", v: h.runRoutes},
 		{name: "powers", v: h.powers},
-		{name: "utility", v: h.utility},
+		{name: "engine", v: h.engine},
+		{name: "standing", v: h.standing},
 		{name: "replay", v: h.replay},
 		// Every collaborator constructed inside New with fields taken from h.
 		{name: "coord", v: h.coord},

@@ -1,8 +1,8 @@
 package agent
 
-// The run host: launching a parentless workflow run and the process that holds it. An agent-launched
-// run is parented on its chat's session by KAS; a manual or scheduled one gets one bridge under the
-// synthetic chat id `run:<workflowId>`, which has no chat file.
+// The run host: launching a parentless workflow run and the session that holds it. An agent-launched
+// run is parented on its chat's session by KAS; a manual or scheduled one gets one host session under
+// the synthetic chat id `run:<workflowId>`, which has no chat file.
 
 import (
 	"context"
@@ -13,12 +13,14 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -46,23 +48,46 @@ func workflowIDOf(chatID marotte.ChatID) string {
 	return strings.TrimPrefix(string(chatID), runChatPrefix)
 }
 
-// launchTimeout bounds the launch handshake; a first launch may unpack a ~240 MB KAS runtime.
+// launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`.
 const launchTimeout = 120 * time.Second
 
 // errRecipeBusy is the single-run rule: one live run per recipe, globally.
 var errRecipeBusy = errors.New("this recipe already has a live run")
 
 // launch starts one parentless attended run of the recipe and returns its workflow id and name.
-func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]string) (id, name string, err error) {
-	return rs.launchAs(ctx, source, inputs, manualLaunch())
+func (rs *Runs) launch(
+	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults,
+) (id, name string, err error) {
+	return rs.launchAs(ctx, source, inputs, defaults, manualLaunch())
 }
 
 // LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window and backstop.
-func (rs *Runs) LaunchScheduled(ctx context.Context, source, scheduleID string, slotAt time.Time) (id, name string, err error) {
-	return rs.launchAs(ctx, source, nil, scheduledLaunch(scheduleID, slotAt))
+// The sign-in gate's refusal wraps schedule.ErrNoRunCanStart.
+func (rs *Runs) LaunchScheduled(
+	ctx context.Context, source, scheduleID string, defaults marotte.RunDefaults, slotAt time.Time,
+) (id, name string, err error) {
+	// The schedule runner outlives Shutdown, so a launch is held on inflight and refused once draining.
+	release, ok := rs.lifecycle.enterUnlessDraining()
+	if !ok {
+		return "", "", errRuntimeDraining
+	}
+	defer release()
+	id, name, err = rs.launchAs(ctx, source, nil, defaults, scheduledLaunch(scheduleID, slotAt))
+	if errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown) {
+		err = fmt.Errorf("%w: %w", schedule.ErrNoRunCanStart, err)
+	}
+	return id, name, err
 }
 
-func (rs *Runs) launchAs(ctx context.Context, source string, inputs map[string]string, o launchOrigin) (id, name string, err error) {
+func (rs *Runs) launchAs(
+	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults, o launchOrigin,
+) (id, name string, err error) {
+	// One admission from before workflow/new through invoke, so no run is created that the gate then never starts.
+	a, gErr := rs.admitRunWork(refuseClosed, "", "")
+	if gErr != nil {
+		return "", "", gErr
+	}
+	defer func() { a.settle(id) }()
 	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
 	defer cancel()
 
@@ -78,55 +103,47 @@ func (rs *Runs) launchAs(ctx context.Context, source string, inputs map[string]s
 		return "", "", bErr
 	}
 
-	// Started outside the manager: the map key is the workflow id `new` returns. Replies ride readLoop, so Forward can attach after.
-	bridge := rs.bridges.factory()
-	if sErr := bridge.Start(cctx, &marotte.StartOpts{
-		Lifetime: rs.lifecycle.shutdownCtx,
-		// Named explicitly, so a buildACPArgs default change cannot start a legacy-engine run bridge.
-		AgentEngine:      resolveAgentEngine(),
-		EnableHooks:      true,
-		Presets:          securityPresets(cctx, rs.lifecycle.configDir),
-		IgnoreFiles:      func(c context.Context) []string { return spawnIgnoreFiles(c, rs.lifecycle.configDir) },
-		TerminalTimeout:  func(c context.Context) int { return terminalCommandTimeoutMs(c, rs.lifecycle.configDir) },
-		ToolSearch:       toolSearchEnabled(cctx, rs.lifecycle.configDir),
-		Knowledge:        knowledgeEnabled(cctx, rs.lifecycle.configDir),
-		Memory:           memoryPreference(cctx, rs.lifecycle.configDir),
-		Features:         agentFeatures(cctx, rs.lifecycle.configDir, currentLocks(rs.locks)),
-		DisableTelemetry: rs.lifecycle.telemetryDisabled(rs.locks),
-		// A run's step sessions share the process, so they inherit it.
-		ContentCollection: contentCollectionResolver(rs.lifecycle.configDir, rs.locks),
-		// Nothing renders a step session's title.
-		DisableSessionTitles: true,
-	}); sErr != nil {
-		return "", "", fmt.Errorf("run bridge start: %w", sErr)
+	// The host session's presets are resolved once and recorded on the lease: a reload after a restart applies
+	// these, never the profile as it is then.
+	presets := securityPresets(cctx, rs.lifecycle.configDir)
+	sb := &sharedBridge{state: bridgeStarting, settled: newSessionSettle()}
+	var relay *hostRelay
+	door := &marotte.SessionOpts{
+		Role: marotte.SessionRoleHost, Presets: presets, AdditionalDirectories: rs.lifecycle.sessionDirs(cctx),
 	}
-
-	// Refuse before the RPC: a started bridge with no session is a broken handshake.
-	parent := bridge.SessionID()
+	if _, oErr := rs.engine.openSession(cctx, door,
+		func(s engineSession) {
+			relay = newHostRelay(s, func(msg *marotte.RPCResponse) { rs.answerEarly(s, msg) })
+			sb.attach(relay)
+		}); oErr != nil {
+		return "", "", fmt.Errorf("%w: %w", errRunHostStart, oErr)
+	}
+	host := sb.current()
+	parent := host.SessionID()
 	if parent == "" {
-		bridge.Stop()
-		return "", "", errors.New("run bridge started with no ACP session; cannot launch a workflow")
+		rs.bridges.closeSession(host)
+		return "", "", fmt.Errorf("%w: the host session's door answered no session id", errRunHostStart)
 	}
-
-	wfID, err := rs.workflowNew(cctx, bridge, recipe.Source, inputs, parent, o.runLabel(recipe.Name))
+	wfID, err := rs.workflowNew(cctx, host, recipe.Source, inputs, defaults, parent, o.runLabel(recipe.Name))
 	if err != nil {
-		bridge.Stop()
+		rs.bridges.closeSession(host)
 		return "", "", err
 	}
-
-	// Register before invoke: the first lifecycle frame follows immediately.
-	launched := &sharedBridge{bridge: bridge, state: bridgeIdle, live: startedLive(bridge)}
-	if !rs.bridges.insert(runChatID(wfID), launched) {
-		bridge.Stop()
-		return "", "", fmt.Errorf("workflow %s already has a run bridge", wfID)
+	if !rs.bridges.insert(runChatID(wfID), sb) {
+		rs.bridges.closeSession(host)
+		return "", "", fmt.Errorf("workflow %s already has a host session", wfID)
 	}
-	// A settings write between Start and the insert found no bridge to push to.
-	launched.syncLive(cctx, runChatID(wfID), rs.readLiveSettings)
+	sb.setIdle()
+	sb.settled.settle(nil)
+	rs.coord.goForward(runChatID(wfID), host)
+	relay.begin()
 	// The run's envelope, before anything can execute (runlease.Lease).
-	rs.grantLease(cctx, wfID, recipe.Name, o)
-	rs.coord.goForward(runChatID(wfID), bridge)
-
-	if _, err := bridge.Call(cctx, methodKiroWorkflowInvoke, map[string]any{keyWorkflowID: wfID}); err != nil {
+	rs.grantLease(cctx, wfID, recipe.Name, o, hostSecurityOf(presets))
+	rs.recordParentSession(cctx, wfID, string(parent))
+	// Visible to Route before invoke is written, so the run's first frame reaches the host's lane.
+	rs.router.registerOwner(wfID, parent)
+	if _, err := rs.write(cctx, a, sb, wfID, methodKiroWorkflowInvoke,
+		map[string]any{keyWorkflowID: wfID}, mutationDrive); err != nil {
 		// Created but never started.
 		rs.releaseLease(cctx, wfID)
 		rs.coord.closeBridge(cctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
@@ -165,27 +182,55 @@ func (s runStop) apply(params map[string]any) {
 	}
 }
 
-// cancel stops a run on the user's behalf. A lost termination claim returns nil; a refused RPC is
-// returned, and retryTermination retries it.
-func (rs *Runs) cancel(ctx context.Context, workflowID string) error {
-	return rs.cancelOn(ctx, workflowID, userStop(""), nil)
+// controlCaller is who sent a person's run control over REST, as callerOf reads the request.
+type controlCaller int
+
+const (
+	// callerPage is marotte's own page: the reader's gesture.
+	callerPage controlCaller = iota
+	// callerAPI is any other caller, such as an agent's curl, which KAS would otherwise record as the user.
+	callerAPI
+)
+
+// apiCallerReason rides beside initiator "user" on a callerAPI control, so KAS and userParked still read it as a
+// person's while the client words it as an agent's (static-src/run-store.ts, testdata/pause_reasons.json).
+const apiCallerReason = "asked through marotte's run API by a caller outside its page"
+
+// stop is the attribution c's pause or stop carries.
+func (c controlCaller) stop() runStop {
+	if c == callerAPI {
+		return userStop(apiCallerReason)
+	}
+	return userStop("")
 }
 
-// cancelOn is Cancel with the carrier already resolved, so stopping N runs costs one inventory read; nil resolves it.
-func (rs *Runs) cancelOn(ctx context.Context, workflowID string, stop runStop, carrier *sharedBridge) error {
+// cancel stops a run on caller's behalf. A lost termination claim returns nil; a refused RPC is
+// returned, and retryTermination retries it.
+func (rs *Runs) cancel(ctx context.Context, workflowID string, caller controlCaller) error {
+	return rs.cancelAs(ctx, workflowID, caller.stop())
+}
+
+// cancelAs is Cancel attributed to stop.
+func (rs *Runs) cancelAs(ctx context.Context, workflowID string, stop runStop) error {
 	if workflowID == "" {
 		return errors.New("missing workflow id")
 	}
 	if !rs.claimTermination(workflowID) {
 		return nil
 	}
-	return rs.finishTermination(ctx, workflowID, "", stop, carrier)
+	return rs.finishTermination(ctx, workflowID, "", stop)
 }
 
-// cancelRPC issues the cancel verb only. The bridge stays open: the owner must live to the node
-// boundary to certify the cancel, and `run_complete` closes it.
-func (rs *Runs) cancelRPC(ctx context.Context, workflowID string, stop runStop, carrier *sharedBridge) error {
-	return rs.control(ctx, workflowID, methodKiroWorkflowCancel, "workflow cancel call", stop, carrier)
+// cancelRPC issues the cancel verb only. The host session stays resident: the run certifies the cancel at its node
+// boundary, and its terminal `run_complete` releases the host.
+func (rs *Runs) cancelRPC(ctx context.Context, workflowID string, stop runStop) error {
+	params := map[string]any{keyWorkflowID: workflowID}
+	stop.apply(params)
+	err := rs.stopVerb(ctx, workflowID, methodKiroWorkflowCancel, params)
+	if err != nil {
+		return fmt.Errorf("workflow cancel call: %w", err)
+	}
+	return nil
 }
 
 // delete removes a run and everything kept about it, on the user's behalf; unrecoverable, and a refused
@@ -193,7 +238,7 @@ func (rs *Runs) cancelRPC(ctx context.Context, workflowID string, stop runStop, 
 // is closed. errRunDeleting refuses a run another delete holds; errDeleteUnconfirmed reports a delete
 // KAS was sent whose outcome is still being read back.
 func (rs *Runs) delete(ctx context.Context, workflowID string) error {
-	return rs.deleteOn(ctx, workflowID, userStop(""), nil)
+	return rs.deleteAs(ctx, workflowID, userStop(""))
 }
 
 var errDeleteUnconfirmed = errors.New("the delete reached the run's agent but its answer was lost; " +
@@ -202,8 +247,8 @@ var errDeleteUnconfirmed = errors.New("the delete reached the run's agent but it
 // deleteReconcileRetry is how long an unconfirmed delete waits before its run is read again. A var for tests.
 var deleteReconcileRetry = 30 * time.Second
 
-// deleteOn is Delete on a carrier the caller already resolved; nil resolves it.
-func (rs *Runs) deleteOn(ctx context.Context, workflowID string, stop runStop, carrier *sharedBridge) error {
+// deleteAs is Delete attributed to stop.
+func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop) error {
 	if workflowID == "" {
 		return errors.New("missing workflow id")
 	}
@@ -211,7 +256,11 @@ func (rs *Runs) deleteOn(ctx context.Context, workflowID string, stop runStop, c
 	if err != nil {
 		return err
 	}
-	got, err := rs.deleteCall(ctx, workflowID, stop, carrier)
+	var got kasVerdict
+	rs.stopSerialized(ctx, workflowID, func(sctx context.Context) bool {
+		got, err = rs.deleteCall(sctx, workflowID, stop)
+		return got != kasRefused
+	})
 	switch got {
 	case kasRefused:
 		d.settle()
@@ -227,22 +276,20 @@ func (rs *Runs) deleteOn(ctx context.Context, workflowID string, stop runStop, c
 	return nil
 }
 
-// deleteCall sends the delete detached from ctx once its connection is resolved: a delete KAS may
-// have applied is waited out, never abandoned.
-func (rs *Runs) deleteCall(ctx context.Context, workflowID string, stop runStop, carrier *sharedBridge) (kasVerdict, error) {
+// deleteCall sends the delete once the engine is ready, then waits for its answer detached from ctx: a delete KAS
+// may have applied is waited out, never abandoned.
+func (rs *Runs) deleteCall(ctx context.Context, workflowID string, stop runStop) (kasVerdict, error) {
 	params := map[string]any{keyWorkflowID: workflowID}
 	stop.apply(params)
-	if carrier == nil {
-		_, carrier = rs.hostBridgeChat(ctx, workflowID)
-	}
-	if carrier != nil {
-		resp, err := carrier.bridge.Call(durable.Context(ctx), methodKiroWorkflowDelete, params)
-		err = runCallErr(resp, err)
-		return verdictOf(err), err
-	}
-	called, err := rs.utility().session.rawCallDetached(ctx, "workflow delete call", methodKiroWorkflowDelete, callerParams(params))
-	if !called {
+	h, _, release, err := rs.engine.acquire(ctx)
+	if err != nil {
 		return kasRefused, err
+	}
+	defer release()
+	resp, err := h.Call(durable.Context(ctx), methodKiroWorkflowDelete, params)
+	err = runCallErr(resp, err)
+	if err == nil {
+		rs.router.forgetWorkflow(workflowID)
 	}
 	return verdictOf(err), err
 }
@@ -255,6 +302,7 @@ func (rs *Runs) reconcileDelete(ctx context.Context, d *runDeletion, cause error
 	case runKept:
 		slog.Info("a run whose delete was unconfirmed is still there, so it takes messages again",
 			"workflow_id", d.workflowID)
+		rs.clearStopping(ctx, d.workflowID)
 		d.settle()
 		return cause
 	case runGone:
@@ -268,7 +316,7 @@ func (rs *Runs) reconcileDelete(ctx context.Context, d *runDeletion, cause error
 }
 
 func (rs *Runs) reconcileLater(d *runDeletion) {
-	time.AfterFunc(deleteReconcileRetry, func() {
+	rs.lifecycle.afterUnlessDraining(deleteReconcileRetry, func() {
 		ctx := rs.lifecycle.shutdownCtx
 		if ctx.Err() != nil {
 			return
@@ -296,8 +344,7 @@ func (rs *Runs) readBack(ctx context.Context, workflowID string) readBackVerdict
 		slog.Warn("could not read back a run whose delete was unconfirmed", "workflow_id", workflowID, "error", err)
 		return runUnread
 	}
-	var res workflow.InspectResult
-	if json.Unmarshal(raw, &res) != nil || res.State == nil {
+	if _, err := workflow.DecodeInspect(workflowID, raw); err != nil {
 		return runUnread
 	}
 	return runKept
@@ -317,35 +364,33 @@ func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string) {
 	slog.Info("workflow run deleted", "workflow_id", workflowID)
 }
 
-// pause asks a run to stop at its next node boundary; the reply confirms the ask. A re-hosted pause is
-// refused: KAS throws for a run its process forgot.
-func (rs *Runs) pause(ctx context.Context, workflowID string) error {
-	return rs.hostedControl(ctx, workflowID, methodKiroWorkflowPause, userStop(""))
-}
-
-// resume re-drives a paused run with a fresh executing budget.
-func (rs *Runs) resume(ctx context.Context, workflowID string) error {
-	err := rs.hostedControl(ctx, workflowID, methodKiroWorkflowResume, runStop{})
-	if err == nil {
-		rs.armDeadline(ctx, workflowID)
-	}
+// pause is caller's ask that a run stop at its next node boundary; the reply confirms the ask. runTransitions
+// decides it as a person's.
+func (rs *Runs) pause(ctx context.Context, workflowID string, caller controlCaller) error {
+	_, err := rs.transition(ctx, workflowID, &runRequest{want: personPause, verb: verbPause, caller: caller})
 	return err
 }
 
-// Below clientRequestBudget, from which it is derived: a browser abort first would tear down a
-// fresh bridge and release the lease. A var for tests.
+// resume is caller's re-drive of a paused run with a fresh executing budget. runTransitions decides it as a person's.
+func (rs *Runs) resume(ctx context.Context, workflowID string, caller controlCaller) error {
+	_, err := rs.transition(ctx, workflowID, &runRequest{want: personResume, verb: verbResume, caller: caller})
+	return err
+}
+
+// Below clientRequestBudget, from which it is derived: the retry's own deadline, never a browser abort, decides
+// whether it released a lease it minted. It bounds the host session's load and the call. A var for tests.
 var retryTimeout = clientRequestBudget - 5*time.Second
 
 // clientRequestBudget is the timeout @cplieger/fetch hard-wires into every apiAction.
 const clientRequestBudget = 30 * time.Second
 
-// errRetryEngineSlow reports a retry not handed off within retryTimeout; the REST layer answers 503.
-var errRetryEngineSlow = errors.New(
-	"the run's engine did not start in time, so nothing was retried. Try again",
+// errRetrySlow reports a retry not handed off within retryTimeout; the REST layer answers 503.
+var errRetrySlow = errors.New(
+	"the run's session did not load in time, so nothing was retried. Try again",
 )
 
 // errRetryOutcomeUnreadable reports a retry KAS accepted whose report was unreadable. The run may be
-// executing, so the remedy is refreshing, not retrying or killing the bridge.
+// executing, so the remedy is refreshing, not retrying.
 var errRetryOutcomeUnreadable = errors.New(
 	"the retry was accepted but its report could not be read, so which steps it reset " +
 		"is unknown. Refresh the run to see where it is",
@@ -368,30 +413,30 @@ func (rs *Runs) retry(
 	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
 	defer cancel()
 
-	host, err := rs.acquireHost(cctx, workflowID, func(context.Context, string) runOrigin { return aff.origin })
-	if err != nil {
-		return out, rs.retryStartErr(cctx, err)
-	}
-	defer func() {
-		// KAS took the retry, so the run may be re-driving in this carrier.
-		if errors.Is(err, errRetryOutcomeUnreadable) {
-			host.release(nil)
-			return
-		}
-		host.release(err)
-	}()
 	// Threaded from the gate: nothing here can learn it once the run re-drives.
 	recipe := aff.origin.recipe
-	// The lease before the verb: retry's `run_start` can beat the reply.
+	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
+	// which reads its presets from it.
 	minted := false
 	if _, held := rs.lease(workflowID); !held {
-		rs.grantLease(cctx, workflowID, recipe, manualLaunch())
+		rs.grantRetryLease(cctx, workflowID, &aff.origin)
 		minted = true
 	}
-	out, err = rs.retryCall(cctx, host.sb.bridge, workflowID)
+	host, err := rs.ensureResident(cctx, workflowID)
+	if err != nil {
+		if minted {
+			rs.releaseLease(cctx, workflowID)
+		}
+		return out, rs.retryResidencyErr(cctx, err)
+	}
+	err = rs.controlSerialized(cctx, workflowID, func(sctx context.Context) error {
+		var cErr error
+		out, cErr = rs.retryCall(sctx, host, workflowID)
+		return cErr
+	})
 	if errors.Is(err, errRetryOutcomeUnreadable) {
 		// Only the report is lost; tearing down would kill the work mid-node.
-		rs.rearmRetried(cctx, workflowID, recipe)
+		rs.rearmRetried(cctx, workflowID, &aff.origin)
 		return out, err
 	}
 	if err != nil {
@@ -402,7 +447,7 @@ func (rs *Runs) retry(
 		return out, err
 	}
 	// Only on success: a refused retry re-drove nothing.
-	rs.rearmRetried(cctx, workflowID, recipe)
+	rs.rearmRetried(cctx, workflowID, &aff.origin)
 	slog.Info("workflow run retried",
 		"workflow_id", workflowID, "recipe", recipe,
 		"retried_nodes", len(out.RetriedNodeIDs), "status", out.Status)
@@ -411,12 +456,12 @@ func (rs *Runs) retry(
 
 // retryCall issues the verb and decodes its report, through runCallErr so an `error` member is not read as success.
 func (rs *Runs) retryCall(
-	ctx context.Context, bridge acpCaller, workflowID string,
+	ctx context.Context, host *drivenHost, workflowID string,
 ) (marotte.RunRetriedResponse, error) {
 	none := marotte.RunRetriedResponse{}
-	resp, err := bridge.Call(ctx, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
-	if cErr := runCallErr(resp, err); cErr != nil {
-		return none, fmt.Errorf("workflow retry: %w", rs.retryDeadlineErr(ctx, cErr))
+	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
+	if err != nil {
+		return none, fmt.Errorf("workflow retry: %w", rs.retryDeadlineErr(ctx, err))
 	}
 	// Past here KAS accepted the verb: any failure is a lost report.
 	if resp == nil || len(resp.Result) == 0 {
@@ -439,82 +484,28 @@ func (rs *Runs) retryCall(
 	return marotte.RunRetriedResponse{Status: out.Status, RetriedNodeIDs: nodes}, nil
 }
 
-// retryStartErr labels a failed bridge start: this call's deadline, or the start
-// failure itself.
-func (*Runs) retryStartErr(ctx context.Context, err error) error {
+// retryResidencyErr labels a failed load of the run's session: this call's deadline, or the load failure itself.
+func (*Runs) retryResidencyErr(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
-		return errRetryEngineSlow
+		return errRetrySlow
 	}
-	return fmt.Errorf("retry bridge start: %w", err)
+	return fmt.Errorf("retry: load the run's session: %w", err)
 }
 
 func (*Runs) retryDeadlineErr(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
-		return errRetryEngineSlow
+		return errRetrySlow
 	}
 	return err
 }
 
-// errStepStatusRefused means KAS declined the update (terminal run, or no running or paused step); the REST layer answers 409.
+// errStepStatusRefused means KAS declined the update (a terminal run, a step that is not paused, a caller
+// that is not the owning parent, or a paused step given a status other than completed or failed); the REST
+// layer answers 409.
 var errStepStatusRefused = errors.New("this run's step status was not changed")
 
 // updateStatusAction is `_kiro/workflow/update`'s step-status action, sent explicitly because the tool schema requires it.
 const updateStatusAction = "update_status"
-
-// errStepStatusMistargeted means the named node is not the one KAS would mark, so the write was withheld. Wraps errStepStatusRefused.
-var errStepStatusMistargeted = fmt.Errorf(
-	"%w: this run is not waiting at the step you asked to mark", errStepStatusRefused,
-)
-
-// errStepStatusUnreadable means the pre-send read failed, so the write was withheld: a `completed` on the
-// wrong node publishes its capture irreversibly.
-var errStepStatusUnreadable = fmt.Errorf(
-	"%w: this run's state could not be read just now, so try again in a moment",
-	errStepStatusRefused,
-)
-
-// setStepStatus marks a step completed, failed or running so a wedged run advances. KAS targets
-// positionally, so the tree is read first and the write withheld unless the targets agree.
-func (rs *Runs) setStepStatus(ctx context.Context, workflowID, nodeID, status string) (err error) {
-	if nodeID == "" {
-		return errors.New("missing node id")
-	}
-	if !slices.Contains(runStepStatuses, status) {
-		return fmt.Errorf("step status must be one of %v", runStepStatuses)
-	}
-	// Before hostRun: `inspect` runs on the utility session. The position lock spans read and write, since a chat open can heal this run.
-	release, lockErr := rs.positions.acquire(ctx, workflowID)
-	if lockErr != nil {
-		return lockErr
-	}
-	defer release()
-	if addrErr := rs.stepStatusAddress(ctx, workflowID, nodeID); addrErr != nil {
-		return addrErr
-	}
-	host, err := rs.hostRun(ctx, workflowID)
-	if err != nil {
-		return err
-	}
-	// A decline releases with a cause too: no run_complete follows.
-	defer func() { host.release(err) }()
-	resp, callErr := rs.callReclaiming(ctx, host.sb.bridge, workflowID, methodKiroWorkflowUpdate, map[string]any{
-		keyWorkflowID: workflowID,
-		"action":      updateStatusAction,
-		"status":      status,
-	})
-	if callErr != nil {
-		return callErr
-	}
-	// Both declines answer {updated:false} with 200, so the reply is read.
-	if refusal := stepStatusRefusal(resp); refusal != "" {
-		return fmt.Errorf("%w: %s", errStepStatusRefused, refusal)
-	}
-	if status == runStepRunning {
-		// Re-driven without the user's words; SettledByUser because this is the reader's decision.
-		rs.settleAskForNode(ctx, workflowID, nodeID, marotte.SettledByUser)
-	}
-	return nil
-}
 
 // stepStatusRefusal returns KAS's reason for a declined update, else "". `Updated` is a *bool so absent reads as taken.
 func stepStatusRefusal(resp *marotte.RPCResponse) string {
@@ -537,91 +528,13 @@ func stepStatusRefusal(resp *marotte.RPCResponse) string {
 	return reply.Message
 }
 
-// stepStatusAddress reports whether the named node is the one KAS would mark, refusing when unsure: a wrong guess writes irreversibly.
-func (rs *Runs) stepStatusAddress(ctx context.Context, workflowID, nodeID string) error {
-	raw, err := rs.rawInspect(ctx, workflowID)
-	if err != nil {
-		slog.Warn("could not read a run's state, so its step status was left alone",
-			"workflow_id", workflowID, "error", err)
-		return errStepStatusUnreadable
-	}
-	var res askInspect
-	if json.Unmarshal(raw, &res) != nil || res.State == nil {
-		slog.Warn("a run's state did not decode, so its step status was left alone",
-			"workflow_id", workflowID)
-		return errStepStatusUnreadable
-	}
-	target := statusUpdateTarget(res.State.Root)
-	if target == nil {
-		slog.Info("a run holds no running or paused step, so nothing was marked",
-			"workflow_id", workflowID, "node_id", scrubLog(nodeID),
-			"status", scrubLog(string(res.State.Status)))
-		return errStepStatusMistargeted
-	}
-	if target.NodeID != nodeID {
-		slog.Info("a run's current step is not the one being marked, "+
-			"so the status write was withheld", "workflow_id", workflowID,
-			"asked_node_id", scrubLog(nodeID), "target_node_id", scrubLog(target.NodeID))
-		return errStepStatusMistargeted
-	}
-	return nil
-}
+// runStepCompleted is the step status finishRepeat writes on a repeat paused at its cap.
+const runStepCompleted = "completed"
 
-// stepNodeType is the state tree's `type` for a step, the only kind KAS's resolver considers.
-const stepNodeType = "step"
-
-// statusUpdateTarget mirrors KAS's resolver: the first running step node in pre-order, else the first paused one.
-func statusUpdateTarget(root *askNode) *askNode {
-	running, paused := stepTargets(root)
-	if running != nil {
-		return running
-	}
-	return paused
-}
-
-// stepTargets is statusUpdateTarget's one pre-order pass, judging each node before its children, returning at the first running step.
-func stepTargets(n *askNode) (running, paused *askNode) {
-	if n == nil {
-		return nil, nil
-	}
-	if n.Type == stepNodeType {
-		if n.Status == marotte.RunNodeStatusRunning {
-			return n, nil
-		}
-		if n.Status == marotte.RunNodeStatusPaused {
-			paused = n
-		}
-	}
-	for i := range n.Children {
-		hitRunning, hitPaused := stepTargets(&n.Children[i])
-		if hitRunning != nil {
-			return hitRunning, nil
-		}
-		if paused == nil {
-			paused = hitPaused
-		}
-	}
-	return nil, paused
-}
-
-// The step statuses a human may set. `running` is continue-without-answering, which plain Resume cannot substitute.
-const (
-	runStepCompleted = "completed"
-	runStepFailed    = "failed"
-	runStepRunning   = "running"
-)
-
-// runStepStatuses is the allowlist, in the order the refusal names them.
-var runStepStatuses = []string{runStepCompleted, runStepFailed, runStepRunning}
-
-// The REST layer answers 409.
-var errAskAlreadySettled = errors.New(
-	"that question has already been answered, or the step it belonged to has moved on",
-)
-
-// answerInput answers one parked step with the user's words, as a `session/prompt` to the paused step's
-// own session. Order is the contract: carrier, lease, the run's message gate, claim, address, send; each
-// guards a window the next would open. A failed send restores the claim.
+// answerInput answers one parked step with the user's words, as a `session/prompt` to its own
+// session. The ask is checked against a fresh read of the run's host under the run's serializer,
+// after marotte's own pending send was registered; the serializer is released before the prompt,
+// whose refused arm can last a whole ordinary turn.
 func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string) (err error) {
 	if workflowID == "" || askID == "" {
 		return errors.New("missing workflow id or ask id")
@@ -630,182 +543,69 @@ func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string)
 	if text == "" {
 		return errors.New("an answer cannot be empty")
 	}
-	host, err := rs.hostRun(ctx, workflowID)
+	c := rs.cellFor(workflowID)
+	if c == nil {
+		return errAskGone
+	}
+	host, err := rs.ensureResident(ctx, workflowID)
 	if err != nil {
 		return err
 	}
-	// Held from here, not from the Call: the address read is a round trip, and a bound coming due inside
-	// it would close this carrier.
-	defer func() { host.release(err) }()
 	lease, err := rs.life.admit(workflowID)
 	if err != nil {
-		return errRunNotParked
+		// A delete KAS keeps reopens the run, so this is not "gone".
+		return errAskStopping
 	}
 	defer lease.end()
+	defer rs.kickCell(c)
+	if aErr := c.acquire(ctx); aErr != nil {
+		return aErr
+	}
+	held := true
+	release := func() {
+		if held {
+			held = false
+			c.release()
+		}
+	}
+	defer release()
+	if refusal := c.holdRefusal(); refusal != nil {
+		return refusal
+	}
+	p := rs.registerPending(ctx, c)
+	r, err := rs.readAsks(ctx, c)
+	if err != nil {
+		rs.clearPending(ctx, c, p)
+		slog.Warn("could not read a run before answering it", "workflow_id", workflowID, "error", err)
+		return errAskUnreadable
+	}
+	ask, err := askByID(r.asks, askID)
+	if err != nil {
+		rs.clearPending(ctx, c, p)
+		return err
+	}
+	at := stepAddr{workflowID: workflowID, nodePath: workflow.PathKey(ask.NodePath), session: ask.StepSessionID}
 	unlock, err := rs.steers.lock(ctx, workflowID)
 	if err != nil {
+		rs.clearPending(ctx, c, p)
 		return err
 	}
 	defer unlock()
-	// Before the claim, so the registry is never empty with no answer in flight.
-	rs.asks.beginAnswer(workflowID)
-	defer rs.asks.endAnswer(workflowID)
-	a, ok := rs.asks.takeIfPresent(workflowID, askID)
-	if !ok {
-		return errAskAlreadySettled
-	}
-	at, verdict := rs.answerAddress(ctx, workflowID, a)
-	switch verdict {
-	case answerMoot:
-		// Moot rather than restored: KAS has stopped waiting on this question.
-		rs.announceSettled(ctx, a, marotte.SettledByMoot)
-		return errAskAlreadySettled
-	case answerBusy:
-		// Early, not stale: the run is between steps, so the card goes back and the reader retries.
-		rs.restoreAsk(ctx, a)
-		return errRunNotParked
-	case answerSend:
-	}
-	return rs.sendAnswer(ctx, host, a, at, text, "answer-"+askID)
-}
-
-// The caller holds the run's message gate.
-func (rs *Runs) sendAnswer(ctx context.Context, host *runHost, a *runAsk, at stepAddr, text, entryID string) error {
-	if at.session == "" {
-		rs.restoreAsk(ctx, a)
-		return errors.New("the step that asked cannot be addressed on this server")
-	}
-	d, err := rs.sendStepWords(ctx, host, at, text, entryID)
-	if d.got == kasRefused {
-		rs.restoreAsk(ctx, a)
+	c.sendingPending(p, ask.StepSessionID)
+	release()
+	got, err := rs.sendStepWords(ctx, host, at, text, "answer-"+askID)
+	if got == kasRefused {
+		rs.clearPending(ctx, c, p)
 		return err
 	}
-	// Words the record keeps answered the question, so a retry finds it settled rather than asks again.
-	rs.announceSettled(durable.Context(ctx), a, marotte.SettledByUser)
+	rs.repliedPending(ctx, c, p)
 	if err != nil {
 		return err
 	}
-	slog.Info("answered a parked workflow step", "workflow_id", at.workflowID,
-		"node_path", scrubLog(at.nodePath), "ask_id", scrubLog(a.payload.AskID))
+	slog.Info("answered a parked workflow step", "workflow_id", workflowID,
+		"node_path", scrubLog(at.nodePath))
 	return nil
 }
-
-// errRunNotParked means the run is executing, with no parked step to reroute into yet. Retryable; the card survives.
-var errRunNotParked = errors.New(
-	"this run is not waiting on an answer right now, so try again in a moment",
-)
-
-type answerVerdict int
-
-const (
-	// answerSend: the ask's own step is parked, so KAS reroutes the prompt into it.
-	answerSend answerVerdict = iota
-	// answerMoot: nothing is waiting on this question any more.
-	answerMoot
-	// answerBusy: the run is BETWEEN steps, so the answer is early rather than stale.
-	answerBusy
-)
-
-// The fresh read leads, since a prompt KAS does not reroute runs as an ordinary turn; an unreadable
-// run falls back to the ask's own address rather than refusing. An ask several parked executions could
-// own answers an empty session, which no send guesses past.
-func (rs *Runs) answerAddress(ctx context.Context, workflowID string, a *runAsk) (stepAddr, answerVerdict) {
-	n, err := rs.readRun(ctx, workflowID)
-	if err != nil {
-		slog.Warn("could not read a parked run's state, so its ask answers to the address it carries",
-			"workflow_id", workflowID, "error", err)
-		session := a.payload.StepSessionID
-		return stepAddr{workflowID: workflowID, nodePath: rs.stepPathOf(workflowID, session), session: session}, answerSend
-	}
-	st, matches := n.askedStep(&a.payload)
-	switch {
-	case matches > 1:
-		return stepAddr{workflowID: workflowID}, answerSend
-	case matches == 1 && marotte.RunNodeStatus(st.Status) == marotte.RunNodeStatusPaused:
-		return n.addrOf(st), answerSend
-	case n.anyPaused():
-		slog.Info("a run is parked at a different step than the one being answered, "+
-			"so the answer was withheld", "workflow_id", workflowID,
-			"asked_node_id", scrubLog(a.payload.NodeID))
-		return stepAddr{}, answerMoot
-	case n.run.Terminal():
-		return stepAddr{}, answerMoot
-	}
-	slog.Info("a run is not parked on any step right now, so its answer was held back "+
-		"rather than discarded", "workflow_id", workflowID,
-		"asked_node_id", scrubLog(a.payload.NodeID), "status", scrubLog(string(n.run)))
-	return stepAddr{}, answerBusy
-}
-
-// hostedControl issues a verb on a process holding the run, never the utility bridge, which denies
-// permissions and fs/terminal calls.
-func (rs *Runs) hostedControl(ctx context.Context, workflowID, method string, stop runStop) error {
-	host, err := rs.hostRun(ctx, workflowID)
-	if err != nil {
-		return err
-	}
-	params := map[string]any{keyWorkflowID: workflowID}
-	stop.apply(params)
-	_, callErr := rs.callReclaiming(ctx, host.sb.bridge, workflowID, method, params)
-	host.release(callErr)
-	return callErr
-}
-
-// After a crash the utility session's KAS stamps every run it reconciles as its own (acp-server.js
-// sweepStaleRuns), refusing other processes for ~135 s; on that refusal the utility is stopped,
-// voiding the stamp, and the verb resent.
-func (rs *Runs) callReclaiming(
-	ctx context.Context, b acpCaller, workflowID, method string, params map[string]any,
-) (*marotte.RPCResponse, error) {
-	resp, err := b.Call(ctx, method, params)
-	callErr := runCallErr(resp, err)
-	if !errors.Is(callErr, workflow.ErrOwnedElsewhere) {
-		return resp, callErr
-	}
-	rs.utility().session.Stop()
-	slog.Info("a run was held by another process, so the utility session was stopped "+
-		"and the verb sent again", "workflow_id", workflowID, "method", method)
-	return resendWhileOwned(ctx, b, method, params)
-}
-
-// reclaimGrace bounds resendWhileOwned: KAS probes liveness with `process.kill(pid, 0)`, and the stopped
-// process exits ~25 ms after Stop (kiro-cli 2.27.0).
-var reclaimGrace = 2 * time.Second
-
-const reclaimPoll = 50 * time.Millisecond
-
-// resendWhileOwned resends until KAS stops refusing for another owner, the grace or ctx ends, and answers the last reply.
-func resendWhileOwned(
-	ctx context.Context, b acpCaller, method string, params map[string]any,
-) (*marotte.RPCResponse, error) {
-	deadline := time.Now().Add(reclaimGrace)
-	for {
-		resp, err := b.Call(ctx, method, params)
-		callErr := runCallErr(resp, err)
-		if !errors.Is(callErr, workflow.ErrOwnedElsewhere) || !time.Now().Before(deadline) {
-			return resp, callErr
-		}
-		wait := time.NewTimer(reclaimPoll)
-		select {
-		case <-ctx.Done():
-			wait.Stop()
-			return resp, callErr
-		case <-wait.C:
-		}
-	}
-}
-
-// errRunHostStart marks a failure to start a carrier: a server fault, answered 500 without echoing an internal path.
-var errRunHostStart = errors.New("a process for this run could not be started")
-
-// Driving it elsewhere would drop the profile's presets from its steps. Answered 409.
-var errLaunchSessionUnavailable = errors.New("the run's launching session cannot be opened here")
-
-const launchSessionUnavailableText = "This run's launching session cannot be opened on this server. " +
-	"Cancel and delete still work."
-
-// errRunNotListed means KAS's inventory does not list the run. Answered 404.
-var errRunNotListed = errors.New("run not found")
 
 // "" for parentless.
 type runParent struct {
@@ -815,18 +615,17 @@ type runParent struct {
 
 // err says why parent cannot route a verb.
 type runOrigin struct {
-	err      error
-	parent   runParent
-	chatName string
-	recipe   string
+	err    error
+	parent runParent
+	recipe string
 	// pauseKind and pauseNodeID are kasWorkflowRun's, off the same read.
 	pauseKind    string
 	pauseNodeID  string
 	pausePending bool
 }
 
-// An ownerless parent is trusted only after a complete chat scan: loading a chat's session onto a
-// run bridge replays it into a carrier.
+// An ownerless parent is trusted only after a complete chat scan: loading a chat's session as a
+// run host replays that chat's transcript into the run.
 func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
 	runs, err := rs.listRaw(ctx)
 	if err != nil {
@@ -848,7 +647,7 @@ func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
 		return o
 	}
 	var complete bool
-	o.parent.chat, o.chatName, complete = rs.chatForSession(ctx, o.parent.session)
+	o.parent.chat, complete = rs.chatForSession(ctx, o.parent.session)
 	if o.parent.chat == "" && !complete {
 		o.err = fmt.Errorf("%w: a chat file could not be read, so which chat launched the run is unknown",
 			errRunHostStart)
@@ -856,433 +655,9 @@ func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
 	return o
 }
 
-// runHost is one verb's hold on a run's carrier, counted in carrierUse before the host lock is
-// released so no verb can end the carrier uncounted. Released exactly once.
-type runHost struct {
-	rs         *Runs
-	sb         *sharedBridge
-	chatID     marotte.ChatID
-	workflowID string
-	// started is whether this verb started the carrier, so release alone decides its end.
-	started bool
-}
-
-func (rs *Runs) hostRun(ctx context.Context, workflowID string) (*runHost, error) {
-	return rs.acquireHost(ctx, workflowID, rs.originOf)
-}
-
-// acquireHost resolves one verb's carrier under the run's host lock (a waiter gives up with its ctx): the
-// run's own bridge, else its launching session made live with the profile's presets, never another
-// session. origin is read only when the run's own bridge is not live.
-func (rs *Runs) acquireHost(
-	ctx context.Context, workflowID string, origin func(context.Context, string) runOrigin,
-) (*runHost, error) {
-	unlock, err := rs.hosts.acquire(ctx, workflowID)
-	if err != nil {
-		return nil, err
-	}
-	if sb := rs.runOwnBridge(workflowID); sb != nil {
-		defer unlock()
-		return rs.hold(workflowID, runChatID(workflowID), sb, false), nil
-	}
-	o := origin(ctx, workflowID)
-	if o.err != nil {
-		unlock()
-		return nil, o.err
-	}
-	if o.parent.chat != "" {
-		return rs.acquireDurably(ctx, unlock, func(dctx context.Context) (*runHost, error) {
-			sb, err := rs.rehostOnChat(dctx, workflowID, o.parent)
-			if err != nil {
-				return nil, err
-			}
-			return rs.hold(workflowID, o.parent.chat, sb, false), nil
-		})
-	}
-	return rs.loadRunCarrier(ctx, workflowID, o.parent.session, unlock)
-}
-
-// hold enters sb for one verb. The caller holds the run's host lock.
-func (rs *Runs) hold(workflowID string, chatID marotte.ChatID, sb *sharedBridge, started bool) *runHost {
-	rs.carriers.enter(sb)
-	return &runHost{rs: rs, sb: sb, chatID: chatID, workflowID: workflowID, started: started}
-}
-
-// errVerbNeverSent is the release cause for a host acquired for a verb that had already given up.
-var errVerbNeverSent = errors.New("the verb gave up before anything was sent")
-
-// acquireDurably runs acquire on a durable context in a tracked goroutine that owns unlock: a cancelled
-// spawn would detach a chat from its session. The lock never spans the verb's RPC; a host for a
-// verb that gave up is released under the lock.
-func (rs *Runs) acquireDurably(
-	ctx context.Context, unlock func(), acquire func(context.Context) (*runHost, error),
-) (*runHost, error) {
-	type acquired struct {
-		h   *runHost
-		err error
-	}
-	var (
-		mu                   sync.Mutex
-		abandoned, delivered bool
-	)
-	done := make(chan acquired, 1)
-	dctx := durable.Context(ctx)
-	rs.lifecycle.inflight.Go(func() {
-		h, err := acquire(dctx)
-		mu.Lock()
-		if abandoned {
-			mu.Unlock()
-			if h != nil {
-				h.releaseLocked(errVerbNeverSent)
-			}
-			unlock()
-			return
-		}
-		delivered = true
-		mu.Unlock()
-		unlock()
-		done <- acquired{h: h, err: err}
-	})
-	select {
-	case r := <-done:
-		return r.h, r.err
-	case <-ctx.Done():
-		mu.Lock()
-		if delivered {
-			// The host is the verb's now: it fails on its own ctx and releases it.
-			mu.Unlock()
-			r := <-done
-			return r.h, r.err
-		}
-		abandoned = true
-		mu.Unlock()
-		return nil, ctx.Err()
-	}
-}
-
-// cause is nil when it landed or KAS took it. A carrier this verb started and failed is ended here
-// only, under the host lock. On a context error KAS may have taken the verb, so the carrier is kept
-// under the kept-carrier bound.
-func (h *runHost) release(cause error) {
-	rs := h.rs
-	if !h.started || cause == nil {
-		rs.carriers.leave(h.sb)
-		return
-	}
-	unlock, err := rs.hosts.acquire(rs.lifecycle.shutdownCtx, h.workflowID)
-	if err != nil {
-		// Shutting down stops every carrier.
-		rs.carriers.leave(h.sb)
-		return
-	}
-	defer unlock()
-	h.releaseLocked(cause)
-}
-
-// releaseLocked is release's decision for a carrier the verb started, made while the
-// caller holds the run's host lock.
-func (h *runHost) releaseLocked(cause error) {
-	rs := h.rs
-	rs.carriers.leave(h.sb)
-	if !h.started || cause == nil {
-		return
-	}
-	switch {
-	case isCtxErr(cause):
-		slog.Warn("a run verb ended with its context cancelled, so its carrier is kept: "+
-			"whether KAS took the verb is unknown, and frames from a run it drove would go nowhere",
-			"workflow_id", h.workflowID, "error", cause)
-		rs.boundKeptCarrier(h.chatID, h.workflowID, h.sb)
-	case h.sb.runVerbs.Load() > 1:
-		rs.boundKeptCarrier(h.chatID, h.workflowID, h.sb)
-	case rs.bridges.get(h.chatID) == h.sb:
-		rs.coord.closeBridge(rs.lifecycle.shutdownCtx, h.chatID, marotte.TurnOutcomeInterrupted)
-	}
-}
-
-// rehostOnChat reaches a chat-parented run through the chat's own bridge, never a second resident on
-// its session. That bridge must hold the run's launching session: openBridge can fall back to a new one.
-func (rs *Runs) rehostOnChat(
-	ctx context.Context, workflowID string, parent runParent,
-) (*sharedBridge, error) {
-	held, err := rs.coord.openBridge(ctx, parent.chat, "")
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errRunHostStart, err)
-	}
-	if got := string(held.SessionID()); got != parent.session {
-		slog.Warn("a run's launching chat is open on another session, so the run was not driven",
-			"workflow_id", workflowID, "chat_id", parent.chat,
-			"launch_session", parent.session, "chat_session", got)
-		return nil, errLaunchSessionUnavailable
-	}
-	return held, nil
-}
-
-// loadRunCarrier makes a parentless run's launching session live on a run bridge under its synthetic id,
-// owning unlock. Registered and forwarded before the load: session/load sends host requests.
-func (rs *Runs) loadRunCarrier(
-	ctx context.Context, workflowID, session string, unlock func(),
-) (*runHost, error) {
-	chatID := runChatID(workflowID)
-	sb, existed := rs.bridges.orInsert(chatID)
-	if existed {
-		unlock()
-		return nil, fmt.Errorf("%w: a run bridge is already registered for this run", errRunHostStart)
-	}
-	return rs.acquireDurably(ctx, unlock, func(dctx context.Context) (*runHost, error) {
-		if err := rs.startRunCarrier(dctx, chatID, sb, session); err != nil {
-			return nil, fmt.Errorf("%w: %w", errRunHostStart, err)
-		}
-		slog.Info("re-hosted a run by loading its launching session", "workflow_id", workflowID,
-			"session_id", session)
-		return rs.hold(workflowID, chatID, sb, true), nil
-	})
-}
-
-// On failure sb leaves the map and its bridge stops.
-func (rs *Runs) startRunCarrier(
-	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, session string,
-) error {
-	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
-	defer cancel()
-	rs.coord.goForward(chatID, sb.bridge)
-	if err := sb.bridge.Start(cctx, &marotte.StartOpts{
-		Lifetime:         rs.lifecycle.shutdownCtx,
-		SessionID:        session,
-		AgentEngine:      resolveAgentEngine(),
-		EnableHooks:      true,
-		Presets:          securityPresets(cctx, rs.lifecycle.configDir),
-		IgnoreFiles:      func(c context.Context) []string { return spawnIgnoreFiles(c, rs.lifecycle.configDir) },
-		TerminalTimeout:  func(c context.Context) int { return terminalCommandTimeoutMs(c, rs.lifecycle.configDir) },
-		ToolSearch:       toolSearchEnabled(cctx, rs.lifecycle.configDir),
-		Knowledge:        knowledgeEnabled(cctx, rs.lifecycle.configDir),
-		Memory:           memoryPreference(cctx, rs.lifecycle.configDir),
-		Features:         agentFeatures(cctx, rs.lifecycle.configDir, currentLocks(rs.locks)),
-		DisableTelemetry: rs.lifecycle.telemetryDisabled(rs.locks),
-		// A run's step sessions share the process, so they inherit it.
-		ContentCollection: contentCollectionResolver(rs.lifecycle.configDir, rs.locks),
-		// Nothing renders a step session's title.
-		DisableSessionTitles: true,
-	}); err != nil {
-		rs.bridges.removeIfSame(chatID, sb)
-		sb.bridge.Stop()
-		return err
-	}
-	sb.adoptSpawn()
-	sb.setIdle()
-	// A settings write during the spawn skipped this bridge (syncLive).
-	sb.syncLive(cctx, chatID, rs.readLiveSettings)
-	return nil
-}
-
-func (rs *Runs) readLiveSettings(ctx context.Context) liveSettings {
-	return readLiveSettings(ctx, rs.lifecycle.configDir, readLiveFields)
-}
-
-// carrierUse counts the run verbs holding each carrier, keyed by carrier since one holds several verbs in turn.
-type carrierUse struct {
-	held map[*sharedBridge]int
-	// onIdle is a close a lifecycle frame deferred while a verb held the carrier (whenIdle).
-	onIdle map[*sharedBridge]func()
-	mu     sync.Mutex
-}
-
-// enter records a verb using sb, paired with leave over the whole span from resolve to return:
-// AnswerInput's span includes an `inspect` round trip.
-func (c *carrierUse) enter(sb *sharedBridge) {
-	sb.runVerbs.Add(1)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.held == nil {
-		c.held = make(map[*sharedBridge]int)
-	}
-	c.held[sb]++
-}
-
-// leave records a verb done with sb and runs any deferred close outside the lock. The entry is deleted
-// at zero, since its key pins the bridge.
-func (c *carrierUse) leave(sb *sharedBridge) {
-	c.mu.Lock()
-	if c.held[sb] > 1 {
-		c.held[sb]--
-		c.mu.Unlock()
-		return
-	}
-	delete(c.held, sb)
-	closeFn := c.onIdle[sb]
-	delete(c.onIdle, sb)
-	c.mu.Unlock()
-	if closeFn != nil {
-		closeFn()
-	}
-}
-
-func (c *carrierUse) busy(sb *sharedBridge) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.held[sb] > 0
-}
-
-// whenIdle runs closeFn once no verb holds sb, at once if none does. It ends on the caller's context or
-// KAS answering. A repeat frame replaces the pending closer: one carrier, one close.
-func (c *carrierUse) whenIdle(sb *sharedBridge, closeFn func()) {
-	c.mu.Lock()
-	if c.held[sb] == 0 {
-		c.mu.Unlock()
-		closeFn()
-		return
-	}
-	if c.onIdle == nil {
-		c.onIdle = make(map[*sharedBridge]func())
-	}
-	c.onIdle[sb] = closeFn
-	c.mu.Unlock()
-}
-
-// runLocks is one ctx-abandonable lock per run (sync.Mutex cannot be). A ctx already ended when the lock frees loses.
-type runLocks struct {
-	held map[string]chan struct{}
-	mu   sync.Mutex
-}
-
-func (p *runLocks) acquire(ctx context.Context, workflowID string) (release func(), err error) {
-	for {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		p.mu.Lock()
-		busy, taken := p.held[workflowID]
-		if !taken {
-			if p.held == nil {
-				p.held = make(map[string]chan struct{})
-			}
-			done := make(chan struct{})
-			p.held[workflowID] = done
-			p.mu.Unlock()
-			return func() {
-				p.mu.Lock()
-				delete(p.held, workflowID)
-				p.mu.Unlock()
-				close(done)
-			}, nil
-		}
-		p.mu.Unlock()
-		select {
-		case <-busy:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-}
-
-// keptCarrierGrace is how long a carrier kept on an unknown outcome waits before its run is re-read;
-// longer than launchTimeout. carrierUse is the safety argument. A var for tests.
-var keptCarrierGrace = 10 * time.Minute
-
-type carrierVerdict int
-
-const (
-	// carrierClosed: the carrier was stopped.
-	carrierClosed carrierVerdict = iota
-	// carrierSpared pins that not this bound's to close, or its run still executes; the bound ends.
-	carrierSpared
-	// carrierBusy pins that a verb still holds it; ask again.
-	carrierBusy
-)
-
-// boundKeptCarrier gives a carrier kept on a context error an end, since nothing else would close it.
-// Untracked, like healPaused's AfterFunc: the guards make a late firing one inspect. A busy verdict
-// re-arms until the holding verb ends or shutdown.
-func (rs *Runs) boundKeptCarrier(chatID marotte.ChatID, workflowID string, kept *sharedBridge) {
-	time.AfterFunc(keptCarrierGrace, func() {
-		if rs.closeKeptCarrier(chatID, workflowID, kept) == carrierBusy {
-			rs.boundKeptCarrier(chatID, workflowID, kept)
-		}
-	})
-}
-
-// closeKeptCarrier is the bound's decision under the run's host lock. Identity leads, so a stale bound
-// neither closes a later carrier nor loops; use comes next, a local read.
-func (rs *Runs) closeKeptCarrier(
-	chatID marotte.ChatID, workflowID string, kept *sharedBridge,
-) carrierVerdict {
-	unlock, err := rs.hosts.acquire(rs.lifecycle.shutdownCtx, workflowID)
-	if err != nil {
-		// Shutting down stops every carrier.
-		return carrierSpared
-	}
-	defer unlock()
-	if rs.bridges.get(chatID) != kept {
-		return carrierSpared
-	}
-	if rs.carriers.busy(kept) {
-		slog.Info("a run verb is still holding a carrier its bound came due on, "+
-			"so the carrier is kept and re-read later", "workflow_id", workflowID)
-		return carrierBusy
-	}
-	res, ok := rs.inspect(rs.lifecycle.shutdownCtx, workflowID)
-	if !ok || res.WorkflowID != workflowID {
-		return carrierSpared
-	}
-	if !res.State.Status.Terminal() && res.State.Status != marotte.RunStatusPaused {
-		return carrierSpared
-	}
-	slog.Info("closing a run carrier kept for a verb KAS never took",
-		"workflow_id", workflowID, "status", res.State.Status)
-	rs.coord.closeBridge(rs.lifecycle.shutdownCtx, chatID, marotte.TurnOutcomeInterrupted)
-	return carrierClosed
-}
-
-// isCtxErr reports a cancellation or deadline at any depth, the one condition under which a failed verb keeps its carrier.
+// isCtxErr reports a cancellation or deadline at any depth: KAS may have taken a verb whose context ended.
 func isCtxErr(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
-}
-
-// hostBridgeChat resolves the bridge holding the run's registry entry and its chat id, or "": the run's
-// own `run:<id>` bridge, or the launching chat's. The id keys a synthesised ask (askChatID). One
-// `workflow/list` on the second path only.
-func (rs *Runs) hostBridgeChat(
-	ctx context.Context, workflowID string,
-) (marotte.ChatID, *sharedBridge) {
-	if sb := rs.runOwnBridge(workflowID); sb != nil {
-		return runChatID(workflowID), sb
-	}
-	o := rs.originOf(ctx, workflowID)
-	if o.err != nil || o.parent.chat == "" {
-		return "", nil
-	}
-	sb := rs.bridges.get(o.parent.chat)
-	if sb == nil {
-		return "", nil
-	}
-	return o.parent.chat, sb
-}
-
-// runOwnBridge is the process holding the run under its own `run:<id>`, or nil (also while loading).
-// The one owner of the preference: a re-hosted run is registered only in that process.
-func (rs *Runs) runOwnBridge(workflowID string) *sharedBridge {
-	if sb := rs.bridges.get(runChatID(workflowID)); sb != nil && sb.startedPastSpawn() {
-		return sb
-	}
-	return nil
-}
-
-// control issues a verb safe on either connection, preferring the process holding the run: only cancel
-// and delete, which only write state. KAS refuses them on the utility session while the owner lives.
-func (rs *Runs) control(
-	ctx context.Context, workflowID, method, logLabel string, stop runStop, carrier *sharedBridge,
-) error {
-	params := map[string]any{keyWorkflowID: workflowID}
-	stop.apply(params)
-	if carrier == nil {
-		_, carrier = rs.hostBridgeChat(ctx, workflowID)
-	}
-	if carrier != nil {
-		resp, err := carrier.bridge.Call(ctx, method, params)
-		return runCallErr(resp, err)
-	}
-	_, err := rs.utility().session.rawCall(ctx, logLabel, method, callerParams(params))
-	return err
 }
 
 // Host requests and the three ask kinds reuse the chat handlers; lifecycle frames go
@@ -1293,14 +668,13 @@ func (rt *Runtime) dispatch(ctx context.Context, chatID marotte.ChatID, origin a
 		rt.dispatchRequest(ctx, chatID, origin, msg)
 		return
 	}
-	// Before the prefix test. It keeps the run bridge's own chat id: `run:<id>` is the ask's dock key.
+	// Before the prefix test.
 	if msg.Method == methodKiroSessionNotify {
-		rt.runs.handleSessionNotify(ctx, chatID, msg)
+		rt.runs.onNotify(ctx, chatID, msg)
 		return
 	}
-	// Keeps the run's chat id, so the toast names the run.
-	if msg.Method == methodV3SystemNotify {
-		rt.translator.HandleSystemNotify(ctx, chatID, msg)
+	// Keeps the run's chat id, so a toast names the run.
+	if rt.dispatchWorkspace(ctx, chatID, msg) {
 		return
 	}
 	if strings.HasPrefix(msg.Method, "_kiro/workflow/") {
@@ -1308,7 +682,7 @@ func (rt *Runtime) dispatch(ctx context.Context, chatID marotte.ChatID, origin a
 			fn(ctx, "", msg)
 		}
 		if msg.Method == methodWFRunComplete {
-			rt.closeStoppedBridge(chatID, msg)
+			rt.releaseEndedHost(chatID, msg)
 		}
 		return
 	}
@@ -1316,7 +690,7 @@ func (rt *Runtime) dispatch(ctx context.Context, chatID marotte.ChatID, origin a
 		rt.handleRunStepFrame(ctx, chatID, msg)
 		return
 	}
-	slog.Debug("run bridge: unhandled notification", "method", msg.Method, "chat_id", chatID)
+	slog.Debug("run host session: unhandled notification", "method", msg.Method, "chat_id", chatID)
 }
 
 // An unmatched one is refused, since silence wedges the step.
@@ -1335,52 +709,29 @@ func (rt *Runtime) dispatchRequest(ctx context.Context, chatID marotte.ChatID, o
 		fn(ctx, chatID, origin, msg)
 		return
 	}
-	slog.Warn("run bridge: refusing unexpected request", "method", msg.Method, "chat_id", chatID)
+	slog.Warn("run host session: refusing unexpected request", "method", msg.Method, "chat_id", chatID)
 	_ = respondOn(ctx, rt.bridge.mgr, chatID, origin, msg, nil, &marotte.RPCError{
 		Code:    marotte.RPCCodeMethodNotFound,
-		Message: "unsupported on a run bridge: " + msg.Method,
+		Message: "unsupported on a run's host session: " + msg.Method,
 	})
 }
 
-// closeStoppedBridge closes a run bridge once its run stopped executing (terminal or paused); hostRun
-// re-hosts on demand. Run bridges only; no lease released; an unrecognised status kept. A goroutine,
-// since this runs on the forward loop Stop closes; it defers until the carrier is idle.
-func (rt *Runtime) closeStoppedBridge(chatID marotte.ChatID, msg *marotte.RPCResponse) {
+// releaseEndedHost closes a parentless run's host session once its run is terminal; a paused run keeps it resident,
+// so resume, retry, Continue and answers need no reload. A goroutine, since this runs on the session's own forward.
+func (rt *Runtime) releaseEndedHost(chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var p struct {
 		Status marotte.RunStatus `json:"status"`
 	}
-	if json.Unmarshal(msg.Params, &p) != nil {
+	if json.Unmarshal(msg.Params, &p) != nil || !p.Status.Terminal() {
 		return
 	}
-	if !p.Status.Terminal() && p.Status != marotte.RunStatusPaused {
+	if rt.bridge.mgr.get(chatID) == nil {
 		return
 	}
-	sb := rt.bridge.mgr.get(chatID)
-	if sb == nil {
-		return
-	}
-	slog.Info("run stopped executing, closing its bridge", "chat_id", chatID, "status", p.Status)
-	workflowID := workflowIDOf(chatID)
-	// Only the goroutine takes the host lock: whenIdle can run this from release, which holds it.
-	rt.runs.carriers.whenIdle(sb, func() { go rt.runs.closeStoppedCarrier(chatID, workflowID, sb) })
-}
-
-// closeStoppedCarrier ends sb under the host lock; a verb that entered since may be re-driving, so sb
-// goes to the kept-carrier bound instead.
-func (rs *Runs) closeStoppedCarrier(chatID marotte.ChatID, workflowID string, sb *sharedBridge) {
-	unlock, err := rs.hosts.acquire(rs.lifecycle.shutdownCtx, workflowID)
-	if err != nil {
-		return
-	}
-	defer unlock()
-	if rs.bridges.get(chatID) != sb {
-		return
-	}
-	if rs.carriers.busy(sb) {
-		rs.boundKeptCarrier(chatID, workflowID, sb)
-		return
-	}
-	rs.coord.closeBridge(rs.lifecycle.shutdownCtx, chatID, marotte.TurnOutcomeInterrupted)
+	slog.Info("a run ended, closing its host session", "chat_id", chatID, "status", p.Status)
+	rt.lifecycle.goUnlessDraining(func() {
+		rt.coord.closeBridge(rt.lifecycle.shutdownCtx, chatID, marotte.TurnOutcomeInterrupted)
+	})
 }
 
 const agentSourcePrefix = "agent://"
@@ -1453,20 +804,20 @@ func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 
 // `plan` rides through as raw JSON (marotte.Recipe).
 type kasRecipe struct {
-	Inputs      map[string]string `json:"inputs"`
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	Source      string            `json:"source"`
-	Plan        json.RawMessage   `json:"plan"`
-	BuiltIn     bool              `json:"builtIn"`
+	Inputs          map[string]string `json:"inputs"`
+	Name            string            `json:"name"`
+	Description     string            `json:"description"`
+	ValidationError string            `json:"validationError"`
+	Source          string            `json:"source"`
+	Plan            json.RawMessage   `json:"plan"`
+	BuiltIn         bool              `json:"builtIn"`
 }
 
 func (rs *Runs) listRecipes(ctx context.Context) ([]marotte.Recipe, error) {
-	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
-	raw, err := u.session.rawCall(cctx, "workflow listRecipes call", methodKiroWorkflowListRecipes,
-		callerParams(map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}}))
+	raw, err := rs.engine.rawCall(cctx, "workflow listRecipes call", methodKiroWorkflowListRecipes,
+		map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}})
 	if err != nil {
 		return nil, err
 	}
@@ -1481,22 +832,26 @@ func (rs *Runs) listRecipes(ctx context.Context) ([]marotte.Recipe, error) {
 		if r.Name == "" || r.Source == "" {
 			continue
 		}
+		docKey, _ := translate.DocKeyFromAbs(r.Source)
 		out = append(out, marotte.Recipe{
-			Name:        r.Name,
-			Description: r.Description,
-			Source:      r.Source,
-			Inputs:      r.Inputs,
-			Plan:        r.Plan,
-			BuiltIn:     r.BuiltIn,
+			Name:            r.Name,
+			Description:     r.Description,
+			ValidationError: r.ValidationError,
+			Source:          r.Source,
+			DocKey:          docKey,
+			Inputs:          r.Inputs,
+			Plan:            r.Plan,
+			BuiltIn:         r.BuiltIn,
 		})
 	}
 	return out, nil
 }
 
-// workflowNew creates the run on bridge and returns its id. parent is the run bridge's own session, so
-// frames route back to the executing process. workspacePaths stays for pre-0.63.3 engines.
+// workflowNew creates the run on bridge and returns its id. parent is the run host session's id, so
+// frames route back to that session. workspacePaths stays for pre-0.63.3 engines.
 func (rs *Runs) workflowNew(
-	ctx context.Context, bridge acpCaller, source string, inputs map[string]string, parent marotte.SessionID, label string,
+	ctx context.Context, bridge acpCaller, source string, inputs map[string]string,
+	defaults marotte.RunDefaults, parent marotte.SessionID, label string,
 ) (string, error) {
 	// Always a map: KAS answers "inputs is not iterable" without one.
 	in := map[string]any{}
@@ -1511,6 +866,12 @@ func (rs *Runs) workflowNew(
 	}
 	if label != "" {
 		params["runLabel"] = label
+	}
+	if defaults.Model != "" {
+		params["modelId"] = defaults.Model
+	}
+	if defaults.Effort != "" {
+		params["effortLevel"] = defaults.Effort
 	}
 	resp, err := bridge.Call(ctx, methodKiroWorkflowNew, params)
 	if cErr := runCallErr(resp, err); cErr != nil {
@@ -1535,13 +896,15 @@ func runCallErr(resp *marotte.RPCResponse, err error) error {
 // stalePauseReason is KAS's STALE_RUNNING_PAUSE_REASON for a run whose owner died. A literal: only this reason licenses a cancel.
 const stalePauseReason = "Interrupted by agent restart; the previously running step was paused for resume."
 
-// Pause reasons for a stop nobody chose, licensing a resume only. The network one is matched by prefix
-// since KAS interpolates the error code.
-const (
-	interruptedPauseReason  = "Step interrupted (agent shutdown or connection reset); will resume."
-	modelServicePauseReason = "Transient model service error (service 5xx/throttling); will resume."
-	networkPausePrefix      = "Transient connection error ("
-)
+// resumableReasonPrefixes open the reasons KAS's pauseVerdict gives a stop nobody chose, licensing a resume
+// only. Prefixes, because KAS rewords the tails between releases and interpolates the network code; the
+// interruption arm carries no pauseDetail, so its prefix is its only arm. TestPauseReasonsMatchBundle
+// (internal/kascap) checks them against the pinned agent server.
+var resumableReasonPrefixes = []string{
+	"Step interrupted (agent shutdown or connection reset);",
+	"Model service error (service 5xx or throttling);",
+	"Transient connection error (",
+}
 
 // transientErrorClass is the `pauseDetail.class` KAS stamps for every transient fault; it reaches a
 // parallel branch's pause, whose prose KAS re-renders.
@@ -1560,18 +923,66 @@ func resumablePause(reason string, detail *pauseDetail) bool {
 	if detail != nil && detail.Class == transientErrorClass {
 		return true
 	}
-	switch reason {
-	case stalePauseReason, interruptedPauseReason, modelServicePauseReason:
+	if reason == stalePauseReason {
 		return true
 	}
-	return strings.HasPrefix(reason, networkPausePrefix)
+	return slices.ContainsFunc(resumableReasonPrefixes, func(p string) bool { return strings.HasPrefix(reason, p) })
 }
 
-// never resumeAll, which would undo deliberate pauses.
+// orphanResumeDelay is when the resume sweep re-reads a run KAS still lists running after an engine end:
+// KAS judges a run's owner dead 135 s after its last beat (staleAfterMs, 4.5 beats of 30 s)
+// and allows one beat of reader drift (kiro-cli 2.29.1). A var for tests.
+var orphanResumeDelay = 165 * time.Second
+
+// resumeInterruptedRuns resumes the restart-paused runs this chat's session chain launched, and sweeps again after
+// orphanResumeDelay while KAS has not yet reconciled one; never resumeAll, which would undo deliberate pauses.
 func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID marotte.ChatID) {
+	if s := rs.resumeChainRuns(ctx, chatID); s.running || s.failed {
+		slog.Info("rehydrate: a run is still listed running, or the chat's runs could not be listed or resumed; sweeping again later",
+			"chat_id", chatID, "delay", orphanResumeDelay)
+		rs.retryResumeLater(func(ctx context.Context) bool { return rs.resumeChainRuns(ctx, chatID).failed },
+			func(sweeps int) {
+				slog.Error("rehydrate: the chat's runs could not be listed or resumed by any sweep; the chat's next reopen tries again",
+					"chat_id", chatID, "sweeps", sweeps)
+			})
+	}
+}
+
+// maxResweeps bounds a resume's tries, the caller's first included (retryResumeLater).
+const maxResweeps = 5
+
+// retryResumeLater follows the caller's one try: it calls try after orphanResumeDelay, again while it reports a
+// failed resume, until maxResweeps tries in all, then spent with that count. A stopping runtime tries nothing more.
+func (rs *Runs) retryResumeLater(try func(context.Context) (failed bool), spent func(tries int)) {
+	var after func(done int)
+	after = func(done int) {
+		if done >= maxResweeps {
+			spent(done)
+			return
+		}
+		rs.lifecycle.afterUnlessDraining(orphanResumeDelay, func() {
+			hctx, cancel := rs.lifecycle.derivedContext()
+			defer cancel()
+			if try(hctx) {
+				after(done + 1)
+			}
+		})
+	}
+	after(1)
+}
+
+// chainSweep is what one resume sweep left unreconciled: a run still listed running, which after an engine end KAS
+// reads until its staleness window passes, or a run list or automatic resume that failed.
+type chainSweep struct {
+	running bool
+	failed  bool
+}
+
+// resumeChainRuns is one resume sweep of chatID's session chain.
+func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID) (s chainSweep) {
 	chat, ok := rs.chats.Get(ctx, chatID)
 	if !ok {
-		return
+		return s
 	}
 	chain := make(map[string]bool, len(chat.PriorACPSessionIDs)+1)
 	chain[chat.ACPSessionID] = true
@@ -1582,15 +993,26 @@ func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID marotte.ChatID
 	runs, err := rs.listRaw(ctx)
 	if err != nil {
 		slog.Warn("rehydrate: run list unavailable, skipping resume sweep", "chat_id", chatID, "error", err)
-		return
+		s.failed = true
+		return s
 	}
 	for i := range runs {
 		r := &runs[i]
-		if marotte.RunStatus(r.Status) != marotte.RunStatusPaused || !chain[r.ParentSessionID] {
+		if !chain[r.ParentSessionID] {
 			continue
 		}
-		rs.resumeIfInterrupted(ctx, chatID, r.WorkflowID)
+		switch marotte.RunStatus(r.Status) {
+		case marotte.RunStatusPaused:
+			if rs.resumeIfInterrupted(ctx, chatID, r.WorkflowID) == resumeFailed {
+				s.failed = true
+			}
+		case marotte.RunStatusRunning:
+			s.running = true
+		}
 	}
+	// The chat's session is resident again, so every run it hosts is read again.
+	rs.kickChat(chatID)
+	return s
 }
 
 // maxAutoHeals bounds automatic resumes between two pieces of progress; a fourth try against a dead network says nothing.
@@ -1600,15 +1022,23 @@ const maxAutoHeals = 3
 // can land first. A var for tests.
 var healBaseDelay = 5 * time.Second
 
-// healPaused resumes a run KAS just parked for a reason nobody chose, off the `_kiro/workflow/paused`
-// frame. After `next`, so the client renders the pause first.
+// healPaused resumes a run KAS just parked for a reason nobody chose, and finds the gate's own landed pause
+// (findHolds), off the `_kiro/workflow/paused` frame. After `next`, so the client renders the pause first.
 func (rs *Runs) healPaused(
 	next func(context.Context, marotte.ChatID, *marotte.RPCResponse),
 ) func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
 	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 		next(ctx, chatID, msg)
 		f := decodePauseFrame(msg)
-		if f.WorkflowID == "" || chatID == "" {
+		if f.WorkflowID == "" {
+			return
+		}
+		if isHoldReason(f.InitiatorReason) {
+			// Every run kind's: a parentless run's frame names no chat.
+			rs.findHoldsAsync(f.WorkflowID)
+			return
+		}
+		if chatID == "" {
 			return
 		}
 		if !resumablePause(f.PauseReason, f.PauseDetail) {
@@ -1620,19 +1050,23 @@ func (rs *Runs) healPaused(
 				"pause_code", scrubLog(pauseCodeOf(f.PauseDetail)))
 			return
 		}
-		attempt, ok := rs.claimHeal(f.WorkflowID)
-		if !ok {
-			slog.Warn("a run keeps pausing for a cause nobody chose; leaving it paused",
-				"workflow_id", scrubLog(f.WorkflowID), "chat_id", chatID,
-				"pause_reason", scrubLog(f.PauseReason), "attempts", attempt)
+		// The resume claims the heal (resumeIfInterrupted); the count here spaces the attempts and stops them at the
+		// budget.
+		spent := rs.healsSpent(f.WorkflowID)
+		if spent >= maxAutoHeals {
+			// At once: past the budget there is no delay to space.
+			rs.lifecycle.goUnlessDraining(func() {
+				hctx, cancel := rs.lifecycle.derivedContext()
+				defer cancel()
+				rs.resumeIfInterrupted(hctx, chatID, f.WorkflowID)
+			})
 			return
 		}
-		delay := healBaseDelay * time.Duration(1<<(attempt-1))
+		delay := healBaseDelay * time.Duration(1<<spent)
 		slog.Info("scheduling the automatic resume of an involuntarily paused run",
 			"workflow_id", scrubLog(f.WorkflowID), "chat_id", chatID,
 			"pause_reason", scrubLog(f.PauseReason), "delay", delay)
-		// Untracked: it re-reads and does nothing unless still parked.
-		time.AfterFunc(delay, func() {
+		rs.lifecycle.afterUnlessDraining(delay, func() {
 			hctx, cancel := rs.lifecycle.derivedContext()
 			defer cancel()
 			rs.resumeIfInterrupted(hctx, chatID, f.WorkflowID)
@@ -1640,12 +1074,13 @@ func (rs *Runs) healPaused(
 	}
 }
 
-// pauseFrame is the three fields the heal reads off `_kiro/workflow/paused`, decoded separately
+// pauseFrame is the fields the heal reads off `_kiro/workflow/paused`, decoded separately
 // from lifecycleFrame. Pointer first for govet's fieldalignment.
 type pauseFrame struct {
-	PauseDetail *pauseDetail `json:"pauseDetail"`
-	WorkflowID  string       `json:"workflowId"`
-	PauseReason string       `json:"pauseReason"`
+	PauseDetail     *pauseDetail `json:"pauseDetail"`
+	WorkflowID      string       `json:"workflowId"`
+	PauseReason     string       `json:"pauseReason"`
+	InitiatorReason string       `json:"initiatorReason"`
 }
 
 // pauseClassOf names a pause's class for a log line only; predicates compare the field directly.
@@ -1685,8 +1120,7 @@ func decodePauseFrame(msg *marotte.RPCResponse) pauseFrame {
 	return f
 }
 
-// healProgress refills a run's per-stall budgets when a node completes and retires that node's ask
-// (node-scoped: a sibling branch may still wait), including one answered from the TUI.
+// healProgress refills a run's per-stall budgets when a node completes.
 func (rs *Runs) healProgress(
 	next func(context.Context, marotte.ChatID, *marotte.RPCResponse),
 ) func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
@@ -1695,19 +1129,15 @@ func (rs *Runs) healProgress(
 			rs.clearHeals(f.WorkflowID)
 			// The cancel ladder too: a refusal speaks only for its moment (maxCancelRetries).
 			rs.clearCancelRetries(f.WorkflowID)
-			// And the idle window. Both run populations reach this: the run bridge reuses chatHandlers for every `_kiro/workflow/*` method.
+			// And the idle window. Both run populations reach this: the run host session reuses chatHandlers for every `_kiro/workflow/*` method.
 			rs.refillDeadline(ctx, f.WorkflowID)
-			// Moot: the frame says only the node moved on.
-			rs.settleAskForNode(ctx, f.WorkflowID, f.NodeID, marotte.SettledByMoot)
 		}
 		next(ctx, chatID, msg)
 	}
 }
 
-// Strict: settleAskForNode needs both ids, so a partial frame would settle the wrong node.
 type nodeFrame struct {
 	WorkflowID string `json:"workflowId"`
-	NodeID     string `json:"nodeId"`
 }
 
 func decodeNodeFrame(msg *marotte.RPCResponse) nodeFrame {
@@ -1721,43 +1151,48 @@ func decodeNodeFrame(msg *marotte.RPCResponse) nodeFrame {
 	return f
 }
 
-func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID marotte.ChatID, workflowID string) {
-	release, err := rs.positions.acquire(ctx, workflowID)
-	if err != nil {
-		return
-	}
-	defer release()
-	// The wider involuntary set, because this resumes; the orphan sweep's narrower `restartPaused` cancels.
-	if !rs.involuntarilyPaused(ctx, workflowID) {
-		return
-	}
-	sb := rs.bridges.get(chatID)
-	if sb == nil {
-		return
-	}
-	if _, cErr := rs.callReclaiming(ctx, sb.bridge, workflowID, methodKiroWorkflowResume,
-		map[string]any{keyWorkflowID: workflowID}); cErr != nil {
-		if errors.Is(cErr, workflow.ErrJustClaimed) {
-			slog.Info("rehydrate: another resume of this run is in flight, so the heal left it to that one",
-				"workflow_id", workflowID, "chat_id", chatID)
-			return
-		}
-		slog.Warn("rehydrate: resume failed", "workflow_id", workflowID, "chat_id", chatID, "error", cErr)
-		return
-	}
-	// Arm here: this path calls the verb directly, so only the `run_start` frame would otherwise cover it.
-	rs.armDeadline(ctx, workflowID)
-	slog.Info("rehydrate: resumed restart-paused run", "workflow_id", workflowID, "chat_id", chatID)
+// resumeOutcome is what one automatic resume did; only resumeFailed is worth another try.
+type resumeOutcome int
+
+const (
+	resumeWritten resumeOutcome = iota + 1
+	// resumeSkipped: not a pause marotte resumes unasked, or the run's heal budget is spent and the run parked for
+	// the user.
+	resumeSkipped
+	resumeHeld
+	// resumeFailed: the run could not be read, its session made resident, its resume written or, past its heal budget,
+	// its pause stamped for the user.
+	resumeFailed
+)
+
+// resumeIfInterrupted is every automatic resume: it resumes a run paused for a cause nobody chose under the run's
+// heal budget, or holds it while the sign-in gate is closed.
+func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID marotte.ChatID, workflowID string) resumeOutcome {
+	out, _ := rs.retryResume(ctx, chatID, workflowID, false)
+	return out
+}
+
+// retryResume is resumeIfInterrupted for one try of a resume its caller retries: charged says an earlier try's heal
+// still stands, so this try claims none. It reports whether a heal stands after this try. runTransitions decides it.
+func (rs *Runs) retryResume(
+	ctx context.Context, chatID marotte.ChatID, workflowID string, charged bool,
+) (resumeOutcome, bool) {
+	c, _ := rs.transition(ctx, workflowID, &runRequest{want: healResume, chatID: chatID, charged: charged})
+	return c.outcome, c.charged
+}
+
+func isStatusRefusal(err error) bool {
+	_, _, ok := command.StatusOf(err)
+	return ok
 }
 
 // listRaw lists runs with their raw parent session ids, for callers that scope by
 // session chain rather than by resolved chat.
 func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
-	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
-	raw, err := u.session.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
-		callerParams(map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}}))
+	raw, err := rs.engine.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
+		map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}})
 	if err != nil {
 		return nil, err
 	}
@@ -1768,8 +1203,8 @@ func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 	return list.Runs, nil
 }
 
-// cancelForChat cancels every live run this chat's sessions launched: killing the chat's process only
-// pauses them. Starts with a record read, so a deleted chat no-ops.
+// cancelForChat cancels every live run this chat's sessions launched: closing the chat's session leaves them
+// running. Starts with a record read, so a deleted chat no-ops.
 func (rs *Runs) cancelForChat(ctx context.Context, chatID marotte.ChatID, stop runStop) {
 	chat, ok := rs.chats.Get(ctx, chatID)
 	if !ok {
@@ -1779,7 +1214,7 @@ func (rs *Runs) cancelForChat(ctx context.Context, chatID marotte.ChatID, stop r
 }
 
 // cancelForSessions cancels every live run these sessions launched, from a captured chain with no record
-// read, best-effort so a tab close never waits. One inventory read; the carrier comes from what the loop knows.
+// read, best-effort so a tab close never waits. One inventory read.
 func (rs *Runs) cancelForSessions(ctx context.Context, chatID marotte.ChatID, sessionChain []string, stop runStop) {
 	if len(sessionChain) == 0 {
 		return
@@ -1798,12 +1233,7 @@ func (rs *Runs) cancelForSessions(ctx context.Context, chatID marotte.ChatID, se
 		if marotte.RunStatus(r.Status).Terminal() || !chain[r.ParentSessionID] {
 			continue
 		}
-		carrier := rs.runOwnBridge(r.WorkflowID)
-		if carrier == nil {
-			// This chat's bridge by id: the loop filtered on its own chain.
-			carrier = rs.bridges.get(chatID)
-		}
-		if cErr := rs.cancelOn(ctx, r.WorkflowID, stop, carrier); cErr != nil {
+		if cErr := rs.cancelAs(ctx, r.WorkflowID, stop); cErr != nil {
 			slog.Warn("close: run cancel failed", "workflow_id", r.WorkflowID, "chat_id", chatID, "error", cErr)
 			continue
 		}
@@ -1812,7 +1242,7 @@ func (rs *Runs) cancelForSessions(ctx context.Context, chatID marotte.ChatID, se
 }
 
 // deleteForSessions deletes every run these sessions launched, whatever its status: KAS refuses a session
-// delete while the session owns a live run. Routing as CancelForSessions.
+// delete while the session owns a live run.
 func (rs *Runs) deleteForSessions(ctx context.Context, chatID marotte.ChatID, sessionChain []string, stop runStop) {
 	if len(sessionChain) == 0 {
 		return
@@ -1831,11 +1261,7 @@ func (rs *Runs) deleteForSessions(ctx context.Context, chatID marotte.ChatID, se
 		if !chain[r.ParentSessionID] {
 			continue
 		}
-		carrier := rs.runOwnBridge(r.WorkflowID)
-		if carrier == nil {
-			carrier = rs.bridges.get(chatID)
-		}
-		if dErr := rs.deleteOn(ctx, r.WorkflowID, stop, carrier); dErr != nil {
+		if dErr := rs.deleteAs(ctx, r.WorkflowID, stop); dErr != nil {
 			slog.Warn("delete: run delete failed", "workflow_id", r.WorkflowID, "chat_id", chatID, "error", dErr)
 		}
 	}

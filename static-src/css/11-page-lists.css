@@ -43,6 +43,26 @@
   padding-block: var(--sp-2);
 }
 
+/* The page switcher takes `--bar-h`, a rung over a control with a mouse; touch keeps
+   the 44px floor. */
+.page-header > .seg-bar {
+  --seg-bar-h: var(--bar-h);
+}
+
+/* --- The page toolbar ---------------------------------------------------- *
+ * Page-level actions in one row (Docs, Git, Settings sections), as `.action-pill`s at
+ * the inline end. The row keeps a pill's height when it holds none: Docs fills it only on
+ * the tabs that can create something, and a row that collapsed would move the list up
+ * when the reader switches tab. */
+.page-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  min-block-size: var(--btn-h);
+}
+
 /* --- The segmented switcher ---------------------------------------------- */
 
 /* A nested corner is inner = outer − border − inset, derived the OTHER way round
@@ -56,6 +76,7 @@
 
   --seg-inset: 0.25rem;
   --seg-radius: var(--r-sm);
+  --seg-bar-h: var(--btn-h);
 
   gap: var(--seg-inset);
   background: var(--c-bg-secondary);
@@ -76,10 +97,10 @@
   justify-content: center;
   gap: var(--sp-2);
 
-  /* THE BAR IS --btn-h AT EACH TIER: the segment is that minus the bar's inset
-     and border on both sides. Coarse, the painted segment is under the hit
-     floor, so the expanders below grow the target on the block axis. */
-  min-block-size: calc(var(--btn-h) - 2 * (var(--seg-inset) + 1px));
+  /* THE BAR IS --seg-bar-h: the segment is that minus the bar's inset and border
+     on both sides. Coarse, the painted segment is under the hit floor, so the
+     expanders below grow the target on the block axis. */
+  min-block-size: calc(var(--seg-bar-h) - 2 * (var(--seg-inset) + 1px));
   padding: 0 var(--sp-3);
   position: relative;
   background: transparent;
@@ -313,6 +334,10 @@ button.entry-open {
   font-family: var(--font-mono);
 }
 
+.entry-sub-error {
+  color: var(--c-red);
+}
+
 /* ONE CONTROL HEIGHT PER ROW: every action in the slot reads the
    dense tier, icon or text. `max()` rather than the bare token because the
    universal hit floor (61-mcp-tools.css) scores zero and LOSES to this rule, which
@@ -359,12 +384,20 @@ button.entry-open {
   color: var(--c-text-tertiary);
 }
 
-/* A control inside a hovered row needs its fill LAYERED over the row's wash: an
-   `.icon-btn` hovers to `--c-bg-tertiary`, and a row whose own hover is that rung
-   leaves its buttons at 1.0:1 under the pointer. Gated, so a tap latches none. */
+/* A control inside a hovered row needs its fill raised over the row's wash. Each filled
+   control hovers to `--c-bg-tertiary` by its own rule, so it takes ONE colour that already
+   includes the wash (`--c-hover-raised`): a `--layer-hover` image on top lands in the first
+   frame while the rung fades in, which read as two hover states in succession. Other
+   members (a switch) take the image, having no fill of their own to fade. A row action is a
+   plain icon or small button: a primary, danger or busy pill here would hover to this
+   neutral fill. Gated, so a tap latches none. */
 @media (any-hover: hover) {
-  .entry .entry-actions > *:hover {
+  .entry .entry-actions > :not(.icon-btn, .btn-small, .action-pill):hover {
     background-image: var(--layer-hover);
+  }
+
+  .entry .entry-actions > :is(.icon-btn, .btn-small, .action-pill):hover {
+    background: var(--c-hover-raised);
   }
 
   .entry .entry-actions > .icon-btn:hover {

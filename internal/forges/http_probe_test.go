@@ -1,8 +1,8 @@
 package forges
 
-// A probe reads the account and leaves its verdict on the connection's row in
-// the error envelope's terms, so the row can say what went wrong and what fixes
-// it without the client reading the message.
+// A Check reads the account and leaves its verdict on the connection's row as
+// one status with its reason in the error envelope's terms, so the row can say
+// what went wrong and what fixes it without the client reading the message.
 
 import (
 	"encoding/json"
@@ -29,119 +29,94 @@ func postProbe(t *testing.T, mux *http.ServeMux) ProbeResult {
 		t.Fatalf("POST %s body %q: %v", githubProbePath, rec.Body, err)
 	}
 	if got.Forge == nil {
-		t.Fatalf("POST %s = %s, want the row the probe left", githubProbePath, rec.Body)
+		t.Fatalf("POST %s = %s, want the row the check left", githubProbePath, rec.Body)
 	}
 	return got
 }
 
-func TestProbeRoute_AScopeRefusalCodesTheRow(t *testing.T) {
+func TestProbeRoute_AScopeRefusalRefusesTheRow(t *testing.T) {
+	isolateGit(t)
 	core := &whoamiCore{err: &forgeapi.Error{
 		Op: "Whoami", Code: forgeapi.CodeScopeInsufficient, Kind: forgeapi.KindForbidden, Status: http.StatusForbidden,
 		Message: "[User: Read] Access denied",
 	}}
 	got := postProbe(t, repoRoutes(recordManager(t, core)))
 
-	if got.Connected || got.Forge.Connected {
-		t.Errorf("probe over a scope refusal = %+v, want disconnected", got)
+	if got.Forge.Status != ForgeRefused || got.Forge.Error == nil {
+		t.Fatalf("check over a scope refusal = %+v, want refused with its reason", got.Forge)
 	}
-	if got.Forge.ErrorCode != forgeapi.CodeScopeInsufficient || got.Forge.ErrorKind != "forbidden" {
-		t.Errorf("row error code, kind = %q, %q, want %q, forbidden", got.Forge.ErrorCode, got.Forge.ErrorKind, forgeapi.CodeScopeInsufficient)
+	if e := got.Forge.Error; e.Code != forgeapi.CodeScopeInsufficient || e.Kind != "forbidden" {
+		t.Errorf("row error code, kind = %q, %q, want %q, forbidden", e.Code, e.Kind, forgeapi.CodeScopeInsufficient)
 	}
-	if !strings.Contains(got.Forge.LastError, "[User: Read]") || got.Error != got.Forge.LastError {
-		t.Errorf("probe error %q, row last_error %q, want both the same sentence naming what the token lacks", got.Error, got.Forge.LastError)
+	if !strings.Contains(got.Forge.Error.Message, "[User: Read]") {
+		t.Errorf("row message %q, want the sentence naming what the token lacks", got.Forge.Error.Message)
 	}
 }
 
-func TestProbeRoute_ATemporaryFailureAnswersConnectedWithItsSentence(t *testing.T) {
+func TestProbeRoute_ATemporaryFailureAnswersRetryingWithItsSentence(t *testing.T) {
+	isolateGit(t)
 	core := &whoamiCore{err: &forgeapi.Error{Op: "Whoami", Kind: forgeapi.KindTransient, Message: "no route to host"}}
 	got := postProbe(t, repoRoutes(recordManager(t, core)))
 
-	if !got.Connected || !got.Forge.Connected {
-		t.Errorf("probe over a dead network = %+v, want connected", got)
+	if got.Forge.Status != ForgeRetrying || got.Forge.Error == nil || got.Forge.Error.Kind != "transient" {
+		t.Fatalf("check over a dead network = %+v, want retrying with kind transient", got.Forge)
 	}
-	if got.Error == "" || got.Error != got.Forge.LastError || got.Forge.ErrorKind != "transient" {
-		t.Errorf("probe error %q, row last_error %q, kind %q, want both the same sentence, kind transient",
-			got.Error, got.Forge.LastError, got.Forge.ErrorKind)
+	if got.Forge.Error.Message == "" {
+		t.Errorf("row message is empty, want the failure's sentence")
 	}
 }
 
-func TestProbeRoute_ARateLimitNamesTheWaitInWholeSeconds(t *testing.T) {
+func TestProbeRoute_ARateLimitNamesWhenItLifts(t *testing.T) {
+	isolateGit(t)
 	core := &whoamiCore{err: &forgeapi.Error{
 		Op: "Whoami", Kind: forgeapi.KindRateLimited, Status: http.StatusTooManyRequests, RetryAfter: 41200 * time.Millisecond,
 	}}
 	got := postProbe(t, repoRoutes(recordManager(t, core)))
 
-	if got.Forge.ErrorKind != "rate_limited" || got.Forge.RetryAfterS != 42 {
-		t.Errorf("row error kind, retry_after_s = %q, %d, want rate_limited, 42", got.Forge.ErrorKind, got.Forge.RetryAfterS)
+	f := got.Forge
+	if f.Status != ForgeRetrying || f.Error == nil || f.Error.Kind != "rate_limited" || f.CheckedAt == 0 {
+		t.Fatalf("row = %+v, want retrying, rate_limited and the check's time", f)
 	}
-	if got.Forge.LastProbed == 0 {
-		t.Errorf("row = %+v, want the probe time the wait counts from", got.Forge)
+	if wait := f.Error.RetryAt - f.CheckedAt; wait != 41200 {
+		t.Errorf("retry_at - checked_at = %d ms, want the forge's 41200", wait)
 	}
 }
 
 func TestProbeRoute_ASuccessClearsTheCodedError(t *testing.T) {
+	isolateGit(t)
 	core := &whoamiCore{err: &forgeapi.Error{Op: "Whoami", Kind: forgeapi.KindRateLimited, RetryAfter: time.Minute}}
 	mux := repoRoutes(recordManager(t, core))
 	_ = postProbe(t, mux)
 
 	core.err = nil
 	got := postProbe(t, mux)
-	if !got.Connected || got.Error != "" {
-		t.Errorf("probe after the limit lifted = %+v, want connected with no error", got)
-	}
-	if f := got.Forge; f.LastError != "" || f.ErrorCode != "" || f.ErrorKind != "" || f.RetryAfterS != 0 {
-		t.Errorf("row after a successful probe = %+v, want no error, code, kind or wait left from the refusal", f)
-	}
-}
-
-// A probe's refusal stays the row's verdict until a probe succeeds: a refresh
-// rebuilds the row from the record and the store, and neither holds it.
-func TestProbeRoute_ARefusalSurvivesARefresh(t *testing.T) {
-	core := &whoamiCore{err: &forgeapi.Error{
-		Op: "Whoami", Code: forgeapi.CodeScopeInsufficient, Kind: forgeapi.KindForbidden, Status: http.StatusForbidden,
-		Message: "denied",
-	}}
-	m := recordManager(t, core)
-	mux := repoRoutes(m)
-	_ = postProbe(t, mux)
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Setup: Refresh() = %v", err)
-	}
-	if f := m.get("github:github.com"); f == nil || f.Connected || f.ErrorCode != forgeapi.CodeScopeInsufficient {
-		t.Errorf("row after a refused probe and a Refresh = %+v, want disconnected and coded %q", f, forgeapi.CodeScopeInsufficient)
-	}
-
-	core.err = nil
-	_ = postProbe(t, mux)
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Setup: Refresh() = %v", err)
-	}
-	if f := m.get("github:github.com"); f == nil || !f.Connected || f.LastError != "" {
-		t.Errorf("row after a successful probe and a Refresh = %+v, want connected with no error", f)
+	if got.Forge.Status != ForgeConnected || got.Forge.Error != nil {
+		t.Errorf("check after the limit lifted = %+v, want connected with no error left from the refusal", got)
 	}
 }
 
 func TestProbeRoute_TheRowsErrorIsSanitized(t *testing.T) {
+	isolateGit(t)
 	core := &whoamiCore{err: &forgeapi.Error{
 		Op: "Whoami", Kind: forgeapi.KindForbidden, Status: http.StatusForbidden, Message: "denied \u202egnihton\u202c here\nand on",
 	}}
 	got := postProbe(t, repoRoutes(recordManager(t, core)))
 
-	for name, text := range map[string]string{"error": got.Error, "last_error": got.Forge.LastError} {
-		if strings.ContainsAny(text, "\u202e\u202c\n") {
-			t.Errorf("probe %s = %q, want the upstream text's bidi controls and line break gone", name, text)
-		}
-		if !strings.Contains(text, "denied") {
-			t.Errorf("probe %s = %q, want the upstream sentence kept", name, text)
-		}
+	text := got.Forge.Error.Message
+	if strings.ContainsAny(text, "\u202e\u202c\n") {
+		t.Errorf("check message = %q, want the upstream text's bidi controls and line break gone", text)
+	}
+	if !strings.Contains(text, "denied") {
+		t.Errorf("check message = %q, want the upstream sentence kept", text)
 	}
 }
 
 func TestProbeRoute_ANonForgeFailureCarriesNoCode(t *testing.T) {
+	isolateGit(t)
 	core := &whoamiCore{err: errNoClient}
 	got := postProbe(t, repoRoutes(recordManager(t, core)))
 
-	if got.Forge.ErrorCode != "" || got.Forge.ErrorKind != "" || got.Forge.LastError == "" {
-		t.Errorf("row after a failure that is not a forge refusal = %+v, want its sentence and no code or kind", got.Forge)
+	if f := got.Forge; f.Status != ForgeRetrying || f.Error == nil || f.Error.Code != "" || f.Error.Kind != "" || f.Error.Message == "" {
+		t.Errorf("row after a failure that is not a forge refusal = %+v, want retrying with its sentence and no code or kind", f)
 	}
 }

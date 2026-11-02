@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { until } from "./__test-helpers__/until.js";
 import { emptyNote, cursorCount } from "./textsearch/copy.js";
 import type * as ModFindInChat from "./find-in-chat.js";
 import type * as ModEditorFind from "./editor-find.js";
@@ -185,7 +186,7 @@ describe("the find bars' match counter under the shipped stylesheet", () => {
       const { box, count } = await boot();
       // `domCounter` answers "" for an empty query, the just-opened state, which must cost no height.
       count.textContent = "";
-      await settle();
+      await settle(count);
       // Read as strings first: `getComputedStyle` is live, so it answers "" after `remove()`.
       const empty = getComputedStyle(count);
       const emptyBlockSize = empty.blockSize;
@@ -230,13 +231,16 @@ function shapeOf(el: HTMLElement): Record<string, string> {
   };
 }
 
-/** Past the longest transition: `block-size` is animated. */
-function settle(): Promise<void> {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setTimeout(resolve, 320);
-      });
-    });
-  });
+/** Past every transition the last write started on the page (`block-size` is animated). Reading
+ *  `el`'s style first flushes the style change, which is what creates them. */
+async function settle(el: HTMLElement): Promise<void> {
+  void getComputedStyle(el).blockSize;
+  const running = document
+    .getAnimations()
+    .filter((a) => Number.isFinite(Number(a.effect?.getComputedTiming().endTime)));
+  await until(
+    () => running.every((a) => a.playState === "finished" || a.playState === "idle"),
+    "the counter's transitions to finish",
+    { detail: () => running.map((a) => a.playState).join(",") },
+  );
 }

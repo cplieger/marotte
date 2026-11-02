@@ -4,66 +4,36 @@ import (
 	"context"
 	"slices"
 	"testing"
-
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestACPArgsReachChatBridges pins WithACPArgs → coordinator → StartOpts.ExtraArgs on a chat spawn.
-func TestACPArgsReachChatBridges(t *testing.T) {
+// engineOptsAfterBoot is the options the first engine generation started with.
+func engineOptsAfterBoot(t *testing.T, opts ...Option) []string {
+	t.Helper()
 	cs := newTestChatStore()
-	br := newFakeBridge()
+	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
+	h := newRuntimeOn(context.Background(), "/tmp/work", src, cs, opts...)
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	if !awaitEngine(h) {
+		t.Fatal("the engine never became ready")
+	}
+	e := src.current()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.opts.ExtraArgs
+}
+
+// TestACPArgsReachTheEngine pins WithACPArgs → the engine's EngineOpts.ExtraArgs: the flags reach every session.
+func TestACPArgsReachTheEngine(t *testing.T) {
 	want := []string{"-v"}
-	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs, WithACPArgs(want))
-	cs.wire(h)
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	opts := br.lastStartOpts()
-	if opts == nil {
-		t.Fatal("the bridge was never started")
-	}
-	if !slices.Equal(opts.ExtraArgs, want) {
-		t.Errorf("chat StartOpts.ExtraArgs = %v, want %v", opts.ExtraArgs, want)
+	if got := engineOptsAfterBoot(t, WithACPArgs(want)); !slices.Equal(got, want) {
+		t.Errorf("EngineOpts.ExtraArgs = %v, want %v", got, want)
 	}
 }
 
-// TestACPArgsNeverReachTheUtilityBridge pins the per-spawn exclusion: the utility bridge
-// shares the chat factory, and an operator `--effort max` there spends credits on titles.
-func TestACPArgsNeverReachTheUtilityBridge(t *testing.T) {
-	cs := newTestChatStore()
-	br := newFakeBridge()
-	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs, WithACPArgs([]string{"--effort", "max"}))
-	cs.wire(h)
-
-	u := h.utility.get()
-	if _, err := u.session.acquire(t.Context()); err != nil {
-		t.Fatalf("acquire utility session: %v", err)
-	}
-	defer u.session.Stop()
-
-	opts := br.lastStartOpts()
-	if opts == nil {
-		t.Fatal("the utility bridge was never started")
-	}
-	if len(opts.ExtraArgs) != 0 {
-		t.Errorf("utility StartOpts.ExtraArgs = %v, want empty: operator launch flags must not reach the utility bridge", opts.ExtraArgs)
-	}
-}
-
-// TestACPArgsUnsetIsEmpty covers the default: no env var, nothing appended to any spawn.
+// TestACPArgsUnsetIsEmpty covers the default: no env var, nothing appended to the engine's argv.
 func TestACPArgsUnsetIsEmpty(t *testing.T) {
-	cs := newTestChatStore()
-	br := newFakeBridge()
-	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs)
-	cs.wire(h)
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	if opts := br.lastStartOpts(); opts != nil && len(opts.ExtraArgs) != 0 {
-		t.Errorf("ExtraArgs = %v with no WithACPArgs, want empty", opts.ExtraArgs)
+	if got := engineOptsAfterBoot(t); len(got) != 0 {
+		t.Errorf("ExtraArgs = %v with no WithACPArgs, want empty", got)
 	}
 }

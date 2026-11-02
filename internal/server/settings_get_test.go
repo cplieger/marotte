@@ -23,7 +23,7 @@ import (
 func getEffective(t *testing.T, dir string) marotte.EffectiveSettings {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	handleSettingsGet(rec, filepath.Join(dir, settings.Filename), nil)
+	handleSettingsGet(rec, settings.AgentDirs{Config: dir}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/settings = %d, want 200 (the read fails OPEN)", rec.Code)
 	}
@@ -308,7 +308,7 @@ func TestSettingsGet_DoesNotBlockOnAFIFO(t *testing.T) {
 	go func() {
 		defer close(done)
 		rec := httptest.NewRecorder()
-		handleSettingsGet(rec, path, nil)
+		handleSettingsGet(rec, settings.AgentDirs{Config: dir}, nil)
 	}()
 	select {
 	case <-done:
@@ -344,8 +344,8 @@ func TestSettingsGet_ThenPatchPersistsOnlyTheStoredKeys(t *testing.T) {
 	if err := json.Unmarshal(raw, &onDisk); err != nil {
 		t.Fatalf("parse %s: %v", raw, err)
 	}
-	if len(onDisk) != 2 {
-		t.Errorf("config.json holds %d keys (%s), want exactly 2 — the stored theme and the patched fb_path", len(onDisk), raw)
+	if len(onDisk) != 4 {
+		t.Errorf("config.json holds %d keys (%s), want exactly 4 — the stored theme, the patched fb_path and the write's epoch and revision", len(onDisk), raw)
 	}
 	for _, unwanted := range []string{settings.KeyKnowledgeEnabled, settings.KeyChatRetentionDays, settings.KeyNotifyAgentFinished} {
 		if _, ok := onDisk[unwanted]; ok {
@@ -451,7 +451,7 @@ func (f fakeKiroDefaults) KiroDefaults() map[string]marotte.KiroDefault { return
 func getEffectiveWith(t *testing.T, dir string, defaults kiroDefaultsReader) marotte.EffectiveSettings {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	handleSettingsGet(rec, filepath.Join(dir, settings.Filename), defaults)
+	handleSettingsGet(rec, settings.AgentDirs{Config: dir}, defaults)
 	var got marotte.EffectiveSettings
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response %s: %v", rec.Body.String(), err)
@@ -479,8 +479,59 @@ func TestSettingsGet_KiroDefaultsOnlyForAnUnsetChoice(t *testing.T) {
 
 func TestSettingsGet_KiroDefaultsIsAnEmptyObjectWithoutAReader(t *testing.T) {
 	rec := httptest.NewRecorder()
-	handleSettingsGet(rec, filepath.Join(t.TempDir(), settings.Filename), nil)
+	handleSettingsGet(rec, settings.AgentDirs{Config: t.TempDir()}, nil)
 	if !strings.Contains(rec.Body.String(), `"kiro_defaults":{}`) {
 		t.Errorf("GET /api/settings = %s, want kiro_defaults as an empty object", rec.Body.String())
+	}
+}
+
+func TestSettingsGet_AdditionalDirectoriesRefusedCarriesEachRefusalReason(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, config, extra := filepath.Join(base, "workspace"), filepath.Join(base, "config"), filepath.Join(base, "data")
+	for _, d := range []string{work, config, extra} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	missing := filepath.Join(base, "missing")
+	stored, err := json.Marshal(map[string][]string{settings.KeyAdditionalDirectories: {extra, missing, config}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(config, settings.Filename), stored, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handleSettingsGet(rec, settings.AgentDirs{Workspace: work, Config: config}, nil)
+	var got marotte.EffectiveSettings
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response %s: %v", rec.Body.String(), err)
+	}
+
+	if want := []string{extra, missing, config}; !slices.Equal(got.AdditionalDirectories, want) {
+		t.Errorf("additional_directories = %v, want the stored list %v", got.AdditionalDirectories, want)
+	}
+	if len(got.AdditionalDirectoriesRefused) != 2 {
+		t.Errorf("additional_directories_refused = %v, want the missing and the config entries only", got.AdditionalDirectoriesRefused)
+	}
+	if _, refused := got.AdditionalDirectoriesRefused[extra]; refused {
+		t.Errorf("additional_directories_refused names %q, which is granted", extra)
+	}
+	if !strings.Contains(got.AdditionalDirectoriesRefused[missing], "no such directory") {
+		t.Errorf("refused[%q] = %q, want the missing-directory reason", missing, got.AdditionalDirectoriesRefused[missing])
+	}
+	if !strings.Contains(got.AdditionalDirectoriesRefused[config], "config directory") {
+		t.Errorf("refused[%q] = %q, want the config-directory reason", config, got.AdditionalDirectoriesRefused[config])
+	}
+}
+
+func TestSettingsGet_AdditionalDirectoriesRefusedIsAnEmptyObjectWhenNothingIsRefused(t *testing.T) {
+	rec := httptest.NewRecorder()
+	handleSettingsGet(rec, settings.AgentDirs{Config: t.TempDir()}, nil)
+	if !strings.Contains(rec.Body.String(), `"additional_directories_refused":{}`) {
+		t.Errorf("GET /api/settings = %s, want additional_directories_refused as an empty object", rec.Body.String())
 	}
 }

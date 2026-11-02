@@ -19,7 +19,6 @@ const (
 	testChat   = marotte.ChatID("chat-1")
 	testParent = "sess_parent"
 	testStep   = "sess_step"
-	testSub    = "sess_subagent"
 )
 
 func notif(method string, params map[string]any) *marotte.RPCResponse {
@@ -39,7 +38,9 @@ func capturing(events *[]marotte.ServerEvent) *baseDeps {
 	return d
 }
 
-func TestClassifyFrame(t *testing.T) {
+// TestClassifyFrame_ADifferingSessionOnAChatLaneIsAStep: the router puts only a chat's own frames and its runs' step
+// frames on its lane, so any other session id is a step's, with a cold registry too.
+func TestClassifyFrame_ADifferingSessionOnAChatLaneIsAStep(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
@@ -48,50 +49,26 @@ func TestClassifyFrame(t *testing.T) {
 	cases := []struct {
 		name    string
 		session string
-		marked  bool
 		want    frameOwner
 	}{
-		{"no session id is the chat", "", false, ownerChat},
-		{"the chat's own session", testParent, false, ownerChat},
-		{"a registered step session", testStep, false, ownerStep},
-		// The recovery path: with a cold registry, the frame's own _meta.kiro.workflow classifies.
-		{"an unregistered session the FRAME marks as a step", "sess_unknown", true, ownerStep},
-		{"an unregistered, unmarked session is a subagent", testSub, false, ownerSubagent},
-		// The session id is the discriminator; a marker cannot promote the parent.
-		{"the marker does not override the chat's own session", testParent, true, ownerChat},
+		{"no session id is the chat", "", ownerChat},
+		{"the chat's own session", testParent, ownerChat},
+		{"a registered step session", testStep, ownerStep},
+		{"an unregistered differing session", "sess_unknown", ownerStep},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			if got := tr.classifyFrame(testChat, c.session, c.marked); got != c.want {
-				t.Errorf("ClassifyFrame(%q, marked=%v) = %d, want %d", c.session, c.marked, got, c.want)
+			if got := tr.classifyFrame(testChat, c.session); got != c.want {
+				t.Errorf("classifyFrame(%q) = %d, want %d", c.session, got, c.want)
 			}
 		})
 	}
 }
 
-// TestDeriveSubSession_StepIsNotASubagent pins that a step answers "", or its permission
-// ask names a subagent that does not exist.
-func TestDeriveSubSession_StepIsNotASubagent(t *testing.T) {
-	t.Parallel()
-	var events []marotte.ServerEvent
-	tr := New(rolesOf(capturing(&events)))
-	tr.RecordStepSession(testStep, "wf_1", "s1", "s1")
-
-	if got := tr.deriveSubSession(testChat, testStep); got != "" {
-		t.Errorf("deriveSubSession(step) = %q, want \"\" (a step is not a subagent)", got)
-	}
-	if got := tr.deriveSubSession(testChat, testSub); got != testSub {
-		t.Errorf("deriveSubSession(subagent) = %q, want %q", got, testSub)
-	}
-	if got := tr.deriveSubSession(testChat, testParent); got != "" {
-		t.Errorf("deriveSubSession(parent) = %q, want \"\"", got)
-	}
-}
-
-// TestForeignSession_DropsBothNonChatOwners pins that the dedup guards drop a step's copy
-// too: KAS fans one payload out to every live session.
-func TestForeignSession_DropsBothNonChatOwners(t *testing.T) {
+// TestForeignSession_DropsAStepsCopy pins that the dedup guards drop a step's copy, registered
+// or not: KAS fans one payload out to every live session.
+func TestForeignSession_DropsAStepsCopy(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
@@ -105,7 +82,7 @@ func TestForeignSession_DropsBothNonChatOwners(t *testing.T) {
 		{"chat", testParent, false},
 		{"unknown session id", "", false},
 		{"step", testStep, true},
-		{"subagent", testSub, true},
+		{"unregistered step", "sess_unregistered", true},
 	} {
 		if got := tr.foreignSession(testChat, c.session); got != c.want {
 			t.Errorf("foreignSession(%s) = %v, want %v", c.name, got, c.want)
@@ -397,59 +374,6 @@ func TestStepAttribution_SlashBearingNodeIDsKeyDistinctTurns(t *testing.T) {
 	}
 }
 
-// TestRunStep_CarriesTheNodeIDBesideItsKey pins the id both turn openers hand the run log: a hashed
-// path key cannot be split back into it.
-func TestRunStep_CarriesTheNodeIDBesideItsKey(t *testing.T) {
-	t.Parallel()
-	var events []marotte.ServerEvent
-	d := capturing(&events)
-	tr := New(rolesOf(d))
-	ctx := t.Context()
-
-	tr.RunProgressHandler(marotte.RunProgressNodeStart)(ctx, testChat,
-		notif("_kiro/workflow/node_start", map[string]any{
-			"workflowId": "wf_1", "nodeId": "a/b", "sessionId": "sess_ab", "nodePath": []string{"wf_1", "a/b"},
-		}))
-	raw, err := json.Marshal(map[string]any{"content": map[string]any{"type": "text", "text": "hi"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tr.HandleAssistantChunk(ctx, testChat, raw, false, tr.StepAttribution("wf_1", "sess_ab", nil))
-
-	got := map[string][]string{}
-	for _, c := range d.runCalls {
-		got[c.kind] = append(got[c.kind], c.nodeID)
-	}
-	if want := []string{"a/b"}; !slices.Equal(got["node_start"], want) || !slices.Equal(got["fold"], want) {
-		t.Errorf("node ids: node_start %q, content fold %q; want %q for each", got["node_start"], got["fold"], want)
-	}
-}
-
-// A cold registry (after a restart) knows no step; a content frame's own workflow _meta names its node.
-func TestRunStep_TakesTheMetasNodeIDWithAColdRegistry(t *testing.T) {
-	t.Parallel()
-	var events []marotte.ServerEvent
-	d := capturing(&events)
-	tr := New(rolesOf(d))
-	raw, err := json.Marshal(map[string]any{"content": map[string]any{"type": "text", "text": "hi"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wf := &ACPWorkflowMeta{WorkflowID: "wf_1", NodeID: "a/b", NodePath: []string{"wf_1", "a/b"}}
-
-	tr.HandleAssistantChunk(t.Context(), testChat, raw, false, tr.StepAttribution("wf_1", "sess_cold", wf))
-
-	var folds []string
-	for _, c := range d.runCalls {
-		if c.kind == "fold" {
-			folds = append(folds, c.nodeID)
-		}
-	}
-	if want := []string{"a/b"}; !slices.Equal(folds, want) {
-		t.Errorf("content fold node ids = %q, want %q from the frame's meta", folds, want)
-	}
-}
-
 // TestRunComplete_LeavesTheStepSessionsToItsCaller pins that this handler forgets nothing:
 // the status can be `paused`, and the terminal gate is agent.observeComplete's.
 func TestRunComplete_LeavesTheStepSessionsToItsCaller(t *testing.T) {
@@ -677,14 +601,14 @@ func TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped(t *testing.T) {
 }
 
 // TestRecordRunSteps_SeedsFromAnInspectRead pins the recovery path: after a restart an
-// `inspect` read makes the frame classify as a step rather than a subagent.
+// `inspect` read places each step session in its run and node.
 func TestRecordRunSteps_SeedsFromAnInspectRead(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
 
-	if got := tr.classifyFrame(testChat, "sess_build", false); got != ownerSubagent {
-		t.Fatalf("before the read, sess_build classified %d, want OwnerSubagent", got)
+	if _, ok := tr.steps.lookup("sess_build"); ok {
+		t.Fatal("Setup: sess_build is placed before the read")
 	}
 	tr.RecordRunSteps(json.RawMessage(`{
 	  "workflowId": "wf_1",
@@ -696,8 +620,8 @@ func TestRecordRunSteps_SeedsFromAnInspectRead(t *testing.T) {
 	}`))
 
 	for _, id := range []string{"sess_build", "sess_test"} {
-		if got := tr.classifyFrame(testChat, id, false); got != ownerStep {
-			t.Errorf("after the read, %s classified %d, want OwnerStep", id, got)
+		if ref, ok := tr.steps.lookup(id); !ok || ref.WorkflowID != "wf_1" {
+			t.Errorf("after the read, %s is placed %+v ok=%v, want in run wf_1", id, ref, ok)
 		}
 	}
 	ref, ok := tr.steps.lookup("sess_build")
@@ -794,7 +718,7 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 		startMsg = "agent-launched workflow run started"
 		endMsg   = "agent-launched workflow run finished"
 	)
-	// The gate is the DELIVERY ADDRESS: a chat bridge stamps the chat's id, a run bridge's
+	// The gate is the DELIVERY ADDRESS: a chat session stamps the chat's id, a run host session's
 	// lifecycle frames get an empty one.
 	cases := []struct {
 		name       string

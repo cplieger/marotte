@@ -6,7 +6,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const H = vi.hoisted(() => ({
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
-  apiPost: vi.fn(),
   confirm: vi.fn(async (_message: string, _label?: string, _variant?: string) => true),
   dialogOpen: vi.fn(),
   dialogClose: vi.fn(),
@@ -16,7 +15,6 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   apiGet: H.apiGet,
   apiGetTyped: H.apiGetTyped,
-  apiPost: H.apiPost,
 }));
 vi.mock("./toast.js", async (importOriginal) => {
   const { toastMock } = await import("./__test-helpers__/toast-mock.js");
@@ -31,7 +29,13 @@ vi.mock("./forge-store.js", async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
   const { apiGetTyped } = await import("./api-client.js");
   const read = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
-  return { ...orig, refreshForges: read, ensureForges: read };
+  const { forgeRow, forgesList, staticStore } = await import("./__test-helpers__/forge-rows.js");
+  return {
+    ...orig,
+    ensureForges: read,
+    ...staticStore(() => forgesList([forgeRow()])),
+    usablePairs: () => [],
+  };
 });
 vi.mock("./sse-adapter.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -55,23 +59,23 @@ vi.mock("@cplieger/ui-primitives/dialog", async (importOriginal) => ({
 
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { openNewPRForRepo } from "./git-prs-tab.js";
-import { _resetForTest, applyInventoryList, setPRForges } from "./git-prs-state.js";
+import { _resetForTest, applyInventoryList } from "./git-prs-state.js";
+import { forgeRow } from "./__test-helpers__/forge-rows.js";
 import { decodeInventoryList } from "./wire/decoders.gen.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { heldFetch, json, expectBusy, expectIdle } from "./__test-helpers__/press-feedback.js";
+import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   H.confirm.mockImplementation(async () => true);
 });
 
 describe("the New PR dialog", () => {
-  const FORGE = {
-    id: "github:github.com",
-    kind: "github" as const,
-    host: "github.com",
-    connected: true,
-    reconnect_required: false,
-  };
+  const FORGE = forgeRow();
   const REPO_ID = "v1.616c6963652f6f6e65";
 
   let host: HTMLElement;
@@ -96,18 +100,17 @@ describe("the New PR dialog", () => {
         </div>
         <footer class="pr-dialog-footer">
           <button type="button" class="btn-small" data-pr-close>Cancel</button>
-          <button type="button" id="pr-generate-btn" class="btn-small">Regenerate description</button>
           <button type="button" id="pr-submit-btn" class="btn-small btn-primary">Open pull request</button>
         </footer>
       </dialog>`;
     document.body.appendChild(host);
     _resetForTest();
-    setPRForges([FORGE]);
     applyInventoryList(
       decodeInventoryList({
         entries: [
           {
             forge_id: FORGE.id,
+            account: FORGE.account,
             state: "ready",
             cycle_id: "1",
             credential: "valid",
@@ -120,7 +123,7 @@ describe("the New PR dialog", () => {
         viewing: false,
       }),
     );
-    H.apiPost.mockResolvedValue({ output: "drafted" });
+    H.apiGet.mockResolvedValue({ subjects: ["add x"] });
   });
 
   afterEach(() => {
@@ -155,8 +158,6 @@ describe("the New PR dialog", () => {
 
   const submit = (): HTMLButtonElement =>
     document.getElementById("pr-submit-btn") as HTMLButtonElement;
-  const regenerate = (): HTMLButtonElement =>
-    document.getElementById("pr-generate-btn") as HTMLButtonElement;
   const status = (): HTMLElement => document.getElementById("pr-dialog-status")!;
 
   async function open(): Promise<void> {
@@ -164,12 +165,13 @@ describe("the New PR dialog", () => {
     // The dialog controller is a mock, so the dialog is shown here.
     document.getElementById("pr-create-dialog")!.setAttribute("open", "");
     await vi.waitFor(() =>
-      expect(status().textContent).toBe("Description generated. Edit and submit."),
+      expect((document.getElementById("pr-body") as HTMLTextAreaElement).value).toBe("- add x"),
     );
     (document.getElementById("pr-title") as HTMLInputElement).value = "Add x";
   }
 
   it("Open pull request is busy from the press and says a refusal in the server's words, usable again", async () => {
+    useSteppableClock();
     await open();
     const calls = heldFetch();
 
@@ -187,7 +189,7 @@ describe("the New PR dialog", () => {
         "Could not open the pull request. a pull request already exists for alice:feat/x",
       ),
     );
-    await vi.waitFor(() => expectIdle(submit()), { timeout: 3000 });
+    await waitForOnClock(() => expectIdle(submit()), 3000);
     expect(H.dialogClose).not.toHaveBeenCalled();
   });
 
@@ -207,7 +209,6 @@ describe("the New PR dialog", () => {
       expect(calls.some((c) => c.url === "/api/forges/inventory/refresh")).toBe(true),
     );
     expect(submit().checkVisibility(), "Open pull request is off screen").toBe(false);
-    expect(regenerate().checkVisibility(), "Regenerate description is off screen").toBe(false);
     expect(host.querySelector(".pr-dialog-footer [data-pr-close]")?.textContent).toBe("Close");
     expect(H.dialogClose).not.toHaveBeenCalled();
   });
@@ -227,7 +228,7 @@ describe("the New PR dialog", () => {
     expectIdle(submit());
     expect(submit().checkVisibility()).toBe(true);
     expect(submit().textContent).toBe("Open pull request");
-    expect(regenerate().checkVisibility()).toBe(true);
+    expect(status().textContent).toBe("");
     expect(host.querySelector(".pr-dialog-footer [data-pr-close]")?.textContent).toBe("Cancel");
   });
 
@@ -244,28 +245,7 @@ describe("the New PR dialog", () => {
     await open();
 
     expect(submit().checkVisibility()).toBe(true);
-    expect(regenerate().checkVisibility()).toBe(true);
+    expect(status().textContent).toBe("");
     expect(host.querySelector(".pr-dialog-footer [data-pr-close]")?.textContent).toBe("Cancel");
-  });
-
-  it("Regenerate description is busy while it drafts and says the outcome in the status line", async () => {
-    await open();
-    // The draft made at open holds its outcome on the button for a moment.
-    await vi.waitFor(() => expectIdle(regenerate()), { timeout: 3000 });
-    let answer: (v: unknown) => void = () => undefined;
-    H.apiPost.mockImplementation(
-      () =>
-        new Promise((r) => {
-          answer = r;
-        }),
-    );
-
-    regenerate().click();
-
-    expectBusy(regenerate());
-    expect(status().textContent).toBe("Generating description…");
-    answer({ error: "no commits between main and feat/x" });
-    await vi.waitFor(() => expect(status().textContent).toBe("no commits between main and feat/x"));
-    await vi.waitFor(() => expectIdle(regenerate()), { timeout: 3000 });
   });
 });

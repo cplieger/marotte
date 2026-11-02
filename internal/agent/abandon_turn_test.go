@@ -97,19 +97,15 @@ func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
 	const callers = "The turn was cancelled before the agent answered."
 
 	// Interrupt through the coordinator so the wiring is exercised; the cause lands on the open turn.
-	id, _ := streamingPromptTurn(t, h, "c1", "about to call a tool")
-
-	// No real process here, so move the bridge to idle the way spawnBridge does at Start's return.
-	sb, _ := h.bridge.mgr.orInsert("c1")
-	sb.setIdle()
-	if !sb.tryAcquireForPrompt() {
-		t.Fatal("fresh bridge must be acquirable")
-	}
 	pctx, cancel := context.WithCancelCause(context.Background())
 	t.Cleanup(func() { cancel(nil) })
-	sb.BeginPromptCall(cancel)
+	id, log := h.stagePromptTurnCalling(t, "c1", cancel)
+	h.coord.WireTurnStart(ctx, "c1")
+	if _, err := log.TextDelta(ctx, "", "say-1", "about to call a tool"); err != nil {
+		t.Fatalf("TextDelta: %v", err)
+	}
 
-	h.coord.InterruptTurn("c1", stashed)
+	h.coord.InterruptTurn("c1", id, stashed)
 
 	// The prompt context must be dead, or the blocked Call never returns and the chat stays busy.
 	select {

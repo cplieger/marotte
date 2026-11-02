@@ -129,7 +129,7 @@ func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 // as pending_model and applied by the closer, so the dispatched model holds for the whole turn.
 func TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel(t *testing.T) {
 	h, cs, br := newTestHub()
-	// spawnBridge writes the session's model back onto the chat, so the fixture must agree with the seeded model.
+	// The session door writes the session's model back onto the chat, so the fixture must agree with the seeded model.
 	br.modelID = "sonnet-4"
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"

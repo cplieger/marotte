@@ -1,7 +1,7 @@
 // A control that starts a request is busy at once, stays busy through a repaint while it runs, and shows its
 // outcome in place. Only the network is held.
 
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from "vitest";
 
 const H = vi.hoisted(() => ({
   apiGet: vi.fn(),
@@ -31,7 +31,7 @@ vi.mock("./forge-store.js", async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
   const { apiGetTyped } = await import("./api-client.js");
   const read = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
-  return { ...orig, refreshForges: read, ensureForges: read };
+  return { ...orig, ensureForges: read };
 });
 vi.mock("./sse-adapter.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -65,6 +65,11 @@ import {
   expectBusy,
   expectIdle,
 } from "./__test-helpers__/press-feedback.js";
+import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   H.confirm.mockImplementation(async () => true);
@@ -81,9 +86,9 @@ describe("the Changes tab", () => {
     resetActionFramework();
     host = document.createElement("div");
     host.innerHTML = `
-      <div class="git-tab-toolbar">
-        <button type="button" id="git-pull-all-btn" class="icon-btn" aria-label="Pull every repo that can fast-forward"></button>
-        <button type="button" id="git-refresh-all-btn" class="icon-btn" aria-label="Refresh all repos"></button>
+      <div class="page-toolbar">
+        <button type="button" id="git-pull-all-btn" class="action-pill" aria-label="Pull every repo that can fast-forward"></button>
+        <button type="button" id="git-refresh-all-btn" class="action-pill" aria-label="Refresh all repos"></button>
       </div>
       <div id="git-changes-mount"></div>`;
     document.body.appendChild(host);
@@ -218,12 +223,6 @@ describe("the Changes tab", () => {
         commitBox(r).value = "fix: a change";
       },
     },
-    {
-      name: "AI message",
-      route: "/api/git/commit-message",
-      could: "write a commit message",
-      find: (r) => byLabel(r, "AI message"),
-    },
   ];
 
   describe.each(PRESSES)("$name", (p) => {
@@ -265,6 +264,7 @@ describe("the Changes tab", () => {
     });
 
     it("says a refusal in its section in git's words until the repository's next press", async () => {
+      useSteppableClock();
       const mine = repoStatus();
       await show(mine);
       const calls = heldFetch();
@@ -277,7 +277,7 @@ describe("the Changes tab", () => {
       await vi.waitFor(() =>
         expect(note(mine.repo)).toBe(`Could not ${p.could}. fatal: index.lock exists`),
       );
-      await vi.waitFor(() => expectIdle(p.find(mine.repo)), { timeout: 3000 });
+      await waitForOnClock(() => expectIdle(p.find(mine.repo)), 3000);
       expect(toast.error).not.toHaveBeenCalled();
       await refreshChanges();
       expect(note(mine.repo)).toBe(`Could not ${p.could}. fatal: index.lock exists`);
@@ -287,7 +287,7 @@ describe("the Changes tab", () => {
       await vi.waitFor(() => expect(note(mine.repo)).toBe(""));
       await vi.waitFor(() => expect(calls).toHaveLength(2));
       calls[1]!.answer(json({ output: "" }));
-      await vi.waitFor(() => expectIdle(p.find(mine.repo)), { timeout: 3000 });
+      await waitForOnClock(() => expectIdle(p.find(mine.repo)), 3000);
       expect(note(mine.repo)).toBe("");
     });
   });
@@ -376,22 +376,18 @@ describe("the Changes tab", () => {
     });
   });
 
-  it("Commit clears its message once it lands, and AI message fills the box on screen", async () => {
+  it("Commit clears the box on screen once it lands, after a repaint replaced the one it was pressed in", async () => {
     const mine = repoStatus();
     await show(mine);
     const calls = heldFetch();
+    commitBox(mine.repo).value = "feat: typed";
 
-    byLabel(mine.repo, "AI message")!.click();
-    await vi.waitFor(() => expect(calls).toHaveLength(1));
-    await refreshChanges();
-    calls[0]!.answer(json({ output: "feat: drafted" }));
-    await vi.waitFor(() => expect(commitBox(mine.repo).value).toBe("feat: drafted"));
-
-    await vi.waitFor(() => expectIdle(byLabel(mine.repo, "Commit 1 file")), { timeout: 3000 });
     byLabel(mine.repo, "Commit 1 file")!.click();
-    await vi.waitFor(() => expect(calls).toHaveLength(2));
-    expect(calls[1]!.body).toEqual({ repo: mine.repo, message: "feat: drafted" });
-    calls[1]!.answer(json({ output: "[main abc1234] feat: drafted" }));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]!.body).toEqual({ repo: mine.repo, message: "feat: typed" });
+    await refreshChanges();
+    expect(commitBox(mine.repo).value).toBe("feat: typed");
+    calls[0]!.answer(json({ output: "[main abc1234] feat: typed" }));
     await vi.waitFor(() => expect(commitBox(mine.repo).value).toBe(""));
   });
 
@@ -460,6 +456,7 @@ describe("the Changes tab", () => {
   });
 
   it("Pull all is busy until its pass lands, never spinning while usable, and says a refusal beside it", async () => {
+    useSteppableClock();
     await show(repoStatus());
     const calls = heldFetch();
     const pullAll = document.getElementById("git-pull-all-btn") as HTMLButtonElement;
@@ -484,7 +481,7 @@ describe("the Changes tab", () => {
     const spinning = pullAll.querySelector(".btn-async-spinner") !== null;
     expect(spinning).toBe(pullAll.disabled && pullAll.getAttribute("aria-busy") === "true");
     release();
-    await vi.waitFor(() => expectIdle(pullAll), { timeout: 3000 });
+    await waitForOnClock(() => expectIdle(pullAll), 3000);
 
     H.apiGet.mockImplementation((url: string) =>
       Promise.resolve(url.startsWith("/api/git/status-all") ? { repos } : null),
@@ -493,18 +490,18 @@ describe("the Changes tab", () => {
     await vi.waitFor(() => expect(calls).toHaveLength(2));
     calls[1]!.answer(json({ error: "another pass is running" }, 409));
     await vi.waitFor(() =>
-      expect(host.querySelector(".git-tab-toolbar-error")?.textContent).toBe(
+      expect(host.querySelector(".page-toolbar-error")?.textContent).toBe(
         "Could not pull every repository. another pass is running",
       ),
     );
-    await vi.waitFor(() => expectIdle(pullAll), { timeout: 3000 });
+    await waitForOnClock(() => expectIdle(pullAll), 3000);
     expect(toast.error).not.toHaveBeenCalled();
 
     pullAll.click();
-    expect(host.querySelector(".git-tab-toolbar-error")?.textContent).toBe("");
+    expect(host.querySelector(".page-toolbar-error")?.textContent).toBe("");
     await vi.waitFor(() => expect(calls).toHaveLength(3));
     calls[2]!.answer(json({ repos: [] }));
-    await vi.waitFor(() => expectIdle(pullAll), { timeout: 3000 });
+    await waitForOnClock(() => expectIdle(pullAll), 3000);
   });
 
   it("Refresh reports a read it could not make as a failure, beside the error the list shows", async () => {

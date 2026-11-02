@@ -17,6 +17,8 @@ vi.mock("../api-client.js", () => ({
   apiGetTyped: vi.fn(),
 }));
 import * as toast from "../toast.js";
+import { signedIn } from "../__test-helpers__/identity.js";
+import { settingsPayload } from "../__test-helpers__/settings.js";
 
 const mockFetch = vi.fn();
 
@@ -98,7 +100,7 @@ describe("logout", () => {
     const render = vi.fn();
 
     const { logout } = await import("./settings.js");
-    await logout.dispatch({ render, prev: { state: "signed_in", email: "user@test.com" } });
+    await logout.dispatch({ render, prev: signedIn("user@test.com") });
 
     expect(render).toHaveBeenCalledWith({ state: "signed_out" });
     expect(mockFetch).toHaveBeenCalledWith(
@@ -110,13 +112,33 @@ describe("logout", () => {
   it("rolls back to the verdict it replaced on failure", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "nope" }), { status: 500 }));
     const render = vi.fn();
-    const prev = { state: "signed_in", email: "user@test.com" } as const;
+    const prev = signedIn("user@test.com");
 
     const { logout } = await import("./settings.js");
     await logout.dispatch({ render, prev });
 
     expect(render).toHaveBeenNthCalledWith(1, { state: "signed_out" });
     expect(render).toHaveBeenLastCalledWith(prev);
+  });
+
+  it("says when a refused sign-out leaves the account signed in, in the server's words", async () => {
+    const kept =
+      "marotte could not remove the saved sign-in, so you are still signed in. The server log has the details.";
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: kept }), { status: 500 }));
+    const { logout } = await import("./settings.js");
+    await logout.dispatch({ render: vi.fn(), prev: signedIn("a@test.com") });
+    expect(toast.error).toHaveBeenCalledWith(kept, undefined);
+  });
+
+  it("says chats stop using the account within about four minutes, and how to stop them at once", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ output: "Signed out" }), { status: 200 }),
+    );
+    const { logout } = await import("./settings.js");
+    await logout.dispatch({ render: vi.fn(), prev: signedIn("a@test.com") });
+    expect(toast.success).toHaveBeenCalledWith(
+      "Signed out. Chats stop using this account within about four minutes. To stop at once, restart the agent engine from Settings.",
+    );
   });
 
   it("restores an UNAVAILABLE verdict rather than signed_out", async () => {
@@ -167,16 +189,15 @@ describe("setKiroSetting", () => {
 });
 
 describe("patchAppSettings", () => {
-  it("PATCHes to /api/settings and rolls back inputs on failure", async () => {
+  it("PATCHes the body to /api/settings and answers null when the server refuses it", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.checked = true; // user just toggled ON
-
     const { patchAppSettings } = await import("./settings.js");
-    await patchAppSettings.dispatch({ body: { debug_logs: true }, inputs: [input] });
-
-    expect(input.checked).toBe(false);
+    const r = await patchAppSettings.dispatch({ body: { debug_logs: true } });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/settings");
+    expect(opts.method).toBe("PATCH");
+    expect(JSON.parse(opts.body as string)).toEqual({ debug_logs: true });
+    expect(r).toBeNull();
   });
 });
 
@@ -187,14 +208,16 @@ describe("a lockable switch crossing a lock", () => {
   const save = {
     kiro: (a: Actions, key: string, input: HTMLInputElement) =>
       a.setKiroSetting.dispatch({ key, value: String(input.checked), input }),
-    marotte: (a: Actions, key: string, input: HTMLInputElement) =>
-      a.patchAppSettings.dispatch({ body: { [key]: input.checked }, inputs: [input] }),
+    // The production path of a marotte switch: persist repaints it when the write settles.
+    marotte: async (_a: Actions, key: string, input: HTMLInputElement) => {
+      const persist = await import("../persist.js");
+      return persist.patchSettings({ [key]: input.checked }, { el: input, key, on: true });
+    },
   };
   const lockable = [
     ["flag-telemetry", "telemetry.enabled", save.kiro],
     ["flag-content-collection", "content_collection_enabled", save.marotte],
     ["flag-workflows", "workflows_enabled", save.marotte],
-    ["flag-inline-agents", "inline_agents_enabled", save.marotte],
   ] as const;
 
   const govState = (lockKey?: string) => ({
@@ -234,6 +257,7 @@ describe("a lockable switch crossing a lock", () => {
       bus.dispatch({ type: "governance_state", chat_id: "", payload: govState(lockKey) });
     };
     const input = document.getElementById(inputID) as HTMLInputElement;
+    (await import("../persist.js")).__testResetTracking();
     return { input, frame, actions: await import("./settings.js") };
   }
 
@@ -277,7 +301,12 @@ describe("a lockable switch crossing a lock", () => {
       frame(key);
       frame();
       expect(input.checked).toBe(false);
-      mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      // Both endpoints answer 200; the settings PATCH's body is the committed settings.
+      mockFetch.mockResolvedValueOnce(
+        Response.json(
+          settingsPayload({ content_collection_enabled: true, workflows_enabled: true }),
+        ),
+      );
       input.checked = true;
       await saveSwitch(actions, key, input);
       expect(input.checked).toBe(true);
@@ -299,5 +328,49 @@ describe("a lockable switch crossing a lock", () => {
       gov.writeSwitch(input, true);
       expect(input.checked).toBe(true);
     });
+  });
+});
+
+describe("restartEngine", () => {
+  it("POSTs /api/engine/restart and takes the 202", async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 202 }));
+    const { restartEngine } = await import("./settings.js");
+    const r = await restartEngine.dispatch(undefined);
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/engine/restart");
+    expect(opts.method).toBe("POST");
+    expect(r).toBe(true);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("says a restart is already under way on a 409", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "The agent engine is already restarting." }), {
+        status: 409,
+      }),
+    );
+    const { restartEngine } = await import("./settings.js");
+    expect(await restartEngine.dispatch(undefined)).toBeNull();
+    expect(toast.error).toHaveBeenCalledWith("The agent engine is already restarting.", undefined);
+  });
+});
+
+describe("setEngineHeap", () => {
+  it("PATCHes engine_heap_mib alone and shows the server's refusal", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "engine_heap_mib must be 0, or 1024 to 3584" }), {
+        status: 400,
+      }),
+    );
+    const { setEngineHeap } = await import("./settings.js");
+    expect(await setEngineHeap.dispatch({ mib: 4096 })).toBeNull();
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/settings");
+    expect(opts.method).toBe("PATCH");
+    expect(JSON.parse(opts.body as string)).toEqual({ engine_heap_mib: 4096 });
+    expect(toast.error).toHaveBeenCalledWith(
+      "engine_heap_mib must be 0, or 1024 to 3584",
+      undefined,
+    );
   });
 });

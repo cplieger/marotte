@@ -4,8 +4,10 @@ package command
 // a turn card holding the reason.
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -24,14 +26,14 @@ type surfaceDeps struct {
 	mu        sync.Mutex
 	errors    []marotte.ErrorPayload
 	abandoned []abandonedTurn
-	// spawnErr, when set, is what OpenBridge answers: the respawn-failure path.
+	// spawnErr, when set, is what OpenBridge answers: the reload-failure path.
 	spawnErr error
 	// slotHeld makes TryAcquireForPrompt refuse, which is the held-bridge-slot path.
 	slotHeld bool
 	// closedReason, when set, is the reason AwaitTurn reports the turn closed with:
 	// the engine's turn_end winning the close.
 	closedReason string
-	// startRefused makes StartTurn answer false, the cancelled-during-spawn path.
+	// startRefused makes StartTurn answer false, the cancelled-during-open path.
 	startRefused bool
 	// callErr, when set, fails the prompt Call itself.
 	callErr error
@@ -81,7 +83,11 @@ func (d *surfaceDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridg
 	return &surfaceBridge{deps: d}, nil
 }
 
-func (d *surfaceDeps) StartTurn(context.Context, marotte.ChatID, string) bool { return !d.startRefused }
+func (*surfaceDeps) EndPromptCall(TurnRef) {}
+
+func (d *surfaceDeps) StartTurn(context.Context, TurnRef, context.CancelCauseFunc) bool {
+	return !d.startRefused
+}
 
 func (*surfaceDeps) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
 	return AdmissionAcquired
@@ -107,6 +113,10 @@ func (b *surfaceBridge) Call(context.Context, string, any) (*marotte.RPCResponse
 	return &marotte.RPCResponse{}, b.deps.callErr
 }
 
+func (b *surfaceBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *surfaceBridge) CallAt(context.Context, string, any) (*marotte.RPCResponse, uint64, error) {
 	return &marotte.RPCResponse{}, 0, b.deps.callErr
 }
@@ -116,10 +126,6 @@ func (*surfaceBridge) Respond(context.Context, int64, any, error) error { return
 func (*surfaceBridge) SessionID() marotte.SessionID                     { return "s1" }
 func (b *surfaceBridge) TryAcquireForPrompt() bool                      { return !b.deps.slotHeld }
 func (*surfaceBridge) ReleaseAfterPrompt()                              {}
-func (*surfaceBridge) BeginPromptCall(context.CancelCauseFunc) uint64   { return 1 }
-func (*surfaceBridge) EndPromptCall()                                   {}
-func (*surfaceBridge) ArmCancelGrace(uint64, time.Duration) bool        { return true }
-func (*surfaceBridge) PromptGeneration() uint64                         { return 1 }
 
 // A turn WAS finalized, so the reason is on its card and the toast may stand down.
 func TestReportPromptFailure_MarksTheFrameTurnScoped(t *testing.T) {
@@ -167,7 +173,7 @@ func TestPromptFailure_PreCallEmittersReadTurnScopedWhenTheyCloseATurn(t *testin
 		turnScoped bool
 	}{
 		{
-			name:    "the bridge could not be spawned",
+			name:    "the chat's session could not be opened",
 			want:    marotte.ErrCodeBridgeStartFailed,
 			arrange: func(d *surfaceDeps) { d.spawnErr = errors.New("no such binary") },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
@@ -194,7 +200,7 @@ func TestPromptFailure_PreCallEmittersReadTurnScopedWhenTheyCloseATurn(t *testin
 			turnScoped: true,
 		},
 		{
-			name:    "empty-turn recovery could not respawn the session",
+			name:    "empty-turn recovery could not reload the session",
 			want:    marotte.ErrCodeRecoveryFailed,
 			arrange: func(d *surfaceDeps) { d.spawnErr = errors.New("no such binary") },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
@@ -266,10 +272,10 @@ func TestRetryEmptyTurnPrompt_WithholdsTheFrameOnAnUnackedCancel(t *testing.T) {
 	}
 }
 
-// A failed respawn names the cause in its frame: the empty turn already closed
+// A failed reload names the cause in its frame: the empty turn already closed
 // with its own outcome and the retry's turn never opened, so nothing else says
 // what stopped the retry.
-func TestRetryEmptyTurnPrompt_RespawnFailureNamesTheCause(t *testing.T) {
+func TestRetryEmptyTurnPrompt_ReopenFailureNamesTheCause(t *testing.T) {
 	deps := newSurfaceDeps()
 	deps.spawnErr = errors.New("no such binary")
 
@@ -391,6 +397,90 @@ func TestPromptExits_CloseTheTurnThroughTheTurnEndRule(t *testing.T) {
 			} else if frames != 0 {
 				t.Errorf("broadcast %d error frames, want none: this exit's surface is the "+
 					"turn_close alone", frames)
+			}
+		})
+	}
+}
+
+// logLines splits a captureLogs buffer into the lines whose text contains sub.
+func logLines(buf *bytes.Buffer, sub string) []string {
+	var out []string
+	for line := range strings.Lines(buf.String()) {
+		if strings.Contains(line, sub) {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// A prompt the engine's exit killed is a casualty of the one "engine exited" record, so neither
+// failure site may log "prompt failed" for it, and the surfaces the user sees stay as they are.
+func TestReportPromptFailure_EngineExitIsNotAPromptFailure(t *testing.T) {
+	exited := &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true}
+	cases := []struct {
+		name     string
+		run      func(context.Context, *promptRoles, *surfaceDeps)
+		wantCode marotte.ErrorCode
+	}{
+		{
+			name: "the prompt's own failure",
+			run: func(ctx context.Context, roles *promptRoles, _ *surfaceDeps) {
+				reportPromptFailure(ctx, roles, "c1", "t-7", exited, 0, time.Second, false)
+			},
+			wantCode: marotte.ErrCodePromptFailed,
+		},
+		{
+			name: "the empty-turn retry's failure",
+			run: func(ctx context.Context, roles *promptRoles, d *surfaceDeps) {
+				d.callErr = exited
+				retryEmptyTurnPrompt(ctx, roles, "c1", "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+			},
+			wantCode: marotte.ErrCodeRecoveryFailed,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureLogs(t)
+			deps := newSurfaceDeps()
+			tc.run(t.Context(), promptRolesOf(deps), deps)
+
+			if got := logLines(logs, "prompt failed"); len(got) != 0 {
+				t.Errorf("logged %q, want no line containing \"prompt failed\" for an engine-exit casualty", got)
+			}
+			warns := logLines(logs, "msg="+strconv.Quote(logMsgPromptEngineEnded))
+			if len(warns) != 1 {
+				t.Fatalf("logged %d %q lines, want exactly 1:\n%s", len(warns), logMsgPromptEngineEnded, logs)
+			}
+			if !strings.Contains(warns[0], "level=WARN") || !strings.Contains(warns[0], "class=pipe_death") {
+				t.Errorf("engine-exit line = %q, want level=WARN and class=pipe_death", warns[0])
+			}
+			frame := deps.onlyError(t)
+			if frame.Code != tc.wantCode || !frame.TurnScoped {
+				t.Errorf("error frame = %+v, want code %q and TurnScoped: the user's surface is unchanged", frame, tc.wantCode)
+			}
+		})
+	}
+}
+
+// Every failure that is not an engine-exit casualty is still the "prompt failed" Error line the
+// alert counts: only ErrBridgeExited is exempt, not every retryable transport error.
+func TestReportPromptFailure_OtherFailuresStillCountAsPromptFailed(t *testing.T) {
+	cases := map[string]error{
+		"a reset connection":        errors.New("connection reset"),
+		"a refused credential":      rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{"details": "not logged in"}),
+		"a retryable write failure": &marotte.TransportError{Err: errors.New("write to ACP: broken pipe"), Retryable: true},
+	}
+	for name, err := range cases {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			reportPromptFailure(t.Context(), promptRolesOf(newSurfaceDeps()), "c1", "t-7", err, 0, time.Second, false)
+
+			got := logLines(logs, `msg="prompt failed"`)
+			if len(got) != 1 || !strings.Contains(got[0], "level=ERROR") {
+				t.Errorf("prompt-failed lines = %q, want exactly one at level=ERROR:\n%s", got, logs)
+			}
+			if warns := logLines(logs, logMsgPromptEngineEnded); len(warns) != 0 {
+				t.Errorf("logged %q, want no engine-exit line for a failure the engine's exit did not cause", warns)
 			}
 		})
 	}

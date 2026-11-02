@@ -30,8 +30,8 @@ type bridgeCaller interface {
 	CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error)
 }
 
-// SessionCaller is one call addressed to one session: a chat bridge's own, or a run step's on its
-// run's carrier.
+// SessionCaller is one call addressed to one session: a chat's own, or the session of one of a
+// run's steps.
 type SessionCaller interface {
 	bridgeCaller
 	sessionScoped
@@ -50,28 +50,21 @@ type bridgeRPC interface {
 	Respond(ctx context.Context, requestID int64, result any, err error) error
 }
 
-// promptSlot is the per-chat turn lock and its unresponsive-cancel budget: acquire
-// the slot, register the in-flight call's cancel func against a turn generation, arm
-// the grace budget for that generation, then release. The generation stops an expired
-// budget cancelling a later turn — time.Timer.Stop does not halt a running func.
+// promptSlot is the per-chat bridge lock a prompt call holds. The call's cancel and its grace budget live on the
+// call's turn (turnOutcomeAccess.StartTurn, turnStopper.ArmStopGrace), never on the bridge, which would name
+// whichever call holds it when the budget runs out.
 type promptSlot interface {
 	// TryAcquireForPrompt attempts to lock the bridge for prompting.
 	TryAcquireForPrompt() bool
 	// ReleaseAfterPrompt releases the prompt lock.
 	ReleaseAfterPrompt()
-	// BeginPromptCall registers the cancel func of the in-flight prompt's
-	// context and returns the turn generation it belongs to. Paired with
-	// EndPromptCall in the prompt handler's defer.
-	BeginPromptCall(cancel context.CancelCauseFunc) uint64
-	// EndPromptCall forgets the in-flight prompt's cancel func.
-	EndPromptCall()
-	// ArmCancelGrace starts the unresponsive-cancel budget: if the turn
-	// identified by gen is still in flight after d, the prompt's context is
-	// cancelled so the blocked Call returns and the slot is released.
-	// Reports false if there was no in-flight prompt to arm against.
-	ArmCancelGrace(gen uint64, d time.Duration) bool
-	// PromptGeneration returns the current turn generation.
-	PromptGeneration() uint64
+}
+
+// promptWriter writes a turn's session/prompt, which CallAt refuses; sendTurnPrompt is its one caller.
+type promptWriter interface {
+	// PromptAt is CallAt for session/prompt with commit run under the engine's write lock just before the frame: its
+	// error refuses the write and is the answer, with nothing written. nil commits nothing.
+	PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error)
 }
 
 // Bridge is the per-chat ACP bridge as a whole. Only a handler that owns a chat for
@@ -79,6 +72,7 @@ type promptSlot interface {
 // bridgeAccess returns it and the runtime's wiring names it.
 type Bridge interface {
 	bridgeRPC
+	promptWriter
 	promptSlot
 }
 
@@ -88,11 +82,11 @@ type bridgeAccess interface {
 	Bridge(chatID marotte.ChatID) Bridge
 	// OpenBridge answers once the chat's log holds KAS's account of its session (sessionLoader).
 	OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (Bridge, error)
-	// BridgeLive reports a bridge for the chat that is past its spawn: the state
-	// a steer can be delivered into, where a spawning one parks it.
+	// BridgeLive reports a bridge for the chat that is past its session open: the state
+	// a steer can be delivered into, where an opening one parks it.
 	BridgeLive(chatID marotte.ChatID) bool
-	// CloseBridge closes every turn the bridge hosted with outcome, then stops the
-	// process: `cancelled` for a stop the reader asked for, `interrupted` otherwise.
+	// CloseBridge closes every turn the session hosted with outcome, then closes the
+	// session: `cancelled` for a stop the reader asked for, `interrupted` otherwise.
 	CloseBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome)
 }
 
@@ -114,14 +108,22 @@ type sessionClaims interface {
 	SessionClaimed(ctx context.Context, sessionID string) (claimed, complete bool)
 }
 
+// stepSessions answers whether a KAS session is a workflow step's, read from KAS's session list.
+type stepSessions interface {
+	StepSessionOf(ctx context.Context, sessionID string) (workflowID string, found bool, err error)
+}
+
 // chatStore is the chat store as the command handlers use it: read the header,
 // mutate it, record a draft and its attachments, delete the chat, and the two
 // log operations a command owns, the rewind's truncate and the attachment count.
 // It excludes List, RegisterRoutes and every append but the turn_open the turn
 // registry writes. Exported because *agent.Runtime names this.
 type chatStore interface {
-	// Get returns the chat header at id, or false if it does not exist.
+	// Get returns the chat header at id, or false if it does not exist or could not be read.
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
+	// Lookup is Get keeping missing apart from unreadable: found is false with
+	// a nil error only when no record exists.
+	Lookup(ctx context.Context, id marotte.ChatID) (c *marotte.Chat, found bool, err error)
 	// Mutate is the header write primitive: load, apply, save, broadcast
 	// chat_created / chat_updated.
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
@@ -145,6 +147,8 @@ type chatStore interface {
 	// TurnCount is the header's turn_count, the whole-history read the rewind and
 	// the model switch key on.
 	TurnCount(ctx context.Context, chatID marotte.ChatID) (uint64, bool)
+	// ReadBound is the chat's read position now, the clamp for an ack_tab.
+	ReadBound(ctx context.Context, chatID marotte.ChatID) (uint64, error)
 	// SetDraft persists the chat's unsent composer text. Its own method rather than a
 	// Mutate call because a draft save is not activity: Mutate stamps UpdatedAt, which
 	// the retention purge ages a chat from. A no-op for a chat that does not exist —
@@ -201,13 +205,24 @@ type chatTeardown interface {
 // pendingPermAccess provides the pending-permission bookkeeping handlers
 // need: an unanswered request is replayed to a reconnecting client, so
 // answering or abandoning one has to retire the entry.
+// permissionCanceller answers a chat's pending permission asks `cancelled` ahead of a session/cancel.
+type permissionCanceller interface {
+	// CancelPendingPermissions takes each pending permission ask of chatID in scope, in ask order, and answers it
+	// cancelled. An ask a card answer claimed first is skipped. It returns an error wrapping marotte.ErrBridgeExited
+	// when the session ended under an answer, and one wrapping ErrCancelNotDelivered when an answer failed on a live
+	// session after its retries; either stops before the next ask.
+	CancelPendingPermissions(ctx context.Context, chatID marotte.ChatID, scope CancelScope) error
+}
+
 type pendingPermAccess interface {
-	ClearPendingPermsForChat(chatID marotte.ChatID)
+	permissionCanceller
+	// ClearPendingInputAsks drops chatID's elicitation and user-input asks in scope, silently.
+	ClearPendingInputAsks(chatID marotte.ChatID, scope CancelScope)
 	// TakePendingPerm claims the request before its answer is sent, reporting false
-	// when another surface already answered it, its bridge ended, or it is not chatID's.
-	// settledBy travels with the claim because the delivered answer is broadcast to the
-	// surfaces that lost, and their card says who answered.
-	TakePendingPerm(chatID marotte.ChatID, requestID int64, settledBy marotte.SettledBy) (AskReply, bool)
+	// when another surface already answered it, its bridge ended, or it is not a
+	// kind ask of chatID's. settledBy travels with the claim because the delivered
+	// answer is broadcast to the surfaces that lost, and their card says who answered.
+	TakePendingPerm(chatID marotte.ChatID, requestID int64, kind marotte.DecisionKind, settledBy marotte.SettledBy) (AskReply, bool)
 	// TakePendingPermissionOption retains an off-list request and reports it as
 	// pending but not offered. A successful result validates and claims in one
 	// operation, so another surface cannot answer between those steps.
@@ -250,18 +265,62 @@ type profileSwitcher interface {
 // terminalAccess is the interrupt's process half: a turn cancel must reach
 // the turn's agent terminals or it strands them.
 type terminalAccess interface {
-	// KillForTurn kills the terminals the chat's current turn created, and nothing else: a
-	// background command an earlier turn left running is not the cancel's to kill. It does not
-	// unregister them; the agent's release does.
-	KillForTurn(chatID marotte.ChatID)
+	// KillForTurn kills the running terminals the named turn created, and nothing else: a
+	// background command an earlier turn left running is not the cancel's to kill. A zero ref
+	// kills nothing. It does not unregister them; the agent's release does.
+	KillForTurn(turn TurnRef)
 }
 
-// turnStopper records a stop on the chat's turn sequence. A cancel records it
-// BEFORE it signals anything, so a turn opened to replace one the reader stopped
-// (the empty-turn retry) sees it whichever bridge the signal reached.
+// turnStopper is a chat's stop, scoped to what ran when it was asked for.
 type turnStopper interface {
-	RequestStop(chatID marotte.ChatID)
+	// RequestStop records a stop for cause on the chat's turn sequence and captures, in one section, the turns it
+	// targets. It is called BEFORE any signal, so a turn opened to replace one the reader stopped (the empty-turn retry)
+	// sees it whichever bridge the signal reached. session/cancel names no turn, so a prompt written before it would
+	// be the one KAS cancels: until ReleaseStop the send gate lets no prompt go, and one it let go before the stop is
+	// written ahead of the stop's session/cancel or not at all (AwaitPromptSend's commit).
+	RequestStop(chatID marotte.ChatID, cause marotte.TurnStopCause) *TurnStop
+	// ReleaseStop lifts the stop's send hold; called once per RequestStop.
+	ReleaseStop(stop *TurnStop)
+	// ArmStopGrace acts on the captured targets once the cancel was sent, each revalidated: Next is kept unsent,
+	// and unless its end comes within d, KAS's turn (Wire) is closed and the sent prompt's call (Call) is
+	// cancelled with ErrCancelGraceExpired. False when no target was still live.
+	ArmStopGrace(stop *TurnStop, d time.Duration) bool
 }
+
+// TurnRef names one turn of one chat. Turn ids are never reused, so an operation handed a ref acts on that turn or,
+// once it has gone, on nothing. The zero ref names none.
+type TurnRef struct {
+	Chat marotte.ChatID
+	Turn string
+}
+
+// Named reports whether r names a turn.
+func (r TurnRef) Named() bool { return r.Turn != "" }
+
+// TurnStop is what one stop targets, captured at its admission; a zero ref names none.
+type TurnStop struct {
+	// Own is the chat's own turn, closing included: its terminals are the stop's.
+	Own TurnRef
+	// Call is a sent prompt whose session/prompt KAS has not answered: Own, or a prompt a later turn_start
+	// superseded.
+	Call TurnRef
+	// Next is the admitted, unsent prompt the send gate would send next because nothing else runs.
+	Next TurnRef
+	Chat marotte.ChatID
+	// Token names the stop's send hold.
+	Token uint64
+	// Admitted names the reservation of a prompt admitted as Next would be but whose turn has not opened; zero for
+	// none. The turn that reservation opens is kept unsent.
+	Admitted uint64
+	// Wire reports Own as an open turn KAS started.
+	Wire bool
+}
+
+// ErrPromptStopped fails a prompt the reader stopped before its session/prompt was sent; it concludes cancelled.
+var ErrPromptStopped = errors.New("the prompt was stopped before it was sent")
+
+// ErrTurnStopped is OpenTurn's refusal of an open that replaces a turn the reader stopped (TurnOpen.Replaces).
+var ErrTurnStopped = errors.New("the turn this open replaces was stopped")
 
 // shellReader reads the built-in shell's output for a `#` terminal reference.
 type shellReader interface {
@@ -364,13 +423,14 @@ type AdmissionOutcome int
 const (
 	// AdmissionAcquired means the caller holds the chat's admission slot.
 	AdmissionAcquired AdmissionOutcome = iota
-	// AdmissionBusy is the holder a steer can reach: a prompt-class turn
-	// with a live bridge. Answered as the plain 409, on which the client's
-	// 409→steer conversion works.
+	// AdmissionBusy is the holder a steer can reach
+	// (marotte.TurnOpenSource.SteerableHolder). Answered as the plain 409, on
+	// which the client steers or queues, per the chat's mode.
 	AdmissionBusy
-	// AdmissionStarting is every other holder: a cold spawn, or a shell on a
-	// bridged or bridgeless chat. Answered as 409 with the additive
-	// `reason: "starting"`.
+	// AdmissionStarting is the fail-closed answer when no steerable holder can take
+	// the prompt: a cold session open, a rewind, or a run or close hold kiro-cli
+	// reports with no steerable turn. Answered as 409 with the additive
+	// `reason: "starting"`, which hands the text back.
 	AdmissionStarting
 )
 
@@ -421,8 +481,11 @@ type TurnFence struct {
 type TurnOpen struct {
 	Prompt *marotte.EntryPrompt
 	Init   func(*marotte.Chat)
-	Source marotte.TurnOpenSource
-	Fence  TurnFence
+	// Replaces names the turn this open stands in for (the empty-turn retry's): a stop requested after that turn
+	// opened refuses the open with ErrTurnStopped, decided in the section that would append it.
+	Replaces string
+	Source   marotte.TurnOpenSource
+	Fence    TurnFence
 	// Awaited takes a second completion handle for a caller that awaits the turn
 	// past its runner's release; that caller releases it.
 	Awaited bool
@@ -439,15 +502,20 @@ type turnOutcomeAccess interface {
 	// OpenTurn appends the turn_open at admission and creates the turn's registry
 	// record in one operation: prompt is the turn's prompt (nil for a source with
 	// none) and init is the header fallback for an id no record exists for, nil for
-	// every source but prompt and local_shell. Refuses on a dead ctx before it
-	// appends, and with ErrTurnSuperseded when the open's fence no longer holds.
+	// every source but prompt. Refuses on a dead ctx before it appends, and with
+	// ErrTurnSuperseded when the open's fence no longer holds.
 	// The id it returns is what StartTurn and every closer are handed.
 	OpenTurn(ctx context.Context, chatID marotte.ChatID, open TurnOpen) (string, error)
-	// StartTurn stamps the model and the credit baseline onto the turn the id
-	// names, with the bridge live, immediately before the call that drives it.
-	// False for a dead ctx and for an id the registry no longer holds, and a caller
+	// StartTurn stamps the model and the credit baseline onto the named turn, with
+	// the bridge live, immediately before the call that drives it. cancel trips that
+	// call when kiro-cli abandons the turn or a stop's grace runs out, nil for a turn
+	// with no prompt call; a non-nil cancel is the turn's until EndPromptCall. False
+	// for a dead ctx and for a turn the registry no longer holds, and a caller
 	// answering false runs the turn end rule on that turn itself.
-	StartTurn(ctx context.Context, chatID marotte.ChatID, turnID string) bool
+	StartTurn(ctx context.Context, turn TurnRef, cancel context.CancelCauseFunc) bool
+	// EndPromptCall forgets the cancel StartTurn stored once its call returned, so no
+	// later interrupt or grace reaches it.
+	EndPromptCall(turn TurnRef)
 	// AwaitTurn blocks until the named turn has finalized and reports what
 	// it did. A caller holding that turn's handle never receives
 	// marotte.ErrNoSuchTurn.
@@ -466,12 +534,9 @@ type turnOutcomeAccess interface {
 	// TurnOpenedAfter reports whether any own turn on the chat opened after
 	// turnID — the structural half of the empty-turn gate.
 	TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool
-	// StopRequestedAfter reports whether the reader asked to stop after turnID
-	// opened — the empty-turn retry's consent clause.
+	// StopRequestedAfter reports whether any stop (marotte.TurnStopCause) was
+	// requested after turnID opened — the empty-turn retry's consent clause.
 	StopRequestedAfter(chatID marotte.ChatID, turnID string) bool
-	// FinalizeLocalShellTurn closes a `!cmd` turn marotte ran itself, appending
-	// its one text entry first.
-	FinalizeLocalShellTurn(ctx context.Context, chatID marotte.ChatID, turnID, output string)
 	// AbandonInFlightTurn finalizes a turn the prompt call could not finish, and
 	// the prompt's exits before any call. stop is what the failure CONCLUDES —
 	// `interrupted` for a fault, `cancelled` for a user cancel KAS never acked — and
@@ -479,6 +544,14 @@ type turnOutcomeAccess interface {
 	// kind, the classified failure the client offers a remedy for (empty for
 	// none). It waits for no read loop position.
 	AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string, kind marotte.FailureKind, seq uint64)
+}
+
+// promptSendGate holds an admitted prompt's session/prompt until the chat's session may take it.
+type promptSendGate interface {
+	// AwaitPromptSend returns once this attempt of turnID's prompt may be sent, with the commit its PromptAt runs
+	// (nil for none), else the error that fails it unsent: ctx ended, the turn closed during the wait, or the reader
+	// stopped it (ErrPromptStopped), which the commit also answers for a stop that followed.
+	AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) (commit func() error, err error)
 }
 
 // preSendCompactor is the compaction policy's before-a-send trigger. It returns
@@ -501,7 +574,6 @@ const (
 	SteerRefuseNotWaiting = "not_waiting"
 	SteerRefuseNotUser    = "not_user"
 	SteerRefuseAgentRows  = "agent_rows_waiting"
-	SteerRefuseStarting   = "starting"
 	SteerRefuseSettling   = "settling"
 	SteerRefuseChatGone   = "chat_gone"
 	// SteerRefuseNoReply is a clear that got no reply: nothing changed.
@@ -592,7 +664,7 @@ type SteerQueue interface {
 	// RemoveCleared re-reads after the delete's clear (landed false: no reply).
 	RemoveCleared(chatID marotte.ChatID, opID string, cleared []string, landed bool) SteerOpResult
 	// BeginDiscard decides a Discard all; needsClear is false when nothing is in KAS.
-	BeginDiscard(chatID marotte.ChatID, opID string) (needsClear bool, refuse string)
+	BeginDiscard(chatID marotte.ChatID, opID string) (needsClear bool)
 	// DiscardCleared re-reads after the discard's clear, or settles it with none.
 	DiscardCleared(chatID marotte.ChatID, opID string, landed bool) SteerOpResult
 	OpSent(chatID marotte.ChatID, opID string, s SteerSend, queued bool, err error)
@@ -676,6 +748,9 @@ type effortRecorder interface {
 	// ThinkingDefaultOff reports whether the model runs with thinking off when the
 	// chat has not chosen, which decides whether a tier pick must turn it back on.
 	ThinkingDefaultOff(model string) bool
+	// EffortSeedable reports whether level may be remembered as model's new-chat
+	// seed: false only when the catalog lists model's tiers and level is not one.
+	EffortSeedable(model string, level marotte.EffortLevel) bool
 }
 
 // modeRecorder is what set_mode needs to leave a transcript record: one write of the mode_switched
@@ -747,7 +822,10 @@ type Roles struct {
 	// Compactor runs the compaction policy before a prompt is sent. Nil sends
 	// with no pre-send check.
 	Compactor preSendCompactor
-	// Renamer renames a KAS session no live bridge holds, so a closed chat's
+	// SendGate holds each session/prompt a chat's prompt sends until the session may
+	// take it. Nil sends at once.
+	SendGate promptSendGate
+	// Renamer renames every KAS session in a chat's chain, so a closed chat's
 	// rename reaches History at once.
 	Renamer SessionRenamer
 	// SpecApprovals is the spec-phase approval record, and it may be nil: a build
@@ -756,13 +834,15 @@ type Roles struct {
 	SpecApprovals SpecApprovals
 	// Tangents resolves a tangent's parent and reads its summary for a merge.
 	Tangents TangentAccess
+	// StepSessions refuses resuming a workflow step's session as a chat. Nil checks nothing.
+	StepSessions stepSessions
 	// Workspace is last for fieldalignment (a trailing length word stops
 	// the leading-pointer count early).
 	Workspace Workspace
 }
 
-// promptRoles holds the prompt path's collaborators and is shared with shell
-// interception. It is built once at registration.
+// promptRoles holds the prompt path's collaborators. It is built once at
+// registration.
 type promptRoles struct {
 	bridges bridgeAccess
 	chats   chatStore
@@ -776,6 +856,7 @@ type promptRoles struct {
 	jobs        SteerJobs
 	followups   QueueAccess
 	compactor   preSendCompactor
+	sendGate    promptSendGate
 	auth        *AuthReadiness
 	workspace   Workspace // last for fieldalignment, as in Roles
 }

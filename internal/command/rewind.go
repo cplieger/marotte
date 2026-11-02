@@ -13,7 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/marotte/internal/chatlock"
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
@@ -55,7 +55,7 @@ func cmdRewindChat(
 	// Held until the record lands: a prompt admitted meanwhile opens a turn, which ends the restore
 	// window before KAS writes the files back. A non-prompt holder parks that prompt rather than
 	// turning it into a steer.
-	if !admission.TryReserveIdleTurn(cmd.ChatID, marotte.TurnSourceLocalShell) {
+	if !admission.TryReserveIdleTurn(cmd.ChatID, marotte.TurnSourceRevert) {
 		return nil, StatusError(http.StatusConflict, errRewindTurnOpen)
 	}
 	defer admission.ReleaseTurnReservation(cmd.ChatID)
@@ -141,11 +141,11 @@ func resumeForRevert(ctx context.Context, bridges bridgeAccess, chatID marotte.C
 		return nil, StatusError(http.StatusConflict, errRewindNoSession)
 	}
 
-	// Empty model on purpose: spawnBridge then keeps the chat's own, so a rewind
+	// Empty model on purpose: the session door then keeps the chat's own, so a rewind
 	// can never silently change which model the chat runs.
 	bridge, err := bridges.OpenBridge(ctx, chatID, "")
 	if err != nil || bridge == nil {
-		// The spawn's own error is logged, not forwarded: it names marotte's
+		// The session door's own error is logged, not forwarded: it names marotte's
 		// internals, and the client renders the reason verbatim to the user.
 		slog.Warn("rewind: no bridge to revert on", "chat", chatID, keyError, err)
 		return nil, StatusError(http.StatusBadGateway, errRewindNoBridge)
@@ -201,7 +201,7 @@ func explainRevertRefusal(kasMessageID string, err error) error {
 }
 
 // cmdSetEffort sets the chat's reasoning-effort level: switched in place on a running session,
-// persisted on the chat and applied to later sessions through StartOpts.Effort. A bridgeless chat
+// persisted on the chat and applied to later sessions through SessionOpts.Effort. A bridgeless chat
 // auto-creates like cmdSetMode. The level is recorded LAST as the new-chat seed for this model, so
 // a refused level is never remembered. Serialized with cmdSetThinking through configLocks.
 func cmdSetEffort(
@@ -211,7 +211,7 @@ func cmdSetEffort(
 	bus broadcaster,
 	ws Workspace,
 	recorder effortRecorder,
-	configLocks *chatlock.Set,
+	configLocks *keylock.Set[marotte.ChatID],
 	cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {
@@ -243,7 +243,9 @@ func cmdSetEffort(
 	if changed {
 		recorder.PersistEffortChange(ctx, cmd.ChatID, model, p.Level)
 	}
-	recordEffortSeed(ctx, bus, ws.ConfigDir, model, p.Level)
+	if recorder.EffortSeedable(model, p.Level) {
+		RecordEffortSeed(ctx, bus, ws.ConfigDir, model, p.Level)
+	}
 	return responseWith(map[string]any{"level": p.Level}), nil
 }
 
@@ -260,7 +262,7 @@ func applyEffortPick(
 		}
 	}
 
-	// Fail fast so a refusal is reported, not persisted; a cold-spawning bridge is not a refusal
+	// Fail fast so a refusal is reported, not persisted; a bridge still opening its session is not a refusal
 	// (applySessionConfig).
 	if err := applySessionConfig(ctx, bridges, chatID, "set_effort",
 		marotte.MethodSetConfigOption, configOptionParams(marotte.ConfigOptionEffort, string(level))); err != nil {
@@ -304,8 +306,9 @@ func persistEffortPick(
 	return model, changed, err
 }
 
-// A failure does not fail the command; a chat with no model is skipped.
-func recordEffortSeed(ctx context.Context, bus broadcaster, configDir, model string, level marotte.EffortLevel) {
+// RecordEffortSeed remembers level as model's next new-chat level (settings.KeyLastEffortByModel),
+// after the pick landed. A failure only logs; an empty model is skipped.
+func RecordEffortSeed(ctx context.Context, bus broadcaster, configDir, model string, level marotte.EffortLevel) {
 	if configDir == "" || model == "" {
 		return
 	}
@@ -326,9 +329,7 @@ func recordEffortSeed(ctx context.Context, bus broadcaster, configDir, model str
 		}
 		doc[settings.KeyLastEffortByModel] = raw
 		return nil
-	}); err != nil {
+	}, bus.Broadcast); err != nil {
 		slog.Warn("effort seed not recorded", "model", model, "level", level, keyError, err)
-		return
 	}
-	bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
 }

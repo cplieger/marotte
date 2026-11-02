@@ -90,6 +90,7 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdReorderTabs:         "CmdReorderTabs",
 		marotte.CmdPinTab:              "CmdPinTab",
 		marotte.CmdReparentTab:         "CmdReparentTab",
+		marotte.CmdAckTab:              "CmdAckTab",
 		marotte.CmdApproveSpecPhase:    "CmdApproveSpecPhase",
 		marotte.CmdMergeTangent:        "CmdMergeTangent",
 	}
@@ -132,8 +133,8 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			want:    true,
 		},
 		{
-			// The prompt path discharges at StartTurn, where the turn's source tells a prompt from
-			// a `!cmd`; a second discharge here would fire for both.
+			// The prompt path discharges when its turn opens, from the turn's source; a second
+			// discharge here would fire twice.
 			name:    "a prompt does not, because its turn source decides",
 			cmdType: marotte.CmdPrompt,
 		},

@@ -2,7 +2,6 @@ package forges
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -19,21 +18,14 @@ import (
 // same-kind tiebreaker; a GitLab host that sorts before both proves the
 // primary key is Kind.
 func TestManagerList_SortsByKindThenHost(t *testing.T) {
+	isolateGit(t)
 	stubPath(t)
 	cfg := t.TempDir()
-	m := NewManager(cfg)
-	var recs []connectionRecord
-	for _, r := range []struct {
-		kind Kind
-		host string
-	}{{KindGitHub, "ccc.example"}, {KindGitHub, "bbb.example"}, {KindGitLab, "aaa.example"}} {
-		id := MakeID(r.kind, r.host)
-		seedStoreRecord(t, cfg, id, "alice")
-		recs = append(recs, connectionRecord{ID: id, Kind: r.kind, Host: r.host})
-	}
-	saveRecords(t, m.conns, recs...)
+	seedConnections(t, cfg, "alice",
+		specFor(KindGitHub, "ccc.example"), specFor(KindGitHub, "bbb.example"), specFor(KindGitLab, "aaa.example"))
+	m, _ := loadedManager(t, cfg, &fakeCore{})
 
-	list := m.List(t.Context())
+	list := m.List()
 
 	got := make([]string, len(list))
 	for i, f := range list {
@@ -54,38 +46,7 @@ func TestManagerList_SortsByKindThenHost(t *testing.T) {
 	}
 }
 
-// The forge list is cached for a TTL, so a client that asks twice in quick
-// succession reads the connection record file once.
-func TestManagerList_ServesTheSecondCallFromCache(t *testing.T) {
-	stubPath(t)
-	cfg := t.TempDir()
-	seedStoreRecord(t, cfg, "gitea:gitea.example", "bob")
-	m := NewManager(cfg)
-	saveRecords(t, m.conns, connectionRecord{ID: "gitea:gitea.example", Kind: KindGitea, Host: "gitea.example"})
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Setup: the boot Refresh() = %v", err)
-	}
-	m.invalidate()
-	reads := 0
-	real := enforceFileMode
-	t.Cleanup(func() { enforceFileMode = real })
-	enforceFileMode = func(path string, mode os.FileMode) (os.FileMode, error) {
-		reads++
-		return real(path, mode)
-	}
-
-	first := m.List(t.Context())
-	second := m.List(t.Context())
-
-	if len(first) != 1 || len(second) != 1 {
-		t.Errorf("List returned %d then %d forges, want the one record row both times", len(first), len(second))
-	}
-	if reads != 1 {
-		t.Errorf("the record file was read %d times across two List calls, want 1: the second is inside the cache TTL", reads)
-	}
-}
-
-func TestManagerList_DegradedStoreRowsCarryTheReason(t *testing.T) {
+func TestManagerList_AnUnopenableStoreMakesEveryRowUnusable(t *testing.T) {
 	stubPath(t)
 	cfg := t.TempDir()
 	store := filepath.Join(cfg, credentialStoreDir)
@@ -95,80 +56,39 @@ func TestManagerList_DegradedStoreRowsCarryTheReason(t *testing.T) {
 	if err := os.Chmod(store, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	m := NewManager(cfg)
-	saveRecords(t, m.conns, githubRecord())
+	writeRecords(t, cfg, connectionRecord{connectionSpec: githubRecord()})
+	m, _ := loadedManager(t, cfg, nil)
 
-	list := m.List(t.Context())
+	list := m.List()
 	if len(list) != 1 {
 		t.Fatalf("List() = %+v, want the one record row", list)
 	}
-	if list[0].Connected {
-		t.Errorf("row over a degraded store reads connected: %+v", list[0])
+	if list[0].Status != ForgeUnusable || list[0].Error == nil {
+		t.Fatalf("row over an unopenable store = %+v, want unusable with its reason", list[0])
 	}
-	if !strings.Contains(list[0].LastError, store) || !strings.Contains(list[0].LastError, "0700") {
-		t.Errorf("row last_error = %q, want the store directory and its required mode", list[0].LastError)
+	if msg := list[0].Error.Message; !strings.Contains(msg, store) || !strings.Contains(msg, "0700") {
+		t.Errorf("row message = %q, want the store directory and its required mode", msg)
 	}
-	if list[0].ErrorCode != codeConnectionUnusable {
-		t.Errorf("row error_code = %q, want %q: no probe, reconnect or sign-out can succeed until the mode is fixed",
-			list[0].ErrorCode, codeConnectionUnusable)
-	}
-}
-
-func TestManagerList_RecordRowsNeedNoCLI(t *testing.T) {
-	stubPath(t)
-	cfg := t.TempDir()
-	seedStoreRecord(t, cfg, "github:github.com", "bob")
-	m := NewManager(cfg)
-	saveRecords(t, m.conns, githubRecord(),
-		connectionRecord{ID: "gitlab:gitlab.com", Kind: KindGitLab, Host: "gitlab.com"})
-
-	byID := map[string]ConfiguredForge{}
-	for _, f := range m.List(t.Context()) {
-		byID[f.ID] = f
-	}
-	if got := byID["github:github.com"]; !got.Connected || got.Username != "bob" || got.LastError != "" {
-		t.Errorf("github row with no CLI on PATH = %+v, want connected as bob", got)
-	}
-	if got := byID["gitlab:gitlab.com"]; got.Connected || got.LastError == "" {
-		t.Errorf("a record with no stored credential = %+v, want disconnected with a reason", got)
+	if list[0].Error.Code != codeConnectionUnusable {
+		t.Errorf("row code = %q, want %q: no check, sign-in or sign-out can succeed until the mode is fixed",
+			list[0].Error.Code, codeConnectionUnusable)
 	}
 }
 
-func connectedGitHub(t *testing.T, core forgeapi.Core) (*Manager, string) {
-	t.Helper()
+func TestManagerList_ARecordWithNoCredentialIsReconnect(t *testing.T) {
 	isolateGit(t)
 	stubPath(t)
 	cfg := t.TempDir()
-	m := NewManager(cfg)
-	m.executable = func() (string, error) { return testHelperBin, nil }
-	m.clients.newCore = func(*connectionRecord, []forgeapi.Option) (forgeapi.Core, error) { return core, nil }
-	rec := connectionRecord{ID: "github:github.com", Kind: KindGitHub, Host: "github.com"}
-	if err := m.connect(t.Context(), &rec, "ghp_secret"); err != nil {
-		t.Fatalf("Setup: connect(github.com) = %v", err)
-	}
-	return m, cfg
-}
+	seedConnections(t, cfg, "bob", githubRecord())
+	writeRecords(t, cfg, connectionRecord{connectionSpec: githubRecord()}, connectionRecord{connectionSpec: gitlabRecord()})
+	m, _ := loadedManager(t, cfg, &fakeCore{})
 
-func TestGitHubConnection_SurvivesRefreshWithNoCLI(t *testing.T) {
-	core := &fakeCore{}
-	m, cfg := connectedGitHub(t, core)
-
-	m.invalidate()
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Refresh() = %v", err)
+	if got := viewFor(t, m, "github:github.com"); got.Status != ForgeConnected || got.Username != "bob" || got.Error != nil {
+		t.Errorf("github row = %+v, want connected as bob", got)
 	}
-	if got := m.get("github:github.com"); got == nil || !got.Connected || got.Username != "bob" {
-		t.Errorf("row after a refresh with no CLI on PATH = %+v, want connected as bob", got)
-	}
-
-	restarted := NewManager(cfg)
-	restarted.executable = m.executable
-	byID := map[string]ConfiguredForge{}
-	for _, f := range restarted.List(t.Context()) {
-		byID[f.ID] = f
-	}
-	if got := byID["github:github.com"]; !got.Connected || got.Username != "bob" || got.LastError != "" {
-		t.Errorf("row after a restart with no CLI on PATH = %+v, want connected as bob", got)
+	if got := viewFor(t, m, "gitlab:gitlab.com"); got.Status != ForgeReconnect || got.Error == nil ||
+		got.Error.Message != emptySlotReason {
+		t.Errorf("a record with no stored credential = %+v, want reconnect naming the missing credential", got)
 	}
 }
 
@@ -198,204 +118,47 @@ func mineRead(reads []ConnectionRead) error {
 	return nil
 }
 
-func TestGitHubConnection_IsVisibleToThePollerWithNoCLI(t *testing.T) {
-	m, _ := connectedGitHub(t, &fakeCore{prs: minePRs(forgeapi.FamilyGitHub, forgeapi.CheckPassing)})
-	reads, src := pollerView(t.Context(), m, "https://github.com")
-	if err := mineRead(reads); err != nil {
-		t.Fatalf("Read() with no CLI on PATH: %v", err)
-	}
-	want := map[string]string{subjectKey("github:github.com", "bob/app", 9): checkPassing}
-	if got := trackedVerdicts(t, src); !maps.Equal(got, want) {
-		t.Errorf("tracked verdicts with no CLI on PATH = %v, want %v", got, want)
-	}
-}
-
-func connectGitLabByPAT(t *testing.T, h *connectHarness) {
-	t.Helper()
-	rec := h.do(t, http.MethodPost, gitlabPATPath, `{"token":"glpat-secret"}`)
-	if body := decodeBody(t, rec); rec.Code != http.StatusOK || body["status"] != stateComplete {
-		t.Fatalf("POST %s = %d %v, want 200 complete", gitlabPATPath, rec.Code, body)
-	}
-}
-
-func TestGitLabConnection_SurvivesRefreshWithNoCLI(t *testing.T) {
-	h := newConnectHarness(t, &userWire{status: http.StatusOK, body: `{"id":1,"username":"alice"}`})
-	connectGitLabByPAT(t, h)
-	cred, ok, err := h.m.store.Load("gitlab:gitlab.com")
-	if err != nil || !ok || cred.Family != forgeapi.FamilyGitLab || cred.Kind != forgeapi.CredKindStaticPAT ||
-		cred.Account != "alice" || cred.WebBaseURL != "https://gitlab.com" {
-		t.Errorf("stored credential = %+v (present %v, err %v), want a static GitLab PAT for alice", cred, ok, err)
-	}
-	if got := helperValuesFor(t, "https://gitlab.com"); len(got) != 2 || got[1] != h.helperValue(t) {
-		t.Errorf("credential.https://gitlab.com.helper = %q, want the reset then Marotte's value", got)
-	}
-
-	h.m.invalidate()
-	if err := h.m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Refresh() = %v", err)
-	}
-	if got := h.m.get("gitlab:gitlab.com"); got == nil || !got.Connected || got.Username != "alice" {
-		t.Errorf("row after a refresh = %+v, want connected as alice", got)
-	}
-
-	restarted := NewManager(h.cfgDir)
-	restarted.executable = h.m.executable
-	byID := map[string]ConfiguredForge{}
-	for _, f := range restarted.List(t.Context()) {
-		byID[f.ID] = f
-	}
-	if got := byID["gitlab:gitlab.com"]; !got.Connected || got.Username != "alice" || got.LastError != "" {
-		t.Errorf("row after a restart = %+v, want connected as alice", got)
-	}
-}
-
-func TestGitLabConnection_IsVisibleToThePollerWithNoCLI(t *testing.T) {
-	h := newConnectHarness(t, nil)
-	h.m.clients.newCore = func(*connectionRecord, []forgeapi.Option) (forgeapi.Core, error) {
-		return &fakeCore{prs: minePRs(forgeapi.FamilyGitLab, forgeapi.CheckFailing)}, nil
-	}
-	connectGitLabByPAT(t, h)
-	reads, src := pollerView(t.Context(), h.m, "https://gitlab.com")
-	if err := mineRead(reads); err != nil {
-		t.Fatalf("Read() with no CLI on PATH: %v", err)
-	}
-	want := map[string]string{subjectKey("gitlab:gitlab.com", "bob/app", 9): checkFailing}
-	if got := trackedVerdicts(t, src); !maps.Equal(got, want) {
-		t.Errorf("tracked verdicts with no CLI on PATH = %v, want %v", got, want)
-	}
-}
-
-func patPath(id string) string {
-	return "/api/forges/" + strings.ReplaceAll(id, ":", "%3A") + "/login/pat"
-}
-
-func connectGiteaKindByPAT(t *testing.T, h *connectHarness, id string) {
-	t.Helper()
-	rec := h.do(t, http.MethodPost, patPath(id), `{"token":"gitea-secret"}`)
-	if body := decodeBody(t, rec); rec.Code != http.StatusOK || body["status"] != stateComplete {
-		t.Fatalf("POST %s = %d %v, want 200 complete", patPath(id), rec.Code, body)
-	}
-}
-
-func TestGiteaFamilyConnection_SurvivesRefreshWithNoCLI(t *testing.T) {
-	for _, tc := range []struct{ id, origin string }{
-		{id: "gitea:gitea.example", origin: "https://gitea.example"},
-		{id: "codeberg:codeberg.org", origin: "https://codeberg.org"},
+// A token sign-in to each family is durable: a restart over the same directory
+// loads it connected as the same account, and the poller reads it.
+func TestPATSignIn_SurvivesARestartAndIsVisibleToThePoller(t *testing.T) {
+	for _, tc := range []struct {
+		kind         Kind
+		host, origin string
+		user         string
+		family       forgeapi.Family
+	}{
+		{KindGitHub, "", "https://github.com", `{"login":"alice"}`, forgeapi.FamilyGitHub},
+		{KindGitLab, "", "https://gitlab.com", `{"id":1,"username":"alice"}`, forgeapi.FamilyGitLab},
+		{KindGitea, "gitea.example", "https://gitea.example", `{"id":1,"login":"alice"}`, forgeapi.FamilyGitea},
+		{KindCodeberg, "", "https://codeberg.org", `{"id":1,"login":"alice"}`, forgeapi.FamilyGitea},
 	} {
-		t.Run(tc.id, func(t *testing.T) {
-			h := newConnectHarness(t, &userWire{status: http.StatusOK, body: `{"id":1,"login":"alice"}`})
-			connectGiteaKindByPAT(t, h, tc.id)
-			cred, ok, err := h.m.store.Load(tc.id)
-			if err != nil || !ok || cred.Family != forgeapi.FamilyGitea || cred.Kind != forgeapi.CredKindStaticPAT ||
+		t.Run(string(tc.kind), func(t *testing.T) {
+			h := newConnectHarness(t, &userWire{status: http.StatusOK, body: tc.user})
+			id := h.signedIn(t, tc.kind, tc.host, "pat-secret", "")
+			cred, ok, err := openTestStore(t, h.cfgDir).Load(slotKey(id, 0))
+			if err != nil || !ok || cred.Family != tc.family || cred.Kind != forgeapi.CredKindStaticPAT ||
 				cred.Account != "alice" || cred.WebBaseURL != tc.origin {
-				t.Errorf("stored credential = %+v (present %v, err %v), want a static Gitea-family PAT for alice on %s",
+				t.Errorf("stored credential = %+v (present %v, err %v), want a static PAT for alice on %s",
 					cred, ok, err, tc.origin)
 			}
 			if got := helperValuesFor(t, tc.origin); len(got) != 2 || got[1] != h.helperValue(t) {
 				t.Errorf("credential.%s.helper = %q, want the reset then Marotte's value", tc.origin, got)
 			}
 
-			h.m.invalidate()
-			if err := h.m.Refresh(t.Context()); err != nil {
-				t.Fatalf("Refresh() = %v", err)
+			restarted, _ := newManager(t, h.cfgDir, &fakeCore{prs: minePRs(tc.family, forgeapi.CheckFailing)})
+			restarted.Load(t.Context())
+			got := viewFor(t, restarted, id)
+			if got.Status != ForgeConnected || got.Username != "alice" || got.Account != viewFor(t, h.m, id).Account {
+				t.Errorf("row after a restart = %+v, want connected as alice under the same sign-in", got)
 			}
-			if got := h.m.get(tc.id); got == nil || !got.Connected || got.Username != "alice" {
-				t.Errorf("row after a refresh = %+v, want connected as alice", got)
+			reads, src := pollerView(t.Context(), restarted, tc.origin)
+			if err := mineRead(reads); err != nil {
+				t.Fatalf("Read() after a restart: %v", err)
 			}
-
-			restarted := NewManager(h.cfgDir)
-			restarted.executable = h.m.executable
-			byID := map[string]ConfiguredForge{}
-			for _, f := range restarted.List(t.Context()) {
-				byID[f.ID] = f
-			}
-			if got := byID[tc.id]; !got.Connected || got.Username != "alice" || got.LastError != "" {
-				t.Errorf("row after a restart = %+v, want connected as alice", got)
+			want := map[string]string{subjectKey(id, "bob/app", 9): checkFailing}
+			if got := trackedVerdicts(t, src); !maps.Equal(got, want) {
+				t.Errorf("tracked verdicts after a restart = %v, want %v", got, want)
 			}
 		})
-	}
-}
-
-func TestGiteaConnection_IsVisibleToThePollerWithNoCLI(t *testing.T) {
-	h := newConnectHarness(t, nil)
-	h.m.clients.newCore = func(*connectionRecord, []forgeapi.Option) (forgeapi.Core, error) {
-		return &fakeCore{prs: minePRs(forgeapi.FamilyGitea, forgeapi.CheckFailing)}, nil
-	}
-	connectGiteaKindByPAT(t, h, "gitea:gitea.example")
-	reads, src := pollerView(t.Context(), h.m, "https://gitea.example")
-	if err := mineRead(reads); err != nil {
-		t.Fatalf("Read() with no CLI on PATH: %v", err)
-	}
-	want := map[string]string{subjectKey("gitea:gitea.example", "bob/app", 9): checkFailing}
-	if got := trackedVerdicts(t, src); !maps.Equal(got, want) {
-		t.Errorf("tracked verdicts with no CLI on PATH = %v, want %v", got, want)
-	}
-}
-
-func TestConnect_RecordWriteFailureLeavesNoCredential(t *testing.T) {
-	isolateGit(t)
-	stubPath(t)
-	m := NewManager(t.TempDir())
-	m.clients.newCore = func(*connectionRecord, []forgeapi.Option) (forgeapi.Core, error) { return &fakeCore{}, nil }
-	saveRecords(t, m.conns, connectionRecord{ID: "gitea:gitea.example", Kind: KindGitea, Host: "gitea.example"})
-	loads := 0
-	real := enforceFileMode
-	t.Cleanup(func() { enforceFileMode = real })
-	enforceFileMode = func(path string, mode os.FileMode) (os.FileMode, error) {
-		if loads++; loads > 1 {
-			return 0, errors.New("mode check failed")
-		}
-		return real(path, mode)
-	}
-
-	rec := connectionRecord{ID: "github:github.com", Kind: KindGitHub, Host: "github.com"}
-	if err := m.connect(t.Context(), &rec, "ghp_secret"); err == nil {
-		t.Fatal("connect() with an unwritable record file = nil, want the write failure")
-	}
-	if _, ok, err := m.store.Load("github:github.com"); ok || err != nil {
-		t.Errorf("store holds the credential (err %v) after the record write failed, want it removed", err)
-	}
-	if got := helperValuesFor(t, githubOrigin); len(got) != 0 {
-		t.Errorf("credential.%s.helper = %q after a failed connect, want nothing registered", githubOrigin, got)
-	}
-}
-
-func TestConnect_ReconnectKeepsTheRecordsRotationCursor(t *testing.T) {
-	m, _ := connectedGitHub(t, &fakeCore{})
-	if err := m.conns.update(t.Context(), func(cur []connectionRecord) []connectionRecord {
-		cur[0].RotationCursor = "cursor-7"
-		return cur
-	}); err != nil {
-		t.Fatalf("Setup: write the cursor: %v", err)
-	}
-
-	rec := connectionRecord{ID: "github:github.com", Kind: KindGitHub, Host: "github.com"}
-	if err := m.connect(t.Context(), &rec, "ghp_new"); err != nil {
-		t.Fatalf("reconnect = %v", err)
-	}
-	recs, err := m.conns.load()
-	if err != nil || len(recs) != 1 || recs[0].RotationCursor != "cursor-7" || recs[0].HelperValue == "" {
-		t.Errorf("records after a reconnect = %+v, %v; want one record keeping cursor-7 and its helper value", recs, err)
-	}
-}
-
-func TestConnect_ReAddressedReconnectMovesTheHelper(t *testing.T) {
-	isolateGit(t)
-	stubPath(t)
-	m := NewManager(t.TempDir())
-	m.executable = func() (string, error) { return testHelperBin, nil }
-	m.clients.newCore = func(*connectionRecord, []forgeapi.Option) (forgeapi.Core, error) { return &fakeCore{}, nil }
-	const host = "forge.test:8080"
-	for _, base := range []string{"https://" + host, "http://" + host} {
-		rec := connectionRecord{ID: MakeID(KindGitHub, host), Kind: KindGitHub, Host: host, WebBaseURL: base, PlaintextHTTP: true}
-		if err := m.connect(t.Context(), &rec, "ghp_secret"); err != nil {
-			t.Fatalf("connect(%s) = %v", base, err)
-		}
-	}
-	if got := helperValuesFor(t, "https://"+host); len(got) != 0 {
-		t.Errorf("credential.https://%s.helper = %q after re-addressing to http, want it removed", host, got)
-	}
-	if got := helperValuesFor(t, "http://"+host); len(got) != 2 {
-		t.Errorf("credential.http://%s.helper = %q, want the reset and Marotte's value", host, got)
 	}
 }

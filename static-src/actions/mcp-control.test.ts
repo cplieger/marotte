@@ -5,12 +5,7 @@ vi.mock("../toast.js", () =>
 );
 
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import {
-  reconnectServer,
-  getPromptContent,
-  getResourceContent,
-  relayOAuthCallback,
-} from "./mcp.js";
+import { reconnectServer, relayOAuthCallback } from "./mcp.js";
 
 const mockFetch = vi.fn();
 
@@ -31,61 +26,42 @@ function lastCall(): { url: string; init: RequestInit } {
 }
 
 describe("reconnectServer", () => {
-  it("POSTs the server name to /api/mcp/reconnect and returns the count", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ reconnected: 2 }), { status: 200 }));
-    const res = await reconnectServer.dispatch({ server: "everything" });
+  it("POSTs the server name to /api/mcp/reconnect and takes a 204 as done", async () => {
+    const toast = await import("../toast.js");
+    mockFetch.mockResolvedValue(new Response(null, { status: 204 }));
+    const done = vi.fn();
+    await reconnectServer.dispatch({ server: "everything" }, { onSuccess: done });
     const { url, init } = lastCall();
-    expect(url).toContain("/api/mcp/reconnect");
+    expect(new URL(url, location.href).pathname).toBe("/api/mcp/reconnect");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({ server: "everything" });
-    expect(res?.reconnected).toBe(2);
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
   });
-});
 
-describe("getPromptContent", () => {
-  it("POSTs server/prompt/arguments to /api/mcp/prompt", async () => {
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ messages: [{ content: { type: "text", text: "hi" } }] }), {
-        status: 200,
-      }),
+  it.each([
+    [503, "The agent engine is not running. Try again once it is back."],
+    [502, "kiro-cli did not reset the server."],
+  ])("a %i shows the server's sentence and never reports success", async (status, sentence) => {
+    const toast = await import("../toast.js");
+    vi.mocked(toast.error).mockClear();
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify({ error: sentence }), { status })),
     );
-    const res = await getPromptContent.dispatch({
-      server: "everything",
-      prompt: "args-prompt",
-      arguments: { city: "Paris" },
-    });
-    const { url, init } = lastCall();
-    expect(url).toContain("/api/mcp/prompt");
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body as string)).toEqual({
-      server: "everything",
-      prompt: "args-prompt",
-      arguments: { city: "Paris" },
-    });
-    expect(res?.messages?.[0]?.content).toBeDefined();
-  });
-
-  it("defaults arguments to an empty object", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ messages: [] }), { status: 200 }));
-    await getPromptContent.dispatch({ server: "everything", prompt: "simple-prompt" });
-    const { init } = lastCall();
-    expect(JSON.parse(init.body as string).arguments).toEqual({});
-  });
-});
-
-describe("getResourceContent", () => {
-  it("POSTs server/uri to /api/mcp/resource", async () => {
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ contents: [{ uri: "demo://x", text: "body" }] }), {
-        status: 200,
-      }),
+    const done = vi.fn();
+    const settled = reconnectServer
+      .dispatch({ server: "everything" }, { onSuccess: done })
+      .catch(() => undefined);
+    // Each retry's delay is armed only after the previous response settles, so step past each one.
+    for (let i = 0; i < 5; i++) {
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+    await settled;
+    expect(done).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      `Could not reconnect integration: ${sentence}`,
+      expect.anything(),
     );
-    const res = await getResourceContent.dispatch({ server: "everything", uri: "demo://x" });
-    const { url, init } = lastCall();
-    expect(url).toContain("/api/mcp/resource");
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body as string)).toEqual({ server: "everything", uri: "demo://x" });
-    expect(res?.contents?.[0]?.text).toBe("body");
   });
 });
 

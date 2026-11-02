@@ -5,7 +5,14 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { SendState } from "./prompt-input.js";
 import { setSendState } from "./prompt-input.js";
 import { setSSEStatus, setAgentDown, clearAgentDown, reportSendRefused } from "./send-state.js";
-import { setSessions, setActive, setThinking, recordSteerQueued } from "./store.js";
+import {
+  setSessions,
+  setActive,
+  setThinking,
+  recordSteerQueued,
+  openTurn,
+  appendEntry,
+} from "./store.js";
 import type { Session } from "./types.js";
 
 // Capture every SendState pushed to prompt-input without loading its DOM deps.
@@ -124,6 +131,40 @@ describe("send-state precedence", () => {
 
     setThinking(id, true);
     expect(lastPushed()).toEqual({ kind: "streaming" });
+  });
+});
+
+// A turn the agent started itself opens with `turn_opened` and streams nothing for seconds (hooks,
+// steering injection, time to first token). Send must already mean Steer or Queue there.
+describe("send-state beside a turn that has not streamed", () => {
+  const wakeOpen = {
+    id: "t-wake-open",
+    turn: "t-wake",
+    kind: "turn_open",
+    seq: 0,
+    ts: 1,
+    payload: { source: "wire_turn_start", n: 1 },
+  } as const;
+
+  it("shows the mid-turn face from the turn's open, and idle again at its close", () => {
+    const id = "c1";
+    setSessions([makeSession(id)]);
+    setActive(id);
+    setSSEStatus("connected");
+    expect(lastPushed()).toEqual({ kind: "idle" });
+
+    openTurn(id, wakeOpen);
+    expect(lastPushed()).toEqual({ kind: "streaming" });
+
+    appendEntry(id, {
+      id: "t-wake-close",
+      turn: "t-wake",
+      kind: "turn_close",
+      seq: 1,
+      ts: 2,
+      payload: { outcome: "completed" },
+    });
+    expect(lastPushed()).toEqual({ kind: "idle" });
   });
 });
 

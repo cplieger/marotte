@@ -67,7 +67,7 @@ func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
 	waitForSessionID(t, cs, "c-test-1")
 }
 
-// waitForSessionID polls until the chat carries an ACP session id: the prompt acks before the bridge spawns.
+// waitForSessionID polls until the chat carries an ACP session id: the prompt acks before the session opens.
 func waitForSessionID(t *testing.T, cs *testChatStore, chatID marotte.ChatID) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -76,7 +76,7 @@ func waitForSessionID(t *testing.T, cs *testChatStore, chatID marotte.ChatID) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("acp_session_id not persisted: the prompt turn never spawned its bridge")
+			t.Fatal("acp_session_id not persisted: the prompt turn never opened its session")
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -166,7 +166,7 @@ func TestCancel_NotifiesBridge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fb := sb.bridge.(*fakeBridge)
+	fb := unguarded(sb.bridge).(*fakeBridge)
 	fb.sessionID = "sess"
 
 	rec := postCmd(t, h, marotte.ClientCommand{Type: "cancel", ChatID: "c1"})
@@ -336,73 +336,28 @@ func newCmdRec() *httptest.ResponseRecorder {
 	return httptest.NewRecorder()
 }
 
-func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
-	h, cs, _ := newTestHubIn(t.TempDir())
+func TestPrompt_BangPrefixedTextReachesTheAgent(t *testing.T) {
+	h, cs, br := newTestHubIn(t.TempDir())
+	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
+	seedChat(t, cs, "c-bang")
 	rec := postCmd(t, h, marotte.ClientCommand{
-		Type: "prompt", ChatID: "c-sh",
-		Payload: json.RawMessage(`{"text":"!printf hi","message_id":"m-1"}`),
+		Type: marotte.CmdPrompt, ChatID: "c-bang",
+		Payload: json.RawMessage(`{"text":"!ls","message_id":"m-1"}`),
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if _, ok := cs.Get(t.Context(), "c-sh"); !ok {
-		t.Fatal("chat not created by shell interception")
-	}
-	// One turn: turn_open{local_shell, prompt}, the fenced output, turn_close.
-	entries := logOf(t, cs, "c-sh")
-	kinds := make([]marotte.EntryKind, 0, len(entries))
-	for i := range entries {
-		kinds = append(kinds, entries[i].Kind)
-	}
-	want := []marotte.EntryKind{marotte.EntryKindTurnOpen, marotte.EntryKindText, marotte.EntryKindTurnClose}
-	if !slices.Equal(kinds, want) {
-		t.Fatalf("log kinds = %v, want %v", kinds, want)
-	}
-	open := opensOf(t, entries)[0]
-	if open.Source != marotte.TurnOpenNameLocalShell || open.Prompt == nil || open.Prompt.Text != "!printf hi" {
-		t.Errorf("turn_open = %+v, want a local_shell turn carrying the command", open)
-	}
-	output := textsOf(t, entries)[0]
-	if !strings.Contains(output, "```") {
-		t.Errorf("shell output missing code fence: %q", output)
-	}
-	if !strings.Contains(output, "hi") {
-		t.Errorf("shell output missing the command's output: %q", output)
-	}
-	if closes := closesOf(t, entries); closes[0].Outcome != marotte.TurnOutcomeCompleted {
-		t.Errorf("turn_close outcome = %q, want %q", closes[0].Outcome, marotte.TurnOutcomeCompleted)
-	}
-}
+	waitFor(t, func() bool { return len(closesOf(t, logOf(t, cs, "c-bang"))) == 1 && !h.coord.turns.live("c-bang") })
 
-// TestPrompt_ShellInterception_EmptyAfterTrim rejects `!<whitespace>` as errEmptyPrompt.
-func TestPrompt_ShellInterception_EmptyAfterTrim(t *testing.T) {
-	h, _, _ := newTestHubIn(t.TempDir())
-	rec := postCmd(t, h, marotte.ClientCommand{
-		Type: "prompt", ChatID: "c-empty",
-		Payload: json.RawMessage(`{"text":"!   \t","message_id":"m-1"}`),
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400 for '!<whitespace>'", rec.Code)
+	blocks, _ := br.paramsFor(marotte.MethodPrompt)[marotte.KeyPrompt].([]map[string]any)
+	if !slices.ContainsFunc(blocks, func(b map[string]any) bool {
+		return b[marotte.ContentKeyType] == marotte.ContentTypeText && b["text"] == "!ls"
+	}) {
+		t.Errorf("session/prompt blocks = %v, want the text block %q", blocks, "!ls")
 	}
-}
-
-// TestPrompt_ShellInterception_ExitCodeAppended pins the exit status below the fenced output.
-func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
-	h, cs, _ := newTestHubIn(t.TempDir())
-	rec := postCmd(t, h, marotte.ClientCommand{
-		Type: "prompt", ChatID: "c-fail",
-		Payload: json.RawMessage(`{"text":"!false","message_id":"m-1"}`),
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	texts := textsOf(t, logOf(t, cs, "c-fail"))
-	if len(texts) != 1 {
-		t.Fatalf("text entries = %d, want the one fenced output", len(texts))
-	}
-	// More than the empty fence, so err.Error() was surfaced.
-	if len(texts[0]) < 10 {
-		t.Errorf("shell output too short, error not surfaced: %q", texts[0])
+	opens := opensOf(t, logOf(t, cs, "c-bang"))
+	if len(opens) != 1 || opens[0].Source != marotte.TurnOpenNamePrompt || opens[0].Prompt == nil || opens[0].Prompt.Text != "!ls" {
+		t.Errorf("turn_opens = %+v, want one prompt turn carrying %q", opens, "!ls")
 	}
 }
 
@@ -643,7 +598,7 @@ func TestPermission_RejectsOptionNotOfferedByRequest(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "option_not_offered") {
 		t.Errorf("off-list permission response body = %q, want a nonsensitive option_not_offered error", rec.Body.String())
 	}
-	if _, ok := h.bus.pendingPerms.takeIfPresent("c1", askID); !ok {
+	if _, ok := h.bus.pendingPerms.takeIfPresent("c1", askID, marotte.DecisionKindPermission); !ok {
 		t.Error("off-list permission response consumed the pending request")
 	}
 }

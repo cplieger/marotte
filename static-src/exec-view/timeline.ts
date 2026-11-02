@@ -1,12 +1,22 @@
 // The exec view's timeline: where the time went and what ran concurrently (a column shows only
-// order). WORK NODES ONLY (steps and watches), since a container's span is its children's. A
-// readout: no axes, ticks or zoom; selectable with the tree's `onSelect` and selected path.
+// order). A lane per WORK NODE (steps and watches), since a container's span is its children's, and
+// every one of them from the plan, so a step not started yet is an empty lane; a loop pass heads
+// its lanes with a row of its own. A readout: no axes, ticks or zoom; selectable with the tree's
+// `onSelect` and selected path.
 
 import { el } from "@cplieger/reactive";
 import { formatElapsed } from "../strings.js";
 import { reconcile } from "../reconcile.js";
-import { elapsed, workNodes, window as execWindow, type ExecNode } from "./model.js";
+import {
+  elapsed,
+  flatten,
+  isWork,
+  passText,
+  window as execWindow,
+  type ExecNode,
+} from "./model.js";
 import { STATE_WORD } from "./status.js";
+import { paintLabel } from "./label.js";
 
 export interface ExecTimelineView {
   readonly root: HTMLElement;
@@ -17,20 +27,34 @@ export interface ExecTimelineView {
   tick(nodes: readonly ExecNode[], selected: string, live: boolean): void;
 }
 
+/** A loop pass container's number; undefined for anything else, a step a repeat holds directly
+ *  included, which is a lane. */
+function passOf(n: ExecNode): number | undefined {
+  return isWork(n) ? undefined : n.pass;
+}
+
+/** Each lane's innermost pass by path, so lanes of the same step in different passes are told
+ *  apart by name; a lane in no loop is absent. */
+function passesOf(nodes: readonly ExecNode[]): Map<string, number> {
+  const out = new Map<string, number>();
+  const walk = (n: ExecNode, around: number | undefined): void => {
+    const here = n.pass ?? around;
+    if (isWork(n) && here !== undefined) {
+      out.set(n.path, here);
+    }
+    for (const k of n.children) {
+      walk(k, here);
+    }
+  };
+  for (const n of nodes) {
+    walk(n, undefined);
+  }
+  return out;
+}
+
 export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelineView {
-  const scale = el("span", { className: "ev-tl-scale" });
   const lanes = el("div", { className: "ev-tl-lanes" });
-  const root = el(
-    "div",
-    { className: "ev-tl" },
-    el(
-      "div",
-      { className: "ev-tl-head" },
-      el("span", { className: "ev-tl-title" }, "Timeline"),
-      scale,
-    ),
-    lanes,
-  );
+  const root = el("div", { className: "ev-tl" }, lanes);
 
   /** One lane per node path, reused across passes. */
   interface Lane {
@@ -70,24 +94,45 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
     return { root, name, bar, dur };
   }
 
+  /** A loop pass's header: its number and its span, read off its steps because a resume restamps
+   *  the pass container itself. */
+  function buildPassHead(): HTMLElement {
+    return el(
+      "div",
+      { className: "ev-tl-pass" },
+      el("span", { className: "ev-tl-pass-name" }),
+      el("span", { className: "ev-tl-dur" }),
+    );
+  }
+
+  function paintPassHead(head: HTMLElement, n: ExecNode, pass: number): void {
+    const [name, dur] = [head.firstElementChild, head.lastElementChild];
+    const text = passText(pass);
+    if (name !== null && name.textContent !== text) {
+      name.textContent = text;
+    }
+    const ms = execWindow([n], false)?.span ?? 0;
+    const durText = ms > 0 ? formatElapsed(ms) : "";
+    if (dur !== null && dur.textContent !== durText) {
+      dur.textContent = durText;
+    }
+  }
+
   /** RECONCILED by path, not rebuilt: each lane is a focusable `role="button"`, and replacing it on
    *  the 1s tick drops focus and `:hover`. The geometry is recomputed every pass and written onto
    *  the REUSED element. */
   function paint(nodes: readonly ExecNode[], selected: string, live: boolean): void {
-    const ls = workNodes(nodes).filter((n) => n.start !== undefined);
+    const ls = flatten(nodes).filter((n) => isWork(n) || passOf(n) !== undefined);
     const win = execWindow(nodes, live);
-    // TWO steps minimum: a single bar spanning its own window is always full
-    // width and reports nothing the header's elapsed does not already say.
-    if (win === undefined || ls.length < 2) {
-      root.hidden = true;
-      lanes.replaceChildren();
-      return;
-    }
-    root.hidden = false;
-    scale.textContent = formatElapsed(win.span);
+    const lanePass = passesOf(nodes);
 
     const paintLane = (lane: Lane, n: ExecNode): void => {
       const from = Date.parse(n.start ?? "");
+      lane.bar.hidden = win === undefined || Number.isNaN(from);
+      if (win === undefined || Number.isNaN(from)) {
+        paintText(lane, n);
+        return;
+      }
       const to = n.end === undefined ? win.to : Date.parse(n.end);
       const left = ((from - win.from) / win.span) * 100;
       // Floor of 0.75%: a sub-second step in an hour-long run rounds to zero
@@ -97,31 +142,46 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
       // Clamped so clock skew between the server's stamps and this browser
       // cannot widen the row past the track.
       lane.bar.style.inlineSize = `${Math.min(100 - left, width).toFixed(3)}%`;
+      paintText(lane, n);
+    };
 
+    const paintText = (lane: Lane, n: ExecNode): void => {
       const ms = elapsed(n.start, n.end);
       const durText = ms > 0 ? formatElapsed(ms) : "";
       lane.root.className = n.path === selected ? "ev-tl-lane ev-selected" : "ev-tl-lane";
       lane.root.dataset["state"] = n.state;
+      const pass = lanePass.get(n.path);
       lane.root.setAttribute(
         "aria-label",
-        `${n.label}, ${STATE_WORD[n.state]}${durText === "" ? "" : `, ${durText}`}`,
+        [n.label, pass === undefined ? "" : passText(pass), STATE_WORD[n.state], durText]
+          .filter((s) => s !== "")
+          .join(", "),
       );
-      lane.name.textContent = n.label;
+      paintLabel(lane.name, n);
       lane.dur.textContent = durText;
     };
 
     reconcile(lanes, ls, {
       key: (n) => n.path,
       mount: (n) => {
+        const pass = passOf(n);
+        if (pass !== undefined) {
+          const head = buildPassHead();
+          paintPassHead(head, n, pass);
+          return head;
+        }
         const lane = buildLane(n.path);
         laneParts.set(lane.root, lane);
         paintLane(lane, n);
         return lane.root;
       },
-      update: (laneRoot, n) => {
-        const lane = laneParts.get(laneRoot);
+      update: (row, n) => {
+        const lane = laneParts.get(row);
+        const pass = passOf(n);
         if (lane !== undefined) {
           paintLane(lane, n);
+        } else if (pass !== undefined) {
+          paintPassHead(row, n, pass);
         }
       },
     });

@@ -21,7 +21,6 @@ func TestOpenTurn_RefusesAnAlreadyDeadContext(t *testing.T) {
 	}{
 		{name: "prompt", source: marotte.TurnSourcePrompt},
 		{name: "empty_retry", source: marotte.TurnSourceEmptyRetry},
-		{name: "local_shell", source: marotte.TurnSourceLocalShell},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -58,10 +57,10 @@ func TestStartTurn_RefusesADeadContextAfterTheOpen(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if h.coord.StartTurn(ctx, "c1", id) {
+	if h.coord.StartTurn(ctx, command.TurnRef{Chat: "c1", Turn: id}, nil) {
 		t.Errorf("StartTurn(cancelled ctx, %q) = true, want false", id)
 	}
-	if h.coord.StartTurn(t.Context(), "c1", "t-never-opened") {
+	if h.coord.StartTurn(t.Context(), command.TurnRef{Chat: "c1", Turn: "t-never-opened"}, nil) {
 		t.Error("StartTurn(live ctx, unknown id) = true, want false: the registry holds no such turn")
 	}
 	if got := h.coord.turns.openTurnIDs("c1"); len(got) != 1 || got[0].ID != id {
@@ -69,13 +68,13 @@ func TestStartTurn_RefusesADeadContextAfterTheOpen(t *testing.T) {
 	}
 }
 
-// A prompt parked in its bridge spawn when Shutdown lands still reaches a terminal frame. Unlike
+// A prompt parked in its session open when Shutdown lands still reaches a terminal frame. Unlike
 // TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn, which passes through a closer race, this pins that no turn
 // opens and the prompt takes its zero-epoch branch.
 func TestPromptTurn_ShutdownBeforeTheTurnOpensStartsNoTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	entered, gate := gateSpawn(h)
+	entered, gate := gateSessionOpen(h)
 	defer close(gate)
 
 	if rec := postCmd(t, h, marotte.ClientCommand{
@@ -98,5 +97,53 @@ func TestPromptTurn_ShutdownBeforeTheTurnOpensStartsNoTurn(t *testing.T) {
 	types := extractTypes(t, bufferedSince(h, 0))
 	if missing := missingEvents(types, string(marotte.EventError)); missing != nil {
 		t.Errorf("events = %v, want the prompt's terminal error frame", types)
+	}
+}
+
+// A prompt's open marks the chat's unsent rows as awaiting it before turn_opened goes out, so no
+// client sees the turn live while those rows still read as a turn of their own.
+func TestOpenTurn_MarksUnsentRowsAwaitingAPromptBeforeTheAnnounce(t *testing.T) {
+	h, cs, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	seedChat(t, cs, "c1")
+	if _, refuse := h.steerQueue.RouteSteer("c1", "steer-a", "words", promptHolder); refuse != "" {
+		t.Fatalf("RouteSteer refused %q", refuse)
+	}
+	if _, refuse := h.steerQueue.RouteSteer("c1", "steer-a", "words", command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
+		t.Fatalf("RouteSteer with no holder refused %q, want no_turn", refuse)
+	}
+	since := uint64(0)
+	if b := bufferedSince(h, 0); len(b) > 0 {
+		since = b[len(b)-1].Offset
+	}
+
+	if _, err := h.coord.OpenTurn(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "hi"}}); err != nil {
+		t.Fatalf("OpenTurn: %v", err)
+	}
+
+	awaitAt, openAt := -1, -1
+	for i, e := range bufferedSince(h, since) {
+		var msg struct {
+			Type    marotte.EventType          `json:"type"`
+			Payload marotte.SteerQueuedPayload `json:"payload"`
+		}
+		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
+			t.Fatalf("unmarshal event: %v", err)
+		}
+		switch {
+		case msg.Type == marotte.EventSteerQueued && msg.Payload.SteerID == "steer-a" && msg.Payload.AwaitsPrompt && awaitAt < 0:
+			awaitAt = i
+		case msg.Type == marotte.EventTurnOpened && openAt < 0:
+			openAt = i
+		}
+	}
+	if openAt < 0 {
+		t.Fatal("no turn_opened frame")
+	}
+	if awaitAt < 0 {
+		t.Fatal("steer-a was never re-framed as awaiting the prompt")
+	}
+	if awaitAt > openAt {
+		t.Errorf("the awaiting frame (%d) came after turn_opened (%d)", awaitAt, openAt)
 	}
 }

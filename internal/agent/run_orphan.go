@@ -7,6 +7,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -28,9 +29,9 @@ const reasonLeaseAbsent = "no terminal signal was seen and the run stayed absent
 // reasonOrphaned is the schedule row's reason for a run swept after its process died; the next slot is the recovery.
 const reasonOrphaned = "stopped because the server restarted while it was running. Run it again, or wait for the next slot"
 
-// SweepOrphaned clears every lease whose run a dead process left paused. Best-effort: skipping costs a stale
+// sweepOrphaned clears every lease whose run a dead process left paused. Best-effort: skipping costs a stale
 // row, cancelling a live run destroys work. Reports whether it reached KAS.
-func (rs *Runs) SweepOrphaned(ctx context.Context) (reached bool) {
+func (rs *Runs) sweepOrphaned(ctx context.Context) (reached bool) {
 	if len(rs.leaseStore().List()) == 0 {
 		// No leases: nothing to ask.
 		return true
@@ -66,6 +67,53 @@ func (rs *Runs) SweepOrphaned(ctx context.Context) (reached bool) {
 		}
 	}
 	return true
+}
+
+// BootSweep is the boot pass: the finder of the sign-in gate's pauses, which retries on its own, the orphan sweep,
+// then one read of every leased run's asks. Reports whether the sweep reached KAS; when it did not, nothing was read.
+// Its loop outlives Shutdown, so the pass is held on inflight and none runs once draining.
+func (rs *Runs) BootSweep(ctx context.Context) (reached bool) {
+	release, ok := rs.lifecycle.enterUnlessDraining()
+	if !ok {
+		return false
+	}
+	defer release()
+	rs.findHoldsAsync()
+	if !rs.sweepOrphaned(ctx) {
+		return false
+	}
+	rs.askBootPass(ctx)
+	return true
+}
+
+// askBootPass reads each leased run through the engine, one at a time. A chat-parented run's chat session is made
+// resident for it, which resumes that chat's restart-paused runs now rather than at the user's return.
+func (rs *Runs) askBootPass(ctx context.Context) {
+	leases := rs.leaseStore().List()
+	if len(leases) == 0 {
+		return
+	}
+	started := time.Now()
+	read := 0
+	for i := range leases {
+		id := leases[i].WorkflowID
+		c := rs.cellFor(id)
+		if c == nil {
+			continue
+		}
+		if leases[i].Origin == runlease.OriginAgent {
+			if _, err := rs.ensureResident(ctx, id); err != nil {
+				slog.Warn("boot: a chat-parented run's chat could not be reopened", "workflow_id", id, "error", err)
+			}
+		}
+		if _, err := rs.readAsks(ctx, c); err != nil {
+			slog.Warn("boot: a leased run could not be read", "workflow_id", id, "error", err)
+			continue
+		}
+		read++
+	}
+	slog.Info("boot: read every leased run's questions", "leases", len(leases), "read", read,
+		"took", time.Since(started).Round(time.Millisecond))
 }
 
 // releaseIfOver releases a run's lease when KAS says it is over, for a stop with no confirmation. Unknown
@@ -176,26 +224,26 @@ func (rs *Runs) clearBlockingOrphan(ctx context.Context, workflowID string, stat
 	return rs.clearOrphaned(ctx, &l)
 }
 
-// clearOrphaned is the shared release: claim, re-confirm, cancel, then record and release, as
-// finishTermination orders it. The check-to-cancel window is accepted; do not widen it or drop the
-// auto-cancel without a compare-and-cancel.
+// clearOrphaned is the shared release: claim, then re-read and cancel in one transition, under the run's resume lock
+// so no resume of marotte's lands between them, then record and release, as finishTermination orders it. A resume
+// from outside marotte can still land between the read and the cancel; do not drop the auto-cancel without a
+// compare-and-cancel.
 func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 	if !rs.claimTermination(l.WorkflowID) {
 		// Already ending; the winner releases.
 		return false
 	}
-	if !rs.restartPaused(ctx, l.WorkflowID) {
+	switch c, err := rs.transition(ctx, l.WorkflowID, &runRequest{want: orphanCancel}); {
+	case err != nil:
+		rs.releaseTermination(l.WorkflowID)
+		slog.Error("could not cancel a restart-orphaned run; its recipe stays busy until the next try",
+			"workflow_id", l.WorkflowID, "error", err)
+		return false
+	case c.act != actCancelOrphan:
 		// No longer an orphan: hand the claim back.
 		rs.releaseTermination(l.WorkflowID)
 		slog.Info("a run stopped reading as restart-orphaned before its cancel; leaving it alone",
 			"workflow_id", l.WorkflowID, "recipe", l.Recipe)
-		return false
-	}
-	rs.disarmDeadline(ctx, l.WorkflowID)
-	if err := rs.cancelRPC(ctx, l.WorkflowID, runStop{}, nil); err != nil {
-		rs.releaseTermination(l.WorkflowID)
-		slog.Error("could not cancel a restart-orphaned run; its recipe stays busy until the next try",
-			"workflow_id", l.WorkflowID, "error", err)
 		return false
 	}
 	rs.recordEnd(l.WorkflowID, runEndOrphaned)
@@ -208,37 +256,10 @@ func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 	return true
 }
 
-// restartPaused reports whether KAS says a run's owning process died: a byte-equal reason (never
-// `pauseDetail`, unlike involuntarilyPaused, since this cancels), status and identity off the same
-// reply, and false on any RPC failure.
+// restartPaused reports whether KAS says a run's owning process died (seenRestartPaused): a selection only, since
+// the cancel's own transition reads the run again.
 func (rs *Runs) restartPaused(ctx context.Context, workflowID string) bool {
-	if workflowID == "" {
-		return false
-	}
-	res, ok := rs.inspect(ctx, workflowID)
-	if !ok {
-		return false
-	}
-	return res.WorkflowID == workflowID &&
-		res.State.Status == marotte.RunStatusPaused &&
-		res.State.PauseReason == stalePauseReason &&
-		!res.userParked()
-}
-
-// involuntarilyPaused reports whether marotte should resume a pause unasked: restartPaused with the wider
-// predicate (resumablePause); false on any RPC failure.
-func (rs *Runs) involuntarilyPaused(ctx context.Context, workflowID string) bool {
-	if workflowID == "" {
-		return false
-	}
-	res, ok := rs.inspect(ctx, workflowID)
-	if !ok {
-		return false
-	}
-	return res.WorkflowID == workflowID &&
-		res.State.Status == marotte.RunStatusPaused &&
-		resumablePause(res.State.PauseReason, res.State.PauseDetail) &&
-		!res.userParked()
+	return workflowID != "" && rs.readPauseState(ctx, workflowID).seen == seenRestartPaused
 }
 
 // inspectRunState is what the pause predicates read off `_kiro/workflow/inspect`, detail included, so this
@@ -252,8 +273,25 @@ type inspectRunState struct {
 		Status        marotte.RunStatus `json:"status"`
 		PauseReason   string            `json:"pauseReason"`
 		StopInitiator string            `json:"stopInitiator"`
+		StopReason    string            `json:"stopReason"`
+		WorkflowID    string            `json:"workflowId"`
 	} `json:"state"`
 	WorkflowID string `json:"workflowId"`
+}
+
+// names reports whether the reply is about workflowID, as workflow.DecodeInspect decides it: every id it names is
+// workflowID, and it names one.
+func (r *inspectRunState) names(workflowID string) bool {
+	top, inner := r.WorkflowID, r.State.WorkflowID
+	return (top != "" || inner != "") && (top == "" || top == workflowID) && (inner == "" || inner == workflowID)
+}
+
+// heldForSignIn reports the sign-in gate's own landed pause, which KAS attributes to the user; a later user pause
+// replaces its reason.
+func (r *inspectRunState) heldForSignIn() bool {
+	st := &r.State
+	return st.Status == marotte.RunStatusPaused && st.PausePending == nil &&
+		st.StopInitiator == initiatorUser && isHoldReason(st.StopReason)
 }
 
 // userParked mirrors KAS's test for a user pause, pending or landed; neither the sweep nor a heal may touch one.
@@ -265,31 +303,85 @@ func (r *inspectRunState) userParked() bool {
 
 // inspect reads one run's inspect reply, false when it cannot be read or decoded at all.
 func (rs *Runs) inspect(ctx context.Context, workflowID string) (inspectRunState, bool) {
+	res, err := rs.readInspect(ctx, workflowID)
+	return res, err == nil
+}
+
+var errInspectUndecoded = errors.New("a run's inspect reply could not be decoded")
+
+// readInspect is inspect with its failure: the RPC's, or errInspectUndecoded.
+func (rs *Runs) readInspect(ctx context.Context, workflowID string) (inspectRunState, error) {
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
 		slog.Warn("could not read a paused run's state, so it is left alone",
 			"workflow_id", workflowID, "error", err)
-		return inspectRunState{}, false
+		return inspectRunState{}, err
 	}
 	var res inspectRunState
 	if !unmarshalKeepingReadable(raw, &res) {
-		return inspectRunState{}, false
+		return inspectRunState{}, errInspectUndecoded
 	}
-	return res, true
+	return res, nil
 }
 
 // rawInspect issues `_kiro/workflow/inspect` and types its failure, so callers use errors.Is. Every
 // successful read seeds the step-session registry before any caller acts on it: after a restart it is
 // the only attribution a step's unmarked frames get, and a caller may send to a step from this read.
 func (rs *Runs) rawInspect(ctx context.Context, workflowID string) (json.RawMessage, error) {
-	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
-	raw, err := u.session.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
-		callerParams(map[string]any{keyWorkflowID: workflowID}))
+	raw, err := rs.engine.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
+		map[string]any{keyWorkflowID: workflowID})
 	if err != nil {
 		return nil, workflow.Classify(err)
 	}
 	rs.translate.RecordRunSteps(raw)
+	rs.seedRouterSteps(workflowID, raw)
 	return raw, nil
+}
+
+// seedRouterSteps teaches the router every step session an inspect names, so a step's frames after a restart reach
+// its run's owner before any node_start is read again.
+func (rs *Runs) seedRouterSteps(workflowID string, raw json.RawMessage) {
+	if rs.router == nil {
+		return
+	}
+	var res workflow.InspectResult
+	if json.Unmarshal(raw, &res) != nil {
+		return
+	}
+	var ids []string
+	for _, st := range workflow.Steps(res.State) {
+		if st.SessionID != "" {
+			ids = append(ids, st.SessionID)
+		}
+	}
+	rs.router.seedSteps(workflowID, ids)
+}
+
+// observeInspected reads workflowID once and feeds its status to the run clock: an executing run is armed, a stopped
+// one disarmed. It decides a run mutation no frame settled.
+func (rs *Runs) observeInspected(ctx context.Context, workflowID string) error {
+	raw, err := rs.rawInspect(ctx, workflowID)
+	if err != nil {
+		if workflowNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	in, err := workflow.DecodeInspect(workflowID, raw)
+	if err != nil {
+		return err
+	}
+	switch marotte.RunStatus(in.State.Status) {
+	case marotte.RunStatusRunning:
+		if !rs.bounded(workflowID) {
+			rs.armDeadline(ctx, workflowID)
+		}
+	default:
+		if rs.bounded(workflowID) {
+			rs.disarmDeadline(ctx, workflowID)
+		}
+	}
+	return nil
 }

@@ -10,7 +10,6 @@ vi.mock("./scroll.js", () => ({
 
 import { chevronEl } from "./chevron.js";
 import { buildToolGroupShell } from "./tool-group.js";
-import { buildSubagentContainer } from "./fundamentals/subagent-block.js";
 import { buildReasoning } from "./fundamentals/reasoning.js";
 import { buildTurnHeader } from "./fundamentals/turn-header.js";
 import { buildTurnFooter } from "./fundamentals/turn-footer.js";
@@ -48,19 +47,6 @@ describe("every disclosure builder emits the shared chevron", () => {
     expect(g.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
     g.classList.add("tool-group-collapsed");
     expect(g.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
-  });
-
-  // A delegate card is absent: it renders none of its delegate's output, so it is not a disclosure.
-  it("pipeline container, and it survives a status flip", async () => {
-    const sa = buildSubagentContainer("orchestrate", "in_progress");
-    // Needs a stage: a container with an empty body withdraws its control, chevron included.
-    sa.body.appendChild(document.createElement("div")).textContent = "stage";
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 0);
-    });
-    expect(sa.root.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
-    sa.setStatus("completed");
-    expect(sa.root.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
   });
 
   it("reasoning summary, and sealing rewrites the LABEL not the summary", () => {
@@ -112,15 +98,6 @@ describe("position carries the interaction type", () => {
   it("the tool group's disclosure leads", () => {
     const g = buildToolGroupShell();
     expect(chevronEnd(g.querySelector(".tool-group-header")!)).toBe("leading");
-  });
-
-  it("the pipeline container's disclosure leads", async () => {
-    const sa = buildSubagentContainer("orchestrate", "in_progress");
-    sa.body.appendChild(document.createElement("div")).textContent = "stage";
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 0);
-    });
-    expect(chevronEnd(sa.root.querySelector(".subagent-header")!)).toBe("leading");
   });
 
   it("a delegate LEAF's navigation chevron trails, in the same header class", async () => {

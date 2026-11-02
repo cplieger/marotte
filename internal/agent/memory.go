@@ -1,6 +1,6 @@
 package agent
 
-// The Memories tab: list, get, update and delete over KAS's _kiro/memory/* on the utility bridge.
+// The Memories tab: list, get, update and delete over KAS's _kiro/memory/* engine calls.
 // KAS owns the store. Calls carry no sessionId, so KAS answers from the account's entitlement
 // alone, whatever the Memory setting.
 
@@ -16,7 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // memoryStoreCap is KAS's record cap and largest list page, so one page holds the store.
@@ -87,7 +87,7 @@ func rowFromKAS(m *kasMemory) memoryRow {
 func (st *Settings) memoryCall(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
 	cctx, cancel := context.WithTimeout(ctx, memoryCallTimeout)
 	defer cancel()
-	return st.utility().session.memoryRaw(cctx, method, params)
+	return st.engine.memoryRaw(cctx, method, params)
 }
 
 // One page normally covers it.

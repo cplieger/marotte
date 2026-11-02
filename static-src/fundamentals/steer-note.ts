@@ -28,11 +28,23 @@ export interface SteerNoteData {
   step?: string;
   /** The run the note came from, which groups a chat's workflow updates. */
   run?: string;
-  /** When a workflow message was sent, epoch ms; set, the note states its delivery too. */
+  /** What the run is called (the dock row's name), drawn before the step; set with `run`. */
+  runLabel?: string;
+  /** Opens the run's tab. Without it the run label is plain text. */
+  onOpenRun?: () => void;
+  /** When a workflow message was sent, epoch ms; set, the note states its send time. */
   sentAt?: number;
+  /** The row has a take-up channel, so it states its delivery too. A row logged only when read (a KAS notice) has
+   *  none: it states when it was sent and nothing about delivery. */
+  tracked?: boolean;
   /** When the receiver took it up, epoch ms; absent while it waits. */
   deliveredAt?: number;
+  /** The receiver's buffer was emptied of it before anything proved it read. */
+  cleared?: boolean;
 }
+
+/** A cleared row's accessible wording: it says no more than marotte knows. */
+const CLEARED_NAME = "Cleared: the agent's queue was emptied before this was confirmed read";
 
 /** The labels, TOTAL over the origin so a new one needs wording. A dropped label states only what
  *  is known. */
@@ -61,7 +73,6 @@ const STEP_LABELS: Record<"parent" | "step", (step: string) => { read: string; d
 const REASONS: Record<SteerReason, string> = {
   restart: "the session restarted",
   boundary: "the turn ended first",
-  deleted: "you deleted it",
 };
 
 /** The second channel, never a hue (WCAG 1.4.1 would forbid one as the only
@@ -74,21 +85,30 @@ const GLYPHS: Record<SteerOrigin, string> = {
   step: ICON_TAB_RUN,
 };
 
-/** Lines the body shows before the opener appears. Four rather than the turn
- *  header's three: this is the message itself, not a navigation row. */
+/** Lines the reader's own message shows before the opener appears. */
 const CLAMP_LINES = 4;
+
+/** Each note's accessible name without the run, so a run label that arrives later can be prefixed. */
+const ariaBases = new WeakMap<HTMLElement, string>();
+
+function ariaNameFor(base: string, runLabel: string | undefined): string {
+  return runLabel === undefined || runLabel === "" ? base : `${runLabel}, ${base}`;
+}
 
 export function buildSteerNote(d: SteerNoteData): HTMLElement {
   const label = labelFor(d);
+  const base = `${cleared(d) ? `${label} \u00b7 ${CLEARED_NAME}` : label}: ${oneLine(d.text)}`;
+  const named = d.run !== undefined && d.run !== "" ? d.runLabel : undefined;
 
   const root = el("div", {
     className: "steer-note",
-    "data-state": d.dropped ? "dropped" : "read",
+    "data-state": d.dropped ? "dropped" : cleared(d) ? "cleared" : "read",
     "data-origin": d.origin,
     // The full text: an accessible name has no width, and neither the glyph nor
     // the clamp carries the state on its own.
-    "aria-label": `${label}: ${oneLine(d.text)}`,
+    "aria-label": ariaNameFor(base, named),
   });
+  ariaBases.set(root, base);
   if (d.acknowledged === true) {
     root.setAttribute("data-acknowledged", "true");
   }
@@ -101,50 +121,112 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   if (d.run !== undefined && d.run !== "") {
     root.dataset["run"] = d.run;
   }
-
   const head = el(
     "div",
     { className: "steer-note-head" },
     el("span", { className: "tool-icon", "aria-hidden": "true" }, iconEl(GLYPHS[d.origin])),
-    el("span", { className: "steer-note-label" }, label),
   );
+  if (d.run !== undefined && d.run !== "" && d.runLabel !== undefined && d.runLabel !== "") {
+    root.dataset["runLabel"] = d.runLabel;
+    head.append(
+      runLabelEl(d.runLabel, d.onOpenRun),
+      el("span", { className: "steer-note-run-sep", "aria-hidden": "true" }, "\u00b7"),
+    );
+  }
+  // The step and the times share one box the phone layout flows as text; the space is its break
+  // point, and a flex or grid head renders none.
+  const meta = el("span", { className: "steer-note-meta" });
+  meta.appendChild(el("span", { className: "steer-note-label" }, label));
+  head.appendChild(meta);
   root.appendChild(head);
   if (d.sentAt !== undefined && d.sentAt > 0) {
-    head.appendChild(el("span", { className: "steer-note-times" }, ...timesFor(d, d.sentAt)));
-    root.dataset["delivered"] = String(delivered(d));
+    meta.append(" ", el("span", { className: "steer-note-times" }, ...timesFor(d, d.sentAt)));
+    if (d.tracked === true || d.dropped) {
+      root.dataset["delivered"] = String(delivered(d));
+    }
   }
 
   const body = el("div", { className: "steer-note-body" });
-  // NOT collapsed to one line: the clamp is an opener rather than a cut, so the
-  // message keeps the shape it was typed in (`white-space: pre-wrap`).
+  // NOT collapsed to one line: the message keeps the shape it was typed in (`white-space: pre-wrap`).
   const text = el("div", { className: "steer-note-text" }, d.text);
   body.appendChild(text);
+  root.appendChild(body);
+  // A workflow's message is the news itself and shows in full; only the reader's own words clamp.
+  if (d.origin !== "user") {
+    return root;
+  }
   const more = el("button", {
     className: "steer-note-more",
     type: "button",
   }) as HTMLButtonElement;
   // OUTSIDE the clamped element, or the clamp hides its own opener.
   body.appendChild(more);
-  root.appendChild(body);
-
   attachClamp(text, more, { lines: CLAMP_LINES });
   return root;
 }
 
-/** A workflow message's two times: when it was sent, and when the receiver took it up or that it
- *  has not yet. A dropped message's label already says it was not delivered. */
-function timesFor(d: SteerNoteData, sentAt: number): (string | HTMLElement)[] {
-  const sent = ["Sent ", stamp(sentAt)];
-  if (d.dropped) {
-    return sent;
+/** The run's name in front of the step. A button when the caller can open the run, text otherwise. */
+function runLabelEl(runLabel: string, open: (() => void) | undefined): HTMLElement {
+  if (open === undefined) {
+    return el("span", { className: "steer-note-run" }, runLabel);
   }
-  return delivered(d)
-    ? [...sent, " \u00b7 delivered ", stamp(d.deliveredAt ?? 0)]
-    : [...sent, " \u00b7 not delivered yet"];
+  const btn = el("button", {
+    type: "button",
+    className: "steer-note-run",
+    "data-tooltip": "Open the workflow run",
+  });
+  btn.textContent = runLabel;
+  btn.addEventListener("click", open);
+  return btn;
+}
+
+/** Rewrite a drawn note's run label in place, so a label that arrives after the first paint needs no redraw. */
+export function setSteerNoteRunLabel(note: HTMLElement, runLabel: string): void {
+  const name = note.querySelector(".steer-note-run");
+  if (name !== null && name.textContent !== runLabel) {
+    name.textContent = runLabel;
+  }
+  note.dataset["runLabel"] = runLabel;
+  const base = ariaBases.get(note);
+  if (base !== undefined) {
+    note.setAttribute("aria-label", ariaNameFor(base, runLabel));
+  }
+}
+
+/** A workflow message's two times: when it was sent, and when the receiver took it up, that its
+ *  buffer was cleared first, or that it waits. A dropped message's label already says it was not
+ *  delivered. Each clause is a
+ *  `.steer-note-clause` the stylesheet keeps unbroken, so a wrap falls only after the dot. */
+function timesFor(d: SteerNoteData, sentAt: number): (string | HTMLElement)[] {
+  const clause = (...parts: (string | HTMLElement)[]): HTMLElement =>
+    el("span", { className: "steer-note-clause" }, ...parts);
+  if (d.dropped || d.tracked !== true) {
+    return [clause("Sent ", stamp(sentAt))];
+  }
+  return [clause("Sent ", stamp(sentAt), " \u00b7"), " ", deliveryClause(d, clause)];
+}
+
+function deliveryClause(
+  d: SteerNoteData,
+  clause: (...parts: (string | HTMLElement)[]) => HTMLElement,
+): HTMLElement {
+  if (delivered(d)) {
+    return clause("delivered ", stamp(d.deliveredAt ?? 0));
+  }
+  if (cleared(d)) {
+    const c = clause("Cleared");
+    c.dataset["tooltip"] = CLEARED_NAME;
+    return c;
+  }
+  return clause("not delivered yet");
 }
 
 function delivered(d: SteerNoteData): boolean {
   return !d.dropped && d.deliveredAt !== undefined && d.deliveredAt > 0;
+}
+
+function cleared(d: SteerNoteData): boolean {
+  return d.cleared === true && d.tracked === true;
 }
 
 /** Seconds shown, because a take-up usually lands within the minute it was sent. */

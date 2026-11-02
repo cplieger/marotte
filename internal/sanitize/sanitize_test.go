@@ -15,9 +15,9 @@ func TestStripANSI(t *testing.T) {
 		{"", ""},
 	}
 	for _, tt := range tests {
-		got := StripANSI(tt.in)
+		got := stripANSI(tt.in)
 		if got != tt.want {
-			t.Errorf("StripANSI(%q) = %q, want %q", tt.in, got, tt.want)
+			t.Errorf("stripANSI(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }
@@ -41,8 +41,8 @@ func TestStripANSI_edge_cases(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := StripANSI(tt.in); got != tt.want {
-				t.Errorf("StripANSI(%q) = %q, want %q", tt.in, got, tt.want)
+			if got := stripANSI(tt.in); got != tt.want {
+				t.Errorf("stripANSI(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}
@@ -57,10 +57,10 @@ func TestStripANSI_is_idempotent(t *testing.T) {
 		"\x1b(Btext\x1b)0line",
 	}
 	for _, in := range inputs {
-		once := StripANSI(in)
-		twice := StripANSI(once)
+		once := stripANSI(in)
+		twice := stripANSI(once)
 		if once != twice {
-			t.Errorf("StripANSI not idempotent: %q → %q → %q", in, once, twice)
+			t.Errorf("stripANSI not idempotent: %q → %q → %q", in, once, twice)
 		}
 	}
 }
@@ -231,9 +231,9 @@ func TestSanitizeOutput_strips_ansi_before_unicode(t *testing.T) {
 	}
 	for _, in := range tricky {
 		got := Output(in)
-		want := Unicode(StripANSI(in))
+		want := Unicode(stripANSI(in))
 		if got != want {
-			t.Errorf("Output(%q) = %q, want Unicode(StripANSI(_)) = %q", in, got, want)
+			t.Errorf("Output(%q) = %q, want Unicode(stripANSI(_)) = %q", in, got, want)
 		}
 	}
 }

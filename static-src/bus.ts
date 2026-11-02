@@ -3,7 +3,12 @@
 
 import { createBus } from "@cplieger/reactive";
 
-import type { NotificationPayload } from "./wire/types.gen.js";
+import type {
+  EngineStatus,
+  NotificationPayload,
+  RunAsksPayload,
+  SettingsUpdatedPayload,
+} from "./wire/types.gen.js";
 import type {
   ServerEvent,
   ChatHeader,
@@ -51,8 +56,6 @@ import type {
   RunStartedPayload,
   RunProgressPayload,
   RunFinishedPayload,
-  RunInputNeededPayload,
-  RunInputSettledPayload,
 } from "./types.js";
 
 // --- Typed SSE surface ---
@@ -108,7 +111,7 @@ export interface SSEPayloads {
   readonly decision_settled: DecisionSettledPayload;
   readonly draft_changed: DraftChangedPayload;
   readonly error: ErrorPayload;
-  readonly settings_updated: undefined;
+  readonly settings_updated: SettingsUpdatedPayload;
   readonly mcp_config_changed: undefined;
   readonly mcp_pool_changed: undefined;
   readonly mcp_connected: MCPConnectedPayload;
@@ -140,14 +143,16 @@ export interface SSEPayloads {
   readonly run_started: RunStartedPayload;
   readonly run_progress: RunProgressPayload;
   readonly run_finished: RunFinishedPayload;
-  // A workflow STEP asking a question, carrying its payload: KAS parks the run with a fixed
-  // pauseReason and empty pauseDetail, so `inspect` never says what was asked. Keyed to the
+  // One run's steps waiting on a person, replaced whole per (epoch, seq). Keyed to the
   // launching chat, or `run:<workflowId>` when parentless.
-  readonly run_input_needed: RunInputNeededPayload;
-  // Its twin, separate from decision_settled: a run ask is keyed by string, not int64.
-  readonly run_input_settled: RunInputSettledPayload;
+  readonly run_asks: RunAsksPayload;
   // internal/notice's notification: the page shows it while its chat or run is off screen.
   readonly notification: NotificationPayload;
+  // The agent engine's whole status, on every state change and every pending or busy change while a restart is
+  // pending. Workspace-global.
+  readonly engine_status: EngineStatus;
+  // GET /api/config/standing changed. Workspace-global.
+  readonly config_standing_changed: undefined;
 }
 
 export type SSEHandler<K extends keyof SSEPayloads> = SSEPayloads[K] extends undefined
@@ -263,6 +268,11 @@ export const BUS_COMMAND_FAILED = "command:failed" as const;
  * the bus: a direct call would close a ring, and no listener may exist.
  */
 export const BUS_USER_INPUT_ANSWERED = "user-input:answered" as const;
+/**
+ * The model catalog landed or changed. On the bus so a form holding its own copy (a workflow's Run
+ * or Schedule pick) follows it without the catalog reader knowing the form.
+ */
+export const BUS_CATALOG_MODELS = "catalog:models" as const;
 
 /** Payload shape per bus event. Events with no payload use `undefined`. */
 interface BusPayloads {
@@ -279,6 +289,7 @@ interface BusPayloads {
     readonly message: string;
   };
   readonly [BUS_USER_INPUT_ANSWERED]: { readonly chatID: string; readonly answer: string };
+  readonly [BUS_CATALOG_MODELS]: undefined;
 }
 
 // The generic bus is @cplieger/reactive's createBus; the SSE surface stays bespoke

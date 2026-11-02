@@ -41,16 +41,15 @@ vi.mock("./actions/forge.js", async (importOriginal) => {
   return { ...orig, cloneRepo: { ...orig.cloneRepo, dispatch: mocks.cloneDispatch } };
 });
 
-// Routed through the mocked client so each case answers the forge list first with mockResolvedValueOnce.
-vi.mock("./forge-store.js", async (importOriginal) => {
-  const orig = await importOriginal<Record<string, unknown>>();
+// The rows read is routed through the mocked client, so each case answers the forge list first.
+vi.mock("./actions/forge-list.js", async (importOriginal) => {
   const { apiGetTyped } = await import("./api-client.js");
-  const forgeRead = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
   return {
-    ...orig,
-    refreshForges: forgeRead,
-    ensureForges: forgeRead,
-    initForgeStore: vi.fn(),
+    ...(await importOriginal<Record<string, unknown>>()),
+    listForges: {
+      dispatch: () =>
+        Promise.resolve(apiGetTyped("/api/forges", (v: unknown) => v)).then((v) => v ?? null),
+    },
   };
 });
 
@@ -58,6 +57,12 @@ import { resetActionFramework } from "@cplieger/actions/testing";
 import { renderForgesPanel } from "./forge-auth.js";
 import { apiGetTyped } from "./api-client.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { _resetForTest as resetForgeStore } from "./forge-store.js";
+import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const mockedApiGet = vi.mocked(apiGetTyped);
 
@@ -76,12 +81,13 @@ describe("forge-auth: the repository list", () => {
     kind: "github",
     host: "github.com",
     username: "alice",
-    connected: true,
-    reconnect_required: false,
+    account: "acct-1",
+    status: "connected",
   };
   const FIRST_PAGE = "/api/forges/github%3Agithub.com/repos";
 
   beforeEach(async () => {
+    resetForgeStore();
     setupDOM();
     vi.clearAllMocks();
     resetActionFramework();
@@ -90,7 +96,7 @@ describe("forge-auth: the repository list", () => {
       Promise.resolve(
         url === "/api/git/repos" ? { repos: [] } : { forges: [], kinds: KINDS },
       )) as typeof apiGetTyped);
-    await renderForgesPanel({ revalidate: false });
+    await renderForgesPanel();
   });
 
   afterEach(() => {
@@ -115,8 +121,12 @@ describe("forge-auth: the repository list", () => {
     };
   }
 
-  /** `first` null means the read failed. */
-  async function showList(first: unknown, cloned: string[] = []): Promise<HTMLElement> {
+  /** `first` null means the read failed; `fresh` is the refresh press's read past the server's cache. */
+  async function showList(
+    first: unknown,
+    cloned: string[] = [],
+    fresh = false,
+  ): Promise<HTMLElement> {
     mockedApiGet.mockImplementation(((url: string, decode: (v: unknown) => unknown) => {
       switch (url) {
         case "/api/forges":
@@ -124,12 +134,15 @@ describe("forge-auth: the repository list", () => {
         case "/api/git/repos":
           return Promise.resolve({ repos: cloned });
         case FIRST_PAGE:
-          return Promise.resolve(first === null ? null : decode(first));
+        case `${FIRST_PAGE}?refresh=1`:
+          return Promise.resolve(
+            first === null ? null : decode({ account: "acct-1", ...(first as object) }),
+          );
         default:
           return Promise.resolve(null);
       }
     }) as typeof apiGetTyped);
-    await renderForgesPanel({ revalidate: false });
+    await renderForgesPanel({ fresh });
     const list = panel().querySelector<HTMLElement>(".forge-account-repos")!;
     list.querySelector<HTMLElement>(".forge-account-repos-summary")!.click();
     return list;
@@ -162,6 +175,7 @@ describe("forge-auth: the repository list", () => {
   }
 
   it("offers Load more while the forge has more, busy from the press, sending the cursor as after", async () => {
+    useSteppableClock();
     const details = await showList({ repos: [repo("one")], next: "cursor-2" });
     expect(details.querySelector(".forge-account-repos-label")?.textContent).toBe(
       "1 repo so far, 0 cloned locally",
@@ -177,15 +191,19 @@ describe("forge-auth: the repository list", () => {
     await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
     expect(spy.mock.calls[0]![0]).toBe(`${FIRST_PAGE}?after=cursor-2`);
     answer(
-      new Response(JSON.stringify({ repos: [repo("two")], next: "cursor-3" }), { status: 200 }),
+      new Response(JSON.stringify({ account: "acct-1", repos: [repo("two")], next: "cursor-3" }), {
+        status: 200,
+      }),
     );
     await vi.waitFor(() => expect(names(details)).toEqual(["alice/one", "alice/two"]));
-    await vi.waitFor(() => expect(loadMore(details)?.disabled).toBe(false), { timeout: 3000 });
+    await waitForOnClock(() => expect(loadMore(details)?.disabled).toBe(false), 3000);
 
     loadMore(details)!.click();
     await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
     expect(spy.mock.calls[1]![0]).toBe(`${FIRST_PAGE}?after=cursor-3`);
-    answer(new Response(JSON.stringify({ repos: [repo("three")] }), { status: 200 }));
+    answer(
+      new Response(JSON.stringify({ account: "acct-1", repos: [repo("three")] }), { status: 200 }),
+    );
     await vi.waitFor(() =>
       expect(names(details)).toEqual(["alice/one", "alice/three", "alice/two"]),
     );
@@ -212,10 +230,12 @@ describe("forge-auth: the repository list", () => {
     let details = await showList({ repos: [repo("one")], next: "cursor-2" });
     const { answer } = heldFetch();
     loadMore(details)!.click();
-    answer(new Response(JSON.stringify({ repos: [repo("two")] }), { status: 200 }));
+    answer(
+      new Response(JSON.stringify({ account: "acct-1", repos: [repo("two")] }), { status: 200 }),
+    );
     await vi.waitFor(() => expect(names(details)).toEqual(["alice/one", "alice/two"]));
 
-    await renderForgesPanel({ revalidate: false });
+    await renderForgesPanel({ fresh: true });
 
     details = panel().querySelector<HTMLElement>(".forge-account-repos")!;
     expect(names(details)).toEqual(["alice/one", "alice/two"]);
@@ -226,11 +246,16 @@ describe("forge-auth: the repository list", () => {
     const details = await showList({ repos: [repo("x")], next: "cursor-2" });
     const { answer } = heldFetch();
     loadMore(details)!.click();
-    answer(new Response(JSON.stringify({ repos: [repo("x", "zed")] }), { status: 200 }));
+    answer(
+      new Response(JSON.stringify({ account: "acct-1", repos: [repo("x", "zed")] }), {
+        status: 200,
+      }),
+    );
     await vi.waitFor(() => expect(names(details)).toEqual(["alice/x", "zed/x"]));
   });
 
   it("keeps the rows and says why when the next page is refused", async () => {
+    useSteppableClock();
     const details = await showList({ repos: [repo("one")], next: "cursor-2" });
     const { answer } = heldFetch();
     const btn = loadMore(details)!;
@@ -249,7 +274,7 @@ describe("forge-auth: the repository list", () => {
     );
     expect(btn.dataset["asyncStatus"]).toBe("error");
     expect(names(details)).toEqual(["alice/one"]);
-    await vi.waitFor(() => expect(loadMore(details)?.disabled).toBe(false), { timeout: 3000 });
+    await waitForOnClock(() => expect(loadMore(details)?.disabled).toBe(false), 3000);
 
     loadMore(details)!.click();
     expect(details.querySelector(".forge-account-repos-more [role='status']")?.textContent).toBe(
@@ -298,7 +323,7 @@ describe("forge-auth: the repository list", () => {
 
   it("keeps the rows it read when a later refresh fails, and says the refresh failed", async () => {
     await showList({ repos: [repo("one")] });
-    const details = await showList(null);
+    const details = await showList(null, [], true);
     expect(names(details)).toEqual(["alice/one"]);
     expect(
       details.querySelector(".forge-account-repos-more p.forge-account-error")?.textContent,
@@ -419,7 +444,7 @@ describe("forge-auth: the repository list", () => {
     const deleteAll = details.querySelector<HTMLButtonElement>(".forge-account-repos-delete-all")!;
     cloneAll.focus();
 
-    await renderForgesPanel({ revalidate: false });
+    await renderForgesPanel();
 
     expect(details.querySelector(".forge-account-repos-clone-all")).toBe(cloneAll);
     expect(details.querySelector(".forge-account-repos-delete-all")).toBe(deleteAll);

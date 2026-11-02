@@ -25,11 +25,10 @@ const EXPECTED_KEYS = [
   "auto_compact_pct",
   // Agent capabilities (settings.ts agentCapabilities)
   "knowledge_enabled",
-  "tool_search_enabled",
+  "model_fallback_enabled",
   "memory_mode",
   "spec_planning",
   "spec_planning_ask_first",
-  "inline_agents_enabled",
   "steering_reminders_enabled",
   "workflows_enabled",
   "work_validation",
@@ -45,10 +44,13 @@ const EXPECTED_KEYS = [
   "hooks.showStatus",
   "chat.disableInheritingDefaultResources",
   "debug_logs",
+  // Agent engine (settings.ts): the memory limit
+  "engine_heap_mib",
   // Permissions
   "supervised_default",
   "scheduled_auto_approve",
   "agent_ignore_files",
+  "additional_directories",
   // Custom instructions
   "steering",
 ] as const;

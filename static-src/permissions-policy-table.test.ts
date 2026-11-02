@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./api-client.js", () => ({ apiGet: mocks.apiGet }));
-vi.mock("./persist.js", () => ({ patchSettings: vi.fn() }));
+vi.mock("./persist.js", () => ({ patchSettings: vi.fn(), settingsAsShown: vi.fn(() => null) }));
 vi.mock("./confirm.js", () => ({ confirm: mocks.confirm }));
 vi.mock("./bus.js", () => ({
   onSSE: (type: string, fn: SSEFn) => {

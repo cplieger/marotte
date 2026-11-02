@@ -4,16 +4,14 @@
 import { el } from "@cplieger/reactive";
 import { loadMoreSkeleton } from "./skeleton.js";
 
-const LOAD_MORE_THRESHOLD_PX = 100;
-/** Distance from the bottom still counted as "at the bottom". Independent of
- *  LOAD_MORE_THRESHOLD_PX despite the equal value. */
+/** Distance from the bottom still counted as "at the bottom". */
 const BOTTOM_TOLERANCE_PX = 100;
 /** How long after their last input the reader still owns the scroller. A QUIET PERIOD rather
  *  than a gesture boundary, because `touchend` does not end a touch scroll: iOS momentum keeps
  *  delivering scroll events after the finger leaves, and one of those is what carries the reader
  *  out of the bottom tolerance band. 300ms covers a fling above ~330px/s and a key's smooth
  *  scroll animation (measured at ~8 events per press in Chromium). */
-const READER_CONTROL_MS = 300;
+export const READER_CONTROL_MS = 300;
 /** How long a bottom pin keeps re-asserting the live edge. Sized to the fold choreography it
  *  releases: `--fold-slide` runs 0.3s and a close flips `content-visibility` at 0.42s
  *  (css/29-turns.css). */
@@ -32,6 +30,12 @@ const SELF_SCROLL_MAX_MS = 1500;
  *  distinguishes. */
 const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
 const SCROLL_DOWN_KEYS = new Set(["ArrowDown", "PageDown", " "]);
+/** What Space activates rather than scrolls; a link scrolls on Space. */
+const SPACE_PRESSES = 'button, summary, [role="button"]';
+/** How far a touch travels before it is a scroll rather than a tap: a tap with a slight wobble still clicks, and an
+ *  engine may deliver its `touchmove`s. Android's touch slop (8dp, `ViewConfiguration.getScaledTouchSlop`), where the
+ *  platform starts a drag. */
+const TAP_SLOP_PX = 8;
 /** The transcript's `content-visibility: auto` boxes (`transcript-layout-css.test.ts` `BULK`). */
 const SKIPPABLE = ".msg-row, .tool-call, .subagent-block, .plan-message, .run-card";
 /** How far past the scrollport, in scrollport heights, a skippable box is laid out ahead (`[data-near]`). Chromium's
@@ -42,6 +46,67 @@ const SKIPPABLE = ".msg-row, .tool-call, .subagent-block, .plan-message, .run-ca
  *  a rootMargin percentage against the root's WIDTH (https://w3c.github.io/IntersectionObserver/#intersectionobserver-root-intersection-rectangle),
  *  which Chromium and WebKit do not follow. */
 const NEAR_LEAD = 1.5;
+/** Consecutive frames the scroller must keep a restored position before `attach`'s restore lets go. */
+const RESTORE_HOLD_FRAMES = 2;
+/** The frames a restore may spend re-asserting before it gives up on a position the platform keeps refusing. */
+const RESTORE_MAX_FRAMES = 60;
+/** A transcript entry's element, stamped by the renderer (messages-blocks.ts `stampEntry`, `stampOpen`) with its
+ *  identity, which a rebuilt element for the same entry carries again. */
+const ENTRY_STAMP = "[data-entry-seq], [data-open-id]";
+/** View children either side of the reading line a live anchor carries as fallbacks: it is re-taken at every scroll
+ *  event, so it only has to outlive one layout change. */
+const LIVE_REACH = 2;
+
+/** The selector for every element that renders `stamped`'s entry: a sealed one by turn and seq, an open one by turn
+ *  and id, which its element keeps once the entry seals. */
+function entryKey(stamped: Element): string {
+  const q = (name: string): string => CSS.escape(stamped.getAttribute(name) ?? "");
+  if (stamped.hasAttribute("data-entry-seq")) {
+    return `[data-entry-turn="${q("data-entry-turn")}"][data-entry-seq="${q("data-entry-seq")}"]`;
+  }
+  const turn = q("data-open-turn");
+  const id = q("data-open-id");
+  return `[data-open-turn="${turn}"][data-open-id="${id}"], [data-entry-turn="${turn}"][data-entry-id="${id}"]`;
+}
+
+/** The index of the element of `els` on `line`: the first, in document order, whose box ends below it, provided that
+ *  box starts above `limit`; -1 when none. Bisected, because block flow stacks siblings down the page; `skip`s and
+ *  box-less elements are passed over. */
+function onLine(
+  els: HTMLCollection,
+  line: number,
+  limit: number,
+  skip: (el: Element) => boolean,
+): number {
+  const counts = (el: Element | undefined): el is Element =>
+    el !== undefined && !skip(el) && el.getClientRects().length > 0;
+  let lo = 0;
+  let hi = els.length;
+  let found = -1;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    let j = mid;
+    while (j < hi && !counts(els[j])) {
+      j++;
+    }
+    const el = els[j];
+    if (j === hi || el === undefined) {
+      hi = mid;
+    } else if (el.getBoundingClientRect().bottom > line) {
+      found = j;
+      hi = mid;
+    } else {
+      lo = j + 1;
+    }
+  }
+  return found >= 0 && (els[found]?.getBoundingClientRect().top ?? limit) < limit ? found : -1;
+}
+
+/** A turn's spacer, standing in for rows the window has not mounted: it holds no text, and its size changes as they
+ *  mount. */
+function isSpacer(el: Element): boolean {
+  return el.classList.contains("turn-space");
+}
 
 function forEachSkippable(root: Element, fn: (box: Element) => void): void {
   if (root.matches(SKIPPABLE)) {
@@ -55,11 +120,25 @@ function forEachSkippable(root: Element, fn: (box: Element) => void): void {
 /** The reader's position. */
 export type ReadingState = "following" | "reading";
 
-/** A parked view's scroll-owned state: where the scroller stood and which reading state the
- *  reader was in. `messages.ts` carries it inside its ViewHandle across a park/unpark cycle. */
+/** Where a reader's text stands, by identity: elements best first, finest first, each with its signed top offset from
+ *  the reading line. An element gone from the view is found again as the `path` of child indices below whatever
+ *  element now matches `sel` (null: the node itself is the identity). Nodes are held weakly, so a parked anchor keeps
+ *  no discarded DOM alive. Opaque to the views that carry it. */
+interface ReadingAnchor {
+  readonly marks: readonly {
+    readonly node: WeakRef<Element>;
+    readonly sel: string | null;
+    readonly path: readonly number[];
+    readonly offset: number;
+  }[];
+}
+
+/** A parked view's scroll-owned state: where the scroller stood, which reading state the reader was in and, while
+ *  Reading, the text they were reading. */
 export interface ViewScrollState {
   scrollTop: number;
   readingState: ReadingState;
+  anchor?: ReadingAnchor;
 }
 
 /** What `attach` needs: the incoming view element (the observers' new root) plus the state to
@@ -100,6 +179,8 @@ export class ScrollController {
   private contentResizeListeners: (() => void)[] = [];
   /** Callbacks fired when a view takes the scroller; `onAttach` owns the contract. */
   private attachListeners: (() => void)[] = [];
+  /** `onLiveEdgeRequest` owns the contract. */
+  private liveEdgeListeners: (() => void)[] = [];
   /** Dispatched for the controller's OWN writes too: a `jumpTo` from the rail or from find-in-chat
    *  moves the reader a long way and the residency window has to follow, whichever side of the self
    *  marker that write falls on. */
@@ -111,6 +192,17 @@ export class ScrollController {
 
   private rafPending = false;
 
+  /** What `attach` restored and still holds (null = none): the offset, and while Reading the anchor, which is what a
+   *  Reading restore holds (`holdRestore`). While Following the offset or the live edge counts as held. `held` counts
+   *  consecutive frames that kept it, `frames` every frame spent. */
+  private restore: {
+    top: number;
+    anchor: ReadingAnchor | null;
+    held: number;
+    frames: number;
+  } | null = null;
+  private restoreFrame = 0;
+
   /** The bottom pin's deadline, and the frame it has queued (0 = none). */
   private pinUntil = 0;
   private pinFrame = 0;
@@ -118,11 +210,12 @@ export class ScrollController {
   /** The element at the scrollport's top edge after the last scroll event, and where it stood. */
   private viewTop: { el: Element; top: number } | null = null;
 
-  /** The element on the reading line after the last scroll event or controller write, and where it stood (null =
-   *  nothing to hold). Native anchoring holds the TOP edge, so a row there growing late — a
-   *  `content-visibility` placeholder taking its real size — pushes this one away; `holdReadingLine`
-   *  puts it back. Dropped by a press in the transcript: what a click opens is the reader's own. */
-  private readLine: { el: Element; top: number } | null = null;
+  /** The text on the reading line after the last scroll event or controller write (null = nothing to hold), and while
+   *  a restore holds, the restore's own anchor, so the two cannot hold different text. A row above it growing late (a
+   *  `content-visibility` placeholder taking its real size) pushes it away wherever native anchoring does not hold it;
+   *  `holdAcross` and `holdReadingLine` put it back. Dropped by a press in the transcript: what a click opens is the
+   *  reader's own. */
+  private readLine: ReadingAnchor | null = null;
 
   /** Whether the last write was `holdReadingLine`'s: layout can move the line again between that write and its
    *  scroll event, so the event holds once more before it re-reads the line. */
@@ -149,6 +242,10 @@ export class ScrollController {
    *  a position rather than a delta (null = no gesture in progress). */
   private lastTouchY: number | null = null;
   private lastBarY: number | null = null;
+  /** Where the touch in progress started, and whether it has left `TAP_SLOP_PX` of it: one that never did is a tap,
+   *  which scrolls nothing. */
+  private touchStart: { x: number; y: number } | null = null;
+  private touchMoved = false;
 
   /** Last value written to `--scrollbar-w`, so a resize storm costs at most one style
    *  invalidation. */
@@ -189,6 +286,13 @@ export class ScrollController {
   private edgeSentinel: HTMLElement | null = null;
   private edgeObserver: IntersectionObserver | null = null;
 
+  /** The history edge's marker, ahead of the oldest loaded turn and watched by `topObserver` with the near lead as
+   *  room above the scrollport: the next older page starts before the reader reaches the top. */
+  private topSentinel: HTMLElement | null = null;
+  private topObserver: IntersectionObserver | null = null;
+  /** Whether the history edge is inside that room, as last published. */
+  private topNear = false;
+
   /** Whether the live edge is in view, as last PUBLISHED rather than measured. Starts true
    *  because a fresh view is at its own bottom, and the state it has to agree with (`following`)
    *  makes the value unobservable until something publishes a real one. */
@@ -228,13 +332,15 @@ export class ScrollController {
     // `.prompt-box` unless the scroller gives that width back.
     this.publishScrollbarWidth();
 
-    // Every input marks the quiet period; the ones that carry a DIRECTION also aim it. `touchend`
-    // marks but cannot aim, which costs nothing: a fling's direction is already known from the
-    // `touchmove` that started it.
+    // Every scrolling input marks the quiet period; the ones that carry a DIRECTION also aim it.
+    // `touchend` marks but cannot aim, which costs nothing: a fling's direction is already known from
+    // the `touchmove` that started it. A tap or a Space press on a control is a PRESS, and marking it
+    // would hold the live edge off while what it opened grows.
     const markInput = (dir: -1 | 0 | 1 = 0): void => {
       // Input is what ends an epoch, and it ends it BEFORE the scroll event it produces arrives, so
       // the reader's own gesture publishes normally.
       this.endSelfScroll();
+      this.endRestore();
       this.userScrollingUntil = Date.now() + READER_CONTROL_MS;
       if (dir !== 0) {
         this.upwardIntent = dir < 0;
@@ -250,7 +356,9 @@ export class ScrollController {
     this.scrollEl.addEventListener(
       "touchend",
       () => {
-        markInput();
+        if (this.touchMoved) {
+          markInput();
+        }
       },
       { passive: true },
     );
@@ -259,8 +367,16 @@ export class ScrollController {
     this.scrollEl.addEventListener(
       "touchmove",
       (e) => {
-        const y = e.touches[0]?.clientY ?? null;
-        markInput(y === null || this.lastTouchY === null ? 0 : y > this.lastTouchY ? -1 : 1);
+        const t = e.touches[0];
+        const y = t?.clientY ?? null;
+        // A move with no position, or no start to measure from, cannot prove a tap.
+        this.touchMoved ||=
+          t === undefined ||
+          this.touchStart === null ||
+          Math.hypot(t.clientX - this.touchStart.x, t.clientY - this.touchStart.y) > TAP_SLOP_PX;
+        if (this.touchMoved) {
+          markInput(y === null || this.lastTouchY === null ? 0 : y > this.lastTouchY ? -1 : 1);
+        }
         this.lastTouchY = y;
       },
       { passive: true },
@@ -268,7 +384,10 @@ export class ScrollController {
     this.scrollEl.addEventListener(
       "touchstart",
       (e) => {
-        this.lastTouchY = e.touches[0]?.clientY ?? null;
+        const t = e.touches[0];
+        this.lastTouchY = t?.clientY ?? null;
+        this.touchStart = t === undefined ? null : { x: t.clientX, y: t.clientY };
+        this.touchMoved = false;
       },
       { passive: true },
     );
@@ -321,6 +440,10 @@ export class ScrollController {
     this.scrollEl.addEventListener(
       "scroll",
       () => {
+        // A move that carried the restored text away with no reader input is undone, and states nothing.
+        if (this.holdRestore()) {
+          return;
+        }
         // Read before anything below can dirty the layout.
         const top = this.scrollEl.scrollTop;
         const edge = this.edgeDistance();
@@ -362,7 +485,6 @@ export class ScrollController {
         if (!this.epochOpen && !own && !anchored && !this.unmoved(top)) {
           this.publishReaderGesture();
         }
-        this.maybeLoadMore();
         this.lastScrollTop = top;
         this.lastEdgeDistance = edge;
         this.noteViewTop();
@@ -398,6 +520,9 @@ export class ScrollController {
       // Activating a control in the transcript is a press, like the pointer's.
       if ((e.key === "Enter" || e.key === " ") && t !== null && this.viewEl.contains(t)) {
         this.readLine = null;
+        if (e.key === " " && t.closest(SPACE_PRESSES) !== null) {
+          return;
+        }
       }
       // Under a modifier too, and BEFORE the resume arm's guard: Ctrl+Home scrolls this box, so
       // dropping it leaves the reader at a position with no fingerprint on it, which reads as
@@ -456,6 +581,7 @@ export class ScrollController {
     );
     // Not observed here: `observeView` below is the single owner, because the sentinel is in no
     // view yet and `detach` unobserves it.
+    this.topSentinel = el("div", { className: "transcript-top", "aria-hidden": "true" });
 
     // The one observer that sees a box change with no DOM mutation behind it (zoom, a scrollbar
     // swap, a code block expanding).
@@ -497,6 +623,10 @@ export class ScrollController {
       // parked view must produce no callback at all.
       this.edgeObserver?.observe(this.edgeSentinel);
     }
+    if (this.topSentinel !== null) {
+      view.prepend(this.topSentinel);
+      this.topObserver?.observe(this.topSentinel);
+    }
     this.contentObserver?.disconnect();
     this.contentObserver?.observe(view, {
       childList: true,
@@ -519,6 +649,10 @@ export class ScrollController {
     if (this.edgeSentinel !== null) {
       this.edgeObserver?.unobserve(this.edgeSentinel);
     }
+    if (this.topSentinel !== null) {
+      this.topObserver?.unobserve(this.topSentinel);
+      this.topNear = false;
+    }
     for (const child of this.observedChildren) {
       this.resizeObserver?.unobserve(child);
     }
@@ -536,18 +670,54 @@ export class ScrollController {
       return;
     }
     this.nearMargin = margin;
+    this.fitTopObserver(margin);
     this.nearObserver?.disconnect();
     const observer = new IntersectionObserver(
       (entries) => {
-        for (const entry of entries) {
-          entry.target.toggleAttribute("data-near", entry.isIntersecting);
-        }
+        this.holdAcross(() => {
+          for (const entry of entries) {
+            entry.target.toggleAttribute("data-near", entry.isIntersecting);
+          }
+        });
       },
       { root: this.scrollEl, rootMargin: `${String(margin)}px 0px` },
     );
     this.nearObserver = observer;
     for (const box of this.nearTargets) {
       observer.observe(box);
+    }
+  }
+
+  /** The history edge's observer, rebuilt with the near lead because a rootMargin is fixed for an observer's life. */
+  private fitTopObserver(margin: number): void {
+    this.topObserver?.disconnect();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const last = entries[entries.length - 1];
+        if (last === undefined) {
+          return;
+        }
+        this.noteHistoryEdge(last.isIntersecting);
+      },
+      { root: this.scrollEl, rootMargin: `${String(margin)}px 0px 0px 0px`, threshold: 0 },
+    );
+    this.topObserver = observer;
+    if (this.topSentinel?.isConnected === true) {
+      observer.observe(this.topSentinel);
+    }
+  }
+
+  /** Record whether the history edge is inside the lead, and ask for the next older page when it is. */
+  noteHistoryEdge(near: boolean): void {
+    this.topNear = near;
+    this.pokeTop();
+  }
+
+  /** Ask for the next older page when the history edge is inside the lead; `maybeLoadMore` holds it back while a
+   *  self-scroll flight is open, and `endSelfScroll` asks again when the flight ends. */
+  private pokeTop(): void {
+    if (this.topNear) {
+      this.maybeLoadMore();
     }
   }
 
@@ -575,7 +745,7 @@ export class ScrollController {
   }
 
   /** Lay every skippable box in `root` out while it is near the scrollport, so its first real size lands off screen,
-   *  where native anchoring holds the reader. Observing a box twice is a no-op. */
+   *  inside `holdAcross`. Observing a box twice is a no-op. */
   private observeNear(root: Element): void {
     const observer = this.nearObserver;
     if (observer === null) {
@@ -597,7 +767,7 @@ export class ScrollController {
     // (and with it an auto-scroll) on every attach, dragging the incoming view to its own bottom.
     const current = new Set<Element>();
     for (const child of this.viewEl.children) {
-      if (child !== this.edgeSentinel) {
+      if (child !== this.edgeSentinel && child !== this.topSentinel) {
         current.add(child);
       }
     }
@@ -709,10 +879,15 @@ export class ScrollController {
   /** Idempotent, because four different closers race for it: `scrollend`, the backstop, reader
    *  input, and a change of owner. */
   endSelfScroll(): void {
+    const wasOpen = this.epochOpen;
     this.epochOpen = false;
     if (this.epochTimer !== null) {
       clearTimeout(this.epochTimer);
       this.epochTimer = null;
+    }
+    // The page the epoch held back is owed now.
+    if (wasOpen) {
+      this.pokeTop();
     }
   }
 
@@ -734,6 +909,7 @@ export class ScrollController {
   scrollToOffset(px: number, behavior: ScrollBehavior): void {
     const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
     const landing = Math.max(0, Math.min(px, max));
+    this.endRestore();
     this.setState(this.landsAtOffsetLiveEdge(landing) ? "following" : "reading");
     this.armEpochBackstop();
     this.scrollSelfTo(landing, behavior);
@@ -781,6 +957,19 @@ export class ScrollController {
       const at = this.contentResizeListeners.indexOf(cb);
       if (at >= 0) {
         this.contentResizeListeners.splice(at, 1);
+      }
+    };
+  }
+
+  /** Register `cb` for the reader asking for the live edge (the resume control, a send), called
+   *  in Following BEFORE the landing write, so what it mounts is laid out by the frame the reader
+   *  lands in; returns the unregister. */
+  onLiveEdgeRequest(cb: () => void): () => void {
+    this.liveEdgeListeners.push(cb);
+    return () => {
+      const at = this.liveEdgeListeners.indexOf(cb);
+      if (at >= 0) {
+        this.liveEdgeListeners.splice(at, 1);
       }
     };
   }
@@ -860,6 +1049,7 @@ export class ScrollController {
     // ownership rule `attach`, `detach` and `resetScrollState` follow.
     this.cancelPinPass();
     this.endSelfScroll();
+    this.endRestore();
     // A jump is the READER moving, so it opens the quiet period a wheel does: nothing re-pins or
     // releases Reading under its landing.
     this.userScrollingUntil = Date.now() + READER_CONTROL_MS;
@@ -890,6 +1080,7 @@ export class ScrollController {
   /** Move the scroller by `px` as this controller's own write that sets no reading state: a layout
    *  compensation, never the reader stating a position. */
   shiftBy(px: number): void {
+    this.endRestore();
     this.scrollSelfTo(this.scrollEl.scrollTop + px, "instant");
     this.rebaseReadLine();
   }
@@ -898,7 +1089,7 @@ export class ScrollController {
    *  frame callback has its event deferred past the frame's ResizeObserver delivery, where a line read before the write
    *  takes it for drift and `holdReadingLine` puts the reader back. */
   private rebaseReadLine(): void {
-    this.readLine = this.pickReadLine();
+    this.readLine = this.restore?.anchor ?? this.readingAnchor(LIVE_REACH);
   }
 
   private jumpLanding(target: HTMLElement, block: ScrollLogicalPosition): number | null {
@@ -943,11 +1134,15 @@ export class ScrollController {
    *  `followTarget`, the same number `autoScrollIfAnchored` writes: ONE target for both writers,
    *  or the hand-off at the deadline has to move the reader. */
   private pinToLiveEdge(): void {
+    this.endRestore();
     this.setState("following");
     // The reader is ASKING to follow, and the pass's own frames test their licence: a `barDragging`
     // latch left standing — a drag whose pointerup never arrived — would kill the pin on its first
     // frame and leave the resume control looking dead.
     this.forgetReaderGesture();
+    for (const cb of [...this.liveEdgeListeners]) {
+      cb();
+    }
     this.pinUntil = Date.now() + pinSettleMs;
     this.pinLiveEdgeNow();
     this.queuePinFrame();
@@ -1013,15 +1208,211 @@ export class ScrollController {
     // to write the incoming one's own scrollTop.
     this.cancelPinPass();
     this.endSelfScroll();
+    this.endRestore();
     this.observeView(handle.el);
     this.forgetReaderGesture();
     this.setState(handle.readingState);
     this.scrollSelfTo(handle.scrollTop, "instant");
+    // A handle whose anchor names nothing in this view (none saved, or a page re-rendered since) is held by the text
+    // the write put on the reading line.
+    const saved = handle.anchor;
+    const anchor =
+      handle.readingState !== "reading"
+        ? null
+        : saved !== undefined && this.resolveAnchor(saved) !== null
+          ? saved
+          : this.readingAnchor();
+    this.restore = { top: handle.scrollTop, anchor, held: 0, frames: 0 };
+    this.rebaseReadLine();
+    this.holdRestore();
+    this.queueRestoreFrame();
     this.lastScrollTop = this.scrollEl.scrollTop;
     this.lastEdgeDistance = this.edgeDistance();
     // Last, so a listener re-measuring this view reads the restored position.
     for (const cb of [...this.attachListeners]) {
       cb();
+    }
+  }
+
+  /** `top` clamped to a reachable scroll position. */
+  private restoreLanding(top: number): number {
+    const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
+    return Math.max(0, Math.min(top, max));
+  }
+
+  /** Where the reader's text stands, found from the view's own boxes rather than a hit-test, which an overlay (the
+   *  phone's side menu) blinds; null for a view with nothing laid out. Marks, finest first: the deepest block on the
+   *  reading line (the first starting below it where the line falls in a gap), each stamped entry holding it, the view
+   *  child holding it, then up to `reach` other children either side, nearest first, the one above first. */
+  private readingAnchor(reach = Number.POSITIVE_INFINITY): ReadingAnchor | null {
+    const box = this.scrollEl.getBoundingClientRect();
+    const line = box.top + this.readingLineOffset();
+    const limit = box.top + this.scrollEl.clientHeight;
+    const furniture = (c: Element): boolean =>
+      c === this.topSentinel || c === this.edgeSentinel || c.id === "load-more-skeleton";
+    const kids = this.viewEl.children;
+    let at = onLine(kids, line, limit, (c) => furniture(c) || isSpacer(c));
+    // Nothing reaches the line: the last child that starts above it, else the first.
+    for (let i = kids.length - 1; at < 0 && i >= 0; i--) {
+      const c = kids[i];
+      if (c !== undefined && !furniture(c) && c.getClientRects().length > 0) {
+        at = i;
+        if (c.getBoundingClientRect().top <= line) {
+          break;
+        }
+      }
+    }
+    const card = kids[at];
+    if (card === undefined) {
+      return null;
+    }
+    const chain = [card];
+    for (;;) {
+      const inner = chain[chain.length - 1]?.children;
+      const i = inner === undefined ? -1 : onLine(inner, line, limit, isSpacer);
+      const next = inner?.[i];
+      // Inline content is not descended, nor a block among inline siblings (a display equation inside a streamed
+      // paragraph): a streamed paragraph's chunk spans number by delta timing, so a rebuilt paragraph's child
+      // indices name other text.
+      const prev = next?.previousElementSibling;
+      if (
+        next === undefined ||
+        getComputedStyle(next).display.startsWith("inline") ||
+        (prev != null && getComputedStyle(prev).display.startsWith("inline"))
+      ) {
+        break;
+      }
+      chain.push(next);
+    }
+    const marks: ReadingAnchor["marks"][number][] = [];
+    const mark = (el: Element, sel: string | null, path: readonly number[]): void => {
+      marks.push({
+        node: new WeakRef(el),
+        sel,
+        path,
+        offset: el.getBoundingClientRect().top - line,
+      });
+    };
+    // Finest first: the block, then the stamps around it, the block found again below the nearest one by its path.
+    const stamped = chain.filter((el) => el.matches(ENTRY_STAMP)).reverse();
+    const block = chain[chain.length - 1] ?? card;
+    const base = stamped[0];
+    if (block !== base) {
+      const path = base === undefined ? [] : chain.slice(chain.indexOf(base) + 1);
+      mark(
+        block,
+        base === undefined ? null : entryKey(base),
+        path.map((el) => Array.prototype.indexOf.call(el.parentElement?.children ?? [], el)),
+      );
+    }
+    for (const el of stamped) {
+      mark(el, entryKey(el), []);
+    }
+    if (block !== card && !stamped.includes(card)) {
+      // By node alone: a keyed reconcile keeps a child's element for as long as its key stays.
+      mark(card, null, []);
+    }
+    for (let d = 1; d <= reach && (at - d >= 0 || at + d < kids.length); d++) {
+      for (const kid of [kids[at - d], kids[at + d]]) {
+        if (kid !== undefined && !furniture(kid) && kid.getClientRects().length > 0) {
+          mark(kid, null, []);
+        }
+      }
+    }
+    return { marks };
+  }
+
+  /** `anchor`'s first mark that has a box in the view, found by node or by key, with that mark. */
+  private resolveAnchor(anchor: ReadingAnchor): { el: Element; offset: number } | null {
+    for (const m of anchor.marks) {
+      const node = m.node.deref();
+      let el: Element | null | undefined =
+        node?.isConnected === true && this.viewEl.contains(node)
+          ? node
+          : m.sel === null
+            ? null
+            : this.viewEl.querySelector(m.sel);
+      if (el !== node) {
+        for (const i of m.path) {
+          el = el?.children[i];
+        }
+      }
+      if (el !== null && el !== undefined && el.getClientRects().length > 0) {
+        return { el, offset: m.offset };
+      }
+    }
+    return null;
+  }
+
+  /** How far `anchor`'s text has moved down the screen from where it was taken (negative: up), or null when no mark
+   *  has a box in the view. */
+  private anchorDrift(anchor: ReadingAnchor): number | null {
+    const r = this.resolveAnchor(anchor);
+    if (r === null) {
+      return null;
+    }
+    const line = this.scrollEl.getBoundingClientRect().top + this.readingLineOffset();
+    return r.el.getBoundingClientRect().top - line - r.offset;
+  }
+
+  /** Put the held restore back if the scroller has left it; true when it wrote. Reading holds the anchor's text at
+   *  the reading line, so a writer that kept that text still (anchoring, a pagination pass's compensation) is left
+   *  alone and a reset that carried it away is undone; with no anchor it holds nothing. */
+  private holdRestore(): boolean {
+    const r = this.restore;
+    if (r === null) {
+      return false;
+    }
+    const top = this.scrollEl.scrollTop;
+    let landing: number;
+    if (this.state === "following") {
+      if (Math.abs(top - this.restoreLanding(r.top)) < 1) {
+        return false;
+      }
+      // The live edge is the position, wherever growth has carried it since the save.
+      landing = this.restoreLanding(this.followTarget());
+    } else {
+      const drift = r.anchor === null ? null : this.anchorDrift(r.anchor);
+      if (drift === null) {
+        return false;
+      }
+      landing = this.restoreLanding(top + drift);
+    }
+    if (Math.abs(top - landing) < 1) {
+      return false;
+    }
+    this.scrollSelfTo(landing, "instant");
+    this.rebaseReadLine();
+    return true;
+  }
+
+  /** Re-assert the restore once per frame, before the paint, until `RESTORE_HOLD_FRAMES` frames in a row kept it. */
+  private queueRestoreFrame(): void {
+    if (this.restoreFrame !== 0) {
+      return;
+    }
+    this.restoreFrame = requestAnimationFrame(() => {
+      this.restoreFrame = 0;
+      const r = this.restore;
+      if (r === null) {
+        return;
+      }
+      r.held = this.holdRestore() ? 0 : r.held + 1;
+      r.frames++;
+      if (r.held >= RESTORE_HOLD_FRAMES || r.frames >= RESTORE_MAX_FRAMES) {
+        this.endRestore();
+        return;
+      }
+      this.queueRestoreFrame();
+    });
+  }
+
+  /** Stop holding the restore: the reader moved, another writer took the scroller, or the position held. */
+  private endRestore(): void {
+    this.restore = null;
+    if (this.restoreFrame !== 0) {
+      cancelAnimationFrame(this.restoreFrame);
+      this.restoreFrame = 0;
     }
   }
 
@@ -1031,14 +1422,20 @@ export class ScrollController {
    *  unpark catch-up paint re-derives every fold the queue was holding), and disconnect the
    *  observers so the parked view can never produce a callback. */
   detach(): ViewScrollState {
+    // Read before the abandoned pass takes its skeleton out from above the reader: the anchor is the text where they
+    // saw it, and the offset is where that text stands once the skeleton is gone.
+    const anchor = this.state === "reading" ? this.readingAnchor() : null;
+    this.abandonLoadPass();
+    const drift = anchor === null ? null : this.anchorDrift(anchor);
     const snapshot: ViewScrollState = {
-      scrollTop: this.scrollEl.scrollTop,
+      scrollTop: this.restoreLanding(this.scrollEl.scrollTop + (drift ?? 0)),
       readingState: this.state,
+      ...(anchor === null ? {} : { anchor }),
     };
     this.deferred = [];
-    this.abandonLoadPass();
     this.cancelPinPass();
     this.endSelfScroll();
+    this.endRestore();
     this.cancelScrollbarWidth();
     // A queued re-derivation belongs to the OUTGOING view: a frame later it would read the incoming
     // transcript's geometry and release a state that is not its own.
@@ -1055,7 +1452,7 @@ export class ScrollController {
   setLoadMore(fn: (() => void) | null, hasMore: boolean): void {
     this.onLoadMore = fn;
     this.hasMoreMessages = hasMore;
-    this.updateLoadMoreIndicator();
+    this.pokeTop();
   }
 
   rebaseLoadMore(): void {
@@ -1083,10 +1480,12 @@ export class ScrollController {
     this.abandonLoadPass();
     this.cancelPinPass();
     this.endSelfScroll();
+    this.endRestore();
     this.cancelScrollbarWidth();
     this.cancelRevalidate();
     this.forgetReaderGesture();
     this.forgetScrollBaselines();
+    this.topNear = false;
     this.setLoadMore(null, false);
     this.setState("following");
   }
@@ -1141,6 +1540,8 @@ export class ScrollController {
     this.barDragging = false;
     this.lastTouchY = null;
     this.lastBarY = null;
+    this.touchStart = null;
+    this.touchMoved = false;
   }
 
   /** The one window three rules read: it suppresses this controller's own writes, it blocks a
@@ -1175,24 +1576,7 @@ export class ScrollController {
   private noteViewTop(): void {
     const box = this.scrollEl.getBoundingClientRect();
     this.viewTop = this.contentAt(box.left + box.width / 2, box.top + 1);
-    this.readLine = this.pickReadLine();
-  }
-
-  private pickReadLine(): { el: Element; top: number } | null {
-    const box = this.scrollEl.getBoundingClientRect();
-    const x = box.left + box.width / 2;
-    // Preferably the first element that starts in view at or below the line: a box reaching above
-    // the scrollport (a body around a gap) does not move when the rows inside it do. A paragraph
-    // taller than the scrollport starts in view nowhere, so the line's own element stands.
-    const bottom = box.top + this.scrollEl.clientHeight;
-    const line = box.top + this.scrollEl.clientHeight * READING_LINE_FRACTION;
-    for (let y = line; y < bottom; y += 24) {
-      const hit = this.contentAt(x, y);
-      if (hit !== null && hit.top >= box.top) {
-        return hit;
-      }
-    }
-    return this.contentAt(x, line);
+    this.rebaseReadLine();
   }
 
   /** The transcript element at a client point and its top, or null over a gap or a spacer. */
@@ -1204,27 +1588,52 @@ export class ScrollController {
     return { el, top: el.getBoundingClientRect().top };
   }
 
-  /** Put the reading line's element back where the reader left it, if a size change moved it. */
+  /** Run `layout`, a change that sizes boxes near the scrollport, and put the reading line back where it stood. Both
+   *  reads sit in this task, where no scroll can land between them, so the drift is the layout's alone, net of any
+   *  anchoring the engine applied. Left to the next frame, that frame's scroll event forces the layout first and
+   *  `noteViewTop` takes the moved line as the reader's own, so `holdReadingLine` finds no drift: native anchoring did
+   *  not hold the transcript in WebKit or in Chromium. */
+  private holdAcross(layout: () => void): void {
+    const held =
+      this.readLine === null || !this.mayHoldLine() ? null : this.resolveAnchor(this.readLine);
+    if (held === null) {
+      layout();
+      return;
+    }
+    const before = held.el.getBoundingClientRect().top;
+    layout();
+    const drift =
+      held.el.getClientRects().length === 0 ? 0 : held.el.getBoundingClientRect().top - before;
+    if (Math.abs(drift) >= 1) {
+      this.scrollSelfTo(this.scrollEl.scrollTop + drift, "instant");
+    }
+  }
+
+  /** Whether a size change is the layout's to undo rather than the reader's: while Following the pin owns the edge,
+   *  and inside an epoch the flight owns the scroller. */
+  private mayHoldLine(): boolean {
+    return this.state === "reading" && !this.epochOpen;
+  }
+
+  /** Put the reading line's text back where the reader left it, if a size change moved it. */
   private holdReadingLine(): void {
     const line = this.readLine;
-    if (line === null || this.state !== "reading" || this.epochOpen) {
+    if (line === null || !this.mayHoldLine()) {
       return;
     }
-    // A box-less element reads a rect of zeros, which would pass for a drift of its whole offset.
-    if (!line.el.isConnected || line.el.getClientRects().length === 0) {
-      this.readLine = this.pickReadLine();
+    const drift = this.anchorDrift(line);
+    if (drift === null) {
+      this.rebaseReadLine();
       return;
     }
-    const top = line.el.getBoundingClientRect().top;
-    const drift = top - line.top;
     if (Math.abs(drift) < 1) {
       return;
     }
     const from = this.scrollEl.scrollTop;
     this.scrollSelfTo(from + drift, "instant");
     if (Math.abs(this.scrollEl.scrollTop - from) < 1) {
-      // Clamped where it stood: no scroll event follows to re-read the line, and the reader now sees it here.
-      this.readLine = { el: line.el, top };
+      // Clamped where it stood: no scroll event follows to re-read the line, so it is re-read here.
+      this.rebaseReadLine();
       return;
     }
     this.holding = true;
@@ -1334,12 +1743,9 @@ export class ScrollController {
   }
 
   private maybeLoadMore(force = false): void {
-    if (!force && this.scrollEl.scrollTop >= LOAD_MORE_THRESHOLD_PX) {
-      return;
-    }
-    // A smooth flight toward an early turn crosses the threshold on its way, and this pass ends in
+    // A smooth flight toward an early turn crosses the history edge on its way, and this pass ends in
     // a drift correction — a second writer inside one animation. The FORCED call is a caller
-    // stating a need rather than the listener guessing at one, so it still runs.
+    // stating a need rather than the observer guessing at one, so it still runs.
     if (!force && this.epochOpen) {
       return;
     }
@@ -1349,15 +1755,14 @@ export class ScrollController {
     this.loadingMore = true;
     const skel = loadMoreSkeleton();
     skel.id = "load-more-skeleton";
-    // Scoped to the attached view: a parked view keeps its own pagination furniture (it is that
-    // view's DOM), so a document-wide id lookup could find a sibling view's button and mount this
-    // pass's skeleton there.
-    const indicator = this.viewEl.querySelector(`[id="load-more-indicator"]`);
     // The skeleton and then the older messages land ABOVE the reader. Scroll anchoring holds them in
     // place except at offset 0, a suppression trigger (css-scroll-anchoring §2.2.2), so only the
     // drift it left is corrected: the height delta would count the page twice wherever it did anchor.
-    const ref =
-      [...this.viewEl.children].find((c) => c !== indicator && c !== this.edgeSentinel) ?? null;
+    const firstContent = (): Element | null =>
+      [...this.viewEl.children].find(
+        (c) => c !== this.topSentinel && c !== this.edgeSentinel && c !== skel,
+      ) ?? null;
+    const ref = firstContent();
     let refTop = 0;
     let prevTop = 0;
     let prevHeight = 0;
@@ -1377,11 +1782,7 @@ export class ScrollController {
         this.scrollSelfTo(this.scrollEl.scrollTop + drift, "instant");
       }
     };
-    if (indicator !== null) {
-      indicator.replaceWith(skel);
-    } else {
-      this.viewEl.prepend(skel);
-    }
+    this.viewEl.prepend(skel);
     hold();
     // Scrolling never moves `ref` in the scroll frame, so while it stands where the skeleton left it nothing has landed
     // above it, and a re-measure is a baseline from before the landing whatever moved the scroller.
@@ -1399,6 +1800,11 @@ export class ScrollController {
       if (document.getElementById("load-more-skeleton") === null) {
         this.endLoadPass();
         hold();
+        // A page that landed above the reader may leave the edge still inside the lead (a short page); one that
+        // landed nothing stays quiet until the edge leaves and re-enters, or the same failing request would loop.
+        if (firstContent() !== ref) {
+          this.pokeTop();
+        }
       }
     });
     const safetyTimer = setTimeout(() => {
@@ -1429,29 +1835,6 @@ export class ScrollController {
   private abandonLoadPass(): void {
     this.endLoadPass();
     this.viewEl.querySelector(`[id="load-more-skeleton"]`)?.remove();
-  }
-
-  /** A real BUTTON, not inert text. */
-  private updateLoadMoreIndicator(): void {
-    // Scoped to the attached view — see maybeLoadMore: parked views keep their own furniture, and
-    // removing "the" indicator by document id could reach into one of them.
-    const existing = this.viewEl.querySelector(`[id="load-more-indicator"]`);
-    if (!this.hasMoreMessages || this.onLoadMore === null) {
-      existing?.remove();
-      return;
-    }
-    if (existing !== null) {
-      return;
-    }
-    const btn = el(
-      "button",
-      { id: "load-more-indicator", className: "load-more-btn", type: "button" },
-      "Load older messages",
-    );
-    btn.addEventListener("click", () => {
-      this.maybeLoadMore(true);
-    });
-    this.viewEl.prepend(btn);
   }
 }
 

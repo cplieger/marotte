@@ -1,0 +1,53 @@
+{
+ "workflowId": "wf_66658d5c69b1f284",
+ "state": {
+  "workflowId": "wf_66658d5c69b1f284",
+  "workflowName": "askloop",
+  "status": "aborted",
+  "inputs": {},
+  "artifacts": {},
+  "capturedOutputs": {},
+  "root": {
+   "nodeId": "wf_66658d5c69b1f284",
+   "type": "sequence",
+   "status": "aborted",
+   "startedAt": "2026-10-12T00:26:23.536Z",
+   "children": [
+    {
+     "nodeId": "ask",
+     "type": "step",
+     "status": "aborted",
+     "agentName": "asker",
+     "modelId": "claude-sonnet-5.5",
+     "effortLevel": "high",
+     "sessionId": "sess_c8ebb89e-a1ac-41da-aeaa-1aaa24762563",
+     "startedAt": "2026-10-12T00:26:23.542Z",
+     "completionSignal": "need_input",
+     "completionSignalSource": "send_message"
+    }
+   ]
+  },
+  "parentSessionId": "sess_b24e223e-fff1-4136-b048-ebf1cfcfcad7",
+  "backgroundExecution": false,
+  "rootConversationId": "sess_b24e223e-fff1-4136-b048-ebf1cfcfcad7",
+  "workspacePath": "/work",
+  "createdAt": "2026-10-12T00:23:14.312Z",
+  "memoryConfig": {
+   "mode": "read_write",
+   "reflection": true
+  },
+  "memoryConfigSource": "legacy",
+  "parentModelId": "claude-sonnet-5.5",
+  "parentEffortLevel": "high",
+  "planRevision": 0
+ },
+ "nodePlan": [
+  {
+   "nodeId": "ask",
+   "type": "step",
+   "agentName": "asker",
+   "modelId": "claude-sonnet-5.5",
+   "effortLevel": "high"
+  }
+ ]
+}

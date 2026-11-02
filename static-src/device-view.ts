@@ -10,17 +10,18 @@ export type ThemeChoice = "dark" | "light" | "system";
  *  "fine" a mouse, a trackpad or a stylus with a cursor. */
 export type PointerTier = "fine" | "coarse";
 
-/** The four fields, as one record. Read together because they are stored
+/** The fields, as one record. Read together because they are stored
  *  together; written one at a time because that is how they change. */
 interface DeviceView {
   active_view: string;
   shell_open: boolean;
   shell_h: number;
   sidebar_w: number;
+  run_bar_open: boolean;
 }
 
 function empty(): DeviceView {
-  return { active_view: "", shell_open: false, shell_h: 0, sidebar_w: 0 };
+  return { active_view: "", shell_open: false, shell_h: 0, sidebar_w: 0, run_bar_open: false };
 }
 
 function validLength(v: unknown): number | null {
@@ -59,6 +60,7 @@ export function loadDeviceView(): DeviceView {
     shell_open: typeof o["shell_open"] === "boolean" ? o["shell_open"] : e.shell_open,
     shell_h: validLength(o["shell_h"]) ?? e.shell_h,
     sidebar_w: validLength(o["sidebar_w"]) ?? e.sidebar_w,
+    run_bar_open: typeof o["run_bar_open"] === "boolean" ? o["run_bar_open"] : e.run_bar_open,
   };
 }
 
@@ -96,6 +98,15 @@ export function sidebarWidth(): number {
 
 export function setSidebarWidth(px: number): void {
   writeBlob({ sidebar_w: px });
+}
+
+/** Whether the chat's run bar lists every run rather than its one summary row. */
+export function runBarOpen(): boolean {
+  return loadDeviceView().run_bar_open;
+}
+
+export function setRunBarOpen(open: boolean): void {
+  writeBlob({ run_bar_open: open });
 }
 
 /** The cached theme choice or null; a cache of `config.json`'s value that never outranks it. */

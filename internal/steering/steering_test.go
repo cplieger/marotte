@@ -3,7 +3,6 @@ package steering
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/slogx/capture"
 )
 
 func TestWriteTools(t *testing.T) {
@@ -153,6 +153,22 @@ func TestWriteMCP_SortsServersAlphabetically(t *testing.T) {
 	if alphaIdx >= linearIdx || linearIdx >= zedIdx {
 		t.Errorf("order alpha=%d linear=%d zed=%d, want alpha < linear < zed",
 			alphaIdx, linearIdx, zedIdx)
+	}
+}
+
+// TestWriteMCP_SaysTheToolsAreDeferred pins that the agent is told to load an MCP tool by id: telling it the
+// tools are already on its belt makes it report a connected integration as missing.
+func TestWriteMCP_SaysTheToolsAreDeferred(t *testing.T) {
+	var b strings.Builder
+	writeMCP(&b, MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}})
+	out := b.String()
+	for _, want := range []string{"deferred", "tool_load", "tool_call", "includeMcpJson", "kiro_powers"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeMCP() omits %q; output:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "appear in your toolset") {
+		t.Errorf("writeMCP() still says MCP tools are in the toolset; output:\n%s", out)
 	}
 }
 
@@ -472,14 +488,7 @@ func TestGenerate_LogsWroteOnSuccess(t *testing.T) {
 	configDir := t.TempDir()
 
 	var buf bytes.Buffer
-	// Restore log's writer and flags too: slog.SetDefault redirects them.
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
 	g := New(workDir, configDir)
 	g.Generate(t.Context())

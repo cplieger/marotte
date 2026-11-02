@@ -9,7 +9,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // RegisterRoutes wires the MCP config endpoints: GET/POST /api/mcp (list masked, create), POST
@@ -170,6 +170,9 @@ func (*Store) writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, errNameConflict):
 		slog.Debug("mcp: http name conflict", "error", err)
 		httpreply.Conflict(w, err.Error())
+	case errors.Is(err, ErrKASUnreadable):
+		// readKASDoc logged the cause.
+		httpreply.Conflict(w, kasUnreadableHint)
 	case errors.Is(err, errPersist):
 		if errors.Is(err, errPersistMarshal) {
 			slog.Error("mcp: http persist marshal failure (programmer bug)", "error", err)

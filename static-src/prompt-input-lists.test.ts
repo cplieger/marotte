@@ -7,14 +7,6 @@ import { userEvent } from "vitest/browser";
 import { initPromptInput } from "./prompt-input.js";
 import { setSessions, setActive } from "./store.js";
 import type { Session } from "./types.js";
-import type * as Platform from "./platform.js";
-
-// Smart Punctuation is reverted on iOS only, so this file runs as an iPhone or iPad;
-// `composer-touch.test.ts` holds the desktop side.
-vi.mock("./platform.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof Platform>()),
-  isIOS: true,
-}));
 
 const CHAT = "c1";
 const submitted: string[] = [];
@@ -253,37 +245,5 @@ describe("Return under a finger", () => {
     box().blur();
     box().focus();
     expect(box().enterKeyHint).toBe("enter");
-  });
-});
-
-/** The value an iOS Smart Punctuation substitution leaves, delivered the way the keyboard does:
- *  a replacement the page did not type. */
-function substitute(el: HTMLTextAreaElement, before: string, after: string): void {
-  el.value = before;
-  el.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", bubbles: true }));
-  el.value = after;
-  el.setSelectionRange(after.length, after.length);
-  el.dispatchEvent(new InputEvent("input", { inputType: "insertReplacementText", bubbles: true }));
-}
-
-describe("smart punctuation", () => {
-  it("turns an em dash back into the two hyphens typed under a finger", () => {
-    touch();
-    const el = start("");
-    substitute(el, "git push -", "git push \u2014");
-    expect(el.value).toBe("git push --");
-  });
-
-  it("straightens a curly quote typed under a finger", () => {
-    touch();
-    const el = start("");
-    substitute(el, "don", "don\u2019");
-    expect(el.value).toBe("don'");
-  });
-
-  it("still reverts on an iPad laid out for a trackpad", () => {
-    const el = start("");
-    substitute(el, "a -", "a \u2014");
-    expect(el.value).toBe("a --");
   });
 });

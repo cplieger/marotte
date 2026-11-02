@@ -218,7 +218,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         view: TAB_VIEWS.chat,
         route: { kind: "chat", id: chatID },
         // From the SUBJECT. A side conversation's own subject carries owns:true
-        // because it owns its bridge; a tab that only WATCHES another chat's work
+        // because it owns its session; a tab that only WATCHES another chat's work
         // carries owns:false. Neither is a property of the kind.
         owns: subject.owns,
         ...parentOf(subject),

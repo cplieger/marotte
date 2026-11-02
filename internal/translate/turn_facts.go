@@ -104,8 +104,7 @@ func (t *Translator) noteTurnFacts(chatID marotte.ChatID, k *sessionInfoKiroBloc
 }
 
 // A resolution always withdraws its pending ask; facts are recorded on the chat's own turn only (a
-// subagent's land on its parent turn, a workflow step's nowhere), and an answer to an unnoted ask
-// records nothing.
+// workflow step's nowhere), and an answer to an unnoted ask records nothing.
 func (t *Translator) handleAskInfo(chatID marotte.ChatID, k *sessionInfoKiroBlock, attr FrameAttribution) bool {
 	if r := k.InteractionResolved; r != nil {
 		t.handleInteractionResolved(chatID, r)

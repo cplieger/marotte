@@ -1,6 +1,7 @@
-// The boot: five reads in the FIRST FRAME, each adopted in its own region as it lands;
+// The boot: four reads in the FIRST FRAME, each adopted in its own region as it lands;
 // nothing waits on the identity verdict. Two orderings are real: the tab set follows the
-// chat fold (a chat tab is named from the chat store), and retention precedes it.
+// chat fold (a chat tab is named from the chat store), and the settings answer, which holds
+// retention, precedes it.
 // `applyRoute` is injected so boot.test.ts can observe it without route-apply's graph.
 
 import { subscribeByName } from "./actions/index.js";
@@ -57,10 +58,11 @@ import type { RouteOrigin } from "./router.js";
 import { createSession } from "./chat.js";
 import { initGovernance } from "./governance.js";
 import { initRuntimeHealth } from "./runtime-health.js";
+import { initEngineStatus } from "./engine-status.js";
 import { initStatusVersions, setStatus } from "./status.js";
 import type { ConnectionStatus } from "./types.js";
 import { loadVersions } from "./versions.js";
-import { refreshRetention } from "./retention.js";
+import { adoptRetention } from "./retention.js";
 import {
   registerRunLogObserver,
   registerRunStateDemand,
@@ -75,6 +77,7 @@ import { dropStoredShellPanel, releaseStoredShellPanel } from "./shell-height.js
 import { restoreShell } from "./shell.js";
 import { applyShareTarget } from "./share-target.js";
 import { error as toastError } from "./toast.js";
+import { notifyStreamConnected } from "./forge-store.js";
 
 /** What the boot chain needs from the composition root. */
 interface BootDeps {
@@ -107,22 +110,21 @@ export async function startBoot(d: BootDeps): Promise<void> {
 
     // `identity` needs no rejection handler: every failure IS its `unavailable` arm
     // (identity.ts). Nor does `snapshotRead`, which resolves null for every failure.
-    const settingsRead = loadSettings();
+    const settingsAdopted = loadSettings().then(adoptSettings);
     const identity = resolveIdentity();
     const chatsRead = loadList();
-    const retentionRead = refreshRetention();
     const snapshotRead = readBootSnapshot();
 
     // The workspace region owns every view the boot swaps, so it is what the animation
     // flag waits on: a slow whoami must not hold the first tab switch's transition back.
-    const workspace = restoreWorkspace(chatsRead, retentionRead, snapshotRead).finally(() => {
+    const workspace = restoreWorkspace(chatsRead, settingsAdopted, snapshotRead).finally(() => {
       // The route has been applied (or the region failed), so ordinary pushes resume.
       // This covers a throw inside the region; the catch below covers one before it.
       releaseLocation();
       markBootDone();
     });
     await Promise.allSettled([
-      settingsRead.then(adoptSettings),
+      settingsAdopted,
       identity.then((v) => adoptIdentity(v, workspace)),
       identity.then(adoptShell),
       workspace,
@@ -136,13 +138,15 @@ export async function startBoot(d: BootDeps): Promise<void> {
 }
 
 /**
- * The settings answer: theme, model and effort seeds, workspace prefs. Null means the
- * fetch FAILED, so nothing is restored: an invented value would persist on the next write.
+ * The settings answer: theme, model and effort seeds, workspace prefs. Null means there is
+ * nothing to adopt (persist.loadSettings), so nothing is restored: an invented value would
+ * persist on the next write.
  */
 function adoptSettings(settings: EffectiveSettings | null): void {
   if (settings === null) {
     return;
   }
+  adoptRetention(settings);
   restoreLastModel(settings.last_model);
   restoreLastEffort(settings.last_effort_by_model);
   adoptLinkGuard(settings);
@@ -220,7 +224,7 @@ async function adoptIdentity(v: IdentityVerdict, workspace: Promise<boolean>): P
  */
 async function restoreWorkspace(
   chatsRead: Promise<boolean>,
-  retentionRead: Promise<void>,
+  settingsAdopted: Promise<void>,
   snapshotRead: Promise<BootSnapshot | null>,
 ): Promise<boolean> {
   // RACED against the chat list: the paint REPLACES the chat store, so it may only precede
@@ -255,7 +259,7 @@ async function restoreWorkspace(
     // Both awaits sit OUTSIDE the suppression window below: a window spanning an await
     // silences every shell push.
     try {
-      await retentionRead;
+      await settingsAdopted;
     } catch {
       /* the close path reads the default */
     }
@@ -354,8 +358,10 @@ export function initPostAuth(): void {
   initPostAuthUI();
   // Degraded-runtime banner; re-checks on every gap so recovery self-heals.
   initRuntimeHealth();
-  // The FETCH-ONLY fan-outs a reduced boot withholds, each with a usable empty state; the two
-  // above stay (capability, degraded runtime).
+  // The engine banner and the Settings restart controls; the event keeps it current from here.
+  initEngineStatus();
+  // The FETCH-ONLY fan-outs a reduced boot withholds, each with a usable empty state; the three
+  // above stay (capability, degraded runtime, the agent engine).
   if (bootMode() === "full") {
     // The marotte + kiro-cli build pair. Fire-and-forget: the lines repaint through a
     // signal, so nothing waits on the `--version` subprocess behind it.
@@ -480,6 +486,7 @@ export function onTransportStatus(status: ConnectionStatus): void {
     return;
   }
   void loadList();
+  notifyStreamConnected();
   if (bootTabsRead === false) {
     void listTabs();
   }

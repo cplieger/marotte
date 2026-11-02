@@ -1,12 +1,14 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"slices"
 	"strconv"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/subject"
 	"pgregory.net/rapid"
 )
@@ -65,7 +67,10 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 		for id := int64(1); id <= 3; id++ {
 			rt.bus.pendingPerms.add(id, permNeeded("c1", id), nil)
 		}
-		rt.runs.asks.add(askOf("c2", "wf", "a1", "n1"))
+		if err := rt.runs.leaseStore().Put(context.Background(), &runlease.Lease{WorkflowID: "wf", ChatID: "c2", Origin: runlease.OriginAgent}); err != nil {
+			t.Fatalf("Setup: lease: %v", err)
+		}
+		rt.runs.cellFor("wf")
 		rt.bus.steers.SteerWaiting("c3", &marotte.SteerQueuedPayload{SteerID: "s1"})
 
 		addAt := rapid.IntRange(-1, 3).Draw(t, "addAfterRead")
@@ -76,7 +81,7 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 				rt.bus.pendingPerms.add(9, permNeeded("c1", 9), nil)
 			}
 			if n == resolveAt {
-				rt.bus.pendingPerms.takeIfPresent("c1", resolveID)
+				rt.bus.pendingPerms.takeIfPresent("c1", resolveID, marotte.DecisionKindPermission)
 			}
 		})
 		// The late arms (-1) land after the snapshot, like a queued live frame.
@@ -84,7 +89,7 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 			rt.bus.pendingPerms.add(9, permNeeded("c1", 9), nil)
 		}
 		if resolveAt == -1 {
-			rt.bus.pendingPerms.takeIfPresent("c1", resolveID)
+			rt.bus.pendingPerms.takeIfPresent("c1", resolveID, marotte.DecisionKindPermission)
 		}
 		server, _ := rt.versions.Current(subject.KindPending, "")
 		client := snapshotKeys(t, payload.Items)
@@ -114,7 +119,7 @@ func TestPendingSnapshot_CounterLastHasAFalseUnchanged(t *testing.T) {
 	counterLast := func(afterPerms func()) ([]marotte.ServerEvent, string) {
 		events := rt.bus.pendingPerms.list("")
 		afterPerms()
-		events = append(events, rt.runs.asks.list("")...)
+		events = append(events, rt.runs.asks.list()...)
 		events = append(events, rt.bus.steers.list("")...)
 		version, _ := rt.versions.Current(subject.KindPending, "")
 		return events, version

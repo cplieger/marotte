@@ -69,19 +69,83 @@ func writeChatMetadata(b *strings.Builder, c *marotte.Chat, turns int) {
 	fmt.Fprintf(b, "- **Turns:** %d\n\n", turns)
 }
 
-// turnRender is one turn's rendering state: results folded into calls, the turn's call ids, and the plan rendered
-// once.
+// turnRender is one turn's rendering state: results folded into calls, the turn's call ids, the plan rendered
+// once, the one turn_revert that renders (the newest: a second rewind to the same turn replaces the row), and the
+// dropped agent notes the turn also read, which KAS's boundary clear names and which are no loss to report.
 type turnRender struct {
 	results  map[string]*marotte.EntryToolResult
 	calls    map[string]struct{}
+	readDrop map[string]struct{}
+	revert   string
 	plan     []marotte.PlanEntry
 	planDone bool
 }
 
+func newTurnRender(turn []marotte.Entry) turnRender {
+	results, calls := indexResults(turn)
+	r := turnRender{results: results, calls: calls, plan: newestPlan(turn), readDrop: readDrops(turn)}
+	for i := range turn {
+		if turn[i].Kind == marotte.EntryKindTurnRevert {
+			r.revert = turn[i].ID
+		}
+	}
+	return r
+}
+
+// readDropped reports a dropped agent note the turn also read; its read twin shares the id and still renders.
+func (r *turnRender) readDropped(e *marotte.Entry) bool {
+	if _, named := r.readDrop[e.ID]; !named {
+		return false
+	}
+	var p marotte.EntrySteer
+	return decodePayload(e, &p) && p.State == marotte.SteerStateDropped
+}
+
+// readDrops answers the turn's dropped agent notes whose id the same turn read, as a read note or a take-up's
+// KASID: block-window.ts readDrops is the client twin.
+func readDrops(turn []marotte.Entry) map[string]struct{} {
+	read := make(map[string]struct{})
+	var dropped []string
+	for i := range turn {
+		id, ok, isDrop := agentNoteRead(&turn[i])
+		switch {
+		case !ok:
+		case isDrop:
+			dropped = append(dropped, id)
+		default:
+			read[id] = struct{}{}
+		}
+	}
+	out := make(map[string]struct{})
+	for _, id := range dropped {
+		if _, ok := read[id]; ok {
+			out[id] = struct{}{}
+		}
+	}
+	return out
+}
+
+// agentNoteRead names the agent-note id an entry speaks for: an agent steer (dropped or not), or a delivered take-up's
+// KASID. ok is false for any other entry.
+func agentNoteRead(e *marotte.Entry) (id string, ok, dropped bool) {
+	switch e.Kind {
+	case marotte.EntryKindSteer:
+		var p marotte.EntrySteer
+		if decodePayload(e, &p) && p.Origin == marotte.SteerOriginAgent {
+			return e.ID, true, p.State == marotte.SteerStateDropped
+		}
+	case marotte.EntryKindSteerDelivered:
+		var d marotte.EntrySteerDelivered
+		if decodePayload(e, &d) && d.KASID != "" {
+			return d.KASID, true, false
+		}
+	}
+	return "", false, false
+}
+
 // writeTurnMarkdown renders one turn: heading and prompt, every rendering entry in file order, the footer and a rule.
 func writeTurnMarkdown(b *strings.Builder, turn []marotte.Entry) {
-	results, calls := indexResults(turn)
-	r := turnRender{results: results, calls: calls, plan: newestPlan(turn)}
+	r := newTurnRender(turn)
 	for i := range turn {
 		r.writeEntry(b, &turn[i])
 	}
@@ -102,17 +166,25 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 	case marotte.EntryKindToolResult:
 		r.writeUnpairedResult(b, e)
 	case marotte.EntryKindSteer:
-		writeSteerMarkdown(b, e)
+		if !r.readDropped(e) {
+			writeSteerMarkdown(b, e)
+		}
 	case marotte.EntryKindPlan:
 		r.writePlanOnce(b)
+	case marotte.EntryKindTurnRevert:
+		if e.ID == r.revert {
+			writeTurnRevertMarkdown(b)
+		}
 	case marotte.EntryKindCompaction, marotte.EntryKindCompactionFailed,
 		marotte.EntryKindSafetyBlocked, marotte.EntryKindModelSwitched, marotte.EntryKindModelRouted,
-		marotte.EntryKindModeSwitched, marotte.EntryKindTurnRevert:
+		marotte.EntryKindModelFallback, marotte.EntryKindModeSwitched:
 		writeEventMarkdown(b, e)
 	case marotte.EntryKindTurnClose:
 		writeTurnCloseEntry(b, e)
-	case marotte.EntryKindTurnBind, marotte.EntryKindReconciled, marotte.EntryKindSteerDelivered:
-		// None renders: turn_bind is bookkeeping, reconciled a fact about the record, and steer_delivered a time on its message's row.
+	case marotte.EntryKindTurnBind, marotte.EntryKindReconciled, marotte.EntryKindSteerDelivered,
+		marotte.EntryKindSteerCleared:
+		// None renders: turn_bind is bookkeeping, reconciled a fact about the record, steer_delivered a time on its
+		// message's row, and steer_cleared an epoch's end.
 	}
 }
 
@@ -128,10 +200,10 @@ func writeEventMarkdown(b *strings.Builder, e *marotte.Entry) {
 		writeModelSwitchedMarkdown(b, e)
 	case marotte.EntryKindModelRouted:
 		writeModelRoutedMarkdown(b, e)
+	case marotte.EntryKindModelFallback:
+		writeModelFallbackMarkdown(b, e)
 	case marotte.EntryKindModeSwitched:
 		writeModeSwitchedMarkdown(b, e)
-	case marotte.EntryKindTurnRevert:
-		writeTurnRevertMarkdown(b)
 	}
 }
 
@@ -253,6 +325,27 @@ func writeModelRoutedMarkdown(b *strings.Builder, e *marotte.Entry) {
 	fmt.Fprintf(b, "**Event: model_routed** %s\n\n", oneLine(p.Message))
 }
 
+// writeModelFallbackMarkdown names KAS's decision in its own codes, as the log stores them: the
+// transcript's wording is the client's. A retry whose model now serves the session says so; a
+// sub-agent's fallback is left out, as the transcript leaves it out.
+func writeModelFallbackMarkdown(b *strings.Builder, e *marotte.Entry) {
+	var p marotte.EntryModelFallback
+	if !decodePayload(e, &p) || p.Subagent {
+		return
+	}
+	line := "**Event: model_fallback** " + oneLine(p.Trigger) + ": " + oneLine(p.From)
+	if p.To != "" {
+		line += " → " + oneLine(p.To)
+	}
+	switch {
+	case p.Reason != "":
+		line += ", declined: " + oneLine(p.Reason)
+	case p.To != "" && p.Scope == marotte.ModelFallbackScopeSession:
+		line += ", now serves the session"
+	}
+	fmt.Fprintf(b, "%s\n\n", line)
+}
+
 func writeModeSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {
 	var p marotte.EntryModeSwitched
 	if !decodePayload(e, &p) {
@@ -273,6 +366,9 @@ func modelSwitchedDetail(p *marotte.EntryModelSwitched) string {
 		return "context reset"
 	}
 	tier := oneLine(p.Effort)
+	if p.Unoffered != "" {
+		tier = strings.TrimPrefix(tier+"; ", "; ") + oneLine(p.Unoffered) + " is not offered"
+	}
 	if tier == "" {
 		return fmt.Sprintf("%s → %s", oneLine(p.From), oneLine(p.To))
 	}

@@ -184,17 +184,12 @@ export class EolTracker {
     this.applyEdit(old, edit, exact !== null, type);
   }
 
-  /** A programmatic write of the whole value. `moved` text re-arranges existing lines (a conflict
-   *  resolution), so its breaks keep their own tags or the record turns uncertain; `new` text is
-   *  the user's own new bytes, which take the neighbouring ending. */
-  replace(next: string, kind: "moved" | "new"): void {
+  /** A programmatic write of the whole value that re-arranges existing lines (a conflict
+   *  resolution), so its breaks keep their own tags or the record turns uncertain. */
+  replace(next: string): void {
     const old = this.value;
     this.value = next;
     if (this.uniform !== null || old === next) {
-      return;
-    }
-    if (kind === "new") {
-      this.applyEdit(old, diffEdit(old, next), true, "insertText");
       return;
     }
     const tags = movedTags(old, next, this.tags);

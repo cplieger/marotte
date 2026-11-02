@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The boot's first decision: the `mkdir -p` of every directory the container needs, and its
-# fail-CLOSED branch, taken inline with extract_range. The ONE place the entrypoint aborts on
+# The boot's KIRO_HOME hand-off and the `mkdir -p` of every directory the container needs, with
+# its fail-CLOSED branch, taken inline with extract_range. The ONE place the entrypoint aborts on
 # /config state (nothing to persist, nothing to serve); a healthy image never shows it. Lint:
 #   SC2015 - `[ cond ] && ok || no` cannot mis-fire: lib.sh's ok/no always return 0.
 #   SC2034 - these variables are inputs to entrypoint.sh code sourced at RUNTIME.
@@ -13,8 +13,14 @@ set -u
 . "$(dirname -- "$0")/lib.sh"
 new_workdir >/dev/null
 
-# Captured as a path, not sourced through a substitution, so a failed extraction stops this file.
-BLOCK=$(extract_range '^mkdir -p' '^  }$') || exit 1
+# From the resolver's definition, so a lost hand-off between it and the mkdir fails a case below
+# rather than the extraction. Captured as a path, not sourced through a substitution, so a failed
+# extraction stops this file.
+BLOCK=$(extract_range '^effective_kiro_home() {$' '^  }$') || exit 1
+grep -q '^mkdir -p' "$BLOCK" || {
+  printf 'harness error: the extracted block does not reach the mkdir; the resolver moved below it\n' >&2
+  exit 1
+}
 # The end anchor `^  }$` is not unique in entrypoint.sh: a lost closing brace would capture the
 # legacy-/config/kiro migration below it. Name that fault rather than rely on it failing to parse.
 if grep -q '/config/kiro' "$BLOCK"; then
@@ -69,13 +75,10 @@ rc=$?
   && ok "a mkdir it cannot complete aborts the boot and says /config may be unmounted" \
   || no "unwritable /config" "rc=$rc, or the message lost its remediation hint: $(cat "$WORK/out.log")"
 
-# --- 3. an unset KIRO_HOME aborts rather than being skipped ----------------------
-# KIRO_HOME comes from the image's ENV, not from this script, so nothing here defaults
-# it. An unset value reaches mkdir as an EMPTY operand, which mkdir refuses — so the
-# coupling to the Dockerfile ENV fails the boot loudly instead of quietly leaving the
-# kiro state directory uncreated. The subshell runs with `set -u` off because the
-# shipped entrypoint does (`grep '^set ' entrypoint.sh` finds nothing); asserting this
-# under the test file's own `set -u` would measure the harness, not the boot.
+# --- 3. the directories land in the KIRO_HOME the resolver hands every child ---------
+# The image's ENV sets KIRO_HOME, so the export matters only where nothing did: a child must
+# still see the value the boot created. The subshells run with `set -u` off because the shipped
+# entrypoint does (`grep '^set ' entrypoint.sh` finds nothing).
 ROOT="$WORK/nokirohome"
 (
   set +u
@@ -84,11 +87,30 @@ ROOT="$WORK/nokirohome"
   unset KIRO_HOME
   sleep() { return 0; }
   . "$BLOCK"
+  bash -c 'printf "%s\n" "${KIRO_HOME-unset}"' >"$WORK/child.txt"
 ) >"$WORK/out.log" 2>&1
 rc=$?
-[ "$rc" -ne 0 ] && grep -q 'failed to create required directories' "$WORK/out.log" \
-  && [ -d "$ROOT/tools/bin" ] \
-  && ok "an unset KIRO_HOME aborts the boot, after the operands it could satisfy" \
-  || no "unset KIRO_HOME" "rc=$rc: the boot continued with no kiro state directory"
+child=$(cat "$WORK/child.txt" 2>/dev/null)
+[ "$rc" -eq 0 ] && [ -d "$ROOT/home/.kiro" ] && [ "$child" = "$ROOT/home/.kiro" ] \
+  && ok "an unset KIRO_HOME creates HOME/.kiro and exports it to children" \
+  || no "unset KIRO_HOME" "rc=$rc, child saw '$child': $(cat "$WORK/out.log")"
+
+# A relative value would create the tree under the boot's cwd, which neither KAS nor the server reads.
+ROOT="$WORK/relative"
+mkdir -p "$ROOT" || exit 1
+(
+  set +u
+  cd "$ROOT" || exit 1
+  TOOLS="$ROOT/tools"
+  HOME="$ROOT/home"
+  KIRO_HOME="state/kiro"
+  sleep() { return 0; }
+  . "$BLOCK"
+) >"$WORK/out.log" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && [ -d "$ROOT/home/.kiro" ] && [ ! -e "$ROOT/state" ] \
+  && grep -Fq 'WARNING: ignoring KIRO_HOME=state/kiro (relative)' "$WORK/out.log" \
+  && ok "a rejected KIRO_HOME creates the fallback tree, not the rejected path, and warns" \
+  || no "rejected KIRO_HOME" "rc=$rc, created: $(ls -A "$ROOT"): $(cat "$WORK/out.log")"
 
 report

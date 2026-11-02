@@ -309,6 +309,44 @@ function moveCaret(data: DomRendererData, target: Element): void {
   data.caretEl = target;
 }
 
+/** The objects a link or image becomes that stand as blocks inside their paragraph. */
+const BLOCK_OBJECT = ".preview-card, .media-audio, .media-download";
+const OBJECT_TAIL = "block-object-tail";
+
+/**
+ * The sentence's punctuation right after a block object would open the next line alone, so it goes
+ * into a tail span the stylesheet hides only while it follows the object: a card rebuilt as a link
+ * shows it again. Answers the text left to append.
+ */
+function holdObjectTail(parent: Element, text: string): string {
+  const last = parent.lastChild;
+  if (!(last instanceof Element)) {
+    return text;
+  }
+  const after = last.matches(BLOCK_OBJECT);
+  if (
+    !after &&
+    !(
+      last.classList.contains(OBJECT_TAIL) &&
+      last.previousElementSibling?.matches(BLOCK_OBJECT) === true
+    )
+  ) {
+    return text;
+  }
+  const lead = /^[\s.,;:!?]+/u.exec(text)?.[0] ?? "";
+  if (lead === "") {
+    return text;
+  }
+  let tail = last;
+  if (after) {
+    tail = makeEl("span");
+    tail.className = OBJECT_TAIL;
+    parent.appendChild(tail);
+  }
+  tail.appendChild(document.createTextNode(lead));
+  return text.slice(lead.length);
+}
+
 function add_text_dom(data: DomRendererData, text: string): void {
   const parent = data.nodes[data.index];
   if (parent === null || parent === undefined) {
@@ -323,6 +361,11 @@ function add_text_dom(data: DomRendererData, text: string): void {
     const img = parent as HTMLImageElement;
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     img.alt = (img.alt ?? "") + text;
+    return;
+  }
+
+  text = holdObjectTail(parent, text);
+  if (text === "") {
     return;
   }
 

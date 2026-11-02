@@ -13,9 +13,7 @@ import (
 
 const dotcomPAT = "ghp-dotcom-token"
 
-func dotcomRecord() connectionRecord {
-	return connectionRecord{ID: MakeID(KindGitHub, "github.com"), Kind: KindGitHub, Host: "github.com"}
-}
+func dotcomRecord() connectionSpec { return specFor(KindGitHub, "github.com") }
 
 func patFor(webBase, token string) creds.Record {
 	return creds.Record{
@@ -24,25 +22,24 @@ func patFor(webBase, token string) creds.Record {
 	}
 }
 
-// storedManager is a manager over a fresh config directory holding recs, each
-// with a static token named after its id.
-func storedManager(t *testing.T, recs ...connectionRecord) *Manager {
+// storedManager is a loaded manager over a fresh config directory holding
+// specs, each with a static token named after its id, and the store it reads.
+func storedManager(t *testing.T, specs ...connectionSpec) (*Manager, *creds.FileStore) {
 	t.Helper()
-	m := NewManager(t.TempDir())
-	if m.store == nil {
-		t.Fatalf("Setup: open the credential store: %s", m.storeReason)
-	}
-	for i := range recs {
-		if err := m.store.Save(recs[i].ID, patFor(recs[i].webBase(), "token-of-"+recs[i].ID)); err != nil {
+	cfg := t.TempDir()
+	seedConnections(t, cfg, "alice", specs...)
+	store := openTestStore(t, cfg)
+	for i := range specs {
+		if err := store.Save(slotKey(specs[i].ID, 0), patFor(specs[i].webBase(), "token-of-"+specs[i].ID)); err != nil {
 			t.Fatalf("Setup: save the credential: %v", err)
 		}
 	}
-	saveRecords(t, m.conns, recs...)
-	return m
+	m, _ := loadedManager(t, cfg, nil)
+	return m, store
 }
 
 func TestGitHubToken_NoConnectionIsAnonymous(t *testing.T) {
-	m := storedManager(t)
+	m, _ := storedManager(t)
 	if got := m.GitHubToken(t.Context()); got != "" {
 		t.Errorf("GitHubToken() with no connection = %q, want \"\"", got)
 	}
@@ -50,21 +47,21 @@ func TestGitHubToken_NoConnectionIsAnonymous(t *testing.T) {
 
 func TestGitHubToken_TheGitHubComConnectionGivesItsToken(t *testing.T) {
 	rec := dotcomRecord()
-	m := storedManager(t, rec)
+	m, _ := storedManager(t, rec)
 	if got, want := m.GitHubToken(t.Context()), "token-of-"+rec.ID; got != want {
 		t.Errorf("GitHubToken() with a github.com connection = %q, want %q", got, want)
 	}
 }
 
 func TestGitHubToken_OtherConnectionsAreAnonymous(t *testing.T) {
-	ghes := connectionRecord{ID: MakeID(KindGitHub, "ghe.example"), Kind: KindGitHub, Host: "ghe.example"}
-	gitlab := connectionRecord{ID: MakeID(KindGitLab, "gitlab.com"), Kind: KindGitLab, Host: "gitlab.com"}
-	gitea := connectionRecord{ID: MakeID(KindGitea, "github.com"), Kind: KindGitea, Host: "github.com"}
+	ghes := specFor(KindGitHub, "ghe.example")
+	gitlab := specFor(KindGitLab, "gitlab.com")
+	gitea := specFor(KindGitea, "github.com")
 	proxied := dotcomRecord()
 	proxied.APIBaseURL = "https://api.ghe.example"
 	cases := []struct {
 		name string
-		rec  connectionRecord
+		rec  connectionSpec
 	}{
 		{"enterprise host", ghes},
 		{"another forge", gitlab},
@@ -73,7 +70,7 @@ func TestGitHubToken_OtherConnectionsAreAnonymous(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := storedManager(t, tc.rec)
+			m, _ := storedManager(t, tc.rec)
 			if got := m.GitHubToken(t.Context()); got != "" {
 				t.Errorf("GitHubToken() with only %s = %q, want \"\": the engine sends it to api.github.com", tc.rec.ID, got)
 			}
@@ -84,7 +81,7 @@ func TestGitHubToken_OtherConnectionsAreAnonymous(t *testing.T) {
 func TestGitHubToken_ExplicitDotcomAPIBaseStillAnswers(t *testing.T) {
 	rec := dotcomRecord()
 	rec.APIBaseURL = "https://api.github.com/"
-	m := storedManager(t, rec)
+	m, _ := storedManager(t, rec)
 	if got, want := m.GitHubToken(t.Context()), "token-of-"+rec.ID; got != want {
 		t.Errorf("GitHubToken() with api_base_url %q = %q, want %q", rec.APIBaseURL, got, want)
 	}
@@ -93,45 +90,47 @@ func TestGitHubToken_ExplicitDotcomAPIBaseStillAnswers(t *testing.T) {
 // The host field is typed and the id keeps the typed spelling, while forgeapi
 // sends a "GitHub.com" connection's token to api.github.com all the same.
 func TestGitHubToken_AHostSpelledInAnotherCaseIsGitHubCom(t *testing.T) {
-	rec := connectionRecord{ID: MakeID(KindGitHub, "GitHub.com"), Kind: KindGitHub, Host: "GitHub.com"}
-	m := storedManager(t, rec)
+	rec := specFor(KindGitHub, "GitHub.com")
+	m, _ := storedManager(t, rec)
 	if got, want := m.GitHubToken(t.Context()), "token-of-"+rec.ID; got != want {
 		t.Errorf("GitHubToken() with only %s = %q, want %q", rec.ID, got, want)
 	}
 }
 
 // A credential the library refuses to use answers anonymous, so the request
-// is sent rather than failed and the row's reconnect state tells the user.
+// is sent rather than failed and the row's status tells the user. Each is read
+// from the store per call, so it needs no reload.
 func TestGitHubToken_AnUnusableCredentialIsAnonymous(t *testing.T) {
 	rec := dotcomRecord()
+	key := slotKey(rec.ID, 0)
 	cases := []struct {
 		name  string
-		setup func(t *testing.T, m *Manager)
+		setup func(t *testing.T, store *creds.FileStore)
 	}{
-		{"no stored credential", func(t *testing.T, m *Manager) {
-			if err := m.store.Delete(rec.ID); err != nil {
+		{"no stored credential", func(t *testing.T, store *creds.FileStore) {
+			if err := store.Delete(key); err != nil {
 				t.Fatalf("Setup: Delete() = %v", err)
 			}
 		}},
-		{"marked reconnect-required", func(t *testing.T, m *Manager) {
+		{"marked reconnect-required", func(t *testing.T, store *creds.FileStore) {
 			cred := patFor(rec.webBase(), dotcomPAT)
 			cred.Usability = creds.UsabilityReconnectRequired
-			if err := m.store.Save(rec.ID, cred); err != nil {
+			if err := store.Save(key, cred); err != nil {
 				t.Fatalf("Setup: Save() = %v", err)
 			}
 		}},
-		{"expired token", func(t *testing.T, m *Manager) {
+		{"expired token", func(t *testing.T, store *creds.FileStore) {
 			cred := patFor(rec.webBase(), dotcomPAT)
 			cred.Expiry = time.Now().Add(-time.Hour)
-			if err := m.store.Save(rec.ID, cred); err != nil {
+			if err := store.Save(key, cred); err != nil {
 				t.Fatalf("Setup: Save() = %v", err)
 			}
 		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := storedManager(t, rec)
-			tc.setup(t, m)
+			m, store := storedManager(t, rec)
+			tc.setup(t, store)
 			if got := m.GitHubToken(t.Context()); got != "" {
 				t.Errorf("GitHubToken() over a credential with %s = %q, want \"\"", tc.name, got)
 			}
@@ -139,28 +138,25 @@ func TestGitHubToken_AnUnusableCredentialIsAnonymous(t *testing.T) {
 	}
 }
 
-// The record file and the store are read per call, so a connect and a
-// disconnect reach the next request with no refresh and no restart.
-func TestGitHubToken_FollowsConnectAndDisconnect(t *testing.T) {
-	m := storedManager(t)
+// A sign-in and a sign-out reach the next request with no reload and no restart.
+func TestGitHubToken_FollowsSignInAndSignOut(t *testing.T) {
+	isolateGit(t)
+	m, _ := loadedManager(t, t.TempDir(), &fakeCore{})
+	if got := m.GitHubToken(t.Context()); got != "" {
+		t.Fatalf("Setup: GitHubToken() before the sign-in = %q, want \"\"", got)
+	}
 	rec := dotcomRecord()
-	if got := m.GitHubToken(t.Context()); got != "" {
-		t.Fatalf("Setup: GitHubToken() before the connect = %q, want \"\"", got)
+	if _, err := m.signIn(t.Context(), m.deadlines.from(time.Now()), &rec, new(patFor(rec.webBase(), dotcomPAT))); err != nil {
+		t.Fatalf("signIn() = %v", err)
 	}
-	if err := m.store.Save(rec.ID, patFor(rec.webBase(), dotcomPAT)); err != nil {
-		t.Fatalf("Setup: Save() = %v", err)
-	}
-	saveRecords(t, m.conns, rec)
 	if got := m.GitHubToken(t.Context()); got != dotcomPAT {
-		t.Errorf("GitHubToken() after the connect = %q, want %q", got, dotcomPAT)
+		t.Errorf("GitHubToken() after the sign-in = %q, want %q", got, dotcomPAT)
 	}
-	// What a disconnect leaves on disk: no record and no stored credential.
-	saveRecords(t, m.conns)
-	if err := m.store.Delete(rec.ID); err != nil {
-		t.Fatalf("Setup: Delete() = %v", err)
+	if err := m.signOut(t.Context(), m.deadlines.from(time.Now()), rec.ID); err != nil {
+		t.Fatalf("signOut() = %v", err)
 	}
 	if got := m.GitHubToken(t.Context()); got != "" {
-		t.Errorf("GitHubToken() after the disconnect = %q, want \"\"", got)
+		t.Errorf("GitHubToken() after the sign-out = %q, want \"\"", got)
 	}
 }
 
@@ -175,8 +171,8 @@ func TestGitHubToken_TheTokenReachesOnlyTheCaller(t *testing.T) {
 	}
 	logs := capture.Default(t)
 	rec := dotcomRecord()
-	m := storedManager(t, rec)
-	if err := m.store.Save(rec.ID, patFor(rec.webBase(), dotcomPAT)); err != nil {
+	m, store := storedManager(t, rec)
+	if err := store.Save(slotKey(rec.ID, 0), patFor(rec.webBase(), dotcomPAT)); err != nil {
 		t.Fatalf("Setup: Save() = %v", err)
 	}
 	if got := m.GitHubToken(t.Context()); got != dotcomPAT {
@@ -184,7 +180,7 @@ func TestGitHubToken_TheTokenReachesOnlyTheCaller(t *testing.T) {
 	}
 	refused := patFor(rec.webBase(), dotcomPAT)
 	refused.Usability = creds.UsabilityReconnectRequired
-	if err := m.store.Save(rec.ID, refused); err != nil {
+	if err := store.Save(slotKey(rec.ID, 0), refused); err != nil {
 		t.Fatalf("Setup: Save() = %v", err)
 	}
 	if got := m.GitHubToken(t.Context()); got != "" {

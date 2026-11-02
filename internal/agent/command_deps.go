@@ -12,10 +12,11 @@ import (
 // which would become a non-nil interface.
 type bridgeRole struct{ coord *bridgeCoordinator }
 
-// Bridge returns the active bridge for a chat, or nil.
+// Bridge returns the chat's bridge once its door has attached a session, or nil: a record still
+// in its door has no session to address, so a command sees no bridge there.
 func (b bridgeRole) Bridge(chatID marotte.ChatID) command.Bridge {
 	sb := b.coord.bridgeFor(chatID)
-	if sb == nil {
+	if sb == nil || sb.current() == nil {
 		return nil
 	}
 	return sb
@@ -30,12 +31,11 @@ func (b bridgeRole) OpenBridge(ctx context.Context, chatID marotte.ChatID, model
 	return sb, nil
 }
 
-// CloseBridge closes every turn the bridge hosted with outcome, then stops it.
 func (b bridgeRole) CloseBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome) {
 	b.coord.closeBridge(ctx, chatID, outcome)
 }
 
-// BridgeLive reports a bridge for the chat that is past its spawn.
+// BridgeLive reports a bridge for the chat that is past its session open.
 func (b bridgeRole) BridgeLive(chatID marotte.ChatID) bool { return b.coord.bridgeLive(chatID) }
 
 // DeleteChatStateByChain deletes a chat's runs and KAS sessions from a captured chain. Order is
@@ -82,8 +82,13 @@ func (rt *Runtime) OpenTurn(ctx context.Context, chatID marotte.ChatID, open com
 }
 
 // StartTurn stamps the model and credit baseline onto the turn, with the bridge live, just before the call.
-func (rt *Runtime) StartTurn(ctx context.Context, chatID marotte.ChatID, turnID string) bool {
-	return rt.coord.StartTurn(ctx, chatID, turnID)
+func (rt *Runtime) StartTurn(ctx context.Context, turn command.TurnRef, cancel context.CancelCauseFunc) bool {
+	return rt.coord.StartTurn(ctx, turn, cancel)
+}
+
+// EndPromptCall forgets the turn's call once it returned.
+func (rt *Runtime) EndPromptCall(turn command.TurnRef) {
+	rt.coord.EndPromptCall(turn)
 }
 
 // ReserveTurnForPrompt takes the chat's admission slot for a prompt, waiting up to wait; a refusal keys on the holder's source.
@@ -147,19 +152,24 @@ func (rt *Runtime) StopRequestedAfter(chatID marotte.ChatID, turnID string) bool
 	return rt.coord.StopRequestedAfter(chatID, turnID)
 }
 
-// RequestStop records the reader's stop on the chat's turn sequence.
-func (rt *Runtime) RequestStop(chatID marotte.ChatID) {
-	rt.coord.RequestStop(chatID)
+// RequestStop records a stop for cause and captures the turns it targets.
+func (rt *Runtime) RequestStop(chatID marotte.ChatID, cause marotte.TurnStopCause) *command.TurnStop {
+	return rt.coord.RequestStop(chatID, cause)
+}
+
+// ReleaseStop lifts the stop's hold on the chat's sends.
+func (rt *Runtime) ReleaseStop(stop *command.TurnStop) {
+	rt.coord.ReleaseStop(stop)
+}
+
+// ArmStopGrace backstops the stop's captured targets with the grace budget d.
+func (rt *Runtime) ArmStopGrace(stop *command.TurnStop, d time.Duration) bool {
+	return rt.coord.ArmStopGrace(stop, d)
 }
 
 // AdmissionHolderSource reports who holds the admission slot: the open turn, else the reservation.
 func (rt *Runtime) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return rt.coord.AdmissionHolderSource(chatID)
-}
-
-// FinalizeLocalShellTurn closes a `!cmd` turn, appending its one text entry first.
-func (rt *Runtime) FinalizeLocalShellTurn(ctx context.Context, chatID marotte.ChatID, turnID, output string) {
-	rt.coord.FinalizeLocalShellTurn(ctx, chatID, turnID, output)
 }
 
 // PreSendCompact runs the compaction policy's before-a-send trigger.
@@ -174,9 +184,9 @@ func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatI
 
 var _ command.SessionRenamer = (*Runtime)(nil)
 
-// RenameSession renames a session no chat bridge holds, through the utility session.
+// RenameSession renames a session, resident or not, with an engine call.
 func (rt *Runtime) RenameSession(ctx context.Context, sessionID, title string) error {
-	raw, err := rt.utility.get().session.renameSessionRaw(ctx, sessionID, title)
+	raw, err := rt.engine.renameSessionRaw(ctx, sessionID, title)
 	if err != nil {
 		return err
 	}

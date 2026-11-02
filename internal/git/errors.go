@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 const (
@@ -27,15 +27,12 @@ const (
 
 // errorKind is a machine-readable discriminator for git handler errors.
 // Clients switch on the "error" field; the "detail" field carries variable
-// context (e.g. branch name).
+// context (e.g. git's stderr).
 type errorKind string
 
-// kindNoStaged and the following constants define the ErrorKind values for git handler errors.
+// kindShowFailed and the following constants define the ErrorKind values for git handler errors.
 const (
-	kindNoStaged         errorKind = "no_staged_changes"
-	kindNoChanges        errorKind = "no_changes"
-	kindGenerationFailed errorKind = "generation_failed"
-	kindShowFailed       errorKind = "show_failed"
+	kindShowFailed errorKind = "show_failed"
 	// kindNotInRepo means no discovered repository owns the path, so it has no committed revision:
 	// not a failure, and a client showing an all-add diff is correct. Kept apart from
 	// kindShowFailed so a real git failure does not render as a new file.

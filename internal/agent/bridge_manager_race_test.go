@@ -9,8 +9,7 @@ import (
 
 // TestBridgeManager_ConcurrentGetOrInsertClose races orInsert against close on one chatID under -race.
 func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
-	factory := func() ACPBridge { return newNoopBridge() }
-	bm := newBridgeManager(factory)
+	bm := newBridgeManager()
 
 	const N = 100
 	var wg sync.WaitGroup
@@ -38,7 +37,7 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 
 	wg.Go(func() {
 		for range N {
-			_ = bm.count()
+			_ = bm.all()
 		}
 	})
 
@@ -47,8 +46,7 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 
 // TestBridgeManager_CloseConcurrentDrain races per-chat close against drain (a tab close during Shutdown).
 func TestBridgeManager_CloseConcurrentDrain(t *testing.T) {
-	factory := func() ACPBridge { return newNoopBridge() }
-	bm := newBridgeManager(factory)
+	bm := newBridgeManager()
 
 	for i := range 20 {
 		chatID := marotte.ChatID("drain-" + string(rune('A'+i)))

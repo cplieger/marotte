@@ -184,7 +184,7 @@ onSSE("error", (chatID, p) => {
       break;
     case "agent-down":
       // Active chat only: this DOES paint a shared control, so a background
-      // chat's dead bridge must not alert the button of the chat in use.
+      // chat's failed session door must not alert the button of the chat in use.
       if (chatID === getActiveId()) {
         setAgentDown(msg !== "" ? msg : "The agent could not be started for this chat.");
       }

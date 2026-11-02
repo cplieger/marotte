@@ -61,12 +61,6 @@
    Wave 1: Animations + reasoning blocks + tool duration
    --------------------------------------------------------------------------- */
 
-/* The `.thinking-dots` / `.thinking-dot` pair and the `.working-label` beside it
-   were deleted in 2026-08: authored together, never wired from TypeScript (a grep
-   for all three returned CSS only). The dots are now `.activity-dots` in
-   03-base.css with a real consumer — the delegated-work card's collapsed busy
-   indicator. The label had no replacement because nothing wanted one. */
-
 /* Reasoning / thought blocks: the BLOCK and its summary are styled in
    13-messages.css (`.reasoning-block`, `.reasoning-summary`, `.reasoning-body`).
    A duplicate set lived here — `.reasoning-block` with its own accent
@@ -90,15 +84,19 @@
 
 /* Turn actions: the copy/source/export icon buttons, mounted in the turn
  * FOOTER's middle grid column (29-turns.css owns the placement). Ink is the
- * footer's own; each button lifts itself on hover. */
-.turn-actions-buttons {
+ * footer's own; each button lifts itself on hover. A code block's header row
+ * (`.code-actions`, 13-messages.css) holds the same buttons, so it shares the gap. */
+.turn-actions-buttons,
+.code-actions {
   /* Wide enough that two neighbours' expanders (below) meet rather than overlap: the
      floor less the paint, so 2px on a mouse and 8px under a finger. */
-  --turn-action-gap: max(0.125rem, var(--hit-floor) - var(--ctl-h-sm));
+  --action-gap: max(0.125rem, var(--hit-floor) - var(--ctl-h-sm));
+}
 
+.turn-actions-buttons {
   display: inline-flex;
   align-items: center;
-  gap: var(--turn-action-gap);
+  gap: var(--action-gap);
   flex-shrink: 0;
 }
 
@@ -123,7 +121,7 @@
 .turn-actions-group {
   display: inline-flex;
   align-items: center;
-  gap: var(--turn-action-gap);
+  gap: var(--action-gap);
 }
 
 .turn-actions-more > .turn-action-more,
@@ -131,15 +129,17 @@
   display: none;
 }
 
-/* THE TURN FOOTER'S CONTROL BOX for the action buttons, the ledger trigger and Rewind:
-   ONE definition, so they cannot drift. The paint leaves the hit floor so each control
-   keeps air on every side in the band (29-turns.css); the expander restores the
-   target on each short axis, `min(0px, …)` never shrinking a wider box. The menu rows
-   below put their own floor back. `box-shadow` is in the transition because 03-base.css's
-   press wash is an inset shadow, which otherwise appears and leaves in one frame. */
+/* THE TURN FOOTER'S CONTROL BOX for the action buttons, the ledger trigger and
+   Rewind, and the code block's header buttons: ONE definition, so they cannot drift.
+   The paint leaves the hit floor so each control keeps air on every side in the band
+   (29-turns.css); the expander restores the target on each short axis, `min(0px, …)`
+   never shrinking a wider box. The menu rows below put their own floor back.
+   `box-shadow` is in the transition because 03-base.css's press wash is an inset
+   shadow, which otherwise appears and leaves in one frame. */
 .turn-action-btn,
 .turn-ledger-summary,
-.turn-rewind {
+.turn-rewind,
+.code-act-btn {
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -169,7 +169,8 @@
    why neither contrast gate could report it: each rule looked reasonable alone.
    The glyph inherits the row's ink (4.771 / 4.719) and hover keeps its own ink
    and fill lift, which is the whole affordance. */
-.turn-action-btn {
+.turn-action-btn,
+.code-act-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -192,7 +193,8 @@
 
 .turn-action-btn:hover,
 .turn-ledger-summary:hover,
-.turn-rewind:hover {
+.turn-rewind:hover,
+.code-act-btn:hover {
   background: var(--c-hover);
   color: var(--c-text-primary);
 }
@@ -259,6 +261,12 @@
       var(--shadow-ambient),
       0 0.5rem 1.5rem oklch(0% 0 none / 40%);
     color: var(--c-text-secondary);
+    transition: opacity var(--uip-popover-enter-duration) var(--uip-popover-enter-easing);
+
+    /* The context menu's enter fade; a menu leaves at once, as `createPopover`'s do. */
+    @starting-style {
+      opacity: 0;
+    }
   }
 
   .turn-actions-group > .turn-action-btn {
@@ -320,6 +328,12 @@
         var(--shadow-ambient),
         0 0.5rem 1.5rem oklch(0% 0 none / 40%);
       color: var(--c-text-secondary);
+      transition: opacity var(--uip-popover-enter-duration) var(--uip-popover-enter-easing);
+
+      /* The context menu's enter fade; a menu leaves at once, as `createPopover`'s do. */
+      @starting-style {
+        opacity: 0;
+      }
     }
 
     .turn-actions-group > .turn-action-btn {
@@ -479,13 +493,13 @@
 /* A NATIVE CHECKBOX OR RADIO PAINTS AT ITS OWN DECLARED SIZE, so the floor grows
  * the MARK rather than the target. Measured before this rule: a 16px box
  * rendering 24x24 on a mouse and 44x44 under a finger, in Settings >
- * Permissions, the composer's `+` menu and every task list in the transcript.
+ * Permissions, the composer's chat-options menu and every task list in the transcript.
  * 44px is Apple HIG's minimum TARGET and WCAG 2.5.5's, never a minimum control,
  * so the box keeps its size and the expander carries the target.
  *
  * A control whose own LABEL already clears the floor may drop the expander,
  * because a target that overhangs its row reaches into its neighbour's: the
- * composer's `+` menu is the one such case (15-input.css). */
+ * composer's chat-options menu is the one such case (15-input.css). */
 input[type="checkbox"],
 input[type="radio"] {
   min-width: 0;
@@ -585,106 +599,6 @@ input[type="radio"] {
   white-space: nowrap;
   color: var(--c-text-tertiary);
   font-size: var(--fs-xs);
-}
-
-/* Tool error explanation button: a circular icon button in the failed card's
- * bottom-right over a RESERVED STRIP (a z-index would cover `.tool-details`'s
- * scrollbar or `.tool-file-link`, both content). `:has(> …)` because the trigger
- * BECOMES the in-flow result in place. `position` is additive: the card's
- * `content-visibility: auto` already makes it a containing block. ALWAYS VISIBLE,
- * never hover-only (touch-first). No `outline` here: 40-a11y.css's floor ring fits
- * inside the >= 8px corner inset under `.tool-call`'s `overflow: hidden`. */
-.tool-call:has(> .tool-explain-btn) {
-  /* THE CORNER INSET also has to clear the TARGET expander below, or the card's
-     `overflow: hidden` clips the target it exists to grow; the `max()` keeps that
-     true whatever the two tier tokens are. */
-  --explain-inset: max(var(--sp-2), calc((var(--hit-floor) - var(--ctl-h-sm)) / 2));
-
-  position: relative;
-
-  /* The disc's own box plus that inset on both sides, so it is centred in the strip
-     and every flow child ends at or above the strip's top edge. Cost, stated: a
-     failed card carrying output grows 40px on a fine pointer and 52px on a coarse
-     one, one row's worth against an output region up to 300px. */
-  padding-block-end: calc(var(--ctl-h-sm) + 2 * var(--explain-inset));
-}
-
-.tool-explain-btn {
-  position: absolute;
-  inset-block-end: var(--explain-inset);
-  inset-inline-end: var(--explain-inset);
-
-  /* THE PAINTED DISC IS THE SMALL-CONTROL RUNG; THE TARGET IS --hit-floor, through
-     the `::after` below. The app-wide floor (this file, further down) sets PHYSICAL
-     `min-width`/`min-height`, and a logical property is a DIFFERENT one resolved by
-     source order rather than by specificity — so the opt-out has to be physical too.
-     Idiom copied from `.send-btn` (15-input.css) and `.tool-file-link`
-     (14-tools.css) rather than invented here. */
-  min-width: 0;
-  min-height: 0;
-  inline-size: var(--ctl-h-sm);
-  block-size: var(--ctl-h-sm);
-
-  /* A circle is a deliberate SHAPE rather than a nesting decision, so it takes no
-     concentric radius from the card it sits in. */
-  border-radius: 50%;
-  border: 1px solid var(--c-accent);
-  background: none;
-  color: var(--c-accent);
-  cursor: pointer;
-
-  /* A floor-widened icon button centres its glyph, or it paints visibly off-centre
-     (rule 3 at the floor below). The glyph sizes itself from `--icon-ui` through
-     `.ic-ui` (03-base.css); nothing here states its pixels. */
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background var(--dur-micro) var(--ease-standard);
-}
-
-/* THE TARGET, not the paint: unpainted, sized off the tier's own floor so it follows
-   a pointer change with no second declaration. Reach is `(--hit-floor - 100%) / 2`
-   per side, which the corner inset above is derived to clear. */
-.tool-explain-btn::after {
-  content: "";
-  position: absolute;
-  inset: calc((var(--hit-floor) - 100%) / -2);
-}
-
-/* ICON-ONLY, so the pending spinner REPLACES the glyph instead of sitting beside it:
-   `.btn-loading::before` (14-tools.css) is a 16px mark with a trailing margin
-   authored for a label, and the two together overflow the disc. The dim and the
-   `cursor: progress` are 40-a11y.css's busy face, keyed on the `aria-busy`
-   `bindLoadingState` already sets. */
-.tool-explain-btn.btn-loading > .ic-ui {
-  display: none;
-}
-
-.tool-explain-btn.btn-loading::before {
-  margin-inline-end: 0;
-}
-
-/* `any-hover`, never `hover`: those queries report only the PRIMARY input, so a
-   `hover: hover` gate drops the rule on every touch-primary device — and on
-   a bare touchscreen a `:hover` fill latches after a tap, which is what the gate is
-   for. Touch gets 03-base.css's app-wide `:active` press instead. */
-@media (any-hover: hover) {
-  .tool-explain-btn:hover {
-    background: color-mix(in srgb, var(--c-accent) 12%, transparent);
-  }
-}
-
-.tool-explain-result {
-  font-size: var(--fs-xs);
-  color: var(--c-text-secondary);
-  background: color-mix(in srgb, var(--c-accent) 5%, transparent);
-  border: none;
-  border-radius: var(--r-sm);
-  padding: var(--sp-2) var(--sp-3);
-  margin: var(--sp-1) var(--sp-3);
-  font-style: italic;
-  text-align: start;
-  cursor: default;
 }
 
 /* Load error with retry button */

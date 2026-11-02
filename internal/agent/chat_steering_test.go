@@ -7,9 +7,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestChatSteeringReachesBothChatVerbsAndNotTheUtility pins chat-only steering on session/new
-// and session/load, and its absence from the utility session.
-func TestChatSteeringReachesBothChatVerbsAndNotTheUtility(t *testing.T) {
+// TestChatSteeringReachesBothChatVerbsAndNotAnObserver pins chat-only steering on session/new and session/load, and
+// its absence from an observer pass.
+func TestChatSteeringReachesBothChatVerbsAndNotAnObserver(t *testing.T) {
 	sentinel := []marotte.ClientSteeringDoc{{Name: "marotte", Inclusion: "always", Content: "probe"}}
 	for _, tc := range []struct {
 		name    string
@@ -20,10 +20,9 @@ func TestChatSteeringReachesBothChatVerbsAndNotTheUtility(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cs := newTestChatStore()
-			// A bridge per spawn: a resumed session's rehydration starts the utility bridge too, so a
-			// shared fake's last start can be the utility's.
-			h := New(context.Background(), "/tmp/work", func() ACPBridge { return newFakeBridge() }, cs)
+			h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs)
 			cs.wire(h)
+			t.Cleanup(func() { shutdownHub(t, h) })
 			h.SetChatSteering(func(context.Context) []marotte.ClientSteeringDoc { return sentinel })
 			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 				c.Name = "A"
@@ -35,41 +34,42 @@ func TestChatSteeringReachesBothChatVerbsAndNotTheUtility(t *testing.T) {
 			if err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
-			br, ok := sb.bridge.(*fakeBridge)
+			br, ok := unguarded(sb.bridge).(*fakeBridge)
 			if !ok {
 				t.Fatalf("the chat's bridge is %T, want the fake", sb.bridge)
 			}
-			opts := br.lastStartOpts()
+			opts := br.lastSessionOpts()
 			if opts == nil {
-				t.Fatal("the bridge was never started")
+				t.Fatal("the session was never opened")
 			}
 			if opts.SessionID != tc.session {
-				t.Fatalf("StartOpts.SessionID = %q, want %q (the case did not take the path it names)", opts.SessionID, tc.session)
+				t.Fatalf("SessionOpts.SessionID = %q, want %q (the case did not take the path it names)", opts.SessionID, tc.session)
 			}
 			if len(opts.Steering) != 1 || opts.Steering[0] != sentinel[0] {
-				t.Errorf("chat StartOpts.Steering = %v, want the sentinel doc", opts.Steering)
+				t.Errorf("chat SessionOpts.Steering = %v, want the sentinel doc", opts.Steering)
 			}
 		})
 	}
 
-	t.Run("utility session", func(t *testing.T) {
+	t.Run("observer pass", func(t *testing.T) {
 		cs := newTestChatStore()
-		br := newFakeBridge()
-		h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs)
+		observer := newFakeBridge()
+		src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
+		src.observer = func() engineSession { return observer }
+		h := newRuntimeOn(context.Background(), "/tmp/work", src, cs)
 		cs.wire(h)
+		t.Cleanup(func() { shutdownHub(t, h) })
 		h.SetChatSteering(func(context.Context) []marotte.ClientSteeringDoc { return sentinel })
 
-		u := h.utility.get()
-		if _, err := u.session.acquire(t.Context()); err != nil {
-			t.Fatalf("acquire utility session: %v", err)
+		if err := h.engine.observe(t.Context(), nil, nil, func(context.Context, engineSession) error { return nil }); err != nil {
+			t.Fatalf("observer pass: %v", err)
 		}
-		defer u.session.Stop()
-		opts := br.lastStartOpts()
+		opts := observer.lastSessionOpts()
 		if opts == nil {
-			t.Fatal("the utility bridge was never started")
+			t.Fatal("the observer session was never opened")
 		}
 		if len(opts.Steering) != 0 {
-			t.Errorf("utility StartOpts.Steering = %v, want none", opts.Steering)
+			t.Errorf("observer SessionOpts.Steering = %v, want none", opts.Steering)
 		}
 	})
 }

@@ -34,9 +34,9 @@ func (q *fakeQueue) Unqueue(_ context.Context, _ marotte.ChatID, id string) (boo
 	return false, nil
 }
 
-func (q *fakeQueue) NextUserRow(context.Context, marotte.ChatID) (marotte.QueuedPrompt, bool, error) {
+func (q *fakeQueue) NextUserRow(_ context.Context, _ marotte.ChatID, only []string) (marotte.QueuedPrompt, bool, error) {
 	for _, r := range q.chat.QueuedPrompts {
-		if !r.Held && !r.Carried() && !q.sending[r.ID] {
+		if !r.Held && !r.Carried() && !q.sending[r.ID] && (only == nil || slices.Contains(only, r.ID)) {
 			return r, true, nil
 		}
 	}

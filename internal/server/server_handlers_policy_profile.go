@@ -11,7 +11,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/securityprofile"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // Seed is valid only when switching TO custom, and refused otherwise rather than ignored.
@@ -81,6 +81,9 @@ func (s *Server) writeCustomizeError(ctx context.Context, w http.ResponseWriter,
 
 func (s *Server) profiles() *securityprofile.Store {
 	store := &securityprofile.Store{ConfigDir: s.configDir, WorkDir: s.workDir}
+	if s.agent != nil {
+		store.Publish = s.agent.Broadcast
+	}
 	if s.policy != nil {
 		store.List = s.policy.PolicyList
 	}

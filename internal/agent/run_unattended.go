@@ -5,9 +5,12 @@ package agent
 // Scheduled runs only. Deny by default; `scheduled_auto_approve` opts in.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -71,17 +74,17 @@ func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
 		}
 		scheduleID := l.ScheduleID
 		acpID := *msg.ID
-		tool := permissionToolName(msg.Params)
-		// AfterFunc parks no goroutine and is a no-op once answered: both paths claim from the tracker.
+		name := permissionAskName(msg.Params)
+		// A timer parks no goroutine and is a no-op once answered: both paths claim from the tracker.
 		params := msg.Params
-		time.AfterFunc(unattendedApprovalBudget, func() {
-			rs.answerUnattended(chatID, origin, acpID, scheduleID, tool, params)
+		rs.lifecycle.afterUnlessDraining(unattendedApprovalBudget, func() {
+			rs.answerUnattended(chatID, origin, acpID, scheduleID, name, params)
 		})
 	}
 }
 
 // answerUnattended settles a still-pending request for an absent user: refuse, or approve when opted in.
-func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acpID int64, scheduleID, tool string, msgParams json.RawMessage) {
+func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acpID int64, scheduleID string, name askName, msgParams json.RawMessage) {
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 
@@ -90,7 +93,7 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acp
 	adminAsk := adminConsentAsk(msgParams)
 	if approve && adminAsk {
 		slog.Warn("unattended auto-approve: refusing, an administrator rule requires a person to approve",
-			"chat_id", chatID, "tool", tool)
+			"chat_id", chatID, "tool", name.tool, "subject", name.subject)
 		approve = false
 	}
 	// Refuse with the advertised reject option; Cancelled only when none is offered.
@@ -104,7 +107,7 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acp
 		if opt == "" {
 			// Never invent an id; fall back to refusal.
 			slog.Warn("unattended auto-approve: request offered no allow option, refusing instead",
-				"chat_id", chatID, "tool", tool)
+				"chat_id", chatID, "tool", name.tool)
 		} else {
 			outcome = marotte.PermissionOutcomeSelected(opt)
 			verb = outcomeApproved
@@ -127,7 +130,7 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acp
 	}
 	// A fixed message with the outcome as a field, so alert rules can match it.
 	slog.Warn(logMsgUnattendedPermission,
-		"outcome", verb, "chat_id", chatID, "tool", tool,
+		"outcome", verb, "chat_id", chatID, "tool", name.tool, "subject", name.subject,
 		"budget", unattendedApprovalBudget, "schedule_id", scheduleID)
 	if verb == outcomeApproved {
 		// An approval is not a failure.
@@ -135,23 +138,46 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acp
 	}
 
 	// Surface it on the schedule row, or the run fails silently every night.
-	reason := "needed approval for " + tool + " with nobody watching. Add a permission rule to allow it"
-	if tool == "" {
+	label := name.label()
+	reason := "needed approval for " + label + " with nobody watching. Add a permission rule to allow it"
+	if label == "" {
 		reason = "needed an approval with nobody watching. Add a permission rule to allow it"
 	}
 	if adminAsk {
 		// No workspace or user rule outranks an administrator one, so the usual remedy would be false.
-		reason = "your organization requires a person to approve " + tool + ", and nobody was watching"
-		if tool == "" {
+		reason = "your organization requires a person to approve " + label + ", and nobody was watching"
+		if label == "" {
 			reason = "your organization requires a person to approve this, and nobody was watching"
 		}
 	}
 	rs.recordScheduleOutcome(ctx, scheduleID, schedule.Outcome{Status: schedule.StatusFailed, Reason: reason})
 }
 
-// permissionToolName names what a request asks about, machine-authored names first, the model's prose last.
-// Best-effort: an unnamed request is still denied.
-func permissionToolName(params json.RawMessage) string {
+// consentCapabilityShell is the consent capability whose resource is the command line.
+const consentCapabilityShell = "shell"
+
+// askName is what a request asks about: the tool that asked, and the consent subject a permission rule
+// would have to cover. Both are defused for a one-line surface.
+type askName struct {
+	tool    string
+	subject string
+}
+
+// label is the schedule row's name for the ask: "tool (subject)", or whichever of the two is set.
+func (n askName) label() string {
+	switch {
+	case n.subject == "" || n.subject == n.tool:
+		return n.tool
+	case n.tool == "":
+		return n.subject
+	}
+	return n.tool + " (" + n.subject + ")"
+}
+
+// permissionAskName names what a request asks about, machine-authored names first, the model's prose last.
+// Best-effort: an unnamed request is still denied. A shell ask has no subject: its resource is the command
+// line, which can carry a credential into the persisted row and the log.
+func permissionAskName(params json.RawMessage) askName {
 	var p struct {
 		ToolCall struct {
 			Title string `json:"title"`
@@ -165,25 +191,55 @@ func permissionToolName(params json.RawMessage) string {
 				// HookName comes from a hook file on disk.
 				HookName string `json:"hookName"`
 				Type     string `json:"type"`
+				Consent  struct {
+					Capability         string `json:"capability"`
+					Resource           string `json:"resource"`
+					TriggeringResource string `json:"triggeringResource"`
+				} `json:"consent"`
 			} `json:"kiro"`
 		} `json:"_meta"`
 	}
 	if json.Unmarshal(params, &p) != nil {
-		return ""
+		return askName{}
 	}
 	kiro := p.Meta.Kiro
+	var name askName
+	if c := kiro.Consent; c.Capability != consentCapabilityShell {
+		name.subject = safeToolName(credentialFreeSubject(cmp.Or(c.TriggeringResource, c.Resource)))
+	}
 	switch {
 	case kiro.ToolID != "":
-		return safeToolName(kiro.ToolID)
+		name.tool = safeToolName(kiro.ToolID)
 	case kiro.HookName != "":
-		return safeToolName(kiro.HookName)
+		name.tool = safeToolName(kiro.HookName)
 	case kiro.Type == approvalTypeTurn:
-		return turnApprovalName
+		name.tool = turnApprovalName
+	case p.ToolCall.Title != "":
+		name.tool = safeToolName(p.ToolCall.Title)
+	default:
+		name.tool = safeToolName(p.ToolCall.Kind)
 	}
-	if p.ToolCall.Title != "" {
-		return safeToolName(p.ToolCall.Title)
+	return name
+}
+
+// credentialFreeSubject drops the userinfo, query and fragment of a subject that is an absolute URL, where
+// a server URL or fetch target carries its token. A URL-shaped subject that does not parse is dropped whole.
+func credentialFreeSubject(s string) string {
+	u, err := url.Parse(s)
+	if err != nil {
+		if strings.Contains(s, "://") {
+			return ""
+		}
+		return s
 	}
-	return safeToolName(p.ToolCall.Kind)
+	// Re-serialising rewrites an untouched subject (a scheme's case, an escape), so only a stripped one is.
+	if !u.IsAbs() || (u.User == nil && u.RawQuery == "" && !u.ForceQuery && u.Fragment == "") {
+		return s
+	}
+	u.User = nil
+	u.RawQuery, u.ForceQuery = "", false
+	u.Fragment, u.RawFragment = "", ""
+	return u.String()
 }
 
 // safeToolName defuses a wire name for a one-line surface: the model composes titles. Replacing rather than

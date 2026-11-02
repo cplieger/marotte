@@ -230,6 +230,19 @@
   font-size: var(--fs-form-peer);
 }
 
+/* The OS file dialog's input (file-dialog.ts), laid over the pressed Upload
+   button: invisible and click-through, but with a real box, because iPadOS
+   anchors its source menu at that box. Not .sr-only, whose 1px box sits wherever
+   its static position falls. */
+.file-dialog-input {
+  position: fixed;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* Attach is now a pill inside .prompt-pills */
 
 .fb-row.fb-drop-target {
@@ -272,6 +285,13 @@
      `backwards` fill above is what holds a delayed row invisible until its turn.
      `sibling-index()` is 1-based, so the `- 1` is what makes the first row 0. */
   animation-delay: calc(min(sibling-index() - 1, 8) * 30ms);
+
+  /* files.ts marks every row past the hundredth that a render pass mounts. A viewport
+     taller than 100 rows (3 800px at the 38px tier) would show them unanimated: the
+     price of not starting thousands of entry animations at once on a large listing. */
+  &[data-no-enter] {
+    animation: none;
+  }
 
   /* The last row drops the separator's COLOUR, not the edge itself. `none` would
      zero the used width, and since 70-selection.css reserves a 1px edge on all

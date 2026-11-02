@@ -1,10 +1,13 @@
 // Package turnlog is the in-memory accumulator for one open turn: per lane, the text or
 // thinking entry still coalescing deltas and the steer carry withheld beside it, frozen
-// into a marotte.Entry the moment anything else appends.
+// into a marotte.Entry when an append ends it.
 //
 // It never touches disk or assigns a position: a seal hands the entry to the injected
-// Sink, which fills Seq and Ts. Every append seals, so within one lane plus the lane-less
-// entries, seq order is arrival order.
+// Sink, which fills Seq and Ts. An append seals what it ends: a laned entry its own lane, a
+// boundary lane-less entry every lane, so within one lane plus those, seq order is arrival
+// order. A message entry (Steer, SteerDelivered, SteerCleared) arrives on its own clock and
+// seals nothing: it takes the next seq, so it sits before the segment that was streaming when it
+// arrived.
 package turnlog
 
 import (
@@ -22,10 +25,17 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// SteerAckPrefix is the shortest span committing a `[` to a steering acknowledgement
-// marker; a carry starting with it is an unclosed marker and a seal drops it. Shorter
-// spans are released as prose (`[STEERING ` alone can open real prose).
+// SteerAckPrefix is the shortest span a seal can drop as an unclosed steering acknowledgement
+// marker (SealDropsSteerCarry owns the rule); a shorter carry is shown, since `[STEERING ` alone
+// can open real prose.
 const SteerAckPrefix = "[STEERING steer-"
+
+// SealDropsSteerCarry reports whether a seal drops carry: it starts with SteerAckPrefix and holds
+// no `]`. Carry holding a `]` is shown even while still a marker prefix (`[STEERING steer-0: ]`),
+// because a reply can end on such a span (`see [STEERING steer-x].`) and hiding prose is worse.
+func SealDropsSteerCarry(carry string) bool {
+	return strings.HasPrefix(carry, SteerAckPrefix) && !strings.Contains(carry, "]")
+}
 
 // ErrClosed reports an append to a turn whose turn_close is already on disk. The
 // between-turns rule sends such an entry to the store, not here.
@@ -59,14 +69,24 @@ type OpenCall struct {
 // withheld from it because they might still grow into a steer marker.
 type lane struct {
 	open *marotte.OpenEntry
-	// say is the say id the lane last opened an entry for and seg its segment count, so a
-	// split say's later segments are `<say>#2`, `<say>#3`.
-	say string
-	// carry is the withheld text and carrySay the say id it came from, so a
+	// seg counts the entries each say opened in this lane, so a split say's later segments are
+	// `<say>#2`, `<say>#3`.
+	seg map[string]int
+	// carry is the withheld text and carrySay the say it came from, so a
 	// released carry with no open entry opens an entry under its own say.
-	carry    string
-	carrySay string
-	seg      int
+	carry string
+	// say is the text say the lane is accumulating, which an id-less text delta continues. A steer
+	// ack and the read it evidences keep it in the ack's lane, as the replay projection never
+	// seals at an ack; every other seal ends it.
+	say      sayRef
+	carrySay sayRef
+}
+
+// sayRef names a say. minted marks an id marotte made up for id-less deltas: it says nothing
+// about which message the stream is in, so it never ends one.
+type sayRef struct {
+	id     string
+	minted bool
 }
 
 type aggregate struct {
@@ -95,7 +115,7 @@ type Turn struct {
 	// plan is the newest plan entry's payload bytes, for the byte-equal dedupe.
 	plan []byte
 	id   string
-	// order is the lane keys in first-seen order, so a lane-less append seals
+	// order is the lane keys in first-seen order, so a boundary append seals
 	// every lane deterministically.
 	order []string
 	// issuer is the lane the newest text or thinking delta arrived in, where a subagent
@@ -211,28 +231,45 @@ func (t *Turn) IssuerLane() string {
 	return t.issuer
 }
 
-// Carry is the text lane key is currently withholding, which the chunk handler
-// passes back into the marker filter with the next delta.
-func (t *Turn) Carry(key string) string {
+// TakeCarry hands the text lane key withholds to the marker filter for a text delta of say
+// sayID ("" when the delta carries none) and clears it. A delta of another message ends the
+// carry's say instead: the carry settles into it, as at any seal, and nothing is handed over.
+// Only two message ids differ; an id-less delta, or a carry under a minted say or none, joins.
+func (t *Turn) TakeCarry(ctx context.Context, key, sayID string) (string, []Sealed, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if l := t.lanes[key]; l != nil {
-		return l.carry
+	l := t.lanes[key]
+	if l == nil || l.carry == "" {
+		return "", nil, nil
 	}
-	return ""
+	if from := l.carrySay; sayID != "" && from.id != "" && !from.minted && from.id != sayID {
+		if t.closed {
+			return "", nil, ErrClosed
+		}
+		sealed, err := t.sealLane(ctx, key)
+		return "", sealed, err
+	}
+	carry := l.carry
+	l.carry, l.carrySay = "", sayRef{}
+	return carry, nil, nil
 }
 
 // SetSteerCarry replaces what lane key withholds. sayID attributes it, so a carry released
-// with nothing open opens an entry under its own say.
+// with nothing open opens an entry under its own say. An absent sayID takes the say the lane
+// is accumulating, which an id-less delta continues; with none it stays absent.
 func (t *Turn) SetSteerCarry(key, sayID, carry string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	l := t.laneOf(key)
 	l.carry = carry
-	if carry == "" {
-		sayID = ""
+	switch {
+	case carry == "":
+		l.carrySay = sayRef{}
+	case sayID == "":
+		l.carrySay = l.say
+	default:
+		l.carrySay = sayRef{id: sayID}
 	}
-	l.carrySay = sayID
 }
 
 // Meter accumulates the turn's metered footer. Credits and elapsed SUM, because a
@@ -351,11 +388,15 @@ func (t *Turn) delta(ctx context.Context, key, sayID, delta string, kind marotte
 		l.open.N++
 		return nil, nil
 	}
+	say := sayRef{id: sayID}
+	if sayID == "" && kind == marotte.EntryKindText {
+		say = l.say
+	}
 	sealed, err := t.sealLane(ctx, key)
 	if err != nil {
 		return sealed, err
 	}
-	t.openEntry(l, key, kind, sayID, delta)
+	t.openEntry(l, key, kind, say, delta)
 	return sealed, nil
 }
 
@@ -414,14 +455,33 @@ func (t *Turn) SteerAck(ctx context.Context, key, steerID, text string) ([]Seale
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	payload := marotte.EntrySteerAck{SteerID: steerID, Text: text}
-	return t.laned(ctx, key, marotte.EntryKindSteerAck, marotte.SteerAckID(steerID), payload, nil)
+	return t.keepSay(key, func() ([]Sealed, error) {
+		return t.laned(ctx, key, marotte.EntryKindSteerAck, marotte.SteerAckID(steerID), payload, nil)
+	})
 }
 
-// SteerDelivered appends a workflow message's take-up, lane-less like the steer it replaces.
+// keepSay runs op and gives lane key back the say op's seals ended: the ack marker sat inside
+// the say's prose, so the say goes on after it.
+func (t *Turn) keepSay(key string, op func() ([]Sealed, error)) ([]Sealed, error) {
+	l := t.laneOf(key)
+	say := l.say
+	sealed, err := op()
+	l.say = say
+	return sealed, err
+}
+
+// SteerDelivered appends a workflow message's take-up, an interjection like the steer it settles.
 func (t *Turn) SteerDelivered(ctx context.Context, d *marotte.EntrySteerDelivered) ([]Sealed, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.laneless(ctx, marotte.EntryKindSteerDelivered, marotte.SteerDeliveredID(d.SteerID), *d)
+	return t.interject(ctx, marotte.EntryKindSteerDelivered, marotte.SteerDeliveredID(d.SteerID), *d)
+}
+
+// SteerCleared appends a steering clear under id, an interjection like a take-up.
+func (t *Turn) SteerCleared(ctx context.Context, id string, c *marotte.EntrySteerCleared) ([]Sealed, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.interject(ctx, marotte.EntryKindSteerCleared, id, *c)
 }
 
 // TurnBind appends the id KAS holds the prompt under. Lane-less with no
@@ -440,20 +500,26 @@ func (t *Turn) TurnBind(ctx context.Context, bind marotte.EntryTurnBind) ([]Seal
 	return sealed, err
 }
 
-// Steer appends a steer, read or dropped. Lane-less because it is the model's
-// input for what follows in every lane.
+// Steer appends a steer in any state as an interjection: it seals no lane, whatever is streaming.
 func (t *Turn) Steer(ctx context.Context, steerID string, steer *marotte.EntrySteer) ([]Sealed, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.laneless(ctx, marotte.EntryKindSteer, steerID, steer)
+	return t.interject(ctx, marotte.EntryKindSteer, steerID, steer)
 }
 
-// SteerInLane appends a steer whose read one lane acknowledged, in that lane, sealing only
-// it: the lane records WHICH agent read the steer.
-func (t *Turn) SteerInLane(ctx context.Context, key, steerID string, steer *marotte.EntrySteer) ([]Sealed, error) {
+// SteerRead appends a steer whose read lane key's ack marker evidences, ahead of that ack. A
+// delegate's goes in its lane, sealing only it, so the lane records WHICH agent read the steer;
+// the agent's own (key "") is a lane-less boundary, since the marker sits in its stream. Either
+// way lane key keeps its say.
+func (t *Turn) SteerRead(ctx context.Context, key, steerID string, steer *marotte.EntrySteer) ([]Sealed, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.laned(ctx, key, marotte.EntryKindSteer, steerID, steer, nil)
+	return t.keepSay(key, func() ([]Sealed, error) {
+		if key == "" {
+			return t.laneless(ctx, marotte.EntryKindSteer, steerID, steer)
+		}
+		return t.laned(ctx, key, marotte.EntryKindSteer, steerID, steer, nil)
+	})
 }
 
 // Plan appends a plan state, sealing nothing when its entries are byte-equal to the newest
@@ -503,12 +569,12 @@ func (t *Turn) SafetyBlocked(ctx context.Context, properties []string) ([]Sealed
 }
 
 // ModelSwitched appends an applied model switch. The switch applies while idle, so it lands
-// by the between-turns rule or on a turn with nothing open. Takes the payload so the three
-// adjacent strings cannot be transposed.
-func (t *Turn) ModelSwitched(ctx context.Context, p marotte.EntryModelSwitched) ([]Sealed, error) {
+// by the between-turns rule or on a turn with nothing open. Takes the payload so the adjacent
+// strings cannot be transposed.
+func (t *Turn) ModelSwitched(ctx context.Context, p *marotte.EntryModelSwitched) ([]Sealed, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.laneless(ctx, marotte.EntryKindModelSwitched, t.mintID(), p)
+	return t.laneless(ctx, marotte.EntryKindModelSwitched, t.mintID(), *p)
 }
 
 // ModelRouted appends KAS's in-turn Auto routing notice at its position in the turn.
@@ -516,6 +582,13 @@ func (t *Turn) ModelRouted(ctx context.Context, p marotte.EntryModelRouted) ([]S
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.laneless(ctx, marotte.EntryKindModelRouted, t.mintID(), p)
+}
+
+// ModelFallback appends KAS's in-turn model fallback notice at its position in the turn.
+func (t *Turn) ModelFallback(ctx context.Context, p *marotte.EntryModelFallback) ([]Sealed, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.laneless(ctx, marotte.EntryKindModelFallback, t.mintID(), *p)
 }
 
 // ModeSwitched appends an applied mode switch, with ModelSwitched's position rule. Takes the
@@ -598,7 +671,7 @@ func (t *Turn) laned(ctx context.Context, key string, kind marotte.EntryKind, id
 	return append(sealed, s), nil
 }
 
-// laneless appends an entry belonging to no lane, sealing EVERY lane first: at the
+// laneless appends a boundary entry belonging to no lane, sealing EVERY lane first: at the
 // moment it takes a seq, no open entry at all is still open.
 func (t *Turn) laneless(ctx context.Context, kind marotte.EntryKind, id string, payload any) ([]Sealed, error) {
 	if t.closed {
@@ -615,6 +688,19 @@ func (t *Turn) laneless(ctx context.Context, kind marotte.EntryKind, id string, 
 	return append(sealed, s), nil
 }
 
+// interject appends a lane-less entry that seals nothing: every open entry keeps its id and
+// text, and seals later at a seq above this one.
+func (t *Turn) interject(ctx context.Context, kind marotte.EntryKind, id string, payload any) ([]Sealed, error) {
+	if t.closed {
+		return nil, ErrClosed
+	}
+	s, err := t.append(ctx, "", kind, id, payload, "")
+	if err != nil {
+		return nil, err
+	}
+	return []Sealed{s}, nil
+}
+
 func (t *Turn) sealAll(ctx context.Context) ([]Sealed, error) {
 	var sealed []Sealed
 	for _, key := range slices.Clone(t.order) {
@@ -627,13 +713,14 @@ func (t *Turn) sealAll(ctx context.Context) ([]Sealed, error) {
 	return sealed, nil
 }
 
-// A carry released with nothing open opens a text entry and seals it in the same step; a carry that
-// is an unclosed marker is dropped.
+// A carry released with nothing open opens a text entry and seals it in the same step; settleCarry
+// decides what is released. The lane's say ends.
 func (t *Turn) sealLane(ctx context.Context, key string) ([]Sealed, error) {
 	l := t.lanes[key]
 	if l == nil {
 		return nil, nil
 	}
+	defer func() { l.say = sayRef{} }()
 	released, releasedSay := l.settleCarry()
 	var n uint64
 	switch {
@@ -664,30 +751,32 @@ func (t *Turn) sealLane(ctx context.Context, key string) ([]Sealed, error) {
 	return []Sealed{s}, nil
 }
 
-// settleCarry applies the seal's rule to what the lane withheld and clears it: a
-// carry bearing the committing prefix is an unclosed marker and is dropped,
-// anything else is prose and becomes the sealed entry's last delta.
-func (l *lane) settleCarry() (released, say string) {
+func (l *lane) settleCarry() (released string, say sayRef) {
 	carry, carrySay := l.carry, l.carrySay
-	l.carry, l.carrySay = "", ""
-	if carry == "" || strings.HasPrefix(carry, SteerAckPrefix) {
-		return "", ""
+	l.carry, l.carrySay = "", sayRef{}
+	if carry == "" || SealDropsSteerCarry(carry) {
+		return "", sayRef{}
 	}
 	return carry, carrySay
 }
 
-// A say id this lane already opened an entry for is one a seal split, so its later segments take
+// A say this lane already opened an entry for is one a seal split, so its later segments take
 // `<say>#k`; an absent id takes a server-minted one, as the projection's own fallback does.
-func (t *Turn) openEntry(l *lane, key string, kind marotte.EntryKind, sayID, delta string) {
-	id := sayID
-	switch sayID {
-	case "":
-		id = t.mintID()
-	case l.say:
-		l.seg++
-		id = marotte.SaySegmentID(sayID, l.seg)
-	default:
-		l.say, l.seg = sayID, 1
+func (t *Turn) openEntry(l *lane, key string, kind marotte.EntryKind, say sayRef, delta string) {
+	if say.id == "" {
+		say = sayRef{id: t.mintID(), minted: true}
+	}
+	if l.seg == nil {
+		l.seg = make(map[string]int)
+	}
+	l.seg[say.id]++
+	id := say.id
+	if k := l.seg[say.id]; k > 1 {
+		id = marotte.SaySegmentID(say.id, k)
+	}
+	l.say = sayRef{}
+	if kind == marotte.EntryKindText {
+		l.say = say
 	}
 	l.open = &marotte.OpenEntry{Turn: t.id, ID: id, Lane: key, Kind: kind, Text: delta, N: 1}
 	t.emitted = true

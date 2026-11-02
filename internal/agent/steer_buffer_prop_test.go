@@ -91,8 +91,7 @@ func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
 				s.q.EndOp(chat, op)
 			},
 			"discard": func(rt *rapid.T) {
-				needsClear, refuse := s.q.BeginDiscard(chat, "op-d")
-				if refuse != "" || !needsClear {
+				if !s.q.BeginDiscard(chat, "op-d") {
 					return
 				}
 				landed := rapid.Bool().Draw(rt, "landed")

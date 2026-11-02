@@ -1,7 +1,7 @@
 package agent
 
 // One workflow step's transcript from KAS's session log via `session/load`. Nothing is stored; the step is
-// addressed by path (repeat iterations share a node id); it runs on the utility bridge under its own budget.
+// addressed by path (repeat iterations share a node id); the load is an engine call under its own budget.
 
 import (
 	"context"
@@ -28,7 +28,8 @@ var errRunStateUndecodable = errors.New("this run's state could not be decoded")
 // stepTranscript reads one step's transcript from the run's log when it holds a turn for the path (`log`, with
 // open tails and stamps), else KAS's replay (`replay`). `ready`, `gone` (session gone or never started) or
 // `unavailable` (worth retrying). nodePath is a workflow.PathKey, looked up among workflowID's own steps only,
-// so another run's step, like a missing key, is errStepUnknown.
+// so another run's step, like a missing key, is errStepUnknown. The newest turn_close reads graded under KAS's
+// record of the step (stepClose.graded), as `step_ends` does.
 func (rs *Runs) stepTranscript(ctx context.Context, workflowID, nodePath string) (marotte.RunStepTranscript, error) {
 	out := marotte.RunStepTranscript{
 		Entries:     []marotte.Entry{},
@@ -40,6 +41,9 @@ func (rs *Runs) stepTranscript(ctx context.Context, workflowID, nodePath string)
 		Source:      marotte.RunStepTranscriptSourceReplay,
 	}
 	if rs.log != nil && rs.fromRunLog(ctx, &out) {
+		gradeNewestClose(out.Entries, func() (workflow.StepRecord, bool) {
+			return rs.kasStep(ctx, workflowID, nodePath)
+		})
 		return out, nil
 	}
 	raw, err := rs.rawInspect(ctx, workflowID)
@@ -67,10 +71,16 @@ func (rs *Runs) stepTranscript(ctx context.Context, workflowID, nodePath string)
 	}
 
 	turns, state := rs.replayStepSession(ctx, sessionID)
+	// A terminal run's step session is closed once its replay settled; a live run's never is, since close quiesces
+	// the session and would abort its step.
+	if workflowTerminal(workflowID, raw) {
+		rs.closeStepSession(sessionID)
+	}
 	out.State = state
 	for i := range turns {
 		out.Entries = append(out.Entries, turns[i].Entries...)
 	}
+	gradeNewestClose(out.Entries, func() (workflow.StepRecord, bool) { return kasStepIn(workflowID, raw, nodePath) })
 	return out, nil
 }
 
@@ -89,8 +99,8 @@ func stepSessionAt(raw json.RawMessage, nodePath string) (string, error) {
 	return "", errStepUnknown
 }
 
-// A raw `session/load`: Start's adoptLoadedSession would rebind the utility's session id and drop
-// it from the reaper's keep-list.
+// replayStepSession loads a step session with an engine-level `session/load`, not as a session with its own lane:
+// its replay frames reach the engine lane's replay reader, its live frames stay with the run's owner.
 func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]translate.ProjectedTurn, marotte.RunStepTranscriptState) {
 	if !rs.stepReplays.open(sessionID, translate.NewEntryProjection(newMessageID, rs.workDir)) {
 		// Refused rather than joined; a retry meets a settled registry.
@@ -103,13 +113,9 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]tran
 	cctx, cancel := context.WithTimeout(ctx, stepTranscriptBudget)
 	defer cancel()
 
-	u := rs.utility()
-	if u == nil {
-		return nil, marotte.RunStepTranscriptUnavailable
-	}
 	// A `{"result":null}` reply would otherwise wait out the budget.
-	raw, at, err := u.session.rawCallAt(cctx, "step transcript load", marotte.MethodSessionLoad,
-		callerParams(map[string]any{marotte.KeySessionID: sessionID}))
+	raw, at, err := rs.engine.callRawAt(cctx, "step transcript load", marotte.MethodSessionLoad,
+		map[string]any{marotte.KeySessionID: sessionID})
 	if err != nil || len(raw) == 0 {
 		// KAS's reason is machine prose: logged, not forwarded.
 		slog.Warn("step transcript: session load failed", "session_id", sessionID,
@@ -117,7 +123,7 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]tran
 		// Unavailable, never gone: KAS answers an unknown id and a transient fault alike (-32603).
 		return nil, marotte.RunStepTranscriptUnavailable
 	}
-	// rawCallAt gives the response's position, which the barrier measures against; recording it attempts one settle.
+	// callRawAt gives the response's position, which the barrier measures against; recording it attempts one settle.
 	rs.stepReplays.markLoadedAt(sessionID, at)
 
 	// The barrier: replay frames precede the result and the channel is buffered (step_replay.go).
@@ -162,3 +168,26 @@ func (rs *Runs) fromRunLog(ctx context.Context, out *marotte.RunStepTranscript) 
 	}
 	return true
 }
+
+// workflowTerminal reports whether an inspect reply shows the run ended.
+func workflowTerminal(workflowID string, raw json.RawMessage) bool {
+	in, err := workflow.DecodeInspect(workflowID, raw)
+	return err == nil && marotte.RunStatus(in.State.Status).Terminal()
+}
+
+// closeStepSession disposes a loaded step session of an ended run in KAS's memory, off the reader's path; the next
+// pane open loads it again. A failed close leaves it resident until the engine restarts.
+func (rs *Runs) closeStepSession(sessionID string) {
+	rs.lifecycle.goUnlessDraining(func() {
+		ctx, cancel := context.WithTimeout(rs.lifecycle.shutdownCtx, stepCloseBudget)
+		defer cancel()
+		if _, err := rs.engine.rawCall(ctx, "step session close", marotte.MethodSessionClose,
+			map[string]any{marotte.KeySessionID: sessionID}); err != nil {
+			slog.Warn("a loaded step session of an ended run did not close; it stays until the engine restarts",
+				"session_id", sessionID, "error", err)
+		}
+	})
+}
+
+// stepCloseBudget bounds one step session's close.
+const stepCloseBudget = 30 * time.Second

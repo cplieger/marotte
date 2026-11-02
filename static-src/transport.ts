@@ -52,7 +52,7 @@ type TypedCommand =
   | { type: "cancel"; chat_id: string; payload?: { lead: string } }
   | { type: "delete_chat"; chat_id: string }
   | { type: "merge_tangent"; chat_id: string; payload: { op_id: string } }
-  | { type: "switch_model"; chat_id: string; payload: { model: string } }
+  | { type: "switch_model"; chat_id: string; payload: { model: string; effort?: string } }
   | { type: "set_supervised_mode"; chat_id: string; payload: { enabled: boolean } }
   | {
       type: "permission_response";
@@ -121,6 +121,7 @@ type TypedCommand =
   | { type: "reorder_tabs"; payload: { order: string[]; op_id: string } }
   | { type: "pin_tab"; payload: { id: string; pinned: boolean; op_id: string } }
   | { type: "reparent_tab"; payload: { id: string; parent: string; op_id: string } }
+  | { type: "ack_tab"; payload: { id: string; seen: number; op_id: string } }
   // A human sign-off on one phase of one spec, with no `chat_id` for the tab
   // mutations' reason: a spec is workspace-global. `hash` is the compare-and-swap
   // precondition rather than a value the server trusts.

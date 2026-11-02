@@ -3,7 +3,6 @@ package kascap
 import (
 	"cmp"
 	"encoding/json"
-	"strconv"
 )
 
 // enabledMember is the one member name KAS reads inside a settings entry (isSettingEnabled returns
@@ -17,7 +16,7 @@ const enabledMember = "enabled"
 // them rather than a coincidence repeated at each row.
 func enabled() map[string]any { return map[string]any{enabledMember: true} }
 
-// enabledIf is enabled()'s runtime twin, for a row whose value comes from a Spawn field.
+// enabledIf is enabled()'s runtime twin, for a row whose value comes from a spawn field.
 // `{"enabled": false}` is how KAS is told a feature is OFF, a different statement from an absent
 // key where a key must veto something or answer a resolver comparing a real boolean.
 func enabledIf(on bool) map[string]any { return map[string]any{enabledMember: on} }
@@ -28,7 +27,7 @@ func hooksValue() map[string]any { return map[string]any{"enabled": true, "v2": 
 
 // specPlanValue builds settings.specPlan: off sends {"enabled": false}; on adds
 // KAS's workflow and the inverted clarification flag.
-func specPlanValue(s *Spawn) map[string]any {
+func specPlanValue(s *SessionSpawn) map[string]any {
 	if s.SpecPlan == "" {
 		return enabledIf(false)
 	}
@@ -64,6 +63,15 @@ func jsonChoice(choice string, on, off map[string]any) (any, bool) {
 		return nil, false
 	}
 	return string(b), true
+}
+
+// envTrueIf writes an env row as "true" when on and withholds it otherwise, so off leaves KAS's
+// own default (and any ramp) in force rather than pinning "false".
+func envTrueIf(on bool) (any, bool) {
+	if !on {
+		return nil, false
+	}
+	return "true", true
 }
 
 // table is every capability key marotte knows about, sent or withheld.
@@ -120,7 +128,7 @@ var table = []decl{
 		// the key has to carry a real boolean either way. Gated on the SAME field
 		// as the knowledge SETTING row below, because the two are two thirds of one
 		// gate and turning one off alone breaks it.
-		gate: func(s *Spawn) (any, bool) { return s.Knowledge, true },
+		engineGate: func(s *EngineSpawn) (any, bool) { return s.Knowledge, true },
 	},
 	{
 		key:      "telemetryEnabled",
@@ -129,7 +137,7 @@ var table = []decl{
 		send:     true,
 		// Value-gated, always present: KAS's own default is on, so only an explicit
 		// false turns its agent telemetry off.
-		gate: func(s *Spawn) (any, bool) { return !s.DisableTelemetry, true },
+		engineGate: func(s *EngineSpawn) (any, bool) { return !s.DisableTelemetry, true },
 	},
 	{
 		key:      "secretStorage",
@@ -138,28 +146,28 @@ var table = []decl{
 		send:     true,
 		// Always present, value from the spawn: a false is a real declaration
 		// here, not an omission. See because.
-		gate: func(s *Spawn) (any, bool) { return s.SecretStorage, true },
+		engineGate: func(s *EngineSpawn) (any, bool) { return s.SecretStorage, true },
 	},
 	{
 		key:      "configurationState",
 		door:     doorConnection,
 		resolver: resolverCapability,
+		value:    true,
 		send:     true,
-		gate: func(s *Spawn) (any, bool) {
-			if !s.ConfigurationState {
-				return nil, false
-			}
-			return true, true
-		},
+	},
+	{
+		key:      "inactiveItems",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		value:    true,
+		send:     true,
 	},
 	{
 		key:      "hooks",
 		door:     doorConnection,
 		resolver: resolverObject,
+		value:    hooksValue(),
 		send:     true,
-		// Presence-gated, not value-gated: when hooks are off the key is absent
-		// entirely, which is what the pre-kascap literal did with an if.
-		gate: func(s *Spawn) (any, bool) { return hooksValue(), s.Hooks },
 	},
 	{
 		key:      "codeIntelligence",
@@ -177,7 +185,7 @@ var table = []decl{
 		// rather than enabled(), because the resolver needs the object shape in
 		// both states: isSettingEnabled reads .enabled unchecked, so {"enabled":
 		// false} is the off state and an absent member would be undefined.
-		gate: func(s *Spawn) (any, bool) { return enabledIf(s.Knowledge), true },
+		engineGate: func(s *EngineSpawn) (any, bool) { return enabledIf(s.Knowledge), true },
 	},
 	{
 		key:      "toolSearch",
@@ -192,8 +200,8 @@ var table = []decl{
 		// Value-gated, always present: on load KAS takes the client value over
 		// the persisted workflowsEnabled, so an explicit false is what turns a
 		// resumed chat's workflow tools off.
-		gate: func(s *Spawn) (any, bool) { return enabledIf(s.Workflows), true },
-		send: true,
+		sessionGate: func(s *SessionSpawn) (any, bool) { return enabledIf(s.Workflows), true },
+		send:        true,
 	},
 	{
 		key:      "backgroundExecution",
@@ -224,13 +232,6 @@ var table = []decl{
 		send:     true,
 	},
 	{
-		key:      "subagentOrchestration",
-		door:     doorConnection,
-		resolver: resolverSetting,
-		value:    enabled(),
-		send:     true,
-	},
-	{
 		key:      "session_title_llm",
 		door:     doorConnection,
 		resolver: resolverSetting,
@@ -243,39 +244,32 @@ var table = []decl{
 		send:     false,
 	},
 	{
-		key:      "specPlan",
-		door:     doorSession,
-		resolver: resolverSetting,
-		gate:     func(s *Spawn) (any, bool) { return specPlanValue(s), true },
-		send:     true,
+		key:         "specPlan",
+		door:        doorSession,
+		resolver:    resolverSetting,
+		sessionGate: func(s *SessionSpawn) (any, bool) { return specPlanValue(s), true },
+		send:        true,
 	},
 	{
-		key:      "inlineAgents",
-		door:     doorConnection,
-		resolver: resolverSetting,
-		gate:     func(s *Spawn) (any, bool) { return enabledIf(s.InlineAgents), true },
-		send:     true,
+		key:        "steeringReminders",
+		door:       doorConnection,
+		resolver:   resolverSetting,
+		engineGate: func(s *EngineSpawn) (any, bool) { return enabledIf(s.SteeringReminders), true },
+		send:       true,
 	},
 	{
-		key:      "steeringReminders",
-		door:     doorConnection,
-		resolver: resolverSetting,
-		gate:     func(s *Spawn) (any, bool) { return enabledIf(s.SteeringReminders), true },
-		send:     true,
+		key:         "validation",
+		door:        doorSession,
+		resolver:    resolverSetting,
+		sessionGate: func(s *SessionSpawn) (any, bool) { return choiceValue(s.WorkValidation) },
+		send:        true,
 	},
 	{
-		key:      "validation",
-		door:     doorSession,
-		resolver: resolverSetting,
-		gate:     func(s *Spawn) (any, bool) { return choiceValue(s.WorkValidation) },
-		send:     true,
-	},
-	{
-		key:      "infraSafetyMonitor",
-		door:     doorConnection,
-		resolver: resolverSetting,
-		gate:     func(s *Spawn) (any, bool) { return choiceValue(s.InfraSafetyMonitor) },
-		send:     true,
+		key:        "infraSafetyMonitor",
+		door:       doorConnection,
+		resolver:   resolverSetting,
+		engineGate: func(s *EngineSpawn) (any, bool) { return choiceValue(s.InfraSafetyMonitor) },
+		send:       true,
 	},
 	{
 		key:      "steeringSupervisor",
@@ -288,7 +282,7 @@ var table = []decl{
 		key:      "_providerPowers",
 		door:     doorSession,
 		resolver: resolverSetting,
-		gate:     func(s *Spawn) (any, bool) { return enabledIf(s.ToolLoad), true },
+		value:    enabledIf(false),
 		send:     true,
 	},
 	{
@@ -307,7 +301,7 @@ var table = []decl{
 		key:      "terminal",
 		door:     doorConnection,
 		resolver: resolverSettingObject,
-		gate: func(s *Spawn) (any, bool) {
+		engineGate: func(s *EngineSpawn) (any, bool) {
 			if s.TerminalCommandTimeoutMs <= 0 {
 				return nil, false
 			}
@@ -336,8 +330,17 @@ var table = []decl{
 		// Gated on the active security profile. Present only for a NON-EMPTY set, which is the
 		// Custom profile's whole implementation: no key makes the permissions files the entire
 		// policy. resolvePresetIds treats an empty array as absent anyway.
-		gate: func(s *Spawn) (any, bool) { return s.Presets, len(s.Presets) > 0 },
-		send: true,
+		sessionGate: func(s *SessionSpawn) (any, bool) { return s.Presets, len(s.Presets) > 0 },
+		send:        true,
+	},
+	{
+		key:      "overrideSessionId",
+		door:     doorSession,
+		resolver: resolverText,
+		// Present only on session/new: KAS takes it as the new session's id, so every frame it sends for the session,
+		// even before the reply, names an id marotte already routes.
+		sessionGate: func(s *SessionSpawn) (any, bool) { return s.OverrideSessionID, s.OverrideSessionID != "" },
+		send:        true,
 	},
 	{
 		key:      "disableAutoCompaction",
@@ -346,8 +349,8 @@ var table = []decl{
 		// Always present: KAS persists the resolved value, so a session once
 		// opened with true (by another client or an earlier marotte setting)
 		// stays off unless every load sends false explicitly.
-		gate: func(s *Spawn) (any, bool) { return enabledIf(s.DisableAutoCompaction), true },
-		send: true,
+		sessionGate: func(s *SessionSpawn) (any, bool) { return enabledIf(s.DisableAutoCompaction), true },
+		send:        true,
 	},
 	{
 		key:      "compaction",
@@ -359,9 +362,9 @@ var table = []decl{
 		key:      "memory",
 		door:     doorSession,
 		resolver: resolverSettingObject,
-		// Always present: an absent key falls back to KAS's own default
-		// {read_write, reflection: true}, so Off has to be SENT.
-		gate: func(s *Spawn) (any, bool) {
+		// Always present: an absent key leaves the chat's memory to KAS's
+		// fallback config, not the user's choice.
+		sessionGate: func(s *SessionSpawn) (any, bool) {
 			return map[string]any{"mode": cmp.Or(s.MemoryMode, "disabled"), "reflection": s.MemoryReflection}, true
 		},
 		send: true,
@@ -380,6 +383,18 @@ var table = []decl{
 	},
 	{
 		key:      "streamingShellContent",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		send:     false,
+	},
+	{
+		key:      "agentHostsForegroundShell",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		send:     false,
+	},
+	{
+		key:      "diagrams",
 		door:     doorConnection,
 		resolver: resolverCapability,
 		send:     false,
@@ -427,16 +442,20 @@ var table = []decl{
 		send:     false,
 	},
 	{
-		key:      "KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED",
-		door:     doorEnvironment,
-		resolver: resolverEnv,
-		send:     false,
+		key:          "KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED",
+		door:         doorEnvironment,
+		resolver:     resolverEnv,
+		engineGate:   func(s *EngineSpawn) (any, bool) { return envTrueIf(s.ModelFallback) },
+		send:         true,
+		settingOwned: true,
 	},
 	{
-		key:      "KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED",
-		door:     doorEnvironment,
-		resolver: resolverEnv,
-		send:     false,
+		key:          "KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED",
+		door:         doorEnvironment,
+		resolver:     resolverEnv,
+		engineGate:   func(s *EngineSpawn) (any, bool) { return envTrueIf(s.ModelFallback) },
+		send:         true,
+		settingOwned: true,
 	},
 	{
 		key:      "KIRO_FEATURE_SESSION_TITLE_LLM_ENABLED",
@@ -508,12 +527,13 @@ var table = []decl{
 		key:      "KIRO_FEATURE_CASCADE_CONFIG",
 		door:     doorEnvironment,
 		resolver: resolverEnvJSON,
-		gate: func(s *Spawn) (any, bool) {
+		engineGate: func(s *EngineSpawn) (any, bool) {
 			return jsonChoice(s.AutoRouting,
 				map[string]any{"cascadeEnabled": true, "cascadeClientNotificationEnabled": true},
 				map[string]any{"cascadeEnabled": false})
 		},
-		send: true,
+		send:         true,
+		settingOwned: true,
 	},
 	{
 		key:      "cascade",
@@ -525,12 +545,13 @@ var table = []decl{
 		key:      "KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG",
 		door:     doorEnvironment,
 		resolver: resolverEnvJSON,
-		gate: func(s *Spawn) (any, bool) {
+		engineGate: func(s *EngineSpawn) (any, bool) {
 			return jsonChoice(s.AutoDelegation,
 				map[string]any{"delegationEnabled": true},
 				map[string]any{"delegationEnabled": false})
 		},
-		send: true,
+		send:         true,
+		settingOwned: true,
 	},
 	{
 		key:      "contextBreakdown",
@@ -561,22 +582,9 @@ var table = []decl{
 		},
 	},
 	{
-		key:      "KIRO_FEATURE_TOOL_LOAD_ENABLED",
-		door:     doorEnvironment,
-		resolver: resolverEnv,
-		gate:     func(s *Spawn) (any, bool) { return strconv.FormatBool(s.ToolLoad), true },
-		send:     true,
-	},
-	{
 		key:      "KIRO_DISABLE_SESSION_TITLE_LLM",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
-		gate: func(s *Spawn) (any, bool) {
-			if !s.DisableSessionTitles {
-				return nil, false
-			}
-			return "true", true
-		},
-		send: true,
+		send:     false,
 	},
 }

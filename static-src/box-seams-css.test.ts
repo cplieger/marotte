@@ -65,16 +65,7 @@ const SEAMS: readonly Seam[] = [
     why: "a member flattens to `background: none`, so every row shares the group's fill",
   },
   {
-    name: "delegate card: header → body",
-    sheet: "14-tools.css",
-    owner: ".subagent-body",
-    prop: "border-block-start",
-    fillOwner: ".subagent-body",
-    step: false,
-    why: "the body declares no fill and shows the card's",
-  },
-  {
-    name: "delegate card: body → foot",
+    name: "delegate card: header → foot",
     sheet: "14-tools.css",
     owner: ".subagent-foot",
     prop: "border-block-start",

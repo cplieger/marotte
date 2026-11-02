@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -18,24 +18,55 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/sse"
 )
 
 // Call Shutdown to tear it down.
-func newTestHub() (*Runtime, *testChatStore, *fakeBridge) {
-	return newTestHubIn("/tmp/work")
+func newTestHub(opts ...Option) (*Runtime, *testChatStore, *fakeBridge) {
+	return newTestHubIn("/tmp/work", opts...)
+}
+
+// settleBoot is awaitBoot for a runtime a test built itself.
+func settleBoot(t *testing.T, h *Runtime) {
+	t.Helper()
+	if err := awaitBoot(h); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // Reassigning workDir afterwards misses the wiring's one read. Order-sensitive: cs.Bus can only be
 // set once New returned.
-func newTestHubIn(workDir string) (*Runtime, *testChatStore, *fakeBridge) {
+func newTestHubIn(workDir string, opts ...Option) (*Runtime, *testChatStore, *fakeBridge) {
 	cs := newTestChatStore()
 	br := newFakeBridge()
-	h := New(context.Background(), workDir, func() ACPBridge { return br }, cs)
-	// Park the cancel-retry ladder: its untracked timers outlive the test.
-	h.runs.cancelRetryBase = time.Hour
+	h := newRuntimeOn(context.Background(), workDir, fakeEngineOf(func() engineSession { return br }, br), cs, opts...)
 	cs.wire(h)
+	// The engine's boot work reads br's scripts; a test edits them unlocked, so only after this.
+	if err := awaitBoot(h); err != nil {
+		panic(err)
+	}
+	br.forgetCalls()
 	return h, cs, br
+}
+
+// awaitBoot waits for h's first engine generation and the work its readiness started, so the replay ring
+// already holds every boot frame (engine_status among them) and no boot call is still reading a fake.
+func awaitBoot(h *Runtime) error {
+	if !awaitEngine(h) {
+		return errors.New("setup: the fake engine was not ready within 5s")
+	}
+	drained := make(chan struct{})
+	go func() {
+		h.lifecycle.inflight.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+		return nil
+	case <-time.After(5 * time.Second):
+		return errors.New("setup: the engine's boot work did not drain within 5s")
+	}
 }
 
 // originOf is the bridge a frame for chatID arrives on in a test, which is what forwardAt passes:
@@ -47,9 +78,44 @@ func (rt *Runtime) originOf(chatID marotte.ChatID) acpResponder {
 	return nil
 }
 
-// Call only once nothing else will Add.
-func joinInflight(t *testing.T, h *Runtime) {
+// bootComing reports whether h's first engine generation is still going to become ready. Its ready hook adds
+// to inflight, and an Add from zero concurrent with a Wait is a WaitGroup misuse the race detector reports.
+func bootComing(h *Runtime) bool {
+	select {
+	case <-h.EngineReady():
+		return false
+	default:
+	}
+	if h.engine.unavailable {
+		return false
+	}
+	src, ok := h.engine.source.(*fakeEngineSource)
+	if !ok {
+		return false
+	}
+	src.mu.Lock()
+	startErr, gate := src.startErr, src.startGate
+	src.mu.Unlock()
+	if startErr != nil {
+		return false
+	}
+	if gate == nil {
+		return true
+	}
+	select {
+	case <-gate:
+		return true
+	default:
+		return false
+	}
+}
+
+// Call only once nothing else will Add; a first engine still coming up is waited for first.
+func joinInflight(t testing.TB, h *Runtime) {
 	t.Helper()
+	if bootComing(h) && !awaitEngine(h) {
+		t.Fatal("the fake engine was not ready within 5s")
+	}
 	drained := make(chan struct{})
 	go func() {
 		h.lifecycle.inflight.Wait()
@@ -60,6 +126,13 @@ func joinInflight(t *testing.T, h *Runtime) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the runtime's inflight work did not drain within 5s")
 	}
+}
+
+// beginDraining flips draining as Shutdown's first step does, without the teardown that follows it.
+func beginDraining(h *Runtime) {
+	h.lifecycle.drainGate.Lock()
+	h.lifecycle.draining.Store(true)
+	h.lifecycle.drainGate.Unlock()
 }
 
 // shutdownHub uses context.Background(): from t.Cleanup t.Context() is already done. 30s is above any unit test and below go test's timeout.
@@ -95,6 +168,7 @@ func bufferedSince(h *Runtime, sinceID uint64) []sse.ReplayEvent {
 	return out
 }
 
+// extractTypes is the events' types, engine_status left out: the engine's own start publishes it asynchronously.
 func extractTypes(t *testing.T, events []sse.ReplayEvent) []string {
 	t.Helper()
 	out := make([]string, 0, len(events))
@@ -103,7 +177,9 @@ func extractTypes(t *testing.T, events []sse.ReplayEvent) []string {
 		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
 			t.Fatalf("unmarshal event: %v", err)
 		}
-		out = append(out, string(msg.Type))
+		if msg.Type != marotte.EventEngineStatus {
+			out = append(out, string(msg.Type))
+		}
 	}
 	return out
 }
@@ -171,21 +247,6 @@ func newSessionChunkMsg(sessionID, text string) *marotte.RPCResponse {
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
-func newToolCallMsg(t *testing.T, id, title, status string) *marotte.RPCResponse {
-	t.Helper()
-	raw := mustJSON(t, map[string]any{
-		"sessionUpdate": "tool_call",
-		"toolCallId":    id,
-		"title":         title,
-		"kind":          "read",
-		"status":        status,
-	})
-	return &marotte.RPCResponse{
-		Method: "session/update",
-		Params: mustJSON(t, map[string]any{"update": raw}),
-	}
-}
-
 // logCapture is mutex-guarded: background goroutines write logs.
 type logCapture struct {
 	buf bytes.Buffer
@@ -204,30 +265,17 @@ func (b *logCapture) String() string {
 	return b.buf.String()
 }
 
-// swapDefaultLogger installs h as the slog default for tb; callers must not be parallel. The log package's
-// writer and flags are restored too, since slog.SetDefault redirects log and skips undoing it for the stock handler.
-func swapDefaultLogger(tb testing.TB, h slog.Handler) {
-	tb.Helper()
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	tb.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(h))
-}
-
 // captureLogs swaps the global slog default, so its test must not call t.Parallel.
 func captureLogs(t *testing.T) *logCapture {
 	t.Helper()
 	out := &logCapture{}
-	swapDefaultLogger(t, slog.NewJSONHandler(out, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	capture.SwapDefault(t, slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return out
 }
 
 func quietLogs(b *testing.B) {
 	b.Helper()
-	swapDefaultLogger(b, slog.DiscardHandler)
+	capture.SwapDefault(b, slog.New(slog.DiscardHandler))
 }
 
 func (rt *Runtime) stageWireTurn(tb testing.TB, chatID marotte.ChatID) *turnlog.Turn {
@@ -238,6 +286,12 @@ func (rt *Runtime) stageWireTurn(tb testing.TB, chatID marotte.ChatID) *turnlog.
 // stagePromptTurn opens a prompt turn and returns its id with its accumulator: an id-scoped closer given another id closes nothing.
 func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID marotte.ChatID) (string, *turnlog.Turn) {
 	tb.Helper()
+	return rt.stagePromptTurnCalling(tb, chatID, nil)
+}
+
+// stagePromptTurnCalling is stagePromptTurn for a turn whose prompt call cancel trips.
+func (rt *Runtime) stagePromptTurnCalling(tb testing.TB, chatID marotte.ChatID, cancel context.CancelCauseFunc) (string, *turnlog.Turn) {
+	tb.Helper()
 	id, err := rt.coord.OpenTurn(tb.Context(), chatID, command.TurnOpen{
 		Source: marotte.TurnSourcePrompt,
 		Prompt: &marotte.EntryPrompt{ID: "m-" + string(chatID), Text: "prompt"},
@@ -246,8 +300,12 @@ func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID marotte.ChatID) (string
 	if err != nil {
 		tb.Fatalf("OpenTurn(%q) failed: %v", chatID, err)
 	}
-	if !rt.coord.StartTurn(tb.Context(), chatID, id) {
+	if !rt.coord.StartTurn(tb.Context(), command.TurnRef{Chat: chatID, Turn: id}, cancel) {
 		tb.Fatalf("StartTurn(%q, %q) refused, so there is no turn to stage", chatID, id)
+	}
+	// The staged prompt counts as sent, so the turn_start a test delivers next is its own.
+	if _, err := rt.coord.AwaitPromptSend(tb.Context(), chatID, id); err != nil {
+		tb.Fatalf("AwaitPromptSend(%q, %q): %v", chatID, id, err)
 	}
 	log, ok := rt.coord.OwnTurn(chatID)
 	if !ok {

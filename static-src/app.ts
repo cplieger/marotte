@@ -4,8 +4,9 @@
 // The server is the source of truth: a prompt posts a command and SSE drives rendering.
 
 import type { ServerEvent } from "./types.js";
-import { getActiveId, getSessions, isThinking } from "./store.js";
+import { getActiveId, getSessions, isBusy } from "./store.js";
 import { effect } from "@cplieger/reactive";
+import { mountLiveRegions } from "@cplieger/ui-primitives/announce";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_RECONCILE } from "./bus.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -135,6 +136,9 @@ function init(): void {
     },
   });
   initPointerModeToggle();
+
+  // Before anything can announce: `announce()` drops a message when no region is mounted.
+  mountLiveRegions(document.body);
 
   // AFTER the tier, which sizes the bar's action buttons this fit measures against.
   initPageTitleFit();
@@ -453,7 +457,7 @@ function setupInput(): void {
       if (getActiveId() === "") {
         return;
       }
-      if (!isThinking(getActiveId())) {
+      if (!isBusy(getActiveId())) {
         return;
       }
       void cancelTurn.dispatch({ chatID: getActiveId() });
@@ -480,7 +484,9 @@ function setupInput(): void {
   // announce.
   initModelPicker(pickModel, () => fetchCatalog());
   // The role picker owns the prompt-bar role pill (expand, list, selection).
-  initRolePicker();
+  initRolePicker(() => {
+    void fetchCatalog();
+  });
   // Queued-prompt chips (pending sends buffered while a turn is in flight).
   initPendingSteers();
   // The composer band's live-run rows; a pure projection of the run store.

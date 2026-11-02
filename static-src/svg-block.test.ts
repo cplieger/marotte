@@ -69,8 +69,7 @@ describe("renderSvgBlock", () => {
     }
   });
 
-  // Mermaid is deferred by decision, not answered: source and render are
-  // separable, and mermaid source is not SVG.
+  // Mermaid source is not SVG: mermaid-block.ts draws it, never this inert path.
   it("does not claim a mermaid fence", () => {
     const pre = fence("mermaid", "graph TD; A-->B;");
     expect(renderSvgBlock(pre)).toBeNull();

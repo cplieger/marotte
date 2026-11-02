@@ -3,20 +3,29 @@
 
 import { el } from "@cplieger/reactive";
 import { join as joinKey } from "@cplieger/keyenc";
-import { onBus, onSSE, BUS_RUNS_CHANGED } from "./bus.js";
+import { onBus, onSSE, BUS_CATALOG_MODELS, BUS_RUNS_CHANGED } from "./bus.js";
 import { reconcile } from "./reconcile.js";
 import { loadRecipes, loadRuns, launchRun, cancelRun } from "./actions/runs.js";
 import { loadSchedules, saveSchedule, deleteSchedule } from "./actions/schedules.js";
 import { buildSchedulePicker, defaultSpec, summaryLine } from "./schedule-picker.js";
+import {
+  buildRunDefaultsPicker,
+  type RunDefaults,
+  type RunDefaultsPicker,
+} from "./run-defaults-picker.js";
+import { getCachedModels } from "./picker.js";
 import type { ScheduleSpec, ScheduleView } from "./schedule-types.js";
 import { createPopup } from "@cplieger/ui-primitives/popup";
 import { openRunView } from "./run-view.js";
-import { loadSettings } from "./persist.js";
+import { loadSettings, refreshSettings } from "./persist.js";
+import type { EffectiveSettings } from "./persist.js";
 import { openSettingsView } from "./tabs.js";
 import { forceReflow } from "./dom.js";
 import type { Recipe, WorkflowRun } from "./types.js";
 import { entryDetail, entryList, entryRow } from "./entry-row.js";
 import { classifyRunStatus, runStatusTerminal } from "./run-status.js";
+import { configStanding, standingBadge, standingLabel } from "./config-standing.js";
+import type { ConfigStanding } from "./wire/types.gen.js";
 
 /** Last fetched recipe list, kept so a repaint needs no refetch. */
 let recipes: Recipe[] = [];
@@ -45,12 +54,14 @@ interface RecipeCounts {
 
 /** Every field of a recipe row a reader could plausibly type at, folded once. */
 function filterHaystack(r: Recipe): string {
+  const standing = standingOf(r);
   return [
     r.name,
     r.description ?? "",
     r.source,
     ...Object.keys(r.inputs ?? {}),
     r.built_in === true ? "bundled" : "",
+    standing === undefined ? "" : standingLabel(standing),
   ]
     .join("\n")
     .toLowerCase();
@@ -86,7 +97,7 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
     // changed on another page. Without this the note would be correct as of whenever this tab last
     // rendered, which is the boilerplate a live read-out exists to avoid.
     onSSE("settings_updated", () => {
-      void refreshAutoApprove();
+      void refreshAutoApprove(refreshSettings);
     });
     // KAS reports a recipe added, edited or removed; the catalog is not cached anywhere, so the
     // list is simply read again while it is on screen.
@@ -94,6 +105,16 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
       if (isShowing()) {
         void refreshRecipes();
       }
+    });
+    // An open Run or Schedule form holds the catalog it opened with, which can be empty when it
+    // opened before the boot fetch landed.
+    onBus(BUS_CATALOG_MODELS, () => {
+      const models = getCachedModels();
+      const detail = container?.querySelector<HTMLElement>(".entry-detail") ?? null;
+      if (detail !== null) {
+        formPicks.get(detail)?.setModels(models);
+      }
+      schedulePicks?.setModels(models);
     });
   }
   if (recipes.length === 0) {
@@ -113,7 +134,7 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
     // Decoration, deliberately off the critical path: the workflow list must still render when the
     // schedule endpoint is unavailable.
     void refreshSchedules();
-    void refreshAutoApprove();
+    void refreshAutoApprove(loadSettings);
   })();
 }
 
@@ -141,8 +162,8 @@ export function setRecipeCountsListener(fn: (c: RecipeCounts) => void): void {
  *  so a failed read cannot make the note claim more permission than the run will get. */
 let autoApprove = false;
 
-async function refreshAutoApprove(): Promise<void> {
-  const s = await loadSettings();
+async function refreshAutoApprove(read: () => Promise<EffectiveSettings | null>): Promise<void> {
+  const s = await read();
   // A failed read leaves the last known value rather than resetting to false: false is the SERVER's
   // default for an absent key, which the payload now states outright, so re-deriving it here on a
   // network failure would be this module guessing at a value it can just be told.
@@ -182,6 +203,9 @@ function syncSchedule(row: HTMLElement, r: Recipe): void {
   }
 }
 
+/** The open schedule form's Model and Effort selects; one popup of the group is open at a time. */
+let schedulePicks: RunDefaultsPicker | null = null;
+
 function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
   let popup: ReturnType<typeof createPopup> | null = null;
   let open = false;
@@ -203,22 +227,35 @@ function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
       popup?.hide();
       open = false;
     };
+    const picks = buildRunDefaultsPicker({
+      models: getCachedModels(),
+      initial: {
+        ...(view?.model === undefined ? {} : { model: view.model }),
+        ...(view?.effort === undefined ? {} : { effort: view.effort }),
+      },
+    });
+    schedulePicks = picks;
     body.appendChild(
       buildSchedulePicker({
         spec: view?.spec ?? defaultSpec(),
         enabled: view?.enabled ?? false,
         exists: view !== undefined,
         autoApprove,
+        picks,
         onOpenPermissions: () => {
           close();
           void openSettingsView("permissions");
         },
         // The picker's flag is carried through rather than re-decided here: it was hardcoded true
         // at both ends, so a paused schedule was unreachable even once the form could express it.
-        onSave: (spec: ScheduleSpec, enabled: boolean) => {
-          close();
+        // Closed only once saved: a refused pick leaves the reader's edits on the form beside the
+        // server's sentence.
+        onSave: (spec: ScheduleSpec, enabled: boolean, defaults: RunDefaults) => {
           void (async () => {
-            await saveSchedule.dispatch({ source, spec, enabled });
+            if ((await saveSchedule.dispatch({ source, spec, enabled, ...defaults })) === null) {
+              return;
+            }
+            close();
             await refreshSchedules();
           })();
         },
@@ -314,10 +351,13 @@ function paint(): void {
     key: (e: RecipeEntry) => joinKey(e.kind, e.recipe.source),
     mount: (e: RecipeEntry) => (e.kind === "row" ? recipeRow(e.recipe) : inputForm(e.recipe)),
     update: (node: HTMLElement, e: RecipeEntry) => {
-      // A kept detail is left alone: it holds what the reader has typed.
       if (e.kind === "row") {
         syncButton(node, e.recipe);
         syncSchedule(node, e.recipe);
+        syncStanding(node, e.recipe);
+      } else {
+        // Only Launch is synced: the fields hold what the reader has typed.
+        syncLaunch(node, e.recipe);
       }
     },
   });
@@ -326,7 +366,11 @@ function paint(): void {
   if (detail !== null) {
     forceReflow(detail);
     detail.classList.add("open");
-    detail.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+    // Launch when the recipe declares no inputs, so Enter still launches it on Default.
+    (
+      detail.querySelector<HTMLElement>("input") ??
+      detail.querySelector<HTMLElement>(".recipe-launch-btn")
+    )?.focus({ preventScroll: true });
   }
 }
 
@@ -354,12 +398,18 @@ function recipeRow(r: Recipe): HTMLElement {
   schedBtn.textContent = "Schedule";
   wireSchedulePopup(schedBtn, r.source);
 
+  // A slot, so a standing change updates a kept row; only a file-backed recipe has a file to join.
+  const standingSlot =
+    r.doc_key === undefined ? null : el("span", { className: "recipe-standing hidden" });
   // No `open`: a recipe row is not a door. Its one destination is the run its button launches, and
   // that run opens its own tab.
   const row = entryRow({
     key: r.source,
     title: r.name,
-    badges: r.built_in === true ? [el("span", { className: "docs-badge" }, "bundled")] : undefined,
+    badges: [
+      ...(r.built_in === true ? [el("span", { className: "docs-badge" }, "bundled")] : []),
+      ...(standingSlot === null ? [] : [standingSlot]),
+    ],
     sub: {
       kind: "lines",
       lines: [{ text: r.description ?? "" }, { text: scheduleLine(r) }],
@@ -369,7 +419,60 @@ function recipeRow(r: Recipe): HTMLElement {
   });
   syncButton(row, r);
   syncSchedule(row, r);
+  syncStanding(row, r);
   return row;
+}
+
+function standingOf(r: Recipe): ConfigStanding | undefined {
+  return r.doc_key === undefined ? undefined : configStanding.peek().files.get(r.doc_key);
+}
+
+function syncStanding(row: HTMLElement, r: Recipe): void {
+  const slot = row.querySelector<HTMLElement>(".recipe-standing");
+  if (slot === null) {
+    return;
+  }
+  const s = standingOf(r);
+  slot.replaceChildren(...(s === undefined ? [] : [standingBadge(s)]));
+  // `.hidden`, not the attribute: `.entry-badges` declares `display`, which beats the UA's `[hidden]`.
+  slot.classList.toggle("hidden", s === undefined);
+  const badges = slot.parentElement;
+  badges?.classList.toggle(
+    "hidden",
+    [...badges.children].every((b) => b.classList.contains("hidden")),
+  );
+}
+
+/** KAS's reason the recipe cannot launch, or "" for one it can. */
+function invalidReason(r: Recipe): string {
+  return (r.validation_error ?? "").trim();
+}
+
+/** The row's first line: KAS's reason a recipe cannot launch outranks its description, since it
+ *  is why Run is off; re-run on every repaint, because a `recipes_changed` refetch can fix or
+ *  break the recipe under a kept row. */
+function syncValidity(row: HTMLElement, r: Recipe): void {
+  const line = row.querySelector<HTMLElement>(".entry-lines > .entry-sub:nth-child(1)");
+  if (line === null) {
+    return;
+  }
+  const reason = invalidReason(r);
+  line.textContent = reason === "" ? (r.description ?? "") : reason;
+  line.classList.toggle("entry-sub-error", reason !== "");
+  const sched = row.querySelector<HTMLButtonElement>(".recipe-sched-btn");
+  if (sched !== null) {
+    sched.disabled = reason !== "";
+    toggleTooltip(sched, reason);
+  }
+}
+
+/** A disabled control still gets hover, so its tooltip says why it is off. */
+function toggleTooltip(btn: HTMLElement, text: string): void {
+  if (text === "") {
+    btn.removeAttribute("data-tooltip");
+  } else {
+    btn.setAttribute("data-tooltip", text);
+  }
 }
 
 /** The row's second line: the schedule's state, then the declared inputs. */
@@ -396,6 +499,17 @@ function syncButton(row: HTMLElement, r: Recipe): void {
     "aria-label",
     live === undefined ? `Run ${r.name}` : `Cancel the running ${r.name}`,
   );
+  // A live run of a recipe KAS now calls invalid can still be cancelled, and an open form still
+  // folds: Run is that form's only close.
+  const reason = live === undefined ? invalidReason(r) : "";
+  btn.disabled = reason !== "" && openForm !== r.source;
+  toggleTooltip(btn, reason);
+  if (live === undefined) {
+    btn.setAttribute("aria-expanded", String(openForm === r.source));
+  } else {
+    btn.removeAttribute("aria-expanded");
+  }
+  syncValidity(row, r);
 }
 
 function onRunButton(r: Recipe): void {
@@ -404,13 +518,21 @@ function onRunButton(r: Recipe): void {
     void cancelRun.dispatch(live.workflow_id);
     return;
   }
-  if (Object.keys(r.inputs ?? {}).length === 0) {
-    launch(r, {});
+  if (openForm === r.source) {
+    openForm = null;
+    paint();
     return;
   }
-  openForm = openForm === r.source ? null : r.source;
+  if (invalidReason(r) !== "") {
+    return;
+  }
+  // Always the form, inputs or not: it is the one place a run's model and effort are picked.
+  openForm = r.source;
   paint();
 }
+
+/** Each open form's Model and Effort selects, for its repaint to hand a newer catalog. */
+const formPicks = new WeakMap<HTMLElement, RunDefaultsPicker>();
 
 /** Inline input collection in the `.entry-detail` region under the row — deliberately not a
  *  modal. Empty values are allowed (KAS accepts them; templates resolve empty), so this collects
@@ -428,9 +550,19 @@ function inputForm(r: Recipe): HTMLElement {
     fields.set(key, input);
     form.appendChild(el("label", { className: "recipe-input-label" }, `${key}: `, input));
   }
-  form.appendChild(el("button", { type: "submit", className: "btn-small" }, "Launch"));
+  const picks = buildRunDefaultsPicker({ models: getCachedModels(), initial: {} });
+  form.appendChild(picks.el);
+  form.appendChild(
+    el("button", { type: "submit", className: "btn-small recipe-launch-btn" }, "Launch"),
+  );
   form.addEventListener("submit", (e: Event) => {
     e.preventDefault();
+    // Resolved at submit time, like the row's Run: a refetch can invalidate the recipe under a
+    // form kept open across repaints.
+    const current = recipes.find((x) => x.source === r.source);
+    if (current === undefined || invalidReason(current) !== "") {
+      return;
+    }
     const inputs: Record<string, string> = {};
     for (const [key, field] of fields) {
       if (field.value !== "") {
@@ -439,14 +571,29 @@ function inputForm(r: Recipe): HTMLElement {
     }
     openForm = null;
     paint();
-    launch(r, inputs);
+    launch(current, inputs, picks.value());
   });
-  return entryDetail(form);
+  const detail = entryDetail(form);
+  formPicks.set(detail, picks);
+  syncLaunch(detail, r);
+  return detail;
 }
 
-function launch(r: Recipe, inputs: Record<string, string>): void {
+/** The open form's Launch follows the row's Run: off, with KAS's reason, for an invalid recipe. */
+function syncLaunch(detail: HTMLElement, r: Recipe): void {
+  const btn = detail.querySelector<HTMLButtonElement>(".recipe-launch-btn");
+  if (btn === null) {
+    return;
+  }
+  const reason = invalidReason(r);
+  btn.disabled = reason !== "";
+  toggleTooltip(btn, reason);
+  formPicks.get(detail)?.setModels(getCachedModels());
+}
+
+function launch(r: Recipe, inputs: Record<string, string>, defaults: RunDefaults): void {
   void launchRun.dispatch(
-    { source: r.source, inputs },
+    { source: r.source, inputs, ...defaults },
     {
       onSuccess: (d) => {
         // Optimistic flip: the run_started event confirms it, and the refetch corrects a failed

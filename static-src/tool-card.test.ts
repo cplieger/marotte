@@ -901,9 +901,9 @@ describe("the details body is deferred to first open", () => {
     card.remove();
   });
 
-  it("makes the output readable straight after expandToolDetails, which the failure path needs", async () => {
-    // `messages-tools.ts` force-opens a failed card and then reads `.tool-output` to offer
-    // "Explain this error", so the body is built by the time the call returns.
+  it("makes the output readable straight after expandToolDetails", async () => {
+    // A forced open never clicks the chevron, so the body has to be built by the time the
+    // call returns or the region opens empty.
     const { expandToolDetails } = await import("./tool-card.js");
     const card = buildToolCard({
       id: "tc1",
@@ -921,7 +921,7 @@ describe("the details body is deferred to first open", () => {
 });
 
 // A card with nothing to disclose loses its disclosure. Emptiness is a property of
-// `.tool-details`; the diff preview and the Explain button sit outside it and stay. The
+// `.tool-details`; the diff preview sits outside it and stays. The
 // region cannot simply be read before first open, so the predicate combines build-time
 // facts with the live output region.
 
@@ -998,8 +998,7 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("counts output the reader cannot see as nothing", () => {
-    // One newline is the same defect from a narrower input. The Explain gate reads the same
-    // region with the same trim, so a blank-output card offers no button either.
+    // One newline is the same defect from a narrower input.
     const card = buildToolCard({
       id: "bare-blank",
       title: "invoke_sub_agent",
@@ -1280,8 +1279,8 @@ describe("a card built with its details open", () => {
   });
 
   it.each([true, false])("leaves a failed call's details CLOSED, live=%s", (live) => {
-    // A failure is not a reason to be born open, live or replay: expand-on-fail is the live
-    // FLIP's (`expandToolDetails`), and live-ness does not enter this decision.
+    // A failure is not a reason to be born open, live or replay, and live-ness does not
+    // enter this decision.
     const card = buildToolCard({ ...opts, live, status: "failed" });
     document.body.appendChild(card);
 
@@ -1294,8 +1293,8 @@ describe("a card built with its details open", () => {
   });
 
   it("still ANIMATES a region opened by an EVENT after the mount", () => {
-    // `expandToolDetails` stays the path for a call that fails or is refused
-    // mid-stream, and that reveal must keep its animation.
+    // `expandToolDetails` stays the path for a call refused mid-stream, and that reveal
+    // must keep its animation.
     const card = buildToolCard({ ...opts });
     document.body.appendChild(card);
     const details = card.querySelector<HTMLElement>(".tool-details");

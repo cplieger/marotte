@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -455,12 +456,14 @@ func TestAwaitTerminalExit_WaitsForTheCommandsProcessGroupToEmpty(t *testing.T) 
 	logs := captureLogs(t) // not parallel: swaps the slog default
 	withTerminalGroupGrace(t, 300*time.Millisecond)
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
+	// Started before the spawn: the head can exit and the grace begin before the create returns,
+	// so a clock started after it reads short of the grace.
+	start := time.Now()
 	// `sleep` joins the head's group and outlives it, with its pipe ends closed.
 	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1,
 		`sleep 30 >/dev/null 2>&1 </dev/null & printf 'head done\n'`, nil))
 	term := singleTerm(t, h)
 
-	start := time.Now()
 	waitClosed(t, term.done, "terminal exit")
 	elapsed := time.Since(start)
 
@@ -716,7 +719,7 @@ func TestKillForTurn_ReportsOnlyARealTeardown(t *testing.T) {
 	t.Run("nothing_to_kill", func(t *testing.T) {
 		at := bareTerminals()
 		logs := captureLogs(t)
-		at.KillForTurn("c1")
+		at.KillForTurn(command.TurnRef{Chat: "c1", Turn: "t1"})
 		if got := logs.String(); strings.Contains(got, wantLine) {
 			t.Errorf("KillForTurn(chat with no terminals) logged %q, want no teardown line", got)
 		}
@@ -724,11 +727,11 @@ func TestKillForTurn_ReportsOnlyARealTeardown(t *testing.T) {
 
 	t.Run("one_terminal_killed", func(t *testing.T) {
 		h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
-		h.stagePromptTurn(t, "c1")
+		id, _ := h.stagePromptTurn(t, "c1")
 		_, term := spawnSleeper(t, h, "c1", h.originOf("c1"), 1)
 
 		logs := captureLogs(t)
-		h.agentTerms.KillForTurn("c1")
+		h.agentTerms.KillForTurn(command.TurnRef{Chat: "c1", Turn: id})
 		if got := logs.String(); !strings.Contains(got, wantLine) {
 			t.Errorf("KillForTurn(chat with a live terminal) logged %q, want a teardown line", got)
 		}
@@ -736,7 +739,7 @@ func TestKillForTurn_ReportsOnlyARealTeardown(t *testing.T) {
 
 		// Already dead: a second cancel has nothing to kill.
 		logs = captureLogs(t)
-		h.agentTerms.KillForTurn("c1")
+		h.agentTerms.KillForTurn(command.TurnRef{Chat: "c1", Turn: id})
 		if got := logs.String(); strings.Contains(got, wantLine) {
 			t.Errorf("KillForTurn(turn whose terminal already exited) logged %q, want no teardown line", got)
 		}
@@ -852,10 +855,10 @@ func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 	h.coord.WireTurnEnd(ctx, "c1", marotte.StopReasonEndTurn)
 
 	// The user's next turn, with a command of its own.
-	h.stagePromptTurn(t, "c1")
+	prompt, _ := h.stagePromptTurn(t, "c1")
 	_, promptCmd := spawnSleeper(t, h, "c1", h.originOf("c1"), 2)
 
-	h.agentTerms.KillForTurn("c1")
+	h.agentTerms.KillForTurn(command.TurnRef{Chat: "c1", Turn: prompt})
 
 	awaitDead(t, promptCmd.cmd.Process.Pid, "the cancelled turn's own terminal")
 	if !processAlive(agentBG.cmd.Process.Pid) {
@@ -864,8 +867,9 @@ func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 	}
 }
 
-// TestKillForTurn_ScopedToTheOpenTurn pins that a cancel kills only the current turn's terminals.
-func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
+// TestKillForTurn_ScopedToTheNamedTurn pins that a cancel kills only the named turn's terminals, whichever turn the
+// chat holds by then.
+func TestKillForTurn_ScopedToTheNamedTurn(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	turns := &turnStub{cur: map[marotte.ChatID]string{"c1": "t7", "c2": "t3"}}
 	h.agentTerms.currentTurn = turns.read
@@ -877,15 +881,23 @@ func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
 	_, curB := spawnSleeper(t, h, "c1", origin, 3)
 	_, other := spawnSleeper(t, h, "c2", newRecordingTermBridge(), 4)
 
-	h.agentTerms.KillForTurn("c1")
+	h.agentTerms.KillForTurn(command.TurnRef{Chat: "c1", Turn: "t8"})
 
-	awaitDead(t, cur.cmd.Process.Pid, "the open turn's terminal")
-	awaitDead(t, curB.cmd.Process.Pid, "the open turn's second terminal")
+	awaitDead(t, cur.cmd.Process.Pid, "the named turn's terminal")
+	awaitDead(t, curB.cmd.Process.Pid, "the named turn's second terminal")
 	if !processAlive(old.cmd.Process.Pid) {
 		t.Error("an earlier turn's terminal was killed: that background command was not the cancel's to take")
 	}
 	if !processAlive(other.cmd.Process.Pid) {
 		t.Error("another chat's terminal was killed")
+	}
+
+	// A stop that captured t7 acts on t7 after t8 opened: t8's terminal lives.
+	_, next := spawnSleeper(t, h, "c1", origin, 5)
+	h.agentTerms.KillForTurn(command.TurnRef{Chat: "c1", Turn: "t7"})
+	awaitDead(t, old.cmd.Process.Pid, "the captured turn's terminal")
+	if !processAlive(next.cmd.Process.Pid) {
+		t.Error("a stop that captured an earlier turn killed the open turn's terminal")
 	}
 }
 
@@ -894,10 +906,10 @@ func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
 func TestKillForTurn_KeepsTheTerminalAnsweringUntilReleased(t *testing.T) {
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, t.TempDir(), br)
-	h.stagePromptTurn(t, "c1")
+	id, _ := h.stagePromptTurn(t, "c1")
 	termID, term := spawnSleeper(t, h, "c1", br, 1)
 
-	h.agentTerms.KillForTurn("c1")
+	h.agentTerms.KillForTurn(command.TurnRef{Chat: "c1", Turn: id})
 	waitClosed(t, term.done, "the cancelled turn's terminal")
 
 	h.translateACPEvent("c1", br, termIDMsg(t, 2, methodTermOutput, termID))
@@ -929,9 +941,9 @@ func TestKillForTurn_NothingOpenIsANoOp(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	_, idle := spawnSleeper(t, h, "c1", h.originOf("c1"), 1) // created while the chat is idle
 
-	h.agentTerms.KillForTurn("c1")
+	h.agentTerms.KillForTurn(command.TurnRef{Chat: "c1"})
 
 	if !processAlive(idle.cmd.Process.Pid) {
-		t.Error("KillForTurn(idle chat) killed a terminal")
+		t.Error("KillForTurn(no turn named) killed a terminal")
 	}
 }

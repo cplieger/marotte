@@ -17,8 +17,18 @@ import {
 } from "../icons.js";
 import { formatElapsed } from "../strings.js";
 import { reconcile } from "../reconcile.js";
-import { elapsed, type ExecKind, type ExecNode } from "./model.js";
-import { STATE_WORD, paintStateMark, type ExecState } from "./status.js";
+import {
+  currentWork,
+  elapsed,
+  isWork,
+  newestStarted,
+  workNodes,
+  type ExecKind,
+  type ExecNode,
+  type ExecRun,
+} from "./model.js";
+import { paintLabel } from "./label.js";
+import { STATE_WORD, inFlight, paintStateMark, type ExecState } from "./status.js";
 
 /** The kind glyph: a step gets the agent hexagon; a container gets a glyph
  *  naming what it does, since "sequence"/"parallel" shouldn't require reading.
@@ -47,6 +57,9 @@ export interface ExecTreeView {
   render(nodes: readonly ExecNode[], selected: string): void;
   /** Advance the durations of the rows still running. */
   tick(): void;
+  /** Unfold every container above `path`'s row and centre the row in `scroller`, the box the tree
+   *  scrolls in, where the tree is long enough. Moves no other scroller and never animates. */
+  reveal(path: string, scroller: HTMLElement): void;
 }
 
 interface Row {
@@ -184,7 +197,7 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
   }
 
   function paint(row: Row, node: ExecNode, depth: number, selected: string): void {
-    row.label.textContent = node.label;
+    paintLabel(row.label, node);
     row.sub.textContent = node.subtitle ?? "";
     row.sub.hidden = (node.subtitle ?? "") === "";
     row.root.dataset["state"] = node.state;
@@ -256,6 +269,31 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
         }
       }
     },
+    reveal(path, scroller) {
+      const target = [...root.querySelectorAll<HTMLElement>(".ev-row")].find(
+        (r) => r.dataset["path"] === path,
+      );
+      if (target === undefined) {
+        return;
+      }
+      let up = target.parentElement?.closest<HTMLElement>(".ev-row") ?? null;
+      while (up !== null) {
+        const row = rowParts.get(up);
+        if (row?.collapsed === true) {
+          row.collapsed = false;
+          applyCollapse(row);
+        }
+        up = up.parentElement?.closest<HTMLElement>(".ev-row") ?? null;
+      }
+      // The row's own line, not the row: a container's row box holds its children too.
+      const line = (target.firstElementChild ?? target).getBoundingClientRect();
+      const box = scroller.getBoundingClientRect();
+      const offset = line.top - box.top - scroller.clientTop;
+      scroller.scrollTo({
+        top: scroller.scrollTop + offset - (scroller.clientHeight - line.height) / 2,
+        behavior: "instant",
+      });
+    },
   };
 }
 
@@ -275,10 +313,55 @@ export function nodeAt(nodes: readonly ExecNode[], path: string): ExecNode | und
   return undefined;
 }
 
+/** The work node of the current pass that most wants the reader (`attentionRank`), else its first:
+ *  the page's default selection and the first choice of `focusStep`. */
+export function attentionStep(nodes: readonly ExecNode[]): ExecNode | undefined {
+  const ls = currentWork(nodes);
+  let best = ls[0];
+  for (const n of ls) {
+    if (best !== undefined && attentionRank(n.state) < attentionRank(best.state)) {
+      best = n;
+    }
+  }
+  return best;
+}
+
+/** The step the Steps tree lands on when it opens: the one waiting on the reader (an ask, a
+ *  failure, a paused run's parked step), else the shown step while in flight, else the newest in
+ *  flight, else the shown step, else the last to end. "" when the run has no step. */
+export function focusStep(run: ExecRun, selected: string): string {
+  const wants = attentionStep(run.nodes);
+  const work = workNodes(run.nodes);
+  const waitingOnReader =
+    wants !== undefined && attentionRank(wants.state) <= attentionRank("fail")
+      ? wants
+      : run.state === "waiting"
+        ? currentWork(run.nodes).find((n) => n.state === "waiting")
+        : undefined;
+  const picked = nodeAt(run.nodes, selected);
+  const shown = picked !== undefined && isWork(picked) ? picked : undefined;
+  const flying = work.filter((n) => inFlight(n.state));
+  let lastEnded: ExecNode | undefined;
+  for (const n of work) {
+    const end = Date.parse(n.end ?? "");
+    if (!Number.isNaN(end) && (lastEnded === undefined || end >= Date.parse(lastEnded.end ?? ""))) {
+      lastEnded = n;
+    }
+  }
+  const pick =
+    waitingOnReader ??
+    (shown !== undefined && inFlight(shown.state) ? shown : undefined) ??
+    newestStarted(flying) ??
+    flying[0] ??
+    shown ??
+    lastEnded;
+  return pick?.path ?? "";
+}
+
 /** Whether a state deserves a reader's attention, which is what the page uses to
  *  pick a default selection: the node that wants something, else the one working,
  *  else the first. */
-export function attentionRank(state: ExecState): number {
+function attentionRank(state: ExecState): number {
   switch (state) {
     case "input":
       return 0;

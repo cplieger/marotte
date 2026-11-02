@@ -8,7 +8,7 @@ export type RunVerb = "pause" | "resume" | "extend" | "finish_loop" | "cancel" |
 export const CONTROL_LABEL: Record<RunVerb, string> = {
   pause: "Pause",
   resume: "Resume",
-  extend: "Add iterations",
+  extend: "Add passes",
   finish_loop: "End this loop",
   cancel: "Cancel",
   retry: "Retry failed steps",

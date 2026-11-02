@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll, beforeEach } from "vitest";
 
 // The served page, mounted above the imports: the real chat graph reads its hosts at module load, and the picker's
 // own markup is then the shipped one.
@@ -18,9 +18,16 @@ vi.mock("./modals.js", async (importOriginal) => ({
   closeModal: vi.fn(),
 }));
 
+vi.mock("./upload.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Upload>()),
+  uploadFiles: vi.fn(),
+}));
+
 import type * as ApiClient from "./api-client.js";
 import type * as Modals from "./modals.js";
+import type * as Upload from "./upload.js";
 import { apiGetOrError } from "./api-client.js";
+import { uploadFiles } from "./upload.js";
 import { initFilePicker, openFilePicker } from "./files-picker.js";
 
 /** Per-path answers; an unlisted path answers an empty listing. */
@@ -136,5 +143,85 @@ describe("the file picker's listing", () => {
       expect(list().querySelector(".fb-notice")?.textContent).toBe("Empty");
     });
     expect(list().querySelector(".fb-row")).toBeNull();
+  });
+});
+
+describe("the Upload button", () => {
+  // The upload mock never answers, and an in-flight upload disables the button for the next test.
+  afterEach(async () => {
+    for (const [opts] of vi.mocked(uploadFiles).mock.calls) {
+      opts.onError?.("the test ended", []);
+    }
+    vi.mocked(uploadFiles).mockClear();
+    await vi.waitFor(() => {
+      expect(byId<HTMLButtonElement>("filepicker-upload").disabled).toBe(false);
+    });
+  });
+
+  it("opens the dialog on an input in the document and uploads what it picks to the open folder", async () => {
+    openFilePicker(undefined, "/a");
+    const file = new File(["x"], "note.txt");
+    let connected: boolean | null = null;
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(function (
+      this: HTMLInputElement,
+    ) {
+      connected = this.isConnected;
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      this.files = dt.files;
+      this.dispatchEvent(new Event("change"));
+    });
+    try {
+      byId("filepicker-upload").click();
+    } finally {
+      click.mockRestore();
+    }
+    expect(connected).toBe(true);
+    await vi.waitFor(() => {
+      expect(uploadFiles).toHaveBeenCalledOnce();
+    });
+    const opts = vi.mocked(uploadFiles).mock.calls[0]?.[0];
+    expect(opts?.targetDir).toBe("/a");
+    expect(Array.from(opts?.files ?? [])).toEqual([file]);
+  });
+
+  it("keeps the picker open when the OS dialog is dismissed, and says no file was attached", async () => {
+    const real = await vi.importActual<typeof Modals>("./modals.js");
+    const modal = byId<HTMLDivElement>("filepicker-modal");
+    const onClose = vi.fn();
+    real.onModalClose(modal, onClose);
+    openFilePicker(undefined, "/a");
+    real.openModal(modal);
+    const dlg = modal.closest("dialog");
+    const opened: HTMLInputElement[] = [];
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(function (
+      this: HTMLInputElement,
+    ) {
+      opened.push(this);
+    });
+    try {
+      byId("filepicker-upload").click();
+    } finally {
+      click.mockRestore();
+    }
+    try {
+      expect(dlg?.open).toBe(true);
+      const input = opened[0];
+      if (input === undefined) {
+        throw new Error("the Upload press opened no dialog");
+      }
+      // Shaped like the platform's: HTML "show the picker, if applicable" fires a bubbling cancel.
+      input.dispatchEvent(new Event("cancel", { bubbles: true }));
+      expect(dlg?.classList.contains("is-leaving")).toBe(false);
+      expect(onClose).not.toHaveBeenCalled();
+      await vi.waitFor(() => {
+        const shown = [...document.querySelectorAll(".uip-toast")].map((t) => t.textContent);
+        expect(shown.some((t) => t.includes("No file was attached."))).toBe(true);
+      });
+      expect(dlg?.open).toBe(true);
+      expect(onClose).not.toHaveBeenCalled();
+    } finally {
+      real.closeModal(modal);
+    }
   });
 });

@@ -9,7 +9,8 @@ import { getGitTab } from "./git-tabs.js";
 import { noteDefaultBrowsePath } from "./files.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { restoreNotifications } from "./notify.js";
-import { loadSettings, patchSettings, initSettingsTracking } from "./persist.js";
+import { adoptWriteAnswer, patchSettings, refreshSettings, settingsAsShown } from "./persist.js";
+import type { SettingsSwitch } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import type { KiroDefault } from "./wire/types.gen.js";
 import { cacheTheme, cachedTheme } from "./device-view.js";
@@ -19,6 +20,7 @@ import type { ThemeStorage } from "@cplieger/ui-primitives/theme";
 import { initSettingsTabs } from "./settings-tabs.js";
 import type { IdentityVerdict } from "./identity.js";
 import { initPermissionsUI, initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
+import { applyAgentDirs, initAgentDirsUI } from "./agent-dirs-ui.js";
 import { initMCP } from "./mcp-ui.js";
 import { initKnowledge, loadKnowledge } from "./knowledge.js";
 import { apiGet } from "./api-client.js";
@@ -29,16 +31,15 @@ import { el } from "@cplieger/reactive";
 import { initNotificationToggles } from "./settings-notifications.js";
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
-import { logout, setKiroSetting } from "./actions/settings.js";
+import { logout, setEngineHeap, setKiroSetting } from "./actions/settings.js";
 import { runDiagnostics } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { initSteeringEditor, loadSteeringDoc } from "./settings-steering.js";
 import { DEFAULT_AUTO_COMPACT_PCT, compactionPolicy } from "./context-ring.js";
 import { paintSettingLocks, writeSwitch } from "./governance.js";
 
-// Per-key write generation for the kiro-cli settings endpoint; same rule as persist.ts's `keyGen`,
-// which explains it. Separate because the key namespaces are (dotted kiro-cli keys against
-// AppSettings keys).
+// The kiro-cli settings endpoint does not go through persist.ts's settings state, so it keeps its own
+// per-key write generation: only a key's newest write reports its outcome.
 let kiroSeq = 0;
 const kiroGen = new Map<string, number>();
 
@@ -95,8 +96,7 @@ function repaintTheme(choice: ThemeChoice): void {
   }
 }
 
-/** Fold a loaded settings payload's theme in, and carry the cache across ONCE when the server
- *  has none. */
+/** Fold a settings payload's theme in, and carry the cache across ONCE when the server has none. */
 export function adoptThemeFromSettings(s: EffectiveSettings): void {
   const fromServer = asThemeChoice(s.theme);
   const first = !themeLoaded;
@@ -141,7 +141,13 @@ function setTheme(choice: ThemeChoice): void {
   if (adoptingTheme) {
     return;
   }
-  void patchSettings({ theme: choice });
+  void patchSettings({ theme: choice }).then((r) => {
+    // A failed write leaves the theme to what the page shows without it.
+    const shown = r.outcome === "failed" ? settingsAsShown() : null;
+    if (shown !== null) {
+      adoptThemeFromSettings(shown);
+    }
+  });
 }
 
 /** The adapter @cplieger/ui-primitives' createTheme persists through. Built here and INJECTED
@@ -164,19 +170,17 @@ export function _resetThemeForTest(): void {
   adoptingTheme = false;
 }
 
-/** Fetch settings from server and apply notification state only. Used for lightweight re-sync
- *  (e.g. after login) without touching per-device UI state. Compare with restoreAll(), which
- *  also seeds the file browser path and the settings panels. */
+/** Read the settings again after a settings_updated event and apply notification state only,
+ *  without touching per-device UI state. Compare with restoreAll(), which also seeds the file
+ *  browser path and the settings panels. Null means there is nothing to adopt
+ *  (persist.refreshSettings). */
 export async function syncSettings(): Promise<EffectiveSettings | null> {
-  const s = await loadSettings();
-  // Null means the fetch failed: seeding the dedup tracker from nothing would clear it and re-arm
-  // the very write-back it exists to suppress, and applying notification state from nothing would
-  // silence or unsilence push on a network blip.
+  const s = await refreshSettings();
+  // Applying notification state from nothing would silence or unsilence push on a network blip,
+  // and from older settings it would roll back a newer write.
   if (s === null) {
     return null;
   }
-  // Seed the dedup tracker BEFORE any code path can fire patchSettings().
-  initSettingsTracking(s);
   restoreNotifications(s);
   return s;
 }
@@ -194,18 +198,22 @@ export function restoreAll(s: EffectiveSettings): void {
   // Theme is applied by initThemeToggle() (initUI), which constructs the createTheme controller —
   // it reads through the storage adapter above and applies the resolved theme on construction.
   initPermissionsUI(s);
+  initAgentDirsUI();
+  applyAgentDirs(s);
   initNativePolicyUI();
   applyGeneralPanel(s);
 }
 
-/** Seed the General panel's controls from a settings payload. Called at boot AND from the
- *  `settings_updated` arm, so a value chosen on another device reaches this screen's controls
- *  rather than only its behaviour. */
-export function applyGeneralPanel(s: EffectiveSettings): void {
+/** Paint the General panel's controls from shown (default s), and take the fallback numbers from s,
+ *  the server's settings. Called at boot AND from the `settings_updated` arm, so a value chosen on
+ *  another device reaches this screen's controls rather than only its behaviour. */
+export function applyGeneralPanel(s: EffectiveSettings, shown: EffectiveSettings = s): void {
   serverRetentionDays = s.chat_retention_days;
-  applyChatRetention(s);
-  applyAgentCapabilities(s);
-  applyPanelSwitches(s);
+  serverEngineHeap = s.engine_heap_mib;
+  applyChatRetention(shown);
+  applyAgentCapabilities(shown);
+  applyPanelSwitches(shown);
+  applyEngineHeap(shown);
 }
 
 /** Register the General panel's `change` listeners. Once per page, from `initUI`: every one of
@@ -214,6 +222,7 @@ export function initGeneralPanelControls(): void {
   initChatRetentionControls();
   initAgentCapabilityControls();
   initPanelSwitchControls();
+  initEngineHeapControl();
   document.getElementById("settings-open-config")?.addEventListener("click", () => {
     void openConfigFile("config.json");
   });
@@ -263,8 +272,12 @@ function initChatRetentionControls(): void {
     return;
   }
   const { daysInput, daysRow, foreverInput } = els;
-  const persist = (value: number, input: HTMLInputElement): void => {
-    void patchSettings({ chat_retention_days: value }, input);
+  const forever = { el: foreverInput, key: "chat_retention_days", on: -1 };
+  const persist = (value: number, ...boxes: SettingsSwitch[]): void => {
+    void patchSettings({ chat_retention_days: value }, ...boxes).then(() => {
+      // The settled write may have repainted the forever box.
+      daysRow?.classList.toggle("hidden", foreverInput.checked);
+    });
   };
 
   daysInput.addEventListener("change", () => {
@@ -272,16 +285,20 @@ function initChatRetentionControls(): void {
       return; // forever wins; the Days-kept row is hidden
     }
     const n = parseInt(daysInput.value, 10);
-    persist(!isNaN(n) && n >= 0 ? n : 0, daysInput);
+    saveControl(daysInput, { chat_retention_days: !isNaN(n) && n >= 0 ? n : 0 }, (shown) => {
+      if (shown.chat_retention_days >= 0) {
+        daysInput.value = String(shown.chat_retention_days);
+      }
+    });
   });
   foreverInput.addEventListener("change", () => {
     daysRow?.classList.toggle("hidden", foreverInput.checked);
     if (foreverInput.checked) {
-      persist(-1, foreverInput);
+      persist(-1, forever);
       return;
     }
     const n = parseInt(daysInput.value, 10);
-    persist(!isNaN(n) && n >= 0 ? n : serverRetentionDays, foreverInput);
+    persist(!isNaN(n) && n >= 0 ? n : serverRetentionDays, forever);
   });
 }
 
@@ -543,12 +560,36 @@ const AUTH_LINE: Readonly<Record<IdentityVerdict["state"], string>> = {
 /** The verdict this module last rendered, held so the logout action can restore it on a refusal. */
 let lastVerdict: IdentityVerdict = { state: "unavailable", reason: "not resolved yet" };
 
-/** Paint the sidebar identity row and the status card's auth line. Takes the VERDICT rather than
- *  an email because three answers reach it and only one carries an address. */
+const TEXT_SIGN_OUT = "Log out";
+const TEXT_SIGN_OUT_API_KEY =
+  "marotte signs in with the KIRO_API_KEY environment variable. Remove it from marotte's environment to sign out.";
+
+/** Paint the sidebar identity row, the status card's auth and sign-in lines, and Sign out. Takes the VERDICT rather
+ *  than an email because three answers reach it and only one carries an address. */
 export function renderIdentity(v: IdentityVerdict): void {
   lastVerdict = v;
-  $.userEmail.textContent = v.state === "signed_in" ? v.email : "";
+  const account = v.state === "signed_in" ? v : null;
+  $.userEmail.textContent = account?.email ?? "";
   setAuthLine(AUTH_LINE[v.state]);
+  setSignInRows(account === null ? [] : [account.method, account.startUrl, account.region]);
+  // The server refuses a sign-out while the key signs the engine in.
+  const keyed = account?.apiKey === true;
+  $.logoutBtn.disabled = keyed;
+  $.logoutBtn.setAttribute("data-tooltip", keyed ? TEXT_SIGN_OUT_API_KEY : TEXT_SIGN_OUT);
+}
+
+/** ONE writer of the sign-in rows and their separator: method, start URL and region, each hidden when empty. */
+function setSignInRows([method = "", url = "", region = ""]: readonly string[]): void {
+  const rows: readonly [HTMLElement, string][] = [
+    [$.stSignInMethod, method],
+    [$.stSignInURL, url],
+    [$.stSignInRegion, region],
+  ];
+  for (const [row, text] of rows) {
+    row.textContent = text;
+    row.hidden = text === "";
+  }
+  $.stSignInSep.hidden = rows.every(([, text]) => text === "");
 }
 
 /** What `renderIdentity` last rendered. Exported for the logout action's rollback, which
@@ -580,13 +621,14 @@ interface KiroSettingsPayload {
 const experimentalFlags: readonly {
   key: string;
   inputID: string;
-  /** Must match the key's Seed in the server's allowedKiroSettings, because a failed seed and a failed
-   *  read both arrive as "". Per row, because the three polarities are not uniform. */
+  /** Must match the key's Seed in the server's allowedKiroSettings, or kiro-cli's own default for a key
+   *  with none, because an unset key and a failed read both arrive as "". Per row, because the three
+   *  polarities are not uniform. */
   defaultOn: boolean;
   inverted?: boolean;
 }[] = [
   { key: "hooks.showStatus", inputID: "flag-hooks-status", defaultOn: true },
-  { key: "telemetry.enabled", inputID: "flag-telemetry", defaultOn: false },
+  { key: "telemetry.enabled", inputID: "flag-telemetry", defaultOn: true },
   // Checked = disable inheritance of default steering/skills/AGENTS.md by custom agents (kiro-cli
   // 2.10+). Not inverted: on = true = disabled.
   {
@@ -660,23 +702,21 @@ export function initExperimentalToggles(): void {
 }
 
 // Toggles that look like the kiro-cli flags above and are a different mechanism: they write MAROTTE
-// settings through /api/settings, and internal/agent resolves each at spawn time into the lever KAS
-// reads: `_meta.kiro.settings` for knowledge, the child environment for tool search.
+// settings through /api/settings, and internal/agent resolves each at the engine spawn or at each session
+// door into the lever KAS reads.
 const agentCapabilities: readonly {
   key:
     | "knowledge_enabled"
-    | "tool_search_enabled"
+    | "model_fallback_enabled"
     | "spec_planning_ask_first"
-    | "inline_agents_enabled"
     | "steering_reminders_enabled"
     | "workflows_enabled"
     | "content_collection_enabled";
   inputID: string;
 }[] = [
   { key: "knowledge_enabled", inputID: "flag-knowledge" },
-  { key: "tool_search_enabled", inputID: "flag-tool-search" },
+  { key: "model_fallback_enabled", inputID: "flag-model-fallback" },
   { key: "spec_planning_ask_first", inputID: "flag-spec-ask-first" },
-  { key: "inline_agents_enabled", inputID: "flag-inline-agents" },
   { key: "steering_reminders_enabled", inputID: "flag-steering-reminders" },
   { key: "workflows_enabled", inputID: "flag-workflows" },
   { key: "content_collection_enabled", inputID: "flag-content-collection" },
@@ -787,27 +827,60 @@ function applyAgentCapabilities(s: EffectiveSettings): void {
   for (const choice of agentFeatureChoices) {
     paintFeatureChoice(choice, s);
   }
+  paintMemory(s);
+  for (const choice of agentChoices) {
+    paintAgentChoice(choice, s);
+  }
+  paintSpecPlanning(s.spec_planning);
+  const timeout = shellTimeoutInput();
+  // Not while the reader is in the box, for retention's reason.
+  if (timeout !== null && document.activeElement !== timeout) {
+    paintShellTimeout(timeout, s);
+  }
+  applyAutoCompaction(s);
+  paintSettingLocks();
+}
+
+function paintMemory(s: EffectiveSettings): void {
   const memory = memorySelect();
   // The server validates the value; an unknown one from a newer build leaves the control as it is
   // rather than selecting nothing.
   if (memory !== null && (MEMORY_MODES as readonly string[]).includes(s.memory_mode)) {
     memory.value = s.memory_mode;
   }
-  for (const choice of agentChoices) {
-    const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
-    if (select !== null && choice.values.includes(s[choice.key])) {
-      select.value = s[choice.key];
+}
+
+function paintAgentChoice(choice: (typeof agentChoices)[number], s: EffectiveSettings): void {
+  const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
+  if (select !== null && choice.values.includes(s[choice.key])) {
+    select.value = s[choice.key];
+  }
+}
+
+function shellTimeoutInput(): HTMLInputElement | null {
+  return document.getElementById("shell-command-timeout") as HTMLInputElement | null;
+}
+
+function paintShellTimeout(timeout: HTMLInputElement, s: EffectiveSettings): void {
+  timeout.value =
+    s.terminal_command_timeout_ms > 0 ? String(s.terminal_command_timeout_ms / 1000) : "";
+}
+
+/** Send patch from control, a control persist holds no switch for. Once the write settles the
+ *  control shows the settings as shown, through paint, unless the reader changed it since: a
+ *  refused write leaves no unsaved value on screen. */
+function saveControl(
+  control: HTMLInputElement | HTMLSelectElement,
+  patch: Partial<EffectiveSettings>,
+  paint: (shown: EffectiveSettings) => void,
+): void {
+  const sent = control.value;
+  void patchSettings(patch).then(() => {
+    const shown = settingsAsShown();
+    if (shown !== null && control.value === sent) {
+      paint(shown);
     }
-  }
-  paintSpecPlanning(s.spec_planning);
-  const timeout = document.getElementById("shell-command-timeout") as HTMLInputElement | null;
-  // Not while the reader is in the box, for retention's reason.
-  if (timeout !== null && document.activeElement !== timeout) {
-    timeout.value =
-      s.terminal_command_timeout_ms > 0 ? String(s.terminal_command_timeout_ms / 1000) : "";
-  }
-  applyAutoCompaction(s);
-  paintSettingLocks();
+  });
 }
 
 function initAgentCapabilityControls(): void {
@@ -817,24 +890,29 @@ function initAgentCapabilityControls(): void {
       continue;
     }
     input.addEventListener("change", () => {
-      void patchSettings({ [cap.key]: input.checked }, input);
+      void patchSettings({ [cap.key]: input.checked }, { el: input, key: cap.key, on: true });
     });
   }
   for (const sw of agentFeatureSwitches) {
     const input = document.getElementById(sw.inputID) as HTMLInputElement | null;
     input?.addEventListener("change", () => {
-      void patchSettings({ [sw.key]: input.checked ? "on" : "off" }, input);
+      void patchSettings(
+        { [sw.key]: input.checked ? "on" : "off" },
+        { el: input, key: sw.key, on: "on" },
+      );
     });
   }
   for (const choice of agentFeatureChoices) {
     const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
     select?.addEventListener("change", () => {
-      void patchSettings({ [choice.key]: select.value });
+      saveControl(select, { [choice.key]: select.value }, (shown) => {
+        paintFeatureChoice(choice, shown);
+      });
     });
   }
   const memory = memorySelect();
   memory?.addEventListener("change", () => {
-    void patchSettings({ memory_mode: memory.value });
+    saveControl(memory, { memory_mode: memory.value }, paintMemory);
   });
   for (const choice of agentChoices) {
     const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
@@ -842,20 +920,25 @@ function initAgentCapabilityControls(): void {
       if (choice.key === "spec_planning") {
         paintSpecPlanning(select.value);
       }
-      void patchSettings({ [choice.key]: select.value });
+      saveControl(select, { [choice.key]: select.value }, (shown) => {
+        paintAgentChoice(choice, shown);
+        paintSpecPlanning(shown.spec_planning);
+      });
     });
   }
-  const timeout = document.getElementById("shell-command-timeout") as HTMLInputElement | null;
+  const timeout = shellTimeoutInput();
   timeout?.addEventListener("change", () => {
     const ms = shellTimeoutMs(timeout.value);
     timeout.value = ms > 0 ? String(ms / 1000) : "";
-    void patchSettings({ terminal_command_timeout_ms: ms }, timeout);
+    saveControl(timeout, { terminal_command_timeout_ms: ms }, (shown) => {
+      paintShellTimeout(timeout, shown);
+    });
   });
   initAutoCompactionControls();
 }
 
-// A switch and, while it is on, a slider. Both write /api/settings; the server resolves them per
-// spawn into the session door, so a change reaches an open chat when it next opens.
+// A switch and, while it is on, a slider. Both write /api/settings; the server resolves them at
+// each session door, so a change reaches an open chat when it next opens.
 // `compactionPolicy` is updated at once, so the ring follows the setting without a reload.
 
 function autoCompactionEls(): {
@@ -909,14 +992,23 @@ function initAutoCompactionControls(): void {
   const { toggle, range } = els;
   toggle.addEventListener("change", () => {
     paintAutoCompaction(toggle.checked, Number(range.value));
-    void patchSettings({ auto_compaction_enabled: toggle.checked }, toggle);
+    void patchSettings(
+      { auto_compaction_enabled: toggle.checked },
+      { el: toggle, key: "auto_compaction_enabled", on: true },
+    ).then(() => {
+      // The settled write may have repainted the switch.
+      paintAutoCompaction(toggle.checked, Number(range.value));
+    });
   });
   // `input` repaints the readout while dragging; only `change`, the released gesture, writes.
   range.addEventListener("input", () => {
     paintAutoCompaction(toggle.checked, Number(range.value));
   });
   range.addEventListener("change", () => {
-    void patchSettings({ auto_compact_pct: Number(range.value) }, range);
+    saveControl(range, { auto_compact_pct: Number(range.value) }, (shown) => {
+      range.value = String(shown.auto_compact_pct);
+      paintAutoCompaction(shown.auto_compaction_enabled, shown.auto_compact_pct);
+    });
   });
 }
 
@@ -947,7 +1039,74 @@ function initPanelSwitchControls(): void {
       continue;
     }
     input.addEventListener("change", () => {
-      void patchSettings({ [sw.key]: input.checked }, input);
+      void patchSettings({ [sw.key]: input.checked }, { el: input, key: sw.key, on: true });
     });
   }
+}
+
+/** The heap limit for a typed value: 0 (kiro-cli's default) for an empty box, the whole number of MiB otherwise,
+ *  or null for text that is no whole number. The server owns the bounds. */
+export function engineHeapMiB(raw: string): number | null {
+  const t = raw.trim();
+  if (t === "") {
+    return 0;
+  }
+  return /^\d+$/.test(t) ? Number(t) : null;
+}
+
+/** The value the server last reported, which a refused entry goes back to. */
+let serverEngineHeap = 0;
+/** The newest edit still saving, which owns the box and the indicator: only its answer paints. */
+let heapEdit: { readonly gen: number; readonly mib: number } | null = null;
+let heapEdits = 0;
+
+function engineHeapInput(): HTMLInputElement | null {
+  return document.getElementById("engine-heap-mib") as HTMLInputElement | null;
+}
+
+function paintEngineHeap(input: HTMLInputElement, mib: number): void {
+  input.value = mib > 0 ? String(mib) : "";
+}
+
+function applyEngineHeap(s: EffectiveSettings): void {
+  const input = engineHeapInput();
+  // Not while the reader is in the box, for retention's reason, nor over an edit still saving.
+  if (input !== null && document.activeElement !== input && heapEdit === null) {
+    paintEngineHeap(input, s.engine_heap_mib);
+  }
+}
+
+function initEngineHeapControl(): void {
+  const input = engineHeapInput();
+  input?.addEventListener("change", () => {
+    const mib = engineHeapMiB(input.value);
+    if (mib === null) {
+      showError("engine_heap_mib");
+      paintEngineHeap(input, heapEdit?.mib ?? serverEngineHeap);
+      return;
+    }
+    const edit = { gen: ++heapEdits, mib };
+    heapEdit = edit;
+    showSaving("engine_heap_mib");
+    void setEngineHeap.dispatch({ mib }).then((r) => {
+      // An answer the page does not adopt leaves serverEngineHeap to the settings it holds.
+      const current = r !== null && adoptWriteAnswer(r);
+      if (current) {
+        serverEngineHeap = r.engine_heap_mib;
+      }
+      if (heapEdit?.gen !== edit.gen) {
+        return;
+      }
+      heapEdit = null;
+      if (r === null) {
+        showError("engine_heap_mib");
+        paintEngineHeap(input, serverEngineHeap);
+        return;
+      }
+      if (!current) {
+        paintEngineHeap(input, serverEngineHeap);
+      }
+      showSaved("engine_heap_mib");
+    });
+  });
 }

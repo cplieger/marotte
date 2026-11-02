@@ -167,7 +167,9 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	epoch, _ := streamingPromptTurn(t, h, chatID, "half an answer")
 	sb, _ := h.bridge.mgr.orInsert(chatID)
-	sb.bridge = br
+	// A session past its door: one still opening has its door retire it.
+	sb.attach(br)
+	sb.setIdle()
 
 	forwardDone := make(chan struct{})
 	go func() {
@@ -183,8 +185,8 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 	}()
 	waitForParkedSettle(t, h.coord.turns, chatID, epoch, 99)
 
-	// Stop without removing the bridge: the process died on its own.
-	br.Stop()
+	// End without removing the session: it ended on its own.
+	br.end()
 	<-forwardDone
 	<-settled
 
@@ -217,9 +219,9 @@ func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 	lc.mu.Lock()
 	turn := lc.openLocked(chatID, &marotte.Entry{ID: "t-1"}, marotte.TurnSourcePrompt, "", turnlog.Open("t-1", nil))
 	lc.mu.Unlock()
-	claimed, won := r.claimOwn(ctx, chatID)
+	claimed, won := r.claimTurn(ctx, chatID, turn.ID, nil)
 	if !won {
-		t.Fatal("claimOwn lost the claim on a freshly opened turn")
+		t.Fatal("claimTurn lost the claim on a freshly opened turn")
 	}
 	r.finish(claimed, marotte.TurnResult{Stop: marotte.StopReasonEndTurn})
 

@@ -181,8 +181,8 @@ func TestSteeringCleared_RecordsEachDroppedAgentNoteAndNoUserRow(t *testing.T) {
 	}
 }
 
-// TestSteeringCleared_ANoteNeverHeldIsDroppedTextless pins a text-less drop stamped with its run;
-// a never-queued user steer writes nothing.
+// TestSteeringCleared_ANoteNeverHeldIsDroppedTextless pins a text-less drop that names no run, since a clear carries
+// no words to find it by, and forgets one recorded notice; a never-queued user steer writes nothing.
 func TestSteeringCleared_ANoteNeverHeldIsDroppedTextless(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	deps.userSteers = map[string]bool{"steer-mine": true}
@@ -196,10 +196,13 @@ func TestSteeringCleared_ANoteNeverHeldIsDroppedTextless(t *testing.T) {
 	want := []steerRow{{
 		ID:     "notify-wf-9",
 		Origin: marotte.SteerOriginAgent, State: marotte.SteerStateDropped,
-		Reason: marotte.SteerReasonBoundary, OriginRun: "wf_9", ProducedTs: 1_700_000_000_000,
+		Reason: marotte.SteerReasonBoundary,
 	}}
 	if len(rows) != 1 || !reflect.DeepEqual(rows[0], want[0]) {
-		t.Errorf("steer entries = %+v, want only the text-less agent drop carrying its run's provenance %+v", rows, want[0])
+		t.Errorf("steer entries = %+v, want only the text-less agent drop %+v", rows, want[0])
+	}
+	if q := deps.runNotices["c1"]; len(q) != 0 {
+		t.Errorf("recorded notices after the clear = %+v, want the cleared one forgotten", q)
 	}
 	if got := appendedSteers(t, *events); len(got) != 1 {
 		t.Errorf("entry_appended{steer} frames = %d, want 1: %v", len(got), eventTypes(*events))
@@ -210,14 +213,54 @@ func TestSteeringCleared_ANoteNeverHeldIsDroppedTextless(t *testing.T) {
 	}
 }
 
-// TestSteeringCleared_EmptyListIsNotBroadcast pins silence on the normal empty clear.
-func TestSteeringCleared_EmptyListIsNotBroadcast(t *testing.T) {
+// TestSteeringCleared_ANoteInjectedThisTurnStaysRead pins that a boundary clear naming run notices KAS already
+// injected writes no dropped row beside the read one, and that the next turn's clear judges the id afresh.
+func TestSteeringCleared_ANoteInjectedThisTurnStaysRead(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	for _, id := range []string{"notify-wf-a", "notify-wf-b"} {
+		tr.HandleSessionInfoUpdate(t.Context(), "c1",
+			steerFrame(t, "steering_injected", map[string]any{"messageId": id, "content": "subflux is done"}),
+			FrameAttribution{})
+	}
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{"notify-wf-a", "notify-wf-b"}}),
+		FrameAttribution{})
+
+	rows := steerRows(t, deps, "c1")
+	if len(rows) != 2 {
+		t.Fatalf("steer entries = %+v, want the two read notes alone", rows)
+	}
+	for _, r := range rows {
+		if r.State != marotte.SteerStateRead {
+			t.Errorf("entry %s state = %q, want %q", r.ID, r.State, marotte.SteerStateRead)
+		}
+	}
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{"notify-wf-a"}}),
+		FrameAttribution{})
+	if rows := steerRows(t, deps, "c1"); len(rows) != 3 || rows[2].State != marotte.SteerStateDropped {
+		t.Errorf("after a later turn's clear, steer entries = %+v, want a third, dropped row", rows)
+	}
+}
+
+// An empty clear still empties the buffer, so it files its steer_cleared fact and nothing else.
+func TestSteeringCleared_AnEmptyClearFilesOnlyItsFact(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{}}), FrameAttribution{})
 
-	if len(*events) != 0 {
-		t.Errorf("broadcast %d events for an empty clear, want 0", len(*events))
+	if len(*events) != 1 {
+		t.Fatalf("broadcast %+v for an empty clear, want only its fact's entry", *events)
+	}
+	p, ok := (*events)[0].Payload.(marotte.EntryAppendedPayload)
+	if !ok || p.Entry.Kind != marotte.EntryKindSteerCleared {
+		t.Fatalf("event = %+v, want the steer_cleared entry", (*events)[0])
+	}
+	if c := decodePayload[marotte.EntrySteerCleared](t, &p.Entry); c.IDs == nil || len(c.IDs) != 0 {
+		t.Errorf("fact = %+v, want an empty, non-null id list", c)
 	}
 }
 
@@ -234,22 +277,6 @@ func TestSteering_IDlessFramesAreDroppedNotForwarded(t *testing.T) {
 				t.Errorf("broadcast %d events for an id-less %s, want 0", len(*events), kind)
 			}
 		})
-	}
-}
-
-// TestSteering_SurvivesSubagentAttribution pins steering dispatch BEFORE the parent-only gate:
-// a steer is the chat's, consumed by whichever execution runs.
-func TestSteering_SurvivesSubagentAttribution(t *testing.T) {
-	deps, events, _ := depsWithStore(t, "c1")
-	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
-		steerFrame(t, "steering_injected", map[string]any{
-			"messageId": "steer-1",
-			"content":   "use tabs",
-		}), FrameAttribution{Subagent: true, SessionID: "sub-session-7"})
-
-	rows := appendedSteers(t, *events)
-	if len(rows) != 1 || rows[0].ID != "steer-1" || rows[0].State != marotte.SteerStateRead {
-		t.Fatalf("events = %v — a steer consumed inside a subagent must still be recorded as read", eventTypes(*events))
 	}
 }
 

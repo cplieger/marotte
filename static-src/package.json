@@ -16,41 +16,44 @@
     "lint:eslint": "eslint .",
     "lint:prettier": "prettier --check .",
     "lint:fix": "eslint . --fix && prettier --write .",
-    "lint:knip": "knip"
+    "lint:knip": "knip",
+    "capture:closed-row": "node scripts/capture-closed-row.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@stryker-mutator/core": "10.0.0",
-    "@stryker-mutator/typescript-checker": "10.0.0",
-    "@stryker-mutator/vitest-runner": "10.0.0",
-    "@types/node": "26.6.4",
+    "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/typescript-checker": "10.1.1",
+    "@stryker-mutator/vitest-runner": "10.1.1",
+    "@types/node": "26.6.6",
     "@typescript/native": "npm:typescript@7.0.2",
-    "@vitest/browser": "5.0.3",
-    "@vitest/browser-playwright": "5.0.3",
-    "@vitest/coverage-v8": "5.0.3",
-    "eslint": "10.12.0",
+    "@vitest/browser": "5.0.5",
+    "@vitest/browser-playwright": "5.0.5",
+    "@vitest/coverage-v8": "5.0.5",
+    "eslint": "10.13.0",
     "fast-check": "4.10.2",
-    "knip": "6.40.0",
-    "msw": "3.0.2",
-    "playwright": "1.64.0",
-    "prettier": "3.9.9",
+    "knip": "6.43.0",
+    "msw": "3.0.3",
+    "playwright": "1.64.1",
+    "prettier": "3.9.10",
     "stylelint": "17.16.0",
     "stylelint-config-standard": "40.0.0",
     "typescript": "npm:@typescript/typescript6@6.0.2",
-    "typescript-eslint": "8.71.1",
-    "vitest": "5.0.3"
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.0.5"
   },
   "dependencies": {
-    "@cplieger/actions": "3.2.0",
-    "@cplieger/fetch": "2.2.2",
-    "@cplieger/keyenc": "1.0.11",
-    "@cplieger/reactive": "2.2.0",
-    "@cplieger/sse": "1.2.0",
-    "@cplieger/ui-primitives": "3.2.0",
-    "@cplieger/web-terminal-engine": "6.2.0",
-    "@cplieger/web-terminal-ui": "8.5.0"
+    "@cplieger/actions": "4.0.0",
+    "@cplieger/fetch": "2.3.0",
+    "@cplieger/keyenc": "1.1.0",
+    "@cplieger/reactive": "2.3.0",
+    "@cplieger/sse": "1.2.1",
+    "@cplieger/ui-primitives": "4.0.0",
+    "@cplieger/web-terminal-engine": "6.4.0",
+    "@cplieger/web-terminal-ui": "8.6.0",
+    "pele": "1.12.0"
   },
   "overrides": {
-    "qs": "^6.15.2"
+    "qs": "^6.15.2",
+    "minimatch": "^11.0.1"
   }
 }

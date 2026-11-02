@@ -28,15 +28,15 @@ func configModelUpdate(t *testing.T, current string, choices []map[string]any) [
 	})
 }
 
-// The per-model hasEffort lands on SessionModel.HasEffort so the picker can hide the
-// effort row; a choice with no _meta decodes as false.
-func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
+// The per-model effortLevels land on SessionModel.EffortTiers, the one capability the effort
+// row reads; a choice with no _meta decodes as none.
+func TestHandleConfigOptionUpdate_PlumbsEffortTiers(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
 	raw := configModelUpdate(t, "model-a", []map[string]any{
-		{"value": "model-a", "name": "Model A", "_meta": map[string]any{"kiro": map[string]any{"hasEffort": true, "rateMultiplier": 1.0}}},
-		{"value": "model-b", "name": "Model B", "_meta": map[string]any{"kiro": map[string]any{"hasEffort": false, "rateMultiplier": 2.0}}},
+		{"value": "model-a", "name": "Model A", "_meta": map[string]any{"kiro": map[string]any{"effortLevels": []string{"low", "high"}, "rateMultiplier": 1.0}}},
+		{"value": "model-b", "name": "Model B", "_meta": map[string]any{"kiro": map[string]any{"rateMultiplier": 2.0}}},
 		{"value": "model-c", "name": "Model C"}, // no _meta at all
 	})
 
@@ -50,7 +50,7 @@ func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 		t.Errorf("current model = %q, want model-a", c.Model)
 	}
 	// The model LIST is the workspace catalog's, not the chat's.
-	want := map[string]bool{"model-a": true, "model-b": false, "model-c": false}
+	want := map[string][]string{"model-a": {"low", "high"}, "model-b": nil, "model-c": nil}
 	if len(deps.catalogModels) != len(want) {
 		t.Fatalf("catalog models len = %d, want %d: %+v", len(deps.catalogModels), len(want), deps.catalogModels)
 	}
@@ -60,14 +60,13 @@ func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 			t.Errorf("unexpected model %q in catalog", m.ID)
 			continue
 		}
-		if m.HasEffort != exp {
-			t.Errorf("model %q HasEffort = %v, want %v", m.ID, m.HasEffort, exp)
+		if !slices.Equal(m.EffortTiers, exp) {
+			t.Errorf("model %q EffortTiers = %v, want %v", m.ID, m.EffortTiers, exp)
 		}
 	}
 }
 
-// configEffortUpdate carries the `effortLevel` option kiro-cli's TUI builds its picker
-// from; there is no per-model tier list on the wire.
+// configEffortUpdate carries the session's `effortLevel` option.
 func configEffortUpdate(t *testing.T, current string, choices []map[string]any) []byte {
 	t.Helper()
 	return mustJSON(t, map[string]any{
@@ -113,10 +112,9 @@ func TestHandleConfigOptionUpdate_PlumbsEffortOption(t *testing.T) {
 	if len(c.EffortLevels) > 0 && c.EffortLevels[0].Name != "Low" {
 		t.Errorf("level name = %q, want Low", c.EffortLevels[0].Name)
 	}
-	// The chat's CHOICE is untouched, or a service default would pin into later sessions
-	// through StartOpts.Effort.
+	// No session is recorded yet: the level is the opening door's to pin.
 	if c.Effort != "" {
-		t.Errorf("Effort = %q, want empty (the option is not a choice)", c.Effort)
+		t.Errorf("Effort = %q, want empty while no session is recorded", c.Effort)
 	}
 }
 
@@ -138,23 +136,21 @@ func TestHandleConfigOptionUpdate_EmptyEffortOptionApplies(t *testing.T) {
 	}
 }
 
-// Absent and malformed meta both decode to the zero value, read as "not plumbed".
+// Absent and malformed meta both decode to the zero value.
 func TestChoiceMeta(t *testing.T) {
 	cases := []struct {
 		name        string
 		meta        string
-		wantHas     bool
+		wantTiers   []string
 		wantDefault string
 		wantRate    float64
 	}{
 		{name: "nil meta"},
 		{name: "empty object", meta: `{}`},
-		{name: "hasEffort only", meta: `{"kiro":{"hasEffort":true}}`, wantHas: true},
-		{name: "hasEffort false", meta: `{"kiro":{"hasEffort":false}}`},
-		{name: "kiro without hasEffort", meta: `{"kiro":{"rateMultiplier":2}}`, wantRate: 2},
+		{name: "tiers only", meta: `{"kiro":{"effortLevels":["low","max"]}}`, wantTiers: []string{"low", "max"}},
+		{name: "kiro without tiers", meta: `{"kiro":{"rateMultiplier":2}}`, wantRate: 2},
 		{
-			// The 2.18.0 shape: a default tier, no capability flag.
-			name:        "default tier, no hasEffort",
+			name:        "default tier, no tiers",
 			meta:        `{"kiro":{"rateMultiplier":1,"effortSchemaPath":"reasoning","defaultEffortLevel":"xhigh"}}`,
 			wantDefault: "xhigh",
 			wantRate:    1,
@@ -173,8 +169,8 @@ func TestChoiceMeta(t *testing.T) {
 				meta = []byte(tc.meta)
 			}
 			got := choiceMeta(meta)
-			if got.Kiro.HasEffort != tc.wantHas {
-				t.Errorf("HasEffort = %v, want %v", got.Kiro.HasEffort, tc.wantHas)
+			if !slices.Equal(got.Kiro.EffortLevels, tc.wantTiers) {
+				t.Errorf("EffortLevels = %v, want %v", got.Kiro.EffortLevels, tc.wantTiers)
 			}
 			if got.Kiro.DefaultEffortLevel != tc.wantDefault {
 				t.Errorf("DefaultEffortLevel = %q, want %q", got.Kiro.DefaultEffortLevel, tc.wantDefault)
@@ -217,8 +213,7 @@ func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			restore := captureSlog(&buf)
-			defer restore()
+			captureSlog(t, &buf)
 
 			deps, _, _ := depsWithStore(t, "c1")
 			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1", infoKindFrame(t, tt.kind), FrameAttribution{})
@@ -240,8 +235,7 @@ func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 // covers every frame the cascade already consumed.
 func TestSessionInfoUpdate_NoKindIsSilent(t *testing.T) {
 	var buf bytes.Buffer
-	restore := captureSlog(&buf)
-	defer restore()
+	captureSlog(t, &buf)
 
 	deps, _, _ := depsWithStore(t, "c1")
 	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
@@ -304,8 +298,45 @@ func TestHandleSessionInfoUpdate_AStepsTurnBracketIsDropped(t *testing.T) {
 	}
 }
 
+// activityInfo is the engine's focus_update as the 2.31 wire sends it: a focus status with the activity
+// snapshot flat beside the kind.
+func activityInfo(t *testing.T, turnActive bool) json.RawMessage {
+	t.Helper()
+	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+		"kind":     "focus_update",
+		"focus":    map[string]any{"status": "idle"},
+		"status":   "idle",
+		"activity": map[string]any{"turnActive": turnActive, "runningWorkflows": 0, "pausedWorkflows": 0},
+	}}})
+}
+
+// KAS's activity report reaches the turn lifecycle for the chat's own session only.
+func TestHandleSessionInfoUpdate_ActivityReachesTheTurnLifecycle(t *testing.T) {
+	tests := []struct {
+		name   string
+		active bool
+		attr   FrameAttribution
+		want   []turnBracket
+	}{
+		{name: "the chat going idle", active: false, want: []turnBracket{{chat: "c1", kind: "idle"}}},
+		{name: "the chat running a turn", active: true, want: []turnBracket{{chat: "c1", kind: "active"}}},
+		{name: "a step going idle", active: false, attr: FrameAttribution{Step: true}, want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps, _, _ := depsWithStore(t, "c1")
+
+			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1", activityInfo(t, tt.active), tt.attr)
+
+			if !slices.Equal(deps.brackets, tt.want) {
+				t.Errorf("brackets = %+v, want %+v", deps.brackets, tt.want)
+			}
+		})
+	}
+}
+
 // TestMaterialPctDelta pins the gate on a context-percentage rewrite: a sub-point move is
-// dropped (the ring cannot render it), a tier crossing is kept.
+// dropped wherever it lands (the ring cannot render it), a one-point move is kept.
 func TestMaterialPctDelta(t *testing.T) {
 	cases := map[string]struct {
 		old, new float64
@@ -317,19 +348,11 @@ func TestMaterialPctDelta(t *testing.T) {
 		"exactly one point up":           {50, 51, true},
 		"exactly one point down":         {51, 50, true},
 		"large jump":                     {10, 90, true},
-		// marotte's own client thresholds (70, 90 recolour the ring; 95 stops input), not KAS's 80/95.
-		"tiny move crossing 70":              {69.9, 70.0, true},
-		"tiny move crossing 70 downward":     {70.0, 69.9, true},
-		"tiny move crossing 90":              {89.9, 90.0, true},
-		"tiny move crossing 95":              {94.9, 95.0, true},
-		"tiny move crossing 95 downward":     {95.0, 94.9, true},
-		"tiny move inside the warning band":  {75.0, 75.2, false},
-		"tiny move inside the critical band": {91.0, 91.3, false},
-		"tiny move above the cutoff":         {96.0, 96.3, false},
-		// 80 is KAS's boundary and not one of marotte's, so a sub-point move
-		// across it is correctly ignored.
-		"tiny move crossing KAS's 80 is not material": {79.9, 80.0, false},
-		"from zero is material":                       {0, 1, true},
+		"sub-point move across 70":       {69.9, 70.0, false},
+		"sub-point move across 90":       {89.9, 90.0, false},
+		"sub-point move across 95 down":  {95.0, 94.9, false},
+		"one-point move across 95":       {94.5, 95.5, true},
+		"from zero is material":          {0, 1, true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -595,6 +618,34 @@ func TestHandleConfigOptionUpdate_RefreshesTheEntitlementSet(t *testing.T) {
 	}
 }
 
+// TestHandleConfigOptionUpdate_AColdCatalogPinChangesNothing pins kiro-cli 2.32.0's cold pin (one Model
+// choice equal to currentValue, one Effort choice) as no catalog: read as one, refuseUnservedModel turns down
+// every other model until the catalog loads, and for good when its refresh fails.
+func TestHandleConfigOptionUpdate_AColdCatalogPinChangesNothing(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelAndEffortUpdate(t, "opus", "high"), FrameAttribution{})
+	before, _ := store.Get(t.Context(), "c1")
+
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+		"configOptions": []map[string]any{
+			{"id": "model", "type": "select", "currentValue": "opus", "options": []map[string]any{{"value": "opus", "name": "Opus"}}},
+			{"id": "effortLevel", "type": "select", "currentValue": "high", "options": []map[string]any{{"value": "high", "name": "High"}}},
+		},
+	}), FrameAttribution{})
+
+	c, _ := store.Get(t.Context(), "c1")
+	if !slices.Equal(c.ServedModelIDs, []string{"opus", "fable"}) {
+		t.Errorf("ServedModelIDs = %v, want [opus fable] kept", c.ServedModelIDs)
+	}
+	if !slices.Equal(modelIDs(deps.catalogModels), []string{"opus", "fable"}) {
+		t.Errorf("catalog = %v, want [opus fable] kept", modelIDs(deps.catalogModels))
+	}
+	if !sameEffortLevels(c.EffortLevels, before.EffortLevels) || len(c.EffortLevels) != 2 {
+		t.Errorf("EffortLevels = %v, want the two tiers kept", c.EffortLevels)
+	}
+}
+
 // An end-of-life id stays in the entitlement set; the picker's filtering is the bridge's.
 func TestHandleConfigOptionUpdate_KeepsEndOfLifeIDsInTheServedSet(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
@@ -647,7 +698,6 @@ func TestHandleConfigOptionUpdate_AStepsFrameRefreshesTheCatalogAndWritesNoSessi
 
 	for _, attr := range []FrameAttribution{
 		{Step: true, SessionID: "sess-step", RunID: "wf_1", NodePath: "wf_1/step"},
-		{Subagent: true, SessionID: "sess-sub"},
 	} {
 		tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelAndEffortUpdate(t, "fable", "high"), attr)
 
@@ -716,7 +766,7 @@ func TestHandleConfigOptionUpdate_AnUnsolicitedRepinIsRecorded(t *testing.T) {
 		return true
 	})
 
-	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "fable"), FrameAttribution{})
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "fable", marotte.ModelAuto), FrameAttribution{})
 
 	c, _ := store.Get(t.Context(), "c1")
 	if c.Model != "fable" {
@@ -729,6 +779,41 @@ func TestHandleConfigOptionUpdate_AnUnsolicitedRepinIsRecorded(t *testing.T) {
 	want := []marotte.EntryModelSwitched{{From: "opus", To: "fable", Reason: marotte.ModelSwitchReasonUnavailable}}
 	if !slices.Equal(got, want) {
 		t.Errorf("model_switched entries = %+v, want %+v", got, want)
+	}
+}
+
+// A recorded session's reported level becomes the chat's when the record holds none: a repin
+// drops the old model's tier for the new model's, and a level held already stands.
+func TestHandleConfigOptionUpdate_AdoptsTheRunningLevelWhenTheRecordHoldsNone(t *testing.T) {
+	tests := map[string]struct {
+		model, effort, session string
+		want                   string
+	}{
+		"a session with no level adopts the reported one": {model: "fable", session: "sess-1", want: "medium"},
+		"a repin replaces the old model's tier":           {model: "opus", effort: "max", session: "sess-1", want: "medium"},
+		"a level the record holds stands":                 {model: "fable", effort: "max", session: "sess-1", want: "max"},
+		"a session still opening adopts nothing":          {model: "fable", want: ""},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			deps, _, store := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+			_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+				c.Model, c.Effort = test.model, test.effort
+				c.RecordSession(test.session)
+				return true
+			})
+			raw := mustJSON(t, map[string]any{"configOptions": []map[string]any{
+				{"id": "model", "type": "select", "currentValue": "fable", "options": []map[string]any{{"value": "fable", "name": "fable"}, {"value": "opus", "name": "opus"}}},
+				{"id": "effortLevel", "type": "select", "currentValue": "medium", "options": []map[string]any{{"value": "medium", "name": "Medium"}}},
+			}})
+
+			tr.HandleConfigOptionUpdate(t.Context(), "c1", raw, FrameAttribution{})
+
+			if c, _ := store.Get(t.Context(), "c1"); c.Effort != test.want {
+				t.Errorf("Effort = %q, want %q", c.Effort, test.want)
+			}
+		})
 	}
 }
 
@@ -765,7 +850,7 @@ func TestHandleConfigOptionUpdate_AFailedWriteRecordsNoRepin(t *testing.T) {
 	deps.store = writeFailingStore{}
 	tr := New(rolesOf(deps))
 
-	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "fable"), FrameAttribution{})
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "fable", marotte.ModelAuto), FrameAttribution{})
 
 	if got := modelSwitchesOf(t, deps.between["c1"]); len(got) != 0 {
 		t.Errorf("model_switched entries = %+v, want none", got)
@@ -855,15 +940,58 @@ func TestHandleSessionInfoUpdate_DisplayErrorDropsAnMCPConnectFailure(t *testing
 	}
 }
 
-// A step's or a subagent's display_error is not the chat's own account.
+// A step's display_error is not the chat's own account.
 func TestHandleSessionInfoUpdate_DisplayErrorIgnoresAForeignFrame(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 	turn := startedTurn(deps, "c1")
 
-	tr.HandleSessionInfoUpdate(t.Context(), "c1", displayErrorFrame(t, "Sub-agent stalled.", "ge"), FrameAttribution{Subagent: true, SessionID: "sess-sub"})
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", displayErrorFrame(t, "Step stalled.", "ge"), FrameAttribution{Step: true, SessionID: "sess-step", RunID: "wf_1"})
 
 	if got := turn.EngineError(); got != nil {
-		t.Errorf("EngineError() = %+v, want nil for a subagent's frame", got)
+		t.Errorf("EngineError() = %+v, want nil for a step's frame", got)
+	}
+}
+
+// The reported tiers, running tier and thinking are the reporting model's: a frame naming a model
+// without an effort option (a tierless one) clears them, a frame naming neither leaves them.
+func TestHandleConfigOptionUpdate_ReportedEffortIsTheNamedModels(t *testing.T) {
+	cases := []struct {
+		name       string
+		model      string
+		frame      func(t *testing.T) []byte
+		wantActive string
+		wantLevels int
+	}{
+		{name: "a move onto auto", model: "opus", frame: func(t *testing.T) []byte {
+			return configModelOffering(t, marotte.ModelAuto, marotte.ModelAuto, "opus")
+		}},
+		{name: "the current model, now tierless", model: "opus", frame: func(t *testing.T) []byte {
+			return configModelOffering(t, "opus", "opus", marotte.ModelAuto)
+		}},
+		{name: "a frame naming no model", model: "opus", wantActive: "high", wantLevels: 2, frame: func(t *testing.T) []byte {
+			return mustJSON(t, map[string]any{"configOptions": []map[string]any{
+				{"id": "thinking", "type": "select", "currentValue": "on"},
+			}})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, _, store := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+			_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+				c.Model, c.EffortActive = tc.model, "high"
+				c.EffortLevels = []marotte.SessionEffortLevel{{ID: "low"}, {ID: "high"}}
+				return true
+			})
+
+			tr.HandleConfigOptionUpdate(t.Context(), "c1", tc.frame(t), FrameAttribution{})
+
+			c, _ := store.Get(t.Context(), "c1")
+			if c.EffortActive != tc.wantActive || len(c.EffortLevels) != tc.wantLevels {
+				t.Errorf("{EffortActive %q, EffortLevels %v}, want {%q, %d tiers}",
+					c.EffortActive, c.EffortLevels, tc.wantActive, tc.wantLevels)
+			}
+		})
 	}
 }

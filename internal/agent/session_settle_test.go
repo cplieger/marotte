@@ -81,7 +81,7 @@ func TestReplayProjection_SettlesTheLoadsGateOnlyOnceItsSwapRan(t *testing.T) {
 func newReplayingHub(t *testing.T, withhold int) (*Runtime, *testChatStore) {
 	t.Helper()
 	cs := newTestChatStore()
-	h := New(context.Background(), t.TempDir(), func() ACPBridge {
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
 		b := newFakeBridge()
 		b.notifsOnStart = []*marotte.RPCResponse{
 			replayNotif(t, "user_message_chunk", "ONE", ""),
@@ -91,7 +91,7 @@ func newReplayingHub(t *testing.T, withhold int) (*Runtime, *testChatStore) {
 		}
 		b.withholdReplay = withhold
 		return b
-	}, cs)
+	}, nil), cs)
 	cs.wire(h)
 	loadedChat(t, cs, "c1")
 	return h, cs
@@ -114,7 +114,7 @@ func TestLoadSession_AnswersOnlyOnceTheReplayMergedIntoTheLog(t *testing.T) {
 		t.Fatalf("log texts before the last replay frame was read = %q, want the replayed turn absent", got)
 	}
 
-	br, ok := h.coord.bridgeFor("c1").bridge.(*fakeBridge)
+	br, ok := unguarded(h.coord.bridgeFor("c1").bridge).(*fakeBridge)
 	if !ok {
 		t.Fatalf("the chat's bridge is %T, want the fake", h.coord.bridgeFor("c1").bridge)
 	}
@@ -172,15 +172,15 @@ func TestLoadSession_AFailedReplaySwapRecoversThroughASecondGeneration(t *testin
 }
 
 // A failed generation answers that failure, never a reopen in the same call, and resumes no runs:
-// either would respawn the same failure over and over.
+// either would reopen on the same failure over and over.
 func TestLoadSession_AFailedGenerationIsNotReopenedOrResumed(t *testing.T) {
 	cs := newTestChatStore()
-	var spawns atomic.Int32
-	h := New(context.Background(), t.TempDir(), func() ACPBridge {
+	var opens atomic.Int32
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
 		b := newFakeBridge()
-		// Bounds a respawn loop, so a regression fails here rather than hanging the package.
-		if spawns.Add(1) > 3 {
-			b.startErr = errors.New("spawn cap reached")
+		// Bounds a reopen loop, so a regression fails here rather than hanging the package.
+		if opens.Add(1) > 3 {
+			b.startErr = errors.New("open cap reached")
 		}
 		b.notifsOnStart = []*marotte.RPCResponse{
 			replayNotif(t, "user_message_chunk", "ONE", ""),
@@ -189,14 +189,14 @@ func TestLoadSession_AFailedGenerationIsNotReopenedOrResumed(t *testing.T) {
 			replayNotif(t, marotte.ACPUpdateSessionInfo, "", "turn_end"),
 		}
 		return b
-	}, cs)
+	}, nil), cs)
 	cs.wire(h)
 	loadedChat(t, cs, "c1")
 	errSwap := errors.New("disk full")
 	h.replay.underLifecycle = func(context.Context, marotte.ChatID, func() error) error { return errSwap }
 	var resumed atomic.Int32
 	h.coord.onSessionRehydrated = func(marotte.ChatID) { resumed.Add(1) }
-	before := spawns.Load()
+	before := opens.Load()
 
 	// A reopen loop spins until this deadline rather than hanging the package.
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -205,8 +205,8 @@ func TestLoadSession_AFailedGenerationIsNotReopenedOrResumed(t *testing.T) {
 		t.Fatalf("LoadSession over a failing replay swap = %v, want %v", err, errSwap)
 	}
 	joinInflight(t, h)
-	if n := spawns.Load() - before; n != 1 {
-		t.Errorf("bridges spawned by one failing load = %d, want 1", n)
+	if n := opens.Load() - before; n != 1 {
+		t.Errorf("sessions opened by one failing load = %d, want 1", n)
 	}
 	if n := resumed.Load(); n != 0 {
 		t.Errorf("run resumes fired for a generation whose replay never merged = %d, want 0", n)
@@ -217,8 +217,8 @@ func TestLoadSession_AFailedGenerationIsNotReopenedOrResumed(t *testing.T) {
 // fails, and the failure leaves nothing registered for the next load to inherit.
 func TestOpenBridge_AdmitsNoCallerBeforeTheReplayMerged(t *testing.T) {
 	cs := newTestChatStore()
-	var spawns atomic.Int32
-	h := New(context.Background(), t.TempDir(), func() ACPBridge {
+	var opens atomic.Int32
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
 		b := newFakeBridge()
 		b.notifsOnStart = []*marotte.RPCResponse{
 			replayNotif(t, "user_message_chunk", "ONE", ""),
@@ -227,11 +227,11 @@ func TestOpenBridge_AdmitsNoCallerBeforeTheReplayMerged(t *testing.T) {
 			replayNotif(t, marotte.ACPUpdateSessionInfo, "", "turn_end"),
 		}
 		// Only the first generation's replay is held a frame short.
-		if spawns.Add(1) == 1 {
+		if opens.Add(1) == 1 {
 			b.withholdReplay = 1
 		}
 		return b
-	}, cs)
+	}, nil), cs)
 	cs.wire(h)
 	loadedChat(t, cs, "c1")
 	errSwap := errors.New("disk full")
@@ -257,7 +257,7 @@ func TestOpenBridge_AdmitsNoCallerBeforeTheReplayMerged(t *testing.T) {
 	if first == nil {
 		t.Fatal("the load registered no generation")
 	}
-	br, ok := first.bridge.(*fakeBridge)
+	br, ok := unguarded(first.bridge).(*fakeBridge)
 	if !ok {
 		t.Fatalf("the chat's bridge is %T, want the fake", first.bridge)
 	}
@@ -281,16 +281,16 @@ func TestOpenBridge_AdmitsNoCallerBeforeTheReplayMerged(t *testing.T) {
 	}
 }
 
-// The caller's context bounds its own wait from the first instant, while the spawn it started runs
-// on under the process lifetime and keeps the chat's session.
-func TestLoadSession_ACancelledWaiterReturnsBeforeAHeldSpawnCompletes(t *testing.T) {
+// The caller's context bounds its own wait from the first instant, while the door it started runs
+// on under the runtime's lifetime and keeps the chat's session.
+func TestLoadSession_ACancelledWaiterReturnsBeforeAHeldOpenCompletes(t *testing.T) {
 	cs := newTestChatStore()
 	gate := make(chan struct{})
-	h := New(context.Background(), t.TempDir(), func() ACPBridge {
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
 		b := newFakeBridge()
 		b.startGate = gate
 		return b
-	}, cs)
+	}, nil), cs)
 	cs.wire(h)
 	loadedChat(t, cs, "c1")
 
@@ -305,14 +305,14 @@ func TestLoadSession_ACancelledWaiterReturnsBeforeAHeldSpawnCompletes(t *testing
 		}
 	case <-time.After(2 * time.Second):
 		close(gate)
-		t.Fatal("LoadSession waited out the held spawn after its caller cancelled")
+		t.Fatal("LoadSession waited out the held session open after its caller cancelled")
 	}
 
 	close(gate)
 	deadline := time.Now().Add(5 * time.Second)
-	for sb := h.coord.bridgeFor("c1"); sb == nil || !sb.startedPastSpawn(); sb = h.coord.bridgeFor("c1") {
+	for sb := h.coord.bridgeFor("c1"); sb == nil || !sb.startedPastOpen(); sb = h.coord.bridgeFor("c1") {
 		if time.Now().After(deadline) {
-			t.Fatal("the spawn the cancelled waiter started never finished")
+			t.Fatal("the session open the cancelled waiter started never finished")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -344,12 +344,12 @@ func (s *unreadableOnce) Get(ctx context.Context, id marotte.ChatID) (*marotte.C
 	return s.testChatStore.Get(ctx, id)
 }
 
-// A record the spawn could not read is not the chat's absence: the answer is retryable, and the
+// A record the session open could not read is not the chat's absence: the answer is retryable, and the
 // next load opens the chat.
 func TestLoadSession_AnUnreadableRecordIsRetryable(t *testing.T) {
 	cs := newTestChatStore()
 	store := &unreadableOnce{testChatStore: cs, chatID: "c1"}
-	h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, store)
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), store)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
@@ -366,7 +366,7 @@ func TestLoadSession_AnUnreadableRecordIsRetryable(t *testing.T) {
 // chat's deletion, and a fresh generation opens the chat once storage recovers.
 func TestLoadSession_AnUnstattableHeaderIsRetryable(t *testing.T) {
 	cs := newTestChatStore()
-	h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs)
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
@@ -416,7 +416,7 @@ func (s *deletingAfterPresence) Presence(id marotte.ChatID) chat.Presence {
 func TestOpenBridge_AdmitsNoBridgeForARecordDeletedBeforeItsReadinessPublished(t *testing.T) {
 	cs := newTestChatStore()
 	store := &deletingAfterPresence{testChatStore: cs, chatID: "c1"}
-	h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, store)
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), store)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
@@ -456,7 +456,7 @@ func (s *refusedAtPublication) PublishIfPresent(ctx context.Context, id marotte.
 // newResumingHub serves resumed chat c1 through store, counting the run resumes its loads fire.
 func newResumingHub(t *testing.T, store *refusedAtPublication) (*Runtime, *atomic.Int32) {
 	t.Helper()
-	h := New(context.Background(), t.TempDir(), func() ACPBridge {
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
 		b := newFakeBridge()
 		b.notifsOnStart = []*marotte.RPCResponse{
 			replayNotif(t, "user_message_chunk", "ONE", ""),
@@ -465,7 +465,7 @@ func newResumingHub(t *testing.T, store *refusedAtPublication) (*Runtime, *atomi
 			replayNotif(t, marotte.ACPUpdateSessionInfo, "", "turn_end"),
 		}
 		return b
-	}, store)
+	}, nil), store)
 	store.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	loadedChat(t, store.testChatStore, "c1")
@@ -521,8 +521,8 @@ func TestLoadSession_AResumedGenerationPublishedReadyResumesItsRuns(t *testing.T
 	}
 }
 
-// generationProbe reports each chat spawn's fake as it reaches Start, after it read the record,
-// and parks the spawn after it recorded the new session, until released.
+// generationProbe reports each chat session door's fake as it reaches Start, after it read the record,
+// and parks the door after it recorded the new session, until released.
 type generationProbe struct {
 	*fakeBridge
 	entered  chan<- *fakeBridge
@@ -530,14 +530,14 @@ type generationProbe struct {
 	release  <-chan struct{}
 }
 
-func (b generationProbe) Start(ctx context.Context, opts *marotte.StartOpts) error {
-	if opts.EnableHooks {
+func (b generationProbe) door(ctx context.Context, so *marotte.SessionOpts, eo *marotte.EngineOpts, load bool) error {
+	if so.Role == marotte.SessionRoleChat {
 		select {
 		case b.entered <- b.fakeBridge:
 		default:
 		}
 	}
-	return b.fakeBridge.Start(ctx, opts)
+	return b.fakeBridge.door(ctx, so, eo, load)
 }
 
 func (b generationProbe) SupervisedApplied() bool {
@@ -548,15 +548,15 @@ func (b generationProbe) SupervisedApplied() bool {
 	return b.fakeBridge.SupervisedApplied()
 }
 
-// A header that becomes unstattable after the spawn read it fails the generation retryably at
+// A header that becomes unstattable after the session open read it fails the generation retryably at
 // publication, never as a success and never as the chat's deletion.
 func TestLoadSession_AHeaderUnstattableAtPublicationIsRetryable(t *testing.T) {
 	cs := newTestChatStore()
 	recorded := make(chan struct{}, 2)
 	release := make(chan struct{})
-	h := New(context.Background(), t.TempDir(), func() ACPBridge {
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
 		return generationProbe{fakeBridge: newFakeBridge(), recorded: recorded, release: release}
-	}, cs)
+	}, nil), cs)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
@@ -568,7 +568,7 @@ func TestLoadSession_AHeaderUnstattableAtPublicationIsRetryable(t *testing.T) {
 	case <-recorded:
 	case <-time.After(5 * time.Second):
 		close(release)
-		t.Fatal("the spawn never recorded its session")
+		t.Fatal("the session open never recorded its session")
 	}
 	if err := os.Rename(dir, dir+".aside"); err != nil {
 		close(release)
@@ -593,15 +593,15 @@ func TestLoadSession_AHeaderUnstattableAtPublicationIsRetryable(t *testing.T) {
 	}
 }
 
-// A header that stops decoding after the spawn read it fails the generation retryably at
+// A header that stops decoding after the session open read it fails the generation retryably at
 // publication: the stat still finds the file, but no record stands under the readiness.
 func TestLoadSession_AHeaderThatStopsDecodingAtPublicationIsRetryable(t *testing.T) {
 	cs := newTestChatStore()
 	recorded := make(chan struct{}, 2)
 	release := make(chan struct{})
-	h := New(context.Background(), t.TempDir(), func() ACPBridge {
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
 		return generationProbe{fakeBridge: newFakeBridge(), recorded: recorded, release: release}
-	}, cs)
+	}, nil), cs)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
@@ -613,7 +613,7 @@ func TestLoadSession_AHeaderThatStopsDecodingAtPublicationIsRetryable(t *testing
 	case <-recorded:
 	case <-time.After(5 * time.Second):
 		close(release)
-		t.Fatal("the spawn never recorded its session")
+		t.Fatal("the session open never recorded its session")
 	}
 	good, err := os.ReadFile(header)
 	if err == nil {
@@ -636,15 +636,15 @@ func TestLoadSession_AHeaderThatStopsDecodingAtPublicationIsRetryable(t *testing
 
 // A fresh session the record could not take because its header stopped decoding fails the
 // generation retryably, removes it, and is reaped: no record holds it, so no delete's chain will.
-func TestSpawnGeneration_ASessionAnUnreadableRecordRefusedIsReapedAndRetryable(t *testing.T) {
+func TestOpenGeneration_ASessionAnUnreadableRecordRefusedIsReapedAndRetryable(t *testing.T) {
 	cs := newTestChatStore()
 	gate := make(chan struct{})
 	entered := make(chan *fakeBridge, 2)
-	h := New(context.Background(), t.TempDir(), func() ACPBridge {
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
 		b := newFakeBridge()
 		b.startGate = gate
 		return generationProbe{fakeBridge: b, entered: entered}
-	}, cs)
+	}, nil), cs)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	var mu sync.Mutex
@@ -660,7 +660,7 @@ func TestSpawnGeneration_ASessionAnUnreadableRecordRefusedIsReapedAndRetryable(t
 	case fb = <-entered:
 	case <-time.After(5 * time.Second):
 		close(gate)
-		t.Fatal("the load started no spawn")
+		t.Fatal("the load opened no session")
 	}
 	good, err := os.ReadFile(header)
 	if err == nil {
@@ -693,7 +693,7 @@ func TestSpawnGeneration_ASessionAnUnreadableRecordRefusedIsReapedAndRetryable(t
 
 // A fresh session a removed record refused is in no delete's chain, so its own generation
 // reaps it; one the record took before the delete is the teardown's, through that chain.
-func TestSpawnGeneration_ReapsOnlyTheFreshSessionNoRecordHolds(t *testing.T) {
+func TestOpenGeneration_ReapsOnlyTheFreshSessionNoRecordHolds(t *testing.T) {
 	removals := map[string]func(cs *testChatStore) error{
 		"refused by the deleted record": func(cs *testChatStore) error {
 			_, err := cs.Delete(context.Background(), "c1")
@@ -713,9 +713,9 @@ func TestSpawnGeneration_ReapsOnlyTheFreshSessionNoRecordHolds(t *testing.T) {
 		entered := make(chan *fakeBridge, 1)
 		recorded := make(chan struct{}, 1)
 		release := make(chan struct{})
-		h := New(context.Background(), t.TempDir(), func() ACPBridge {
+		h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
 			return generationProbe{fakeBridge: newFakeBridge(), entered: entered, recorded: recorded, release: release}
-		}, cs)
+		}, nil), cs)
 		cs.wire(h)
 		t.Cleanup(func() { shutdownHub(t, h) })
 		var mu sync.Mutex
@@ -730,13 +730,13 @@ func TestSpawnGeneration_ReapsOnlyTheFreshSessionNoRecordHolds(t *testing.T) {
 		case fb = <-entered:
 		case <-time.After(5 * time.Second):
 			close(release)
-			t.Fatal("the load started no spawn")
+			t.Fatal("the load opened no session")
 		}
 		select {
 		case <-recorded:
 		case <-time.After(5 * time.Second):
 			close(release)
-			t.Fatal("the spawn never recorded its session")
+			t.Fatal("the session open never recorded its session")
 		}
 		chain, err := cs.Delete(t.Context(), "c1")
 		close(release)
@@ -763,11 +763,11 @@ func testReapsTheSessionARemovedRecordRefused(t *testing.T, remove func(cs *test
 	cs := newTestChatStore()
 	gate := make(chan struct{})
 	entered := make(chan *fakeBridge, 1)
-	h := New(context.Background(), t.TempDir(), func() ACPBridge {
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
 		b := newFakeBridge()
 		b.startGate = gate
 		return generationProbe{fakeBridge: b, entered: entered}
-	}, cs)
+	}, nil), cs)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	var mu sync.Mutex
@@ -782,7 +782,7 @@ func testReapsTheSessionARemovedRecordRefused(t *testing.T, remove func(cs *test
 	case fb = <-entered:
 	case <-time.After(5 * time.Second):
 		close(gate)
-		t.Fatal("the load started no spawn")
+		t.Fatal("the load opened no session")
 	}
 	if err := remove(cs); err != nil {
 		close(gate)
@@ -790,7 +790,7 @@ func testReapsTheSessionARemovedRecordRefused(t *testing.T, remove func(cs *test
 	}
 	close(gate)
 	if err := <-done; !errors.Is(err, command.ErrChatGone) {
-		t.Fatalf("LoadSession of a chat removed mid-spawn = %v, want %v", err, command.ErrChatGone)
+		t.Fatalf("LoadSession of a chat removed mid-open = %v, want %v", err, command.ErrChatGone)
 	}
 	joinInflight(t, h)
 	mu.Lock()
@@ -800,24 +800,24 @@ func testReapsTheSessionARemovedRecordRefused(t *testing.T, remove func(cs *test
 	}
 }
 
-// enteringBridge reports each chat spawn as it reaches Start, before the fake's gate parks it. The
-// utility bridge, which shares the factory, opts out of hooks and is not reported.
+// enteringBridge reports each chat door as it is reached, before the fake's gate parks it; a host or observer door
+// on the same factory is not reported.
 type enteringBridge struct {
 	*fakeBridge
 	entered chan<- struct{}
 }
 
-func (b enteringBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
-	if opts.EnableHooks {
+func (b enteringBridge) door(ctx context.Context, so *marotte.SessionOpts, eo *marotte.EngineOpts, load bool) error {
+	if so.Role == marotte.SessionRoleChat {
 		select {
 		case b.entered <- struct{}{}:
 		default:
 		}
 	}
-	return b.fakeBridge.Start(ctx, opts)
+	return b.fakeBridge.door(ctx, so, eo, load)
 }
 
-// A parent deleted while a tangent's recovery is loading its session, after the spawn read the
+// A parent deleted while a tangent's recovery is loading its session, after the session open read the
 // record and before it settled, is the terminal answer: the merge fails once and no bridge survives.
 func TestTangentMerge_AParentDeletedWhileItsSessionLoadsFailsTheMergeOnce(t *testing.T) {
 	seeds := map[string]func(c *marotte.Chat){
@@ -829,11 +829,11 @@ func TestTangentMerge_AParentDeletedWhileItsSessionLoadsFailsTheMergeOnce(t *tes
 			cs := newTestChatStore()
 			gate := make(chan struct{})
 			entered := make(chan struct{}, 8)
-			h := New(context.Background(), t.TempDir(), func() ACPBridge {
+			h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
 				b := newFakeBridge()
 				b.startGate = gate
 				return enteringBridge{fakeBridge: b, entered: entered}
-			}, cs)
+			}, nil), cs)
 			cs.wire(h)
 			t.Cleanup(func() { shutdownHub(t, h) })
 			if _, err := cs.Mutate(t.Context(), "c-parent", func(c *marotte.Chat, _ bool) bool {
@@ -867,7 +867,7 @@ func TestTangentMerge_AParentDeletedWhileItsSessionLoadsFailsTheMergeOnce(t *tes
 			for deadline := time.Now().Add(5 * time.Second); cs.Presence("c-parent") != chat.PresenceAbsent; time.Sleep(5 * time.Millisecond) {
 				if time.Now().After(deadline) {
 					close(gate)
-					t.Fatal("the parent's record was not removed while its spawn was held")
+					t.Fatal("the parent's record was not removed while its session open was held")
 				}
 			}
 			close(gate)

@@ -1,11 +1,12 @@
 package agent
 
 // The MCP OAuth loopback relay. KAS runs the flow and binds its redirect listener on
-// `http://localhost:<ephemeral>/oauth/callback` in the container, which a remote browser cannot
-// reach. The user pastes the dead page's address and marotte replays the GET from inside.
-// The pasted address is untrusted; the stored authorization URL KAS wrote is the anchor: the
-// dial target comes from its `redirect_uri` and `state` must match, or this unauthenticated
-// route injects authorization codes. Rewriting redirect_uri fails RFC 6749 §4.1.3.
+// `http://localhost:<ephemeral>/oauth/callback` in the container, which a remote browser cannot reach. The user
+// pastes the dead page's address and marotte replays the GET from inside, which completes only while that listener
+// waits: KAS closes a passive attempt's listener (the authorizationUrl a failed connect's status entry carries)
+// before the entry arrives. The pasted address is untrusted; the stored authorization URL KAS wrote is the anchor:
+// the dial target comes from its `redirect_uri` and `state` must match, or this unauthenticated route injects
+// authorization codes. Rewriting redirect_uri fails RFC 6749 §4.1.3.
 
 import (
 	"context"
@@ -23,7 +24,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/ssrf/v4"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 const (

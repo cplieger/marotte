@@ -2,14 +2,22 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import type * as ModPRs from "./git-prs-tab.js";
+import { forgeRow } from "./__test-helpers__/forge-rows.js";
 
 let bootSeq = 0;
 
 const apiGetTyped = vi.fn();
 const ensureForges = vi.fn();
 
-vi.mock("./api-client.js", () => ({ apiGetTyped, apiPost: vi.fn() }));
-vi.mock("./forge-store.js", () => ({ ensureForges }));
+vi.mock("./api-client.js", () => ({ apiGetTyped, apiGet: vi.fn() }));
+vi.mock("./forge-store.js", async () => {
+  const { forgeRow, forgesList, staticStore } = await import("./__test-helpers__/forge-rows.js");
+  return {
+    ensureForges,
+    ...staticStore(() => forgesList([forgeRow()])),
+    usablePairs: () => [],
+  };
+});
 vi.mock("./bus.js", () => ({
   BUS_RECONCILE: "transport:reconcile",
   onSSE: vi.fn(),
@@ -53,13 +61,7 @@ vi.mock("./git-scroll.js", () => ({
 
 const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
 
-const forge = {
-  id: "github:github.com",
-  kind: "github" as const,
-  host: "github.com",
-  connected: true,
-  reconnect_required: false,
-};
+const forge = forgeRow();
 const REPO_ID = "v1.63706c69656765722f6f6e65";
 
 /** Long enough to ellipsise at every width here, so the clip does real work. */
@@ -129,6 +131,7 @@ async function rows(): Promise<HTMLElement[]> {
     entries: [
       {
         forge_id: forge.id,
+        account: forge.account,
         state: "ready",
         cycle_id: "1",
         credential: "valid",

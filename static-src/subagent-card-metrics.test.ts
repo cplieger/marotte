@@ -11,7 +11,7 @@ import { page } from "vitest/browser";
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-import { buildSubagentCard, buildSubagentContainer } from "./fundamentals/subagent-block.js";
+import { buildSubagentCard } from "./fundamentals/subagent-block.js";
 
 /** Long enough that a per-card error is a four-figure number in the list total, so
  *  a failure is unmistakable rather than a rounding argument. Also the divisor the
@@ -94,18 +94,6 @@ function runningCard(i: number): HTMLElement {
     open: { href: `/chat/c-1/subagent/sub-${String(i)}`, open: () => undefined },
   });
   return sa.root;
-}
-
-/** A COLLAPSED pipeline container over two stage cards: the second resting shape
- *  the ONE reserve has to serve. Its body is driven to zero by the disclosure, so
- *  what is left is the identity row and the foot -- the settled card's shape. */
-function collapsedContainer(i: number): HTMLElement {
-  const c = buildSubagentContainer(`Subagent pipeline \u00b7 2 stages`, "completed", {
-    startOpen: false,
-  });
-  c.setSummary(LEDGER);
-  c.body.append(settledCard(i * 2), settledCard(i * 2 + 1));
-  return c.root;
 }
 
 type Build = (i: number) => HTMLElement;
@@ -215,7 +203,7 @@ function expectOverStates(m: Metrics): void {
   ).toBe(true);
 }
 
-// Red-check probes: `contain-intrinsic-size: auto 4rem` reddens the settled and container cases;
+// Red-check probes: `contain-intrinsic-size: auto 4rem` reddens the settled case;
 // `--subagent-content: 30px` reddens the running arm.
 describe("the fine-pointer tier", () => {
   it(
@@ -223,15 +211,6 @@ describe("the fine-pointer tier", () => {
     async () => {
       tier("fine");
       expectNoDrift(await measure(settledCard));
-    },
-    LOADED_BUDGET_MS,
-  );
-
-  it(
-    "reports one height for a COLLAPSED pipeline container too, on the same reserve",
-    async () => {
-      tier("fine");
-      expectNoDrift(await measure(collapsedContainer));
     },
     LOADED_BUDGET_MS,
   );
@@ -286,19 +265,6 @@ describe("the coarse-pointer tiers, measured at real viewport sizes", () => {
       ]);
       tier("coarse");
       expectNoDrift(await measure(settledCard));
-    },
-    LOADED_BUDGET_MS,
-  );
-
-  it(
-    "holds for a COLLAPSED pipeline container",
-    async () => {
-      await page.viewport(768, 900);
-      expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
-        768, 900,
-      ]);
-      tier("coarse");
-      expectNoDrift(await measure(collapsedContainer));
     },
     LOADED_BUDGET_MS,
   );

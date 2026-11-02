@@ -1,9 +1,10 @@
 // Settings -> Tools over the v2 engine: rows from the composite GET, the action wiring, the
 // search-first add modal and the SSE job output panel.
-import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll, afterAll, onTestFinished, vi } from "vitest";
 
 import indexHtml from "../static/index.html?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { useSteppableClock } from "./__test-helpers__/fake-clock.js";
 import type { ToolInfo, Job, Inventory } from "./types.js";
 
 const mocks = vi.hoisted(() => ({
@@ -801,6 +802,10 @@ describe("add modal", () => {
 
   // Button and Enter CANCEL the pending debounce rather than racing a second identical query.
   it("searches on the button and on Enter, once per gesture", async () => {
+    useSteppableClock();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     initWith(listWith([]));
     mocks.searchDispatch.mockResolvedValue({ results: [] });
     byId<HTMLButtonElement>("tool-add-btn").click();
@@ -824,7 +829,7 @@ describe("add modal", () => {
 
     // The debounce is still armed for the plain typing path; neither gesture
     // left a trailing timer behind that would fire a third query.
-    await new Promise((r) => setTimeout(r, 300));
+    await vi.runAllTimersAsync();
     expect(mocks.searchDispatch.mock.calls.length).toBe(opening + 2);
   });
 });

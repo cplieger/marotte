@@ -24,6 +24,7 @@ vi.mock("../store.js", async () => ({
 }));
 
 vi.mock("../api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   apiGetOrError: vi.fn(),
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
@@ -37,7 +38,7 @@ import { error as toastError } from "../toast.js";
 import { recordSteerSent, recordSteerQueued, forgetSteer } from "../store.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { IDEMPOTENCY_COMMAND_FIELD } from "./index.js";
-import { removeSteer, steerChat } from "./chat.js";
+import { clearSteers, removeSteer, steerChat } from "./chat.js";
 
 const mockSend = vi.mocked(transportSend);
 
@@ -188,5 +189,18 @@ describe("removeSteer — one row out of the buffer", () => {
     expect(recordSteerSent).not.toHaveBeenCalled();
     expect(forgetSteer).not.toHaveBeenCalled();
     expect(recordSteerQueued).not.toHaveBeenCalled();
+  });
+});
+
+describe("clearSteers — the whole buffer", () => {
+  it("sends steer_clear naming no row", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: {} });
+
+    await clearSteers.dispatch({ chatID: "c1" }).outcome;
+
+    expect(mockSend.mock.calls.map(([cmd]) => cmd)).toMatchObject([
+      { type: "steer_clear", chat_id: "c1" },
+    ]);
+    expect(mockSend.mock.calls[0]?.[0]).not.toHaveProperty("payload");
   });
 });

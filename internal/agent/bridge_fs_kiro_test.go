@@ -3,7 +3,6 @@ package agent
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -233,24 +232,11 @@ func TestKiroFSDeleteRefusesWorkDirRoot(t *testing.T) {
 	h.inbound.respondKiroFSDelete(t.Context(), "c1", h.originOf("c1"), kiroFSMsg(t, 1, methodKiroFSDelete, "."))
 	<-br.done
 	// The sentinel, not any error: without the guard os.RemoveAll refuses "." with EINVAL anyway.
-	if !errors.Is(br.response.err, errRefusedWorkDirRoot) {
-		t.Fatalf("err = %v, want errRefusedWorkDirRoot", br.response.err)
+	if !errors.Is(br.response.err, errRefusedRootDelete) {
+		t.Fatalf("err = %v, want errRefusedRootDelete", br.response.err)
 	}
 	if _, err := os.Stat(filepath.Join(work, "keep.txt")); err != nil {
 		t.Errorf("the workspace was touched anyway: %v", err)
-	}
-}
-
-// TestKiroFSDeleteRefusesRelativeResolvedPath pins the absoluteness assertion: a relative
-// path would resolve against the server's cwd. Through the helper, since
-// resolveInsideWorkDir cannot produce one today.
-func TestKiroFSDeleteRefusesRelativeResolvedPath(t *testing.T) {
-	if filepath.IsAbs("relative/path") {
-		t.Skip("platform treats the fixture as absolute")
-	}
-	err := fmt.Errorf("%w: resolved path is not absolute", errRefusedWorkDirRoot)
-	if !errors.Is(err, errRefusedWorkDirRoot) {
-		t.Error("the not-absolute rejection must carry errRefusedWorkDirRoot so callers can classify it")
 	}
 }
 

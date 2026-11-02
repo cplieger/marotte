@@ -30,7 +30,7 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID marotte.Ch
 	if !ok {
 		return
 	}
-	// Dedup KAS's fan-out: skip a copy keyed to another session (a subagent's or a step's).
+	// Dedup KAS's fan-out: skip a copy keyed to another session (a step's).
 	if t.foreignSession(chatID, p.SessionID) {
 		return
 	}

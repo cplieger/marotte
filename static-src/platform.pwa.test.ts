@@ -246,8 +246,8 @@ describe("fixIOSViewport", () => {
   });
 
   it("works in a browser tab too, where the same keyboard shrinks the same viewport", async () => {
-    // No standalone gate here: `initSidebarSwipe` keeps one only because its gesture conflicts with
-    // Safari's own back-swipe.
+    // No standalone gate here: `initSidebarSwipe` keeps one only because a browser tab's edge swipe
+    // navigates the tab's history.
     const { viewport, dispose } = await install({ standalone: false, displayMode: false });
     expect(dispose).toBeTypeOf("function");
     expect(viewport.types).toStrictEqual(["resize"]);
@@ -436,7 +436,7 @@ describe("initSidebarSwipe", () => {
   });
 
   describe("installation", () => {
-    it("installs no gestures in a browser tab, where they fight Safari's back swipe", async () => {
+    it("installs no gestures in a browser tab, where Safari's edge swipe navigates the tab's history", async () => {
       const { chatArea, sidebar } = await install({ standalone: false, displayMode: false });
       sendTouch(chatArea, "touchstart", 10, 100);
       sendTouch(chatArea, "touchmove", 70, 100);

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -12,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/slogx/capture"
 )
 
 // Respond is the only method these handlers use; the rest satisfies the interface.
@@ -32,6 +32,8 @@ type takeDeps struct {
 	// takeChats is the chat each claim named, so a handler that drops it is
 	// visible: an id-only claim can retire another chat's card.
 	takeChats []marotte.ChatID
+	// takeKinds is the decision kind each claim named.
+	takeKinds []marotte.DecisionKind
 	takeOK    bool
 }
 
@@ -49,8 +51,9 @@ func (r bridgeReply) Respond(ctx context.Context, result any) (AnswerOutcome, er
 	return AnswerDelivered, nil
 }
 
-func (d *takeDeps) TakePendingPerm(chatID marotte.ChatID, requestID int64, _ marotte.SettledBy) (AskReply, bool) {
+func (d *takeDeps) TakePendingPerm(chatID marotte.ChatID, requestID int64, kind marotte.DecisionKind, _ marotte.SettledBy) (AskReply, bool) {
 	d.takes = append(d.takes, requestID)
+	d.takeKinds = append(d.takeKinds, kind)
 	d.takeChats = append(d.takeChats, chatID)
 	if !d.takeOK {
 		return nil, false
@@ -152,6 +155,27 @@ func TestDecisionHandlers_WonClaimAnswersOnce(t *testing.T) {
 			// cannot settle this one's ask.
 			if !slices.Equal(deps.takeChats, []marotte.ChatID{"c1"}) {
 				t.Errorf("claimed chats = %v, want [c1]", deps.takeChats)
+			}
+		})
+	}
+}
+
+// A claim names the kind its answer is shaped for, so the tracker can refuse an answer naming
+// another kind's ask.
+func TestDecisionHandlers_ClaimNamesTheAnswersKind(t *testing.T) {
+	want := map[string]marotte.DecisionKind{"elicitation": marotte.DecisionKindElicitation, "user_input": marotte.DecisionKindUserInput}
+	for _, tc := range decisionCases(t) {
+		kind, ok := want[tc.name]
+		if !ok {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: &countingBridge{}, takeOK: true}
+			if _, err := tc.run(deps); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if !slices.Equal(deps.takeKinds, []marotte.DecisionKind{kind}) {
+				t.Errorf("claimed kinds = %v, want [%s]", deps.takeKinds, kind)
 			}
 		})
 	}
@@ -306,18 +330,11 @@ func TestCmdUserInputResponse_AnswerTravelsOnlyWhenAnswered(t *testing.T) {
 }
 
 // captureLogs swaps the slog default to a buffer-backed debug handler for the test; tests using it
-// must not run in parallel. The log package's writer and flags are restored too, because
-// slog.SetDefault repoints log and does not point it back for the stock handler.
+// must not run in parallel.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return buf
 }
 

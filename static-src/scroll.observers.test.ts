@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import type { MockInstance } from "vitest";
 import type * as ScrollModule from "./scroll.js";
+import { framesDrained } from "./__test-helpers__/frame-queue.js";
 
 /** Cache-buster for the re-imports below. */
 let bootSeq = 0;
@@ -157,8 +158,29 @@ function readerScroll(el: HTMLElement): void {
   el.dispatchEvent(new Event("scroll"));
 }
 
+/** The reader's scroll plus the history-edge observer's report, which fake geometry cannot produce: the edge counts
+ *  as reached within 100px of the top. */
+function readerAtHistoryEdge(h: Harness): void {
+  readerScroll(h.scrollEl);
+  h.scroll.noteHistoryEdge(h.scrollEl.scrollTop < 100);
+}
+
+/** Two frames, for the controller's frame-queued pin and re-assert, then a task to resume past
+ *  the last one. That schedule is what a positive pins; an absence reads after `drained()`. */
 async function settle(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 25));
+  for (let i = 0; i < 2; i++) {
+    await new Promise<void>((r) => {
+      requestAnimationFrame(() => {
+        r();
+      });
+    });
+  }
+  await new Promise((r) => setTimeout(r, 0));
+}
+
+/** Until no frame callback is left queued, so a write the controller still owes is seen. */
+async function drained(): Promise<void> {
+  await framesDrained("the controller's queued frames");
 }
 
 /** Drain the same queues without depending on `setTimeout`, which a fake-timer test has
@@ -222,19 +244,19 @@ async function freshModule(opts: { withExistingRow?: boolean } = {}): Promise<Ha
   const scrollEl = scroll.getScrollEl();
   // TWO ResizeObservers, in construction order: the content one, then the gutter one. Attributed by
   // construction site rather than by target, so a regression that moves a callback between them
-  // names the observer it moved to. TWO IntersectionObservers likewise: the live edge's, then the
-  // near-view one.
+  // names the observer it moved to. THREE IntersectionObservers likewise: the live edge's, the
+  // history edge's (built with the near lead), then the near-view one.
   expect([
     FakeResizeObserver.instances.length,
     FakeIntersectionObserver.instances.length,
     scrollEl,
-  ]).toEqual([2, 2, wrap]);
+  ]).toEqual([2, 3, wrap]);
   return {
     scroll,
     ro: FakeResizeObserver.instances[0]!,
     gutter: FakeResizeObserver.instances[1]!,
     io: FakeIntersectionObserver.instances[0]!,
-    near: FakeIntersectionObserver.instances[1]!,
+    near: FakeIntersectionObserver.instances[2]!,
     messagesEl: messages,
     scrollEl,
     listeners,
@@ -269,7 +291,7 @@ describe("the gutter observer", () => {
       clientWidth: 985,
     });
     h.ro.fire();
-    await settle();
+    await drained();
     expect([
       h.ro.targets.has(h.scrollEl),
       document.documentElement.style.getPropertyValue("--scrollbar-w"),
@@ -330,6 +352,8 @@ describe("the gutter observer", () => {
     h.gutter.fire();
     await settle();
     expect(setProperty.mock.calls.filter((c) => c[0] === "--scrollbar-w")).toHaveLength(1);
+    await drained();
+    expect(setProperty.mock.calls.filter((c) => c[0] === "--scrollbar-w")).toHaveLength(1);
   });
 
   it("leaves no scheduled write behind when the controller is reset", async () => {
@@ -345,7 +369,7 @@ describe("the gutter observer", () => {
     });
     h.gutter.fire();
     h.scroll.resetScrollState();
-    await settle();
+    await drained();
     expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("0px");
   });
 });
@@ -620,6 +644,8 @@ describe("what the mutation callback may read", () => {
     const counter = countMetricReads(h.scrollEl);
     // The streaming shape: a chunk extends a text node inside a resident row.
     row.appendChild(document.createTextNode("a chunk"));
+    // Not drained: on the frozen clock an open pin window never closes, and its pin frame
+    // re-queues every frame.
     await settle();
     const reads = counter.reads();
     counter.stop();
@@ -776,7 +802,7 @@ describe("the near-view observer", () => {
     const { row, box } = rowWithBox(h.messagesEl);
     await settle();
     row.remove();
-    await settle();
+    await drained();
     const gone = h.near.targets.has(box);
     h.messagesEl.appendChild(row);
     await settle();
@@ -830,7 +856,7 @@ describe("the per-child resize observers", () => {
     h.messagesEl.appendChild(document.createElement("div"));
     await settle();
     h.messagesEl.appendChild(document.createElement("div"));
-    await settle();
+    await drained();
     expect(h.ro.observedCount(a)).toBe(1);
   });
 
@@ -860,6 +886,8 @@ describe("the auto-scroll frame guard", () => {
     h.messagesEl.appendChild(document.createElement("div"));
     h.ro.fire();
     await settle();
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    await drained();
     expect(scrollTo).toHaveBeenCalledTimes(1);
   });
 
@@ -901,7 +929,7 @@ describe("the reader's control window", () => {
     now.mockReturnValue(1299);
     g.scrollHeight = 3000;
     h.messagesEl.appendChild(document.createElement("div"));
-    await settle();
+    await drained();
     expect(g.scrollTop).toBe(1500);
   });
 });
@@ -913,20 +941,19 @@ describe("pagination's skeleton", () => {
   /** Wire a fetcher and park the reader at the top so the scroll listener asks for a page. */
   function startLoad(h: Harness, load: () => void): void {
     h.scroll.setLoadMore(load, true);
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
   }
 
-  it("prepends the skeleton when there is no button left to replace", async () => {
-    // The button is consumed by the first fetch and nothing puts it back, so the second fetch of a
-    // session has nothing to swap and must place the skeleton itself — otherwise a reader waiting
-    // for an older page sees no sign of it.
+  it("prepends the skeleton on a second pass too", async () => {
+    // Each pass places its own skeleton above the oldest turn, so a reader waiting for a second
+    // older page sees it as they saw the first.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     startLoad(h, () => undefined);
     document.getElementById("load-more-skeleton")?.remove();
     await settle();
     g.scrollTop = 0;
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     expect(h.messagesEl.firstElementChild?.id).toBe("load-more-skeleton");
   });
 
@@ -961,7 +988,7 @@ describe("pagination's safety timeout", () => {
     const load = vi.fn();
     useLoadTimeout();
     h.scroll.setLoadMore(load, true);
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     expect(document.getElementById("load-more-skeleton")).not.toBeNull();
 
     vi.advanceTimersByTime(15_000);
@@ -969,7 +996,7 @@ describe("pagination's safety timeout", () => {
     // The furniture goes, and the reader is not stuck: the next scroll to the top asks again.
     expect(document.getElementById("load-more-skeleton")).toBeNull();
     g.scrollTop = 0;
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     expect(load).toHaveBeenCalledTimes(2);
   });
 
@@ -981,7 +1008,7 @@ describe("pagination's safety timeout", () => {
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     useLoadTimeout();
     h.scroll.setLoadMore(() => undefined, true);
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     g.scrollHeight = 1500;
 
     vi.advanceTimersByTime(15_000);
@@ -998,7 +1025,7 @@ describe("pagination's safety timeout", () => {
     const load = vi.fn();
     useLoadTimeout();
     h.scroll.setLoadMore(load, true);
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     document.getElementById("load-more-skeleton")?.remove();
     g.scrollHeight = 1400;
     await settleFrames();
@@ -1007,7 +1034,7 @@ describe("pagination's safety timeout", () => {
     // deadline falls INSIDE the second load's flight.
     vi.advanceTimersByTime(14_000);
     g.scrollTop = 0;
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     expect(load).toHaveBeenCalledTimes(2);
     expect(document.getElementById("load-more-skeleton")).not.toBeNull();
 
@@ -1016,7 +1043,7 @@ describe("pagination's safety timeout", () => {
     // The second fetch is still the one in flight: its furniture is untouched and nothing else may
     // be started.
     g.scrollTop = 0;
-    readerScroll(h.scrollEl);
+    readerAtHistoryEdge(h);
     expect([
       document.getElementById("load-more-skeleton") === null,
       load.mock.calls.length,

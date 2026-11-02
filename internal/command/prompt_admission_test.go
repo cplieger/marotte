@@ -107,6 +107,10 @@ func (b *orderedBridge) ReleaseAfterPrompt() {
 	b.rec.add("bridge.release")
 }
 
+func (b *orderedBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *orderedBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	b.rec.add("call")
 	return b.recordingBridge.CallAt(ctx, method, params)
@@ -187,7 +191,9 @@ func (a *scriptedAdmission) OpenTurn(context.Context, marotte.ChatID, TurnOpen) 
 	return admissionTurnID, nil
 }
 
-func (a *scriptedAdmission) StartTurn(context.Context, marotte.ChatID, string) bool {
+func (*scriptedAdmission) EndPromptCall(TurnRef) {}
+
+func (a *scriptedAdmission) StartTurn(context.Context, TurnRef, context.CancelCauseFunc) bool {
 	a.rec.add("startTurn")
 	return !a.startRefused
 }
@@ -213,8 +219,6 @@ func (a *scriptedAdmission) TurnOpenedAfter(marotte.ChatID, string) bool {
 }
 
 func (*scriptedAdmission) StopRequestedAfter(marotte.ChatID, string) bool { return false }
-
-func (*scriptedAdmission) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
 
 func (a *scriptedAdmission) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string, marotte.FailureKind, uint64) {
 	a.rec.add("abandon")
@@ -278,7 +282,7 @@ func newAdmissionFixture(t *testing.T, result marotte.TurnResult, startRefused b
 	return host, roles, join
 }
 
-// The ack precedes the turn AND the bridge spawn: the POST answers while
+// The ack precedes the turn AND the session open: the POST answers while
 // OpenBridge is still parked, and the turn's call happens only afterwards.
 func TestCmdPrompt_AcksBeforeOpenBridgeAndTurnCompletion(t *testing.T) {
 	gate := make(chan struct{})

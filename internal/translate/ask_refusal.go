@@ -10,8 +10,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// refuseAsk answers a server-to-client ask whose params did not decode, on the bridge it arrived
-// on. KAS's sendRequest has no timeout, so not answering strands the tool batch. The answer is the
+// refuseAsk answers a server-to-client ask whose params did not decode, on the session it
+// arrived on. KAS's sendRequest has no timeout, so not answering strands the tool batch. The answer is the
 // kind's own fail-closed RESULT, never a JSON-RPC error: KAS's turn-approval path fails OPEN on an
 // error, applying every unreviewed write. Nothing decoded from the frame is logged (untrusted text).
 func refuseAsk(

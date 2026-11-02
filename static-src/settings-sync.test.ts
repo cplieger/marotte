@@ -1,0 +1,1141 @@
+// The page adopts only settings at or above the version it holds, whichever of the settings_updated
+// handler (handlers/system.ts), the shared read (persist.loadSettings) or the additional
+// directories panel's own write delivers them, a failed write rolls back nothing newer settings
+// or a later write own, what the page acts on is the server's while its controls show a click
+// not yet committed, and a control's last click is the one saved, over the shipped markup with
+// only the network faked.
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
+import indexHtml from "../static/index.html?raw";
+import { settingsPayload } from "./__test-helpers__/settings.js";
+import type { EffectiveSettings } from "./persist.js";
+import { dispatch } from "./bus.js";
+import type { ServerEvent } from "./types.js";
+import { applyAgentDirs, initAgentDirsUI } from "./agent-dirs-ui.js";
+import { byId } from "./dom.js";
+import { __testResetTracking, loadSettings, patchSettings } from "./persist.js";
+import { additionalDirectories, _resetForTest as resetWorkspace } from "./workspace.js";
+import { areNotificationsEnabled, isKindEnabled } from "./notify.js";
+import { isRetentionEnabled } from "./retention.js";
+import { initNotificationToggles } from "./settings-notifications.js";
+import { getLastModel, setLastModel } from "./session-context.js";
+import { initPermissionsUI } from "./permissions-ui.js";
+import { compactionPolicy } from "./context-ring.js";
+import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
+
+interface Held {
+  answer: (s: EffectiveSettings) => void;
+  fail: () => void;
+  body: unknown;
+}
+
+let gets: Held[] = [];
+let patches: Held[] = [];
+
+function held(queue: Held[], body: unknown): Promise<Response> {
+  return new Promise((resolve) => {
+    queue.push({
+      body,
+      answer: (s) => {
+        resolve(
+          new Response(JSON.stringify(s), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      },
+      fail: () => {
+        resolve(new Response(JSON.stringify({ error: "unavailable" }), { status: 500 }));
+      },
+    });
+  });
+}
+
+function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  if (url.endsWith("/api/settings")) {
+    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : undefined;
+    return held(method === "PATCH" ? patches : gets, body);
+  }
+  return Promise.resolve(new Response("{}", { status: 404 }));
+}
+
+function settingsEvent(revision: number, epoch = 1): void {
+  dispatch({
+    type: "settings_updated",
+    payload: { settings_epoch: epoch, settings_revision: revision },
+  } as ServerEvent);
+}
+
+function chipLabels(): string[] {
+  return [...byId("agent-dirs-chips").querySelectorAll(".chip-label")].map((c) => c.textContent);
+}
+
+async function settled(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function dirsAt(revision: number, dirs: string[], epoch = 1): EffectiveSettings {
+  return settingsPayload({
+    settings_epoch: epoch,
+    settings_revision: revision,
+    additional_directories: dirs,
+  });
+}
+
+async function debounced(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  await settled();
+}
+
+function debugLogs(): HTMLInputElement {
+  return byId<HTMLInputElement>("flag-debug-logs");
+}
+
+function saveDebugLogs(on: boolean): void {
+  debugLogs().checked = on;
+  void patchSettings({ debug_logs: on }, { el: debugLogs(), key: "debug_logs", on: true });
+}
+
+function debugAt(revision: number, on: boolean): EffectiveSettings {
+  return settingsPayload({ settings_epoch: 1, settings_revision: revision, debug_logs: on });
+}
+
+function finishedBox(): HTMLInputElement {
+  return byId<HTMLInputElement>("notify-finished-toggle");
+}
+
+/** Boot the page on revision 1 of server, through the read a settings event sends. */
+async function boot(server: EffectiveSettings): Promise<void> {
+  settingsEvent(1);
+  await settled();
+  gets[0]?.answer(server);
+  await settled();
+}
+
+/** Commit patch i's body over server at the next revision and answer it with the result. */
+function commitPatch(server: EffectiveSettings, i: number): EffectiveSettings {
+  const next = {
+    ...server,
+    ...(patches[i]?.body as Partial<EffectiveSettings>),
+    settings_revision: server.settings_revision + 1,
+  };
+  patches[i]?.answer(next);
+  return next;
+}
+
+/** Deliver the settings event of server's revision and answer the read it sends with server. */
+async function announced(server: EffectiveSettings): Promise<void> {
+  settingsEvent(server.settings_revision);
+  await settled();
+  gets.at(-1)?.answer(server);
+  await settled();
+}
+
+function masterBox(): HTMLInputElement {
+  return byId<HTMLInputElement>("notify-toggle");
+}
+
+/** Notifications on, with agent_finished the one kind on. */
+function lastKindOn(): EffectiveSettings {
+  return settingsPayload({
+    settings_epoch: 1,
+    settings_revision: 1,
+    notifications_enabled: true,
+    notify_agent_finished: true,
+    notify_pr_status: false,
+    notify_run_outcome: false,
+  });
+}
+
+function runOutcomeBox(): HTMLInputElement {
+  return byId<HTMLInputElement>("notify-run-outcome-toggle");
+}
+
+/** Notifications on, with agent_finished and run_outcome on. */
+function twoKindsOn(): EffectiveSettings {
+  return { ...lastKindOn(), notify_run_outcome: true };
+}
+
+function add(dir: string): void {
+  byId<HTMLInputElement>("agent-dirs-input").value = dir;
+  byId<HTMLButtonElement>("agent-dirs-add").click();
+}
+
+beforeAll(async () => {
+  document.body.innerHTML = new DOMParser().parseFromString(indexHtml, "text/html").body.innerHTML;
+  // After the markup: the handler's module graph reads elements as it loads.
+  await import("./handlers/system.js");
+  initAgentDirsUI();
+  initNotificationToggles();
+  initPermissionsUI(settingsPayload());
+  const { initGeneralPanelControls } = await import("./settings.js");
+  initGeneralPanelControls();
+});
+
+beforeEach(() => {
+  gets = [];
+  patches = [];
+  __testResetTracking();
+  // Per case: the config restores stubbed globals after each one.
+  vi.stubGlobal("fetch", vi.fn(fakeFetch));
+  applyAgentDirs(dirsAt(0, ["/data"]));
+});
+
+// A case that fails leaves requests held, and the settings queue waits on them: failing them keeps
+// the next case's requests its own.
+afterEach(async () => {
+  for (let i = 0; i < 5 && patches.length + gets.length > 0; i++) {
+    for (const h of [...patches.splice(0), ...gets.splice(0)]) {
+      h.fail();
+    }
+    await settled();
+  }
+});
+
+afterAll(() => {
+  document.body.replaceChildren();
+  resetWorkspace();
+});
+
+describe("settings sync ordering", () => {
+  it("ignores a write's answer that arrives after a newer settings event", async () => {
+    byId<HTMLInputElement>("agent-dirs-input").value = "/a";
+    byId<HTMLButtonElement>("agent-dirs-add").click();
+    await settled();
+    expect(patches).toHaveLength(1);
+
+    // Another device wrote revision 2 after this write committed revision 1.
+    settingsEvent(2);
+    await settled();
+    expect(gets).toHaveLength(1);
+    gets[0]?.answer(dirsAt(2, ["/data", "/b"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/b"]);
+
+    patches[0]?.answer(dirsAt(1, ["/data", "/a"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/b"]);
+    expect(additionalDirectories()).toEqual(["/data", "/b"]);
+  });
+
+  it("ignores a write's answer that arrives after a newer settings event and before its read answers", async () => {
+    byId<HTMLInputElement>("agent-dirs-input").value = "/a";
+    byId<HTMLButtonElement>("agent-dirs-add").click();
+    await settled();
+    expect(patches).toHaveLength(1);
+
+    settingsEvent(2);
+    await settled();
+    expect(gets).toHaveLength(1);
+    patches[0]?.answer(dirsAt(1, ["/data", "/a"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data"]);
+    expect(additionalDirectories()).toEqual(["/data"]);
+
+    gets[0]?.answer(dirsAt(2, ["/data", "/b"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/b"]);
+  });
+
+  it("sends one more read for an event that arrives while a read is in flight", async () => {
+    settingsEvent(1);
+    await settled();
+    expect(gets).toHaveLength(1);
+
+    settingsEvent(2);
+    settingsEvent(2);
+    await settled();
+    expect(gets, "no read starts while one is in flight").toHaveLength(1);
+
+    gets[0]?.answer(dirsAt(1, ["/data", "/old"]));
+    await settled();
+    expect(gets, "the events during the first read share one more").toHaveLength(2);
+    gets[1]?.answer(dirsAt(2, ["/data", "/new"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/new"]);
+    expect(additionalDirectories()).toEqual(["/data", "/new"]);
+  });
+
+  it("adopts this write's own answer when another device's event arrived first", async () => {
+    add("/a");
+    await settled();
+    expect(patches).toHaveLength(1);
+
+    // Another device committed revision 1 first; this write committed revision 2 over it.
+    settingsEvent(1);
+    await settled();
+    expect(gets).toHaveLength(1);
+    patches[0]?.answer(dirsAt(2, ["/data", "/a"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/a"]);
+
+    gets[0]?.answer(dirsAt(1, ["/data", "/b"]));
+    await settled();
+    expect(chipLabels(), "the read served before this write is older").toEqual(["/data", "/a"]);
+
+    add("/c");
+    await settled();
+    expect(patches).toHaveLength(2);
+    expect(patches[1]?.body).toEqual({ additional_directories: ["/data", "/a", "/c"] });
+    patches[1]?.answer(dirsAt(3, ["/data", "/a", "/c"]));
+    await settled();
+  });
+
+  it("never repaints older settings after an older event", async () => {
+    add("/a");
+    await settled();
+    settingsEvent(2);
+    await settled();
+    gets[0]?.answer(dirsAt(2, ["/data", "/b"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/b"]);
+
+    settingsEvent(1);
+    await settled();
+    patches[0]?.answer(dirsAt(1, ["/data", "/a"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/b"]);
+    expect(additionalDirectories()).toEqual(["/data", "/b"]);
+    gets[1]?.answer(dirsAt(2, ["/data", "/b"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/b"]);
+  });
+
+  it("keeps the panel locked on an older answer until the newest settings are read", async () => {
+    add("/a");
+    await settled();
+    settingsEvent(2);
+    await settled();
+    patches[0]?.answer(dirsAt(1, ["/data", "/a"]));
+    await settled();
+    expect(byId<HTMLInputElement>("agent-dirs-input").disabled).toBe(true);
+
+    gets[0]?.answer(dirsAt(2, ["/data", "/a", "/b"]));
+    await settled();
+    expect(byId<HTMLInputElement>("agent-dirs-input").disabled).toBe(false);
+    add("/c");
+    await settled();
+    expect(patches[1]?.body).toEqual({ additional_directories: ["/data", "/a", "/b", "/c"] });
+    patches[1]?.answer(dirsAt(3, ["/data", "/a", "/b", "/c"]));
+    await settled();
+  });
+
+  it("adopts a reset config.json's later epoch, and refuses the old epoch's settings after it", async () => {
+    settingsEvent(5);
+    await settled();
+    gets[0]?.answer(dirsAt(5, ["/data", "/five"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/five"]);
+
+    // config.json was replaced, so its next write started a later epoch at 1.
+    settingsEvent(1, 2);
+    await settled();
+    gets[1]?.answer(dirsAt(1, ["/data", "/reset"], 2));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/reset"]);
+
+    settingsEvent(6);
+    await settled();
+    gets[2]?.answer(dirsAt(6, ["/data", "/old"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/reset"]);
+  });
+
+  it("keeps the panel locked when the newest settings cannot be read after an older answer", async () => {
+    add("/a");
+    await settled();
+    settingsEvent(2);
+    await settled();
+    gets[0]?.fail();
+    await settled();
+    patches[0]?.answer(dirsAt(1, ["/data", "/a"]));
+    await settled();
+    expect(gets, "the panel asks for the newest settings once more").toHaveLength(2);
+    gets[1]?.fail();
+    await settled();
+
+    expect(byId<HTMLInputElement>("agent-dirs-input").disabled).toBe(true);
+    expect(byId("agent-dirs-error").textContent).toContain("the newest list could not be loaded");
+    add("/c");
+    for (const remove of byId("agent-dirs-chips").querySelectorAll<HTMLButtonElement>(
+      ".chip-remove",
+    )) {
+      remove.click();
+    }
+    await settled();
+    expect(patches, "no whole-list write is built from the older list").toHaveLength(1);
+
+    byId("agent-dirs-error").querySelector<HTMLButtonElement>("button")?.click();
+    await settled();
+    gets[2]?.answer(dirsAt(2, ["/data", "/b"]));
+    await settled();
+    expect(chipLabels()).toEqual(["/data", "/b"]);
+    expect(byId<HTMLInputElement>("agent-dirs-input").disabled).toBe(false);
+    expect(byId("agent-dirs-error").classList.contains("hidden")).toBe(true);
+  });
+
+  it("leaves a switch and the next write to newer settings read before its write failed", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(
+      settingsPayload({ settings_epoch: 1, settings_revision: 1, debug_logs: false }),
+    );
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    expect(patches).toHaveLength(1);
+
+    // Another device turned the switch on, so the server holds what this page is still sending.
+    settingsEvent(2);
+    await settled();
+    gets[1]?.answer(settingsPayload({ settings_epoch: 1, settings_revision: 2, debug_logs: true }));
+    await settled();
+    patches[0]?.fail();
+    await settled();
+    expect(debugLogs().checked, "the server's value, not the one before this write").toBe(true);
+
+    saveDebugLogs(false);
+    await debounced();
+    expect(patches[1]?.body).toEqual({ debug_logs: false });
+    patches[1]?.answer(settingsPayload({ settings_epoch: 1, settings_revision: 3 }));
+    await settled();
+  });
+
+  it("lets a failed write roll back neither the switch nor the value a later write sends", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(
+      settingsPayload({ settings_epoch: 1, settings_revision: 1, debug_logs: false }),
+    );
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    saveDebugLogs(false);
+    saveDebugLogs(true);
+    await debounced();
+    expect(patches, "the second write waits behind the first").toHaveLength(1);
+
+    patches[0]?.fail();
+    await settled();
+    expect(debugLogs().checked, "the later write still owns the switch").toBe(true);
+    expect(patches).toHaveLength(2);
+    expect(patches[1]?.body).toEqual({ debug_logs: true });
+    patches[1]?.answer(
+      settingsPayload({ settings_epoch: 1, settings_revision: 2, debug_logs: true }),
+    );
+    await settled();
+    expect(debugLogs().checked).toBe(true);
+
+    saveDebugLogs(true);
+    await debounced();
+    expect(patches, "true is what the server holds, so nothing is sent").toHaveLength(2);
+  });
+
+  it("sends a click that puts back what newer settings changed while an older write was out", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    expect(patches).toHaveLength(1);
+
+    // Another device turned the switch off after this write committed revision 2.
+    settingsEvent(3);
+    await settled();
+    gets[1]?.answer(debugAt(3, false));
+    await settled();
+    expect(debugLogs().checked).toBe(false);
+
+    saveDebugLogs(true);
+    await debounced();
+    patches[0]?.answer(debugAt(2, true));
+    await settled();
+    expect(patches, "the click reaches the server").toHaveLength(2);
+    expect(patches[1]?.body).toEqual({ debug_logs: true });
+    patches[1]?.answer(debugAt(4, true));
+    await settled();
+    expect(debugLogs().checked).toBe(true);
+  });
+
+  it("puts a switch back to newer settings, not to an overtaken write, when the write after it fails", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    settingsEvent(3);
+    await settled();
+    gets[1]?.answer(debugAt(3, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+
+    patches[0]?.answer(debugAt(2, true));
+    await settled();
+    expect(patches).toHaveLength(2);
+    patches[1]?.fail();
+    await settled();
+    expect(debugLogs().checked, "revision 3's value").toBe(false);
+  });
+
+  it("puts a switch back to newer settings, not to the value before both writes, when both fail", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, true));
+    await settled();
+    saveDebugLogs(false);
+    await debounced();
+    settingsEvent(3);
+    await settled();
+    gets[1]?.answer(debugAt(3, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+
+    patches[0]?.fail();
+    await settled();
+    expect(patches).toHaveLength(2);
+    patches[1]?.fail();
+    await settled();
+    expect(debugLogs().checked, "revision 3's value").toBe(false);
+  });
+
+  it("puts a switch clicked twice around a plain read back to the server's value when both writes fail", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    void loadSettings();
+    await settled();
+    gets[1]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(false);
+    await debounced();
+
+    patches[0]?.fail();
+    await settled();
+    expect(patches).toHaveLength(2);
+    patches[1]?.fail();
+    await settled();
+    expect(debugLogs().checked, "revision 1's value").toBe(false);
+  });
+
+  it("keeps a click still waiting to be sent across another device's settings event", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(true);
+
+    settingsEvent(2);
+    await settled();
+    gets[1]?.answer(debugAt(2, false));
+    await settled();
+    expect(debugLogs().checked, "the click, not revision 2's value").toBe(true);
+
+    await debounced();
+    expect(patches[0]?.body).toEqual({ debug_logs: true });
+    patches[0]?.answer(debugAt(3, true));
+    await settled();
+  });
+
+  it("leaves a switch on the settings it holds when an answer older than an announced version settles", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    expect(patches).toHaveLength(1);
+
+    // This write committed revision 2, then another device committed revision 3.
+    settingsEvent(3);
+    await settled();
+    expect(gets).toHaveLength(2);
+    patches[0]?.answer(debugAt(2, true));
+    await settled();
+    expect(debugLogs().checked, "revision 2 is older than the version the page holds").toBe(false);
+
+    gets[1]?.answer(debugAt(3, false));
+    await settled();
+    expect(debugLogs().checked).toBe(false);
+  });
+
+  it("shows a click waiting behind another write over another device's newer settings", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(debugAt(1, false));
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    saveDebugLogs(false);
+    await debounced();
+    expect(patches, "the second write waits behind the first").toHaveLength(1);
+
+    settingsEvent(3);
+    await settled();
+    gets[1]?.answer(debugAt(3, true));
+    await settled();
+    expect(debugLogs().checked, "the waiting write commits after revision 3").toBe(false);
+
+    patches[0]?.answer(debugAt(2, true));
+    await settled();
+    expect(debugLogs().checked).toBe(false);
+    expect(patches[1]?.body).toEqual({ debug_logs: false });
+    patches[1]?.answer(debugAt(4, false));
+    await settled();
+    expect(debugLogs().checked).toBe(false);
+  });
+
+  it("notifies by the server's kind setting while a kind click waits, and after it fails", async () => {
+    const box = byId<HTMLInputElement>("notify-finished-toggle");
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(
+      settingsPayload({ settings_epoch: 1, settings_revision: 1, notify_agent_finished: true }),
+    );
+    await settled();
+    expect(box.checked).toBe(true);
+    box.checked = false;
+    void patchSettings(
+      { notify_agent_finished: false },
+      { el: box, key: "notify_agent_finished", on: true },
+    );
+
+    // Another device's write, inside the click's debounce window.
+    settingsEvent(2);
+    await settled();
+    gets[1]?.answer(
+      settingsPayload({
+        settings_epoch: 1,
+        settings_revision: 2,
+        notify_agent_finished: true,
+        debug_logs: true,
+      }),
+    );
+    await settled();
+    expect(box.checked, "the click, not yet sent").toBe(false);
+    expect(isKindEnabled("agent_finished"), "the kind the server holds").toBe(true);
+
+    await debounced();
+    patches[0]?.fail();
+    await settled();
+    expect(box.checked).toBe(true);
+    expect(isKindEnabled("agent_finished")).toBe(true);
+  });
+
+  it("keeps the retention the server holds while a retention write waits, and after it fails", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(
+      settingsPayload({ settings_epoch: 1, settings_revision: 1, chat_retention_days: 7 }),
+    );
+    await settled();
+    expect(isRetentionEnabled()).toBe(true);
+    void patchSettings({ chat_retention_days: 0 });
+
+    settingsEvent(2);
+    await settled();
+    gets[1]?.answer(
+      settingsPayload({
+        settings_epoch: 1,
+        settings_revision: 2,
+        chat_retention_days: 7,
+        debug_logs: true,
+      }),
+    );
+    await settled();
+    expect(byId<HTMLInputElement>("chat-retention-days").value, "the value not yet sent").toBe("0");
+    expect(isRetentionEnabled(), "the retention the server holds").toBe(true);
+
+    await debounced();
+    patches[0]?.fail();
+    await settled();
+    expect(isRetentionEnabled()).toBe(true);
+  });
+
+  it("shows a switch click that waited behind a directories write over that write's answer", async () => {
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(dirsAt(1, ["/data"]));
+    await settled();
+    add("/a");
+    await settled();
+    saveDebugLogs(true);
+    await debounced();
+    expect(patches, "the switch's write waits behind the directories write").toHaveLength(1);
+
+    patches[0]?.answer(dirsAt(2, ["/data", "/a"]));
+    await settled();
+    expect(patches).toHaveLength(2);
+    expect(debugLogs().checked, "the switch's write commits after revision 2").toBe(true);
+    patches[1]?.answer(debugAt(3, true));
+    await settled();
+    expect(debugLogs().checked).toBe(true);
+  });
+
+  it("saves the second of two kind clicks made inside one debounce", async () => {
+    let server = settingsPayload({ settings_epoch: 1, settings_revision: 1 });
+    await boot(server);
+    expect(finishedBox().checked).toBe(true);
+    finishedBox().click();
+    await settled();
+    finishedBox().click();
+    await debounced();
+
+    expect(patches, "one write carries the debounced clicks").toHaveLength(1);
+    server = commitPatch(server, 0);
+    await settled();
+    expect(server.notify_agent_finished, "the server holds the last click").toBe(true);
+    expect(finishedBox().checked).toBe(true);
+    expect(isKindEnabled("agent_finished")).toBe(true);
+  });
+
+  it("sends a kind click made while the opposite click's write is in flight", async () => {
+    let server = settingsPayload({ settings_epoch: 1, settings_revision: 1 });
+    await boot(server);
+    finishedBox().click();
+    await debounced();
+    expect(patches).toHaveLength(1);
+    finishedBox().click();
+    await debounced();
+
+    server = commitPatch(server, 0);
+    await debounced();
+    expect(isKindEnabled("agent_finished"), "the server's until the click's write commits").toBe(
+      false,
+    );
+    expect(patches, "the second click follows the write that made it a change").toHaveLength(2);
+    expect(patches[1]?.body).toEqual({ notify_agent_finished: true });
+    server = commitPatch(server, 1);
+    await settled();
+    expect(server.notify_agent_finished).toBe(true);
+    expect(finishedBox().checked).toBe(true);
+    expect(isKindEnabled("agent_finished")).toBe(true);
+  });
+
+  it("sends a kind click back to the server's value while the click before it is in flight", async () => {
+    let server = settingsPayload({
+      settings_epoch: 1,
+      settings_revision: 1,
+      notify_agent_finished: false,
+    });
+    await boot(server);
+    expect(finishedBox().checked).toBe(false);
+    finishedBox().click();
+    await debounced();
+    expect(patches).toHaveLength(1);
+    finishedBox().click();
+    await settled();
+
+    server = commitPatch(server, 0);
+    await debounced();
+    expect(isKindEnabled("agent_finished"), "the server's until the click's write commits").toBe(
+      true,
+    );
+    expect(patches).toHaveLength(2);
+    expect(patches[1]?.body).toEqual({ notify_agent_finished: false });
+    server = commitPatch(server, 1);
+    await settled();
+    expect(server.notify_agent_finished).toBe(false);
+    expect(finishedBox().checked).toBe(false);
+    expect(isKindEnabled("agent_finished")).toBe(false);
+  });
+
+  it("saves a model picked back after another device's settings were read", async () => {
+    let server = settingsPayload({ settings_epoch: 1, settings_revision: 1, last_model: "A" });
+    await boot(server);
+    expect(getLastModel()).toBe("A");
+    setLastModel("B");
+
+    // Another device's write lands while the pick of B is still waiting to be sent.
+    server = { ...server, settings_revision: 2, debug_logs: true };
+    settingsEvent(2);
+    await settled();
+    gets[1]?.answer(server);
+    await settled();
+    setLastModel("A");
+    await debounced();
+
+    expect(patches, "one write carries the debounced picks").toHaveLength(1);
+    server = commitPatch(server, 0);
+    await settled();
+    expect(server.last_model, "the server holds the last pick").toBe("A");
+    expect(getLastModel()).toBe("A");
+  });
+
+  it("adds an ignore file to the list another device saved", async () => {
+    let server = settingsPayload({
+      settings_epoch: 1,
+      settings_revision: 1,
+      agent_ignore_files: [".gitignore"],
+      supervised_default: false,
+    });
+    await boot(server);
+    server = {
+      ...server,
+      settings_revision: 2,
+      agent_ignore_files: [".gitignore", ".npmignore"],
+      supervised_default: true,
+    };
+    settingsEvent(2);
+    await settled();
+    gets[1]?.answer(server);
+    await settled();
+    expect(byId<HTMLInputElement>("supervised-default-checkbox").checked).toBe(true);
+
+    byId<HTMLInputElement>("agent-ignore-input").value = ".env.dec";
+    byId<HTMLButtonElement>("agent-ignore-add").click();
+    await debounced();
+    expect(patches[0]?.body).toEqual({
+      agent_ignore_files: [".gitignore", ".npmignore", ".env.dec"],
+    });
+    commitPatch(server, 0);
+    await settled();
+    expect(
+      [...byId("agent-ignore-chips").querySelectorAll(".chip-label")].map((c) => c.textContent),
+    ).toEqual([".gitignore", ".npmignore", ".env.dec"]);
+  });
+
+  it("keeps a read's directory verdict over a late write's answer at the same version", async () => {
+    add("/a");
+    await settled();
+    expect(patches).toHaveLength(1);
+
+    // The write committed revision 1, and /a stopped being a directory before its event's read.
+    settingsEvent(1);
+    await settled();
+    gets[0]?.answer(
+      settingsPayload({
+        settings_epoch: 1,
+        settings_revision: 1,
+        additional_directories: ["/data", "/a"],
+        additional_directories_refused: { "/a": "/a is not a directory" },
+      }),
+    );
+    await settled();
+    expect(additionalDirectories()).toEqual(["/data"]);
+
+    patches[0]?.answer(dirsAt(1, ["/data", "/a"]));
+    await settled();
+    expect(additionalDirectories(), "the read, resolved after the write's answer").toEqual([
+      "/data",
+    ]);
+    expect(byId("agent-dirs-refused").textContent).toContain("/a is not a directory");
+    expect(byId<HTMLInputElement>("agent-dirs-input").disabled).toBe(false);
+  });
+
+  it("leaves the switch on when the last kind on is clicked off", async () => {
+    localStorage.removeItem(LS_NOTIFY_ASK_KEY);
+    let server = lastKindOn();
+    await boot(server);
+    finishedBox().click();
+    await debounced();
+    expect(masterBox().checked, "the switch the click never moved").toBe(true);
+    expect(byId("notify-sub-options").inert, "the kind rows stay open").toBe(false);
+    expect(patches.map((p) => p.body)).toEqual([{ notify_agent_finished: false }]);
+
+    server = commitPatch(server, 0);
+    await settled();
+    await announced(server);
+    expect(server.notifications_enabled, "the server keeps notifications on").toBe(true);
+    expect(server.notify_agent_finished).toBe(false);
+    expect(masterBox().checked).toBe(true);
+    expect(areNotificationsEnabled()).toBe(true);
+    expect(isKindEnabled("agent_finished")).toBe(false);
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY), "the ask is not spent").toBeNull();
+  });
+
+  it("leaves the switch on when the last kind on is clicked off and on inside one debounce", async () => {
+    localStorage.removeItem(LS_NOTIFY_ASK_KEY);
+    let server = lastKindOn();
+    await boot(server);
+    finishedBox().click();
+    await settled();
+    expect(masterBox().checked, "the switch the click never moved").toBe(true);
+    finishedBox().click();
+    await debounced();
+
+    expect(patches.map((p) => p.body)).toEqual([{ notify_agent_finished: true }]);
+    server = commitPatch(server, 0);
+    await settled();
+    await announced(server);
+    expect(server.notify_agent_finished).toBe(true);
+    expect(server.notifications_enabled, "the server keeps notifications on").toBe(true);
+    expect(masterBox().checked).toBe(true);
+    expect(areNotificationsEnabled()).toBe(true);
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY), "the ask is not spent").toBeNull();
+  });
+
+  it("leaves the switch on when the last kind on is clicked on again while its off write is in flight", async () => {
+    localStorage.removeItem(LS_NOTIFY_ASK_KEY);
+    let server = lastKindOn();
+    await boot(server);
+    finishedBox().click();
+    await debounced();
+    expect(patches[0]?.body).toEqual({ notify_agent_finished: false });
+    finishedBox().click();
+    await settled();
+    expect(masterBox().checked).toBe(true);
+
+    server = commitPatch(server, 0);
+    await settled();
+    await announced(server);
+    await debounced();
+    expect(patches[1]?.body).toEqual({ notify_agent_finished: true });
+    server = commitPatch(server, 1);
+    await settled();
+    await announced(server);
+    expect(server.notify_agent_finished).toBe(true);
+    expect(server.notifications_enabled, "the server keeps notifications on").toBe(true);
+    expect(masterBox().checked).toBe(true);
+    expect(areNotificationsEnabled()).toBe(true);
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY), "the ask is not spent").toBeNull();
+  });
+
+  it("keeps notifications off when a kind is clicked off after the switch was turned off", async () => {
+    localStorage.removeItem(LS_NOTIFY_ASK_KEY);
+    let server = twoKindsOn();
+    await boot(server);
+    masterBox().click();
+    await settled();
+    expect(
+      byId("notify-sub-options").inert,
+      "the kind rows stay open until the write settles",
+    ).toBe(false);
+    runOutcomeBox().click();
+    await debounced();
+    expect(patches.map((p) => p.body)).toEqual([
+      { notifications_enabled: false, notify_run_outcome: false },
+    ]);
+
+    server = commitPatch(server, 0);
+    await settled();
+    await announced(server);
+    expect(server.notifications_enabled, "the server keeps the switch's off").toBe(false);
+    expect(masterBox().checked).toBe(false);
+    expect(areNotificationsEnabled()).toBe(false);
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY), "the ask is spent").toBe("1");
+  });
+
+  it("keeps notifications off when a kind is clicked off while the switch's off write is in flight", async () => {
+    localStorage.removeItem(LS_NOTIFY_ASK_KEY);
+    let server = twoKindsOn();
+    await boot(server);
+    masterBox().click();
+    await debounced();
+    expect(patches[0]?.body).toEqual({ notifications_enabled: false });
+    runOutcomeBox().click();
+    await settled();
+
+    server = commitPatch(server, 0);
+    await settled();
+    await announced(server);
+    await debounced();
+    expect(patches[1]?.body).toEqual({ notify_run_outcome: false });
+    server = commitPatch(server, 1);
+    await settled();
+    await announced(server);
+    expect(server.notifications_enabled, "the server keeps the switch's off").toBe(false);
+    expect(masterBox().checked).toBe(false);
+    expect(areNotificationsEnabled()).toBe(false);
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY), "the ask is spent").toBe("1");
+  });
+
+  it("keeps notifications off when the last kind is clicked off and on after the switch was turned off", async () => {
+    let server = lastKindOn();
+    await boot(server);
+    masterBox().click();
+    await settled();
+    finishedBox().click();
+    await settled();
+    finishedBox().click();
+    await debounced();
+    expect(patches.map((p) => p.body)).toEqual([
+      { notifications_enabled: false, notify_agent_finished: true },
+    ]);
+
+    server = commitPatch(server, 0);
+    await settled();
+    await announced(server);
+    expect(server.notifications_enabled, "the server keeps the switch's off").toBe(false);
+    expect(masterBox().checked).toBe(false);
+    expect(areNotificationsEnabled()).toBe(false);
+  });
+
+  it("spends the ask when the switch's off write is superseded by newer settings that keep it off", async () => {
+    localStorage.removeItem(LS_NOTIFY_ASK_KEY);
+    await boot(lastKindOn());
+    masterBox().click();
+    await debounced();
+    expect(patches).toHaveLength(1);
+
+    // This write committed revision 2, then another device's revision 3 kept notifications off.
+    await announced({ ...lastKindOn(), settings_revision: 3, notifications_enabled: false });
+    patches[0]?.answer({ ...lastKindOn(), settings_revision: 2, notifications_enabled: false });
+    await settled();
+    expect(masterBox().checked).toBe(false);
+    expect(areNotificationsEnabled()).toBe(false);
+    expect(localStorage.getItem(LS_NOTIFY_ASK_KEY)).toBe("1");
+  });
+
+  it("turns the switch on alone, leaving every kind off as stored", async () => {
+    // Blocked, so turning the switch on neither prompts nor registers push.
+    vi.stubGlobal("Notification", { permission: "denied" });
+    let server = {
+      ...lastKindOn(),
+      notifications_enabled: false,
+      notify_agent_finished: false,
+    };
+    await boot(server);
+    masterBox().click();
+    await debounced();
+    expect(patches.map((p) => p.body)).toEqual([{ notifications_enabled: true }]);
+    server = commitPatch(server, 0);
+    await settled();
+    await announced(server);
+    expect(masterBox().checked).toBe(true);
+    expect(areNotificationsEnabled()).toBe(true);
+    expect(finishedBox().checked, "the kind no click moved").toBe(false);
+    expect(isKindEnabled("agent_finished")).toBe(false);
+    expect(runOutcomeBox().checked).toBe(false);
+  });
+
+  it("leaves the notification switch alone when a kind click's write fails before any settings were read", async () => {
+    masterBox().checked = true;
+    finishedBox().checked = true;
+    finishedBox().click();
+    await debounced();
+    expect(patches[0]?.body).toEqual({ notify_agent_finished: false });
+    patches[0]?.fail();
+    await settled();
+    expect(finishedBox().checked, "the kind row goes back").toBe(true);
+    expect(masterBox().checked, "the switch the click never moved").toBe(true);
+  });
+
+  it("puts a select back to the server's value when its write is refused", async () => {
+    await boot(settingsPayload({ settings_epoch: 1, settings_revision: 1, memory_mode: "off" }));
+    const memory = byId<HTMLSelectElement>("memory-mode");
+    memory.value = "read_only";
+    memory.dispatchEvent(new Event("change"));
+    await debounced();
+    expect(patches[0]?.body).toEqual({ memory_mode: "read_only" });
+    patches[0]?.fail();
+    await settled();
+    expect(memory.value).toBe("off");
+  });
+
+  it("keeps a value typed since a refused write was sent", async () => {
+    await boot(
+      settingsPayload({ settings_epoch: 1, settings_revision: 1, terminal_command_timeout_ms: 0 }),
+    );
+    const timeout = byId<HTMLInputElement>("shell-command-timeout");
+    timeout.value = "30";
+    timeout.dispatchEvent(new Event("change"));
+    await debounced();
+    expect(patches[0]?.body).toEqual({ terminal_command_timeout_ms: 30000 });
+    timeout.value = "45";
+    patches[0]?.fail();
+    await settled();
+    expect(timeout.value, "the reader's newer value").toBe("45");
+  });
+
+  it("asks no browser permission when the switch is turned off again inside the same write", async () => {
+    const requestPermission = vi.fn(() => Promise.resolve("default"));
+    vi.stubGlobal("Notification", { permission: "default", requestPermission });
+    await boot({ ...lastKindOn(), notifications_enabled: false });
+    masterBox().click();
+    await settled();
+    finishedBox().click();
+    masterBox().click();
+    await debounced();
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.body).toEqual({
+      notifications_enabled: false,
+      notify_agent_finished: false,
+    });
+    commitPatch({ ...lastKindOn(), notifications_enabled: false }, 0);
+    await settled();
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(masterBox().checked).toBe(false);
+    expect(areNotificationsEnabled()).toBe(false);
+  });
+
+  it("retries push registration, with no write, when the switch is clicked on again after registration failed", async () => {
+    const requestPermission = vi.fn(() => Promise.resolve("default"));
+    vi.stubGlobal("Notification", { permission: "default", requestPermission });
+    const off = { ...lastKindOn(), notifications_enabled: false };
+    await boot(off);
+    masterBox().click();
+    await debounced();
+    commitPatch(off, 0);
+    await settled();
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    document.dispatchEvent(new CustomEvent("notify:registration-failed"));
+    expect(masterBox().checked, "the rollback unchecks the switch alone").toBe(false);
+    masterBox().click();
+    await debounced();
+    expect(patches, "the server already holds the switch on").toHaveLength(1);
+    expect(masterBox().checked).toBe(true);
+    expect(areNotificationsEnabled()).toBe(true);
+    expect(requestPermission, "a second registration attempt").toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves notifications off and asks no permission when the switch's on write is refused", async () => {
+    const requestPermission = vi.fn(() => Promise.resolve("default"));
+    vi.stubGlobal("Notification", { permission: "default", requestPermission });
+    await boot({ ...lastKindOn(), notifications_enabled: false });
+    masterBox().click();
+    await debounced();
+    expect(patches.map((p) => p.body)).toEqual([{ notifications_enabled: true }]);
+    patches[0]?.fail();
+    await settled();
+    expect(masterBox().checked).toBe(false);
+    expect(areNotificationsEnabled()).toBe(false);
+    expect(requestPermission).not.toHaveBeenCalled();
+  });
+
+  it("asks browser permission once when the switch is clicked on, off and on inside one debounce", async () => {
+    const requestPermission = vi.fn(() => Promise.resolve("default"));
+    vi.stubGlobal("Notification", { permission: "default", requestPermission });
+    const off = { ...lastKindOn(), notifications_enabled: false };
+    await boot(off);
+    masterBox().click();
+    masterBox().click();
+    masterBox().click();
+    await debounced();
+    expect(patches.map((p) => p.body)).toEqual([{ notifications_enabled: true }]);
+    commitPatch(off, 0);
+    await settled();
+    expect(masterBox().checked).toBe(true);
+    expect(areNotificationsEnabled()).toBe(true);
+    expect(requestPermission).toHaveBeenCalledOnce();
+  });
+
+  it("puts the compaction slider and its policy back when the write is refused", async () => {
+    await boot(
+      settingsPayload({
+        settings_epoch: 1,
+        settings_revision: 1,
+        auto_compaction_enabled: true,
+        auto_compact_pct: 80,
+      }),
+    );
+    const range = byId<HTMLInputElement>("auto-compact-pct");
+    range.value = "90";
+    range.dispatchEvent(new Event("input"));
+    range.dispatchEvent(new Event("change"));
+    expect(compactionPolicy.value).toEqual({ enabled: true, pct: 90 });
+    await debounced();
+    patches[0]?.fail();
+    await settled();
+    expect(range.value).toBe("80");
+    expect(compactionPolicy.value).toEqual({ enabled: true, pct: 80 });
+  });
+});

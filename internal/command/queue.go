@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/cplieger/marotte/internal/ids"
@@ -32,16 +31,19 @@ var (
 const reasonSending = "sending"
 
 // QueueAccess is the follow-up queue as the commands and the drain drive it. An
-// append sees the turn registry, so a turn cannot close between "it is running"
-// and "it is queued" and leave a row no close will send.
+// append sees the turn registry, so a live turn cannot close between "it is
+// running" and "it is queued" and leave a row no close will send.
 type QueueAccess interface {
 	// AppendIfLive applies fn to the chat's record while the chat holds a live turn,
-	// reporting live=false (and writing nothing) when it holds none. fn's error
-	// aborts the write and is returned as is.
+	// or waits for kiro-cli to end a run the user stopped (the next drain once that wait
+	// ends may send one such row despite a stop, CloseFacts.AfterStop; the rest go as
+	// after any close), reporting
+	// live=false (and writing nothing) when neither. fn's error aborts the write and
+	// is returned as is.
 	AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (live bool, err error)
 	// NextUserRow answers the first queued user row that is not held and whose
-	// turn this process has not opened.
-	NextUserRow(ctx context.Context, chatID marotte.ChatID) (marotte.QueuedPrompt, bool, error)
+	// turn this process has not opened, among only when it is non-nil.
+	NextUserRow(ctx context.Context, chatID marotte.ChatID, only []string) (marotte.QueuedPrompt, bool, error)
 	// Unqueue removes the row with id. An id whose turn this process opened answers
 	// sending=true; an id no row carries is success.
 	Unqueue(ctx context.Context, chatID marotte.ChatID, id string) (sending bool, err error)
@@ -154,13 +156,20 @@ func cmdUnqueuePrompt(ctx context.Context, roles *promptRoles, cmd *marotte.Clie
 // and the fence naming it.
 type CloseFacts struct {
 	Outcome marotte.TurnOutcome
-	Fence   TurnFence
+	// AfterStop are rows queued while kiro-cli ended the stopped run, with no turn
+	// live: one of them may go after this close although it was stopped (after any
+	// unread steers, which go first); the rest wait for the next close's drain.
+	AfterStop []string
+	Fence     TurnFence
+	// Unattended is a close no one stopped (marotte closing a turn KAS went idle without
+	// ending), after which queued user rows still go, as after a clean close.
+	Unattended bool
 }
 
 // drainAfterClose sends at most one prompt for a close, under the chat's steer lock from the pick
 // to launchPrompt's return: unread steers first (after a close leaving a live bridge or a drained
-// death), else one queued user row (after a clean close, bridge live). A pending end, a held slot,
-// a newer turn or a shutdown sends nothing; no shell interception.
+// death), else one queued user row (after a clean or unattended close, or one of AfterStop, bridge
+// live). A pending end, a held slot, a newer turn or a shutdown sends nothing.
 func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, cl CloseFacts, ends EndFacts) {
 	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
 	if err != nil {
@@ -181,16 +190,21 @@ func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 			return
 		}
 	}
-	if !live || marotte.SeverityOf(cl.Outcome) != marotte.TurnSeverityClean || roles.followups == nil {
+	clean := marotte.SeverityOf(cl.Outcome) == marotte.TurnSeverityClean || cl.Unattended
+	var only []string
+	if !clean {
+		only = cl.AfterStop
+	}
+	if !live || (!clean && len(only) == 0) || roles.followups == nil {
 		roles.admission.ReleaseTurnReservation(chatID)
 		return
 	}
-	sendNextUserRow(ctx, roles, chatID, cl.Fence)
+	sendNextUserRow(ctx, roles, chatID, cl.Fence, only)
 }
 
-// No row, or one that cannot be read, releases it.
-func sendNextUserRow(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, fence TurnFence) {
-	row, ok, err := roles.followups.NextUserRow(ctx, chatID)
+// No row, or one that cannot be read, releases it. only narrows the pick (NextUserRow).
+func sendNextUserRow(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, fence TurnFence, only []string) {
+	row, ok, err := roles.followups.NextUserRow(ctx, chatID, only)
 	if err != nil || !ok {
 		if err != nil {
 			slog.Warn("queued prompts could not be read; they stay queued", "chat_id", chatID, keyError, err)
@@ -208,6 +222,8 @@ func sendNextUserRow(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 
 // sendUnread opens one prompt carrying the unread rows, joined by a blank line, and
 // retires them once its turn_open is appended. A refused open leaves them unsent.
+// The words are the user's own, so the prompt carries no DisplayText: a label would
+// replace them in the transcript and in KAS's replay.
 func sendUnread(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, rows []SteerRow, fence TurnFence) {
 	keys := make([]string, 0, len(rows))
 	texts := make([]string, 0, len(rows))
@@ -215,20 +231,13 @@ func sendUnread(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, 
 		keys = append(keys, r.Key)
 		texts = append(texts, r.Text)
 	}
-	p := &marotte.PromptCommand{Text: strings.Join(texts, "\n\n"), MessageID: ids.NewMessageID(), DisplayText: unreadLabel(len(rows))}
+	p := &marotte.PromptCommand{Text: strings.Join(texts, "\n\n"), MessageID: ids.NewMessageID()}
 	if err := launchPrompt(ctx, roles, chatID, p, launch{resends: keys, fence: fence}); err != nil {
 		logDrainRefused(chatID, p.MessageID, err)
 		return
 	}
 	roles.jobs.Delivered(chatID, keys)
 	slog.Info("unread steers sent as the next prompt", "chat_id", chatID, "steers", len(keys))
-}
-
-func unreadLabel(n int) string {
-	if n == 1 {
-		return "Resending a message the agent had not read"
-	}
-	return "Resending " + strconv.Itoa(n) + " messages the agent had not read"
 }
 
 func logDrainRefused(chatID marotte.ChatID, messageID string, err error) {

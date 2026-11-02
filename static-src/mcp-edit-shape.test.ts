@@ -200,14 +200,15 @@ describe("an edit round trip", () => {
     },
   );
 
-  it("keeps a remote server's oauth metadata URL and redirect across a form save", async () => {
-    // No form control edits these two, and Update replaces the whole record.
+  it("keeps a remote server's oauth metadata URL, redirect and scopes across a form save", async () => {
+    // No form control edits these, and Update replaces the whole record.
     const { setEditing, initModal } = await import("./mcp-panels.js");
     const server = record({
       transport: "http",
       url: "https://example.com/mcp",
       oauth_client_metadata_url: "https://example.com/c.json",
       oauth_redirect_uri: "localhost:7778",
+      oauth_scopes: ["read", "write"],
     });
     setEditing({ id: server.id });
     initModal({ mode: "remote", server });
@@ -219,6 +220,7 @@ describe("an edit round trip", () => {
     });
     expect(saved.calls[0]?.body.oauth_client_metadata_url).toBe("https://example.com/c.json");
     expect(saved.calls[0]?.body.oauth_redirect_uri).toBe("localhost:7778");
+    expect(saved.calls[0]?.body.oauth_scopes).toEqual(["read", "write"]);
   });
 
   it("shows a stored wait_for_ready and timeout_ms in the raw box", async () => {

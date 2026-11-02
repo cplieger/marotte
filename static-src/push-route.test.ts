@@ -2,7 +2,10 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { buildPath, type Route } from "./route-path.js";
+import { join } from "@cplieger/keyenc";
 import { parsePushTarget, pushTargetRoute } from "./push-subject.js";
+import { _resetRunAsksForTest, applyRunAsks, runAskPosition } from "./run-asks.js";
+import type { RunAsk } from "./wire/types.gen.js";
 import {
   registerNotificationOpener,
   _resetNotificationOpenerForTest,
@@ -11,6 +14,9 @@ import {
 vi.mock("./toast.js", async () => (await import("./__test-helpers__/toast-mock.js")).toastMock());
 
 const { routePushMessage } = await import("./handlers/push-message.js");
+const { info } = await import("./toast.js");
+
+const WAIT = join("wf_42", join("wf_42", "review"), "sess-1");
 
 interface Row {
   readonly name: string;
@@ -42,6 +48,13 @@ const rows: readonly Row[] = [
     name: "a workflow run",
     chatId: "",
     subject: "run:wf_42",
+    route: { kind: "run", id: "wf_42" },
+    url: "/run/wf_42",
+  },
+  {
+    name: "a step's question",
+    chatId: "",
+    subject: `runask:${WAIT}`,
     route: { kind: "run", id: "wf_42" },
     url: "/run/wf_42",
   },
@@ -106,5 +119,73 @@ describe("an unregistered opener", () => {
         body: "",
       });
     }).toThrow(/no opener registered/);
+  });
+});
+
+// A banner can outlive its question (another device answered, the step moved on): the tap still lands
+// on the run, and says the step no longer waits rather than leaving the reader to look for a card.
+describe("a tap on a step question's banner", () => {
+  const ask: RunAsk = {
+    ask_id: "ask-1",
+    node_id: "review",
+    node_path: ["wf_42", "review"],
+    step_session_id: "sess-1",
+    agent_name: "",
+    text: "Ship it?",
+    text_source: "asked",
+  };
+
+  function tap(): void {
+    routePushMessage({
+      type: "push",
+      reason: "clicked",
+      chatId: "",
+      subject: `runask:${WAIT}`,
+      title: "Marotte",
+      body: "",
+    });
+  }
+
+  function hold(asks: RunAsk[], reachable = true): void {
+    applyRunAsks({
+      workflow_id: "wf_42",
+      chat_id: "run:wf_42",
+      epoch: "e1",
+      seq: 1,
+      reachable,
+      asks,
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetRunAsksForTest();
+    registerNotificationOpener(opened);
+  });
+
+  it("opens the run quietly while the step still waits", () => {
+    expect(runAskPosition("wf_42", ask)).toBe(WAIT);
+    hold([ask]);
+    tap();
+    expect(opened).toHaveBeenCalledWith({ kind: "run", id: "wf_42" });
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it("says the step no longer waits once the run's snapshot drops it", () => {
+    hold([{ ...ask, step_session_id: "sess-other", node_path: ["wf_42", "other"] }]);
+    tap();
+    expect(opened).toHaveBeenCalledWith({ kind: "run", id: "wf_42" });
+    expect(info).toHaveBeenCalledWith("This step is no longer waiting for an answer.");
+  });
+
+  it("says so for a run this page holds no questions for", () => {
+    tap();
+    expect(info).toHaveBeenCalledWith("This step is no longer waiting for an answer.");
+  });
+
+  it("claims nothing for a run marotte could not read", () => {
+    hold([], false);
+    tap();
+    expect(info).not.toHaveBeenCalled();
   });
 });

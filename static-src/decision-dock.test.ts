@@ -5,6 +5,7 @@
 
 import { vi, describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { userEvent } from "vitest/browser";
+import { join } from "@cplieger/keyenc";
 
 // The store is real: the chat-switch trigger is an effect over the real `activeSession` computed.
 vi.mock("./editor-openers.js", () => ({
@@ -32,23 +33,53 @@ import {
   dropDecisions,
   dropRunDecisions,
   collapseSettledDecision,
-  collapseSettledRunInput,
-  dropRunAsks,
+  dropRunRequests,
   DOCK_PHASE_MS,
+  hasPendingDecision,
   runPendingAsks,
   _resetForTest,
   type AnswerOutcome,
 } from "./decision-dock.js";
 import { BUS_USER_INPUT_ANSWERED, onBus } from "./bus.js";
-import { RUN_INPUT_FALLBACK } from "./dock-ask.js";
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import { clampObservationCount } from "./clamp-text.js";
 // Read directly (`loadCSS` globs `*.css`; MANIFEST has no extension): its file order is a cascade fact for the
 // reduced-motion disarm below.
 import cssManifest from "./css/MANIFEST?raw";
 import { setSessions, setActive } from "./store.js";
-import type { PermissionNeededPayload, RunInputNeededPayload, Session } from "./types.js";
+import type { PermissionNeededPayload, Session } from "./types.js";
 import type { PermissionAnswer } from "./permission.js";
+import { _resetRunAsksForTest, applyRunAsks } from "./run-asks.js";
+import type { RunAsk, RunAsksPayload } from "./wire/types.gen.js";
+
+function stepAsk(over: Partial<RunAsk> = {}): RunAsk {
+  return {
+    ask_id: "ask:7",
+    node_id: "review",
+    node_path: ["wf_1", "review"],
+    step_session_id: "sess-1",
+    agent_name: "reviewer",
+    text: "Ship it?",
+    text_source: "asked",
+    ...over,
+  };
+}
+
+let seq = 0;
+
+/** The server's `run_asks` for one run, as the handler applies it. */
+function snapshot(chatID: string, asks: RunAsk[], over: Partial<RunAsksPayload> = {}): void {
+  seq++;
+  applyRunAsks({
+    workflow_id: "wf_1",
+    chat_id: chatID,
+    epoch: "e1",
+    seq,
+    reachable: true,
+    asks,
+    ...over,
+  });
+}
 
 function session(id: string): Session {
   return {
@@ -168,6 +199,7 @@ beforeEach(() => {
   // Only the two functions the dock uses; faking Date and performance would reach the reactive graph.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   _resetForTest();
+  _resetRunAsksForTest();
   mockToastInfo.mockClear();
   document.body.innerHTML = `<div id="decision-dock" class="hidden"></div>`;
   setSessions([session("c1"), session("c2")]);
@@ -517,7 +549,7 @@ describe("the run tab's dock", () => {
       });
       const a = runPendingAsks("wf_1");
       expect(a.count).toBe(1);
-      expect(a.asked).toEqual([{ nodeID: "", sessionID: "", answer: false }]);
+      expect(a.asked).toEqual([{ nodeID: "", sessionID: "", answer: false, text: "ls -la" }]);
     });
 
     it("ignores a chat's own ask and another run's", () => {
@@ -579,42 +611,10 @@ describe("the run tab's dock", () => {
   });
 });
 
-// A workflow step's question: not request-shaped (a string ask id, not an int64), hence the per-kind key. The prompt
-// must reach the parent tab, the chat that launched the run.
+// A workflow step's question takes no card in any dock: kiro-cli hands it to the launching agent, and the run tab's
+// composer answers it. The run-asks store still says the run waits, which its run card and dots read.
 
 describe("a workflow step's question", () => {
-  function runInput(over: Partial<RunInputNeededPayload> = {}): RunInputNeededPayload {
-    return {
-      workflow_id: "wf_1",
-      ask_id: "notify:7",
-      node_id: "review",
-      step_session_id: "sess-1",
-      agent_name: "reviewer",
-      question: "Ship it?",
-      asked_at: "2026-09-03T10:00:00Z",
-      ...over,
-    };
-  }
-
-  function pushAsk(
-    chatID: string,
-    over: Partial<RunInputNeededPayload> = {},
-    submit: (text: string | null) => void = vi.fn(),
-    defer?: () => void | Promise<void>,
-  ): typeof submit {
-    const payload = runInput(over);
-    pushDecision({
-      kind: "run_input",
-      chatID,
-      runID: payload.workflow_id,
-      askID: payload.ask_id,
-      payload,
-      submit,
-      ...(defer === undefined ? {} : { defer }),
-    });
-    return submit;
-  }
-
   function mountRunHost(run: () => string): HTMLElement {
     const el = document.createElement("div");
     el.id = "run-dock";
@@ -624,307 +624,100 @@ describe("a workflow step's question", () => {
     return el;
   }
 
-  function textarea(h: HTMLElement = host()): HTMLTextAreaElement | null {
-    return liveCard(h)?.querySelector<HTMLTextAreaElement>(".dock-ask-text") ?? null;
-  }
-
-  it("renders in the PARENT TAB, keyed to the launching chat", () => {
-    // The envelope's chat id is the launching chat, so the composer dock's own matcher puts the card in the parent tab.
-    pushAsk("c1");
-    expect(host().classList.contains("hidden")).toBe(false);
-    expect(liveCard()?.classList.contains("dock-run-input")).toBe(true);
-    expect(liveCard()?.textContent).toContain("Ship it?");
-    expect(liveCard()?.textContent).toContain("reviewer \u00b7 step review");
+  const reParked = stepAsk({
+    ask_id: "ask:8",
+    node_id: "build",
+    node_path: ["wf_1", "build"],
+    step_session_id: "sess-2",
+    text: "Build it?",
+    text_source: "last_message",
   });
 
-  it("takes no card on the run tab, where the run composer answers it", () => {
-    // A manual or scheduled run's ask is keyed `run:<workflowId>`; the run tab's composer is its surface
-    // (`run-composer.ts`), so neither dock draws it and the run still counts it.
-    const runHost = mountRunHost(() => "wf_1");
-    pushAsk("run:wf_1");
+  it("draws no card in the launching chat, whether the step asked or re-parked on plain text", () => {
+    snapshot("c1", [stepAsk(), reParked]);
+    settleMotion();
     expect(host().classList.contains("hidden")).toBe(true);
+    expect(host().children.length).toBe(0);
+    expect(runPendingAsks("wf_1").count).toBe(2);
+  });
+
+  it("draws no card on the run tab's dock, where the run composer answers it", () => {
+    const runHost = mountRunHost(() => "wf_1");
+    snapshot("c1", [stepAsk()]);
     expect(runHost.classList.contains("hidden")).toBe(true);
-    expect(liveCard(runHost)).toBeNull();
     expect(runPendingAsks("wf_1").count).toBe(1);
   });
 
-  it("shows a launched run's ask in the chat only, and the chat's answer settles it", () => {
-    const runHost = mountRunHost(() => "wf_1");
-    const submit = pushAsk("c1");
-    expect(liveCard()).not.toBeNull();
-    expect(liveCard(runHost)).toBeNull();
-
-    const box = textarea();
-    if (box !== null) {
-      box.value = "  yes, ship it  ";
-    }
-    clickButton("Send answer");
-    expect(submit).toHaveBeenCalledWith("yes, ship it");
-    settleMotion();
-    expect(host().classList.contains("hidden")).toBe(true);
-    expect(runPendingAsks("wf_1").count).toBe(0);
+  it("does not mark the launching chat as holding a decision", () => {
+    snapshot("c1", [stepAsk()]);
+    expect(hasPendingDecision("c1")).toBe(false);
   });
 
-  it("still shows the run tab's other decisions", () => {
-    // Only the step's question moved into the composer; a permission keyed to the run stays a card.
-    const runHost = mountRunHost(() => "wf_1");
-    pushPerm("run:wf_1", 3);
-    expect(liveCard(runHost)).not.toBeNull();
-  });
-
-  it("sends null for continue-without-answering", () => {
-    // The ask registry is in memory, so after a restart the question is gone; `null` re-drives the step with KAS's continuation.
-    const submit = pushAsk("c1", { question: "" });
-    expect(liveCard()?.textContent).toContain(RUN_INPUT_FALLBACK);
-    expect(liveCard()?.textContent).toContain("lost when the server restarted");
-    clickButton("Continue without answering");
-    expect(submit).toHaveBeenCalledWith(null);
-  });
-
-  it("refuses an empty answer instead of sending one", () => {
-    const submit = pushAsk("c1");
-    clickButton("Send answer");
-    expect(submit).not.toHaveBeenCalled();
-    expect(liveCard()).not.toBeNull();
-  });
-
-  it("answers an ask at most once", () => {
-    const submit = pushAsk("c1");
-    const box = textarea();
-    if (box !== null) {
-      box.value = "ok";
-    }
-    const send = [...(liveCard()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
-      (b) => b.textContent === "Send answer",
-    );
-    send?.click();
-    send?.click();
-    expect(submit).toHaveBeenCalledTimes(1);
-  });
-
-  // `settle` splices the entry before the answer goes out, so on a retryable refusal the same ask returns on a fresh
-  // `run_input_needed` and the held text must come back with it, in both directions.
-  describe("the words a refused send is holding", () => {
-    function sendAnswer(text: string): void {
-      const box = textarea();
-      if (box !== null) {
-        box.value = text;
-      }
-      clickButton("Send answer");
-    }
-
-    it("comes back with the ask the server re-offered", () => {
-      pushAsk("c1");
-      sendAnswer("the release branch");
-      settleMotion();
-      // restoreAsk re-broadcasts the same ask on a between-steps refusal.
-      pushAsk("c1");
-      expect(textarea()?.value).toBe("the release branch");
+  it("leaves a permission card from the same run alone, and is not counted behind it", () => {
+    snapshot("c1", [stepAsk(), reParked]);
+    pushDecision({
+      kind: "permission",
+      chatID: "c1",
+      runID: "wf_1",
+      requestID: 3,
+      payload: perm({ request_id: 3, node_id: "build" }),
+      submit: vi.fn(),
     });
-
-    it("is dropped once the ask is genuinely settled", () => {
-      pushAsk("c1");
-      sendAnswer("the release branch");
-      settleMotion();
-      collapseSettledRunInput("wf_1", "notify:7", "user");
-      // A second ask with that id is a new question, so the old answer must not seed it.
-      pushAsk("c1");
-      expect(textarea()?.value).toBe("");
-    });
-
-    it("is dropped when the run itself ends", () => {
-      // A run's terminal sweep drops cards without a per-ask settle frame, so nothing else frees the words.
-      pushAsk("c1");
-      sendAnswer("the release branch");
-      settleMotion();
-      dropRunAsks("wf_1");
-      pushAsk("c1");
-      expect(textarea()?.value).toBe("");
-    });
-
-    it("is dropped by continue-without-answering, which retires the question", () => {
-      pushAsk("c1");
-      sendAnswer("the release branch");
-      settleMotion();
-      pushAsk("c1");
-      clickButton("Continue without answering");
-      settleMotion();
-      pushAsk("c1");
-      expect(textarea()?.value).toBe("");
-    });
-
-    it("is held per ASK, so a second parked step cannot evict the first's", () => {
-      // Keyed by ask, not one slot, or the older answer is lost here.
-      pushAsk("c1", { ask_id: "notify:1" });
-      sendAnswer("the release branch");
-      settleMotion();
-      pushAsk("c1", { ask_id: "notify:2" });
-      sendAnswer("main");
-      settleMotion();
-
-      pushAsk("c1", { ask_id: "notify:1" });
-      expect(textarea()?.value).toBe("the release branch");
-    });
-  });
-
-  // Deferring is a pass-through and must not settle: splicing would take the card off every surface while the run is
-  // still parked.
-  describe("deferring to the launching agent", () => {
-    it("hands the deferral through and leaves the ask OPEN", () => {
-      const defer = vi.fn();
-      const submit = pushAsk("c1", {}, vi.fn(), defer);
-      clickButton("Defer to parent agent");
-
-      expect(defer).toHaveBeenCalledTimes(1);
-      expect(submit).not.toHaveBeenCalled();
-      settleMotion();
-      // Both halves: the DOM could be a phase's leftover and the count a card nobody can see.
-      expect(liveCard()?.classList.contains("dock-run-input")).toBe(true);
-      expect(runPendingAsks("wf_1").count).toBe(1);
-    });
-
-    it("offers no deferral for an ask the decision carries none for", () => {
-      // The callback passes through verbatim: no callback, no button.
-      pushAsk("c1");
-      const labels = [...(liveCard()?.querySelectorAll(".dock-ask-actions button") ?? [])].map(
-        (b) => b.textContent,
-      );
-      expect(labels).toEqual(["Send answer", "Continue without answering"]);
-    });
-  });
-
-  it("ignores a re-delivered ask (the connect replay re-offers every parked one)", () => {
-    // The server replays every parked question on connect; identity is the ask id.
-    pushAsk("c1");
-    pushAsk("c1");
+    expect(liveCards().length).toBe(1);
+    expect(liveCard()?.classList.contains("dock-permission")).toBe(true);
     expect(liveDepth()?.classList.contains("hidden")).toBe(true);
-  });
-
-  it("keys separately from a permission carrying the same number", () => {
-    // An ask id is arbitrary text: permission 1 beside ask "1" must stay two decisions, or the per-kind key collapsed.
-    pushPerm("c1", 1);
-    pushAsk("c1", { ask_id: "1" });
-    expect(liveDepth()?.textContent).toBe("1 more waiting");
-  });
-
-  it("survives a switch away from the parent tab and back", () => {
-    pushAsk("c1");
-    setActive("c2");
-    settleMotion();
-    expect(host().classList.contains("hidden")).toBe(true);
-    setActive("c1");
-    expect(liveCard()?.classList.contains("dock-run-input")).toBe(true);
+    expect(hasPendingDecision("c1")).toBe(true);
   });
 
   describe("runPendingAsks", () => {
-    it("counts an ask under either keying and names its step", () => {
-      pushAsk("c1", { ask_id: "notify:1", node_id: "review" });
-      pushAsk("run:wf_1", { ask_id: "notify:2", node_id: "build" });
+    it("addresses a step question by session, path and id, and joins the run's requests", () => {
+      snapshot("c1", [stepAsk()]);
+      pushDecision({
+        kind: "permission",
+        chatID: "run:wf_1",
+        requestID: 1,
+        payload: perm({ request_id: 1, node_id: "build" }),
+        submit: vi.fn(),
+      });
       const a = runPendingAsks("wf_1");
       expect(a.count).toBe(2);
-      expect(a.asked.map((x) => x.nodeID).sort()).toEqual(["build", "review"]);
-      expect(a.asked.every((x) => x.answer)).toBe(true);
+      expect(a.asked).toEqual([
+        {
+          nodeID: "review",
+          sessionID: "sess-1",
+          answer: true,
+          path: join("wf_1", "review"),
+          askID: "ask:7",
+          text: "Ship it?",
+        },
+        { nodeID: "build", sessionID: "", answer: false, text: "ls -la" },
+      ]);
       expect(a.label).toBe("Ship it?");
     });
 
-    it("labels a question-less ask with the shared fallback", () => {
-      // The card heading and the run card's alert share one exported fallback constant.
-      pushAsk("run:wf_1", { question: "" });
-      expect(runPendingAsks("wf_1").label).toBe(RUN_INPUT_FALLBACK);
+    it("labels a question with no text with the fallback", () => {
+      snapshot("run:wf_1", [stepAsk({ text: "", text_source: "unseen" })]);
+      expect(runPendingAsks("wf_1").label).toBe("A step is waiting for an answer");
     });
 
-    it("clears once the ask is answered", () => {
-      pushAsk("c1");
-      expect(runPendingAsks("wf_1").count).toBe(1);
-      const box = textarea();
-      if (box !== null) {
-        box.value = "done";
-      }
-      clickButton("Send answer");
+    it("ignores another run's questions", () => {
+      snapshot("c1", [stepAsk()], { workflow_id: "wf_OTHER" });
+      expect(runPendingAsks("wf_1").count).toBe(0);
+      expect(runPendingAsks("").count).toBe(0);
+    });
+
+    it("drops the question once the run's snapshot no longer holds it, however it was answered", () => {
+      snapshot("c1", [stepAsk()]);
+      snapshot("c1", []);
       expect(runPendingAsks("wf_1").count).toBe(0);
     });
   });
 
-  describe("dropRunDecisions", () => {
-    it("clears a run-keyed ask, which the per-chat sweep cannot reach", () => {
-      // A transport gap's sweep walks the chat store, and `run:<workflowId>` is no chat, so an ask answered during the outage
-      // kept its card and its click answered 409.
-      const submit = pushAsk("run:wf_1");
-      dropRunDecisions();
-      settleMotion();
-      expect(runPendingAsks("wf_1").count).toBe(0);
-      expect(submit).not.toHaveBeenCalled();
-    });
-
-    it("leaves an ask keyed to a launching CHAT alone", () => {
-      // The chat's queue is `dropDecisions`'; dropping it here too would drop it twice and, keyed on runID, reach every
-      // chat-keyed run ask.
-      pushAsk("c1");
-      dropRunDecisions();
-      expect(runPendingAsks("wf_1").count).toBe(1);
-      expect(liveCard()?.classList.contains("dock-run-input")).toBe(true);
-    });
-  });
-
-  describe("collapseSettledRunInput", () => {
-    it("retires the card and says a person answered elsewhere", () => {
-      const submit = pushAsk("c1");
-      collapseSettledRunInput("wf_1", "notify:7", "user");
-      settleMotion();
-
-      expect(host().classList.contains("hidden")).toBe(true);
-      expect(submit).not.toHaveBeenCalled();
-      expect(mockToastInfo).toHaveBeenCalledWith(
-        "c1: The workflow step's question was answered in another window.",
-      );
-    });
-
-    it("says a machine answered when the unattended floor did", () => {
-      pushAsk("c1");
-      collapseSettledRunInput("wf_1", "notify:7", "unattended");
-      expect(mockToastInfo).toHaveBeenCalledWith(
-        "c1: The workflow step's question was answered automatically because nobody was watching.",
-      );
-    });
-
-    it("claims NO answer when the question merely stopped being answerable", () => {
-      // A run ask needs a third settler: the step can move on or the run end while it is parked, with nobody replying, so
-      // "answered in another window" would be false.
-      pushAsk("c1");
-      collapseSettledRunInput("wf_1", "notify:7", "moot");
-      expect(mockToastInfo).toHaveBeenCalledWith(
-        "c1: The workflow step's question is no longer waiting for an answer.",
-      );
-    });
-
-    it("finds a PARENTLESS run's ask, which no chat id names", () => {
-      // The settle event carries only the run and a parentless ask is keyed `run:<id>`, so every queue is scanned.
-      const runHost = mountRunHost(() => "wf_1");
-      pushAsk("run:wf_1");
-      collapseSettledRunInput("wf_1", "notify:7", "user");
-      settleMotion();
-      expect(runHost.classList.contains("hidden")).toBe(true);
-      expect(runPendingAsks("wf_1").count).toBe(0);
-    });
-
-    it("leaves an ask belonging to another run alone", () => {
-      pushAsk("c1");
-      collapseSettledRunInput("wf_OTHER", "notify:7", "user");
-      collapseSettledRunInput("wf_1", "notify:OTHER", "user");
-      collapseSettledRunInput("", "notify:7", "user");
-      collapseSettledRunInput("wf_1", "", "user");
-
-      expect(liveCard()).not.toBeNull();
-      expect(mockToastInfo).not.toHaveBeenCalled();
-    });
-
-    it("does not retire a permission with the same number as the ask id", () => {
-      const submit = pushPerm("c1", 7);
-      collapseSettledRunInput("wf_1", "7", "user");
-      expect(liveCard()).not.toBeNull();
-      clickButton("Allow");
-      expect(submit).toHaveBeenCalledTimes(1);
-    });
+  it("is left alone by the run's request sweep, which the server's final snapshot ends", () => {
+    snapshot("c1", [stepAsk()]);
+    dropRunRequests("wf_1");
+    dropRunDecisions();
+    expect(runPendingAsks("wf_1").count).toBe(1);
   });
 });
 
@@ -1614,23 +1407,19 @@ const OPTIONS = Array.from({ length: 10 }, (_, i) => ({
   description: "Keeps that surface's wording and rewrites the other two to match it.",
 }));
 
-function longAsk(chatID: string, submit: (text: string | null) => void = vi.fn()): void {
+/** The agent's own prose question, the card the clamp and the ceiling serve. */
+function proseAsk(chatID: string, question: string): void {
   pushDecision({
-    kind: "run_input",
+    kind: "user_input",
     chatID,
-    runID: "wf_long",
-    askID: "notify:long",
-    payload: {
-      workflow_id: "wf_long",
-      ask_id: "notify:long",
-      node_id: "review",
-      step_session_id: "sess-long",
-      agent_name: "reviewer",
-      question: LONG_QUESTION,
-      asked_at: "2026-09-03T10:00:00Z",
-    },
-    submit,
+    requestID: 40,
+    payload: { request_id: 40, question },
+    submit: vi.fn(),
   });
+}
+
+function longAsk(chatID: string): void {
+  proseAsk(chatID, LONG_QUESTION);
 }
 
 function question(h: HTMLElement = host()): HTMLElement | null {
@@ -1659,22 +1448,7 @@ describe("a question longer than the card", () => {
   });
 
   it("leaves a SHORT question unclamped, so the opener is not permanent furniture", () => {
-    pushDecision({
-      kind: "run_input",
-      chatID: "c1",
-      runID: "wf_1",
-      askID: "notify:1",
-      payload: {
-        workflow_id: "wf_1",
-        ask_id: "notify:1",
-        node_id: "review",
-        step_session_id: "sess-1",
-        agent_name: "reviewer",
-        question: "Ship it?",
-        asked_at: "2026-09-03T10:00:00Z",
-      },
-      submit: vi.fn(),
-    });
+    proseAsk("c1", "Ship it?");
     expect(opener()?.hidden).toBe(true);
   });
 
@@ -1685,13 +1459,7 @@ describe("a question longer than the card", () => {
     longAsk("c1");
     expect(clampObservationCount()).toBeGreaterThan(before);
 
-    // An empty box focuses itself and sends nothing, so the answer is typed.
-    const box = liveCard()?.querySelector<HTMLTextAreaElement>(".dock-ask-text");
-    if (box === null || box === undefined) {
-      throw new Error("no answer box");
-    }
-    box.value = "the release branch";
-    clickButton("Send answer");
+    dropDecisions("c1");
     settleMotion();
     expect(clampObservationCount()).toBe(before);
   });
@@ -1740,6 +1508,10 @@ describe("the card's ceiling keeps the answer row on screen", () => {
     const h = boundedHost();
     longAsk("c1");
     opener(h)?.click();
+    // Show more slides open; the ceiling is a property of the opened card, so read it settled.
+    for (const a of document.getAnimations()) {
+      a.finish();
+    }
     const card = liveCard(h);
     const body = card?.querySelector<HTMLElement>(".dock-ask-body");
     const actions = card?.querySelector<HTMLElement>(".dock-ask-actions");

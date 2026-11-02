@@ -1,8 +1,8 @@
-// The shell precache's two decisions, and one of them is a CROSS-LANGUAGE contract with no codegen
+// The shell precache's decisions, and one of them is a CROSS-LANGUAGE contract with no codegen
 // behind it: cmd/bundle decides which names the build emits and `isShellPath` decides which the
 // worker will answer for, so the Go writer's own literals are read here rather than restated.
 import { describe, it, expect } from "vitest";
-import { isPreviewPath, isShellPath, parseManifest } from "./precache.js";
+import { fetchArm, isPreviewPath, isShellPath, parseManifest } from "./precache.js";
 import bundleGo from "../cmd/bundle/main.go?raw";
 
 describe("isPreviewPath", () => {
@@ -55,7 +55,7 @@ describe("isShellPath", () => {
     // whose imports name chunk hashes the new server no longer serves.
     expect(isShellPath("/app.js")).toBe(false);
     expect(isShellPath("/style.css")).toBe(false);
-    const body = /func precacheAssets\(\)[\s\S]*?\n}\n/.exec(bundleGo);
+    const body = /func precacheAssets\([^)]*\)[\s\S]*?\n}\n/.exec(bundleGo);
     expect(body, "precacheAssets not found in cmd/bundle/main.go").not.toBeNull();
     for (const name of ["app.js", "style.css"]) {
       expect(body?.[0], `precacheAssets still lists ${name}`).not.toContain(`"${name}"`);
@@ -81,6 +81,43 @@ describe("isShellPath", () => {
     expect(isShellPath("/chunks/notes.md")).toBe(false);
     // Not a prefix match on a sibling directory name.
     expect(isShellPath("/chunkstore/x.js")).toBe(false);
+  });
+});
+
+describe("fetchArm", () => {
+  const origin = "https://marotte.example";
+  const chunk = `${origin}/chunks/editor-4K73XYBF.js`;
+  const req = (method: string, url: string, mode = "cors") => ({ method, mode, url });
+
+  it("leaves an upload POST to the network, untouched by the worker", () => {
+    expect(fetchArm(req("POST", `${origin}/api/file/upload`), origin)).toBe("untouched");
+  });
+
+  it("leaves a non-GET untouched even at a path the cache would answer", () => {
+    for (const method of ["POST", "PUT", "DELETE"]) {
+      expect(fetchArm(req(method, chunk), origin), method).toBe("untouched");
+    }
+  });
+
+  it("answers a GET for a content-hashed chunk from the cache", () => {
+    expect(fetchArm(req("GET", chunk), origin)).toBe("shell");
+  });
+
+  it("leaves a cross-origin chunk-shaped GET and an API GET untouched", () => {
+    expect(fetchArm(req("GET", "https://cdn.example/chunks/editor-4K73XYBF.js"), origin)).toBe(
+      "untouched",
+    );
+    expect(fetchArm(req("GET", `${origin}/api/chats`), origin)).toBe("untouched");
+  });
+
+  it("sends a navigation to the network arm", () => {
+    expect(fetchArm(req("GET", `${origin}/chat/c-1`, "navigate"), origin)).toBe("navigation");
+  });
+
+  it("stays out of a preview, a navigation into one included", () => {
+    expect(fetchArm(req("GET", `${origin}/preview/tok/index.html`, "navigate"), origin)).toBe(
+      "untouched",
+    );
   });
 });
 

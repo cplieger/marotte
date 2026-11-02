@@ -35,6 +35,7 @@ describe("the row a kind draws", () => {
       [event("model_switched", { from: "a", to: "b" }), "boundary-switched"],
       [event("mode_switched", { from: "spec", to: "vibe", source: "user" }), "boundary-switched"],
       [event("model_routed", { message: "" }), "boundary-switched"],
+      [event("model_fallback", { from: "a", to: "b", trigger: "refusal" }), "boundary-switched"],
       [event("compaction", { summary: "" }), "boundary-compacted"],
       [event("compaction_failed", { reason: "" }), "boundary-failed"],
       [event("safety_blocked", { properties: [] }), "boundary-blocked"],
@@ -57,6 +58,79 @@ describe("model_routed", () => {
     expect(labelOf(buildEvent(event("model_routed", { message: "" })))).toBe(
       "Auto moved to a stronger model",
     );
+  });
+});
+
+describe("model_fallback", () => {
+  const label = (payload: KindedEntry<"model_fallback">["payload"]): string =>
+    labelOf(buildEvent(event("model_fallback", payload)));
+
+  it.each([
+    ["refusal", "opus-5 refused this request, retried on sonnet-5"],
+    ["availability", "opus-5 was unavailable, retried on sonnet-5"],
+    ["latency", "opus-5 stopped for an unknown reason, retried on sonnet-5"],
+  ])("names the %s cause and the model the turn moved to", (trigger, want) => {
+    expect(label({ from: "opus-5", to: "sonnet-5", scope: "turn", trigger })).toBe(want);
+  });
+
+  it("says a session-wide fallback's model now serves the session, in the same row", () => {
+    const node = buildEvent(
+      event("model_fallback", {
+        from: "opus-5",
+        to: "sonnet-5",
+        scope: "session",
+        trigger: "refusal",
+      }),
+    );
+    expect(node.className).toContain("boundary-switched");
+    expect(labelOf(node)).toBe(
+      "opus-5 refused this request, retried on sonnet-5, which now serves this session",
+    );
+  });
+
+  it.each([
+    ["noServedTarget", "none of its fallback models is offered to this account"],
+    ["chainExhausted", "every fallback model was already tried"],
+    ["unsafeToReissue", "the turn had already run tools, so a retry could repeat them"],
+    ["raceLost", "the model changed while Kiro was switching"],
+  ])("words the %s decline", (reason, why) => {
+    expect(label({ from: "opus-5", trigger: "availability", reason })).toBe(
+      `opus-5 was unavailable, no fallback model available \u00b7 ${why}`,
+    );
+  });
+
+  it("names a decline's cause from its trigger", () => {
+    expect(label({ from: "opus-5", trigger: "refusal", reason: "chainExhausted" })).toBe(
+      "opus-5 refused this request, no fallback model available \u00b7 every fallback model was already tried",
+    );
+  });
+
+  // KAS's decline log carries the model it would have tried; the notice decides on `reason` alone.
+  it("reads a reason as a decline even when a model is named", () => {
+    expect(
+      label({
+        from: "opus-5",
+        to: "sonnet-5",
+        scope: "session",
+        trigger: "availability",
+        reason: "raceLost",
+      }),
+    ).toBe(
+      "opus-5 was unavailable, no fallback model available \u00b7 the model changed while Kiro was switching",
+    );
+  });
+
+  it("shows a decline code it does not know as sent, and an inherited name as a code", () => {
+    expect(label({ from: "opus-5", trigger: "availability", reason: "quotaGone" })).toBe(
+      "opus-5 was unavailable, no fallback model available \u00b7 quotaGone",
+    );
+    expect(label({ from: "opus-5", trigger: "availability", reason: "constructor" })).toBe(
+      "opus-5 was unavailable, no fallback model available \u00b7 constructor",
+    );
+  });
+
+  it("names the cause alone with no target", () => {
+    expect(label({ from: "opus-5", trigger: "refusal" })).toBe("opus-5 refused this request");
   });
 });
 
@@ -86,6 +160,25 @@ describe("model_switched", () => {
       }),
     );
     expect(labelOf(node)).toBe("Switched from opus-9 to sonnet-5 · not available for this account");
+  });
+
+  it("says so when the new model does not offer the tier the chat wanted", () => {
+    const node = buildEvent(
+      event("model_switched", {
+        from: "opus-5",
+        to: "gpt-5.6-sol",
+        effort: "high",
+        unoffered: "max",
+      }),
+    );
+    expect(labelOf(node)).toBe("Switched to gpt-5.6-sol (high; max is not offered)");
+  });
+
+  it("names the unoffered tier alone when the new model runs at none", () => {
+    const node = buildEvent(
+      event("model_switched", { from: "opus-5", to: "gpt-5.6-sol", unoffered: "xhigh" }),
+    );
+    expect(labelOf(node)).toBe("Switched to gpt-5.6-sol (x-high is not offered)");
   });
 
   it("names the model alone when the entry carries no tier", () => {

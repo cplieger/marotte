@@ -14,6 +14,7 @@ const m = vi.hoisted(() => ({
 // A Browser-Mode mock is linked as real ESM, so EVERY name any module in this graph reaches has to
 // exist on it — a partial factory fails collection rather than one case.
 vi.mock("./api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
   // Reached through `run-step-transcript.js`, which run-view imports to read a settled step's
@@ -123,7 +124,7 @@ const RETRY_ONLY = { verbs: ["retry"], refused: {}, parent_chat_id: "" };
  *  the verb under test the same one. */
 const RETRY_PLUS_REFUSAL = {
   verbs: ["retry"],
-  refused: { pause: "This run has no live engine on this server." },
+  refused: { pause: "A pause is already requested; the run stops at the end of its current step." },
   parent_chat_id: "",
 };
 
@@ -132,12 +133,17 @@ async function paintRetryRow(): Promise<HTMLElement> {
   m.reply.current = abortedState();
   m.controls.current = RETRY_ONLY;
 
+  // The view as `static/index.html` lays it out; the row lives in the run dock.
   document.body.replaceChildren();
   const body = document.createElement("div");
-  body.id = "run-body";
+  const runBody = document.createElement("div");
+  runBody.id = "run-body";
+  const execDock = document.createElement("div");
+  execDock.id = "run-exec-dock";
   const dock = document.createElement("div");
   dock.id = "run-dock";
-  document.body.append(body, dock);
+  body.append(runBody, execDock, dock);
+  document.body.append(body);
 
   openRunView(RUN, "nightly");
   showRun(RUN);
@@ -296,7 +302,7 @@ describe("the control row's in-flight state", () => {
 
     // What a caller replacing `#run-body`'s children does: the page this module cached is no longer
     // mounted in it, so the next paint mounts a new one.
-    body.replaceChildren();
+    body.querySelector("#run-body")?.replaceChildren();
     await repaint();
     const live = retryButton(body);
     expect(live).not.toBe(stale);

@@ -1,18 +1,21 @@
 package agent
 
 // GET /api/config-template serves the mode and model catalog from kiro-cli's session-less
-// _kiro/config/template, over the utility bridge.
+// _kiro/config/template, with an engine call.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/modeltext"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // The client's CATALOG_REQUEST_TIMEOUT_MS (static-src/model-catalog.ts) must stay longer: move them
@@ -49,7 +52,7 @@ type kasConfigChoice struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description"`
 	Options     []kasConfigChoice `json:"options"` // grouped selects nest
-	// Meta is the shared model-choice block; tiers are the `effortLevel` option's options[] (marotte.SessionModel).
+	// Meta is the shared model-choice block, which carries each model's own effort tiers.
 	Meta marotte.ModelChoiceMeta `json:"_meta"`
 }
 
@@ -59,32 +62,20 @@ type configTemplateAssembly struct {
 }
 
 // handleConfigTemplate serves GET /api/config-template: always 200 with non-null lists, and
-// ConfigTemplateResponse.catalog says which outcome produced them. A live session's lists
-// win: only KAS has resolved workspace agents.
+// ConfigTemplateResponse.catalog says which outcome produced them. A live session's lists win
+// over the template, and the custom agents KAS would load for the workspace are merged over
+// either, so the picker lists them before any session has run.
 func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
-	u := rt.utility.get()
+	u := rt.engine
 	cctx, cancel := context.WithTimeout(r.Context(), configTemplateTimeout)
 	defer cancel()
 	// No early return: a template outage still serves the live catalog.
-	var out *configTemplateAssembly
-	raw, err := u.session.configTemplateRaw(cctx)
-	switch {
-	case err != nil:
-		slog.Warn("config template failed", "error", err)
-		out = unavailableTemplate(marotte.CatalogReasonRPC)
-	default:
-		var tpl kasConfigTemplate
-		if uErr := json.Unmarshal(raw, &tpl); uErr != nil {
-			slog.Warn("config template decode failed", "error", uErr)
-			out = unavailableTemplate(marotte.CatalogReasonDecode)
-		} else {
-			out = templateToResponse(&tpl)
-		}
-	}
+	out := readTemplate(cctx, u)
 	modes, models, stamp := rt.catalog.modesModelsStamped()
 	if len(modes) > 0 {
 		out.response.Modes = modes
 	}
+	out.response.Modes = mergeCustomAgents(out.response.Modes, workspaceAgents(cctx, u, rt.lifecycle.workDir))
 	if len(models) > 0 {
 		out.response.Models = models
 	}
@@ -92,6 +83,70 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 	stamp.Epoch = rt.Epoch()
 	out.response.Subject = stamp
 	webhttp.WriteJSON(w, withCatalogVerdict(out))
+}
+
+// readTemplate reads and decodes `_kiro/config/template`; a failed read or decode is an
+// unavailable catalog with its reason.
+func readTemplate(ctx context.Context, o *engineOwner) *configTemplateAssembly {
+	raw, err := o.configTemplateRaw(ctx)
+	if err != nil {
+		slog.Warn("config template failed", "error", err)
+		return unavailableTemplate(marotte.CatalogReasonRPC)
+	}
+	var tpl kasConfigTemplate
+	if uErr := json.Unmarshal(raw, &tpl); uErr != nil {
+		slog.Warn("config template decode failed", "error", uErr)
+		return unavailableTemplate(marotte.CatalogReasonDecode)
+	}
+	return templateToResponse(&tpl)
+}
+
+// servedModels is the model list GET /api/config-template serves, and false when that read
+// has no catalog to serve (CatalogReady unmet). The template is read only when no session has
+// reported a live list, since the live one wins.
+func (rt *Runtime) servedModels(ctx context.Context) ([]marotte.SessionModel, bool) {
+	if _, models, _ := rt.catalog.modesModelsStamped(); len(models) > 0 {
+		return models, true
+	}
+	cctx, cancel := context.WithTimeout(ctx, configTemplateTimeout)
+	defer cancel()
+	out := withCatalogVerdict(readTemplate(cctx, rt.engine))
+	return out.Models, out.Catalog == marotte.CatalogReady
+}
+
+// workspaceAgents is KAS's custom-agent list for workDir, or nil when getState fails: the catalog
+// then serves its base modes alone, under the same verdict.
+func workspaceAgents(ctx context.Context, o *engineOwner, workDir string) []marotte.SessionMode {
+	raw, err := o.workspaceConfigurationRaw(ctx, []string{workDir})
+	if err != nil {
+		slog.Warn("workspace configuration failed", "error", err)
+		return nil
+	}
+	agents, ok := translate.DecodeCustomAgents(raw)
+	if !ok {
+		slog.Warn("workspace configuration decode failed")
+	}
+	return agents
+}
+
+// mergeCustomAgents lays agents over base: an agent replaces the base mode of its id in place and
+// names that mode's source in Shadows when it differs from its own, and a new id is appended.
+// A base mode with no source is bundled, as the template reports the built-in ones.
+func mergeCustomAgents(base, agents []marotte.SessionMode) []marotte.SessionMode {
+	out := slices.Clone(base)
+	for _, a := range agents {
+		i := slices.IndexFunc(out, func(m marotte.SessionMode) bool { return m.ID == a.ID })
+		if i < 0 {
+			out = append(out, a)
+			continue
+		}
+		replaced := cmp.Or(out[i].Source, "bundled")
+		if replaced != a.Source {
+			a.Shadows = replaced
+		}
+		out[i] = a
+	}
+	return out
 }
 
 // withCatalogVerdict is the only conversion from an assembled catalog to its response. A live
@@ -116,7 +171,6 @@ func unavailableTemplate(reason marotte.CatalogReason) *configTemplateAssembly {
 		CatalogReason: reason,
 		Modes:         []marotte.SessionMode{},
 		Models:        []marotte.SessionModel{},
-		EffortLevels:  []marotte.SessionEffortLevel{},
 	}}
 }
 
@@ -137,37 +191,16 @@ func templateToResponse(tpl *kasConfigTemplate) *configTemplateAssembly {
 		})
 	}
 	out := &configTemplateAssembly{response: marotte.ConfigTemplateResponse{
-		Modes:        modes,
-		Models:       []marotte.SessionModel{},
-		EffortLevels: []marotte.SessionEffortLevel{},
+		Modes:  modes,
+		Models: []marotte.SessionModel{},
 	}}
 	for i := range tpl.ConfigOptions {
 		opt := &tpl.ConfigOptions[i]
-		switch opt.ID {
-		case marotte.ConfigOptionModel:
+		if opt.ID == marotte.ConfigOptionModel {
 			out.modelOptionPresent = true
 			_ = json.Unmarshal(opt.CurrentValue, &out.response.DefaultModel) // string; ignore non-string
 			out.response.Models = flattenTemplateModels(opt.Options)
-		case marotte.ConfigOptionEffort:
-			_ = json.Unmarshal(opt.CurrentValue, &out.response.EffortActive) // string; ignore non-string
-			out.response.EffortLevels = flattenTemplateEfforts(opt.Options)
 		}
-	}
-	return out
-}
-
-func flattenTemplateEfforts(choices []kasConfigChoice) []marotte.SessionEffortLevel {
-	out := make([]marotte.SessionEffortLevel, 0, len(choices))
-	for i := range choices {
-		c := &choices[i]
-		if len(c.Options) > 0 {
-			out = append(out, flattenTemplateEfforts(c.Options)...)
-			continue
-		}
-		if c.Value == "" {
-			continue
-		}
-		out = append(out, marotte.SessionEffortLevel{ID: c.Value, Name: c.Name})
 	}
 	return out
 }
@@ -185,16 +218,7 @@ func flattenTemplateModels(choices []kasConfigChoice) []marotte.SessionModel {
 		if c.Value == "" || modeltext.Hidden(c.Description) {
 			continue
 		}
-		out = append(out, marotte.SessionModel{
-			ID:                 c.Value,
-			Name:               c.Name,
-			Description:        c.Description,
-			RateMultiplier:     c.Meta.Kiro.RateMultiplier,
-			HasEffort:          c.Meta.Kiro.HasEffort,
-			DefaultEffortLevel: c.Meta.Kiro.DefaultEffortLevel,
-			ThinkingToggleable: c.Meta.Kiro.ThinkingToggleable,
-			ThinkingDefaultOff: c.Meta.ThinkingDefaultOff(),
-		})
+		out = append(out, c.Meta.SessionModel(c.Value, c.Name, c.Description))
 	}
 	return out
 }

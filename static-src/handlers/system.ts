@@ -1,10 +1,13 @@
-// System handlers: connected, settings_updated, transport:reconcile, transport:resumed, the two
+// System handlers: connected, settings_updated, engine_status, transport:reconcile, transport:resumed, the two
 // connect-hook snapshots, compaction_started, mode_changed. `transport:reconcile` fires when every
 // held claim is void (new hub epoch, or must_refetch) and re-reads the whole projection; the
 // everyday wake is the adapter's digest.
 
 import { onSSE, onBus, BUS_RECONCILE, BUS_PAGE_RESUMED, decodeEnvelope, dispatch } from "../bus.js";
 import { adoptThemeFromSettings, applyGeneralPanel, syncSettings } from "../settings.js";
+import { applyAgentDirs } from "../agent-dirs-ui.js";
+import { applyPermissionsPanel } from "../permissions-ui.js";
+import { noteSettingsEvent, settingsAsShown } from "../persist.js";
 import { restoreLastModel, restoreLastEffort } from "../session-context.js";
 import { adoptLinkGuard } from "../link-guard.js";
 import { setWorkspaceRoot } from "../workspace.js";
@@ -18,17 +21,19 @@ import {
 import { refreshActiveView } from "../tabs.js";
 import { dropDecisions, dropRunDecisions } from "../decision-dock.js";
 import { closeNotificationsExcept } from "../notify.js";
-import { askTarget, chatTarget, pushTargetTag, runTarget } from "../push-subject.js";
+import { askTarget, chatTarget, pushTargetTag, runAskTarget } from "../push-subject.js";
+import { dropAllRunAsks, runAskPosition } from "../run-asks.js";
 import { loadList, scheduleListRetry } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
-import { refreshRetention } from "../retention.js";
+import { adoptRetention } from "../retention.js";
 import { adoptConnectRuns, invalidateCachedRuns, rebuildLiveRuns } from "../run-store.js";
 import { forgetAllStepSteers } from "../run-step-steers.js";
 import { fetchCatalog } from "../session-catalog.js";
+import { adoptEngineStatus, reconcileEngineStatus } from "../engine-status.js";
 import { invalidateTurnRails } from "../turn-rail.js";
 import type { SSEPayloads } from "../bus.js";
 import type { ServerEvent } from "../types.js";
-import type { ConnectedPayload, RunInputNeededPayload } from "../wire/types.gen.js";
+import type { ConnectedPayload, RunAsksPayload } from "../wire/types.gen.js";
 
 // The handshake alone states the workspace root (for relative agent paths); recorded here because
 // transport.ts's hook skips a page's first connection.
@@ -87,26 +92,34 @@ function reconcileThinking(p: ConnectedPayload): void {
   }
 }
 
-onSSE("settings_updated", () => {
-  // Use restoreLastModel (cache-only), not setLastModel — that calls
-  // patchSettings, which re-broadcasts settings_updated, looping forever.
+onSSE("settings_updated", (_chatID, p) => {
+  noteSettingsEvent(p);
   void syncSettings().then((s) => {
-    // Null means the refetch failed; the local cache is a better answer
-    // than inventing one, and the next frame or reload re-syncs.
+    // Null means the refetch failed or answered older settings; the local cache is a better
+    // answer than inventing one, and the next frame or reload re-syncs.
     if (s === null) {
       return;
     }
+    adoptRetention(s);
     restoreLastModel(s.last_model);
     restoreLastEffort(s.last_effort_by_model);
     adoptLinkGuard(s);
-    // A theme chosen on another device lands here. Safe against a loop:
-    // syncSettings already seeded the write tracker from this payload.
-    adoptThemeFromSettings(s);
-    // Re-seeds the controls on a second device; `refreshRetention` and the spawn-time reads carry the
+    // The paints below take the settings as shown, so a click not yet committed stays painted; the
+    // behaviour above takes the server's, so a write that then fails leaves nothing applied.
+    const shown = settingsAsShown() ?? s;
+    // A theme chosen on another device lands here. Safe against a loop: it is what the page shows,
+    // so writing it back is no change (settings-state.changes).
+    adoptThemeFromSettings(shown);
+    // Re-seeds the controls on a second device; `adoptRetention` and the session-door reads carry the
     // effect.
-    applyGeneralPanel(s);
+    applyGeneralPanel(s, shown);
+    applyPermissionsPanel(shown);
+    applyAgentDirs(s);
   });
-  void refreshRetention();
+});
+
+onSSE("engine_status", (_chatID, p) => {
+  adoptEngineStatus(p);
 });
 
 onBus(BUS_RECONCILE, ({ cause, signal }) => {
@@ -138,6 +151,8 @@ onBus(BUS_RECONCILE, ({ cause, signal }) => {
   invalidateCachedRuns(token);
   // The catalog rides no frame, so a gap must re-read it.
   void fetchCatalog({ signal });
+  // A gap may have swallowed an engine_status, and the next one comes only on a change.
+  void reconcileEngineStatus(signal);
   // The rail's `GET /api/chats/{id}/turns` carries no stamp, so its records are
   // invalidated by hand here; each chat re-reads its index at its next activation.
   invalidateTurnRails();
@@ -146,13 +161,11 @@ onBus(BUS_RECONCILE, ({ cause, signal }) => {
   refreshActiveView();
 });
 
-/** The tag a pending item's banner carries, as its handler computed it: a run ask's run, a
+/** The tag a request-shaped or steer item's banner carries, as its handler computed it: a
  *  request-shaped ask's `askTarget`, else the chat. */
 function liveAskTag(evt: ServerEvent): string {
   const chatID = evt.chat_id ?? "";
   switch (evt.type) {
-    case "run_input_needed":
-      return pushTargetTag(runTarget((evt.payload as RunInputNeededPayload).workflow_id));
     case "permission_needed":
     case "elicitation_needed":
     case "user_input_needed":
@@ -177,9 +190,25 @@ onSSE("pending_snapshot", (_chatID, p) => {
       console.error("sse: pending_snapshot item rejected:", msg);
     }
   }
-  // Every chat or run banner the set does not name comes down, whether or not this
-  // tab ever rendered the ask: the tab that slept through it is the one holding it.
-  void closeNotificationsExcept(new Set(items.map(liveAskTag)));
+  // Every chat, run or step-question banner the set does not name comes down, whether or not
+  // this tab ever rendered the ask: the tab that slept through it is the one holding it. A run
+  // the set names but marotte has not read this epoch keeps its step-question banners.
+  const live = new Set<string>();
+  const unread = new Set<string>();
+  for (const evt of items) {
+    if (evt.type !== "run_asks") {
+      live.add(liveAskTag(evt));
+      continue;
+    }
+    const run = evt.payload as RunAsksPayload;
+    for (const a of run.asks) {
+      live.add(pushTargetTag(runAskTarget(runAskPosition(run.workflow_id, a))));
+    }
+    if (!run.reachable) {
+      unread.add(run.workflow_id);
+    }
+  }
+  void closeNotificationsExcept(live, unread);
   for (const s of getSessions()) {
     dropDecisions(s.id);
     // FORGOTTEN, not promoted: the items below re-offer whatever KAS still buffers.
@@ -188,6 +217,7 @@ onSSE("pending_snapshot", (_chatID, p) => {
   // A run's own asks are keyed to `run:<workflowId>`, which is no chat and so has no
   // session row for the loop above to reach; a run step's dock rows likewise.
   dropRunDecisions();
+  dropAllRunAsks();
   forgetAllStepSteers();
   for (const evt of items) {
     dispatch(evt);

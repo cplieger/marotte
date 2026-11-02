@@ -3,7 +3,7 @@ import { chatTarget } from "./push-subject.js";
 import { noticeFor } from "./__test-helpers__/notice.js";
 
 vi.mock("./persist.js", () => ({
-  patchSettings: async (): Promise<Record<string, unknown>> => ({ ok: true }),
+  patchSettings: async (): Promise<{ outcome: string }> => ({ outcome: "committed" }),
 }));
 
 vi.mock("./actions/notify.js", () => ({

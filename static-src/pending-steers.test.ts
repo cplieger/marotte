@@ -95,6 +95,8 @@ import {
   recordSteerSent,
   openTurn,
   appendEntry,
+  setTurnOpen,
+  get,
 } from "./store.js";
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
 import { signal } from "@cplieger/reactive";
@@ -540,6 +542,7 @@ describe("the steer stack", () => {
     recordSteerQueued("chat-1", { id: "steer-2", text: "actually target main", origin: "user" });
     clickAction(rowAt(1), "Edit");
 
+    // A plain delete, which leaves no transcript entry: the edited text is the next steer.
     await vi.waitFor(() => {
       expect(removeDispatch).toHaveBeenCalledWith({ chatID: "chat-1", steerID: "steer-2" });
     });
@@ -685,10 +688,165 @@ describe("the steer stack", () => {
   // below the steers. Each is addressed by its own id, so its controls reach `unqueue_prompt` and
   // never the steer buffer.
 
-  function withQueued(queued: QueuedPrompt[]): void {
-    setSessions([{ ...makeSession("chat-1"), queued }]);
+  /** A follow-up is only accepted while a turn runs, so the header's rows arrive beside one. */
+  function withQueued(queued: QueuedPrompt[], turnOpen = true): void {
+    setSessions([{ ...makeSession("chat-1"), queued, turn_open: turnOpen }]);
     setActive("chat-1");
   }
+
+  const three: QueuedPrompt[] = [
+    { id: "m-q1", text: "first" },
+    { id: "m-q2", text: "second" },
+    { id: "m-q3", text: "third" },
+  ];
+
+  // The server sends one follow-up per turn end, so each row waits one turn longer than the row
+  // above it.
+  it("counts each follow-up's wait in turns from the running one", () => {
+    withQueued(three);
+
+    expect(rows().map(labelOf)).toEqual(["After this turn", "After 2 turns", "After 3 turns"]);
+    expect(rowAt(2).getAttribute("aria-label")).toBe("After 3 turns: third");
+  });
+
+  it("moves every remaining follow-up up a turn when the first one posts", () => {
+    withQueued(three);
+    const [, second, third] = rows();
+
+    withQueued(three.slice(1));
+
+    expectSameNodes(rows(), [second as HTMLElement, third as HTMLElement]);
+    expect(rows().map(labelOf)).toEqual(["After this turn", "After 2 turns"]);
+  });
+
+  it("closes the gap a discarded follow-up leaves", () => {
+    withQueued(three);
+
+    withQueued([three[0] as QueuedPrompt, three[2] as QueuedPrompt]);
+
+    expect(rows().map(textOf)).toEqual(["first", "third"]);
+    expect(rows().map(labelOf)).toEqual(["After this turn", "After 2 turns"]);
+  });
+
+  // Unread steers go out together as one prompt ahead of any follow-up; a steer the agent has
+  // been handed is read inside the running turn.
+  it("puts unread steers one turn ahead of the follow-ups, and a sent steer none", () => {
+    withQueued(three.slice(0, 2));
+    recordSteerQueued("chat-1", { id: "steer-1", text: "in this turn", origin: "user" });
+
+    expect(rows().map(labelOf)).toEqual(["Sent", "After this turn", "After 2 turns"]);
+
+    recordSteerQueued("chat-1", { id: "steer-2", text: "a", origin: "user", state: "unsent" });
+    recordSteerQueued("chat-1", { id: "steer-3", text: "b", origin: "user", state: "unsent" });
+
+    expect(rows().map(labelOf)).toEqual([
+      "Sent",
+      "Unread \u00b7 sends next",
+      "Unread \u00b7 sends next",
+      "After 2 turns",
+      "After 3 turns",
+    ]);
+  });
+
+  // The server opens the sent row's turn before the header write that drops the row, and a failed
+  // write leaves it listed, so the dock can hold a row whose turn is already running.
+  it("marks a follow-up whose turn has opened as sent, and counts the rest from that turn", () => {
+    withQueued(three.slice(0, 2), false);
+    openTurn("chat-1", {
+      id: "tq-open",
+      turn: "tq",
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "prompt", n: 1, prompt: { id: "m-q1", text: "first" } },
+    });
+
+    expect(rows().map(labelOf)).toEqual(["Sent", "After this turn"]);
+    expect(rowAt(1).getAttribute("aria-label")).toBe("After this turn: second");
+
+    const live = get("chat-1");
+    if (live === undefined) {
+      throw new Error("no chat-1");
+    }
+    setSessions([{ ...live, queued: three.slice(1, 2) }]);
+
+    expect(rows().map(labelOf)).toEqual(["After this turn"]);
+  });
+
+  it("gives a held row no turn, so the follow-ups around it skip it", () => {
+    withQueued([
+      { id: "m-h", text: "from before", held: true },
+      { id: "m-u1", text: "first" },
+      { id: "m-ch", text: "carried", resends: ["steer-1"], held: true },
+      { id: "m-u2", text: "second" },
+    ]);
+
+    expect(rows().map(labelOf)).toEqual([
+      "Not sent \u00b7 the server restarted",
+      "After this turn",
+      "Not sent \u00b7 the server restarted",
+      "After 2 turns",
+    ]);
+  });
+
+  // A turn that did not end cleanly leaves the rows queued for the close of a turn not yet
+  // started, and unread steers then ride on that turn's prompt rather than taking one of their own.
+  // The server marks them as awaiting that prompt before it announces the turn.
+  it("counts from the next turn while none runs, and from the running one once it opens", () => {
+    withQueued(three.slice(0, 2), false);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "a", origin: "user", state: "unsent" });
+
+    expect(rows().map(labelOf)).toEqual([
+      "Unread \u00b7 sends next",
+      "After the next turn",
+      "After 2 turns",
+    ]);
+
+    recordSteerQueued("chat-1", {
+      id: "steer-1",
+      text: "a",
+      origin: "user",
+      state: "unsent",
+      awaitsPrompt: true,
+    });
+    setTurnOpen("chat-1", true);
+
+    expect(rows().map(labelOf)).toEqual([
+      "Unread \u00b7 sends next",
+      "After this turn",
+      "After 2 turns",
+    ]);
+  });
+
+  // While KAS may re-inject the steers after a load, the server's close sends the first follow-up
+  // and the steers wait for a prompt; once that clears, the next close sends them first again.
+  it("gives an unsent steer that awaits a prompt no turn, and one again when the mark clears", () => {
+    withQueued(three);
+    recordSteerQueued("chat-1", {
+      id: "steer-1",
+      text: "a",
+      origin: "user",
+      state: "unsent",
+      awaitsPrompt: true,
+    });
+
+    expect(rows().map(labelOf)).toEqual([
+      "Unread \u00b7 sends next",
+      "After this turn",
+      "After 2 turns",
+      "After 3 turns",
+    ]);
+    expect(rowAt(1).getAttribute("aria-label")).toBe("After this turn: first");
+
+    recordSteerQueued("chat-1", { id: "steer-1", text: "a", origin: "user", state: "unsent" });
+
+    expect(rows().map(labelOf)).toEqual([
+      "Unread \u00b7 sends next",
+      "After 2 turns",
+      "After 3 turns",
+      "After 4 turns",
+    ]);
+  });
 
   it("draws a queued follow-up below the waiting steers", () => {
     withQueued([{ id: "m-q1", text: "then add tests" }]);
@@ -713,20 +871,6 @@ describe("the steer stack", () => {
     expect(firstRow()).toBe(before);
     expect(textOf(firstRow())).toBe("Merged findings");
     expect(firstRow().getAttribute("aria-label")).toBe("After this turn: Merged findings");
-  });
-
-  it("labels a carried row and a held row by what will happen to them", () => {
-    withQueued([
-      { id: "m-c", text: "unread one", resends: ["steer-1"] },
-      { id: "m-h", text: "from before", held: true },
-      { id: "m-ch", text: "both", resends: ["steer-2"], held: true },
-    ]);
-
-    expect(rows().map(labelOf)).toEqual([
-      "Unread \u00b7 sends next",
-      "Not sent \u00b7 the server restarted",
-      "Not sent \u00b7 the server restarted",
-    ]);
   });
 
   it("says what discarding loses: a user row was never sent, a carried row will not be sent again", () => {

@@ -57,6 +57,7 @@ const { served, apiGetMock } = vi.hoisted(() => ({
   apiGetMock: vi.fn(),
 }));
 vi.mock("./api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   apiGet: apiGetMock,
   // Present-but-inert so real-ESM linking succeeds.
   apiPost: vi.fn(),
@@ -64,13 +65,17 @@ vi.mock("./api-client.js", () => ({
   apiGetTypedOrError: vi.fn(),
   apiGetOrError: vi.fn(),
 }));
-vi.mock("./store-load.js", () => ({ loadMessages: vi.fn(), loadList: vi.fn() }));
+vi.mock("./store-load.js", () => ({
+  loadMessages: vi.fn(),
+  loadOlderTurns: vi.fn(),
+  loadList: vi.fn(),
+}));
 
 const store = await import("./store.js");
 const scroll = await import("./scroll.js");
 const messages = await import("./messages.js");
 const rail = await import("./turn-rail.js");
-const { loadMessages } = await import("./store-load.js");
+const { loadOlderTurns } = await import("./store-load.js");
 
 messages.mountChatView();
 
@@ -299,7 +304,7 @@ beforeEach(() => {
   apiGetMock.mockImplementation((path: string) =>
     Promise.resolve(path.endsWith("/turns") ? ({ turns: served.turns } as never) : null),
   );
-  vi.mocked(loadMessages).mockReset();
+  vi.mocked(loadOlderTurns).mockReset();
 });
 
 describe(
@@ -410,7 +415,7 @@ describe(
       served.turns = [1, 2, 3, 4, 5, 6].map(summary);
       await rail.loadTurnRail(chat);
       await until(() => markers().length === 6, "the rail's own index to render its markers");
-      vi.mocked(loadMessages).mockImplementation((chatID: string) => {
+      vi.mocked(loadOlderTurns).mockImplementation((chatID: string) => {
         prepend(chatID, [1, 2, 3]);
         return Promise.resolve(true);
       });
@@ -430,7 +435,7 @@ describe(
       // The landing's own scroll event arrives a frame later, so wait for it.
       await quiet();
 
-      expect(vi.mocked(loadMessages)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(loadOlderTurns)).toHaveBeenCalledTimes(1);
       expect(marked().map(turnOf)).toEqual(["3"]);
       expect(markerFor(3).getAttribute("aria-current")).toBe("location");
     });

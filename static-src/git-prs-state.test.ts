@@ -1,4 +1,23 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { ForgesListResponse } from "./actions/forge-list.js";
+
+// The store's rows as each case stages them, and the apply hooks the module registered.
+const S = vi.hoisted(() => ({
+  rows: null as ForgesListResponse | null,
+  hooks: [] as (() => void)[],
+}));
+vi.mock("./forge-store.js", async (importOriginal) => {
+  const { usableAccountIn } = await import("./__test-helpers__/forge-rows.js");
+  return {
+    ...(await importOriginal<Record<string, unknown>>()),
+    forgeRows: () => S.rows,
+    usableAccount: (id: string) => usableAccountIn(S.rows, id),
+    onRowsApplied: (fn: () => void) => {
+      S.hooks.push(fn);
+    },
+  };
+});
+
 import {
   applyInventoryEntry,
   applyInventoryList,
@@ -13,7 +32,6 @@ import {
   reinsertPRInGroups,
   removePRFromGroups,
   settleRemoval,
-  setPRForges,
   _resetForTest,
 } from "./git-prs-state.js";
 import type { ConfiguredForge, InventoryEntry, InventoryScope, PR } from "./wire/types.gen.js";
@@ -59,6 +77,7 @@ function entry(
 ): InventoryEntry {
   return {
     forge_id: forgeID,
+    account: `acct:${forgeID}`,
     state: "ready",
     cycle_id: cycle,
     credential: "valid",
@@ -75,7 +94,7 @@ function forge(
   host: string,
   username: string,
 ): ConfiguredForge {
-  return { id, kind, host, username, connected: true, reconnect_required: false };
+  return { id, kind, host, username, account: `acct:${id}`, status: "connected" };
 }
 
 const GH = forge("github:github.com", "github", "github.com", "me");
@@ -100,8 +119,16 @@ beforeEach(() => {
   bindPRPaint(() => {
     paints++;
   });
-  setPRForges([GH, GL]);
+  setRows([GH, GL]);
 });
+
+/** The store applies `forges` as its rows. */
+function setRows(forges: ConfiguredForge[]): void {
+  S.rows = { forges, kinds: ["github", "gitlab"] };
+  for (const fn of S.hooks) {
+    fn();
+  }
+}
 
 describe("the groups an inventory derives", () => {
   it("groups the owner and added scopes' rows by repo_id under the display path", () => {
@@ -351,6 +378,63 @@ describe("which entry is held", () => {
     expect(cloneInDir("nothing")).toBeUndefined();
     expect(cloneDirOf(GH.id, REPO)).toBe("repo-clone");
     expect(cloneDirOf(GL.id, REPO)).toBeUndefined();
+  });
+
+  it("ignores an entry or a frame read through another sign-in than the row's", () => {
+    const stale = entry(GH.id, "5", [scope("owner", [row(1)], "me")], { account: "acct:before" });
+    expect(applyInventoryList({ entries: [stale], subject: [], viewing: false })).toEqual([]);
+    expect(applyInventoryEntry({ ...stale, cycle_id: "6" })).toBe(false);
+    expect(heldEntry(GH.id)).toBeUndefined();
+    expect(shape()).toEqual([]);
+  });
+});
+
+describe("a held entry once its row changes", () => {
+  function holdGitHub(): void {
+    applyInventoryList({
+      entries: [
+        entry(GH.id, "5", [scope("owner", [row(1)], "me")], {
+          clones: [{ dir: "repo-clone", forge_id: GH.id, repo_id: REPO }],
+        }),
+      ],
+      subject: [],
+      viewing: false,
+    });
+    expect(shape()).toEqual(["github:github.com org/repo: 1"]);
+  }
+
+  // No inventory read follows in these cases: the next one may be blocked or fail, and the old rows must not show.
+  it("is dropped at once when the row is signed in as another account", () => {
+    holdGitHub();
+    setRows([{ ...GH, account: "acct:other" }, GL]);
+    expect(shape()).toEqual([]);
+    expect(heldEntry(GH.id)).toBeUndefined();
+    expect(cloneInDir("repo-clone")).toBeUndefined();
+    expect(cloneDirOf(GH.id, REPO)).toBeUndefined();
+  });
+
+  it.each(["refused", "reconnect", "unusable"] as const)(
+    "is dropped at once when the row turns %s",
+    (status) => {
+      holdGitHub();
+      setRows([{ ...GH, status, error: { message: "no" } }, GL]);
+      expect(shape()).toEqual([]);
+      expect(heldEntry(GH.id)).toBeUndefined();
+    },
+  );
+
+  it("is dropped once its row is gone, and kept while the row only retries", () => {
+    holdGitHub();
+    setRows([{ ...GH, status: "retrying", error: { message: "slow" } }, GL]);
+    expect(shape()).toEqual(["github:github.com org/repo: 1"]);
+    setRows([GL]);
+    expect(heldEntry(GH.id)).toBeUndefined();
+  });
+
+  it("is kept while no rows have been read", () => {
+    holdGitHub();
+    S.rows = null;
+    expect(heldEntry(GH.id)?.cycle_id).toBe("5");
   });
 });
 

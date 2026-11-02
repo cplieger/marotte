@@ -1,14 +1,12 @@
 package auth
 
 import (
-	"bytes"
-	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/signin"
 	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // WhoamiState discriminates /api/whoami's three answers; "could not ask" is its own state so the UI offers a retry,
@@ -17,16 +15,17 @@ type WhoamiState string
 
 // Every response carries exactly one arm.
 const (
-	// WhoamiSignedIn carries Email, plus Auth/AccountType/StartURL/Region when kiro-cli reported them.
+	// WhoamiSignedIn carries the account's labels, and Email when the backend learned it.
 	WhoamiSignedIn WhoamiState = "signed_in"
-	// WhoamiSignedOut is a working kiro-cli reporting nobody signed in; it carries nothing else.
+	// WhoamiSignedOut carries nothing but the sign-in attempt.
 	WhoamiSignedOut WhoamiState = "signed_out"
 	// WhoamiUnavailable is marotte not knowing, and carries Reason.
 	WhoamiUnavailable WhoamiState = "unavailable"
 )
 
 // WhoamiResponse is /api/whoami's typed wire shape. State is the discriminator and each other field belongs to one
-// arm. Unlisted kiro-cli fields are dropped, so a compromised or upgraded CLI cannot leak attributes to the browser.
+// arm. The Login* fields report the latest sign-in attempt on every arm: a poll waits for its own attempt to leave
+// pending, since a switch keeps the old account signed in until the new one commits.
 type WhoamiResponse struct {
 	State WhoamiState `json:"state"`
 	// Email and the four labels below belong to the signed_in arm.
@@ -35,44 +34,54 @@ type WhoamiResponse struct {
 	AccountType string `json:"accountType,omitempty"`
 	StartURL    string `json:"startUrl,omitempty"`
 	Region      string `json:"region,omitempty"`
-	// Reason belongs to the unavailable arm: a server-authored phrase, never CLI output.
+	// Reason belongs to the unavailable arm: a server-authored phrase.
 	Reason string `json:"reason,omitempty"`
+	// LoginState is the attempt's signin.AttemptState, LoginError a failed attempt's user text.
+	LoginState   string `json:"loginState,omitempty"`
+	LoginError   string `json:"loginError,omitempty"`
+	LoginAttempt uint64 `json:"loginAttempt,omitempty"`
+	// APIKey is true while KIRO_API_KEY signs the engine in: sign-in and sign-out answer 409, so the UI offers neither.
+	APIKey bool `json:"apiKey,omitempty"`
 }
 
-// handleWhoami answers from the cached identity, never a subprocess: it fires on every page load and SSE reconnect.
-// Always 200; all three states are answers.
+// textAPIKeyAuth is the signed_in arm's method while KIRO_API_KEY signs the engine in.
+const textAPIKeyAuth = "API key (KIRO_API_KEY)" //nolint:gosec // G101: a display label naming the variable, not a credential
+
+// handleWhoami answers from the vault's memory; always 200, all three states are answers.
 func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	webhttp.WriteJSON(w, h.identity.snapshot())
+	if h.apiKey {
+		webhttp.WriteJSON(w, WhoamiResponse{State: WhoamiSignedIn, Auth: textAPIKeyAuth, APIKey: true})
+		return
+	}
+	st := h.vault.Status(h.backend)
+	webhttp.WriteJSON(w, whoamiFrom(&st))
 }
 
-// whoamiInfo normalises kiro-cli's JSON whoami output into a WhoamiResponse, accepting snake_case and camelCase.
-// The email decides the arm: without one (null included) it is signed_out. kiro-cli 2.0.1+ appends a non-JSON
-// footer, so json.Decoder reads exactly one value.
-func whoamiInfo(out []byte) (WhoamiResponse, error) {
-	dec := json.NewDecoder(bytes.NewReader(out))
-	var raw map[string]any
-	if err := dec.Decode(&raw); err != nil {
-		return WhoamiResponse{}, err
+// whoamiFrom is a Status as the account menu reads it, every upstream string bounded to one line.
+func whoamiFrom(st *signin.Status) WhoamiResponse {
+	out := WhoamiResponse{LoginAttempt: st.SignIn.ID, LoginState: string(st.SignIn.State)}
+	if st.SignIn.State == signin.AttemptFailed {
+		out.LoginError = identityText(st.SignIn.Error)
 	}
-	if raw == nil {
-		return signedOutIdentity(), nil
+	switch st.Kind {
+	case signin.StatusSignedIn:
+		out.State = WhoamiSignedIn
+		out.Email = identityText(st.Label.Email)
+		out.Auth = identityText(st.Label.Method)
+		out.AccountType = identityText(st.Label.AccountType)
+		out.StartURL = identityText(st.Label.StartURL)
+		out.Region = identityText(st.Label.Region)
+	case signin.StatusSignedOut:
+		out.State = WhoamiSignedOut
+	default:
+		out.State = WhoamiUnavailable
+		out.Reason = identityText(st.Reason)
 	}
-	email := firstNonEmptyString(raw, "email", "Email")
-	if email == "" {
-		return signedOutIdentity(), nil
-	}
-	resp := WhoamiResponse{State: WhoamiSignedIn, Email: email}
-	resp.AccountType = firstNonEmptyString(raw, "account_type", "accountType")
-	if resp.AccountType != "" {
-		resp.Auth = identityText(humanizeAccountType(resp.AccountType))
-	}
-	resp.StartURL = firstNonEmptyString(raw, "startUrl", "start_url")
-	resp.Region = firstNonEmptyString(raw, "region")
-	return resp, nil
+	return out
 }
 
 const maxIdentityFieldBytes = 256
@@ -81,37 +90,4 @@ const maxIdentityFieldBytes = 256
 // to spaces since these are labels.
 func identityText(s string) string {
 	return runesafe.SanitizeSingleLineBounded(s, maxIdentityFieldBytes)
-}
-
-// firstNonEmptyString returns the first non-empty string value among keys in raw, or "". It sanitizes the winner so
-// no new field can skip it.
-func firstNonEmptyString(raw map[string]any, keys ...string) string {
-	for _, k := range keys {
-		if v, ok := raw[k].(string); ok && v != "" {
-			return identityText(v)
-		}
-	}
-	return ""
-}
-
-// The phrasing of kiro-cli's own plaintext output.
-const (
-	authBuilderID      = "Logged in with Builder ID"
-	authIdentityCenter = "Logged in with IAM Identity Center"
-	authSocialLogin    = "Logged in with social login"
-	authPrefixGeneric  = "Logged in with "
-)
-
-var accountTypeLabels = map[string]string{
-	"builderid":         authBuilderID,
-	"identitycenter":    authIdentityCenter,
-	"iamidentitycenter": authIdentityCenter,
-	"social":            authSocialLogin,
-}
-
-func humanizeAccountType(t string) string {
-	if label, ok := accountTypeLabels[strings.ToLower(t)]; ok {
-		return label
-	}
-	return authPrefixGeneric + t
 }

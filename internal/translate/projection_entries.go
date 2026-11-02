@@ -71,6 +71,8 @@ type EntryProjection struct {
 	// carry is the marker filter's withheld tail per lane, carrySay the say it belongs to.
 	carry    map[string]string
 	carrySay map[string]string
+	// minted holds the say ids sayIDFor made up for id-less deltas.
+	minted map[string]bool
 	// calls maps an unsettled tool_call's entry id to the lane its result belongs in,
 	// fixed at the create frame; callOrder is the order the turn's close aborts them
 	// in.
@@ -254,9 +256,10 @@ func (p *EntryProjection) ingestAgentText(raw json.RawMessage, kind marotte.Entr
 		return
 	}
 	sayID := p.sayIDFor(kind, lane, c.Meta.Kiro.MessageID)
-	// Another say, or thinking over text, is a barrier: settle the held carry first so a `[` tail
-	// stays off the next say's head.
-	if held, ok := p.heldSay(lane); ok && (held.id != sayID || held.kind != kind) {
+	// Another message, or thinking over text, is a barrier: settle the held carry first so a `[`
+	// tail stays off the next say's head. A minted say is no evidence of another message
+	// (turnlog.TakeCarry's rule), so its carry joins.
+	if held, ok := p.heldSay(lane); ok && (held.kind != kind || (held.id != sayID && !p.minted[held.id])) {
 		p.sealLane(lane)
 	}
 	text := c.Content.Text
@@ -283,7 +286,9 @@ func (p *EntryProjection) sayIDFor(kind marotte.EntryKind, lane, sayID string) s
 	if held, ok := p.heldSay(lane); ok && held.kind == kind {
 		return held.id
 	}
-	return p.newID()
+	id := p.newID()
+	p.minted[id] = true
+	return id
 }
 
 // heldSay is the say a lane is still accumulating: its open entry, or the say a carry
@@ -334,12 +339,12 @@ func (p *EntryProjection) setCarry(lane, sayID, held string) {
 	p.carrySay[lane] = sayID
 }
 
-// sealLane settles one lane's carry and closes its say: a carry starting with SteerAckPrefix
-// is an unclosed marker and is dropped, anything else returns to its say (turnlog's seal rule).
+// sealLane settles one lane's carry and closes its say: turnlog.SealDropsSteerCarry owns which
+// carry is dropped; anything else returns to its say.
 func (p *EntryProjection) sealLane(lane string) {
 	held, sayID := p.carry[lane], p.carrySay[lane]
 	p.setCarry(lane, "", "")
-	if held != "" && !strings.HasPrefix(held, turnlog.SteerAckPrefix) {
+	if held != "" && !turnlog.SealDropsSteerCarry(held) {
 		p.extendSay(marotte.EntryKindText, sayID, lane, 0, held)
 	}
 	delete(p.laneOpen, lane)
@@ -499,18 +504,33 @@ func (p *EntryProjection) ingestInfo(raw json.RawMessage) {
 		p.sealLanes()
 		p.appendEntry(marotte.EntryKindModelRouted, p.newID(), "", p.frameTS(""),
 			modelRoutedPayload(u.Meta.Kiro.Message))
+	case infoKindModelFallback, infoKindModelFallbackPromoted:
+		p.ingestModelFallback(&u.Meta.Kiro)
 	}
 }
 
-// The credit sum matches the live path's: an empty unit or the credit unit counts, anything else is
-// a dimension this does not price.
+// ingestModelFallback is the replayed twin of handleModelFallback: a frame the transcript does
+// not show seals nothing.
+func (p *EntryProjection) ingestModelFallback(k *replayInfoKiro) {
+	payload, show := modelFallbackPayload(k.Kind, &k.modelFallbackFields)
+	if !show {
+		return
+	}
+	p.flushUser()
+	p.ensureTurn(marotte.TurnOpenNameEvent)
+	p.sealLanes()
+	p.appendEntry(marotte.EntryKindModelFallback, p.newID(), "", p.frameTS(""), payload)
+}
+
+// Credits and elapsed sum as turnlog.Turn.Meter does live: an empty unit or the credit unit counts,
+// anything else is a dimension this does not price.
 func (p *EntryProjection) noteTurnMetering(summaries []promptTurnSummary, elapsedMs float64) {
 	for i := range summaries {
 		if summaries[i].Unit == "" || summaries[i].Unit == meteringUnitCredit {
 			p.facts.credits += summaries[i].Usage
 		}
 	}
-	p.facts.elapsedMs = elapsedMs
+	p.facts.elapsedMs += elapsedMs
 }
 
 // A bracket carrying no payload records ConcludeStopReason's answer for an unstated reason, because
@@ -587,6 +607,7 @@ func (p *EntryProjection) startTurn(source marotte.TurnOpenSourceName, prompt *m
 	p.sayText = map[string]string{}
 	p.carry = map[string]string{}
 	p.carrySay = map[string]string{}
+	p.minted = map[string]bool{}
 	p.laneOpen = map[string]laneSay{}
 	p.calls = map[string]string{}
 	p.callOrder = nil

@@ -15,7 +15,7 @@ interface GitRepoFilesArgs extends GitRepoArgs {
 
 /** Result envelope of every /api/git mutation. decodeGitResult throws on the error arm, so a
  *  RESOLVED dispatch is a genuine success. */
-export interface GitCmdResult {
+interface GitCmdResult {
   output?: string;
 }
 
@@ -166,15 +166,4 @@ export const commit = apiAction<{ repo: string; message: string }, GitCmdResult>
   error: false,
   idempotencyKey: true,
   // Not retryable: a timed-out commit may have succeeded; a retry duplicates it.
-});
-
-export const generateCommitMessage = apiAction<GitRepoArgs, GitCmdResult>({
-  name: "git.generate_message",
-  scope: (args) => "git:" + args.repo,
-  dedupe: (args) => args.repo,
-  request: (args) => ({ method: "POST", path: "/api/git/commit-message", body: args }),
-  decode: decodeGitResult,
-  error: false,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
 });

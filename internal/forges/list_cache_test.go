@@ -50,7 +50,7 @@ func newTestCache(ttl time.Duration) *listCache[[]string] {
 const testForge = "github:github.com"
 
 func testKey(page string) cacheKey {
-	return listKey(testForge, "v1.6f2f72", page, "")
+	return listKey(testForge, testSignIn, "v1.6f2f72", page, "")
 }
 
 func TestListCache_ColdFillThenServesFromCache(t *testing.T) {
@@ -167,6 +167,50 @@ func TestListCache_StaleEntryServesAtOnceThenRevalidates(t *testing.T) {
 			t.Errorf("fill calls after the revalidated read = %d, want 2", calls)
 		}
 	})
+}
+
+// A peek whose fill fails asks the forge again only once a TTL has passed, so a
+// down forge is not read on every peek.
+func TestListCache_PeekRetriesAFailedFillOncePerTTL(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const ttl = time.Minute
+		c := newTestCache(ttl)
+		f := &countingFill{err: errors.New("forge down")}
+
+		for range 3 {
+			if _, ok := c.peek(t.Context(), testKey("k"), f.fill); ok {
+				t.Fatal("peek() with no stored value reported one")
+			}
+			synctest.Wait()
+		}
+		if calls := f.count(); calls != 1 {
+			t.Errorf("fill calls after three peeks inside the TTL = %d, want 1", calls)
+		}
+
+		synctest.Sleep(ttl)
+		c.peek(t.Context(), testKey("k"), f.fill)
+		synctest.Wait()
+		if calls := f.count(); calls != 2 {
+			t.Errorf("fill calls after a peek a TTL later = %d, want 2", calls)
+		}
+	})
+}
+
+// stored is told each fill the cache keeps, and not one it refuses.
+func TestListCache_StoredIsToldEachKeptFill(t *testing.T) {
+	c := newTestCache(time.Hour)
+	var told []cacheKey
+	c.stored = func(_ context.Context, key cacheKey) { told = append(told, key) }
+
+	if _, err := c.get(t.Context(), testKey("k"), false, (&countingFill{}).fill); err != nil {
+		t.Fatalf("get(cold) error = %v, want nil", err)
+	}
+	if _, err := c.get(t.Context(), testKey("bad"), false, (&countingFill{err: errors.New("down")}).fill); err == nil {
+		t.Fatal("get(failing) error = nil, want the fill's")
+	}
+	if !slices.Equal(told, []cacheKey{testKey("k")}) {
+		t.Errorf("stored was told %v, want only %v", told, testKey("k"))
+	}
 }
 
 func TestListCache_OneRevalidationAtATime(t *testing.T) {
@@ -323,44 +367,6 @@ func TestListCache_CancelledReadDoesNotBlock(t *testing.T) {
 	})
 }
 
-func TestListCache_ClearDropsEntriesAndInFlightFills(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		c := newTestCache(time.Hour)
-		release := make(chan struct{})
-		f := &countingFill{}
-		fill := func(ctx context.Context) ([]string, error) {
-			<-release
-			return f.fill(ctx)
-		}
-
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			if _, err := c.get(t.Context(), testKey("k"), false, fill); err != nil {
-				t.Errorf("get(cold) error = %v, want nil", err)
-			}
-		}()
-		synctest.Wait()
-
-		// A sign-in landing here is the real case: the fill already read the forge
-		// as the PREVIOUS account, so its answer must reach the caller who asked
-		// and go no further.
-		c.clear()
-		close(release)
-		<-done
-
-		if _, ok := c.entries[testKey("k")]; ok {
-			t.Error("entry cached by a fill that started before clear(); want it dropped")
-		}
-		if _, err := c.get(t.Context(), testKey("k"), false, f.fill); err != nil {
-			t.Fatalf("get(after clear) error = %v, want nil", err)
-		}
-		if calls := f.count(); calls != 2 {
-			t.Errorf("fill calls after clear = %d, want 2 (the dropped one, then a real refill)", calls)
-		}
-	})
-}
-
 func TestListCache_FillsAreBounded(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const limit = 3
@@ -436,11 +442,11 @@ func TestListCache_MutationEvictsItsRepo(t *testing.T) {
 	c := newTestCache(time.Hour)
 	f := &countingFill{}
 	const repo = "v1.6f2f72"
-	evicted := []cacheKey{listKey(testForge, repo, "prs", "open"), listKey(testForge, repo, "prs", "closed")}
+	evicted := []cacheKey{listKey(testForge, testSignIn, repo, "prs", "open"), listKey(testForge, testSignIn, repo, "prs", "closed")}
 	kept := []cacheKey{
-		listKey(testForge, "v1.6f2f73", "prs", "open"),
-		listKey("gitlab:gitlab.com", repo, "prs", "open"),
-		listKey(testForge, "", "repos", ""),
+		listKey(testForge, testSignIn, "v1.6f2f73", "prs", "open"),
+		listKey("gitlab:gitlab.com", testSignIn, repo, "prs", "open"),
+		listKey(testForge, testSignIn, "", "repos", ""),
 	}
 	all := slices.Concat(evicted, kept)
 	before := make(map[cacheKey]string, len(all))
@@ -470,7 +476,7 @@ func TestListCache_MutationOnOneRepoKeepsAnotherRepoFill(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := newTestCache(time.Hour)
 		f := newHeldFill()
-		inFlight, cached := listKey(testForge, "v1.62", "prs", "open"), listKey(testForge, "v1.62", "prs", "closed")
+		inFlight, cached := listKey(testForge, testSignIn, "v1.62", "prs", "open"), listKey(testForge, testSignIn, "v1.62", "prs", "closed")
 		got := getAsync(t, c, inFlight, f.fill)
 		synctest.Wait()
 		if _, err := c.get(t.Context(), cached, false, f.fill); err != nil {
@@ -495,7 +501,7 @@ func TestListCache_MutationOnOneRepoKeepsAnotherRepoFill(t *testing.T) {
 
 func TestListCache_StaleFillAfterMutationDoesNotPublish(t *testing.T) {
 	scope := repoScope(testForge, "v1.6f2f72")
-	key := listKey(testForge, "v1.6f2f72", "prs", "open")
+	key := listKey(testForge, testSignIn, "v1.6f2f72", "prs", "open")
 
 	t.Run("a fill in flight answers its caller and stores nothing", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -576,8 +582,8 @@ func TestListCache_StaleFillAfterMutationDoesNotPublish(t *testing.T) {
 func TestListCache_GenerationZeroIsALiveGeneration(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := newTestCache(time.Hour)
-		served := listKey(testForge, "v1.61", "prs", "open")
-		fenced := listKey(testForge, "v1.62", "prs", "open")
+		served := listKey(testForge, testSignIn, "v1.61", "prs", "open")
+		fenced := listKey(testForge, testSignIn, "v1.62", "prs", "open")
 		f := &countingFill{}
 		for range 2 {
 			if _, err := c.get(t.Context(), served, false, f.fill); err != nil {
@@ -606,7 +612,7 @@ func TestListCache_ARecordFilledAfterAMutationRevalidates(t *testing.T) {
 		const ttl = time.Minute
 		c := newTestCache(ttl)
 		key := testKey("k")
-		c.clear()
+		c.drop(testForge)
 		c.evict(key.scope)
 		f := &countingFill{}
 		if _, err := c.get(t.Context(), key, false, f.fill); err != nil {
@@ -620,7 +626,7 @@ func TestListCache_ARecordFilledAfterAMutationRevalidates(t *testing.T) {
 
 		if v, err := c.get(t.Context(), key, false, f.fill); err != nil || v[1] != "2" || f.count() != 2 {
 			t.Errorf("get after the revalidation = %v, %v after %d fills, want the revalidated fill 2: "+
-				"a record filled after a clear and a mutation revalidates under the generation it was filled under",
+				"a record filled after a drop and a mutation revalidates under the generation it was filled under",
 				v, err, f.count())
 		}
 	})
@@ -668,36 +674,6 @@ func TestListCache_RerunBumpsNothing(t *testing.T) {
 	if rec := getRoute(t, mux, prs); rec.Code != http.StatusOK || core.listed() != 1 {
 		t.Errorf("GET %s after a re-run = %d after %d lists, want 200 after 1: a re-run changes no forge object",
 			prs, rec.Code, core.listed())
-	}
-}
-
-func TestManager_InvalidateDropsCachedListings(t *testing.T) {
-	core := &pagedCore{
-		prPages:   onePRPage(1),
-		repoPages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.Repository]{"": {}},
-	}
-	m := recordManager(t, core)
-	mux := repoRoutes(m)
-	paths := []string{
-		"/api/forges/github%3Agithub.com/repos", githubRepoPath("v1.6f2f72", "prs"), githubRepoPath("v1.6f2f72", "affordances"),
-	}
-	read := func() {
-		for _, path := range paths {
-			if rec := getRoute(t, mux, path); rec.Code != http.StatusOK {
-				t.Fatalf("GET %s = %d %s, want 200", path, rec.Code, rec.Body)
-			}
-		}
-	}
-
-	read()
-	// A sign-in or a disconnect decides which repositories are visible at all,
-	// and what the credential may do in each, so the previous account's
-	// listings and affordances must not survive it.
-	m.invalidate()
-	read()
-
-	if asked, _, _ := core.calls(); len(asked) != 2*len(paths) {
-		t.Errorf("the %d reads reached the forge %d times across an Invalidate, want %d", len(paths), len(asked), 2*len(paths))
 	}
 }
 

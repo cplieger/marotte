@@ -1,5 +1,5 @@
 // The read-only native Cedar policy view (_kiro/permissions/list + explain) at GET /api/permissions,
-// via the utility bridge. Editing is a file write KAS hot-reloads (internal/policyfile).
+// each on an observer pass. Editing is a file write KAS hot-reloads (internal/policyfile).
 
 package agent
 
@@ -13,62 +13,19 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// policyCallTimeout bounds one list or explain: both hold the utility mutex across bridge.Call.
+// policyCallTimeout bounds one list or explain, its observer pass's door included.
 const policyCallTimeout = 45 * time.Second
 
-// buildUtility is the utility lease's constructor, here because it closes over Settings hooks into runtime services.
-func (rt *Runtime) buildUtility() *utilityRuntime {
-	return newUtilityRuntime(
-		rt.lifecycle.shutdownCtx, rt.bridge.factory, rt.models,
-		&utilitySessionHooks{
-			onHooksChanged: rt.config.broadcastHooksChanged,
-			onPowersChanged: func(params json.RawMessage) {
-				rt.powers.itemsChanged(rt.lifecycle.shutdownCtx, params)
-			},
-			onRecipesChanged: func() {
-				rt.Broadcast(context.Background(),
-					marotte.NewEvent(marotte.EventRecipesChanged, "", marotte.RecipesChangedPayload{}))
-			},
-			onGovernanceState:    rt.config.cacheGovernanceFromUtility,
-			onConfigurationState: rt.config.cacheConfigurationState,
-			onPolicyNotification: rt.forwardPolicyNotification,
-			onSlashCommands:      rt.applyUtilitySlashCommands,
-			onSteeringDocs: func(params json.RawMessage) {
-				rt.translator.ApplySteeringDocuments(rt.lifecycle.shutdownCtx, params)
-			},
-			onSystemNotify: func(msg *marotte.RPCResponse) {
-				rt.translator.HandleSystemNotify(context.Background(), "", msg)
-			},
-			// A step session's `session/load` replays frames the utility session reads as foreign; no-ops until a read is open.
-			onForeignUpdate: func(sessionID string, kind marotte.ACPUpdateKind, update json.RawMessage) bool {
-				return rt.runs.stepReplays.ingest(sessionID, kind, update)
-			},
-			onFrameDrained: func(at drainPoint, force bool) {
-				rt.runs.stepReplays.settleConsumed(at, force)
-			},
-			presets: func(ctx context.Context) []string {
-				return securityPresets(ctx, rt.lifecycle.configDir)
-			},
-			ignoreFiles: func(ctx context.Context) []string {
-				return spawnIgnoreFiles(ctx, rt.lifecycle.configDir)
-			},
-			contentCollection: contentCollectionResolver(rt.lifecycle.configDir, rt.config.GovernanceLocks),
-			telemetryOff:      func() bool { return rt.lifecycle.telemetryDisabled(rt.config.GovernanceLocks) },
-		},
-		rt.secrets,
-		true, // enableHooks
-	)
-}
-
-// forwardPolicyNotification hands a utility-session _kiro/policy/{changed,error} to the chat
-// translator, broadcast workspace-global on context.Background(): forward has no request behind it.
-func (rt *Runtime) forwardPolicyNotification(msg *marotte.RPCResponse) {
-	switch msg.Method {
-	case methodV3PolicyChanged:
-		rt.translator.HandlePolicyChanged(context.Background(), "", msg)
-	case methodV3PolicyError:
-		rt.translator.HandlePolicyError(context.Background(), "", msg)
-	}
+// policyRaw issues a read-only, session-scoped _kiro/permissions/* request on an observer pass: KAS answers only for
+// a resident session, and the pass carries the profile's current presets.
+func (st *Settings) policyRaw(ctx context.Context, method string, extra map[string]any) (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := st.observe(ctx, func(ctx context.Context, s engineSession) error {
+		var err error
+		raw, err = observerCall(ctx, s, fmt.Sprintf("policy call %s", method), method, extra)
+		return err
+	})
+	return raw, err
 }
 
 // PolicyList returns the native policy rules, optionally for one scope, via _kiro/permissions/list.
@@ -79,7 +36,7 @@ func (st *Settings) PolicyList(ctx context.Context, scope string) ([]marotte.Pol
 	}
 	cctx, cancel := context.WithTimeout(ctx, policyCallTimeout)
 	defer cancel()
-	raw, err := st.utility().session.policyRaw(cctx, methodV3PermissionsList, extra)
+	raw, err := st.policyRaw(cctx, methodV3PermissionsList, extra)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +88,7 @@ func (st *Settings) PolicyExplain(ctx context.Context, req marotte.PolicyExplain
 	}
 	cctx, cancel := context.WithTimeout(ctx, policyCallTimeout)
 	defer cancel()
-	raw, err := st.utility().session.policyRaw(cctx, methodV3PermissionsExplain, extra)
+	raw, err := st.policyRaw(cctx, methodV3PermissionsExplain, extra)
 	if err != nil {
 		return nil, err
 	}

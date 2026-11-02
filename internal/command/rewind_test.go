@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
@@ -55,6 +54,10 @@ func (b *recordingBridge) Call(_ context.Context, method string, params any) (*m
 
 // CallAt reports position zero, which is what "no ordering to wait for" means: this
 // double is not on a prompt path.
+func (b *recordingBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *recordingBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	resp, err := b.Call(ctx, method, params)
 	return resp, 0, err
@@ -65,10 +68,6 @@ func (*recordingBridge) Respond(context.Context, int64, any, error) error { retu
 func (b *recordingBridge) SessionID() marotte.SessionID                   { return b.sessionID }
 func (*recordingBridge) TryAcquireForPrompt() bool                        { return true }
 func (*recordingBridge) ReleaseAfterPrompt()                              {}
-func (*recordingBridge) BeginPromptCall(context.CancelCauseFunc) uint64   { return 0 }
-func (*recordingBridge) EndPromptCall()                                   {}
-func (*recordingBridge) PromptGeneration() uint64                         { return 0 }
-func (*recordingBridge) ArmCancelGrace(uint64, time.Duration) bool        { return false }
 
 // bridgeDeps adds a bridge to storeDeps so the outgoing call can be observed.
 type bridgeDeps struct {
@@ -82,7 +81,7 @@ type bridgeDeps struct {
 
 func (d *bridgeDeps) Bridge(marotte.ChatID) Bridge { return d.bridge }
 
-// BridgeLive follows the live bridge: a spawning or absent one parks a steer.
+// BridgeLive follows the live bridge: an opening or absent one parks a steer.
 func (d *bridgeDeps) BridgeLive(marotte.ChatID) bool { return d.bridge != nil }
 
 func (d *bridgeDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {

@@ -126,7 +126,7 @@ func TestStartOrphanSweep_StopsAtShutdown(t *testing.T) {
 	if took >= backgroundStopGrace {
 		t.Errorf("the stop took %s, at or past the %s grace: the sweep goroutine is parked "+
 			"with no shutdown arm, so it outlives App.Shutdown and can still be mid-RPC on a "+
-			"utility bridge the teardown has closed", took, backgroundStopGrace)
+			"engine the teardown has closed", took, backgroundStopGrace)
 	}
 	rec.refuseCall(t, "a retry after shutdown")
 }

@@ -45,6 +45,10 @@ func (c *chatStatusCache) mergeStamped(chatID marotte.ChatID, p marotte.ChatStat
 		return p, statusStamp(c.registry().BumpCounter(subject.KindStatus, ""))
 	}
 	prev := c.byChat[chatID]
+	// The newest frame stating a status says whether it is turn-scoped; a description alone keeps the old answer.
+	if p.Status == "" {
+		p.TurnScoped = prev.TurnScoped
+	}
 	p.Status = cmp.Or(p.Status, prev.Status)
 	p.Description = cmp.Or(p.Description, prev.Description)
 	c.byChat[chatID] = p
@@ -94,13 +98,14 @@ func (c *chatStatusCache) snapshot() map[marotte.ChatID]marotte.ChatStatusPayloa
 	return maps.Clone(c.byChat)
 }
 
-// clearAtTurnEnd drops a chat's status at turn end, EXCEPT waiting_on_user, which means a
-// person still owes an answer and must survive a refresh or a second device. It is kept
-// until the agent's next declaration or the chat going away.
+// clearAtTurnEnd drops a chat's status at turn end, EXCEPT a waiting_on_user the agent
+// declared, which means a person still owes an answer and must survive a refresh or a second
+// device. It is kept until the agent's next declaration or the chat going away. A turn-scoped
+// one described the turn's own ask, which the turn's end settled.
 func (c *chatStatusCache) clearAtTurnEnd(chatID marotte.ChatID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.byChat[chatID].Status == marotte.ChatStatusWaitingOnUser {
+	if p := c.byChat[chatID]; p.Status == marotte.ChatStatusWaitingOnUser && !p.TurnScoped {
 		return
 	}
 	delete(c.byChat, chatID)

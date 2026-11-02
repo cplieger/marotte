@@ -1,7 +1,6 @@
 package forges
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -11,66 +10,37 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/creds"
+	"github.com/cplieger/keyenc"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 const codeNotSupported = "not_supported"
 
-// *agent.Runtime satisfies it.
-type broadcaster interface {
-	Broadcast(ctx context.Context, evt marotte.ServerEvent)
-}
-
 // HTTPHandler exposes the forges package over HTTP.
 type HTTPHandler struct {
-	manager     *Manager
-	broadcaster broadcaster
-	onChange    func()
+	manager *Manager
 	// grants are the device grants in progress, which only this process can
 	// poll: a restart loses them and the sign-in starts again.
 	grants *grantRegistry
 	// poller holds the pull-request inventory and runs its cycles.
-	poller       *PRStatusPoller
-	probeTimeout time.Duration
+	poller *PRStatusPoller
 }
 
-// NewHTTPHandler builds an HTTPHandler with the given Manager.
-// broadcaster may be nil; when nil, forge change events are silently dropped.
-func NewHTTPHandler(m *Manager, b broadcaster) *HTTPHandler {
-	return &HTTPHandler{
-		manager:      m,
-		broadcaster:  b,
-		probeTimeout: 20 * time.Second,
-		grants:       newGrantRegistry(),
-	}
+// NewHTTPHandler builds an HTTPHandler over m, whose notify announces every
+// change the routes make.
+func NewHTTPHandler(m *Manager) *HTTPHandler {
+	return &HTTPHandler{manager: m, grants: newGrantRegistry()}
 }
-
-// SetOnChange wires a callback fired whenever a forge connection changes (login, OAuth completion,
-// disconnect, refresh), used to refresh the steering forge-snapshot cache. It must not block or
-// capture the request context: it runs on the request path.
-func (h *HTTPHandler) SetOnChange(fn func()) { h.onChange = fn }
 
 // SetPoller wires the poller whose inventory the inventory routes answer from.
 // Called once at composition, before the routes serve.
 func (h *HTTPHandler) SetPoller(p *PRStatusPoller) { h.poller = p }
 
-// NotifyChanged broadcasts a forges_changed event so the forge panels
-// refresh, then fires the onChange callback. No-op parts are skipped when
-// unwired.
-func (h *HTTPHandler) NotifyChanged(ctx context.Context) {
-	if h.broadcaster != nil {
-		h.broadcaster.Broadcast(ctx, marotte.NewEvent(marotte.EventForgesChanged, "", marotte.ForgesChangedPayload{}))
-	}
-	if h.onChange != nil {
-		h.onChange()
-	}
-}
-
-// Detection and a device-grant start share one bucket: any caller can send
-// either, and each sends requests to a forge.
+// Detection, a token sign-in and a device-grant start share one bucket: any
+// caller can send each, and each sends requests to a forge.
 const (
 	outboundBurst    = 6
 	outboundInterval = 10 * time.Second
@@ -83,6 +53,7 @@ func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {
 		webhttp.WithRateLimitError("rate_limited", "Too many sign-ins or detections were started. Wait a moment and try again"))
 	mux.HandleFunc("/api/forges", h.handleForgesList)
 	mux.HandleFunc("/api/forges/", h.handleForgeItem)
+	mux.Handle("/api/forges/login", outbound(http.HandlerFunc(h.handleLogin)))
 	mux.Handle("/api/forges/detect", outbound(http.HandlerFunc(h.handleDetect)))
 	mux.HandleFunc("/api/forges/inventory", h.handleInventory)
 	mux.HandleFunc("/api/forges/inventory/refresh", h.handleInventoryRefresh)
@@ -92,7 +63,7 @@ func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {
 
 func sendsOutbound(r *http.Request) bool {
 	return r.Method == http.MethodPost &&
-		(r.URL.Path == "/api/forges/detect" || strings.HasSuffix(r.URL.Path, "/start"))
+		(r.URL.Path == "/api/forges/detect" || r.URL.Path == "/api/forges/login" || strings.HasSuffix(r.URL.Path, "/start"))
 }
 
 const (
@@ -147,7 +118,7 @@ func (h *HTTPHandler) handleInventory(w http.ResponseWriter, r *http.Request) {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
 		return
 	}
-	webhttp.WriteJSON(w, h.poller.inventoryFor(h.manager.List(r.Context())))
+	webhttp.WriteJSON(w, h.poller.inventoryFor(h.manager.readers()))
 }
 
 func (h *HTTPHandler) handleInventoryRefresh(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +138,7 @@ func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	forges := h.manager.List(r.Context())
+	forges := h.manager.List()
 	_, github := marotteApp(forgeapi.FamilyGitHub)
 	_, gitlab := marotteApp(forgeapi.FamilyGitLab)
 	webhttp.WriteJSON(w, map[string]any{
@@ -185,28 +156,24 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, sub, _ := splitFirst(tail)
-	op, rest, _ := splitFirst(sub)
-	// A login is how a forge that has no row yet gets one.
-	if op == "login" {
-		h.handleLogin(w, r, id, rest)
+	if sub == "" && r.Method == http.MethodDelete {
+		h.handleDisconnect(w, r, id)
 		return
 	}
-	if h.manager.get(id) == nil {
+	row, ok := h.manager.view(id)
+	if !ok {
 		httpreply.NotFound(w, "unknown forge id")
 		return
 	}
 	if sub == "" {
-		switch r.Method {
-		case http.MethodGet:
-			f := h.manager.get(id)
-			webhttp.WriteJSON(w, f)
-		case http.MethodDelete:
-			h.handleDisconnect(w, r, id)
-		default:
+		if r.Method != http.MethodGet {
 			httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodDelete)
+			return
 		}
+		webhttp.WriteJSON(w, row)
 		return
 	}
+	op, rest, _ := splitFirst(sub)
 	switch op {
 	case "probe":
 		h.handleProbe(w, r, id)
@@ -221,24 +188,39 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleDisconnect is DELETE /api/forges/{id}: a sign-out of any id parseID
+// reads, a row or not, so a repeat finishes a cleanup a first one left.
 func (h *HTTPHandler) handleDisconnect(w http.ResponseWriter, r *http.Request, id string) {
-	f := h.manager.get(id)
-	if f == nil {
-		httpreply.NotFound(w, "unknown forge")
+	deadline := h.manager.deadlines.from(time.Now())
+	if _, _, ok := parseID(id); !ok {
+		httpreply.BadRequest(w, "invalid forge id")
 		return
 	}
-	if err := h.manager.disconnect(r.Context(), f); err != nil {
-		if errors.Is(err, errConnectionUnusable) {
-			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
-			return
-		}
-		httpreply.ServerError(w, "disconnect failed", err)
-		return
+	err := h.manager.signOut(r.Context(), deadline, id)
+	switch {
+	case err == nil:
+		webhttp.Ok(w)
+	case r.Context().Err() != nil, writeMutationError(w, err):
+	case errors.Is(err, errCleanupPending):
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+			httpreply.ErrorJSONWithCode(logsafe.Field(err.Error()), codeCleanupPending))
+	default:
+		httpreply.ServerError(w, "the sign-out could not be saved", err)
 	}
-	h.manager.invalidate()
-	_ = h.manager.Refresh(r.Context())
-	h.NotifyChanged(r.Context())
-	webhttp.Ok(w)
+}
+
+// writeMutationError answers the refusals every mutation of a connection
+// shares, and reports whether err was one.
+func writeMutationError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, errConnectionBusy):
+		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeConnectionBusy))
+	case errors.Is(err, errConnectionUnusable):
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+	default:
+		return false
+	}
+	return true
 }
 
 const (
@@ -259,6 +241,7 @@ func (h *HTTPHandler) handleOwners(w http.ResponseWriter, r *http.Request, id st
 		httpreply.MethodNotAllowed(w, http.MethodPut)
 		return
 	}
+	deadline := h.manager.deadlines.from(time.Now())
 	var body ownersBody
 	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Owners == nil {
@@ -266,17 +249,11 @@ func (h *HTTPHandler) handleOwners(w http.ResponseWriter, r *http.Request, id st
 			httpreply.ErrorJSONWithCode("the body must be {owners: [string, ...]}", codeOwnersInvalid))
 		return
 	}
-	f := h.manager.get(id)
-	if f == nil {
-		httpreply.NotFound(w, "unknown forge")
-		return
-	}
-	stored, err := h.manager.setOwnerScopes(r.Context(), f, *body.Owners)
+	stored, err := h.manager.setOwners(r.Context(), deadline, id, *body.Owners)
 	if err != nil {
 		writeOwnersError(w, r, err)
 		return
 	}
-	h.NotifyChanged(r.Context())
 	// The inventory's added scopes are the stored owners, so the change shows at
 	// the next cycle rather than a poll interval later.
 	h.askCycle()
@@ -286,7 +263,7 @@ func (h *HTTPHandler) handleOwners(w http.ResponseWriter, r *http.Request, id st
 // writeOwnersError answers a refused owners write. An owner the library refuses
 // is its own envelope, with the message naming which owner it was.
 func writeOwnersError(w http.ResponseWriter, r *http.Request, err error) {
-	if r.Context().Err() != nil {
+	if r.Context().Err() != nil || writeMutationError(w, err) {
 		return
 	}
 	if ferr, ok := errors.AsType[*forgeapi.Error](err); ok {
@@ -298,28 +275,26 @@ func writeOwnersError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, errTooManyOwners):
 		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeOwnersTooMany))
-	case errors.Is(err, errConnectionUnusable):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
-	case errors.Is(err, errNoRecord):
+	case errors.Is(err, errNotLoggedIn):
 		httpreply.NotFound(w, err.Error())
 	default:
 		httpreply.ServerError(w, "storing the owners failed", err)
 	}
 }
 
-// connectionClient answers connection id's client, or writes why there is none:
-// a record file or store the server cannot use is a 503, anything else a 404.
-func (h *HTTPHandler) connectionClient(w http.ResponseWriter, id string) (forgeClient, bool) {
-	fc, err := h.manager.client(id)
+// handle answers connection id's read handle, or writes why there is none:
+// persistence the server cannot use is a 503, anything else a 404.
+func (h *HTTPHandler) handle(w http.ResponseWriter, id string) (readHandle, bool) {
+	rh, err := h.manager.reader(id)
 	if errors.Is(err, errConnectionUnusable) {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
-		return forgeClient{}, false
+		return readHandle{}, false
 	}
 	if err != nil {
 		httpreply.NotFound(w, err.Error())
-		return forgeClient{}, false
+		return readHandle{}, false
 	}
-	return fc, true
+	return rh, true
 }
 
 // A failed read of either scope answers its envelope, never a partial verdict.
@@ -328,82 +303,115 @@ func (h *HTTPHandler) handleCapabilities(w http.ResponseWriter, r *http.Request,
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	fc, ok := h.connectionClient(w, id)
+	rh, ok := h.handle(w, id)
 	if !ok {
 		return
 	}
-	conn, err := fc.core.ConnectionCaps(r.Context())
+	caps, err := h.manager.capabilities(r.Context(), &rh, r.URL.Query().Get("refresh") == "1")
 	if err != nil {
 		writeOpsError(w, r, err)
 		return
 	}
-	grant, err := fc.core.GrantCaps(r.Context())
-	if err != nil {
-		writeOpsError(w, r, err)
-		return
-	}
-	webhttp.WriteJSON(w, capabilitiesOf(conn, grant))
+	webhttp.WriteJSON(w, caps)
 }
 
+const (
+	codeCheckBusy         = "check_busy"
+	codeReconnectRequired = "reconnect_required"
+)
+
+// handleProbe is the Check: one check of the connection under the request's
+// context, answering the row it left.
 func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), h.probeTimeout)
-	defer cancel()
-	err := h.manager.probeConnection(ctx, id)
-	f := h.manager.get(id)
-	res := ProbeResult{Forge: f, Connected: f != nil && f.Connected}
+	_, err := h.manager.check(r.Context(), id, checkBudget)
 	switch {
-	case err == nil:
-	case f != nil && f.LastError != "":
-		res.Error = f.LastError
-	default:
-		res.Error = logsafe.Field(err.Error())
+	case r.Context().Err() != nil, writeMutationError(w, err):
+		return
+	case errors.Is(err, errCheckBusy):
+		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeCheckBusy))
+		return
+	case errors.Is(err, errReconnectRequired):
+		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeReconnectRequired))
+		return
+	case err != nil:
+		httpreply.NotFound(w, err.Error())
+		return
 	}
-	webhttp.WriteJSON(w, res)
+	row, ok := h.manager.view(id)
+	if !ok {
+		httpreply.NotFound(w, "unknown forge id")
+		return
+	}
+	webhttp.WriteJSON(w, ProbeResult{Forge: &row})
 }
 
-// handleLogin handles POST /api/forges/{id}/login/pat — the user-
-// supplied PAT path. id is the forge ID we're logging into; the
-// kind+host are derived from id.
-func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, sub string) {
+const (
+	codeKindInvalid   = "kind_invalid"
+	codeTokenRequired = "token_required"
+)
+
+// patLoginBody is a token sign-in: the forge's kind and host, the token, and
+// for a self-managed instance how to reach it.
+type patLoginBody struct {
+	Kind  Kind   `json:"kind"`
+	Host  string `json:"host"`
+	Token string `json:"token"`
+	connectionFields
+}
+
+// handleLogin is POST /api/forges/login: a token sign-in, answering the id the
+// server minted for the saved connection.
+func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	op, _, _ := splitFirst(sub)
-	if op != "pat" {
-		httpreply.NotFound(w, "unknown login method")
-		return
-	}
-	kind, host := splitID(id)
-	if !kind.valid() {
-		httpreply.BadRequest(w, "invalid forge id")
-		return
-	}
-	var body patBody
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	deadline := h.manager.deadlines.from(time.Now())
+	var body patLoginBody
+	if err := webhttp.DecodeJSONInto(w, r, &body, webhttp.MaxJSONBody); err != nil {
 		httpreply.BadRequest(w, "invalid json")
 		return
 	}
-	if err := h.loginPAT(r.Context(), kind, host, &body); err != nil {
+	if !body.Kind.valid() {
+		webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+			httpreply.ErrorJSONWithCode("forges: kind must be one of the supported forge kinds", codeKindInvalid))
+		return
+	}
+	spec, err := body.record(body.Kind, body.Host)
+	if err == nil && body.Token == "" {
+		err = errTokenRequired
+	}
+	if err != nil {
+		writeFieldError(w, err)
+		return
+	}
+	id, err := h.manager.signIn(r.Context(), deadline, &spec,
+		&creds.Record{Kind: forgeapi.CredKindStaticPAT, Token: body.Token, Issued: time.Now()})
+	if err != nil {
 		writeLoginError(w, r, err)
 		return
 	}
-	h.manager.invalidate()
-	_ = h.manager.Refresh(r.Context())
-	h.NotifyChanged(r.Context())
-	webhttp.WriteJSON(w, map[string]string{"status": stateComplete})
+	webhttp.WriteJSON(w, LoginResult{ForgeID: id})
 }
 
-// patBody is a token connect: the token and, for a self-managed instance, how
-// to reach it.
-type patBody struct {
-	Token string `json:"token"`
-	connectionFields
+// errTokenRequired refuses a token sign-in with no token.
+var errTokenRequired = errors.New("forges: a token is required")
+
+// writeFieldError answers a sign-in body field marotte refuses, a 400 naming
+// the field.
+func writeFieldError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errWebBaseInvalid):
+		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeWebBaseInvalid))
+	case errors.Is(err, errTokenRequired):
+		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeTokenRequired))
+	default:
+		httpreply.BadRequest(w, err.Error())
+	}
 }
 
 type connectionFields struct {
@@ -421,47 +429,61 @@ type trustFields struct {
 	PlaintextHTTP    bool   `json:"plaintext_http"`
 }
 
-func (h *HTTPHandler) loginPAT(ctx context.Context, kind Kind, host string, body *patBody) error {
-	rec, err := body.record(kind, host)
-	if err != nil {
-		return err
-	}
-	return h.manager.connect(ctx, &rec, body.Token)
-}
-
 // codeWebBaseInvalid answers a web base URL that is not the scheme and host the
-// connection id names.
+// connection names.
 const codeWebBaseInvalid = "web_base_url_invalid"
 
 var (
-	errWebBaseInvalid = errors.New("forges: web_base_url must be the scheme and host:port the forge id names")
-	errHostInvalid    = errors.New("forges: the forge id's host is not a host[:port]")
+	errWebBaseInvalid = errors.New("forges: web_base_url must be the scheme and host:port of the host")
+	errHostInvalid    = errors.New("forges: the host is not a host[:port]")
 )
 
-// The id's host, and the web base URL when one is given, must each be a bare origin on that host
-// and port, so a token is never sent to an instance the id does not name.
-func (b *connectionFields) record(kind Kind, host string) (connectionRecord, error) {
+// maxHostBytes bounds a host: a DNS name is at most 253 octets (RFC 1035
+// section 2.3.4) and a port adds at most 6 (":65535"). It also keeps every id
+// reversible, since keyenc.Join hashes components over MaxComponentBytes into an
+// id keyenc.Split refuses, and the longest kind plus this bound is far below it.
+const maxHostBytes = 259
+
+// validHost is the one host rule of the sign-in boundary, the records file and
+// parseID: a bare host[:port], bounded.
+func validHost(host string) bool {
+	return host != "" && len(host) <= maxHostBytes && originOn("https://"+host, host)
+}
+
+// The host, and the web base URL when one is given, must each be a bare origin on that host and
+// port, so a token is never sent to an instance the connection does not name.
+func (b *connectionFields) record(kind Kind, host string) (connectionSpec, error) {
 	if host == "" {
 		host = kind.defaultHost()
 	}
-	if !originOn("https://"+host, host) {
-		return connectionRecord{}, errHostInvalid
+	if !validHost(host) {
+		return connectionSpec{}, errHostInvalid
 	}
-	rec := b.recordOn(host)
-	rec.ID, rec.Kind, rec.APIBaseURL = MakeID(kind, host), kind, b.APIBaseURL
+	spec := b.specOn(host)
+	spec.ID, spec.Kind, spec.APIBaseURL = MakeID(kind, host), kind, b.APIBaseURL
 	if b.WebBaseURL == "" {
-		return rec, nil
+		return spec, nil
 	}
-	if !originOn(b.WebBaseURL, host) {
-		return connectionRecord{}, errWebBaseInvalid
+	webBase, err := canonicalWebBase(b.WebBaseURL, host)
+	if err != nil {
+		return connectionSpec{}, err
 	}
-	u, _ := url.Parse(b.WebBaseURL)
-	rec.WebBaseURL = u.Scheme + "://" + host
-	return rec, nil
+	spec.WebBaseURL = webBase
+	return spec, nil
 }
 
-func (f *trustFields) recordOn(host string) connectionRecord {
-	return connectionRecord{
+// canonicalWebBase is raw as a connection stores it, scheme://host, refused
+// unless raw is an origin on host.
+func canonicalWebBase(raw, host string) (string, error) {
+	if !originOn(raw, host) {
+		return "", errWebBaseInvalid
+	}
+	u, _ := url.Parse(raw)
+	return u.Scheme + "://" + host, nil
+}
+
+func (f *trustFields) specOn(host string) connectionSpec {
+	return connectionSpec{
 		Host: host, CAPEM: f.CAPEM, ClientCertPEM: f.ClientCertPEM, ClientKeyPEM: f.ClientKeyPEM, Proxy: f.Proxy,
 		PrivateAddresses: f.PrivateAddresses, PlaintextHTTP: f.PlaintextHTTP,
 	}
@@ -475,31 +497,22 @@ func originOn(raw, host string) bool {
 		(u.Path == "" || u.Path == "/") && !u.ForceQuery && u.RawQuery == "" && u.Fragment == ""
 }
 
-// writeLoginError answers a refused login. A refusal of the credential or of
-// the address is a 2xx {error, code} envelope: the client's action layer
-// collapses any non-2xx to a generic network error, which would hide the reason
-// from the PAT form. A store or record file the server cannot write is a 503.
+// writeLoginError answers a refused sign-in with an ordinary status and the
+// {error, code} body the client's action layer carries to the form.
 func writeLoginError(w http.ResponseWriter, r *http.Request, err error) {
-	if r.Context().Err() != nil {
-		return
-	}
-	if errors.Is(err, errConnectionUnusable) {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+	if r.Context().Err() != nil || writeMutationError(w, err) {
 		return
 	}
 	if ferr, ok := errors.AsType[*forgeapi.Error](err); ok {
-		webhttp.WriteJSON(w, envelopeFor(ferr))
+		writeForgeAPIError(w, ferr)
 		return
 	}
-	if errors.Is(err, errWebBaseInvalid) {
-		webhttp.WriteJSON(w, httpreply.ErrorJSONWithCode(err.Error(), codeWebBaseInvalid))
-		return
+	switch {
+	case errors.Is(err, errSignInTimedOut):
+		webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout, httpreply.ErrorJSONWithCode(err.Error(), codeSignInTimedOut))
+	default:
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(logsafe.Field(err.Error())))
 	}
-	if errors.Is(err, errHostInvalid) {
-		httpreply.BadRequest(w, err.Error())
-		return
-	}
-	webhttp.WriteJSON(w, httpreply.ErrorJSON(err.Error()))
 }
 
 // A request whose own context ended is answered with nothing: nobody is left to read it.
@@ -524,14 +537,18 @@ func writeOpsError(w http.ResponseWriter, r *http.Request, err error) {
 		httpreply.ErrorJSON(err.Error()))
 }
 
-// splitID parses "kind:host" → (kind, host). Returns ("", "") for
-// malformed input — the caller should validate Kind.valid().
-func splitID(id string) (kind Kind, ref string) {
-	k, host, found := strings.Cut(id, ":")
-	if !found {
-		return "", ""
+// parseID reads a connection id back into its kind and host, refusing any id
+// MakeID would not mint, a hashed one included.
+func parseID(id string) (Kind, string, bool) {
+	parts, err := keyenc.Split(id)
+	if err != nil || len(parts) != 2 {
+		return "", "", false
 	}
-	return Kind(k), host
+	kind, host := Kind(parts[0]), parts[1]
+	if !kind.valid() || !validHost(host) || MakeID(kind, host) != id {
+		return "", "", false
+	}
+	return kind, host, true
 }
 
 // splitFirst splits s at the first '/' separator, returning

@@ -16,17 +16,25 @@ describe("a11y: missing labels", () => {
 
   it("toast is announced via the shared live region and is self-describing", async () => {
     const { showToast, _resetForTest } = await import("./toast.js");
+    const { mountLiveRegions } = await import("@cplieger/ui-primitives/announce");
+    const release = mountLiveRegions(document.body);
     const dismiss = showToast("File saved", "success", 5000);
-    const toast = document.querySelector(".uip-toast--success")!;
-    expect(toast).not.toBeNull();
-    // The toast is keyboard-focusable with a visually-hidden dismiss hint, and its message is
-    // announced through the shared polite live region, not an aria-label (double announce).
-    expect(toast.getAttribute("tabindex")).toBe("0");
-    expect(toast.querySelector(".uip-visually-hidden")?.textContent).toBe("Click to dismiss.");
-    expect(toast.querySelector(".uip-toast-msg")?.textContent).toBe("File saved");
-    expect(document.querySelector('[aria-live="polite"]')).not.toBeNull();
-    dismiss();
-    _resetForTest();
+    try {
+      const toast = document.querySelector(".uip-toast--success")!;
+      expect(toast).not.toBeNull();
+      // The toast is keyboard-focusable with a visually-hidden dismiss hint, and its message is
+      // announced through the shared polite live region, not an aria-label (double announce).
+      expect(toast.getAttribute("tabindex")).toBe("0");
+      expect(toast.querySelector(".uip-visually-hidden")?.textContent).toBe("Click to dismiss.");
+      expect(toast.querySelector(".uip-toast-msg")?.textContent).toBe("File saved");
+      await vi.waitFor(() => {
+        expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe("File saved");
+      });
+    } finally {
+      dismiss();
+      _resetForTest();
+      release();
+    }
   });
 
   it("banner stack container has aria-label and aria-live", async () => {
@@ -98,7 +106,7 @@ describe("a11y: permissions rule-form labels (static markup)", () => {
 
     const forms = Array.from(doc.querySelectorAll<HTMLElement>(".rule-form"));
     const kinds = forms.map((f) => f.getAttribute("data-rule-form"));
-    expect(kinds.sort()).toEqual(["explain", "ignore", "policy"]);
+    expect(kinds.sort()).toEqual(["directory", "explain", "ignore", "policy"]);
 
     for (const form of forms) {
       // Grouped + named for assistive tech.
@@ -130,6 +138,8 @@ describe("a11y: permissions rule-form labels (static markup)", () => {
       "native-explain-run",
       "agent-ignore-input",
       "agent-ignore-add",
+      "agent-dirs-input",
+      "agent-dirs-add",
     ]) {
       expect(doc.querySelector(`[id="${id}"]`), `#${id} must exist`).not.toBeNull();
     }
@@ -167,6 +177,19 @@ describe("a11y: autocomplete on every autocompletable input (static markup)", ()
     expect(indexHtml).not.toContain('autocomplete="username"');
     const clientId = /<input\b[^>]*id="mcp-remote-oauth-client-id"[^>]*>/.exec(indexHtml)?.[0];
     expect(clientId).toContain('autocomplete="off"');
+  });
+});
+
+describe("a11y: the composer's chat options button (static markup)", () => {
+  it("names the button once, for the tooltip and the accessible name, and draws two sliders", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      /<button\b[^>]*id="chat-options-btn"[\s\S]*?<\/button>/.exec(indexHtml)?.[0] ?? "";
+    const btn = host.querySelector("#chat-options-btn");
+    expect(btn?.getAttribute("aria-label")).toBe("Chat options");
+    expect(btn?.getAttribute("data-tooltip")).toBe("Chat options");
+    expect(btn?.querySelectorAll("svg circle")).toHaveLength(2);
+    expect(btn?.querySelectorAll("svg line")).toHaveLength(0);
   });
 });
 
@@ -335,8 +358,8 @@ describe("a11y: async-button screen reader announcements", () => {
   });
 });
 
-describe("a11y: failed tool aria-expanded", () => {
-  it("failed status sets aria-expanded=true on the tool toggle", async () => {
+describe("a11y: declined tool aria-expanded", () => {
+  it("a refusal's auto-open sets aria-expanded=true on the tool toggle", async () => {
     vi.resetModules();
     const noop = (): void => {
       /* noop */
@@ -347,24 +370,18 @@ describe("a11y: failed tool aria-expanded", () => {
       openFileDiff: noop,
       openFileGitDiff: undefined,
     }));
-    vi.doMock("./tool-group.js", () => ({ maybeCollapseGroup: noop }));
     vi.doMock("./actions/index.js", () => ({
       // `registerCleanup` is CALLED on this path, so it is a noop rather than
       // undefined; Browser Mode's real linking requires the name either way.
       registerCleanup: () => {
         /* noop */
       },
-      bindLoadingState: () => () => undefined,
     }));
 
     const { buildToolCard } = await import("./tool-card.js");
     const { initToolCallbacks, applyToolCallUpdate } = await import("./messages-tools.js");
 
-    initToolCallbacks({
-      pushBind: noop,
-      refreshGroupHeader: noop,
-      explainError: () => Promise.resolve(""),
-    });
+    initToolCallbacks({ refreshGroupHeader: noop });
 
     const card = buildToolCard({
       id: "tf1",
@@ -389,13 +406,14 @@ describe("a11y: failed tool aria-expanded", () => {
         id: "tf1",
         title: "Running: grep",
         kind: "other",
-        status: "failed",
+        status: "completed",
+        declined: true,
         ts: 0,
       },
       "c-a11y",
     );
 
-    // The failed branch auto-expands the details, which must keep aria-expanded and the
+    // The refusal branch auto-expands the details, which must keep aria-expanded and the
     // region's aria-hidden in sync.
     expect(details.getAttribute("aria-hidden")).toBe("false");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
@@ -403,8 +421,70 @@ describe("a11y: failed tool aria-expanded", () => {
     document.body.removeChild(card);
     vi.doUnmock("./scroll.js");
     vi.doUnmock("./editor-openers.js");
-    vi.doUnmock("./tool-group.js");
     vi.doUnmock("./subagent.js");
     vi.doUnmock("./actions/index.js");
+  });
+});
+
+describe("a11y: the agent engine controls", () => {
+  it("labels the memory limit and describes both controls by text that exists (static markup)", () => {
+    const doc = new DOMParser().parseFromString(indexHtml, "text/html");
+    const heap = doc.getElementById("engine-heap-mib");
+    expect(heap, "the memory limit row is in the markup").not.toBeNull();
+    expect(doc.querySelector('label[for="engine-heap-mib"]')?.textContent).toBe(
+      "Agent engine memory limit",
+    );
+    const restart = doc.getElementById("engine-restart");
+    expect(restart?.textContent).toBe("Restart now");
+    for (const el of [heap, restart]) {
+      const ids = el?.getAttribute("aria-describedby")?.split(" ") ?? [];
+      expect(ids.length).toBeGreaterThan(0);
+      for (const id of ids) {
+        expect(doc.getElementById(id), `#${id} describes a control`).not.toBeNull();
+      }
+    }
+  });
+
+  it("describes every engine-wide control by its restart hint in the real markup", async () => {
+    const host = document.createElement("div");
+    host.innerHTML = new DOMParser().parseFromString(indexHtml, "text/html").body.innerHTML;
+    document.body.appendChild(host);
+    try {
+      const { paintEngineRows } = await import("./engine-status.js");
+      paintEngineRows(null);
+      const hints = [...host.querySelectorAll(".engine-restart-hint")];
+      // One per engine-wide row; a control id the markup lost would leave its row without one.
+      expect(hints).toHaveLength(8);
+      for (const hint of hints) {
+        expect(hint.textContent).toContain("Applies after the agent engine restarts.");
+        const control = host.querySelector(`[aria-describedby~="${hint.id}"]`);
+        expect(control, `#${hint.id} describes its control`).not.toBeNull();
+        expect(hint.closest(".section-option")).toBe(control?.closest(".section-option"));
+      }
+    } finally {
+      document.body.removeChild(host);
+    }
+  });
+});
+
+describe("a11y: the configuration standing badge", () => {
+  it("names what happened and the layer in its own text, since a tooltip on a span is unreachable", async () => {
+    const { standingBadge } = await import("./config-standing.js");
+    const base = { type: "agent", key: "k", decided_by: "workspace", decided_by_name: "Workspace" };
+    expect(standingBadge({ ...base, kind: "displaced", compose: "override" }).textContent).toBe(
+      "Replaced by Workspace",
+    );
+    expect(
+      standingBadge({ ...base, kind: "disabled", decided_by: "machine", decided_by_name: "" })
+        .textContent,
+    ).toBe("Off by machine");
+    expect(
+      standingBadge({ ...base, kind: "displaced", decided_by: "", decided_by_name: "" })
+        .textContent,
+    ).toBe("Replaced by another layer");
+    expect(standingBadge({ ...base, kind: "undiscovered" }).textContent).toBe("Not in use");
+    expect(standingBadge({ ...base, kind: "undiscovered" }).getAttribute("data-tooltip")).toBe(
+      "kiro-cli loaded this but does not use it (undiscovered, decided by Workspace).",
+    );
   });
 });

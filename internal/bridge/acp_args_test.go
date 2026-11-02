@@ -53,7 +53,7 @@ func TestFilterACPArgs(t *testing.T) {
 			want: []string{"-v"},
 		},
 		{
-			// Fatal: kiro-cli rejects these with --agent-engine=v3 and exits before initialize, taking down every chat bridge.
+			// Fatal: kiro-cli rejects these with --agent-engine=v3 and exits before initialize, stopping the agent engine.
 			name: "refuses model and its value",
 			in:   []string{"--model", "claude-opus-5", "-v"},
 			want: []string{"-v"},
@@ -97,7 +97,7 @@ func TestFilterACPArgs(t *testing.T) {
 
 func TestFilterACPArgs_RefusesAuthMethod(t *testing.T) {
 	// kiro-cli exits 2 before initialize on an invalid value:
-	// error: invalid value 'bogus' for '--auth-method <METHOD>' [possible values: cli]
+	// error: invalid value 'bogus' for '--auth-method <METHOD>' [possible values: cli, client]
 	cases := map[string][]string{
 		"long_separate":  {"--auth-method", "bogus", "-v"},
 		"long_inline":    {"--auth-method=bogus", "-v"},
@@ -144,8 +144,8 @@ func TestRefuseReasonNamesTheRealSurface(t *testing.T) {
 		wantSubstrs []string
 	}{
 		{flagAgentEngine, []string{"v3-only"}},
-		{flagAuthMethod, []string{"exits before initialize", "cli"}},
-		{flagAuthMethodAlias, []string{"exits before initialize", "cli"}},
+		{flagAuthMethod, []string{"marotte owns the sign-in", "declaration"}},
+		{flagAuthMethodAlias, []string{"marotte owns the sign-in", "declaration"}},
 		{flagTrustAll, []string{"exits before initialize", "permissions.yaml"}},
 		{flagTrustAllShort, []string{"exits before initialize", "permissions.yaml"}},
 		{flagTrustTools, []string{"exits before initialize", "permissions.yaml"}},
@@ -178,7 +178,7 @@ func TestRefuseReasonNamesTheRealSurface(t *testing.T) {
 // TestBuildACPArgsPrecedesExtraArgs pins that a launch flag is an initial value, so it follows the derived args (kiro-cli
 // takes the last spelling) and switch_model / set_effort still win later.
 func TestBuildACPArgsPrecedesExtraArgs(t *testing.T) {
-	derived := buildACPArgs("v3")
+	derived := buildACPArgs([]string{"--auth-method", "client"})
 	extra := []string{"-v"}
 	full := append(slices.Clone(derived), extra...)
 

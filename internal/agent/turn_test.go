@@ -56,16 +56,16 @@ func TestTurnRegistry_InterruptIsFirstWinsPerTurn(t *testing.T) {
 // winner's unlocked persistence and broadcast rather than a half-finalized turn.
 func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 	reg := newTurnRegistry()
-	openTestTurn(t, reg, "c1")
+	open := openTestTurn(t, reg, "c1")
 
-	turn, won := reg.claimOwn(t.Context(), "c1")
+	turn, won := reg.claimTurn(t.Context(), "c1", open.ID, nil)
 	if !won {
 		t.Fatal("claiming an open turn must be taken")
 	}
 
 	second := make(chan bool, 1)
 	go func() {
-		_, ok := reg.claimOwn(context.WithoutCancel(t.Context()), "c1")
+		_, ok := reg.claimTurn(context.WithoutCancel(t.Context()), "c1", open.ID, nil)
 		second <- ok
 	}()
 	select {
@@ -90,7 +90,7 @@ func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 	reg := newTurnRegistry()
 	first := openTestTurn(t, reg, "c1")
-	if _, won := reg.claimOwn(t.Context(), "c1"); !won {
+	if _, won := reg.claimTurn(t.Context(), "c1", first.ID, nil); !won {
 		t.Fatal("claiming the open turn must be taken")
 	}
 
@@ -131,8 +131,8 @@ func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 // TestTurnRegistry_OpenIsCancellable pins that a channel, unlike sync.Cond, lets a waiter give up on a wedged chat.
 func TestTurnRegistry_OpenIsCancellable(t *testing.T) {
 	reg := newTurnRegistry()
-	openTestTurn(t, reg, "c1")
-	if _, won := reg.claimOwn(t.Context(), "c1"); !won {
+	open := openTestTurn(t, reg, "c1")
+	if _, won := reg.claimTurn(t.Context(), "c1", open.ID, nil); !won {
 		t.Fatal("claiming the open turn must be taken")
 	}
 
@@ -220,10 +220,10 @@ func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) 
 	const chatID marotte.ChatID = "c1"
 
 	lc := r.lifecycleFor(chatID)
-	openTestTurn(t, r, chatID)
-	claimed, won := r.claimOwn(ctx, chatID)
+	open := openTestTurn(t, r, chatID)
+	claimed, won := r.claimTurn(ctx, chatID, open.ID, nil)
 	if !won {
-		t.Fatal("claimOwn lost the claim on a freshly opened turn")
+		t.Fatal("claimTurn lost the claim on a freshly opened turn")
 	}
 
 	r.forget(chatID)
@@ -291,10 +291,10 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 	// ReleaseTurn leaves the turn open, so it must be finalized for the chat to be idle.
 	t.Run("a settled chat is not busy", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		h.stagePromptTurn(t, "c1")
-		turn, won := h.coord.turns.claimOwn(t.Context(), "c1")
+		id, _ := h.stagePromptTurn(t, "c1")
+		turn, won := h.coord.turns.claimTurn(t.Context(), "c1", id, nil)
 		if !won {
-			t.Fatal("claimOwn lost the claim on a freshly opened turn")
+			t.Fatal("claimTurn lost the claim on a freshly opened turn")
 		}
 		h.coord.turns.finish(turn, marotte.TurnResult{})
 		if busySet(t, h.coord.turns)["c1"] {
@@ -303,16 +303,16 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 	})
 }
 
-// A shell reservation reaches this set through the same predicate.
-func TestBusyChatIDs_NamesAnAdmittedShellCommand(t *testing.T) {
+// A rewind's reservation reaches this set through the same predicate.
+func TestBusyChatIDs_NamesARewindHoldingTheSlot(t *testing.T) {
 	h, _, _ := newTestHub()
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
-		t.Fatal("a fresh chat refused a shell reservation")
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
+		t.Fatal("a fresh chat refused a revert reservation")
 	}
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
 
 	if !slices.Contains(h.coord.turns.busyChatIDs(), "c1") {
-		t.Error("a chat holding a shell reservation is absent from busy_chats")
+		t.Error("a chat holding a revert reservation is absent from busy_chats")
 	}
 }
 
@@ -322,7 +322,7 @@ func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
 	h, _, _ := newTestHub()
 	a, _ := h.stagePromptTurn(t, "c1")
 
-	h.coord.RequestStop("c1")
+	h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopReader))
 	endTurn(t, h, "c1", a)
 
 	if !h.coord.StopRequestedAfter("c1", a) {
@@ -336,8 +336,41 @@ func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
 		t.Error("StopRequestedAfter(a) = false once a later turn opened, want true")
 	}
 
-	h.coord.RequestStop("c-never-opened")
+	h.coord.ReleaseStop(h.coord.RequestStop("c-never-opened", marotte.TurnStopReader))
 	if _, ok := h.coord.turns.lookup("c-never-opened"); ok {
 		t.Error("a stop on a chat with no turns minted a lifecycle for it")
+	}
+}
+
+// A stop's cause is the one its issuer recorded, and none for a turn opened after it. A teardown's cause holds against
+// a later stop of the same turns, whose clear may still be the teardown's; a stop after a newer turn opened records
+// its own.
+func TestTurnRegistry_AStopCauseIsTheIssuersAndATeardownsHoldsForItsTurns(t *testing.T) {
+	h, _, _ := newTestHub()
+	a, _ := h.stagePromptTurn(t, "c1")
+	if got := h.coord.StopCauseAfter("c1", a); got != marotte.TurnStopNone {
+		t.Fatalf("StopCauseAfter(a) before any stop = %v, want none", got)
+	}
+
+	h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopReader))
+	if got := h.coord.StopCauseAfter("c1", a); got != marotte.TurnStopReader {
+		t.Errorf("StopCauseAfter(a) after the reader's stop = %v, want the reader", got)
+	}
+	h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopTeardown))
+	if got := h.coord.StopCauseAfter("c1", a); got != marotte.TurnStopTeardown {
+		t.Errorf("StopCauseAfter(a) after a teardown's stop = %v, want the teardown", got)
+	}
+	h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopReader))
+	if got := h.coord.StopCauseAfter("c1", a); got != marotte.TurnStopTeardown {
+		t.Errorf("StopCauseAfter(a) after the reader's stop of the same turn = %v, want the teardown still", got)
+	}
+	endTurn(t, h, "c1", a)
+	b, _ := h.stagePromptTurn(t, "c1")
+	if got := h.coord.StopCauseAfter("c1", b); got != marotte.TurnStopNone {
+		t.Errorf("StopCauseAfter(b) for a turn opened after the stops = %v, want none", got)
+	}
+	h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopReader))
+	if got := h.coord.StopCauseAfter("c1", b); got != marotte.TurnStopReader {
+		t.Errorf("StopCauseAfter(b) after the reader's stop of the newer turn = %v, want the reader", got)
 	}
 }

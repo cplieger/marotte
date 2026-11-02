@@ -3,6 +3,8 @@
 
 import type { Route } from "./route-path.js";
 import { pushTargetRoute, type PushTarget } from "./push-subject.js";
+import { runAskPosition, runAsksOf } from "./run-asks.js";
+import { info } from "./toast.js";
 
 let opener: ((route: Route) => void) | null = null;
 
@@ -23,6 +25,19 @@ export function openPushTarget(target: PushTarget): void {
     );
   }
   opener(pushTargetRoute(target));
+  if (target.kind === "run_ask" && !stillWaiting(target.workflowID, target.position)) {
+    info("This step is no longer waiting for an answer.");
+  }
+}
+
+/** Whether the run-asks store still holds the wait a banner announced; a run read nowhere this
+ *  epoch (unreachable) is given the benefit of the doubt. */
+function stillWaiting(workflowID: string, position: string): boolean {
+  const run = runAsksOf(workflowID);
+  if (run === undefined) {
+    return false;
+  }
+  return !run.reachable || run.asks.some((a) => runAskPosition(workflowID, a) === position);
 }
 
 /** Drop the registration. Test isolation only; production never unregisters. */

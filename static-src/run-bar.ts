@@ -1,5 +1,6 @@
-// The run bar: one line per LIVE workflow run the active chat launched, in the bottom bar between
-// the interaction dock and the steer stack.
+// The run bar: one box holding a line per LIVE workflow run the active chat launched, in the bottom
+// bar between the interaction dock and the steer stack. From `FOLD_AT` runs a fold row heads the
+// list, outside the list's clip so its touch target can reach past the row.
 
 import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
@@ -9,39 +10,50 @@ import { watchActiveId } from "./store.js";
 import {
   liveRunIDsForChat,
   runIsLive,
+  runLabelOf,
   runPlan,
   runState,
   runStepEnds,
   invalidateRun,
-  type RunState,
 } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
 import { runToExec } from "./run-exec-source.js";
-import { counters, window as execWindow, type ExecNode } from "./exec-view/model.js";
+import { compactText, counters, progressPhrase, type ExecRun } from "./exec-view/model.js";
+import { buildExecSummary, type ExecSummaryView } from "./exec-view/summary.js";
+import { wantsReader } from "./exec-view/alert.js";
+import { chevronEl } from "./chevron.js";
+import { runBarOpen, setRunBarOpen } from "./device-view.js";
 import { holdRunClock, releaseRunClock, type RunClockHolder } from "./messages-blocks.js";
 import { openRunView } from "./run-view.js";
-import { STATE_WORD, stateOf, withAsk, type ExecState } from "./exec-view/status.js";
+import type { ExecState } from "./exec-view/status.js";
 import type { TabRunDotStatus } from "./tabs.js";
-import { formatElapsed } from "./strings.js";
 
-/** NOT `stateOf(undefined)`, which is `pending` and reads "not started" — a run in the live
- *  inventory has demonstrably started, so that word would be false. */
-const UNKNOWN_STATE = "unknown";
-
-/** The label a run with no fetched state carries. The store's `runLabelOf` answers `""` there,
- *  and a row with no name at all is unclickable in practice. */
+/** The name a run with no fetched state carries: `runLabelOf` answers `""` there, and a row with
+ *  no name at all is unclickable in practice. */
 const FALLBACK_NAME = "Workflow run";
 
-/** The element is re-pointed on every render rather than re-registered, so the refcount in
+/** From this many live runs the bar folds them behind one summary row, so a fan-out cannot push
+ *  the transcript and the composer off a phone. */
+const FOLD_AT = 3;
+
+/** One bar row's painted parts, kept so a repaint and the clock patch them in place. */
+interface RowView {
+  readonly btn: HTMLButtonElement;
+  readonly glyph: HTMLElement;
+  readonly summary: ExecSummaryView;
+}
+
+/** The row is re-pointed on every render rather than re-registered, so the refcount in
  *  `messages-blocks.ts` sees one holder per run for as long as the bar shows it. */
 interface Hold extends RunClockHolder {
-  clock: HTMLElement | null;
+  row: RowView | null;
 }
 
 let bound = false;
 let prevCount = 0;
 let prevChatID = "";
 const holds = new Map<string, Hold>();
+const rowViews = new WeakMap<HTMLElement, RowView>();
 /** The render effect's disposer, held only so `_resetRunBarForTest` can stop it. Production
  *  never tears the bar down — it lives as long as the page. */
 let stopRender: (() => void) | null = null;
@@ -71,19 +83,20 @@ function key(): string {
   const chatID = watchActiveId();
   const parts: string[] = [chatID];
   for (const id of liveRunIDsForChat(chatID)) {
-    const st = runState(id);
-    const asks = runPendingAsks(id);
-    const c = counters(execNodes(id, st));
+    const run = execOf(id);
+    const c = counters(run?.nodes ?? []);
     parts.push(
       [
         id,
-        st?.status ?? "",
-        st?.runLabel ?? "",
-        st?.workflowName ?? "",
-        String(asks.count),
+        run?.state ?? "",
+        run?.label ?? "",
+        run?.alert?.kind ?? "",
+        run?.alert?.text ?? "",
         String(c.total),
         String(c.done),
         String(c.current),
+        // A new pass can open on the same step counts.
+        run === undefined ? "" : compactText(progressPhrase(run)),
       ].join("\u0002"),
     );
   }
@@ -99,24 +112,49 @@ function rows(chatID: string): string[] {
   });
 }
 
+/** Whether a run is waiting on the reader: an unanswered ask, a pause or a failure. */
+function needsYou(id: string): boolean {
+  const run = execOf(id);
+  return run !== undefined && (run.state === "input" || wantsReader(run.alert));
+}
+
 function render(bar: HTMLUListElement): void {
   const chatID = watchActiveId();
-  const ids = rows(chatID);
+  // Runs that need the reader first, each group in inventory order.
+  const live = rows(chatID);
+  const waiting = live.filter(needsYou);
+  const ids = [...waiting, ...live.filter((id) => !waiting.includes(id))];
+  const folds = ids.length >= FOLD_AT;
+  const open = !folds || runBarOpen();
 
   bar.classList.toggle("hidden", ids.length === 0);
-  // BEFORE the rows, not after: `buildRow` points its clock span at this run's hold, so a hold
-  // created afterwards would leave the FIRST render's clock unaddressable — which is every render
-  // for a run whose state was already in the store when the bar started showing it, and the tick
-  // would then never write to it.
+  // BEFORE the rows, not after: `buildRow` points this run's hold at its row, so a hold created
+  // afterwards would leave the FIRST render's row unaddressable, and the tick would never paint it.
   reconcileHolds(ids);
+  // The waiting-first order moves a row whenever another run starts needing the reader, and a
+  // moved node loses focus, so the focused row button is handed it back.
+  const focused = document.activeElement;
+  const held = focused instanceof HTMLElement && bar.contains(focused) ? focused : null;
   // KEYED BY RUN ID, and each surviving row is PATCHED rather than rebuilt. Both halves are needed.
   reconcile(bar, ids, {
     key: (id: string) => id,
     mount: (id: string) => buildRow(id, chatID),
-    update: (row: HTMLElement, id: string) => {
-      paintRow(row, id);
-    },
+    update: paintRow,
   });
+  for (const row of bar.querySelectorAll<HTMLElement>(":scope > .run-bar-row")) {
+    row.hidden = !open;
+  }
+  if (held !== null && held.isConnected && document.activeElement !== held) {
+    held.focus({ preventScroll: true });
+  }
+  const fold = $.runBarFold;
+  fold.hidden = !folds;
+  if (folds) {
+    if (fold.firstElementChild === null) {
+      fold.append(buildSummary(bar));
+    }
+    paintSummary(fold, ids.length, waiting.length, open);
+  }
   if (ids.length === 0) {
     // Reset the announce baseline so arriving at a chat that already has runs reads them out fresh,
     // while the empty case stays silent.
@@ -138,83 +176,105 @@ function render(bar: HTMLUListElement): void {
   prevChatID = chatID;
 }
 
+/** The fold row: how many runs and how many need the reader, opening the list in place. */
+function buildSummary(bar: HTMLUListElement): HTMLButtonElement {
+  const glyph = el("span", { className: "run-bar-glyph", "aria-hidden": "true" });
+  const btn = el(
+    "button",
+    { type: "button", className: "run-bar-open run-bar-toggle", "aria-expanded": "false" },
+    el("span", { className: "run-bar-chev", "aria-hidden": "true" }, chevronEl()),
+    glyph,
+    el("span", { className: "run-bar-count" }),
+  ) as HTMLButtonElement;
+  btn.addEventListener("click", () => {
+    setRunBarOpen(!runBarOpen());
+    render(bar);
+  });
+  return btn;
+}
+
+function paintSummary(fold: HTMLElement, total: number, waiting: number, open: boolean): void {
+  const btn = fold.querySelector<HTMLButtonElement>(".run-bar-toggle");
+  if (btn === null) {
+    return;
+  }
+  const text =
+    waiting === 0
+      ? `${String(total)} workflows running`
+      : `${String(total)} workflows, ${String(waiting)} ${waiting === 1 ? "needs" : "need"} you`;
+  const count = btn.querySelector<HTMLElement>(".run-bar-count");
+  if (count !== null && count.textContent !== text) {
+    count.textContent = text;
+  }
+  btn.setAttribute("aria-expanded", String(open));
+  const glyph = btn.querySelector<HTMLElement>(".run-bar-glyph");
+  if (glyph !== null) {
+    glyph.dataset["status"] = waiting > 0 ? "input" : "working";
+  }
+}
+
 /** One row: an `<li>` carrying the state, holding the `<button>` that opens the run's own tab. */
 function buildRow(id: string, chatID: string): HTMLElement {
   // No attribute means reserved box, nothing to show.
   const glyph = el("span", { className: "run-bar-glyph", "aria-hidden": "true" });
-  const clock = el("span", { className: "run-bar-clock" });
-
-  const btn = el(
-    "button",
-    { type: "button", className: "run-bar-open" },
-    glyph,
-    el("span", { className: "run-bar-name" }),
-    el("span", { className: "run-bar-state" }),
-    el("span", { className: "run-bar-steps" }),
-    clock,
-  );
+  const btn = el("button", { type: "button", className: "run-bar-open" }) as HTMLButtonElement;
+  const summary = buildExecSummary({ alertHost: btn });
+  btn.append(glyph, summary.root);
   // The NAME is resolved at click time rather than captured here, because this row outlives its
-  // first paint now: a run whose label arrives with its first fetch would otherwise open a tab
-  // called "Workflow run" for the rest of the session.
+  // first paint: a run whose label arrives with its first fetch would otherwise open a tab called
+  // "Workflow run" for the rest of the session.
   btn.addEventListener("click", () => {
-    void openRunView(id, runName(runState(id)), chatID);
+    void openRunView(id, runLabelOf(id) || FALLBACK_NAME, chatID);
   });
 
   const row = el("li", { className: "run-bar-row" }, btn);
-  // Point this run's hold at the clock span ONCE. `paintRow` never replaces it, so the shared tick
-  // keeps writing into the row on screen for as long as the bar shows that run.
+  const view = { btn, glyph, summary };
+  rowViews.set(row, view);
+  // Point this run's hold at the row ONCE, so the shared tick keeps painting the row on screen for
+  // as long as the bar shows that run.
   const hold = holds.get(id);
   if (hold !== undefined) {
-    hold.clock = clock;
+    hold.row = view;
   }
   paintRow(row, id);
   return row;
 }
 
-/** Write one row's state into the shell `buildRow` made, IN PLACE. */
 function paintRow(row: HTMLElement, id: string): void {
-  const btn = row.querySelector<HTMLButtonElement>(":scope > .run-bar-open");
-  if (btn === null) {
+  const view = rowViews.get(row);
+  if (view === undefined) {
     return;
   }
-  const st = runState(id);
-  const state = execStateOf(st, runPendingAsks(id).count > 0);
-  const name = runName(st);
-  const word = state === UNKNOWN_STATE ? "" : STATE_WORD[state];
-  const steps = stepText(id, st);
-
+  const state = paintView(view, id);
   row.dataset["state"] = state;
-  const mark = runMarkStatus(state);
-  const glyph = btn.querySelector<HTMLElement>(":scope > .run-bar-glyph");
-  if (glyph !== null) {
-    // A run with no fetched state writes NO attribute, which is how the shared rule says "reserved
-    // box, nothing to show" — so leaving a stale one behind would claim a status this row cannot
-    // vouch for.
-    if (mark === "") {
-      delete glyph.dataset["status"];
-    } else {
-      glyph.dataset["status"] = mark;
-    }
-  }
-  setText(btn, ".run-bar-name", name);
-  setText(btn, ".run-bar-state", word);
-  setText(btn, ".run-bar-steps", steps);
-  setText(btn, ".run-bar-clock", elapsedText(id, st));
-  // The visible state is a glyph plus a word, both visual, so the name has to carry it too. The
-  // step counter rides along because it is the row's other non-textual claim about progress.
-  btn.setAttribute("aria-label", accessibleName(name, word, steps));
 }
 
-function setText(host: HTMLElement, selector: string, text: string): void {
-  const span = host.querySelector<HTMLElement>(`:scope > ${selector}`);
-  if (span !== null) {
-    span.textContent = text;
+/** Paint a row's mark and summary from the run's model, IN PLACE; answers the row's state. */
+function paintView(view: RowView, id: string): ExecState | "unknown" {
+  const run = execOf(id);
+  if (run === undefined) {
+    view.summary.paintPending(runLabelOf(id) || FALLBACK_NAME);
+  } else {
+    view.summary.paint(run);
   }
+  // NOT `pending` for a run with no state, which reads "not started": a run in the live inventory
+  // has demonstrably started.
+  const state = run?.state ?? "unknown";
+  const mark = runMarkStatus(state);
+  // A run with no fetched state writes NO attribute, which is how the shared rule says "reserved
+  // box, nothing to show".
+  if (mark === "") {
+    delete view.glyph.dataset["status"];
+  } else {
+    view.glyph.dataset["status"] = mark;
+  }
+  view.btn.setAttribute("aria-label", `Open workflow run ${view.summary.describe()}`);
+  return state;
 }
 
 /** The workflow mark's own status for a row's state, or `""` for a row that has nothing to show
  *  yet. */
-function runMarkStatus(state: ExecState | typeof UNKNOWN_STATE): TabRunDotStatus | "" {
+function runMarkStatus(state: ExecState | "unknown"): TabRunDotStatus | "" {
   switch (state) {
     case "running":
       return "working";
@@ -232,57 +292,12 @@ function runMarkStatus(state: ExecState | typeof UNKNOWN_STATE): TabRunDotStatus
   }
 }
 
-/** Fold a run's status and its ask onto ONE axis, the way the card's STEP rows and the exec tree
- *  do. The card's ROOT keeps two axes because its rail and its ask paint at the same time; a
- *  single line has one slot. */
-function execStateOf(st: RunState | undefined, asking: boolean): ExecState | typeof UNKNOWN_STATE {
-  if (st === undefined) {
-    return UNKNOWN_STATE;
-  }
-  return withAsk(stateOf(st.status), asking);
-}
-
-/** The run's name, RAW. It is also the run TAB's name and the button's accessible name, and
- *  `.run-bar-name` ellipsizes the visible span responsively — so a length cut here would travel
- *  into the tab strip and into what a screen reader reads. */
-function runName(st: RunState | undefined): string {
-  const label = st?.runLabel ?? "";
-  const name = label === "" ? (st?.workflowName ?? "") : label;
-  return name === "" ? FALLBACK_NAME : name;
-}
-
-/** The run tab's model of a run, which the card and the page count from as well. */
-function execNodes(id: string, st: RunState | undefined): readonly ExecNode[] {
+/** The run tab's model of a run, which the card and the page read as well. */
+function execOf(id: string): ExecRun | undefined {
+  const st = runState(id);
   return st === undefined
-    ? []
-    : runToExec(id, st, runPlan(id), runPendingAsks(id), "", runStepEnds(id)).nodes;
-}
-
-/** The step counter, in the card's own wording so the two surfaces agree. */
-function stepText(id: string, st: RunState | undefined): string {
-  const c = counters(execNodes(id, st));
-  if (c.total === 0) {
-    return "";
-  }
-  return c.current > 0
-    ? `step ${String(c.current)} of ${String(c.total)}`
-    : `${String(c.done)} of ${String(c.total)}`;
-}
-
-function elapsedText(id: string, st: RunState | undefined): string {
-  const ms = execWindow(execNodes(id, st), runIsLive(st))?.span ?? 0;
-  return ms > 0 ? formatElapsed(ms) : "";
-}
-
-function accessibleName(name: string, word: string, steps: string): string {
-  const parts = [name];
-  if (word !== "") {
-    parts.push(word);
-  }
-  if (steps !== "") {
-    parts.push(steps);
-  }
-  return `Open workflow run ${parts.join(", ")}`;
+    ? undefined
+    : runToExec(st, runPlan(id), runPendingAsks(id), "", runStepEnds(id));
 }
 
 /** Join the shared 1s clock for every run on screen and leave it for every run that left. ONE
@@ -300,12 +315,12 @@ function reconcileHolds(ids: readonly string[]): void {
     const held = holds.has(id);
     if (!held) {
       const hold: Hold = {
-        clock: null,
+        row: null,
         tick(): void {
           // A tracked read is inert here: a setInterval callback runs outside any effect's eval
           // context, so nothing subscribes.
-          if (hold.clock !== null) {
-            hold.clock.textContent = elapsedText(id, runState(id));
+          if (hold.row !== null) {
+            paintView(hold.row, id);
           }
         },
       };

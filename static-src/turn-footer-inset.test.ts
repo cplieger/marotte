@@ -107,7 +107,7 @@ function mountFooter(doc: Document, trailing: Trailing): Mounted {
   section.className = "turn-info-section";
   const title = doc.createElement("h4");
   title.className = "turn-info-title";
-  title.textContent = "Timings";
+  title.textContent = "Time";
   const rows = doc.createElement("ul");
   rows.className = "turn-info-rows";
   const lastRow = doc.createElement("li");
@@ -386,9 +386,7 @@ describe("the trailing control", () => {
   });
 });
 
-/** The panel SLIDES open: `block-size` and `padding-block` both transition, so a read
- *  taken in the same task as the flip returns the PRE-transition value — measured, 0px
- *  of padding against a resolved 12. Wait for the animations the flip starts. */
+/** Two frames and any animation the flip starts, so a read is of the settled panel. */
 async function settle(el: Element): Promise<void> {
   await new Promise<void>((done) => {
     requestAnimationFrame(() => {
@@ -401,6 +399,32 @@ async function settle(el: Element): Promise<void> {
 }
 
 describe("the panel the ledger opens", () => {
+  it("keeps the band and its controls' air above and below with the panel open", () => {
+    // A box floor stops binding row 1 once the panel adds a row, and the row shrank to its controls.
+    for (const [where, doc] of [
+      ["phone", phone],
+      ["desktop", document],
+    ] as const) {
+      const { footer, ledger, last, panel } = mountFooter(doc, "rewind");
+      const shut = {
+        band: band(footer),
+        ledger: insets(footer, ledger),
+        rewind: insets(footer, last),
+      };
+      footer.dataset["info"] = "open";
+      const ledgerTop = ledger.getBoundingClientRect().top - footer.getBoundingClientRect().top;
+      expect(ledgerTop, `${where} ledger top air`).toBeCloseTo(shut.ledger.top, 1);
+      expect(
+        last.getBoundingClientRect().top - footer.getBoundingClientRect().top,
+        `${where} Rewind top air`,
+      ).toBeCloseTo(shut.rewind.top, 1);
+      expect(
+        panel.getBoundingClientRect().top - footer.getBoundingClientRect().top,
+        `${where} the panel starts below the band`,
+      ).toBeCloseTo(shut.band, 1);
+    }
+  });
+
   it("holds its ink one gutter off the CARD on all four edges", async () => {
     // Measured against the CARD, because the band's inset sits between the two, and held
     // against the `i`'s own ink gutter so one value stays the card's ink gutter.

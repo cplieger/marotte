@@ -38,7 +38,7 @@ export function mountNewDocButton(
 ): (tab: DocsTab) => void {
   const btn = el(
     "button",
-    { type: "button", className: "icon-btn docs-new-btn", "aria-haspopup": "dialog" },
+    { type: "button", className: "action-pill docs-new-btn", "aria-haspopup": "dialog" },
     iconEl(ICON_PLUS_UI),
   ) as HTMLButtonElement;
   let tab: NewDocTab | null = null;

@@ -1,0 +1,453 @@
+{
+  "workflowId": "wf_e4797c3850730e0b",
+  "state": {
+    "workflowId": "wf_e4797c3850730e0b",
+    "workflowName": "kiro-cli-2.31.0-contract-fixes",
+    "runLabel": "kiro-cli-2.31.0-contract-fixes-r2",
+    "status": "completed",
+    "root": {
+      "nodeId": "wf_e4797c3850730e0b",
+      "type": "sequence",
+      "status": "completed",
+      "startedAt": "2026-10-14T21:19:51.611Z",
+      "endedAt": "2026-10-14T23:07:19.325Z",
+      "children": [
+        {
+          "nodeId": "wait",
+          "type": "step",
+          "status": "completed",
+          "startedAt": "2026-10-13T22:51:46.586Z",
+          "endedAt": "2026-10-14T00:02:32.187Z"
+        },
+        {
+          "nodeId": "build-loop",
+          "type": "repeat",
+          "status": "completed",
+          "startedAt": "2026-10-14T21:19:51.616Z",
+          "endedAt": "2026-10-14T21:24:52.841Z",
+          "extendedMaxIterations": 8,
+          "children": [
+            {
+              "nodeId": "build-loop#0",
+              "type": "sequence",
+              "status": "completed",
+              "startedAt": "2026-10-14T08:10:33.388Z",
+              "endedAt": "2026-10-14T09:56:43.009Z",
+              "iteration": 0,
+              "children": [
+                {
+                  "nodeId": "build",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T08:10:33.393Z",
+                  "endedAt": "2026-10-14T08:45:03.791Z",
+                  "iteration": 0
+                },
+                {
+                  "nodeId": "reviews",
+                  "type": "parallel",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T08:45:03.806Z",
+                  "endedAt": "2026-10-14T09:56:08.306Z",
+                  "iteration": 0,
+                  "children": [
+                    {
+                      "nodeId": "review-claude",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T08:45:03.812Z",
+                      "endedAt": "2026-10-14T08:52:57.868Z",
+                      "iteration": 0
+                    },
+                    {
+                      "nodeId": "review-gpt",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T08:45:03.812Z",
+                      "endedAt": "2026-10-14T09:56:08.287Z",
+                      "iteration": 0
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "aggregate",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T09:56:08.325Z",
+                  "endedAt": "2026-10-14T09:56:42.993Z",
+                  "iteration": 0
+                }
+              ]
+            },
+            {
+              "nodeId": "build-loop#1",
+              "type": "sequence",
+              "status": "completed",
+              "startedAt": "2026-10-14T10:59:44.474Z",
+              "endedAt": "2026-10-14T11:47:33.656Z",
+              "iteration": 1,
+              "children": [
+                {
+                  "nodeId": "build",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T10:59:44.475Z",
+                  "endedAt": "2026-10-14T11:01:33.246Z",
+                  "iteration": 1
+                },
+                {
+                  "nodeId": "reviews",
+                  "type": "parallel",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T11:01:33.257Z",
+                  "endedAt": "2026-10-14T11:47:11.702Z",
+                  "iteration": 1,
+                  "children": [
+                    {
+                      "nodeId": "review-claude",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T11:01:33.259Z",
+                      "endedAt": "2026-10-14T11:05:31.125Z",
+                      "iteration": 1
+                    },
+                    {
+                      "nodeId": "review-gpt",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T11:01:33.259Z",
+                      "endedAt": "2026-10-14T11:47:11.665Z",
+                      "iteration": 1
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "aggregate",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T11:47:11.714Z",
+                  "endedAt": "2026-10-14T11:47:33.553Z",
+                  "iteration": 1
+                }
+              ]
+            },
+            {
+              "nodeId": "build-loop#2",
+              "type": "sequence",
+              "status": "completed",
+              "startedAt": "2026-10-14T11:47:33.723Z",
+              "endedAt": "2026-10-14T13:13:12.963Z",
+              "iteration": 2,
+              "children": [
+                {
+                  "nodeId": "build",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T11:47:33.761Z",
+                  "endedAt": "2026-10-14T12:05:18.022Z",
+                  "iteration": 2
+                },
+                {
+                  "nodeId": "reviews",
+                  "type": "parallel",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T12:05:18.045Z",
+                  "endedAt": "2026-10-14T13:12:55.297Z",
+                  "iteration": 2,
+                  "children": [
+                    {
+                      "nodeId": "review-claude",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T12:05:18.049Z",
+                      "endedAt": "2026-10-14T12:08:07.505Z",
+                      "iteration": 2
+                    },
+                    {
+                      "nodeId": "review-gpt",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T12:05:18.049Z",
+                      "endedAt": "2026-10-14T13:12:55.274Z",
+                      "iteration": 2
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "aggregate",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T13:12:55.299Z",
+                  "endedAt": "2026-10-14T13:13:12.942Z",
+                  "iteration": 2
+                }
+              ]
+            },
+            {
+              "nodeId": "build-loop#3",
+              "type": "sequence",
+              "status": "completed",
+              "startedAt": "2026-10-14T13:40:26.741Z",
+              "endedAt": "2026-10-14T14:54:02.037Z",
+              "iteration": 3,
+              "children": [
+                {
+                  "nodeId": "build",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T13:40:26.750Z",
+                  "endedAt": "2026-10-14T13:45:30.379Z",
+                  "iteration": 3
+                },
+                {
+                  "nodeId": "reviews",
+                  "type": "parallel",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T13:45:30.434Z",
+                  "endedAt": "2026-10-14T14:53:36.870Z",
+                  "iteration": 3,
+                  "children": [
+                    {
+                      "nodeId": "review-claude",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T13:45:30.484Z",
+                      "endedAt": "2026-10-14T13:47:42.460Z",
+                      "iteration": 3
+                    },
+                    {
+                      "nodeId": "review-gpt",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T13:45:30.485Z",
+                      "endedAt": "2026-10-14T14:53:36.840Z",
+                      "iteration": 3
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "aggregate",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T14:53:36.879Z",
+                  "endedAt": "2026-10-14T14:54:02.004Z",
+                  "iteration": 3
+                }
+              ]
+            },
+            {
+              "nodeId": "build-loop#4",
+              "type": "sequence",
+              "status": "completed",
+              "startedAt": "2026-10-14T16:17:10.622Z",
+              "endedAt": "2026-10-14T16:24:29.055Z",
+              "iteration": 4,
+              "children": [
+                {
+                  "nodeId": "build",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T15:22:39.207Z",
+                  "endedAt": "2026-10-14T15:29:53.476Z",
+                  "iteration": 4
+                },
+                {
+                  "nodeId": "reviews",
+                  "type": "parallel",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T16:17:10.658Z",
+                  "endedAt": "2026-10-14T16:24:13.536Z",
+                  "iteration": 4,
+                  "children": [
+                    {
+                      "nodeId": "review-claude",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T15:29:53.505Z",
+                      "endedAt": "2026-10-14T15:33:36.852Z",
+                      "iteration": 4
+                    },
+                    {
+                      "nodeId": "review-gpt",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T16:17:10.670Z",
+                      "endedAt": "2026-10-14T16:24:13.512Z",
+                      "iteration": 4
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "aggregate",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T16:24:13.545Z",
+                  "endedAt": "2026-10-14T16:24:29.010Z",
+                  "iteration": 4
+                }
+              ]
+            },
+            {
+              "nodeId": "build-loop#5",
+              "type": "sequence",
+              "status": "completed",
+              "startedAt": "2026-10-14T16:29:08.301Z",
+              "endedAt": "2026-10-14T16:54:37.138Z",
+              "iteration": 5,
+              "children": [
+                {
+                  "nodeId": "build",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T16:29:08.303Z",
+                  "endedAt": "2026-10-14T16:36:19.505Z",
+                  "iteration": 5
+                },
+                {
+                  "nodeId": "reviews",
+                  "type": "parallel",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T16:36:19.539Z",
+                  "endedAt": "2026-10-14T16:54:09.430Z",
+                  "iteration": 5,
+                  "children": [
+                    {
+                      "nodeId": "review-claude",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T16:36:19.546Z",
+                      "endedAt": "2026-10-14T16:39:16.742Z",
+                      "iteration": 5
+                    },
+                    {
+                      "nodeId": "review-gpt",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T16:36:19.546Z",
+                      "endedAt": "2026-10-14T16:54:09.404Z",
+                      "iteration": 5
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "aggregate",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T16:54:09.435Z",
+                  "endedAt": "2026-10-14T16:54:37.113Z",
+                  "iteration": 5
+                }
+              ]
+            },
+            {
+              "nodeId": "build-loop#6",
+              "type": "sequence",
+              "status": "completed",
+              "startedAt": "2026-10-14T21:19:51.633Z",
+              "endedAt": "2026-10-14T21:24:52.825Z",
+              "iteration": 6,
+              "children": [
+                {
+                  "nodeId": "build",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T16:54:37.161Z",
+                  "endedAt": "2026-10-14T17:04:26.503Z",
+                  "iteration": 6
+                },
+                {
+                  "nodeId": "reviews",
+                  "type": "parallel",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T21:19:51.641Z",
+                  "endedAt": "2026-10-14T21:24:26.425Z",
+                  "iteration": 6,
+                  "children": [
+                    {
+                      "nodeId": "review-claude",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T17:04:31.535Z",
+                      "endedAt": "2026-10-14T17:08:03.539Z",
+                      "iteration": 6
+                    },
+                    {
+                      "nodeId": "review-gpt",
+                      "type": "step",
+                      "status": "completed",
+                      "startedAt": "2026-10-14T21:19:51.655Z",
+                      "endedAt": "2026-10-14T21:24:25.688Z",
+                      "iteration": 6
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "aggregate",
+                  "type": "step",
+                  "status": "completed",
+                  "startedAt": "2026-10-14T21:24:27.178Z",
+                  "endedAt": "2026-10-14T21:24:52.763Z",
+                  "iteration": 6
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "nodeId": "land",
+          "type": "step",
+          "status": "completed",
+          "startedAt": "2026-10-14T21:24:52.850Z",
+          "endedAt": "2026-10-14T23:07:19.279Z"
+        }
+      ]
+    }
+  },
+  "nodePlan": [
+    {
+      "nodeId": "wait",
+      "type": "step"
+    },
+    {
+      "nodeId": "build-loop",
+      "type": "repeat",
+      "steps": [
+        {
+          "nodeId": "build",
+          "type": "step"
+        },
+        {
+          "nodeId": "reviews",
+          "type": "parallel",
+          "branches": [
+            {
+              "nodeId": "review-claude",
+              "type": "step"
+            },
+            {
+              "nodeId": "review-gpt",
+              "type": "step"
+            }
+          ]
+        },
+        {
+          "nodeId": "aggregate",
+          "type": "step"
+        }
+      ],
+      "maxIterations": 3,
+      "onMaxIterations": "pause",
+      "stopCondition": {
+        "fileCheck": {
+          "path": "/repo/.agents/tasks/build/gate.json",
+          "jsonPath": "verdict",
+          "value": "APPROVED"
+        }
+      }
+    },
+    {
+      "nodeId": "land",
+      "type": "step"
+    }
+  ]
+}

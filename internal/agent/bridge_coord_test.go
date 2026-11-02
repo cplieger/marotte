@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -23,32 +24,32 @@ import (
 
 type recordingStartBridge struct {
 	*fakeBridge
-	lastStart marotte.StartOpts
-	recMu     sync.Mutex
+	lastDoor marotte.SessionOpts
+	recMu    sync.Mutex
 }
 
 func newRecordingStartBridge() *recordingStartBridge {
 	return &recordingStartBridge{fakeBridge: newFakeBridge()}
 }
 
-func (b *recordingStartBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
+func (b *recordingStartBridge) door(ctx context.Context, so *marotte.SessionOpts, eo *marotte.EngineOpts, load bool) error {
 	b.recMu.Lock()
-	b.lastStart = *opts
+	b.lastDoor = *so
 	b.recMu.Unlock()
-	return b.fakeBridge.Start(ctx, opts)
+	return b.fakeBridge.door(ctx, so, eo, load)
 }
 
-func (b *recordingStartBridge) startOpts() marotte.StartOpts {
+func (b *recordingStartBridge) startOpts() marotte.SessionOpts {
 	b.recMu.Lock()
 	defer b.recMu.Unlock()
-	return b.lastStart
+	return b.lastDoor
 }
 
 func newRecordingStartHub(t *testing.T) (*Runtime, *testChatStore, *recordingStartBridge) {
 	t.Helper()
 	cs := newTestChatStore()
 	rb := newRecordingStartBridge()
-	h := New(t.Context(), "/tmp/rec-start", func() ACPBridge { return rb }, cs)
+	h := newRuntimeOn(t.Context(), "/tmp/rec-start", fakeEngineOf(func() engineSession { return rb }, laneOf(rb)), cs)
 	cs.wire(h)
 	return h, cs, rb
 }
@@ -85,8 +86,8 @@ func (p *recordingPush) Send(_ context.Context, n *marotte.NotificationPayload) 
 	}
 }
 
-// On session/new the override model wins over the stored value, and the persisted model comes from the started bridge.
-func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
+// On session/new the override model wins over the stored value, and the persisted model comes from the opened session.
+func TestOpenBridge_ANewSessionTakesTheOverrideModel(t *testing.T) {
 	h, cs, rb := newRecordingStartHub(t)
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
@@ -101,7 +102,7 @@ func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 
 	opts := rb.startOpts()
 	if opts.Model != "model-override" {
-		t.Errorf("StartOpts.Model = %q, want %q (override must beat chat.Model)", opts.Model, "model-override")
+		t.Errorf("SessionOpts.Model = %q, want %q (override must beat chat.Model)", opts.Model, "model-override")
 	}
 
 	c, _ := cs.Get(ctx, "c1")
@@ -111,18 +112,17 @@ func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 }
 
 // A resume carries the chat's supervised choice on its door: KAS's fork copies no autopilot.
-func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
-	// A fresh bridge per spawn, found by session id: the rehydrate sweep starts the utility bridge on the same factory.
+func TestOpenBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 	var mu sync.Mutex
-	var spawned []*recordingStartBridge
+	var opened []*recordingStartBridge
 	cs := newTestChatStore()
-	h := New(t.Context(), t.TempDir(), func() ACPBridge {
+	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession {
 		rb := newRecordingStartBridge()
 		mu.Lock()
-		spawned = append(spawned, rb)
+		opened = append(opened, rb)
 		mu.Unlock()
 		return rb
-	}, cs)
+	}, nil), cs)
 	cs.wire(h)
 
 	ctx := t.Context()
@@ -140,21 +140,21 @@ func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	var opts marotte.StartOpts
+	var opts marotte.SessionOpts
 	var found bool
 	mu.Lock()
-	for _, rb := range spawned {
-		if o := rb.startOpts(); o.SessionID == acpSession {
+	for _, rb := range opened {
+		if o := rb.startOpts(); o.SessionID == acpSession && o.Role == marotte.SessionRoleChat {
 			opts, found = o, true
 		}
 	}
 	mu.Unlock()
 	if !found {
-		// Without a Start naming the stored session there is no load to assert on.
-		t.Fatalf("no bridge was started with SessionID %q, so the resume never happened", acpSession)
+		// Without a door naming the stored session there is no load to assert on.
+		t.Fatalf("no chat door loaded SessionID %q, so the resume never happened", acpSession)
 	}
 	if !opts.Supervised {
-		t.Error("the resume's StartOpts.Supervised = false although the chat is supervised, " +
+		t.Error("the resume's SessionOpts.Supervised = false although the chat is supervised, " +
 			"so KAS runs the loaded session in autopilot and its writes are applied unreviewed")
 	}
 }
@@ -168,7 +168,7 @@ func TestApplyModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := h.coord.applyModelSwitch(ctx, "c1", "m-new", "max"); got != true {
+	if got := h.coord.applyModelSwitch(ctx, "c1", &effortDecision{to: "m-new", sent: "max"}); got != true {
 		t.Errorf("ApplyModelSwitch(success) = %v, want true", got)
 	}
 	if got := br.lastEffort(); got != "max" {
@@ -186,7 +186,7 @@ func TestApplyModelSwitch_TouchesNoOpenTurn(t *testing.T) {
 	}
 	id, log := streamingPromptTurn(t, h, "c1", "the user's own reply, still streaming")
 
-	if got := h.coord.applyModelSwitch(ctx, "c1", "m-new", ""); !got {
+	if got := h.coord.applyModelSwitch(ctx, "c1", &effortDecision{to: "m-new"}); !got {
 		t.Fatalf("ApplyModelSwitch = %v, want true", got)
 	}
 
@@ -207,7 +207,7 @@ func TestApplyModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := h.coord.applyModelSwitch(ctx, "c1", "m-new", ""); got != true {
+	if got := h.coord.applyModelSwitch(ctx, "c1", &effortDecision{to: "m-new"}); got != true {
 		t.Errorf("ApplyModelSwitch(success) = %v, want true", got)
 	}
 	if got := br.lastEffort(); got != "" {
@@ -273,23 +273,20 @@ func writeEffortSeed(t *testing.T, dir string, seed map[string]string) {
 	}
 }
 
-// effortFor prefers the chat's choice, then the seed for its own model, and refuses a
-// malformed level; a well-formed unknown seed flows. No catalog is loaded here.
-func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
+// A chat holding no level reads the seed for its own model, refusing a malformed level; a
+// well-formed seed flows while no session has reported the model. No catalog is loaded here.
+func TestLevelRanOrFirst_ReadsTheSeedForItsOwnModel(t *testing.T) {
 	tests := map[string]struct {
-		chatEffort string
-		chatModel  string
-		seed       map[string]string
-		want       string
+		model string
+		seed  map[string]string
+		want  string
 	}{
-		"chat choice wins over the seed":        {chatEffort: "max", chatModel: "m1", seed: map[string]string{"m1": "low"}, want: "max"},
-		"seed answers for an unset chat":        {chatEffort: "", chatModel: "m1", seed: map[string]string{"m1": "xhigh"}, want: "xhigh"},
-		"no choice and no seed sends none":      {chatEffort: "", chatModel: "m1", want: ""},
-		"a malformed seed level is refused":     {chatEffort: "", chatModel: "m1", seed: map[string]string{"m1": "TURBO"}, want: ""},
-		"a well-formed unknown level flows":     {chatEffort: "", chatModel: "m1", seed: map[string]string{"m1": "none"}, want: "none"},
-		"another model's entry is not this one": {chatEffort: "", chatModel: "m2", seed: map[string]string{"m1": "max"}, want: ""},
-		"a modelless chat never takes a seed":   {chatEffort: "", chatModel: "", seed: map[string]string{"m1": "max"}, want: ""},
-		"the choice survives a seed miss":       {chatEffort: "high", chatModel: "m2", seed: map[string]string{"m1": "max"}, want: "high"},
+		"the model's seed answers":              {model: "m1", seed: map[string]string{"m1": "xhigh"}, want: "xhigh"},
+		"no seed sends none":                    {model: "m1", want: ""},
+		"a malformed seed level is refused":     {model: "m1", seed: map[string]string{"m1": "TURBO"}, want: ""},
+		"a well-formed unknown level flows":     {model: "m1", seed: map[string]string{"m1": "none"}, want: "none"},
+		"another model's entry is not this one": {model: "m2", seed: map[string]string{"m1": "max"}, want: ""},
+		"a modelless chat never takes a seed":   {model: "", seed: map[string]string{"m1": "max"}, want: ""},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -297,46 +294,26 @@ func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 			if test.seed != nil {
 				writeEffortSeed(t, dir, test.seed)
 			}
-			h, _, _ := newTestHub()
-			h.coord.lifecycle.configDir = dir
+			h, _, _ := newTestHub(WithConfigDir(dir))
 
-			got := h.coord.effortFor(t.Context(), &marotte.Chat{ID: "c1", Effort: test.chatEffort, Model: test.chatModel})
-
-			if got != test.want {
-				t.Errorf("effortFor(chat=%q, model=%q, last_effort_by_model=%v) = %q, want %q",
-					test.chatEffort, test.chatModel, test.seed, got, test.want)
+			if got, _ := h.coord.levelRanOrFirst(t.Context(), &marotte.Chat{Model: test.model}); got != test.want {
+				t.Errorf("levelRanOrFirst(%q, last_effort_by_model=%v) = %q, want %q",
+					test.model, test.seed, got, test.want)
 			}
 		})
 	}
 }
 
 // A pick on one model must not retract another model's remembered level.
-func TestEffortFor_OneModelsPickDoesNotRetractAnother(t *testing.T) {
+func TestEffortSeedFor_OneModelsPickDoesNotRetractAnother(t *testing.T) {
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"m1": "max", "m2": "low"})
-	h, _, _ := newTestHub()
-	h.coord.lifecycle.configDir = dir
+	h, _, _ := newTestHub(WithConfigDir(dir))
 
 	for model, want := range map[string]string{"m1": "max", "m2": "low"} {
 		if got := h.coord.effortSeedFor(t.Context(), model); got != want {
 			t.Errorf("effortSeedFor(%q) = %q, want %q — each model keeps its own remembered level", model, got, want)
 		}
-		if got := h.coord.effortFor(t.Context(), &marotte.Chat{ID: "c-" + model, Model: model}); got != want {
-			t.Errorf("effortFor(chat on %q) = %q, want %q — each model keeps its own remembered level", model, got, want)
-		}
-	}
-}
-
-// With no choice and no seed, effortFor resolves the model's catalog default, not "".
-func TestEffortFor_FallsBackToTheModelsCatalogDefault(t *testing.T) {
-	h, _, _ := newTestHub()
-	h.coord.lifecycle.configDir = t.TempDir()
-	h.coord.catalog.SetModels([]marotte.SessionModel{{ID: "m1", DefaultEffortLevel: "high"}})
-
-	got := h.coord.effortFor(t.Context(), &marotte.Chat{ID: "c1", Model: "m1"})
-
-	if got != "high" {
-		t.Errorf("effortFor(chat on m1, no choice and no seed) = %q, want high — the model's own default_effort_level is the last rung", got)
 	}
 }
 
@@ -355,12 +332,11 @@ func TestSessionEffort_CapsAHighTierOnADefaultOffModel(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			h, _, _ := newTestHub()
-			h.coord.lifecycle.configDir = t.TempDir()
+			h, _, _ := newTestHub(WithConfigDir(t.TempDir()))
 			h.coord.catalog.SetModels([]marotte.SessionModel{{ID: "m1", ThinkingToggleable: true, ThinkingDefaultOff: tc.defaultOff}})
 			rec := &marotte.Chat{ID: "c1", Model: "m1", Effort: "max", Thinking: tc.thinking, EffortLevels: five}
 
-			if got := h.coord.sessionEffort(t.Context(), rec); got != tc.want {
+			if got := h.coord.sessionEffort(rec); got != tc.want {
 				t.Errorf("sessionEffort(Effort max, Thinking %q, defaultOff %v) = %q, want %q",
 					tc.thinking, tc.defaultOff, got, tc.want)
 			}
@@ -368,11 +344,12 @@ func TestSessionEffort_CapsAHighTierOnADefaultOffModel(t *testing.T) {
 	}
 }
 
-// EffortForSwitch resolves against the target model: its seed, else its workspace catalog default.
-func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
+// A chat holding no level resolves against its model: the seed, else the catalog default.
+func TestLevelRanOrFirst_SeedThenModelDefault(t *testing.T) {
+	tiers := []string{"low", "medium", "high", "max"}
 	catalog := []marotte.SessionModel{
-		{ID: "m1", DefaultEffortLevel: "high"},
-		{ID: "m2", DefaultEffortLevel: "medium"},
+		{ID: "m1", DefaultEffortLevel: "high", EffortTiers: tiers},
+		{ID: "m2", DefaultEffortLevel: "medium", EffortTiers: tiers},
 	}
 	tests := map[string]struct {
 		seed   map[string]string
@@ -390,73 +367,34 @@ func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
 			if test.seed != nil {
 				writeEffortSeed(t, dir, test.seed)
 			}
-			h, _, _ := newTestHub()
-			h.coord.lifecycle.configDir = dir
+			h, _, _ := newTestHub(WithConfigDir(dir))
 			h.coord.catalog.SetModels(catalog)
 
-			got := h.coord.effortForSwitch(t.Context(), test.target)
-
-			if got != test.want {
-				t.Errorf("EffortForSwitch(target=%q, last_effort_by_model=%v) = %q, want %q — the chat's own choice must never leak into a switch",
+			if got, _ := h.coord.levelRanOrFirst(t.Context(), &marotte.Chat{Model: test.target}); got != test.want {
+				t.Errorf("levelRanOrFirst(target=%q, last_effort_by_model=%v) = %q, want %q",
 					test.target, test.seed, got, test.want)
 			}
 		})
 	}
 }
 
-// The seed is a fallback, never written onto the chat record.
-func TestEffortFor_DoesNotWriteTheSeedOntoTheChat(t *testing.T) {
+// An open session is held to the record's level only: the seed is another chat's last pick.
+func TestSessionEffort_NeverReadsTheSeed(t *testing.T) {
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"m1": "max"})
-	h, _, _ := newTestHub()
-	h.coord.lifecycle.configDir = dir
-	chat := &marotte.Chat{ID: "c1", Model: "m1"}
+	h, _, _ := newTestHub(WithConfigDir(dir))
+	h.coord.catalog.SetModels([]marotte.SessionModel{{ID: "m1", DefaultEffortLevel: "high"}})
 
-	if got := h.coord.effortFor(t.Context(), chat); got != "max" {
-		t.Fatalf("effortFor = %q, want max", got)
+	if got := h.coord.sessionEffort(&marotte.Chat{ID: "c1", Model: "m1"}); got != "" {
+		t.Errorf("sessionEffort(chat on m1 holding no level) = %q, want none: neither the seed nor the default is this chat's", got)
 	}
-	if chat.Effort != "" {
-		t.Errorf("chat.Effort = %q, want it left empty; the seed is resolved per spawn, not persisted", chat.Effort)
-	}
-}
-
-// Forward clears the MCP registry only when its bridge is the last one.
-func TestForward_ClearsRegistryOnlyWhenLastBridge(t *testing.T) {
-	seed := func(h *Runtime) {
-		h.mcpRegistry.mu.Lock()
-		h.mcpRegistry.servers["srv"] = &mcpServerRuntime{Name: "srv", State: mcpStateConnected}
-		h.mcpRegistry.mu.Unlock()
-	}
-
-	t.Run("clears_when_no_bridges_remain", func(t *testing.T) {
-		h, _, br := newTestHub()
-		seed(h)
-		br.Stop() // close notifCh so Forward's range exits immediately
-		h.coord.Forward("nochat", br)
-		if n := len(h.mcpRegistry.snapshot()); n != 0 {
-			t.Errorf("registry size = %d, want 0 (no bridges left must clearAll)", n)
-		}
-	})
-
-	t.Run("keeps_when_a_bridge_remains", func(t *testing.T) {
-		h, _, _ := newTestHub()
-		seed(h)
-		// Stays registered so count() stays >= 1.
-		h.bridge.mgr.orInsert("keep")
-		other := newFakeBridge()
-		other.Stop()
-		h.coord.Forward("other", other)
-		if n := len(h.mcpRegistry.snapshot()); n != 1 {
-			t.Errorf("registry size = %d, want 1 (a remaining bridge must NOT clearAll)", n)
-		}
-	})
 }
 
 // A non-cancelled turn fires the "Agent finished" push.
 func TestSettleTurnOnResponse_NonCancelledFiresPush(t *testing.T) {
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
-	h := New(t.Context(), "/tmp/push", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+	h := newRuntimeOn(t.Context(), "/tmp/push", fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 	cs.wire(h)
 	ctx := t.Context()
 
@@ -480,7 +418,7 @@ func TestSettleTurnOnResponse_NonCancelledFiresPush(t *testing.T) {
 func TestNoticeTarget_TitlesTheTabTheClickOpens(t *testing.T) {
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
-	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 	cs.wire(h)
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "Fix the parser" })
 
@@ -492,7 +430,7 @@ func TestNoticeTarget_TitlesTheTabTheClickOpens(t *testing.T) {
 	}{
 		{"c1", "", "Fix the parser", marotte.ChatSubject("c1")},
 		{"gone", "", marotte.DefaultChatName, marotte.ChatSubject("gone")},
-		{"c1", "wf1", "Workflow run", marotte.RunSubject("wf1")},
+		{"c1", "wf_0123456789", "wf_01234567", marotte.RunSubject("wf_0123456789")},
 	} {
 		target := h.coord.NoticeTarget(t.Context(), tc.chatID, tc.runID)
 		n := notice.TurnFinished(target, "")
@@ -532,7 +470,7 @@ func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 
 	logs := captureLogs(t)
-	h.coord.persistModelSwitch(ctx, "c1", marotte.EntryModelSwitched{From: "m-old", To: "m-new"}, 1234)
+	h.coord.persistModelSwitch(ctx, "c1", &effortDecision{from: "m-old", to: "m-new"}, 1234)
 	if got := logs.String(); strings.Contains(got, "switch_model:") {
 		t.Errorf("unexpected switch_model error log on success: %s", got)
 	}
@@ -542,7 +480,7 @@ func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 }
 
 // A landed switch is one model_switched entry plus a header taking the pick: pending_model
-// cleared, old tier dropped, usage reset to the new context size.
+// cleared, the old tier replaced by the switch's, usage reset to the new context size.
 func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -556,12 +494,10 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 		return true
 	})
 
-	h.coord.persistModelSwitch(ctx, "c1",
-		marotte.EntryModelSwitched{From: "m-old", To: "m-new", Effort: "high"}, 1234)
+	h.coord.persistModelSwitch(ctx, "c1", &effortDecision{from: "m-old", to: "m-new", pref: "high", sent: "high"}, 1234)
 
 	entries := logOf(t, cs, "c1")
 	switches := switchesOf(t, entries)
-	// The tier travels on the entry, the only record of it once the header clears its copy.
 	if len(switches) != 1 || switches[0] != (marotte.EntryModelSwitched{From: "m-old", To: "m-new", Effort: "high"}) {
 		t.Errorf("model_switched entries = %+v, want one {From: m-old, To: m-new, Effort: high}", switches)
 	}
@@ -573,8 +509,9 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 	if !ok {
 		t.Fatal("the chat vanished")
 	}
-	if c.Model != "m-new" || c.PendingModel != "" || c.Effort != "" {
-		t.Errorf("header after the switch = {Model %q, PendingModel %q, Effort %q}, want {m-new, \"\", \"\"}",
+	// The switch's level stays on the record, so a later door re-sends it rather than the moving seed.
+	if c.Model != "m-new" || c.PendingModel != "" || c.Effort != "high" {
+		t.Errorf("header after the switch = {Model %q, PendingModel %q, Effort %q}, want {m-new, \"\", high}",
 			c.Model, c.PendingModel, c.Effort)
 	}
 	if c.Usage.ContextSize != 1234 || c.Usage.Credits != 0 {
@@ -610,7 +547,7 @@ func TestPersistEffortChange_OnAnEmptyLogAnnouncesAClosedCarrier(t *testing.T) {
 		return true
 	})
 
-	h.coord.PersistEffortChange(ctx, "c1", "opus-5", marotte.EffortMedium)
+	h.coord.PersistEffortChange(ctx, "c1", "opus-5", marotte.EffortLevel("medium"))
 
 	var kinds []string
 	for _, e := range logOf(t, cs, "c1") {
@@ -666,10 +603,13 @@ func TestPersistEffortChange_AChatWithNoModelWritesNothing(t *testing.T) {
 	}
 }
 
+// finishedTurn returns once the close's follow-ups (afterTurnClose) are done: the queue drain's
+// brief admission reservation otherwise makes a caller's next applier read the chat as busy.
 func finishedTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 	t.Helper()
 	id, _ := h.stagePromptTurn(t, chatID)
 	endTurn(t, h, chatID, id)
+	joinInflight(t, h)
 	if c, ok := h.chatStore.Get(t.Context(), chatID); !ok || c.TurnCount != 1 {
 		t.Fatalf("after one finished turn the header reads %+v, want turn_count 1", c)
 	}
@@ -685,7 +625,7 @@ func TestPersistSwitches_RecordNothingBeforeTheFirstPrompt(t *testing.T) {
 				marotte.EntryModeSwitched{From: "", To: "spec", Source: marotte.ModeSwitchSourceUser})
 		},
 		"model": func(h *Runtime) {
-			h.coord.persistModelSwitch(t.Context(), "c1", marotte.EntryModelSwitched{From: "opus-5", To: "sonnet-5"}, 1234)
+			h.coord.persistModelSwitch(t.Context(), "c1", &effortDecision{from: "opus-5", to: "sonnet-5"}, 1234)
 		},
 	}
 	for name, persist := range tests {
@@ -714,7 +654,7 @@ func TestPersistModelSwitch_UnstartedChatTakesThePickOnTheHeader(t *testing.T) {
 		return true
 	})
 
-	h.coord.persistModelSwitch(t.Context(), "c1", marotte.EntryModelSwitched{From: "opus-5", To: "sonnet-5"}, 1234)
+	h.coord.persistModelSwitch(t.Context(), "c1", &effortDecision{from: "opus-5", to: "sonnet-5"}, 1234)
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if c.Model != "sonnet-5" || c.PendingModel != "" || c.Usage.ContextSize != 1234 {
@@ -896,7 +836,7 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 
 			// Wired at construction: New starts sweepSessionsLoop, so later assignment races (-race).
 			cs := newTestChatStore()
-			h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
+			h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
 				WithSessionReaper(
 					kirosession.New(sessionsDir, testReaperWorkDir),
 					func(context.Context) (map[string]struct{}, bool) {
@@ -920,34 +860,31 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 	}
 }
 
-// TestLiveSessionIDs_CoversEveryBridge pins that every live bridge's session is exempt; the
-// 10-minute guard is a create-race cushion, not a liveness test.
-func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
-	// A per-spawn factory: newTestHub's shares one fake, and this needs distinct session ids.
+// The 10-minute guard is a create-race cushion, not a liveness test: the on-disk sweep spares every resident
+// session, a run's host session included, which no chat file names.
+func TestLiveSessionIDs_CoversEveryResidentSession(t *testing.T) {
 	cs := newTestChatStore()
-	h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs)
+	h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs)
 	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
 
 	setSession := func(chatID marotte.ChatID, sessionID string) {
 		t.Helper()
 		sb, _ := h.bridge.mgr.orInsert(chatID)
-		fb, ok := sb.bridge.(*fakeBridge)
-		if !ok {
-			t.Fatalf("bridge for %s is not a *fakeBridge", chatID)
-		}
-		fb.mu.Lock()
+		fb := newFakeBridge()
 		fb.sessionID = sessionID
-		fb.mu.Unlock()
+		sb.attach(fb)
 	}
 
 	setSession("chatA", "sess_chatA")
 	setSession("chatB", "sess_chatB")
-	// A bridge with no session yet contributes nothing.
+	setSession(runChatID("wf_1"), "sess_host")
+	// An entry with no session yet contributes nothing.
 	setSession("chatC", "")
 
 	got := h.liveSessionIDs()
 	slices.Sort(got)
-	want := []string{"sess_chatA", "sess_chatB"}
+	want := []string{"sess_chatA", "sess_chatB", "sess_host"}
 	if !slices.Equal(got, want) {
 		t.Errorf("liveSessionIDs() = %v, want %v", got, want)
 	}
@@ -1029,7 +966,7 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 			})
 
 			since := h.bus.fanout.Position().Head
-			h.coord.persistNewSessionMetadata(t.Context(), "c1", br)
+			h.coord.persistNewSessionMetadata(t.Context(), "c1", br, firstLevel{})
 
 			// The record always holds the mode the session is really in.
 			c, _ := cs.Get(t.Context(), "c1")
@@ -1054,9 +991,9 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 	}
 }
 
-// TestSpawnBridge_ReportsSupervisedThatWasNotApplied pins that a refused `autopilot: off`
-// reaches the user. The third case is why the report cannot key on the bridge flag alone.
-func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
+// TestOpenGeneration_ReportsSupervisedThatWasNotApplied pins that a refused `autopilot: off`
+// reaches the user. The third case is why the report cannot key on the session's flag alone.
+func TestOpenGeneration_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 	cases := []struct {
 		name        string
 		supervised  bool
@@ -1074,7 +1011,7 @@ func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 			br.mu.Lock()
 			br.supervisedAssertFails = tc.assertFails
 			br.mu.Unlock()
-			h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs)
+			h := newRuntimeOn(t.Context(), "/tmp/work", fakeEngineOf(func() engineSession { return br }, laneOf(br)), cs)
 			cs.wire(h)
 			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 				c.Name = "A"
@@ -1087,10 +1024,10 @@ func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 
-			// The chat keeps the request: supervised is the safer intent, so the next spawn re-asserts.
+			// The chat keeps the request: supervised is the safer intent, so the next session door re-asserts.
 			c, _ := cs.Get(t.Context(), "c1")
 			if c.SupervisedMode != tc.supervised {
-				t.Errorf("chat.SupervisedMode = %v, want the request %v kept for the next spawn",
+				t.Errorf("chat.SupervisedMode = %v, want the request %v kept for the next session door",
 					c.SupervisedMode, tc.supervised)
 			}
 
@@ -1139,7 +1076,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 			writeSessionRecord(t, sessDir, testReaperWorkDir)
 
 			cs := newTestChatStore()
-			h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
+			h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
 				WithSessionReaper(
 					kirosession.New(sessionsDir, testReaperWorkDir),
 					func(context.Context) (map[string]struct{}, bool) {
@@ -1180,7 +1117,7 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 	writeSessionRecord(t, sessDir, testReaperWorkDir)
 
 	cs := newTestChatStore()
-	h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
+	h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
 		WithSessionReaper(
 			kirosession.New(sessionsDir, testReaperWorkDir),
 			func(context.Context) (map[string]struct{}, bool) {
@@ -1199,7 +1136,7 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 }
 
 // TestSessionLoad_HealsTheChatsRestartPausedRuns pins that a resumed chat heals the runs KAS
-// paused when its bridge died. The sweep is off the spawn path, so it is awaited.
+// paused when its bridge died. The sweep is off the session-open path, so it is awaited.
 func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 	h, cs, br := newTestHub()
 	const chatID marotte.ChatID = "c1"
@@ -1322,7 +1259,7 @@ func TestLoad_ASavedModelIsJudgedAgainstTheServedCatalogue(t *testing.T) {
 			h, _, _ := newTestHub()
 			rec := &marotte.Chat{Name: "A", Model: "m-saved", Effort: "max", ServedModelIDs: tc.served}
 
-			sent, _, _, _ := h.coord.sessionChoices(t.Context(), "c1", rec, "")
+			sent := h.coord.sessionChoices(t.Context(), "c1", rec, "").model
 			_, _ = applyLoadedSessionFacts(rec, &fakeBridge{catalog: tc.catalog}, "")
 
 			if sent != tc.wantSent {
@@ -1350,7 +1287,7 @@ func TestOpenBridge_RecordsAWithheldModelAsAnUnavailableSwitch(t *testing.T) {
 	}
 
 	if got := rb.startOpts().Model; got != "" {
-		t.Errorf("StartOpts.Model = %q, want the unserved model withheld", got)
+		t.Errorf("SessionOpts.Model = %q, want the unserved model withheld", got)
 	}
 	want := []marotte.EntryModelSwitched{{From: "m-gone", To: "fake-model", Reason: marotte.ModelSwitchReasonUnavailable}}
 	if got := switchesOf(t, logOf(t, cs, "c1")); !slices.Equal(got, want) {
@@ -1385,7 +1322,36 @@ func TestOpenBridge_RecordsAModelTheLoadDropped(t *testing.T) {
 	}
 }
 
-func TestOpenBridge_ServedOrFailedSpawnRecordsNoUnavailableSwitch(t *testing.T) {
+// A loaded session the door moved off a model the catalog does not list moves the record with it, auto included.
+func TestLoadUnservedAutoMovesRecord(t *testing.T) {
+	for _, saved := range []string{marotte.ModelAuto, "m-gone"} {
+		t.Run(saved, func(t *testing.T) {
+			h, cs, rb := newRecordingStartHub(t)
+			rb.catalog = []marotte.SessionModel{{ID: "fake-model"}}
+			ctx := t.Context()
+			_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
+				c.Name, c.Model, c.ServedModelIDs = "A", saved, []string{"fake-model"}
+				c.RecordSession("sess_saved")
+				c.TurnCount = 1
+				return true
+			})
+
+			if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+				t.Fatalf("OpenBridge: %v", err)
+			}
+
+			want := []marotte.EntryModelSwitched{{From: saved, To: "fake-model", Reason: marotte.ModelSwitchReasonUnavailable}}
+			if got := switchesOf(t, logOf(t, cs, "c1")); !slices.Equal(got, want) {
+				t.Errorf("model_switched entries = %+v, want %+v", got, want)
+			}
+			if c, _ := cs.Get(ctx, "c1"); c.Model != "fake-model" {
+				t.Errorf("header Model = %q, want the running model", c.Model)
+			}
+		})
+	}
+}
+
+func TestOpenBridge_ServedOrFailedOpenRecordsNoUnavailableSwitch(t *testing.T) {
 	t.Run("served", func(t *testing.T) {
 		h, cs, _ := newRecordingStartHub(t)
 		ctx := t.Context()
@@ -1402,20 +1368,20 @@ func TestOpenBridge_ServedOrFailedSpawnRecordsNoUnavailableSwitch(t *testing.T) 
 	})
 	t.Run("failed_spawn", func(t *testing.T) {
 		h, cs, rb := newRecordingStartHub(t)
-		rb.startErr = errors.New("spawn refused")
+		rb.startErr = errors.New("session open refused")
 		ctx := t.Context()
 		_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 			c.Name, c.Model, c.Effort, c.ServedModelIDs = "A", "m-gone", "max", []string{"m-other"}
 			return true
 		})
 		if _, err := h.coord.openBridge(ctx, "c1", ""); err == nil {
-			t.Fatal("OpenBridge = nil, want the spawn's error")
+			t.Fatal("OpenBridge = nil, want the open's error")
 		}
 		if got := switchesOf(t, logOf(t, cs, "c1")); len(got) != 0 {
 			t.Errorf("model_switched entries = %+v, want none", got)
 		}
 		if c, _ := cs.Get(ctx, "c1"); c.Model != "m-gone" || c.Effort != "max" {
-			t.Errorf("header = {Model %q, Effort %q}, want {m-gone, max} back for the next spawn to withhold and record",
+			t.Errorf("header = {Model %q, Effort %q}, want {m-gone, max} back for the next session open to withhold and record",
 				c.Model, c.Effort)
 		}
 	})
@@ -1496,7 +1462,7 @@ func TestPersistNewSessionMetadata_RenamesASuccessorOfAUserNamedChat(t *testing.
 			return true
 		})
 
-		h.coord.persistNewSessionMetadata(t.Context(), "c1", br)
+		h.coord.persistNewSessionMetadata(t.Context(), "c1", br, firstLevel{})
 
 		br.mu.Lock()
 		params, renamed := br.lastParams[marotte.MethodSessionRename]
@@ -1509,6 +1475,41 @@ func TestPersistNewSessionMetadata_RenamesASuccessorOfAUserNamedChat(t *testing.
 		}
 		if c, _ := cs.Get(t.Context(), "c1"); c.Name != "Mine" {
 			t.Errorf("user-named=%v: chat name = %q, want Mine", userNamed, c.Name)
+		}
+	}
+}
+
+// KAS names the session holding its agent slot by ACP session id; the lookup answers the chat resident on it.
+func TestChatForACPSession_NamesTheResidentChat(t *testing.T) {
+	h, cs, _ := newTestHub()
+	defer shutdownHub(t, h)
+	var n atomic.Int32
+	fakeSourceOf(t, h).setFactory(func() engineSession {
+		b := newFakeBridge()
+		b.sessionID = fmt.Sprintf("sess-%d", n.Add(1))
+		return b
+	})
+	sessions := map[marotte.ChatID]string{}
+	for _, chatID := range []marotte.ChatID{"c1", "c2"} {
+		cs.seed(t, chatID, func(c *marotte.Chat) { c.Name = string(chatID) })
+		sb, err := h.coord.openBridge(t.Context(), chatID, "")
+		if err != nil {
+			t.Fatalf("Setup: openBridge(%s): %v", chatID, err)
+		}
+		sessions[chatID] = string(sb.bridge.SessionID())
+	}
+	if sessions["c1"] == sessions["c2"] {
+		t.Fatalf("Setup: both chats share session %q", sessions["c1"])
+	}
+
+	for chatID, sess := range sessions {
+		if got, ok := h.coord.ChatForACPSession(sess); !ok || got != chatID {
+			t.Errorf("ChatForACPSession(%q) = %q ok=%v, want %q", sess, got, ok, chatID)
+		}
+	}
+	for _, sess := range []string{"", "sess-unknown"} {
+		if got, ok := h.coord.ChatForACPSession(sess); ok {
+			t.Errorf("ChatForACPSession(%q) = %q, want no chat", sess, got)
 		}
 	}
 }

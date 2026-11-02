@@ -464,9 +464,9 @@ func awaitReplayedTurn(t *testing.T, cs *testChatStore, chatID marotte.ChatID, w
 // TestSessionLoad_AdoptsTheReplayedTranscript is the load path end to end: the projection opens
 // before Forward attaches, and the load's return is recorded.
 func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
-	// A fresh bridge per spawn, so the rehydrate sweep's utility bridge does not drain this replay.
+	// A fresh session per door, so the rehydrate sweep does not drain this replay.
 	cs := newTestChatStore()
-	h := New(context.Background(), t.TempDir(), func() ACPBridge {
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
 		b := newFakeBridge()
 		b.notifsOnStart = []*marotte.RPCResponse{
 			replayNotif(t, "user_message_chunk", "ONE", ""),
@@ -475,7 +475,7 @@ func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 			replayNotif(t, marotte.ACPUpdateSessionInfo, "", "turn_end"),
 		}
 		return b
-	}, cs)
+	}, nil), cs)
 	cs.wire(h)
 	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)
@@ -485,18 +485,18 @@ func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	br, ok := sb.bridge.(*fakeBridge)
+	br, ok := unguarded(sb.bridge).(*fakeBridge)
 	if !ok {
 		t.Fatalf("the chat's bridge is %T, want the fake", sb.bridge)
 	}
-	if opts := br.lastStartOpts(); opts == nil || opts.SessionID == "" {
+	if opts := br.lastSessionOpts(); opts == nil || opts.SessionID == "" {
 		// Without a named session the fake replays nothing, so fail as invalid.
-		t.Fatalf("the chat's bridge was started with StartOpts %+v, want one naming "+
+		t.Fatalf("the chat's door was %+v, want one naming "+
 			"the stored ACP session so the fake replays a transcript", opts)
 	}
 
-	// The bridge exit is the backstop settle.
-	br.Stop()
+	// The session's end is the backstop settle.
+	br.end()
 
 	awaitReplayedTurn(t, cs, chatID, "reply")
 }
@@ -532,7 +532,7 @@ func TestForward_ReportsEachFramesOwnPosition(t *testing.T) {
 	}
 
 	awaitReplayedTurn(t, cs, chatID, "reply")
-	if br.isStopped() {
+	if br.isClosed() {
 		t.Error("the bridge was stopped, so the seal could have settled this instead " +
 			"of the frames' own positions")
 	}
@@ -550,7 +550,7 @@ func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
 	feedOneTurn(t, h.replay, chatID)
 	h.replay.MarkReplayLoadedAt(chatID, atLoad())
 
-	br.Stop() // the bridge exits with nothing further to deliver
+	br.end() // the session ends with nothing further to deliver
 	h.coord.Forward(chatID, br)
 
 	awaitReplayedTurn(t, cs, chatID, "reply")
@@ -573,7 +573,7 @@ func TestReplayProjection_ConcurrentLoadsAreIndependent(t *testing.T) {
 	feedOneTurn(t, rp, first)
 	rp.MarkReplayLoadedAt(first, atLoad())
 
-	// The second spawn while the first is in flight.
+	// The second session open while the first is in flight.
 	rp.OpenReplayProjection(t.Context(), second, "old-acp", nil)
 	if !rp.hasProjection(first) {
 		t.Fatal("opening a second chat's load dropped the first chat's rebuild, so that " +
@@ -745,7 +745,7 @@ func TestSwapProjectedTranscript_MergesAChatARewindAlreadyTouched(t *testing.T) 
 	h.replay.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
 	feedOneTurn(t, h.replay, chatID)
 	h.replay.MarkReplayLoadedAt(chatID, atLoad())
-	br.Stop()
+	br.end()
 	h.coord.Forward(chatID, br)
 
 	if got := textsOf(t, logOf(t, cs, chatID)); !slices.Contains(got, "reply") {

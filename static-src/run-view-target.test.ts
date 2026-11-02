@@ -144,10 +144,12 @@ beforeEach(() => {
   document.body.replaceChildren();
   const body = document.createElement("div");
   body.id = "run-body";
+  const execDock = document.createElement("div");
+  execDock.id = "run-exec-dock";
   const dock = document.createElement("div");
   dock.id = "run-dock";
   input.value = "";
-  document.body.append(body, dock, stack, form);
+  document.body.append(body, execDock, dock, stack, form);
 });
 
 afterEach(() => {
@@ -231,6 +233,72 @@ describe("run view composer target", () => {
     // The premise: the shown step's path and state, all the page's change-of-attention guard reads.
     expect(document.querySelector(".ev-d-title")?.textContent).toBe("review");
     expect(detailState()).toBe("input");
+  });
+
+  describe("a step's question", () => {
+    const ASK = "wf_dock_answer";
+    const twoSteps = (review: string): RunInspectReply => ({
+      workflowId: ASK,
+      state: {
+        workflowId: ASK,
+        status: "running",
+        root: {
+          nodeId: ASK,
+          type: "sequence",
+          status: "running",
+          children: [
+            { nodeId: "plan", type: "step", status: "completed", sessionId: "sess_plan" },
+            { nodeId: "review", type: "step", status: review, sessionId: "sess_review" },
+          ],
+        },
+      },
+    });
+
+    beforeEach(() => {
+      vi.mocked(runPendingAsks).mockReturnValue({
+        count: 1,
+        asked: [
+          {
+            nodeID: "review",
+            sessionID: "sess_review",
+            answer: true,
+            path: nodePathKey([ASK, "review"]),
+            askID: "ask-1",
+            text: "Which colour?",
+          },
+        ],
+        label: "Which colour?",
+      });
+    });
+
+    it("shows whole under the head, selects its step, and leaves the answer to the composer", async () => {
+      m.reply.current = twoSteps("paused");
+      openRunView(ASK, "nightly");
+      const tab = m.opened.at(-1)!;
+      showRun(tab);
+      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
+      refreshRun(tab);
+      await vi.waitFor(() => {
+        expect(document.querySelector("#run-exec-dock .ev-dock-ask-q")?.textContent).toBe(
+          "Which colour?",
+        );
+      });
+      expect(document.querySelector(".ev-d-title")?.textContent).toBe("review");
+      expect(document.querySelector('#run-exec-dock button[aria-label="Answer"]')).toBeNull();
+      await vi.waitFor(() => {
+        expect(composerInput().placeholder).toBe("Answer review\u2026");
+      });
+      expect(document.getElementById("run-composer")?.dataset["mode"]).toBe("answer");
+      expect(document.getElementById("run-send-btn")?.getAttribute("aria-label")).toBe(
+        "Send answer",
+      );
+      // A pick after the question opened holds.
+      pick(ASK, "plan");
+      invalidateRun(ASK);
+      await vi.waitFor(() => {
+        expect(document.querySelector(".ev-d-title")?.textContent).toBe("plan");
+      });
+    });
   });
 
   // A run whose first read has not resolved: nothing the previous run's tab drew may address it.

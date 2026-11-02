@@ -7,22 +7,22 @@ import { activeSession } from "./store.js";
 import { BUS_USER_INPUT_ANSWERED, emitBus } from "./bus.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { forceReflow } from "./dom.js";
-import { RUN_INPUT_FALLBACK } from "./dock-ask.js";
 import { buildPermissionCard, type PermissionAnswer } from "./permission.js";
 import { buildElicitationCard } from "./elicitation.js";
 import { buildUserInputCard } from "./user-input.js";
-import { buildRunInputCard } from "./run-input.js";
+import { followBand } from "./dock-ask.js";
 import { info } from "./toast.js";
 import { named, noticeSubject } from "./notice-subject.js";
 import { join } from "@cplieger/keyenc";
-import type { RunAskAddress, RunAsks } from "./run-asks.js";
+import { nodePathKey } from "./run-node-key.js";
+import { allRunAsks, type RunAskAddress, type RunAsks } from "./run-asks.js";
 import type {
   PermissionNeededPayload,
   ElicitationNeededPayload,
   UserInputNeededPayload,
-  RunInputNeededPayload,
   SettledBy,
 } from "./types.js";
+import type { RunAsk } from "./wire/types.gen.js";
 
 /** A permission ask, including the turn-approval variety (payload.files). */
 interface PermissionDecision {
@@ -56,28 +56,10 @@ interface UserInputDecision {
   submit: (action: "answered" | "dismissed", answer?: string) => Promise<AnswerOutcome>;
 }
 
-/**
- * A workflow step's question: durable across bridge death and restart, answered by a fresh `session/prompt` to the
- * paused step's session, and carrying a string id (hence `decisionIdentity`). `submit(null)` continues without
- * answering, for the post-restart case where the question text is gone (the ask registry is in memory).
- */
-interface RunInputDecision {
-  kind: "run_input";
-  chatID: string;
-  runID?: string;
-  /** The ask's identity within its run, server-composed. */
-  askID: string;
-  payload: RunInputNeededPayload;
-  submit: (text: string | null) => void;
-  /** Asks the launching agent to answer, on a chat-parented ask only; its presence puts the Defer button on the card. */
-  defer?: () => void | Promise<void>;
-}
-
-/** The dock's input; the per-kind shapes are this module's business. */
-type Decision = PermissionDecision | ElicitationDecision | UserInputDecision | RunInputDecision;
-
-/** The three request-shaped kinds (an open JSON-RPC request with an int64 id), which `decision_settled` can name. */
-type RequestDecision = PermissionDecision | ElicitationDecision | UserInputDecision;
+/** What a dock renders: an open JSON-RPC request with an int64 id, which `decision_settled` can name. A workflow
+ *  step's question takes no card: kiro-cli hands the questions a step sends to the agent that launched the run, and
+ *  the run tab's composer answers any of them. */
+type Decision = PermissionDecision | ElicitationDecision | UserInputDecision;
 
 /**
  * What the server made of an answer: `answered` (its `decision_settled` retires the card), `superseded` (another
@@ -91,13 +73,9 @@ export type AnswerOutcome = "answered" | "superseded" | "withdrawn" | "failed";
  * Request decisions this surface answered and the server has not yet settled: their cards stay on screen, inert,
  * because only the server knows whether the answer reached the agent.
  */
-const answering = new WeakSet<RequestDecision>();
+const answering = new WeakSet<Decision>();
 
-function isRequestDecision(d: Decision): d is RequestDecision {
-  return d.kind !== "run_input";
-}
-
-/** Per-chat FIFO of unanswered decisions. The head is the one on screen. */
+/** Per-chat FIFO of unanswered decisions. */
 const queues = new Map<string, Decision[]>();
 
 /**
@@ -139,6 +117,10 @@ interface DockHost {
   renderedKey: string;
   /** The card `renderedKey` names, which an answer in flight makes inert. */
   card: HTMLElement | null;
+  /** Whether the bar's composer rendered at the last `focusAnswerIfAside`. */
+  composerShown: boolean;
+  /** Whether the question card's floors outgrew the bar's room at the last `paintFloor`, so it scrolls. */
+  cardScrolls: boolean;
   /** The answered card, kept on screen (neutralised) for the phase's duration.
    *  At most one per host, ever. */
   outgoing: HTMLElement | null;
@@ -155,6 +137,18 @@ interface DockHost {
 }
 
 const hosts: DockHost[] = [];
+let viewportFollowed = false;
+
+/** The tray's floor under a question card, which `css/26-dock.css` gives the tray as its `min-block-size`. */
+const FLOOR_PROP = "--dock-floor";
+
+/** A question card's options region's floor (`paintOptionsFloor`). */
+const OPTIONS_FLOOR_PROP = "--options-floor";
+
+/** A question card's question region's floor and the bar's steer stack's, each written by `paintFloor` only while
+ *  it is lowered under its own. */
+const ASK_FLOOR_PROP = "--ask-floor";
+const STEER_FLOOR_PROP = "--steer-floor";
 
 /** Wire the composer's dock into the chat bottom bar. Idempotent per host. */
 export function mountDecisionDock(hostEl: HTMLElement): void {
@@ -163,17 +157,13 @@ export function mountDecisionDock(hostEl: HTMLElement): void {
 
 /**
  * Wire the run view's dock: the current run's decisions, whether keyed to the launching chat or `run:<id>`. The run is
- * a getter because one view element serves every run tab. Idempotent per host element. A step's question takes no
- * card here: the run composer answers it, marked by its attention border (`run-composer.ts`).
+ * a getter because one view element serves every run tab. Idempotent per host element. A step's question is answered
+ * in the run composer, whose placeholder names the step and whose Send reads "Send answer" (`run-composer.ts`).
  */
 export function mountRunDecisionDock(hostEl: HTMLElement, runID: () => string): void {
   addHost(hostEl, (d) => {
     const id = runID();
-    return (
-      id !== "" &&
-      d.kind !== "run_input" &&
-      (d.runID === id || d.chatID === `${RUN_CHAT_PREFIX}${id}`)
-    );
+    return id !== "" && (d.runID === id || d.chatID === `${RUN_CHAT_PREFIX}${id}`);
   });
 }
 
@@ -212,21 +202,80 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
   if (hosts.some((existing) => existing.el === hostEl)) {
     return;
   }
+  if (!viewportFollowed) {
+    viewportFollowed = true;
+    window.addEventListener("resize", followViewport);
+    followBand(followViewport);
+  }
   const h: DockHost = {
     el: hostEl,
     match,
     renderedKey: "",
     card: null,
+    composerShown: true,
+    cardScrolls: false,
     outgoing: null,
     timer: null,
     gen: 0,
     stop: () => undefined,
   };
   hosts.push(h);
-  h.stop = effect(() => {
+  // The floor follows the bar's content: a new card, a stage switch inside it, the depth row, a member
+  // stepping aside or back, the box taking the typing, and the clamp's review of a card's question once
+  // a hidden view shows it.
+  const content = new MutationObserver(() => {
+    paintFloor(h);
+  });
+  content.observe(hostEl.parentElement ?? hostEl, {
+    childList: true,
+    subtree: true,
+    attributeFilter: ["class", TYPING_ATTR],
+  });
+  const stopTyping = followTyping(hostEl);
+  const stopRender = effect(() => {
     touch(activeSession, queueVersion);
     renderHost(h);
   });
+  h.stop = () => {
+    stopRender();
+    content.disconnect();
+    stopTyping();
+  };
+}
+
+/** On the bar: which of its text boxes last took the typing, `card` (the tray's) or `composer`, absent for another. */
+const TYPING_ATTR = "data-typing";
+
+/**
+ * Keep the tray's bar's `data-typing` (`css/26-dock.css` reads it under a soft keyboard and on a tight band). Written
+ * only when a text box takes focus, never when it loses it: a pressed button takes focus at pointerdown, and a bar that
+ * reflowed then would move the button out from under the pointer before the click.
+ */
+function followTyping(tray: HTMLElement): () => void {
+  const bar = tray.parentElement;
+  if (bar === null) {
+    return () => undefined;
+  }
+  const take = (box: EventTarget | null): void => {
+    if (!(box instanceof HTMLTextAreaElement) || !bar.contains(box)) {
+      return;
+    }
+    if (tray.contains(box)) {
+      bar.setAttribute(TYPING_ATTR, "card");
+    } else if (box.matches('[id="prompt-input"], [id="run-composer-input"]')) {
+      bar.setAttribute(TYPING_ATTR, "composer");
+    } else {
+      bar.removeAttribute(TYPING_ATTR);
+    }
+  };
+  const onFocus = (e: FocusEvent): void => {
+    take(e.target);
+  };
+  take(document.activeElement);
+  bar.addEventListener("focusin", onFocus);
+  return () => {
+    bar.removeEventListener("focusin", onFocus);
+  };
 }
 
 function activeChatID(): string {
@@ -236,10 +285,8 @@ function activeChatID(): string {
 /** Enqueue a decision and show it when its chat is the one on screen. */
 export function pushDecision(d: Decision): void {
   const q = queues.get(d.chatID) ?? [];
-  // SSE connect replays every unanswered permission and parked question, so a re-delivery must not stack. Per-kind
-  // identity, so a string ask id and a request id are never compared.
-  const id = decisionIdentity(d);
-  if (q.some((existing) => existing.kind === d.kind && decisionIdentity(existing) === id)) {
+  // SSE connect replays every unanswered request, so a re-delivery must not stack.
+  if (q.some((existing) => existing.kind === d.kind && existing.requestID === d.requestID)) {
     return;
   }
   q.push(d);
@@ -249,7 +296,7 @@ export function pushDecision(d: Decision): void {
 
 /**
  * Drop every decision keyed to this surface without answering (chat gone, or a transport gap). Never calls submit.
- * Unconditional: `close_chat` / `delete_chat` cancel the chat's runs server-side, so run asks keyed here are dead too.
+ * Unconditional: `close_chat` / `delete_chat` cancel the chat's runs server-side, so a run's requests keyed here are dead too.
  */
 export function dropDecisions(chatID: string): void {
   if (!queues.delete(chatID)) {
@@ -276,18 +323,15 @@ export function dropRunDecisions(): void {
 }
 
 /**
- * Drop every unanswered ask of this run, wherever filed, without answering. All four kinds carry `runID`
- * (handlers/turn.ts, handlers/run.ts), so a step's permission and elicitation have no other remover. Safe: a terminal
- * run has no step to consume an answer, and the server clears its own pending set on the same transition. Same join
- * as `runPendingAsks`. Refuses an empty id.
+ * Drop every request decision of this run, wherever filed, without answering. All three kinds carry `runID`
+ * (handlers/turn.ts), so a step's permission and elicitation have no other remover. Safe: a terminal run has no step to
+ * consume an answer. Same join as `runPendingAsks`. Refuses an empty id.
  */
-export function dropRunAsks(workflowID: string): void {
+export function dropRunRequests(workflowID: string): void {
   if (workflowID === "") {
     return;
   }
   const runKey = `${RUN_CHAT_PREFIX}${workflowID}`;
-  // Includes an ask whose per-ask settle never arrived, which `collapseSettledRunInput` cannot cover.
-  heldAnswers.delete(workflowID);
   let dropped = false;
   for (const [chatID, q] of queues) {
     const rest = q.filter((d) => d.runID !== workflowID && d.chatID !== runKey);
@@ -309,7 +353,7 @@ export function dropRunAsks(workflowID: string): void {
 /**
  * Drop the decisions a turn owned, leaving run asks alone. Triggers: `turn_ended`, and a run's terminal frame while
  * the launching chat is idle (a step's ask can arrive with empty `run_id`). A blocking ask cannot outlive its turn.
- * Run-scoped asks are exempt: an agent-launched run outlives the turn that launched it; `dropRunAsks` ends that.
+ * Run-scoped asks are exempt: an agent-launched run outlives the turn that launched it; `dropRunRequests` ends that.
  */
 export function dropTurnDecisions(chatID: string): void {
   const q = queues.get(chatID);
@@ -329,8 +373,9 @@ export function dropTurnDecisions(chatID: string): void {
 }
 
 /**
- * Whether this chat holds an unanswered decision (the tab dot). Reads `queueVersion.value` so the calling effect
- * subscribes to arrivals and answers. A `run:<id>` key never matches.
+ * Whether this chat holds an unanswered decision (the tab dot's `input`). A step question of a run it launched is not
+ * one: the run's own mark carries it (`chat-run-dots.ts`). Subscribes the calling effect to the queue. A `run:<id>`
+ * key never matches a tab.
  */
 export function hasPendingDecision(chatID: string): boolean {
   touch(queueVersion);
@@ -338,8 +383,9 @@ export function hasPendingDecision(chatID: string): boolean {
 }
 
 /**
- * What one workflow run waits on a person for (the run card): KAS leaves the run `running` while a step is blocked.
- * Scans every queue (same join as `mountRunDecisionDock`), and reads `queueVersion.value` to subscribe the caller.
+ * What one workflow run waits on a person for (the run card, the exec view, the dots): its steps' questions from the
+ * run-asks store, then its request decisions from every queue (same join as `mountRunDecisionDock`). Subscribes the
+ * caller to both.
  */
 export function runPendingAsks(workflowID: string): RunAsks {
   touch(queueVersion);
@@ -347,35 +393,54 @@ export function runPendingAsks(workflowID: string): RunAsks {
   if (workflowID === "") {
     return { count: 0, asked, label: "" };
   }
-  const runKey = `${RUN_CHAT_PREFIX}${workflowID}`;
-  let count = 0;
   let label = "";
+  for (const r of allRunAsks()) {
+    if (r.workflow_id !== workflowID) {
+      continue;
+    }
+    for (const a of r.asks) {
+      asked.push({
+        nodeID: a.node_id,
+        sessionID: a.step_session_id,
+        answer: true,
+        path: nodePathKey(a.node_path),
+        askID: a.ask_id,
+        text: runAskLabel(a),
+      });
+      if (label === "") {
+        label = runAskLabel(a);
+      }
+    }
+  }
+  const runKey = `${RUN_CHAT_PREFIX}${workflowID}`;
   for (const q of queues.values()) {
     for (const d of q) {
       if (d.runID !== workflowID && d.chatID !== runKey) {
         continue;
       }
-      count++;
-      asked.push(askAddress(d));
+      asked.push({
+        nodeID: d.payload.node_id ?? "",
+        sessionID: "",
+        answer: false,
+        text: requestLabel(d),
+      });
       if (label === "") {
-        label = askLabel(d);
+        label = requestLabel(d);
       }
     }
   }
-  return { count, asked, label };
+  return { count: asked.length, asked, label };
 }
 
-/** Either id is absent when the step-session registry never saw the sub-session; the run is blocked either way. */
-function askAddress(d: Decision): RunAskAddress {
-  const nodeID = d.payload.node_id ?? "";
-  if (d.kind === "run_input") {
-    return { nodeID, sessionID: d.payload.step_session_id, answer: true };
-  }
-  return { nodeID, sessionID: d.payload.sub_session_id ?? "", answer: false };
+/** What a step's question reads as when marotte has no text for it. */
+const RUN_ASK_FALLBACK = "A step is waiting for an answer";
+
+function runAskLabel(a: RunAsk): string {
+  return a.text === "" ? RUN_ASK_FALLBACK : a.text;
 }
 
 /** Per-kind and private: the run card takes the sentence, not a payload. */
-function askLabel(d: Decision): string {
+function requestLabel(d: Decision): string {
   switch (d.kind) {
     case "permission":
       return d.payload.title ?? "";
@@ -383,9 +448,6 @@ function askLabel(d: Decision): string {
       return d.payload.message ?? "";
     case "user_input":
       return d.payload.question;
-    case "run_input":
-      // Empty after a restart: the ask registry is in memory, so the server reconstructs the ask without its question.
-      return d.payload.question === "" ? RUN_INPUT_FALLBACK : d.payload.question;
   }
 }
 
@@ -396,14 +458,12 @@ function askLabel(d: Decision): string {
  */
 export function collapseSettledDecision(
   chatID: string,
-  // Request-shaped kinds only: `decision_settled` is keyed by an int64 id; run asks use `collapseSettledRunInput`.
-  kind: RequestDecision["kind"],
+  kind: Decision["kind"],
   requestID: number,
   settledBy: SettledBy,
 ): string | undefined {
   const q = queues.get(chatID);
-  const i =
-    q?.findIndex((d) => d.kind === kind && isRequestDecision(d) && d.requestID === requestID) ?? -1;
+  const i = q?.findIndex((d) => d.kind === kind && d.requestID === requestID) ?? -1;
   if (q === undefined || i < 0) {
     return undefined;
   }
@@ -413,11 +473,7 @@ export function collapseSettledDecision(
   }
   const key = decisionKey(chatID, kind, String(requestID));
   // This surface's own answer, delivered: nothing to explain. An end or a withdrawal still says why.
-  const ownAnswer =
-    settled !== undefined &&
-    isRequestDecision(settled) &&
-    answering.has(settled) &&
-    settledBy === "user";
+  const ownAnswer = settled !== undefined && answering.has(settled) && settledBy === "user";
   if (!ownAnswer && hosts.some((h) => h.renderedKey === key)) {
     // The toast announces itself into the shared live region; a second announce() would read it twice.
     info(named(noticeSubject(chatID), settledMessage(kind, settledBy)));
@@ -457,78 +513,6 @@ function settledSubject(kind: Decision["kind"]): string {
       return "The input request";
     case "user_input":
       return "The agent's question";
-    case "run_input":
-      return "The workflow step's question";
-    default:
-      kind satisfies never;
-      return "The request";
-  }
-}
-
-/**
- * Retire a run ask answered or waived elsewhere (`run_input_settled`), keyed by string ask id. Scans every queue:
- * the event names only the run.
- */
-export function collapseSettledRunInput(
-  workflowID: string,
-  askID: string,
-  settledBy: SettledBy,
-): void {
-  if (workflowID === "" || askID === "") {
-    return;
-  }
-  // Unconditional: the ask is over whether or not a card is still queued here.
-  forgetHeldAnswer(workflowID, askID);
-  for (const [chatID, q] of queues) {
-    const i = q.findIndex(
-      (d) => d.kind === "run_input" && d.askID === askID && d.payload.workflow_id === workflowID,
-    );
-    if (i < 0) {
-      continue;
-    }
-    q.splice(i, 1);
-    if (q.length === 0) {
-      queues.delete(chatID);
-    }
-    if (hosts.some((h) => h.renderedKey === decisionKey(chatID, "run_input", askID))) {
-      info(named(noticeSubject(chatID), settledMessage("run_input", settledBy)));
-    }
-    bump();
-    return;
-  }
-}
-
-/**
- * A run-input card's typed words, held per ask: `settleRunInput` unqueues before sending, so a retryable refusal
- * (`errRunNotParked`) re-offers the same ask and must return the text. Nested by run because `collapseSettledRunInput`
- * (per ask) and `dropRunAsks` (per run) are every exit, which bounds the map.
- */
-const heldAnswers = new Map<string, Map<string, string>>();
-
-/** The text this ask is holding, or "" — what a rebuilt card seeds its box with. */
-function heldAnswer(d: RunInputDecision): string {
-  return heldAnswers.get(d.payload.workflow_id)?.get(d.askID) ?? "";
-}
-
-/** Hold the words being sent; a `null` text continues without answering, so the hold is dropped instead. */
-function holdAnswer(d: RunInputDecision, text: string | null): void {
-  if (text === null) {
-    forgetHeldAnswer(d.payload.workflow_id, d.askID);
-    return;
-  }
-  const byAsk = heldAnswers.get(d.payload.workflow_id) ?? new Map<string, string>();
-  byAsk.set(d.askID, text);
-  heldAnswers.set(d.payload.workflow_id, byAsk);
-}
-
-function forgetHeldAnswer(workflowID: string, askID: string): void {
-  const byAsk = heldAnswers.get(workflowID);
-  if (byAsk === undefined) {
-    return;
-  }
-  byAsk.delete(askID);
-  if (byAsk.size === 0) {
-    heldAnswers.delete(workflowID);
   }
 }
 
@@ -550,23 +534,12 @@ function unqueue(d: Decision): void {
   }
 }
 
-/** A run ask retires on send: a retryable refusal comes back as a re-offered ask, which `heldAnswers` refills. */
-function settleRunInput(d: RunInputDecision, run: () => void): void {
-  if (!isQueued(d)) {
-    // A double answer on one ask is worse than a dropped click.
-    return;
-  }
-  unqueue(d);
-  run();
-  bump();
-}
-
 /**
  * Send a request decision's answer, holding its card inert until the server settles it: `decision_settled`
  * retires it, a failure hands it back, and `onAnswered` runs only once the agent has the answer.
  */
 function answerRequest(
-  d: RequestDecision,
+  d: Decision,
   send: () => Promise<AnswerOutcome>,
   onAnswered?: () => void,
 ): void {
@@ -598,7 +571,7 @@ function answerRequest(
 }
 
 /** Every host showing d's card makes it inert while its answer is in flight, and live again after. */
-function paintAnswering(d: RequestDecision): void {
+function paintAnswering(d: Decision): void {
   const key = decisionKey(d.chatID, d.kind, decisionIdentity(d));
   for (const h of hosts) {
     if (h.renderedKey === key && h.card !== null) {
@@ -612,7 +585,7 @@ function markAnswering(card: HTMLElement, on: boolean): void {
   card.toggleAttribute("aria-busy", on);
 }
 
-/** Insertion order across queues is stable enough: a run's asks come from one bridge. */
+/** In insertion order across queues (a run's asks come from one host session). */
 function matching(h: DockHost): Decision[] {
   const out: Decision[] = [];
   for (const q of queues.values()) {
@@ -625,12 +598,12 @@ function matching(h: DockHost): Decision[] {
   return out;
 }
 
-/** Within-kind identity: the server's int64 ask id (`request_id`), or the run ask id. */
+/** Within-kind identity: the server's int64 ask id (`request_id`). */
 function decisionIdentity(d: Decision): string {
-  return d.kind === "run_input" ? d.askID : String(d.requestID);
+  return String(d.requestID);
 }
 
-/** keyenc rather than a template join: a run ask id is arbitrary text, and a separator inside it would merge two keys. */
+/** keyenc rather than a template join: a chat id is arbitrary text, and a separator inside it would merge two keys. */
 function decisionKey(chatID: string, kind: Decision["kind"], identity: string): string {
   return join(chatID, kind, identity);
 }
@@ -642,20 +615,21 @@ function renderHost(h: DockHost): void {
   if (head === undefined) {
     // Cleared when `leaving` starts, so a second empty render does not restart the exit.
     if (h.renderedKey !== "") {
-      swap(h, undefined, 0);
+      swap(h, undefined, []);
     }
     return;
   }
 
-  // A rebuild would discard the user's typing, so the same decision is a no-op apart from the depth line. MUST NOT start a phase.
+  // A rebuild would discard the user's typing, so the same decision only re-states what can move in place. MUST NOT
+  // start a phase.
   const key = decisionKey(head.chatID, head.kind, decisionIdentity(head));
-  const depth = mine.length;
+  const rest = mine.slice(1);
   if (key === h.renderedKey) {
-    updateDepth(h, depth);
+    paintRest(h, rest);
     return;
   }
 
-  swap(h, head, depth);
+  swap(h, head, rest);
 }
 
 // The phase machine. The next head is observed, not detected: every retirement unqueues then `bump()`s, so the render
@@ -665,7 +639,7 @@ function renderHost(h: DockHost): void {
  * Swap the host's content, animating unless motion is off: nothing->head enters, head->head advances, head->nothing
  * leaves (nothing->nothing returns early in `renderHost`).
  */
-function swap(h: DockHost, head: Decision | undefined, depth: number): void {
+function swap(h: DockHost, head: Decision | undefined, rest: readonly Decision[]): void {
   // Measured first, before `endPhase` or any write, so it reads the live height and rapid answers morph from it.
   const from = measure(h);
   const phase: Phase =
@@ -687,7 +661,7 @@ function swap(h: DockHost, head: Decision | undefined, depth: number): void {
       h.renderedKey = "";
       h.card = null;
     } else {
-      show(h, head, depth);
+      show(h, head, rest);
     }
     return;
   }
@@ -701,7 +675,7 @@ function swap(h: DockHost, head: Decision | undefined, depth: number): void {
     h.renderedKey = "";
     h.card = null;
   } else {
-    show(h, head, depth);
+    show(h, head, rest);
   }
   if (outgoing !== null) {
     h.el.prepend(outgoing);
@@ -722,16 +696,191 @@ function swap(h: DockHost, head: Decision | undefined, depth: number): void {
 }
 
 /** Identical on both paths, so `announce()` fires once per new head with the card in the DOM and never opacity-0. */
-function show(h: DockHost, head: Decision, depth: number): void {
+function show(h: DockHost, head: Decision, rest: readonly Decision[]): void {
   const card = buildCard(head);
-  if (isRequestDecision(head) && answering.has(head)) {
+  if (answering.has(head)) {
     markAnswering(card, true);
   }
   h.card = card;
-  h.el.replaceChildren(card, depthRow(depth));
+  h.cardScrolls = false;
+  h.el.replaceChildren(card, depthRow());
   h.el.classList.remove("hidden");
   h.renderedKey = decisionKey(head.chatID, head.kind, decisionIdentity(head));
+  paintRest(h, rest);
   announce(announcementFor(head));
+  h.composerShown = true;
+  focusAnswerIfAside(h);
+}
+
+/**
+ * When the stylesheet has hidden the bar's composer under a question card (`css/26-dock.css`), focus left in it or on
+ * body moves to the card's own answer box. Only on the composer's going from rendered to hidden, so a later call never
+ * pulls focus back; keyed on its rendering, so the stylesheet alone owns the condition.
+ */
+function focusAnswerIfAside(h: DockHost): void {
+  const composer = h.el.parentElement?.querySelector(
+    ':scope > :is([id="prompt-box"], [id="run-composer"])',
+  );
+  if (h.card === null || composer == null) {
+    return;
+  }
+  const shown = composer.checkVisibility();
+  const hidden = h.composerShown && !shown;
+  h.composerShown = shown;
+  const typing = document.activeElement;
+  if (hidden && (typing === document.body || composer.contains(typing))) {
+    h.card.querySelector<HTMLElement>(".dock-ask-text")?.focus({ preventScroll: true });
+  }
+}
+
+/** A rotation can hide the composer under a card already up, and a new width or band moves the card's floor. */
+function followViewport(): void {
+  for (const h of hosts) {
+    focusAnswerIfAside(h);
+    paintFloor(h);
+  }
+}
+
+/**
+ * Publish the tray's floor while it holds a question card: the height of its card with each scroller in it at its own
+ * `min-block-size` and every other region whole, plus the tray's other rows. Measured because the bar's flex column
+ * sees only the tray's content size: a scroller's floor nested in it is invisible to the bar. Where the bar's ceiling
+ * cannot hold every member's floor, they are lowered in the reverse of their order (`css/26-dock.css` "ONE
+ * ALLOCATION"): the steer stack's, then the question's second line. The card's controls never give: past that, the
+ * floor is the room and the card scrolls, opened at its controls.
+ */
+function paintFloor(h: DockHost): void {
+  const card = h.card;
+  if (card === null || !card.classList.contains("dock-user-input") || !card.isConnected) {
+    h.el.style.removeProperty(FLOOR_PROP);
+    h.cardScrolls = false;
+    return;
+  }
+  const options = card.querySelector<HTMLElement>(":scope > .user-input-options");
+  if (options !== null) {
+    paintOptionsFloor(options);
+  }
+  const atEnd = card.scrollTop + card.clientHeight >= card.scrollHeight - 1;
+  const ask = card.querySelector<HTMLElement>(":scope > .dock-ask-body");
+  const stack = h.el.parentElement?.querySelector<HTMLElement>(":scope > .steer-stack") ?? null;
+  ask?.style.removeProperty(ASK_FLOOR_PROP);
+  stack?.style.removeProperty(STEER_FLOOR_PROP);
+  const rows = flexItems(h.el).filter((row) => row !== h.outgoing);
+  const px = rows.reduce(
+    (sum, row) => sum + (row === card ? floorOf(card) : row.getBoundingClientRect().height),
+    gapsAndChrome(h.el, rows.length),
+  );
+  const over = lower(stack, STEER_FLOOR_PROP, px - roomFor(h), 1);
+  const left = lower(ask, ASK_FLOOR_PROP, over, 1 / 2);
+  // Where the floors outgrow the room, `px - over` is that room plus the steer stack's give; the card scrolls `left`.
+  const floor = px - Math.max(0, over);
+  h.el.style.setProperty(
+    FLOOR_PROP,
+    `${String(left > 0 ? Math.max(0, Math.floor(floor)) : Math.ceil(floor))}px`,
+  );
+  // A card that scrolls opens at its controls, which outrank its question, and stays there unless the reader scrolled.
+  if (left > 0 && (!h.cardScrolls || atEnd)) {
+    card.scrollTop = card.scrollHeight;
+  }
+  h.cardScrolls = left > 0;
+}
+
+/** Lower `box`'s floor through `prop` by `over`, at most `share` of it, if `box` renders; what is still over. */
+function lower(box: HTMLElement | null, prop: string, over: number, share: number): number {
+  if (box === null || over <= 0 || !box.checkVisibility()) {
+    return over;
+  }
+  const floor = Number.parseFloat(getComputedStyle(box).minBlockSize) || 0;
+  const give = Math.min(over, floor * share);
+  box.style.setProperty(prop, `${String(floor - give)}px`);
+  return over - give;
+}
+
+/**
+ * What the bar's ceiling leaves the tray with every other member at its floor (a shrinking item's `min-block-size`,
+ * else its height); `Infinity` under no ceiling.
+ */
+function roomFor(h: DockHost): number {
+  const bar = h.el.parentElement;
+  const s = bar === null ? null : getComputedStyle(bar);
+  const ceiling = s === null ? Number.NaN : Number.parseFloat(s.maxBlockSize);
+  if (bar === null || s === null || Number.isNaN(ceiling)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const px = (v: string): number => Number.parseFloat(v) || 0;
+  const items = flexItems(bar);
+  const chrome =
+    s.boxSizing === "border-box"
+      ? gapsAndChrome(bar, items.length)
+      : Math.max(0, items.length - 1) * px(s.rowGap);
+  return items.reduce((room, item) => {
+    const is = getComputedStyle(item);
+    const margins = px(is.marginBlockStart) + px(is.marginBlockEnd);
+    if (item === h.el) {
+      return room - margins;
+    }
+    const shrinks = px(is.flexShrink) > 0 && is.minBlockSize !== "auto";
+    return room - margins - (shrinks ? px(is.minBlockSize) : item.getBoundingClientRect().height);
+  }, ceiling - chrome);
+}
+
+/**
+ * Publish the options region's floor, which `css/26-dock.css` gives it as its `min-block-size`: what stands before its
+ * first control and its tallest control, so each option up to the region's ceiling is whole once scrolled to, however
+ * its description wraps.
+ * Never above the region's own ceiling: a minimum beats a maximum, so a taller option would push the answer controls
+ * off the band; it scrolls inside the region instead.
+ */
+function paintOptionsFloor(region: HTMLElement): void {
+  const controls = [...region.children].filter(
+    (c) => c.matches(".user-input-option, .user-input-sub-option") && c.checkVisibility(),
+  );
+  const [first] = controls;
+  if (first === undefined || region.firstElementChild === null) {
+    region.style.removeProperty(OPTIONS_FLOOR_PROP);
+    return;
+  }
+  const lead =
+    first.getBoundingClientRect().top - region.firstElementChild.getBoundingClientRect().top;
+  const tallest = Math.max(...controls.map((c) => c.getBoundingClientRect().height));
+  const px = Math.ceil(lead + tallest + gapsAndChrome(region, 1));
+  const ceiling = Number.parseFloat(getComputedStyle(region).maxBlockSize);
+  const floor = Number.isNaN(ceiling) ? px : Math.min(px, Math.floor(ceiling));
+  region.style.setProperty(OPTIONS_FLOOR_PROP, `${String(floor)}px`);
+}
+
+function floorOf(box: Element): number {
+  const items = flexItems(box);
+  return items.reduce(
+    (sum, item) => {
+      const s = getComputedStyle(item);
+      const scrolls = item instanceof HTMLTextAreaElement || s.overflowY !== "visible";
+      return (
+        sum +
+        (scrolls ? Number.parseFloat(s.minBlockSize) || 0 : item.getBoundingClientRect().height)
+      );
+    },
+    gapsAndChrome(box, items.length),
+  );
+}
+
+/** A column's rendered flex items: a `display: contents` child's children stand in for it. */
+function flexItems(box: Element): Element[] {
+  return [...box.children]
+    .flatMap((c) => (getComputedStyle(c).display === "contents" ? [...c.children] : [c]))
+    .filter((c) => c.checkVisibility());
+}
+
+function gapsAndChrome(box: Element, items: number): number {
+  const s = getComputedStyle(box);
+  const px = (v: string): number => Number.parseFloat(v) || 0;
+  return (
+    px(s.paddingBlockStart) +
+    px(s.paddingBlockEnd) +
+    px(s.borderBlockStartWidth) +
+    px(s.borderBlockEndWidth) +
+    Math.max(0, items - 1) * px(s.rowGap)
+  );
 }
 
 /** A collapsed host is `display: none`, so its margin is 0 whatever `getComputedStyle` reports. */
@@ -810,25 +959,18 @@ function motionOff(): boolean {
   );
 }
 
-/** Scoped to a DIRECT child: a stale depth row inside `.dock-outgoing` sits
- *  earlier in document order and would win an unscoped lookup. */
-function updateDepth(h: DockHost, depth: number): void {
+/** The queue behind the head, as a count. Scoped to a DIRECT child: a stale row inside `.dock-outgoing` sits earlier
+ *  in document order. */
+function paintRest(h: DockHost, rest: readonly Decision[]): void {
   const row = h.el.querySelector(":scope > .dock-depth");
-  if (row === null) {
-    return;
+  if (row !== null) {
+    row.textContent = rest.length === 0 ? "" : `${String(rest.length)} more waiting`;
+    row.classList.toggle("hidden", rest.length === 0);
   }
-  row.textContent = depthText(depth);
-  row.classList.toggle("hidden", depth < 2);
 }
 
-function depthRow(depth: number): HTMLElement {
-  const row = el("p", { className: "dock-depth" }, depthText(depth));
-  row.classList.toggle("hidden", depth < 2);
-  return row;
-}
-
-function depthText(depth: number): string {
-  return depth < 2 ? "" : `${String(depth - 1)} more waiting`;
+function depthRow(): HTMLElement {
+  return el("p", { className: "dock-depth hidden" });
 }
 
 function announcementFor(d: Decision): string {
@@ -841,8 +983,6 @@ function announcementFor(d: Decision): string {
       return "A tool is requesting input";
     case "user_input":
       return "The agent has a question";
-    case "run_input":
-      return "A workflow step is waiting for your answer";
     default:
       d satisfies never;
       return "";
@@ -872,20 +1012,6 @@ function buildCard(d: Decision): HTMLElement {
             : undefined,
         );
       });
-    case "run_input":
-      // Inside settleRunInput's callback, so an already-answered ask leaves nothing held.
-      return buildRunInputCard(
-        d.payload,
-        heldAnswer(d),
-        (text) => {
-          settleRunInput(d, () => {
-            holdAnswer(d, text);
-            d.submit(text);
-          });
-        },
-        // Unwrapped: a deferral answers nothing, and unqueueing would remove the card while the run is still parked.
-        d.defer,
-      );
     default:
       d satisfies never;
       return el("div");
@@ -900,7 +1026,6 @@ export function _resetForTest(): void {
     h.stop();
   }
   queues.clear();
-  heldAnswers.clear();
   hosts.length = 0;
   queueVersion.value = 0;
 }

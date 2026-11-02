@@ -60,9 +60,11 @@ func (t *Translator) handleCompactionFailed(ctx context.Context, chatID marotte.
 	detail := cmp.Or(errMsg, "compaction failed")
 	detail = runesafe.SanitizeSingleLineBounded(detail, maxCompactionDetailBytes)
 	// A refused append means the chat is gone: no banner for a chat nobody holds.
+	turnID := ""
 	if !t.appendLaneless(durable.Context(ctx), chatID, marotte.EntryKindCompactionFailed,
 		"", marotte.EntryCompactionFailed{Reason: detail},
 		func(ctx context.Context, turn *turnlog.Turn) ([]turnlog.Sealed, error) {
+			turnID = turn.ID()
 			return turn.CompactionFailed(ctx, detail)
 		}) {
 		return
@@ -71,6 +73,9 @@ func (t *Translator) handleCompactionFailed(ctx context.Context, chatID marotte.
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
 		Code: marotte.ErrCodeCompactionFailed, Message: detail, TurnScoped: true,
 	}))
-	// A compaction failure does not prove the turn ended: the host bounds the silence, then interrupts.
-	t.turnInterrupt.CompactionFailed(chatID, detail)
+	// A compaction failure does not prove the turn ended: the host bounds the silence of the turn it was recorded
+	// in, then interrupts it; recorded between turns, it bounds none.
+	if turnID != "" {
+		t.turnInterrupt.CompactionFailed(chatID, turnID, detail)
+	}
 }

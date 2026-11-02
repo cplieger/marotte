@@ -9,6 +9,10 @@ import "log/slog"
 const (
 	KeyAgentIgnoreFiles = "agent_ignore_files"
 
+	// KeyAdditionalDirectories lists the directories beyond the workspace that agents may read
+	// and write (AgentDirs owns which entries are granted). Default empty.
+	KeyAdditionalDirectories = "additional_directories"
+
 	// KeyChatRetentionDays is three states: -1 keeps every chat, 0 deletes at close, N keeps N
 	// days. A dropped key falls back to the 7-day default, hence PATCH merges, never replaces.
 	KeyChatRetentionDays = "chat_retention_days"
@@ -17,9 +21,9 @@ const (
 	KeyLastModel            = "last_model"
 	KeyNotificationsEnabled = "notifications_enabled"
 
-	// KeyLastEffortByModel maps model id to the effort level last picked under it: the level a
-	// NEW chat on that model opens on. A seed, never written onto the chat record (Chat.Effort
-	// owns the level); both readers (effortSeedFor, getLastEffortFor) look up the chat's model.
+	// KeyLastEffortByModel maps model id to the effort level last picked under it: the preference
+	// a chat holding no level for that model takes, then pinned onto Chat.Effort, which owns it
+	// from there; both readers (effortSeedFor, getLastEffortFor) look up the chat's model.
 	KeyLastEffortByModel = "last_effort_by_model"
 
 	// KeyLastMergeMethod is the PR merge method last picked (forge spelling), the merge dialog's
@@ -41,19 +45,17 @@ const (
 	// chosen, not inherited.
 	KeyScheduledAutoApprove = "scheduled_auto_approve"
 
-	// KeyToolSearchEnabled and KeyKnowledgeEnabled reach the agent per spawn (knowledge under
-	// _meta.kiro.settings, tool search as KIRO_FEATURE_TOOL_LOAD_ENABLED). Knowledge defaults TRUE.
-	KeyToolSearchEnabled = "tool_search_enabled"
+	// KeyKnowledgeEnabled reaches the agent per spawn under _meta.kiro.settings; it defaults TRUE.
 	KeyKnowledgeEnabled  = "knowledge_enabled"
 	KeyGuardPayloadLinks = "guard_payload_links"
 
 	// KeyContentCollectionEnabled lets model requests be used by AWS for service
-	// improvement. Default off. internal/agent asserts it on every kiro-cli process
+	// improvement. Default off. internal/agent asserts it on the engine at each spawn
 	// and pushes a change live, because KAS holds it per process and persists none
 	// of it; an organization's lock overrides it.
 	KeyContentCollectionEnabled = "content_collection_enabled"
 
-	// KeyMemoryMode is the Memory dropdown (memory.go's Memory* values), resolved per spawn by
+	// KeyMemoryMode is the Memory dropdown (memory.go's Memory* values), resolved per session door by
 	// MemoryPreferenceFor. KAS freezes the mode per session; the reflection half is re-sent on
 	// session/load.
 	KeyMemoryMode = "memory_mode"
@@ -70,32 +72,42 @@ const (
 	KeyAutoCompactionEnabled = "auto_compaction_enabled"
 	KeyAutoCompactPct        = "auto_compact_pct"
 
-	// The Agent capabilities that ride KAS's doors, resolved per spawn by
+	// The Agent capabilities that ride KAS's doors, resolved per session door by
 	// internal/agent's agentFeatures (values in agent_features.go).
 	// KeyWorkValidation, KeyCloudFormationSafety, KeyAutoRouting and
 	// KeyAutoDelegation are three-state: empty sends nothing, so kiro-cli's own
-	// experiment decides.
+	// experiment decides. KeyModelFallback on sends KAS's two model-fallback
+	// flags; off sends nothing, leaving kiro-cli's default (off) in force.
 	KeySpecPlanning         = "spec_planning"
 	KeySpecPlanningAskFirst = "spec_planning_ask_first"
-	KeyInlineAgents         = "inline_agents_enabled"
 	KeySteeringReminders    = "steering_reminders_enabled"
 	KeyWorkflowsEnabled     = "workflows_enabled"
 	KeyWorkValidation       = "work_validation"
 	KeyCloudFormationSafety = "cloudformation_safety_check"
 	KeyAutoRouting          = "auto_routing"
 	KeyAutoDelegation       = "auto_delegation"
+	KeyModelFallback        = "model_fallback_enabled"
 
 	// KeyOutputStyle rides each chat prompt as _meta.kiro.outputStyle.
 	// KeyTerminalCommandTimeoutMs is the shell tool's default timeout (0 = KAS's
-	// 120 s), sent at initialize and pushed live to every bridge.
+	// 120 s), sent at initialize and pushed live to the engine.
 	KeyOutputStyle              = "output_style"
 	KeyTerminalCommandTimeoutMs = "terminal_command_timeout_ms"
+
+	// KeyEngineHeapMiB is the agent engine's JavaScript heap limit in MiB: 0 (the default) adds no flag and leaves
+	// kiro-cli's own, otherwise ValidEngineHeapMiB's range. It applies when the engine restarts.
+	KeyEngineHeapMiB = "engine_heap_mib"
 
 	// KeyTheme is "dark" | "light" | "system" ("system" is a stored choice; absent resolves to
 	// system at the client). The browser's localStorage copy is a pre-paint hint this value
 	// overwrites. KeyFBPath is the file browser's last directory, per workspace.
 	KeyTheme  = "theme"
 	KeyFBPath = "fb_path"
+
+	// KeySettingsEpoch and KeySettingsRevision stamp the document's version: Update owns both, and
+	// a PATCH may set neither.
+	KeySettingsEpoch    = "settings_epoch"
+	KeySettingsRevision = "settings_revision"
 )
 
 // There is no notify_permission key: a permission ask blocks the turn, so its notice cannot
@@ -112,11 +124,18 @@ func DefaultAgentIgnoreFiles() []string {
 	return []string{}
 }
 
+// defaultAdditionalDirectories is the default for additional_directories: EMPTY, so agents
+// reach only the workspace until the user grants more. Non-nil, so it marshals [].
+func defaultAdditionalDirectories() []string {
+	return []string{}
+}
+
 // KnownKeys is the set of marotte-managed config.json keys; PATCH warns about others but
 // does not reject them. kiro-cli's own settings (cli.json) are not in it. There is no
 // model_effort key: effort is per chat (Chat.Effort), seeded by KeyLastEffortByModel.
 var KnownKeys = map[string]struct{}{
 	KeyAgentIgnoreFiles:         {},
+	KeyAdditionalDirectories:    {},
 	KeyAutoCompactionEnabled:    {},
 	KeyAutoCompactPct:           {},
 	KeyAutoDelegation:           {},
@@ -124,7 +143,7 @@ var KnownKeys = map[string]struct{}{
 	KeyChatRetentionDays:        {},
 	KeyCloudFormationSafety:     {},
 	KeyDebugLogs:                {},
-	KeyInlineAgents:             {},
+	KeyEngineHeapMiB:            {},
 	KeyOutputStyle:              {},
 	KeySpecPlanning:             {},
 	KeySpecPlanningAskFirst:     {},
@@ -135,6 +154,7 @@ var KnownKeys = map[string]struct{}{
 	KeyFBPath:                   {},
 	KeyGuardPayloadLinks:        {},
 	KeyKnowledgeEnabled:         {},
+	KeyModelFallback:            {},
 	KeyContentCollectionEnabled: {},
 	KeyLastEffortByModel:        {},
 	KeyLastMergeMethod:          {},
@@ -148,8 +168,9 @@ var KnownKeys = map[string]struct{}{
 	KeySupervisedDefault:        {},
 	KeyScheduledAutoApprove:     {},
 	KeySecurityProfile:          {},
+	KeySettingsEpoch:            {},
+	KeySettingsRevision:         {},
 	KeyTheme:                    {},
-	KeyToolSearchEnabled:        {},
 }
 
 // WarnUnknownKeys logs a warning for each key in keys outside KnownKeys and returns them

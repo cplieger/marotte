@@ -3,6 +3,7 @@ package translate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -37,9 +38,7 @@ type baseDeps struct {
 	// test can stage a scheduled run without a runtime or a scheduler.
 	scheduledRuns map[string]bool
 	// runLabels are the labels RunLabel answers, keyed by workflow id.
-	runLabels map[string]string
-	// stepReading are the step steer keys RunStepReading answers true for.
-	stepReading map[marotte.ChatID]bool
+	runLabels   map[string]string
 	planUpdates []marotte.RunPlanUpdate
 	// runNotices is the per-chat queue RunNotice consumes, oldest first, so a test
 	// can stage a finished run behind a notify-wf- notice without a run registry.
@@ -83,8 +82,10 @@ type baseDeps struct {
 	// queuedAnswer, when set, is the frame SteerWaiting answers, standing in for
 	// the record rewriting a user row's frame or refusing a chat that is going.
 	queuedAnswer func(marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool)
-	// stopped is the turn ids StopRequestedAfter answers true for.
-	stopped map[string]bool
+	// stopped is the cause StopCauseAfter answers per turn id.
+	stopped map[string]marotte.TurnStopCause
+	// sessionChats is the chat each live ACP session id belongs to, for ChatForACPSession.
+	sessionChats map[string]marotte.ChatID
 }
 
 type termRendered struct {
@@ -203,10 +204,10 @@ func (d *baseDeps) DepartedName(id marotte.ChatID) (string, bool) {
 	return d.store.DepartedName(id)
 }
 
-// WaitingWorkflowMessages folds what the double filed for the chat, after-close entries first, as
-// the store's log would.
-func (d *baseDeps) WaitingWorkflowMessages(_ context.Context, chatID marotte.ChatID) ([]marotte.WorkflowMessage, error) {
-	return waitingIn(d.between[chatID], d.chatEntries(chatID))
+// UnsettledWorkflowMessages folds what the double filed for the chat in file order, every turn's and
+// those filed after a close, as the store's log would.
+func (d *baseDeps) UnsettledWorkflowMessages(_ context.Context, chatID marotte.ChatID) ([]marotte.WorkflowMessage, error) {
+	return waitingIn(d.turns.chatLog[chatID])
 }
 
 func waitingIn(logs ...[]marotte.Entry) ([]marotte.WorkflowMessage, error) {
@@ -223,7 +224,7 @@ func waitingIn(logs ...[]marotte.Entry) ([]marotte.WorkflowMessage, error) {
 		}
 	}
 	fold := marotte.FoldWorkflowMessages(facts)
-	return fold.Waiting(), nil
+	return fold.Unsettled(), nil
 }
 
 // The turnAccess half: one open turn per chat over the recording sink; every fold records its
@@ -243,15 +244,16 @@ func (d *baseDeps) PromptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	return t, t != nil
 }
 
-func (d *baseDeps) StopRequestedAfter(_ marotte.ChatID, turnID string) bool {
+func (d *baseDeps) StopCauseAfter(_ marotte.ChatID, turnID string) marotte.TurnStopCause {
 	return d.stopped[turnID]
 }
 
 func (d *baseDeps) AppendBetweenTurns(_ context.Context, chatID marotte.ChatID, e *marotte.Entry) ([]*marotte.Entry, error) {
-	if d.turns.appendErr != nil {
-		return nil, d.turns.appendErr
+	if err := d.turns.refusal("", e); err != nil {
+		return nil, err
 	}
 	d.between[chatID] = append(d.between[chatID], *e)
+	d.turns.chatLog[chatID] = append(d.turns.chatLog[chatID], *e)
 	return nil, nil
 }
 
@@ -352,7 +354,7 @@ func (d *baseDeps) lastFold() (foldRecord, bool) {
 
 // The RunAppender half: one open turn per run path, recorded call by call.
 func (d *baseDeps) RunNodeStart(_ context.Context, step *RunStep, chatID marotte.ChatID) {
-	d.runCalls = append(d.runCalls, runCall{kind: "node_start", runID: step.RunID, nodePath: step.NodePath, nodeID: step.NodeID, sessionID: step.SessionID, chat: chatID})
+	d.runCalls = append(d.runCalls, runCall{kind: "node_start", runID: step.RunID, nodePath: step.NodePath, sessionID: step.SessionID, chat: chatID})
 	d.turns.runTurn(step.RunID, step.NodePath)
 }
 
@@ -369,7 +371,7 @@ func (d *baseDeps) RunFoldTarget(_ context.Context, step *RunStep, chatID marott
 	if t, ok := d.turns.runs[runPathKey(step.RunID, step.NodePath)]; ok && d.turns.closed(t) {
 		return nil, false
 	}
-	d.runCalls = append(d.runCalls, runCall{kind: "fold", runID: step.RunID, nodePath: step.NodePath, nodeID: step.NodeID, sessionID: step.SessionID, chat: chatID})
+	d.runCalls = append(d.runCalls, runCall{kind: "fold", runID: step.RunID, nodePath: step.NodePath, sessionID: step.SessionID, chat: chatID})
 	return d.turns.runTurn(step.RunID, step.NodePath), true
 }
 
@@ -404,16 +406,25 @@ func (d *baseDeps) RunSteer(ctx context.Context, runID, nodePath, steerID string
 	}
 }
 
-func (d *baseDeps) RunSteerDelivered(ctx context.Context, runID, nodePath string, sd *marotte.EntrySteerDelivered) {
+func (d *baseDeps) RunSteerDelivered(ctx context.Context, runID, nodePath string, sd *marotte.EntrySteerDelivered) bool {
 	d.runCalls = append(d.runCalls, runCall{kind: "steer_delivered", runID: runID, nodePath: nodePath, steerID: sd.SteerID})
 	if t, ok := d.turns.runs[runPathKey(runID, nodePath)]; ok && !d.turns.closed(t) {
-		_, _ = t.SteerDelivered(ctx, sd)
+		_, err := t.SteerDelivered(ctx, sd)
+		return err == nil
 	}
+	return false
 }
 
-func (d *baseDeps) RunStepReading(key marotte.ChatID) bool { return d.stepReading[key] }
+func (d *baseDeps) RunSteerCleared(ctx context.Context, runID, nodePath, clearID string, c *marotte.EntrySteerCleared) bool {
+	d.runCalls = append(d.runCalls, runCall{kind: "steer_cleared", runID: runID, nodePath: nodePath, steerID: clearID})
+	if t, ok := d.turns.runs[runPathKey(runID, nodePath)]; ok && !d.turns.closed(t) {
+		_, err := t.SteerCleared(ctx, clearID, c)
+		return err == nil
+	}
+	return false
+}
 
-func (d *baseDeps) RunWaitingWorkflowMessages(_ context.Context, runID string) ([]marotte.WorkflowMessage, error) {
+func (d *baseDeps) RunUnsettledWorkflowMessages(_ context.Context, runID string) ([]marotte.WorkflowMessage, error) {
 	var logs [][]marotte.Entry
 	for _, k := range slices.Sorted(maps.Keys(d.turns.runs)) {
 		if strings.HasPrefix(k, runID+"\x00") {
@@ -440,7 +451,6 @@ type runCall struct {
 	kind      string
 	runID     string
 	nodePath  string
-	nodeID    string
 	sessionID string
 	status    string
 	reason    string
@@ -451,7 +461,7 @@ type runCall struct {
 	elapsedMs float64
 }
 
-// The three turn-bracket operations, recorded rather than performed: the host
+// The turn-bracket operations, recorded rather than performed: the host
 // owns the turn lifecycle, and what this package is responsible for is calling
 // the right one on the right frame.
 func (d *baseDeps) WireTurnStart(_ context.Context, chatID marotte.ChatID) {
@@ -460,6 +470,14 @@ func (d *baseDeps) WireTurnStart(_ context.Context, chatID marotte.ChatID) {
 
 func (d *baseDeps) WireTurnEnd(_ context.Context, chatID marotte.ChatID, stop marotte.StopReason) {
 	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "end", stop: stop})
+}
+
+func (d *baseDeps) WireTurnActivity(chatID marotte.ChatID, active bool) {
+	kind := "idle"
+	if active {
+		kind = "active"
+	}
+	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: kind})
 }
 
 func (d *baseDeps) ReviseTurnBinding(_ context.Context, chatID marotte.ChatID) {
@@ -477,17 +495,37 @@ type turnLogs struct {
 	chats  map[marotte.ChatID]*turnlog.Turn
 	runs   map[string]*turnlog.Turn
 	sealed map[string][]marotte.Entry
+	// chatLog is each chat's log in file order across its turns, and chatOf the chat a turn id is the chat's.
+	chatLog map[marotte.ChatID][]marotte.Entry
+	chatOf  map[string]marotte.ChatID
 	// appendErr, when set, is what every sink append and every between-turns
 	// append answers, recording nothing: the store refusing a write.
 	appendErr error
-	minted    int
+	// refuses, when set, picks the appends the store refuses with errRefused: by the turn the entry
+	// files in, "" for a chat's between-turns append.
+	refuses func(turn string, kind marotte.EntryKind) bool
+	minted  int
+}
+
+var errRefused = errors.New("the store refused this append")
+
+func (tl *turnLogs) refusal(turn string, e *marotte.Entry) error {
+	if tl.appendErr != nil {
+		return tl.appendErr
+	}
+	if tl.refuses != nil && tl.refuses(turn, e.Kind) {
+		return errRefused
+	}
+	return nil
 }
 
 func newTurnLogs() *turnLogs {
 	return &turnLogs{
-		chats:  map[marotte.ChatID]*turnlog.Turn{},
-		runs:   map[string]*turnlog.Turn{},
-		sealed: map[string][]marotte.Entry{},
+		chats:   map[marotte.ChatID]*turnlog.Turn{},
+		runs:    map[string]*turnlog.Turn{},
+		sealed:  map[string][]marotte.Entry{},
+		chatLog: map[marotte.ChatID][]marotte.Entry{},
+		chatOf:  map[string]marotte.ChatID{},
 	}
 }
 
@@ -499,6 +537,7 @@ func (tl *turnLogs) chatTurn(chatID marotte.ChatID) *turnlog.Turn {
 	}
 	t := tl.open()
 	tl.chats[chatID] = t
+	tl.chatOf[t.ID()] = chatID
 	return t
 }
 
@@ -544,10 +583,13 @@ type recordingSink struct {
 }
 
 func (s *recordingSink) Append(_ context.Context, e *marotte.Entry) error {
-	if s.logs.appendErr != nil {
-		return s.logs.appendErr
+	if err := s.logs.refusal(s.turn, e); err != nil {
+		return err
 	}
 	s.logs.sealed[s.turn] = append(s.logs.sealed[s.turn], *e)
+	if chat, ok := s.logs.chatOf[s.turn]; ok {
+		s.logs.chatLog[chat] = append(s.logs.chatLog[chat], *e)
+	}
 	return nil
 }
 
@@ -557,6 +599,12 @@ func (d *baseDeps) RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDi
 	d.lineTracker.RecordFromDiffs(chatID, diffs, turn, kind)
 }
 func (d *baseDeps) ParentACPSession(marotte.ChatID) string { return d.parent }
+
+func (d *baseDeps) ChatForACPSession(sessionID string) (marotte.ChatID, bool) {
+	c, ok := d.sessionChats[sessionID]
+	return c, ok
+}
+
 func (d *baseDeps) IsScheduled(workflowID string) bool {
 	return d.scheduledRuns[workflowID]
 }
@@ -564,16 +612,25 @@ func (d *baseDeps) RunLabel(workflowID string) string { return d.runLabels[workf
 
 type stagedRunNotice struct {
 	workflowID string
+	label      string
 	producedTs int64
 }
 
-func (d *baseDeps) RunNotice(chatID marotte.ChatID) (string, int64, bool) {
+func (d *baseDeps) RunNotice(chatID marotte.ChatID, text string) (string, int64, bool) {
 	q := d.runNotices[chatID]
-	if len(q) == 0 {
-		return "", 0, false
+	for i, n := range q {
+		if n.label != "" && strings.Contains(text, `"`+n.label+`"`) {
+			d.runNotices[chatID] = slices.Delete(q, i, i+1)
+			return n.workflowID, n.producedTs, true
+		}
 	}
-	d.runNotices[chatID] = q[1:]
-	return q[0].workflowID, q[0].producedTs, true
+	return "", 0, false
+}
+
+func (d *baseDeps) ForgetRunNotices(chatID marotte.ChatID, n int) {
+	if q := d.runNotices[chatID]; len(q) > 0 {
+		d.runNotices[chatID] = q[min(n, len(q)):]
+	}
 }
 
 func (d *baseDeps) RunMadeProgress(workflowID string) {
@@ -582,20 +639,22 @@ func (d *baseDeps) RunMadeProgress(workflowID string) {
 
 type compactionFailure struct {
 	chatID marotte.ChatID
+	turnID string
 	detail string
 }
 
-func (d *baseDeps) CompactionFailed(chatID marotte.ChatID, detail string) {
-	d.compactionFailures = append(d.compactionFailures, compactionFailure{chatID: chatID, detail: detail})
+func (d *baseDeps) CompactionFailed(chatID marotte.ChatID, turnID, detail string) {
+	d.compactionFailures = append(d.compactionFailures, compactionFailure{chatID: chatID, turnID: turnID, detail: detail})
 }
 
 type turnInterrupt struct {
 	chatID marotte.ChatID
+	turnID string
 	reason string
 }
 
-func (d *baseDeps) InterruptTurn(chatID marotte.ChatID, reason string) {
-	d.turnInterrupts = append(d.turnInterrupts, turnInterrupt{chatID, reason})
+func (d *baseDeps) InterruptTurn(chatID marotte.ChatID, turnID, reason string) {
+	d.turnInterrupts = append(d.turnInterrupts, turnInterrupt{chatID, turnID, reason})
 }
 
 // AccumulateSpend and StageConversationTurnSummary stand in for the host's per-turn

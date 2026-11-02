@@ -10,14 +10,12 @@ const a11y = loadCSS("40-a11y.css");
 /** Every focusable the inset offset is declared for, as `40-a11y.css` spells it. */
 const MEMBERS = [
   "a.subagent-header",
-  ".subagent-container.has-disclosure > .subagent-header",
   ".subagent-foot > .subagent-footer > .turn-ledger-summary",
   ".pill-account",
   ".run-head",
   "a.run-step-head",
   ".run-open",
   ".tool-group-header",
-  ".code-act-btn",
   ".git-repo-section-header",
   ".git-repo-section-header-toggle",
   ".forge-account-repos-summary",
@@ -217,17 +215,6 @@ function subagentCard(opts: { foot: boolean }): {
   return { clipper: mount(clipper), head, ledger };
 }
 
-/** The container: the head is the disclosure's own `role="button"`. */
-function subagentContainer(): { clipper: HTMLElement; head: HTMLElement } {
-  const head = node("div", "subagent-header", { role: "button", tabindex: "0" });
-  head.append(node("span", "subagent-icon tool-icon"), node("span", "subagent-name"));
-  const body = node("div", "subagent-body");
-  body.appendChild(node("div", "subagent-block")).textContent = "a stage card";
-  const clipper = node("div", "subagent-block subagent-container has-disclosure");
-  clipper.append(head, body, node("div", "subagent-foot"));
-  return { clipper: mount(clipper), head };
-}
-
 /** Plus one step so the head's bottom edge is not the card's. */
 function runCard(): { clipper: HTMLElement; head: HTMLElement } {
   const head = node("div", "run-head", { role: "button", tabindex: "0" });
@@ -277,7 +264,7 @@ function toolGroup(): { clipper: HTMLElement; head: HTMLElement } {
   return { clipper: mount(clipper), head };
 }
 
-/** `.code-head`'s 2px block padding is the only thing between an action button and the clip. */
+/** `.code-head`'s row height, taller than its buttons, is what keeps them off the clip. */
 function codeBlock(): { clipper: HTMLElement; copy: HTMLElement; run: HTMLElement } {
   const copy = node("button", "code-act-btn", { type: "button", "aria-label": "Copy" });
   copy.appendChild(glyph());
@@ -499,11 +486,11 @@ function turnInfoPanel(): { clipper: HTMLElement; row: HTMLElement } {
   row.append(span("turn-file-path", "static-src/app.ts"), node("span", "turn-file-delta"));
   const item = node("li", "turn-ledger-file");
   item.appendChild(row);
-  const list = node("ul", "turn-ledger-files");
+  const list = node("ul", "turn-info-rows");
   list.appendChild(item);
   const section = node("section", "turn-info-section");
   section.append(node("h4", "turn-info-title"), list);
-  section.querySelector("h4")!.textContent = "Work";
+  section.querySelector("h4")!.textContent = "Changed files";
   const panel = node("div", "turn-info-panel");
   panel.style.transition = "none";
   panel.appendChild(section);
@@ -632,13 +619,6 @@ describe("the ring is painted inside the card that clips it", () => {
     expectRingInside("foot ledger", ledger, clipper);
   });
 
-  it("on a pipeline CONTAINER's head, the disclosure shape on that same class", async () => {
-    // One class, two focusable shapes: an anchor head and a `role="button"` head.
-    const { clipper, head } = subagentContainer();
-    await focusByTab(head);
-    expectRingInside("container head", head, clipper);
-  });
-
   it("on a run card's head", async () => {
     const { clipper, head } = runCard();
     await focusByTab(head);
@@ -672,19 +652,6 @@ describe("the ring is painted inside the card that clips it", () => {
     const { clipper, head } = toolGroup();
     await focusByTab(head);
     expectRingInside("tool group header", head, clipper);
-  });
-
-  it("on a code block's action buttons, which are 2px inside rather than flush", async () => {
-    // The mildest member: 2px block padding against 3px reach.
-    const { clipper, copy, run } = codeBlock();
-    await focusByTab(copy);
-    const gap = inset(copy, clipper);
-    expect(gap.top, `code copy button: block-start inset against the floor's reach`).toBe(2);
-    expect(gap.top).toBeLessThan(FLOOR_REACH);
-    expect(gap.right, "the other three edges are clear").toBeGreaterThanOrEqual(FLOOR_REACH);
-    expectRingInside("code copy button", copy, clipper);
-    await focusByTab(run);
-    expectRingInside("code run button", run, clipper);
   });
 
   it("on a git repo section's header", async () => {
@@ -731,11 +698,9 @@ describe("the inset band clears the content it now sits over", () => {
     // All four edges: the band lands at the same depth everywhere.
     const builders: [string, () => HTMLElement][] = [
       ["leaf head", () => subagentCard({ foot: false }).head],
-      ["container head", () => subagentContainer().head],
       ["run head", () => runCard().head],
       ["run step head", () => runStep().head],
       ["tool group header", () => toolGroup().head],
-      ["code action button", () => codeBlock().copy],
       ["git section header", () => gitRepoSection().head],
       ["prs section toggle", () => gitRepoSectionPRs().head],
       ["account repos summary", () => forgeAccountRow().summary],
@@ -856,6 +821,15 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
     await focusByTab(discard);
     expect(inset(discard, clipper).top).toBe(8);
     expectClears("git file Discard", discard, clipper);
+  });
+
+  it("pins a code block's header buttons, centred in a row taller than they are", async () => {
+    const { clipper, copy, run } = codeBlock();
+    await focusByTab(copy);
+    expect(inset(copy, clipper).top, "half the head's spare block room").toBe(4);
+    expectClears("code copy button", copy, clipper);
+    await focusByTab(run);
+    expectClears("code run button", run, clipper);
   });
 
   it("pins the diff pane's whitespace checkbox against its toolbar's padding", async () => {

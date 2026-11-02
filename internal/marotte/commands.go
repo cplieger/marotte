@@ -40,13 +40,16 @@ const (
 	// CmdSteerRemove drops ONE waiting steer: KAS has no per-steer verb, so the
 	// server clears the buffer and resends the others together, in order.
 	CmdSteerRemove CommandType = "steer_remove"
-	// The four tab commands. Membership is a mutation, so it rides this envelope
+	// The tab commands. Membership is a mutation, so it rides this envelope
 	// rather than a second REST surface with its own failure semantics.
 	CmdOpenTab     CommandType = "open_tab"
 	CmdCloseTab    CommandType = "close_tab"
 	CmdReorderTabs CommandType = "reorder_tabs"
 	CmdPinTab      CommandType = "pin_tab"
 	CmdReparentTab CommandType = "reparent_tab"
+	// CmdAckTab records that the reader has seen a chat or run tab up to a read position.
+	// Payload: AckTabCommand.
+	CmdAckTab CommandType = "ack_tab"
 	// CmdApproveSpecPhase records a human sign-off on one phase of a spec. It is
 	// a COMMAND rather than a REST POST because invariant 1 puts every mutation
 	// through this envelope; its chat_id is EMPTY, because a spec is
@@ -80,6 +83,9 @@ type PromptCommand struct {
 	Model       string       `json:"model,omitempty"`
 	DisplayText string       `json:"display_text,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
+	// ForAgent marks a server-authored prompt whose answer an agent reads, so the user's output
+	// style is withheld from it. Server-only: no client payload can set it.
+	ForAgent bool `json:"-"`
 }
 
 // Attachment is a file staged beside a prompt; its extension decides whether it
@@ -143,13 +149,23 @@ const (
 )
 
 // SwitchModelCommand is the payload for type="switch_model". A live session is
-// switched in place. The fallback restarts the bridge and first attempts to load
-// the existing session before creating a fresh one.
+// switched in place; a chat with no live session records the pick, and its next
+// session opens on it.
 type SwitchModelCommand struct {
-	// Empty or "auto" keeps the current model: a bare restart of the bridge,
-	// useful when the session is wedged.
+	// Empty names the model in force; "auto" is KAS's Auto model.
 	Model string `json:"model,omitempty"`
+	// Effort is the tier this pick sets: empty keeps a tier parked with Model, else the chat's
+	// level; a level replaces it; SwitchEffortOff drops a parked one, turns no thinking on, and
+	// turns the running session's thinking off at once. On the model in force a level is set in
+	// place as set_effort sets it (refused when that model lacks it), and a level or
+	// SwitchEffortOff there cancels a switch parked on another model, in the same request; empty
+	// changes nothing.
+	Effort EffortLevel `json:"effort,omitempty"`
 }
+
+// SwitchEffortOff is the switch Effort for the slider's Off stop. It fails Valid, so no tier
+// can carry its name.
+const SwitchEffortOff EffortLevel = "thinking:off"
 
 // PermissionResponseCommand is the payload for type="permission_response".
 type PermissionResponseCommand struct {
@@ -233,7 +249,7 @@ type SetAttachmentsCommand struct {
 // SetModeCommand is the payload for type="set_mode". ModeID names an entry in
 // the workspace mode catalog — bundled workflow modes and workspace custom agents
 // alike. Applied to a live session in place; for a chat whose bridge has not
-// started the mode is persisted and applied at session/new (StartOpts.Mode).
+// started the mode is persisted and applied at session/new (SessionOpts.Mode).
 type SetModeCommand struct {
 	ModeID string `json:"mode_id"`
 }
@@ -276,10 +292,8 @@ type EffortLevel string
 // Well-known effort levels, used where marotte itself picks a tier. Not the
 // valid set: the per-model catalog owns which tiers exist.
 const (
-	EffortLow    EffortLevel = "low"
-	EffortMedium EffortLevel = "medium"
-	effortXHigh  EffortLevel = "xhigh"
-	EffortMax    EffortLevel = "max"
+	effortXHigh EffortLevel = "xhigh"
+	EffortMax   EffortLevel = "max"
 )
 
 // Valid reports whether e is plausibly an effort-level id: a short lowercase token (letter first;
@@ -392,6 +406,15 @@ type PinTabCommand struct {
 	ID     string `json:"id"`
 	OpID   string `json:"op_id,omitempty"`
 	Pinned bool   `json:"pinned"`
+}
+
+// AckTabCommand is the payload for type="ack_tab": the reader has seen a chat or run tab up to
+// Seen, a read position the server sent. The server clamps Seen to the position the tab's state
+// names now, and a value not past the stored one is a no-op; the reply's `seen` is what is stored.
+type AckTabCommand struct {
+	ID   string `json:"id"`
+	OpID string `json:"op_id,omitempty"`
+	Seen uint64 `json:"seen"`
 }
 
 // ReparentTabCommand is the payload for type="reparent_tab": hang an open tab

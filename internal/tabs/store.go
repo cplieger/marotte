@@ -164,6 +164,20 @@ func (s *Store) SetPinned(ctx context.Context, id string, pinned bool) (uint64, 
 	})
 }
 
+// SetSeen advances the tab's Seen to seen, the field's only writer, so it never moves backward: a
+// value not past the stored one, or an id that is not open, changes nothing and bumps no version.
+// Nothing is applied on error.
+func (s *Store) SetSeen(ctx context.Context, id string, seen uint64) (uint64, error) {
+	return s.mutate(ctx, func(st *state) (bool, error) {
+		i := indexOfID(st.tabs, id)
+		if i < 0 || seen <= st.tabs[i].Seen {
+			return false, nil
+		}
+		st.tabs[i].Seen = seen
+		return true, nil
+	})
+}
+
 // Reparent hangs the tab under parent and moves its row behind parent's existing
 // children by insert's rule. The row travels alone: its own descendants keep
 // their positions and their Parent, because the one caller reparents leaves.

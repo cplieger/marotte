@@ -122,7 +122,53 @@ func mergeEntries(record []recordTurn, projected []translate.ProjectedTurn, sid 
 			insert(j)
 		}
 	}
-	return out, renumber(out) || changed
+	moved := renumber(out)
+	filled := fillTimestamps(out)
+	return out, moved || filled || changed
+}
+
+// fillTimestamps gives each turn row with no timestamp one from its place in the merged log: a turn_open its own
+// turn's first, else every such row its predecessor's, else (at the head) the first after it. KAS replays turn
+// brackets and settled calls with no timestamp, so a turn inserted from the replay has no other time fact. A
+// reconciled record is the merge's own bookkeeping, not a turn row, and is left as written.
+func fillTimestamps(turns []mergedTurn) bool {
+	var f tsFill
+	for i := range turns {
+		entries := turns[i].Entries
+		for j := range entries {
+			if e := &entries[j]; e.Kind != marotte.EntryKindReconciled {
+				f.entry(e, entries)
+			}
+		}
+	}
+	return f.changed
+}
+
+// tsFill is fillTimestamps' walk: the newest timestamp seen, and the head rows waiting for the first one.
+type tsFill struct {
+	head    []*marotte.Entry
+	last    int64
+	changed bool
+}
+
+func (f *tsFill) entry(e *marotte.Entry, turn []marotte.Entry) {
+	if e.Ts == 0 && e.Kind == marotte.EntryKindTurnOpen {
+		if k := slices.IndexFunc(turn, func(x marotte.Entry) bool { return x.Ts != 0 }); k >= 0 {
+			e.Ts, f.changed = turn[k].Ts, true
+		}
+	}
+	switch {
+	case e.Ts != 0:
+		f.last = e.Ts
+		for _, h := range f.head {
+			h.Ts, f.changed = f.last, true
+		}
+		f.head = f.head[:0]
+	case f.last != 0:
+		e.Ts, f.changed = f.last, true
+	default:
+		f.head = append(f.head, e)
+	}
 }
 
 // carriedSteerKeys is every steer row key a record prompt or steer names in Resends, in any turn:
@@ -600,9 +646,9 @@ type recordEntryIndex struct {
 	// byInvocation is each subagent invocation's delegate uuid.
 	byInvocation map[string]int
 	messages     *workflowMessageIndex
-	// routed is every model_routed in seq order: neither side's frame carries an id and KAS's
-	// message is constant, so the n-th route of a paired turn is the n-th on the other side.
-	routed []int
+	// notices is every model_routed and model_fallback in seq order, per kind: neither side's
+	// frame carries an id, so the n-th notice of a kind in a paired turn is the n-th on the other side.
+	notices map[marotte.EntryKind][]int
 	// turnOpen and turnClose pair by kind: their ids are minted differently on each side.
 	turnOpen  int
 	turnClose int
@@ -621,6 +667,7 @@ func indexRecordEntries(entries []marotte.Entry) recordEntryIndex {
 		byID:         make(map[string]int, len(entries)),
 		bySay:        make(map[string][]int),
 		byInvocation: make(map[string]int),
+		notices:      make(map[marotte.EntryKind][]int, 2),
 		messages:     &workflowMessageIndex{byWords: map[workflowMessageKey][]int{}, deliveredAs: map[string]string{}},
 		turnOpen:     -1,
 		turnClose:    -1,
@@ -645,8 +692,8 @@ func (idx *recordEntryIndex) add(e *marotte.Entry, i int) {
 		if idx.turnClose < 0 {
 			idx.turnClose = i
 		}
-	case marotte.EntryKindModelRouted:
-		idx.routed = append(idx.routed, i)
+	case marotte.EntryKindModelRouted, marotte.EntryKindModelFallback:
+		idx.notices[e.Kind] = append(idx.notices[e.Kind], i)
 	case marotte.EntryKindSteer, marotte.EntryKindSteerDelivered:
 		idx.messages.add(e, i)
 	case marotte.EntryKindText, marotte.EntryKindThinking:
@@ -786,15 +833,15 @@ func pairEntries(rec, proj []marotte.Entry, idx recordEntryIndex) []entryPairing
 	}
 	// A result pairs through its call, whose twin is always known by then.
 	resultTwin := make(map[string]int, len(proj))
-	routes := 0
+	notices := make(map[marotte.EntryKind]int, 2)
 	for j := range proj {
 		e := &proj[j]
 		switch e.Kind {
-		case marotte.EntryKindModelRouted:
-			if routes < len(idx.routed) {
-				c.claim(j, idx.routed[routes])
+		case marotte.EntryKindModelRouted, marotte.EntryKindModelFallback:
+			if n := notices[e.Kind]; n < len(idx.notices[e.Kind]) {
+				c.claim(j, idx.notices[e.Kind][n])
 			}
-			routes++
+			notices[e.Kind]++
 		case marotte.EntryKindTurnOpen:
 			c.claim(j, idx.turnOpen)
 		case marotte.EntryKindTurnClose:

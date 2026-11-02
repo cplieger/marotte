@@ -80,7 +80,7 @@ func utf16Len(s string) int {
 // neutralizeESC replaces every ESC byte with U+FFFD on the paths that release unparsed bytes (an overlong run, a
 // stream ending mid-sequence), which would otherwise persist a raw ESC. With hidden Unicode sanitized first and
 // every other family consumed by the parser, the output is escape-free by construction (FuzzParse asserts it), so
-// this replaces sanitize.StripANSI. One U+FFFD per ESC keeps UTF-16 length additive.
+// this replaces sanitize.Output's ANSI stripping. One U+FFFD per ESC keeps UTF-16 length additive.
 func neutralizeESC(s string) string {
 	if !strings.ContainsRune(s, 0x1b) {
 		return s

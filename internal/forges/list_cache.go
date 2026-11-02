@@ -1,6 +1,7 @@
 // A read-through cache over the forge listing routes (repositories, pull requests, affordances),
-// first page only. No ticker: a fill happens only because a request asked, and the one goroutine is
-// the revalidation of a stale value already served, bounded by listFillBudget.
+// first page only. No ticker: a fill happens only because a caller asked, and the one goroutine is
+// a fill no caller waits on (a get's revalidation of a stale value it served, or a peek's fill of a
+// missing or stale entry), bounded by listFillBudget.
 
 package forges
 
@@ -19,8 +20,8 @@ import (
 )
 
 // The set changes when someone clones, creates or archives a repository, which is rare against the
-// rate this endpoint is read, and a forge connection change clears the cache outright
-// (Manager.invalidate) rather than waiting for the TTL.
+// rate this endpoint is read, and a sign-in or a sign-out drops the connection's entries outright
+// (listCaches.drop) rather than waiting for the TTL.
 const repoListTTL = 5 * time.Minute
 
 // prListTTL is deliberately much shorter than repoListTTL, and CI is the reason
@@ -44,20 +45,23 @@ const maxListFills = 16
 // may leave while others still wait.
 const listFillBudget = 60 * time.Second
 
-// generation is what a fill started under: epoch moves when the whole cache is
-// cleared, repo when the fill's scope is mutated. Zero is a live generation
-// (ADR-0065), so it is never read as "not recorded".
+// generation is what a fill started under: conn moves when the fill's
+// connection is dropped, repo when the fill's scope is mutated. Zero is a live
+// generation (ADR-0065), so it is never read as "not recorded".
 type generation struct {
-	epoch, repo uint64
+	conn, repo uint64
 }
 
 type listEntry[T any] struct {
 	// at is the zero time until the first successful fill, which is what
 	// separates "nothing to serve" from "something stale to serve".
-	at   time.Time
-	val  T
-	gen  generation
-	busy bool // a revalidation is in flight; do not start a second
+	at time.Time
+	// asked is when peek last started a fill, so a failing one is retried
+	// once a TTL rather than on every peek.
+	asked time.Time
+	val   T
+	gen   generation
+	busy  bool // a revalidation is in flight; do not start a second
 }
 
 // listCache caches one KIND of listing, keyed by whatever identifies a single
@@ -66,30 +70,33 @@ type listEntry[T any] struct {
 // would let a []Repo and a []PR share one map.
 type listCache[T any] struct {
 	entries map[cacheKey]*listEntry[T]
-	// gens is each mutated scope's generation, an absent one reading zero, and
-	// epoch is bumped by clear(). A fill whose generation moved while it ran
-	// still RETURNS its value to the caller who asked for it, but does not store
-	// it: it may have read the forge before the change, and storing it would
-	// strand that change until the TTL.
+	// gens is each mutated scope's generation and conns each dropped
+	// connection's, an absent one reading zero. A fill whose generation moved
+	// while it ran still RETURNS its value to the caller who asked for it, but
+	// does not store it: it may have read the forge before the change, and
+	// storing it would strand that change until the TTL.
 	gens  map[string]uint64
-	sf    singleflight.Group
-	fills *semaphore.Weighted
-	ttl   time.Duration
-	epoch uint64
-	mu    sync.Mutex
+	conns map[string]uint64
+	// stored, when set, is told each key a fill stored, with no lock held.
+	stored func(context.Context, cacheKey)
+	sf     singleflight.Group
+	fills  *semaphore.Weighted
+	ttl    time.Duration
+	mu     sync.Mutex
 }
 
 func newListCache[T any](ttl time.Duration, fills *semaphore.Weighted) *listCache[T] {
 	return &listCache[T]{
 		entries: make(map[cacheKey]*listEntry[T]),
 		gens:    make(map[string]uint64),
+		conns:   make(map[string]uint64),
 		fills:   fills,
 		ttl:     ttl,
 	}
 }
 
-func (c *listCache[T]) genLocked(scope string) generation {
-	return generation{epoch: c.epoch, repo: c.gens[scope]}
+func (c *listCache[T]) genLocked(key cacheKey) generation {
+	return generation{conn: c.conns[key.conn], repo: c.gens[key.scope]}
 }
 
 // get serves key: force fills now and replaces (the UI's refresh), an empty
@@ -120,24 +127,57 @@ func (c *listCache[T]) serve(ctx context.Context, key cacheKey,
 		var zero T
 		return zero, false
 	}
-	if time.Since(e.at) >= c.ttl && !e.busy {
-		e.busy = true
-		go c.revalidate(ctx, key, e.gen, fill)
-	}
+	c.reviveLocked(ctx, key, e, e.at, fill)
 	return e.val, true
 }
 
+// peek answers key's stored value, false when none is, and never waits on the
+// forge: a missing or stale entry is filled behind the caller, detached from
+// ctx's cancellation. A failed fill is retried by the next peek a TTL after the
+// last peek asked for key, or at once if none has (serve stamps no ask).
+func (c *listCache[T]) peek(ctx context.Context, key cacheKey, fill func(context.Context) (T, error)) (T, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	if !ok {
+		e = &listEntry[T]{gen: c.genLocked(key)}
+		c.entries[key] = e
+	}
+	since := e.at
+	if e.asked.After(since) {
+		since = e.asked
+	}
+	if c.reviveLocked(ctx, key, e, since, fill) {
+		e.asked = time.Now()
+	}
+	return e.val, !e.at.IsZero()
+}
+
+// reviveLocked starts e's revalidation when since is a TTL old and none is in
+// flight, reporting whether it did.
+func (c *listCache[T]) reviveLocked(ctx context.Context, key cacheKey, e *listEntry[T], since time.Time,
+	fill func(context.Context) (T, error),
+) bool {
+	if e.busy || time.Since(since) < c.ttl {
+		return false
+	}
+	e.busy = true
+	go c.revalidate(ctx, key, e.gen, fill)
+	return true
+}
+
 // Concurrent callers for one key share a single fetch, as two browser tabs opening one list
-// together do. The generation is part of the shared fetch's key, so a read after a mutation never
-// joins a fetch begun before it.
+// together do. The account and the generation are part of the shared fetch's key, so two accounts
+// never share one and a read after a mutation or a drop never joins a fetch begun before it.
 func (c *listCache[T]) fillNow(ctx context.Context, key cacheKey,
 	fill func(context.Context) (T, error),
 ) (T, error) {
 	c.mu.Lock()
-	gen := c.genLocked(key.scope)
+	gen := c.genLocked(key)
 	c.mu.Unlock()
 
-	flight := keyenc.Join(key.scope, key.page, strconv.FormatUint(gen.epoch, 10), strconv.FormatUint(gen.repo, 10))
+	flight := keyenc.Join(key.conn, key.account, key.scope, key.page,
+		strconv.FormatUint(gen.conn, 10), strconv.FormatUint(gen.repo, 10))
 	ch := c.sf.DoChan(flight, func() (any, error) {
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), listFillBudget)
 		defer cancel()
@@ -149,7 +189,7 @@ func (c *listCache[T]) fillNow(ctx context.Context, key cacheKey,
 		if err != nil {
 			return nil, err
 		}
-		c.store(key, gen, val)
+		c.store(fctx, key, gen, val)
 		return val, nil
 	})
 
@@ -168,9 +208,9 @@ func (c *listCache[T]) fillNow(ctx context.Context, key cacheKey,
 	}
 }
 
-// revalidate refreshes an entry whose stale value was already served, on a detached context bounded
-// by its timeout, since the noticing request's ctx dies with its response. A failure is not
-// reported; the next request retries.
+// revalidate fills key for a caller that did not wait (reviveLocked), on a detached context bounded
+// by listFillBudget, since the caller's ctx may die first. A failure is not reported: the next get
+// retries, and so does the next peek (peek says when).
 func (c *listCache[T]) revalidate(ctx context.Context, key cacheKey, gen generation,
 	fill func(context.Context) (T, error),
 ) {
@@ -186,15 +226,15 @@ func (c *listCache[T]) revalidate(ctx context.Context, key cacheKey, gen generat
 		slog.Debug("forges: listing revalidation failed", "key", key, "error", err)
 		return
 	}
-	c.store(key, gen, val)
+	c.store(bg, key, gen, val)
 }
 
 // store records a successful fill, unless its generation moved while it was in
 // flight (see listCache.gens).
-func (c *listCache[T]) store(key cacheKey, gen generation, val T) {
+func (c *listCache[T]) store(ctx context.Context, key cacheKey, gen generation, val T) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if gen != c.genLocked(key.scope) {
+	if gen != c.genLocked(key) {
+		c.mu.Unlock()
 		return
 	}
 	e, ok := c.entries[key]
@@ -205,6 +245,10 @@ func (c *listCache[T]) store(key cacheKey, gen generation, val T) {
 	e.val = val
 	e.gen = gen
 	e.at = time.Now()
+	c.mu.Unlock()
+	if c.stored != nil {
+		c.stored(ctx, key)
+	}
 }
 
 func (c *listCache[T]) clearBusy(key cacheKey) {
@@ -215,12 +259,13 @@ func (c *listCache[T]) clearBusy(key cacheKey) {
 	}
 }
 
-func (c *listCache[T]) clear() {
+// drop removes every entry of connection id and moves its generation, so a
+// fill in flight for it stores nothing; other connections are untouched.
+func (c *listCache[T]) drop(id string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries = make(map[cacheKey]*listEntry[T])
-	clear(c.gens)
-	c.epoch++
+	c.conns[id]++
+	maps.DeleteFunc(c.entries, func(k cacheKey, _ *listEntry[T]) bool { return k.conn == id })
 }
 
 // evict drops scope's entries and moves its generation, so a fill in flight for
@@ -238,6 +283,7 @@ type listCaches struct {
 	repos       *listCache[RepoList]
 	prs         *listCache[PRList]
 	affordances *listCache[RepoAffordances]
+	caps        *listCache[Capabilities]
 }
 
 func newListCaches() *listCaches {
@@ -246,24 +292,30 @@ func newListCaches() *listCaches {
 		repos:       newListCache[RepoList](repoListTTL, fills),
 		prs:         newListCache[PRList](prListTTL, fills),
 		affordances: newListCache[RepoAffordances](affordancesTTL, fills),
+		caps:        newListCache[Capabilities](affordancesTTL, fills),
 	}
 }
 
-func (c *listCaches) clear() {
-	c.repos.clear()
-	c.prs.clear()
-	c.affordances.clear()
+// drop empties every cache family of connection id, which a sign-in or a
+// sign-out makes the wrong account's.
+func (c *listCaches) drop(id string) {
+	c.repos.drop(id)
+	c.prs.drop(id)
+	c.affordances.drop(id)
+	c.caps.drop(id)
 }
 
-// cacheKey is a first page's key: the scope a mutation evicts, and the page
+// cacheKey is a cached answer's key: the connection a drop removes, the
+// sign-in it was read through, the scope a mutation evicts, and the page
 // within it.
-type cacheKey struct{ scope, page string }
+type cacheKey struct{ conn, account, scope, page string }
 
-// listKey is the key of one connection's first page of list under one state
-// filter, scoped to one canonical repository id (empty for a list no repository
-// addresses). keyenc rather than a separator: the id arrives in a URL.
-func listKey(forgeID, repoID, list, state string) cacheKey {
-	return cacheKey{scope: repoScope(forgeID, repoID), page: keyenc.Join(list, state)}
+// listKey is the key of connection forgeID's first page of list under one
+// state filter as account reads it, scoped to one canonical repository id
+// (empty for a list no repository addresses). keyenc rather than a separator:
+// the id arrives in a URL.
+func listKey(forgeID, account, repoID, list, state string) cacheKey {
+	return cacheKey{conn: forgeID, account: account, scope: repoScope(forgeID, repoID), page: keyenc.Join(list, state)}
 }
 
 func repoScope(forgeID, repoID string) string { return keyenc.Join(forgeID, repoID) }
@@ -291,23 +343,31 @@ func resolveList(opts ...forgeapi.ListOption) (listRequest, error) {
 // Only a first page with no filter reads through the cache: a continuation is keyed by a caller's
 // cursor, so caching it would grow without bound and could answer for the first page, and a named
 // state must reach the library that refuses it.
-func (m *Manager) repoPage(ctx context.Context, fc forgeClient, req *listRequest, force bool) (RepoList, error) {
-	fill := func(ctx context.Context) (RepoList, error) {
-		page, err := fc.core.ListRepos(ctx, req.opts...)
-		if err != nil {
-			return RepoList{}, err
-		}
-		return repoListWire(&page), nil
-	}
+func (m *Manager) repoPage(ctx context.Context, h *readHandle, req *listRequest, force bool) (RepoList, error) {
+	fill := repoFill(h, req.opts)
 	if req.set.After != "" || req.set.StateSet {
 		return fill(ctx)
 	}
-	return m.lists.repos.get(ctx, listKey(fc.id, "", "repos", ""), force, fill)
+	return m.lists.repos.get(ctx, firstRepoPage(h), force, fill)
 }
 
-func (m *Manager) prPage(ctx context.Context, fc forgeClient, ref forgeapi.RepoRef, req *listRequest, force bool) (PRList, error) {
+func repoFill(h *readHandle, opts []forgeapi.ListOption) func(context.Context) (RepoList, error) {
+	return func(ctx context.Context) (RepoList, error) {
+		page, err := h.core.ListRepos(ctx, opts...)
+		if err != nil {
+			return RepoList{}, err
+		}
+		list := repoListWire(&page)
+		list.Account = h.account
+		return list, nil
+	}
+}
+
+func firstRepoPage(h *readHandle) cacheKey { return listKey(h.id, h.account, "", "repos", "") }
+
+func (m *Manager) prPage(ctx context.Context, h *readHandle, ref forgeapi.RepoRef, req *listRequest, force bool) (PRList, error) {
 	fill := func(ctx context.Context) (PRList, error) {
-		page, err := fc.core.ListPRs(ctx, ref, req.opts...)
+		page, err := h.core.ListPRs(ctx, ref, req.opts...)
 		if err != nil {
 			return PRList{}, err
 		}
@@ -316,16 +376,18 @@ func (m *Manager) prPage(ctx context.Context, fc forgeClient, ref forgeapi.RepoR
 	if req.set.After != "" {
 		return fill(ctx)
 	}
-	return m.lists.prs.get(ctx, listKey(fc.id, ref.ID, "prs", req.set.State.String()), force, fill)
+	return m.lists.prs.get(ctx, listKey(h.id, h.account, ref.ID, "prs", req.set.State.String()), force, fill)
 }
 
-func (m *Manager) repoAffordances(ctx context.Context, fc forgeClient, ref forgeapi.RepoRef, force bool) (RepoAffordances, error) {
-	key := cacheKey{scope: repoScope(fc.id, ref.ID), page: "affordances"}
+func (m *Manager) repoAffordances(ctx context.Context, h *readHandle, ref forgeapi.RepoRef, force bool) (RepoAffordances, error) {
+	key := cacheKey{conn: h.id, account: h.account, scope: repoScope(h.id, ref.ID), page: "affordances"}
 	return m.lists.affordances.get(ctx, key, force, func(ctx context.Context) (RepoAffordances, error) {
-		aff, err := fc.core.RepoAffordances(ctx, ref)
+		aff, err := h.core.RepoAffordances(ctx, ref)
 		if err != nil {
 			return RepoAffordances{}, err
 		}
-		return affordancesOf(&aff), nil
+		got := affordancesOf(&aff)
+		got.Account = h.account
+		return got, nil
 	})
 }

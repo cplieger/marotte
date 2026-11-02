@@ -68,6 +68,7 @@ type Event =
   | { racedRead: RunState; during: Frame[]; reread: RunState };
 
 let page: ReturnType<typeof buildExecPage>;
+let dock: HTMLElement;
 let selected: ExecNode | undefined;
 
 async function answerReads(): Promise<void> {
@@ -100,15 +101,13 @@ async function play(events: readonly Event[]): Promise<void> {
     } else if ("frame" in e) {
       land(e.frame);
     } else {
-      page.root
-        .querySelector<HTMLElement>(`.ev-row[data-path="${e.pick}"] > .ev-row-main`)
-        ?.click();
+      dock.querySelector<HTMLElement>(`.ev-row[data-path="${e.pick}"] > .ev-row-main`)?.click();
       expect(selected?.path, "the pick took").toBe(e.pick);
       continue;
     }
     const state = store.peekRunState("wf");
     if (state !== undefined) {
-      page.render(runToExec("wf", state, undefined, NO_ASKS));
+      page.render(runToExec(state, undefined, NO_ASKS));
     }
   }
 }
@@ -118,19 +117,22 @@ beforeEach(() => {
   resolvers = [];
   selected = undefined;
   store.forgetRun("wf");
+  dock = document.createElement("div");
   page = buildExecPage({
     emptyNote: () => "",
+    dock,
     onSelect: (n) => {
       selected = n;
     },
     follow: "newest",
   });
-  document.body.append(page.root);
+  document.body.append(page.root, dock);
 });
 
 afterEach(() => {
   page.dispose();
   page.root.remove();
+  dock.remove();
 });
 
 describe("one start counts once, and a new one counts however it was learned", () => {

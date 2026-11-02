@@ -103,11 +103,9 @@ const TITLE_PROFILES: Readonly<Record<string, ToolProfile>> = {
   webFetch: { kind: "fetch", writesFile: false },
   remote_web_search: { kind: "fetch", writesFile: false },
 
-  // Deferred MCP tool discovery (tool_search is the older mode).
+  // Deferred MCP tool discovery.
   tool_load: { kind: "search", writesFile: false },
   "Tool Load": { kind: "search", writesFile: false },
-  tool_search: { kind: "search", writesFile: false },
-  "Tool Search": { kind: "search", writesFile: false },
 };
 
 /** Fallback profile keyed on the ACP kind, for titles the client does not know. */
@@ -334,8 +332,8 @@ export function disclosedClaim(d: ToolDisclosed): string {
 }
 
 /** The tool call that OPENS a subagent, matched by title: nested calls share its
- *  `agent_subtask_id` but never these titles. `Orchestrate Sub-agent` is the PIPELINE
- *  driver's and stays out. Here, not roles.ts, so the store does not import icons.ts. */
+ *  `agent_subtask_id` but never these titles. Here, not roles.ts, so the store does not
+ *  import icons.ts. */
 export function isSubagentInvocation(tc: { readonly title: string }): boolean {
   const t = tc.title;
   return (

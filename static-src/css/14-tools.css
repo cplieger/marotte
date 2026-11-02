@@ -86,8 +86,10 @@
 }
 
 /* Uncapped and unindented — see .tool-call. The GROUP is the box (border, fill, radius);
- * its members are separator-ruled rows inside it. */
-.tool-group {
+ * its members are separator-ruled rows inside it. A run of workflow updates
+ * (`.steer-group`, workflow-delivery.ts) is the same box. */
+.tool-group,
+.steer-group {
   display: flex;
   flex-direction: column;
   background: var(--c-bg-secondary);
@@ -98,7 +100,8 @@
 
 /* Cards live in the body region (a uip-disclosure-region: the primitive
  * animates its height and marks it aria-hidden + inert when collapsed). */
-.tool-group-body {
+.tool-group-body,
+.steer-group-body {
   display: flex;
   flex-direction: column;
 }
@@ -123,7 +126,8 @@
   padding-block: var(--sp-1);
 }
 
-.tool-group-header {
+.tool-group-header,
+.steer-group-header {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
@@ -169,7 +173,8 @@
    (01-tokens.css). Gated on `any-hover`, so a tap does not latch `:hover`; touch takes
    the press from 03-base.css. The ink lift is this header's own. */
 @media (any-hover: hover) {
-  .tool-group-header:hover {
+  .tool-group-header:hover,
+  .steer-group-header:hover {
     color: var(--c-text-primary);
     background: var(--c-hover);
   }
@@ -177,24 +182,28 @@
 
 /* Open: the chevron turns down. Keyed on `aria-expanded`, the one flag both collapse
    classes keep true-or-false. */
-.tool-group-header[aria-expanded="true"] > .disclosure-chevron {
+.tool-group-header[aria-expanded="true"] > .disclosure-chevron,
+.steer-group-header[aria-expanded="true"] > .disclosure-chevron {
   --chev-turn: 0deg;
 }
 
 /* OPTICAL ALIGNMENT TO THE FIRST LINE: the margin centres each glyph within the label's
    first line. A margin, not a `min-block-size`, because growing the declared verdict
    slot would move the mark inside it (`tool-group-mark-css.test.ts`). */
-.tool-group-header > .disclosure-chevron {
+.tool-group-header > .disclosure-chevron,
+.steer-group-header > .disclosure-chevron {
   color: var(--c-text-tertiary);
   margin-block-start: calc((var(--row-first-line) - var(--chev-size)) / 2);
 }
 
-.tool-group-header > .tool-group-icon {
+.tool-group-header > .tool-group-icon,
+.steer-group-header > .steer-group-icon {
   margin-block-start: calc((var(--row-first-line) - var(--icon-ui)) / 2);
 }
 
 /* Both edges, so a one-line row keeps its height and a wrapped one stays balanced. */
-.tool-group-header > .tool-group-count {
+.tool-group-header > .tool-group-count,
+.steer-group-header > .steer-group-count {
   padding-block: calc((var(--row-first-line) - 1lh) / 2);
 }
 
@@ -604,10 +613,9 @@
   color: var(--c-accent);
 }
 
-/* The delegated-work boxes: a subagent's CARD and a pipeline's CONTAINER. Uncapped and
- * unindented — see .tool-call. The CARD has no body: an identity row that opens the
- * delegate's own page, a rolling tail while it works, and a foot with the ledger. The
- * CONTAINER's body holds its stages' cards and folds like a tool group. */
+/* The delegated-work box: a subagent's CARD. Uncapped and unindented — see .tool-call. It
+ * has no body: an identity row that opens the delegate's own page, a rolling tail while it
+ * works, and a foot with the ledger. */
 .subagent-block {
   background: var(--c-bg-secondary);
   border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
@@ -616,8 +624,8 @@
   overflow: hidden;
   flex-shrink: 0;
 
-  /* Containment: see `.tool-call`. The reserve is the RESTING shape both kinds share,
-     identity row plus foot row, as a CONTENT height (the border adds on top). Both tier
+  /* Containment: see `.tool-call`. The reserve is the RESTING shape, identity row plus
+     foot row, as a CONTENT height (the border adds on top). Both tier
      terms move with the pointer: `--btn-h` and `.turn-footer`'s band (29-turns.css); the
      1px is `.subagent-foot`'s border. It is the LARGER of the settled and running heights
      (`subagent-card-metrics.test.ts`): only settled cards persist into the history this
@@ -640,10 +648,8 @@
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
-/* A header is a control as a CONTAINER's disclosure or a LEAF's anchor; a leaf with no
-   opener (a detached render) stays inert. A container with an empty body keeps its
-   header, which makes a failed dispatch visible, but advertises no withdrawn control. */
-.subagent-container.has-disclosure > .subagent-header,
+/* A header is a control as the card's anchor; a card with no opener (a detached render)
+   stays inert. */
 a.subagent-header {
   cursor: pointer;
   -webkit-user-select: none;
@@ -653,7 +659,6 @@ a.subagent-header {
 /* The shared box-header recipe. `a.subagent-header` is a LINK, so 03-base.css's
    universal press does not reach it — hence the `:active` below. */
 @media (any-hover: hover) {
-  .subagent-container.has-disclosure > .subagent-header:hover,
   a.subagent-header:hover {
     background: var(--c-hover);
   }
@@ -711,8 +716,8 @@ a.subagent-header {
   white-space: nowrap;
 }
 
-/* An inline helper's model and effort. `:empty` takes it out of the flex line, or
-   the header's gap would still be charged for a saved agent's card. */
+/* The requested model category. `:empty` takes it out of the flex line, or the header's
+   gap would still be charged for a card with none. */
 .subagent-detail {
   flex-shrink: 0;
   color: var(--c-text-secondary);
@@ -724,10 +729,8 @@ a.subagent-header {
   }
 }
 
-/* A header's chevron: `.subagent-toggle` is a PIPELINE's leading disclosure glyph, and
-   `.subagent-head-chevron` a leaf's trailing NAVIGATION glyph, which declares no
-   `--chev-turn`, so it never turns. */
-.subagent-toggle,
+/* The header's trailing NAVIGATION glyph, which declares no `--chev-turn`, so it never
+   turns. */
 .subagent-head-chevron {
   flex-shrink: 0;
   display: grid;
@@ -737,79 +740,6 @@ a.subagent-header {
   color: var(--c-text-control);
   cursor: pointer;
   padding: 0 var(--sp-1);
-}
-
-/* Open: the chevron turns down, keyed on the root's `.collapsed` class. Scoped to the
-   CONTAINER, or a leaf's navigation glyph would rotate. */
-.subagent-container:not(.collapsed) .subagent-toggle > .disclosure-chevron {
-  --chev-turn: 0deg;
-}
-
-/* A PIPELINE's stage cards; no other box has one. Collapses to zero height
- * (interpolate-size: allow-keywords on :root animates height auto ↔ 0). */
-.subagent-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3) var(--sp-3);
-  border-block-start: 1px solid var(--c-border);
-  overflow: hidden;
-  transition:
-    height var(--dur-standard) var(--ease-standard),
-    content-visibility var(--dur-standard) allow-discrete;
-}
-
-/* LAZY RENDERING OF A CLOSED CONTAINER.
- *
- * `height: 0` + `overflow: hidden` clips PAINT but keeps every descendant in
- * flow, so a transcript holding twenty collapsed pipelines still laid out every
- * stage card inside all twenty on every reflow — and a reflow happens on each
- * streamed delta, because the live text above them grows. `content-visibility:
- * hidden` takes the subtree out of layout as well.
- *
- * The win survives the newest-element rule that decides WHICH pipeline is open: at
- * most one per lane is expanded at a time (the rest have something posted after
- * them), so a transcript still lays out at most one stage set however many
- * pipelines it holds.
- *
- * THREE CHOICES HERE ARE NOT INTERCHANGEABLE.
- *
- * 1. `hidden`, not `auto`. `auto` is keyed on viewport relevancy, which buys two
- *    problems this does not have. It would hide OFF-SCREEN content from the
- *    find-in-chat walker even while the card is OPEN — the walker prunes at any
- *    element whose `checkVisibility({contentVisibilityAuto:true})` is false — and
- *    it would make the scroller's own `scrollHeight` change as the reader
- *    scrolls. `hidden` applies
- *    only in the closed state, which is exactly the state whose content is
- *    already excluded from search by the `aria-hidden` the disclosure sets.
- *
- * 2. Keyed on the root's `.collapsed`, NOT on `[aria-hidden="true"]` on this
- *    element. Both mark the same state, but not at the same MOMENT.
- *    `createDisclosure`'s `set` runs `reflectAria()` (which writes aria-hidden)
- *    and only then `applyHeight()`, which starts a collapse by reading
- *    `region.scrollHeight` for a concrete start height. An aria-keyed rule is
- *    therefore already in effect when that read happens, making it 0, and the
- *    collapse would snap instead of animating. `.collapsed` is written by the
- *    `onToggle` callback, which runs after `applyHeight`.
- *
- * 3. No `contain-intrinsic-size`. A skipped subtree takes its size from that
- *    property, and for these bodies the height is already pinned to 0 by the
- *    controller's inline style — so there is nothing to estimate, and none of the
- *    guesswork `auto` on an unbounded container would need.
- *
- * `allow-discrete` is what keeps the animation honest in both directions:
- * `content-visibility` is a discrete property, so the flip TO hidden lands at the
- * END of the height transition (the content animates away and is only then
- * dropped) and the flip back to visible lands at its START. */
-.subagent-block.collapsed > .subagent-body {
-  content-visibility: hidden;
-}
-
-/* Collapsed chrome (the height itself is the disclosure controller's inline
- * style; aria-hidden is the attribute it sets on the collapsed region). */
-.subagent-body[aria-hidden="true"] {
-  padding-block: 0;
-  border-block-start: none;
 }
 
 /* The tail: rolling activity while the delegate RUNS (`subagent-tail.ts`), removed on
@@ -846,30 +776,6 @@ a.subagent-header {
     block-size var(--dur-enter) var(--ease-enter),
     padding-block var(--dur-enter) var(--ease-enter),
     opacity var(--dur-enter) var(--ease-enter);
-}
-
-/* THE PIPELINE CONTAINER (subagent-block.ts `buildSubagentContainer`). Its busy dots
-   show ONLY while collapsed: open, each stage carries its own ring. `.activity-dots`
-   sets `inline-flex`, so the default is turned off explicitly. */
-.subagent-block .subagent-busy {
-  display: none;
-
-  /* Accent, matching the rings these dots stand in for: on a collapsed pipeline they are
-     the only running signal, and a tertiary grey on the accent-tinted fill reads as an
-     artifact. */
-  color: var(--c-accent);
-}
-
-.subagent-block.collapsed.running .subagent-busy {
-  display: inline-flex;
-}
-
-/* A stage sits one level in, so it drops to a plain border and the body's fill: one
-   rail with a quieter box inside reads as containment, two rails as overlapping peers. */
-.subagent-container > .subagent-body > .subagent-block {
-  border-inline-start-width: 1px;
-  border-color: var(--c-border);
-  background: transparent;
 }
 
 /* The tail's last `TAIL_LINES` (3, subagent-tail.ts) VISUAL lines: the lines wrap,
@@ -1721,8 +1627,7 @@ a.subagent-header {
 }
 
 /* Agent question (kiro-cli _kiro/userInput), a .dock-card. ONLY THE OPTION CARDS are
-   here; the card's own regions are the dock's, shared with the run-input card
-   (26-dock.css). */
+   here; the card's own regions are the dock's (26-dock.css). */
 
 .user-input-options {
   display: flex;
@@ -1811,6 +1716,17 @@ a.subagent-header {
 
 .user-input-sub-option .user-input-option-desc {
   grid-column: 2;
+}
+
+/* AN OPTION'S TEXT BREAKS ANYWHERE: the server passes one unbroken token of up to 512 bytes
+   (`internal/translate/display_text.go`), and the options region hides inline overflow. */
+:is(
+  .user-input-option-title,
+  .user-input-option-desc,
+  .user-input-option-more,
+  .user-input-sub-label
+) {
+  overflow-wrap: anywhere;
 }
 
 /* The question head, the answer box and the button row are the SHARED ask card's

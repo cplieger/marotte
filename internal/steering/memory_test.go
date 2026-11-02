@@ -97,6 +97,12 @@ func TestWriteMemory_NamesEachRepoTagUnlessOff(t *testing.T) {
 	cfg := t.TempDir()
 	var b strings.Builder
 	writeMemory(t.Context(), &b, workDir, cfg)
+	if b.Len() != 0 {
+		t.Errorf("Memory at its default, Off, wrote a section:\n%s", b.String())
+	}
+	mustWrite(t, filepath.Join(cfg, "config.json"), `{"memory_mode":"learn"}`)
+	b.Reset()
+	writeMemory(t.Context(), &b, workDir, cfg)
 	out := b.String()
 	for _, want := range []string{
 		"## Memory",
@@ -122,8 +128,10 @@ func TestWriteMemory_NamesEachRepoTagUnlessOff(t *testing.T) {
 func TestRender_IncludesTheMemorySection(t *testing.T) {
 	workDir := t.TempDir()
 	writeRepo(t, workDir, "marotte", "git@github.com:cplieger/marotte.git", false)
-	out := string(New(workDir, t.TempDir()).render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false))
+	cfg := t.TempDir()
+	mustWrite(t, filepath.Join(cfg, "config.json"), `{"memory_mode":"read_only"}`)
+	out := string(New(workDir, cfg).render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false))
 	if !strings.Contains(out, "## Memory\n") || !strings.Contains(out, "`repo:github/cplieger/marotte`") {
-		t.Errorf("environment.md lacks the Memory section under the default mode")
+		t.Errorf("environment.md lacks the Memory section with memory read only")
 	}
 }

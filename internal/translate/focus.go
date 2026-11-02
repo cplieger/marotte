@@ -1,8 +1,9 @@
 package translate
 
-// v3 focus updates (session_info_update, kind "focus_update"). THREE writers share the
-// channel with no field naming the speaker (the agent's tool, KAS's first-prompt derivation,
-// KAS's LLM title), so the filters go on shape, BEFORE the write: adoption is a one-way latch.
+// v3 focus updates (session_info_update, kind "focus_update"). Four writers share the
+// channel. Three name no speaker (the agent's tool, KAS's first-prompt derivation, KAS's LLM
+// title), so the title filters go on shape, BEFORE the write: adoption is a one-way latch.
+// The fourth, the engine's activity tracker, carries `activity`.
 
 import (
 	"context"
@@ -24,10 +25,20 @@ type focusUpdate struct {
 	Status      string `json:"status"`
 }
 
-// handleFocusUpdate adopts the title onto the chat record unless a rule refuses it, and
-// broadcasts status/description as an ephemeral chat_status. Parent-only. The door rule runs
-// here; the derivation filter needs the chat's prompts and runs in applyFocusTitle.
-func (t *Translator) handleFocusUpdate(ctx context.Context, chatID marotte.ChatID, f *focusUpdate) {
+// focusActivity is the engine's activity snapshot. With TurnActive its status describes the
+// live turn, an outstanding ask included, never a declaration that outlives the turn.
+type focusActivity struct {
+	TurnActive bool `json:"turnActive"`
+}
+
+// handleFocusUpdate hands the engine's activity to the turn lifecycle, adopts the title onto the
+// chat record unless a rule refuses it, and broadcasts status/description as an ephemeral
+// chat_status. Parent-only. The door rule runs here; the derivation filter needs the chat's
+// prompts and runs in applyFocusTitle.
+func (t *Translator) handleFocusUpdate(ctx context.Context, chatID marotte.ChatID, f *focusUpdate, activity *focusActivity) {
+	if activity != nil {
+		t.bracket.WireTurnActivity(chatID, activity.TurnActive)
+	}
 	if title := SanitizeTitle(f.Title); title != "" {
 		t.adoptOrRefuseTitle(ctx, chatID, title)
 	}
@@ -41,6 +52,7 @@ func (t *Translator) handleFocusUpdate(ctx context.Context, chatID marotte.ChatI
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventChatStatus, chatID, marotte.ChatStatusPayload{
 		Status:      status,
 		Description: desc,
+		TurnScoped:  activity != nil && activity.TurnActive,
 	}))
 }
 

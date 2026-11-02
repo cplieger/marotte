@@ -16,6 +16,7 @@ let responses: (
       root?: unknown;
       runLabel?: string;
       workflowName?: string;
+      pausePending?: RunState["pausePending"];
       /** The reply's top-level `step_ends`, moved off the state when the mock answers. */
       stepEnds?: Record<string, { outcome: string; failure_reason?: string }>;
       /** The reply's top-level `step_starts`, likewise. */
@@ -196,6 +197,42 @@ describe("the reply's step ends travel beside the state", () => {
     store.invalidateRun("r1");
     await settle();
     expect(store.runStepEnds("r1").size).toBe(0);
+  });
+});
+
+describe("the reply's read position travels beside the state", () => {
+  it.each([
+    ["a non-negative integer", 4, 4],
+    ["a negative number", -1, 0],
+    ["a fraction", 1.5, 0],
+    ["a string", "4", 0],
+    ["nothing", undefined, 0],
+  ])("reads %s as %s", async (_label, raw, want) => {
+    responses = [{ workflowId: "rp", status: "failed" }];
+    replyExtra = raw === undefined ? {} : { read_position: raw };
+    store.invalidateRun("rp");
+    await settle();
+    expect(store.peekRunState("rp")?.readPosition).toBe(want);
+    store.forgetRun("rp");
+  });
+
+  // Only a read names a run's position: a retry's frames arrive before the run settles again.
+  it("is left alone by a run_progress frame", async () => {
+    responses = [
+      {
+        workflowId: "rp",
+        status: "failed",
+        root: { nodeId: "rp", type: "sequence", status: "failed", children: [step("build")] },
+      },
+    ];
+    replyExtra = { read_position: 3 };
+    store.invalidateRun("rp");
+    await settle();
+    expect(
+      store.applyRunProgress({ workflow_id: "rp", node_path: ["rp", "build"], status: "running" }),
+    ).toBe(true);
+    expect(store.peekRunState("rp")?.readPosition).toBe(3);
+    store.forgetRun("rp");
   });
 });
 
@@ -520,47 +557,6 @@ describe("one cause costs one request per run", () => {
   });
 });
 
-// KAS describes one node two ways: a repeat's iteration container is `<repeatId>#<n>` in the state
-// tree these fixtures reproduce and `iter-<n>` in the `nodePath` it stamps on a step FRAME.
-describe("nodePathSegment spells a node the way a step frame addresses it", () => {
-  const loop: RunNode = { nodeId: "loop", type: "repeat", status: "running" };
-
-  it("names a repeat's pass by its iteration, so two passes of one id differ", () => {
-    const first: RunNode = {
-      nodeId: "loop#0",
-      type: "sequence",
-      status: "completed",
-      iteration: 0,
-    };
-    const second: RunNode = { ...first, nodeId: "loop#1", iteration: 1 };
-    expect(store.nodePathSegment(first, loop)).toBe("iter-0");
-    expect(store.nodePathSegment(second, loop)).toBe("iter-1");
-  });
-
-  it("falls back to a repeat child's own id when it carries no iteration", () => {
-    // Every iteration container on real runs carries an `iteration`, so this is the unobserved
-    // branch: it must degrade to a row in the wrong place rather than to `iter-undefined`, which is
-    // the same call the server's own runNodePath makes for a frame with no path.
-    expect(store.nodePathSegment(step("loop#0"), loop)).toBe("loop#0");
-  });
-
-  it("leaves a parallel BRANCH spelled as its own id", () => {
-    // Real data: a parallel's branches are named `plan-a`…`plan-d` on both sides and match
-    // byte-for-byte today. The rule is a repeat's, not every container's.
-    const fan: RunNode = { nodeId: "investigate", type: "parallel", status: "running" };
-    expect(store.nodePathSegment(step("plan-a", { branchId: "plan-a" }), fan)).toBe("plan-a");
-  });
-
-  it("rewrites a step sitting DIRECTLY under a repeat", () => {
-    // The rule keys on the PARENT's type, not on the node being a container.
-    expect(store.nodePathSegment(step("work", { iteration: 2 }), loop)).toBe("iter-2");
-  });
-
-  it("uses the bare id at the root", () => {
-    expect(store.nodePathSegment(step("wf"), undefined)).toBe("wf");
-  });
-});
-
 describe("nodesOfType", () => {
   it("finds a type at any depth, every pass included, in plan order", () => {
     const root: RunNode = {
@@ -601,74 +597,6 @@ describe("runIsLive counts a pause as live", () => {
     expect(store.runIsLive({ workflowId: "r1", status: "unknown" })).toBe(true);
     expect(store.runIsLive({ workflowId: "r1" })).toBe(false);
     expect(store.runIsLive(undefined)).toBe(false);
-  });
-});
-
-// isNeedInputPause is tested in `run-store-pause.node.test.ts`, NOT here.
-describe("isNeedInputPark answers over the reason AND the node tree", () => {
-  // The plain-step park: KAS writes the matching sentence on the run itself.
-  const byReason: RunState = {
-    workflowId: "r1",
-    status: "paused",
-    pauseReason: "Step requested user input via send_message.",
-    root: { nodeId: "root", type: "sequence", status: "paused" },
-  };
-
-  // The parallel-branch park, verbatim from KAS's executeParallel: the branch runs against a
-  // shallow COPY of the run state, so its own sentence is written to a throwaway object and the run
-  // keeps only this wrapper.
-  const branch = (signal?: RunNode["completionSignal"]): RunState => ({
-    workflowId: "r2",
-    status: "paused",
-    pauseReason: "Parallel 'phase1' is waiting on branch 'verify'.",
-    root: {
-      nodeId: "root",
-      type: "sequence",
-      status: "paused",
-      children: [
-        {
-          nodeId: "phase1",
-          type: "parallel",
-          status: "paused",
-          children: [
-            {
-              nodeId: "verify",
-              type: "step",
-              status: "paused",
-              ...(signal === undefined ? {} : { completionSignal: signal }),
-            },
-          ],
-        },
-      ],
-    },
-  });
-
-  it("recognises a plain step's park from the reason", () => {
-    expect(store.isNeedInputPark(byReason)).toBe(true);
-  });
-
-  // The arm the dot exists for and the reason could never reach: without it a branch parked on a
-  // person paints the ordinary blue waiting dot, so the one pause a reader has to act on is
-  // indistinguishable from a network blip.
-  it("recognises a park inside a parallel branch from the node's own signal", () => {
-    expect(store.isNeedInputPark(branch("need_input"))).toBe(true);
-  });
-
-  // The negative that keeps the arm honest.
-  it("does not fire on a branch parked for any other cause", () => {
-    expect(store.isNeedInputPark(branch(undefined))).toBe(false);
-    expect(store.isNeedInputPark(branch("error"))).toBe(false);
-  });
-
-  // Gated on `paused`, like the dot vocabulary's own arm: a signal outliving its pause must never
-  // paint a finished run as awaiting input.
-  it("withholds it for a run that is no longer paused", () => {
-    expect(store.isNeedInputPark({ ...branch("need_input"), status: "completed" })).toBe(false);
-    expect(store.isNeedInputPark({ ...byReason, status: "running" })).toBe(false);
-  });
-
-  it("answers false for a run this client has not fetched", () => {
-    expect(store.isNeedInputPark(undefined)).toBe(false);
   });
 });
 
@@ -1311,8 +1239,8 @@ describe("applyRunProgress refuses what it cannot express, so the caller refetch
   });
 });
 
-// The affordance is a SECOND cell on its own clock: the state is re-read on every gap and shape
-// change, while what a run offers turns over only when it reaches a terminal status.
+// The affordance is a SECOND cell, re-read behind every state read but the tab open's own: the
+// verbs rest on facts the state does not carry (hosting, a pending pause).
 describe("the affordance cell coalesces like the state cell, trailing fetch included", () => {
   const live: RunControlsResponse = {
     verbs: ["pause", "cancel"],
@@ -1331,7 +1259,7 @@ describe("the affordance cell coalesces like the state cell, trailing fetch incl
   it("re-asks for a run that ended while the tab-open read was still open", async () => {
     controlsReplies = [live, ended];
     store.invalidateRunControls("r1"); // the tab opening
-    store.invalidateRunControls("r1"); // run_finished, inside that read's window
+    store.invalidateRunControls("r1"); // a status move, inside that read's window
     expect(controlsFetches()).toHaveLength(1);
 
     await settle();
@@ -1376,6 +1304,109 @@ describe("the affordance cell coalesces like the state cell, trailing fetch incl
 
   it("ignores an empty id rather than fetching /api/runs//controls", () => {
     store.invalidateRunControls("");
+    expect(controlsFetches()).toEqual([]);
+  });
+
+  // A resume's `run_start` re-reads the state only; the row a reader is watching has to turn
+  // Resume into Pause off that read, on every surface drawing the run's controls.
+  it("re-reads the verbs when a fetched state moves the run's status", async () => {
+    const paused: RunControlsResponse = {
+      verbs: ["resume", "cancel"],
+      refused: {},
+      parent_chat_id: "",
+    };
+    await seedRun("r1", { workflowId: "r1", status: "paused" });
+    controlsReplies = [paused, live];
+    store.invalidateRunControls("r1");
+    await settle();
+    await settle();
+    expect(store.runControls("r1")?.verbs).toEqual(["resume", "cancel"]);
+
+    responses = [{ workflowId: "r1", status: "running" }];
+    store.invalidateRun("r1");
+    await settle();
+    await settle();
+    await settle();
+    expect(controlsFetches()).toHaveLength(2);
+    expect(store.runControls("r1")?.verbs).toEqual(["pause", "cancel"]);
+  });
+
+  // A landed Pause leaves the run `running` with only `pausePending` set, and the Pause it
+  // withholds must not stay pressable on any surface.
+  it("re-reads the verbs after a state read whose status did not move", async () => {
+    const pending: RunControlsResponse = {
+      verbs: ["cancel"],
+      refused: { pause: "A pause is already requested." },
+      parent_chat_id: "",
+    };
+    await seedRun("r1", { workflowId: "r1", status: "running" });
+    controlsReplies = [live, pending];
+    store.invalidateRunControls("r1");
+    await settle();
+    await settle();
+
+    responses = [{ workflowId: "r1", status: "running", pausePending: { initiator: "user" } }];
+    store.invalidateRun("r1");
+    await settle();
+    await settle();
+    await settle();
+    expect(controlsFetches()).toHaveLength(2);
+    expect(store.runControls("r1")?.verbs).toEqual(["cancel"]);
+  });
+
+  // A finished run whose state read failed must not keep Pause and Cancel.
+  it("re-reads the verbs after a failed state read", async () => {
+    await seedRun("r1", { workflowId: "r1", status: "running" });
+    controlsReplies = [live, ended];
+    store.invalidateRunControls("r1");
+    await settle();
+    await settle();
+
+    store.invalidateRun("r1"); // no response queued, so the read fails
+    await settle();
+    await settle();
+    await settle();
+    expect(controlsFetches()).toHaveLength(2);
+    expect(store.runControls("r1")?.verbs).toEqual(["retry"]);
+  });
+
+  it("leaves the tab open's first state read to the controls read the open issued", async () => {
+    responses = [{ workflowId: "r1", status: "running" }];
+    controlsReplies = [live];
+    store.invalidateRunControls("r1");
+    store.invalidateRun("r1");
+    await settle();
+    await settle();
+    await settle();
+    expect(controlsFetches()).toHaveLength(1);
+  });
+
+  it("re-reads the verbs once for a burst of state reads", async () => {
+    await seedRun("r1", { workflowId: "r1", status: "running" });
+    controlsReplies = [live, live];
+    store.invalidateRunControls("r1");
+    await settle();
+    await settle();
+
+    responses = [
+      { workflowId: "r1", status: "running" },
+      { workflowId: "r1", status: "running" },
+    ];
+    store.invalidateRun("r1");
+    store.invalidateRun("r1"); // inside the first read's window: one trailing read
+    for (let i = 0; i < 5; i++) {
+      await settle();
+    }
+    expect(fetches.filter((p) => !p.endsWith("/controls"))).toHaveLength(2);
+    expect(controlsFetches()).toHaveLength(2);
+  });
+
+  it("asks nothing for a run whose controls nobody has read", async () => {
+    await seedRun("r1", { workflowId: "r1", status: "paused" });
+    responses = [{ workflowId: "r1", status: "running" }];
+    store.invalidateRun("r1");
+    await settle();
+    await settle();
     expect(controlsFetches()).toEqual([]);
   });
 });
@@ -1697,5 +1728,24 @@ describe("the run read's plan revision", () => {
     replyExtra = { plan_update: { outcome: 7 } };
     await seedRun("r-plan", { workflowId: "r-plan", status: "running" });
     expect(store.peekRunState("r-plan")?.planUpdate).toBeUndefined();
+  });
+});
+
+describe("a run's log orders its turns by the run's own ordinal", () => {
+  const opened = (turn: string, n: number) => ({
+    id: `${turn}-0`,
+    turn,
+    lane: "",
+    kind: "turn_open" as const,
+    payload: { source: "workflow_step", node_path: "r-order:coder", n },
+    seq: 0,
+    ts: 0,
+  });
+
+  it("seats a turn a step read adopts late before the newer one the stream opened", () => {
+    store.openRunTurn("r-order", opened("t-second", 2));
+    store.openRunTurn("r-order", opened("t-first", 1));
+    store.openRunTurn("r-order", opened("t-third", 3));
+    expect(store.runTurns("r-order").map(([id]) => id)).toEqual(["t-first", "t-second", "t-third"]);
   });
 });

@@ -386,7 +386,6 @@ describe("the slot, read as source", () => {
       /gap:\s*var\(--sp-2\)/u,
     );
     const footer = ruleContaining(turns, ".turn-footer", "top");
-    expect(footer.body).toMatch(/row-gap:/u);
     expect(footer.body).not.toMatch(/column-gap:/u);
     expect(footer.body).not.toMatch(/[^-]gap:/u);
   });

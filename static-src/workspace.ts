@@ -5,6 +5,8 @@
 /** Absolute workspace root, or "" until the handshake arrives. */
 let root = "";
 
+let additional: readonly string[] = [];
+
 /** The container's default work dir (`KIRO_WORK_DIR` unset). */
 const DEFAULT_ROOT = "/workspace";
 
@@ -35,6 +37,26 @@ export function setWorkspaceRoot(abs: string): void {
   for (const fn of [...listeners]) {
     fn();
   }
+  redecideFollowed();
+}
+
+/** Record the additional directories from the settings payload; a change re-decides every followed surface, as
+ *  a root change does, since each one is a file-browser mount. */
+export function setAdditionalDirectories(dirs: readonly string[]): void {
+  const next = dirs.map(cleanRoot).filter((d) => d !== "" && d !== "/");
+  if (next.length === additional.length && next.every((d, i) => d === additional[i])) {
+    return;
+  }
+  additional = next;
+  redecideFollowed();
+}
+
+/** The additional directories agents may reach, each clean and absolute. */
+export function additionalDirectories(): readonly string[] {
+  return additional;
+}
+
+function redecideFollowed(): void {
   // A snapshot: a redo that re-renders registers its replacement, which already decided against this root.
   const current = dependents;
   dependents = [];
@@ -114,12 +136,13 @@ export function _followedCountForTest(): number {
   return dependents.length;
 }
 
-/** @internal Test seam: reset the root between cases. Listeners are neither cleared (module wiring
+/** @internal Test seam: reset the root and the additional directories between cases. Listeners are neither cleared (module wiring
  *  a test may assert) nor notified (the workspace did not move); followed surfaces are dropped with
  *  the case that rendered them. */
 // deadset:ignore DS1004 -- test seam: resets the workspace root and followed surfaces
 export function _resetForTest(): void {
   root = "";
+  additional = [];
   dependents = [];
   sweptLength = 0;
 }

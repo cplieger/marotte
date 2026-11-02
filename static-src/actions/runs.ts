@@ -3,8 +3,9 @@
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import { retryOutcomeNotice } from "../run-controls.js";
-import { invalidateRun, invalidateRunControls } from "../run-store.js";
+import { invalidateRun } from "../run-store.js";
 import { errorAbout, noticeAbout } from "./subject.js";
+import { serverSentence } from "./server-sentence.js";
 import { decodeRunRetriedResponse, decodeRunStepMessageResponse } from "../wire/decoders.gen.js";
 import type {
   RunRetriedResponse,
@@ -14,7 +15,6 @@ import type {
 } from "../wire/types.gen.js";
 import type {
   RecipesResponse,
-  RunAnswerRequest,
   RunLaunchRequest,
   RunLaunchedResponse,
   SessionListResponse,
@@ -62,6 +62,12 @@ export const launchRun = apiAction<RunLaunchRequest, RunLaunchedResponse>({
   error: (_args, err) => serverSentence(err) ?? "Could not launch",
 });
 
+/** A verb's success can move what the run offers with no frame to say so (a landed Pause only
+ *  sets `pausePending`), so the run is re-read and its verbs behind it (`invalidateRunControls`). */
+function rereadAfterVerb(workflowID: string): void {
+  invalidateRun(workflowID);
+}
+
 /** Ask a run to stop. The reply confirms the ASK — cancel is a node-boundary
  *  verb, so the terminal state (and the run_finished event) follows at the
  *  in-flight node's end. */
@@ -72,6 +78,9 @@ export const cancelRun = apiAction<string, { ok: boolean }>({
     path: `/api/runs/${encodeURIComponent(workflowID)}/cancel`,
   }),
   error: errorAbout(onRun, "Could not cancel the run"),
+  onSuccess: (_res, workflowID) => {
+    rereadAfterVerb(workflowID);
+  },
 });
 
 /** One run-control verb: POST to a sub-path, no body, `{ok:true}` back. */
@@ -83,6 +92,9 @@ function runControl(verb: string, errorText: string) {
       path: `/api/runs/${encodeURIComponent(workflowID)}/${verb}`,
     }),
     error: errorAbout(onRun, errorText),
+    onSuccess: (_res, workflowID) => {
+      rereadAfterVerb(workflowID);
+    },
   });
 }
 
@@ -105,37 +117,14 @@ export const retryRun = apiAction<string, RunRetriedResponse>({
   onSuccess: (res, workflowID) => {
     const notice = retryOutcomeNotice(res.retried_node_ids.length);
     noticeAbout(onRun(workflowID), notice.text, notice.level);
-    // BOTH, even on a zero-node outcome: the status and the verbs it offers can have moved.
-    invalidateRun(workflowID);
-    invalidateRunControls(workflowID);
+    // Even on a zero-node outcome: the status and the verbs it offers can have moved.
+    rereadAfterVerb(workflowID);
   },
 });
 
 /** Re-drive a paused run. Works even when the launching process is gone (KAS reloads the run
  *  from disk), so it is offered on any paused run. */
 export const resumeRun = runControl("resume", "Could not resume the run");
-
-/** Answer the question a parked workflow step asked. The server claims the ask BEFORE it sends,
- *  so one surface wins; a 409 means settled (nothing to redo) or the run is BETWEEN steps (the
- *  question comes back on a fresh `run_input_needed`), and only the server's sentence tells
- *  them apart. NO argument-composite idempotency key: inside that cache's window a repeat
- *  replays a cached success and the answer never reaches the step. */
-export const answerRunInput = apiAction<{ workflowID: string } & RunAnswerRequest, { ok: boolean }>(
-  {
-    name: "runs.answer_input",
-    request: ({ workflowID, ask_id, text }) => ({
-      method: "POST",
-      path: `/api/runs/${encodeURIComponent(workflowID)}/answer`,
-      body: { ask_id, text },
-    }),
-    // The server's sentence ALONE: a static `error` string PREFIXES the message (`emitErrorToast`),
-    // which contradicts the 409's "already answered" and leaks the empty-body `HTTP 500`.
-    error: errorAbout(
-      ({ workflowID }: { workflowID: string }) => onRun(workflowID),
-      (_args, err) => serverSentence(err) ?? "Could not send your answer to the step",
-    ),
-  },
-);
 
 /** One run step's address, `/api/runs/{id}/steps/{path}` with `{path}` one encoded `nodePathKey`; its
  *  verbs are sub-paths. The workflow id and the node path are independent, so neither is derived from
@@ -160,10 +149,10 @@ export const messageRunStep = apiAction<
 >({
   name: "runs.message_step",
   idempotencyKey: ({ message_id }) => message_id,
-  request: ({ workflowID, nodePath, text, message_id }) => ({
+  request: ({ workflowID, nodePath, text, message_id, ask_id }) => ({
     method: "POST",
     path: `${runStepURL(workflowID, nodePath)}/message`,
-    body: { text, message_id },
+    body: ask_id === undefined ? { text, message_id } : { text, message_id, ask_id },
   }),
   decode: decodeRunStepMessageResponse,
   error: false,
@@ -196,33 +185,6 @@ export const clearRunStepSteers = apiAction<StepAddress, { ok: boolean }>({
   ),
 });
 
-/** The server's error sentence, or null. `@cplieger/fetch` falls back to the literal
- *  `HTTP <status>` for an empty body, and a transport failure (`status === 0`) carries a browser
- *  sentence, so both are compared exactly. */
-function serverSentence(err: {
-  readonly message: string;
-  readonly status?: number;
-}): string | null {
-  const status = err.status ?? 0;
-  if (status < 400 || err.message === "" || err.message === `HTTP ${String(status)}`) {
-    return null;
-  }
-  return err.message;
-}
-
-/** Let a parked step carry on with NO answer. Not Resume: KAS's resume leaves the step's
- *  `need_input` signal, so it re-parks; setting the status clears it and the step runs its
- *  default continuation. */
-export const continueRunStep = apiAction<{ workflowID: string; nodeID: string }, { ok: boolean }>({
-  name: "runs.continue_step",
-  request: ({ workflowID, nodeID }) => ({
-    method: "POST",
-    path: `/api/runs/${encodeURIComponent(workflowID)}/step`,
-    body: { node_id: nodeID, status: "running" },
-  }),
-  error: errorAbout(({ workflowID }) => onRun(workflowID), "Could not let the step continue"),
-});
-
 export const extendRunRepeat = apiAction<
   { workflowID: string; nodeID: string; iterations: number },
   { ok: boolean }
@@ -235,10 +197,10 @@ export const extendRunRepeat = apiAction<
   }),
   error: errorAbout(
     ({ workflowID }) => onRun(workflowID),
-    (_args, err) => serverSentence(err) ?? "Couldn't add iterations",
+    (_args, err) => serverSentence(err) ?? "Couldn't add passes",
   ),
   onSuccess: (_res, { workflowID }) => {
-    invalidateRunControls(workflowID);
+    rereadAfterVerb(workflowID);
   },
 });
 
@@ -254,7 +216,7 @@ export const finishRunRepeat = apiAction<{ workflowID: string; nodeID: string },
     (_args, err) => serverSentence(err) ?? "Couldn't end the loop",
   ),
   onSuccess: (_res, { workflowID }) => {
-    invalidateRunControls(workflowID);
+    rereadAfterVerb(workflowID);
   },
 });
 

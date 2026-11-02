@@ -213,7 +213,7 @@ describe("composerMode against the server's availability table", () => {
       workflowID: "wf_1",
       runLive: !runStatusTerminal(run),
       runPaused: run === "paused",
-      step: workNodes(runToExec("wf_1", state, undefined, asks).nodes)[0],
+      step: workNodes(runToExec(state, undefined, asks).nodes)[0],
     });
     expect(mode.kind === "disabled" ? undefined : mode.verb).toBe(c.verb);
   });
@@ -464,6 +464,30 @@ describe("the box", () => {
     });
   });
 
+  it("names the question an answer is for, and none on a steer", async () => {
+    m.outcome = { status: "success", value: { verb: "answer" } };
+    const node = asking();
+    node.ask = "ask-7";
+    setRunComposerTarget({ workflowID: "wf_1", runLive: true, runPaused: true, step: node });
+    ui.input.value = "the release branch";
+    ui.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(m.sent).toHaveLength(1);
+    });
+    expect(m.sent[0]?.["ask_id"]).toBe("ask-7");
+
+    m.outcome = { status: "success", value: { verb: "steer" } };
+    const running = step("running", "steer");
+    running.ask = "ask-8";
+    setRunComposerTarget({ workflowID: "wf_1", runLive: true, runPaused: false, step: running });
+    ui.input.value = "check the tests";
+    ui.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(m.sent).toHaveLength(2);
+    });
+    expect("ask_id" in (m.sent[1] ?? {})).toBe(false);
+  });
+
   it("keeps a row a frame confirmed before the reply was lost, and gives nothing back", async () => {
     m.during = () => {
       const id = `steer-${String(m.sent[0]?.["message_id"])}`;
@@ -674,34 +698,31 @@ describe("the box", () => {
   });
 });
 
-describe("the attention border", () => {
-  it("is the yellow border on an open question, and typing the answer keeps it", () => {
+// A state is not drawn as a coloured edge: answering is named by the placeholder and Send.
+describe("answering a question", () => {
+  it("draws no ring: the box's edge is the same as a message's, and Send reads Send answer", () => {
     const style = mountAppCSS();
     const box = ui.form.querySelector<HTMLElement>(".prompt-box")!;
-    // The rendered colour, not mid-transition.
     box.style.transition = "none";
-    const probe = document.createElement("span");
-    probe.style.color = "var(--c-yellow)";
-    ui.form.appendChild(probe);
-    const yellow = getComputedStyle(probe).color;
     setRunComposerTarget({
       workflowID: "wf_4",
       runLive: true,
       runPaused: false,
       step: step("running", "steer"),
     });
-    expect(getComputedStyle(box).borderTopColor).not.toBe(yellow);
+    const steering = [getComputedStyle(box).borderTopColor, getComputedStyle(box).boxShadow];
     setRunComposerTarget({
       workflowID: "wf_4",
       runLive: true,
       runPaused: false,
       step: asking(),
     });
-    expect(getComputedStyle(box).borderTopColor).toBe(yellow);
-    ui.input.focus();
-    expect(getComputedStyle(box).borderTopColor).toBe(yellow);
-    ui.input.blur();
-    probe.remove();
+    expect(ui.form.dataset["mode"]).toBe("answer");
+    expect([getComputedStyle(box).borderTopColor, getComputedStyle(box).boxShadow]).toEqual(
+      steering,
+    );
+    expect(ui.send.getAttribute("aria-label")).toBe("Send answer");
+    expect(ui.send.getAttribute("data-tooltip")).toBe("Send answer");
     box.style.removeProperty("transition");
     style.remove();
   });

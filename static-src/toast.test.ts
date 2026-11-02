@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mountLiveRegions } from "@cplieger/ui-primitives/announce";
 
 import { info, success, error, notice, showToast, _resetForTest } from "./toast.js";
 
@@ -49,14 +50,21 @@ describe("toast — basic rendering", () => {
     expect(t?.classList.contains("uip-toast--error")).toBe(true);
   });
 
-  it("announces via a shared live region (assertive for errors)", () => {
-    // The library decouples announcement from the visual stack: the stack
-    // carries no role/aria-live, and errors announce through the assertive
-    // live region created by announce().
-    error("boom");
-    expect(getStack()?.getAttribute("aria-live")).toBeNull();
-    expect(getStack()?.getAttribute("role")).toBeNull();
-    expect(document.querySelector('[aria-live="assertive"]')).not.toBeNull();
+  it("announces through the root live regions (assertive for errors)", () => {
+    // The stack carries no role/aria-live: the message reaches assistive tech only through the
+    // pair app boot mounts, which lands the text after its 100ms clear-then-set gap.
+    const release = mountLiveRegions(document.body);
+    try {
+      error("boom");
+      info("hello");
+      expect(getStack()?.getAttribute("aria-live")).toBeNull();
+      expect(getStack()?.getAttribute("role")).toBeNull();
+      vi.advanceTimersByTime(100);
+      expect(document.querySelector('[aria-live="assertive"]')?.textContent).toBe("boom");
+      expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe("hello");
+    } finally {
+      release();
+    }
   });
 
   // Every level has a finite duration and so a countdown bar; a RETRYABLE error is the sticky case.

@@ -41,7 +41,6 @@ const (
 const (
 	defaultSpecPlanning             = SpecPlanningOff
 	defaultSpecPlanningAskFirst     = false
-	defaultInlineAgents             = false
 	defaultSteeringReminders        = false
 	DefaultWorkflowsEnabled         = true
 	defaultOutputStyle              = OutputStyleDefault
@@ -49,6 +48,7 @@ const (
 	defaultCloudFormationSafety     = FeatureFollowKiro
 	defaultAutoRouting              = FeatureFollowKiro
 	defaultAutoDelegation           = FeatureFollowKiro
+	defaultModelFallback            = false
 	defaultTerminalCommandTimeoutMs = 0
 )
 
@@ -133,14 +133,19 @@ var agentPatchChecks = map[string]func(json.RawMessage) error{
 		return decodeChecked(&v, r, KeyTerminalCommandTimeoutMs, ValidTerminalCommandTimeoutMs)
 	},
 	KeySpecPlanningAskFirst: func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
-	KeyInlineAgents:         func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeySteeringReminders:    func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeyWorkflowsEnabled:     func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
+	KeyModelFallback:        func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 }
 
 // ValidateAgentPatch refuses a patch whose agent-capability keys carry a value
 // the UI cannot produce. A patch carrying none of them passes.
 func ValidateAgentPatch(patch map[string]json.RawMessage) error {
+	if raw, ok := patch[KeyEngineHeapMiB]; ok {
+		if err := validateEngineHeapMiB(raw, nodeOptionsEnv(), containerLimit); err != nil {
+			return err
+		}
+	}
 	for key, check := range agentPatchChecks {
 		raw, ok := patch[key]
 		if !ok {

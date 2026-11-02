@@ -23,12 +23,14 @@ const (
 	EntryKindSteer            EntryKind = "steer"
 	EntryKindSteerAck         EntryKind = "steer_ack"
 	EntryKindSteerDelivered   EntryKind = "steer_delivered"
+	EntryKindSteerCleared     EntryKind = "steer_cleared"
 	EntryKindPlan             EntryKind = "plan"
 	EntryKindCompaction       EntryKind = "compaction"
 	EntryKindCompactionFailed EntryKind = "compaction_failed"
 	EntryKindSafetyBlocked    EntryKind = "safety_blocked"
 	EntryKindModelSwitched    EntryKind = "model_switched"
 	EntryKindModelRouted      EntryKind = "model_routed"
+	EntryKindModelFallback    EntryKind = "model_fallback"
 	EntryKindModeSwitched     EntryKind = "mode_switched"
 	EntryKindTurnRevert       EntryKind = "turn_revert"
 	EntryKindReconciled       EntryKind = "reconciled"
@@ -68,15 +70,14 @@ type OpenEntry struct {
 }
 
 // TurnOpenSourceName is the wire spelling of what opened a turn; TurnOpenSource maps onto
-// it through Name. `event` (a turn an event row opens) and `revert` (the carrier a revert
-// opens when no turn survives it) have no TurnOpenSource member.
+// it through Name. `event` (a turn an event row opens) has no TurnOpenSource member, and
+// `revert` (the carrier a revert opens when no turn survives it) is TurnSourceRevert's.
 type TurnOpenSourceName string
 
 // TurnOpenNamePrompt and the following constants are the valid TurnOpenSourceName
 // values.
 const (
 	TurnOpenNamePrompt        TurnOpenSourceName = "prompt"
-	TurnOpenNameLocalShell    TurnOpenSourceName = "local_shell"
 	TurnOpenNameWireTurnStart TurnOpenSourceName = "wire_turn_start"
 	TurnOpenNameEmptyRetry    TurnOpenSourceName = "empty_retry"
 	TurnOpenNameEvent         TurnOpenSourceName = "event"
@@ -90,8 +91,8 @@ func (s TurnOpenSource) Name() TurnOpenSourceName {
 	switch s {
 	case TurnSourcePrompt:
 		return TurnOpenNamePrompt
-	case TurnSourceLocalShell:
-		return TurnOpenNameLocalShell
+	case TurnSourceRevert:
+		return TurnOpenNameRevert
 	case TurnSourceWireTurnStart:
 		return TurnOpenNameWireTurnStart
 	case TurnSourceEmptyRetry:
@@ -114,9 +115,9 @@ type EntryPrompt struct {
 	Resends     []string     `json:"resends,omitempty"`
 }
 
-// EntryTurnOpen is the turn_open payload. Prompt is present for a prompt,
-// local_shell or empty_retry turn and absent otherwise. Run, NodePath and
-// SessionID are set on a run log's turns only.
+// EntryTurnOpen is the turn_open payload. Prompt is present for a prompt or
+// empty_retry turn and absent otherwise. Run, NodePath and SessionID are set on
+// a run log's turns only.
 type EntryTurnOpen struct {
 	Prompt    *EntryPrompt       `json:"prompt,omitempty"`
 	Source    TurnOpenSourceName `json:"source"`
@@ -234,32 +235,36 @@ const (
 	// chat's tab closed (the close cancels the turn and no prompt carries the steer), or an agent
 	// note KAS's turn-end clear named.
 	SteerReasonBoundary SteerReason = "boundary"
-	// SteerReasonDeleted is the reason on a steer the reader deleted from the
-	// dock before the agent read it.
-	SteerReasonDeleted SteerReason = "deleted"
 )
 
 // EntrySteer is the steer payload. Text has the `[notification/<sev>]` prefix stripped; Severity
 // (KAS's vocabulary) is set on a note KAS's buffer carried; State is absent where nothing stamped it
 // (a replay-projected steer, a workflow message). OriginRun is the run a note came from. ProducedTs
 // is when the words were sent and ReadTs when the receiver took a workflow message up; both label,
-// never order, and a log read fills ReadTs (or the dropped state) from steer_delivered. Step names
+// never order, and a log read fills ReadTs, or Cleared, from steer_delivered. Step names
 // the step on a workflow message's far end, in the launching chat's log only; StepPath is its node
 // path on both sides' rows, and Chat the launching chat on the step's row. Resends names the steer
 // rows (dock keys) this one re-sends, taken from the steer record at the read.
 type EntrySteer struct {
-	Text       string      `json:"text"`
-	Origin     SteerOrigin `json:"origin"`
-	State      SteerState  `json:"state,omitempty"`
-	Reason     SteerReason `json:"reason,omitempty"`
-	Severity   string      `json:"severity,omitempty"`
-	OriginRun  string      `json:"origin_run,omitempty"`
-	Step       string      `json:"step,omitempty"`
-	StepPath   string      `json:"step_path,omitempty"`
-	Chat       ChatID      `json:"chat,omitempty"`
-	Resends    []string    `json:"resends,omitempty"`
-	ProducedTs int64       `json:"produced_ts,omitempty"`
-	ReadTs     int64       `json:"read_ts,omitempty"`
+	Text     string      `json:"text"`
+	Origin   SteerOrigin `json:"origin"`
+	State    SteerState  `json:"state,omitempty"`
+	Reason   SteerReason `json:"reason,omitempty"`
+	Severity string      `json:"severity,omitempty"`
+	// KASID is the id the notify frame gave a workflow message (`notifyId`), empty while it carries none.
+	KASID string `json:"kas_id,omitempty"`
+	// ToSession is the KAS session a workflow message was sent to, on the receiver's row only.
+	ToSession  string   `json:"to_session,omitempty"`
+	OriginRun  string   `json:"origin_run,omitempty"`
+	Step       string   `json:"step,omitempty"`
+	StepPath   string   `json:"step_path,omitempty"`
+	Chat       ChatID   `json:"chat,omitempty"`
+	Resends    []string `json:"resends,omitempty"`
+	ProducedTs int64    `json:"produced_ts,omitempty"`
+	ReadTs     int64    `json:"read_ts,omitempty"`
+	// Cleared marks a workflow message its receiver's buffer was emptied of before any take-up or
+	// wake proved it read; State stays absent, since whether it was read is not known.
+	Cleared bool `json:"cleared,omitempty"`
 }
 
 // EntrySteerAck is the steer_ack payload: KAS's acknowledgement of a steer,
@@ -270,20 +275,45 @@ type EntrySteerAck struct {
 }
 
 // EntrySteerDelivered is the steer_delivered payload: the receiver took up the workflow message
-// SteerID names, recorded at send, at ReadTs; Dropped instead says KAS cleared it unread at a turn
-// boundary. It renders on that message's row, not where it sits. KASID is the id KAS persisted the
-// message under, which its replay row carries.
+// SteerID names, recorded at send, at ReadTs; Cleared instead says a steering clear emptied the
+// receiver's buffer at ReadTs with no proof it was read. It renders on that message's row, not
+// where it sits. KASID is the id KAS persisted the message under, which its replay row carries.
 type EntrySteerDelivered struct {
 	SteerID string `json:"steer_id"`
 	KASID   string `json:"kas_id,omitempty"`
 	ReadTs  int64  `json:"read_ts"`
-	Dropped bool   `json:"dropped,omitempty"`
+	Cleared bool   `json:"cleared,omitempty"`
 }
 
 // SteerDeliveredID is the steer_delivered entry id for a steer: `<steer>:delivered`.
 func SteerDeliveredID(steerID string) string {
 	return steerID + ":delivered"
 }
+
+// SteerClearCause is what emptied a receiver's steering buffer. It decides no workflow message's
+// outcome, since no frame says which cleared message was re-delivered or dropped.
+type SteerClearCause string
+
+const (
+	// SteerClearCauseCancel is the reader's session/cancel, after which KAS re-prompts the unread
+	// notifications it cleared.
+	SteerClearCauseCancel SteerClearCause = "cancel"
+	// SteerClearCauseBoundary is any other clear (a turn end with steering left, a teardown, an
+	// error, `_session/steer/clear`), which drops what it cleared unread.
+	SteerClearCauseBoundary SteerClearCause = "boundary"
+)
+
+// EntrySteerCleared is the steer_cleared payload: KAS emptied Session's steering buffer, naming
+// IDs, for Cause. It ends the epoch of every workflow message filed before it whose ToSession is
+// Session, settling each one still unsettled cleared. It renders nothing.
+type EntrySteerCleared struct {
+	Cause   SteerClearCause `json:"cause"`
+	Session string          `json:"session"`
+	IDs     []string        `json:"ids"`
+}
+
+// SteerClearedIDPrefix marks a steer_cleared entry's id, minted at the clear: a clear may name no id.
+const SteerClearedIDPrefix = "cleared-"
 
 // EntryPlan is the plan payload, one per distinct plan state.
 type EntryPlan struct {
@@ -315,6 +345,8 @@ type EntryModelSwitched struct {
 	// Effort is the reasoning tier in force; a plain string, as Chat.Effort, so a
 	// level another build wrote decodes rather than throws.
 	Effort string `json:"effort,omitempty"`
+	// Unoffered is the tier the chat wanted that To does not offer, so it runs at Effort instead.
+	Unoffered string `json:"unoffered,omitempty"`
 	// Reason is set only on a switch KAS made by itself.
 	Reason ModelSwitchReason `json:"reason,omitempty"`
 }
@@ -325,6 +357,23 @@ type EntryModelSwitched struct {
 type EntryModelRouted struct {
 	Message string `json:"message"`
 }
+
+// EntryModelFallback is the model_fallback payload: KAS's fallback decision after From refused a
+// turn or was unavailable. A non-empty Reason marks a decline; KAS's notice for a retry carries To
+// and Scope and no Reason, and ModelFallbackScopeSession means To now serves the session. Every
+// string is KAS's open vocabulary, display-sanitized. Subagent is set only in an entry an earlier
+// build recorded: the translator now drops a sub-agent's fallback, and readers hide such an entry.
+type EntryModelFallback struct {
+	From     string `json:"from"`
+	To       string `json:"to,omitempty"`
+	Scope    string `json:"scope,omitempty"`
+	Trigger  string `json:"trigger"`
+	Reason   string `json:"reason,omitempty"`
+	Subagent bool   `json:"subagent,omitempty"`
+}
+
+// ModelFallbackScopeSession is the EntryModelFallback.Scope of a fallback that now serves the session.
+const ModelFallbackScopeSession = "session"
 
 // ModelSwitchReason says why KAS moved a chat off its model. A closed enum
 // because the client words it, so the wording table must be total.

@@ -1,11 +1,12 @@
-// One SUBAGENT execution on its own page (/chat/{id}/subagent/{taskId}), with its whole pipeline
-// readable in place: the second surface over the card's blocks. It IS the shared exec view
-// (`subagent-exec-source.ts` folds into its model), so no layout or status vocabulary lives here.
-// View-only (no composer, dock or controls row). The close stops nothing but RELEASES: the demand
-// effect drops the page once no open subagent tab names a member of its group. Nothing is fetched:
-// blocks persist with `agent_subtask_id`. The page projects the GROUP (`sliceSubagentGroup`); a body
-// mounts on first `onShowNode` and is kept. Paged-out turns say so; unopened chats fill in later.
+// One SUBAGENT execution on its own page (/chat/{id}/subagent/{taskId}): the second surface over
+// the card's blocks. It IS the shared exec view (`subagent-exec-source.ts` folds into its model), so
+// no layout or status vocabulary lives here. View-only: a run dock with no verbs, no composer. The
+// close stops nothing but RELEASES: the demand effect drops the page once no open subagent tab
+// names its delegate. Nothing is fetched: blocks persist with `agent_subtask_id`. The page projects
+// one delegate (`sliceSubagent`); its body mounts on first `onShowNode` and is kept. Paged-out turns
+// say so; unopened chats fill in later.
 
+import { join } from "@cplieger/keyenc";
 import { el, effect, signal, touch } from "@cplieger/reactive";
 import { hasTab, openSubagentRefs, openSubagentTab } from "./tabs.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
@@ -15,20 +16,14 @@ import {
   buildDetachedBody,
   disposeDetachedBody,
   finalizeDetachedBody,
+  rebuildDetached,
   updateDetachedBody,
 } from "./messages-blocks.js";
 import { refreshChatView } from "./chat.js";
 import { chatTurnLive, get, isThinking, messagesVersionOf } from "./store.js";
 import { laneSig } from "./store-signals.js";
 import { ICON_TAB_AGENT } from "./icons.js";
-import {
-  blockShape,
-  shapeExtends,
-  sliceSubagentGroup,
-  type SubagentGroup,
-  type SubagentProjection,
-  type SubagentSlice,
-} from "./subagent-slice.js";
+import { blockShape, shapeExtends, sliceSubagent, type SubagentSlice } from "./subagent-slice.js";
 import { subagentToExec } from "./subagent-exec-source.js";
 import { parseSubagentRef, subagentRef } from "./tab-materialize.js";
 import type { TurnState } from "./types.js";
@@ -37,12 +32,9 @@ import { SharedScroll } from "./view-scroll.js";
 /** A detached render is addressed `(turn, lane)`, `messages-blocks.ts`'s render key; the
  *  transcript holds the same turn under the EMPTY lane, so the two cannot clobber each other. */
 
-/** One PAGE INSTANCE's identity: the GROUP, so switching stage tabs reuses the page and its
- *  bodies (re-pointing through `ExecRun.focus`). Prefixed so it cannot collide with a `renderID`. */
-function pageID(chatID: string, group: SubagentGroup, subtaskID: string): string {
-  return group.pipeline === ""
-    ? `page:sub:${chatID}:${subtaskID}`
-    : `page:sub:${chatID}:pipeline:${group.pipeline}`;
+/** One PAGE INSTANCE's identity: the delegate. Prefixed so it cannot collide with a `renderID`. */
+function pageID(chatID: string, subtaskID: string): string {
+  return join("page:sub", chatID, subtaskID);
 }
 
 /** The delegate on screen, a SIGNAL so the view effect re-runs on a tab switch; ONE
@@ -50,12 +42,12 @@ function pageID(chatID: string, group: SubagentGroup, subtaskID: string): string
  *  empties it and the paint effect's empty-subject guard drops the page. */
 const shown = signal<{ chatID: string; subtaskID: string }>({ chatID: "", subtaskID: "" });
 
-/** One mounted member's render lifecycle, per MEMBER: the repaint gate is a UNION over registered
- *  renders, so each must be disposed (as `run-chat-steps.ts`'s `StepRender`). */
+/** The mounted delegate's render lifecycle: the repaint gate is a UNION over registered renders,
+ *  so it must be disposed (as `run-chat-steps.ts`'s `StepRender`). */
 interface BodyRender {
   host: HTMLElement;
-  /** The turn this member's lane was mounted from, which is half its render key. Held
-   *  because the DISPOSE has to name it after the projection has moved on. */
+  /** The turn the lane was mounted from, which is half its render key. Held because the
+   *  DISPOSE has to name it after the projection has moved on. */
   turnID: string;
   /** The mounted entry shape: the incremental update is correct only while the mounted prefix is
    *  unchanged (tail growth keeps it; a rewind or refetch does not). */
@@ -65,22 +57,22 @@ interface BodyRender {
 }
 
 /** ONE PAGE, ONE LIFETIME: dropping the record IS the disposal, so a half-disposed page cannot be
- *  spelled. `key` is `pageID`'s GROUP key; `chatID` is immutable per page; `projection` is the
- *  latest paint's inputs and the membership demand reads; `bodies` are released together;
- *  `shownNodePath` is a subtask id for a delegate and anything else for a node with no transcript. */
+ *  spelled. `key` is `pageID`; `chatID` and `subtaskID` are immutable per page; `slice` is the
+ *  latest paint's input; `bodies` are released together; `shownNodePath` is a subtask id for the
+ *  delegate and anything else for a node with no transcript. */
 interface MountedPage {
   readonly key: string;
   readonly chatID: string;
+  readonly subtaskID: string;
   readonly view: ExecPageView;
-  projection: SubagentProjection;
+  slice: SubagentSlice;
   readonly bodies: Map<string, BodyRender>;
   shownNodePath: string;
 }
 let mounted: MountedPage | undefined;
 
-/** `.page-content` is shared by every subagent tab, so each TAB keeps its own offset.
- *  Keyed by the tab's ref rather than the page: sibling stages of one pipeline share
- *  a page, and each shows a different transcript. */
+/** `.page-content` is shared by every subagent tab, so each TAB keeps its own offset, keyed by
+ *  the tab's ref. */
 const pageScroll = new SharedScroll(
   () => document.querySelector<HTMLElement>("[id='subagent-view'] > .page-content"),
   () => (mounted === undefined ? "" : shownRef()),
@@ -96,7 +88,7 @@ function shownRef(): string {
 let inPaint = false;
 
 /** Point the shared subagent view at one delegate (a tab's `onShow`). Writing the subject is the
- *  whole call; the paint effect re-points and releases a different group's page. */
+ *  whole call; the paint effect releases another delegate's page. */
 export function showSubagent(chatID: string, subtaskID: string): void {
   shown.value = { chatID, subtaskID };
   installEffects();
@@ -112,12 +104,12 @@ export function refreshSubagent(chatID: string): void {
   refreshChatView(chatID);
 }
 
-/** Whether an open subagent tab still names a member of `m`'s group: a `Map.has` plus a chat
- *  compare (two chats can share a subtask id), which also rejects a malformed ref. */
+/** Whether an open subagent tab still names `m`'s delegate, chat included (two chats can share a
+ *  subtask id); a malformed ref names nothing. */
 function demandHolds(m: MountedPage, refs: readonly string[]): boolean {
   for (const ref of refs) {
     const { chatID, subtaskID } = parseSubagentRef(ref);
-    if (chatID === m.chatID && m.projection.slices.has(subtaskID)) {
+    if (chatID === m.chatID && subtaskID === m.subtaskID) {
       return true;
     }
   }
@@ -138,7 +130,7 @@ function installEffects(): void {
   effect(() => {
     const refs = openSubagentRefs();
     // UNTRACKED: every way to reach "mounted and unwanted" is a tab-set change, and a mount always
-    // follows an activation of a row in the projection.
+    // follows an activation of the delegate's tab.
     const m = mounted;
     if (m === undefined || demandHolds(m, refs)) {
       // Nothing mounted. Accepted residual: a non-resident delegate leaves `shown` set with nothing
@@ -147,9 +139,7 @@ function installEffects(): void {
     }
     // Write the INPUT, never `mounted` (the paint effect is its single writer). Clearing `shown` stops
     // the chat's next delta re-mounting a page for a closed tab.
-    for (const id of m.projection.slices.keys()) {
-      pageScroll.forget(subagentRef(m.chatID, id));
-    }
+    pageScroll.forget(subagentRef(m.chatID, m.subtaskID));
     shown.value = { chatID: "", subtaskID: "" };
   });
 
@@ -165,52 +155,43 @@ function installEffects(): void {
     // would mint a `messagesVersionSigs` entry under `""`.
     touch(messagesVersionOf(chatID));
     const session = get(chatID);
-    const projection =
-      session === undefined
-        ? { group: { pipeline: "", driver: undefined, members: [] }, slices: new Map() }
-        : sliceSubagentGroup(session, subtaskID, isThinking(chatID));
-    subscribeToDeltas(projection);
-    paint(chatID, subtaskID, projection);
+    const slice =
+      session === undefined ? undefined : sliceSubagent(session, subtaskID, isThinking(chatID));
+    // The LANE signal too: a delta bumps the lane, not the chat's version.
+    const turnID = slice?.turn?.id;
+    if (turnID !== undefined) {
+      touch(laneSig(turnID, subtaskID));
+    }
+    paint(chatID, subtaskID, slice);
   });
 }
 
-/** Subscribe to EVERY member's LANE signal: a delta bumps the lane, not the chat's version, and a
- *  sibling's body can be mounted at any selection. */
-function subscribeToDeltas(projection: SubagentProjection): void {
-  for (const [lane, slice] of projection.slices) {
-    const turnID = slice.turn?.id;
-    if (turnID !== undefined) {
-      touch(laneSig(turnID, lane));
-    }
-  }
-}
-
-function paint(chatID: string, subtaskID: string, projection: SubagentProjection): void {
+function paint(chatID: string, subtaskID: string, slice: SubagentSlice | undefined): void {
   const host = document.getElementById("subagent-body");
-  if (host === null) {
+  const dockHost = document.getElementById("subagent-exec-dock");
+  if (host === null || dockHost === null) {
     return;
   }
 
   // Nothing resident for this delegate: no blocks AND no invocation. One honest
   // sentence per situation, because a blank page reads as a broken one in both.
-  const own = projection.slices.get(subtaskID);
-  if (own === undefined || (!holdsOutput(own) && own.invocation === undefined)) {
+  if (slice === undefined || (!holdsOutput(slice) && slice.invocation === undefined)) {
     unmount();
     host.replaceChildren(el("div", { className: "list-empty" }, notResidentNote(chatID)));
     return;
   }
 
-  const key = pageID(chatID, projection.group, subtaskID);
+  const key = pageID(chatID, subtaskID);
   // `#subagent-body` is shared, so a page cached against a detached container renders into nothing;
   // re-resolved per pass (as `run-view.ts` does).
   const kept =
     mounted?.key === key && mounted.view.root.parentElement === host ? mounted : undefined;
-  const m = kept ?? mountPage(host, key, chatID, projection);
-  // AFTER `mountPage`, which drops the previous page and with it its own projection.
-  m.projection = projection;
+  const m = kept ?? mountPage(host, dockHost, key, chatID, subtaskID, slice);
+  // AFTER `mountPage`, which drops the previous page and with it its own slice.
+  m.slice = slice;
   inPaint = true;
   try {
-    m.view.render(subagentToExec(subtaskID, projection, chatTurnLive(chatID)));
+    m.view.render(subagentToExec(subtaskID, slice, chatTurnLive(chatID)));
   } finally {
     inPaint = false;
   }
@@ -220,16 +201,21 @@ function paint(chatID: string, subtaskID: string, projection: SubagentProjection
   syncBodies(m);
 }
 
-/** Bring every mounted transcript current, mounting the SHOWN node's first. Lazy: a hidden body
+/** Bring the mounted transcript current, mounting it once its node is shown. Lazy: a hidden body
  *  still costs construction. Once mounted it stays; the scroll offset is shared (the page scrolls). */
 function syncBodies(m: MountedPage): void {
   const wanted = m.shownNodePath;
-  const slice = wanted === "" ? undefined : m.projection.slices.get(wanted);
+  const slice = m.slice;
   // An EMPTY slice is left unmounted deliberately: `exec-view/detail.ts` shows the
   // empty note only while its host has no children, and that note is the honest answer
   // for a delegate that has produced nothing yet.
-  const turnID = slice?.turn?.id;
-  if (slice !== undefined && turnID !== undefined && holdsOutput(slice) && !m.bodies.has(wanted)) {
+  const turnID = slice.turn?.id;
+  if (
+    wanted === m.subtaskID &&
+    turnID !== undefined &&
+    holdsOutput(slice) &&
+    !m.bodies.has(wanted)
+  ) {
     m.bodies.set(wanted, {
       // Through the transcript's OWN dispatcher with this lane as render root: prose runs, fold rules
       // and grandchild cards come free.
@@ -240,15 +226,12 @@ function syncBodies(m: MountedPage): void {
     });
   }
   for (const [id, rec] of m.bodies) {
-    const s = m.projection.slices.get(id);
-    if (s !== undefined) {
-      renderBody(rec, m.chatID, id, s);
-    }
+    renderBody(rec, m.chatID, id, slice);
   }
 }
 
-/** Paint one member's transcript into its own host, deciding per record whether the
- *  mounted prefix can be appended to or has to be rebuilt. */
+/** Paint the delegate's transcript into its host, deciding whether the mounted prefix can be
+ *  appended to or has to be rebuilt. */
 function renderBody(
   rec: BodyRender,
   chatID: string,
@@ -267,17 +250,18 @@ function renderBody(
   if (sameTurn && shapeExtends(rec.shape, shape) && rec.shape.length > 0) {
     updateDetachedBody(rec.host, turn, chatID, subtaskID, slice.live);
   } else {
-    disposeDetachedBody(rec.turnID, subtaskID);
-    rec.host.replaceChildren();
-    rec.turnID = turn.id;
-    rec.sealed = false;
-    buildDetachedBody(rec.host, turn, chatID, subtaskID, slice.live);
+    rebuildDetached(() => {
+      disposeDetachedBody(rec.turnID, subtaskID);
+      rec.host.replaceChildren();
+      rec.turnID = turn.id;
+      rec.sealed = false;
+      buildDetachedBody(rec.host, turn, chatID, subtaskID, slice.live);
+    });
   }
   rec.shape = shape;
 
-  // Settled: flush the markdown streams and collapse the reasoning traces, so a
-  // finished delegate does not sit under a caret. Read off the SLICE, so liveness is
-  // per member: a stage can finish while its siblings carry on.
+  // Settled: flush the markdown streams and collapse the reasoning traces, so a finished delegate
+  // does not sit under a caret. Read off the SLICE: a delegate can finish while its chat carries on.
   if (!slice.live && !rec.sealed) {
     rec.sealed = true;
     finalizeDetachedBody(turn.id, subtaskID);
@@ -287,15 +271,17 @@ function renderBody(
 /** Build the page into `#subagent-body`, replacing whatever was there. */
 function mountPage(
   host: HTMLElement,
+  dockHost: HTMLElement,
   key: string,
   chatID: string,
-  projection: SubagentProjection,
+  subtaskID: string,
+  slice: SubagentSlice,
 ): MountedPage {
   unmount();
   const built = buildExecPage({
     emptyNote: emptyNote,
-    // The agent hexagon rather than the workflow glyph. No `controls`: a delegate has
-    // no pause, resume or cancel verb, so the row does not render at all.
+    dock: dockHost,
+    // No `controls`: a delegate has no pause, resume or cancel verb.
     icon: ICON_TAB_AGENT,
     // A selection arrives from a repaint or a click; only the click syncs here. Resolved through the
     // module slot, so a dropped page is never reached; `exec-view/page.ts` fires this only from
@@ -314,8 +300,9 @@ function mountPage(
   mounted = {
     key,
     chatID,
+    subtaskID,
     view: built,
-    projection,
+    slice,
     bodies: new Map(),
     shownNodePath: "",
   };

@@ -544,79 +544,6 @@ func registerParentSession(t *testing.T, h *Runtime, chatID marotte.ChatID, pare
 	sb.state = bridgeIdle
 }
 
-func captureSubSession(t *testing.T, h *Runtime, chatID marotte.ChatID, sessionID string) (got string, called bool) {
-	t.Helper()
-	h.sessUpdateHandlers = map[marotte.ACPUpdateKind]sessionUpdateHandler{
-		marotte.ACPUpdateAgentChunk: func(_ context.Context, _ marotte.ChatID, _ json.RawMessage, attr translate.FrameAttribution) {
-			if attr.Subagent {
-				got = attr.SessionID
-			}
-			called = true
-		},
-	}
-	update := mustJSON(t, map[string]any{
-		"sessionUpdate": string(marotte.ACPUpdateAgentChunk),
-		"content":       map[string]any{"type": "text", "text": "x"},
-	})
-	params := mustJSON(t, map[string]any{
-		"sessionId": sessionID,
-		"update":    update,
-	})
-	msg := &marotte.RPCResponse{Method: "session/update", Params: params}
-	h.handleSessionUpdate(t.Context(), chatID, msg)
-	return got, called
-}
-
-// subSessionID is the frame's sessionId only when non-empty, a parent exists, and they differ; otherwise "".
-func TestHandleSessionUpdate_SubSessionAttribution(t *testing.T) {
-	cases := []struct {
-		name       string
-		chatID     marotte.ChatID
-		registerPS string // parent session to register; "" => no bridge (parent == "")
-		sessionID  string
-		want       string
-	}{
-		{
-			name:       "subagent_when_session_nonempty_parent_set_and_differs",
-			chatID:     "chat-sub",
-			registerPS: "parent-A",
-			sessionID:  "sub-B",
-			want:       "sub-B",
-		},
-		{
-			name:       "parent_when_session_equals_parent",
-			chatID:     "chat-match",
-			registerPS: "same",
-			sessionID:  "same",
-			want:       "",
-		},
-		{
-			name:       "parent_when_no_parent_bridge",
-			chatID:     "chat-noparent",
-			registerPS: "",
-			sessionID:  "sub-C",
-			want:       "",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h, _, _ := newTestHub()
-			defer shutdownHub(t, h)
-			if tc.registerPS != "" {
-				registerParentSession(t, h, tc.chatID, tc.registerPS)
-			}
-			got, called := captureSubSession(t, h, tc.chatID, tc.sessionID)
-			if !called {
-				t.Fatalf("handleSessionUpdate did not invoke the sub-handler (sub-dispatch returned early)")
-			}
-			if got != tc.want {
-				t.Errorf("handleSessionUpdate subSessionID = %q, want %q (parent=%q, sessionID=%q)",
-					got, tc.want, tc.registerPS, tc.sessionID)
-			}
-		})
-	}
-}
-
 // captureAttribution is captureSubSession's sibling for the whole attribution, for the step case a string cannot express.
 func captureAttribution(t *testing.T, h *Runtime, chatID marotte.ChatID, sessionID string) (got translate.FrameAttribution, called bool) {
 	t.Helper()
@@ -651,7 +578,7 @@ func TestHandleSessionUpdate_StepFrameIsAttributedWithoutAMetaBlock(t *testing.T
 	if !called {
 		t.Fatal("handleSessionUpdate did not invoke the sub-handler (sub-dispatch returned early)")
 	}
-	want := translate.FrameAttribution{SessionID: stepSID, RunID: "wf_1", NodePath: "wf_1/build", NodeID: "build", Step: true}
+	want := translate.FrameAttribution{SessionID: stepSID, RunID: "wf_1", NodePath: "wf_1/build", Step: true}
 	if got != want {
 		t.Errorf("handleSessionUpdate(step session %q, no _meta.kiro.workflow) attribution = %+v, want %+v",
 			stepSID, got, want)

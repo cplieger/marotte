@@ -15,15 +15,19 @@ import {
   counters,
   currentMembers,
   elapsed,
-  failureOwner,
   isWork,
   latestPass,
+  passText,
+  progressPhrase,
   window as execWindow,
   type ExecKind,
   type ExecNode,
+  type ExecRun,
 } from "../exec-view/model.js";
+import { buildProgress } from "../exec-view/summary.js";
 import { reconcile } from "../reconcile.js";
 import { kindGlyph } from "../exec-view/tree.js";
+import { paintLabel } from "../exec-view/label.js";
 import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN, ICON_EXTERNAL } from "../icons.js";
@@ -33,16 +37,7 @@ import { runToExec, type StepEnds } from "../run-exec-source.js";
 import { formatElapsed, truncate } from "../strings.js";
 import type { ToolStatus } from "../types.js";
 import { watchResult, watchSummary } from "../watch-result.js";
-import {
-  isNeedInputPark,
-  nodesOfType,
-  pauseDetailPhrase,
-  pausePendingSentence,
-  resumeSentence,
-  runIsLive,
-  type RunState,
-  stopSentence,
-} from "../run-store.js";
+import { nodesOfType, runIsLive, type RunState } from "../run-store.js";
 
 const NO_ASKS: RunAsks = { count: 0, asked: [], label: "" };
 
@@ -51,20 +46,6 @@ const NO_ASKS: RunAsks = { count: 0, asked: [], label: "" };
 interface RunDetail {
   readonly plan?: unknown;
   readonly ends?: StepEnds;
-}
-
-/** The pause as a sentence a reader can act on. KAS's two `need_input` literals name a tool and a
- *  mechanism, so they are replaced (the arm above renders the question when the dock has it). Takes
- *  the STATE: for a park inside a parallel branch the run's reason names only a branch. */
-function pauseSentence(state: RunState | undefined): string {
-  if (isNeedInputPark(state)) {
-    return "A step is waiting for your answer";
-  }
-  const reason = state?.pauseReason;
-  if (reason === undefined || reason === "") {
-    return "Waiting";
-  }
-  return `Waiting: ${reason}`;
 }
 
 /** A run's status as one word. `paused` reads "waiting": KAS pauses for a watch, a retry budget
@@ -139,12 +120,7 @@ function membersOf(n: ExecNode): readonly ExecNode[] {
 /** A container's one-line fact: a repeat's pass against its bound, else the adapter's summary. */
 function groupMeta(n: ExecNode): string {
   const pass = n.kind === "repeat" ? latestPass(n)?.pass : undefined;
-  if (pass === undefined) {
-    return n.subtitle ?? "";
-  }
-  return n.maxPasses === undefined
-    ? `pass ${String(pass)}`
-    : `pass ${String(pass)} of ${String(n.maxPasses)}`;
+  return pass === undefined ? (n.subtitle ?? "") : passText(pass, n.maxPasses);
 }
 
 /** The card's disclosure bookkeeping, delegated because the registry's keys are not known here.
@@ -186,7 +162,9 @@ export function buildRunCard(
   // The step counter is the only fact this row carries besides the name: the status
   // word and the elapsed clock are `.run-foot`'s, which states both 44px below and
   // outside the disclosure, so a second rendering here was one fact with two owners.
-  const countEl = el("span", { className: "run-count" });
+  const count = buildProgress();
+  const countEl = count.root;
+  countEl.classList.add("run-count");
   // A span, not a button: the head is `role="button"`, so a nested `<button>`
   // is axe's `nested-interactive` regardless of aria-hidden/tabindex="-1".
   const chevron = el("span", { className: "run-toggle", "aria-hidden": "true" }, chevronEl());
@@ -324,7 +302,7 @@ export function buildRunCard(
       g.kind = node.kind;
     }
     g.root.dataset["kind"] = node.kind;
-    g.name.textContent = node.label;
+    paintLabel(g.name, node);
     const meta = groupMeta(node);
     g.meta.textContent = meta;
     g.root.setAttribute("aria-label", meta === "" ? node.label : `${node.label}, ${meta}`);
@@ -335,7 +313,7 @@ export function buildRunCard(
     row.root.dataset["status"] = node.state;
     row.root.dataset["nodeType"] = node.kind;
     paintStateMark(row.glyph, node.state);
-    row.name.textContent = node.label;
+    paintLabel(row.name, node);
     // Via a local, not directly: `undefined` is not a valid value for an
     // optional property under exactOptionalPropertyTypes.
     if (node.start === undefined) {
@@ -407,62 +385,18 @@ export function buildRunCard(
     });
   }
 
-  /** The alert: five things that can put a run in front of a person, ordered
-   *  by what the reader can do about it. Only one shows. It truncates tighter
-   *  than the run tab's alert, which carries the detail this glance leaves out. */
-  function renderAlert(state: RunState | undefined, asks: RunAsks): void {
-    const parts: string[] = [];
-    let kind = "";
-    if (launchError !== "") {
-      // Outranks every state: the launch never created a run, so `inspect`
-      // has nothing and only this reason exists.
-      kind = "failed";
-      parts.push(launchError);
-    } else if (asks.count > 0) {
-      // Ahead of the run's own status: it still reads `running` while a
-      // step's ask blocks it.
-      kind = "input";
-      parts.push(
-        asks.label === ""
-          ? "Waiting for your answer"
-          : `Waiting for your answer: ${truncate(asks.label, 120)}`,
-      );
-      if (asks.count > 1) {
-        parts.push(`${String(asks.count)} asks waiting`);
-      }
-    } else if (state !== undefined && stopSentence(state) !== undefined) {
-      kind = "stopped";
-      parts.push(stopSentence(state) ?? "");
-    } else if (state !== undefined && pausePendingSentence(state) !== undefined) {
-      kind = "paused";
-      parts.push(pausePendingSentence(state) ?? "");
-    } else if (state !== undefined && resumeSentence(state) !== undefined) {
-      kind = "stopped";
-      parts.push(resumeSentence(state) ?? "");
-    } else if (state?.status === "paused") {
-      kind = "paused";
-      parts.push(pauseSentence(state));
-      const detail = pauseDetailPhrase(state.pauseDetail);
-      if (detail !== undefined) {
-        parts.push(detail);
-      }
-    } else if (state?.status === "failed") {
-      kind = "failed";
-      const failed = failureOwner(lastNodes);
-      parts.push(
-        failed === undefined
-          ? "The run failed"
-          : `${failed.label} failed: ${truncate(failed.failure ?? "", 160)}`,
-      );
-    }
-    if (parts.length === 0) {
+  /** The alert: a failed launch, which no run state can carry, else the run's own
+   *  (`run-exec-source.ts` owns its precedence and its words). */
+  function renderAlert(runAlert: ExecRun["alert"]): void {
+    const alertOf = launchError !== "" ? { kind: "failed", text: launchError } : runAlert;
+    if (alertOf === undefined) {
       alert.classList.add("hidden");
       alert.replaceChildren();
       return;
     }
-    alert.dataset["kind"] = kind;
+    alert.dataset["kind"] = alertOf.kind;
     alert.classList.remove("hidden");
-    alert.textContent = parts.join(" \u00b7 ");
+    alert.textContent = alertOf.text;
   }
 
   /** Artifacts and captured outputs as one result list (one thing to a reader); artifacts win a key
@@ -574,10 +508,9 @@ export function buildRunCard(
     lastState = state;
     lastAsks = asks;
     lastDetail = detail;
-    lastNodes =
-      state === undefined
-        ? []
-        : runToExec(workflowID, state, detail.plan, asks, "", detail.ends).nodes;
+    const exec =
+      state === undefined ? undefined : runToExec(state, detail.plan, asks, "", detail.ends);
+    lastNodes = exec?.nodes ?? [];
     const label = state?.runLabel ?? state?.workflowName ?? "";
     if (label !== "") {
       nameEl.textContent = label;
@@ -594,17 +527,11 @@ export function buildRunCard(
     // ask blocks it, so `data-status` keeps the status and this says what is wanted.
     const word = asks.count > 0 ? "needs input" : runWord(state?.status);
 
-    const c = counters(lastNodes);
-    countEl.textContent =
-      c.total === 0
-        ? ""
-        : c.current > 0
-          ? `step ${String(c.current)} of ${String(c.total)}`
-          : `${String(c.done)} of ${String(c.total)}`;
+    count.paint(exec === undefined ? undefined : progressPhrase(exec));
 
     liveClock = runIsLive(state);
 
-    renderAlert(state, asks);
+    renderAlert(exec?.alert);
     seat(steps, lastNodes);
     renderOutputs(state);
     renderFoot(state);

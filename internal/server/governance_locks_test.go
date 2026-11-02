@@ -224,6 +224,32 @@ func TestReadKiroSettings_ReportsTheHeldUserValue(t *testing.T) {
 	}
 }
 
+// A user with no value of their own reads "" under the lock, so the switch shows kiro-cli's default
+// on unlock rather than the organization's value.
+func TestReadKiroSettings_ReportsAHeldUnsetValueAsUnset(t *testing.T) {
+	const key = "telemetry.enabled"
+	cli := &seedStoreCLI{}
+	s := &Server{cliRunner: cli, cliTimeouts: defaultCLITimeouts(), governance: fakeLocks{
+		marotte.LockTelemetry: {Value: false, Source: marotte.LockSourceOrganization},
+	}}
+	s.ApplyGovernanceLocks(t.Context())
+	if got, _ := cli.value(key); got != "false" {
+		t.Fatalf("Setup: under the lock kiro-cli holds %s = %q, want the organization's \"false\"", key, got)
+	}
+
+	rec := httptest.NewRecorder()
+	s.readKiroSettings(rec, httptest.NewRequest(http.MethodGet, "/api/kiro-settings?keys="+key, nil))
+	var body struct {
+		Settings map[string]string `json:"settings"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("GET /api/kiro-settings body %q: %v", rec.Body, err)
+	}
+	if got, ok := body.Settings[key]; !ok || got != "" {
+		t.Errorf("GET %s under the lock = (%q, present=%v), want \"\" (the user had no value)", key, got, ok)
+	}
+}
+
 func TestSettingsWrite_ReopensOpenChatsWhenASessionSettingMoved(t *testing.T) {
 	dir := t.TempDir()
 	eng := &fakeEngine{sessionSettings: func(ctx context.Context) string {
@@ -248,7 +274,7 @@ func telemetryEngine(runner *argsRunner) *fakeEngine {
 	return &fakeEngine{sessionSettings: func(context.Context) string { return runner.value("telemetry.enabled") }}
 }
 
-func TestWriteKiroSetting_ReopensOpenChatsWhenTheSwitchMoved(t *testing.T) {
+func TestWriteKiroSetting_ReachesResidentSessionsWhenTheSwitchMoved(t *testing.T) {
 	runner := &argsRunner{store: map[string]string{"telemetry.enabled": "true"}}
 	eng := telemetryEngine(runner)
 	eng.settle(t.Context())
@@ -270,8 +296,8 @@ func TestWriteKiroSetting_ReopensOpenChatsWhenTheSwitchMoved(t *testing.T) {
 }
 
 // Lifting a lock writes the user's own value back after the agent reconciled the lock change,
-// so the restore itself must reopen chats still on the organization's value.
-func TestApplyGovernanceLocks_ReopensOpenChatsWhenALiftRestoresTheUserValue(t *testing.T) {
+// so the restore itself must reach resident sessions still on the organization's value.
+func TestApplyGovernanceLocks_ReachesResidentSessionsWhenALiftRestoresTheUserValue(t *testing.T) {
 	runner := &argsRunner{store: map[string]string{"telemetry.enabled": "false"}}
 	gov := &liveLocks{m: map[string]marotte.GovernanceLock{marotte.LockTelemetry: {Value: true}}}
 	eng := telemetryEngine(runner)
@@ -288,8 +314,8 @@ func TestApplyGovernanceLocks_ReopensOpenChatsWhenALiftRestoresTheUserValue(t *t
 	}
 }
 
-// internal/agent's kiroCLIWrites routes each of these to open chats; a new key needs a row there.
-func TestAllowedKiroSettings_EachHasARouteToOpenChats(t *testing.T) {
+// internal/agent's kiroCLIWrites routes each of these (live, reload, engine restart or none); a new key needs a row there.
+func TestAllowedKiroSettings_EachHasARoute(t *testing.T) {
 	want := []string{
 		"chat.disableInheritingDefaultResources", "chat.enableKnowledge", "chat.enablePromptHints",
 		"chat.enableSubagent", "hooks.showStatus", "telemetry.enabled",

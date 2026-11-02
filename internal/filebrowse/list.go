@@ -15,7 +15,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // --- /api/files (GET directory listing) ---
@@ -83,8 +83,8 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 // listMounts writes the synthetic root listing: one directory entry per
-// granted mount. The root itself is never writable — mounts are boot-time
-// configuration, not filesystem entries.
+// granted mount. The root itself is never writable: mounts are configuration, not filesystem
+// entries.
 func (h *Handler) listMounts(w http.ResponseWriter) {
 	files := make([]fileEntry, 0, len(h.mounts))
 	for i := range h.mounts {

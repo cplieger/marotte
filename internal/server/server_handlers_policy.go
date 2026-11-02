@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 
@@ -14,7 +13,8 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/marotte/internal/workspace"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // Native Cedar policy endpoints: GET /api/permissions (the enforced view), POST
@@ -22,8 +22,8 @@ import (
 // permissions.yaml write KAS hot-reloads). The writer is conservative: a new rule defaults to
 // `ask`, only user and workspace scopes are writable, and widening needs an explicit confirm.
 
-// handlePolicyView serves GET /api/permissions via _kiro/permissions/list on the utility
-// bridge, degrading to the editable files (Available=false) when no bridge answers.
+// handlePolicyView serves GET /api/permissions via _kiro/permissions/list on an observer
+// session, degrading to the editable files (Available=false) when the engine does not answer.
 func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	// Gated here, not on the pattern (see ListenAndServe).
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {
@@ -47,7 +47,7 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("policy view: live list failed, falling back to file read", "error", logsafe.Field(err.Error()))
 	}
 	// Fallback: read the editable files directly so the editor works even
-	// when no bridge can answer (e.g. not signed in).
+	// when the engine cannot answer (e.g. not signed in).
 	view.Available = false
 	view.Rules = dedupePolicyRules(s.policyRulesFromFiles(scope))
 	view.Capabilities = pickerCapabilities(view.Rules)
@@ -114,7 +114,7 @@ func pickerCapabilities(rules []marotte.PolicyRule) []string {
 
 // Used only as the no-bridge fallback for the view.
 func (s *Server) policyRulesFromFiles(scope string) []marotte.PolicyRule {
-	home, err := os.UserHomeDir()
+	kiroHome, err := workspace.KiroHomeDir()
 	if err != nil {
 		return []marotte.PolicyRule{}
 	}
@@ -123,7 +123,7 @@ func (s *Server) policyRulesFromFiles(scope string) []marotte.PolicyRule {
 		if scope != "" && scope != sc {
 			continue
 		}
-		path, perr := policyfile.PathFor(sc, policyfile.Roots{Home: home, WorkDir: s.workDir})
+		path, perr := policyfile.PathFor(sc, policyfile.Roots{KiroHome: kiroHome, WorkDir: s.workDir})
 		if perr != nil {
 			continue
 		}
@@ -212,12 +212,12 @@ func (s *Server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "scope must be user or workspace")
 		return
 	}
-	home, err := os.UserHomeDir()
+	kiroHome, err := workspace.KiroHomeDir()
 	if err != nil {
 		httpreply.InternalError(w, err)
 		return
 	}
-	path, err := policyfile.PathFor(body.Scope, policyfile.Roots{Home: home, WorkDir: s.workDir})
+	path, err := policyfile.PathFor(body.Scope, policyfile.Roots{KiroHome: kiroHome, WorkDir: s.workDir})
 	if err != nil {
 		httpreply.BadRequest(w, err.Error())
 		return

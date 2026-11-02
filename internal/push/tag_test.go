@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // TestTagOf_MatchesTheCrossLanguageGolden pins the derivation both halves compute:

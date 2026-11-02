@@ -148,59 +148,37 @@ func TestSteeringDocumentsChanged_ProducesIssuesKeyedByDocsPath(t *testing.T) {
 	}
 }
 
-// A chat's catalog carries MCP prompts the utility session cannot see, so the
-// utility list seeds an empty catalog and never replaces a chat's.
-func TestSlashCatalog_UtilityNeverOverwritesChat(t *testing.T) {
-	var c slashCatalog
-	utility := []marotte.SlashCommand{{Name: "u", Kind: marotte.SlashKindPrompt}}
-	chat := []marotte.SlashCommand{{Name: "c", Kind: marotte.SlashKindPrompt}}
-
-	if !c.setFromUtility(utility) {
-		t.Fatal("SetFromUtility on an empty catalog = false, want true")
-	}
-	if !c.SetFromChat(chat) {
-		t.Fatal("SetFromChat over a utility list = false, want true")
-	}
-	if c.setFromUtility(utility) {
-		t.Error("SetFromUtility after a chat frame = true, want false")
-	}
-	if got, _ := c.snapshot(); len(got) != 1 || got[0].Name != "c" {
-		t.Errorf("Snapshot() = %+v, want the chat's list", got)
-	}
-}
-
 // Not ready until KAS sends a catalog; an empty one still counts, letting the client release unknown names.
 func TestSlashCatalog_ReadyOnlyAfterAKASCatalog(t *testing.T) {
 	var c slashCatalog
 	if cmds, ready := c.snapshot(); ready || len(cmds) != 0 {
 		t.Fatalf("Snapshot() before any frame = (%+v, %v), want ([], false)", cmds, ready)
 	}
-	if !c.SetFromChat([]marotte.SlashCommand{}) {
-		t.Error("SetFromChat(empty) on an unready catalog = false, want true so clients refetch")
+	if !c.Set([]marotte.SlashCommand{}) {
+		t.Error("Set(empty) on an unready catalog = false, want true so clients refetch")
 	}
 	if cmds, ready := c.snapshot(); !ready || len(cmds) != 0 {
 		t.Errorf("Snapshot() after an empty catalog = (%+v, %v), want ([], true)", cmds, ready)
 	}
-	if c.SetFromChat([]marotte.SlashCommand{}) {
-		t.Error("SetFromChat(empty) again = true, want false: nothing changed")
+	if c.Set([]marotte.SlashCommand{}) {
+		t.Error("Set(empty) again = true, want false: nothing changed")
 	}
 }
 
-// The utility seed fills the menu but never lets the client release an unknown name.
-func TestSlashCatalog_UtilitySeedIsNotReady(t *testing.T) {
+// Every session shares the engine's one MCP pool, so the newest list from any session is the workspace's.
+func TestSlashCatalog_TheNewestListFromAnySessionWins(t *testing.T) {
 	var c slashCatalog
-	seed := []marotte.SlashCommand{{Name: "review", Kind: marotte.SlashKindPrompt}}
-	if !c.setFromUtility(seed) {
-		t.Fatal("SetFromUtility(seed) on an empty catalog = false, want true so clients refetch")
+	first := []marotte.SlashCommand{{Name: "a", Kind: marotte.SlashKindPrompt}}
+	second := []marotte.SlashCommand{{Name: "b", Kind: marotte.SlashKindPrompt}}
+	c.Set(first)
+	if !c.Set(second) {
+		t.Fatal("Set(a new list) = false, want true so clients refetch")
 	}
-	if cmds, ready := c.snapshot(); ready || len(cmds) != 1 {
-		t.Errorf("Snapshot() after a utility seed = (%+v, %v), want one command, not ready", cmds, ready)
+	if got, _ := c.snapshot(); len(got) != 1 || got[0].Name != "b" {
+		t.Errorf("Snapshot() = %+v, want the newest list", got)
 	}
-	if !c.SetFromChat(seed) {
-		t.Error("SetFromChat(same list) after a utility seed = false, want true: readiness changed")
-	}
-	if _, ready := c.snapshot(); !ready {
-		t.Error("Snapshot() after a chat frame: ready = false, want true")
+	if c.Set(second) {
+		t.Error("Set(the same list) = true, want false: nothing changed")
 	}
 }
 
@@ -219,7 +197,7 @@ func TestHandleSlashCommands_ReportsReadiness(t *testing.T) {
 	if resp := get(); resp.Ready || len(resp.Commands) != 0 {
 		t.Errorf("before any frame: %+v, want {commands:[] ready:false}", resp)
 	}
-	h.slash.SetFromChat([]marotte.SlashCommand{{Name: "review", Kind: marotte.SlashKindPrompt}})
+	h.slash.Set([]marotte.SlashCommand{{Name: "review", Kind: marotte.SlashKindPrompt}})
 	if resp := get(); !resp.Ready || len(resp.Commands) != 1 {
 		t.Errorf("after a catalog: %+v, want ready with one command", resp)
 	}
@@ -420,10 +398,15 @@ func TestTranslateSystemNotify_EmitsASystemNoticeNotAnError(t *testing.T) {
 	}
 }
 
-func TestTranslateSystemNotify_ARunBridgeNamesItsRun(t *testing.T) {
+// The workspace table claims a session-less notify on whichever lane it arrives, and a host session's run:<id> lane
+// names its run in the toast.
+func TestTranslateSystemNotify_AHostSessionLaneNamesItsRun(t *testing.T) {
 	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	before := h.bus.fanout.Position().Head
-	h.translateACPEvent(runChatID("wf_1"), h.originOf(runChatID("wf_1")), systemNotifyMsg(t))
+	if !h.dispatchWorkspace(t.Context(), runChatID("wf_1"), systemNotifyMsg(t)) {
+		t.Fatal("the workspace table did not claim _kiro/system/notify")
+	}
 	var got []marotte.ChatID
 	for _, e := range bufferedSince(h, before) {
 		var msg marotte.ServerEvent
@@ -436,15 +419,5 @@ func TestTranslateSystemNotify_ARunBridgeNamesItsRun(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != runChatID("wf_1") {
 		t.Errorf("system_notice chat ids = %v, want one on %q", got, runChatID("wf_1"))
-	}
-}
-
-func TestUtilitySession_ForwardsASystemNotify(t *testing.T) {
-	var seen []string
-	us := &utilitySession{hooks: utilitySessionHooks{
-		onSystemNotify: func(msg *marotte.RPCResponse) { seen = append(seen, msg.Method) },
-	}}
-	if !us.dispatchNotification(systemNotifyMsg(t)) || len(seen) != 1 {
-		t.Errorf("dispatchNotification took %v, want the notify handed to its hook", seen)
 	}
 }

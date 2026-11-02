@@ -6,6 +6,7 @@ import {
   appendEntry,
   applyDelta,
   applyToolProgress,
+  clearTurnDropped,
   get,
   markSteersCompacted,
   openEntry,
@@ -28,6 +29,7 @@ onSSE("turn_opened", (chatID, p) => {
   if (forRun(p)) {
     return;
   }
+  clearTurnDropped(chatID);
   openTurn(chatID, p.entry);
 });
 
@@ -120,11 +122,13 @@ function afterAppend(chatID: string, entry: Entry): void {
     case "steer":
     case "steer_ack":
     case "steer_delivered":
+    case "steer_cleared":
     case "plan":
     case "compaction_failed":
     case "safety_blocked":
     case "model_switched":
     case "model_routed":
+    case "model_fallback":
     case "mode_switched":
     case "turn_revert":
     case "reconciled":

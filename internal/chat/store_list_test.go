@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -59,6 +60,47 @@ func TestListWithCompleteness_ACancelledCallerStillGetsEveryChat(t *testing.T) {
 	if !complete {
 		t.Error("complete = false; every chat was readable, so the scan is complete")
 	}
+}
+
+// A caller that arrives while a scan runs must get a scan that started after it: the running one
+// can predate a frame the caller already applied. Callers arriving together still share one scan.
+func TestListFlight_ACallerNeverJoinsAScanThatStartedBeforeIt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var f listFlight
+		release := make(chan struct{})
+		scans := 0
+		// Each scan answers its own number as the header count.
+		scan := func() listResult {
+			scans++
+			n := scans
+			if n == 1 {
+				<-release
+			}
+			return listResult{headers: make([]marotte.ChatHeader, n)}
+		}
+		first := make(chan int, 1)
+		go func() { first <- len(f.do(scan).headers) }()
+		synctest.Wait()
+
+		late := make(chan int, 2)
+		for range 2 {
+			go func() { late <- len(f.do(scan).headers) }()
+		}
+		synctest.Wait()
+		close(release)
+
+		if got := <-first; got != 1 {
+			t.Errorf("the first caller got scan %d, want 1", got)
+		}
+		for range 2 {
+			if got := <-late; got != 2 {
+				t.Errorf("a caller arriving during scan 1 got scan %d, want 2", got)
+			}
+		}
+		if scans != 2 {
+			t.Errorf("scans = %d, want 2: the two late callers share one", scans)
+		}
+	})
 }
 
 // loopHeader replaces id's header with a symlink to itself, so a stat answers

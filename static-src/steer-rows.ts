@@ -12,6 +12,7 @@ export interface SteerFrame {
   replaces?: readonly string[] | undefined;
   /** Absent reads as `queued`, the plain row a direct POST reply describes. */
   state?: SteerRowState | undefined;
+  awaitsPrompt?: boolean | undefined;
 }
 
 /** A fold's outcome: the new rows, and whether the change moves what the dock draws (a batch only
@@ -83,6 +84,7 @@ export function foldSteerFrame(
     ...(prev?.kas !== undefined && { kas: prev.kas }),
     ...(prev?.compacted === true && { compacted: true as const }),
     ...(frame.state === "unsent" && { unsent: true as const }),
+    ...(frame.state === "unsent" && frame.awaitsPrompt === true && { awaitsPrompt: true as const }),
   };
   const next = adoptAt >= 0 ? rows.map((e, i) => (i === adoptAt ? row : e)) : [...rows, row];
   return { rows: next, repaint: true };

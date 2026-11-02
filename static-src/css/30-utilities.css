@@ -140,9 +140,9 @@
  * `inline-size` is the ONE per-site variable, through `--skel-field-w`, and it is a
  * custom property rather than a per-site `width` for a cascade reason: this file
  * beats every feature slice at equal specificity, so a `width: 10em` here would
- * OVERRIDE a `.forge-account-primary-skeleton { width: 12em }` in 17-settings.css
- * and silently resize that site. A custom property has exactly one declaration to
- * win, wherever it is written, and the `var()` fallback here is not a declaration
+ * OVERRIDE a slice's own width for its site and silently resize that site. A
+ * custom property has exactly one declaration to win, wherever it is written,
+ * and the `var()` fallback here is not a declaration
  * and does not participate in the cascade for it.
  *
  * `max-inline-size: 100%` so a value wider than its column shrinks rather than
@@ -311,14 +311,6 @@
   max-width: 100%;
   height: 0.875rem;
   border-radius: var(--r-sm);
-}
-
-[id="load-more-indicator"] {
-  text-align: center;
-  padding: var(--sp-2);
-  color: var(--c-text-tertiary);
-  font-size: var(--fs-sm);
-  font-style: italic;
 }
 
 * {

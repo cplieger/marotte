@@ -10,7 +10,7 @@ import { jumpTo, onTranscriptMutate } from "./scroll.js";
 import { runServerSearch, resetServerSearch, revealHitTurn } from "./chat-search.js";
 import { getActive, getActiveId } from "./store.js";
 import { runOffsetOf } from "./messages-blocks.js";
-import { loadMessages } from "./store-load.js";
+import { loadOlderTurns } from "./store-load.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
 import { createSearchShell, searchIconButton } from "./search-shell.js";
@@ -662,13 +662,9 @@ async function ensureHitResident(chatID: string, hit: Hit): Promise<boolean> {
     if (session?.has_more !== true || session.id !== chatID || pages >= HIT_PAGE_CAP) {
       return false;
     }
-    const oldest = session.turn_order[0];
-    if (!(await loadMessages(chatID, oldest))) {
-      return false;
-    }
-    // No progress: the server answered but the window's edge did not move, so
-    // more requests would loop on the same answer.
-    if (getActive()?.turn_order[0] === oldest) {
+    // False covers a failed fetch and a page that moved the window's edge nowhere, where more requests would loop on
+    // the same answer.
+    if (!(await loadOlderTurns(chatID))) {
       return false;
     }
   }
@@ -764,6 +760,14 @@ function openDisclosureChain(target: HTMLElement, hit: Hit): void {
     }
     if (cur.classList.contains("tool-group") && cur.classList.contains("tool-group-collapsed")) {
       const header = cur.querySelector<HTMLElement>(":scope > .tool-group-header");
+      if (header !== null) {
+        activateQuietly(header);
+      }
+    }
+    if (cur.classList.contains("steer-group")) {
+      const header = cur.querySelector<HTMLElement>(
+        ':scope > .steer-group-header[aria-expanded="false"]',
+      );
       if (header !== null) {
         activateQuietly(header);
       }

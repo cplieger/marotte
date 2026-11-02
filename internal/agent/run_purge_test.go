@@ -28,7 +28,7 @@ func newPurgeRigRefs(t *testing.T, runs json.RawMessage, refs func(context.Conte
 		t.Fatalf("Setup: tabs.NewStore: %v", err)
 	}
 	cs := newTestChatStore()
-	h := New(t.Context(), testReaperWorkDir, rig.factory, cs, WithTabs(st), WithSessionReaper(nil, refs))
+	h := newRuntimeOn(t.Context(), testReaperWorkDir, rig.engine(), cs, WithTabs(st), WithSessionReaper(nil, refs))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	return h, rig
@@ -63,11 +63,11 @@ func deletedRunIDs(rig *deleteRig) []string {
 func TestPurgeParentlessRuns_DeletesOnlyFinishedUnclaimedRunsPastTheWindow(t *testing.T) {
 	old := time.Now().Add(-10 * 24 * time.Hour)
 	runs := purgeRuns(t,
-		purgeRow("wf_old_done", "completed", "sess_runbridge", old),
-		purgeRow("wf_old_failed", "failed", "sess_runbridge2", old),
-		purgeRow("wf_recent", "completed", "sess_runbridge3", time.Now().Add(-time.Hour)),
-		purgeRow("wf_running", "running", "sess_runbridge4", old),
-		purgeRow("wf_paused", "paused", "sess_runbridge5", old),
+		purgeRow("wf_old_done", "completed", "sess_runhost", old),
+		purgeRow("wf_old_failed", "failed", "sess_runhost2", old),
+		purgeRow("wf_recent", "completed", "sess_runhost3", time.Now().Add(-time.Hour)),
+		purgeRow("wf_running", "running", "sess_runhost4", old),
+		purgeRow("wf_paused", "paused", "sess_runhost5", old),
 		purgeRow("wf_chat_run", "completed", "sess_chat", old),
 	)
 	h, rig := newPurgeRig(t, runs, map[string]struct{}{"sess_chat": {}}, true)
@@ -85,6 +85,21 @@ func TestPurgeParentlessRuns_DeletesOnlyFinishedUnclaimedRunsPastTheWindow(t *te
 	}
 	if res.NextDeadline.IsZero() {
 		t.Error("PurgeParentlessRuns(7d) reported no deadline, want the recent run's purge time")
+	}
+}
+
+func TestPurgeParentlessRuns_PurgesNothingOnceShutdownBegan(t *testing.T) {
+	old := time.Now().Add(-10 * 24 * time.Hour)
+	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_old_done", "completed", "sess_runbridge", old)), nil, true)
+	beginDraining(h)
+
+	res := h.PurgeParentlessRuns(t.Context(), 7*24*time.Hour)
+
+	if got := deletedRunIDs(rig); len(got) != 0 {
+		t.Errorf("PurgeParentlessRuns once Shutdown began deleted %v, want none", got)
+	}
+	if res.Purged != 0 {
+		t.Errorf("PurgeParentlessRuns once Shutdown began reported %d purged, want 0", res.Purged)
 	}
 }
 

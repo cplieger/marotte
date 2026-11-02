@@ -10,14 +10,17 @@ import (
 // Matches KiroCrew's silence budget for upstream issue #3583.
 const compactionFailedTurnBudget = 60 * time.Second
 
-// CompactionFailed bounds a turn that may never get its response after a failed compaction. Backend activity and
-// live tools restart the silence budget.
-func (bc *bridgeCoordinator) CompactionFailed(chatID marotte.ChatID, detail string) {
-	lc := bc.turns.lifecycleFor(chatID)
+// CompactionFailed bounds the named turn, which the failure was recorded in, since it may never get its response.
+// Backend activity and live tools restart the silence budget. A turn no longer own is not armed.
+func (bc *bridgeCoordinator) CompactionFailed(chatID marotte.ChatID, turnID, detail string) {
+	lc, ok := bc.turns.lookup(chatID)
+	if !ok {
+		return
+	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	if lc.own == nil || lc.own.finalizing {
-		slog.Debug("compaction reap: no turn open", "chat_id", chatID)
+	if lc.own == nil || lc.own.ID != turnID || lc.own.finalizing {
+		slog.Debug("compaction reap: the turn is not open", "chat_id", chatID, "turn", turnID)
 		return
 	}
 	// The chain's origin, set once so it survives every re-arm: live tools are judged against it, and a per-arm cutoff
@@ -46,7 +49,11 @@ func (bc *bridgeCoordinator) armCompactionReapLocked(lc *chatLifecycle, turn *ac
 }
 
 func (bc *bridgeCoordinator) expireCompactionReap(chatID marotte.ChatID, turnID string, armID, seq, gen uint64, detail string) {
-	lc := bc.turns.lifecycleFor(chatID)
+	// lookup: an expiry outliving forget must not mint an empty lifecycle for the chat.
+	lc, ok := bc.turns.lookup(chatID)
+	if !ok {
+		return
+	}
 	lc.mu.Lock()
 	if lc.own == nil || lc.own.ID != turnID || lc.own.finalizing {
 		lc.mu.Unlock()
@@ -68,9 +75,17 @@ func (bc *bridgeCoordinator) expireCompactionReap(chatID marotte.ChatID, turnID 
 		return
 	}
 	turn.reapTimer = nil
+	// Claimed in the section that validated the turn, so a close and a new prompt after the unlock meet only
+	// this turn's own cancel.
+	cancel, claimed := lc.interruptLocked(turn, marotte.InterruptCause(detail))
 	lc.mu.Unlock()
-
-	bc.InterruptTurn(chatID, detail)
+	if !claimed {
+		slog.Debug("compaction reap: another cause already claimed the turn", "chat_id", chatID, "turn", turnID)
+		return
+	}
+	slog.Warn("the turn stayed silent after a failed compaction; interrupting it",
+		"chat_id", chatID, "turn", turnID, "budget", compactionFailedTurnBudget)
+	tripPromptCall(chatID, turnID, cancel)
 }
 
 func (*chatLifecycle) stopReapLocked(turn *activeTurn) {

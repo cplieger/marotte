@@ -71,7 +71,7 @@ describe("renderDeviceSignIn", () => {
 
   it("polls the grant by the id the start answered, never by a device code", async () => {
     mocks.dispatch.mockReturnValue(started(start()));
-    mocks.apiPostTyped.mockResolvedValue({ status: "complete" });
+    mocks.apiPostTyped.mockResolvedValue({ status: "complete", forge_id: "server-minted" });
 
     await signIn();
     await vi.advanceTimersByTimeAsync(5000);
@@ -82,13 +82,27 @@ describe("renderDeviceSignIn", () => {
       expect.any(Function),
       expect.any(AbortSignal),
     );
-    expect(deps.connected).toHaveBeenCalledExactlyOnceWith("github:github.com");
+    // The server mints the id; the client never builds one from kind and host.
+    expect(deps.connected).toHaveBeenCalledExactlyOnceWith("server-minted");
+  });
+
+  it("expands nothing, and says so, when a completed grant names no connection", async () => {
+    mocks.dispatch.mockReturnValue(started(start()));
+    mocks.apiPostTyped.mockResolvedValue({ status: "complete" });
+
+    await signIn();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(deps.connected).not.toHaveBeenCalled();
+    expect(body.querySelector(".forge-device-status")?.textContent).toBe(
+      "Error: the server answered no connection id",
+    );
   });
 
   it("closing the pane of a grant that connected cancels nothing on the server", async () => {
     // The pane closes from inside `connected`, which ends every grant left in it.
     mocks.dispatch.mockReturnValue(started(start()));
-    mocks.apiPostTyped.mockResolvedValue({ status: "complete" });
+    mocks.apiPostTyped.mockResolvedValue({ status: "complete", forge_id: "server-minted" });
     const fetchSpy = vi.fn<typeof fetch>(() =>
       Promise.resolve(new Response(null, { status: 204 })),
     );
@@ -122,7 +136,7 @@ describe("renderDeviceSignIn", () => {
   it("polls GitLab's route for a GitLab grant and expands that connection on completion", async () => {
     hostInput.value = "gitlab.example.com";
     mocks.dispatch.mockReturnValue(started(start()));
-    mocks.apiPostTyped.mockResolvedValue({ status: "complete" });
+    mocks.apiPostTyped.mockResolvedValue({ status: "complete", forge_id: "gitlab-minted" });
     renderDeviceSignIn(body, { kind: "gitlab", hostInput, options: () => ({}) }, deps);
     body.querySelector<HTMLInputElement>("[data-forge-client-id] input")!.value = "app-id";
 
@@ -141,7 +155,7 @@ describe("renderDeviceSignIn", () => {
       expect.any(Function),
       expect.any(AbortSignal),
     );
-    expect(deps.connected).toHaveBeenCalledExactlyOnceWith("gitlab:gitlab.example.com");
+    expect(deps.connected).toHaveBeenCalledExactlyOnceWith("gitlab-minted");
   });
 
   it("names on a self-managed GitLab every setting its OAuth application needs", () => {

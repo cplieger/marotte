@@ -24,9 +24,8 @@ const { geometrySkipped } = await import("./messages-blocks.js");
 
 /** The selector strings are the predicate's own, so a drift on either side fails here. */
 const SKIPPED = [
-  { sheet: "29-turns.css", selector: ".turn[data-folded] > .turn-body" },
+  { sheet: "29-turns.css", selector: ".turn[data-folded] > .turn-body:not([data-fold-closing])" },
   { sheet: "13-messages.css", selector: ".transcript-view:not(.is-active)" },
-  { sheet: "14-tools.css", selector: ".subagent-block.collapsed > .subagent-body" },
 ] as const;
 
 /** Builds the shape for real, so the predicate walks a genuine ancestor chain. */
@@ -36,9 +35,6 @@ function mountSkipped(selector: string): HTMLElement {
     host.className = "turn";
     host.setAttribute("data-folded", "");
     host.innerHTML = `<div class="turn-body"><div class="message assistant">prose</div></div>`;
-  } else if (selector.startsWith(".subagent-block")) {
-    host.className = "subagent-block collapsed";
-    host.innerHTML = `<div class="subagent-body"><div class="message assistant">prose</div></div>`;
   } else if (selector.startsWith(".transcript-view")) {
     host.className = "transcript-view";
     host.innerHTML = `<div class="turn-body"><div class="message assistant">prose</div></div>`;

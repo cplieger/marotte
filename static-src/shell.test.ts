@@ -340,6 +340,19 @@ describe("shell.ts: lazy terminal creation", () => {
     expect(h.createTerminal).not.toHaveBeenCalled();
   });
 
+  it("lights the toolbar button and mirrors it on aria-pressed while the panel is open", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+
+    h.shellBtn.click();
+    expect(h.shellBtn.classList.contains("active")).toBe(true);
+    expect(h.shellBtn.getAttribute("aria-pressed")).toBe("true");
+
+    h.shellBtn.click();
+    expect(h.shellBtn.classList.contains("active")).toBe(false);
+    expect(h.shellBtn.getAttribute("aria-pressed")).toBe("false");
+  });
+
   it("builds the terminal on first open with the shell WS path, theme, and container layout", async () => {
     const h = await setup();
     h.mod.initShellPanel();

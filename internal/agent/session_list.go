@@ -15,10 +15,10 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
-// sessionListTimeout bounds the round-trip, which may start the utility bridge (configTemplateTimeout's value).
+// sessionListTimeout bounds the round-trip, which may wait for the engine to be ready (configTemplateTimeout's value).
 const sessionListTimeout = 45 * time.Second
 
 // maxSessionDescBytes bounds the agent's self-declared description for the History row: 512, as translate's
@@ -70,6 +70,7 @@ func (rt *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 		runs = []marotte.WorkflowRun{}
 		out.RunsState = marotte.ReadUnavailable
 	}
+	withParentNames(runs, rt.chatStore.List(r.Context()))
 	out.Sessions = rows
 	out.Runs = runs
 	webhttp.WriteJSON(w, out)
@@ -80,19 +81,51 @@ func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]mar
 	if err != nil {
 		return nil, err
 	}
-	return toResumable(claimed, rows), nil
+	out := toResumable(claimed, rows)
+	withChatFacts(out, rt.chatStore.List(ctx))
+	return out, nil
 }
 
-// workspaceSessionRows is KAS's session/list for this workspace, over the utility session.
+// withChatFacts copies each owning chat's header facts onto its row. The History line reads them from here
+// rather than from a client's open chats, which hold only the chats with a tab.
+func withChatFacts(rows []marotte.ResumableSession, headers []marotte.ChatHeader) {
+	byID := make(map[string]int, len(headers))
+	for i := range headers {
+		byID[headers[i].ID] = i
+	}
+	for i := range rows {
+		at, ok := byID[rows[i].ChatID]
+		if !ok {
+			continue
+		}
+		h := &headers[at]
+		rows[i].Model = h.Model
+		rows[i].CurrentModeID = h.CurrentModeID
+		rows[i].TurnCount = h.TurnCount
+		rows[i].Credits = h.Usage.Credits
+	}
+}
+
+// withParentNames copies each launching chat's name from its stored header onto the run row.
+func withParentNames(runs []marotte.WorkflowRun, headers []marotte.ChatHeader) {
+	names := make(map[string]string, len(headers))
+	for i := range headers {
+		names[headers[i].ID] = headers[i].Name
+	}
+	for i := range runs {
+		runs[i].ParentChatName = names[runs[i].ParentChatID]
+	}
+}
+
+// workspaceSessionRows is KAS's session/list for this workspace, an engine call.
 func (rt *Runtime) workspaceSessionRows(ctx context.Context) ([]kasSessionRow, error) {
-	u := rt.utility.get()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
 
 	// cwd scopes the answer to this workspace; unscoped it returned 399 rows across 55 directories. The "user"
 	// scope is that unscoped answer.
-	raw, err := u.session.rawCall(cctx, "session list call", marotte.MethodSessionList,
-		callerParams(map[string]any{"cwd": rt.lifecycle.workDir}))
+	raw, err := rt.engine.rawCall(cctx, "session list call", marotte.MethodSessionList,
+		map[string]any{"cwd": rt.lifecycle.workDir})
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +149,7 @@ func (rt *Runtime) claimedSessions(ctx context.Context) map[string]marotte.ChatI
 	return claimed
 }
 
-// toResumable keeps only rows a marotte chat claims, dropping step, utility and subagent sessions. The chat
+// toResumable keeps only rows a marotte chat claims, dropping step, host, observer and subagent sessions. The chat
 // store decides what is offered; session/list whether KAS can resume it.
 func toResumable(claimed map[string]marotte.ChatID, rows []kasSessionRow) []marotte.ResumableSession {
 	out := make([]marotte.ResumableSession, 0, len(rows))
@@ -231,13 +264,12 @@ type kasWorkflowRun struct {
 }
 
 func (rs *Runs) list(ctx context.Context, claimed map[string]marotte.ChatID) ([]marotte.WorkflowRun, error) {
-	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
 
 	// workspacePaths is a required array (methodKiroWorkflowList).
-	raw, err := u.session.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
-		callerParams(map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}}))
+	raw, err := rs.engine.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
+		map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}})
 	if err != nil {
 		return nil, err
 	}

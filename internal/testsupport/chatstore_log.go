@@ -29,13 +29,13 @@ func (*InMemoryChatStore) EmptyCompactions(context.Context, marotte.ChatID) (int
 	return 0, nil
 }
 
-// WaitingWorkflowMessages answers none.
-func (*RecordingChatStore) WaitingWorkflowMessages(context.Context, marotte.ChatID) ([]marotte.WorkflowMessage, error) {
+// UnsettledWorkflowMessages answers none.
+func (*RecordingChatStore) UnsettledWorkflowMessages(context.Context, marotte.ChatID) ([]marotte.WorkflowMessage, error) {
 	return nil, nil
 }
 
-// WaitingWorkflowMessages answers none.
-func (*InMemoryChatStore) WaitingWorkflowMessages(context.Context, marotte.ChatID) ([]marotte.WorkflowMessage, error) {
+// UnsettledWorkflowMessages answers none.
+func (*InMemoryChatStore) UnsettledWorkflowMessages(context.Context, marotte.ChatID) ([]marotte.WorkflowMessage, error) {
 	return nil, nil
 }
 
@@ -58,6 +58,11 @@ func (*InMemoryChatStore) RewindTarget(context.Context, marotte.ChatID, string) 
 // PromptReceipt answers a prompt the log never held.
 func (*InMemoryChatStore) PromptReceipt(context.Context, marotte.ChatID, string) (marotte.PromptReceipt, error) {
 	return marotte.PromptReceipt{}, nil
+}
+
+// ReadBound answers 0: this store holds no log, so no read position.
+func (*InMemoryChatStore) ReadBound(context.Context, marotte.ChatID) (uint64, error) {
+	return 0, nil
 }
 
 // PromptAttachmentPaths answers no paths.

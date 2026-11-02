@@ -2,12 +2,10 @@ package git
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -19,13 +17,11 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
-	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/webhttp/v4"
 	"golang.org/x/sync/singleflight"
-	"pgregory.net/rapid"
 )
 
 func TestRepoDir(t *testing.T) {
@@ -386,79 +382,6 @@ func TestOwnerOf_NoRepositoryMeansNoOwner(t *testing.T) {
 	h := NewHandler(t.TempDir())
 	if repo, inner, ok := h.ownerOf(t.Context(), "anything.go"); ok {
 		t.Errorf("ownerOf = (%q, %q, true), want no owner in a workspace with no repos", repo, inner)
-	}
-}
-
-func TestExtractCommitMessage(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"empty input yields empty", "", ""},
-		{"plain single line passes through", "feat: add widget", "feat: add widget"},
-		{"strips triple-backtick fences", "```\nfeat: add widget\n```", "feat: add widget"},
-		{"strips uppercase prefix", "COMMIT MESSAGE: feat: add widget", "feat: add widget"},
-		{"strips lowercase prefix", "commit message: feat: add widget", "feat: add widget"},
-		{"strips titlecase prefix", "Commit Message: feat: add widget", "feat: add widget"},
-		{"strips surrounding double quotes", `"feat: add widget"`, "feat: add widget"},
-		{"strips surrounding single quotes", `'feat: add widget'`, "feat: add widget"},
-		{"mismatched quotes preserved", `"feat: add widget'`, `"feat: add widget'`},
-		{"trims leading/trailing whitespace", "   feat: add widget  \n", "feat: add widget"},
-		{
-			"short subject + body preserved",
-			"feat: add widget\n\n- does the thing",
-			"feat: add widget\n\n- does the thing",
-		},
-		{
-			"empty body drops to subject only",
-			"feat: add widget\n\n   \n  ",
-			"feat: add widget",
-		},
-		{
-			"subject exactly 72 chars unchanged",
-			strings.Repeat("a", 72),
-			strings.Repeat("a", 72),
-		},
-		{
-			"subject >72 chars with no word boundary in first 30 hard-cuts at 69",
-			strings.Repeat("x", 100),
-			strings.Repeat("x", 69) + "...",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractCommitMessage(tt.in)
-			if got != tt.want {
-				t.Errorf("extractCommitMessage(%q) = %q, want %q", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestExtractCommitMessage_SubjectLineBounded(t *testing.T) {
-	inputs := []string{
-		"",
-		"short",
-		strings.Repeat("a", 72),
-		strings.Repeat("a", 73),
-		strings.Repeat("x", 1000),
-		"feat: " + strings.Repeat("word ", 40),
-		strings.Repeat("日", 200),
-		"feat: " + strings.Repeat("変更 ", 60),
-		strings.Repeat("𝄞", 100),
-	}
-	for _, in := range inputs {
-		out := extractCommitMessage(in)
-		firstLine, _, _ := strings.Cut(out, "\n")
-		if n := utf8.RuneCountInString(firstLine); n > subjectMaxRunes {
-			t.Errorf("extractCommitMessage(%q...): subject is %d runes, want <=%d",
-				in[:min(len(in), 20)], n, subjectMaxRunes)
-		}
-		if !utf8.ValidString(firstLine) {
-			t.Errorf("extractCommitMessage(%q...): subject %q is not valid UTF-8",
-				in[:min(len(in), 20)], firstLine)
-		}
 	}
 }
 
@@ -1499,21 +1422,6 @@ func TestHandlePRFetch_InvalidHeadRejected(t *testing.T) {
 	}
 }
 
-func TestHandleCommitMessage_NilUtilityPromptReturnsError(t *testing.T) {
-	a := &AIHandler{workDir: t.TempDir()}
-	req := httptest.NewRequest(http.MethodPost, "/api/git/commit-message", strings.NewReader(`{}`))
-	rec := httptest.NewRecorder()
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("panicked with nil utilityPrompt: %v", r)
-		}
-	}()
-	a.handleCommitMessage(rec, req)
-	if !strings.Contains(rec.Body.String(), "no_staged_changes") {
-		t.Errorf("body %q missing 'no_staged_changes'", rec.Body.String())
-	}
-}
-
 func TestHandleRepos_ListsReposSkippingDotAndNonRepos(t *testing.T) {
 	workDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workDir, ".hidden", ".git"), 0o755); err != nil {
@@ -1626,13 +1534,7 @@ func writeCommit(t *testing.T, dir, file, content, msg string) {
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return buf
 }
 
@@ -2146,34 +2048,6 @@ func TestStagingHandlers_InputValidation(t *testing.T) {
 	}
 }
 
-func TestHandlePRDescription_MalformedBodyRejected(t *testing.T) {
-	a := &AIHandler{workDir: t.TempDir()}
-	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader("{not"))
-	rec := httptest.NewRecorder()
-	a.handlePRDescription(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("code = %d, want 400", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "bad request") {
-		t.Errorf("body %q missing 'bad request'", rec.Body.String())
-	}
-}
-
-func TestHandlePRDescription_NilUtilityPromptReturnsError(t *testing.T) {
-	a := &AIHandler{workDir: t.TempDir()}
-	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader(`{}`))
-	rec := httptest.NewRecorder()
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("panicked with nil utilityPrompt: %v", r)
-		}
-	}()
-	a.handlePRDescription(rec, req)
-	if !strings.Contains(rec.Body.String(), "no_changes") {
-		t.Errorf("body %q missing 'no_changes'", rec.Body.String())
-	}
-}
-
 func TestSimpleHandlers_NonPostRejected(t *testing.T) {
 	tests := []struct {
 		handler func(h *Handler) http.HandlerFunc
@@ -2209,32 +2083,6 @@ func TestSimpleHandlers_NonPostRejected(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-type mockPrompter struct {
-	err    error
-	result string
-	called bool
-}
-
-func (m *mockPrompter) UtilityPrompt(_ context.Context, _ string, _ marotte.EffortLevel) (string, error) {
-	m.called = true
-	return m.result, m.err
-}
-
-func TestWithUtilityPrompt_WiresCallback(t *testing.T) {
-	mp := &mockPrompter{result: "feat: stub"}
-	a := NewAIHandler(t.TempDir(), mp)
-	req := httptest.NewRequest(http.MethodPost, "/api/git/commit-message",
-		strings.NewReader(`{}`))
-	rec := httptest.NewRecorder()
-	a.handleCommitMessage(rec, req)
-	if mp.called {
-		t.Errorf("utilityPrompt called before staged-changes check (guard order changed)")
-	}
-	if !strings.Contains(rec.Body.String(), "no_staged_changes") {
-		t.Errorf("body %q missing 'no_staged_changes'; guard order may have changed", rec.Body.String())
 	}
 }
 
@@ -2357,62 +2205,6 @@ func FuzzPRRemoteHost(f *testing.F) {
 				t.Errorf("ParseRemoteHost(%q) = %q: contains control char %U", data, got, c)
 				return
 			}
-		}
-	})
-}
-
-func FuzzExtractCommitMessage(f *testing.F) {
-	seeds := []string{
-		"",
-		"feat: add widget",
-		"```\nfeat: add widget\n```",
-		"COMMIT MESSAGE: feat: add widget",
-		"commit message: feat: add widget",
-		"Commit Message: feat: add widget",
-		`"feat: add widget"`,
-		`'feat: add widget'`,
-		"   feat: add widget  \n",
-		"feat: add widget\n\n- does the thing",
-		"feat: add widget\n\n   \n  ",
-		strings.Repeat("a", 72),
-		strings.Repeat("x", 100),
-		"feat: " + strings.Repeat("word ", 40),
-		"```go\nfeat: refactor\n```",
-		strings.Repeat("a", 68) + "\u00e9" + strings.Repeat("a", 10),
-		"a " + strings.Repeat("b", 66) + "\u0c0b" + strings.Repeat("b", 10),
-		strings.Repeat("a", 68) + "\U0001f680" + strings.Repeat("a", 10),
-	}
-	for _, s := range seeds {
-		f.Add(s)
-	}
-	f.Fuzz(func(t *testing.T, data string) {
-		result := extractCommitMessage(data)
-		// The subject is capped in RUNES, the unit capSubject documents.
-		firstLine, _, _ := strings.Cut(result, "\n")
-		if n := utf8.RuneCountInString(firstLine); n > subjectMaxRunes {
-			t.Errorf("extractCommitMessage(%q): subject %q is %d runes, want <=%d",
-				data, firstLine, n, subjectMaxRunes)
-		}
-		if utf8.ValidString(data) && !utf8.ValidString(result) {
-			t.Errorf("extractCommitMessage(%q) = %q: valid UTF-8 in, invalid UTF-8 out",
-				data, result)
-		}
-		trimmed := strings.TrimSpace(result)
-		if len(trimmed) >= 2 {
-			if (trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"') ||
-				(trimmed[0] == '\'' && trimmed[len(trimmed)-1] == '\'') {
-				in := strings.TrimSpace(data)
-				if len(in) >= 2 &&
-					((in[0] == '"' && in[len(in)-1] == '"') ||
-						(in[0] == '\'' && in[len(in)-1] == '\'')) {
-					t.Errorf("extractCommitMessage(%q) = %q: surrounding quotes not stripped",
-						data, result)
-				}
-			}
-		}
-		upper := strings.ToUpper(strings.TrimSpace(result))
-		if strings.HasPrefix(upper, "COMMIT MESSAGE:") {
-			t.Errorf("extractCommitMessage(%q) = %q: prefix not stripped", data, result)
 		}
 	})
 }
@@ -2591,50 +2383,6 @@ func FuzzRepoDir(f *testing.F) {
 	})
 }
 
-func TestExtractCommitMessage_PropertyInvariants(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		subject := rapid.StringMatching(`[a-z :(){}\-]{0,200}`).Draw(t, "subject")
-
-		hasBody := rapid.Bool().Draw(t, "hasBody")
-		var input string
-		if hasBody {
-			body := rapid.StringMatching(`[a-z \-\n]{1,100}`).Draw(t, "body")
-			input = subject + "\n\n" + body
-		} else {
-			input = subject
-		}
-
-		wrapper := rapid.IntRange(0, 3).Draw(t, "wrapper")
-		switch wrapper {
-		case 1:
-			input = "```\n" + input + "\n```"
-		case 2:
-			input = "COMMIT MESSAGE: " + input
-		case 3:
-			input = `"` + input + `"`
-		}
-
-		result := extractCommitMessage(input)
-
-		firstLine, _, _ := strings.Cut(result, "\n")
-		if n := utf8.RuneCountInString(firstLine); n > subjectMaxRunes {
-			t.Fatalf("subject %q is %d runes, want <=%d", firstLine, n, subjectMaxRunes)
-		}
-
-		trimmedSubject := strings.TrimSpace(subject)
-		if wrapper == 0 && utf8.RuneCountInString(trimmedSubject) > subjectMaxRunes && result != "" {
-			subjectOut, _, _ := strings.Cut(result, "\n")
-			if !strings.HasSuffix(subjectOut, subjectEllipsis) {
-				t.Fatalf("truncated subject %q does not end with %q", subjectOut, subjectEllipsis)
-			}
-		}
-
-		if result != strings.TrimSpace(result) {
-			t.Fatalf("result has leading/trailing whitespace: %q", result)
-		}
-	})
-}
-
 func TestHandlePush_ValidationMatrix(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -2732,64 +2480,6 @@ func TestHandlePull_ValidationMatrix(t *testing.T) {
 	}
 }
 
-func TestExtractCommitMessage_RapidUTF8(t *testing.T) {
-	rapid.Check(t, func(rt *rapid.T) {
-		subject := rapid.String().Draw(rt, "subject")
-		if len(subject) > 500 {
-			subject = subject[:500]
-		}
-
-		hasBody := rapid.Bool().Draw(rt, "hasBody")
-		var input string
-		if hasBody {
-			body := rapid.String().Draw(rt, "body")
-			if len(body) > 200 {
-				body = body[:200]
-			}
-			input = subject + "\n\n" + body
-		} else {
-			input = subject
-		}
-
-		wrapper := rapid.IntRange(0, 4).Draw(rt, "wrapper")
-		switch wrapper {
-		case 1:
-			lang := rapid.StringMatching(`[a-z]{0,10}`).Draw(rt, "lang")
-			input = "```" + lang + "\n" + input + "\n```"
-		case 2:
-			input = "COMMIT MESSAGE: " + input
-		case 3:
-			input = `"` + input + `"`
-		case 4:
-			input = "  \n\t" + input + "\n  "
-		}
-
-		result := extractCommitMessage(input)
-
-		firstLine, _, _ := strings.Cut(result, "\n")
-		if n := utf8.RuneCountInString(firstLine); n > subjectMaxRunes {
-			rt.Fatalf("subject %q is %d runes, want <=%d", firstLine, n, subjectMaxRunes)
-		}
-
-		if result != strings.TrimSpace(result) {
-			rt.Fatalf("result has leading/trailing whitespace: %q", result)
-		}
-	})
-}
-
-// A subject longer than 72 chars whose only space within subject[:69]
-// sits at exactly column 30: extractCommitMessage's strict ">30"
-// word-boundary rule treats column 30 as too early, so it breaks at
-// column 69 rather than at the space.
-func TestExtractCommitMessage_WordBreakBoundary(t *testing.T) {
-	input := strings.Repeat("A", 30) + " " + strings.Repeat("B", 45)
-	got := extractCommitMessage(input)
-	want := strings.Repeat("A", 30) + " " + strings.Repeat("B", 38) + "..."
-	if got != want {
-		t.Errorf("extractCommitMessage(boundary idx==30) = %q, want %q", got, want)
-	}
-}
-
 // writeGitError includes the detail field only when it is non-empty.
 func TestWriteGitError_DetailField(t *testing.T) {
 	rec := httptest.NewRecorder()
@@ -2845,110 +2535,6 @@ func TestHandlePRFetch_NumberBoundary(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "invalid PR number") {
 		t.Errorf("boundary number rejected as invalid; body = %s", rec.Body.String())
-	}
-}
-
-// handleCommitMessage calls the prompter only when there are staged
-// changes: a clean repo reports no_staged_changes without invoking it; a
-// repo with a staged change generates a message.
-func TestHandleCommitMessage_StagedGate(t *testing.T) {
-	skipNoGit(t)
-
-	t.Run("clean_repo_reports_no_staged", func(t *testing.T) {
-		dir := t.TempDir()
-		initFixtureRepo(t, dir)
-		mp := &mockPrompter{result: "feat: gk commit"}
-		a := NewAIHandler(dir, mp)
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/git/commit-message", strings.NewReader(`{}`))
-		a.handleCommitMessage(rec, req)
-		if mp.called {
-			t.Errorf("prompter called on clean repo; want it skipped")
-		}
-		if !strings.Contains(rec.Body.String(), "no_staged_changes") {
-			t.Errorf("body = %q, want no_staged_changes", rec.Body.String())
-		}
-	})
-
-	t.Run("staged_repo_generates_message", func(t *testing.T) {
-		dir := t.TempDir()
-		initFixtureRepo(t, dir)
-		if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("changed\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		runGit(t, dir, "add", "README.md")
-		mp := &mockPrompter{result: "feat: gk commit"}
-		a := NewAIHandler(dir, mp)
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/git/commit-message", strings.NewReader(`{}`))
-		a.handleCommitMessage(rec, req)
-		if !mp.called {
-			t.Errorf("prompter not called on staged repo; want it invoked")
-		}
-		var resp map[string]string
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("unmarshal: %v", err)
-		}
-		if resp["output"] != "feat: gk commit" {
-			t.Errorf("output = %q, want %q; body = %s", resp["output"], "feat: gk commit", rec.Body.String())
-		}
-	})
-}
-
-// handlePRDescription proceeds (and calls the prompter) when
-// `git diff base...HEAD` is non-empty, without falling through to the
-// origin fallback.
-func TestHandlePRDescription_DiffGate(t *testing.T) {
-	skipNoGit(t)
-	dir := t.TempDir()
-	initFixtureRepo(t, dir)
-	runGit(t, dir, "checkout", "-q", "-b", "feature")
-	writeCommit(t, dir, "README.md", "changed\n", "feature commit")
-	mp := &mockPrompter{result: "My PR description"}
-	a := NewAIHandler(dir, mp)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader(`{}`))
-	a.handlePRDescription(rec, req)
-	if !mp.called {
-		t.Errorf("prompter not called with a non-empty base diff; want it invoked")
-	}
-	var resp map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if resp["output"] != "My PR description" {
-		t.Errorf("output = %q, want %q; body = %s", resp["output"], "My PR description", rec.Body.String())
-	}
-}
-
-// When `git diff base...HEAD` is empty, handlePRDescription falls back to
-// `git diff origin/base...HEAD`; a non-empty fallback diff proceeds to
-// generate the description.
-func TestHandlePRDescription_FallbackDiffGate(t *testing.T) {
-	skipNoGit(t)
-	base := t.TempDir()
-	origin := filepath.Join(base, "origin")
-	work := filepath.Join(base, "work")
-	if err := os.Mkdir(origin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initFixtureRepo(t, origin)
-	runGit(t, base, "clone", "-q", origin, work)
-	writeCommit(t, work, "README.md", "changed\n", "work commit")
-	mp := &mockPrompter{result: "My PR description"}
-	a := NewAIHandler(work, mp)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader(`{}`))
-	a.handlePRDescription(rec, req)
-	if !mp.called {
-		t.Errorf("prompter not called with non-empty fallback diff; want it invoked")
-	}
-	var resp map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if resp["output"] != "My PR description" {
-		t.Errorf("output = %q, want %q; body = %s", resp["output"], "My PR description", rec.Body.String())
 	}
 }
 
@@ -3193,155 +2779,6 @@ func TestValidateFilePath_ControlCharBoundary(t *testing.T) {
 	}
 }
 
-// getRecentCommits returns the commit subjects for a real repo and the
-// "No commit history available" sentinel for a non-repo directory.
-func TestGetRecentCommits_ReturnsHistoryForRealRepo(t *testing.T) {
-	skipNoGit(t)
-	dir := t.TempDir()
-	runGit(t, dir, "init", "-q")
-	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("hi"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, dir, "add", "f.txt")
-	runGit(t, dir, "commit", "-q", "-m", "seed commit subject")
-
-	got := getRecentCommits(t.Context(), dir, 10)
-	if !strings.Contains(got, "seed commit subject") {
-		t.Errorf("getRecentCommits(repo with a commit) = %q, want it to contain the commit subject", got)
-	}
-	if got == "No commit history available" {
-		t.Errorf("getRecentCommits(repo with a commit) returned the empty-history sentinel")
-	}
-
-	if got := getRecentCommits(t.Context(), t.TempDir(), 10); got != "No commit history available" {
-		t.Errorf("getRecentCommits(non-repo dir) = %q, want the sentinel", got)
-	}
-}
-
-// capturePrompter records the prompt it was handed so a test can assert
-// on the text the AI git handlers build (the diff body, the commit-log
-// section). It always succeeds.
-type capturePrompter struct {
-	prompt string
-	result string
-}
-
-func (c *capturePrompter) UtilityPrompt(_ context.Context, prompt string, _ marotte.EffortLevel) (string, error) {
-	c.prompt = prompt
-	return c.result, nil
-}
-
-// handleCommitMessage feeds the AI the full staged diff (unified-diff
-// hunk bodies), not the `--stat` summary and not a size-truncated stub:
-// the prompt must carry the actual changed line and a hunk header.
-func TestHandleCommitMessage_PromptCarriesFullStagedDiff(t *testing.T) {
-	skipNoGit(t)
-	dir := t.TempDir()
-	initFixtureRepo(t, dir)
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi\nUNIQUE_DIFF_MARKER_LINE\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, dir, "add", "README.md")
-
-	cp := &capturePrompter{result: "feat: x"}
-	a := NewAIHandler(dir, cp)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/git/commit-message", strings.NewReader(`{}`))
-	a.handleCommitMessage(rec, req)
-
-	if !strings.Contains(cp.prompt, "UNIQUE_DIFF_MARKER_LINE") {
-		t.Errorf("commit prompt missing the staged diff body; prompt:\n%s", cp.prompt)
-	}
-	if !strings.Contains(cp.prompt, "@@") {
-		t.Errorf("commit prompt missing unified-diff hunk header (got the --stat summary instead of the full diff?); prompt:\n%s", cp.prompt)
-	}
-}
-
-// handlePRDescription caps the branch diff at 12 KB but must still feed
-// the AI the actual diff content for normal-sized branches; a cap that
-// collapses to zero would truncate everything down to the size-stub
-// suffix.
-func TestHandlePRDescription_PromptCarriesBranchDiff(t *testing.T) {
-	skipNoGit(t)
-	dir := t.TempDir()
-	initFixtureRepo(t, dir)
-	runGit(t, dir, "checkout", "-q", "-b", "feature")
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi\nPR_DIFF_MARKER_LINE\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, dir, "add", "README.md")
-	runGit(t, dir, "commit", "-q", "-m", "feature change")
-
-	cp := &capturePrompter{result: "desc"}
-	a := NewAIHandler(dir, cp)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader(`{}`))
-	a.handlePRDescription(rec, req)
-
-	if !strings.Contains(cp.prompt, "PR_DIFF_MARKER_LINE") {
-		t.Errorf("PR prompt missing the branch diff body; prompt:\n%s", cp.prompt)
-	}
-}
-
-// handlePRDescription uses the local `base..HEAD` commit log verbatim
-// when it is non-empty; it must NOT fall through to the
-// `origin/base..HEAD` fallback. When local main is ahead of origin/main,
-// the fallback would wrongly fold in commits that aren't part of this
-// branch's own history.
-func TestHandlePRDescription_UsesLocalLogWhenNonEmpty(t *testing.T) {
-	skipNoGit(t)
-	base := t.TempDir()
-	origin := filepath.Join(base, "origin")
-	work := filepath.Join(base, "work")
-	if err := os.Mkdir(origin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initFixtureRepo(t, origin)
-	runGit(t, base, "clone", "-q", origin, work)
-	writeCommit(t, work, "main.txt", "m\n", "MAIN_ONLY_COMMIT")
-	runGit(t, work, "checkout", "-q", "-b", "feature")
-	writeCommit(t, work, "feat.txt", "f\n", "FEATURE_ONLY_COMMIT")
-
-	cp := &capturePrompter{result: "desc"}
-	a := NewAIHandler(work, cp)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader(`{}`))
-	a.handlePRDescription(rec, req)
-
-	if !strings.Contains(cp.prompt, "FEATURE_ONLY_COMMIT") {
-		t.Fatalf("PR prompt log missing the branch's own commit; prompt:\n%s", cp.prompt)
-	}
-	if strings.Contains(cp.prompt, "MAIN_ONLY_COMMIT") {
-		t.Errorf("PR prompt log folded in origin/main fallback commits; the non-empty local log should win; prompt:\n%s", cp.prompt)
-	}
-}
-
-// When the local `base..HEAD` log is empty (HEAD == base), the handler
-// falls back to `origin/base..HEAD` so a freshly-pushed-from-clone
-// branch still gets a commit list in its PR description.
-func TestHandlePRDescription_FallsBackToOriginLogWhenLocalEmpty(t *testing.T) {
-	skipNoGit(t)
-	base := t.TempDir()
-	origin := filepath.Join(base, "origin")
-	work := filepath.Join(base, "work")
-	if err := os.Mkdir(origin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initFixtureRepo(t, origin)
-	runGit(t, base, "clone", "-q", origin, work)
-	writeCommit(t, work, "README.md", "changed\n", "FALLBACK_LOG_COMMIT")
-
-	cp := &capturePrompter{result: "desc"}
-	a := NewAIHandler(work, cp)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader(`{}`))
-	a.handlePRDescription(rec, req)
-
-	if !strings.Contains(cp.prompt, "FALLBACK_LOG_COMMIT") {
-		t.Errorf("PR prompt log missing the origin-fallback commit; prompt:\n%s", cp.prompt)
-	}
-}
-
 // handlePRFetch proceeds to the fetch when `git remote get-url origin`
 // succeeds; an unreachable origin must surface as an error envelope, not
 // a success response that echoes the origin URL back as output.
@@ -3365,133 +2802,6 @@ func TestHandlePRFetch_UnreachableOriginReportsError(t *testing.T) {
 	}
 	if out, ok := resp["output"]; ok {
 		t.Errorf("pr-fetch returned success output %q; a successful origin lookup must not short-circuit to echoing the URL", out)
-	}
-}
-
-// sanitizeBranchName must turn arbitrary model output into a valid,
-// compact git branch name (or "" when nothing usable remains).
-func TestSanitizeBranchName(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"clean passthrough", "feat/tab-status-badges", "feat/tab-status-badges"},
-		{"uppercase + spaces", "Feat/Tab Status Badges", "feat/tab-status-badges"},
-		{"quoted + fenced", "```\n\"fix/retry-test\"\n```", "fix/retry-test"},
-		{"explanation line dropped", "feat/exif-rename\nThis name reflects...", "feat/exif-rename"},
-		{"underscores to dashes", "chore/update_deps_now", "chore/update-deps-now"},
-		{"exotic chars dropped", "feat/caf\u00e9-\u2728launch!", "feat/caf-launch"},
-		{"dash runs collapsed", "fix/--double--dash--", "fix/double-dash"},
-		{"empty segments removed", "feat//name/", "feat/name"},
-		{"dotdot segment removed", "feat/../escape", "feat/escape"},
-		{"cap at 60 bytes", "feat/" + strings.Repeat("a", 80), "feat/" + strings.Repeat("a", 55)},
-		{"nothing usable", "\u2728\u2728 !!", ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := sanitizeBranchName(tc.in); got != tc.want {
-				t.Errorf("sanitizeBranchName(%q) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
-// Each prompt template renders against the data map its builder passes.
-// template.Must only proves the template PARSES; a field reference the
-// builder does not supply fails at execute time, and the builder answers
-// that by logging and returning whatever it had rendered so far — so a
-// silently truncated prompt reaching the model is visible only in the log.
-func TestPromptBuilders_renderAgainstTheirData(t *testing.T) {
-	t.Run("commit", func(t *testing.T) {
-		logs := captureLogs(t)
-		got := buildCommitPrompt("recent history", "the staged diff")
-		if strings.Contains(logs.String(), "commit prompt template execute failed") {
-			t.Errorf("buildCommitPrompt(%q, %q) logged a template failure: %s",
-				"recent history", "the staged diff", logs.String())
-		}
-		if !strings.Contains(got, "the staged diff") {
-			t.Errorf("buildCommitPrompt(%q, %q) = %q, want it to carry the diff",
-				"recent history", "the staged diff", got)
-		}
-	})
-
-	t.Run("pr", func(t *testing.T) {
-		logs := captureLogs(t)
-		got := buildPRPrompt("the commit log", "the branch diff")
-		if strings.Contains(logs.String(), "pr prompt template execute failed") {
-			t.Errorf("buildPRPrompt(%q, %q) logged a template failure: %s",
-				"the commit log", "the branch diff", logs.String())
-		}
-		if !strings.Contains(got, "the branch diff") {
-			t.Errorf("buildPRPrompt(%q, %q) = %q, want it to carry the diff",
-				"the commit log", "the branch diff", got)
-		}
-	})
-
-	t.Run("branch", func(t *testing.T) {
-		logs := captureLogs(t)
-		got := buildBranchPrompt("main\nfeat/old", "the work in progress")
-		if strings.Contains(logs.String(), "branch prompt template execute failed") {
-			t.Errorf("buildBranchPrompt(%q, %q) logged a template failure: %s",
-				"main\nfeat/old", "the work in progress", logs.String())
-		}
-		if !strings.Contains(got, "the work in progress") {
-			t.Errorf("buildBranchPrompt(%q, %q) = %q, want it to carry the context",
-				"main\nfeat/old", "the work in progress", got)
-		}
-	})
-}
-
-// The branch-name endpoint: the model's raw output is sanitized into the
-// response, and the prompt carries the repo's uncommitted context.
-func TestHandleBranchName(t *testing.T) {
-	skipNoGit(t)
-	dir := t.TempDir()
-	initFixtureRepo(t, dir)
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi\nBRANCH_CONTEXT_MARKER\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cp := &capturePrompter{result: "  Feat/Say Hello World  "}
-	a := NewAIHandler(dir, cp)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/git/branch-name", strings.NewReader(`{}`))
-	a.handleBranchName(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
-	}
-	var out map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("bad body: %v", err)
-	}
-	if out["output"] != "feat/say-hello-world" {
-		t.Errorf("output = %q, want sanitized feat/say-hello-world", out["output"])
-	}
-	if !strings.Contains(cp.prompt, "BRANCH_CONTEXT_MARKER") {
-		t.Errorf("prompt missing uncommitted diff context; prompt:\n%s", cp.prompt)
-	}
-}
-
-// A repo with no uncommitted changes falls back to recent commits as the
-// naming context instead of erroring.
-func TestHandleBranchName_CleanTreeUsesCommits(t *testing.T) {
-	skipNoGit(t)
-	dir := t.TempDir()
-	initFixtureRepo(t, dir)
-
-	cp := &capturePrompter{result: "chore/initial-commit-follow-up"}
-	a := NewAIHandler(dir, cp)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/git/branch-name", strings.NewReader(`{}`))
-	a.handleBranchName(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(cp.prompt, "Recent commits:") {
-		t.Errorf("clean-tree prompt should carry the commit fallback; prompt:\n%s", cp.prompt)
 	}
 }
 

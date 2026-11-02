@@ -7,11 +7,12 @@ import {
   transportAction,
   IDEMPOTENCY_COMMAND_FIELD,
   API_TIMEOUT_MS,
-  classifyFetchError,
-  withTimeout,
 } from "./index.js";
 import type { ActionErrorLike } from "./index.js";
+import { readDownload } from "./download.js";
 import { exportFilename } from "../export-filename.js";
+import { THINKING_OFF, thinkingIsOff } from "../effort.js";
+import { getCachedModels } from "../picker.js";
 import { join as joinKey } from "@cplieger/keyenc";
 import { errorAbout, successAbout } from "./subject.js";
 
@@ -38,6 +39,8 @@ import {
   reinsertSession,
   indexOfSession,
   setModel,
+  setEffort,
+  setThinkingChoice,
   setCurrentMode,
   turnLive,
   recordSteerSent,
@@ -251,18 +254,11 @@ export const downloadKiroSession = defineAction<{ chatID: string; name: string }
   name: "chat.download_kiro_session",
   dedupe: ({ chatID }) => chatID,
   run: async ({ chatID, name }, signal) => {
-    let r: Response;
-    try {
-      r = await fetch(`/api/chats/${encodeURIComponent(chatID)}/kiro-session`, {
-        signal: withTimeout(signal, SESSION_DOWNLOAD_TIMEOUT_MS),
-      });
-    } catch (e) {
-      throw classifyFetchError(e, signal);
-    }
-    if (!r.ok) {
-      throw new ActionError("Download failed", { status: r.status });
-    }
-    const blob = await r.blob();
+    const blob = await readDownload(
+      { method: "GET", path: `/api/chats/${encodeURIComponent(chatID)}/kiro-session` },
+      signal,
+      SESSION_DOWNLOAD_TIMEOUT_MS,
+    );
     if (signal.aborted) {
       return;
     }
@@ -561,8 +557,11 @@ export const clearSteers = transportAction<
  *  resends the kept rows as one steer; nothing is drawn here. A refusal is an `ActionError` with
  *  the server's sentence, status and `reason`, so Edit can tell a refusal from a lost reply.
  *  Deduped per row. */
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
-export const removeSteer = defineAction<{ chatID: string; steerID: string }, void>({
+export const removeSteer = defineAction<
+  { chatID: string; steerID: string },
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
+  void
+>({
   name: "chat.remove_steer",
   networkMode: "always",
   scope: ({ chatID }) => `chat:${chatID}`,
@@ -579,7 +578,8 @@ export const removeSteer = defineAction<{ chatID: string; steerID: string }, voi
   },
 });
 
-// A live bridge switches in place (session/set_mode); an empty chat applies it at the first prompt.
+// A chat with a resident session switches in place (session/set_mode); an empty chat applies it at
+// the first prompt.
 
 export const setMode = transportAction<{ chatID: string; modeID: string }, { prev: string }>({
   name: "chat.set_mode",
@@ -624,7 +624,8 @@ export const loadSessions = apiAction<
   error: "Could not load previous sessions",
 });
 
-// The server resumes the parent's bridge and calls `session/fork`; nothing is copied client-side.
+// The server makes the parent's session resident and calls `session/fork`; nothing is copied
+// client-side.
 // `outcome` is informational; `opID` stops a retry forking twice.
 
 export const forkChat = defineAction<
@@ -686,38 +687,71 @@ export const cancelTurn = transportAction<
 });
 
 // defineAction: the caller needs a boolean, and setThinking is a loading indicator here rather
-// than an optimistic mutation. Rollback restores the previous model.
+// than an optimistic mutation. Rollback restores the previous model and tier. The key rides every
+// retry, so a retry of a switch that landed replays its answer rather than re-running it.
 
 export const switchModel = defineAction<
-  { chatID: string; model: string },
+  { chatID: string; model: string; effort?: string },
   boolean,
-  { prev: string }
+  { prev: string; prevEffort: string; thinking: string; thinkingActive: string }
 >({
   name: "chat.switch_model",
   scope: ({ chatID }) => `chat:${chatID}`,
+  idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  optimistic: ({ chatID, model }) => {
+  optimistic: ({ chatID, model, effort }) => {
     const session = get(chatID);
-    // A pick made during a turn becomes `pending_model` and the turn keeps running on
-    // the old model, so an optimistic write asserts a switch the server did not make
-    // and the header echo flips the pill back. The badge carries the pending pick.
-    if (session === undefined || turnLive(session)) {
+    if (session === undefined) {
       return undefined;
     }
-    const prev = session.model;
-    setModel(chatID, model);
-    return { prev };
+    // A move made during a turn becomes `pending_model` and the turn keeps running on the old
+    // model, which the badge carries; a stop kept on the model in force lands at once, mid-turn too.
+    const moves = model !== session.model && !turnLive(session);
+    const off = effort === THINKING_OFF.id;
+    const tier = !off && effort !== undefined && (moves || model === session.model);
+    if (!moves && !off && !tier) {
+      return undefined;
+    }
+    const thinkingActive = session.thinking_active ?? "";
+    const op = {
+      prev: session.model,
+      prevEffort: session.effort ?? "",
+      thinking: session.thinking_choice ?? "",
+      thinkingActive,
+    };
+    if (moves) {
+      setModel(chatID, model);
+    }
+    if (off) {
+      setThinkingChoice(chatID, "off", thinkingActive === "" ? "" : "off");
+    } else if (tier) {
+      // The header echo corrects a tier the new model does not offer. A tier turns thinking on.
+      setEffort(chatID, effort);
+      if (thinkingIsOff(get(chatID), getCachedModels())) {
+        setThinkingChoice(chatID, "on", thinkingActive === "" ? "" : "on");
+      }
+    }
+    return op;
   },
   rollback: ({ chatID }, op) => {
     if (op !== undefined) {
       setModel(chatID, op.prev);
+      setEffort(chatID, op.prevEffort);
+      setThinkingChoice(chatID, op.thinking, op.thinkingActive);
     }
   },
-  run: async ({ chatID, model }, signal) => {
+  run: async ({ chatID, model, effort }, signal, ctx) => {
     // sendPrompt owns thinking; the switcher button's bindLoadingState shows progress.
     const r = await transportSend(
-      { type: "switch_model", chat_id: chatID, payload: { model } },
+      {
+        type: "switch_model",
+        chat_id: chatID,
+        ...(ctx?.idempotencyKey === undefined
+          ? {}
+          : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
+        payload: effort === undefined ? { model } : { model, effort },
+      },
       { signal, reportSendState: false },
     );
     if (!r.ok) {

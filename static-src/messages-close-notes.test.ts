@@ -37,6 +37,7 @@ const { apiGetMock, rewindMock, confirmMock } = vi.hoisted(() => ({
   confirmMock: vi.fn(),
 }));
 vi.mock("./api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   apiGet: apiGetMock,
   // Present-but-inert so real-ESM linking succeeds.
   apiPost: vi.fn(),
@@ -87,7 +88,12 @@ function stage(chatID: string, turnID: string, close?: Record<string, unknown>):
   const s = session(chatID);
   const entries =
     close === undefined ? turnEntries(turnID).slice(0, 2) : turnEntries(turnID, close);
-  s.turns.set(turnID, { entries, openEntries: new Map() });
+  // `closeAt` as the store seats it, or the closed turn reads as still running.
+  s.turns.set(turnID, {
+    entries,
+    openEntries: new Map(),
+    ...(close === undefined ? {} : { closeAt: 2 }),
+  });
   s.turn_order.push(turnID);
   store.setSessions([s]);
   store.setActive(chatID);

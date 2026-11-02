@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -32,50 +31,63 @@ var (
 var errNoWorkRoot = errors.New("workspace is not open for confined access")
 
 // Follows symlinks on the target and its parent, and is a verdict only: filesystem operations use
-// confineInWorkDir, which pairs the verdict with a handle.
+// confine, which pairs the verdict with a handle.
 func (lt *lifetime) resolveInsideWorkDir(p string) (string, error) {
 	return workspace.ResolveInsideAbs(lt.workDir, p)
 }
 
-// confineInWorkDir returns the workspace root and p's root-relative name, so every component
-// is re-resolved per operation: an agent can swap an ancestor for a symlink between
-// verdict and operation. A symlink staying inside the workspace is still followed; delete
-// descends with atomicfile.OpenParentInRoot instead.
-func (lt *lifetime) confineInWorkDir(p string) (*os.Root, string, error) {
-	if lt.workRoot == nil {
-		return nil, "", errNoWorkRoot
-	}
-	abs, err := lt.resolveInsideWorkDir(p)
-	if err != nil {
-		return nil, "", err
-	}
-	rel, err := workspace.RelPath(lt.workDir, abs)
-	if err != nil {
-		return nil, "", fmt.Errorf("workspace-relative path for %q: %w", p, err)
-	}
-	return lt.workRoot, rel, nil
+// fsAccess is what a verb does at a path. Only a read reaches the uploads folder.
+type fsAccess int
+
+const (
+	fsWrite fsAccess = iota
+	fsRead
+)
+
+// fsTarget is a path confined to one root: every operation goes through root with rel, so each
+// component is re-resolved per operation and an agent swapping an ancestor for a symlink between
+// verdict and operation reaches nothing outside it. A symlink staying inside the root is still
+// followed; delete descends with atomicfile.OpenParentInRoot instead. The caller runs release.
+type fsTarget struct {
+	root *os.Root
+	rel  string
+	// inWorkspace reports rel is workspace-relative, the one tree whose names marotte reads
+	// (spec directories).
+	inWorkspace bool
+	opened      bool
 }
 
-// confineReadable is confineInWorkDir widened, for the READ verbs only, to an absolute path
-// under uploadsDir: a prompt names a composer upload as `Attached file: <path>` and the agent
-// is told to read it with its file tools. That root is opened per call; the caller runs
-// release. A path neither root holds reports the workspace's error.
-func (lt *lifetime) confineReadable(p string) (root *os.Root, rel string, release func(), err error) {
-	root, rel, err = lt.confineInWorkDir(p)
-	if err == nil {
-		return root, rel, func() {}, nil
+func (t fsTarget) release() {
+	if t.opened {
+		_ = t.root.Close()
 	}
-	if lt.uploadsDir == "" || !filepath.IsAbs(p) {
-		return nil, "", nil, err
+}
+
+// confine resolves p into the workspace, or, for an absolute p, into the first granted
+// additional directory or (reads only) the uploads folder holding it; a prompt names a composer
+// upload as `Attached file: <path>`. A relative p resolves against the workspace only. A root
+// other than the workspace is opened for the call. A path no root holds reports the
+// workspace's error.
+func (lt *lifetime) confine(ctx context.Context, p string, access fsAccess) (fsTarget, error) {
+	roots := append([]string{lt.workDir}, lt.grantedDirs(ctx)...)
+	if access == fsRead && lt.uploadsDir != "" {
+		roots = append(roots, lt.uploadsDir)
 	}
-	if _, rel, upErr := workspace.ConfineAnyAbs([]string{lt.uploadsDir}, p); upErr == nil {
-		up, openErr := os.OpenRoot(lt.uploadsDir)
-		if openErr != nil {
-			return nil, "", nil, fmt.Errorf("open uploads folder: %w", openErr)
+	won, rel, err := workspace.ConfineAnyAbs(roots, p)
+	if err != nil {
+		return fsTarget{}, err
+	}
+	if won == lt.workDir {
+		if lt.workRoot == nil {
+			return fsTarget{}, errNoWorkRoot
 		}
-		return up, rel, func() { _ = up.Close() }, nil
+		return fsTarget{root: lt.workRoot, rel: rel, inWorkspace: true}, nil
 	}
-	return nil, "", nil, err
+	root, err := os.OpenRoot(won)
+	if err != nil {
+		return fsTarget{}, fmt.Errorf("open %s: %w", won, err)
+	}
+	return fsTarget{root: root, rel: rel, opened: true}, nil
 }
 
 // respondFSError answers an fs request with a JSON-RPC error and logs it: routine
@@ -115,10 +127,11 @@ func parseRequest(msg *marotte.RPCResponse, v any) error {
 	return json.Unmarshal(msg.Params, v)
 }
 
-// respondOn answers msg on origin, the bridge it arrived on, never on whatever bridge chatID maps to
-// at answer time: KAS settles a response by its per-connection request id, so an answer redirected to
-// a successor resolves an unrelated request pending there. A write that fails because origin exited
-// or is no longer chatID's bridge is the expected loss at its end and drops at Debug; other failures
+// respondOn answers msg on origin, the session it arrived on, never on whatever session chatID maps to
+// at answer time: KAS settles a response by its request id on the connection that asked, and a restarted
+// engine numbers its requests from zero, so an answer redirected across a restart resolves an unrelated
+// request. A write that fails because origin exited
+// or is no longer chatID's session is the expected loss at its end and drops at Debug; other failures
 // return.
 func respondOn(ctx context.Context, bridges *bridgeManager, chatID marotte.ChatID, origin acpResponder,
 	msg *marotte.RPCResponse, result any, err error,

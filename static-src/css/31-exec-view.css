@@ -1,9 +1,9 @@
-/* The EXEC VIEW, a full tab for one delegated execution (the `/run/{id}` page's
-   skin). Every rule is scoped under `.ev-page` with an `ev-` vocabulary so it cannot
-   collide with the transcript run card's `.run-*`. It shares the app's tokens and
-   components, not the transcript's single capped column, because an execution is a
-   tree over time. Radius ladder, child = parent radius − parent padding: a pane is
-   `--r-lg` with `--sp-3` inside, a row or bar inside it `--r`, a chip `--r-sm`. */
+/* The EXEC VIEW, a full tab for one delegated execution (the `/run/{id}` and
+   subagent pages' skin): the scrolling page (`.ev-page`, the selected node's detail
+   and results) and the run dock in the bottom bar (`.ev-dock`). The `ev-` vocabulary
+   keeps it apart from the transcript run card's `.run-*`. Radius ladder, child =
+   parent radius − parent padding: a card is `--r-lg` with `--sp-3` inside, a row or
+   bar inside it `--r`, a chip `--r-sm`. */
 
 .ev-page {
   display: flex;
@@ -24,284 +24,11 @@
 }
 
 /* --------------------------------------------------------------------------
-   Header — identity, state, progress, controls, and what it was ASKED to do
-   -------------------------------------------------------------------------- */
-
-.ev-head {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-}
-
-/* WRAPS, because nothing in the row can shrink to fit a phone: the meta and the
-   controls are content-sized, so a single line pushed the controls off screen
-   and crushed the name to nothing. Each group takes its own line instead. */
-.ev-h-main {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-2);
-  min-width: 0;
-}
-
-.ev-h-icon {
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  color: var(--c-accent);
-}
-
-/* The execution's OUTCOME tints its name, which is the page-scale version of the
-   run card's rail: one glance answers "did this work" before any reading. Shape
-   carries it too, on every node glyph below, so tint is never the only channel
-   (WCAG 1.4.1). */
-.ev-name {
-  font-size: var(--fs-lg);
-  font-weight: var(--fw-semibold);
-  color: var(--c-text-primary);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ONE TRIO FOR THE STATE VOCABULARY, and it is the transcript's rather than the
-   alert palette's (2026-09). Every state-keyed ink in this file — this header
-   glyph, the tree row's mark, the detail pane's word, the timeline bar, the alert
-   accent and the failure box — is the same vocabulary `exec-view/status.ts`
-   declares and the same glyph set a tool card paints, so it reads
-   `--c-green`/`--c-red`/`--c-yellow` exactly as `.tool-icon.is-*` does. It used to
-   take green from there and red and yellow from `--c-danger`/`--c-warning`, so ONE
-   status trio was spelled out of two palettes and `ok` agreed with a tool card
-   while `fail` and `warn` did not.
-
-   The swap is what the measurement wanted anyway: `--c-danger` reads 2.70:1 on this
-   pane's own hovered group head in dark and 2.65:1 on a selected row, and
-   `--c-warning` 2.88:1 on a selected row in light — three WCAG 1.4.11 failures,
-   against 3.73:1 and 3.52:1 for the trio, whose worst case over every fill either
-   palette touches is 3.08:1. `--c-danger` and `--c-warning` keep their ~50 other
-   consumers; they are the destructive-action palette, not a run's outcome.
-
-   The TAB DOT stays on the `--c-dot-*` family and that is not this fork: its
-   values are web-terminal-kiro's, adopted so a reader moving between the two apps
-   learns one signal, and that reason stops at the tab strip because the sibling app
-   has no transcript. `01-tokens.css` owns it. */
-.ev-page[data-state="ok"] .ev-h-icon {
-  color: var(--c-green);
-}
-
-.ev-page[data-state="fail"] .ev-h-icon {
-  color: var(--c-red);
-}
-
-.ev-page[data-state="warn"] .ev-h-icon,
-.ev-page[data-state="input"] .ev-h-icon,
-.ev-page[data-state="waiting"] .ev-h-icon {
-  color: var(--c-yellow);
-}
-
-.ev-h-meta {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-2);
-  flex-shrink: 0;
-  font-size: var(--fs-sm);
-  color: var(--c-text-secondary);
-}
-
-.ev-h-state {
-  text-transform: capitalize;
-}
-
-.ev-h-progress,
-.ev-h-clock {
-  color: var(--c-text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Shrinks to the header's width once it has a line to itself, so the row inside
-   (`.run-controls`, 18-pages.css) wraps rather than overflowing. */
-.ev-h-actions {
-  margin-inline-start: auto;
-  display: flex;
-  gap: var(--sp-2);
-  min-width: 0;
-  max-width: 100%;
-}
-
-.ev-h-actions:empty {
-  display: none;
-}
-
-/* The INPUTS: what this execution was asked to do. On the wire since runs existed
-   and displayed nowhere in the app until now, which is why it earns a place in the
-   header rather than a fact buried in a pane — it is the question every other
-   number on the page is an answer about. */
-.ev-inputs {
-  display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-
-  /* The same card skin `.ev-tl`, `.ev-pane` and `.ev-results` carry, so the
-     instructions read as a card among the cards rather than as loose text under
-     the identity row. */
-  padding: var(--sp-3);
-  background: var(--c-bg-secondary);
-  border-radius: var(--r-lg);
-
-  /* The key and the value sit on ONE baseline. Grid's default `stretch` aligns
-     the two boxes, not the text in them, so any difference in font metrics
-     between the columns leaves the label riding above or below its value —
-     visible here because the pair reads as one line. */
-  align-items: baseline;
-  gap: 0.15rem var(--sp-3);
-  margin: 0;
-  font-size: var(--fs-sm);
-}
-
-/* REQUIRED, not defensive. There is no author `[hidden]` rule anywhere in this
-   tree, so the UA sheet's `[hidden] { display: none }` loses the specificity tie
-   to the bare class above and a hidden `.ev-inputs` computes `display: grid` and
-   stays in layout — measured visible at 17px. Harmless while it painted nothing;
-   an empty card the moment the skin above landed. Every other `.ev-*` element
-   declaring a `display` already carries this companion. */
-.ev-inputs[hidden] {
-  display: none;
-}
-
-/* Inherits the grid's family and size, so the key and its value differ in INK
-   and nothing else. It used to declare `--font-mono` at `--fs-xs` against a sans
-   `--fs-sm` value, which is two families and two sizes in one row — reported as
-   `workdir` and `/workspace/marotte` not lining up. The sibling that does the
-   same job in the detail pane (`.ev-d-k`) never had the mono, and a value that
-   IS machine text opts in there through `.ev-mono`; a run input can be a path or
-   a sentence, so this column does not. */
-.ev-in-k {
-  color: var(--c-text-tertiary);
-  white-space: nowrap;
-}
-
-.ev-in-v {
-  margin: 0;
-  min-width: 0;
-  color: var(--c-text-secondary);
-}
-
-/* THE CLAMP. Three lines, then a show-more, and the opener is a SIBLING of the
-   clipped box rather than inside it — the exact `.turn-req` shape, for the same
-   reason: a `-webkit-line-clamp` box is `overflow: hidden`, so a button inside it
-   would be clipped away at the moment it becomes needed.
-
-   `overflow-wrap` moved here off `.ev-in-v`, because the clamp has to own the
-   wrap: an input can be a path with no spaces in it. */
-.ev-in-text {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.ev-in-text[data-clamped] {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-/* `.steer-note-more`'s skin: a text control, not a button-shaped one. ONE owner for
-   both of this page's clamp openers — the header's instructions and a result box's
-   report — rather than a copy in the Results section that can drift. */
-.ev-in-more,
-.ev-r-more {
-  font-size: var(--fs-xs);
-  color: var(--c-text-secondary);
-  background: none;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-
-  &:hover {
-    color: var(--c-accent);
-  }
-}
-
-/* --------------------------------------------------------------------------
-   Alert — the only region that speaks about a person's involvement
-   -------------------------------------------------------------------------- */
-
-.ev-alert {
-  flex: 0 0 auto;
-  padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--r);
-  border-inline-start: 0.1875rem solid var(--c-yellow);
-  background: color-mix(in srgb, var(--c-yellow) 10%, transparent);
-  font-size: var(--fs-sm);
-  color: var(--c-text-primary);
-}
-
-.ev-notice {
-  margin: 0;
-}
-
-.ev-alert[data-kind="failed"] {
-  border-inline-start-color: var(--c-red);
-  background: color-mix(in srgb, var(--c-red) 10%, transparent);
-}
-
-/* A deliberate stop is not a fault, so it takes the quiet treatment: the reader
-   did this on purpose and the row is a statement rather than a warning. */
-.ev-alert[data-kind="stopped"] {
-  border-inline-start-color: var(--c-border);
-  background: var(--c-bg-secondary);
-  color: var(--c-text-secondary);
-}
-
-/* --------------------------------------------------------------------------
    Timeline — where the time went, and what overlapped
    -------------------------------------------------------------------------- */
 
-/* The ONE capped region left, deliberately, now that the page scrolls. This is a
-   fixed-size READOUT (one bar per leaf plus one scale number), not a content
-   region: uncapped it puts ~700px of chart above the tree on a fifty-step run, so
-   the tree and the detail pane would be unreachable without scrolling past it.
-   Nothing is clipped by it — a chart inside its own viewport is not trapped
-   content. Two lines reverse it if that trade ever changes. */
-.ev-tl {
-  flex: 0 0 auto;
-  max-block-size: 11rem;
-  overflow-y: auto;
-  padding: var(--sp-3);
-  background: var(--c-bg-secondary);
-  border-radius: var(--r-lg);
-}
-
-.ev-tl[hidden] {
-  display: none;
-}
-
-.ev-tl-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-block-end: var(--sp-2);
-}
-
-.ev-tl-title {
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.0313rem;
-  color: var(--c-text-tertiary);
-}
-
-/* The whole scale, as ONE number. A timeline this small earns no axis: a reader
-   wants the shape and the total, and ticks would be chrome competing with the bars
-   for the same 11rem. */
-.ev-tl-scale {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
+/* A readout inside the dock panel, which is its chrome and its scroller. No axis or
+   scale: the dock head's clock is the run's whole span. */
 .ev-tl-lanes {
   display: flex;
   flex-direction: column;
@@ -310,7 +37,9 @@
 
 .ev-tl-lane {
   display: grid;
-  grid-template-columns: minmax(4rem, 9rem) minmax(0, 1fr) 3.5rem;
+  /* 12rem holds an included step's whole id (`review/code-adversary-claude`, 28
+     mono characters at `--fs-xs`); the 40% keeps a phone's track readable. */
+  grid-template-columns: minmax(4rem, min(12rem, 40%)) minmax(0, 1fr) 3.5rem;
   align-items: center;
   gap: var(--sp-2);
   padding: 0.125rem var(--sp-1);
@@ -354,46 +83,63 @@
   background: color-mix(in srgb, var(--c-text-primary) 8%, transparent);
 }
 
-.ev-tl-bar {
-  position: absolute;
-  inset-block: 0;
-  border-radius: var(--r-sm);
-  background: var(--c-accent);
-  min-inline-size: 0.125rem;
+/* One fill per step state, read by a timeline bar and the summary's mini segment
+   alike. A running one fades toward its growing end rather than carrying a
+   spinner, because the bar's own length is already the readout. */
+:is(.ev-tl-lane, .ev-mini-seg)[data-state="ok"] {
+  --ev-state-fill: var(--c-green);
 }
 
-.ev-tl-lane[data-state="ok"] .ev-tl-bar {
-  background: var(--c-green);
+:is(.ev-tl-lane, .ev-mini-seg)[data-state="fail"] {
+  --ev-state-fill: var(--c-red);
 }
 
-.ev-tl-lane[data-state="fail"] .ev-tl-bar {
-  background: var(--c-red);
+:is(.ev-tl-lane, .ev-mini-seg):is([data-state="warn"], [data-state="input"]) {
+  --ev-state-fill: var(--c-yellow);
 }
 
-.ev-tl-lane[data-state="warn"] .ev-tl-bar,
-.ev-tl-lane[data-state="input"] .ev-tl-bar {
-  background: var(--c-yellow);
+:is(.ev-tl-lane, .ev-mini-seg)[data-state="waiting"] {
+  --ev-state-fill: var(--c-blue);
 }
 
-.ev-tl-lane[data-state="waiting"] .ev-tl-bar {
-  background: var(--c-blue);
+:is(.ev-tl-lane, .ev-mini-seg):is([data-state="skipped"], [data-state="unknown"]) {
+  --ev-state-fill: var(--c-text-tertiary);
 }
 
-.ev-tl-lane[data-state="skipped"] .ev-tl-bar,
-.ev-tl-lane[data-state="unknown"] .ev-tl-bar {
-  background: var(--c-text-tertiary);
-}
-
-/* A running bar is the one that is still growing, and MOTION is this app's
-   in-flight axis — a slow shimmer along the bar rather than a spinner, because the
-   bar's own length is already the readout and a second moving thing beside it
-   would compete with it. */
-.ev-tl-lane[data-state="running"] .ev-tl-bar {
-  background: linear-gradient(
+:is(.ev-tl-lane, .ev-mini-seg)[data-state="running"] {
+  --ev-state-fill: linear-gradient(
     90deg,
     var(--c-accent),
     color-mix(in srgb, var(--c-accent) 45%, transparent)
   );
+}
+
+.ev-tl-bar {
+  position: absolute;
+  inset-block: 0;
+  border-radius: var(--r-sm);
+  background: var(--ev-state-fill, var(--c-accent));
+  min-inline-size: 0.125rem;
+}
+
+/* A loop pass's header over its lanes: a label, not a target. */
+.ev-tl-pass {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-1) 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+
+  &:not(:first-child) {
+    margin-block-start: var(--sp-1);
+    border-block-start: 1px solid var(--c-border);
+  }
+}
+
+/* A step not started yet: its lane is there from the plan, its track empty. */
+.ev-tl-bar[hidden] {
+  display: none;
 }
 
 .ev-tl-dur {
@@ -403,71 +149,8 @@
   text-align: end;
 }
 
-/* --------------------------------------------------------------------------
-   Panes — the tree beside the detail
-   -------------------------------------------------------------------------- */
-
-.ev-panes {
-  /* SIZES TO CONTENT, like every other region now that the page scrolls. The
-     `min-block-size: 16rem` floor that used to sit here existed because the
-     results region was a flex sibling competing for a fixed height and crushed
-     the panes to ~90px; with nothing clamped to the scrollport, nothing crushes
-     anything and there is no competition to floor. */
-  flex: 0 0 auto;
-  display: grid;
-  grid-template-columns: minmax(0, 22rem) minmax(0, 1fr);
-
-  /* Each pane shrink-wraps its own content instead of stretching to the taller
-     sibling's height — a short tree beside a long transcript would otherwise be
-     a mostly-empty box the height of the page. */
-  align-items: start;
-  gap: var(--sp-3);
-}
-
-/* STACKED below the width where two panes each stop being usable, and keyed on the
-   PAGE's own container rather than the viewport, because the sidebar decides how
-   much width this tab gets — the same reason the transcript's turn map keys on
-   `chat-area`. Below it the tree keeps its own height and the detail grows, so a
-   reader scrolls the page once instead of two panes independently. */
-@container exec-view (width < 52rem) {
-  .ev-panes {
-    grid-template-columns: minmax(0, 1fr);
-
-    /* Both rows size to content: the page is the scroller, so a stacked tree
-       keeps its full height rather than being capped into a 14rem scrollport
-       above the detail. */
-    grid-template-rows: auto auto;
-  }
-}
-
-/* NO STRUCTURE, no tree pane: one root with no children is a single node, and a
-   pane holding one row is a row you cannot avoid clicking rather than navigation.
-   The detail takes the whole width, which is what a reader of a single delegate
-   wants — the page's whole point is that the thing being read gets the room. */
-.ev-panes.ev-panes-flat,
-.ev-panes.ev-panes-docked {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto;
-}
-
-/* The detail pane's own name row goes with the tree, and that is the same
-   degrade-by-content rule one step further. It exists to say WHICH node you
-   selected, which is feedback for a navigation; with no tree there is nothing to
-   navigate and nothing to feed back, and the page header two rows above already
-   carries that name, its state word and its clock. Measured on a single delegate,
-   where the two rows were character-for-character identical. */
-.ev-panes-flat .ev-d-head {
-  display: none;
-}
-
-.ev-pane[hidden] {
-  display: none;
-}
-
-/* NO `overflow` on either axis. A pane used to be its own scrollport, which is
-   what made a fifty-step tree and a long transcript two boxes to scroll inside a
-   page that could not scroll at all; the page owns scrolling now. `min-width: 0`
-   stays — it is the grid track's, not a scroll concern. */
+/* The detail pane's card. NO `overflow` on either axis: the page is the one
+   scroller. */
 .ev-pane {
   min-width: 0;
   padding: var(--sp-3);
@@ -716,16 +399,20 @@
   color: var(--c-text-tertiary);
 }
 
-.ev-row[data-state="ok"] > .ev-row-main > .ev-state {
+.ev-row[data-state="ok"] > .ev-row-main > .ev-state,
+.ev-dock-row[data-state="ok"] > .ev-state {
   color: var(--c-green);
 }
 
-.ev-row[data-state="fail"] > .ev-row-main > .ev-state {
+.ev-row[data-state="fail"] > .ev-row-main > .ev-state,
+.ev-dock-row[data-state="fail"] > .ev-state {
   color: var(--c-red);
 }
 
 .ev-row[data-state="warn"] > .ev-row-main > .ev-state,
-.ev-row[data-state="input"] > .ev-row-main > .ev-state {
+.ev-row[data-state="input"] > .ev-row-main > .ev-state,
+.ev-dock-row[data-state="warn"] > .ev-state,
+.ev-dock-row[data-state="input"] > .ev-state {
   color: var(--c-yellow);
 }
 
@@ -734,7 +421,10 @@
    A still ring is a node that is open with nothing moving; spinning is work. */
 .ev-row[data-state="running"] > .ev-row-main > .ev-state::before,
 .ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before,
-.ev-row[data-state="unknown"] > .ev-row-main > .ev-state::before {
+.ev-row[data-state="unknown"] > .ev-row-main > .ev-state::before,
+.ev-dock-row[data-state="running"] > .ev-state::before,
+.ev-dock-row[data-state="waiting"] > .ev-state::before,
+.ev-dock-row[data-state="unknown"] > .ev-state::before {
   content: "";
   display: block;
 
@@ -770,7 +460,8 @@
    is neutralised rather than dropped: the still `waiting` and `unknown` rings share
    that rule and DRAW with it, and it also reserves this ring's band inside
    `--dot-size`, which the mask then paints over. */
-.ev-row[data-state="running"] > .ev-row-main > .ev-state::before {
+.ev-row[data-state="running"] > .ev-row-main > .ev-state::before,
+.ev-dock-row[data-state="running"] > .ev-state::before {
   border-color: transparent;
   background: conic-gradient(
       from var(--vk-spin-arc),
@@ -786,7 +477,8 @@
   animation: vk-spin var(--spin-dur) linear infinite;
 }
 
-.ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before {
+.ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before,
+.ev-dock-row[data-state="waiting"] > .ev-state::before {
   border-color: var(--c-blue);
 }
 
@@ -795,7 +487,8 @@
    and neutral ink: it may not spin (nothing says work is moving) and may not be blue
    (that means blocked on a person). Without an arm here it rendered no mark at all,
    which is the colour-alone failure the pending ring below exists to have fixed. */
-.ev-row[data-state="unknown"] > .ev-row-main > .ev-state::before {
+.ev-row[data-state="unknown"] > .ev-row-main > .ev-state::before,
+.ev-dock-row[data-state="unknown"] > .ev-state::before {
   border-color: var(--c-text-tertiary);
 }
 
@@ -807,7 +500,8 @@
    use, and it costs the text nothing.
    Three rings, three meanings, one axis: hollow is not started, still is open with
    nothing moving, spinning is work. */
-.ev-row[data-state="pending"] > .ev-row-main > .ev-state::before {
+.ev-row[data-state="pending"] > .ev-row-main > .ev-state::before,
+.ev-dock-row[data-state="pending"] > .ev-state::before {
   content: "";
   display: block;
   box-sizing: border-box;
@@ -851,8 +545,8 @@
   flex-shrink: 0;
 }
 
-/* A container's own fact — a repeat's bound, a parallel's join, a watch's
-   condition — read straight off `nodePlan`. One line that ellipsizes rather than
+/* A container's own fact — a repeat's bound, a watch's condition, the recipe an
+   include came from — read straight off `nodePlan`. One line that ellipsizes rather than
    wrapping, because a row growing to two lines makes a twenty-node tree
    unscannable. */
 .ev-sub {
@@ -873,6 +567,38 @@
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
   font-variant-numeric: tabular-nums;
+}
+
+/* The scope qualifier of a verbatim id (`label.ts`), in the file-search parent's
+   ink, so the part that tells two included steps apart stands out. */
+.ev-q {
+  color: var(--c-text-tertiary);
+}
+
+/* In a bounded column the qualifier yields first and from its START (rtl over the
+   `bdi`), so its trailing `/` and the leaf survive; the leaf ellipsizes only once
+   the qualifier is down to its floor. A column that never shrinks its label (the
+   tree's `.ev-label`) gets the ink split alone. */
+.ev-qualified {
+  display: flex;
+  min-inline-size: 0;
+
+  & > .ev-q {
+    flex: 0 1000 auto;
+    min-inline-size: 2ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+  }
+
+  & > .ev-leaf {
+    flex: 0 1 auto;
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 /* A GROUP HEAD IS A HOVERED BAND — the tertiary rung under the hover wash — which
@@ -905,12 +631,7 @@
   align-items: baseline;
   gap: var(--sp-2);
 
-  /* The band that puts this row on the same rank as the tree row across the seam:
-     both panes start at the same y, and with the tree at `--btn-h` this row's
-     zero-padding line left the two first lines 10px apart (measured; 4px before
-     the tree fix, 2px after this one).
-
-     PADDING rather than `min-block-size`, because `align-items: baseline` is
+  /* PADDING rather than `min-block-size`, because `align-items: baseline` is
      deliberate here — the mono title and the smaller meta share one baseline — and
      a floor top-aligns the line instead of centring it: measured in Chromium 151,
      a baseline-aligned single flex line sits at offset 0 in a taller box and
@@ -1015,7 +736,6 @@
 .ev-d-fail {
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r);
-  border-inline-start: 0.1875rem solid var(--c-red);
   background: color-mix(in srgb, var(--c-red) 10%, transparent);
   font-size: var(--fs-sm);
   color: var(--c-text-primary);
@@ -1125,16 +845,9 @@
    Results — what the SELECTED step produced
    -------------------------------------------------------------------------- */
 
-/* A FIXED REGION below the panes, at the column's full width, present only while
-   the selected step has settled and produced something. BELOW rather than above
-   because its `hidden` flips as the reader clicks between a settled step and an
-   unsettled one: above the panes that shifted the tree and the detail by this
-   region's height, moving the rows under the pointer that had just chosen one. Last
-   in the column, the flip moves nothing anybody is aiming at. No disclosure at
-   either level, so no `overflow: hidden` either — that declaration existed to clip
-   the box's own corners while the disclosure animated its height, and with no
-   animation the region joins `.ev-pane`'s no-overflow rule rather than being a
-   scroll container nothing scrolls. */
+/* Below the detail, present only while the selected step has settled and produced
+   something: last in the column, its `hidden` flip moves nothing anybody is aiming
+   at. No `overflow`, for `.ev-pane`'s reason. */
 .ev-results {
   flex: 0 0 auto;
   background: var(--c-bg-secondary);
@@ -1159,10 +872,7 @@
   color: var(--c-text-tertiary);
 }
 
-/* FULL NATURAL HEIGHT. The `max-block-size: 12rem` + `overflow-y: auto` that used
-   to sit here was a peek sized for scanning, and it existed because this region
-   competed with the panes for a fixed page height. The page scrolls now, so a
-   report renders whole and the reader scrolls the document. */
+/* FULL NATURAL HEIGHT: the page is the scroller, so a report renders whole. */
 .ev-r-body {
   display: flex;
   flex-direction: column;
@@ -1176,7 +886,9 @@
    separate them. */
 .ev-r-item {
   border: 1px solid var(--c-border);
-  border-radius: var(--r);
+
+  /* Concentric with `.ev-results` across `.ev-r-body`'s inset: 12 - 12 = 0. */
+  border-radius: max(0px, calc(var(--r-lg) - var(--sp-3)));
   background: var(--c-bg-primary);
   overflow: hidden;
   flex-shrink: 0;
@@ -1237,10 +949,8 @@
    measures the rendered line positions and writes `--clamp-h`; this value is the
    budget that snap reads, and what it clips to before the snap lands.
 
-   12 lines at 14px × 1.6 is 268.8px, which leaves the panes their room under the
-   header and the timeline on a 900px viewport. The count is also
-   `RESULT_CLAMP.lines` in `exec-view/page.ts`, and `clamp-line-count.test.ts`
-   fails when the two disagree. */
+   The count is also `RESULT_CLAMP.lines` in `exec-view/page.ts`, and
+   `clamp-line-count.test.ts` fails when the two disagree. */
 .ev-r-text[data-clamped] {
   max-block-size: var(--clamp-h, 12lh);
   overflow: hidden;
@@ -1251,4 +961,750 @@
 .ev-r-item-empty {
   font-size: var(--fs-sm);
   color: var(--c-text-tertiary);
+}
+
+/* --------------------------------------------------------------------------
+   Run dock — the execution as a whole, above the bottom bar's composer
+   -------------------------------------------------------------------------- */
+
+/* The prompt box's measure, so the dock, the decision dock and the composer share
+   an edge. */
+.ev-dock-host {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  max-width: var(--content-max-w);
+  width: 100%;
+  margin: 0 auto;
+
+  &:empty {
+    display: none;
+  }
+}
+
+/* A container, so the dock and the chat's run-bar rows answer the width they get
+   rather than the viewport's (the sidebar takes its share). A column whose open
+   panel is the one member that gives, when the bottom bar's ceiling (18-pages.css)
+   is reached: the head, the question, notes and rows keep their height. With an ask
+   card up the bar keeps a closed dock whole, and on a short band hides it (18-pages.css).
+
+   One of the bottom stack's cards (01-tokens.css `--stack-r`): every surface inside
+   sits `--stack-in` from its edge at `--stack-in-r`, and consecutive regions are
+   `--stack-in` apart, so a hover never meets a neighbour. Margins rather than `gap`:
+   an empty live region and the closed panel stay rendered at 0px, and a gap would
+   still be charged for them. */
+.ev-dock {
+  container: run-dock / inline-size;
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  padding: var(--stack-in);
+  border: 1px solid var(--c-border);
+  border-radius: var(--stack-r);
+  background: var(--c-bg-secondary);
+  overflow: hidden;
+  font-size: var(--fs-sm);
+
+  & > * {
+    flex: none;
+  }
+
+  & > :not(:first-child) {
+    margin-block-start: var(--stack-in);
+  }
+
+  & > :is(.ev-dock-ask-live, .ev-dock-notes):empty,
+  &:not([data-open]) > .ev-dock-panel {
+    margin-block-start: 0;
+  }
+}
+
+/* The head is the run's identity row in every state, never washed or wrapped, and
+   the panel's hit target (`disclosure-row.ts` `wireRowToggle`), forwarding to the
+   chevron that keeps `aria-expanded`; its controls are their own. The verbs end on
+   its corner, so its end inset is theirs (`--head-act-in`, 2px fine, 0 coarse); the
+   chevron is flush with its start edge and takes that corner. */
+.ev-dock-head {
+  --head-act-in: calc((var(--btn-h) - max(var(--ctl-h-dense), var(--hit-floor))) / 2);
+
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-block-size: var(--btn-h);
+  padding-inline: 0 var(--head-act-in);
+  border-radius: var(--stack-in-r);
+  cursor: pointer;
+  transition: background-color var(--dur-micro) var(--ease-standard);
+
+  @media (any-hover: hover) {
+    &:hover {
+      background-color: var(--c-hover);
+    }
+  }
+
+  & .run-icon-btn {
+    border-radius: max(0px, calc(var(--stack-in-r) - var(--head-act-in)));
+  }
+}
+
+.ev-box-toggle {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  inline-size: 1.5rem;
+  align-self: stretch;
+  padding: 0;
+  border: 0;
+  border-radius: var(--stack-in-r) 0 0 var(--stack-in-r);
+  background: none;
+  color: var(--c-text-control);
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset-inset);
+  }
+
+  &[aria-expanded="true"] .disclosure-chevron {
+    --chev-turn: 0deg;
+  }
+}
+
+.ev-dock-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: var(--c-accent);
+}
+
+/* Tint and shape both carry the outcome (WCAG 1.4.1): the state word beside it says it
+   in words. */
+.ev-dock[data-state="ok"] .ev-dock-icon {
+  color: var(--c-green);
+}
+
+.ev-dock[data-state="fail"] .ev-dock-icon {
+  color: var(--c-red);
+}
+
+.ev-dock:is([data-state="warn"], [data-state="input"]) .ev-dock-icon,
+.ev-dock[data-state="waiting"] .ev-dock-icon {
+  color: var(--c-yellow);
+}
+
+/* --- The summary (`exec-view/summary.ts`): the dock head and a run-bar row --- */
+
+.ev-sum {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.ev-sum-label {
+  flex: 0 1 auto;
+  min-inline-size: 4rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--fw-semibold);
+  color: var(--c-text-primary);
+}
+
+.ev-sum-state {
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--c-text-secondary);
+}
+
+.ev-sum-progress,
+.ev-sum-clock {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-tertiary);
+}
+
+.ev-sum-state:empty,
+.ev-sum-progress[hidden],
+.ev-sum-clock:empty {
+  display: none;
+}
+
+/* The one compact form at every width: the repeat glyph stands for "pass", `›` an
+   inner loop past its first pass, then the step fraction. Its words are the
+   `.sr-only` sibling and the tooltip. */
+.ev-sum-compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+
+  & > [hidden] {
+    display: none;
+  }
+}
+
+.ev-sum-pass {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+
+  & > svg {
+    inline-size: 1em;
+    block-size: 1em;
+  }
+}
+
+/* The mini bar: one segment per step of the plan as it stands (`model.ts` `miniBar`).
+   A sibling parallel branch starts after twice the gap, so a grey stretch reads as one
+   track's remaining steps. `--ev-state-fill` is the timeline's. All the gaps, a branch's second
+   one included, stay under 40% of the bar's width: `summary.ts` writes `--mini-n` as the segments
+   plus the branch starts. A segment has no floor, so a long plan never paints into the clock. */
+.ev-mini {
+  --mini-gap: min(0.125rem, calc(40% / var(--mini-n, 1)));
+
+  flex: 1 1 0;
+  min-inline-size: 3rem;
+  display: flex;
+  gap: var(--mini-gap);
+  block-size: 0.5rem;
+
+  &:empty {
+    display: none;
+  }
+}
+
+.ev-mini-seg {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  border-radius: var(--r-sm);
+  background: var(--ev-state-fill, color-mix(in srgb, var(--c-text-primary) 12%, transparent));
+
+  &[data-branch] {
+    margin-inline-start: var(--mini-gap);
+  }
+}
+
+/* What wants the reader on a run summary: a question or a pause in the progress's place, a
+   failure on a run-bar row's line of its own under the columns (see 26-dock.css). Where the mark
+   shows (a failure), it sits on the sentence's first line. */
+.ev-alert-line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  min-inline-size: 0;
+  color: var(--c-text-primary);
+}
+
+.ev-alert-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  block-size: 1lh;
+  color: var(--ev-alert-mark);
+}
+
+.ev-alert-text,
+.ev-dock-note-text {
+  min-inline-size: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.ev-dock[data-open] .ev-dock-note-text {
+  -webkit-line-clamp: unset;
+}
+
+/* A pause in the dock head has the progress phrase's and the bar's place, up to the clock, on one
+   line cut by an ellipsis: a line-clamp wraps at word breaks first and would cut it short. */
+.ev-dock-head[data-alert-in-place] {
+  & :is(.ev-sum-progress, .ev-mini, .ev-alert-icon) {
+    display: none;
+  }
+
+  & .ev-alert-line {
+    flex: 1 1 0;
+    color: var(--c-text-secondary);
+  }
+
+  & .ev-alert-text {
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}
+
+/* --- The question a step asks ------------------------------------------------ */
+
+/* The whole question, readable: prose at the transcript's size, four lines then the
+   clamp opener, on the dock's own surface. It leaves with the ask. The live wrapper
+   stays rendered, empty, between asks. */
+.ev-dock-ask {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) calc(1.5rem + var(--sp-2));
+  border-radius: var(--stack-in-r);
+  color: var(--c-text-primary);
+}
+
+.ev-dock-ask-count {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+/* The clamp's line count is also `ASK_CLAMP.lines` in `exec-view/dock.ts`
+   (`clamp-line-count.test.ts`). */
+.ev-dock-ask-q {
+  align-self: stretch;
+  margin: 0;
+  font-size: var(--fs-base);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ev-dock-ask-q[data-clamped] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+}
+
+/* --- The verbs (`run-controls-view.ts`) ---------------------------------------- */
+
+.ev-dock-act {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+
+  &:empty {
+    display: none;
+  }
+}
+
+.run-controls,
+.run-extend {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+/* The house icon button at every width: a dense row-action square, the name in
+   `aria-label`, the hover text the tooltip. Cancel is neutral at rest and red with
+   the red wash under the pointer or focus, the steer stack's destructive idiom
+   (26-dock.css `.steer-act-danger`). */
+.run-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: max(var(--ctl-h-dense), var(--hit-floor));
+  block-size: max(var(--ctl-h-dense), var(--hit-floor));
+  padding: 0;
+  color: var(--c-text-control);
+  font-size: var(--fs-sm);
+
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-hover);
+      color: var(--c-text-primary);
+    }
+
+    &.is-danger:hover {
+      background: color-mix(in srgb, var(--c-red) 15%, transparent);
+      color: var(--c-red);
+    }
+  }
+
+  &.is-danger:focus-visible {
+    background: color-mix(in srgb, var(--c-red) 15%, transparent);
+    color: var(--c-red);
+  }
+}
+
+/* Outranks `.tool-form-input`'s padding (61-mcp-tools.css), which left no room for a digit. */
+.run-controls .run-extend-count {
+  inline-size: 4rem;
+  min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
+  padding-inline: var(--sp-2);
+}
+
+/* --- Notes: statements about the run, quiet, one line each ---------------- */
+
+.ev-dock-notes {
+  margin: 0;
+  padding: 0 var(--sp-2) 0 calc(1.5rem + var(--sp-2));
+  list-style: none;
+  color: var(--c-text-secondary);
+}
+
+.ev-dock-note {
+  padding-block: var(--sp-1);
+
+  &[data-failed] {
+    margin-inline-start: calc(-1 * var(--sp-2));
+    padding-inline: var(--sp-2);
+    border-radius: var(--stack-in-r);
+    background: color-mix(in srgb, var(--c-red) 10%, transparent);
+    color: var(--c-text-primary);
+  }
+}
+
+/* --- The steps in flight, each a door to its transcript ------------------- */
+
+/* Past five rows the list scrolls inside itself, half of the sixth showing so an
+   overlay scrollbar's silence still says there is more. */
+.ev-dock-live {
+  /* The hit floor, since a row and the `+N` are each a target: 44px under a finger. */
+  --dock-row-h: max(1.75rem, var(--hit-floor));
+
+  display: flex;
+  align-items: flex-start;
+  gap: var(--stack-in);
+}
+
+.ev-dock[data-open] .ev-dock-live {
+  display: none;
+}
+
+/* One grid for the rows and a subgrid per row, so the state, name, tail and
+   duration columns line up across every row. */
+.ev-dock-rows {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  display: grid;
+  grid-template-columns:
+    [mark] auto [name] fit-content(60%) [tail] minmax(0, 1fr)
+    [dur] auto [end];
+  gap: var(--sp-05) var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-block-size: calc(5.5 * var(--dock-row-h) + 5 * var(--sp-05));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.ev-dock-li {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+}
+
+.ev-dock-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  block-size: var(--dock-row-h);
+  padding: 0 var(--sp-2) 0 calc(1.5rem + var(--sp-2));
+  border: 0;
+  border-radius: var(--stack-in-r);
+  background: none;
+  color: inherit;
+  font-size: var(--fs-sm);
+  text-align: start;
+  cursor: pointer;
+
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-hover);
+    }
+  }
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset-inset);
+  }
+}
+
+.ev-dock-name {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-inline-size: 0;
+
+  & > .ev-kind[hidden] {
+    display: none;
+  }
+}
+
+.ev-dock-label {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.ev-dock-tail {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.ev-dock-dur {
+  justify-self: end;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* `+N`: the steps a one-row dock cannot show; it opens the panel on Steps. Shown
+   only where the list is cut to one row. */
+.ev-dock-more {
+  display: none;
+  flex-shrink: 0;
+  min-inline-size: var(--hit-floor);
+  block-size: var(--dock-row-h);
+  padding-inline: var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--stack-in-r);
+  background: none;
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-hover);
+    }
+  }
+}
+
+/* After the `display` the phone rules give it, which this outranks. */
+.ev-dock-more[hidden] {
+  display: none;
+}
+
+/* --- The panel: the run's inputs, the switcher, then its own box ------------ */
+
+.ev-dock-panel {
+  flex: 0 1 auto;
+  min-block-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-in);
+  overflow: hidden;
+}
+
+/* What this execution was asked to do, one line each: the full value in the
+   tooltip, a workspace path a link to its file (`dock.ts` `inputValue`). */
+.ev-dock-inputs {
+  flex: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--sp-05) var(--sp-3);
+  margin: 0;
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) calc(1.5rem + var(--sp-2));
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+.ev-dock-input {
+  display: contents;
+
+  & > dt {
+    color: var(--c-text-tertiary);
+    white-space: nowrap;
+  }
+
+  & > dd {
+    min-inline-size: 0;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--c-text-secondary);
+  }
+}
+
+.ev-dock-input-path {
+  font-family: var(--font-mono);
+}
+
+.ev-dock-seg {
+  flex: none;
+  margin: 0;
+}
+
+/* The scroller is a box of its own below the switcher, so a row scrolled past its
+   top is clipped by the box's rounded edge, never by a seam under the switcher. It
+   is a scroll container, not a line clamp, so its padding is scroll area rather
+   than a band the next line's cap-tops paint into. Inside, the corner ladder restarts from its
+   own: `--panel-in-r`, 0 at today's tokens, which the tree's top-level rows, its
+   group boxes and the timeline's lanes take. The ceiling is the decision dock's
+   visual-viewport one (26-dock.css), so an open panel never pushes the composer off
+   a phone with its keyboard up. */
+.ev-dock-body {
+  --panel-in-r: max(0px, calc(var(--stack-in-r) - 1px - var(--stack-in)));
+
+  flex: 0 1 auto;
+  min-block-size: 0;
+  max-block-size: min(calc(0.45 * var(--dock-viewport-h, 100dvh)), 24rem);
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  padding: var(--stack-in);
+  border: 1px solid var(--c-border);
+  border-radius: var(--stack-in-r);
+  background: var(--c-bg-primary);
+
+  & :is(.ev-row-main, .ev-row.ev-group, .ev-tl-lane) {
+    border-radius: var(--panel-in-r);
+  }
+}
+
+.ev-dock-pane[hidden] {
+  display: none;
+}
+
+/* `.steer-note-more`'s skin: a text control. One owner for both of the exec view's
+   clamp openers, the dock question's and a result's. */
+.ev-dock-ask-more,
+.ev-r-more {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  @media (any-hover: hover) {
+    &:hover {
+      color: var(--c-accent);
+    }
+  }
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset);
+  }
+}
+
+/* --- Phone: the container under 30rem, or a short viewport ---------------- */
+
+@container run-dock (width < 30rem) {
+  /* The tab names the run; the state word stays, so state is never colour alone. */
+  .ev-dock .ev-sum-label {
+    display: none;
+  }
+
+  /* So does the head's run mark, its state being the word beside it: with the tighter
+     gaps, its width lets the progress and the clock clear the verbs. */
+  .ev-dock-head > .ev-dock-icon {
+    display: none;
+  }
+
+  .ev-dock-head,
+  .ev-sum {
+    column-gap: var(--sp-1);
+  }
+
+  /* Under the hit floor's width on purpose: the head row is the toggle's target
+     (`wireRowToggle`) and keeps the floor's height, so the chevron's box needs only
+     its glyph's width. */
+  .ev-dock-head > .ev-box-toggle {
+    min-inline-size: 0;
+  }
+
+  /* The mini timeline becomes a band along the head's bottom edge. */
+  .ev-dock-head .ev-mini {
+    position: absolute;
+    inset-inline: var(--sp-3);
+    inset-block-end: 2px;
+    block-size: 3px;
+    gap: 1px;
+  }
+
+  .ev-dock-head .ev-mini-seg {
+    border-radius: 1px;
+  }
+
+  /* A pause takes the head's second line, where the band it replaces sits, with the clock: beside
+     the verbs the one line leaves neither room. `::after` is the line break; the pause starts
+     under the state word. */
+  .ev-dock-head[data-alert-in-place] {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding-block-end: var(--sp-1);
+
+    & > .ev-sum {
+      display: contents;
+    }
+
+    & > .ev-dock-act {
+      margin-inline-start: auto;
+    }
+
+    &::after {
+      content: "";
+      order: 1;
+      flex-basis: 100%;
+    }
+
+    & .ev-alert-line {
+      order: 2;
+      padding-inline-start: calc(1.5rem + var(--sp-1));
+    }
+
+    & .ev-sum-clock {
+      order: 2;
+    }
+  }
+
+  /* The one row left is the lead (`dock.ts`); the rest leave the tab order with the
+     screen, and `+N` is the way to them. */
+  .ev-dock-li:not([data-lead]) {
+    display: none;
+  }
+
+  .ev-dock-more {
+    display: inline-block;
+  }
+
+  .ev-dock-tail {
+    display: none;
+  }
+
+  .ev-dock-rows {
+    grid-template-columns: [mark] auto [name] minmax(0, 1fr) [tail] 0 [dur] auto [end];
+  }
+
+  .ev-tl-lane {
+    grid-template-columns: minmax(0, 7rem) minmax(0, 1fr) 3.5rem;
+  }
+}
+
+/* A landscape phone: one row, so the bar stays short. */
+@media (height <= 30rem) {
+  .ev-dock-li:not([data-lead]) {
+    display: none;
+  }
+
+  .ev-dock-more {
+    display: inline-block;
+  }
 }

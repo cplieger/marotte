@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
 )
@@ -76,25 +75,11 @@ func deadContext(t *testing.T) context.Context {
 func streamingPromptTurn(t *testing.T, h *Runtime, chatID marotte.ChatID, text string) (string, *turnlog.Turn) {
 	t.Helper()
 	id, log := h.stagePromptTurn(t, chatID)
+	h.coord.WireTurnStart(t.Context(), chatID)
 	if _, err := log.TextDelta(t.Context(), "", "say-1", text); err != nil {
 		t.Fatalf("TextDelta: %v", err)
 	}
 	return id, log
-}
-
-func shellTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) string {
-	t.Helper()
-	id, err := h.coord.OpenTurn(t.Context(), chatID, command.TurnOpen{
-		Source: marotte.TurnSourceLocalShell, Prompt: &marotte.EntryPrompt{ID: "m-shell", Text: "!ls"},
-		Init: func(c *marotte.Chat) { c.Name = "test chat" },
-	})
-	if err != nil {
-		t.Fatalf("OpenTurn(local_shell): %v", err)
-	}
-	if !h.coord.StartTurn(t.Context(), chatID, id) {
-		t.Fatalf("StartTurn(%q) refused", id)
-	}
-	return id
 }
 
 // TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn pins that with the bridge dead nothing else closes the turn.
@@ -218,34 +203,6 @@ func TestFinalizeTurn_ALostClaimAmendsNothing(t *testing.T) {
 	}
 	if got := closedBroadcasts(t, h); len(got) != 1 {
 		t.Errorf("turn_closed broadcasts = %d, want exactly one", len(got))
-	}
-}
-
-// TestFinalizeLocalShellTurn_WritesThreeEntriesAndAnnouncesTheEnd pins that turn_open, the output text, a completed turn_close, one turn_closed frame.
-func TestFinalizeLocalShellTurn_WritesThreeEntriesAndAnnouncesTheEnd(t *testing.T) {
-	h, cs, _ := newTestHub()
-	id := shellTurn(t, h, "c1")
-
-	h.coord.FinalizeLocalShellTurn(t.Context(), "c1", id, "```\nfile.go\n```")
-
-	entries := logOf(t, cs, "c1")
-	var kinds []marotte.EntryKind
-	for i := range entries {
-		kinds = append(kinds, entries[i].Kind)
-	}
-	want := []marotte.EntryKind{marotte.EntryKindTurnOpen, marotte.EntryKindText, marotte.EntryKindTurnClose}
-	if !slices.Equal(kinds, want) {
-		t.Fatalf("entry kinds = %v, want %v", kinds, want)
-	}
-	if got := textsOf(t, entries); !slices.Equal(got, []string{"```\nfile.go\n```"}) {
-		t.Errorf("texts = %q, want the rendered output", got)
-	}
-	closes := closesOf(t, entries)
-	if closes[0].Outcome != marotte.TurnOutcomeCompleted || closes[0].StopReasonRaw != string(marotte.StopReasonEndTurn) {
-		t.Errorf("turn_close = outcome %q stop %q, want completed/end_turn", closes[0].Outcome, closes[0].StopReasonRaw)
-	}
-	if got := closedBroadcasts(t, h); len(got) != 1 || got[0].StopReasonRaw != string(marotte.StopReasonEndTurn) {
-		t.Errorf("turn_closed broadcasts = %+v, want exactly one end_turn", got)
 	}
 }
 
@@ -383,9 +340,9 @@ func TestFinalizeTurn_MeasuresEmittedAfterReleasingTheCarry(t *testing.T) {
 // TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease pins retention by handle.
 func TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease(t *testing.T) {
 	h, _, _ := newTestHub()
-	id := shellTurn(t, h, "c1")
+	id, _ := h.stagePromptTurn(t, "c1")
 
-	h.coord.FinalizeLocalShellTurn(t.Context(), "c1", id, "out")
+	endTurn(t, h, "c1", id)
 
 	result, err := h.coord.AwaitTurn(t.Context(), "c1", id)
 	if err != nil {
@@ -415,14 +372,14 @@ func TestAwaitTurn_UnknownTurnReportsNoSuchTurn(t *testing.T) {
 // TestAwaitTurn_DeadContextReturnsRatherThanParking, leaving the lifecycle usable.
 func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
 	h, cs, _ := newTestHub()
-	id := shellTurn(t, h, "c1")
+	id, _ := h.stagePromptTurn(t, "c1")
 	defer h.coord.ReleaseTurn("c1", id)
 
 	if _, err := h.coord.AwaitTurn(deadContext(t), "c1", id); !errors.Is(err, context.Canceled) {
 		t.Errorf("AwaitTurn with a dead context = %v, want context.Canceled", err)
 	}
 
-	h.coord.FinalizeLocalShellTurn(t.Context(), "c1", id, "out")
+	endTurn(t, h, "c1", id)
 	if got := closesOf(t, logOf(t, cs, "c1")); len(got) != 1 || got[0].StopReasonRaw != string(marotte.StopReasonEndTurn) {
 		t.Errorf("turn_close entries = %+v, want exactly one end_turn", got)
 	}

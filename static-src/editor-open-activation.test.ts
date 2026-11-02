@@ -61,10 +61,6 @@ vi.mock("./api-client.js", () => ({
   apiGetOrError: vi.fn(),
 }));
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
-vi.mock("./editor-conflict.js", () => ({
-  abortSuggestion: vi.fn(),
-  clearSuggestionState: vi.fn(),
-}));
 vi.mock("./editor-modes.js", () => ({ restoreUI: vi.fn() }));
 vi.mock("./editor-ui.js", () => ({
   applyPendingLine: vi.fn(),

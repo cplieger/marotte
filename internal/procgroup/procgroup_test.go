@@ -1,10 +1,13 @@
 package procgroup
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -148,4 +151,245 @@ func TestKill_ReapsTheWholeTree(t *testing.T) {
 		_ = member.Process.Kill()
 		t.Fatal("group member survived Kill; the signal reached the head alone")
 	}
+}
+
+// startHeadWithOutsideChild starts a sh head in its own group that forks one child in the head's
+// group and one setsid child in a group of its own, and returns the head and the setsid child's
+// pid (its group id). The head lives until release exists.
+func startHeadWithOutsideChild(t *testing.T, release string) (head *exec.Cmd, outside int) {
+	t.Helper()
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("setsid is not on PATH")
+	}
+	pidFile := t.TempDir() + "/outside.pid"
+	head = exec.Command("sh", "-c", `sleep 60 &
+setsid sh -c 'echo $$ > "`+pidFile+`.tmp"; mv "`+pidFile+`.tmp" "`+pidFile+`"; trap "" TERM; while :; do sleep 0.05; done' &
+while [ ! -e "`+release+`" ]; do sleep 0.05; done`)
+	head.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := head.Start(); err != nil {
+		t.Fatalf("Setup: start head: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-head.Process.Pid, syscall.SIGKILL)
+		_ = head.Wait()
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		raw, err := os.ReadFile(pidFile)
+		if err == nil {
+			outside, err = strconv.Atoi(strings.TrimSpace(string(raw)))
+			if err != nil {
+				t.Fatalf("Setup: parse outside pid %q: %v", raw, err)
+			}
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatal("Setup: the setsid child never wrote its pid")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-outside, syscall.SIGKILL) })
+	if g, err := syscall.Getpgid(outside); err != nil || g != outside {
+		t.Fatalf("Setup: outside child pgid = %d, %v; want its own group %d", g, err, outside)
+	}
+	return head, outside
+}
+
+func TestGroupsBelow_ReportsAnOutsideGroupAndSkipsOwnAndInit(t *testing.T) {
+	head, outside := startHeadWithOutsideChild(t, t.TempDir()+"/never")
+
+	got := GroupsBelow(head.Process.Pid)
+	if len(got) != 1 || got[0].ID != outside {
+		t.Fatalf("GroupsBelow(head) = %v, want exactly [%d], the setsid child's group (never the head's %d or the test's %d)",
+			got, outside, head.Process.Pid, syscall.Getpgrp())
+	}
+	if st, ok := readStat(outside); !ok || got[0].leader != st.start {
+		t.Errorf("GroupsBelow(head) stamped leader %d, want the setsid child's start time %d", got[0].leader, st.start)
+	}
+}
+
+// Signal 0 only: a guard that fails here would otherwise signal init's group, which is every
+// process the test may signal.
+func TestKillGroup_RefusesOwnInitAndEmptyGroups(t *testing.T) {
+	zombie := exec.Command("sleep", "60")
+	zombie.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := zombie.Start(); err != nil {
+		t.Fatalf("Setup: start: %v", err)
+	}
+	t.Cleanup(func() { _ = zombie.Wait() })
+	if err := zombie.Process.Kill(); err != nil {
+		t.Fatalf("Setup: kill: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if st, ok := readStat(zombie.Process.Pid); ok && st.state == 'Z' {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatal("Setup: the killed group leader never reached the zombie state")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	for _, tc := range []struct {
+		name string
+		pgid int
+	}{
+		{name: "init", pgid: 1},
+		{name: "zero", pgid: 0},
+		{name: "own group", pgid: syscall.Getpgrp()},
+		{name: "zombie-only group", pgid: zombie.Process.Pid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := KillGroup(stampGroup(tc.pgid), syscall.Signal(0)); err == nil {
+				t.Errorf("KillGroup(%d) = nil, want a refusal", tc.pgid)
+			}
+		})
+	}
+}
+
+func TestKillGroup_KillsAGroupWithALiveMember(t *testing.T) {
+	pgid, member := startGroupWithMember(t)
+	g := stampGroup(pgid)
+	// The head dies alone and stays unreaped, so only the member keeps the group live.
+	if err := syscall.Kill(pgid, syscall.SIGKILL); err != nil {
+		t.Fatalf("Setup: kill head: %v", err)
+	}
+
+	if err := KillGroup(g, syscall.SIGKILL); err != nil {
+		t.Fatalf("KillGroup(%d) = %v, want nil", pgid, err)
+	}
+	err := member.Wait()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.Sys().(syscall.WaitStatus).Signal() != syscall.SIGKILL {
+		t.Errorf("member wait = %v, want killed by SIGKILL through its group", err)
+	}
+}
+
+// A live leader whose start time is not the stamped one leads a later group that reuses the id.
+func TestKillGroup_RefusesAnIdALaterGroupReuses(t *testing.T) {
+	pgid, _ := startGroupWithMember(t)
+	later := stampGroup(pgid)
+	later.leader++
+
+	if err := KillGroup(later, syscall.Signal(0)); !errors.Is(err, errGroupRefused) {
+		t.Errorf("KillGroup(stale stamp) = %v, want errGroupRefused", err)
+	}
+}
+
+// The orphan shape a bridge sweep exists for: the leader exited and was reaped, a member still
+// holds the group's id, and no process sits at that pid.
+func TestKillGroup_KillsAGroupWhoseLeaderWasReaped(t *testing.T) {
+	leader := exec.Command("sleep", "60")
+	leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := leader.Start(); err != nil {
+		t.Fatalf("Setup: start leader: %v", err)
+	}
+	t.Cleanup(func() { _ = leader.Process.Kill(); _ = leader.Wait() })
+	pgid := leader.Process.Pid
+	g := stampGroup(pgid)
+	member := exec.Command("sleep", "60")
+	member.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: pgid}
+	if err := member.Start(); err != nil {
+		t.Fatalf("Setup: start member: %v", err)
+	}
+	t.Cleanup(func() { _ = member.Process.Kill(); _ = member.Wait() })
+	if got, err := syscall.Getpgid(member.Process.Pid); err != nil || got != pgid {
+		t.Fatalf("Setup: member pgid = %d, %v; want the leader's group %d", got, err, pgid)
+	}
+	if err := leader.Process.Kill(); err != nil {
+		t.Fatalf("Setup: kill leader: %v", err)
+	}
+	_ = leader.Wait()
+	if _, ok := readStat(pgid); ok {
+		t.Fatalf("Setup: a process still sits at the reaped leader's pid %d", pgid)
+	}
+
+	if g.Stale() {
+		t.Error("Stale() = true for a group whose leader was reaped, want false: the sweep would skip its orphans")
+	}
+	if err := KillGroup(g, syscall.SIGKILL); err != nil {
+		t.Fatalf("KillGroup(reaped-leader group) = %v, want nil", err)
+	}
+	err := member.Wait()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.Sys().(syscall.WaitStatus).Signal() != syscall.SIGKILL {
+		t.Errorf("member wait = %v, want killed by SIGKILL through its group", err)
+	}
+}
+
+func TestGroup_StaleOnlyWhenTheLiveLeaderStartedAtAnotherTime(t *testing.T) {
+	pgid, _ := startGroupWithMember(t)
+	own := stampGroup(pgid)
+	later := own
+	later.leader++
+
+	if own.Stale() {
+		t.Errorf("Stale() = true for the group's own stamp, want false")
+	}
+	if !later.Stale() {
+		t.Errorf("Stale() = false for another start time at a live pid, want true")
+	}
+}
+
+// TestOwnGroup_DeadlineKillsTheGroupAndBoundsWait: the head forks a child that holds the stdout
+// pipe, so a head-only kill leaves Wait open for the child's whole sleep.
+func TestOwnGroup_DeadlineKillsTheGroupAndBoundsWait(t *testing.T) {
+	const waitDelay = 2 * time.Second
+	run := func(t *testing.T, fork string) (elapsed time.Duration, child int) {
+		t.Helper()
+		pidFile := filepath.Join(t.TempDir(), "child.pid")
+		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "sh", "-c", fork+` &
+echo $! > "`+pidFile+`"
+sleep 30`)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		OwnGroup(cmd, waitDelay)
+		start := time.Now()
+		err := cmd.Run()
+		elapsed = time.Since(start)
+		raw, rErr := os.ReadFile(pidFile)
+		if rErr != nil {
+			t.Fatalf("the head never recorded its child: %v", rErr)
+		}
+		child, cErr := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if cErr != nil {
+			t.Fatalf("parse child pid %q: %v", raw, cErr)
+		}
+		t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+		if err == nil {
+			t.Error("Run after its deadline = nil, want the kill's error")
+		}
+		return elapsed, child
+	}
+
+	t.Run("a group member dies with the head", func(t *testing.T) {
+		elapsed, child := run(t, "sleep 30")
+		if elapsed > waitDelay {
+			t.Errorf("Run returned after %s, want under the %s wait delay: the child held the pipe", elapsed, waitDelay)
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			st, ok := readStat(child)
+			if !ok || st.state == 'Z' {
+				break
+			}
+			if !time.Now().Before(deadline) {
+				t.Fatalf("child %d outlived the deadline kill", child)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+
+	t.Run("an escaped child cannot hold Wait past the delay", func(t *testing.T) {
+		if _, err := exec.LookPath("setsid"); err != nil {
+			t.Skip("setsid is not on PATH")
+		}
+		elapsed, _ := run(t, "setsid sleep 30")
+		if elapsed > waitDelay+2*time.Second {
+			t.Errorf("Run returned after %s, want within the %s wait delay plus slack", elapsed, waitDelay)
+		}
+	})
 }

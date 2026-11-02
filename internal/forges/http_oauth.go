@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/forgeapi/creds"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // DeviceFlowResponse is a started device grant as a client renders it. The
@@ -34,10 +34,11 @@ type PollResult struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
 	Code   string `json:"code,omitempty"`
+	// ForgeID is the id the server minted for the saved connection, on complete.
+	ForgeID string `json:"forge_id,omitempty"`
 }
 
-// The poll statuses. A token connect answers stateComplete too, and a failed
-// probe names its reason under statusError.
+// The poll statuses.
 const (
 	statePending  = "pending"
 	stateComplete = "complete"
@@ -53,10 +54,6 @@ const (
 	// codeClientIDInvalid answers a start whose client id does not fit its host.
 	codeClientIDInvalid = "client_id_invalid"
 )
-
-// grantSaveBudget bounds saving an approved grant, which outlives the request:
-// the token is spent once the grant answers it.
-const grantSaveBudget = 30 * time.Second
 
 var (
 	errClientIDNeeded = errors.New("forges: an instance other than the public one signs in with its own " +
@@ -104,8 +101,8 @@ func (h *HTTPHandler) handleGrantStart(w http.ResponseWriter, r *http.Request, k
 		return
 	}
 	rec, req, err := h.grantFor(kind, &body)
-	if err == nil {
-		_, err = h.manager.writableRecord(rec.ID)
+	if err == nil && !h.manager.healthy() {
+		err = errConnectionUnusable
 	}
 	var started startedGrant
 	if err == nil {
@@ -124,20 +121,20 @@ func (h *HTTPHandler) handleGrantStart(w http.ResponseWriter, r *http.Request, k
 
 // grantFor is the connection a start signs in and the application it signs in
 // with: Marotte's own on the public instance, the body's anywhere else.
-func (*HTTPHandler) grantFor(kind Kind, body *grantBody) (connectionRecord, creds.GrantRequest, error) {
+func (*HTTPHandler) grantFor(kind Kind, body *grantBody) (connectionSpec, creds.GrantRequest, error) {
 	rec, err := body.record(kind, body.Host)
 	if err != nil {
-		return connectionRecord{}, creds.GrantRequest{}, err
+		return connectionSpec{}, creds.GrantRequest{}, err
 	}
 	if rec.Host != kind.defaultHost() {
 		if body.ClientID == "" {
-			return connectionRecord{}, creds.GrantRequest{}, errClientIDNeeded
+			return connectionSpec{}, creds.GrantRequest{}, errClientIDNeeded
 		}
 		rec.OAuthClientID = body.ClientID
 		return rec, creds.GrantRequest{ClientID: body.ClientID, Scopes: grantScopes(kind.family())}, nil
 	}
 	if body.ClientID != "" {
-		return connectionRecord{}, creds.GrantRequest{}, errClientIDPublic
+		return connectionSpec{}, creds.GrantRequest{}, errClientIDPublic
 	}
 	// handleDeviceGrant admits only a family marotteApp names.
 	req, _ := marotteApp(kind.family())
@@ -159,21 +156,25 @@ func writeGrantStartError(w http.ResponseWriter, r *http.Request, err error) {
 		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeWebBaseInvalid))
 	case errors.Is(err, errHostInvalid):
 		httpreply.BadRequest(w, err.Error())
-	case errors.Is(err, errConnectionUnusable):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+	case writeMutationError(w, err):
 	default:
 		writeOpsError(w, r, err)
 	}
 }
 
+// handleGrantPoll takes its deadline at entry, so the token request and the
+// sign-in after it answer before the browser stops waiting.
 func (h *HTTPHandler) handleGrantPoll(w http.ResponseWriter, r *http.Request) {
+	deadline := h.manager.deadlines.from(time.Now())
 	id, ok := grantIDOf(w, r)
 	if !ok {
 		return
 	}
-	g, err := h.grants.poll(r.Context(), id)
+	pctx, cancel := context.WithDeadline(r.Context(), deadline.Add(-h.manager.deadlines.reserve))
+	g, err := h.grants.poll(pctx, id)
+	cancel()
 	if err == nil && g.Done {
-		res := h.completeGrant(r.Context(), &g)
+		res := h.completeGrant(r.Context(), deadline, &g)
 		if r.Context().Err() == nil {
 			webhttp.WriteJSON(w, res)
 		}
@@ -189,21 +190,24 @@ func (h *HTTPHandler) handleGrantPoll(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, PollResult{Status: statePending})
 }
 
-// It does not end with the request, because the token cannot be asked for again.
-func (h *HTTPHandler) completeGrant(ctx context.Context, g *polledGrant) PollResult {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grantSaveBudget)
-	defer cancel()
-	if err := h.manager.connectCredential(ctx, &g.Conn, &g.Record); err != nil {
-		res := PollResult{Status: statusError, Error: logsafe.Field(err.Error())}
-		if ferr, ok := errors.AsType[*forgeapi.Error](err); ok {
-			res.Code = ferr.Code
-		}
-		return res
+// The forge has spent the device code and the registry has forgotten the
+// grant, so only the deadline may abandon the token, never the browser leaving.
+func (h *HTTPHandler) completeGrant(ctx context.Context, deadline time.Time, g *polledGrant) PollResult {
+	id, err := h.manager.signIn(context.WithoutCancel(ctx), deadline, &g.Conn, &g.Record)
+	if err == nil {
+		return PollResult{Status: stateComplete, ForgeID: id}
 	}
-	h.manager.invalidate()
-	_ = h.manager.Refresh(ctx)
-	h.NotifyChanged(ctx)
-	return PollResult{Status: stateComplete}
+	res := PollResult{Status: statusError, Error: logsafe.Field(err.Error())}
+	if ferr, ok := errors.AsType[*forgeapi.Error](err); ok {
+		res.Code = ferr.Code
+	}
+	switch {
+	case errors.Is(err, errSignInTimedOut):
+		res.Code = codeSignInTimedOut
+	case errors.Is(err, errConnectionBusy):
+		res.Code = codeConnectionBusy
+	}
+	return res
 }
 
 // A refusal that ends the grant is a terminal status, which the client stops on; a failure the

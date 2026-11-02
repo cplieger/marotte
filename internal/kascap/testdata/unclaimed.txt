@@ -6,12 +6,11 @@
 # either direction: send:true with an implementation, or send:false with a
 # because saying why not.
 #
-# Read from kiro-cli 2.29.1 by TestCapabilityCensus.
+# Read from the pinned kiro-cli by TestCapabilityCensus.
 # Regenerate: go test ./internal/kascap/ -run TestCapabilityCensus -update
 capability c2sViews
 capability findFiles
 capability helpDocs
-capability inactiveItems
 capability specLinks
 capability telemetry
 capability textSearch

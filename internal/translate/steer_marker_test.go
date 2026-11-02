@@ -152,6 +152,55 @@ func TestStripSteerAcks_DoesNotHoldTextInFrontOfAMarker(t *testing.T) {
 	}
 }
 
+func TestStripSteerAcks_HoldsABracketTheMarkerAccepts(t *testing.T) {
+	tests := map[string]struct {
+		chunks []string
+		wantID string
+		wantAt string
+	}{
+		"bracket opening the body": {[]string{"[STEERING steer-0: ]00", "0]"}, "steer-0", "]000"},
+		"bracket inside the id":    {[]string{"[STEERING steer-a]b", ": done]"}, "steer-a]b", "done"},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			emit, carry, acks := feedAcks(tt.chunks)
+			if emit != "" || carry != "" {
+				t.Errorf("emitted %q carry %q, want neither", emit, carry)
+			}
+			if len(acks) != 1 || acks[0].SteerID != tt.wantID || acks[0].Text != tt.wantAt {
+				t.Errorf("acks = %+v, want one %s %q", acks, tt.wantID, tt.wantAt)
+			}
+		})
+	}
+}
+
+func TestStripSteerAcks_ReleasesWhatTheMarkerRefuses(t *testing.T) {
+	tests := map[string]string{
+		"bracket then space in the id": "[STEERING steer-a] then prose",
+		"space ends the id":            "[STEERING steer-a b",
+		"tab ends the id":              "[STEERING steer-a\tb",
+		"newline ends the id":          "[STEERING steer-a\nb",
+		"form feed ends the id":        "[STEERING steer-a\fb",
+		"carriage return ends the id":  "[STEERING steer-a\rb",
+		"empty id":                     "[STEERING steer-:",
+		"no space after the colon":     "[STEERING steer-a:b",
+	}
+	for name, in := range tests {
+		t.Run(name, func(t *testing.T) {
+			emit, carry, acks := stripSteerAcks("", in)
+			if carry != "" {
+				t.Errorf("stripSteerAcks(\"\", %q) carry = %q, want it released", in, carry)
+			}
+			if emit != in {
+				t.Errorf("stripSteerAcks(\"\", %q) emitted %q, want the input whole", in, emit)
+			}
+			if len(acks) != 0 {
+				t.Errorf("stripSteerAcks(\"\", %q) acks = %+v, want none", in, acks)
+			}
+		})
+	}
+}
+
 // An unclosed marker cannot be allowed to swallow the rest of the turn. Past the
 // bound the carry is released as ordinary text, which is the lesser wrong: some
 // machinery shows, rather than the response disappearing.

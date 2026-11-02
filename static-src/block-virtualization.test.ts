@@ -48,6 +48,7 @@ const { mountChatView, mountTurnBody, activeTranscriptView, teardownAll } =
   await import("./messages.js");
 const { scrollToBottom, readingState } = await import("./scroll.js");
 const { setPinSettleMs } = await import("./scroll-controller.js");
+const { pinAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
 const { projectTurns } = await import("./turns.js");
@@ -144,11 +145,13 @@ function runsTurn(turnID: string, runs: number, per: number): Entry[] {
     }
     for (let i = 0; i < per; i++) {
       // Long enough to WRAP, so a departing run's recorded height is worth something.
-      out.push(
-        sealed(turnID, at++, "text", {
+      // One say per run, each chunk a `#k` segment of it, so a run is one message.
+      out.push({
+        ...sealed(turnID, at++, "text", {
           text: `run ${String(r)} chunk ${String(i)}: ${"the quick brown fox jumps over the lazy dog and keeps going ".repeat(6)}`,
         }),
-      );
+        id: `${turnID}-r${String(r)}-say#${String(i + 1)}`,
+      });
     }
   }
   out.push(turnClose(turnID, at));
@@ -496,14 +499,13 @@ describe("scrolling moves the window", () => {
    * would undo a gesture inside it.
    */
   async function atLiveEdge(): Promise<void> {
-    const real = setPinSettleMs(20);
-    try {
-      scrollToBottom();
-    } finally {
-      setPinSettleMs(real);
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 100);
+    await pinAtLiveEdge(scroller(), 20, () => {
+      const real = setPinSettleMs(20);
+      try {
+        scrollToBottom();
+      } finally {
+        setPinSettleMs(real);
+      }
     });
   }
 

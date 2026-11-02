@@ -5,6 +5,7 @@ import { el } from "@cplieger/reactive";
 import { formatElapsed } from "../strings.js";
 import { elapsed, type ExecNode } from "./model.js";
 import { STATE_WORD } from "./status.js";
+import { paintLabel } from "./label.js";
 
 export interface ExecDetailView {
   readonly root: HTMLElement;
@@ -57,7 +58,7 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
     shown = node;
     if (node === undefined) {
       root.dataset["state"] = "pending";
-      title.textContent = "No step selected";
+      paintLabel(title, { label: "No step selected" });
       state.textContent = "";
       dur.textContent = "";
       facts.replaceChildren();
@@ -71,7 +72,7 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
       return;
     }
     root.dataset["state"] = node.state;
-    title.textContent = node.label;
+    paintLabel(title, node);
     state.textContent = STATE_WORD[node.state];
     const ms = elapsed(node.start, node.end);
     dur.textContent = ms > 0 ? formatElapsed(ms) : "";

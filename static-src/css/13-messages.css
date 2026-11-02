@@ -15,21 +15,42 @@
    * instead of back over the cards. 2.75rem is kept because narrowing it moves
    * both insets, the resume control's dock and both measured container thresholds. */
   --rail-w: 2.75rem;
+
+  /* The step buttons' height and the resume control's target. */
+  --rail-hit: var(--hit-floor);
   --rail-inset-end: calc(50% - var(--content-max-w) / 2 - var(--rail-w) - var(--sp-2));
   --rail-inset-start: calc(100% - var(--rail-inset-end) - var(--rail-w));
 
   /* The map's reserved FOOT, which the docked resume control sits in. Reserved
-   * UNCONDITIONALLY, because the control appears only once the reader has scrolled up
-   * and the map may not move then. It clears the control's target: `--ctl-h-sm`
-   * painted, lifted to the hit floor where the floor is taller. */
+   * UNCONDITIONALLY where it docks, because the control appears only once the reader has
+   * scrolled up and the map may not move then; every form that does not dock leaves `--sp-3`.
+   * It clears the control's target: `--ctl-h-sm` painted, lifted to the hit floor where the
+   * floor is taller. */
   --rail-foot: calc(var(--sp-3) + max(var(--ctl-h-sm), var(--hit-floor)) + var(--sp-2));
 }
 
-/* NATIVE SCROLL ANCHORING HOLDS THE READER (`overflow-anchor` left at `auto`,
- * https://drafts.csswg.org/css-scroll-anchoring/). It is the one mechanism that sees
- * a height change landing after the mutation that caused it — a `content-visibility`
- * row taking its real size, an animated collapse. It keeps the anchor node's top in
- * place, so `scroll.ts` holds the reading line when the row on that edge grows. */
+/* A FINGER'S RAIL, on a touch device or in touch mode: a 48px column is the press-and-drag band
+ * and the step buttons' width, and 48px is their height and the resume control's target. Still
+ * inside the 3.75rem gutter at 57.5rem. The resume control does not dock here, so the foot is
+ * bare. Two rules, one value: a selector cannot OR an attribute with a media query. */
+:root[data-pointer="coarse"] [id="messages-wrap-outer"] {
+  --rail-w: 3rem;
+  --rail-hit: 3rem;
+  --rail-foot: var(--sp-3);
+}
+
+@media (any-pointer: coarse) {
+  [id="messages-wrap-outer"] {
+    --rail-w: 3rem;
+    --rail-hit: 3rem;
+    --rail-foot: var(--sp-3);
+  }
+}
+
+/* Native scroll anchoring (`overflow-anchor` left at `auto`,
+ * https://drafts.csswg.org/css-scroll-anchoring/) may absorb some layout changes
+ * above the reader; `ScrollController` (scroll-controller.ts) holds a Reading
+ * position across near-row layout and later child resizes. */
 [id="messages-wrap"] {
   position: absolute;
   inset: 0;
@@ -63,6 +84,23 @@
    * with behavior:"instant", which overrides this: small per-chunk deltas compose
    * into continuous motion that "smooth" would stutter through. */
   scroll-behavior: smooth;
+}
+
+/* UNDER 57.5rem THE COLUMN LEAVES NO GUTTER, so the map sits `--sp-2` inside the chat area's end,
+ * clear of a classic scrollbar, and the scroller below reserves the map's column so it covers no
+ * transcript text. The resume control does not dock here, so the foot is bare. A phone-shaped
+ * screen draws no map (29-turns.css) and keeps its inset. */
+@container chat-area (width < 57.5rem) {
+  [id="messages-wrap-outer"] {
+    --rail-inset-end: calc(var(--scrollbar-w, 0px) + var(--sp-2));
+    --rail-foot: var(--sp-3);
+  }
+
+  @media (width > 48rem) and (height > 30rem) {
+    [id="messages-wrap"] {
+      padding-inline-end: max(calc(var(--rail-w) + 2 * var(--sp-2)), env(safe-area-inset-right, 0));
+    }
+  }
 }
 
 /* NO HALF-VIEWPORT RESERVE WHILE STREAMING — third attempt at one, so do not add
@@ -122,6 +160,15 @@
   order: 1;
   block-size: 0;
   margin-block-start: calc(var(--sp-4) - var(--sp-3));
+}
+
+/* THE HISTORY EDGE, the live edge's twin at the other end (scroll-controller.ts `topSentinel`). `order: -1` seats it
+ * above every card whatever the DOM order, and the negative margin cancels the column `gap` flex draws below a
+ * zero-height first item, so the first turn sits where it would with no marker. */
+.transcript-top {
+  order: -1;
+  block-size: 0;
+  margin-block-end: calc(-1 * var(--sp-3));
 }
 
 /* A parked view keeps its DOM and rendering state but costs the page nothing.
@@ -235,21 +282,19 @@
   }
 }
 
-/* PHONE: three cards per row, from a grid rather than a wrapping flex line. A
- * `min-width` is what pinned the phone to two, spending one row per two models.
- * `minmax(0, 1fr)` rather than `1fr`, because a grid track's automatic minimum is
- * its content, so a long model name would push its track past its share and the
- * three columns would stop being equal. */
+/* PHONE: exactly three cards per row, a short last row centred like desktop's. A 10rem
+ * card minimum is what pinned the phone to two, spending one row per two models. The
+ * basis is a third of the content box less the two gaps; a grid track would equalise
+ * the columns but cannot centre a partial last row. */
 @media (width <= 48rem) {
   .picker-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
     max-width: none;
     inline-size: 100%;
     padding-inline: var(--sp-3);
   }
 
   .picker-btn {
+    flex: 0 0 calc((100% - 2 * var(--sp-2)) / 3);
     min-width: 0;
     padding: var(--sp-2);
   }
@@ -265,12 +310,17 @@
   contain-intrinsic-size: auto 3rem;
 }
 
-/* A skippable transcript box near the scrollport (`scroll.ts` `NEAR_LEAD`): laid out
+/* A skippable transcript box near the scrollport (`scroll-controller.ts` `NEAR_LEAD`): laid out
  * ahead, with the containment `auto` applies, so `[id="messages-wrap"]` outranks each
- * box's own `content-visibility`. */
+ * box's own `content-visibility`. `content`, never `layout style paint`: Gecko reflows a
+ * `content-visibility` flip only when the effective containment changes (`CalcDifference` in
+ * https://searchfox.org/mozilla-central/source/layout/style/nsStyleStruct.cpp), `auto` already
+ * implies those three, and a box skipped at the flip stays a blank band at its intrinsic size.
+ * `content` carries a bit of its own, so no skippable box may already be `contain: content`, and
+ * no state rule on one may declare a `contain`: it ties this rule's specificity and can win. */
 [id="messages-wrap"] [data-near] {
   content-visibility: visible;
-  contain: layout style paint;
+  contain: content;
 }
 
 /* A RESERVED BLOCK SLOT TAKES NO ROW UNTIL IT HAS SOMETHING TO SHOW, and the node
@@ -427,9 +477,18 @@
       border-spacing: 0;
       border: 1px solid var(--c-border);
       border-radius: var(--r);
-      width: 100%;
       margin: var(--sp-2) 0;
       font-size: var(--fs-sm);
+
+      /* Sized by its content and capped at the measure, scrolling inside its own box
+       * when the columns cannot fit. `.message`'s `overflow-wrap: anywhere` is reset
+       * here because `anywhere` counts every character boundary toward a cell's
+       * min-content, so auto layout would crush a short column to one letter. */
+      display: block;
+      inline-size: max-content;
+      max-inline-size: 100%;
+      overflow-x: auto;
+      overflow-wrap: normal;
     }
 
     /* ONE SIDE PER CELL, or an interior line is two adjacent borders and draws at
@@ -440,6 +499,11 @@
     & td {
       border-inline-start: 1px solid var(--c-border);
       padding: var(--sp-1) var(--sp-2);
+
+      /* The user agent centres `th` and middles every cell; the delimiter row's inline
+       * `text-align` still wins, on header and body alike. */
+      text-align: start;
+      vertical-align: top;
     }
 
     & tbody :where(th, td) {
@@ -616,18 +680,21 @@
     }
 
     /* A workspace audio file the agent presented with `![](…)`. The native
-       player's own chrome is the whole widget; only its width is ours. */
+       player's own chrome is the whole widget; only its width is ours, the
+       column's, like every object in the transcript. */
     & .media-audio {
       display: block;
       width: 100%;
-      max-width: 24rem;
       margin-block: var(--sp-2);
     }
 
     /* The download affordance for a presented file that is neither image nor audio.
-     * A chip rather than a prose link, so it reads as an object in the transcript. */
+     * An object rather than a prose link: a full-width block, so the sentence around
+     * it breaks above and below. */
     & .media-download {
-      display: inline-flex;
+      display: flex;
+      width: 100%;
+      margin-block: var(--sp-2);
       align-items: center;
       gap: 0.35rem;
       padding: var(--sp-1) var(--sp-2);
@@ -636,6 +703,12 @@
       color: var(--c-text-primary);
       font-size: var(--fs-sm);
       text-decoration: none;
+    }
+
+    /* `holdObjectTail` (smd-renderer.ts): the punctuation after a block object,
+     * shown again once the object is an inline link. */
+    & :is(.preview-card, .media-audio, .media-download) + .block-object-tail {
+      display: none;
     }
 
     & .media-download:hover {
@@ -672,36 +745,6 @@
   }
 }
 
-/* Load older messages: a real BUTTON, not an instruction. "Scroll up for older
- * messages" is unusable the moment progressive collapse makes the transcript
- * shorter than the viewport — there is nothing to scroll. */
-.load-more-btn {
-  align-self: center;
-  flex-shrink: 0;
-  padding: var(--sp-1) var(--sp-3);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-secondary);
-  color: var(--c-text-secondary);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard),
-    border-color var(--dur-micro) var(--ease-standard);
-}
-
-.load-more-btn:hover {
-  background: var(--c-bg-tertiary);
-  color: var(--c-text-primary);
-  border-color: var(--c-text-tertiary);
-}
-
-.load-more-btn:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-offset);
-}
-
 /* Reasoning/thinking block (collapsible). NO bar and no indent: the trace sits
  * flush on `.turn-body`'s content edge, the same left edge the prose and every
  * evidence card start from. Subordination is carried by `--c-text-aside`, the
@@ -721,26 +764,8 @@
    * opacity is invisible to both contrast gates, so the number the tools reported
    * was never the number on screen. */
 
-  /* No height transition ON THE BLOCK: the streaming bubble's per-chunk flicker
-   * reasoning. The open/close slide lives on ::details-content below, where the
-   * computed block-size only changes at the state flip. */
-}
-
-/* `::details-content` is the platform half of a native <details> (the UA flips
- * its content-visibility), so the close animates: block-size 0<->auto rides
- * interpolate-size and the visibility flip lands at the end of a close via
- * allow-discrete. While OPEN the computed block-size stays `auto`, so streamed
- * growth never retriggers it. */
-.reasoning-block::details-content {
-  overflow: clip;
-  block-size: 0;
-  transition:
-    block-size var(--dur-standard) var(--ease-standard),
-    content-visibility var(--dur-standard) allow-discrete;
-}
-
-.reasoning-block[open]::details-content {
-  block-size: auto;
+  /* No height transition: streamed growth would replay it per chunk. The open/close slide is
+   * `disclosure-row.ts` `slideBox`, which runs only at a state flip. */
 }
 
 /* NO ANIMATION ON A REASONING SELECTOR: a pulsing dot is reserved to tabs and
@@ -1057,19 +1082,6 @@
   --chev-turn: 0deg;
 }
 
-/* The slide, in `.reasoning-block::details-content`'s shape; the reasoning there. */
-.compaction::details-content {
-  overflow: clip;
-  block-size: 0;
-  transition:
-    block-size var(--dur-standard) var(--ease-standard),
-    content-visibility var(--dur-standard) allow-discrete;
-}
-
-.compaction[open]::details-content {
-  block-size: auto;
-}
-
 /* NO INLINE PADDING, per `.message`: an inset would put this prose right of every
  * other block in the card. Block-end only, for air above the rule. */
 .compaction-body {
@@ -1133,34 +1145,17 @@
   }
 }
 
-/* On a phone the band sits UNDER the toolbar and back IN FLOW, which needs no
- * repositioning: `.chat-toolbar` is `position: static` here and paints its own
- * background as the first in-flow child of `#chat-area`. In flow rather than
- * overlaid because that top band is painted, so no canvas is revealed and the
- * defect above is desktop-only — and a 42px overlay at 390px would sit on top of
- * the live turn. `position: static` makes the insets and the z-index inert. */
+/* On a phone a band that HOLDS a banner goes back in flow under the toolbar, because an
+ * overlay would sit on the live turn. `position: static` makes the insets inert, so the
+ * band's `--sp-2` offset from the bar becomes padding, which `anchor(--notice-band bottom)`
+ * reads like the banner-to-toast gap above.
+ *
+ * An EMPTY band keeps the desktop overlay shape, out of flow at the same offset, so the
+ * scroller meets the toolbar with no canvas strip between them. The box stays laid out
+ * because a lone toast anchors to it. */
 @media (width <= 48rem) {
-  .banner-stack {
+  .banner-stack:not(:empty) {
     position: static;
-
-    /* `position: static` makes the insets inert, and the band's own `--sp-2` OFFSET
-     * from the bar was in one of them — so in flow the band began at the bar's
-     * hairline and BOTH of its rows sat flush against it: a banner directly, and a
-     * lone toast because it anchors to this box's bottom edge. Measured at 390x844
-     * before this rule, 0.00px against the desktop overlay's 8.00px.
-     *
-     * PADDING, not a margin, because the band already charges the banner-to-toast
-     * gap to its own border box for the same reason (`padding-block-end` above):
-     * `anchor(--notice-band bottom)` reads the border box, so one declaration moves
-     * the banner AND the toast under it, and the two cannot drift.
-     *
-     * UNCONDITIONAL, so the EMPTY band carries it too — that box is what a lone
-     * toast anchors to, and the desktop's offset is unconditional in exactly the
-     * same way. The cost is stated rather than hidden: an empty band reserves
-     * `--sp-2` of flow here where the desktop overlay reserves nothing, so the
-     * transcript's scroller is 8px shorter on a phone. Scoping it to
-     * `:not(:empty)` is the shape that looks tidier and reintroduces the defect
-     * for the toast, which is the row that reported it. */
     padding-block-start: var(--sp-2);
     padding-inline: var(--sp-3);
   }
@@ -1305,10 +1300,11 @@
   justify-content: space-between;
   gap: var(--sp-2);
 
-  /* Not a target (a plain div; the buttons inside carry their own floor), so the
-     hit floor is not its measure. */
-  min-height: 1.75rem;
-  padding: 0.125rem var(--sp-2);
+  /* The turn footer's row height (29-turns.css), for the same buttons: their
+     `--hit-floor` expanders must fit inside `.code-wrap`'s clip, which cuts hit
+     testing as well as paint. */
+  min-height: max(var(--hit-floor), var(--ctl-h-dense));
+  padding: 0 var(--sp-2);
   background: var(--c-bg-secondary);
 }
 
@@ -1325,10 +1321,12 @@
   white-space: nowrap;
 }
 
+/* The buttons' box is the turn footer's (61-mcp-tools.css); they inherit this ink. */
 .code-actions {
   display: flex;
   flex-shrink: 0;
-  gap: 0.25rem;
+  gap: var(--action-gap);
+  color: var(--c-text-control);
 }
 
 /* Still arriving: the block has its chrome but not its highlighting, because the
@@ -1347,25 +1345,6 @@
 
   animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
   vertical-align: 1px;
-}
-
-.code-act-btn {
-  width: 1.75rem;
-  height: 1.75rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--c-bg-secondary);
-  color: var(--c-text-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  cursor: pointer;
-  flex-shrink: 0;
-
-  &:hover {
-    background: var(--c-bg-tertiary);
-    color: var(--c-text-primary);
-  }
 }
 
 /* Math (native MathML, no KaTeX). THE FONT IS THE WHOLE REASON THIS BLOCK EXISTS:
@@ -1393,31 +1372,30 @@
   overflow-wrap: anywhere;
 }
 
-[id="scroll-bottom"] {
-  position: absolute;
-  bottom: var(--sp-3);
-  left: 50%;
-  transform: translateX(-50%);
-  min-height: var(--btn-h);
-  padding: 0 var(--sp-3);
+/* THE RESUME CONTROL, one component for the chat (`#scroll-bottom`) and the run tab
+   (`#run-scroll-bottom`): a square glyph button in the reading area's end corner, each
+   view placing it. NO DROP SHADOW: the opaque fill separates it from the text under it.
+
+   The painted box is the glyph plus `--sp-2` plus its border, square by construction
+   (the svg is `--icon-ui` on both axes, 03-base.css; the label hidden), so it follows
+   the pointer tier. The TARGET is `--hit-floor`, grown by the `::after` rather than
+   the box; `min(0px, …)` never shrinks a box already past the floor. The app-wide
+   floor (61-mcp-tools.css) sets PHYSICAL `min-width`/`min-height`, so the opt-out is
+   physical too. */
+.scroll-resume {
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--sp-2);
   border-radius: var(--r);
   border: 1px solid var(--c-border);
   background: var(--c-bg-secondary);
   color: var(--c-text-primary);
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-  justify-content: center;
-
-  /* NO DROP SHADOW, and the border below is the whole edge. It carried
-   * `--shadow-ambient` (a 1px ring in `--c-border`) on top of that border, so the
-   * edge painted 2px in one colour. Every drop shadow left in the app sits on a
-   * transient overlay or a dragged element — the effort slider's knob was the last
-   * persistent one and took a border instead in 2026-09 — so a persistent control
-   * with a raised layer is now unrepresentable rather than merely rare.
-   * The opaque fill is what separates it from the text it sits over. */
-  z-index: 10;
   opacity: 1;
   transition:
     background var(--dur-micro),
@@ -1425,58 +1403,113 @@
     opacity var(--dur-standard);
   font-size: var(--fs-sm);
   white-space: nowrap;
-}
 
-[id="scroll-bottom"]:hover {
-  color: var(--c-text-primary);
-  background: var(--c-bg-tertiary);
-}
-
-/* DOCKED AT THE FOOT OF THE TURN MAP, wherever the map draws: a floating form sits
- * over the last lines of the content the reader is behind on, while the map's column
- * is empty space below the stack. The width and pointer gates are the map's own
- * (29-turns.css). Pinned by its inline-START edge, so the label grows RIGHT into the
- * gutter rather than back over the cards, and `--sp-3` short of the wrapper's end
- * because #chat-area clips. Both thresholds track `--rail-w`. */
-@container chat-area (width >= 57.5rem) {
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] {
-    left: var(--rail-inset-start);
-    transform: none;
-    min-inline-size: var(--rail-w);
-    max-inline-size: max(var(--rail-w), calc(var(--rail-inset-end) + var(--rail-w) - var(--sp-3)));
-
-    /* THE MAP'S STEP-BUTTON VOCABULARY (`.turn-map-step`, 29-turns.css), because it is
-     * the foot of the map's own column: `--ctl-h-sm` tall, no surface at rest, the
-     * hover pair on demand. Spelled with the floor, which this rule would otherwise
-     * override at class specificity. */
-    min-block-size: max(var(--ctl-h-sm), var(--hit-floor));
-    background: transparent;
-    border-color: transparent;
-    color: var(--c-text-tertiary);
-    font-size: var(--fs-xs);
-    justify-content: flex-start;
-    gap: 0;
-    padding: 0;
-    border-radius: var(--r-sm);
+  &::after {
+    content: "";
+    position: absolute;
+    inset-block: min(0px, calc((100% - var(--hit-floor)) / 2));
+    inset-inline: min(0px, calc((100% - var(--hit-floor)) / 2));
   }
 
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:hover {
-    background: var(--c-hover);
-    color: var(--c-text-primary);
-  }
-
-  /* The glyph takes the map's own column, so it sits under the stack whether or not
-   * the label is showing. `- 2px` is this button's two borders, which the column
-   * width does not include. */
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > svg {
-    flex: 0 0 calc(var(--rail-w) - 2px);
-  }
-
-  /* HIDDEN, not truncated, at a width the gutter cannot hold: `setResumeLabel`
-   * also writes the label to the tooltip, which is published as this button's
-   * accessible description, so the count is never the only copy. */
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
+  & > span {
     display: none;
+  }
+
+  @media (any-hover: hover) {
+    &:hover {
+      color: var(--c-text-primary);
+      background: var(--c-bg-tertiary);
+    }
+  }
+}
+
+/* BOTH INSETS ARE `--sp-4`: the transcript column and the composer end `--sp-4` from
+   the screen edge (`#messages-wrap`, `.bottom-bar`), and a box docked in a corner
+   reads off-square unless its two insets match. */
+[id="scroll-bottom"] {
+  position: absolute;
+  right: var(--sp-4);
+  bottom: var(--sp-4);
+}
+
+/* THE TARGET IS `--rail-hit`, the turn map's navigator target, rather than the shared
+ * `--hit-floor`, so a finger gets 48px in every form (`.scroll-resume::after` above). */
+[id="scroll-bottom"]::after {
+  inset-block: min(0px, calc((100% - var(--rail-hit)) / 2));
+  inset-inline: min(0px, calc((100% - var(--rail-hit)) / 2));
+}
+
+/* Past a phone the chat's control is the labelled pill centred over the transcript
+   ("N new blocks"), unless the turn map's foot takes it below. */
+@media (width > 48rem) {
+  [id="scroll-bottom"] {
+    right: auto;
+    left: 50%;
+    bottom: var(--sp-3);
+    transform: translateX(-50%);
+    min-height: var(--btn-h);
+    padding: 0 var(--sp-3);
+  }
+
+  [id="scroll-bottom"] > span {
+    display: inline;
+  }
+}
+
+/* DOCKED AT THE FOOT OF THE TURN MAP, wherever the map draws to a mouse: a floating form
+ * sits over the last lines of the content the reader is behind on, while the map's column
+ * is empty space below the stack. The height gate is the map's own (29-turns.css). Mouse
+ * only, device and tier: the dock hides the label under 70rem and a hover reveals it, so
+ * a touch device or touch mode keeps the labelled pill. Pinned by its inline-START edge,
+ * so the label grows RIGHT into the gutter rather than back over the cards, and `--sp-3`
+ * short of the wrapper's end because #chat-area clips. Both thresholds track `--rail-w`. */
+@container chat-area (width >= 57.5rem) {
+  @media (height > 30rem) and (not (any-pointer: coarse)) {
+    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] {
+      left: var(--rail-inset-start);
+      transform: none;
+      min-inline-size: var(--rail-w);
+      max-inline-size: max(
+        var(--rail-w),
+        calc(var(--rail-inset-end) + var(--rail-w) - var(--sp-3))
+      );
+
+      /* THE MAP'S STEP-BUTTON VOCABULARY (`.turn-map-step`, 29-turns.css), because it is
+       * the foot of the map's own column: `--ctl-h-sm` tall, no surface at rest, the
+       * hover pair on demand. Spelled with the floor, which this rule would otherwise
+       * override at class specificity. */
+      min-block-size: max(var(--ctl-h-sm), var(--hit-floor));
+      background: transparent;
+      border-color: transparent;
+      color: var(--c-text-tertiary);
+      font-size: var(--fs-xs);
+      justify-content: flex-start;
+      gap: 0;
+      padding: 0;
+      border-radius: var(--r-sm);
+    }
+
+    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:hover {
+      background: var(--c-hover);
+      color: var(--c-text-primary);
+    }
+
+    /* The glyph takes the map's own column, so it sits under the stack whether or not
+     * the label is showing. `- 2px` is this button's two borders, which the column
+     * width does not include. A WIDTH, not a flex-basis: Gecko sizes this shrink-to-fit
+     * box from each item's width, so a basis wider than `.ic-ui`'s 16px clipped the
+     * revealed label by the difference in Firefox. */
+    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > svg {
+      flex: none;
+      inline-size: calc(var(--rail-w) - 2px);
+    }
+
+    /* HIDDEN, not truncated, at a width the gutter cannot hold: `setResumeLabel`
+     * also writes the label to the tooltip, which is published as this button's
+     * accessible description, so the count is never the only copy. */
+    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
+      display: none;
+    }
   }
 }
 
@@ -1495,33 +1528,35 @@
  * gutter, no other element's box moves, and `#messages`' scrollHeight is out of
  * reach. */
 @container chat-area (width >= 70rem) {
-  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
-    display: block;
-    min-width: 0;
-    padding-inline-end: var(--sp-2);
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* ICON-ONLY AT REST, and the reveal is HOVER rather than width. A width query
-   * decides for every reader at once; the control is a navigator sitting over the
-   * last lines of the transcript, so at rest it earns the rail's own footprint and
-   * the words arrive when a pointer or the keyboard asks for them.
-   *
-   * `any-hover: hover`, never `hover: hover`: those report only the PRIMARY input
-   * and iPadOS answers `hover: none` with a trackpad attached. OUTSIDE this query
-   * the rule above stands unchanged and the label is simply always visible, which is
-   * the right default for a device that has no hover to reveal it with rather than a
-   * fallback — and `:focus-visible` is paired with `:hover` so a keyboard user is
-   * not the one reader who can never see it. */
-  @media (any-hover: hover) {
+  @media (height > 30rem) and (not (any-pointer: coarse)) {
     :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
-      display: none;
+      display: block;
+      min-width: 0;
+      padding-inline-end: var(--sp-2);
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
-    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:hover > span,
-    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:focus-visible > span {
-      display: block;
+    /* ICON-ONLY AT REST, and the reveal is HOVER rather than width. A width query
+     * decides for every reader at once; the control is a navigator sitting over the
+     * last lines of the transcript, so at rest it earns the rail's own footprint and
+     * the words arrive when a pointer or the keyboard asks for them.
+     *
+     * `any-hover: hover`, never `hover: hover`: those report only the PRIMARY input
+     * and iPadOS answers `hover: none` with a trackpad attached. OUTSIDE this query
+     * the rule above stands unchanged and the label is simply always visible, which is
+     * the right default for a device that has no hover to reveal it with rather than a
+     * fallback — and `:focus-visible` is paired with `:hover` so a keyboard user is
+     * not the one reader who can never see it. */
+    @media (any-hover: hover) {
+      :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
+        display: none;
+      }
+
+      :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:hover > span,
+      :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:focus-visible > span {
+        display: block;
+      }
     }
   }
 }
@@ -1667,16 +1702,58 @@
   overflow-wrap: anywhere;
 }
 
-/* THE CLAMP, four lines, behind the attribute the opener toggles — the turn
- * header's own mechanism (29-turns.css, clamp-text.ts). Not an ellipsis that
- * cuts: every character stays in the DOM and in the accessibility tree, which is
- * what keeps find-in-chat able to match the reader's own words. */
+/* THE CLAMP on the reader's own message, four lines, behind the attribute the
+ * opener toggles (clamp-text.ts); a workflow's message never clamps. Not an
+ * ellipsis that cuts: every character stays in the DOM and in the accessibility
+ * tree, which is what keeps find-in-chat able to match the reader's own words. */
 .steer-note-text[data-clamped] {
   display: -webkit-box;
   -webkit-line-clamp: 4;
   line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* The run's name before the step: secondary ink, the step's label stays the accent word. It shrinks
+ * and ellipsizes first, so a long run name never pushes the step or the times off the row. */
+.steer-note-run {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.steer-note-run {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-underline-offset: 2px;
+}
+
+button.steer-note-run:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+@media (any-hover: hover) {
+  button.steer-note-run:hover {
+    color: var(--c-accent);
+    text-decoration: underline;
+  }
+}
+
+.steer-note-run-sep {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+}
+
+.steer-note-meta {
+  display: contents;
 }
 
 /* A workflow message's two times, after the label. */
@@ -1687,36 +1764,78 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Kiro's notification group: one row naming a run of workflow updates, which
- * opens and closes them. */
-.steer-group-toggle {
-  align-self: flex-start;
-  min-height: var(--btn-h);
-  padding: 0 var(--sp-3);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-secondary);
-  color: var(--c-text-secondary);
-  font: inherit;
-  font-size: var(--fs-sm);
-  cursor: pointer;
+.steer-note-clause {
+  white-space: nowrap;
 }
 
-.steer-group-toggle:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-offset);
-}
+/* Phone-shaped: the run's name takes a line of its own beside the glyph and is ellipsized there on its
+ * own. The step and the times share one run of text under it, starting at the glyph's edge, which is
+ * the body's; it wraps only between the clauses. A tool card's subtitle and a delegate's tail also
+ * sit under the glyph, not the title. */
+@media (width <= 48rem) {
+  .steer-note-head:has(> .steer-note-run) {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0 var(--sp-2);
+  }
 
-@media (any-hover: hover) {
-  .steer-group-toggle:hover {
-    color: var(--c-accent);
+  .steer-note-head:has(> .steer-note-run) > .tool-icon {
+    grid-area: 1 / 1;
+  }
+
+  .steer-note-head > .steer-note-run {
+    grid-area: 1 / 2;
+    justify-self: start;
+    max-inline-size: 100%;
+  }
+
+  .steer-note-head > .steer-note-run-sep {
+    display: none;
+  }
+
+  .steer-note-head:has(> .steer-note-run) > .steer-note-meta {
+    display: block;
+    grid-area: 2 / 2;
+    font-size: var(--fs-xs);
+  }
+
+  .steer-note-head:has(> .steer-note-run):has(.steer-note-times) > .steer-note-meta {
+    grid-area: 2 / 1 / auto / -1;
+  }
+
+  .steer-note-head:has(> .steer-note-run) .steer-note-label {
+    margin-inline-end: var(--sp-1);
+  }
+
+  .steer-note-times {
+    margin-inline-start: 0;
+  }
+
+  /* With no run's name, the times keep the row's end when they fit and, when they do not, wrap
+   * under the step as one item on the gutter, the body's edge. */
+  .steer-note-head:not(:has(> .steer-note-run)):has(.steer-note-times) {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .steer-note-head:not(:has(> .steer-note-run)):has(.steer-note-times) .steer-note-label {
+    margin-inline-end: auto;
   }
 }
 
-/* Skinned on `.steer-note-more` (13-messages.css): it is the same control, a text
- * button that opens a clamp. */
-.steer-note-more,
-.turn-req-more {
+/* Kiro's notification group: a run of workflow updates inside one box (14-tools.css
+ * `.steer-group`), flattened the way a tool group's members are: the box owns the chrome and a
+ * hairline rules each row off the one above. No entry slide: a row moves in when its run
+ * reaches two, and re-inserting it would replay the slide. */
+.steer-group-body > .steer-note {
+  border: 0;
+  border-radius: 0;
+  border-top: 1px solid color-mix(in srgb, var(--c-border) 55%, transparent);
+  animation: none;
+}
+
+/* The clamp's opener: a text button, like the run page's (`.ev-r-more`). */
+.steer-note-more {
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
   background: none;
@@ -1727,13 +1846,13 @@
   text-underline-offset: 2px;
 }
 
-.steer-note-more:hover,
-.turn-req-more:hover {
-  color: var(--c-accent);
+@media (any-hover: hover) {
+  .steer-note-more:hover {
+    color: var(--c-accent);
+  }
 }
 
-.steer-note-more:focus-visible,
-.turn-req-more:focus-visible {
+.steer-note-more:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
 }

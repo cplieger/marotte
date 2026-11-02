@@ -7,7 +7,7 @@ import (
 	"slices"
 )
 
-// SeedKiroSettings writes each allowlisted kiro-cli setting's Seed where kiro-cli holds no value,
+// SeedKiroSettings writes the Seed of each allowlisted kiro-cli setting that has one where kiro-cli holds no value,
 // so a user's own choice survives a restart. A locked key is left to its lock, and a settings
 // document kiro-cli cannot list seeds nothing. Call it once kiro-cli is installed.
 func (s *Server) SeedKiroSettings(ctx context.Context) {
@@ -27,7 +27,7 @@ func (s *Server) SeedKiroSettings(ctx context.Context) {
 	}
 	seeded := false
 	for _, key := range slices.Sorted(maps.Keys(allowedKiroSettings)) {
-		if _, set := listed[key]; set {
+		if _, set := listed[key]; set || allowedKiroSettings[key].Seed == "" {
 			continue
 		}
 		if _, locked := s.kiroSettingLock(key); locked {
@@ -39,7 +39,7 @@ func (s *Server) SeedKiroSettings(ctx context.Context) {
 		}
 		seeded = true
 	}
-	// telemetry.enabled reaches a chat only when its process starts.
+	// A seed is a kiro-cli write like a user's, so it reconciles resident chat sessions the same way.
 	if seeded && s.agent != nil {
 		s.agent.ReconcileSessionSettings(ctx)
 	}

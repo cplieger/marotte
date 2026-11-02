@@ -1,7 +1,8 @@
 // The run page's LAYOUT contract, as CSS rules rather than as rendered pixels.
 
-import { describe, it, expect } from "vitest";
-import { loadCSS, ruleBody, allRules } from "./__test-helpers__/css-rules.js";
+import { describe, it, expect, afterEach } from "vitest";
+import { page as browser } from "vitest/browser";
+import { loadCSS, ruleBody, allRules, mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 /** A rule's DECLARATIONS, with its comments stripped. Required by every negative assertion
  *  below: `ruleBody` returns the authored text, and each of these rules explains in prose which
@@ -20,6 +21,10 @@ function overflowDecls(css: string, selector: string): string[] {
     (m[1] ?? "").replace(/\s+/g, " ").trim(),
   );
 }
+
+/** Both exec tabs share one rule per box (18-pages.css), so each is addressed as the pair. */
+const SCROLLER = '[id="run-view"] .page-content,\n[id="subagent-view"] .page-content';
+const BODY = '[id="run-body"],\n[id="subagent-body"]';
 
 describe("the run page claims its height", () => {
   // The omission itself. Every full-page view is in this list; a new one that is not renders inside
@@ -51,33 +56,22 @@ describe("the run page claims its height", () => {
   it("scrolls the page wrapper, not the panes", () => {
     // `overflow: hidden auto` is the two-value shorthand: `hidden` across, `auto` down. Exactly one
     // declaration, so no plain `overflow: hidden` can sit beside it.
-    expect(overflowDecls(loadCSS("18-pages.css"), '[id="run-view"] .page-content')).toEqual([
-      "overflow: hidden auto",
-    ]);
+    expect(overflowDecls(loadCSS("18-pages.css"), SCROLLER)).toEqual(["overflow: hidden auto"]);
 
     // A pane with an `overflow` on either axis is a scroll container again, and a scroll
     // container's automatic minimum size is 0.
     expect(overflowDecls(loadCSS("31-exec-view.css"), ".ev-pane")).toEqual([]);
   });
 
-  // The second consumer of the same exec page. It has no bottom bar, so it could have scrolled the
-  // view instead — but leaving it `overflow: hidden` while `.ev-page` stops clamping itself would
-  // clip a delegate's transcript outright.
-  it("scrolls the subagent page too", () => {
-    expect(overflowDecls(loadCSS("18-pages.css"), '[id="subagent-view"] .page-content')).toEqual([
-      "overflow: hidden auto",
-    ]);
+  // One block owns `overflow` for both tabs: two contradictory blocks at equal specificity in one
+  // file let the later declaration silently win.
+  it("declares the scroller exactly once, for both tabs", () => {
+    const css = loadCSS("18-pages.css");
+    const hits = allRules(css).filter(
+      (r) => r.selector.includes(".page-content") && /run-view|subagent-view/.test(r.selector),
+    );
+    expect(hits.map((r) => r.selector)).toEqual([SCROLLER]);
   });
-
-  // One block per page owns `overflow`: two contradictory blocks at equal specificity in one file
-  // let the later declaration silently win.
-  it.each(['[id="run-view"] .page-content', '[id="subagent-view"] .page-content'])(
-    "declares %s exactly once",
-    (selector) => {
-      const hits = allRules(loadCSS("18-pages.css")).filter((r) => r.selector === selector);
-      expect(hits).toHaveLength(1);
-    },
-  );
 
   // The page must SIZE TO CONTENT, or the scroller above has nothing taller than itself to scroll:
   // `flex: 1 1 0` plus `min-height: 0` made this column exactly the free space of its parent, so
@@ -87,16 +81,6 @@ describe("the run page claims its height", () => {
     expect(/display:\s*flex/.test(page)).toBe(true);
     expect(/flex-direction:\s*column/.test(page)).toBe(true);
     expect(/flex:\s*1 0 auto/.test(page)).toBe(true);
-  });
-
-  // The floor this replaced (`min-block-size: 16rem`) existed because the results region competed
-  // with the panes for a fixed page height and crushed them to ~90px. With nothing clamped to the
-  // scrollport there is no competition, so the panes size to content and each shrink-wraps its own.
-  it("sizes the panes to their content rather than flooring them", () => {
-    const panes = decls(loadCSS("31-exec-view.css"), ".ev-panes");
-    expect(/flex:\s*0 0 auto/.test(panes)).toBe(true);
-    expect(panes).not.toMatch(/min-block-size:/);
-    expect(/align-items:\s*start/.test(panes)).toBe(true);
   });
 
   // The results are the selected step's PRODUCT, so they render whole and the page scrolls. A
@@ -130,7 +114,7 @@ describe("the run page claims its height", () => {
     const css = loadCSS("31-exec-view.css");
     const owners = allRules(css).filter((r) => /(^|,)\s*\.ev-r-more\s*$/m.test(r.selector));
     expect(owners).toHaveLength(1);
-    expect(owners[0]?.selector).toBe(".ev-in-more,\n.ev-r-more");
+    expect(owners[0]?.selector).toBe(".ev-dock-ask-more,\n.ev-r-more");
   });
 
   // A container's state is a ROLL-UP of its children and must never repaint them.
@@ -145,8 +129,8 @@ describe("the run page claims its height", () => {
 
   // `#run-body` sits between the scroller and the page, so it has to SIZE TO CONTENT like
   // everything else below the scroller.
-  it.each(['[id="run-body"]', '[id="subagent-body"]'])("sizes %s to its content", (selector) => {
-    const host = decls(loadCSS("18-pages.css"), selector);
+  it("sizes both bodies to their content", () => {
+    const host = decls(loadCSS("18-pages.css"), BODY);
     expect(/flex:\s*1 0 auto/.test(host)).toBe(true);
     expect(host).not.toMatch(/min-height:\s*0/);
   });
@@ -154,13 +138,10 @@ describe("the run page claims its height", () => {
   // WHICH BOX carries the measure is the half worth pinning, and it moved: a capped scroller puts
   // its scrollbar against the right edge of the cards rather than the view's, which reads as a
   // panel's inner scroller instead of the page's.
-  it.each([
-    ['[id="run-view"] .page-content', '[id="run-body"]'],
-    ['[id="subagent-view"] .page-content', '[id="subagent-body"]'],
-  ])("measures %s at its body rather than at its scroller", (scroller, body) => {
+  it("measures both tabs at their body rather than at their scroller", () => {
     const css = loadCSS("18-pages.css");
-    expect(decls(css, scroller)).toMatch(/max-width:\s*none/);
-    expect(decls(css, body)).toMatch(/max-width:\s*var\(--content-max-w\)/);
+    expect(decls(css, SCROLLER)).toMatch(/max-width:\s*none/);
+    expect(decls(css, BODY)).toMatch(/max-width:\s*var\(--content-max-w\)/);
   });
 
   // The transcript is the OTHER side of that contract, and it is what makes the token assertion
@@ -181,16 +162,73 @@ describe("the run page claims its height", () => {
     }
   });
 
-  it.each(['[id="run-body"]', '[id="subagent-body"]'])(
-    "lets %s fill its measure rather than shrink-wrapping to content",
-    (selector) => {
-      const body = decls(loadCSS("18-pages.css"), selector);
-      expect(body).toMatch(/width:\s*100%/);
-      expect(body).toMatch(/margin-inline:\s*auto/);
-    },
-  );
+  it("lets both bodies fill their measure rather than shrink-wrapping to content", () => {
+    const body = decls(loadCSS("18-pages.css"), BODY);
+    expect(body).toMatch(/width:\s*100%/);
+    expect(body).toMatch(/margin-inline:\s*auto/);
+  });
 
   it("keeps the page measure a real token", () => {
     expect(loadCSS("01-tokens.css")).toMatch(/--content-max-w:\s*\d/);
   });
+});
+
+// The top edge: the first card stands as far under the toolbar as a list page's, and scrolled
+// content never meets the toolbar, through a sticky band of page colour.
+describe("the run page's top gap", () => {
+  let style: HTMLStyleElement | undefined;
+  let view: HTMLElement | undefined;
+  afterEach(async () => {
+    view?.remove();
+    style?.remove();
+    await browser.viewport(1280, 720);
+  });
+
+  function mountRunPage(): { scroller: HTMLElement; card: HTMLElement } {
+    style = mountAppCSS();
+    view = document.createElement("div");
+    view.id = "run-view";
+    view.style.blockSize = "600px";
+    const scroller = document.createElement("div");
+    scroller.className = "page-content";
+    const body = document.createElement("div");
+    body.id = "run-body";
+    const card = document.createElement("div");
+    card.style.blockSize = "3000px";
+    body.append(card);
+    scroller.append(body);
+    view.append(scroller);
+    document.body.append(view);
+    return { scroller, card };
+  }
+
+  for (const [width, rest] of [
+    [1280, 20],
+    [390, 12],
+  ] as const) {
+    it(`rests the first card ${String(rest)}px under the toolbar at ${String(width)}px`, async () => {
+      await browser.viewport(width, 844);
+      const { scroller, card } = mountRunPage();
+      const gap = card.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      expect(gap).toBe(rest);
+    });
+  }
+
+  for (const by of [4, 40, 400]) {
+    it(`keeps a sticky band of page colour over scrolled content at ${String(by)}px`, async () => {
+      await browser.viewport(1280, 720);
+      const { scroller } = mountRunPage();
+      scroller.scrollTop = by;
+      const band = getComputedStyle(scroller, "::before");
+      expect(band.position).toBe("sticky");
+      expect(band.top).toBe("0px");
+      expect(band.height).toBe("8px");
+      const page = document.createElement("div");
+      page.style.backgroundColor = "var(--c-bg-primary)";
+      document.body.append(page);
+      expect(band.backgroundColor).toBe(getComputedStyle(page).backgroundColor);
+      page.remove();
+      expect(Number.parseFloat(getComputedStyle(scroller).paddingTop)).toBe(0);
+    });
+  }
 });

@@ -59,12 +59,14 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.EntrySteer](),
 	wiregen.TypeRef[marotte.EntrySteerAck](),
 	wiregen.TypeRef[marotte.EntrySteerDelivered](),
+	wiregen.TypeRef[marotte.EntrySteerCleared](),
 	wiregen.TypeRef[marotte.EntryPlan](),
 	wiregen.TypeRef[marotte.EntryCompaction](),
 	wiregen.TypeRef[marotte.EntryCompactionFailed](),
 	wiregen.TypeRef[marotte.EntrySafetyBlocked](),
 	wiregen.TypeRef[marotte.EntryModelSwitched](),
 	wiregen.TypeRef[marotte.EntryModelRouted](),
+	wiregen.TypeRef[marotte.EntryModelFallback](),
 	wiregen.TypeRef[marotte.EntryModeSwitched](),
 	wiregen.TypeRef[marotte.EntryTurnRevert](),
 	wiregen.TypeRef[marotte.EntryReconciled](),
@@ -103,6 +105,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.TurnClosedPayload](),
 	wiregen.TypeRef[marotte.SteerQueuedPayload](),
 	wiregen.TypeRef[marotte.TangentMergedPayload](),
+	wiregen.TypeRef[marotte.SettingsUpdatedPayload](),
 	wiregen.TypeRef[marotte.AgentNoticePayload](),
 	wiregen.TypeRef[marotte.SystemNoticePayload](),
 	// Before the two types that reference it.
@@ -202,11 +205,11 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.RunStartedPayload](),
 	wiregen.TypeRef[marotte.RunProgressPayload](),
 	wiregen.TypeRef[marotte.RunFinishedPayload](),
-	wiregen.TypeRef[marotte.RunInputNeededPayload](),
-	wiregen.TypeRef[marotte.RunInputSettledPayload](),
 	wiregen.TypeRef[marotte.NotificationPayload](),
-	// GET /api/runs/{id}'s `open_asks`, a read reply, so the SSE-binding test exempts it.
-	wiregen.TypeRef[marotte.RunOpenAsk](),
+	// One step waiting on a person: run_asks's element and GET /api/runs/{id}'s `open_asks`, before
+	// the payload that holds it. No `Payload` suffix, so the SSE-binding test exempts it.
+	wiregen.TypeRef[marotte.RunAsk](),
+	wiregen.TypeRef[marotte.RunAsksPayload](),
 	// GET /api/runs/{id}'s `plan_update`, a read reply too.
 	wiregen.TypeRef[marotte.RunPlanUpdate](),
 	// GET /api/runs/{id}'s `step_ends`, a read reply like `open_asks`.
@@ -219,9 +222,22 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.TerminalCreatedPayload](),
 	wiregen.TypeRef[marotte.TerminalOutputPayload](),
 	wiregen.TypeRef[marotte.TerminalExitedPayload](),
+	// GET /api/engine and the engine_status event, after the parts it holds.
+	wiregen.TypeRef[marotte.EngineRestart](),
+	wiregen.TypeRef[marotte.EngineBusyTurn](),
+	wiregen.TypeRef[marotte.EngineBusyRun](),
+	wiregen.TypeRef[marotte.EngineBusy](),
+	wiregen.TypeRef[marotte.EngineExit](),
+	wiregen.TypeRef[marotte.EngineStatusVersion](),
+	wiregen.TypeRef[marotte.EngineStatus](),
+	// GET /api/config/standing, after the parts it holds.
+	wiregen.TypeRef[marotte.ConfigStanding](),
+	wiregen.TypeRef[marotte.AgentLoadError](),
+	wiregen.TypeRef[marotte.ConfigStandingResponse](),
 	// GET /api/settings. No omitempty, so the client holds no defaults of its own.
 	wiregen.TypeRef[marotte.KiroDefault](),
 	wiregen.TypeRef[marotte.EffectiveSettings](),
+	wiregen.TypeRef[forges.ForgeError](),
 	wiregen.TypeRef[forges.ConfiguredForge](),
 	// The list envelopes after the rows and parts they hold.
 	wiregen.TypeRef[forges.PartialResult](),
@@ -247,7 +263,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[forges.MergeStatus](),
 	wiregen.TypeRef[forges.CloneRepo](),
 	wiregen.TypeRef[forges.InventoryError](),
-	wiregen.TypeRef[forges.InventoryBudget](),
 	wiregen.TypeRef[forges.InventoryScope](),
 	wiregen.TypeRef[forges.InventoryEntry](),
 	wiregen.TypeRef[forges.InventoryList](),
@@ -261,8 +276,12 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[forges.LabelList](),
 	wiregen.TypeRef[forges.DeviceFlowResponse](),
 	wiregen.TypeRef[forges.PollResult](),
+	// POST /api/forges/login's 200 answer.
+	wiregen.TypeRef[forges.LoginResult](),
 	wiregen.TypeRef[forges.Detection](),
 	wiregen.TypeRef[auth.WhoamiResponse](),
+	// POST /api/login's 200 answer: the attempt the login poll waits on.
+	wiregen.TypeRef[auth.LoginResponse](),
 	wiregen.TypeRef[auth.LoginOptions](),
 	// The search replies embed textsearch.Tally, which wiregen flattens, so
 	// `scanned`/`matched`/`truncated` are REQUIRED on every one.
@@ -302,6 +321,8 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"ToolKind": {}, "ToolStatus": {},
 	"PlanStatus": {},
 	"StopReason": {}, "ErrorCode": {}, "Kind": {}, // forges.Kind → ForgeKind
+	// Sources, the PR tab and the merge dialog each switch over it.
+	"ForgeStatus": {},
 	// The rule producing it is implemented in BOTH languages.
 	"TurnOutcome": {},
 	// turn_close.failure_kind; the turn notice's remedy button branches on it.
@@ -340,6 +361,10 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// The run composer words the delivery and each refusal, so both folds must be total.
 	"RunStepMessageVerb":    {},
 	"RunStepMessageRefusal": {},
+	// A card labels its text and words its blocker from these, and the answer's refusal from the code.
+	"RunAskText":    {},
+	"RunAskBlocker": {},
+	"RunAskRefusal": {},
 	// Registered for CatalogState's reason below.
 	"RunStepTranscriptState": {},
 	"DecisionKind":           {},
@@ -347,7 +372,7 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"AlwaysAllowBlock":       {},
 	// One definition of the tab kinds; TabSubject.kind fails the decoder on an unknown one.
 	"TabKind": {},
-	// The composer's placeholder and the + menu's radio branch on it.
+	// The composer's placeholder and the chat-options menu's radio branch on it.
 	"InterruptMode": {},
 	// The spec page labels a segment by its role.
 	"SpecDocRole": {},
@@ -359,6 +384,8 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// "marotte could not ask" must render a retry, not a sign-in prompt.
 	"WhoamiState": {},
 	"Transport":   {},
+	// The engine banner and the Settings restart control branch on it.
+	"EngineState": {},
 	// Each kind resolves to a different rendered surface; the decoder is strict.
 	"SegmentKind": {},
 	// The client branches on it to say "wait" or "narrow the query".
@@ -419,8 +446,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "run_started", TypeName: "RunStartedPayload"},
 	{EventType: "run_progress", TypeName: "RunProgressPayload"},
 	{EventType: "run_finished", TypeName: "RunFinishedPayload"},
-	{EventType: "run_input_needed", TypeName: "RunInputNeededPayload"},
-	{EventType: "run_input_settled", TypeName: "RunInputSettledPayload"},
+	{EventType: "run_asks", TypeName: "RunAsksPayload"},
 	{EventType: "safety_properties", TypeName: "SafetyPropertiesPayload"},
 	{EventType: "safety_status", TypeName: "SafetyStatusPayload"},
 	{EventType: "knowledge_indexing", TypeName: "KnowledgeIndexingPayload"},
@@ -428,6 +454,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "tool_job_output", TypeName: "ToolJobOutputPayload"},
 	{EventType: "steer_queued", TypeName: "SteerQueuedPayload"},
 	{EventType: "tangent_merged", TypeName: "TangentMergedPayload"},
+	{EventType: "settings_updated", TypeName: "SettingsUpdatedPayload"},
 	{EventType: "agent_notice", TypeName: "AgentNoticePayload"},
 	{EventType: "system_notice", TypeName: "SystemNoticePayload"},
 	// The agent-terminal trio.
@@ -446,6 +473,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "spec_changed", TypeName: "SpecChangedPayload"},
 	{EventType: "spec_approved", TypeName: "SpecApprovedPayload"},
 	{EventType: "forge_inventory", TypeName: "InventoryChangedPayload"},
+	{EventType: "engine_status", TypeName: "EngineStatus"},
 }
 
 // Registry returns the fully-populated wiregen registry: the generator options plus the

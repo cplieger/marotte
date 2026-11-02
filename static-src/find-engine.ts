@@ -39,12 +39,16 @@ const BLOCK_TAGS = new Set([
 const CHROME_SELECTOR = "[data-vk-chrome]:not(.tool-denial):not(.tool-mcp-badge)";
 
 /**
- * Prunes script/style, wrapped hits, chrome, structurally hidden subtrees and elements `checkVisibility` calls
+ * Prunes script/style, SVG, wrapped hits, chrome, structurally hidden subtrees and elements `checkVisibility` calls
  * invisible (except `display: contents`, and content inside `keep` that is hidden only by a skipped box).
  */
 function isSearchableElement(elem: Element, keep: Element | null): boolean {
   const tag = elem.tagName;
   if (tag === "SCRIPT" || tag === "STYLE" || tag === "MARK") {
+    return false;
+  }
+  // A drawn diagram's `<text>` cannot hold the HTML `<mark>` a hit is wrapped in; the server's count still reaches it.
+  if (elem instanceof SVGElement) {
     return false;
   }
   if (elem.hasAttribute("hidden") || elem.getAttribute("aria-hidden") === "true") {

@@ -1,9 +1,6 @@
 package command
 
 import (
-	"context"
-	"os/exec"
-	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -83,51 +80,6 @@ func TestSettleComposerOnPrompt_ASecondSettleBroadcastsNothing(t *testing.T) {
 	settleComposerOnPrompt(t.Context(), store, bus, "c1", p)
 	if len(bus.events) != 0 {
 		t.Errorf("a retried prompt broadcast %v, want nothing: the mutator declined and no version was minted", typesOf(bus.events))
-	}
-}
-
-// recordingRoles is the shell interception's role set over a real in-memory store
-// with a capturing bus, so the assistant message's frames are the store's own.
-type recordingRoles struct {
-	*storeDeps
-	bus *capturingBus
-}
-
-func (r *recordingRoles) Broadcast(ctx context.Context, evt marotte.ServerEvent) {
-	r.bus.Broadcast(ctx, evt)
-}
-
-// The shell's output reaches the transcript through the turn closer alone, once:
-// nothing in the command package appends or broadcasts the text itself, so the
-// only entry frames a `!cmd` produces are the registry's stamped ones.
-func TestHandleShellInterception_HandsTheOutputToTheTurnCloserOnce(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skipf("sh not available: %v", err)
-	}
-	store, bus, deps := storeAndBus(t)
-	seedEmptyChat(t, store, "c1")
-	closer := &shellStoreDeps{benchDeps: deps.benchDeps}
-	roles := &recordingRoles{storeDeps: deps, bus: bus}
-	pr := promptRolesOf(deps)
-	pr.chats = roles
-	pr.bus = roles
-	pr.admission = closer
-	pr.turnOutcome = closer
-	bus.events = nil
-
-	if _, err := handleShellInterception(t.Context(), pr, &marotte.ClientCommand{Type: "prompt", ChatID: "c1"}, &marotte.PromptCommand{
-		Text: "!echo shell-output", MessageID: "m-1",
-	}); err != nil {
-		t.Fatalf("HandleShellInterception: %v", err)
-	}
-
-	if len(closer.finalized) != 1 || !strings.Contains(closer.finalized[0], "shell-output") {
-		t.Fatalf("FinalizeLocalShellTurn outputs = %q, want exactly one carrying the command's output", closer.finalized)
-	}
-	for _, e := range bus.events {
-		if e.Type != marotte.EventChatUpdated {
-			t.Errorf("the command package broadcast %s; a `!cmd` owes the bus nothing but the header frame", e.Type)
-		}
 	}
 }
 

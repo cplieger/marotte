@@ -1,13 +1,9 @@
 // One section per forge kind, then one for a server whose kind the detect route names. The server keys a
 // connection on kind and host, so a second account on the same host replaces the first.
 
-// signal.aborted and generation guards: the value can flip between awaited microtasks though the type says it cannot.
-/* eslint-disable @typescript-eslint/no-unnecessary-condition */
-
-import { apiGetTyped, apiPost, CancellableSlot } from "./api-client.js";
+import { apiGetTyped, CancellableSlot } from "./api-client.js";
 import type { Decoder } from "./validators.js";
 import { asObject, decodeArray } from "./validators.js";
-import { decodeRepoList } from "./wire/decoders.gen.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import {
   FORGE_ICONS,
@@ -19,20 +15,27 @@ import {
 } from "./icons.js";
 import type { ConfiguredForge, ForgeKind, Repo } from "./wire/types.gen.js";
 import { FORGE_META, FORGE_URLS, kindTitle } from "./forge-types.js";
-import { listRepoPage, probeForge, signOut } from "./actions/forge.js";
-import { refreshForges, type ForgesListResponse } from "./forge-store.js";
+import { probeForge, signOut } from "./actions/forge.js";
+import {
+  ensureListing,
+  forgeRows,
+  forgeRowsFailed,
+  readForges,
+  refreshListing,
+  readMoreListing,
+} from "./forge-store.js";
+import { rowStatus, usableStatus } from "./forge-auth-status.js";
 import { registerCleanup } from "./actions/index.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { signal, effect, el, touch } from "@cplieger/reactive";
+import { join } from "@cplieger/keyenc";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";
 import { abortPoll, endGrantsIn, isDeviceKind, renderDeviceSignIn } from "./forge-auth-oauth.js";
 import { renderConnectionTarget } from "./forge-auth-connection.js";
 import { renderDetectForm, renderPATForm, type PATFormDeps } from "./forge-auth-pat.js";
-import { buildOwnerScopes, updateOwnerScopes, type OwnerScopesDeps } from "./forge-auth-owners.js";
+import { buildOwnerScopes, updateOwnerScopes } from "./forge-auth-owners.js";
 import {
-  readFirstPage,
-  readNextPage,
   renderRepoRow,
   updateRepoRow,
   type RepoDeps,
@@ -66,10 +69,6 @@ const decodeLocalReposResponse: Decoder<LocalReposResponse> = (v) => {
 
 import { iconEl } from "./icon-el.js";
 
-/** Each connected account's repository listing, by forge ID: what its
- *  collapsible footer counts and lists. */
-let lastReposByForge: Record<string, RepoListing> = {};
-
 /** Why an account's last list-wide press (Load more, Clone all, Delete all) fell
  *  short, by forge ID, until the next one. */
 const listNotes = new Map<string, string>();
@@ -83,26 +82,28 @@ let lastLocalNames = new Set<string>();
  */
 const expandOnNextPaint = new Set<string>();
 
-let oauthByKind: Partial<Record<ForgeKind, boolean>> = {};
-
 /**
- * A row action's failure the row does not carry (a sign-out, or a check never answered), per forge ID. Cleared
+ * A row action's outcome the row does not carry (a sign-out, or a check never answered), per forge ID. Cleared
  * when the next action on that row starts.
  */
 const rowNotes = new Map<string, string>();
 
+/**
+ * A check_busy note's row as it was answered: the note retires when the row moves (the running check's verdict) or
+ * after BUSY_NOTE_MS, whichever comes first.
+ */
+const busyNotes = new Map<string, { row: string }>();
+
+/**
+ * A UI fallback set to the server's checkBudget (internal/forges/check.go): a busy note does not outlast an ordinary
+ * check, though a slow sign-out can hold the account longer.
+ */
+const BUSY_NOTE_MS = 20_000;
+
 /** Row requests in flight, by forge ID and action, so a control rebuilt while its request runs shows that request. */
 const rowRequests = new Map<string, Promise<void>>();
 
-/** True when the last /api/forges fetch failed: the effect renders the error UI with Retry instead of the sections. */
-let lastForgesError = false;
-
-let lastForgesData: ForgesListResponse | null = null;
-
-/** Stops a stale concurrent renderForgesPanel from overwriting a newer render. */
-let renderGen = 0;
-
-/** Every mutation of the panel state above bumps this; the paint effect subscribes to it. */
+/** Every mutation of the panel-local state above bumps this; the paint effect subscribes to it and to the store. */
 const stateVersion = signal(0);
 
 function bumpState(): void {
@@ -126,14 +127,11 @@ function ensurePanelEffect(): void {
   });
 }
 
-let revalidateController: AbortController | null = null;
-
-/** Each renderForgesPanel aborts the previous in-flight fetch. */
+/** Each renderForgesPanel aborts the previous in-flight workspace read. */
 const panelSlot = new CancellableSlot();
 
 registerCleanup(() => {
   abortPoll();
-  revalidateController?.abort();
   panelSlot.abort();
 });
 
@@ -148,74 +146,36 @@ function manageAccountURL(kind: ForgeKind, host: string): string {
 }
 
 /**
- * Render the full forges panel. Idempotent; call after every list mutation. `revalidate` (default true) re-probes
- * connected accounts after the first paint, since tokens can be revoked or expire silently. `skipRepos` skips the
- * local-repos fetch so an optimistic in-memory mutation is not overwritten by a stale answer. `fresh` reads every
- * repository list from its forge rather than the server's cache. Resolves false when a read failed, true otherwise,
- * a render a newer one superseded included: the panel names a failed forge listing, and a failed workspace read keeps
- * the clone state the panel last read.
+ * Start the panel's paint and read its data again: the rows, the workspace's clone names and, with `fresh`, every
+ * usable row's repository list from its forge. Resolves false when a read failed, true otherwise, a render a newer
+ * one superseded included.
  */
-export async function renderForgesPanel(
-  opts: { revalidate?: boolean; skipRepos?: boolean; fresh?: boolean } = {},
-): Promise<boolean> {
-  const root = document.getElementById("forges-panel");
-  if (root === null) {
+export async function renderForgesPanel({
+  fresh = false,
+}: { fresh?: boolean } = {}): Promise<boolean> {
+  if (document.getElementById("forges-panel") === null) {
     return true;
   }
-
+  // Issued before anything reads the store, so a first open sends one rows read, not two.
+  const rowsRead = readForges();
+  const ids = fresh
+    ? (forgeRows()?.forges ?? []).filter((f) => usableStatus(f.status)).map((f) => f.id)
+    : [];
   ensurePanelEffect();
-
-  const myGen = ++renderGen;
   const signal = panelSlot.start();
-
-  // Through the shared store: a sign-in or sign-out must reach the sidebar badge and the PRs tab too. It carries no
-  // signal on purpose (one consumer navigating away must not abort a fetch others await); the guards below make a
-  // stale answer harmless.
-  const data = await refreshForges();
-  if (signal.aborted || myGen !== renderGen) {
+  const [rowsAnswer, localNames, listed] = await Promise.all([
+    rowsRead,
+    refreshLocalNames(signal),
+    Promise.all(ids.map((id) => refreshListing(id))),
+  ]);
+  if (signal.aborted) {
     return true;
   }
-  if (data === null) {
-    lastForgesError = true;
+  if (localNames !== null) {
+    lastLocalNames = localNames;
     bumpState();
-    return false;
   }
-
-  // The accounts paint before their repositories are read, so an account with no listing yet shows that read.
-  lastForgesError = false;
-  lastForgesData = data;
-  oauthByKind = data.oauth ?? {};
-  bumpState();
-
-  let localRead = true;
-  if (opts.skipRepos !== true) {
-    const [localNames, reposByForge] = await Promise.all([
-      refreshLocalNames(signal),
-      refreshReposByForge(data.forges, signal, opts.fresh === true),
-    ]);
-    if (signal.aborted || myGen !== renderGen) {
-      return true;
-    }
-    localRead = localNames !== null;
-    lastLocalNames = localNames ?? lastLocalNames;
-    lastReposByForge = reposByForge;
-  } else {
-    const reposByForge = await refreshReposByForge(data.forges, signal, opts.fresh === true);
-    if (signal.aborted || myGen !== renderGen) {
-      return true;
-    }
-    lastReposByForge = reposByForge;
-  }
-  bumpState();
-
-  if (opts.revalidate !== false) {
-    const ids = data.forges.filter((f) => f.connected).map((f) => f.id);
-    if (ids.length > 0) {
-      void revalidateInBackground(ids);
-    }
-  }
-  // Every listing was just read, so a stale or unread one is this read failing.
-  return localRead && Object.values(lastReposByForge).every((l) => !l.stale && !l.unread);
+  return rowsAnswer !== null && localNames !== null && listed.every(Boolean);
 }
 
 /** The workspace's clone names; null when the read failed. */
@@ -224,99 +184,26 @@ async function refreshLocalNames(signal?: AbortSignal): Promise<Set<string> | nu
   return r === null ? null : new Set(r.repos.filter((n) => n !== "."));
 }
 
-async function refreshReposByForge(
-  forges: ConfiguredForge[],
-  signal?: AbortSignal,
-  fresh = false,
-): Promise<Record<string, RepoListing>> {
-  const map: Record<string, RepoListing> = {};
-  await Promise.all(
-    forges
-      .filter((f) => f.connected)
-      .map(async (f) => {
-        const page = await apiGetTyped(
-          `/api/forges/${encodeURIComponent(f.id)}/repos${fresh ? "?refresh=1" : ""}`,
-          decodeRepoList,
-          signal,
-        );
-        map[f.id] = readFirstPage(lastReposByForge[f.id], page);
-      }),
-  );
-  return map;
-}
-
-/** Read the page after an account's held one into its listing. A listing that
- *  moved on while the page was read keeps its own state. */
+/** Read the page after an account's held one; rejects after the list notes why. */
 async function loadMoreRepos(forgeId: string): Promise<void> {
-  const held = lastReposByForge[forgeId];
-  if (held === undefined || held.next === "") {
-    return;
-  }
   listNotes.delete(forgeId);
-  const o = await listRepoPage.dispatch({ forgeId, after: held.next }).outcome;
-  if (o.status === "cancelled") {
-    return;
+  const failure = await readMoreListing(forgeId);
+  if (failure !== undefined) {
+    listNotes.set(forgeId, `Could not load more repositories. ${failure}`);
+    throw new Error(failure);
   }
-  if (o.status === "error") {
-    listNotes.set(forgeId, `Could not load more repositories. ${o.error.message}`);
-    throw new Error(o.error.message);
-  }
-  const now = lastReposByForge[forgeId];
-  if (now?.next === held.next) {
-    lastReposByForge[forgeId] = readNextPage(now, o.value);
-  }
-}
-
-/** An open add-account slot is a non-keyed sibling, so the reconcile after the probes leaves the user's pane alone. */
-async function revalidateInBackground(ids: string[]): Promise<void> {
-  // The most recent paint's state wins.
-  revalidateController?.abort();
-  revalidateController = new AbortController();
-  const signal = revalidateController.signal;
-  const myGen = renderGen;
-  await Promise.allSettled(
-    ids.map((id) => apiPost(`/api/forges/${encodeURIComponent(id)}/probe`, {}, signal)),
-  );
-  if (signal.aborted) {
-    return;
-  }
-  const data = await refreshForges();
-  if (signal.aborted) {
-    return;
-  }
-  if (data === null || data === undefined) {
-    return;
-  }
-  const [localNames, reposByForge] = await Promise.all([
-    refreshLocalNames(signal),
-    refreshReposByForge(data.forges, signal),
-  ]);
-  if (signal.aborted) {
-    return;
-  }
-  if (myGen !== renderGen) {
-    return;
-  }
-  lastLocalNames = localNames ?? lastLocalNames;
-  lastReposByForge = reposByForge;
-  lastForgesData = data;
-  oauthByKind = data.oauth ?? {};
-  bumpState();
 }
 
 function paintIntoRoot(root: HTMLElement): void {
-  if (lastForgesError) {
-    paintErrorState(root);
+  const data = forgeRows();
+  if (data === null) {
+    if (forgeRowsFailed()) {
+      paintErrorState(root);
+    }
     return;
   }
-  if (lastForgesData === null) {
-    return;
-  }
-
-  const errEl = root.querySelector(":scope > .forge-error");
-  errEl?.remove();
-
-  const supportedKinds = ALL_KINDS.filter((k) => lastForgesData!.kinds.includes(k)); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  root.querySelector(":scope > .forge-error")?.remove();
+  const supportedKinds = ALL_KINDS.filter((k) => data.kinds.includes(k));
   reconcile(root, [...supportedKinds, OTHER_SERVER], sectionSpec);
 }
 
@@ -442,15 +329,14 @@ function updateKindSection(section: HTMLElement, kind: ForgeKind): void {
 }
 
 function accountsForKind(kind: ForgeKind): ConfiguredForge[] {
-  if (lastForgesData === null) {
-    return [];
-  }
-  return lastForgesData.forges.filter((f) => f.kind === kind);
+  return (forgeRows()?.forges ?? []).filter((f) => f.kind === kind);
 }
 
 /** Both the mount body (fresh empty li) and the update (li with stale children). */
 function paintAccountRow(li: HTMLElement, a: ConfiguredForge): void {
-  li.classList.toggle("forge-account-row-error", !a.connected);
+  const usable = usableStatus(a.status);
+  const control = rowStatus(a).control;
+  li.classList.toggle("forge-account-row-error", !usable);
 
   // The identity and actions repaint apart: a check rewrites the identity's error line, and its button must survive
   // that to show the outcome.
@@ -459,23 +345,28 @@ function paintAccountRow(li: HTMLElement, a: ConfiguredForge): void {
     top = el("div", { className: "forge-account-row-top" });
     li.prepend(top);
   }
+  retireBusyNote(a);
   swapIfChanged(
     top,
     ":scope > .forge-account-identity",
     [wireSignature(a), rowNotes.get(a.id) ?? ""],
     () => renderAccountIdentity(a),
   );
-  swapIfChanged(top, ":scope > .forge-account-actions", [rowState(a), a.kind, a.host], () =>
+  // Sign out is bound to the account it was built for, so a new sign-in rebuilds it.
+  swapIfChanged(top, ":scope > .forge-account-actions", [control, a.kind, a.host, a.account], () =>
     renderAccountActions(a, li),
   );
 
   const oldDetails = li.querySelector<HTMLElement>(":scope > .forge-account-repos");
-  const listing = lastReposByForge[a.id];
-  if (!a.connected) {
+  const listing = usable ? ensureListing(a.id) : undefined;
+  if (!usable) {
     oldDetails?.remove();
   } else if (listing === undefined) {
+    // A listing held for an earlier sign-in is gone from the store; its rows must not stay on screen.
     if (oldDetails === null) {
       top.after(buildReposPending());
+    } else if (!oldDetails.hasAttribute("data-pending")) {
+      oldDetails.replaceWith(buildReposPending());
     }
   } else if (oldDetails === null || oldDetails.hasAttribute("data-pending")) {
     const details = buildAccountReposDetails(a, listing);
@@ -489,9 +380,9 @@ function paintAccountRow(li: HTMLElement, a: ConfiguredForge): void {
   }
 
   const oldOwners = li.querySelector<HTMLElement>(":scope > .forge-account-owners");
-  if (rowState(a) === "ok") {
+  if (control === "check") {
     if (oldOwners === null) {
-      li.appendChild(buildOwnerScopes(a, ownerDeps));
+      li.appendChild(buildOwnerScopes(a));
     } else {
       updateOwnerScopes(oldOwners, a);
     }
@@ -519,55 +410,6 @@ function swapIfChanged(
   }
 }
 
-/**
- * Which controls a row offers: none needing a request when none can succeed; a new sign-in when only that revives
- * the credential.
- */
-type RowState = "unusable" | "reconnect" | "ok";
-
-const CONNECTION_UNUSABLE = "connection_unusable";
-
-function rowState(a: ConfiguredForge): RowState {
-  if (a.error_code === CONNECTION_UNUSABLE) {
-    return "unusable";
-  }
-  return a.reconnect_required ? "reconnect" : "ok";
-}
-
-function rowErrorText(a: ConfiguredForge): string {
-  const reason = a.last_error ?? "";
-  if (a.reconnect_required) {
-    return "This account needs a new sign-in: the stored credential can no longer be used or renewed. Reconnect to sign in again.";
-  }
-  if (reason === "") {
-    return "";
-  }
-  if (a.error_kind === "rate_limited") {
-    return `The forge is rate limiting this account. ${retryWords(a)}`;
-  }
-  // A connected row's error is a temporary one: ConfiguredForge.connected owns that.
-  if (a.connected) {
-    return `The last check hit a temporary problem and runs again automatically. ${reason}`;
-  }
-  if (a.error_code === "scope_insufficient") {
-    return `The token is missing a permission this needs. Add it to the token on the forge, then check again. ${reason}`;
-  }
-  return reason;
-}
-
-/** The wait a rate limit asked for, counted from the probe that met it. */
-function retryWords(a: ConfiguredForge): string {
-  if (a.retry_after_s === undefined || a.retry_after_s <= 0) {
-    return "Try again later.";
-  }
-  const since = a.last_probed === undefined ? 0 : Date.now() - a.last_probed;
-  const left = Math.ceil((a.retry_after_s * 1000 - since) / 1000);
-  if (left <= 0) {
-    return "It can be checked again now.";
-  }
-  return `Try again in ${left} second${left === 1 ? "" : "s"}.`;
-}
-
 function renderAccountIdentity(a: ConfiguredForge): HTMLElement {
   const primary = el("span", { className: "forge-account-primary" });
   const hasEmail = a.email !== undefined && a.email !== "";
@@ -575,10 +417,9 @@ function renderAccountIdentity(a: ConfiguredForge): HTMLElement {
   if (hasEmail || hasUsername) {
     primary.textContent = hasEmail ? a.email! : a.username!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   } else {
-    // No identity until the background probe lands (first paint after a sign-in): a skeleton, not the host, which the
-    // meta line already shows.
-    primary.classList.add("skeleton", "forge-account-primary-skeleton");
-    primary.setAttribute("aria-label", "Loading account identity…");
+    // Only a row whose credential is missing or whose store cannot be read names no one, and nothing will until a
+    // new sign-in or a repaired store replaces the row: no loading placeholder. The meta line shows the host.
+    primary.textContent = "Unknown account";
   }
 
   const meta = el("span", { className: "forge-account-meta" });
@@ -592,10 +433,19 @@ function renderAccountIdentity(a: ConfiguredForge): HTMLElement {
   meta.textContent = parts.join(" · ");
 
   const id = el("div", { className: "forge-account-identity" }, primary, meta);
-  for (const text of [rowErrorText(a), rowNotes.get(a.id) ?? ""]) {
-    if (text !== "") {
-      id.appendChild(el("span", { className: "forge-account-error" }, text));
-    }
+  const st = rowStatus(a);
+  if (st.line !== "") {
+    id.appendChild(
+      el(
+        "span",
+        { className: st.tone === "muted" ? "forge-account-note" : "forge-account-error" },
+        st.line,
+      ),
+    );
+  }
+  const note = rowNotes.get(a.id) ?? "";
+  if (note !== "") {
+    id.appendChild(el("span", { className: "forge-account-error" }, note));
   }
   return id;
 }
@@ -621,11 +471,11 @@ function renderAccountActions(a: ConfiguredForge, li: HTMLElement): HTMLElement 
     actions.appendChild(manage);
   }
 
-  const state = rowState(a);
-  if (state === "unusable") {
+  const control = rowStatus(a).control;
+  if (control === "none") {
     return actions;
   }
-  if (state === "reconnect") {
+  if (control === "reconnect") {
     const reconnect = el(
       "button",
       { type: "button", className: "btn-small btn-primary" },
@@ -646,7 +496,7 @@ function renderAccountActions(a: ConfiguredForge, li: HTMLElement): HTMLElement 
       },
       "Check",
     ) as HTMLButtonElement;
-    const key = `${a.id} probe`;
+    const key = join(a.id, "probe");
     check.addEventListener("click", () => {
       runRowRequest(check, key, () => onProbe(a.id));
     });
@@ -660,9 +510,9 @@ function renderAccountActions(a: ConfiguredForge, li: HTMLElement): HTMLElement 
     "Sign out",
   ) as HTMLButtonElement;
   out.addEventListener("click", () => {
-    void onSignOut(a, out);
+    void onSignOut(a.id, a.account, out);
   });
-  adoptRowRequest(out, `${a.id} sign out`);
+  adoptRowRequest(out, join(a.id, "sign out"));
   actions.appendChild(out);
   return actions;
 }
@@ -700,18 +550,8 @@ function adoptRowRequest(btn: HTMLButtonElement, key: string): void {
   }
 }
 
-function replaceRow(f: ConfiguredForge): void {
-  if (lastForgesData === null) {
-    return;
-  }
-  lastForgesData = {
-    ...lastForgesData,
-    forges: lastForgesData.forges.map((x) => (x.id === f.id ? f : x)),
-  };
-  bumpState();
-}
-
 function setRowNote(id: string, note: string): void {
+  busyNotes.delete(id);
   if (note === "") {
     rowNotes.delete(id);
   } else {
@@ -720,7 +560,10 @@ function setRowNote(id: string, note: string): void {
   bumpState();
 }
 
-/** Rejects when the check failed, after the row says why. */
+/**
+ * Rejects when the check failed, after the row says why. The two 409s are answers, not failures: `check_busy` names
+ * the check already running, and `reconnect_required` means the page had not yet applied the row's new status.
+ */
 async function onProbe(id: string): Promise<void> {
   setRowNote(id, "");
   const o = await probeForge.dispatch({ forgeId: id }).outcome;
@@ -728,15 +571,43 @@ async function onProbe(id: string): Promise<void> {
     return;
   }
   if (o.status === "error") {
+    if (o.error.code === "check_busy") {
+      noteBusy(id, o.error.message);
+      return;
+    }
+    if (o.error.code === "reconnect_required") {
+      setRowNote(id, o.error.message);
+      await readForges();
+      return;
+    }
     setRowNote(id, `Could not check the connection. ${o.error.message}`);
     throw new Error(o.error.message);
   }
-  if (o.value.forge !== undefined) {
-    replaceRow(o.value.forge);
+  await readForges();
+  const forge = o.value.forge;
+  if (forge !== undefined && forge.status !== "connected") {
+    throw new Error(forge.error?.message ?? "the check failed");
   }
-  const failure = o.value.error ?? "";
-  if (!o.value.connected || failure !== "") {
-    throw new Error(failure === "" ? "the check failed" : failure);
+}
+
+function noteBusy(id: string, note: string): void {
+  setRowNote(id, note);
+  const row = rowById(id);
+  const held = { row: row === undefined ? "" : wireSignature(row) };
+  busyNotes.set(id, held);
+  setTimeout(() => {
+    if (busyNotes.get(id) === held) {
+      setRowNote(id, "");
+    }
+  }, BUSY_NOTE_MS);
+}
+
+/** Drops a check_busy note once the row it was answered on has moved. */
+function retireBusyNote(a: ConfiguredForge): void {
+  const held = busyNotes.get(a.id);
+  if (held !== undefined && held.row !== wireSignature(a)) {
+    busyNotes.delete(a.id);
+    rowNotes.delete(a.id);
   }
 }
 
@@ -800,15 +671,6 @@ const reposRenderDeps: ReposRenderDeps = {
   listNotes,
 };
 
-const ownerDeps: OwnerScopesDeps = {
-  stored: (id, owners) => {
-    const f = lastForgesData?.forges.find((x) => x.id === id);
-    if (f !== undefined) {
-      replaceRow({ ...f, owner_scopes: [...owners] });
-    }
-  },
-};
-
 const patDeps: PATFormDeps = {
   closeSlot,
   connected: onConnected,
@@ -837,7 +699,7 @@ function showAddPane(section: HTMLElement, kind: ForgeKind, host?: string): void
   if (host !== undefined) {
     target.hostInput.value = host;
   }
-  const deviceKind = isDeviceKind(kind) && oauthByKind[kind] === true ? kind : null;
+  const deviceKind = isDeviceKind(kind) && forgeRows()?.oauth?.[kind] === true ? kind : null;
   const pane = el(
     "div",
     { className: "forge-add-pane" },
@@ -959,8 +821,13 @@ function slotOf(section: HTMLElement): HTMLElement {
   return slot;
 }
 
-async function onSignOut(f: ConfiguredForge, btn: HTMLButtonElement): Promise<void> {
-  const label = f.email ?? f.username ?? f.host;
+/** Signs out `account` from connection `id`; a confirm the connection's next sign-in overtook sends nothing. */
+async function onSignOut(id: string, account: string, btn: HTMLButtonElement): Promise<void> {
+  const pressed = rowById(id);
+  const label =
+    [pressed?.email, pressed?.username].find((s) => s !== undefined && s !== "") ??
+    pressed?.host ??
+    id;
   const ok = await confirmDialog(
     `Sign out of ${label}? Its stored token will be removed.`,
     "Sign out",
@@ -969,16 +836,33 @@ async function onSignOut(f: ConfiguredForge, btn: HTMLButtonElement): Promise<vo
   if (!ok) {
     return;
   }
-  runRowRequest(btn, `${f.id} sign out`, async () => {
-    setRowNote(f.id, "");
-    const o = await signOut.dispatch({ forgeId: f.id }).outcome;
+  // The DELETE removes whichever account the connection holds when it lands.
+  const now = rowById(id);
+  if (now === undefined) {
+    return;
+  }
+  if (now.account !== account) {
+    setRowNote(
+      id,
+      "This connection was signed in to another account while you confirmed, so nothing was signed out.",
+    );
+    return;
+  }
+  runRowRequest(btn, join(id, "sign out"), async () => {
+    setRowNote(id, "");
+    const o = await signOut.dispatch({ forgeId: id }).outcome;
     if (o.status === "cancelled") {
       return;
     }
+    // A 5xx can follow a committed removal, so the rows are read whatever the answer.
+    void readForges();
     if (o.status === "error") {
-      setRowNote(f.id, `Could not sign out. ${o.error.message}`);
+      setRowNote(id, `Could not sign out. ${o.error.message}`);
       throw new Error(o.error.message);
     }
-    void renderForgesPanel();
   });
+}
+
+function rowById(id: string): ConfiguredForge | undefined {
+  return forgeRows()?.forges.find((f) => f.id === id);
 }

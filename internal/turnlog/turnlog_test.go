@@ -172,14 +172,14 @@ func TestSealingTable(t *testing.T) {
 		}
 	})
 
-	t.Run("a steer seals EVERY lane", func(t *testing.T) {
+	t.Run("a steer seals NO lane", func(t *testing.T) {
 		turn, rec := open(t)
 		rec.seal(turn.TextDelta(ctx, "", "s1-say", "parent"))
 		rec.seal(turn.TextDelta(ctx, "d1", "s2-say", "delegate"))
 		rec.seal(turn.Steer(ctx, "steer-1", &marotte.EntrySteer{Text: "also do X"}))
-		equalShape(t, rec.shape(), []string{"/text", "d1/text", "/steer"}, "a steer")
-		if got := turn.OpenEntries(); len(got) != 0 {
-			t.Errorf("open entries after a steer are %+v, want none", got)
+		equalShape(t, rec.shape(), []string{"/steer"}, "a steer")
+		if got := turn.OpenEntries(); len(got) != 2 {
+			t.Errorf("open entries after a steer are %+v, want both lanes still open", got)
 		}
 	})
 
@@ -219,7 +219,7 @@ func TestSealingTable(t *testing.T) {
 		rec.seal(turn.TextDelta(ctx, "", "s3-say", "c"))
 		rec.seal(turn.SafetyBlocked(ctx, []string{"p1"}))
 		rec.seal(turn.TextDelta(ctx, "", "s4-say", "d"))
-		rec.seal(turn.ModelSwitched(ctx, marotte.EntryModelSwitched{From: "old", To: "new"}))
+		rec.seal(turn.ModelSwitched(ctx, &marotte.EntryModelSwitched{From: "old", To: "new"}))
 		equalShape(t, rec.shape(), []string{
 			"/text", "/compaction", "/text", "/compaction_failed",
 			"/text", "/safety_blocked", "/text", "/model_switched",
@@ -257,7 +257,7 @@ func TestASplitSayTakesASegmentSuffix(t *testing.T) {
 	rec.seal(turn.TextDelta(ctx, "", "s1-say", "before "))
 	rec.seal(turn.Plan(ctx, marotte.EntryPlan{Entries: []marotte.PlanEntry{{Content: "a"}}}))
 	rec.seal(turn.TextDelta(ctx, "", "s1-say", "after"))
-	rec.seal(turn.Steer(ctx, "steer-1", &marotte.EntrySteer{}))
+	rec.seal(turn.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}))
 	want := []string{"s1-say", "s1-say#2"}
 	got := []string{rec.ids()[0], rec.ids()[2]}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
@@ -268,8 +268,6 @@ func TestASplitSayTakesASegmentSuffix(t *testing.T) {
 	}
 }
 
-// The carry rule at a seal: a carry bearing the committing prefix is DROPPED; anything
-// shorter becomes the sealed entry's last delta.
 func TestSteerCarryIsSettledAtTheSeal(t *testing.T) {
 	ctx := t.Context()
 
@@ -284,6 +282,16 @@ func TestSteerCarryIsSettledAtTheSeal(t *testing.T) {
 		}
 		if rec.entries[0].Seq >= rec.entries[1].Seq {
 			t.Error("the text entry did not seal before the card")
+		}
+	})
+
+	t.Run("a prefix-bearing carry holding a bracket is shown", func(t *testing.T) {
+		turn, rec := open(t)
+		rec.seal(turn.TextDelta(ctx, "", "s1-say", "see "))
+		turn.SetSteerCarry("", "s1-say", SteerAckPrefix+"abc].")
+		rec.seal(turn.ToolCall(ctx, "", &marotte.EntryToolCall{ID: "call-1"}))
+		if got := rec.text(0); got != "see "+SteerAckPrefix+"abc]." {
+			t.Errorf("sealed text is %q, want the carry appended", got)
 		}
 	})
 
@@ -313,15 +321,117 @@ func TestSteerCarryIsSettledAtTheSeal(t *testing.T) {
 		}
 	})
 
-	t.Run("the carry is readable back so the filter can re-join it", func(t *testing.T) {
+	t.Run("the carry is handed back once so the filter can re-join it", func(t *testing.T) {
 		turn, _ := open(t)
 		turn.SetSteerCarry("", "s1-say", "[STE")
-		if got := turn.Carry(""); got != "[STE" {
-			t.Errorf("Carry is %q, want the withheld text", got)
+		if got, sealed, err := turn.TakeCarry(ctx, "", "s1-say"); got != "[STE" || len(sealed) != 0 || err != nil {
+			t.Errorf("TakeCarry is %q, %d sealed, %v; want the withheld text and no seal", got, len(sealed), err)
 		}
-		turn.SetSteerCarry("", "s1-say", "")
-		if got := turn.Carry(""); got != "" {
-			t.Errorf("Carry after a clear is %q, want empty", got)
+		if got, _, _ := turn.TakeCarry(ctx, "", "s1-say"); got != "" {
+			t.Errorf("a second TakeCarry is %q, want empty", got)
+		}
+	})
+
+	t.Run("another message's delta settles the carry into its own say", func(t *testing.T) {
+		turn, rec := open(t)
+		rec.seal(turn.TextDelta(ctx, "", "s1-say", "see "))
+		turn.SetSteerCarry("", "", "[note")
+		got, sealed, err := turn.TakeCarry(ctx, "", "s2-say")
+		rec.seal(sealed, err)
+		if got != "" {
+			t.Errorf("TakeCarry handed over %q, want nothing across a message boundary", got)
+		}
+		equalShape(t, rec.shape(), []string{"/text"}, "a carry settled at a message boundary")
+		if text := rec.text(0); text != "see [note" {
+			t.Errorf("sealed text is %q, want the carry back in its say", text)
+		}
+	})
+
+	t.Run("an id-less carry belongs to the say a steer ack interrupted", func(t *testing.T) {
+		turn, rec := open(t)
+		rec.seal(turn.TextDelta(ctx, "", "s1-say", "one. "))
+		rec.seal(turn.SteerAck(ctx, "", "steer-1", "noted"))
+		turn.SetSteerCarry("", "", "[note")
+		got, sealed, err := turn.TakeCarry(ctx, "", "s2-say")
+		rec.seal(sealed, err)
+		if got != "" {
+			t.Errorf("TakeCarry handed %q to another message, want the carry kept in s1-say", got)
+		}
+		if ids := rec.ids(); len(ids) != 3 || ids[2] != "s1-say#2" || rec.text(2) != "[note" {
+			t.Errorf("entries are %v, want the carry settled as s1-say#2", ids)
+		}
+	})
+
+	t.Run("a carry under a minted say joins any message", func(t *testing.T) {
+		turn, rec := open(t)
+		rec.seal(turn.TextDelta(ctx, "", "", "one. "))
+		turn.SetSteerCarry("", "", "[STE")
+		if got, sealed, _ := turn.TakeCarry(ctx, "", "s1-say"); got != "[STE" || len(sealed) != 0 {
+			t.Errorf("TakeCarry is %q with %d sealed, want the carry joined", got, len(sealed))
+		}
+	})
+}
+
+// Each say numbers its own segments, so a say resumed after another never reuses its first id.
+func TestASayResumedAfterAnotherTakesItsNextSegment(t *testing.T) {
+	ctx := t.Context()
+	turn, rec := open(t)
+	rec.seal(turn.TextDelta(ctx, "", "s1-say", "one. "))
+	rec.seal(turn.TextDelta(ctx, "", "s2-say", "two. "))
+	rec.seal(turn.TextDelta(ctx, "", "s1-say", "three."))
+	rec.seal(turn.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}))
+	if got, want := strings.Join(rec.ids()[:3], ","), "s1-say,s2-say,s1-say#2"; got != want {
+		t.Errorf("ids are %s, want %s", got, want)
+	}
+}
+
+// A steer ack sits inside the say's prose: an id-less delta after it continues that say as its
+// next segment, while any other seal ends the say.
+func TestIdLessTextContinuesTheSayAnAckInterrupted(t *testing.T) {
+	ctx := t.Context()
+	t.Run("after an ack", func(t *testing.T) {
+		turn, rec := open(t)
+		rec.seal(turn.TextDelta(ctx, "", "s1-say", "one. "))
+		rec.seal(turn.SteerAck(ctx, "", "steer-1", "noted"))
+		rec.seal(turn.TextDelta(ctx, "", "", "two."))
+		rec.seal(turn.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}))
+		if got, want := strings.Join(rec.ids(), ","), "s1-say,"+marotte.SteerAckID("steer-1")+",s1-say#2"; !strings.HasPrefix(got, want) {
+			t.Errorf("ids are %s, want them to start %s", got, want)
+		}
+	})
+	for name, lane := range map[string]string{"the agent's": "", "a delegate's": "d1"} {
+		t.Run("after the read "+name+" ack evidences", func(t *testing.T) {
+			turn, rec := open(t)
+			rec.seal(turn.TextDelta(ctx, lane, "s1-say", "one. "))
+			rec.seal(turn.SteerRead(ctx, lane, "steer-1", &marotte.EntrySteer{State: marotte.SteerStateRead}))
+			rec.seal(turn.SteerAck(ctx, lane, "steer-1", "noted"))
+			rec.seal(turn.TextDelta(ctx, lane, "", "two."))
+			rec.seal(turn.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}))
+			want := "s1-say,steer-1," + marotte.SteerAckID("steer-1") + ",s1-say#2"
+			if got := strings.Join(rec.ids(), ","); !strings.HasPrefix(got, want) {
+				t.Errorf("ids are %s, want them to start %s", got, want)
+			}
+		})
+	}
+	t.Run("after a minted say's ack", func(t *testing.T) {
+		turn, rec := open(t)
+		rec.seal(turn.TextDelta(ctx, "", "", "one. "))
+		rec.seal(turn.SteerAck(ctx, "", "steer-1", "noted"))
+		rec.seal(turn.TextDelta(ctx, "", "", "two."))
+		rec.seal(turn.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}))
+		ids := rec.ids()
+		if len(ids) < 3 || ids[2] != marotte.SaySegmentID(ids[0], 2) {
+			t.Errorf("ids are %v, want the third the minted say's second segment", ids)
+		}
+	})
+	t.Run("after a tool call", func(t *testing.T) {
+		turn, rec := open(t)
+		rec.seal(turn.TextDelta(ctx, "", "s1-say", "one. "))
+		rec.seal(turn.ToolCall(ctx, "", &marotte.EntryToolCall{ID: "call-1"}))
+		rec.seal(turn.TextDelta(ctx, "", "", "two."))
+		rec.seal(turn.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}))
+		if ids := rec.ids(); len(ids) < 3 || marotte.SayIDOf(ids[2]) == "s1-say" {
+			t.Errorf("ids are %v, want the delta after the card under a say of its own", ids)
 		}
 	})
 }
@@ -379,8 +489,8 @@ func TestSealLaneEndsOneLanesProse(t *testing.T) {
 		if got := rec.text(0); got != "see [note" {
 			t.Errorf("sealed text is %q, want the released carry appended", got)
 		}
-		if got := turn.Carry(""); got != "" {
-			t.Errorf("Carry after the seal is %q, want empty", got)
+		if got, _, _ := turn.TakeCarry(ctx, "", "s1-say"); got != "" {
+			t.Errorf("TakeCarry after the seal is %q, want empty", got)
 		}
 	})
 

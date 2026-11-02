@@ -9,7 +9,7 @@ import type * as NotifyActions from "./actions/notify.js";
 
 vi.mock("./persist.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Persist>()),
-  patchSettings: async (): Promise<Record<string, unknown>> => ({ ok: true }),
+  patchSettings: async (): Promise<{ outcome: string }> => ({ outcome: "committed" }),
 }));
 
 vi.mock("./actions/notify.js", async (importOriginal) => ({

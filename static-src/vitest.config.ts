@@ -1,15 +1,15 @@
 // The DEFAULT is the browser: a file runs in real headless Chromium unless named `.node.test.ts`
-// (Node) or `.touch.test.ts` (a touch-device page). No `environment` option on the browser side
-// and no per-file `@vitest-environment` pragma: Browser Mode is not an environment but a
-// runner. The suffix is load-bearing: a misplaced Node-needing test throws on
-// import, but one needing the DOM ABSENT passes vacuously (`attention-no-dom.node.test.ts`
-// asserts its premise). `*.fuzz.test.ts` is ts-ci's fuzz axis. `channel: "chromium"` is the real
+// (Node), `.touch.test.ts` (a touch-device page) or `.pointer.test.ts` (a page of its own for the
+// real mouse). No `environment` option on the browser side and no per-file `@vitest-environment`
+// pragma: Browser Mode is not an environment but a runner. The suffix is load-bearing: a
+// misplaced Node-needing test throws on import, but one needing the DOM ABSENT passes vacuously
+// (`attention-no-dom.node.test.ts` asserts its premise). `*.fuzz.test.ts` is ts-ci's fuzz axis. `channel: "chromium"` is the real
 // browser, not headless-shell: `npx playwright install --with-deps chromium`.
 import { configDefaults, defineConfig, type TestProjectInlineConfiguration } from "vitest/config";
 import { resolve } from "node:path";
+import { playwright } from "@vitest/browser-playwright";
 import { msw } from "msw/vite";
 
-import { alwaysOnInterception } from "./__test-helpers__/always-on-interception.js";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 
 const actionsInternals = resolve(__dirname, "node_modules/@cplieger/actions/dist/src");
@@ -48,23 +48,17 @@ function browserProject(
       name,
       include,
       exclude,
-      // A later group, so touch never runs beside `browser`: a bail that lands while the other project
-      // is resolving a `vi.mock` factory can end the vitest process
-      // (https://github.com/vitest-dev/vitest/issues/11467).
-      ...(hasTouch ? { sequence: { groupOrder: 1 } } : {}),
-      // Merged with the root list (`extends: true` merges arrays). Browser-only: the gate reads `window`,
+      // Merged with the root list (`extends: true` merges arrays). Browser-only: both read `window`,
       // and a `ResizeObserver` loop is a real engine's verdict.
-      setupFiles: ["./ro-loop-gate.ts"],
-      // One test file at a time: the mocker's routes live on the shared Playwright CONTEXT and are
-      // unrouted at each file end, so a still-resolving mock gets auto-continued (`route.fulfill: Route
-      // is already handled!`, https://github.com/vitest-dev/vitest/issues/8339). The anchor route below
-      // closes the zero-crossing; drop this only after a parallel run measures clean.
-      fileParallelism: false,
+      setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts"],
+      // Files run in parallel because each worker session opens its own Playwright context, and the
+      // mocker's routes live on the context: two concurrent files never share one
+      // (https://github.com/vitest-dev/vitest/issues/8339).
       browser: {
         enabled: true,
         headless: true,
         traceView,
-        provider: alwaysOnInterception({
+        provider: playwright({
           ...(hasTouch ? { contextOptions: { hasTouch } } : {}),
           launchOptions: {
             channel: "chromium",
@@ -181,10 +175,19 @@ export default defineConfig({
       browserProject(
         "browser",
         ["**/*.test.ts"],
-        [...sharedExclude, "**/*.node.test.ts", "**/*.touch.test.ts"],
+        [...sharedExclude, "**/*.node.test.ts", "**/*.touch.test.ts", "**/*.pointer.test.ts"],
       ),
+      // `*.pointer.test.ts` runs in a page of its own, so the real mouse it moves reaches no later file: after one real
+      // mouse event Chromium keeps the page's hover tracking on, and its hit tests force layouts a later file never
+      // sees otherwise. Moving the pointer out of the viewport does not turn it off.
+      browserProject("browser-pointer", ["**/*.pointer.test.ts"], sharedExclude),
       browserProject("browser-touch", ["**/*.touch.test.ts"], sharedExclude, true),
     ],
+
+    // Two workers, so two Chromium pages at once: CI's runner has 4 vCPUs, and each page's renderer
+    // shares them with the Vite server and the runner process. Root-only: a per-project value needs a
+    // distinct `sequence.groupOrder` per project. Stryker's runner forces its own value of 1.
+    maxWorkers: 2,
 
     // Fail loudly if the include pattern matches nothing.
     passWithNoTests: false,

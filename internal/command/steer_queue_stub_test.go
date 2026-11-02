@@ -9,7 +9,7 @@ import (
 )
 
 // stubSteerQueue is a scripted SteerQueue: it routes a steer as itself (or parks
-// it while the bridge spawns) and answers each op step from the fields a test
+// it while the session opens) and answers each op step from the fields a test
 // sets, recording every call in order. The real record's transitions are pinned in
 // internal/agent; here the subject is what the commands DO with the answers.
 type stubSteerQueue struct {
@@ -21,7 +21,6 @@ type stubSteerQueue struct {
 	unsentRows []SteerRow
 	run        func(SteerJob)
 	removeRef  string
-	discardRef string
 	routeRef   string
 	flush      []SteerSend
 	jobRows    []SteerRow
@@ -119,9 +118,9 @@ func (q *stubSteerQueue) RemoveCleared(_ marotte.ChatID, _ string, cleared []str
 	return q.removeRes
 }
 
-func (q *stubSteerQueue) BeginDiscard(marotte.ChatID, string) (bool, string) {
+func (q *stubSteerQueue) BeginDiscard(_ marotte.ChatID, _ string) bool {
 	q.log("begin-discard")
-	return q.needsClear, q.discardRef
+	return q.needsClear
 }
 
 func (q *stubSteerQueue) DiscardCleared(_ marotte.ChatID, _ string, landed bool) SteerOpResult {

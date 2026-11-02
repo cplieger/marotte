@@ -10,7 +10,7 @@ import (
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // The action segment and query parameter the repository routes read.
@@ -22,19 +22,20 @@ const (
 // The {repo_id} segment is decoded once on the connection's family. `?refresh=1` is the reader
 // asking for the truth, as `/api/git/status-all?fetch=1` is on the local side.
 func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, rest string) {
-	fc, ok := h.connectionClient(w, id)
+	held, ok := h.handle(w, id)
 	if !ok {
 		return
 	}
+	rh := &held
 	force := r.URL.Query().Get("refresh") == "1"
 	if rest == "" {
-		h.handleRepoList(w, r, fc, force)
+		h.handleRepoList(w, r, rh, force)
 		return
 	}
 	segment, sub, _ := splitFirst(rest)
 	// The library accepts only the canonical encoding, so ref.ID is the id this
 	// server mints and keys every cache entry on.
-	ref, err := forgeapi.DecodeRepoRef(segment, fc.family)
+	ref, err := forgeapi.DecodeRepoRef(segment, rh.family)
 	if err != nil {
 		writeOpsError(w, r, err)
 		return
@@ -47,28 +48,28 @@ func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, re
 	switch op {
 	case "prs":
 		if tail == "" {
-			h.handlePRCollection(w, r, fc, ref, force)
+			h.handlePRCollection(w, r, rh, ref, force)
 			return
 		}
 		if !strings.Contains(tail, "/") {
-			handlePRDetail(w, r, fc.core, ref, tail)
+			handlePRDetail(w, r, rh.core, ref, tail)
 			return
 		}
 		if numStr, op, _ := splitFirst(tail); op == "merge" {
-			h.handleMerge(w, r, fc, ref, numStr)
+			h.handleMerge(w, r, rh, ref, numStr)
 			return
 		}
-		h.handlePRAction(w, r, fc, ref, tail)
+		h.handlePRAction(w, r, rh, ref, tail)
 	case "issues":
-		h.handleIssues(w, r, fc, ref, tail)
+		h.handleIssues(w, r, rh, ref, tail)
 	case "checks":
-		handleChecks(w, r, fc.core, ref)
+		handleChecks(w, r, rh.core, ref)
 	case "releases":
-		h.handleReleases(w, r, fc, ref)
+		h.handleReleases(w, r, rh, ref)
 	case "labels":
-		handleLabels(w, r, fc.core, ref)
+		handleLabels(w, r, rh.core, ref)
 	case "affordances":
-		h.handleAffordances(w, r, fc, ref, force)
+		h.handleAffordances(w, r, rh, ref, force)
 	default:
 		httpreply.NotFound(w, "unknown repo sub-resource")
 	}
@@ -77,8 +78,8 @@ func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, re
 // mutated follows a successful mutation of ref: its cached lists go, and the
 // inventory is asked to read the connection again. It answers the id of the
 // cycle that reads the change.
-func (h *HTTPHandler) mutated(fc forgeClient, ref forgeapi.RepoRef) string {
-	h.manager.evictRepo(fc.id, ref.ID)
+func (h *HTTPHandler) mutated(rh *readHandle, ref forgeapi.RepoRef) string {
+	h.manager.evictRepo(rh.id, ref.ID)
 	return h.askCycle()
 }
 
@@ -118,7 +119,7 @@ func listRequestOf(q url.Values) (listRequest, error) {
 	return resolveList(opts...)
 }
 
-func (h *HTTPHandler) handleRepoList(w http.ResponseWriter, r *http.Request, fc forgeClient, force bool) {
+func (h *HTTPHandler) handleRepoList(w http.ResponseWriter, r *http.Request, rh *readHandle, force bool) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
@@ -128,7 +129,7 @@ func (h *HTTPHandler) handleRepoList(w http.ResponseWriter, r *http.Request, fc 
 		writeOpsError(w, r, err)
 		return
 	}
-	page, err := h.manager.repoPage(r.Context(), fc, &req, force)
+	page, err := h.manager.repoPage(r.Context(), rh, &req, force)
 	if err != nil {
 		writeOpsError(w, r, err)
 		return
@@ -147,7 +148,7 @@ type createPRBody struct {
 
 // handlePRCollection serves the repo-level PR endpoints: list (GET) and create
 // (POST), which answers the new row.
-func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, force bool) {
+func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request, rh *readHandle, ref forgeapi.RepoRef, force bool) {
 	switch r.Method {
 	case http.MethodGet:
 		req, err := listRequestOf(r.URL.Query())
@@ -155,7 +156,7 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 			writeOpsError(w, r, err)
 			return
 		}
-		page, err := h.manager.prPage(r.Context(), fc, ref, &req, force)
+		page, err := h.manager.prPage(r.Context(), rh, ref, &req, force)
 		if err != nil {
 			writeOpsError(w, r, err)
 			return
@@ -168,7 +169,7 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 			httpreply.BadRequest(w, "invalid json")
 			return
 		}
-		created, err := fc.core.CreatePR(r.Context(), ref, forgeapi.NewPullRequest{
+		created, err := rh.core.CreatePR(r.Context(), ref, forgeapi.NewPullRequest{
 			Title: params.Title, Body: params.Body, SourceBranch: params.SourceBranch,
 			TargetBranch: params.TargetBranch, Labels: params.Labels, Draft: params.Draft,
 		})
@@ -176,7 +177,7 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 			writeOpsError(w, r, err)
 			return
 		}
-		h.mutated(fc, ref)
+		h.mutated(rh, ref)
 		webhttp.WriteJSON(w, prWire(&created))
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -237,7 +238,7 @@ var mergeIntents = []forgeapi.MergeIntent{forgeapi.IntentDefault, forgeapi.Inten
 // handleMerge serves one pull request's merge: POST merges it and answers the
 // outcome, GET reads its merge state back, the read that follows an accepted or
 // queued merge. Neither is cached.
-func (h *HTTPHandler) handleMerge(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, numStr string) {
+func (h *HTTPHandler) handleMerge(w http.ResponseWriter, r *http.Request, rh *readHandle, ref forgeapi.RepoRef, numStr string) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 		return
@@ -249,7 +250,7 @@ func (h *HTTPHandler) handleMerge(w http.ResponseWriter, r *http.Request, fc for
 	}
 	pr := forgeapi.PRRef{Number: number}
 	if r.Method == http.MethodGet {
-		status, statusErr := fc.core.MergeStatus(r.Context(), ref, pr)
+		status, statusErr := rh.core.MergeStatus(r.Context(), ref, pr)
 		if statusErr != nil {
 			writeOpsError(w, r, statusErr)
 			return
@@ -257,16 +258,16 @@ func (h *HTTPHandler) handleMerge(w http.ResponseWriter, r *http.Request, fc for
 		webhttp.WriteJSON(w, mergeStatusWire(&status))
 		return
 	}
-	req, ok := mergeRequestOf(w, r, fc.family)
+	req, ok := mergeRequestOf(w, r, rh.family)
 	if !ok {
 		return
 	}
-	outcome, err := fc.core.MergePR(r.Context(), ref, pr, req)
+	outcome, err := rh.core.MergePR(r.Context(), ref, pr, req)
 	if err != nil {
 		writeOpsError(w, r, err)
 		return
 	}
-	cycle := h.mutated(fc, ref)
+	cycle := h.mutated(rh, ref)
 	webhttp.WriteJSON(w, MergeResult{Outcome: mergeOutcomeWire(&outcome), CycleID: cycle})
 }
 
@@ -305,7 +306,7 @@ func writeMergeRefusal(w http.ResponseWriter, status int, code, msg string) {
 
 // handlePRAction serves the per-PR mutations, all POST-only: close and reopen
 // answer the row as the forge left it, rerun answers ok.
-func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, tail string) {
+func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, rh *readHandle, ref forgeapi.RepoRef, tail string) {
 	numStr, op, _ := splitFirst(tail)
 	number, err := strconv.Atoi(numStr)
 	if err != nil {
@@ -320,11 +321,11 @@ func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, fc 
 	var row forgeapi.PullRequest
 	switch op {
 	case stateClose:
-		row, err = fc.core.ClosePR(r.Context(), ref, pr)
+		row, err = rh.core.ClosePR(r.Context(), ref, pr)
 	case "reopen":
-		row, err = fc.core.ReopenPR(r.Context(), ref, pr)
+		row, err = rh.core.ReopenPR(r.Context(), ref, pr)
 	case "rerun":
-		h.handlePRRerun(w, r, fc, ref, pr)
+		h.handlePRRerun(w, r, rh, ref, pr)
 		return
 	default:
 		httpreply.NotFound(w, "unknown PR action")
@@ -334,7 +335,7 @@ func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, fc 
 		writeOpsError(w, r, err)
 		return
 	}
-	cycle := h.mutated(fc, ref)
+	cycle := h.mutated(rh, ref)
 	webhttp.WriteJSON(w, PRChanged{PR: prWire(&row), CycleID: cycle})
 }
 
@@ -343,24 +344,24 @@ func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, fc 
 // refuses one for any other commit. No pin re-runs the head as it is now. A
 // re-run changes no forge object, so it evicts nothing; the checks it restarts
 // are the cycle's to read.
-func (h *HTTPHandler) handlePRRerun(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, pr forgeapi.PRRef) {
-	if err := fc.core.RerunFailedChecks(r.Context(), ref, pr, r.URL.Query().Get(fieldHeadSHA)); err != nil {
+func (h *HTTPHandler) handlePRRerun(w http.ResponseWriter, r *http.Request, rh *readHandle, ref forgeapi.RepoRef, pr forgeapi.PRRef) {
+	if err := rh.core.RerunFailedChecks(r.Context(), ref, pr, r.URL.Query().Get(fieldHeadSHA)); err != nil {
 		writeOpsError(w, r, err)
 		return
 	}
 	if h.poller != nil {
-		h.poller.refill(fc.id, ref.ID, pr.Number)
+		h.poller.refill(rh.id, ref.ID, pr.Number)
 	}
 	h.askCycle()
 	webhttp.Ok(w)
 }
 
-func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, tail string) {
+func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, rh *readHandle, ref forgeapi.RepoRef, tail string) {
 	if tail == "" {
-		h.handleIssueCollection(w, r, fc, ref)
+		h.handleIssueCollection(w, r, rh, ref)
 		return
 	}
-	h.handleIssueAction(w, r, fc, ref, tail)
+	h.handleIssueAction(w, r, rh, ref, tail)
 }
 
 type createIssueBody struct {
@@ -371,7 +372,7 @@ type createIssueBody struct {
 
 // handleIssueCollection serves the repo-level issue endpoints: list (GET) and
 // create (POST), which answers the new issue.
-func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef) {
+func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Request, rh *readHandle, ref forgeapi.RepoRef) {
 	switch r.Method {
 	case http.MethodGet:
 		req, err := listRequestOf(r.URL.Query())
@@ -379,7 +380,7 @@ func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Reque
 			writeOpsError(w, r, err)
 			return
 		}
-		page, err := fc.core.ListIssues(r.Context(), ref, req.opts...)
+		page, err := rh.core.ListIssues(r.Context(), ref, req.opts...)
 		if err != nil {
 			writeOpsError(w, r, err)
 			return
@@ -392,14 +393,14 @@ func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Reque
 			httpreply.BadRequest(w, "invalid json")
 			return
 		}
-		created, err := fc.core.CreateIssue(r.Context(), ref, forgeapi.NewIssue{
+		created, err := rh.core.CreateIssue(r.Context(), ref, forgeapi.NewIssue{
 			Title: params.Title, Body: params.Body, Labels: params.Labels,
 		})
 		if err != nil {
 			writeOpsError(w, r, err)
 			return
 		}
-		h.mutated(fc, ref)
+		h.mutated(rh, ref)
 		webhttp.WriteJSON(w, issueWire(&created))
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -408,7 +409,7 @@ func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Reque
 
 // handleIssueAction serves the per-issue action endpoints: close, which answers
 // the issue as the forge left it.
-func (h *HTTPHandler) handleIssueAction(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, tail string) {
+func (h *HTTPHandler) handleIssueAction(w http.ResponseWriter, r *http.Request, rh *readHandle, ref forgeapi.RepoRef, tail string) {
 	numStr, op, _ := splitFirst(tail)
 	number, err := strconv.Atoi(numStr)
 	if err != nil {
@@ -423,12 +424,12 @@ func (h *HTTPHandler) handleIssueAction(w http.ResponseWriter, r *http.Request, 
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	closed, err := fc.core.CloseIssue(r.Context(), ref, forgeapi.IssueRef{Number: number})
+	closed, err := rh.core.CloseIssue(r.Context(), ref, forgeapi.IssueRef{Number: number})
 	if err != nil {
 		writeOpsError(w, r, err)
 		return
 	}
-	h.mutated(fc, ref)
+	h.mutated(rh, ref)
 	webhttp.WriteJSON(w, issueWire(&closed))
 }
 
@@ -448,18 +449,18 @@ func handleChecks(w http.ResponseWriter, r *http.Request, core forgeapi.Checks, 
 }
 
 // Releases is an optional role, so a client without it answers errNotSupported.
-func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef) {
+func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, rh *readHandle, ref forgeapi.RepoRef) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 		return
 	}
-	rel, ok := fc.core.(forgeapi.Releases)
+	rel, ok := rh.core.(forgeapi.Releases)
 	if !ok {
 		writeOpsError(w, r, errNotSupported)
 		return
 	}
 	if r.Method == http.MethodPost {
-		h.createRelease(w, r, fc, rel, ref)
+		h.createRelease(w, r, rh, rel, ref)
 		return
 	}
 	req, err := listRequestOf(r.URL.Query())
@@ -484,7 +485,7 @@ type createReleaseBody struct {
 	Prerelease bool   `json:"prerelease,omitempty"`
 }
 
-func (h *HTTPHandler) createRelease(w http.ResponseWriter, r *http.Request, fc forgeClient, rel forgeapi.Releases, ref forgeapi.RepoRef) {
+func (h *HTTPHandler) createRelease(w http.ResponseWriter, r *http.Request, rh *readHandle, rel forgeapi.Releases, ref forgeapi.RepoRef) {
 	var params createReleaseBody
 	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
@@ -499,17 +500,17 @@ func (h *HTTPHandler) createRelease(w http.ResponseWriter, r *http.Request, fc f
 		writeOpsError(w, r, err)
 		return
 	}
-	h.mutated(fc, ref)
+	h.mutated(rh, ref)
 	webhttp.WriteJSON(w, releaseWire(&created))
 }
 
 // A mutation of the repository evicts the cached answer with its lists.
-func (h *HTTPHandler) handleAffordances(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, force bool) {
+func (h *HTTPHandler) handleAffordances(w http.ResponseWriter, r *http.Request, rh *readHandle, ref forgeapi.RepoRef, force bool) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	aff, err := h.manager.repoAffordances(r.Context(), fc, ref, force)
+	aff, err := h.manager.repoAffordances(r.Context(), rh, ref, force)
 	if err != nil {
 		writeOpsError(w, r, err)
 		return

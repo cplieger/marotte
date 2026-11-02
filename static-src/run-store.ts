@@ -3,10 +3,10 @@
 
 import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
-import { nodePathKey } from "./run-node-key.js";
+import { nodePathKey, nodePathSegment } from "./run-node-key.js";
 import { forgetSubject, observeStamp } from "./subject-versions.js";
 import { turnOpenOf } from "./turns.js";
-import { settleWorkflowMessages } from "./workflow-delivery.js";
+import { settleWorkflowMessages, turnsInOrder } from "./workflow-delivery.js";
 import type { Entry, OpenEntry, TurnState } from "./types.js";
 import {
   decodeLiveRunsResponse,
@@ -46,6 +46,9 @@ export interface RunNode {
   startedAt?: string;
   endedAt?: string;
   iteration?: number;
+  /** On a repeat an extension grew: its new pass budget in total, replacing the plan's
+   *  `maxIterations`. */
+  extendedMaxIterations?: number;
   branchId?: string;
   children?: RunNode[];
   artifacts?: Record<string, string>;
@@ -65,8 +68,9 @@ export interface RunNode {
 }
 
 /** A run's whole state. `runLabel` is the name a launcher gave this execution and `workflowName`
- *  the recipe's; `stopInitiator`/`stopReason` are set only when a person stopped it, which is
- *  what separates "the user cancelled this" from "it failed" in the card's alert. */
+ *  the recipe's; `stopInitiator`/`stopReason` are KAS's attribution of a requested stop or pause
+ *  (a person's, an orchestrator's or marotte's sign-in pause) and are unset when the run failed,
+ *  which is what separates a requested stop from "it failed" in the card's alert. */
 export interface RunState {
   workflowId: string;
   workflowName?: string;
@@ -78,6 +82,8 @@ export interface RunState {
   root?: RunNode;
   pauseReason?: string;
   pauseDetail?: { class?: string; code?: string; occurredAt?: string };
+  /** KAS's `state.pause`: which loop a cap pause stopped at, its budget and the passes it ran. */
+  pause?: { kind?: string; nodeId?: string; maxIterations?: number; iterationsRun?: number };
   stopInitiator?: string;
   stopReason?: string;
   /** A pause asked for that lands at the end of the current step. */
@@ -85,27 +91,83 @@ export interface RunState {
   parentSessionId?: string;
   /** marotte's, from the reply's `plan_update`: the run's newest queued plan revision. */
   planUpdate?: RunPlanUpdate;
+  /** marotte's, from the reply's `read_position`: the run's read position, 0 while it is live. Only
+   *  a read sets it; a `run_progress` frame keeps the previous read's value. */
+  readPosition?: number;
 }
 
-/** The alert an attributed stop or pause reads, or undefined when KAS names no initiator. KAS's
- *  initiator and reason are shown as given: an orchestrator's pause reaches here as `user` with
- *  KAS's own sentence saying so. */
-export function stopSentence(state: RunState): string | undefined {
-  const who = state.stopInitiator ?? "";
-  if (who === "") {
+/** The reasons marotte pauses a run with (internal/agent/run_gate.go, pinned by
+ *  internal/agent/testdata/pause_reasons.json): the sign-in gate's two, and the one a run marotte no
+ *  longer resumes on its own is stamped with. KAS attributes every reasoned pause to the user, so
+ *  these are the pauses no person asked for. */
+const MAROTTE_PAUSE_REASONS: ReadonlySet<string> = new Set([
+  "sign in to Kiro to continue; marotte resumes the run when you do",
+  "the Kiro sign-in service is unreachable; marotte resumes the run when it answers",
+  "resume it to continue",
+]);
+
+/** The reason marotte stamps beside `user` on a run control its REST API took from outside its
+ *  page, such as an agent's curl (internal/agent/run_host.go apiCallerReason, same fixture). */
+const API_CALLER_REASON = "asked through marotte's run API by a caller outside its page";
+
+/** KAS's reasons on the pause and the resume a run's owning parent session asks for, which KAS
+ *  attributes to `user` and its own classifier names the orchestrator's. Pinned to the bundle by
+ *  internal/kascap/parent_control_reason_census_test.go through testdata/parent_control_reasons.json. */
+const PARENT_PAUSE_REASON =
+  "Pause requested by owning parent/orchestrator; human intent not verified.";
+const PARENT_RESUME_REASON =
+  "Resume requested by owning parent/orchestrator; human intent not verified.";
+
+/** What an attributed control did to the run. */
+type ControlVerb = "paused" | "stopped" | "completed" | "resumed";
+
+const CONTROL_LEAD: Record<ControlVerb, string> = {
+  paused: "Paused",
+  stopped: "Stopped",
+  completed: "Marked complete",
+  resumed: "Resumed",
+};
+
+/** The one sentence every surface words a KAS attribution with, or undefined when it names no
+ *  actor. The parent chat's controls and marotte's REST controls all arrive as `user`, so under
+ *  `user` the reason says who asked, and a reason that names an actor is never shown. The
+ *  parent's reason is the run's chat whatever the verb (its stop carries no attribution, so it
+ *  keeps the pause's). The API reason names an agent,
+ *  marotte's own pause reasons name nobody, and no reason is the reader's gesture on its page. */
+function attributedSentence(
+  verb: ControlVerb,
+  initiator: string,
+  reason: string,
+): string | undefined {
+  if (initiator === "") {
     return undefined;
   }
-  const lead =
-    state.status === "completed"
-      ? `Marked complete by ${who}`
-      : state.status === "paused"
-        ? `Paused by ${who}`
-        : `Stopped by ${who}`;
-  const why = state.stopReason ?? "";
-  return why === "" ? lead : `${lead}: ${why}`;
+  const lead = CONTROL_LEAD[verb];
+  const parent = reason === PARENT_PAUSE_REASON || reason === PARENT_RESUME_REASON;
+  if (initiator !== "user") {
+    const shown = parent || reason === API_CALLER_REASON ? "" : reason;
+    return shown === "" ? `${lead} by ${initiator}` : `${lead} by ${initiator}: ${shown}`;
+  }
+  if (parent) {
+    return `${lead} by its chat`;
+  }
+  if (reason === API_CALLER_REASON) {
+    return `${lead} by an agent`;
+  }
+  if (MAROTTE_PAUSE_REASONS.has(reason)) {
+    return verb === "paused" ? `Paused: ${reason}` : undefined;
+  }
+  return reason === "" ? `${lead} by you` : `${lead} by you: ${reason}`;
 }
 
-/** KAS's attribution on each run's newest resume, verbatim: `run_start` carries it and no read does. */
+/** The alert an attributed stop or pause reads, or undefined when KAS names no initiator. */
+export function stopSentence(state: RunState): string | undefined {
+  const verb: ControlVerb =
+    state.status === "completed" ? "completed" : state.status === "paused" ? "paused" : "stopped";
+  return attributedSentence(verb, state.stopInitiator ?? "", state.stopReason ?? "");
+}
+
+/** KAS's attribution on each run's newest resume: `run_start` carries it and no read does. */
 const resumedBy = new Map<string, { initiator: string; reason: string }>();
 
 /** Record a `run_start`'s attribution; a start naming no initiator (a launch) clears it. */
@@ -117,13 +179,13 @@ export function noteRunResumed(workflowID: string, initiator: string, reason: st
   resumedBy.set(workflowID, { initiator, reason });
 }
 
-/** The alert a running run's attributed resume reads, as given. */
+/** The alert a running run's attributed resume reads. */
 export function resumeSentence(state: RunState): string | undefined {
   const r = resumedBy.get(state.workflowId);
   if (r === undefined || state.status !== "running") {
     return undefined;
   }
-  return r.reason === "" ? `Resumed by ${r.initiator}` : `Resumed by ${r.initiator}: ${r.reason}`;
+  return attributedSentence("resumed", r.initiator, r.reason);
 }
 
 /** The alert for a pause that has been asked for and not landed yet. */
@@ -157,6 +219,12 @@ interface RawRunInspect extends Omit<RunInspect, "state"> {
   step_ends?: Record<string, RunStepEnd>;
   /** marotte's own key beside KAS's reply: when each node's current attempt began in the run's log. */
   step_starts?: Record<string, RunStepStart>;
+  read_position?: unknown;
+}
+
+/** The reply's read position, 0 for none or a value that is not a non-negative safe integer. */
+function readPositionOf(raw: unknown): number {
+  return typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0 ? raw : 0;
 }
 
 /** The reply's plan revision, or undefined for none or one this build cannot read. */
@@ -270,6 +338,10 @@ const cells = new Map<string, Signal<RunState | undefined>>();
  *  CAUSE the trailing fetch will run under, so the token below survives a coalesce. */
 const inFlight = new Set<string>();
 const stale = new Map<string, string>();
+
+/** Runs forgotten while their read was out; the read drops its answer and its retry, so a late
+ *  response cannot rebuild the state `forgetRun` just released. */
+const forgotten = new Set<string>();
 
 /** The invalidation CAUSE behind each run's current answer: recorded when its fetch is ISSUED
  *  and kept once that fetch has answered, which is what makes one cause cost one request per run
@@ -675,16 +747,22 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
     answeredCause.set(workflowID, cause);
   }
   let answered = false;
+  let dropped: boolean;
   // The status of a read that produced nothing, which is what tells a SETTLED answer from the
   // absence of one: `handleRun` answers 404 only where the engine described this run and refused,
   // so no number of retries can change it. 0 (no request) and every other status are worth
   // re-asking.
   let failed = 0;
   const issued = executionsOf(workflowID).frames;
+  // A read before the cell holds any answer skips the controls: only a run tab holds them, and its
+  // open reads them itself.
+  const first = cell(workflowID).peek() === undefined;
   try {
     const r = await apiGetOrError<RawRunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
     const d = r.data;
-    if (d?.state !== undefined && executionsOf(workflowID).frames !== issued) {
+    if (forgotten.has(workflowID)) {
+      // The last reader left while this read was out: writing the answer would recreate a cell nobody holds.
+    } else if (d?.state !== undefined && executionsOf(workflowID).frames !== issued) {
       // A frame changed the tree while this read was out, so the answer may predate it. Only a
       // read issued after the frame can say which side of it KAS is on.
       stale.set(workflowID, stale.get(workflowID) ?? cause);
@@ -704,6 +782,7 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
       if (planUpdate !== undefined) {
         state.planUpdate = planUpdate;
       }
+      state.readPosition = readPositionOf(d.read_position);
       if (state.root !== undefined) {
         stampStarts(workflowID, state.root);
       }
@@ -716,7 +795,10 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
     }
   } finally {
     inFlight.delete(workflowID);
-    if (answered) {
+    dropped = forgotten.delete(workflowID);
+    if (dropped) {
+      // Nothing to retry for a run no reader holds; `forgetRun` already cleared its ladder.
+    } else if (answered) {
       cancelRunRetry(workflowID);
     } else {
       if (cause !== "") {
@@ -733,10 +815,18 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
       }
     }
   }
+  if (dropped && !runStateDemanded(workflowID)) {
+    // `stale` may come from a lifecycle invalidation, which fires whether or not anyone reads the run,
+    // so only a registered demand lets the trailing read recreate the cell.
+    stale.delete(workflowID);
+  }
   const next = stale.get(workflowID);
   if (next !== undefined) {
     stale.delete(workflowID);
     await fetchRun(workflowID, next);
+  } else if (!first && controlCells.has(workflowID)) {
+    // After the trailing read rather than beside it, so a burst costs one controls read.
+    invalidateRunControls(workflowID);
   }
 }
 
@@ -778,11 +868,18 @@ function cancelRunRetry(workflowID: string): void {
   runRetries.delete(workflowID);
 }
 
-/** Externally-owned reasons a run's state cell must be KEPT, registered by the composition root
- *  so this module stays a leaf — importing `tabs.ts` here would invert the dependency direction,
- *  which is why `store.ts`'s eviction exemptions take the same shape. Nothing registered means
- *  nothing demands a cell. */
+/** Externally-owned reasons a run's state cell must be KEPT, registered by the module that owns
+ *  the reader (the composition root for tabs, a surface for its own mounted notes) so this module
+ *  stays a leaf — importing `tabs.ts` here would invert the dependency direction, which is why
+ *  `store.ts`'s eviction exemptions take the same shape. Every reader of a cell must register one
+ *  (tabs, mounted notes, transcript run cards, and detached run cards in subagent pages and run-tab step streams): `forgetRun` and a dropped late read treat an
+ *  unregistered reader as absent. */
 const stateDemands: ((workflowID: string) => boolean)[] = [];
+
+/** Whether any registered demand holds the run's state cell. */
+export function runStateDemanded(workflowID: string): boolean {
+  return stateDemands.some((fn) => fn(workflowID));
+}
 
 /** Register one demand predicate. Returns its unregister. */
 export function registerRunStateDemand(fn: (workflowID: string) => boolean): () => void {
@@ -809,8 +906,11 @@ export function noteRunLabel(workflowID: string, name: string | undefined): void
  *  predicate answering true keeps everything below, because no call site can enumerate this
  *  store's readers. */
 export function forgetRun(workflowID: string): void {
-  if (stateDemands.some((fn) => fn(workflowID))) {
+  if (runStateDemanded(workflowID)) {
     return;
+  }
+  if (inFlight.has(workflowID)) {
+    forgotten.add(workflowID);
   }
   cells.delete(workflowID);
   stale.delete(workflowID);
@@ -860,9 +960,10 @@ export function runControls(workflowID: string): RunControlsResponse | undefined
   return controlCell(workflowID).value;
 }
 
-/** Re-read what a run offers. THREE triggers, never one per repaint: a tab open (`run-view.ts`),
- *  that run's own `run_finished` (`handlers/run.ts`), and a retry that succeeded
- *  (`actions/runs.ts`). */
+/** Re-read what a run offers. Never per repaint: a tab open (`run-view.ts`) and every settled
+ *  state read after the first (`fetchRun`), since the verbs also rest on facts the state does not
+ *  carry (`run_affordance.go` `runFacts`: hosting, a pending pause). Every copy of a run's
+ *  controls reads this one cell. */
 export function invalidateRunControls(workflowID: string): void {
   if (workflowID === "") {
     return;
@@ -1214,7 +1315,8 @@ function markRunHole(workflowID: string, turnID: string): void {
 }
 
 /** Create the turn a run-scoped `turn_opened` announced, with its `turn_open` as `entries[0]`.
- *  Idempotent by turn id, like the chat store's. */
+ *  Idempotent by turn id, like the chat store's. Seated by its `turn_open.n`, the run log's own
+ *  ordinal, because a step read can adopt a turn older than one the stream already opened. */
 export function openRunTurn(workflowID: string, entry: Entry): void {
   const l = log(workflowID);
   if (l.turns.has(entry.turn)) {
@@ -1222,9 +1324,23 @@ export function openRunTurn(workflowID: string, entry: Entry): void {
   }
   const state: TurnState = { entries: [entry], openEntries: new Map() };
   l.turns.set(entry.turn, state);
-  l.order.push(entry.turn);
+  const n = runTurnOrdinal(state);
+  const at = l.order.findIndex((id) => {
+    const other = l.turns.get(id);
+    return other !== undefined && runTurnOrdinal(other) > n;
+  });
+  if (at < 0) {
+    l.order.push(entry.turn);
+  } else {
+    l.order.splice(at, 0, entry.turn);
+  }
   stampRunTurn(workflowID, entry.turn, state);
   bumpLog(workflowID);
+}
+
+/** A turn without a readable ordinal sorts last, where a newer turn belongs. */
+function runTurnOrdinal(state: TurnState): number {
+  return turnOpenOf(state)?.n ?? Number.MAX_SAFE_INTEGER;
 }
 
 /** Append one sealed entry of a run's log at the position its `seq` claims. Same three answers
@@ -1250,8 +1366,12 @@ export function appendRunEntry(workflowID: string, entry: Entry): void {
   if (entry.kind === "steer") {
     logObserver?.steer(workflowID, turnOpenOf(state)?.node_path ?? "", entry);
   }
-  if (entry.kind === "steer" || entry.kind === "steer_delivered") {
-    settleWorkflowMessages(l.turns.values());
+  if (
+    entry.kind === "steer" ||
+    entry.kind === "steer_delivered" ||
+    entry.kind === "steer_cleared"
+  ) {
+    settleWorkflowMessages(turnsInOrder(l.order, l.turns));
   }
   if (entry.kind === "turn_close") {
     state.closeAt = entry.seq;
@@ -1365,16 +1485,6 @@ export function sealRunEntry(
 // Derived reads: functions over the cached value, never stored beside it — a second copy of "how
 // many steps finished" is a second thing that can be wrong.
 
-/** A repeat child carrying no `iteration` falls back to its `nodeId`: a row in the wrong place
- *  beats content that vanishes, the same call the server's own `runNodePath` makes when a frame
- *  carries no path. */
-export function nodePathSegment(node: RunNode, parent: RunNode | undefined): string {
-  if (parent?.type === "repeat" && node.iteration !== undefined) {
-    return `iter-${String(node.iteration)}`;
-  }
-  return node.nodeId;
-}
-
 /** Every node of `type` in the tree, depth-first in plan order, every pass included. */
 export function nodesOfType(root: RunNode | undefined, type: string): RunNode[] {
   const out: RunNode[] = [];
@@ -1396,51 +1506,6 @@ export function nodesOfType(root: RunNode | undefined, type: string): RunNode[] 
 export function runIsLive(state: RunState | undefined): boolean {
   const status = state?.status;
   return status === undefined ? false : runStatusActive(status);
-}
-
-/** Whether a pause REASON means a step is waiting on a person — the reason half of
- *  `isNeedInputPark`, which is the question every surface asks. */
-export function isNeedInputPause(reason: string | undefined): boolean {
-  if (reason === undefined || reason === "") {
-    return false;
-  }
-  if (reason === "Step requested user input via send_message.") {
-    return true;
-  }
-  return (
-    reason.startsWith("Step '") &&
-    (reason.endsWith("' is waiting for user input.") ||
-      reason.endsWith("' is waiting for the next user message."))
-  );
-}
-
-/** Depth-first, first match wins. */
-function needInputNode(n: RunNode | undefined): RunNode | undefined {
-  if (n === undefined) {
-    return undefined;
-  }
-  if (n.status === "paused" && n.completionSignal === "need_input") {
-    return n;
-  }
-  for (const child of n.children ?? []) {
-    const hit = needInputNode(child);
-    if (hit !== undefined) {
-      return hit;
-    }
-  }
-  return undefined;
-}
-
-/** Whether a run is parked on a PERSON — the one pause a reader has to act on. TWO ARMS, because
- *  neither answers alone: the run's own pause reason, which is what a plain step's park writes,
- *  and a paused node's completion signal, which is the only thing left of a park that happened
- *  inside a parallel branch. Gated on `paused`, like the dot vocabulary's own arm: a reason or a
- *  signal outliving its pause must never paint a finished run as awaiting input. */
-export function isNeedInputPark(state: RunState | undefined): boolean {
-  if (state?.status !== "paused") {
-    return false;
-  }
-  return isNeedInputPause(state.pauseReason) || needInputNode(state.root) !== undefined;
 }
 
 /** Only a class whose `pauseReason` does NOT already name its cause earns a label.

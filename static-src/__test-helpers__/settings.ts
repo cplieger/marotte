@@ -6,6 +6,8 @@ import type { EffectiveSettings } from "../wire/types.gen.js";
 export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): EffectiveSettings {
   return {
     agent_ignore_files: [".gitignore", ".kiroignore"],
+    additional_directories: [],
+    additional_directories_refused: {},
     chat_retention_days: 7,
     theme: "",
     fb_path: "",
@@ -16,13 +18,12 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     knowledge_enabled: true,
     content_collection_enabled: false,
     guard_payload_links: true,
-    tool_search_enabled: false,
-    memory_mode: "learn",
+    model_fallback_enabled: false,
+    memory_mode: "off",
     auto_compaction_enabled: true,
     auto_compact_pct: 80,
     spec_planning: "off",
     spec_planning_ask_first: false,
-    inline_agents_enabled: false,
     steering_reminders_enabled: false,
     workflows_enabled: true,
     work_validation: "",
@@ -31,6 +32,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     auto_delegation: "",
     output_style: "default",
     terminal_command_timeout_ms: 0,
+    engine_heap_mib: 0,
     mcp_wait_for_ready: false,
     notifications_enabled: false,
     notify_agent_finished: true,
@@ -39,6 +41,8 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     supervised_default: false,
     scheduled_auto_approve: false,
     debug_logs: false,
+    settings_epoch: 0,
+    settings_revision: 0,
     ...overrides,
   };
 }

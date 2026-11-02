@@ -201,16 +201,6 @@ func TestClassify_OwnershipRefusals(t *testing.T) {
 		details string
 	}{
 		{
-			name: "a live owner refuses a load", want: ErrOwnedElsewhere,
-			details: "Workflow 'wf_1' appears to be running in another process (owner pid 42, liveness verdict: live); " +
-				"refusing to load it here. Retry after that process releases it or its run goes stale.",
-		},
-		{
-			name: "a live owner refuses a mutation", want: ErrOwnedElsewhere,
-			details: "Workflow 'wf_1' appears to be running in another process (owner pid 42, liveness verdict: live); " +
-				"refusing to mutate it here. Retry after that process releases it or its run goes stale.",
-		},
-		{
 			name: "a claim in flight refuses a load", want: ErrJustClaimed,
 			details: "Workflow 'wf_1' was just claimed by another process; refusing to load it here. " +
 				"Retry if that process does not end up driving it.",
@@ -229,8 +219,7 @@ func TestClassify_OwnershipRefusals(t *testing.T) {
 			}
 		})
 	}
-	if got := Classify(rpcErr("Internal error", `{"details":"workflow not found"}`)); errors.Is(got, ErrOwnedElsewhere) ||
-		errors.Is(got, ErrJustClaimed) {
+	if got := Classify(rpcErr("Internal error", `{"details":"workflow not found"}`)); errors.Is(got, ErrJustClaimed) {
 		t.Errorf("Classify(workflow not found) = %v, want no ownership sentinel", got)
 	}
 }
@@ -310,5 +299,34 @@ func TestPathKey_SharedFixture(t *testing.T) {
 			t.Errorf("%s: PathKey(%q) = %q, the same key as %q", c.Name, c.Path, got, other)
 		}
 		seen[got] = c.Name
+	}
+}
+
+func TestDecodeInspect_CountsThePendingSteps(t *testing.T) {
+	t.Parallel()
+	state := `"workflowId":"wf_1","state":{"workflowId":"wf_1","status":"paused"}`
+	cases := map[string]struct {
+		raw  string
+		want int
+	}{
+		"two queued steps": {raw: `{` + state + `,"pendingSteps":[{"id":"a"},{"id":"b"}]}`, want: 2},
+		"none queued":      {raw: `{` + state + `}`, want: 0},
+		"null":             {raw: `{` + state + `,"pendingSteps":null}`, want: 0},
+		"not an array":     {raw: `{` + state + `,"pendingSteps":{"id":"a"}}`, want: -1},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			in, err := DecodeInspect("wf_1", json.RawMessage(c.raw))
+			if err != nil || !in.OK {
+				t.Fatalf("DecodeInspect = %+v, %v; want OK", in, err)
+			}
+			if in.Pending != c.want {
+				t.Errorf("Pending = %d, want %d", in.Pending, c.want)
+			}
+			if in.State.Status != "paused" {
+				t.Errorf("State.Status = %q, want the rest of the reply decoded", in.State.Status)
+			}
+		})
 	}
 }

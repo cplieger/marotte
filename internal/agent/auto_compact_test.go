@@ -54,7 +54,7 @@ type compactRig struct {
 
 func newCompactRig(pct int, kasAutoOff bool) *compactRig {
 	r := &compactRig{enabled: true, pct: pct, bridge: newFakeBridge()}
-	r.bridge.startOpts = &marotte.StartOpts{DisableAutoCompaction: kasAutoOff}
+	r.bridge.sessionOpts = &marotte.SessionOpts{DisableAutoCompaction: kasAutoOff}
 	r.ac = &autoCompactor{
 		chats: map[marotte.ChatID]*autoCompactState{},
 		live: func(marotte.ChatID) bool {
@@ -62,7 +62,7 @@ func newCompactRig(pct int, kasAutoOff bool) *compactRig {
 			defer r.mu.Unlock()
 			return r.live
 		},
-		bridgeOf: func(marotte.ChatID) ACPBridge { return r.bridge },
+		bridgeOf: func(marotte.ChatID) engineSession { return r.bridge },
 		usage: func(context.Context, marotte.ChatID) (marotte.Usage, bool) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
@@ -344,46 +344,53 @@ func TestAutoCompactionPolicy_ReadsTheSettingAndFailsToTheDefault(t *testing.T) 
 	}
 }
 
-// TestChatSpawn_SendsTheCompactionPolicyAndOtherSpawnsDoNot pins that a chat spawn carries
-// the policy's door value and the utility session always sends false.
-func TestChatSpawn_SendsTheCompactionPolicyAndOtherSpawnsDoNot(t *testing.T) {
+// TestChatDoor_SendsTheCompactionPolicyAndAnObserverDoorDoesNot pins that a chat's door carries the policy's door
+// value and an observer pass always sends false.
+func TestChatDoor_SendsTheCompactionPolicyAndAnObserverDoorDoesNot(t *testing.T) {
 	dir := t.TempDir()
 	writeCompactionSetting(t, dir, true, 85)
 	var mu sync.Mutex
-	var spawned []*recordingStartBridge
-	cs := newTestChatStore()
-	h := New(t.Context(), t.TempDir(), func() ACPBridge {
+	var doors []*recordingStartBridge
+	record := func() engineSession {
 		rb := newRecordingStartBridge()
 		mu.Lock()
-		spawned = append(spawned, rb)
+		doors = append(doors, rb)
 		mu.Unlock()
 		return rb
-	}, cs, WithConfigDir(dir))
+	}
+	src := fakeEngineOf(record, nil)
+	src.observer = record
+	cs := newTestChatStore()
+	h := newRuntimeOn(t.Context(), t.TempDir(), src, cs, WithConfigDir(dir))
 	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
 	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	if _, err := h.utility.get().session.acquire(t.Context()); err != nil {
-		t.Fatalf("utility session: %v", err)
+	if err := h.engine.observe(t.Context(), nil, nil, func(context.Context, engineSession) error { return nil }); err != nil {
+		t.Fatalf("observer pass: %v", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	var chat, other int
-	for _, rb := range spawned {
-		o := rb.startOpts()
-		if o.Lifetime == nil {
-			continue
-		}
-		if o.DisableAutoCompaction {
+	var chat, observer int
+	for _, rb := range doors {
+		switch o := rb.startOpts(); o.Role {
+		case marotte.SessionRoleChat:
+			if !o.DisableAutoCompaction {
+				t.Error("the chat's door sent disableAutoCompaction false under an 85% policy")
+			}
 			chat++
-		} else {
-			other++
+		case marotte.SessionRoleObserver:
+			if o.DisableAutoCompaction {
+				t.Error("an observer door sent disableAutoCompaction true")
+			}
+			observer++
 		}
 	}
-	if chat != 1 || other < 1 {
-		t.Errorf("spawns sending disableAutoCompaction true/false = %d/%d, want exactly the chat true and the utility session false", chat, other)
+	if chat != 1 || observer < 1 {
+		t.Errorf("chat doors = %d, observer doors = %d; want one chat door and at least one observer door", chat, observer)
 	}
 }

@@ -84,7 +84,7 @@ type MCPFailedPayload struct {
 }
 
 // MCPDisconnectedPayload is the payload for type="mcp_disconnected".
-// Emitted when the runtime's last bridge exits: kiro-cli's MCP subprocesses
+// Emitted per server when the agent engine ends: kiro-cli's MCP subprocesses
 // shut down with it, so no configured server is currently live.
 // Clients use this to clear their runtime-state map.
 type MCPDisconnectedPayload struct {
@@ -99,25 +99,14 @@ type MCPSnapshotServer struct {
 }
 
 // Discovery: on v3 a connected server's prompts and resources arrive in _kiro/mcp/status beside its
-// tools; the registry caches them per server and /api/mcp/status surfaces them, fetched via
-// _kiro/mcp/getPrompt and getResource (KAS 2.12).
+// tools; the registry caches them per server and /api/mcp/status surfaces them. A resource is read
+// through _kiro/mcp/getResource (KAS 2.12).
 
-// MCPPromptArg describes one argument of an MCP prompt.
-type MCPPromptArg struct {
+// MCPPromptInfo describes one prompt a connected MCP server advertises. Name is KAS's display
+// title, the prompt's title when it has one, else its name.
+type MCPPromptInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	Required    bool   `json:"required,omitempty"`
-}
-
-// MCPPromptInfo describes one prompt a connected MCP server advertises.
-// PromptName is the machine id passed to _kiro/mcp/getPrompt; Name is the
-// human-readable display title (they differ — e.g. "Simple Prompt" vs
-// "simple-prompt"). Arguments lists the prompt's parameters, if any.
-type MCPPromptInfo struct {
-	Name        string         `json:"name"`
-	PromptName  string         `json:"prompt_name"`
-	Description string         `json:"description,omitempty"`
-	Arguments   []MCPPromptArg `json:"arguments,omitempty"`
 }
 
 // MCPResourceInfo describes one resource a connected MCP server advertises.

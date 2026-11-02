@@ -239,6 +239,45 @@ func TestCmdForkChat_InheritsTheParentsAgent(t *testing.T) {
 	}
 }
 
+// A parent holding no level hands the tangent the one its session runs, which the tangent's load
+// asserts: KAS's fork drops it, and the seed is another chat's pick.
+func TestCmdForkChat_InheritsTheLevelTheParentRuns(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	_, _ = store.Mutate(t.Context(), "c-parent", func(c *marotte.Chat, _ bool) bool {
+		c.Effort, c.EffortActive = "", "medium"
+		return true
+	})
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
+	host := newForkHost(store, br, "c-parent")
+
+	_, _ = cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
+
+	if c, _ := store.Get(t.Context(), "c-tangent"); c.Effort != "medium" {
+		t.Errorf("tangent effort = %q, want medium, the level the parent's session runs", c.Effort)
+	}
+}
+
+// A parent moved onto a tierless model hands the tangent no tier: the one its old model ran is that
+// model's.
+func TestCmdForkChat_InheritsNoTierFromTheParentsOldModel(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	_, _ = store.Mutate(t.Context(), "c-parent", func(c *marotte.Chat, _ bool) bool {
+		c.Effort, c.EffortActive = "", "high"
+		c.MoveToModel(marotte.ModelAuto)
+		return true
+	})
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
+	host := newForkHost(store, br, "c-parent")
+
+	_, _ = cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
+
+	if c, _ := store.Get(t.Context(), "c-tangent"); c.Model != marotte.ModelAuto || c.Effort != "" {
+		t.Errorf("tangent = {Model %q, Effort %q}, want {auto, none}", c.Model, c.Effort)
+	}
+}
+
 // TestCmdForkChat_StartsFreshOnForkRefusal drives the three refusal shapes.
 // The tangent still opens, but without a bound session or inherited context.
 func TestCmdForkChat_StartsFreshOnForkRefusal(t *testing.T) {
@@ -711,7 +750,7 @@ func TestCmdForkChat_TheRecordSurvivesAClose(t *testing.T) {
 	host := newForkHost(store, br, "c-parent")
 
 	_, _ = cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
-	closeChatTeardown(t.Context(), host, host, host, "c-tangent")
+	closeChatTeardown(t.Context(), host, host, host, host, "c-tangent")
 
 	c, ok := store.Get(t.Context(), "c-tangent")
 	if !ok {

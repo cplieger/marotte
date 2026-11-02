@@ -45,6 +45,8 @@ var (
 	// errAnswerNotDelivered is the 502 for an answer the agent never received: the ask is
 	// pending again, so the client re-enables its card. A code, like errAlreadyAnswered.
 	errAnswerNotDelivered = errors.New("answer_not_delivered")
+	// errCancelNotDelivered is Stop's 502 when a permission card could not be answered, so no cancel was sent.
+	errCancelNotDelivered = errors.New("marotte could not close this reply's permission card, so the reply was not stopped. Press Stop again")
 	// errAskWithdrawn is the 410 for an answer that reached nobody because the ask settled
 	// first; the client leaves the card to that settlement. A code, like errAlreadyAnswered.
 	errAskWithdrawn = errors.New("ask_withdrawn")

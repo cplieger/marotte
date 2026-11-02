@@ -1,9 +1,6 @@
 package auth
 
 import (
-	"bytes"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -51,16 +48,5 @@ func TestReadLoginOptions(t *testing.T) {
 				t.Errorf("readLoginOptions(%s) = %+v, want %+v", tc.body, got, tc.want)
 			}
 		})
-	}
-}
-
-// A denied method is refused before kiro-cli is spawned, so no device code is minted.
-func TestHandleLogin_RefusesAMethodTheAdministratorDenies(t *testing.T) {
-	h := NewHandler(func() string { return "/nonexistent/kiro-cli" })
-	h.managedSettingsPath = managedFile(t, `{"rules":[{"capability":"signin_method","effect":"deny","match":["builder_id"]}]}`)
-	rec := httptest.NewRecorder()
-	h.handleLogin(rec, httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewReader([]byte(`{}`))))
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("POST /api/login for Builder ID under a builder_id deny = %d, want 403: %s", rec.Code, rec.Body)
 	}
 }

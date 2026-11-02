@@ -244,7 +244,7 @@ describe("EolTracker over native edits", () => {
     const raw = "<<<<<<< ours\r\nmine\r\n=======\ntheirs\n>>>>>>> b\nend";
     const { text, record } = normalize(raw);
     const t = new EolTracker(text, record);
-    t.replace(next, "moved");
+    t.replace(next);
     expect(t.uncertain).toBe(false);
     expect(serialize(next, t.snapshot())).toBe(want);
   });
@@ -252,14 +252,14 @@ describe("EolTracker over native edits", () => {
   it("refuses to vouch for moved text that is not the file's own lines", () => {
     const { text, record } = normalize("a\r\nb\nc");
     const t = new EolTracker(text, record);
-    t.replace("ab\nc", "moved");
+    t.replace("ab\nc");
     expect(t.uncertain).toBe(true);
   });
 
   it("refuses to vouch when identical lines with different endings make the move ambiguous", () => {
     const { text, record } = normalize("x\r\nx\nend");
     const t = new EolTracker(text, record);
-    t.replace("x\nend", "moved");
+    t.replace("x\nend");
     expect(t.uncertain).toBe(true);
   });
 

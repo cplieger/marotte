@@ -13,10 +13,12 @@ import {
   registerEvictionExemption,
   codeReferencesFor,
   liveRefusalFor,
+  sessionBusy,
 } from "./store.js";
 import { clearTurnSigs } from "./store-signals.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
+import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { effect, el, touch } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
@@ -30,6 +32,7 @@ import {
   deferWhileReading,
   fillViewport,
   onReadingStateChange,
+  onLiveEdgeRequest,
   onReaderGesture,
   onViewportChange,
   setAnchorProvider,
@@ -39,7 +42,7 @@ import {
   attach as attachScroll,
   detach as detachScroll,
 } from "./scroll.js";
-import type { ReadingState } from "./scroll-controller.js";
+import type { ViewScrollState } from "./scroll-controller.js";
 import {
   buildTurnHeader,
   updateTurnHeader,
@@ -59,18 +62,17 @@ import {
   turnCloseOf,
   turnLedger,
   turnAnchorID,
-  turnFaceProse,
   turnFailureText,
-  turnFoldHides,
   type Turn,
 } from "./turns.js";
+import { turnFoldHides, turnLastMessage } from "./turn-face.js";
 import { severityOf } from "./turn-severity.js";
 import { ICON_REWIND } from "./icons.js";
 import { buildAssistantBubble } from "./fundamentals/text-bubble.js";
 import { isTurnOpen, isTurnRevealed, setTurnOpen } from "./fold-state.js";
 import {
   entryRenders,
-  firstPlanSeq,
+  turnFolds,
   planResidency,
   rendersNothing,
   runCardOwners,
@@ -83,7 +85,7 @@ import {
   type ResidencyAnchor,
 } from "./block-window.js";
 import { forgetHeights, spacerHeight, spacerOrdinalAt } from "./block-heights.js";
-import { wireRowToggle } from "./disclosure-row.js";
+import { slideTurnFolds, wireRowToggle, type TurnFold } from "./disclosure-row.js";
 import { initSearchRevealBuilder, searchHitCount } from "./chat-search.js";
 import {
   mountTurnRail,
@@ -115,7 +117,6 @@ import {
   geometrySkipped,
   setRunCardOwners,
 } from "./messages-blocks.js";
-import { explainError as explainErrorAction } from "./actions/messages.js";
 import { rewindChat } from "./actions/rewind.js";
 import { compactChat } from "./actions/chat.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
@@ -164,8 +165,7 @@ interface ChatView {
   chatID: string;
   el: HTMLElement;
   parked: boolean;
-  scrollTop: number;
-  readingState: ReadingState;
+  scroll: ViewScrollState;
   followBaseline: number;
   reachableEntries: number;
   lastNewestTurnID: string | undefined;
@@ -234,9 +234,7 @@ function parkView(view: ChatView): void {
   if (focused !== null && view.el.contains(focused)) {
     $.promptInput.focus();
   }
-  const scroll = detachScroll();
-  view.scrollTop = scroll.scrollTop;
-  view.readingState = scroll.readingState;
+  view.scroll = detachScroll();
   view.followBaseline = followBaseline;
   view.reachableEntries = reachableEntries;
   view.lastNewestTurnID = lastNewestTurnID;
@@ -272,8 +270,7 @@ function activateView(chatID: string): boolean {
       chatID,
       el: el("div", { className: "transcript-view" }),
       parked: false,
-      scrollTop: 0,
-      readingState: "following",
+      scroll: { scrollTop: 0, readingState: "following" },
       followBaseline: 0,
       reachableEntries: 0,
       lastNewestTurnID: undefined,
@@ -290,7 +287,7 @@ function activateView(chatID: string): boolean {
   view.el.inert = false;
   view.el.classList.add("is-active");
   activeView = view;
-  attachScroll({ el: view.el, scrollTop: view.scrollTop, readingState: view.readingState });
+  attachScroll({ el: view.el, ...view.scroll });
   if (created) {
     // After the attach, and only for a view this call created: `resetScrollState` ends in `setLoadMore(null, false)`,
     // scoped to the attached view, so earlier it strips the outgoing view's pagination, and on an existing view it
@@ -343,6 +340,7 @@ export function disposeChatView(chatID: string): void {
   }
   // Every clamp in the view in one sweep; `parkView` deliberately keeps its clamps and re-measures on unpark.
   releaseClampsIn(view.el);
+  releaseScrollableTablesIn(view.el);
   // After the row disposal, which records one last height per entry. Heights are keyed `(turnID, seq)`, and the cache
   // survives unmounts, so the view's dispose is where they stop meaning anything.
   forgetHeights(get(chatID)?.turn_order ?? []);
@@ -398,6 +396,7 @@ function rebuildTurnBody(session: Session, t: Turn, body: HTMLElement): void {
   disposeAssistantBody(t.id);
   clearTurnSigs(t.id);
   releaseClampsIn(body);
+  releaseScrollableTablesIn(body);
   body.replaceChildren();
   buildAssistantBody(body, t, session.id, turnIsLive(t), want);
   // The wipe took the head spacer.
@@ -416,17 +415,6 @@ function resumeView(view: ChatView, session: Session): void {
   }
   view.pausedStreaming.clear();
   drainParkedTerminals(session.id, view.el);
-}
-
-/** bindLoadingState unsubs keyed by tool id, released at page teardown; a card's loading binding outlives its card. */
-const bindUnbinds = new Map<string, (() => void)[]>();
-function pushBind(key: string, unbind: () => void): void {
-  let arr = bindUnbinds.get(key);
-  if (arr === undefined) {
-    arr = [];
-    bindUnbinds.set(key, arr);
-  }
-  arr.push(unbind);
 }
 
 /** Dispose one turn's per-entry effects, on turn end and on unmount. */
@@ -501,11 +489,7 @@ function svgTemplate(markup: string): () => Node {
 
 let mounted = false;
 
-initToolCallbacks({
-  pushBind,
-  refreshGroupHeader,
-  explainError,
-});
+initToolCallbacks({ refreshGroupHeader });
 initTurnActionCallbacks({ svgTemplate });
 initBlockRenderer({
   pushEntryEffect,
@@ -547,6 +531,7 @@ export function mountChatView(): void {
   // frame to measure in. `onViewportChange` alone also fires for the anchoring a pass's own mutations cause.
   onReaderGesture(noteReaderMoved);
   onViewportChange(windowPass);
+  onLiveEdgeRequest(mountLiveEdge);
   // The tool layer sits below this module, so the multiplexer injects whether a view is parked and that a resident
   // view's chat must not have its messages evicted.
   initToolViewCallbacks({
@@ -581,9 +566,9 @@ export function mountChatView(): void {
 function entryCount(turns: readonly Turn[]): number {
   let n = 0;
   for (const t of turns) {
-    const firstPlan = firstPlanSeq(t, "");
+    const folds = turnFolds(t, "");
     for (const e of t.body) {
-      if (entryRenders(e, "", firstPlan)) {
+      if (entryRenders(e, "", folds)) {
         n++;
       }
     }
@@ -623,7 +608,9 @@ function refreshResumeLabel(): void {
     return;
   }
   // Nothing new since they parked: say what the turn is doing rather than a count of zero.
-  setResumeLabel(session?.thinking === true ? session.working_label || "Working" : "Latest");
+  setResumeLabel(
+    session !== undefined && sessionBusy(session) ? session.working_label || "Working" : "Latest",
+  );
 }
 
 /**
@@ -1046,14 +1033,25 @@ function noteReaderMoved(): void {
 }
 
 /**
- * Re-window on a settled scroll frame the reader caused, over the last full pass's projection; `openable` is
- * recomputed since a fold toggle changes it. `fromScroll` false is a build settling.
+ * Window the live edge in before the reader lands on it: landing first shows the spacers a reading window left there
+ * until the next frame's pass.
  */
-function windowPass(fromScroll = true): void {
+function mountLiveEdge(): void {
+  demandPin = undefined;
+  windowPass("live-edge");
+}
+
+type PassTrigger = "scroll" | "settle" | "live-edge";
+
+/**
+ * Re-window on a settled scroll frame the reader caused, over the last full pass's projection; `openable` is
+ * recomputed since a fold toggle changes it.
+ */
+function windowPass(trigger: PassTrigger = "scroll"): void {
   if (inWindowPass) {
     return;
   }
-  if (fromScroll) {
+  if (trigger === "scroll") {
     if (!readerMoved) {
       return;
     }
@@ -1064,8 +1062,9 @@ function windowPass(fromScroll = true): void {
   if (session === undefined || session.id !== lastActiveId || turns.length === 0) {
     return;
   }
-  // A filling body reports coordinates for a partial range; the builder's settle runs the skipped pass.
-  if (coldBuilds.size > 0 || turnBodyBuilds.size > 0) {
+  // A filling body reports coordinates for a partial range; the builder's settle runs the skipped pass. A live-edge
+  // request reads none (`residencyAnchor` answers Following first), and the builder re-reads `wantedWindow` per batch.
+  if (trigger !== "live-edge" && (coldBuilds.size > 0 || turnBodyBuilds.size > 0)) {
     return;
   }
   const openable = turns.filter(
@@ -1168,7 +1167,7 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
   if (session === undefined) {
     return;
   }
-  if (session.thinking) {
+  if (sessionBusy(session)) {
     return;
   }
   // Through the projection: an undrawn turn is not one the reader can be told they are discarding.
@@ -1217,12 +1216,6 @@ export function teardownAll(): void {
     disposeChatView(chatID);
   }
   // For what no view reaches: a detached render's effects and rows a view walk could not see. Idempotent.
-  for (const arr of bindUnbinds.values()) {
-    for (const fn of arr) {
-      fn();
-    }
-  }
-  bindUnbinds.clear();
   disposeAllToolEffects();
   resetBlockRenders();
   resetScrollState();
@@ -1250,6 +1243,7 @@ const turnSpec: ReconcileSpec<Turn> = {
     disposeTurnBody(key);
     // A rewind truncation drops a card while its view lives, so `disposeChatView` never runs for it.
     releaseClampsIn(card);
+    releaseScrollableTablesIn(card);
   },
 };
 
@@ -1347,6 +1341,7 @@ function applyFoldPass(
     byID.set(t.id, t);
   }
   const changes: (() => void)[] = [];
+  const flips: { card: HTMLElement; folded: boolean; t: Turn | undefined }[] = [];
   // A pass that refused a turn records nothing: recording an unapplied plan drops the delta until the next gesture.
   let refused = false;
   const record = (): void => {
@@ -1404,14 +1399,9 @@ function applyFoldPass(
       }
       continue;
     }
-    changes.push(() => {
-      setCardFolded(card, !open);
-      if (t !== undefined) {
-        syncTurnFace(card, t);
-      }
-    });
+    flips.push({ card, folded: !open, t });
   }
-  if (changes.length === 0) {
+  if (changes.length === 0 && flips.length === 0) {
     record();
     // Born-folded cards queue nothing, so the pagination trigger still needs restoring.
     if (paintMountedCards) {
@@ -1422,6 +1412,12 @@ function applyFoldPass(
   const apply = (): void => {
     for (const change of changes) {
       change();
+    }
+    setCardsFolded(flips);
+    for (const { card, t } of flips) {
+      if (t !== undefined) {
+        syncTurnFace(card, t);
+      }
     }
     // After the batch: a change the plan moved under has skipped itself.
     record();
@@ -1509,6 +1505,12 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
     return;
   }
   btn.dataset["bound"] = "";
+  // The fold opens the request and the body together; a stub's body takes its id when it is built.
+  const req = header.querySelector<HTMLElement>(":scope > .turn-req");
+  if (req !== null) {
+    req.id = `${card.id}-req`;
+  }
+  btn.setAttribute("aria-controls", `${card.id}-req ${turnBodyID(card)}`);
   btn.addEventListener("click", () => {
     // A no-fold turn's header is not a control; `isTurnOpen` ignores overrides for the newest and running turns, so
     // recording one would spring a surprise fold later.
@@ -1542,6 +1544,10 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
   wireRowToggle(header, btn);
 }
 
+function turnBodyID(card: HTMLElement): string {
+  return `${card.id}-body`;
+}
+
 /** Show a turn's search-hit count, so the folded list says which turns are worth opening. */
 function setHitCount(card: HTMLElement, n: number): void {
   const badge = card.querySelector<HTMLElement>(
@@ -1554,27 +1560,41 @@ function setHitCount(card: HTMLElement, n: number): void {
 }
 
 function setCardFolded(card: HTMLElement, folded: boolean): void {
-  if (folded) {
-    card.setAttribute("data-folded", "");
-  } else {
-    card.removeAttribute("data-folded");
-  }
-  const header = card.querySelector<HTMLElement>(":scope > .turn-header");
-  // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
-  header
-    ?.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
-    ?.setAttribute("aria-expanded", folded ? "false" : "true");
+  setCardsFolded([{ card, folded }]);
 }
 
-// A collapsed turn keeps the open layout: header, a face with the final answer prose where the body was, and the
-// ledger. The face carries no run card; the composer's run bar is a live run's persistent surface.
+function setCardsFolded(items: readonly { card: HTMLElement; folded: boolean }[]): void {
+  const slides: TurnFold[] = [];
+  for (const { card, folded } of items) {
+    const flip = (): void => {
+      card.toggleAttribute("data-folded", folded);
+      const header = card.querySelector<HTMLElement>(":scope > .turn-header");
+      // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
+      header
+        ?.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
+        ?.setAttribute("aria-expanded", folded ? "false" : "true");
+    };
+    const body = card.querySelector<HTMLElement>(":scope > .turn-body");
+    if (body === null || card.hasAttribute("data-folded") === folded) {
+      flip();
+      continue;
+    }
+    slides.push({ body, folded, apply: flip });
+  }
+  slideTurnFolds(slides);
+}
 
-/** Per-card content key that detects when the face must be rebuilt; the prose-only face needs no dispose. */
+// A collapsed turn keeps the open layout: header, a face with the turn's last message (`turnLastMessage`) where the
+// body was, and the ledger. The face carries no run card; the composer's run bar is a live run's persistent surface.
+
+/** Per-card content key that detects when the face must be rebuilt; the face's tables are released when it goes. */
 const turnFaces = new WeakMap<HTMLElement, string>();
 
 function faceKey(t: Turn): string {
-  // An outcome flip is when the final prose can be superseded by text of the same length.
-  return `${t.outcome}|${String(turnFaceProse(t).length)}`;
+  // An outcome flip is when the last message can be superseded by text of the same length.
+  return `${t.outcome}|${turnLastMessage(t)
+    .map((m) => String(m.length))
+    .join(",")}`;
 }
 
 function disposeTurnFace(card: HTMLElement): void {
@@ -1582,7 +1602,11 @@ function disposeTurnFace(card: HTMLElement): void {
     return;
   }
   turnFaces.delete(card);
-  card.querySelector(":scope > .turn-face")?.remove();
+  const face = card.querySelector<HTMLElement>(":scope > .turn-face");
+  if (face !== null) {
+    releaseScrollableTablesIn(face);
+    face.remove();
+  }
 }
 
 /** Build or refresh the face to match the fold state; idempotent per content key, so cheap every pass. */
@@ -1597,8 +1621,7 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
   }
   disposeTurnFace(card);
   const face = el("div", { className: "turn-face" });
-  const prose = turnFaceProse(t);
-  if (prose !== "") {
+  for (const prose of turnLastMessage(t)) {
     const bubble = buildAssistantBubble(prose, false);
     bubble.root.classList.add("turn-face-prose");
     face.appendChild(bubble.root);
@@ -1752,7 +1775,7 @@ function buildTurn(t: Turn): HTMLElement {
   // The window entry is `plan.mounted`, so no whole-turn fallback.
   const range = wantedWindow.get(t.id);
   if (range !== undefined) {
-    const body = el("div", { className: "turn-body" });
+    const body = el("div", { className: "turn-body", id: turnBodyID(card) });
     card.appendChild(body);
     startFirstSlice(body, t, bodyRange(t, range));
   } else {
@@ -1833,6 +1856,7 @@ function unmountTurnBody(card: HTMLElement): void {
   }
   // The header's clamp stays with the card.
   releaseClampsIn(body);
+  releaseScrollableTablesIn(body);
   // The tail spacer is the body's sibling, so it leaves with it.
   for (const space of card.querySelectorAll<HTMLElement>(":scope > .turn-space")) {
     space.remove();
@@ -1907,7 +1931,7 @@ function existingOrNewBody(card: HTMLElement): HTMLElement | null {
   if (header === null) {
     return null;
   }
-  const body = el("div", { className: "turn-body" });
+  const body = el("div", { className: "turn-body", id: turnBodyID(card) });
   header.after(body);
   return body;
 }
@@ -1931,7 +1955,7 @@ function drainColdBuilds(): void {
       .finally(() => {
         coldBuilds.delete(id);
         // `buildOrJoin`'s own pass refused while this entry stood.
-        windowPass(false);
+        windowPass("settle");
       });
   }
 }
@@ -1998,7 +2022,7 @@ function buildOrJoin(chatID: string, turnID: string, want: EntryRange): Promise<
   const done = buildTurnBodyBatches(chatID, turnID).finally(() => {
     turnBodyBuilds.delete(turnID);
     // The only pass a head-ward grant gets: the build inserts nothing above its window and a rail jump scrolls first.
-    windowPass(false);
+    windowPass("settle");
   });
   turnBodyBuilds.set(turnID, { range: want, done });
   return done;
@@ -2121,7 +2145,8 @@ function mountRewind(card: HTMLElement, t: Turn): void {
     });
   };
   // Disabled mid-turn: KAS refuses a revert on a session with a live abortController.
-  const busy = getActive()?.thinking ?? false;
+  const session = getActive();
+  const busy = session !== undefined && sessionBusy(session);
   btn.disabled = busy;
   // The consequence, in a channel separate from the name. `data-tooltip`, not `title`, reaches a disabled button.
   btn.setAttribute(
@@ -2217,9 +2242,4 @@ function finalizeStreamingIfNeeded(turns: readonly Turn[]): void {
  *  it. */
 function makeRow(): HTMLDivElement {
   return el("div", { className: "msg-row" }) as HTMLDivElement;
-}
-
-async function explainError(errorText: string, toolTitle: string): Promise<string> {
-  const d = await explainErrorAction.dispatch({ errorText, context: toolTitle });
-  return d?.output ?? "";
 }

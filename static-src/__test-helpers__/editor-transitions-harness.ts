@@ -1,7 +1,7 @@
-// The editor transition suites' staged server, tab strip, save and suggestion requests and confirm
-// dialog. Each suite's `vi.mock` factories spread `mocks` over the real modules, so every suite
-// drives the one state object here. Production modules are imported by the driver, never here:
-// a factory imports this module while the module it replaces is still loading.
+// The editor transition suites' staged server, tab strip, save requests and confirm dialog. Each
+// suite's `vi.mock` factories spread `mocks` over the real modules, so every suite drives the one
+// state object here. Production modules are imported by the driver, never here: a factory imports
+// this module while the module it replaces is still loading.
 import { vi } from "vitest";
 import type * as EditorActions from "../actions/editor.js";
 import type { SaveOutcome } from "../actions/editor.js";
@@ -19,8 +19,6 @@ export interface SaveCall {
   };
 }
 
-type Suggestion = { output?: string; error?: string } | null;
-
 export const server = {
   routes: new Map<string, Staged>(),
   holding: new Set<string>(),
@@ -35,8 +33,6 @@ export const tabs = {
   },
 };
 export const saves: SaveCall[] = [];
-/** Each suggestion request, answered when the test resolves it. */
-export const suggestions: ((answer: Suggestion) => void)[] = [];
 export const confirms: ((ok: boolean) => void)[] = [];
 
 export const mocks = {
@@ -70,13 +66,6 @@ export const mocks = {
         saves.push({ args, handlers });
         return Promise.resolve();
       },
-    },
-    suggestResolution: {
-      ...real.suggestResolution,
-      dispatch: (): Promise<Suggestion> =>
-        new Promise<Suggestion>((resolve) => {
-          suggestions.push(resolve);
-        }),
     },
   }),
   confirm: () => ({
@@ -200,7 +189,6 @@ export function resetHarness(): void {
   server.waiting.length = 0;
   server.hits.clear();
   saves.length = 0;
-  suggestions.length = 0;
   confirms.length = 0;
   tabs.active = "";
   tabs.minted.clear();

@@ -12,13 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/procout"
-)
-
-const (
-	jsonKeyOutput = httpreply.JSONKeyOutput
 )
 
 const (
@@ -30,6 +26,10 @@ const (
 
 	// settingsListMaxBytes is the hostile-output bound on the `settings list` document.
 	settingsListMaxBytes = 64 * 1024
+
+	// cliWaitDelay bounds Wait after a deadline kill. Short: the calls carry 2 to 20 s deadlines
+	// and the settings writes hold a mutex across theirs.
+	cliWaitDelay = 2 * time.Second
 )
 
 // cliRunner abstracts subprocess execution for kiro-cli commands.
@@ -54,6 +54,8 @@ type execCLIRunner struct {
 
 func (r *execCLIRunner) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.cliPath(), args...) //nolint:gosec // G204: binary path from the install manager, never user input
+	// `settings` forks kiro-cli-chat, which would otherwise hold the pipes past a deadline.
+	procgroup.OwnGroup(cmd, cliWaitDelay)
 	if r.env != nil {
 		// The overlay lands LAST: os/exec keeps the last value for a repeated key.
 		cmd.Env = append(os.Environ(), r.env()...)
@@ -111,6 +113,7 @@ const (
 )
 
 type settingMeta struct {
+	// Seed is written where kiro-cli holds no value; empty seeds nothing, so kiro-cli's own default applies.
 	Seed string
 	Kind settingKind
 }
@@ -123,7 +126,7 @@ var allowedKiroSettings = map[string]settingMeta{
 	"chat.enableSubagent":    {Kind: settingBool, Seed: kiroTrue},
 	"chat.enablePromptHints": {Kind: settingBool, Seed: kiroTrue},
 	"hooks.showStatus":       {Kind: settingBool, Seed: kiroTrue},
-	"telemetry.enabled":      {Kind: settingBool, Seed: kiroFalse},
+	"telemetry.enabled":      {Kind: settingBool},
 	// cleanup.periodDays is NOT here: marotte owns chat retention and pins kiro-cli's purge off.
 	"chat.disableInheritingDefaultResources": {Kind: settingBool, Seed: kiroFalse},
 }

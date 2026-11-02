@@ -7,6 +7,7 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { settingsPayload } from "./__test-helpers__/settings.js";
+import type { SettingsSwitch } from "./persist.js";
 
 const H = vi.hoisted(() => ({
   mockRun: vi.fn(),
@@ -17,6 +18,9 @@ const H = vi.hoisted(() => ({
   mockInitGitBadge: vi.fn(),
   mockInitGitPanel: vi.fn(),
   mockOpenConfigFile: vi.fn(() => Promise.resolve()),
+  mockHeapDispatch: vi.fn<(args: { mib: number }) => Promise<unknown>>(),
+  /** Whether persist.adoptWriteAnswer takes a write's answer: false for one the page does not adopt. */
+  adopts: true,
 }));
 
 vi.mock("./actions/tools.js", () => ({
@@ -38,6 +42,8 @@ vi.mock("./actions/settings.js", () => ({
   saveSteering: {},
   logout: {},
   setKiroSetting: { dispatch: (...a: unknown[]) => H.mockKiroDispatch(...a) },
+  setEngineHeap: { dispatch: (args: { mib: number }) => H.mockHeapDispatch(args) },
+  setAdditionalDirectories: { dispatch: vi.fn() },
 }));
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve(undefined)),
@@ -63,8 +69,11 @@ vi.mock("./save-indicator.js", () => ({
 }));
 vi.mock("./persist.js", () => ({
   loadSettings: vi.fn(),
-  patchSettings: vi.fn(),
-  initSettingsTracking: vi.fn(),
+  refreshSettings: vi.fn(),
+  patchSettings: vi.fn(() => Promise.resolve({ outcome: "unchanged" })),
+  adoptWriteAnswer: () => H.adopts,
+  newestSettings: vi.fn(),
+  settingsAsShown: vi.fn(() => null),
 }));
 // Feature modules settings.ts wires in initUI — inert stubs so the import graph loads without side
 // effects (initUI is never called here).
@@ -133,6 +142,7 @@ const {
   initExperimentalToggles,
   initGeneralPanelControls,
   initPostAuthUI,
+  engineHeapMiB,
   shellTimeoutMs,
   themeStorage,
   _resetThemeForTest,
@@ -172,6 +182,16 @@ beforeEach(() => {
   seedDom();
 });
 
+/** persist.patchSettings for a write the server refuses: it puts each switch back, then answers failed. */
+function failAndRollBack(
+  _patch: unknown,
+  ...switches: SettingsSwitch[]
+): Promise<{ outcome: "failed" }> {
+  for (const { el } of switches) {
+    el.checked = !el.checked;
+  }
+  return Promise.resolve({ outcome: "failed" });
+}
 describe("extractDiagnosticVersion", () => {
   it("reads q-details.version (the Amazon-Q-derived schema)", () => {
     expect(extractDiagnosticVersion('{"q-details":{"version":"2.12.0"}}')).toBe("2.12.0");
@@ -418,6 +438,21 @@ describe("the chat-retention row", () => {
     expect(patchSettings).toHaveBeenCalledTimes(1);
   });
 
+  it("paints the settings as shown and falls back to the number the server holds", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ chat_retention_days: 14 }));
+    daysInput().value = "";
+
+    applyGeneralPanel(
+      settingsPayload({ chat_retention_days: 14 }),
+      settingsPayload({ chat_retention_days: -1 }),
+    );
+    expect(foreverInput().checked, "the write not yet committed").toBe(true);
+
+    toggleForever(false);
+    expect(patchSettings).toHaveBeenLastCalledWith({ chat_retention_days: 14 }, expect.anything());
+  });
+
   it("does not rewrite the day box while the reader is in it", () => {
     initRetention(settingsPayload({ chat_retention_days: 14 }));
     daysInput().focus();
@@ -440,6 +475,38 @@ describe("the chat-retention row", () => {
     expect(daysRow().classList.contains("hidden")).toBe(false);
     expect(daysInput().value).toBe("30");
     expect(patchSettings).toHaveBeenLastCalledWith({ chat_retention_days: 30 }, expect.anything());
+  });
+
+  it("shows the Days-kept row again when the write that hid it fails", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ chat_retention_days: 30 }));
+    vi.mocked(patchSettings).mockImplementationOnce(failAndRollBack);
+
+    toggleForever(true);
+
+    await vi.waitFor(() => {
+      expect(daysRow().classList.contains("hidden")).toBe(false);
+    });
+    expect(foreverInput().checked).toBe(false);
+  });
+});
+
+// Agent capabilities: the switch paints the stored value and its flip writes the key the server reads.
+describe("the Model fallback switch", () => {
+  it("shows the stored value and writes model_fallback_enabled on a flip", async () => {
+    const { patchSettings } = await import("./persist.js");
+    document.body.innerHTML = `<input type="checkbox" id="flag-model-fallback">`;
+    const box = document.getElementById("flag-model-fallback") as HTMLInputElement;
+    initRetention(settingsPayload({ model_fallback_enabled: true }));
+    expect(box.checked).toBe(true);
+
+    box.checked = false;
+    box.dispatchEvent(new Event("change"));
+
+    expect(patchSettings).toHaveBeenLastCalledWith(
+      { model_fallback_enabled: false },
+      { el: box, key: "model_fallback_enabled", on: true },
+    );
   });
 });
 
@@ -532,6 +599,21 @@ describe("the theme, between config.json and its paint cache", () => {
     expect(H.mockApplyTheme).toHaveBeenLastCalledWith("light");
   });
 
+  it("goes back to the theme the page shows when a chosen theme's write fails", async () => {
+    const { cachedTheme } = await import("./device-view.js");
+    const { patchSettings, settingsAsShown } = await import("./persist.js");
+    adoptThemeFromSettings(settingsPayload({ theme: "dark" }));
+    vi.mocked(patchSettings).mockResolvedValueOnce({ outcome: "failed" });
+    vi.mocked(settingsAsShown).mockReturnValueOnce(settingsPayload({ theme: "dark" }));
+
+    themeStorage.set("light");
+    await vi.waitFor(() => {
+      expect(H.mockApplyTheme).toHaveBeenLastCalledWith("dark");
+    });
+    expect(cachedTheme()).toBe("dark");
+    expect(patchSettings, "putting it back writes nothing").toHaveBeenCalledTimes(1);
+  });
+
   it("ignores a value that is not one of the three choices", async () => {
     const { cachedTheme } = await import("./device-view.js");
     adoptThemeFromSettings(settingsPayload({ theme: "chartreuse" }));
@@ -564,8 +646,7 @@ describe("initExperimentalToggles", () => {
 
   /** Wire the toggles and wait out the initial read, so a late arrival of it cannot land between
    *  a test's own toggle and its assertion. The default mock answers no value for any key, and
-   *  `hooks.showStatus` is the one row whose own default is ON, so it is what says the read has
-   *  landed. */
+   *  `hooks.showStatus`'s own default is ON, so it is what says the read has landed. */
   async function initFlags(): Promise<void> {
     initExperimentalToggles();
     await vi.waitFor(() => {
@@ -681,9 +762,8 @@ describe("initExperimentalToggles", () => {
   });
 
   // The endpoint answers "" for a key `cli.json` does not carry AND for a read it could not make,
-  // and the three rows do not share a polarity — so one blanket unset-means-on rule claimed
-  // telemetry was on while it was off, and claimed default-resource inheritance was disabled while
-  // it was not.
+  // and the three rows do not share a polarity, so one blanket rule claims default-resource
+  // inheritance is disabled while it is not.
   it("renders an absent key at that row's own default, not at one shared rule", async () => {
     const { apiGet } = await import("./api-client.js");
     vi.mocked(apiGet).mockResolvedValueOnce({ settings: {} });
@@ -693,7 +773,7 @@ describe("initExperimentalToggles", () => {
     await vi.waitFor(() => {
       expect(box("flag-hooks-status").checked).toBe(true);
     });
-    expect(box("flag-telemetry").checked).toBe(false);
+    expect(box("flag-telemetry").checked).toBe(true);
     expect(box("flag-disable-inherit-resources").checked).toBe(false);
   });
 
@@ -771,7 +851,10 @@ describe("the payload-link guard switch", () => {
     initRetention(settingsPayload({ guard_payload_links: true }));
     box().checked = false;
     box().dispatchEvent(new Event("change"));
-    expect(patchSettings).toHaveBeenCalledExactlyOnceWith({ guard_payload_links: false }, box());
+    expect(patchSettings).toHaveBeenCalledExactlyOnceWith(
+      { guard_payload_links: false },
+      { el: box(), key: "guard_payload_links", on: true },
+    );
   });
 });
 
@@ -794,7 +877,10 @@ describe("the wait-for-MCP-servers switch", () => {
     initRetention(settingsPayload({ mcp_wait_for_ready: false }));
     box().checked = true;
     box().dispatchEvent(new Event("change"));
-    expect(patchSettings).toHaveBeenCalledExactlyOnceWith({ mcp_wait_for_ready: true }, box());
+    expect(patchSettings).toHaveBeenCalledExactlyOnceWith(
+      { mcp_wait_for_ready: true },
+      { el: box(), key: "mcp_wait_for_ready", on: true },
+    );
   });
 });
 
@@ -844,7 +930,7 @@ describe("the automatic-compaction switch and slider", () => {
     expect(patchSettings).not.toHaveBeenCalled();
     expect(compactionPolicy.value).toEqual({ enabled: true, pct: 65 });
     range().dispatchEvent(new Event("change"));
-    expect(patchSettings).toHaveBeenCalledExactlyOnceWith({ auto_compact_pct: 65 }, range());
+    expect(patchSettings).toHaveBeenCalledExactlyOnceWith({ auto_compact_pct: 65 });
   });
 
   it("writes the switch and hides the slider when the reader turns it off", async () => {
@@ -855,9 +941,24 @@ describe("the automatic-compaction switch and slider", () => {
     toggle().dispatchEvent(new Event("change"));
     expect(patchSettings).toHaveBeenCalledExactlyOnceWith(
       { auto_compaction_enabled: false },
-      toggle(),
+      { el: toggle(), key: "auto_compaction_enabled", on: true },
     );
     expect(row().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the slider and the policy again when the write that turned the switch off fails", async () => {
+    const { patchSettings } = await import("./persist.js");
+    const { compactionPolicy } = await import("./context-ring.js");
+    initRetention(settingsPayload({ auto_compaction_enabled: true, auto_compact_pct: 80 }));
+    vi.mocked(patchSettings).mockImplementationOnce(failAndRollBack);
+    toggle().checked = false;
+    toggle().dispatchEvent(new Event("change"));
+
+    await vi.waitFor(() => {
+      expect(row().classList.contains("hidden")).toBe(false);
+    });
+    expect(toggle().checked).toBe(true);
+    expect(compactionPolicy.value).toEqual({ enabled: true, pct: 80 });
   });
 });
 
@@ -979,7 +1080,7 @@ describe("the agent-capability selects and the shell timeout", () => {
     box("flag-cloudformation-safety").dispatchEvent(new Event("change"));
     expect(patchSettings).toHaveBeenLastCalledWith(
       { cloudformation_safety_check: "off" },
-      box("flag-cloudformation-safety"),
+      { el: box("flag-cloudformation-safety"), key: "cloudformation_safety_check", on: "on" },
     );
   });
 
@@ -989,13 +1090,10 @@ describe("the agent-capability selects and the shell timeout", () => {
     vi.mocked(patchSettings).mockClear();
     timeout().value = "45";
     timeout().dispatchEvent(new Event("change"));
-    expect(patchSettings).toHaveBeenLastCalledWith(
-      { terminal_command_timeout_ms: 45_000 },
-      timeout(),
-    );
+    expect(patchSettings).toHaveBeenLastCalledWith({ terminal_command_timeout_ms: 45_000 });
     timeout().value = "";
     timeout().dispatchEvent(new Event("change"));
-    expect(patchSettings).toHaveBeenLastCalledWith({ terminal_command_timeout_ms: 0 }, timeout());
+    expect(patchSettings).toHaveBeenLastCalledWith({ terminal_command_timeout_ms: 0 });
   });
 
   it.each([
@@ -1008,5 +1106,125 @@ describe("the agent-capability selects and the shell timeout", () => {
     ["5000", 1_800_000],
   ])("shellTimeoutMs(%j) is %i", (raw, want) => {
     expect(shellTimeoutMs(raw)).toBe(want);
+  });
+});
+
+describe("the agent engine memory limit", () => {
+  function heap(): HTMLInputElement {
+    return document.getElementById("engine-heap-mib") as HTMLInputElement;
+  }
+
+  function enter(value: string): void {
+    heap().value = value;
+    heap().dispatchEvent(new Event("change"));
+  }
+
+  beforeEach(() => {
+    H.mockHeapDispatch.mockReset();
+    H.adopts = true;
+    document.body.innerHTML = `<input type="number" id="engine-heap-mib">`;
+  });
+
+  it("reads an empty box as kiro-cli's default and refuses what is no whole number", () => {
+    expect(engineHeapMiB("")).toBe(0);
+    expect(engineHeapMiB("  ")).toBe(0);
+    expect(engineHeapMiB("2048")).toBe(2048);
+    expect(engineHeapMiB(" 4096 ")).toBe(4096);
+    expect(engineHeapMiB("1.5")).toBeNull();
+    expect(engineHeapMiB("-1")).toBeNull();
+    expect(engineHeapMiB("2e3")).toBeNull();
+    expect(engineHeapMiB("abc")).toBeNull();
+  });
+
+  it("shows the stored limit, empty for the default", () => {
+    initRetention(settingsPayload({ engine_heap_mib: 3072 }));
+    expect(heap().value).toBe("3072");
+    applyGeneralPanel(settingsPayload({ engine_heap_mib: 0 }));
+    expect(heap().value).toBe("");
+  });
+
+  it("writes the typed limit through its own action", async () => {
+    const { showSaved } = await import("./save-indicator.js");
+    H.mockHeapDispatch.mockResolvedValueOnce(settingsPayload({ engine_heap_mib: 2048 }));
+    initRetention(settingsPayload());
+    enter("2048");
+    expect(H.mockHeapDispatch).toHaveBeenCalledWith({ mib: 2048 });
+    await vi.waitFor(() => {
+      expect(showSaved).toHaveBeenCalledWith("engine_heap_mib");
+    });
+    expect(heap().value).toBe("2048");
+  });
+
+  it("puts the server's value back when the write is refused", async () => {
+    const { showError } = await import("./save-indicator.js");
+    H.mockHeapDispatch.mockResolvedValueOnce(null);
+    initRetention(settingsPayload({ engine_heap_mib: 3072 }));
+    enter("999999");
+    await vi.waitFor(() => {
+      expect(showError).toHaveBeenCalledWith("engine_heap_mib");
+    });
+    expect(heap().value).toBe("3072");
+  });
+
+  /** Two edits in flight, answered in call order as the settings scope serializes them. */
+  async function twoEdits(first: unknown, second: unknown): Promise<void> {
+    let answerFirst!: (v: unknown) => void;
+    let answerSecond!: (v: unknown) => void;
+    H.mockHeapDispatch
+      .mockReturnValueOnce(new Promise((r) => (answerFirst = r)))
+      .mockReturnValueOnce(new Promise((r) => (answerSecond = r)));
+    initRetention(settingsPayload({ engine_heap_mib: 3072 }));
+    enter("2048");
+    enter("4096");
+    answerFirst(first);
+    await Promise.resolve();
+    answerSecond(second);
+    await vi.waitFor(() => {
+      expect(H.mockHeapDispatch).toHaveBeenCalledTimes(2);
+    });
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  it("keeps a newer edit when an older one is refused", async () => {
+    const { showError, showSaved } = await import("./save-indicator.js");
+    vi.mocked(showError).mockClear();
+    vi.mocked(showSaved).mockClear();
+    await twoEdits(null, settingsPayload({ engine_heap_mib: 4096 }));
+    expect(heap().value, "the refused older edit repaints nothing").toBe("4096");
+    expect(showError).not.toHaveBeenCalledWith("engine_heap_mib");
+    expect(showSaved).toHaveBeenCalledWith("engine_heap_mib");
+  });
+
+  it("goes back to the older saved edit when the newer one is refused", async () => {
+    const { showError } = await import("./save-indicator.js");
+    vi.mocked(showError).mockClear();
+    await twoEdits(settingsPayload({ engine_heap_mib: 2048 }), null);
+    expect(heap().value, "the server holds the older edit").toBe("2048");
+    expect(showError).toHaveBeenCalledWith("engine_heap_mib");
+  });
+
+  it("shows newer settings' limit over a write's answer older than them", async () => {
+    const { showSaved } = await import("./save-indicator.js");
+    let answer!: (v: unknown) => void;
+    H.mockHeapDispatch.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    initRetention(settingsPayload({ engine_heap_mib: 3072 }));
+    enter("2048");
+    applyGeneralPanel(settingsPayload({ engine_heap_mib: 4096 }));
+    expect(heap().value, "the edit still saving owns the box").toBe("2048");
+    H.adopts = false;
+    answer(settingsPayload({ engine_heap_mib: 2048 }));
+    await vi.waitFor(() => {
+      expect(showSaved).toHaveBeenCalledWith("engine_heap_mib");
+    });
+    expect(heap().value).toBe("4096");
+  });
+
+  it("sends nothing for text that is no whole number", async () => {
+    const { showError } = await import("./save-indicator.js");
+    initRetention(settingsPayload({ engine_heap_mib: 0 }));
+    enter("1.5");
+    expect(H.mockHeapDispatch).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith("engine_heap_mib");
+    expect(heap().value).toBe("");
   });
 });

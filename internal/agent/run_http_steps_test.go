@@ -47,9 +47,9 @@ func stepRouteHub(t *testing.T, tc stepRouteCase) (*Runtime, *fakeBridge, *http.
 	h.runs.log = newRunLog(t.TempDir())
 	h.bridge.mgr.insert(runChatID(tc.WorkflowID), &sharedBridge{bridge: br, state: bridgeIdle})
 	br.setCallResult(methodKiroWorkflowInspect,
-		stepTreeInspect(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning, rootID, stepID, "sess_step"))
+		stepTreeInspect(t, tc.WorkflowID, marotte.RunStatusRunning, marotte.RunNodeStatusRunning, rootID, stepID, "sess_step"))
 	br.setCallResult(marotte.MethodSessionSteer, json.RawMessage(`{"queued":true}`))
-	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: tc.WorkflowID, NodePath: workflow.PathKey(tc.NodePath), NodeID: stepID, SessionID: "sess_step"}, "")
+	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: tc.WorkflowID, NodePath: workflow.PathKey(tc.NodePath), SessionID: "sess_step"}, "")
 	mux := http.NewServeMux()
 	(&runRoutes{runs: h.Runs()}).register(mux)
 	return h, br, mux
@@ -72,7 +72,7 @@ func postStep(t *testing.T, mux *http.ServeMux, target string, body any) *httpte
 	return rec
 }
 
-// releaseSteerClear answers the next _session/steer/clear with steerIDs and moves the carrier's read loop
+// releaseSteerClear answers the next _session/steer/clear with steerIDs and moves the host session's lane
 // past its reply, the barrier a remove or a clear awaits.
 func releaseSteerClear(t *testing.T, h *Runtime, br *fakeBridge, workflowID string, seq uint64, steerIDs ...string) {
 	t.Helper()
@@ -131,6 +131,25 @@ func TestStepRoutes_ReachTheStepTheClientAddresses(t *testing.T) {
 	}
 }
 
+// Discard all deletes the step's unread rows, so the step's log gets no note for them.
+func TestStepRoutes_AClearLeavesTheStepsLogNoNote(t *testing.T) {
+	tc := stepRouteCases(t)[0]
+	h, br, mux := stepRouteHub(t, tc)
+	if rec := postStep(t, mux, tc.StepURL+"/message", marotte.RunStepMessageRequest{Text: "hi", MessageID: "m-1"}); rec.Code != http.StatusOK {
+		t.Fatalf("Setup: message = %d %s", rec.Code, rec.Body.String())
+	}
+	releaseSteerClear(t, h, br, tc.WorkflowID, 3, "steer-m-1")
+
+	rec := postStep(t, mux, tc.StepURL+"/steer-clear", nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST %s/steer-clear = %d %s, want 200", tc.StepURL, rec.Code, rec.Body.String())
+	}
+	if got := stepSteersAt(t, h, tc.WorkflowID); len(got) != 0 {
+		t.Errorf("run log steers = %+v, want none for a discarded row", got)
+	}
+}
+
 // A node path is a step of the run only when the run's own tree holds it.
 func TestStepRoutes_APathTheRunsTreeDoesNotHoldIsUnknown(t *testing.T) {
 	tc := stepRouteCases(t)[0]
@@ -149,6 +168,21 @@ func TestStepRoutes_APathTheRunsTreeDoesNotHoldIsUnknown(t *testing.T) {
 			marotte.RunStepSteerRequest{SteerID: "steer-x"})
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("POST a foreign path's %s = %d %s, want 404", verb, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestRunRoutes_NoStepStatusWrite pins that marotte serves no ordinary step-status write: KAS's
+// update targets positionally, and continuing a step without an answer is a typed message.
+func TestRunRoutes_NoStepStatusWrite(t *testing.T) {
+	h, _, _ := newTestHub()
+	mux := http.NewServeMux()
+	(&runRoutes{runs: h.Runs()}).register(mux)
+	for _, body := range []string{`{"node_id":"review","status":"running"}`, `{"node_id":"review","status":"completed"}`} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/step", strings.NewReader(body)))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("POST /api/runs/wf_1/step %s = %d, want 404", body, rec.Code)
 		}
 	}
 }

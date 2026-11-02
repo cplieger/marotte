@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,7 +26,7 @@ func TestTemplateToResponse(t *testing.T) {
 	    {"id": "mode", "currentValue": "vibe", "options": []},
 	    {"id": "model", "currentValue": "m-default", "options": [
 	      {"value": "m-default", "name": "Default Model", "description": "Fast", "_meta": {"kiro": {"rateMultiplier": 1}}},
-	      {"value": "m-big", "name": "Big Model", "_meta": {"kiro": {"rateMultiplier": 2.5, "hasEffort": true}}},
+	      {"value": "m-big", "name": "Big Model", "_meta": {"kiro": {"rateMultiplier": 2.5, "effortLevels": ["low", "high"]}}},
 	      {"value": "m-old", "name": "Old", "description": "[Deprecated] legacy"},
 	      {"name": "Group", "options": [
 	        {"value": "m-grouped", "name": "Grouped Model"}
@@ -54,7 +55,7 @@ func TestTemplateToResponse(t *testing.T) {
 	if len(got.Models) != 3 || ids[0] != "m-default" || ids[1] != "m-big" || ids[2] != "m-grouped" {
 		t.Fatalf("models: %v", ids)
 	}
-	if got.Models[1].RateMultiplier != 2.5 || !got.Models[1].HasEffort {
+	if got.Models[1].RateMultiplier != 2.5 || !slices.Equal(got.Models[1].EffortTiers, []string{"low", "high"}) {
 		t.Errorf("model meta mapping: %+v", got.Models[1])
 	}
 	if got.Catalog != marotte.CatalogReady {
@@ -123,7 +124,7 @@ func TestTemplateToResponseEmpty(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	s := string(b)
-	if s != `{"catalog":"empty","modes":[],"models":[],"effort_levels":[]}` {
+	if s != `{"catalog":"empty","modes":[],"models":[]}` {
 		t.Errorf("empty response JSON: %s", s)
 	}
 }
@@ -301,7 +302,7 @@ func TestHandleConfigTemplate_EveryBodyKeepsItsArraysNonNull(t *testing.T) {
 			h.handleConfigTemplate(rec, req)
 
 			body := rec.Body.String()
-			for _, key := range []string{"modes", "models", "effort_levels"} {
+			for _, key := range []string{"modes", "models"} {
 				if !strings.Contains(body, `"`+key+`":[]`) {
 					t.Errorf("body has no empty %s array: %s", key, body)
 				}
@@ -310,5 +311,77 @@ func TestHandleConfigTemplate_EveryBodyKeepsItsArraysNonNull(t *testing.T) {
 				t.Errorf("body carries a null: %s", body)
 			}
 		})
+	}
+}
+
+const getStateReply = `{
+  "layers": [{"id": "kiro-agent-defaults"}, {"id": "user-local"}, {"id": "workspace"}],
+  "resources": [{"type": "agent", "items": [
+    {"layer": "kiro-agent-defaults", "value": {"id": "wf-coder", "name": "wf-coder", "description": "step agent"}},
+    {"layer": "workspace", "value": {"id": "reviewer", "name": "reviewer", "description": "Reviews the diff"}},
+    {"layer": "workspace", "value": {"id": "semantic_reviewer", "name": "semantic_reviewer", "description": "ours"}}
+  ]}]
+}`
+
+const templateWithReviewer = `{
+  "modes": {"availableModes": [
+    {"id": "vibe", "name": "Default", "_meta": {"kiro": {"source": "bundled"}}},
+    {"id": "semantic_reviewer", "name": "Semantic Reviewer", "_meta": {"kiro": {"source": "bundled"}}}
+  ]},
+  "configOptions": [{"id": "model", "currentValue": "m", "options": [{"value": "m", "name": "M"}]}]
+}`
+
+func serveConfigTemplate(t *testing.T, h *Runtime) marotte.ConfigTemplateResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.handleConfigTemplate(rec, httptest.NewRequest(http.MethodGet, "/api/config-template", nil))
+	var got marotte.ConfigTemplateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode reply %q: %v", rec.Body.String(), err)
+	}
+	return got
+}
+
+func TestConfigTemplate_CarriesWorkspaceAgentsBeforeAnySession(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroConfigTemplate:   json.RawMessage(templateWithReviewer),
+		methodKiroConfigurationGet: json.RawMessage(getStateReply),
+	}
+
+	got := serveConfigTemplate(t, h)
+
+	want := []marotte.SessionMode{
+		{ID: "vibe", Name: "Default", Source: "bundled"},
+		{ID: "semantic_reviewer", Name: "semantic_reviewer", Description: "ours", Source: "workspace", Shadows: "bundled"},
+		{ID: "reviewer", Name: "reviewer", Description: "Reviews the diff", Source: "workspace"},
+	}
+	if !slices.Equal(got.Modes, want) {
+		t.Errorf("modes = %+v, want %+v", got.Modes, want)
+	}
+	br.mu.Lock()
+	params := br.lastParams[methodKiroConfigurationGet]
+	br.mu.Unlock()
+	if params["observer"] != "workspace" || !slices.Equal(params["roots"].([]string), []string{h.lifecycle.workDir}) {
+		t.Errorf("getState params = %v, want a workspace observer of %q", params, h.lifecycle.workDir)
+	}
+}
+
+func TestConfigTemplate_GetStateFailureServesBaseModes(t *testing.T) {
+	logs := captureLogs(t)
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroConfigTemplate: json.RawMessage(templateWithReviewer)}
+	br.callErrs = map[string]error{methodKiroConfigurationGet: errors.New("kas gone")}
+
+	got := serveConfigTemplate(t, h)
+
+	if len(got.Modes) != 2 || got.Modes[1].ID != "semantic_reviewer" || got.Modes[1].Shadows != "" {
+		t.Errorf("modes = %+v, want the template's two modes unchanged", got.Modes)
+	}
+	if got.Catalog != marotte.CatalogReady {
+		t.Errorf("catalog = %q, want %q: the agent list failing is not the catalog failing", got.Catalog, marotte.CatalogReady)
+	}
+	if out := logs.String(); !strings.Contains(out, `"msg":"workspace configuration failed"`) {
+		t.Errorf("a failed getState said nothing: %s", out)
 	}
 }

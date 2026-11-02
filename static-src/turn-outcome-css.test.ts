@@ -32,15 +32,12 @@ const SURFACES = [
   { name: "header dot", sel: (attr: string) => `.turn-header[${attr}] .turn-dot` },
   { name: "footer wash", sel: (attr: string) => `.turn-footer[${attr}]` },
   { name: "footer glyph", sel: (attr: string) => `.turn-footer[${attr}] .turn-ledger-glyph` },
-  {
-    name: "turn-map mark",
-    sel: (attr: string) => `.turn-pill[${attr}] > .turn-pill-link > .turn-pill-mark`,
-  },
+  { name: "turn-map bar", sel: (attr: string) => `.turn-pill[${attr}]` },
 ] as const;
 
 /** Which severities a surface paints a MARK for. `clean` and `running` paint
- *  nothing on the dot, the glyph and the map's lane (absence IS the clean mark, the footer reports
- *  how a turn ENDED, and the map outlines a running bar instead). */
+ *  nothing on the dot and the glyph, and the map's bar keeps its resting ink (absence IS the clean
+ *  mark, the footer reports how a turn ENDED, and the map outlines a running bar instead). */
 const MARKED: TurnSeverity[] = ["stopped", "broken"];
 
 describe("hue comes off the severity table, on every surface", () => {
@@ -48,9 +45,9 @@ describe("hue comes off the severity table, on every surface", () => {
     for (const surface of SURFACES) {
       for (const severity of MARKED) {
         const rule = ruleContaining(turns, surface.sel(`data-severity="${severity}"`));
-        // A ring is an inset `box-shadow` (the turn map's stopped mark).
+        // The map's bar takes its colour through `--pill-ink`.
         expect(rule.body, `${surface.name} / ${severity} declares a colour`).toMatch(
-          /(background|border-color|color|box-shadow):/u,
+          /(background|border-color|color|--pill-ink):/u,
         );
       }
     }
@@ -69,13 +66,8 @@ describe("hue comes off the severity table, on every surface", () => {
     );
     expect(glyph.body, "a broken glyph is filled, not a ring").toMatch(/background:/u);
 
-    const mark = ruleContaining(
-      turns,
-      '.turn-pill[data-severity="broken"] > .turn-pill-link > .turn-pill-mark',
-    );
-    expect(mark.body, "a broken turn-map mark is a filled red disc").toMatch(
-      /background:\s*var\(--c-red\)/u,
-    );
+    const bar = ruleContaining(turns, '.turn-pill[data-severity="broken"]');
+    expect(bar.body, "a broken turn-map bar is red").toMatch(/--pill-ink:\s*var\(--c-red\)/u);
 
     const wash = ruleContaining(turns, '.turn-footer[data-severity="broken"]');
     // The tinted-band token, never a `color-mix()` of the ink into the band: a mix

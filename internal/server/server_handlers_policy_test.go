@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -66,7 +67,7 @@ func TestPolicyViewFileFallback(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
 	t.Setenv("HOME", home)
-	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: work})
+	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
 	if err := policyfile.Save(t.Context(), up, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny", Match: []string{"sudo *"}}},
 	}); err != nil {
@@ -98,7 +99,7 @@ func TestPolicyRuleAddDefaultsToAsk(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
+	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
 	f, err := policyfile.Load(wp)
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +118,7 @@ func TestPolicyRuleAddExplicitAllow(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: work})
+	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
 	f, _ := policyfile.Load(up)
 	if len(f.Rules) != 1 || f.Rules[0].Effect != "allow" || f.Rules[0].Capability != "web_fetch" {
 		t.Errorf("written rule = %+v", f.Rules)
@@ -148,7 +149,7 @@ func TestPolicyRuleUnrecognisedCapabilityRoundTrips(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (KAS is the authority on the vocabulary)", rec.Code)
 	}
-	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: work})
+	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
 	f, err := policyfile.Load(up)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -233,7 +234,7 @@ func TestPolicyRuleRemoveDenyRequiresConfirm(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
 	t.Setenv("HOME", home)
-	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
+	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
 	if err := policyfile.Save(t.Context(), wp, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny", Match: []string{"rm -rf *"}}},
 	}); err != nil {
@@ -309,7 +310,7 @@ func TestPolicyRuleUpdate(t *testing.T) {
 		home := t.TempDir()
 		work := t.TempDir()
 		t.Setenv("HOME", home)
-		wp, _ = policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
+		wp, _ = policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
 		if err := policyfile.Save(t.Context(), wp, &policyfile.File{
 			Rules: []policyfile.Rule{
 				{Capability: "shell", Effect: "ask", Match: []string{"rm *"}},
@@ -425,7 +426,7 @@ func TestPolicyRuleUpdate_UnchangedEffectNeedsNoConfirm(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
 	t.Setenv("HOME", home)
-	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
+	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
 	if err := policyfile.Save(t.Context(), wp, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "ask", Match: []string{"rm *"}}},
 	}); err != nil {
@@ -448,8 +449,8 @@ func TestPolicyRulesFromFiles_ScopeSelectsItsOwnFile(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
 	t.Setenv("HOME", home)
-	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: work})
-	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
+	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
+	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
 	if err := policyfile.Save(t.Context(), up, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "web_fetch", Effect: "allow"}},
 	}); err != nil {

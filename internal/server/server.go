@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"os/signal"
 	"strings"
 	"sync/atomic"
@@ -18,7 +18,7 @@ import (
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 const port = "9847"
@@ -28,19 +28,17 @@ var listenPort = port
 
 // Server holds shared state and registers all HTTP handlers.
 type Server struct {
-	forges        routeHandler
-	mcpConfig     routeHandler
-	chats         routeHandler
-	git           routeHandler
-	gitAI         routeHandler
-	files         routeHandler
-	auth          routeHandler
-	push          routeHandler
-	mcpStatus     routeHandler
-	utilityPrompt utilityPrompter
-	accountUsage  AccountUsageProvider
-	policy        policyProvider
-	policyReload  policyReloader
+	forges       routeHandler
+	mcpConfig    routeHandler
+	chats        routeHandler
+	git          routeHandler
+	files        routeHandler
+	auth         routeHandler
+	push         routeHandler
+	mcpStatus    routeHandler
+	accountUsage AccountUsageProvider
+	policy       policyProvider
+	policyReload policyReloader
 	// governance answers the administrator's lock map; nil means nothing is locked.
 	governance governanceLocks
 	// kiroDefaults fills GET /api/settings' kiro_defaults; nil leaves it empty.
@@ -79,12 +77,14 @@ type Server struct {
 	sensitive filebrowse.Sensitive
 	// heldKiroPrefs keeps the user's value of each kiro-cli setting a lock pins.
 	heldKiroPrefs heldKiroPrefs
-	// trustedProxies feeds webhttp.WithClientIP; nil logs the unspoofable socket peer.
-	trustedProxies []*net.IPNet
+	// trustedProxies feeds clientIP; nil logs the unspoofable socket peer.
+	trustedProxies []netip.Prefix
 	acctUsage      acctUsageCache
 	cliTimeouts    cliTimeouts
 	// ready is true between listener bind and the shutdown signal.
 	ready atomic.Bool
+	// ignoredPublicWarned latches clientIP's one warning per process.
+	ignoredPublicWarned atomic.Bool
 }
 
 // Option configures a Server at construction time.
@@ -93,17 +93,14 @@ type Option func(*Server)
 // WithSteering sets the steering generator used to produce environment.md for kiro-cli.
 func WithSteering(g SteeringGenerator) Option { return func(s *Server) { s.steering = g } }
 
-// WithAgent sets the agent runtime that manages bridge processes and SSE broadcasts.
+// WithAgent sets the agent runtime that owns the agent engine, its sessions and SSE broadcasts.
 func WithAgent(a chatEngine) Option { return func(s *Server) { s.agent = a } }
 
 // WithChats sets the chat store, whose own router owns the chat HTTP surface.
 func WithChats(c routeHandler) Option { return func(s *Server) { s.chats = c } }
 
-// WithGit sets the git handler for non-AI git HTTP endpoints.
+// WithGit sets the git handler for the /api/git endpoints.
 func WithGit(g routeHandler) Option { return func(s *Server) { s.git = g } }
-
-// WithGitAI sets the route handler for AI-assisted git operations.
-func WithGitAI(r routeHandler) Option { return func(s *Server) { s.gitAI = r } }
 
 // WithFiles sets the file handler for workspace file read/write endpoints.
 func WithFiles(f routeHandler) Option { return func(s *Server) { s.files = f } }
@@ -131,11 +128,6 @@ func WithForges(r routeHandler) Option { return func(s *Server) { s.forges = r }
 
 // WithTools sets the source of the tools engine backing the /api/tools surface.
 func WithTools(src toolsSource) Option { return func(s *Server) { s.tools = src } }
-
-// WithUtilityPrompt sets the utility prompter used for AI-assisted tasks.
-func WithUtilityPrompt(p utilityPrompter) Option {
-	return func(s *Server) { s.utilityPrompt = p }
-}
 
 // WithAccountUsage sets the provider backing GET /api/account/usage.
 func WithAccountUsage(p AccountUsageProvider) Option {
@@ -236,7 +228,7 @@ func WithWorkDir(d string) Option { return func(s *Server) { s.workDir = d } }
 
 // WithTrustedProxies sets the reverse-proxy networks trusted when resolving the
 // access-log client_ip. Empty trusts nothing, so the socket peer is logged.
-func WithTrustedProxies(trusted []*net.IPNet) Option {
+func WithTrustedProxies(trusted []netip.Prefix) Option {
 	return func(s *Server) { s.trustedProxies = trusted }
 }
 
@@ -296,13 +288,9 @@ func (s *Server) routes() *http.ServeMux {
 	}
 	mux.HandleFunc("/api/tools/status", handleToolStatus)
 	s.git.RegisterRoutes(mux)
-	if s.gitAI != nil {
-		s.gitAI.RegisterRoutes(mux)
-	}
 	s.files.RegisterRoutes(mux)
 	mux.HandleFunc("/api/settings", s.handleSettings)
 	mux.HandleFunc("/api/tabs", s.handleTabs)
-	mux.HandleFunc("/api/workspace/kiro-config", s.handleKiroConfig)
 	mux.HandleFunc("/api/workspace/kiro-docs", s.handleKiroDocs)
 	mux.HandleFunc("/api/workspace/kiro-docs/new", s.handleKiroDocNew)
 	mux.HandleFunc("/api/specs/{dir}", s.handleSpec)
@@ -316,8 +304,6 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("/api/permissions/explain", s.handlePolicyExplain)
 	mux.HandleFunc("/api/permissions/rules", s.handlePolicyRules)
 	mux.HandleFunc("/api/permissions/profile", s.handlePolicyProfile)
-	mux.HandleFunc("/api/utility/explain-error", s.handleUtilityExplainError)
-	mux.HandleFunc("/api/utility/resolve-conflict", s.handleUtilityResolveConflict)
 	mux.HandleFunc("/api/account/usage", s.handleAccountUsage)
 	s.push.RegisterRoutes(mux)
 	if s.preview != nil {
@@ -384,6 +370,19 @@ func (s *Server) ListenAndServe() error {
 	return runErr
 }
 
+// clientIP is the access log's client_ip. The first request whose ignored forwarding header names a
+// public address warns once, because a reverse proxy missing from TRUSTED_PROXIES otherwise makes
+// every line log the proxy's address silently.
+func (s *Server) clientIP(r *http.Request) string {
+	res := webhttp.ResolveClient(r, s.trustedProxies...)
+	if res.IgnoredPublic && s.ignoredPublicWarned.CompareAndSwap(false, true) {
+		slog.Warn("a peer outside TRUSTED_PROXIES forwarded a public client address; client_ip logs the peer instead",
+			"peer", res.Peer.String(),
+			"hint", "if a reverse proxy sits in front of marotte, add its address to TRUSTED_PROXIES; a client sending its own X-Forwarded-For also triggers this")
+	}
+	return res.IP.String()
+}
+
 const msgUnknownAPIEndpoint = "unknown endpoint"
 
 // registerAPIFallback puts a 404 under the /api/ subtree, so an unmatched API path is not
@@ -409,7 +408,7 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 			// /api/health is probed every 30s, so a healthy probe logs at Debug and only
 			// a failing one is surfaced.
 			webhttp.ProbeLogLevel("/api/health"),
-			webhttp.WithClientIP(s.trustedProxies...),
+			webhttp.WithClientIPFunc(s.clientIP),
 			// A preview path carries a 12h bearer token, so it logs as the route template.
 			webhttp.WithTemplatePathsUnder(preview.PathPrefix),
 		),

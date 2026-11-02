@@ -2,27 +2,20 @@ package chat
 
 import (
 	"bytes"
-	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/slogx/capture"
 )
 
-// captureStoreSlog swaps the default logger for a buffer; tests using it must run serially. The log
-// package's writer and flags are restored too, because slog.SetDefault repoints log and does not
-// point it back for the stock handler.
+// captureStoreSlog swaps the default logger for a buffer; tests using it must run serially.
 func captureStoreSlog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return buf
 }
 

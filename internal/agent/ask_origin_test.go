@@ -197,7 +197,8 @@ func TestAskAnswer_AFailedWriteOnALiveBridgeRefusesTheAnswerAndReoffersTheAsk(t 
 			if got := h.bus.pendingPerms.list("c1"); len(got) != 1 || requestIDOf(t, got[0]) != askID {
 				t.Errorf("asks pending after the failed write = %d, want ask %d again", len(got), askID)
 			}
-			if _, ok := h.bus.TakePendingPerm("c1", askID, marotte.SettledByUser); !ok {
+			kind, _ := marotte.DecisionKindForEvent(tc.event)
+			if _, ok := h.bus.TakePendingPerm("c1", askID, kind, marotte.SettledByUser); !ok {
 				t.Error("the reopened ask cannot be claimed again")
 			}
 		})
@@ -209,11 +210,17 @@ func TestAskAnswer_AFailedWriteOnALiveBridgeRefusesTheAnswerAndReoffersTheAsk(t 
 // discharge the chat's wait; the transition that won owns the card and the chat's status.
 func TestAskAnswer_AnAskSettledDuringTheWriteRefusesTheAnswerAsWithdrawn(t *testing.T) {
 	transitions := map[string]func(h *Runtime, origin acpResponder){
-		"turnCancel":  func(h *Runtime, _ acpResponder) { h.bus.ClearPendingPermsForChat("c1") },
+		"turnCancel": func(h *Runtime, _ acpResponder) {
+			h.bus.ClearPendingInputAsks("c1", command.ScopeChatSession)
+		},
 		"bridgeEnded": func(h *Runtime, origin acpResponder) { h.bus.endAsksOf(origin) },
 	}
 	for name, tc := range askFamilies() {
 		for transition, settle := range transitions {
+			if transition == "turnCancel" && tc.event == marotte.EventPermissionNeeded {
+				// A cancel answers a permission ask itself, and skips one a card claimed first.
+				continue
+			}
 			t.Run(name+"_"+transition, func(t *testing.T) {
 				h, _, _ := newTestHub()
 				br := &duringWriteBridge{fakeBridge: newFakeBridge()}
@@ -256,7 +263,7 @@ func TestAskAnswer_ATerminalTransitionDuringTheWriteSettlesTheClaimOnce(t *testi
 		want       []marotte.SettledBy
 	}{
 		"turnCancel": {
-			transition: func(h *Runtime) bool { h.bus.ClearPendingPermsForChat("c1"); return true },
+			transition: func(h *Runtime) bool { h.bus.ClearPendingInputAsks("c1", command.ScopeChatAndRuns); return true },
 		},
 		"runFinished": {
 			transition: func(h *Runtime) bool { h.bus.ClearPendingPermsForRun(workflowID); return true },
@@ -296,7 +303,7 @@ func TestAskAnswer_ATerminalTransitionDuringTheWriteSettlesTheClaimOnce(t *testi
 					marotte.UserInputNeededPayload{ToolCallID: toolCallID, RunID: workflowID}), br))
 				head := h.bus.fanout.Position().Head
 
-				reply, ok := h.bus.TakePendingPerm("c1", askID, marotte.SettledByUser)
+				reply, ok := h.bus.TakePendingPerm("c1", askID, marotte.DecisionKindUserInput, marotte.SettledByUser)
 				if !ok {
 					t.Fatal("TakePendingPerm refused a pending ask")
 				}
@@ -318,7 +325,7 @@ func TestAskAnswer_ATerminalTransitionDuringTheWriteSettlesTheClaimOnce(t *testi
 				if left := h.bus.pendingPerms.list(""); len(left) != 0 {
 					t.Errorf("%s during a %s write left asks pending = %v, want none", name, write, left)
 				}
-				if _, ok := h.bus.TakePendingPerm("c1", askID, marotte.SettledByUser); ok {
+				if _, ok := h.bus.TakePendingPerm("c1", askID, marotte.DecisionKindUserInput, marotte.SettledByUser); ok {
 					t.Errorf("%s during a %s write: the settled ask could be claimed again", name, write)
 				}
 			})

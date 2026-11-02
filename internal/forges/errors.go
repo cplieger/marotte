@@ -6,11 +6,12 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 var kindStatus = map[forgeapi.ErrorKind]int{
@@ -137,4 +138,28 @@ func writeContextError(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	return true
+}
+
+// statusOf is a failed check's status, decided from forgeapi's Kind and Code
+// alone: a dead token is reconnect, the forge refusing the account is refused,
+// and every other answer (an outage, a rate limit, a TLS or address-policy
+// refusal, anything forgeapi cannot classify) is retrying. at is the check's
+// end, which a Retry-After counts from.
+func statusOf(err error, at time.Time) status {
+	fe, ok := errors.AsType[*forgeapi.Error](err)
+	if !ok {
+		return status{kind: statusRetrying, checkedAt: at, fault: &fault{message: err.Error()}}
+	}
+	f := &fault{message: fe.Error(), code: fe.Code, kind: fe.Kind.String()}
+	if fe.RetryAfter > 0 {
+		f.retryAt = at.Add(fe.RetryAfter)
+	}
+	s := status{kind: statusRetrying, checkedAt: at, fault: f}
+	switch {
+	case fe.Kind == forgeapi.KindUnauthorized, fe.Code == forgeapi.CodeReconnectRequired:
+		s.kind = statusReconnect
+	case fe.Kind == forgeapi.KindForbidden, fe.Kind == forgeapi.KindNotFound:
+		s.kind = statusRefused
+	}
+	return s
 }

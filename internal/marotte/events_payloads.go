@@ -78,10 +78,9 @@ type PermissionNeededPayload struct {
 	Title      string           `json:"title,omitempty"`
 	// Kind forwards the ACP toolCall.kind so the client can style distinctive prompts
 	// (switch_mode gets a different dialog from an execute_bash prompt).
-	Kind         ToolKind `json:"kind,omitempty"`
-	SubSessionID string   `json:"sub_session_id,omitempty"`
+	Kind ToolKind `json:"kind,omitempty"`
 	// RunID + NodeID attribute a WORKFLOW STEP's ask to its run, stamped from the
-	// step-session registry whichever bridge the ask arrived on, so a run tab can render
+	// step-session registry whichever lane the ask arrived on, so a run tab can render
 	// the ask of a run it is watching even though the ask is keyed to the launching chat.
 	RunID  string `json:"run_id,omitempty"`
 	NodeID string `json:"node_id,omitempty"`
@@ -102,7 +101,7 @@ type PermissionNeededPayload struct {
 	// again for the same toolCallId.
 	ConsentRound int `json:"consent_round,omitempty"`
 	// RequestID is marotte's id for this ask, unique in the process, which the answer echoes;
-	// never the ACP request id, which every bridge mints from zero. All three asks share it.
+	// never the ACP request id, which KAS mints and may repeat after an engine restart. All three asks share it.
 	RequestID int64 `json:"request_id"`
 	// AdminRequired marks an ask raised by the administrator's rules, which a
 	// person must answer: the card says so, and unattended runs refuse it.
@@ -176,11 +175,11 @@ const (
 	SettledByUnattended SettledBy = "unattended"
 	// SettledByMoot means NOBODY answered and nobody had to: the question stopped being
 	// answerable. User and unattended both ASSERT an answer, so retiring a discarded ask under
-	// one of them would tell the reader their question was decided. A run ask carries it,
-	// and so does a request KAS withdrew itself (interaction_resolved, outcome cancelled).
+	// one of them would tell the reader their question was decided. A request KAS withdrew
+	// itself (interaction_resolved, outcome cancelled) carries it.
 	SettledByMoot SettledBy = "moot"
-	// SettledByEnded means nobody answered and nobody now can: the bridge the ask arrived on
-	// ended, and an answer may only go back on that bridge. Separate from moot because the
+	// SettledByEnded means nobody answered and nobody now can: the session the ask arrived on
+	// ended, and an answer may only go back on that session. Separate from moot because the
 	// reader is owed the reason the card went.
 	SettledByEnded SettledBy = "ended"
 )
@@ -228,21 +227,6 @@ func DecisionRunID(payload any) string {
 	}
 }
 
-// DecisionNodeID is DecisionRunID's twin for the step node that raised the decision,
-// "" for a payload that is not one of the three or names no node.
-func DecisionNodeID(payload any) string {
-	switch p := payload.(type) {
-	case PermissionNeededPayload:
-		return p.NodeID
-	case ElicitationNeededPayload:
-		return p.NodeID
-	case UserInputNeededPayload:
-		return p.NodeID
-	default:
-		return ""
-	}
-}
-
 // ErrorCode identifies an SSE error event class.
 type ErrorCode string
 
@@ -283,7 +267,7 @@ type ErrorPayload struct {
 	OpID string `json:"op_id,omitempty"`
 	// TurnScoped reports that this failure finalized a turn whose entry log now carries
 	// the same text durably, so the reason is already in that turn's card. A property of the EMISSION,
-	// not of the Code: the recovery's respawn failure shares ErrCodeRecoveryFailed with
+	// not of the Code: the recovery's reopen failure shares ErrCodeRecoveryFailed with
 	// the retry turn's abandon and closes no turn, so no per-code answer fits. Absent
 	// means NO, the safe direction — report the failure rather than trust an inline row
 	// that may not exist.
@@ -300,7 +284,7 @@ type WorkingLabelPayload struct {
 // attributions on the in-flight turn. References is the full deduped list, so a later
 // notification REPLACES rather than appends. Live only; the durable value is the
 // turn_close aggregate's code_references. Chat-scoped: KAS broadcasts one references
-// list to every session in the bridge process, so a step's copy carries the chat's own
+// list to every session on the engine, so a step's copy carries the chat's own
 // attributions and there is nothing a run-scoped frame could report that this one does
 // not.
 type CodeReferencesPayload struct {
@@ -443,7 +427,6 @@ const (
 	LockContentCollection = "content_collection_enabled"
 	LockTelemetry         = "telemetry.enabled"
 	LockWorkflows         = "workflows_enabled"
-	LockInlineAgents      = "inline_agents_enabled"
 	LockWebTools          = "web_tools"
 	LockPowers            = "powers"
 	LockMCP               = "mcp"
@@ -495,6 +478,8 @@ type OpenExternalURLPayload struct {
 
 // RPC error code constants for typed dispatch in retry logic.
 const (
+	// RPCCodeParseError is the JSON-RPC 2.0 "Parse error" code (-32700).
+	RPCCodeParseError = -32700
 	// RPCCodeInternal is the JSON-RPC 2.0 "Internal error" code (-32603).
 	RPCCodeInternal = -32603
 	// RPCCodeMethodNotFound is the JSON-RPC 2.0 "Method not found" code (-32601). KAS
@@ -502,14 +487,13 @@ const (
 	// settles its promise — but -32603 means "I broke", and labelling a deliberate refusal
 	// as an internal fault makes marotte's logs lie about which side has the problem.
 	RPCCodeMethodNotFound = -32601
-	// RPCCodeNotIdle indicates the session is still processing a prior turn.
-	RPCCodeNotIdle = -32001
-	// RPCCodeBridgeExited says the ACP bridge process exited. COLLISION: -32000 is also
-	// KAS's code for a MAPPED backend error, throttles included. They never reach one
-	// reader today because Call intercepts the bridge-exited frame by POINTER IDENTITY, but
-	// a `switch re.Code` on this constant would swallow every throttle. Classify by
-	// errors.Is(err, ErrBridgeExited), never by this code.
-	RPCCodeBridgeExited = -32000
+	// RPCCodeSessionBusy is KAS's SessionBusyError: a prompt or a close is already in flight
+	// on the session.
+	RPCCodeSessionBusy = -32002
+	// RPCCodeBridgeExited marks the engine-exited reply marotte hands its own pending calls. It
+	// sits outside the JSON-RPC reserved range (-32768 to -32000), so no KAS code can equal it;
+	// classify by errors.Is(err, ErrBridgeExited), since callers never see this reply.
+	RPCCodeBridgeExited = -33000
 )
 
 // TerminalOutputPayload is the payload for type="terminal_output". Data is PLAIN text with
@@ -570,17 +554,21 @@ type CompactionStartedPayload struct{}
 type ChatStatusPayload struct {
 	Status      string `json:"status,omitempty"`
 	Description string `json:"description,omitempty"`
+	// TurnScoped marks a status the engine's activity tracker stated during a live turn
+	// (`activity.turnActive`), its only source. Server-side only.
+	TurnScoped bool `json:"-"`
 }
 
 // ChatStatusWaitingOnUser is the one Status value the server branches on, as KAS's
-// focus_update channel spells it: the only status whose meaning OUTLIVES its turn, so the
-// only one the connect-time replay retains. Every other value travels through opaque.
+// focus_update channel spells it: the only status whose meaning can OUTLIVE its turn, when it
+// is not TurnScoped, so the only one the connect-time replay retains. Every other value
+// travels through opaque.
 const ChatStatusWaitingOnUser = "waiting_on_user"
 
 // PendingSnapshotPayload is the payload for type="pending_snapshot": every
 // pending item across every chat, each a complete ServerEvent envelope of one
-// of the five ask kinds (permission_needed, elicitation_needed,
-// user_input_needed, run_input_needed, steer_queued). Raw so the client can
+// of the five kinds (permission_needed, elicitation_needed, user_input_needed,
+// steer_queued, and one run_asks per run marotte answers for). Raw so the client can
 // re-dispatch each through the decoder it already has for that type; the
 // stamp rides the snapshot's own envelope, never an item.
 type PendingSnapshotPayload struct {
@@ -626,6 +614,10 @@ type PowersChangedPayload struct{}
 // empty. The client refetches GET /api/recipes on receipt.
 type RecipesChangedPayload struct{}
 
+// ConfigStandingChangedPayload is the payload for type="config_standing_changed": a refetch signal for
+// GET /api/config/standing.
+type ConfigStandingChangedPayload struct{}
+
 // ToolJobChangedPayload is the payload for type="tool_job_changed", workspace-global, on
 // every job state transition. The job carries no output tail; output streams via
 // tool_job_output.
@@ -640,8 +632,14 @@ type ToolJobOutputPayload struct {
 	Lines []string `json:"lines"`
 }
 
-// SettingsUpdatedPayload is the payload for type="settings_updated".
-type SettingsUpdatedPayload struct{}
+// SettingsUpdatedPayload is the payload for type="settings_updated": config.json's version
+// (EffectiveSettings.SettingsEpoch and SettingsRevision) once the change it announces is stored.
+// settings.Update's events leave in version order; settings.Announce reports the version stored
+// now, which a config.json restored from outside can lower, so a client refuses a lower one.
+type SettingsUpdatedPayload struct {
+	SettingsEpoch    uint64 `json:"settings_epoch"`
+	SettingsRevision uint64 `json:"settings_revision"`
+}
 
 // TangentMergedPayload is the payload for type="tangent_merged": the summary reached
 // ParentChatID as a prompt or a queued follow-up. OpID echoes the merge_tangent command's.
@@ -672,6 +670,9 @@ type SteerQueuedPayload struct {
 	// re-sent row) under, and these are the rows' keys. A batch frame adds no row, so
 	// a resubmit repaints nothing; a ROW frame (SteerID is the row's key) leaves it empty.
 	Replaces []string `json:"replaces,omitempty"`
+	// AwaitsPrompt is set on an unsent row that no clean turn close sends as a prompt of its own: a
+	// prompt that has opened carries it into its turn, or KAS may re-inject it after a load.
+	AwaitsPrompt bool `json:"awaits_prompt,omitempty"`
 }
 
 // SteerRowState is a dock row's state as the dock draws it. Every row that is or may
@@ -683,7 +684,7 @@ const (
 	// SteerRowQueued is a row waiting to be read.
 	SteerRowQueued SteerRowState = "queued"
 	// SteerRowUnsent is an unread row the server holds with no turn to deliver it to:
-	// its bridge died, its buffer was cleared with no turn running, or a turn-end resend
+	// its session ended, its buffer was cleared with no turn running, or a turn-end resend
 	// failed. The chat's next prompt carries it; a server restart discards it.
 	SteerRowUnsent SteerRowState = "unsent"
 	// SteerRowRemoved retires a row that leaves with no steer entry to leave on.
@@ -713,10 +714,10 @@ const (
 )
 
 // SystemNoticePayload is the payload for type="system_notice". The frame names no
-// session, so the chat id is the bridge that received it: a chat's, a run's
-// (`run:<id>`), or empty for the utility session. Live only, never persisted.
+// session, so the chat id is the lane that received it: a chat's, a run's
+// (`run:<id>`), or empty for the engine's own lane. Live only, never persisted.
 // ChatName is the chat's name when the notice was raised, so a client whose row is
-// gone or renamed still names it; empty for a run, the utility session, or no record.
+// gone or renamed still names it; empty for a run, the engine lane, or no record.
 type SystemNoticePayload struct {
 	Level    NoticeLevel `json:"level"`
 	Message  string      `json:"message"`

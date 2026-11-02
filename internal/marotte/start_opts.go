@@ -12,133 +12,134 @@ import "context"
 // No Broadcaster interface: the one method is declared by internal/chat, internal/forges and
 // internal/command's ChatAccess; *agent.Runtime satisfies all three.
 
-// StartOpts collects the parameters for ACPBridge.Start. Lifetime is
-// REQUIRED; every other field is optional, so a StartOpts carrying nothing but
-// a Lifetime creates a new session with no model override.
+// EngineOpts collects what the one kiro-cli engine is spawned with. Every field is engine-wide:
+// KAS reads it at initialize or from the environment, so a change applies only after the engine
+// restarts. Lifetime is REQUIRED.
 //
-// There is no MCPServers field. The user's MCP servers reach KAS through its own
-// config file, which marotte renders — passing them on session/new would OUTRANK
-// that file and freeze the set for the session's lifetime.
-type StartOpts struct {
-	// Lifetime bounds the kiro-cli SUBPROCESS: cancelling it closes its stdin and signals its tree.
-	// REQUIRED (Start refuses nil), and NOT Start's ctx, which bounds only the handshake. Pass the
-	// runtime's shutdown context: under a turn context the first prompt's end closes stdin, and the
-	// children holding stdout keep the readLoop from seeing EOF, so the dead bridge stays registered.
+// There is no MCPServers field. The user's MCP servers reach KAS through its own config file,
+// which marotte renders: passing them on session/new would OUTRANK that file and freeze the set
+// for the session's lifetime.
+type EngineOpts struct {
+	// Lifetime bounds the engine PROCESS: cancelling it closes its stdin and signals its tree.
+	// REQUIRED (Start refuses nil), and NOT Start's ctx, which bounds only the handshake.
 	Lifetime context.Context
-	// IgnoreFiles RESOLVES the ignore-file basenames KAS enforces for this connection, sent as
-	// MethodPolicyIgnoreFilesChanged after initialize and before the first session verb (the only
-	// door; CONNECTION-scope). A resolver read at send time, so a settings save between
-	// registration and Start is not overwritten. The list leads with settings.AgentIgnoreFloor.
-	// NIL or EMPTY sends nothing: `{files: []}` would CLEAR KAS's list. It sits ahead of the
-	// []string fields for fieldalignment.
+	// Background runs fn on a goroutine the runtime waits for at shutdown, reporting false (and
+	// running nothing) once it drains. The engine runs its late-reply hooks, close retries and
+	// overflow answers on it. Nil runs them on a plain goroutine.
+	Background func(fn func()) bool
+	// ReapSession removes a KAS session's on-disk state; the engine calls it for a session KAS
+	// created whose door was abandoned. Nil reaps nothing.
+	ReapSession func(SessionID)
+	// IgnoreFiles RESOLVES the ignore-file basenames KAS enforces for the connection, sent as
+	// MethodPolicyIgnoreFilesChanged after initialize (CONNECTION-scope). Read at send time, so a
+	// settings save during the start is not overwritten. The list leads with
+	// settings.AgentIgnoreFloor. NIL or EMPTY sends nothing: `{files: []}` would CLEAR KAS's list.
 	IgnoreFiles func(context.Context) []string
-	// TerminalTimeout RESOLVES the shell tool's default timeout (0 = unset) for
-	// IgnoreFiles' reason: a save during the spawn finds a bridge that refuses the
-	// live push. Start reads it before initialize and again after, and sends
-	// MethodTerminalSettingsChanged when the two differ. Nil keeps
-	// Features.TerminalCommandTimeoutMs.
+	// TerminalTimeout RESOLVES the shell tool's default timeout (0 = unset) for IgnoreFiles'
+	// reason. Start reads it before initialize and again after, and sends
+	// MethodTerminalSettingsChanged when the two differ. Nil keeps Features.TerminalCommandTimeoutMs.
 	TerminalTimeout func(context.Context) int
-	// ContentCollection RESOLVES whether model requests from this process may be used
-	// for service improvement. KAS holds the value per PROCESS and persists none of it,
-	// so the bridge asserts it on BOTH session doors, read when the session exists
-	// rather than at spawn, so a save landing mid-spawn is not overwritten. readable
-	// false means the settings could not be read: a session door still sends enabled
-	// (kiro-cli starts opted in), a live refresh keeps a value KAS confirmed and sends
-	// enabled when none is confirmed. Nil sends nothing.
+	// ContentCollection RESOLVES whether model requests may be used for service improvement. KAS
+	// holds the value per PROCESS and persists none of it, so every session door asserts it, read
+	// when the session exists. readable false means the settings could not be read: a session door
+	// still sends enabled (kiro-cli starts opted in), a live refresh keeps a value KAS confirmed
+	// and sends enabled when none is confirmed. Nil sends nothing.
 	ContentCollection func(context.Context) (enabled, readable bool)
-	SessionID         string
-	Model             string
-	Effort            string
-	AgentEngine       string
-	Mode              string
-	// Thinking is the chat's thinking choice (ThinkingOn, ThinkingOff or empty),
-	// asserted after session/new and session/load when the session reports a
-	// different value. Effort is already capped for it by the caller.
-	Thinking string
-	// Presets are the KAS policy-preset ids of the active security profile (policyfile.Profile),
-	// sent as _meta.kiro.policyPreset on BOTH session/new and session/load since KAS persists
-	// neither. EMPTY is the Custom profile and withholds the key. Per session: KAS cannot change a
-	// running session's policy. Set on the utility bridge too, which answers GET /api/permissions.
-	Presets []string
-	// ExtraArgs are operator kiro-cli flags (MAROTTE_KIRO_ACP_ARGS, bridge.filterACPArgs), appended
-	// after marotte's own. CHAT bridges only: on the utility bridge an `--effort max` would spend
-	// real credits generating a two-word title.
+	// ExtraArgs are the operator's kiro-cli flags (MAROTTE_KIRO_ACP_ARGS, bridge.ParseACPArgs),
+	// appended after marotte's own.
 	ExtraArgs []string
-	// Steering is the session door's client steering, sent on session/new and
-	// session/load alike (KAS persists none of it); nil sends no key. Chat
-	// bridges only: it carries the chat-user guidance a workflow step, the
-	// utility session and the TUI have no use for.
-	Steering []ClientSteeringDoc
-	// Memory is the session's memory preference, sent on BOTH session doors as
-	// `_meta.kiro.settings.memory`. The zero value means mode "disabled" (the
-	// kascap gate maps an empty mode there), which is what the utility bridge
-	// relies on. KAS freezes the mode per session; the bridge re-asserts the
-	// reflection half after a session/load.
-	Memory MemoryPreference
-	// Features are the Agent-capabilities settings that ride KAS's doors,
-	// resolved per spawn. The utility bridge leaves them zero.
-	Features AgentFeatures
-	// EnableHooks opts the session into KAS's v2 hook engine by declaring
-	// _meta.kiro.hooks={enabled,v2} at initialize. Set on every bridge: the
-	// utility bridge (the hooks list|setEnabled RPCs), chat bridges and run
-	// bridges (workspace .kiro/hooks/*.json autofire during a turn or a step).
-	// In v2 mode KAS runs the hooks itself and never calls the client back.
-	EnableHooks bool
-	// Supervised sets `autopilot` FALSE at session/new, requesting KAS's turn-approval gate; KAS
-	// persists it (ConfigOptionAutopilot) and holds the writes back itself.
-	Supervised bool
-	// SecretStorage declares `_meta.kiro.secretStorage` at initialize, so KAS asks this client to
-	// hold its MCP OAuth credentials. A COMMITMENT: KAS rethrows a store failure into the MCP
-	// connect path, so it is set only when the runtime opened a store (internal/secretstore);
-	// undeclared, KAS re-registers per spawn. Set on chat and utility bridges alike.
+	// AuthArgs are the sign-in backend declaration's SpawnArgs, copied from nowhere else, so the
+	// declaration alone decides the engine's authentication argv.
+	AuthArgs []string
+	// Features are the engine half of the Agent-capabilities settings.
+	Features EngineFeatures
+	// HeapMiB is the JavaScript heap limit in MiB composed into NODE_OPTIONS; 0 adds no flag and
+	// leaves kiro-cli's default.
+	HeapMiB int
+	// SecretStorage declares `_meta.kiro.secretStorage` at initialize, so KAS asks marotte to hold
+	// its MCP OAuth credentials. A COMMITMENT: KAS rethrows a store failure into the MCP connect
+	// path, so it is set only when the runtime opened a store (internal/secretstore).
 	SecretStorage bool
-	// ConfigurationState declares `_meta.kiro.configurationState` at initialize, so KAS pushes
-	// _kiro/configuration/state. Set on the utility bridge only, whose connection view is what a
-	// new chat resolves before marotte states anything.
-	ConfigurationState bool
-	// ToolSearch ("Load MCP tools on demand") reaches KAS as KIRO_FEATURE_TOOL_LOAD_ENABLED in the
-	// child environment (kascap.ChildEnv), not the wire: `_meta.kiro.settings.toolSearch` grew the
-	// tools array on every load. Resolved per spawn; KAS freezes it at session creation.
-	ToolSearch bool
-	// Knowledge gates BOTH knowledge rows, the capability that lists the bases
-	// in msg0 and the setting that builds the Knowledge tool: gating one alone
-	// lists bases the agent cannot query. It does not reach `_kiro/knowledge`,
-	// so the REST surface keeps working with the switch off. Resolved per
-	// spawn; KAS freezes it at session creation.
+	// Knowledge gates BOTH knowledge rows, the capability that lists the bases in msg0 and the
+	// setting that builds the Knowledge tool. It does not reach `_kiro/knowledge`, so the REST
+	// surface keeps working with the switch off.
 	Knowledge bool
-	// DisableTelemetry turns KAS's agent telemetry off at initialize (kascap's
-	// telemetryEnabled row). Resolved per spawn on every bridge; the zero value
-	// leaves KAS's default, on.
+	// DisableTelemetry turns KAS's agent telemetry off at initialize and the Rust binary's toolkit
+	// client off in the environment; the zero value leaves both at kiro-cli's default, on.
 	DisableTelemetry bool
-	// DisableSessionTitles writes KIRO_DISABLE_SESSION_TITLE_LLM=true into the
-	// child environment. Run bridges only: nothing renders a run step session's
-	// title, so the LLM title call is spend with no reader.
-	DisableSessionTitles bool
-	// DisableAutoCompaction turns KAS's own compaction off for this session (the
-	// chat policy's switch off, or a point above 80%). Chat spawns only; run and
-	// utility bridges leave it false. KAS freezes it per session, so it takes
-	// effect at the next session/new or session/load.
-	DisableAutoCompaction bool
 }
 
-// AgentFeatures carries the Agent-capabilities settings a spawn sends KAS.
-// WorkValidation, InfraSafetyMonitor, AutoRouting and AutoDelegation are ""
-// (send nothing, kiro-cli's experiment decides), "on" or "off".
-type AgentFeatures struct {
-	// SpecPlan is "" (off), "quick" or "full"; it only changes Autonomous mode.
-	SpecPlan           string
-	WorkValidation     string
+// EngineFeatures are the Agent-capabilities settings KAS reads per engine. InfraSafetyMonitor,
+// AutoRouting and AutoDelegation are "" (send nothing, kiro-cli's experiment decides), "on" or "off".
+type EngineFeatures struct {
 	InfraSafetyMonitor string
 	AutoRouting        string
 	AutoDelegation     string
 	// TerminalCommandTimeoutMs is the shell tool's default timeout; 0 is unset.
 	TerminalCommandTimeoutMs int
-	SpecAskClarification     bool
-	InlineAgents             bool
 	SteeringReminders        bool
-	// Workflows gives the agent its workflow tools; the utility bridge's zero
-	// value withholds them.
-	Workflows bool
+	// ModelFallback sends KAS's refusal and availability fallback flags.
+	ModelFallback bool
+}
+
+// SessionRole names what a session is for: a chat's, a parentless run's host, or an observer
+// pass that reads one answer and closes.
+type SessionRole string
+
+// The session roles.
+const (
+	SessionRoleChat     SessionRole = "chat"
+	SessionRoleHost     SessionRole = "host"
+	SessionRoleObserver SessionRole = "observer"
+)
+
+// SessionOpts collects what one session door sends. KAS persists none of the presets, steering
+// or memory reflection, so a load sends them again.
+type SessionOpts struct {
+	// SessionID is the session to load; empty creates one under an id the engine mints.
+	SessionID string
+	Role      SessionRole
+	// Model, Effort and Mode ride session/new's _meta.kiro and are repaired after it; a load
+	// re-asserts the effort only.
+	Model  string
+	Effort string
+	Mode   string
+	// Thinking is the chat's thinking choice (ThinkingOn, ThinkingOff or empty), asserted after
+	// either door when the session reports a different value. Effort is already capped for it.
+	Thinking string
+	// Presets are the KAS policy-preset ids of the active security profile (policyfile.Profile),
+	// sent as _meta.kiro.policyPreset on BOTH doors since KAS persists neither. EMPTY is the Custom
+	// profile and withholds the key.
+	Presets []string
+	// Steering is the chat's client steering, sent on both doors; nil sends no key. Chat sessions
+	// only: it carries chat-user guidance a workflow host and an observer have no use for.
+	Steering []ClientSteeringDoc
+	// AdditionalDirectories are the directories beyond the workspace the session may reach, sent
+	// on BOTH doors: KAS adopts the list per call, so a door without it drops them.
+	AdditionalDirectories []string
+	// Memory is the session's memory preference, sent on BOTH doors as
+	// `_meta.kiro.settings.memory`. The zero value means mode "disabled". KAS freezes the mode per
+	// session; the door re-asserts the reflection half after a load.
+	Memory MemoryPreference
+	// Features are the session half of the Agent-capabilities settings; an observer leaves them zero.
+	Features SessionFeatures
+	// Supervised sets `autopilot` FALSE after the door, requesting KAS's turn-approval gate.
+	Supervised bool
+	// DisableAutoCompaction turns KAS's own compaction off for this session (the chat policy's
+	// switch off, or a point above 80%). KAS freezes it per session, so it takes effect at the
+	// next door.
+	DisableAutoCompaction bool
+}
+
+// SessionFeatures are the Agent-capabilities settings KAS reads per session. WorkValidation is
+// "" (kiro-cli's experiment decides), "on" or "off".
+type SessionFeatures struct {
+	// SpecPlan is "" (off), "quick" or "full"; it only changes Autonomous mode.
+	SpecPlan       string
+	WorkValidation string
+	// Workflows gives the agent its workflow tools; the zero value withholds them.
+	Workflows            bool
+	SpecAskClarification bool
 }
 
 // MemoryPreference mirrors KAS's `settings.memory` object field for field.
@@ -149,8 +150,8 @@ type MemoryPreference struct {
 	Reflection bool
 }
 
-// No ACPBridge interface: internal/agent declares the subprocess contract at its consumer, at seven
-// widths. StartOpts stays here as a type internal/bridge decodes.
+// No ACPSession interface: internal/agent declares the session contract at its consumer.
+// EngineOpts and SessionOpts stay here as types internal/bridge decodes.
 
 // --- HTTP ---
 
@@ -159,8 +160,3 @@ type MemoryPreference struct {
 
 // No PushService interface: internal/agent and internal/server each declare the methods they use;
 // internal/forges notifies through *agent.Runtime (PRNotifier).
-
-// --- AI Utilities ---
-
-// No UtilityPrompter interface: internal/server and internal/git each declare the one method;
-// *agent.Runtime satisfies both.

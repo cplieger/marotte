@@ -18,8 +18,8 @@ const (
 	dischargeNo dischargeVerdict = iota
 	// dischargeYes: the dispatcher discharges once the handler has succeeded.
 	dischargeYes
-	// dischargeBySource: the TURN's source decides (marotte.TurnOpenSource.UserAnswered),
-	// because one command covers both a prompt and a `!cmd`.
+	// dischargeBySource: the TURN's source decides (marotte.TurnOpenSource.UserAnswered)
+	// when the turn opens, which a drained queued prompt reaches with no command.
 	dischargeBySource
 	// dischargeByAnswer: the command's own PAYLOAD decides, because one command type
 	// carries both the user supplying an answer and the user walking away from the
@@ -79,6 +79,7 @@ var commandDischarges = map[marotte.CommandType]dischargeVerdict{
 	marotte.CmdReorderTabs:       dischargeNo,
 	marotte.CmdPinTab:            dischargeNo,
 	marotte.CmdReparentTab:       dischargeNo,
+	marotte.CmdAckTab:            dischargeNo,
 	// An approval is a statement ABOUT a document, not an answer to a question the
 	// agent asked: the spec gate's own ask travels on cmdUserInputResponse, so a phase
 	// approved from the spec tab leaves any waiting claim standing.

@@ -1,5 +1,6 @@
 import { el } from "@cplieger/reactive";
-import { chevronEl } from "./chevron.js";
+import { join } from "@cplieger/keyenc";
+import { occurrenceKeys, type ItemPart, type PanelItem } from "./turn-info-panel.js";
 import type { ContextBreakdown, ContextCategory, ContextItem } from "./wire/types.gen.js";
 
 /** KAS's category keys in words; an unknown key is shown as sent. */
@@ -36,26 +37,14 @@ const PART_LABEL: ReadonlyMap<string, string> = new Map([
   ["knowledge", "knowledge"],
 ]);
 
-type InfoRow = (label: string, value: string | Node) => HTMLElement;
-
-type ItemName = (name: string, uri: string) => Node;
+/** An item's name as a list item part: the caller decides whether it links. */
+type ItemName = (name: string, uri: string) => ItemPart;
 
 const count = (n: number): string => Math.round(n).toLocaleString();
 const share = (pct: number): string => `${String(Math.round(pct))}%`;
 
-/** The breakdown's rows: the request's size first, then one row per category, largest first. */
-export function contextBreakdownRows(
-  b: ContextBreakdown,
-  row: InfoRow,
-  itemName: ItemName,
-): HTMLElement[] {
-  return [
-    row("Last request", requestLine(b)),
-    ...b.categories.map((c) => categoryRow(c, row, itemName)),
-  ];
-}
-
-function requestLine(b: ContextBreakdown): string {
+/** The request's size, the Context section's "Last request". */
+export function requestLine(b: ContextBreakdown): string {
   const calls = b.model_calls > 1 ? ` over ${String(b.model_calls)} model calls` : "";
   const bits = [`${count(b.total_chars)} characters${calls}`];
   if (b.compacted === true) {
@@ -71,50 +60,59 @@ function requestLine(b: ContextBreakdown): string {
   return bits.join(" \u00b7 ");
 }
 
-function categoryRow(c: ContextCategory, row: InfoRow, itemName: ItemName): HTMLElement {
-  const label = CATEGORY_LABEL.get(c.key) ?? c.key;
-  const figure = `${share(c.percent)} \u00b7 ${count(c.chars)} characters`;
-  const items = c.items ?? [];
-  const parts = c.parts ?? [];
-  if (items.length === 0 && parts.length === 0) {
-    return row(label, figure);
-  }
-  const body = el("ul", { className: "ctx-breakdown-items" });
-  if (parts.length > 0) {
-    body.appendChild(
-      el(
-        "li",
-        { className: "ctx-breakdown-parts" },
-        parts.map((p) => `${PART_LABEL.get(p.key) ?? p.key} ${count(p.chars)}`).join(" \u00b7 "),
-      ),
-    );
-  }
-  for (const item of items) {
-    body.appendChild(itemRow(item, itemName));
-  }
-  if ((c.omitted_count ?? 0) > 0) {
-    body.appendChild(
-      el(
-        "li",
-        { className: "ctx-breakdown-more" },
-        `${String(c.omitted_count ?? 0)} more, ${count(c.omitted_chars ?? 0)} characters`,
-      ),
-    );
-  }
-  const disclosure = el(
-    "details",
-    { className: "ctx-breakdown-category" },
-    el("summary", { className: "ctx-breakdown-summary" }, chevronEl(), el("span", {}, figure)),
-    body,
-  );
-  return row(label, disclosure);
+/** The Breakdown list: every category, largest first, with its parts, items and the rest indented
+ *  beneath it. A category's identity is its key plus its occurrence: the wire states no uniqueness. */
+export function breakdownItems(b: ContextBreakdown, itemName: ItemName): PanelItem[] {
+  const ids = occurrenceKeys(b.categories.map((c) => c.key));
+  return b.categories.flatMap((c, i) => categoryItems(c, ids[i] ?? c.key, itemName));
 }
 
-function itemRow(item: ContextItem, itemName: ItemName): HTMLElement {
-  const li = el("li", { className: "ctx-breakdown-item" }, itemName(item.name, item.uri ?? ""));
-  if ((item.inclusion ?? "") !== "") {
-    li.appendChild(el("span", { className: "ctx-breakdown-badge" }, item.inclusion ?? ""));
+function categoryItems(c: ContextCategory, id: string, itemName: ItemName): PanelItem[] {
+  const label = CATEGORY_LABEL.get(c.key) ?? c.key;
+  const figure = `${share(c.percent)} \u00b7 ${count(c.chars)} characters`;
+  const out: PanelItem[] = [
+    {
+      key: join("cat", id),
+      className: "turn-info-item",
+      parts: [textPart("name", label), textPart("share", figure, "turn-info-item-share")],
+    },
+  ];
+  const parts = c.parts ?? [];
+  if (parts.length > 0) {
+    const text = parts
+      .map((p) => `${PART_LABEL.get(p.key) ?? p.key} ${count(p.chars)}`)
+      .join(" \u00b7 ");
+    out.push({ key: join("parts", id), className: SUB, parts: [textPart("text", text)] });
   }
-  li.appendChild(el("span", { className: "ctx-breakdown-share" }, share(item.percent)));
-  return li;
+  const items = c.items ?? [];
+  const keys = occurrenceKeys(items.map((it) => join(it.name, it.uri ?? "")));
+  items.forEach((item, i) => {
+    out.push(itemEntry(id, keys[i] ?? "", item, itemName));
+  });
+  const omitted = c.omitted_count ?? 0;
+  if (omitted > 0) {
+    const text = `${String(omitted)} more, ${count(c.omitted_chars ?? 0)} characters`;
+    out.push({
+      key: join("more", id),
+      className: `${SUB} turn-info-more`,
+      parts: [textPart("text", text)],
+    });
+  }
+  return out;
+}
+
+const SUB = "turn-info-item turn-info-sub";
+
+function textPart(key: string, text: string, className = ""): ItemPart {
+  return { key, sig: text, build: () => el("span", className === "" ? {} : { className }, text) };
+}
+
+function itemEntry(cat: string, key: string, item: ContextItem, itemName: ItemName): PanelItem {
+  const parts = [itemName(item.name, item.uri ?? "")];
+  const badge = item.inclusion ?? "";
+  if (badge !== "") {
+    parts.push(textPart("badge", badge, "turn-info-badge"));
+  }
+  parts.push(textPart("share", share(item.percent), "turn-info-item-share"));
+  return { key: join("item", cat, key), className: SUB, parts };
 }

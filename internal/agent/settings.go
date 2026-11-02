@@ -7,12 +7,12 @@ import (
 )
 
 // Settings owns the KAS configuration surface (knowledge, hooks, governance, Cedar policy queries) and its
-// routes, all over the utility bridge. utility is a thunk: the runtime is built under a sync.Once whose
-// hooks call back into agent surfaces.
+// routes: engine calls, and observer passes for the reads KAS answers only on a resident session.
 type Settings struct {
 	governance *governanceCache
-	// utility is the bridgeless runtime every call here goes through.
-	utility func() *utilityRuntime
+	engine     *engineOwner
+	// observe runs fn on an observer pass (Runtime.observe).
+	observe func(ctx context.Context, fn func(ctx context.Context, s engineSession) error) error
 	// lifecycle supplies the workspace dir and the process lifetime.
 	lifecycle *lifetime
 	broadcast func(context.Context, marotte.ServerEvent)

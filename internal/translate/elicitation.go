@@ -37,8 +37,6 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID marotte
 		return
 	}
 
-	subSessionID := t.deriveSubSession(chatID, p.SessionID)
-
 	step := t.steps.refFor(p.SessionID)
 	message := displayText(p.Elicitation.Message)
 	evt := marotte.NewEvent(marotte.EventElicitationNeeded, chatID, marotte.ElicitationNeededPayload{
@@ -48,7 +46,6 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID marotte
 		Message:         message,
 		URL:             p.Elicitation.URL,
 		ToolCallID:      p.ToolCallID,
-		SubSessionID:    subSessionID,
 		RunID:           step.WorkflowID,
 		NodeID:          step.NodeID,
 		RequestedSchema: p.Elicitation.RequestedSchema,

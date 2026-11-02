@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"testing"
@@ -8,7 +9,28 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func TestOpenBridge_ALivePushABridgeMissedIsResentAtTheNextOpen(t *testing.T) {
+// resendFixture builds a runtime over configDir whose engine lane is seeded before the engine starts.
+func resendFixture(t *testing.T, configDir string, seedLane func(lane *fakeBridge), seedSession func(*fakeBridge)) (*Runtime, *fakeEngineSource) {
+	t.Helper()
+	lane := newFakeBridge()
+	if seedLane != nil {
+		seedLane(lane)
+	}
+	src := fakeEngineOf(func() engineSession {
+		br := newFakeBridge()
+		if seedSession != nil {
+			seedSession(br)
+		}
+		return br
+	}, lane)
+	cs := newTestChatStore()
+	h := newRuntimeOn(context.Background(), t.TempDir(), src, cs, WithConfigDir(configDir))
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	return h, src
+}
+
+func TestEngineLive_APushTheEngineMissedIsResentAtTheNextOpen(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		body   string
@@ -18,25 +40,19 @@ func TestOpenBridge_ALivePushABridgeMissedIsResentAtTheNextOpen(t *testing.T) {
 		{name: "terminal_timeout", body: `{"terminal_command_timeout_ms":300000}`, method: marotte.MethodTerminalSettingsChanged},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, configDir := reopenFixture(t)
-			first, err := h.coord.openBridge(t.Context(), "c1", "")
-			if err != nil {
-				t.Fatalf("OpenBridge: %v", err)
-			}
-			br := fakeOf(first)
-			br.setNotifyErr(tc.method, errors.New("broken pipe"))
+			configDir := t.TempDir()
+			h, src := resendFixture(t, configDir, nil, nil)
+			openChat(t, h, "c1")
+			lane := src.lane
+			lane.setNotifyErr(tc.method, errors.New("broken pipe"))
 			rewriteConfigByHand(t, configDir, tc.body)
-			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-				t.Fatalf("OpenBridge after the hand edit: %v", err)
-			}
-			br.setNotifyErr(tc.method, nil)
+			openChat(t, h, "c1")
+			lane.setNotifyErr(tc.method, nil)
 
 			for i := range 2 {
-				if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-					t.Fatalf("OpenBridge %d after the bridge healed: %v", i+1, err)
-				}
-				if got := len(br.notified(tc.method)); got != 1 {
-					t.Errorf("after open %d since the bridge healed it holds %d %s frames, want 1: the first resends the "+
+				openChat(t, h, "c1")
+				if got := len(lane.notified(tc.method)); got != 1 {
+					t.Errorf("after open %d since the engine healed it holds %d %s frames, want 1: the first resends the "+
 						"missed push before it returns, a later one does not repeat it", i+1, got, tc.method)
 				}
 			}
@@ -44,7 +60,7 @@ func TestOpenBridge_ALivePushABridgeMissedIsResentAtTheNextOpen(t *testing.T) {
 	}
 }
 
-func TestOpenBridge_ALiveSettingItsSpawnFailedToSendIsSentAtTheNextOpen(t *testing.T) {
+func TestEngineLive_ASettingTheEngineStartFailedToSendIsSentAtTheNextOpen(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		boot   string
@@ -64,19 +80,25 @@ func TestOpenBridge_ALiveSettingItsSpawnFailedToSendIsSentAtTheNextOpen(t *testi
 		t.Run(tc.name, func(t *testing.T) {
 			configDir := t.TempDir()
 			rewriteConfigByHand(t, configDir, tc.boot)
-			h := reopenFixtureIn(t, configDir, func(br *fakeBridge) {
-				br.setNotifyErr(tc.method, errors.New("broken pipe"))
-				if tc.midway != "" {
-					br.afterInitialize = func() { rewriteConfigByHand(t, configDir, tc.midway) }
-				}
-			})
-			br := fakeOf(openChat(t, h, "c1"))
-			br.setNotifyErr(tc.method, nil)
+			lane := newFakeBridge()
+			lane.setNotifyErr(tc.method, errors.New("broken pipe"))
+			src := fakeEngineOf(func() engineSession { return newFakeBridge() }, lane)
+			if tc.midway != "" {
+				src.afterInitialize = func() { rewriteConfigByHand(t, configDir, tc.midway) }
+			}
+			cs := newTestChatStore()
+			h := newRuntimeOn(context.Background(), t.TempDir(), src, cs, WithConfigDir(configDir))
+			cs.wire(h)
+			t.Cleanup(func() { shutdownHub(t, h) })
+			if !awaitEngine(h) {
+				t.Fatal("the engine never became ready")
+			}
+			lane.setNotifyErr(tc.method, nil)
 
 			for i := range 2 {
 				openChat(t, h, "c1")
-				if got := br.notified(tc.method); !slices.Equal(got, []string{tc.want}) {
-					t.Errorf("after open %d since the spawn's %s send failed the chat holds frames %v, want [%s]: "+
+				if got := lane.notified(tc.method); !slices.Equal(got, []string{tc.want}) {
+					t.Errorf("after open %d since the engine start's %s send failed the engine holds frames %v, want [%s]: "+
 						"a failed startup send is no record of delivery", i+1, tc.method, got, tc.want)
 				}
 			}
@@ -85,77 +107,61 @@ func TestOpenBridge_ALiveSettingItsSpawnFailedToSendIsSentAtTheNextOpen(t *testi
 }
 
 func TestOpenBridge_AFailedContentCollectionAssertIsResentAtTheNextOpen(t *testing.T) {
-	h, configDir := reopenFixture(t)
-	first, err := h.coord.openBridge(t.Context(), "c1", "")
-	if err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	br := fakeOf(first)
-	br.setCallErr(marotte.MethodSetConfigOption, errors.New("broken pipe"))
+	configDir := t.TempDir()
+	h, src := resendFixture(t, configDir, nil, nil)
+	openChat(t, h, "c1")
+	lane := src.lane
+	lane.setCallErr(marotte.MethodSetConfigOption, errors.New("broken pipe"))
 	rewriteConfigByHand(t, configDir, `{"content_collection_enabled":true}`)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("OpenBridge after the hand edit: %v", err)
-	}
-	br.mu.Lock()
-	delete(br.callErrs, marotte.MethodSetConfigOption)
-	br.mu.Unlock()
+	openChat(t, h, "c1")
+	lane.mu.Lock()
+	delete(lane.callErrs, marotte.MethodSetConfigOption)
+	lane.mu.Unlock()
 
 	for i := range 2 {
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-			t.Fatalf("OpenBridge %d after the bridge healed: %v", i+1, err)
-		}
-		if got := contentCollectionWrites(br); len(got) != 2 {
-			t.Errorf("after open %d since the bridge healed its content-collection asserts are %v, want the failed one "+
+		openChat(t, h, "c1")
+		if got := contentCollectionWrites(lane); len(got) != 2 {
+			t.Errorf("after open %d since the engine healed its content-collection asserts are %v, want the failed one "+
 				"and one resend", i+1, got)
 		}
 	}
 }
 
 func TestOpenBridge_AMissedPushIsHeldOverAnUnreadableDocumentAndResentOnceItParses(t *testing.T) {
-	h, configDir := reopenFixture(t)
-	first, err := h.coord.openBridge(t.Context(), "c1", "")
-	if err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	br := fakeOf(first)
-	br.setNotifyErr(marotte.MethodTerminalSettingsChanged, errors.New("broken pipe"))
+	configDir := t.TempDir()
+	h, src := resendFixture(t, configDir, nil, nil)
+	openChat(t, h, "c1")
+	lane := src.lane
+	lane.setNotifyErr(marotte.MethodTerminalSettingsChanged, errors.New("broken pipe"))
 	rewriteConfigByHand(t, configDir, `{"terminal_command_timeout_ms":300000}`)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("OpenBridge after the hand edit: %v", err)
-	}
-	br.setNotifyErr(marotte.MethodTerminalSettingsChanged, nil)
+	openChat(t, h, "c1")
+	lane.setNotifyErr(marotte.MethodTerminalSettingsChanged, nil)
 
 	rewriteConfigByHand(t, configDir, "{half typed")
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("OpenBridge over the half-typed document: %v", err)
-	}
-	if frames := br.notified(marotte.MethodTerminalSettingsChanged); len(frames) != 0 {
+	openChat(t, h, "c1")
+	if frames := lane.notified(marotte.MethodTerminalSettingsChanged); len(frames) != 0 {
 		t.Errorf("the resend over an unparseable config.json sent %v; it answers the default timeout, not the user's", frames)
 	}
 
 	rewriteConfigByHand(t, configDir, `{"terminal_command_timeout_ms":300000}`)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("OpenBridge once the document parses: %v", err)
-	}
+	openChat(t, h, "c1")
 	want := []string{jsonOf(t, marotte.TerminalSettingsParams(300000))}
-	if got := br.notified(marotte.MethodTerminalSettingsChanged); !slices.Equal(got, want) {
-		t.Errorf("once config.json parsed again with the same timeout the bridge was sent %v, want %v", got, want)
+	if got := lane.notified(marotte.MethodTerminalSettingsChanged); !slices.Equal(got, want) {
+		t.Errorf("once config.json parsed again with the same timeout the engine was sent %v, want %v", got, want)
 	}
 }
 
-func TestOpenBridge_ASpawnWhoseContentCollectionAssertFailedAssertsItAtTheNextOpen(t *testing.T) {
-	h, _ := reopenFixtureWith(t, func(br *fakeBridge) {
+// A door's failed assert leaves the engine's record unconfirmed, so the open's engine sync asserts it before the open
+// returns, once.
+func TestOpenBridge_ADoorWhoseContentCollectionAssertFailedIsAssertedBeforeTheOpenReturns(t *testing.T) {
+	h, src := resendFixture(t, t.TempDir(), nil, func(br *fakeBridge) {
 		br.callErrs = map[string]error{marotte.MethodSetConfigOption: errors.New("broken pipe")}
 	})
-	br := fakeOf(openChat(t, h, "c1"))
-	br.mu.Lock()
-	delete(br.callErrs, marotte.MethodSetConfigOption)
-	br.mu.Unlock()
-
-	openChat(t, h, "c1")
-
-	if got := contentCollectionWrites(br); len(got) != 2 || got[1] != marotte.ConfigValueContentCollectionDisabled {
-		t.Errorf("content-collection asserts = %v, want the first open's failed one and the next open's %q: "+
-			"a spawn whose door assert failed leaves KAS on its opted-in default", got, marotte.ConfigValueContentCollectionDisabled)
+	for i := range 2 {
+		openChat(t, h, "c1")
+		if got := contentCollectionWrites(src.lane); len(got) != 1 || got[0] != marotte.ConfigValueContentCollectionDisabled {
+			t.Errorf("after open %d the engine's content-collection asserts are %v, want one %q: "+
+				"a door whose assert failed leaves KAS on its opted-in default", i+1, got, marotte.ConfigValueContentCollectionDisabled)
+		}
 	}
 }

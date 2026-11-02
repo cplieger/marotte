@@ -21,7 +21,7 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -360,6 +360,60 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 		"behind":            behind,
 		"commit_url_prefix": commitURLPrefix(parsedRemote),
 	})
+}
+
+// maxBranchCommits caps the subjects GET /api/git/branch-commits returns: a wrong base can put a
+// whole history in range, and the list is a starting point for a PR body, not an audit.
+const maxBranchCommits = 100
+
+// handleBranchCommits answers GET /api/git/branch-commits?repo=&base=&head= with the subjects of
+// head's commits that base lacks, oldest first, merges excluded, at most maxBranchCommits (the
+// newest). head defaults to HEAD. A range git cannot resolve (a ref still being typed) answers an
+// empty list; a malformed ref is a 400.
+func (h *Handler) handleBranchCommits(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	q := r.URL.Query()
+	base, head := q.Get("base"), q.Get("head")
+	if head == "" {
+		head = refHEAD
+	}
+	if !isValidGitRef(base) || !isValidGitRef(head) {
+		httpreply.BadRequest(w, "invalid branch name")
+		return
+	}
+	dir := h.repoDir(repoFromQuery(r))
+	rng := pullRequestRef(ctx, dir, base) + ".." + pullRequestRef(ctx, dir, head)
+	// --topo-order: commits a rebase stamped in one second tie on date, and a merged line would
+	// interleave with its target's.
+	out, err := gitCmd(ctx, dir, "log", "--no-merges", "--topo-order", "--reverse", "--format=%s",
+		"-n"+strconv.Itoa(maxBranchCommits), rng)
+	subjects := []string{}
+	if err != nil {
+		slog.Debug("git branch commits failed", "repo", logsafe.Field(dir), "range", logsafe.Field(rng), "error", logsafe.Field(err.Error()), "out", logField(out))
+		webhttp.WriteJSON(w, map[string]any{"subjects": subjects})
+		return
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		if line != "" {
+			// A subject is upstream text: git keeps whatever bytes the author wrote.
+			subjects = append(subjects, clientLine(line))
+		}
+	}
+	webhttp.WriteJSON(w, map[string]any{"subjects": subjects})
+}
+
+// pullRequestRef is the commit a forge compares for ref: origin's copy when one exists, since the
+// pull request is opened against the remote, else the local ref. HEAD stays HEAD, because
+// origin/HEAD names the remote's default branch, not this checkout.
+func pullRequestRef(ctx context.Context, dir, ref string) string {
+	if ref == refHEAD {
+		return ref
+	}
+	remote := remoteOrigin + "/" + ref
+	if _, err := gitCmd(ctx, dir, "rev-parse", "--verify", "--quiet", remote+"^{commit}"); err == nil {
+		return remote
+	}
+	return ref
 }
 
 func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {

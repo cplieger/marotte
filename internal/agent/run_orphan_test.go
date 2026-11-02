@@ -78,6 +78,18 @@ const branchWrapperReason = "Parallel 'phase1' is waiting on branch 'live-verify
 // branchWaitReason is the same wrapper with no cause, which interruptions, failures and need-input parks all produce.
 const branchWaitReason = "Parallel 'phase1' is waiting on branch 'live-verify'."
 
+// KAS's pauseVerdict reasons verbatim (kiro-cli 2.32.0 unless suffixed), never derived from the production
+// prefixes, so a reword shows here.
+const (
+	interruptedReason      = "Step interrupted (agent shutdown or connection reset); resuming the run retries the step."
+	modelServiceReason     = "Model service error (service 5xx or throttling); resuming the run retries the step."
+	stallReason            = "Model stream stalled (no data received from the model); the run is paused and can be resumed."
+	permanentReason        = "Step paused after a transient error; resuming the run retries the step."
+	interruptedReason2311  = "Step interrupted (agent shutdown or connection reset); will resume."
+	modelServiceReason2311 = "Transient model service error (service 5xx/throttling); will resume."
+	permanentReason2311    = "Step paused after a transient error; will resume."
+)
+
 func transientDetail() pauseDetail {
 	return pauseDetail{
 		Class: transientErrorClass,
@@ -220,7 +232,7 @@ func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
 				t.Fatal("the fixture registered a bridge; the sweep must be wrong-by-default without one")
 			}
 
-			h.runs.SweepOrphaned(t.Context())
+			h.runs.sweepOrphaned(t.Context())
 
 			if got := h.runs.endReason("wf_1"); got != "" {
 				t.Errorf("the sweep recorded %q against a run it does not own", got)
@@ -257,7 +269,7 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	var cancelled bool
 	for _, m := range br.callLog() {
@@ -307,7 +319,7 @@ func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 		t.Fatalf("Put lease: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	rows := st.List()
 	if len(rows) != 1 {
@@ -339,7 +351,7 @@ func TestSweepOrphanedRuns_ReleasesTerminalLeasesImmediately(t *testing.T) {
 				t.Fatalf("Put: %v", err)
 			}
 
-			h.runs.SweepOrphaned(t.Context())
+			h.runs.sweepOrphaned(t.Context())
 
 			if _, held := h.runs.lease("wf_1"); held {
 				t.Error("a terminal run kept its lease")
@@ -365,7 +377,7 @@ func TestSweepOrphanedRuns_AbsenceStartsAClockWithoutReleasing(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	got, held := h.runs.lease("wf_1")
 	if !held {
@@ -432,7 +444,7 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 		t.Fatalf("Put lease: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	if _, held := h.runs.lease("wf_1"); held {
 		t.Error("a lease continuously absent past the budget was not released")
@@ -472,7 +484,7 @@ func TestSweepOrphanedRuns_InspectUnknownReleasesImmediately(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	if _, held := h.runs.lease("wf_1"); held {
 		t.Error("inspect confirmed an unknown workflow, but its lease survived")
@@ -490,7 +502,7 @@ func TestSweepOrphanedRuns_InspectFailureStartsTheClock(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	got, held := h.runs.lease("wf_1")
 	if !held || got.FirstAbsentAt.IsZero() {
@@ -511,7 +523,7 @@ func TestSweepOrphanedRuns_EmptySuccessfulListReleasesNothing(t *testing.T) {
 		}
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	if got := len(h.runs.leaseStore().List()); got != 3 {
 		t.Errorf("leases after empty successful list = %d, want 3", got)
@@ -528,7 +540,7 @@ func TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	if _, held := h.runs.lease("wf_1"); !held {
 		t.Error("an unreadable run list released a lease, so a live run's envelope is gone")
@@ -557,7 +569,7 @@ func TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphaned(t.Context())
+	h.runs.sweepOrphaned(t.Context())
 
 	if _, held := h.runs.lease("wf_1"); !held {
 		t.Error("a failed cancel released the lease, stranding a paused KAS row with nothing " +
@@ -716,7 +728,7 @@ func TestOrphanSweepBudget_ExceedsThePerCallTimeout(t *testing.T) {
 			"time out before its first inspect could answer", orphanSweepBudget, sessionListTimeout)
 	}
 	if orphanSweepBudget > 5*time.Minute {
-		t.Errorf("orphanSweepBudget = %v; a boot goroutine holding a utility bridge that long "+
+		t.Errorf("orphanSweepBudget = %v; a boot goroutine holding the engine that long "+
 			"is a stall, not a sweep", orphanSweepBudget)
 	}
 }
@@ -733,10 +745,18 @@ func TestResumablePause_CoversEveryInvoluntaryPauseAndNothingElse(t *testing.T) 
 	}{
 		// The reason arm, no detail. Involuntary.
 		"the reconcile's restart literal": {nil, stalePauseReason, true},
-		"an interrupted step":             {nil, interruptedPauseReason, true},
-		"a transient model 5xx":           {nil, modelServicePauseReason, true},
+		"an interrupted step":             {nil, interruptedReason, true},
+		"a transient model 5xx":           {nil, modelServiceReason, true},
 		"a transient network code":        {nil, "Transient connection error (EAI_AGAIN); the run is paused and can be resumed.", true},
 		"a different network code":        {nil, "Transient connection error (ECONNRESET); the run is paused and can be resumed.", true},
+		// A run paused before the upgrade keeps the older wording on disk.
+		"an interrupted step, 2.31.1 wording":   {nil, interruptedReason2311, true},
+		"a transient model 5xx, 2.31.1 wording": {&transient, modelServiceReason2311, true},
+		"a stalled stream":                      {&transient, stallReason, true},
+
+		// KAS's permanent arm: a resume retries the step, but nobody chose it as transient.
+		"a permanent fault":                 {nil, permanentReason, false},
+		"a permanent fault, 2.31.1 wording": {nil, permanentReason2311, false},
 
 		// Waiting on a human.
 		"a step that asked for input":   {nil, "Step requested user input via send_message.", false},
@@ -797,21 +817,22 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 		t.Helper()
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{methodKiroWorkflowInspect: reply}
-		return h.runs.restartPaused(t.Context(), "wf_1"), h.runs.involuntarilyPaused(t.Context(), "wf_1")
+		resume, _ = autoResumable(t, h.runs, "wf_1")
+		return h.runs.restartPaused(t.Context(), "wf_1"), resume
 	}
 
 	t.Run("everything the cancel side accepts, the resume side accepts too", func(t *testing.T) {
 		// Otherwise a restart-paused run would be cancellable but never resumable.
 		cancel, resume := both(t, inspectPaused(t, "wf_1", stalePauseReason))
 		if !cancel || !resume {
-			t.Errorf("restartPaused = %v, involuntarilyPaused = %v for KAS's restart literal; want both true",
+			t.Errorf("restartPaused = %v, an automatic resume = %v for KAS's restart literal; want both true",
 				cancel, resume)
 		}
 	})
 
 	for name, reason := range map[string]string{
-		"an interrupted step":      interruptedPauseReason,
-		"a transient model 5xx":    modelServicePauseReason,
+		"an interrupted step":      interruptedReason,
+		"a transient model 5xx":    modelServiceReason,
 		"a transient network code": "Transient connection error (EAI_AGAIN); the run is paused and can be resumed.",
 	} {
 		t.Run(name+" is resumable but never cancellable", func(t *testing.T) {
@@ -821,7 +842,7 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 					"a resume would have saved (see clearOrphaned)", reason)
 			}
 			if !resume {
-				t.Errorf("involuntarilyPaused = false for %q; this is the class that stranded "+
+				t.Errorf("an automatic resume = false for %q; this is the class that stranded "+
 					"six live runs", reason)
 			}
 		})
@@ -836,7 +857,7 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 				"cancels work a resume would have saved")
 		}
 		if !resume {
-			t.Error("involuntarilyPaused = false for a transient fault inside a parallel branch; " +
+			t.Error("an automatic resume = false for a transient fault inside a parallel branch; " +
 				"this is the run the whole detail arm exists for")
 		}
 	})
@@ -845,16 +866,16 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 	t.Run("the branch wrapper with no detail is neither resumable nor cancellable", func(t *testing.T) {
 		cancel, resume := both(t, inspectPaused(t, "wf_1", branchWaitReason))
 		if cancel || resume {
-			t.Errorf("restartPaused = %v, involuntarilyPaused = %v for a detail-less parallel "+
+			t.Errorf("restartPaused = %v, an automatic resume = %v for a detail-less parallel "+
 				"wrapper; want both false, because that one sentence covers a need-input park, "+
 				"an interruption and a permanent failure alike", cancel, resume)
 		}
 	})
 }
 
-// TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions pins that only the reason predicate is wider; status is
+// TestAutomaticResume_KeepsItsSiblingsThreeConditions pins that only the reason predicate is wider; status is
 // re-read since a reason outlives its pause.
-func TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions(t *testing.T) {
+func TestAutomaticResume_KeepsItsSiblingsThreeConditions(t *testing.T) {
 	transient := "Transient connection error (EAI_AGAIN); the run is paused and can be resumed."
 
 	t.Run("an involuntary pause on this paused run is resumable", func(t *testing.T) {
@@ -862,22 +883,21 @@ func TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions(t *testing.T) {
 		br.callResults = map[string]json.RawMessage{
 			methodKiroWorkflowInspect: inspectPaused(t, "wf_1", transient),
 		}
-		if !h.runs.involuntarilyPaused(t.Context(), "wf_1") {
-			t.Error("involuntarilyPaused = false for a transient-network pause on this very run")
+		if resume, _ := autoResumable(t, h.runs, "wf_1"); !resume {
+			t.Error("an automatic resume = false for a transient-network pause on this very run")
 		}
 	})
 
 	for name, reply := range map[string]json.RawMessage{
-		"a reply naming a DIFFERENT run": inspectPaused(t, "wf_other", transient),
-		"a run KAS says is running":      inspectReply(t, "wf_1", "running", transient),
-		"a run KAS says completed":       inspectReply(t, "wf_1", "completed", transient),
-		"a reply carrying no status":     inspectReply(t, "wf_1", "", transient),
+		"a run KAS says is running":  inspectReply(t, "wf_1", "running", transient),
+		"a run KAS says completed":   inspectReply(t, "wf_1", "completed", transient),
+		"a reply carrying no status": inspectReply(t, "wf_1", "", transient),
 	} {
 		t.Run(name+" is not resumable", func(t *testing.T) {
 			h, _, br := newTestHub()
 			br.callResults = map[string]json.RawMessage{methodKiroWorkflowInspect: reply}
-			if h.runs.involuntarilyPaused(t.Context(), "wf_1") {
-				t.Errorf("involuntarilyPaused = true for %s", name)
+			if resume, read := autoResumable(t, h.runs, "wf_1"); resume || !read {
+				t.Errorf("an automatic resume = %v, read %v for %s, want false on a read reply", resume, read, name)
 			}
 		})
 	}
@@ -885,15 +905,23 @@ func TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions(t *testing.T) {
 	t.Run("a failed inspect leaves the run paused", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
-		if h.runs.involuntarilyPaused(t.Context(), "wf_1") {
-			t.Error("an unreadable pause reason was treated as resumable")
+		if resume, read := autoResumable(t, h.runs, "wf_1"); resume || read {
+			t.Errorf("an automatic resume = %v, read %v for a failed inspect, want neither", resume, read)
+		}
+	})
+
+	t.Run("a reply naming a different run leaves the run paused, unread", func(t *testing.T) {
+		h, _, br := newTestHub()
+		br.callResults = map[string]json.RawMessage{methodKiroWorkflowInspect: inspectPaused(t, "wf_other", transient)}
+		if resume, read := autoResumable(t, h.runs, "wf_1"); resume || read {
+			t.Errorf("an automatic resume = %v, read %v for another run's reply, want neither", resume, read)
 		}
 	})
 
 	t.Run("an empty workflow id is not resumable", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		if h.runs.involuntarilyPaused(t.Context(), "") {
-			t.Error("involuntarilyPaused(\"\") = true")
+		if resume, _ := autoResumable(t, h.runs, ""); resume {
+			t.Error("an automatic resume(\"\") = true")
 		}
 	})
 }
@@ -987,20 +1015,20 @@ func TestSweepOrphaned_ReportsWhetherItReachedKAS(t *testing.T) {
 		}
 		leased(t, h.runs, "wf_1")
 
-		if !h.runs.SweepOrphaned(t.Context()) {
+		if !h.runs.sweepOrphaned(t.Context()) {
 			t.Error("a sweep that read the run list reported unreached, so the caller " +
 				"pays for a retry it does not need")
 		}
 	})
 
-	t.Run("a run list the utility bridge could not serve", func(t *testing.T) {
+	t.Run("a run list the engine could not serve", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callErrs = map[string]error{
-			methodKiroWorkflowList: errors.New("utility bridge start: kiro-cli is not available yet"),
+			methodKiroWorkflowList: errors.New("engine start: kiro-cli is not available yet"),
 		}
 		leased(t, h.runs, "wf_1")
 
-		if h.runs.SweepOrphaned(t.Context()) {
+		if h.runs.sweepOrphaned(t.Context()) {
 			t.Error("a sweep that never read the run list reported reached; this is the " +
 				"one failure the caller retries, and it would be silently dropped")
 		}
@@ -1011,9 +1039,16 @@ func TestSweepOrphaned_ReportsWhetherItReachedKAS(t *testing.T) {
 
 	t.Run("no leases at all", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		if !h.runs.SweepOrphaned(t.Context()) {
+		if !h.runs.sweepOrphaned(t.Context()) {
 			t.Error("an empty lease store reported unreached, so every boot with no runs " +
 				"parks a goroutine waiting for an install it has no use for")
 		}
 	})
+}
+
+// autoResumable reports whether an automatic resume takes the run, and whether the run was read.
+func autoResumable(t *testing.T, rs *Runs, workflowID string) (resume, read bool) {
+	t.Helper()
+	r := rs.readPauseState(t.Context(), workflowID)
+	return runTransitions[healResume][r.seen] == actHeal, r.seen != seenUnreadable
 }

@@ -3,7 +3,8 @@
 import { describe, it, expect } from "vitest";
 import { runToExec, indexPlan } from "./run-exec-source.js";
 import { nodePathKey } from "./run-node-key.js";
-import { flatten, workNodes, counters } from "./exec-view/model.js";
+import { flatten, workNodes, counters, type ExecNode } from "./exec-view/model.js";
+import extendedLoopRaw from "./testdata/run-extended-loop.json?raw";
 import { makeRunState } from "./__test-helpers__/model.js";
 import type { RunNode, RunState } from "./run-store.js";
 import type { RunAsks } from "./run-asks.js";
@@ -29,7 +30,6 @@ describe("runToExec structure", () => {
   // around everything — an indent carrying no information.
   it("unwraps the synthetic root and keeps the real top level", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -47,7 +47,6 @@ describe("runToExec structure", () => {
 
   it("keys two steps whose ids spell alike under a slash join apart", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -66,7 +65,6 @@ describe("runToExec structure", () => {
   // Flattening the tree to its leaves would make a loop, a parallel and a watch invisible.
   it("keeps control-flow containers as nodes of their own", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -117,7 +115,6 @@ describe("runToExec structure", () => {
   // renders with no glyph and no treatment.
   it("maps an unknown node type onto group rather than passing it through", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({ nodeId: "wf_1", type: "fanout", status: "running", children: [] }),
       undefined,
       NO_ASKS,
@@ -149,7 +146,7 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
   ];
 
   function shape(root: unknown, plan: unknown): string[] {
-    return flatten(runToExec("wf_1", stateWith(root), plan, NO_ASKS).nodes).map(
+    return flatten(runToExec(stateWith(root), plan, NO_ASKS).nodes).map(
       (n) => `${n.kind}:${n.label}:${n.path}:${n.transcript === true ? "t" : "-"}`,
     );
   }
@@ -175,7 +172,7 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
       status: "running",
       children: [{ nodeId: "loop", type: "repeat", status: "running" }],
     };
-    const run = runToExec("wf_1", stateWith(root), PLAN, NO_ASKS);
+    const run = runToExec(stateWith(root), PLAN, NO_ASKS);
     expect(shape(root, PLAN)).toEqual([
       "repeat:loop:wf_1:loop:-",
       "sequence:pass 1:wf_1:loop:iter-0:-",
@@ -191,6 +188,36 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
     expect(counters(run.nodes)).toEqual({ total: 3, done: 0, failed: 0, current: 0 });
   });
 
+  it("gives a planned step the model and effort its recipe pins", () => {
+    const pinned = {
+      nodeId: "code",
+      type: "step",
+      agentName: "wf-coder",
+      modelId: "claude-opus-5.5",
+      effortLevel: "high",
+    };
+    const unstarted = { nodeId: "wf_1", type: "sequence", status: "running", children: [] };
+    const pendingFan = {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [{ nodeId: "fan", type: "parallel", status: "pending", children: [] }],
+    };
+    const cases: [string, unknown, unknown[]][] = [
+      ["top level", unstarted, [pinned]],
+      ["parallel branch", pendingFan, [{ nodeId: "fan", type: "parallel", branches: [pinned] }]],
+    ];
+    for (const [name, root, plan] of cases) {
+      const code = flatten(runToExec(stateWith(root), plan, NO_ASKS).nodes).find(
+        (n) => n.label === "code",
+      );
+      expect(code?.state, name).toBe("pending");
+      const facts = new Map((code?.facts ?? []).map((f) => [f.label, f.value]));
+      expect(facts.get("Model"), name).toBe("claude-opus-5.5");
+      expect(facts.get("Effort"), name).toBe("high");
+    }
+  });
+
   it("never counts a childless container as a step, plan or no plan", () => {
     const root = {
       nodeId: "wf_1",
@@ -201,7 +228,7 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
         { nodeId: "fan", type: "parallel", status: "pending", children: [] },
       ],
     };
-    const run = runToExec("wf_1", stateWith(root), undefined, NO_ASKS);
+    const run = runToExec(stateWith(root), undefined, NO_ASKS);
     expect(workNodes(run.nodes).map((n) => n.label)).toEqual(["a"]);
     expect(run.nodes[1]?.transcript).toBeUndefined();
   });
@@ -239,7 +266,7 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
       "sequence:pass 1:wf_1:loop:iter-0:-",
       "step:code:wf_1:loop:iter-0:code:t",
     ]);
-    expect(runToExec("wf_1", stateWith(root), undefined, NO_ASKS).nodes).toEqual([]);
+    expect(runToExec(stateWith(root), undefined, NO_ASKS).nodes).toEqual([]);
   });
 
   it("keeps the state's children over the plan's once KAS has expanded a container", () => {
@@ -283,7 +310,7 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
         },
       ],
     };
-    const run = runToExec("wf_1", stateWith(root), PLAN, NO_ASKS);
+    const run = runToExec(stateWith(root), PLAN, NO_ASKS);
     expect(counters(run.nodes)).toEqual({ total: 2, done: 0, failed: 0, current: 1 });
     // The run tab still holds every pass.
     expect(run.nodes[0]?.children.map((p) => `${p.label}:${String(p.pass)}`)).toEqual([
@@ -307,7 +334,6 @@ describe("runToExec container state", () => {
       ["paused", "waiting"],
     ] as const) {
       const run = runToExec(
-        "wf_1",
         stateWith({
           nodeId: "wf_1",
           type: "sequence",
@@ -332,7 +358,6 @@ describe("runToExec container state", () => {
   // which it does until KAS settles it.
   it("settles a container once every child has", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -355,7 +380,6 @@ describe("runToExec container state", () => {
   // KAS's inspect reply carries no end on a completed repeat, so without one its duration ran on.
   it("ends a finished container with no end of its own at its last child's end", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -387,7 +411,6 @@ describe("runToExec container state", () => {
 
   it("leaves a running container's end open", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -442,7 +465,7 @@ describe("runToExec container state", () => {
       ["completed", "ok"],
       ["failed", "fail"],
     ] as const) {
-      const run = runToExec("wf_1", loopAfterFailure(last), undefined, NO_ASKS);
+      const run = runToExec(loopAfterFailure(last), undefined, NO_ASKS);
       expect(run.nodes[0]?.state, last).toBe(want);
       expect(run.nodes[0]?.children[0]?.state, "pass 1 keeps its own failure").toBe("fail");
     }
@@ -454,7 +477,6 @@ describe("runToExec reads what nothing read before", () => {
   // nowhere in the app.
   it("carries the run's inputs", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "running"), { inputs: { repo: "marotte" } }),
       undefined,
       NO_ASKS,
@@ -467,7 +489,6 @@ describe("runToExec reads what nothing read before", () => {
   // screen.
   it("states a repeat's bound and stop condition from the plan", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -498,7 +519,6 @@ describe("runToExec reads what nothing read before", () => {
 
   it("names a watch's handler from KAS's nodePlan shape", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -517,7 +537,6 @@ describe("runToExec reads what nothing read before", () => {
 
   it("reads a settled background-process watch's exit record", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -554,7 +573,6 @@ describe("runToExec reads what nothing read before", () => {
 
   it("keeps a watch capture that is not KAS's record verbatim", () => {
     const run = runToExec(
-      "wf_1",
       stateWith({
         nodeId: "wf_1",
         type: "sequence",
@@ -579,7 +597,6 @@ describe("runToExec reads what nothing read before", () => {
   // Four more fields with zero render sites before the exec view.
   it("surfaces the per-step facts nothing rendered", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(
         step("a", "completed", {
           agentName: "wf-coder",
@@ -605,7 +622,6 @@ describe("runToExec reads what nothing read before", () => {
   // `auto` is the ABSENCE of a model choice, so naming it as one implies a pin that never happened.
   it("does not report auto as a model", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "running", { agentName: "wf-coder", modelId: "auto" })),
       undefined,
       NO_ASKS,
@@ -617,7 +633,6 @@ describe("runToExec reads what nothing read before", () => {
   it("counts a step's retries in the subtitle, one retry singular", () => {
     const subtitle = (n: number) =>
       runToExec(
-        "wf_1",
         stateWith(step("a", "running", { agentName: "wf-coder", continuationAttempts: n })),
         undefined,
         NO_ASKS,
@@ -643,10 +658,10 @@ describe("indexPlan tolerance", () => {
         nodeId: "top",
         steps: [{ nodeId: "mid", branches: [{ nodeId: "deep", maxIterations: 3 }] }],
       },
-      { nodeId: "other", nodes: [{ nodeId: "nested", join: "any" }] },
+      { nodeId: "other", nodes: [{ nodeId: "nested", stopCondition: "done" }] },
     ]);
     expect(idx.get("deep")?.maxIterations).toBe(3);
-    expect(idx.get("nested")?.join).toBe("any");
+    expect(idx.get("nested")?.stopCondition).toBe("done");
   });
 
   // `stopWhen` is the other spelling; the engine rejects a node declaring both, so folding them
@@ -679,16 +694,11 @@ describe("runToExec alert precedence", () => {
   // `running` while a step's ask blocks it — so the status reports nothing wrong and would leave
   // the one actionable state unsaid.
   it("puts an unanswered ask ahead of everything", () => {
-    const run = runToExec(
-      "wf_1",
-      stateWith(step("a", "running"), { status: "failed" }),
-      undefined,
-      {
-        count: 2,
-        asked: [{ nodeID: "a", sessionID: "", answer: false }],
-        label: "Run tests?",
-      },
-    );
+    const run = runToExec(stateWith(step("a", "running"), { status: "failed" }), undefined, {
+      count: 2,
+      asked: [{ nodeID: "a", sessionID: "", answer: false }],
+      label: "Run tests?",
+    });
     expect(run.alert?.kind).toBe("input");
     expect(run.alert?.text).toContain("Run tests?");
     expect(run.alert?.text).toContain("2 asks waiting");
@@ -701,7 +711,6 @@ describe("runToExec alert precedence", () => {
   // is on the wire.
   it("separates a user stop from a failure", () => {
     const stopped = runToExec(
-      "wf_1",
       stateWith(step("a", "aborted"), {
         status: "aborted",
         stopInitiator: "user",
@@ -711,18 +720,17 @@ describe("runToExec alert precedence", () => {
       NO_ASKS,
     );
     expect(stopped.alert?.kind).toBe("stopped");
-    expect(stopped.alert?.text).toBe("Stopped by user: changed my mind");
+    expect(stopped.alert?.text).toBe("Stopped by you: changed my mind");
 
     const paused = runToExec(
-      "wf_1",
       stateWith(step("a", "paused"), { status: "paused", stopInitiator: "user" }),
       undefined,
       NO_ASKS,
     );
-    expect(paused.alert?.text).toBe("Paused by user");
+    // A pause asked for is still a pause: the run waits for a resume.
+    expect(paused.alert).toEqual({ kind: "paused", text: "Paused by you" });
 
     const pending = runToExec(
-      "wf_1",
       stateWith(step("a", "running"), { status: "running", pausePending: { initiator: "user" } }),
       undefined,
       NO_ASKS,
@@ -730,7 +738,6 @@ describe("runToExec alert precedence", () => {
     expect(pending.alert).toEqual({ kind: "paused", text: "Pausing after the current step" });
 
     const failed = runToExec(
-      "wf_1",
       stateWith(step("a", "failed", { failureReason: "exit 1" }), { status: "failed" }),
       undefined,
       NO_ASKS,
@@ -742,7 +749,6 @@ describe("runToExec alert precedence", () => {
 
   it("names the transient-error code behind a pause", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "paused"), {
         status: "paused",
         pauseReason: "retrying",
@@ -760,7 +766,6 @@ describe("runToExec alert precedence", () => {
   // is not a transient failure, and the reason sentence already carries upstream's own explanation.
   it("does not call an exhausted continuation budget a transient error", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "paused"), {
         status: "paused",
         pauseReason: "Step could not be continued after 3 consecutive attempts.",
@@ -774,39 +779,10 @@ describe("runToExec alert precedence", () => {
     expect(run.alert?.text).not.toContain("transient");
   });
 
-  // The two need-input literals reach the reader as a sentence about THEM rather than verbatim, and
-  // on this page the alert also has to say what the Resume BUTTON beside it will do: KAS's resume
-  // clears the run's pause reason and leaves the step node's own signal, so the next step execution
-  // parks again.
-  it("rewrites a need-input pause and warns that Resume alone re-parks it", () => {
-    for (const reason of [
-      "Step requested user input via send_message.",
-      "Step 'review' is waiting for user input.",
-      "Step 'review' is waiting for the next user message.",
-    ]) {
-      const run = runToExec(
-        "wf_1",
-        stateWith(step("a", "paused"), { status: "paused", pauseReason: reason }),
-        undefined,
-        NO_ASKS,
-      );
-      expect(run.alert?.kind, reason).toBe("paused");
-      expect(run.alert?.text, reason).toBe(
-        "A step is waiting for your answer. Resume alone will park it again",
-      );
-      // The literal itself never reaches the reader: it names a tool and a node id where the reader
-      // needs to know somebody owes an answer.
-      expect(run.alert?.text, reason).not.toContain("send_message");
-    }
-  });
-
-  // The branch arm: KAS composes `Parallel '<id>' is waiting on branch '<branch>'.` onto the run
-  // because the branch's own sentence went to a shallow state copy, so before the node-signal arm
-  // this page quoted a sentence naming a branch at a reader who needed to know somebody owes an
-  // answer.
-  it("recognises a park inside a parallel branch and says the same thing", () => {
+  // Only the run-asks store says a step waits on a person; a need-input park it holds no ask for (the
+  // run was not read yet, or the question was answered) is KAS's pause, quoted like any other.
+  it("leaves a need-input park the store holds no ask for to KAS's own sentence", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(
         {
           nodeId: "phase1",
@@ -814,20 +790,17 @@ describe("runToExec alert precedence", () => {
           status: "paused",
           children: [step("verify", "paused", { completionSignal: "need_input" })],
         },
-        { status: "paused", pauseReason: "Parallel 'phase1' is waiting on branch 'verify'." },
+        { status: "paused", pauseReason: "Step 'verify' is waiting for user input." },
       ),
       undefined,
       NO_ASKS,
     );
     expect(run.alert?.kind).toBe("paused");
-    expect(run.alert?.text).toBe(
-      "A step is waiting for your answer. Resume alone will park it again",
-    );
+    expect(run.alert?.text).toBe("Waiting: Step 'verify' is waiting for user input.");
   });
 
   it("quotes any other pause reason verbatim", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "paused"), { status: "paused", pauseReason: "watching for a file" }),
       undefined,
       NO_ASKS,
@@ -837,7 +810,6 @@ describe("runToExec alert precedence", () => {
 
   it("raises no alert on a run that wants nothing", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "completed"), { status: "completed" }),
       undefined,
       NO_ASKS,
@@ -851,43 +823,89 @@ describe("runToExec alert precedence", () => {
 
 describe("runToExec question targeting", () => {
   // The run tab answers where the server would: a repeat's iterations share a node id, so only the
-  // execution the ask resolves to is the one the box's words answer.
-  it("marks only the paused execution of a shared node id as answered", () => {
-    const loop = {
-      nodeId: "loop",
-      type: "repeat",
-      status: "paused",
-      children: [
-        { ...step("review", "completed", { sessionId: "sess_0" }), iteration: 0 },
-        { ...step("review", "paused", { sessionId: "sess_1" }), iteration: 1 },
-      ],
-    };
-    const run = runToExec("wf_1", stateWith(loop, { status: "paused" }), undefined, {
+  // execution the ask resolves to (by session, else by path) is the one the box's words answer.
+  const loop = {
+    nodeId: "loop",
+    type: "repeat",
+    status: "paused",
+    children: [
+      { ...step("review", "completed", { sessionId: "sess_0" }), iteration: 0 },
+      { ...step("review", "paused", { sessionId: "sess_1" }), iteration: 1 },
+    ],
+  };
+
+  function answered(address: RunAsks["asked"][number]): { path: string; ask?: string }[] {
+    const run = runToExec(stateWith(loop, { status: "paused" }), undefined, {
       count: 1,
-      asked: [{ nodeID: "review", sessionID: "", answer: true }],
+      asked: [address],
       label: "Which colour?",
     });
-    const answered = workNodes(run.nodes)
+    return workNodes(run.nodes)
       .filter((n) => n.verb === "answer")
-      .map((n) => n.path);
-    expect(answered).toEqual([nodePathKey(["loop", "iter-1"])]);
+      .map((n) => (n.ask === undefined ? { path: n.path } : { path: n.path, ask: n.ask }));
+  }
+
+  it("answers the execution a question's path names, under that question's id", () => {
+    expect(
+      answered({
+        nodeID: "review",
+        sessionID: "",
+        answer: true,
+        path: nodePathKey(["loop", "iter-1"]),
+        askID: "ask-1",
+      }),
+    ).toEqual([{ path: nodePathKey(["loop", "iter-1"]), ask: "ask-1" }]);
   });
 
-  it("answers a question naming no step at the run's only paused step", () => {
-    const run = runToExec(
-      "wf_1",
-      stateWith(step("ask", "paused", { sessionId: "sess_a" }), { status: "paused" }),
-      undefined,
-      { count: 1, asked: [{ nodeID: "", sessionID: "", answer: true }], label: "" },
-    );
-    expect(workNodes(run.nodes).map((n) => n.verb)).toEqual(["answer"]);
+  it("answers the execution a question's session names", () => {
+    expect(
+      answered({ nodeID: "review", sessionID: "sess_1", answer: true, askID: "ask-1" }),
+    ).toEqual([{ path: nodePathKey(["loop", "iter-1"]), ask: "ask-1" }]);
+  });
+
+  it("answers nowhere for a question addressed by a node id alone", () => {
+    expect(answered({ nodeID: "review", sessionID: "", answer: true })).toEqual([]);
+  });
+});
+
+describe("the run's questions", () => {
+  const root = {
+    nodeId: "wf_1",
+    type: "sequence",
+    status: "paused",
+    children: [
+      step("fix", "paused", { sessionId: "sess_fix" }),
+      step("review", "paused", { sessionId: "sess_rev" }),
+    ],
+  };
+  const QUESTION = "Phase A fix: which contract do you want? ".repeat(20);
+
+  it("carries every step question whole, placed at its step, and never a request decision", () => {
+    const run = runToExec(stateWith(root, { status: "paused" }), undefined, {
+      count: 3,
+      asked: [
+        { nodeID: "fix", sessionID: "sess_fix", answer: true, askID: "a1", text: QUESTION },
+        { nodeID: "review", sessionID: "sess_rev", answer: true, askID: "a2", text: "Ship?" },
+        { nodeID: "fix", sessionID: "", answer: false, text: "Allow git push?" },
+      ],
+      label: QUESTION,
+    });
+    expect(run.questions).toEqual([
+      { text: QUESTION, path: nodePathKey(["wf_1", "fix"]), step: "fix" },
+      { text: "Ship?", path: nodePathKey(["wf_1", "review"]), step: "review" },
+    ]);
+    // The head line keeps its one-line form; the region is where the whole question lives.
+    expect(run.alert?.kind).toBe("input");
+  });
+
+  it("carries none when nothing asks", () => {
+    expect(runToExec(stateWith(root), undefined, NO_ASKS).questions).toBeUndefined();
   });
 });
 
 describe("a step's detail line", () => {
   it("names a retry wait on a running step and a pause on a paused one, verbatim", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("coder", "running", { retryReason: "Waiting 30s to retry." })),
       undefined,
       NO_ASKS,
@@ -896,7 +914,6 @@ describe("a step's detail line", () => {
     expect(run.nodes[0]?.subtitle).toBe("Retrying: Waiting 30s to retry.");
 
     const paused = runToExec(
-      "wf_1",
       stateWith(step("coder", "paused", { pauseReason: "Step paused." })),
       undefined,
       NO_ASKS,
@@ -933,18 +950,12 @@ describe("the plan revision notice", () => {
       false,
     ],
   ] as const)("words %o", (u, text, failed) => {
-    const run = runToExec(
-      "wf_1",
-      stateWith(step("a", "running"), { planUpdate: u }),
-      undefined,
-      NO_ASKS,
-    );
+    const run = runToExec(stateWith(step("a", "running"), { planUpdate: u }), undefined, NO_ASKS);
     expect(run.notice).toEqual({ text, failed });
   });
 
   it("reaches the exec model from the run read", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(step("a", "running"), {
         planUpdate: { outcome: "queued", pending: 2, after: "a" },
       }),
@@ -965,7 +976,6 @@ describe("runToExec reads the run log's step ends", () => {
 
   it("marks a completed step whose turn kiro-cli stopped as failed, with the reason", () => {
     const run = runToExec(
-      "wf_1",
       tree(step("build", "completed")),
       undefined,
       NO_ASKS,
@@ -983,7 +993,6 @@ describe("runToExec reads the run log's step ends", () => {
 
   it("falls back to the outcome's sentence for an end with no reason", () => {
     const run = runToExec(
-      "wf_1",
       tree(step("build", "completed")),
       undefined,
       NO_ASKS,
@@ -996,7 +1005,6 @@ describe("runToExec reads the run log's step ends", () => {
 
   it.each(["", "  \n"])("falls back to the outcome's sentence for a blank reason %j", (reason) => {
     const run = runToExec(
-      "wf_1",
       tree(step("build", "completed")),
       undefined,
       NO_ASKS,
@@ -1008,7 +1016,6 @@ describe("runToExec reads the run log's step ends", () => {
 
   it("does not name a blank account of KAS's own failure", () => {
     const run = runToExec(
-      "wf_1",
       stateWith(
         {
           nodeId: "wf_1",
@@ -1029,7 +1036,6 @@ describe("runToExec reads the run log's step ends", () => {
 
   it("keeps KAS's own account for a step it did not grade completed", () => {
     const run = runToExec(
-      "wf_1",
       tree(step("build", "failed", { failureReason: "exit 1" })),
       undefined,
       NO_ASKS,
@@ -1042,7 +1048,6 @@ describe("runToExec reads the run log's step ends", () => {
 
   it("leaves a completed step with no end, and an end at another path, alone", () => {
     const run = runToExec(
-      "wf_1",
       tree(step("build", "completed")),
       undefined,
       NO_ASKS,
@@ -1051,5 +1056,389 @@ describe("runToExec reads the run log's step ends", () => {
     );
     expect(run.nodes[0]?.state).toBe("ok");
     expect(run.nodes[0]?.failure).toBeUndefined();
+  });
+});
+
+// KAS expands an `include` into a sequence whose plan entry carries `includedFrom` and prefixes
+// every id inside with `<include id>/`; the state tree's sequence drops `includedFrom`.
+describe("runToExec shows where an included group came from", () => {
+  const seat = (id: string, agent: string, model: string) => ({
+    nodeId: `review/${id}`,
+    type: "step",
+    agentName: agent,
+    modelId: model,
+  });
+  const plan = [
+    { nodeId: "implement", type: "step", agentName: "wf-coder" },
+    {
+      nodeId: "review",
+      type: "sequence",
+      steps: [
+        {
+          nodeId: "review/seats",
+          type: "parallel",
+          branches: [
+            seat("advisor", "advisor", "gpt-5.6-sol"),
+            seat("code-adversary-claude", "code-adversary-claude", "claude-opus-5.5"),
+          ],
+        },
+      ],
+      includedFrom: { name: "review-seats", path: "./review-seats.workflow.json" },
+    },
+    { nodeId: "finalize", type: "step", agentName: "wf-coder" },
+  ];
+  const root = (review: Record<string, unknown>) => ({
+    nodeId: "wf_1",
+    type: "sequence",
+    status: "running",
+    children: [step("implement", "completed"), review, step("finalize", "pending")],
+  });
+  const started = {
+    nodeId: "review",
+    type: "sequence",
+    status: "running",
+    children: [
+      {
+        nodeId: "review/seats",
+        type: "parallel",
+        status: "running",
+        children: [
+          step("review/advisor", "running", { agentName: "advisor" }),
+          step("review/code-adversary-claude", "running"),
+        ],
+      },
+    ],
+  };
+  const fold = (planIn: unknown, review: Record<string, unknown> = started) =>
+    flatten(runToExec(stateWith(root(review)), planIn, NO_ASKS).nodes);
+  const byLabel = (nodes: ReturnType<typeof fold>, label: string) => {
+    const n = nodes.find((x) => x.label === label);
+    if (n === undefined) {
+      throw new Error(`no ${label}`);
+    }
+    return n;
+  };
+
+  it("subtitles the group with its recipe and gives it the recipe's name and file", () => {
+    const group = byLabel(fold(plan), "review");
+    expect(group.subtitle).toBe("from review-seats");
+    expect(group.qualifier).toBeUndefined();
+    expect(group.facts).toEqual([
+      { label: "Recipe", value: "review-seats" },
+      { label: "Recipe file", value: "./review-seats.workflow.json", mono: true },
+    ]);
+  });
+
+  it("qualifies every id inside with the include's prefix, keeping the label verbatim", () => {
+    const nodes = fold(plan);
+    for (const label of ["review/seats", "review/advisor", "review/code-adversary-claude"]) {
+      expect(byLabel(nodes, label).qualifier, label).toBe("review/");
+    }
+    expect(byLabel(nodes, "implement").qualifier).toBeUndefined();
+    expect(byLabel(nodes, "finalize").qualifier).toBeUndefined();
+  });
+
+  it("names the recipe among a step's facts, after its structural ones", () => {
+    const facts = byLabel(fold(plan), "review/advisor").facts ?? [];
+    expect(facts.map((f) => f.label)).toEqual(["Agent", "Recipe"]);
+    expect(facts[1]?.value).toBe("review-seats");
+    expect(byLabel(fold(plan), "implement").facts).toBeUndefined();
+  });
+
+  it("shows the same before the include has started, from its plan", () => {
+    const nodes = fold(plan, { nodeId: "review", type: "sequence", status: "pending" });
+    expect(byLabel(nodes, "review").subtitle).toBe("from review-seats");
+    expect(byLabel(nodes, "review/code-adversary-claude").qualifier).toBe("review/");
+  });
+
+  it("reads nothing from an includedFrom it cannot trust", () => {
+    for (const bad of [undefined, "review-seats", { name: 3 }, { name: "" }, ["review-seats"]]) {
+      const planIn = plan.map((n) => (n.nodeId === "review" ? { ...n, includedFrom: bad } : n));
+      const nodes = fold(planIn);
+      const group = byLabel(nodes, "review");
+      expect(group.subtitle, JSON.stringify(bad)).toBeUndefined();
+      expect(group.facts, JSON.stringify(bad)).toBeUndefined();
+      expect(byLabel(nodes, "review/advisor").qualifier, JSON.stringify(bad)).toBeUndefined();
+    }
+  });
+
+  it("keeps a recipe with no path to its name alone", () => {
+    const planIn = plan.map((n) =>
+      n.nodeId === "review" ? { ...n, includedFrom: { name: "review-seats", path: 7 } } : n,
+    );
+    expect(byLabel(fold(planIn), "review").facts).toEqual([
+      { label: "Recipe", value: "review-seats" },
+    ]);
+  });
+
+  it("gives a hand-written id holding a slash no qualifier", () => {
+    const nodes = flatten(
+      runToExec(
+        stateWith({
+          nodeId: "wf_1",
+          type: "sequence",
+          status: "running",
+          children: [
+            {
+              nodeId: "a",
+              type: "sequence",
+              status: "running",
+              children: [step("a/b", "running")],
+            },
+          ],
+        }),
+        undefined,
+        NO_ASKS,
+      ).nodes,
+    );
+    expect(byLabel(nodes, "a/b").qualifier).toBeUndefined();
+  });
+
+  it("degrades to the plain group with no plan", () => {
+    const nodes = fold(undefined);
+    expect(byLabel(nodes, "review").subtitle).toBeUndefined();
+    expect(byLabel(nodes, "review/advisor").qualifier).toBeUndefined();
+  });
+
+  it("says a parallel runs in parallel and no more, since KAS's plan names no join", () => {
+    expect(byLabel(fold(plan), "review/seats").subtitle).toBe("in parallel");
+  });
+});
+
+// KAS's loop executor reads `extendedMaxIterations ?? maxIterations`, and an extension stores the
+// new total on the repeat's state node (`testdata/run-extended-loop.json`, a run extended from 3
+// passes to 8 that ran 7).
+describe("runToExec reads a loop's budget as the engine does", () => {
+  const extended = JSON.parse(extendedLoopRaw) as { state: unknown; nodePlan: unknown };
+
+  function fold(edit: (loop: Record<string, unknown>) => void = () => undefined): ExecNode {
+    const state = structuredClone(extended.state) as RunState;
+    const loop = state.root?.children?.find((n) => n.nodeId === "build-loop");
+    if (loop === undefined) {
+      throw new Error("the fixture lost its loop");
+    }
+    edit(loop as unknown as Record<string, unknown>);
+    const node = runToExec(state, extended.nodePlan, NO_ASKS).nodes.find(
+      (n) => n.label === "build-loop",
+    );
+    if (node === undefined) {
+      throw new Error("no build-loop node");
+    }
+    return node;
+  }
+
+  const fact = (n: ExecNode, label: string): string | undefined =>
+    n.facts?.find((f) => f.label === label)?.value;
+
+  it("takes an extension's total as the budget and states what it added", () => {
+    const loop = fold();
+    expect(loop.maxPasses).toBe(8);
+    expect(loop.subtitle).toBe(
+      "up to 8 passes (5 added) \u00b7 until gate.json verdict is APPROVED",
+    );
+    expect(fact(loop, "Max passes")).toBe("8 (3 planned, 5 added)");
+    expect(fact(loop, "Stops when")).toBe(
+      "/repo/.agents/tasks/build/gate.json verdict is APPROVED",
+    );
+  });
+
+  it("keeps the plan's bound with no extension", () => {
+    const loop = fold((l) => {
+      delete l["extendedMaxIterations"];
+    });
+    expect(loop.maxPasses).toBe(3);
+    expect(loop.subtitle).toBe("up to 3 passes \u00b7 until gate.json verdict is APPROVED");
+    expect(fact(loop, "Max passes")).toBe("3");
+  });
+});
+
+describe("runToExec words a stop condition in KAS's object form", () => {
+  const subtitle = (stopCondition: unknown): string | undefined =>
+    runToExec(
+      stateWith({
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "loop", type: "repeat", status: "running", children: [] }],
+      }),
+      [{ nodeId: "loop", type: "repeat", stopCondition, steps: [{ nodeId: "w", type: "step" }] }],
+      NO_ASKS,
+    ).nodes[0]?.subtitle;
+
+  it("names each part it sets", () => {
+    expect(subtitle({ containsText: "PASS" })).toBe('repeats \u00b7 until output contains "PASS"');
+    expect(subtitle({ completionSignal: "success" })).toBe(
+      "repeats \u00b7 until the step signals success",
+    );
+    expect(subtitle({ fileCheck: { path: "/t/done.json", jsonPath: "done", value: true } })).toBe(
+      "repeats \u00b7 until done.json done is true",
+    );
+    expect(subtitle({ fileCheck: { path: "/t/v.json", value: ["A", "B"] } })).toBe(
+      "repeats \u00b7 until v.json is one of A, B",
+    );
+  });
+
+  it("says nothing of a shape it cannot read", () => {
+    expect(subtitle({ fileCheck: { jsonPath: "done", value: true } })).toBe("repeats");
+    expect(subtitle(42)).toBe("repeats");
+  });
+});
+
+// KAS names the loop a cap pause stopped at in `state.pause` (`{kind: "maxIterations", nodeId,
+// maxIterations, iterationsRun}`), and `pauseReason` is its sentence.
+describe("the alert of a run paused at a loop's cap", () => {
+  const pass = (n: number, status: string, children?: unknown[]) => ({
+    nodeId: `loop#${String(n)}`,
+    type: "sequence",
+    status,
+    iteration: n,
+    children: children ?? [
+      step("code", status),
+      step("review", status === "running" ? "paused" : status),
+    ],
+  });
+  const loop = (status: string, passes: unknown[], nodeId = "loop") => ({
+    nodeId,
+    type: "repeat",
+    status,
+    children: passes,
+  });
+  const capPause = (nodeId: string, max: number, ran = max) => ({
+    kind: "maxIterations",
+    nodeId,
+    maxIterations: max,
+    iterationsRun: ran,
+  });
+  const PLAN = [
+    {
+      nodeId: "loop",
+      type: "repeat",
+      maxIterations: 3,
+      onMaxIterations: "pause",
+      steps: [{ nodeId: "code", type: "step" }],
+    },
+  ];
+  const alertFor = (
+    children: unknown[],
+    pause: Record<string, unknown>,
+    plan: unknown = PLAN,
+  ): string | undefined =>
+    runToExec(
+      stateWith(
+        { nodeId: "wf_1", type: "sequence", status: "paused", children },
+        { status: "paused", ...pause },
+      ),
+      plan,
+      NO_ASKS,
+    ).alert?.text;
+  const spent = [pass(0, "completed"), pass(1, "completed"), pass(2, "completed")];
+
+  it("names the loop and its passes in place of KAS's sentence", () => {
+    expect(
+      alertFor([loop("paused", spent), step("land", "pending")], {
+        pauseReason: "Repeat 'loop' reached maxIterations.",
+        pause: capPause("loop", 3),
+      }),
+    ).toBe("loop reached its pass limit (3/3)");
+  });
+
+  it("names a capped branch's loop, not the parallel KAS's sentence names", () => {
+    expect(
+      alertFor([loop("paused", spent, "lane-bolttable")], {
+        pauseReason: "Parallel 'lanes' is waiting on branch 'lane-bolttable'.",
+        pause: capPause("lane-bolttable", 4),
+      }),
+    ).toBe("lane-bolttable reached its pass limit (4/4)");
+  });
+
+  it("names the loop, then who paused the rest of the run", () => {
+    expect(
+      alertFor([loop("paused", spent, "lane-bolttable")], {
+        pauseReason: "Parallel 'lanes' is waiting on branch 'lane-bolttable'.",
+        pause: capPause("lane-bolttable", 4),
+        stopInitiator: "user",
+        stopReason: "Pause requested by owning parent/orchestrator; human intent not verified.",
+      }),
+    ).toBe("lane-bolttable reached its pass limit (4/4) \u00b7 Paused by its chat");
+  });
+
+  it("counts an extended budget as KAS ran it", () => {
+    const passes = Array.from({ length: 8 }, (_, i) => pass(i, "completed"));
+    expect(
+      alertFor([loop("paused", passes), step("land", "pending")], {
+        pauseReason: "Repeat 'loop' reached maxIterations.",
+        pause: capPause("loop", 8),
+      }),
+    ).toBe("loop reached its pass limit (8/8)");
+  });
+
+  it("counts nothing for a pause inside a pass", () => {
+    const passes = [pass(0, "completed"), pass(1, "completed"), pass(2, "running")];
+    expect(
+      alertFor([loop("paused", passes), step("land", "pending")], {
+        pauseReason: "Interrupted by agent restart",
+      }),
+    ).toBe("Waiting: Interrupted by agent restart");
+  });
+
+  it("counts nothing for a pause of another kind", () => {
+    expect(
+      alertFor([loop("paused", spent), step("land", "pending")], {
+        pauseReason: "Waiting on a step",
+        pause: { ...capPause("loop", 3), kind: "stepInput" },
+      }),
+    ).toBe("Waiting: Waiting on a step");
+  });
+
+  it("counts nothing for a pause after a loop that stopped on its last pass", () => {
+    expect(
+      alertFor([loop("completed", spent), step("land", "paused")], {
+        pauseReason: "Step 'land' failed: exit 1",
+      }),
+    ).toBe("Waiting: Step 'land' failed: exit 1");
+  });
+
+  it("counts nothing for a pause after a loop whose cap outcome was continue", () => {
+    const plan = [{ ...PLAN[0], onMaxIterations: "continue" }];
+    expect(
+      alertFor(
+        [loop("completed", spent), step("land", "paused")],
+        { pauseReason: "Interrupted by agent restart" },
+        plan,
+      ),
+    ).toBe("Waiting: Interrupted by agent restart");
+  });
+
+  it("counts the loop KAS paused, not a nested one that spent its own budget", () => {
+    const inner = loop("completed", spent, "inner");
+    const outer = loop(
+      "paused",
+      [pass(0, "completed", [inner]), pass(1, "completed", [structuredClone(inner)])],
+      "outer",
+    );
+    const plan = [
+      {
+        nodeId: "outer",
+        type: "repeat",
+        maxIterations: 2,
+        onMaxIterations: "pause",
+        steps: [
+          {
+            nodeId: "inner",
+            type: "repeat",
+            maxIterations: 3,
+            onMaxIterations: "continue",
+            steps: [{ nodeId: "code", type: "step" }],
+          },
+        ],
+      },
+    ];
+    expect(
+      alertFor(
+        [outer, step("land", "pending")],
+        { pauseReason: "Repeat 'outer' reached maxIterations.", pause: capPause("outer", 2) },
+        plan,
+      ),
+    ).toBe("outer reached its pass limit (2/2)");
   });
 });

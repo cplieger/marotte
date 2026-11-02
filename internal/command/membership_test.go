@@ -343,6 +343,33 @@ func TestOpenTab_ForAChatThatIsGoneIsRefused(t *testing.T) {
 	}
 }
 
+// A record that exists but cannot be read is not gone: the client reads a 404 as "deleted" and says
+// so, so the gate answers a retryable 503 instead, for an open and for a create that requires it.
+func TestRequireChat_AnUnreadableRecordIsA503(t *testing.T) {
+	store := &unreadableChats{InMemoryChatStore: testsupport.NewInMemoryChatStore(), unreadable: "c-unread"}
+	seedRecord(t, store.InMemoryChatStore, "c-unread")
+	mem, st, _ := newTabbedMembership(t, store)
+
+	_, openErr := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-unread"}, "op-a")
+	_, createErr := mem.CreateChatAndOpen(t.Context(), ChatCreate{
+		ChatID:      "c-tangent",
+		RequireChat: "c-unread",
+		Init:        func(c *marotte.Chat) { c.Name = "Must not exist" },
+	})
+
+	for name, err := range map[string]error{"OpenTab": openErr, "CreateChatAndOpen": createErr} {
+		if statusOf(err) != http.StatusServiceUnavailable || !errors.Is(err, errChatUnread) {
+			t.Errorf("%s = %v (status %d), want the 503 unread chat", name, err, statusOf(err))
+		}
+	}
+	if open, _ := st.List(); len(open) != 0 {
+		t.Errorf("the refusals left tabs %v, want none", open)
+	}
+	if got := storedChatIDs(t, store.InMemoryChatStore); len(got) != 1 {
+		t.Errorf("chat records = %v, want only c-unread: the refused create minted nothing", got)
+	}
+}
+
 // Why removed_ids is a LIST: a singular per-tab event would force either several
 // frames sharing one version (the second reads as a duplicate) or several bumps
 // for one mutation.

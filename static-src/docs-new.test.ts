@@ -148,6 +148,14 @@ describe("the New button", () => {
     }
   });
 
+  it("is a filled pill like every other page-toolbar action, and leaves the slot empty when absent", () => {
+    sync("steering");
+    expect(button()?.classList.contains("action-pill")).toBe(true);
+    expect(button()?.classList.contains("icon-btn")).toBe(false);
+    sync("memories");
+    expect(slot.childElementCount).toBe(0);
+  });
+
   it("is absent on Workflows, Memories and Powers", () => {
     for (const tab of ["workflows", "memories", "powers"] as const) {
       sync("steering");

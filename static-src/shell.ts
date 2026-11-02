@@ -379,6 +379,7 @@ function setShellOpen(open: boolean, opts: { focus?: boolean } = {}): void {
     $.shellPanel.classList.remove("shell-closed");
     releaseStoredShellPanel();
     $.shellBtn.classList.add("active");
+    $.shellBtn.setAttribute("aria-pressed", "true");
     requestAnimationFrame(() => {
       if (opts.focus !== false) {
         handle?.focus();
@@ -402,6 +403,7 @@ function setShellOpen(open: boolean, opts: { focus?: boolean } = {}): void {
     releaseStoredShellPanel();
     $.shellPanel.classList.add("shell-closed");
     $.shellBtn.classList.remove("active");
+    $.shellBtn.setAttribute("aria-pressed", "false");
     // Whatever the user typed in here may have written to the tree — a `git commit`, a build, an
     // editor invoked at the prompt — and this panel is the one writer that can name nothing about
     // it.

@@ -31,8 +31,49 @@ type fakePowers struct {
 	syncEntered    chan struct{}
 	syncRelease    chan struct{}
 	installEntered chan struct{}
-	mu             sync.Mutex
-	syncs          int
+	// rendered, when set, is signalled after each Sync or Uninstall records its mode.
+	rendered chan struct{}
+	mu       sync.Mutex
+	syncs    int
+}
+
+// renderCount is how many renders (Sync and Uninstall) have recorded their mode.
+func (f *fakePowers) renderCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.modes)
+}
+
+// rendersAfter waits for at least one render past mark, then returns every mode recorded past it.
+func (f *fakePowers) rendersAfter(t *testing.T, mark int) []powers.ServersMode {
+	t.Helper()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	for {
+		f.mu.Lock()
+		if len(f.modes) > mark {
+			out := slices.Clone(f.modes[mark:])
+			f.mu.Unlock()
+			return out
+		}
+		f.mu.Unlock()
+		select {
+		case <-f.rendered:
+		case <-deadline.C:
+			t.Fatalf("no render past %d within 5s", mark)
+		}
+	}
+}
+
+// noteRendered signals rendered without blocking: the signal coalesces, and rendersAfter re-reads the modes.
+func (f *fakePowers) noteRendered() {
+	if f.rendered == nil {
+		return
+	}
+	select {
+	case f.rendered <- struct{}{}:
+	default:
+	}
 }
 
 func (f *fakePowers) Catalog(context.Context) ([]powers.Entry, error) {
@@ -70,6 +111,7 @@ func (f *fakePowers) Uninstall(_ context.Context, name string, mode powers.ModeF
 	defer f.mu.Unlock()
 	f.removed = append(f.removed, name)
 	f.modes = append(f.modes, mode())
+	f.noteRendered()
 	return f.verbErr
 }
 
@@ -77,6 +119,7 @@ func (f *fakePowers) Sync(_ context.Context, mode powers.ModeFunc) error {
 	f.mu.Lock()
 	f.syncs++
 	f.modes = append(f.modes, mode())
+	f.noteRendered()
 	entered, release := f.syncEntered, f.syncRelease
 	f.mu.Unlock()
 	if entered != nil {
@@ -107,7 +150,7 @@ func newPowersHub(t *testing.T, backend *fakePowers) (*Runtime, *fakeBridge) {
 	h.powers.backend = backend
 	h.powers.adminKnown = func() bool { return true }
 	h.powers.refreshAdmin = func() {}
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	return h, br
 }
 
@@ -241,11 +284,12 @@ func installReq(method, path, name string) *http.Request {
 	return r
 }
 
-func TestHandlePowerInstall_RunsTheVerbRefreshesLiveProcessesAndBroadcasts(t *testing.T) {
+func TestHandlePowerInstall_RunsTheVerbRefreshesTheEngineAndBroadcasts(t *testing.T) {
 	backend := &fakePowers{}
-	h, utility := newPowersHub(t, backend)
-	chat := newFakeBridge()
-	h.bridge.mgr.bridges["c1"] = &sharedBridge{bridge: chat}
+	h, engine := newPowersHub(t, backend)
+	if !awaitEngine(h) {
+		t.Fatal("the engine never became ready")
+	}
 
 	rec := httptest.NewRecorder()
 	h.powers.handleInstall(rec, installReq(http.MethodPost, "/api/powers/postman/install", "postman"))
@@ -255,11 +299,8 @@ func TestHandlePowerInstall_RunsTheVerbRefreshesLiveProcessesAndBroadcasts(t *te
 	if !slices.Equal(backend.installed, []string{"postman"}) {
 		t.Errorf("installed = %v, want [postman]", backend.installed)
 	}
-	if got := chat.notified(methodKiroPowersRefresh); len(got) != 1 {
-		t.Errorf("chat bridge powers refreshes = %v, want one", got)
-	}
-	if utility.startCount() != 0 || len(utility.notifyLog()) != 0 {
-		t.Errorf("a stopped utility session was started (%d) or notified (%v)", utility.startCount(), utility.notifyLog())
+	if got := engine.notified(methodKiroPowersRefresh); len(got) != 1 {
+		t.Errorf("engine powers refreshes = %v, want one", got)
 	}
 	if n := powersChangedCount(t, h); n != 1 {
 		t.Errorf("powers_changed broadcast %d times, want 1", n)
@@ -302,15 +343,16 @@ func TestHandlePowerInstall_OutlivesTheRequestButNotShutdown(t *testing.T) {
 	}
 }
 
-func TestHandlePowerInstall_RefreshesARunningUtilitySession(t *testing.T) {
-	h, utility := newPowersHub(t, &fakePowers{})
-	if _, err := h.utility.get().session.acquire(t.Context()); err != nil {
-		t.Fatalf("start utility: %v", err)
+// An install tells the running engine to rescan, once for every session.
+func TestHandlePowerInstall_RefreshesTheRunningEngine(t *testing.T) {
+	h, engine := newPowersHub(t, &fakePowers{})
+	if !awaitEngine(h) {
+		t.Fatal("the engine never became ready")
 	}
 	rec := httptest.NewRecorder()
 	h.powers.handleInstall(rec, installReq(http.MethodPost, "/api/powers/postman/install", "postman"))
-	if rec.Code != http.StatusOK || !slices.Contains(utility.notifyLog(), methodKiroPowersRefresh) {
-		t.Errorf("install = %d, utility notifications %v; want a refresh", rec.Code, utility.notifyLog())
+	if got := len(engine.notified(methodKiroPowersRefresh)); rec.Code != http.StatusOK || got != 1 {
+		t.Errorf("install = %d, engine refreshes %d; want 200 and one refresh", rec.Code, got)
 	}
 }
 
@@ -358,9 +400,10 @@ func TestHandlePowerVerbs_ARenderFailureStillConvergesAndSaysTheChangeWasMade(t 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			backend := &fakePowers{verbErr: &powers.RenderError{Err: errors.New("disk /secret/path full")}}
-			h, _ := newPowersHub(t, backend)
-			chat := newFakeBridge()
-			h.bridge.mgr.bridges["c1"] = &sharedBridge{bridge: chat}
+			h, engine := newPowersHub(t, backend)
+			if !awaitEngine(h) {
+				t.Fatal("the engine never became ready")
+			}
 
 			rec := httptest.NewRecorder()
 			tc.call(h.powers, rec, installReq(tc.method, tc.path, "postman"))
@@ -377,8 +420,8 @@ func TestHandlePowerVerbs_ARenderFailureStillConvergesAndSaysTheChangeWasMade(t 
 			if strings.Contains(rec.Body.String(), "/secret/path") {
 				t.Errorf("an internal error reached the client: %s", rec.Body.String())
 			}
-			if got := chat.notified(methodKiroPowersRefresh); len(got) != 1 {
-				t.Errorf("chat bridge powers refreshes = %v, want one", got)
+			if got := engine.notified(methodKiroPowersRefresh); len(got) != 1 {
+				t.Errorf("engine powers refreshes = %v, want one", got)
 			}
 			if n := powersChangedCount(t, h); n != 1 {
 				t.Errorf("powers_changed broadcast %d times, want 1", n)
@@ -486,7 +529,7 @@ func itemsChangedMsg(status string) *marotte.RPCResponse {
 	}
 }
 
-func TestPowersItemsChanged_FromAChatBridgeSyncsAndBroadcasts(t *testing.T) {
+func TestPowersItemsChanged_FromAChatSessionSyncsAndBroadcasts(t *testing.T) {
 	backend := &fakePowers{}
 	h, _ := newPowersHub(t, backend)
 	h.translateACPEvent("c1", h.originOf("c1"), itemsChangedMsg("success"))
@@ -500,15 +543,16 @@ func TestPowersItemsChanged_FromAChatBridgeSyncsAndBroadcasts(t *testing.T) {
 	}
 }
 
-func TestPowersItemsChanged_FromTheUtilitySession(t *testing.T) {
+// items_changed is workspace-global: the one table claims it on an observer's or the engine's lane too.
+func TestPowersItemsChanged_FromAnyLane(t *testing.T) {
 	backend := &fakePowers{}
 	h, _ := newPowersHub(t, backend)
-	if !h.utility.get().session.dispatchNotification(itemsChangedMsg("success")) {
-		t.Fatal("the utility session did not claim items_changed")
+	if !h.dispatchWorkspace(t.Context(), "", itemsChangedMsg("success")) {
+		t.Fatal("the workspace table did not claim items_changed")
 	}
 	waitFor(t, func() bool { return powersChangedCount(t, h) == 1 })
 	if backend.syncCount() != 1 {
-		t.Errorf("utility items_changed: %d syncs, want 1", backend.syncCount())
+		t.Errorf("items_changed: %d syncs, want 1", backend.syncCount())
 	}
 }
 
@@ -540,7 +584,7 @@ func TestPowersItemsChanged_NeverWaitsOnASlowSyncAndCoalesces(t *testing.T) {
 }
 
 func TestPowers_TheLockKeepsInstalledServersOutOfEveryRender(t *testing.T) {
-	backend := &fakePowers{}
+	backend := &fakePowers{rendered: make(chan struct{}, 1)}
 	h, br := newPowersHub(t, backend)
 	var mu sync.Mutex
 	locked := true
@@ -552,43 +596,48 @@ func TestPowers_TheLockKeepsInstalledServersOutOfEveryRender(t *testing.T) {
 		}
 		return map[string]marotte.GovernanceLock{marotte.LockPowers: {Source: marotte.LockSourceAdministrator, Reason: "blocked"}}
 	}
-	wantMode := func(step string, want powers.ServersMode) {
+	setLocked := func(on bool) {
+		mu.Lock()
+		locked = on
+		mu.Unlock()
+	}
+	// Every render after mark read the lock state current at its start, so all of them are checked, strays included.
+	wantRenders := func(step string, mark int, want powers.ServersMode) {
 		t.Helper()
-		if got, ok := backend.lastMode(); !ok || got != want {
-			t.Errorf("%s rendered in mode %v (recorded %v), want %v", step, got, ok, want)
+		for _, got := range backend.rendersAfter(t, mark) {
+			if got != want {
+				t.Errorf("%s rendered in mode %v, want %v", step, got, want)
+			}
 		}
 	}
 
+	mark := backend.renderCount()
 	h.SyncPowers(t.Context())
-	wantMode("boot", powers.ServersSuppressed)
+	wantRenders("boot", mark, powers.ServersSuppressed)
 
 	br.setCallResult(methodKiroPowersList, json.RawMessage(kasPowersListReply))
+	mark = backend.renderCount()
 	h.powers.handleList(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/powers", nil))
-	wantMode("GET /api/powers", powers.ServersSuppressed)
+	wantRenders("GET /api/powers", mark, powers.ServersSuppressed)
 
-	syncs := backend.syncCount()
+	mark = backend.renderCount()
 	h.translateACPEvent("c1", h.originOf("c1"), itemsChangedMsg("success"))
-	waitFor(t, func() bool { return backend.syncCount() == syncs+1 })
-	wantMode("items_changed", powers.ServersSuppressed)
+	wantRenders("items_changed", mark, powers.ServersSuppressed)
 
+	mark = backend.renderCount()
 	h.powers.handleUninstall(httptest.NewRecorder(), installReq(http.MethodDelete, "/api/powers/postman", "postman"))
-	wantMode("uninstall", powers.ServersSuppressed)
+	wantRenders("uninstall", mark, powers.ServersSuppressed)
 
-	mu.Lock()
-	locked = false
-	mu.Unlock()
-	syncs, broadcasts := backend.syncCount(), powersChangedCount(t, h)
+	setLocked(false)
+	mark, broadcasts := backend.renderCount(), powersChangedCount(t, h)
 	h.onGovernanceLocksChanged(t.Context())
-	waitFor(t, func() bool { return backend.syncCount() == syncs+1 && powersChangedCount(t, h) == broadcasts+1 })
-	wantMode("unlock", powers.ServersActive)
+	wantRenders("unlock", mark, powers.ServersActive)
+	waitFor(t, func() bool { return powersChangedCount(t, h) > broadcasts })
 
-	mu.Lock()
-	locked = true
-	mu.Unlock()
-	syncs = backend.syncCount()
+	setLocked(true)
+	mark = backend.renderCount()
 	h.onGovernanceLocksChanged(t.Context())
-	waitFor(t, func() bool { return backend.syncCount() == syncs+1 })
-	wantMode("lock", powers.ServersSuppressed)
+	wantRenders("lock", mark, powers.ServersSuppressed)
 }
 
 func TestPowers_ServersStayOffUntilTheAdministratorRulesResolve(t *testing.T) {
@@ -597,7 +646,7 @@ func TestPowers_ServersStayOffUntilTheAdministratorRulesResolve(t *testing.T) {
 	h.powers.backend = backend
 	asked := 0
 	h.powers.refreshAdmin = func() { asked++ }
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 
 	h.SyncPowers(t.Context())
 	if got, ok := backend.lastMode(); !ok || got != powers.ServersUnresolved {
@@ -621,7 +670,7 @@ func TestPowers_InstallWaitsForTheAdministratorRules(t *testing.T) {
 	h, _, br := newTestHub()
 	h.powers.backend = backend
 	h.powers.refreshAdmin = func() {}
-	t.Cleanup(h.stopUtilityBridge)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroPowersList, json.RawMessage(`{"powers":[],"errors":[]}`))
 
 	rec := httptest.NewRecorder()

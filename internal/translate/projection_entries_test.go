@@ -645,6 +645,33 @@ func TestEntryProjection_TheCloserCarriesTheWiresOwnConclusion(t *testing.T) {
 	}
 }
 
+// TestEntryProjection_TwoTurnCompletionsSumCreditsAndDuration pins the replay twin of
+// turnlog.Turn.Meter: each metering frame reports its own share, so both fields sum.
+func TestEntryProjection_TwoTurnCompletionsSumCreditsAndDuration(t *testing.T) {
+	completion := func(credits, elapsedMs float64) [2]any {
+		return pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_completion", map[string]any{
+			"promptTurnSummaries": []any{map[string]any{"unit": "credit", "usage": credits}},
+			"elapsedTime":         elapsedMs,
+		}))
+	}
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		agentChunkFrame(t, "first execution"),
+		completion(0.5, 1200),
+		agentChunkFrame(t, "second execution"),
+		completion(0.25, 800),
+		turnEndFrame(t, "end_turn"),
+	})
+	var payload marotte.EntryTurnClose
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindTurnClose), &payload)
+	if payload.Credits != 0.75 {
+		t.Errorf("credits = %v, want 0.75", payload.Credits)
+	}
+	if payload.ElapsedMs != 2000 {
+		t.Errorf("elapsed_ms = %v, want 2000", payload.ElapsedMs)
+	}
+}
+
 // toolCallFrame builds a replayed tool_call. extra merges into _meta.kiro, so a test
 // names only the discriminator it is about.
 func toolCallFrame(t *testing.T, id string, extra map[string]any) [2]any {

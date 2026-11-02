@@ -5,6 +5,7 @@
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { CHROME_ATTR } from "../chrome-attr.js";
+import { slideDetails, wireDetailsSlide } from "../disclosure-row.js";
 
 /** No `g` flag, so `test` stays stateless. */
 const SPACE = /\s/u;
@@ -62,6 +63,7 @@ export function buildReasoning(initial: string, live: boolean, open: boolean): R
   const body = el("blockquote", { className: "reasoning-body" }, initial);
   root.append(summary, body);
   root.open = open;
+  wireDetailsSlide(root);
   if (live) {
     root.classList.add("streaming");
   }
@@ -128,7 +130,7 @@ export function buildReasoning(initial: string, live: boolean, open: boolean): R
         return;
       }
       collapsed = true;
-      root.open = false;
+      slideDetails(root, false);
     },
   };
 }

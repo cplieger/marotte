@@ -966,8 +966,8 @@ func TestToolCallUpdate_RefusedWorkflowUpdateReadsAsDeclined(t *testing.T) {
 			if got.Declined != c.wantDeclined {
 				t.Errorf("ToolCall.Declined from rawOutput %v = %v, want %v", c.raw, got.Declined, c.wantDeclined)
 			}
-			// A second axis, never a status: `failed` would offer "Explain this error" for a tool
-			// that ran correctly.
+			// A second axis, never a status: `failed` would mark a tool that ran correctly as
+			// broken.
 			if got.Status != marotte.ToolCompleted {
 				t.Errorf("ToolCall.Status = %q, want %q (a refusal is still a completion)", got.Status, marotte.ToolCompleted)
 			}
@@ -1173,26 +1173,27 @@ func TestHandleToolCallUpdate_FailedKeepsExistingOutput(t *testing.T) {
 }
 
 // TestHandleToolCallUpdate_AFailureAfterTheReadersStopSettlesAborted pins the stop grade: KAS
-// settles a call its cancel stopped as `failed`, the reader's stop makes it `aborted`, and a
-// completion or a failure with no stop keeps KAS's status.
+// settles a call its cancel stopped as `failed`, a stop (the reader's or a teardown's) makes it
+// `aborted`, and a completion or a failure with no stop keeps KAS's status.
 func TestHandleToolCallUpdate_AFailureAfterTheReadersStopSettlesAborted(t *testing.T) {
 	t.Parallel()
 	const l6 = "This tool was interrupted before it reported a result, so it may or may not have taken effect."
 	cases := []struct {
-		name    string
-		status  string
-		want    marotte.ToolStatus
-		stopped bool
+		name   string
+		status string
+		want   marotte.ToolStatus
+		stop   marotte.TurnStopCause
 	}{
-		{name: "failed after the stop", status: "failed", stopped: true, want: marotte.ToolAborted},
+		{name: "failed after the stop", status: "failed", stop: marotte.TurnStopReader, want: marotte.ToolAborted},
+		{name: "failed after a teardown", status: "failed", stop: marotte.TurnStopTeardown, want: marotte.ToolAborted},
 		{name: "failed with no stop", status: "failed", want: marotte.ToolFailed},
-		{name: "completed after the stop", status: "completed", stopped: true, want: marotte.ToolCompleted},
+		{name: "completed after the stop", status: "completed", stop: marotte.TurnStopReader, want: marotte.ToolCompleted},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			tr, _, deps, events, chatID := primeToolCall(t)
-			deps.stopped = map[string]bool{deps.turns.chats[chatID].ID(): c.stopped}
+			deps.stopped = map[string]marotte.TurnStopCause{deps.turns.chats[chatID].ID(): c.stop}
 			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 				"toolCallId": "tc-1",
 				"status":     c.status,
@@ -1207,7 +1208,7 @@ func TestHandleToolCallUpdate_AFailureAfterTheReadersStopSettlesAborted(t *testi
 				t.Fatal("no tool_progress or tool_result frame emitted")
 			}
 			if got.Status != c.want {
-				t.Errorf("ToolCall.Status for a %q frame (stopped=%v) = %q, want %q", c.status, c.stopped, got.Status, c.want)
+				t.Errorf("ToolCall.Status for a %q frame (stop=%v) = %q, want %q", c.status, c.stop, got.Status, c.want)
 			}
 			if got.Output != l6+"\n" {
 				t.Errorf("ToolCall.Output = %q, want KAS's sentence kept on the card", got.Output)
@@ -1505,7 +1506,7 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 
 	t.Run("an unknown type renders nothing and logs both lines", func(t *testing.T) {
 		var logs bytes.Buffer
-		t.Cleanup(captureSlog(&logs))
+		captureSlog(t, &logs)
 
 		got := tr.parseToolUpdateContent("tc-1", []acpToolCallContentBlock{
 			{Type: "structuredContent"},
@@ -1529,7 +1530,7 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 	t.Run("a claim-only tool logs nothing", func(t *testing.T) {
 		// No content blocks is the common case; logging here would bury the real line.
 		var logs bytes.Buffer
-		t.Cleanup(captureSlog(&logs))
+		captureSlog(t, &logs)
 		tr.parseToolUpdateContent("tc-2", nil)
 		if logs.Len() != 0 {
 			t.Errorf("a claim-only tool logged %q", logs.String())
@@ -1540,7 +1541,7 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 		// An empty-text block and a path-less diff are NORMAL frames, so the guard is on the TYPE
 		// rather than on whether an arm matched.
 		var logs bytes.Buffer
-		t.Cleanup(captureSlog(&logs))
+		captureSlog(t, &logs)
 		tr.parseToolUpdateContent("tc-3", []acpToolCallContentBlock{
 			{Type: contentTypeContent},
 			{Type: contentTypeDiff},
@@ -1558,7 +1559,7 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 
 	t.Run("a block that renders logs nothing", func(t *testing.T) {
 		var logs bytes.Buffer
-		t.Cleanup(captureSlog(&logs))
+		captureSlog(t, &logs)
 		// acpToolCallContentBlock.Content is an anonymous struct, so a literal would restate it.
 		blk := acpToolCallContentBlock{Type: contentTypeContent}
 		blk.Content.Text = "hello"
@@ -1606,10 +1607,6 @@ func TestToolCallTitle_IsTreatedAtTheDecodeDoor(t *testing.T) {
 		"an ANSI introducer's ESC becomes a space": {
 			in:   "Read \u001b]0;pwn\u0007file",
 			want: "Read  ]0;pwn file",
-		},
-		"the pipeline driver's title is byte-identical": {
-			in:   "Orchestrate Sub-agent",
-			want: "Orchestrate Sub-agent",
 		},
 		"a delegate invocation's title is byte-identical": {
 			in:   "Sub-agent: context-gatherer",

@@ -105,7 +105,7 @@ export function loadGitRepos(): void {
 /** Refresh the Changes view and the sidebar badge, after an agent turn that touched files. */
 export function refreshGitBadge(): void {
   void refreshChanges();
-  void refreshBadgeImpl();
+  refreshBadgeImpl();
 }
 
 /**
@@ -116,5 +116,5 @@ export function refreshGitBadge(): void {
 export function markGitDirty(paths?: readonly string[]): void {
   void refreshGitStatus(paths);
   void refreshChanges();
-  void refreshBadgeImpl();
+  refreshBadgeImpl();
 }

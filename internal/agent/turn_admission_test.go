@@ -39,7 +39,7 @@ func seedChat(t *testing.T, cs *testChatStore, id marotte.ChatID) {
 	}
 }
 
-// The refusal keys on the holder's source alone: a shell holder answers "starting" with or without a bridge; a
+// The refusal keys on the holder's source alone: a revert holder answers "starting" with or without a bridge; a
 // prompt holder answers busy whatever its bridge.
 func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
 	cases := []struct {
@@ -48,8 +48,8 @@ func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
 		bridged bool
 		want    command.AdmissionOutcome
 	}{
-		{name: "shell holder on a bridgeless chat answers starting", holder: marotte.TurnSourceLocalShell, want: command.AdmissionStarting},
-		{name: "shell holder on a bridged chat answers starting", holder: marotte.TurnSourceLocalShell, bridged: true, want: command.AdmissionStarting},
+		{name: "revert holder on a bridgeless chat answers starting", holder: marotte.TurnSourceRevert, want: command.AdmissionStarting},
+		{name: "revert holder on a bridged chat answers starting", holder: marotte.TurnSourceRevert, bridged: true, want: command.AdmissionStarting},
 		{name: "prompt holder with no bridge answers busy", holder: marotte.TurnSourcePrompt, want: command.AdmissionBusy},
 		{name: "prompt holder with a live bridge answers busy", holder: marotte.TurnSourcePrompt, bridged: true, want: command.AdmissionBusy},
 	}
@@ -76,7 +76,7 @@ func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
 	}
 }
 
-// A free slot admits at once; a shell-held one parks the waiter until the release admits it.
+// A free slot admits at once; a revert-held one parks the waiter until the release admits it.
 func TestReserveTurnForPrompt_AcquiresAFreeOrFreedSlot(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
@@ -84,7 +84,7 @@ func TestReserveTurnForPrompt_AcquiresAFreeOrFreedSlot(t *testing.T) {
 		t.Fatalf("free slot = %v, want acquired", got)
 	}
 	h.coord.ReleaseTurnReservation("c1")
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
 		t.Fatal("setup: the admission slot was already held")
 	}
 	answered := make(chan command.AdmissionOutcome, 1)
@@ -108,8 +108,8 @@ func TestReserveTurnForPrompt_AcquiresAFreeOrFreedSlot(t *testing.T) {
 	h.coord.ReleaseTurnReservation("c1")
 }
 
-// A prompt-class holder with a still-spawning bridge answers busy at once, from its source rather than readiness or expiry.
-func TestReserveTurnForPrompt_ASpawningPromptHolderAnswersBusyAtOnce(t *testing.T) {
+// A prompt-class holder whose session door is still open answers busy at once, from its source rather than readiness or expiry.
+func TestReserveTurnForPrompt_AnOpeningPromptHolderAnswersBusyAtOnce(t *testing.T) {
 	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
 	startGate := make(chan struct{})
@@ -120,10 +120,10 @@ func TestReserveTurnForPrompt_ASpawningPromptHolderAnswersBusyAtOnce(t *testing.
 		t.Fatal("setup: the admission slot was already held")
 	}
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
-	spawned := make(chan error, 1)
+	opened := make(chan error, 1)
 	go func() {
 		_, err := h.coord.openBridge(t.Context(), "c1", "")
-		spawned <- err
+		opened <- err
 	}()
 
 	const budget = 10 * time.Second
@@ -131,7 +131,7 @@ func TestReserveTurnForPrompt_ASpawningPromptHolderAnswersBusyAtOnce(t *testing.
 	got := h.coord.ReserveTurnForPrompt(context.Background(), "c1", budget)
 	elapsed := time.Since(start)
 	close(startGate)
-	if err := <-spawned; err != nil {
+	if err := <-opened; err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	if got != command.AdmissionBusy {
@@ -142,12 +142,12 @@ func TestReserveTurnForPrompt_ASpawningPromptHolderAnswersBusyAtOnce(t *testing.
 	}
 }
 
-// A prompt against a shell-held chat answers 409 with `reason":"starting"` at the budget and writes nothing.
+// A prompt against a revert-held chat answers 409 with `reason":"starting"` at the budget and writes nothing.
 func TestPrompt_FullPath409StartingCarriesTheReason(t *testing.T) {
 	shrinkAdmissionWait(t, 60*time.Millisecond)
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
 		t.Fatal("setup: the admission slot was already held")
 	}
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
@@ -174,12 +174,13 @@ func TestPrompt_FullPath409StartingCarriesTheReason(t *testing.T) {
 	}
 }
 
-// gateSpawn parks every spawn on the returned gate, installed through the public setter so the wiring is pinned too.
-func gateSpawn(h *Runtime) (entered, gate chan struct{}) {
+// gateSessionOpen parks every session door on the returned gate, installed through the public setter so the wiring is
+// pinned too.
+func gateSessionOpen(h *Runtime) (entered, gate chan struct{}) {
 	entered = make(chan struct{})
 	gate = make(chan struct{})
 	var once sync.Once
-	h.SetPreBridgeSpawn(func(ctx context.Context) {
+	h.SetPreSessionOpen(func(ctx context.Context) {
 		once.Do(func() { close(entered) })
 		select {
 		case <-gate:
@@ -187,38 +188,6 @@ func gateSpawn(h *Runtime) (entered, gate chan struct{}) {
 		}
 	})
 	return entered, gate
-}
-
-// `!echo hi` during a prompt's blocked spawn is refused at once: the shell door tries, never waits.
-func TestShellDuringABlockedSpawnIsRefusedImmediately(t *testing.T) {
-	h, cs, _ := newTestHub()
-	seedChat(t, cs, "c1")
-	entered, gate := gateSpawn(h)
-	defer close(gate)
-
-	if rec := postCmd(t, h, marotte.ClientCommand{
-		Type: "prompt", ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
-	}); rec.Code != http.StatusOK {
-		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
-	}
-	<-entered // the prompt goroutine is parked inside its spawn, holding the reservation
-
-	start := time.Now()
-	rec := postCmd(t, h, marotte.ClientCommand{
-		Type: "prompt", ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"!echo hi","message_id":"m-2"}`),
-	})
-	elapsed := time.Since(start)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("shell during spawn = %d, want 409 (body %s)", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "busy") {
-		t.Errorf("body = %q, want busy", rec.Body.String())
-	}
-	if elapsed > time.Second {
-		t.Errorf("the shell refusal took %v, want an immediate try — never a wait", elapsed)
-	}
 }
 
 // waitForTurnClosed polls until exactly want turn_closed frames exist and returns their turn_close entries; a surplus is a defect.
@@ -240,11 +209,11 @@ func waitForTurnClosed(t *testing.T, h *Runtime, want int) []marotte.EntryTurnCl
 	}
 }
 
-// The model is stamped at StartTurn with the bridge live; credits are the turn's own frames, so spawn-window spend never reaches its close.
+// The model is stamped at StartTurn with the bridge live; credits are the turn's own frames, so session-open-window spend never reaches its close.
 func TestPromptTurn_MeteringAndModelStampAtStartTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1") // cold: no model on the record yet
-	entered, gate := gateSpawn(h)
+	entered, gate := gateSessionOpen(h)
 
 	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
@@ -265,10 +234,10 @@ func TestPromptTurn_MeteringAndModelStampAtStartTurn(t *testing.T) {
 
 	closed := waitForTurnClosed(t, h, 1)
 	if got := closed[0].Credits; got != 0 {
-		t.Errorf("turn_close credits = %v, want 0: spend during the spawn window is not the turn's", got)
+		t.Errorf("turn_close credits = %v, want 0: spend during the session-open window is not the turn's", got)
 	}
 	if closed[0].Model == "" {
-		t.Error("turn_close model is empty on a cold chat; StartTurn runs after the spawn persisted the session's model")
+		t.Error("turn_close model is empty on a cold chat; StartTurn runs after the session open persisted the session's model")
 	}
 }
 
@@ -279,7 +248,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 	gate := make(chan struct{})
 	var mu sync.Mutex
 	var minted []*fakeBridge
-	factory := func() ACPBridge {
+	factory := func() engineSession {
 		mu.Lock()
 		defer mu.Unlock()
 		br := newFakeBridge()
@@ -290,7 +259,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 		minted = append(minted, br)
 		return br
 	}
-	h := New(context.Background(), t.TempDir(), factory, cs)
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(factory, nil), cs)
 	cs.wire(h)
 	seedChat(t, cs, "c1")
 
@@ -314,12 +283,13 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 				return br
 			}
 			if time.Now().After(deadline) {
-				t.Fatal("the prompt goroutine never spawned a bridge")
+				t.Fatal("the prompt goroutine never opened a session")
 			}
 			time.Sleep(time.Millisecond)
 		}
 	}()
 	waitForCall(t, first, marotte.MethodPrompt)
+	first.deliver(newTurnStartMsg())
 	first.deliver(newTurnEndMsg("end_turn"))
 	close(gate)
 
@@ -327,13 +297,13 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		mu.Lock()
-		respawned := len(minted) >= 2
+		reopened := len(minted) >= 2
 		var second *fakeBridge
-		if respawned {
+		if reopened {
 			second = minted[1]
 		}
 		mu.Unlock()
-		if respawned && slices.Contains(second.callLog(), marotte.MethodPrompt) {
+		if reopened && slices.Contains(second.callLog(), marotte.MethodPrompt) {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -380,7 +350,7 @@ func TestPromptTurn_ShutdownMidCallDrainsTheTurn(t *testing.T) {
 func TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	entered, gate := gateSpawn(h)
+	entered, gate := gateSessionOpen(h)
 	defer close(gate)
 
 	if rec := postCmd(t, h, marotte.ClientCommand{
@@ -405,11 +375,12 @@ func TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn(t *testing.T) {
 	}
 }
 
-// A cancel between the ack and BeginPromptCall answers 200 with nothing to arm; the turn closes and the chat accepts the next prompt.
-func TestPromptTurn_CancelBetweenAckAndBeginPromptCall(t *testing.T) {
-	h, cs, _ := newTestHub()
+// A cancel while the admitted prompt's session opens answers 200 and keeps the prompt unsent: its turn closes
+// cancelled with no session/prompt, and the chat accepts the next prompt.
+func TestPromptTurn_CancelInTheSessionOpenKeepsThePromptUnsent(t *testing.T) {
+	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
-	entered, gate := gateSpawn(h)
+	entered, gate := gateSessionOpen(h)
 
 	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
@@ -417,13 +388,18 @@ func TestPromptTurn_CancelBetweenAckAndBeginPromptCall(t *testing.T) {
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
 	}
-	<-entered // parked in the spawn: no BeginPromptCall yet
+	<-entered // parked in the session open: nothing sent yet
 
 	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
-		t.Fatalf("cancel in the spawn window = %d, want 200", rec.Code)
+		t.Fatalf("cancel in the session-open window = %d, want 200", rec.Code)
 	}
 	close(gate)
-	waitForTurnClosed(t, h, 1)
+	if closed := waitForTurnClosed(t, h, 1); closed[0].Outcome != marotte.TurnOutcomeCancelled || closed[0].FailureReason != "" {
+		t.Errorf("turn_closed = %+v, want cancelled with no failure_reason", closed[0])
+	}
+	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
+		t.Errorf("calls = %v, want no session/prompt for a prompt stopped before its send", br.callLog())
+	}
 
 	// The slots released, so a fresh prompt is admitted.
 	deadline := time.Now().Add(5 * time.Second)
@@ -505,13 +481,13 @@ func TestPromptTurn_ShutdownDuringTheGraceStaysInterrupted(t *testing.T) {
 	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
 		t.Fatalf("cancel = %d, want 200", rec.Code)
 	}
-	sb := h.bridge.mgr.get("c1")
-	if sb == nil {
-		t.Fatal("the prompt opened no bridge")
+	lc, ok := h.coord.turns.lookup("c1")
+	if !ok {
+		t.Fatal("the prompt opened no lifecycle")
 	}
-	sb.mu.Lock()
-	armed := sb.cancelTimer != nil
-	sb.mu.Unlock()
+	lc.mu.Lock()
+	armed := lc.call != nil && lc.call.graceTimer != nil
+	lc.mu.Unlock()
 	if !armed {
 		t.Fatal("the cancel armed no grace, so the two cancellers were never contended")
 	}
@@ -643,11 +619,11 @@ func TestShutdown_TheCutTurnNamesTheRestartAsItsCause(t *testing.T) {
 func TestShutdown_AUserCancelCauseOutranksTheShutdownCause(t *testing.T) {
 	const earlier marotte.InterruptCause = "an earlier cause"
 	cs := shutdownMidPrompt(t, func(h *Runtime) {
-		own, ok := h.coord.turns.ownTurn("c1")
+		own, ok := ownID(h, "c1")
 		if !ok {
 			t.Fatal("no own turn to claim a cause on")
 		}
-		if !h.coord.turns.interrupt("c1", own.ID, earlier) {
+		if !h.coord.turns.interrupt("c1", own, earlier) {
 			t.Fatal("the earlier cause was not claimed")
 		}
 	})
@@ -658,34 +634,257 @@ func TestShutdown_AUserCancelCauseOutranksTheShutdownCause(t *testing.T) {
 	}
 }
 
-// A wire turn holds no reservation, so only a reserve that reads every holder in the same acquisition keeps a
-// rewind from reserving beside it.
-func TestTryReserveIdleTurn_RefusesBesideAWireTurnTheBareReserveAdmits(t *testing.T) {
-	h, cs, _ := newTestHub()
-	seedChat(t, cs, "c1")
-	h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg())
-	if _, open := ownID(h, "c1"); !open {
-		t.Fatal("setup: a turn_start with nothing pending opened no wire turn")
+// Every reserve refuses beside a turn KAS bracketed, since each one sends a session/prompt or opens a turn; beside a
+// fold-opened wire turn only the idle reserve, which reads every holder, refuses.
+func TestTryReserve_BesideAWireTurn(t *testing.T) {
+	cases := []struct {
+		name      string
+		open      func(t *testing.T, h *Runtime)
+		wantBare  bool
+		wantFence bool
+	}{
+		{
+			name: "a bracketed wire turn",
+			open: func(_ *testing.T, h *Runtime) { h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg()) },
+		},
+		{
+			name: "a fold-opened wire turn",
+			open: func(t *testing.T, h *Runtime) {
+				if h.stageWireTurn(t, "c1") == nil {
+					t.Fatal("setup: the fold opened no wire turn")
+				}
+			},
+			wantBare:  true,
+			wantFence: true,
+		},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			seedChat(t, cs, "c1")
+			tc.open(t, h)
+			if _, open := ownID(h, "c1"); !open {
+				t.Fatal("setup: no wire turn is open")
+			}
 
-	if h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceLocalShell) {
-		t.Error("TryReserveIdleTurn(c1) reserved beside an open wire turn, want refused")
-	}
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
-		t.Fatal("setup: TryReserveTurn refused, so this chat does not show a wire turn holding no reservation")
+			if h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceRevert) {
+				t.Error("TryReserveIdleTurn reserved beside an open wire turn, want refused")
+				h.coord.ReleaseTurnReservation("c1")
+			}
+			got := h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt)
+			if got {
+				h.coord.ReleaseTurnReservation("c1")
+			}
+			if got != tc.wantBare {
+				t.Errorf("TryReserveTurn = %t, want %t", got, tc.wantBare)
+			}
+			got = h.coord.TryReserveTurnFenced("c1", marotte.TurnSourcePrompt, command.TurnFence{})
+			if got {
+				h.coord.ReleaseTurnReservation("c1")
+			}
+			if got != tc.wantFence {
+				t.Errorf("TryReserveTurnFenced = %t, want %t", got, tc.wantFence)
+			}
+		})
 	}
 }
 
 func TestTryReserveIdleTurn_TakesAnIdleSlotAndRefusesAHeldOne(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	if !h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceLocalShell) {
+	if !h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceRevert) {
 		t.Fatal("TryReserveIdleTurn(c1) refused an idle chat")
 	}
-	if src, held := h.coord.AdmissionHolderSource("c1"); !held || src != marotte.TurnSourceLocalShell {
-		t.Errorf("after TryReserveIdleTurn the holder is %v (held %t), want local_shell", src, held)
+	if src, held := h.coord.AdmissionHolderSource("c1"); !held || src != marotte.TurnSourceRevert {
+		t.Errorf("after TryReserveIdleTurn the holder is %v (held %t), want revert", src, held)
 	}
 	if h.coord.TryReserveIdleTurn("c1", marotte.TurnSourcePrompt) {
 		t.Error("a second TryReserveIdleTurn(c1) took a held slot")
+	}
+}
+
+// A turn KAS starts itself (a send_message wake) holds no reservation, yet a prompt beside it must answer Busy: KAS
+// aborts its running turn on any session/prompt. A fold-opened wire turn admits: no turn_end is owed for it, so a
+// refusal would last until a later turn_start or the bridge's death.
+func TestReserveTurnForPrompt_BesideAWireTurn(t *testing.T) {
+	cases := []struct {
+		name string
+		open func(t *testing.T, h *Runtime)
+		want command.AdmissionOutcome
+	}{
+		{
+			name: "a bracketed wire turn answers busy",
+			open: func(_ *testing.T, h *Runtime) { h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg()) },
+			want: command.AdmissionBusy,
+		},
+		{
+			name: "a bracketed wire turn that ended admits",
+			open: func(_ *testing.T, h *Runtime) {
+				h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg())
+				h.translateACPEvent("c1", h.originOf("c1"), newTurnEndMsg("end_turn"))
+			},
+			want: command.AdmissionAcquired,
+		},
+		{
+			name: "a fold-opened wire turn admits",
+			open: func(t *testing.T, h *Runtime) {
+				if h.stageWireTurn(t, "c1") == nil {
+					t.Fatal("setup: the fold opened no wire turn")
+				}
+			},
+			want: command.AdmissionAcquired,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			seedChat(t, cs, "c1")
+			tc.open(t, h)
+
+			got := h.coord.ReserveTurnForPrompt(t.Context(), "c1", 60*time.Millisecond)
+			if got == command.AdmissionAcquired {
+				h.coord.ReleaseTurnReservation("c1")
+			}
+			if got != tc.want {
+				t.Errorf("ReserveTurnForPrompt = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// wakeTurnHub is a chat with a live bridge and a turn KAS opened itself, nothing streamed into it yet.
+func wakeTurnHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
+	t.Helper()
+	s, cs, br := steerOpsHub(t)
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+	if _, open := ownID(s.h, "c1"); !open {
+		t.Fatal("setup: a turn_start with nothing pending opened no wire turn")
+	}
+	return s.h, cs, br
+}
+
+// The composer's Send beside an agent-initiated turn answers the plain 409 the client steers or queues on, and
+// reaches neither the log nor KAS.
+func TestCmdPrompt_BesideAWireTurnAnswersThePlainBusyAndSendsNothing(t *testing.T) {
+	h, cs, br := wakeTurnHub(t)
+	opens := len(opensOf(t, logOf(t, cs, "c1")))
+
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
+	})
+	joinInflight(t, h)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body %s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal body %q: %v", rec.Body.String(), err)
+	}
+	if body.Reason != "" {
+		t.Errorf("reason = %q, want the plain 409 the client converts into its busy verb", body.Reason)
+	}
+	if got := len(opensOf(t, logOf(t, cs, "c1"))); got != opens {
+		t.Errorf("turn_open entries = %d, want %d: a refused prompt opens no turn", got, opens)
+	}
+	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
+		t.Errorf("bridge calls = %v, want no session/prompt beside the running turn", br.callLog())
+	}
+}
+
+// mergeHub is a hub whose engine lists the tangent "c-tangent" (session s-fork) as forked from the parent "c1"
+// (s-parent) and answers a prompt with a summary.
+func mergeHub(t *testing.T) (*Runtime, *testChatStore, func(method string) int) {
+	t.Helper()
+	h, cs, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.callResults = map[string]json.RawMessage{
+		marotte.MethodSessionList: sessionRowsJSON(t, map[string]string{"s-fork": "s-parent", "s-parent": ""}),
+	}
+	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"Found it."}}
+	seedChain(t, cs, "c1", "s-parent")
+	seedChain(t, cs, "c-tangent", "s-fork")
+	return h, cs, func(method string) int { return countCalls(br, method) }
+}
+
+func mergeCmd(tangent marotte.ChatID) marotte.ClientCommand {
+	return marotte.ClientCommand{Type: marotte.CmdMergeTangent, ChatID: tangent, Payload: json.RawMessage(`{"op_id":"op-1"}`)}
+}
+
+// Merging a tangent while KAS runs a turn of its own there is refused as busy, like any running turn: the summary
+// prompt would abort it.
+func TestMergeTangent_ATangentRunningAWakeTurnIsRefusedBusy(t *testing.T) {
+	h, _, calls := mergeHub(t)
+	h.translateACPEvent("c-tangent", h.originOf("c-tangent"), newTurnStartMsg())
+
+	rec := postCmd(t, h, mergeCmd("c-tangent"))
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"busy"`) {
+		t.Errorf("merge_tangent = %d %s, want 409 busy", rec.Code, rec.Body.String())
+	}
+	if n := calls(marotte.MethodPrompt); n != 0 {
+		t.Errorf("session/prompt calls = %d, want none beside the running turn", n)
+	}
+}
+
+// The findings for a parent running a turn KAS started are queued behind it, never prompted into it.
+func TestMergeTangent_QueuesTheFindingsBehindAParentsWakeTurn(t *testing.T) {
+	h, cs, calls := mergeHub(t)
+	h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg())
+
+	if rec := postCmd(t, h, mergeCmd("c-tangent")); rec.Code != http.StatusOK {
+		t.Fatalf("merge_tangent = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	waitFor(t, func() bool {
+		c, _ := cs.Get(t.Context(), "c-tangent")
+		return len(c.TangentMerges) == 1 && c.TangentMerges[0].State != marotte.TangentMergeRunning
+	})
+
+	if c, _ := cs.Get(t.Context(), "c-tangent"); c.TangentMerges[0].State != marotte.TangentMergeSucceeded {
+		t.Errorf("merge state = %q, want succeeded", c.TangentMerges[0].State)
+	}
+	rows := queuedRows(t, cs, "c1")
+	if len(rows) != 1 || !strings.Contains(rows[0].Text, "Found it.") {
+		t.Errorf("parent's queue = %+v, want the findings queued", rows)
+	}
+	if n := calls(marotte.MethodPrompt); n != 1 {
+		t.Errorf("session/prompt calls = %d, want the tangent's summary only", n)
+	}
+	if ids := promptIDs(t, cs, "c1"); len(ids) != 0 {
+		t.Errorf("parent prompt turns = %v, want none beside the running turn", ids)
+	}
+}
+
+// A steer while the chat's session door is still opening is parked for the session, never sent on a record that
+// holds none.
+func TestPromptTurn_SteerInTheSessionDoorWindowIsAccepted(t *testing.T) {
+	h, cs, _ := newTestHub()
+	seedChat(t, cs, "c1")
+	entered, gate := gateSessionOpen(h)
+
+	if rec := postCmd(t, h, marotte.ClientCommand{
+		Type: "prompt", ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
+	}
+	<-entered
+
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdSteer, ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"also this","message_id":"m-2"}`),
+	})
+	if rec.Code >= http.StatusInternalServerError {
+		t.Errorf("steer in the door window = %d %s, want an answer the client can act on", rec.Code, rec.Body.String())
+	}
+	close(gate)
+	// The fake engine never takes the steer up, so the first turn's end sends it as the next prompt.
+	waitForTurnClosed(t, h, 2)
+	opens := opensOf(t, logOf(t, cs, "c1"))
+	if len(opens) != 2 || opens[1].Prompt == nil || !strings.Contains(opens[1].Prompt.Text, "also this") {
+		t.Errorf("turn_open entries = %+v, want the prompt's turn then one carrying the parked steer", opens)
 	}
 }

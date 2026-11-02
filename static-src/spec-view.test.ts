@@ -90,10 +90,10 @@ vi.mock("./store.js", async (importOriginal) => {
   return {
     ...actual,
     get: (id: string) => (m.names.has(id) ? { id, name: m.names.get(id) } : undefined),
-    isThinking: (id: string) => m.thinking.get(id) ?? false,
-    watchSession: (id: string) => {
+    isBusy: (id: string) => m.thinking.get(id) ?? false,
+    watchBusy: (id: string) => {
       void thinkVersion.value;
-      return { id, thinking: m.thinking.get(id) ?? false };
+      return m.thinking.get(id) ?? false;
     },
   };
 });
@@ -108,6 +108,7 @@ const bus = await import("./bus.js");
 const dock = await import("./decision-dock.js");
 const openers = await import("./editor-openers.js");
 const navigate = await import("./navigate.js");
+const { tableObservationCount } = await import("./table-scroll.js");
 
 const DIR = ".kiro/specs/demo";
 
@@ -708,6 +709,37 @@ describe("fetch and state", () => {
     expect(body().querySelector(".spec-run")).toBeNull();
     expect(body().querySelector(".spec-run-all")).toBeNull();
     expect(body().querySelector(".spec-bar")).toBeNull();
+  });
+
+  it("lets go of a document's tables when the pane repaints and when the page is released", async () => {
+    const before = tableObservationCount();
+    openParented();
+    const withTable = { ...prose("design.md", "design", "| a | b |\n|---|---|\n| 1 | 2 |\n") };
+    m.replies = [
+      reply(spec([withTable]), '"v1"'),
+      reply(spec([{ ...prose("design.md", "design", "# No table"), hash: "design-2" }]), '"v2"'),
+    ];
+    view.showSpec(DIR);
+    await settle();
+    expect(body().querySelectorAll("table").length, "table rendered").toBe(1);
+    expect(tableObservationCount() - before, "one watched").toBe(1);
+
+    // Microtasks only: a frame would let the resize observer's own report of the removed table
+    // release it, which is not the mechanism under test.
+    view.refreshSpec(DIR);
+    await flush();
+    expect(body().querySelector("table")).toBeNull();
+    expect(tableObservationCount() - before, "pane repaint").toBe(0);
+
+    m.replies = [reply(spec([withTable]), '"v3"')];
+    view.refreshSpec(DIR);
+    await flush();
+    expect(tableObservationCount() - before).toBe(1);
+    m.specTabs.delete(DIR);
+    tabsVersion.value++;
+    await flush();
+    expect(view._openStates()).toEqual([]);
+    expect(tableObservationCount() - before, "page release").toBe(0);
   });
 
   it("refetches on a spec_changed frame for its own ref only", async () => {

@@ -52,6 +52,20 @@ describe("runs.message_step", () => {
   });
 });
 
+describe("the words that answer one question", () => {
+  it("carry the question's ask id on the message when the caller names one", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ verb: "answer" }), { status: 200 }));
+    await messageRunStep.dispatch({
+      workflowID: "wf_1",
+      nodePath: nodePathKey(["root", "review"]),
+      text: "yes",
+      message_id: "m-1",
+      ask_id: "ask-7",
+    }).outcome;
+    expect(sent().body).toEqual({ text: "yes", message_id: "m-1", ask_id: "ask-7" });
+  });
+});
+
 describe.each(stepRoutes)("the step actions for $id", (c) => {
   const at = { workflowID: c.workflow_id, nodePath: nodePathKey(c.node_path) };
 

@@ -46,17 +46,17 @@ func stepSteeringMsg(kind, steerID, text string) *marotte.RPCResponse {
 
 // A message is the first request after a restart when the browser kept its target, so the inspect it
 // sends from must attribute the step's frames by itself: with no GET before it, KAS's steering frames
-// still fold as the step's, on either carrier.
+// still fold as the step's, through either door.
 func TestStepMessage_AColdRegistryStillAttributesTheStepsSteeringFrames(t *testing.T) {
-	for _, carrier := range []string{"run_bridge", "launching_chat"} {
-		t.Run(carrier, func(t *testing.T) {
+	for _, door := range []string{"host_session", "launching_chat"} {
+		t.Run(door, func(t *testing.T) {
 			h, cs, br := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
 			h.runs.log = newRunLog(t.TempDir())
 			br.setCallResult(methodKiroWorkflowInspect, stepWorkflowInspect(t))
 			br.setCallResult(marotte.MethodSessionSteer, json.RawMessage(`{"queued":true}`))
 			frameChat := runChatID("wf_1")
-			if carrier == "run_bridge" {
+			if door == "host_session" {
 				h.bridge.mgr.insert(frameChat, &sharedBridge{bridge: br, state: bridgeIdle})
 			} else {
 				frameChat = "c1"
@@ -94,7 +94,7 @@ func TestStepMessage_AColdRegistryStillAttributesTheStepsSteeringFrames(t *testi
 			if rows := h.bus.steers.list("c1"); len(rows) != 0 {
 				t.Errorf("the launching chat holds %d steer rows, want none: the frames are the step's", len(rows))
 			}
-			if carrier == "run_bridge" {
+			if door == "host_session" {
 				return
 			}
 			for _, e := range logOf(t, cs, "c1") {

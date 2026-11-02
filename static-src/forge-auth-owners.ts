@@ -1,5 +1,6 @@
 // Every add or remove sends the whole list, one write at a time, each built from the list the last one stored.
 
+import { join } from "@cplieger/keyenc";
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
 import { buildChip } from "./chip.js";
@@ -8,25 +9,24 @@ import { ICON_EXEC_GROUP } from "./icons.js";
 import { reconcile } from "./reconcile.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { setOwners } from "./actions/forge.js";
+import { readForges } from "./forge-store.js";
 import type { ConfiguredForge } from "./wire/types.gen.js";
-
-export interface OwnerScopesDeps {
-  /** Record the list the server stored on the connection's row. */
-  readonly stored: (id: string, owners: readonly string[]) => void;
-}
 
 interface Block {
   readonly id: string;
+  /** The list painted: the last durable answer, or the row's list when the row's list last changed. */
   owners: readonly string[];
+  /** The row's list the block last adopted, so a repaint from rows older than a write keeps the write's list. */
+  rowOwners: string;
   /** The write in flight, or a settled one: the next write starts after it. */
   chain: Promise<void>;
   readonly status: HTMLElement;
-  readonly deps: OwnerScopesDeps;
+  readonly details: HTMLElement;
 }
 
 const blocks = new WeakMap<HTMLElement, Block>();
 
-export function buildOwnerScopes(a: ConfiguredForge, deps: OwnerScopesDeps): HTMLElement {
+export function buildOwnerScopes(a: ConfiguredForge): HTMLElement {
   const chevron = chevronEl();
   chevron.classList.add("forge-account-repos-chevron");
   const summary = el(
@@ -83,7 +83,14 @@ export function buildOwnerScopes(a: ConfiguredForge, deps: OwnerScopesDeps): HTM
     ),
   );
 
-  const block: Block = { id: a.id, owners: [], chain: Promise.resolve(), status, deps };
+  const block: Block = {
+    id: a.id,
+    owners: [],
+    rowOwners: "",
+    chain: Promise.resolve(),
+    status,
+    details,
+  };
   blocks.set(details, block);
 
   form.addEventListener("submit", (e) => {
@@ -104,16 +111,25 @@ export function buildOwnerScopes(a: ConfiguredForge, deps: OwnerScopesDeps): HTM
     );
   });
 
-  updateOwnerScopes(details, a);
+  block.rowOwners = join(...(a.owner_scopes ?? []));
+  block.owners = a.owner_scopes ?? [];
+  paintOwners(block);
   return details;
 }
 
 export function updateOwnerScopes(details: HTMLElement, a: ConfiguredForge): void {
   const block = blocks.get(details);
-  if (block === undefined) {
+  const rowOwners = join(...(a.owner_scopes ?? []));
+  if (block === undefined || rowOwners === block.rowOwners) {
     return;
   }
+  block.rowOwners = rowOwners;
   block.owners = a.owner_scopes ?? [];
+  paintOwners(block);
+}
+
+function paintOwners(block: Block): void {
+  const details = block.details;
   const label = details.querySelector(".forge-account-repos-label");
   if (label !== null) {
     const n = block.owners.length;
@@ -160,7 +176,8 @@ function write(
       throw new Error(refusal);
     }
     block.owners = o.value.owners;
-    block.deps.stored(block.id, o.value.owners);
+    paintOwners(block);
+    void readForges();
   });
   block.chain = run.catch(() => undefined);
   return run;

@@ -41,13 +41,20 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 	// The log is published only once the queue is settled: a cached log is never
 	// held again, so an unsettled one would leave a previous process's rows
 	// sendable for this process's life.
-	if err := s.holdQueuedLocked(ctx, chatID, l); err != nil {
+	c, settled, err := s.holdQueuedLocked(ctx, chatID, l)
+	if err != nil {
 		if cerr := l.Close(); cerr != nil {
 			slog.Warn("chat open: closing the unpublished log", "chat_id", logsafe.Field(string(chatID)), "error", cerr)
 		}
 		return nil, fmt.Errorf("chat open: settle queued rows: %w", err)
 	}
 	s.logs.Store(chatID, l)
+	// The first open is when a client can first learn the read position, and any reader may be
+	// first; the settle's save announces nothing, so this one frame carries both. The `chat`
+	// version stays: the transcript did not move.
+	if c != nil && (settled || l.readPosition() != 0) {
+		s.broadcastMutation(ctx, chatID, c, true)
+	}
 	return l, nil
 }
 
@@ -55,21 +62,22 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 // log's first open in this one and after the store-open closer. A row whose id a
 // turn_open already carries was sent and only lost its removal, so it goes; every
 // other row is marked Held, shown and never sent automatically, because nothing in
-// this process saw it queued. A chat with no header has nothing to settle. Caller
-// holds the chat's mutex.
-func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *EntryLog) error {
+// this process saw it queued. It answers the header, nil for a chat with no header,
+// which has nothing to settle, and whether it saved one, which it does not announce.
+// Caller holds the chat's mutex.
+func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *EntryLog) (*marotte.Chat, bool, error) {
 	c, err := s.load(ctx, chatID)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		return nil
+		return nil, false, nil
 	case err != nil:
-		return err
+		return nil, false, err
 	case !slices.ContainsFunc(c.QueuedPrompts, func(q marotte.QueuedPrompt) bool { return !q.Held }):
-		return nil
+		return c, false, nil
 	}
 	entries, err := l.All()
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	sent := make(map[string]bool)
 	for i := range entries {
@@ -77,7 +85,7 @@ func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *
 			sent[open.Prompt.ID] = true
 		}
 	}
-	_, err = s.mutateLocked(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+	_, settled, _, err := s.saveLocked(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -87,7 +95,10 @@ func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *
 		}
 		return true
 	})
-	return err
+	if err != nil {
+		return nil, false, err
+	}
+	return settled, settled != nil, nil
 }
 
 // OpenTurn appends a turn_open to the chat's log and answers the entry, whose ID is
@@ -225,11 +236,11 @@ func (s *Store) All(ctx context.Context, chatID marotte.ChatID) ([]marotte.Entry
 	return out, err
 }
 
-// WaitingWorkflowMessages answers the chat's workflow messages no take-up has settled, oldest first.
-func (s *Store) WaitingWorkflowMessages(ctx context.Context, chatID marotte.ChatID) ([]marotte.WorkflowMessage, error) {
+// UnsettledWorkflowMessages answers the chat's workflow messages nothing has settled, oldest first.
+func (s *Store) UnsettledWorkflowMessages(ctx context.Context, chatID marotte.ChatID) ([]marotte.WorkflowMessage, error) {
 	var out []marotte.WorkflowMessage
 	err := s.readLog(ctx, chatID, func(l *EntryLog) error {
-		out = l.WaitingWorkflowMessages()
+		out = l.UnsettledWorkflowMessages()
 		return nil
 	})
 	return out, err
@@ -293,7 +304,7 @@ func (s *Store) page(ctx context.Context, chatID marotte.ChatID, turns int, befo
 	}
 	version, _ := s.versions.Current(subject.KindChat, string(chatID))
 	page := &logPage{
-		Chat:        c.Header(),
+		Chat:        s.wireHeader(chatID, c),
 		Draft:       c.Draft,
 		Entries:     win.Entries,
 		OpenEntries: []marotte.OpenEntry{},
@@ -519,8 +530,9 @@ func (s *Store) bumpChatWindow(ctx context.Context, chatID marotte.ChatID) strin
 }
 
 // WriteCounters caches the log's turn_count and last_turn_outcome on the header
-// and broadcasts the header when they moved: the write the closer and the turn
-// open run after releasing the lifecycle mutex.
+// and broadcasts the header: the write the closer and the turn open run after
+// releasing the lifecycle mutex. It broadcasts even when the counters held,
+// because the read position moves at a close that leaves both unchanged.
 func (s *Store) WriteCounters(ctx context.Context, chatID marotte.ChatID) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -532,22 +544,34 @@ func (s *Store) WriteCounters(ctx context.Context, chatID marotte.ChatID) error 
 		m.Unlock()
 		return err
 	}
-	before, berr := s.load(ctx, chatID)
 	err = l.writeCounters(ctx)
 	after, aerr := s.load(ctx, chatID)
 	m.Unlock()
 	if err != nil {
 		return err
 	}
-	if berr != nil || aerr != nil {
-		return errors.Join(berr, aerr)
-	}
-	if before.TurnCount == after.TurnCount && before.LastTurnOutcome == after.LastTurnOutcome {
-		return nil
+	if aerr != nil {
+		return aerr
 	}
 	s.versions.BumpCounter(subject.KindChat, string(chatID))
 	s.broadcastMutation(ctx, chatID, after, true)
 	return nil
+}
+
+// Warm opens the chat's log so its read position is projected; a no-op once open.
+func (s *Store) Warm(ctx context.Context, chatID marotte.ChatID) error {
+	return s.withLog(ctx, chatID, func(*EntryLog) error { return nil })
+}
+
+// ReadBound is the chat's read position now, the largest acknowledgement a client can have been
+// shown, opening the log when it is not open.
+func (s *Store) ReadBound(ctx context.Context, chatID marotte.ChatID) (uint64, error) {
+	var bound uint64
+	err := s.withLog(ctx, chatID, func(l *EntryLog) error {
+		bound = l.readPosition()
+		return nil
+	})
+	return bound, err
 }
 
 // NewestRevert answers the id of the LAST turn_revert in the chat's log in file order, false when

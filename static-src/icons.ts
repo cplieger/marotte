@@ -33,7 +33,7 @@ const PATH_PIN = '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3
  * `ICON_TAB_DOCS`.
  */
 const PATH_BOOK_OPEN =
-  '<path d="M12 4.5C9 3.5 6 3 4.5 3Q3 3 3 4.5V18Q3 19.5 4.5 19.5C6 19.5 9 20 12 21C15 20 18 19.5 19.5 19.5Q21 19.5 21 18V4.5Q21 3 19.5 3C18 3 15 3.5 12 4.5Z"/><path d="M12 4.5v16.5"/>';
+  '<path d="M12 6.25C10 4.7 7.5 3.5 4.5 3.5Q3 3.5 3 5V16.75Q3 18.25 4.5 18.25C7.5 18.25 10 19.45 12 21C14 19.45 16.5 18.25 19.5 18.25Q21 18.25 21 16.75V5Q21 3.5 19.5 3.5C16.5 3.5 14 4.7 12 6.25Z"/><path d="M12 6.25v14.75"/>';
 
 /** Lucide `eye`. */
 const PATH_EYE =
@@ -55,6 +55,11 @@ export const ICON_FILE_TEXT_UI = svg(
 export const ICON_TRASH = svg("inline", PATH_TRASH);
 export const ICON_TRASH_UI = svg("ui", PATH_TRASH);
 export const ICON_PLUS_UI = svg("ui", PATH_PLUS);
+export const ICON_MINUS_UI = svg("ui", '<path d="M5 12h14"/>');
+/** Lucide `code`: a diagram's source text. */
+export const ICON_CODE_UI = svg("ui", '<path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>');
+/** Lucide `maximize-2`: open full screen. */
+export const ICON_EXPAND_UI = svg("ui", '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>');
 // Per-tool auto_update toggle: filled = pinned (auto_update off), outline = tracking upstream.
 export const ICON_PIN = svg("inline", PATH_PIN);
 // Stroke 2 like `ICON_PIN`, so the pin keeps its weight across states.
@@ -83,14 +88,13 @@ export const ICON_DIFF =
 export const ICON_PLAY = svg("ui", '<polygon points="5 3 19 12 5 21 5 3"/>');
 export const ICON_CHEVRON_DOWN = svg("ui", '<path d="M6 9l6 6 6-6"/>');
 export const ICON_CHEVRON_UP = svg("ui", '<path d="M18 15l-6-6-6 6"/>');
+/**
+ * The turn map's steps draw one chevron of the 10×5 pair `#scroll-bottom` stacks in `static/index.html`, so the two
+ * navigators at the map's foot read as one set (`icon-step-chevron.test.ts`).
+ */
+export const ICON_STEP_PREV = svg("ui", '<path d="M7 14.5l5-5 5 5"/>');
+export const ICON_STEP_NEXT = svg("ui", '<path d="M7 9.5l5 5 5-5"/>');
 export const ICON_SEND = svg("ui", PATH_SEND);
-// The AI-generate glyph (Lucide "sparkles") for buttons that ask a model to fill a field. Not an emoji: a colour
-// font beside a stroked arrow renders at its own weight and baseline.
-export const ICON_SPARKLE = svg(
-  "ui",
-  '<path d="m12 3-1.9 5.8a2 2 0 01-1.3 1.3L3 12l5.8 1.9a2 2 0 011.3 1.3L12 21l1.9-5.8a2 2 0 011.3-1.3L21 12l-5.8-1.9a2 2 0 01-1.3-1.3z"/>' +
-    '<path d="M5 3v4M3 5h4M19 17v4M17 19h4"/>',
-);
 // Rotated by 15-input.css. Not a marching `stroke-dashoffset`: under `non-scaling-stroke` Chromium computes the dash
 // in a space `stroke-dasharray` disagrees with, collapsing the arc to a dot.
 export const ICON_SPINNER =
@@ -113,6 +117,13 @@ export const ICON_CANCEL = svg(
 // Transport, beside `ICON_CANCEL` and `ICON_PLAY`. Line art: an open chevron has no interior to become a sliver.
 // Left-pointing and doubled, clear of `.disclosure-chevron`.
 export const ICON_REWIND = svg("ui", '<path d="M11 18l-6-6 6-6M19 18l-6-6 6-6"/>');
+// Transport too: two filled bars as tall as `ICON_CANCEL`'s square, at its weight. Stroked hairlines read lighter
+// than the filled stop beside them, and an outlined 4-unit bar leaves no interior at 16px.
+export const ICON_PAUSE = svg(
+  "ui",
+  '<rect x="6.5" y="6" width="4" height="12" rx="1" fill="currentColor" stroke="none"/>' +
+    '<rect x="13.5" y="6" width="4" height="12" rx="1" fill="currentColor" stroke="none"/>',
+);
 
 /*
  * One `d`, two sizes (picker heading, model pill at 12px). A redraw keeps: filled eyes (a ring cannot survive 1.5 CSS
@@ -137,6 +148,8 @@ export const ICON_ALERT = svg(
 );
 // Lucide `arrow-up`, a direction primitive: the dock's send-now control.
 export const ICON_ARROW_UP = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
+// Lucide `arrow-right`: the turn panel's "Review all changes", which leaves the panel for the git view.
+export const ICON_ARROW_RIGHT = svg("ui", '<path d="M5 12h14M13 6l6 6-6 6"/>');
 // Go to line (Lucide "hash").
 export const ICON_GOTO_LINE = svg("ui", '<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/>');
 export const ICON_GIT_DOWN_ARROW = svg("ui", '<path d="M12 5v14M5 12l7 7 7-7"/>');
@@ -157,8 +170,9 @@ export const ICON_FILTER =
   "</svg>";
 
 /**
- * The find affordance's glyph: a magnifier for a box that reaches past what is on screen, a funnel for one that only
- * narrows loaded rows. One producer, so the toolbar button and its box agree.
+ * The find affordance's glyph: a magnifier for a search, a funnel for a filter. A page keeps one kind across its
+ * panes (History's Runs box narrows loaded rows and still wears the magnifier), so the toolbar button never changes
+ * glyph on a pane switch. One producer, so the toolbar button and its box agree.
  */
 export function findGlyph(kind: "search" | "filter"): string {
   return svg(
@@ -468,14 +482,25 @@ export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path 
 /**
  * The configuration browser's open book: one closed outline plus one spine line (two covers sharing a spine paint
  * it double). Rounded corners and curved page edges. The bottom flaps are the top ones translated, never mirrored.
- * The rise is 1.5; much lower renders as a closed book, which is `ICON_REPO`'s meaning. Straight strokes stay on the
- * 3-unit grid; pinned to the sidebar button by `menu-icons.test.ts`.
+ * The rise is 2.75: at 16px each page edge must drop a full device pixel toward the spine, or it rasterises flat;
+ * much lower renders as a closed book, which is `ICON_REPO`'s meaning. Straight strokes stay on the 3-unit grid;
+ * pinned to the sidebar button by `menu-icons.test.ts`.
  */
 export const ICON_TAB_DOCS = svg("ui", PATH_BOOK_OPEN);
 /** Workflow run: three nodes top to bottom, distinct from the chat and subagent glyphs. */
 export const ICON_TAB_RUN = svg(
   "ui",
   '<rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/>',
+);
+/** The run dock's Steps segment: Lucide `list-tree`. */
+export const ICON_SEG_STEPS = svg(
+  "ui",
+  '<path d="M21 12h-8"/><path d="M21 6H8"/><path d="M21 18h-8"/><path d="M3 6v4c0 1.1.9 2 2 2h3"/><path d="M3 10v6c0 1.1.9 2 2 2h3"/>',
+);
+/** The run dock's Timeline segment: Lucide `chart-gantt`. */
+export const ICON_SEG_TIMELINE = svg(
+  "ui",
+  '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M7 6h8"/><path d="M12 11h7"/><path d="M9 16h5"/>',
 );
 /**
  * A sub-tab's nesting marker (Lucide "corner-down-right"), a real element so the activity dot sits beside it.

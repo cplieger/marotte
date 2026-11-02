@@ -148,8 +148,6 @@ export interface OpenTabArgs {
 interface Callbacks {
   onActivate: ((id: string) => void) | null;
   onEmpty: (() => void) | null;
-  /** A NOTIFICATION slot, like onEmpty: it must not mutate the store. */
-  onClosed: ((id: string) => void) | null;
 }
 
 interface Internal {
@@ -170,7 +168,7 @@ interface State {
 }
 
 const state: State = { tabs: [], active: "" };
-const callbacks: Callbacks = { onActivate: null, onEmpty: null, onClosed: null };
+const callbacks: Callbacks = { onActivate: null, onEmpty: null };
 const internal: Internal = {
   emptyTimer: null,
   emptyDeferred: false,
@@ -299,7 +297,6 @@ function forgetRow(row: TabRow): void {
   // The one function every removal door already calls, which is what makes the MRU
   // prune structural and prunes a whole cascade in the loop that removes it.
   forgetActivation(row.subject.id);
-  callbacks.onClosed?.(row.subject.id);
 }
 
 // --- Ordering ---
@@ -1348,7 +1345,7 @@ export function activeChatRef(): string {
 
 /** The chat ref of the tab `tabID` hangs under, or "". The only client answer after a reload: a
  *  FINISHED run has no lease, so `runChatID` answers "", while `TabSubject.Parent` is persisted and
- *  was filled from the run's lease at open (`Membership.fillRunParent`). It changes only through
+ *  was settled at open (`Membership.runTabParent`). It changes only through
  *  `setTabParent`, which adopts the new subject, so the answer tracks it. */
 export function parentChatRef(tabID: string): string {
   const parentID = rowOfID(tabID)?.subject.parent ?? "";
@@ -1420,11 +1417,29 @@ export function paintProvisionalTabs(subjects: readonly TabSubject[]): void {
  *  Only `chat` and `run` bear a cue; every `runStatusFor` value is a `CueStatus` member or one
  *  `isCueStatus` rejects. `owns` excludes chat VIEW tabs (one chat counted twice) and is scoped to
  *  chats because tab-materialize.ts hard-codes `owns: false` for run and subagent. Subagent asks are
- *  filed under the launching chat. The id is the TAB id, that module's one key vocabulary. */
-export function cueCandidates(): { id: string; status: string }[] {
-  return state.tabs
-    .filter((t) => (t.subject.kind === "chat" && t.spec.owns) || t.subject.kind === "run")
-    .map((t) => ({ id: t.subject.id, status: foldedDotStatus(t) }));
+ *  filed under the launching chat. The id is the TAB id, that module's one key vocabulary; `seen` is
+ *  the server's acknowledgement on the subject, 0 for none. */
+export function cueCandidates(): {
+  id: string;
+  kind: "chat" | "run";
+  ref: string;
+  status: string;
+  seen: number;
+}[] {
+  const out: { id: string; kind: "chat" | "run"; ref: string; status: string; seen: number }[] = [];
+  for (const t of state.tabs) {
+    const kind = t.subject.kind;
+    if ((kind === "chat" && t.spec.owns) || kind === "run") {
+      out.push({
+        id: t.subject.id,
+        kind,
+        ref: t.subject.ref,
+        status: foldedDotStatus(t),
+        seen: t.subject.seen ?? 0,
+      });
+    }
+  }
+  return out;
 }
 
 /** The dot states meaning a chat's own work is OVER: the only ones the settle probe may blank.
@@ -1442,8 +1457,7 @@ export function setChatSettledProbe(fn: (chatRef: string) => boolean): void {
 }
 
 /** What the out-of-page fold sees for one row: its own dot, unless a CHAT whose turn settled while
- *  work it launched still runs. `""`, not `idle`: attention.ts reads `""` as no information, while
- *  `idle` FORGETS the reader's acknowledgement. The probe is consulted LAST, so a row that can never
+ *  work it launched still runs: `""`, which no cue counts. The probe is consulted LAST, so a row that can never
  *  be suppressed subscribes to nothing extra. */
 function foldedDotStatus(row: TabRow): string {
   const status = row.dotStatus ?? "";
@@ -1467,13 +1481,11 @@ export function subscribeTabCues(fn: () => void): () => void {
   });
 }
 
-/** Register the notification for a tab leaving the projection. One slot, one
- *  consumer: attention.ts, which drops the chat's acknowledgement. */
-export function setOnTabClosed(fn: (id: string) => void): void {
-  callbacks.onClosed = fn;
-}
-
 // --- Empty-state timer ---
+
+/** Longer than the closed row's exit animation (10-shell-app.css), so the respawned row is built
+ *  into an EMPTY strip instead of animating in beside the departing one. */
+export const EMPTY_RESPAWN_MS = 500;
 
 export function setOnEmpty(fn: () => void): void {
   callbacks.onEmpty = fn;
@@ -1490,12 +1502,10 @@ function scheduleEmpty(): void {
     return;
   }
   internal.emptyDeferred = false;
-  // Longer than the closed row's exit animation (10-shell-app.css), so the respawned row is built
-  // into an EMPTY strip instead of animating in beside the departing one.
   internal.emptyTimer = setTimeout(() => {
     internal.emptyTimer = null;
     callbacks.onEmpty?.();
-  }, 500);
+  }, EMPTY_RESPAWN_MS);
 }
 
 /** Re-arm (or drop) a deferred empty-state respawn once the last pending remove
@@ -1585,11 +1595,15 @@ const ACTIVE_BTN: Readonly<Partial<Record<TabKind, () => HTMLButtonElement>>> = 
   git: () => $.gitBtn,
   files: () => $.filesBtn,
   history: () => $.historyBtn,
+  docs: () => $.docsBtn,
 };
 
 function syncSidebarButtons(activeKind: TabKind | null): void {
   for (const [kind, getter] of Object.entries(ACTIVE_BTN)) {
-    getter().classList.toggle("active", kind === activeKind);
+    const on = kind === activeKind;
+    const btn = getter();
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-pressed", String(on));
   }
 }
 
@@ -2218,6 +2232,11 @@ export async function openFilesView(openAt: string): Promise<void> {
   await openTab({ kind: "files", ref: openAt });
 }
 
+/** Toggle the History tab: the sidebar button closes the page it is showing, like every toolbar toggle. */
+export async function toggleHistoryView(): Promise<void> {
+  await toggleSingleton("history");
+}
+
 /** Switch the History page's pane route. No-op when it isn't open. */
 export function setHistoryTab(tab: HistoryTab): void {
   setTabRoute(tabIdFor("history"), { kind: "history", tab });
@@ -2353,7 +2372,6 @@ export function _resetForTest(): void {
   state.active = "";
   callbacks.onActivate = null;
   callbacks.onEmpty = null;
-  callbacks.onClosed = null;
   chatSettledProbe = null;
   if (internal.emptyTimer !== null) {
     clearTimeout(internal.emptyTimer);

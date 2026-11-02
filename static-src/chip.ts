@@ -7,6 +7,8 @@ interface ChipOptions {
   /** Render label inside <code> (monospace). */
   code?: boolean;
   badge?: { text: string; className: string };
+  /** Prose after the label, in the sans face (`.chip-note`), so it does not read as another entry. */
+  note?: string;
   /** CSS class for the chip container. Default: "chip". */
   chipClass?: string;
   /** Tooltip on the remove button. Default: "Remove". */
@@ -30,6 +32,9 @@ export function buildChip(opts: ChipOptions): HTMLSpanElement {
   } else {
     const labelEl = el("span", { className: "chip-label" }, opts.label);
     chip.appendChild(labelEl);
+  }
+  if (opts.note !== undefined) {
+    chip.appendChild(el("span", { className: "chip-note" }, opts.note));
   }
 
   // The aria-label is the button's only accessible name: its sole child is an SVG (axe `button-name`).

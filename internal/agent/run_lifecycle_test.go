@@ -12,37 +12,30 @@ import (
 	"testing/synctest"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
+// deleteGate holds the engine lane's delete at KAS until release, then answers outcome.
 type deleteGate struct {
-	*fakeBridge
 	entered chan struct{}
 	release chan struct{}
 	outcome func() (*marotte.RPCResponse, error)
 	once    sync.Once
 }
 
-func (g *deleteGate) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
-	resp, err := g.fakeBridge.Call(ctx, method, params)
+func (g *deleteGate) gate(ctx context.Context, method string, resp *marotte.RPCResponse, err error) (*marotte.RPCResponse, error) {
 	if method != methodKiroWorkflowDelete {
 		return resp, err
 	}
 	g.once.Do(func() { close(g.entered) })
-	// The real bridge's arms: the reply, or the caller's ctx ending after the write.
+	// The real engine's arms: the reply, or the caller's ctx ending after the write.
 	select {
 	case <-g.release:
 		return g.outcome()
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-}
-
-func (g *deleteGate) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
-	resp, err := g.Call(ctx, method, params)
-	g.mu.Lock()
-	seq := g.deliveredSeq
-	g.mu.Unlock()
-	return resp, seq, err
 }
 
 type lifecycleOp struct {
@@ -60,27 +53,25 @@ var lifecycleOps = []lifecycleOp{
 		name: "prompt", method: marotte.MethodPrompt,
 		run: marotte.RunStatusPaused, node: marotte.RunNodeStatusPaused, state: "paused",
 		do: func(ctx context.Context, h *Runtime) error {
-			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "carry on", "m-op")
+			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "carry on", "m-op", "")
 			return err
 		},
 	},
 	{
 		name: "answer", method: marotte.MethodPrompt,
-		run: marotte.RunStatusPaused, node: marotte.RunNodeStatusPaused, state: "paused",
-		setup: func(_ *testing.T, h *Runtime, _ *fakeBridge) {
-			h.runs.asks.add(&runAsk{chatID: runChatID("wf_1"), payload: marotte.RunInputNeededPayload{
-				WorkflowID: "wf_1", AskID: "a1", NodeID: "review", StepSessionID: "sess_step",
-			}})
+		run: marotte.RunStatusPaused, node: marotte.RunNodeStatusPaused, state: "asked",
+		setup: func(t *testing.T, h *Runtime, _ *fakeBridge) {
+			leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
 		},
 		do: func(ctx context.Context, h *Runtime) error {
-			return h.runs.answerInput(ctx, "wf_1", "a1", "teal")
+			return h.runs.answerInput(ctx, "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "teal")
 		},
 	},
 	{
 		name: "steer", method: marotte.MethodSessionSteer,
 		run: marotte.RunStatusRunning, node: marotte.RunNodeStatusRunning, state: "running",
 		do: func(ctx context.Context, h *Runtime) error {
-			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "use main", "m-op")
+			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "use main", "m-op", "")
 			return err
 		},
 	},
@@ -91,7 +82,7 @@ var lifecycleOps = []lifecycleOp{
 		setup: func(t *testing.T, h *Runtime, br *fakeBridge) {
 			t.Helper()
 			for _, id := range []string{"m-a", "m-b"} {
-				if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "words "+id, id); err != nil {
+				if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "words "+id, id, ""); err != nil {
 					t.Fatalf("Setup: MessageStep(%s) = %v", id, err)
 				}
 			}
@@ -123,7 +114,7 @@ func deleteAnswer(resp *marotte.RPCResponse, err error) func() (*marotte.RPCResp
 	return func() (*marotte.RPCResponse, error) { return resp, err }
 }
 
-var bridgeExited = &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true}
+var engineExited = &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true}
 
 var deleteOutcomes = []deleteOutcome{
 	{
@@ -147,18 +138,18 @@ var deleteOutcomes = []deleteOutcome{
 	{
 		name: "unknown_unreadable", after: "closed", wantErr: true, unconfirm: true,
 		arm: func(g *deleteGate, br *fakeBridge, _ *stepScript) {
-			g.outcome = deleteAnswer(nil, bridgeExited)
-			br.setCallErr(methodKiroWorkflowInspect, errors.New("the utility session is down"))
+			g.outcome = deleteAnswer(nil, engineExited)
+			br.setCallErr(methodKiroWorkflowInspect, errors.New("the engine is down"))
 		},
 	},
 	{
 		name: "unknown_run_kept", after: "open", wantErr: true,
-		arm: func(g *deleteGate, _ *fakeBridge, _ *stepScript) { g.outcome = deleteAnswer(nil, bridgeExited) },
+		arm: func(g *deleteGate, _ *fakeBridge, _ *stepScript) { g.outcome = deleteAnswer(nil, engineExited) },
 	},
 	{
 		name: "unknown_run_gone", after: "gone",
 		arm: func(g *deleteGate, br *fakeBridge, _ *stepScript) {
-			g.outcome = deleteAnswer(nil, bridgeExited)
+			g.outcome = deleteAnswer(nil, engineExited)
 			br.setCallRPCErr(methodKiroWorkflowInspect, &marotte.RPCError{
 				Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`),
 			})
@@ -172,13 +163,13 @@ func gatedHub(t *testing.T, op *lifecycleOp) (*Runtime, *fakeBridge, *deleteGate
 	// First, so a setup's own cleanup runs before the shutdown.
 	t.Cleanup(func() { shutdownHub(t, h) })
 	g := &deleteGate{
-		fakeBridge: br, entered: make(chan struct{}), release: make(chan struct{}),
+		entered: make(chan struct{}), release: make(chan struct{}),
 		outcome: deleteAnswer(&marotte.RPCResponse{Result: json.RawMessage(`{}`)}, nil),
 	}
-	h.bridge.mgr.remove(runChatID("wf_1"))
-	if !h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: g, state: bridgeIdle}) {
-		t.Fatal("Setup: the gated carrier was not registered for wf_1")
-	}
+	src := fakeSourceOf(t, h)
+	src.mu.Lock()
+	src.callGate = g.gate
+	src.mu.Unlock()
 	s := newStepScript(t, br, op.state)
 	if op.setup != nil {
 		op.setup(t, h, br)
@@ -291,6 +282,8 @@ func deleteFirst(t *testing.T, op *lifecycleOp, out *deleteOutcome) {
 		if err := op.do(t.Context(), h); err != nil {
 			t.Errorf("%s again once the run reopened = %v, want nil", op.name, err)
 		}
+		// The step takes what it was sent; an answer's pending ends on that turn_start.
+		h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)
 	}
 	checkRunAfter(t, h, br, op, out)
 }
@@ -312,7 +305,7 @@ func checkRunAfter(t *testing.T, h *Runtime, br *fakeBridge, op *lifecycleOp, ou
 	sends := []string{marotte.MethodPrompt, marotte.MethodSessionSteer}
 	counts := func() []int { return []int{countCalls(br, sends[0]), countCalls(br, sends[1])} }
 	before := counts()
-	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "and then", "m-probe")
+	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "and then", "m-probe", "")
 	switch out.after {
 	case "open":
 		if err != nil {

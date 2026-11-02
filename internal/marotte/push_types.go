@@ -105,7 +105,7 @@ func PRSubject(forgeID, repoID string, number int) PushSubject {
 // halves of the contract are in different languages and one of them is TypeScript.
 //
 // The literal coincides with internal/agent's own private runChatPrefix
-// (run_host.go, the synthetic chat-id namespace a run bridge registers under) and
+// (run_host.go, the synthetic chat-id namespace a run host session registers under) and
 // neither may be derived from the other: that one is a chat-id namespace private to
 // that package, this one is a push-subject vocabulary shared with the worker.
 const RunSubjectPrefix = "run:"
@@ -115,4 +115,15 @@ const RunSubjectPrefix = "run:"
 // their own tray slots.
 func RunSubject(workflowID string) PushSubject {
 	return PushSubject{Key: RunSubjectPrefix + workflowID}
+}
+
+// runAskSubjectPrefix marks a subject key naming one step's wait in a run. Declared here for
+// PRSubjectPrefix's reason.
+const runAskSubjectPrefix = "runask:"
+
+// RunAskSubject is the subject of a notification about one step's wait. position is the ask's id
+// without its turn marker, so a re-park of the same wait replaces its banner, and two parked
+// branches hold two tray slots.
+func RunAskSubject(position string) PushSubject {
+	return PushSubject{Key: runAskSubjectPrefix + position}
 }

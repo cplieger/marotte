@@ -1,4 +1,4 @@
-// Adjacent `text` entries are ONE prose run, and a residency window may not cut one.
+// Adjacent `text` entries of ONE message are one prose run, and a residency window may not cut one.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { Entry, EntryToolCall, EntryToolResult, OpenEntry } from "./types.js";
@@ -73,8 +73,9 @@ function sealed(
   };
 }
 
+/** A text entry as a `#k` segment of the turn's ONE say, so adjacent ones are one message (`MessageRun`). */
 function text(turnID: string, seq: number, s: string): Entry {
-  return sealed(turnID, seq, "text", { text: s });
+  return sealed(turnID, seq, "text", { text: s }, { id: `${turnID}-say#${String(seq)}` });
 }
 
 // `Object.assign` rather than a spread: under `exactOptionalPropertyTypes` a spread of a `Partial`
@@ -241,7 +242,7 @@ describe("a seal inside a prose run is invisible", () => {
   it("names every member of the run on the row, in stream order", () => {
     const r = render((t) => [text(t, 1, "one "), resultEntry(t, 2, 1), text(t, 3, "two")]);
     const row = rows(r.body)[0];
-    expect(row?.dataset["entries"]).toBe(`${r.turnID}-e1 ${r.turnID}-e3`);
+    expect(row?.dataset["entries"]).toBe(`${r.turnID}-say#1 ${r.turnID}-say#3`);
   });
 });
 
@@ -315,7 +316,7 @@ describe("a residency window may not cut a prose run", () => {
         const mounted = rows(body);
         expect(mounted, at).toHaveLength(1);
         expect(mounted[0]?.dataset["entries"], at).toBe(
-          members.map((seq) => `${turnID}-e${String(seq)}`).join(" "),
+          members.map((seq) => `${turnID}-say#${String(seq)}`).join(" "),
         );
         resetBlockRenders();
       }

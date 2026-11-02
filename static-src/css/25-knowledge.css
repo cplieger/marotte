@@ -74,11 +74,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* A base still indexing: accent left-border marks it as in-progress. */
-.knowledge-row.knowledge-indexing {
-  box-shadow: inset 2px 0 0 var(--c-accent);
-}
-
 .knowledge-progress {
   display: flex;
   flex: 1;

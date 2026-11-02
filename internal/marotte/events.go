@@ -80,9 +80,10 @@ const (
 	// is what TurnConclusion.Truncated carries.
 	StopReasonMaxTokens       StopReason = "max_tokens"
 	StopReasonMaxTurnRequests StopReason = "max_turn_requests"
-	// StopReasonToolUse is KAS's raw stop for a turn its agent loop cut at the per-turn
-	// model-call limit while the model was asking for another tool. KAS never sends
-	// max_turn_requests for that stop, and a turn that finishes never ends on tool_use.
+	// StopReasonToolUse is the model's last stop on a turn KAS ended while the model was asking
+	// for a tool: at the per-turn model-call limit (KAS never sends max_turn_requests for it), or,
+	// since kiro-cli 2.32.0, after a tool that ends the turn (update_workflow's handoff). Only
+	// KAS's node record tells a workflow step's two cases apart.
 	StopReasonToolUse StopReason = "tool_use"
 	// StopReasonUnterminated is marotte's OWN value, never KAS's: the store-open closer and the
 	// merge's synthesized closer stamp it on a turn nobody closed. An enum member, not a literal,
@@ -117,7 +118,7 @@ const (
 	EventMCPFailed         EventType = "mcp_failed"
 	EventMCPOAuthNeeded    EventType = "mcp_oauth_needed"
 	// EventMCPPoolChanged is an empty refetch signal for GET /api/mcp/pool: a
-	// bridge's pool was replaced or dropped.
+	// session's pool was replaced or dropped.
 	EventMCPPoolChanged  EventType = "mcp_pool_changed"
 	EventMCPPrewarm      EventType = "mcp_prewarm"
 	EventModeChanged     EventType = "mode_changed"
@@ -142,14 +143,8 @@ const (
 	EventRunStarted  EventType = "run_started"
 	EventRunProgress EventType = "run_progress"
 	EventRunFinished EventType = "run_finished"
-	// EventRunInputNeeded is a workflow STEP asking a person a question. It carries its payload
-	// because the question is on no endpoint: KAS parks the run with a fixed pauseReason. Keyed to
-	// the launching chat, else to `run:<workflowId>`.
-	EventRunInputNeeded EventType = "run_input_needed"
-	// EventRunInputSettled retires a run ask on every surface that did not answer
-	// it, the run-shaped twin of decision_settled. Separate from that event
-	// because a run ask is identified by a string, not by an int64 request id.
-	EventRunInputSettled EventType = "run_input_settled"
+	// EventRunAsks is one run's steps waiting on a person, replaced whole (RunAsksPayload).
+	EventRunAsks         EventType = "run_asks"
 	EventForgesChanged   EventType = "forges_changed"
 	EventGovernanceState EventType = "governance_state"
 	EventHooksChanged    EventType = "hooks_changed"
@@ -167,6 +162,11 @@ const (
 	// EventPowersChanged is an empty refetch signal for GET /api/powers.
 	EventPowersChanged   EventType = "powers_changed"
 	EventSettingsUpdated EventType = "settings_updated"
+	// EventEngineStatus carries EngineStatus on every engine state change, and on every pending or busy change while a
+	// restart is pending.
+	EventEngineStatus EventType = "engine_status"
+	// EventConfigStandingChanged is an empty refetch signal for GET /api/config/standing.
+	EventConfigStandingChanged EventType = "config_standing_changed"
 	// EventStatusSnapshot is every retained waiting_on_user row as ONE frame on a
 	// v3 connect, stamped with the `status` version; the per-row chat_status
 	// replay is the legacy-connect form. Possibly empty, for pending_snapshot's

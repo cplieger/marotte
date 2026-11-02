@@ -1,9 +1,9 @@
 package agent
 
 // Hooks state: list .kiro/hooks/*.json and flip their enabled flag over KAS's _kiro/hooks/*
-// requests. Hooks are workspace-global, so they route through the utility bridge, which enables
+// requests. Hooks are workspace-global, so they are engine calls, and the engine enables
 // KAS's v2 hook engine (_meta.kiro.hooks={enabled,v2}); without it _kiro/hooks/list throws.
-// Chat bridges enable the same engine, and KAS runs runCommand hooks itself.
+// Chat sessions enable the same engine, and KAS runs runCommand hooks itself.
 
 import (
 	"context"
@@ -20,10 +20,10 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
-// hookCallTimeout bounds a list or setEnabled round-trip; only the first call starts the utility bridge.
+// hookCallTimeout bounds a list or setEnabled round-trip, the wait for the engine included.
 const hookCallTimeout = 45 * time.Second
 
 // actionRunCommand / actionAskAgent are the two KAS hook action types.
@@ -125,10 +125,9 @@ func (st *Settings) hookScopeAndPath(abs string) (scope, path string) {
 }
 
 func (st *Settings) hooksListRaw(ctx context.Context) ([]kasHook, error) {
-	u := st.utility()
 	cctx, cancel := context.WithTimeout(ctx, hookCallTimeout)
 	defer cancel()
-	raw, err := u.session.hooksRaw(cctx, methodKiroHooksList, map[string]any{
+	raw, err := st.engine.hooksRaw(cctx, methodKiroHooksList, map[string]any{
 		keyWorkspacePaths: []string{st.lifecycle.workDir},
 		// includeDisabled, or a disabled hook vanishes and can never be re-enabled from the UI.
 		"includeDisabled": true,
@@ -208,10 +207,9 @@ func (st *Settings) handleHookSetEnabled(w http.ResponseWriter, r *http.Request)
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
-	u := st.utility()
 	cctx, cancel := context.WithTimeout(r.Context(), hookCallTimeout)
 	defer cancel()
-	raw, err := u.session.hooksRaw(cctx, methodKiroHooksSetEnabled, map[string]any{
+	raw, err := st.engine.hooksRaw(cctx, methodKiroHooksSetEnabled, map[string]any{
 		"hookId":  hookID,
 		"enabled": body.Enabled,
 	})
@@ -268,7 +266,7 @@ func writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
 	httpreply.BadRequest(w, msg)
 }
 
-// The utility bridge auto-starts, so there is no "open a chat first" case.
+// The engine runs with no chat open, so there is no "open a chat first" case.
 func writeHookErr(w http.ResponseWriter, err error) {
 	slog.Warn("hooks op failed", "error", err)
 	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("hooks request failed"))

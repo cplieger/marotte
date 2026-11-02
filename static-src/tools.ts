@@ -366,9 +366,7 @@ class ToolsManager {
       }
     });
     f.searchBtn.addEventListener("click", searchNow);
-    // Both faces come from the registry rather than the markup, so each glyph keeps
-    // ONE drawing. A MAGNIFIER because this box reaches past what is on screen,
-    // which is the distinction `findGlyph` exists to make.
+    // Both faces come from the registry rather than the markup, so each glyph keeps ONE drawing.
     const magnifier = iconEl(findGlyph("search"));
     magnifier.classList.add("tool-search-glyph");
     const spinner = iconEl(ICON_SPINNER);

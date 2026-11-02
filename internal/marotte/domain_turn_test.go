@@ -34,7 +34,7 @@ func turnSourceCount(t *testing.T) TurnOpenSource {
 	return 0
 }
 
-// TestTurnSourcePredicates decides all three predicates for every member of the
+// TestTurnSourcePredicates decides every predicate for every member of the
 // enum. The count is DERIVED from the const block rather than written twice, so a
 // member added to the const block fails here instead of silently answering false
 // for a predicate nobody decided about it — the mutation that measured this gap
@@ -42,15 +42,15 @@ func turnSourceCount(t *testing.T) TurnOpenSource {
 // green.
 func TestTurnSourcePredicates(t *testing.T) {
 	rows := []struct {
-		name                                       string
-		src                                        TurnOpenSource
-		promptClass, userAnswered, acknowledgeable bool
+		name                                                  string
+		src                                                   TurnOpenSource
+		promptClass, userAnswered, acknowledgeable, steerable bool
 	}{
-		{"prompt", TurnSourcePrompt, true, true, true},
-		{"localShell", TurnSourceLocalShell, false, false, false},
-		{"wireTurnStart", TurnSourceWireTurnStart, false, false, false},
-		{"emptyRetry", TurnSourceEmptyRetry, true, true, true},
-		{"workflowStep", turnSourceWorkflowStep, false, false, false},
+		{"prompt", TurnSourcePrompt, true, true, true, true},
+		{"revert", TurnSourceRevert, false, false, false, false},
+		{"wireTurnStart", TurnSourceWireTurnStart, false, false, false, true},
+		{"emptyRetry", TurnSourceEmptyRetry, true, true, true, true},
+		{"workflowStep", turnSourceWorkflowStep, false, false, false, false},
 	}
 	if count := turnSourceCount(t); len(rows) != int(count) {
 		t.Fatalf("the table covers %d sources, the enum has %d: decide every predicate for the new member",
@@ -75,6 +75,9 @@ func TestTurnSourcePredicates(t *testing.T) {
 			}
 			if got := row.src.Acknowledgeable(); got != row.acknowledgeable {
 				t.Errorf("Acknowledgeable() = %v, want %v", got, row.acknowledgeable)
+			}
+			if got := row.src.SteerableHolder(); got != row.steerable {
+				t.Errorf("SteerableHolder() = %v, want %v", got, row.steerable)
 			}
 		})
 	}

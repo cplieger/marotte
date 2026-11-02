@@ -35,7 +35,7 @@ func stagedStretch(t *testing.T, rs *Runs, workflowID string, deadline, stretchS
 // TestRefillDeadline_RollsTheWindowForwardSoALongRunSurvives pins that a run 90 minutes deep gets a full
 // window from progress, past where a start-anchored ceiling would fire.
 func TestRefillDeadline_RollsTheWindowForwardSoALongRunSurvives(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 	stretchStart := time.Now().Add(-90 * time.Minute)
 	// Two minutes from expiring.
@@ -62,7 +62,7 @@ func TestRefillDeadline_RollsTheWindowForwardSoALongRunSurvives(t *testing.T) {
 
 // TestRefillDeadline_RefusesAPausedRun pins that a refill re-arming a parked run would cancel one waiting on a person.
 func TestRefillDeadline_RefusesAPausedRun(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
 	h.armDeadline(t.Context(), id)
@@ -86,7 +86,7 @@ func TestRefillDeadline_RefusesAPausedRun(t *testing.T) {
 
 // TestRefillDeadline_RefusesARunWithNoLease pins that a TUI run has no lease or cancel path here.
 func TestRefillDeadline_RefusesARunWithNoLease(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	h.refillDeadline(t.Context(), "wf_tui")
 	if h.bounded("wf_tui") {
 		t.Error("a refill bounded a run with no lease")
@@ -104,7 +104,7 @@ func TestRefillDeadline_RefusesARunWithNoLease(t *testing.T) {
 // TestRefillDeadline_ThrottlesAWriteItWouldBarelyMove pins the granularity's disk saving, and that a
 // skip keeps the same timer.
 func TestRefillDeadline_ThrottlesAWriteItWouldBarelyMove(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
 	h.armDeadline(t.Context(), id)
@@ -195,7 +195,7 @@ func TestRefillDeadline_SwapsTheTimerForTheNewDeadline(t *testing.T) {
 // TestRefillDeadline_CannotMoveTheDeadlinePastTheBackstop pins that the first refill clamps at the backstop and
 // every later one recomputes that instant. Staged 30 minutes deep so a now-anchored version differs.
 func TestRefillDeadline_CannotMoveTheDeadlinePastTheBackstop(t *testing.T) {
-	h := &Runs{}
+	h := boundsRuns(t)
 	const id = "wf_1"
 	// The backstop comes due in 7 minutes: inside the window, above minRunBudget.
 	const deep, left = 30 * time.Minute, 37 * time.Minute
@@ -231,7 +231,7 @@ func TestRefillDeadline_CannotMoveTheDeadlinePastTheBackstop(t *testing.T) {
 // Lease.StartedAt, which would cancel a run parked on a person.
 func TestRunBackstop_MeasuresExecutingTimeNotWallTime(t *testing.T) {
 	t.Run("stretches accumulate across pauses", func(t *testing.T) {
-		h := &Runs{}
+		h := boundsRuns(t)
 		const id = "wf_1"
 		leased(t, h, id)
 
@@ -293,7 +293,7 @@ func TestRunBackstop_MeasuresExecutingTimeNotWallTime(t *testing.T) {
 	})
 
 	t.Run("a run ending clears its accounting", func(t *testing.T) {
-		h := &Runs{}
+		h := boundsRuns(t)
 		const id = "wf_1"
 		leased(t, h, id)
 		h.armDeadline(t.Context(), id)
@@ -324,7 +324,7 @@ func TestRunBackstop_MeasuresExecutingTimeNotWallTime(t *testing.T) {
 	})
 
 	t.Run("wall time spent parked burns none of it", func(t *testing.T) {
-		h := &Runs{}
+		h := boundsRuns(t)
 		const id = "wf_1"
 		// Granted longer ago than the backstop, barely executed. Derived: a shorter literal passes both implementations.
 		staleBy := runBackstop + time.Hour
@@ -426,7 +426,7 @@ func TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline(t *
 			t.Fatalf("round %d: NewStore: %v", round, err)
 		}
 		h.runs.leases = st
-		h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
+		h.runs.grantLease(t.Context(), id, "publish", manualLaunch(), hostSec())
 		h.runs.armDeadline(t.Context(), id)
 		// Near-expiry, so a refill genuinely lands.
 		if sErr := st.SetDeadline(t.Context(), id, time.Now().Add(time.Minute)); sErr != nil {

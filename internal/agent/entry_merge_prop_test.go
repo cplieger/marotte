@@ -193,6 +193,39 @@ func TestMergeEntries_IsIdempotentAndOrderPreserving(t *testing.T) {
 	})
 }
 
+// TestMergeEntries_KeepsEveryRecordTurnInOrder pins the premise of a chat's read position, a turn's
+// file-order index: a merge drops no record turn, reverted ones included, and reorders none, so
+// no turn's index falls and a read chat cannot hide a later turn.
+func TestMergeEntries_KeepsEveryRecordTurnInOrder(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		plans := genTurnPlans().Draw(rt, "plans")
+		record, projected := buildSides(rt, plans, func(i int) int64 { return int64(1000 + i) })
+		for i := range record {
+			record[i].Reverted = rapid.Bool().Draw(rt, "reverted")
+		}
+		merged, _ := mergeEntries(record, projected, "sid-1")
+
+		at := make(map[string]int, len(merged))
+		for i := range merged {
+			if len(merged[i].Entries) > 0 {
+				at[merged[i].Entries[0].Turn] = i
+			}
+		}
+		last := -1
+		for i := range record {
+			id := record[i].Entries[0].Turn
+			pos, held := at[id]
+			if !held {
+				rt.Fatalf("record turn %s (reverted %v) is missing from the merge:\n%s", id, record[i].Reverted, dumpMerged(merged))
+			}
+			if pos <= last {
+				rt.Fatalf("record turn %s moved ahead of an earlier record turn:\n%s", id, dumpMerged(merged))
+			}
+			last = pos
+		}
+	})
+}
+
 // TestMergeEntries_ReadsNoTimestamp pins that output is identical whether timestamps are meaningful or zero.
 func TestMergeEntries_ReadsNoTimestamp(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {

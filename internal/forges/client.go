@@ -4,8 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"reflect"
-	"sync"
+	"slices"
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/creds"
@@ -14,33 +13,42 @@ import (
 	"github.com/cplieger/forgeapi/gitlab"
 )
 
-func connectionFor(rec *connectionRecord) forgeapi.Connection {
+// connReadCacheBytes bounds each connection's forgeapi read cache at the lower
+// end of the cache author's 8 to 16 MiB per connection: marotte revalidates few
+// REST reads per connection (the first repository pages, the merge settings of
+// opened repositories, GitLab's per-scope merge-request lists), GitHub's
+// pull-request reads are GraphQL, which is never cached, and forgeapi keeps no
+// entry over a quarter of the bound, far above any projected page. An eviction
+// costs one full read, never a wrong answer.
+const connReadCacheBytes = 8 << 20
+
+func connectionFor(spec *connectionSpec) forgeapi.Connection {
 	return forgeapi.Connection{
-		WebBaseURL: rec.webBase(),
-		APIBaseURL: rec.APIBaseURL,
-		CABytes:    []byte(rec.CAPEM),
-		ClientCert: []byte(rec.ClientCertPEM),
-		ClientKey:  []byte(rec.ClientKeyPEM),
-		Proxy:      rec.Proxy,
+		WebBaseURL: spec.webBase(),
+		APIBaseURL: spec.APIBaseURL,
+		CABytes:    []byte(spec.CAPEM),
+		ClientCert: []byte(spec.ClientCertPEM),
+		ClientKey:  []byte(spec.ClientKeyPEM),
+		Proxy:      spec.Proxy,
 	}
 }
 
 // connOptions is the option set every forgeapi entry that opens an endpoint for
-// rec takes. The credential source and the device grant read the address policy
-// from their own options, so a set given to the client alone would let a
+// spec takes. The credential source and the device grant read the address
+// policy from their own options, so a set given to the client alone would let a
 // private-range instance answer its API and refuse its refresh.
-func connOptions(rec *connectionRecord) []forgeapi.Option {
+func connOptions(spec *connectionSpec) []forgeapi.Option {
 	return []forgeapi.Option{
 		forgeapi.WithLogger(slog.Default().With("component", "forges")),
-		forgeapi.WithPrivateAddresses(rec.PrivateAddresses),
-		forgeapi.WithPlaintextHTTP(rec.PlaintextHTTP),
+		forgeapi.WithPrivateAddresses(spec.PrivateAddresses),
+		forgeapi.WithPlaintextHTTP(spec.PlaintextHTTP),
 	}
 }
 
 // The kind is the user's own statement at connect time, so nothing is spent detecting it.
-func newFamilyClient(rec *connectionRecord, opts []forgeapi.Option) (forgeapi.Core, error) {
-	conn := connectionFor(rec)
-	switch rec.Kind.family() {
+func newFamilyClient(spec *connectionSpec, opts []forgeapi.Option) (forgeapi.Core, error) {
+	conn := connectionFor(spec)
+	switch spec.Kind.family() {
 	case forgeapi.FamilyGitHub:
 		return asCore(github.New(conn, opts...))
 	case forgeapi.FamilyGitLab:
@@ -48,7 +56,7 @@ func newFamilyClient(rec *connectionRecord, opts []forgeapi.Option) (forgeapi.Co
 	case forgeapi.FamilyGitea:
 		return asCore(gitea.New(conn, opts...))
 	}
-	return nil, fmt.Errorf("forges: kind %q has no forgeapi family", rec.Kind)
+	return nil, fmt.Errorf("forges: kind %q has no forgeapi family", spec.Kind)
 }
 
 // asCore keeps a failed constructor's nil pointer from becoming a non-nil Core.
@@ -59,97 +67,75 @@ func asCore[T forgeapi.Core](c T, err error) (forgeapi.Core, error) {
 	return c, nil
 }
 
-// clientFactory holds one forgeapi client per connection, rebuilt only when
-// the fields that shape the connection change.
-type clientFactory struct {
-	clients map[string]cachedClient
-	// newCore builds a client; a test stands in a fake.
-	newCore func(rec *connectionRecord, opts []forgeapi.Option) (forgeapi.Core, error)
-	// extra is appended to every connection's option set; a test injects a
-	// wire transport through it.
-	extra []forgeapi.Option
-	mu    sync.Mutex
-}
-
-type cachedClient struct {
-	core  forgeapi.Core
-	cred  forgeapi.CredentialSource
-	shape connectionRecord
-}
-
-func newClientFactory() *clientFactory {
-	return &clientFactory{clients: make(map[string]cachedClient), newCore: newFamilyClient}
-}
-
-// clientShape is rec without the fields a live client owns or never reads: the
-// rotation cursor seeds a client once and then moves inside it, the helper
-// value is git's, and the owner scopes are the poller's.
-func clientShape(rec *connectionRecord) connectionRecord {
-	shape := *rec
-	shape.HelperValue, shape.RotationCursor, shape.OwnerScopes = "", "", nil
-	return shape
-}
-
-func (f *clientFactory) options(rec *connectionRecord) []forgeapi.Option {
-	return append(connOptions(rec), f.extra...)
-}
-
-func (f *clientFactory) sourceFor(store creds.Store, rec *connectionRecord) (*creds.Source, error) {
-	return creds.NewSource(store, rec.ID, connectionFor(rec), f.options(rec)...)
-}
-
 type staticSource string
 
 func (s staticSource) Token(context.Context) (string, error) { return string(s), nil }
 func (staticSource) Kind() forgeapi.CredKind                 { return forgeapi.CredKindStaticPAT }
 func (staticSource) State() forgeapi.CredState               { return forgeapi.CredValid }
 
-// verifier is a client for rec holding token in memory, for the identity read
-// a connect makes before anything is stored. It is not cached, so the caller
-// closes it.
-func (f *clientFactory) verifier(rec *connectionRecord, token string) (forgeapi.Core, error) {
-	return f.newCore(rec, append(f.options(rec), forgeapi.WithCredentialSource(staticSource(token))))
+// storedToken is the credential source every reader's client reads through: the
+// active slot's stored token, never refreshed, so every refresh runs in check
+// under the connection's id lock. State and Kind are the refreshing source's,
+// which read without sending.
+type storedToken struct {
+	src *creds.Source
 }
 
-// clientFor answers rec's client, building it on first use or after the record
-// changed shape. Construction sends nothing.
-func (f *clientFactory) clientFor(store creds.Store, rec *connectionRecord) (cachedClient, error) {
-	shape := clientShape(rec)
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if c, ok := f.clients[rec.ID]; ok && reflect.DeepEqual(c.shape, shape) {
-		return c, nil
-	}
-	src, err := f.sourceFor(store, rec)
-	if err != nil {
-		return cachedClient{}, err
-	}
-	opts := append(f.options(rec),
-		forgeapi.WithCredentialSource(src),
-		forgeapi.WithRotationCursor(forgeapi.RotationCursor(rec.RotationCursor)),
-		forgeapi.WithMutations(true),
-	)
-	core, err := f.newCore(rec, opts)
-	if err != nil {
-		return cachedClient{}, err
-	}
-	if old, ok := f.clients[rec.ID]; ok {
-		old.core.Close()
-	}
-	c := cachedClient{core: core, cred: src, shape: shape}
-	f.clients[rec.ID] = c
-	return c, nil
-}
+var _ forgeapi.CredentialSource = storedToken{}
 
-// retain drops and closes the client of every connection not in ids. A call
-// still in flight on a closed client completes; Close releases its idle pool.
-func (f *clientFactory) retain(ids map[string]connectionRecord) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for id := range f.clients {
-		if _, ok := ids[id]; !ok {
-			f.clients[id].core.Close()
-			delete(f.clients, id)
+func (t storedToken) Token(context.Context) (string, error) {
+	token, state, err := t.src.StoredToken()
+	switch {
+	case err == nil:
+		return token, nil
+	case state == forgeapi.CredReconnectRequired:
+		return "", &forgeapi.Error{Kind: forgeapi.KindUnauthorized, Code: forgeapi.CodeReconnectRequired, Message: reconnectReason}
+	case state == forgeapi.CredUnknown:
+		return "", &forgeapi.Error{
+			Kind: forgeapi.KindTransient, Retryable: true,
+			Message: "the credential store could not be read",
 		}
 	}
+	// Source.StoredToken owns which tokens are handed over, a held rotated pair's
+	// included; a token it refuses here waits for the check's src.Token.
+	return "", &forgeapi.Error{
+		Kind: forgeapi.KindTransient, Retryable: true,
+		Message: "the token expired; it is renewed on the next check",
+	}
+}
+
+func (t storedToken) Kind() forgeapi.CredKind   { return t.src.Kind() }
+func (t storedToken) State() forgeapi.CredState { return t.src.State() }
+
+// openConn builds the one client a loaded sign-in reads through, with its
+// refreshing source and the stored-token source it reads by. Construction
+// sends nothing; either constructor's refusal leaves nothing to close.
+func openConn(store creds.Store, spec *connectionSpec, newCore coreFactory, extra []forgeapi.Option,
+) (core forgeapi.Core, src *creds.Source, cred storedToken, err error) {
+	key := slotKey(spec.ID, spec.Slot)
+	opts := slices.Concat(connOptions(spec), extra)
+	src, err = creds.NewSource(store, key, connectionFor(spec), opts...)
+	if err != nil {
+		return nil, nil, storedToken{}, err
+	}
+	cred = storedToken{src: src}
+	core, err = newCore(spec, slices.Concat(opts, []forgeapi.Option{
+		forgeapi.WithCredentialSource(cred),
+		forgeapi.WithRotationCursor(forgeapi.RotationCursor(spec.RotationCursor)),
+		forgeapi.WithMutations(true),
+		forgeapi.WithReadCache(connReadCacheBytes),
+	}))
+	if err != nil {
+		return nil, nil, storedToken{}, err
+	}
+	return core, src, cred, nil
+}
+
+// verifier is a throwaway client for spec holding token in memory, for the
+// identity read a sign-in makes before anything is stored. The caller closes it.
+func verifier(m *Manager, spec *connectionSpec, token string) (forgeapi.Core, error) {
+	return m.newCore(spec, slices.Concat(connOptions(spec), m.extraOpts, []forgeapi.Option{
+		forgeapi.WithCredentialSource(staticSource(token)),
+		forgeapi.WithReadCache(0),
+	}))
 }

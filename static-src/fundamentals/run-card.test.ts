@@ -96,7 +96,7 @@ describe("the head against the foot", () => {
     expect(c.root.querySelector(".run-head-meta")).toBeNull();
     expect(
       [...(c.root.querySelector(".run-head")?.children ?? [])].map((e) => e.className),
-    ).toEqual(["run-toggle", "run-icon", "run-name", "run-count"]);
+    ).toEqual(["run-toggle", "run-icon", "run-name", "ev-sum-progress run-count"]);
     expect(ledger(c.root)).toContain("running");
   });
 });
@@ -196,7 +196,7 @@ describe("an unanswered ask", () => {
     expect(rowStates(c.root)).toEqual(["input", "pending"]);
     expect(glyphs(c.root)[0]).toBe("?");
     expect(c.root.querySelector(".run-step-head")?.getAttribute("aria-label")).toBe(
-      "a, waiting for your answer",
+      "a, waiting for answer",
     );
   });
 
@@ -246,7 +246,7 @@ describe("an unanswered ask", () => {
   it("reports itself in the alert, ahead of the run's own status", () => {
     const c = card();
     c.render(runOf("running", step("a", "running")), asks(1, ["a"], "Run git push"));
-    expect(alertText(c.root)).toBe("Waiting for your answer: Run git push");
+    expect(alertText(c.root)).toBe("Waiting for answer: Run git push");
     expect(c.root.querySelector<HTMLElement>(".run-alert")?.dataset["kind"]).toBe("input");
   });
 
@@ -257,7 +257,7 @@ describe("an unanswered ask", () => {
     c.render(runOf("running", step("a", "running")), asks(2, []));
     expect(rowStates(c.root)).toEqual(["running"]);
     expect(statusWord(c.root)).toBe("needs input");
-    expect(alertText(c.root)).toBe("Waiting for your answer \u00b7 2 asks waiting");
+    expect(alertText(c.root)).toBe("Waiting for answer (2 asks waiting)");
   });
 
   it("loses to a failed launch, which is the one state with no run behind it", () => {
@@ -272,13 +272,13 @@ describe("an unanswered ask", () => {
 
   it("says the user paused it, and that a requested pause has not landed yet", () => {
     const paused: RunState = { ...runOf("paused", step("a", "paused")), stopInitiator: "user" };
-    expect(alertText(buildAndRender(paused, NO_ASKS))).toBe("Paused by user");
+    expect(alertText(buildAndRender(paused, NO_ASKS))).toBe("Paused by you");
     const closed: RunState = {
       ...runOf("aborted", step("a", "aborted")),
       stopInitiator: "user",
       stopReason: "tab closed",
     };
-    expect(alertText(buildAndRender(closed, NO_ASKS))).toBe("Stopped by user: tab closed");
+    expect(alertText(buildAndRender(closed, NO_ASKS))).toBe("Stopped by you: tab closed");
     const pending: RunState = {
       ...runOf("running", step("a", "running")),
       pausePending: { initiator: "user" },
@@ -293,62 +293,23 @@ describe("an unanswered ask", () => {
     };
     expect(alertText(buildAndRender(state, asks(0, [])))).toBe("Waiting: retry budget");
     expect(alertText(buildAndRender(state, asks(1, ["a"], "Approve")))).toBe(
-      "Waiting for your answer: Approve",
+      "Waiting for answer: Approve",
     );
   });
 });
 
-// A pause reason is KAS's prose shown verbatim, EXCEPT the two literals meaning a person owes an
-// answer; this arm covers the question text never having arrived.
-describe("a pause that means a step is waiting on a person", () => {
+// A pause reason is KAS's prose shown verbatim: only the run-asks store says a step waits on a person.
+describe("a paused run's alert", () => {
   function pausedWith(reason: string): string {
     return alertText(
       buildAndRender({ ...runOf("paused", step("a", "paused")), pauseReason: reason }, asks(0, [])),
     );
   }
 
-  it("replaces the send_message literal with a sentence about the reader", () => {
+  it("quotes a need-input park the store holds no ask for, like any other pause", () => {
     expect(pausedWith("Step requested user input via send_message.")).toBe(
-      "A step is waiting for your answer",
+      "Waiting: Step requested user input via send_message.",
     );
-  });
-
-  it("replaces the re-park literal too, whose node id sits in the middle", () => {
-    // A plain Resume clears the RUN's pause reason and leaves the step node's
-    // signal, so the next step execution parks again under this fallback.
-    expect(pausedWith("Step 'review' is waiting for user input.")).toBe(
-      "A step is waiting for your answer",
-    );
-    expect(pausedWith("Step 'review' is waiting for the next user message.")).toBe(
-      "A step is waiting for your answer",
-    );
-  });
-
-  // The branch arm, which no reason can reach: the run keeps only the wrapper KAS
-  // composes for a parallel, and that same wrapper covers an interruption and a
-  // permanent failure — so the sentence has to come from the node's own signal.
-  it("recognises a park inside a parallel branch", () => {
-    const run: RunState = {
-      workflowId: "wf_1",
-      status: "paused",
-      pauseReason: "Parallel 'phase1' is waiting on branch 'verify'.",
-      root: {
-        nodeId: "wf_1",
-        type: "sequence",
-        status: "running",
-        children: [
-          {
-            nodeId: "phase1",
-            type: "parallel",
-            status: "paused",
-            children: [
-              { nodeId: "verify", type: "step", status: "paused", completionSignal: "need_input" },
-            ],
-          },
-        ],
-      },
-    };
-    expect(alertText(buildAndRender(run, asks(0, [])))).toBe("A step is waiting for your answer");
   });
 
   it("quotes any other reason verbatim, because it is not about the reader", () => {
@@ -363,14 +324,14 @@ describe("a pause that means a step is waiting on a person", () => {
       buildAndRender(
         {
           ...runOf("paused", step("a", "paused")),
-          pauseReason: "Step requested user input via send_message.",
+          pauseReason: "Connection reset.",
           pauseDetail: { code: "ThrottlingException" },
         },
         asks(0, []),
       ),
     );
     expect(text).toBe(
-      "A step is waiting for your answer \u00b7 after a transient error (Throttli" + "ngException)",
+      "Waiting: Connection reset. \u00b7 after a transient error (Throttli" + "ngException)",
     );
   });
 
@@ -448,9 +409,7 @@ describe("a step row's key is the exec view's own node path", () => {
     // The run tab's model over the same state: its paths are what the page
     // navigates and `bodyFor` files a transcript under, so a row that keyed on
     // anything else would open the page on no node at all.
-    const execPaths = workNodes(runToExec("wf_1", state, undefined, NO_ASKS).nodes).map(
-      (n) => n.path,
-    );
+    const execPaths = workNodes(runToExec(state, undefined, NO_ASKS).nodes).map((n) => n.path);
     expect(execPaths).toEqual(["wf_1:plan", CODE_PATH, "wf_1:loop:iter-0:review"]);
     expect(rowPaths(c.root)).toEqual(execPaths);
   });
@@ -833,9 +792,7 @@ describe("the newest run card is expanded, and being superseded folds it", () =>
     const { c } = wired();
     c.render(state);
     expect(alertText(c.root)).toBe("a failed: the second try broke");
-    expect(runToExec("wf_1", state, undefined, NO_ASKS).alert?.text).toBe(
-      "a failed: the second try broke",
-    );
+    expect(runToExec(state, undefined, NO_ASKS).alert?.text).toBe("a failed: the second try broke");
   });
 
   it("names no failure the loop recovered from, on the card or the run tab", () => {
@@ -843,7 +800,7 @@ describe("the newest run card is expanded, and being superseded folds it", () =>
     const { c } = wired();
     c.render(state);
     expect(alertText(c.root)).toBe("The run failed");
-    expect(runToExec("wf_1", state, undefined, NO_ASKS).alert?.text).toBe("The run failed");
+    expect(runToExec(state, undefined, NO_ASKS).alert?.text).toBe("The run failed");
   });
 
   it("does not fold a failed run, and re-opens one that fails after folding", () => {
@@ -1031,6 +988,23 @@ describe("the card shows the run's structure, and only steps and watches as work
     ).toBe("pass 2 of 3");
   });
 
+  it("counts an extended loop's passes against the extended budget", () => {
+    const c = card();
+    const s = liveLoop();
+    const loop = s.root?.children?.[0];
+    const pass = loop?.children?.[0];
+    if (loop === undefined || pass === undefined) {
+      throw new Error("fixture lost its loop");
+    }
+    loop.extendedMaxIterations = 8;
+    pass.nodeId = "build-loop#6";
+    pass.iteration = 6;
+    c.render(s, NO_ASKS, { plan: PLAN });
+    expect(
+      c.root.querySelector('.run-group[data-kind="repeat"] .run-group-meta')?.textContent,
+    ).toBe("pass 7 of 8");
+  });
+
   // A re-insert of an attached node drops its focus and restarts its animation, so a row that
   // survives a render must never move while a departed sibling still sits ahead of it.
   it("keeps a surviving row seated, and focused, when an earlier sibling leaves", () => {
@@ -1161,7 +1135,11 @@ describe("the card shows the run's structure, and only steps and watches as work
   it("counts the steps a reader sees, in the head and the foot alike", () => {
     const c = card();
     c.render(liveLoop(), NO_ASKS, { plan: PLAN });
-    expect(c.root.querySelector(".run-count")?.textContent).toBe("step 1 of 4");
+    // The one compact phrase every run surface draws, its words in the name and the tooltip.
+    expect(c.root.querySelector(".run-count .ev-sum-compact")?.textContent).toBe("1/3\u00b71/4");
+    expect(c.root.querySelector(".run-count")?.getAttribute("data-tooltip")).toBe(
+      "build-loop pass 1 of 3, step 1 of 4",
+    );
     expect(ledger(c.root)).toMatch(/^4 steps \u00b7 running \u00b7 2m/);
   });
 
@@ -1170,6 +1148,6 @@ describe("the card shows the run's structure, and only steps and watches as work
     c.render(loopStarting(), NO_ASKS, { plan: PLAN });
     expect(spinning(c.root)).toEqual([]);
     expect(outline(c.root)[0]).toBe("group:build-loop");
-    expect(c.root.querySelector(".run-count")?.textContent).toBe("0 of 4");
+    expect(c.root.querySelector(".run-count .ev-sum-compact")?.textContent).toBe("0/4");
   });
 });

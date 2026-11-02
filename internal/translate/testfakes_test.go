@@ -25,7 +25,7 @@ func (nopChatRecords) EmptyCompactions(context.Context, marotte.ChatID) (int, er
 
 func (nopChatRecords) DepartedName(marotte.ChatID) (string, bool) { return "", false }
 
-func (nopChatRecords) WaitingWorkflowMessages(context.Context, marotte.ChatID) ([]marotte.WorkflowMessage, error) {
+func (nopChatRecords) UnsettledWorkflowMessages(context.Context, marotte.ChatID) ([]marotte.WorkflowMessage, error) {
 	return nil, nil
 }
 

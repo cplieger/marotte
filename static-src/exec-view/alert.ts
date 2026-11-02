@@ -1,0 +1,51 @@
+// The run's alert as a mark and a sentence, painted by the run summary (`summary.ts`) wherever it
+// shows.
+
+import { el } from "@cplieger/reactive";
+import { iconEl } from "../icon-el.js";
+import { ICON_ALERT, ICON_WARN } from "../icons.js";
+import type { ExecRun } from "./model.js";
+
+export type ExecAlert = NonNullable<ExecRun["alert"]>;
+
+function alertGlyph(kind: ExecAlert["kind"]): string {
+  return kind === "failed" ? ICON_ALERT : ICON_WARN;
+}
+
+/** A kind that asks something of the reader. A `stopped` alert states what a person already did,
+ *  so it never stands in for the run's summary. */
+export function wantsReader(alert: ExecRun["alert"]): alert is ExecAlert {
+  return alert !== undefined && alert.kind !== "stopped";
+}
+
+/** A kind that takes the progress phrase's and the bar's place on the summary's one line: a
+ *  question or a pause. A failure keeps the progress, which says where it broke. */
+export function inPlace(alert: ExecAlert): boolean {
+  return alert.kind === "input" || alert.kind === "paused";
+}
+
+interface AlertLine {
+  readonly root: HTMLElement;
+  paint(alert: ExecAlert): void;
+}
+
+export function buildAlertLine(tag: "div" | "span", className: string): AlertLine {
+  const icon = el("span", { className: "ev-alert-icon", "aria-hidden": "true" });
+  const text = el("span", { className: "ev-alert-text" });
+  const root = el(tag, { className }, icon, text);
+  let glyph = "";
+  return {
+    root,
+    paint(alert) {
+      root.dataset["kind"] = alert.kind;
+      const want = alertGlyph(alert.kind);
+      if (glyph !== want) {
+        glyph = want;
+        icon.replaceChildren(iconEl(want));
+      }
+      if (text.textContent !== alert.text) {
+        text.textContent = alert.text;
+      }
+    },
+  };
+}

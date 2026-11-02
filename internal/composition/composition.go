@@ -11,13 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sync"
 	"time"
 
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/auth"
-	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/chat/archive"
 	"github.com/cplieger/marotte/internal/command"
@@ -26,6 +26,7 @@ import (
 	"github.com/cplieger/marotte/internal/git"
 	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/logctl"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp"
 	"github.com/cplieger/marotte/internal/mcp/prewarm"
@@ -36,6 +37,7 @@ import (
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/server"
 	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/signin"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/marotte/internal/subject"
@@ -54,7 +56,7 @@ type App struct {
 	// stopKiro cancels the background kiro-cli install, so shutdown need not wait it out.
 	stopKiro func()
 	// stopOrphanSweep stops the boot orphan sweep and WAITS: a sweep in flight issues
-	// one `inspect` per lease over the utility bridge the teardown below is about to close.
+	// one `inspect` per lease over the agent engine the teardown below is about to stop.
 	stopOrphanSweep func()
 	// stopKiroSeed stops the kiro-cli settings seed and waits for its goroutine.
 	stopKiroSeed func()
@@ -62,19 +64,19 @@ type App struct {
 	stopPRPoller func()
 	// stopForgeKeeper stops the forge credential keeper and waits for its goroutine.
 	stopForgeKeeper func()
+	// stopKASHeal stops the KAS MCP file heal loop and waits for its goroutine.
+	stopKASHeal func()
 	// stopApp ends the app's LIFETIME: what every process-bound component is parented on.
 	stopApp func()
+	// waitSignIn waits for the sign-in vault's goroutines, which end with the app's lifetime.
+	waitSignIn func()
+	// roots is never closed: the claims last until the process exits (heldRoots).
+	roots *heldRoots
 }
 
 // Build constructs all services and wires them together. staticFS is the embedded
 // web UI; cfg must be treated as read-only from here on.
 func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
-	// flock, so the lock auto-releases on SIGKILL: two processes on one configDir
-	// corrupt chat files.
-	if err := acquireInstanceLock(cfg.ConfigDir); err != nil {
-		return nil, fmt.Errorf("another marotte instance is running on %s: %w", cfg.ConfigDir, err)
-	}
-
 	if err := validateConfig(ctx, cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed:\n  %w", err)
 	}
@@ -93,6 +95,13 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	slog.Info("boot paths resolved",
 		"config_dir", cfg.ConfigDir, "work_dir", cfg.WorkDir, "kiro_home", workspace.KiroHome())
 	logBridgeEnvPosture(cfg)
+
+	// Before the first write into any root: every writer below would otherwise run in a second
+	// instance too, rendering its own state over the live one's.
+	roots, claimErr := claimRoots(ownedRoots(cfg))
+	if claimErr != nil {
+		return nil, fmt.Errorf("refusing to start: %w", claimErr)
+	}
 
 	// Backgrounded: the listener binds first, so a first-boot download is an unready verdict rather
 	// than a missing server. Below Install because its early returns log synchronously.
@@ -115,12 +124,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, err
 	}
 
-	// Resolved per SPAWN: resolving once per process would pin every chat to whatever
-	// version was installed first.
-	bridgeFactory := func() agent.ACPBridge {
-		return bridge.New(kiro.cliPath(), cfg.WorkDir,
-			bridge.WithEnv(kiro.env()), bridge.WithEnvAllow(cfg.BridgeEnvAllow))
-	}
+	// The sign-in the agent engine is answered from, on the app's lifetime: its poll and renewals outlive a request.
+	vault := signin.Open(appCtx, cfg.ConfigDir, signinBackends()...)
+	apiKey := apiKeyReachesEngine(cfg)
 
 	mcpStore, err := mcp.New(appCtx, cfg.ConfigDir, nil,
 		mcp.WithWaitForReady(func(ctx context.Context) (bool, bool) {
@@ -151,7 +157,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	approvalStore := openSpecApprovalStore(cfg.ConfigDir)
 	authReadiness := new(command.AuthReadiness)
 	lockedSettings := new(lateLockSink)
-	h := agent.New(appCtx, cfg.WorkDir, bridgeFactory, chatStore,
+	h := agent.New(appCtx, cfg.WorkDir, engineSource{kiro: kiro, allow: cfg.BridgeEnvAllow}, chatStore,
+		agent.WithSignIn(vault, engineBackend), agent.WithAPIKey(apiKey),
 		agent.WithConfigDir(cfg.ConfigDir), agent.WithMCPConfig(mcpStore), agent.WithPush(pushSvc),
 		agent.WithKASMCPRenderer(mcpStore),
 		agent.WithDebugLogs(logctl.Debug, logctl.SetDebug),
@@ -177,7 +184,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// BEFORE anything can launch: relying on the scheduler's first tick would make
 	// correctness a property of the tick interval. On the APP's lifetime, never Build's,
 	// or the sweep outlives App.Shutdown; backgrounded because a boot must not wait.
-	stopOrphanSweep := startOrphanSweep(appCtx, h.Runs().SweepOrphaned, kiro.installed)
+	stopOrphanSweep := startOrphanSweep(appCtx, h.Runs().BootSweep, h.EngineReady())
 
 	startScheduleRunner(appCtx, scheduleStore, h.Runs())
 
@@ -192,7 +199,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	mcpStore.SetOnChange(func(ctx context.Context) {
 		h.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPConfigChanged, "", marotte.MCPConfigChangedPayload{}))
 		mcpPrewarm.Run(ctx)
-		// No bridge restart and nothing to forward: the persist renders KAS's own config
+		// No engine restart and nothing to forward: the persist renders KAS's own config
 		// file, whose watcher reconnects in place, so a change reaches every LIVE session.
 	})
 	mcpPrewarm.Run(ctx)
@@ -201,13 +208,19 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return steering.MCPSnapshot{Servers: h.MCPSnapshot()}
 	})
 	h.SetMCPOnChange(func() { steer.Generate(appCtx) })
-	h.SetPreBridgeSpawn(func(ctx context.Context) { steer.Generate(ctx) })
+	healer := &kasHealer{heal: mcpStore.HealKASConfig, afterHeal: h.SyncPowers, every: kasHealInterval}
+	h.SetPreSessionOpen(func(ctx context.Context) {
+		steer.Generate(ctx)
+		healer.healOnce(ctx, "session_open")
+	})
+	stopKASHeal := runBackground(appCtx, "kas mcp config heal", healer.run)
 	h.SetChatSteering(steer.ChatDocs)
 
-	forgesManager := forges.NewManager(cfg.ConfigDir)
-	if refreshErr := forgesManager.Refresh(ctx); refreshErr != nil {
-		_ = refreshErr
-	}
+	// The manager notifies nothing before the routes serve, the keeper runs or a forge snapshot
+	// is read, all after forgeNotify is wired below; forgeNotifier.notify logs a call that comes earlier.
+	forgeNotify := &forgeNotifier{hub: h}
+	forgesManager := forges.NewManager(cfg.ConfigDir, forgeNotify.notify)
+	forgesManager.Load(ctx)
 
 	tools, err := wireToolsEngine(appCtx, cfg, h, githubTokenFor(forgesManager))
 	if err != nil {
@@ -215,42 +228,31 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	}
 
 	gitHandler := git.NewHandler(cfg.WorkDir, git.WithShowMax(filebrowse.WholeFileMax))
-	gitAIHandler := git.NewAIHandler(cfg.WorkDir, h)
 	ensureUploadDir()
 	sensitive := filebrowse.NewSensitive(cfg.ConfigDir)
+	agentDirs := settings.AgentDirs{Workspace: cfg.WorkDir, Config: cfg.ConfigDir}
 	fileHandler, err := filebrowse.New(sensitive, cfg.BrowseRoots,
-		wireToolsManifestHook(tools, h))
+		wireToolsManifestHook(tools, h),
+		filebrowse.WithLiveRoots(func(ctx context.Context) []string {
+			granted, _, _ := agentDirs.Granted(ctx)
+			return granted
+		}))
 	if err != nil {
 		return nil, err
 	}
 	fileHandler.AllowToolOutputs(filepath.Join(workspace.KiroHome(), "sessions"))
-	identity := auth.NewIdentity(kiro.cliPath, kiro.env, func() {
-		h.RetireBridges("account identity changed")
-	})
-	h.SetIdentityCheck(identity.EnsureCurrent)
-	authHandler := auth.NewHandler(kiro.cliPath,
-		auth.WithConfig(cfg.AuthConfig),
+	authHandler := auth.NewHandler(vault, engineBackend,
 		auth.WithTrustedProxies(cfg.TrustedProxies),
-		auth.WithIdentity(identity))
-	// Off the boot path: Run primes and refreshes the identity /api/whoami answers from.
-	go authHandler.Run(appCtx)
-	forgesHTTP := forges.NewHTTPHandler(forgesManager, h)
-
-	// A cache, because steering.Generate runs synchronously on the pre-bridge-spawn path
-	// and forgeSnapshot lists each connection's repositories from its forge.
-	forgeCache := newForgeSnapshotCache(appCtx, steer, func(bctx context.Context) steering.ForgeSnapshot {
-		return forgeSnapshot(bctx, forgesManager)
-	})
-	steer.SetForgeSnapshot(forgeCache.snapshot)
-	go forgeCache.refresh()
-	forgesHTTP.SetOnChange(func() { go forgeCache.refresh() })
+		auth.WithAPIKey(apiKey))
+	forgesHTTP := forges.NewHTTPHandler(forgesManager)
 
 	prPoller := newPRStatusPoller(forgesManager, gitHandler, h, prPollGate(presence, pushSvc),
 		forges.WithInventoryPush(versions, h), forges.WithViewers(presence))
 	forgesHTTP.SetPoller(prPoller)
+	forgeSteer := forgeNotify.wire(appCtx, prPoller, forgesManager, steer)
+	go forgeSteer.sync()
 	stopPRPoller := runBackground(ctx, "pr status poller", prPoller.Run)
-	stopForgeKeeper := runBackground(ctx, "forge credential keeper",
-		forges.NewKeeper(forgesManager, forgesHTTP.NotifyChanged).Run)
+	stopForgeKeeper := runBackground(ctx, "forge credential keeper", forges.NewKeeper(forgesManager).Run)
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -268,17 +270,17 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	})
 	// The purge scans the directory live chats live in, so this predicate keeps an old-but-open
 	// conversation out of it.
-	chat.WithLive(h.HasLiveBridge)(chatStore)
+	chat.WithLive(h.HasResidentSession)(chatStore)
 	chat.WithOpenTab(h.Membership().HasOpenTab)(chatStore)
 	// Not retention predicates: the transcript GET reads both. Injected post-construction because
 	// the store cannot import the agent.
 	chat.WithLiveTurn(h.TurnLive)(chatStore)
 	chat.WithOpenTurns(h.OpenTurns)(chatStore)
-	chat.WithOnPurge(func(id marotte.ChatID, sessionChain []string) {
+	chat.WithOnPurge(heldUnlessDraining(h.HoldUnlessDraining, func(id marotte.ChatID, sessionChain []string) {
 		// After the per-chat record lock is released, keeping the lock order acyclic.
 		// RetentionClose reaps the chain itself, so no second reap here.
 		h.Membership().RetentionClose(appCtx, id, sessionChain)
-	})(chatStore)
+	}))(chatStore)
 	// An exempt chat contributes no wake-up deadline, so closing its tab must trigger
 	// a pass; without this the purge noticed up to an hour later.
 	h.Membership().SetRetentionWake(purgeScheduler.Trigger)
@@ -294,7 +296,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithAgent(h),
 		server.WithChats(chatStore),
 		server.WithGit(gitHandler),
-		server.WithGitAI(gitAIHandler),
 		server.WithFiles(fileHandler),
 		server.WithAuth(authHandler),
 		server.WithPush(pushSvc),
@@ -304,7 +305,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithForges(forgesHTTP),
 		server.WithPreview(preview.New(cfg.WorkDir, sensitive, previewSigner, slog.Default())),
 		server.WithTools(tools),
-		server.WithUtilityPrompt(h),
 		server.WithAccountUsage(h),
 		server.WithPolicy(h.Config()),
 		server.WithGovernanceLocks(h.Config()),
@@ -343,7 +343,10 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopKiroSeed:    stopKiroSeed,
 		stopPRPoller:    stopPRPoller,
 		stopForgeKeeper: stopForgeKeeper,
+		stopKASHeal:     stopKASHeal,
 		stopApp:         stopApp,
+		waitSignIn:      vault.Wait,
+		roots:           roots,
 	}, nil
 }
 
@@ -366,8 +369,9 @@ func (a *App) Run() error {
 func (a *App) Shutdown() {
 	callIfSet(a.stopPRPoller)
 	callIfSet(a.stopForgeKeeper)
-	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the utility bridge
-	// the kiro teardown is about to close, so the reverse order leaves one mid-inspect.
+	callIfSet(a.stopKASHeal)
+	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the agent engine the
+	// runtime teardown is about to stop, so the reverse order leaves one mid-inspect.
 	callIfSet(a.stopOrphanSweep)
 	callIfSet(a.stopKiroSeed)
 	callIfSet(a.stopKiro)
@@ -384,6 +388,9 @@ func (a *App) Shutdown() {
 	// push service's Done while the poller that consults it is still running.
 	callIfSet(a.stopApp)
 	a.shutdownHub()
+	// After the runtime's teardown, which may still call the vault: a renewal's save lands before exit.
+	callIfSet(a.waitSignIn)
+	runtime.KeepAlive(a.roots)
 }
 
 // hubStopGrace bounds the runtime teardown App.Shutdown owns: the signal context is already
@@ -487,115 +494,97 @@ func sweepStaleTemps(ctx context.Context, configDir, workDir string) {
 	}
 }
 
-// forgeSnapshotTTL bounds how stale the cached forge snapshot may get before a read kicks a
-// background revalidation.
-const forgeSnapshotTTL = 5 * time.Minute
-
-// forgeSnapshotCache is a stale-while-revalidate cache around forgeSnapshot: snapshot() never
-// blocks on a forge request (zero value before the boot prime), refresh() rebuilds in the caller
-// and regenerates the steering file only on a change.
-type forgeSnapshotCache struct {
-	// appCtx is the app's lifetime, required at construction: both entry points are
-	// context-free callbacks, and both reach rebuild, which must not outlive the process.
-	appCtx context.Context
-	build  func(context.Context) steering.ForgeSnapshot
-	steer  *steering.Generator
-	at     time.Time
-	snap   steering.ForgeSnapshot
-	mu     sync.Mutex
-	busy   bool
-	dirty  bool
+// eventHub is where the forge notifier broadcasts; *agent.Runtime is one.
+type eventHub interface {
+	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
 
-// newForgeSnapshotCache wires a cache around build that regenerates steer on a change.
-// ctx is the app's lifetime and is required; see the appCtx field.
-func newForgeSnapshotCache(ctx context.Context, steer *steering.Generator,
-	build func(context.Context) steering.ForgeSnapshot,
-) *forgeSnapshotCache {
-	return &forgeSnapshotCache{appCtx: ctx, build: build, steer: steer}
+// forgeNotifier is the forge manager's notify. Its poller and steering are
+// set by wire after the manager is built, so a call before that logs and broadcasts
+// nothing rather than dereferencing nil or silently skipping the drop.
+type forgeNotifier struct {
+	hub    eventHub
+	poller *forges.PRStatusPoller
+	steer  *forgeSteering
 }
 
-// snapshot returns the cached forge snapshot immediately, kicking a single-flight
-// background refresh when stale. Safe on the pre-bridge-spawn critical path.
-func (c *forgeSnapshotCache) snapshot() steering.ForgeSnapshot {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if time.Since(c.at) >= forgeSnapshotTTL && !c.busy {
-		c.busy = true
-		go c.rebuild()
-	}
-	return c.snap
-}
-
-// refresh rebuilds the snapshot, then regenerates the steering file if the data changed. A request
-// arriving mid-rebuild is coalesced, not dropped: that rebuild may predate the change. Callers run
-// refresh in their own goroutine.
-func (c *forgeSnapshotCache) refresh() {
-	c.mu.Lock()
-	if c.busy {
-		c.dirty = true
-		c.mu.Unlock()
+// notify drops a replaced account's inventory before any tab is told, so no
+// tab re-reads the old account's entry, then syncs the steering file behind
+// the caller. A stored repository page changes no row, so no tab is told.
+func (n *forgeNotifier) notify(ctx context.Context, c forges.Change) {
+	if n.poller == nil || n.steer == nil {
+		slog.Error("forges: a change was notified before the forge poller was wired", "connection", c.ID)
 		return
 	}
-	c.busy = true
-	c.mu.Unlock()
-	c.rebuild()
+	if c.ReposListed {
+		go n.steer.sync()
+		return
+	}
+	if c.AccountChanged {
+		n.poller.DropInventory(c.ID)
+	}
+	n.hub.Broadcast(ctx, marotte.NewEvent(marotte.EventForgesChanged, "", marotte.ForgesChangedPayload{}))
+	go n.steer.sync()
 }
 
-// rebuild does the rebuild and conditional regen, looping while coalesced requests are
-// pending. Entered only with busy already claimed by the caller; clears it when done.
-func (c *forgeSnapshotCache) rebuild() {
-	for {
-		snap := c.build(c.appCtx)
-		c.mu.Lock()
-		changed := !reflect.DeepEqual(c.snap, snap)
-		c.snap = snap
-		c.at = time.Now()
-		again := c.dirty
-		c.dirty = false
-		c.busy = again
-		c.mu.Unlock()
-		// Generate skips byte-identical writes anyway; skipping the RENDER for the common
-		// no-change TTL refresh is what avoids a pointless workspace scan.
-		if changed {
-			c.steer.Generate(c.appCtx)
-		}
-		if !again {
-			return
-		}
+// wire makes n notify poller and a steering sync over m that renders into steer,
+// and returns that sync for the caller's boot run. n is wired before steer reads
+// a snapshot, because a read can start a repository fill whose landing notifies;
+// the sync exists only once steer renders the forge section.
+func (n *forgeNotifier) wire(appCtx context.Context, poller *forges.PRStatusPoller, m *forges.Manager,
+	steer *steering.Generator,
+) *forgeSteering {
+	s := &forgeSteering{appCtx: appCtx, m: m, generate: steer.Generate}
+	n.poller, n.steer = poller, s
+	steer.SetForgeSnapshot(func() steering.ForgeSnapshot { return forgeSnapshot(appCtx, m) })
+	return s
+}
+
+// forgeSteering regenerates the steering file when its forge section moved.
+type forgeSteering struct {
+	// appCtx is the app's lifetime: sync runs behind context-free callers and
+	// must not outlive the process.
+	appCtx   context.Context
+	m        *forges.Manager
+	generate func(context.Context)
+	last     steering.ForgeSnapshot
+	mu       sync.Mutex
+}
+
+// sync regenerates the steering file when the snapshot it renders moved. A
+// repository page the snapshot found missing or stale is read behind it, and
+// its arrival syncs again (forgeNotifier.notify). Callers run it in their own
+// goroutine.
+func (s *forgeSteering) sync() {
+	// Taken under mu, so last is never replaced by a snapshot older than it.
+	s.mu.Lock()
+	snap := forgeSnapshot(s.appCtx, s.m)
+	changed := !reflect.DeepEqual(s.last, snap)
+	s.last = snap
+	s.mu.Unlock()
+	// Generate scans the workspace, so an unmoved snapshot skips it.
+	if changed {
+		s.generate(s.appCtx)
 	}
 }
 
-// forgeSnapshot builds the steering forge snapshot: one provider per configured forge,
-// each enriched best-effort with its repo list.
-func forgeSnapshot(ctx context.Context, forgesManager *forges.Manager) steering.ForgeSnapshot {
-	fctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	configured := forgesManager.List(fctx)
-	providers := make([]steering.ForgeProvider, 0, len(configured))
-	for i := range configured {
-		f := &configured[i]
+// forgeSnapshot builds the steering forge snapshot from memory: one provider per connection, read
+// live so a sign-in or a sign-out reaches the next chat at once, with the repository names the
+// forge cache holds for its current account.
+func forgeSnapshot(ctx context.Context, m *forges.Manager) steering.ForgeSnapshot {
+	rows := m.List()
+	providers := make([]steering.ForgeProvider, 0, len(rows))
+	for i := range rows {
+		f := &rows[i]
 		providers = append(providers, steering.ForgeProvider{
 			Kind:  string(f.Kind),
 			Host:  f.Host,
 			User:  f.Username,
 			Email: f.Email,
-			Repos: repoNamesFor(ctx, forgesManager, f.ID),
+			Repos: m.HeldRepoNames(ctx, f.ID, f.Account),
 		})
 	}
 	return steering.ForgeSnapshot{Providers: providers}
-}
-
-// repoNamesFor returns every repo reachable for the given forge, or nil. Best-effort: a
-// forge whose repos cannot be listed is still surfaced, just without a repo list.
-func repoNamesFor(ctx context.Context, forgesManager *forges.Manager, id string) []string {
-	repoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	names, err := forgesManager.RepoNames(repoCtx, id)
-	if err != nil {
-		return nil
-	}
-	return names
 }
 
 // wireToolsEngine starts the tools engine in its slot. An error is a failure the boot stops on;
@@ -791,9 +780,26 @@ func openSpecApprovalStore(dir string) *specapproval.Store {
 	return st
 }
 
+// heldUnlessDraining wraps the store's purge callback so closeChain runs held on the runtime's in-flight wait
+// (hold): the purge scheduler outlives the runtime's Shutdown. Skipped once Shutdown began; the next boot's
+// orphan-session sweep, parentless-run purge and tab prune reap what the chain left.
+func heldUnlessDraining(hold func() (release func(), ok bool),
+	closeChain func(marotte.ChatID, []string),
+) func(marotte.ChatID, []string) {
+	return func(id marotte.ChatID, sessionChain []string) {
+		release, ok := hold()
+		if !ok {
+			return
+		}
+		defer release()
+		closeChain(id, sessionChain)
+	}
+}
+
 // pruneTabs is the tab set's one-shot LOAD-TIME crash recovery for a crash between the
 // coordinator's two writes. Only CHAT tabs are checked against the chat store; a missing file is no
-// reason to close an editor, run or singleton tab.
+// reason to close an editor, run or singleton tab. It then opens each remaining chat tab's log, so
+// its read position is projected from the first request.
 func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
 	if st == nil {
 		return
@@ -805,12 +811,21 @@ func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
 		_, ok := chats.Get(ctx, marotte.ChatID(t.Ref))
 		return ok
 	})
-	if err != nil {
+	switch {
+	case err != nil:
 		slog.Warn("tab prune failed; the arrangement may name a chat that is gone", "error", err)
-		return
-	}
-	if len(dropped) > 0 {
+	case len(dropped) > 0:
 		slog.Info("tab prune dropped tabs whose subject is gone", "count", len(dropped))
+	}
+	open, _ := st.List()
+	for _, t := range open {
+		if t.Kind != marotte.TabKindChat {
+			continue
+		}
+		if err := chats.Warm(ctx, marotte.ChatID(t.Ref)); err != nil {
+			slog.Warn("chat log not opened at boot, its unread state waits for the next read",
+				"chat_id", logsafe.Field(t.Ref), "error", err)
+		}
 	}
 }
 
@@ -825,18 +840,18 @@ func openRunLeaseStore(dir string) *runlease.Store {
 	return st
 }
 
-// startOrphanSweep runs the boot orphan sweep and RETRIES it once the kiro-cli install
-// completes. sweep is a method VALUE rather than the run surface, so the retry POLICY is
+// startOrphanSweep runs the boot orphan sweep and RETRIES it once the first agent engine
+// is ready. sweep is a method VALUE rather than the run surface, so the retry POLICY is
 // testable with no agent runtime behind it.
 func startOrphanSweep(ctx context.Context, sweep func(context.Context) bool,
-	installed <-chan struct{},
+	engineReady <-chan struct{},
 ) (stop func()) {
 	return runBackground(ctx, "orphan sweep", func(bctx context.Context) {
 		if sweep(bctx) {
 			return
 		}
 		select {
-		case <-installed:
+		case <-engineReady:
 			sweep(bctx)
 		case <-bctx.Done():
 		}

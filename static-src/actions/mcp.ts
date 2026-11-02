@@ -266,15 +266,10 @@ export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult
   error: false,
 });
 
-// Reconnect on every live chat bridge (server-side fan-out); the refreshed status arrives via SSE
-// and a /api/mcp/status refetch, so no optimistic state.
-
-/** Result of POST /api/mcp/reconnect: how many live bridges were targeted. */
-export interface ReconnectResult {
-  reconnected: number;
-}
-
-export const reconnectServer = apiAction<{ server: string }, ReconnectResult>({
+// One reset on the agent engine: 204 once taken, 503 while the engine is down, 502 when it refused.
+// The refreshed status arrives via SSE and a /api/mcp/status refetch, so no optimistic state.
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no result
+export const reconnectServer = apiAction<{ server: string }, void>({
   name: "mcp.reconnect_server",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
@@ -287,57 +282,9 @@ export const reconnectServer = apiAction<{ server: string }, ReconnectResult>({
   error: "Could not reconnect integration",
 });
 
-// The response is the raw MCP result; the UI inserts its text into the prompt bar.
-
-/** One content block of an MCP message (text is the only kind we surface). */
-export interface MCPContentBlock {
-  type?: string;
-  text?: string;
-}
-
-/** Raw MCP GetPromptResult: an ordered list of role-tagged messages. */
-export interface MCPPromptResult {
-  messages?: { role?: string; content?: MCPContentBlock | MCPContentBlock[] }[];
-}
-
-/** Raw MCP ReadResourceResult: one or more resource contents. */
-export interface MCPResourceResult {
-  contents?: { uri?: string; mimeType?: string; text?: string; blob?: string }[];
-}
-
-interface GetPromptArgs {
-  server: string;
-  prompt: string;
-  arguments?: Record<string, string>;
-}
-
-export const getPromptContent = apiAction<GetPromptArgs, MCPPromptResult>({
-  name: "mcp.get_prompt",
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: ({ server, prompt, arguments: args }) => ({
-    method: "POST",
-    path: `${MCP_API}/prompt`,
-    body: { server, prompt, arguments: args ?? {} },
-  }),
-  error: "Could not load prompt",
-});
-
-export const getResourceContent = apiAction<{ server: string; uri: string }, MCPResourceResult>({
-  name: "mcp.get_resource",
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: ({ server, uri }) => ({
-    method: "POST",
-    path: `${MCP_API}/resource`,
-    body: { server, uri },
-  }),
-  error: "Could not load resource",
-});
-
 // Rescues a sign-in whose redirect landed on the wrong machine: KAS binds its OAuth listener on
 // the CONTAINER's localhost, so a remote browser is sent to its own. The user pastes the dead
-// address and the server replays it inward (`internal/hub/mcp_oauth_relay.go`).
+// address and the server replays it inward (`internal/agent/mcp_oauth_relay.go`).
 
 export const relayOAuthCallback = apiAction<{ server: string; redirect_url: string }>({
   name: "mcp.relay_oauth_callback",

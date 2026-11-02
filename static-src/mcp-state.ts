@@ -2,6 +2,8 @@
 
 import { apiGetTyped, CancellableSlot } from "./api-client.js";
 import { registerCleanup } from "./actions/index.js";
+import { configStanding } from "./config-standing.js";
+import type { ConfigStanding } from "./wire/types.gen.js";
 import {
   SignalMap,
   createCollection,
@@ -22,32 +24,14 @@ import {
   type Decoder,
 } from "./validators.js";
 
-const decodePromptArg: Decoder<MCPPromptArg> = (v) => {
-  const o = asObject(v, "$.mcp.prompt.arg");
-  const out: MCPPromptArg = { name: reqStr(o, "name", "$.mcp.prompt.arg") };
-  const d = optStr(o, "description", "$.mcp.prompt.arg");
-  if (d !== undefined) {
-    out.description = d;
-  }
-  const r = optBool(o, "required", "$.mcp.prompt.arg");
-  if (r !== undefined) {
-    out.required = r;
-  }
-  return out;
-};
-
 const decodePromptInfo: Decoder<MCPPromptInfo> = (v) => {
   const o = asObject(v, "$.mcp.prompt");
   const out: MCPPromptInfo = {
     name: reqStr(o, "name", "$.mcp.prompt"),
-    prompt_name: reqStr(o, "prompt_name", "$.mcp.prompt"),
   };
   const d = optStr(o, "description", "$.mcp.prompt");
   if (d !== undefined) {
     out.description = d;
-  }
-  if (Array.isArray(o["arguments"])) {
-    out.arguments = decodeArray(o["arguments"], decodePromptArg, "$.mcp.prompt.arguments");
   }
   return out;
 };
@@ -203,6 +187,9 @@ const decodeServer: Decoder<Server> = (v) => {
   if (Array.isArray(o["disabled_tools"])) {
     out.disabled_tools = (o["disabled_tools"] as unknown[]).map((x) => String(x));
   }
+  if (Array.isArray(o["oauth_scopes"])) {
+    out.oauth_scopes = (o["oauth_scopes"] as unknown[]).map((x) => String(x));
+  }
   return out;
 };
 
@@ -249,27 +236,19 @@ export interface Server {
   oauth_client_metadata_url?: string;
   /** KAS `oauth.redirectUri`: the pinned loopback callback ("localhost:7778"). */
   oauth_redirect_uri?: string;
+  /** KAS `oauthScopes`, from a paste or the raw edit; no form control edits it. */
+  oauth_scopes?: string[];
   created_at: number;
   updated_at: number;
 }
 
-/** One argument of an MCP prompt (from _kiro/mcp/status discovery). */
-export interface MCPPromptArg {
-  name: string;
-  description?: string;
-  required?: boolean;
-}
-
-/** A prompt a connected MCP server advertises. `prompt_name` is the machine
- *  id passed to the fetch endpoint; `name` is the display title. */
+/** A prompt a connected MCP server advertises; `name` is the display title. */
 export interface MCPPromptInfo {
   name: string;
-  prompt_name: string;
   description?: string;
-  arguments?: MCPPromptArg[];
 }
 
-/** A resource a connected MCP server advertises. `uri` is the fetch key. */
+/** A resource a connected MCP server advertises. `uri` is what a `#mcp:` mention names. */
 export interface MCPResourceInfo {
   name: string;
   uri: string;
@@ -391,6 +370,12 @@ const statusMap = new SignalMap<RuntimeStatus>();
 
 function idleStatus(name: string): RuntimeStatus {
   return { name, origin: "user", state: "idle" };
+}
+
+/** kiro-cli's standing for a server it loaded but another layer replaced or switched off, undefined while the server
+ *  is in use. Distinct from marotte's own Enabled toggle. Reactive inside an effect. */
+export function standingFor(name: string): ConfigStanding | undefined {
+  return configStanding.value.servers.get(name);
 }
 
 /** Reactive per-server runtime-status signal, created lazily as "idle". */

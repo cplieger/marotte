@@ -5,7 +5,7 @@
 import { isViewableImage } from "./file-extensions.js";
 import type { Route } from "./route-path.js";
 import { UPLOADS_DIR } from "./upload-policy.js";
-import { workspaceRootOrDefault } from "./workspace.js";
+import { additionalDirectories, workspaceRootOrDefault } from "./workspace.js";
 
 /** URL safety predicate for a rendered href/src: http, https and mailto are the only absolute
  *  schemes; scheme-less resolves against the document. Strips every C0 control THEN trims, at least
@@ -61,14 +61,14 @@ export function fileDownloadURL(path: string): string {
   return `/api/file/download?path=${encodeURIComponent(path)}`;
 }
 
-/** The roots the byte route can serve, as far as routing a link goes: the live workspace root and
- *  the uploads mount (`browseRoots` in internal/composition/config.go), never the config mount,
- *  which holds the chat store and credentials. Outside them the SPA answers index.html. The
- *  server's mount allow-list and deny list decide access; this list only routes. A `/` work dir is
- *  never a mount (filebrowse `openMounts` refuses it), so it routes nothing. */
+/** The roots a link routes to the byte route (elsewhere the SPA answers index.html): the workspace
+ *  (unless it is `/`, which is never a mount), the uploads mount and the additional directories; never
+ *  the config mount, which holds the chat store and credentials. The server's allow and deny lists decide access. */
 function servedRoots(): readonly string[] {
   const root = workspaceRootOrDefault();
-  return root === "/" ? [`${UPLOADS_DIR}/`] : [`${root}/`, `${UPLOADS_DIR}/`];
+  return [...(root === "/" ? [] : [root]), UPLOADS_DIR, ...additionalDirectories()].map(
+    (r) => `${r}/`,
+  );
 }
 
 function isServedPath(path: string): boolean {

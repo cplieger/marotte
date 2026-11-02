@@ -1,5 +1,7 @@
 // A text element capped to N lines with a show-more opener. The measurement facts are on `watchClamp`.
 
+import { isSliding, slideBox } from "./disclosure-row.js";
+
 /** Above this, assume overflow when layout cannot be measured. Generous: a false positive costs one frame of opener. */
 const CLAMP_FALLBACK_CHARS = 220;
 
@@ -8,6 +10,12 @@ const CLAMP_LINES = 3;
 
 const LABEL_MORE = "Show more";
 const LABEL_LESS = "Show less";
+
+/**
+ * Text the clamp would cut by this many rendered lines or fewer shows in full with no opener: the opener's own line
+ * would cost about what it hides.
+ */
+const SMALL_CUT_LINES = 2;
 
 /** Measured clip height written by `reviewClamp` (its one writer), read as `max-block-size: var(--clamp-h, <nominal>)`. */
 const CLAMP_H = "--clamp-h";
@@ -43,7 +51,8 @@ interface ClampHandle {
 }
 
 interface ClampState {
-  readonly more: HTMLButtonElement;
+  /** Absent for a cue-only watch (`watchCut`): the caller's own fold opens the text. */
+  readonly more: HTMLButtonElement | undefined;
   readonly lines: number;
   readonly fallbackChars: number;
   readonly snapToLine: boolean;
@@ -51,6 +60,8 @@ interface ClampState {
   readonly setExpanded: (on: boolean) => void;
   /** Set by `disable`: a resize must not put the clamp back. */
   off: boolean;
+  /** A cue-only watch's report of whether the text is cut. */
+  readonly onCut?: (cut: boolean) => void;
 }
 
 interface ClampEntry {
@@ -111,25 +122,63 @@ export function attachClamp(
 
   more.hidden = true;
   more.addEventListener("click", () => {
-    writeExpanded(text, state, !state.isExpanded());
+    writeExpanded(text, state, !state.isExpanded(), true);
   });
   watchClamp(text);
   reviewClamp(text, state);
   return handle;
 }
 
-/** Measurement decides when layout exists, the character fallback otherwise, so a long text always has an opener. */
+/**
+ * Report whether `text` is cut, as `data-cut` and through `onCut`, for text whose own fold clamps it in CSS: the
+ * fade and the cue follow a real overflow, re-measured on every resize. Released by {@link releaseClamp}.
+ */
+export function watchCut(text: HTMLElement, onCut: (cut: boolean) => void): void {
+  if (clamps.has(text)) {
+    return;
+  }
+  const state: ClampState = {
+    more: undefined,
+    lines: CLAMP_LINES,
+    fallbackChars: CLAMP_FALLBACK_CHARS,
+    snapToLine: false,
+    isExpanded: () => false,
+    setExpanded: () => undefined,
+    off: false,
+    onCut,
+  };
+  const review = (): void => {
+    reviewClamp(text, state);
+  };
+  clamps.set(text, { state, handle: { sync: review, collapse: review, disable: review } });
+  watchClamp(text);
+  review();
+}
+
+/** A cue-only watch (no opener) only writes `data-cut`: the text stays clamped, since its owner's fold is the opener.
+ *  An opener-backed clamp with measurable layout gives a cut of more than `SMALL_CUT_LINES` lines the opener and shows
+ *  any other cut in full; with no layout yet, the character and line fallback decides the opener alone. */
 function reviewClamp(text: HTMLElement, s: ClampState): void {
-  if (s.off) {
+  // A slide resizes the box every frame, and a mid-close review would clamp it before the slide ends.
+  if (s.off || isSliding(text)) {
+    return;
+  }
+  const more = s.more;
+  if (more === undefined) {
+    const cut = text.scrollHeight - text.clientHeight > 1;
+    if (text.hasAttribute("data-cut") !== cut) {
+      text.toggleAttribute("data-cut", cut);
+      s.onCut?.(cut);
+    }
     return;
   }
   if (s.isExpanded()) {
-    s.more.hidden = false;
+    more.hidden = false;
     return;
   }
   text.setAttribute("data-clamped", "");
-  s.more.textContent = LABEL_MORE;
-  s.more.setAttribute("aria-expanded", "false");
+  more.textContent = LABEL_MORE;
+  more.setAttribute("aria-expanded", "false");
 
   // Withdraw a previous snap first, or it becomes the next review's budget and each resize loses a line.
   if (s.snapToLine) {
@@ -138,11 +187,16 @@ function reviewClamp(text: HTMLElement, s: ClampState): void {
   const measured = text.scrollHeight;
   const visible = text.clientHeight;
   const body = text.textContent;
-  const overflows =
-    measured > 0 && visible > 0
-      ? measured - visible > 1
-      : body.length > s.fallbackChars || countLines(body) > s.lines;
-  s.more.hidden = !overflows;
+  const measurable = measured > 0 && visible > 0;
+  const overflows = measurable
+    ? measured - visible > lineHeight(text) * SMALL_CUT_LINES + 1
+    : body.length > s.fallbackChars || countLines(body) > s.lines;
+  more.hidden = !overflows;
+  // A small cut shows the whole text: the clamp comes off with the opener.
+  if (measurable && !overflows) {
+    text.removeAttribute("data-clamped");
+    return;
+  }
   // Gated on overflow: a height written for text that fits makes `scrollHeight > clientHeight` by a fraction and offers
   // Show more over nothing.
   if (s.snapToLine && overflows && measured > 0 && visible > 0) {
@@ -285,15 +339,28 @@ function snapClampToLine(text: HTMLElement): void {
   text.style.setProperty(CLAMP_H, `${String(height)}px`);
 }
 
-function writeExpanded(text: HTMLElement, s: ClampState, on: boolean): void {
+/** `motion` is the reader's own toggle: a content change collapses at once. */
+function writeExpanded(text: HTMLElement, s: ClampState, on: boolean, motion = false): void {
   s.setExpanded(on);
-  if (on) {
-    text.removeAttribute("data-clamped");
-  } else {
-    text.setAttribute("data-clamped", "");
+  slideBox(
+    text,
+    on,
+    (open) => {
+      text.toggleAttribute("data-clamped", !open);
+    },
+    motion,
+  );
+  if (s.more !== undefined) {
+    s.more.textContent = on ? LABEL_LESS : LABEL_MORE;
+    s.more.setAttribute("aria-expanded", on ? "true" : "false");
   }
-  s.more.textContent = on ? LABEL_LESS : LABEL_MORE;
-  s.more.setAttribute("aria-expanded", on ? "true" : "false");
+}
+
+/** One rendered line of `text`, in px; `normal` resolves to the UA's usual 1.2 of the font size. */
+function lineHeight(text: HTMLElement): number {
+  const cs = getComputedStyle(text);
+  const lh = Number.parseFloat(cs.lineHeight);
+  return Number.isFinite(lh) ? lh : 1.2 * Number.parseFloat(cs.fontSize);
 }
 
 /**

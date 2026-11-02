@@ -3,8 +3,8 @@ import type * as ModPRs from "./git-prs-tab.js";
 import { prIdentity } from "./push-subject.js";
 import type { Forge } from "./__test-helpers__/git-prs-tab-harness.js";
 import {
-  H,
   actions,
+  applyRows,
   applyFilter,
   capabilities,
   entry,
@@ -193,22 +193,26 @@ describe("PRs tab merge outcome", () => {
     expect(await statusReads()).toBe(3);
   });
 
+  // The read answers only once the dispatch's `signal` aborts; the handle's own abort() does nothing.
   it("ends the follow-up at its bound even when a state read never answers", async () => {
     await shownMergeable();
     const { readMergeStatus } = await actions();
-    const aborts: ReturnType<typeof vi.fn>[] = [];
-    vi.mocked(readMergeStatus.dispatch).mockImplementation(() => {
-      let settle: (o: Record<string, unknown>) => void = () => undefined;
+    const signals: (AbortSignal | undefined)[] = [];
+    vi.mocked(readMergeStatus.dispatch).mockImplementation((_args, opts) => {
+      const signal = opts?.signal;
+      signals.push(signal);
       const outcome = new Promise<Record<string, unknown>>((resolve) => {
-        settle = resolve;
+        signal?.addEventListener(
+          "abort",
+          () => {
+            resolve({ status: "cancelled" });
+          },
+          { once: true },
+        );
       });
-      const abort = vi.fn(() => {
-        settle({ status: "cancelled" });
-      });
-      aborts.push(abort);
       return Object.assign(
         outcome.then(() => null),
-        { outcome, abort },
+        { outcome, abort: () => undefined },
       ) as never;
     });
 
@@ -219,7 +223,7 @@ describe("PRs tab merge outcome", () => {
       "The forge has not finished the merge yet. The list shows it once it does.",
     );
     expect(await statusReads()).toBe(1);
-    expect(aborts[0]).toHaveBeenCalledTimes(1);
+    expect(signals[0]?.aborted).toBe(true);
   });
 
   it("says a queued merge waits in the merge queue while it follows it", async () => {
@@ -468,7 +472,10 @@ describe("the pull-request row's action state", () => {
   it("disables Re-run with the evidence where another family's capability reads unknown", async () => {
     const { readCapabilities } = await actions();
     vi.mocked(readCapabilities.dispatch).mockImplementation(
-      () => succeeds(capabilities("unknown", "no swagger document on this instance")) as never,
+      () =>
+        succeeds(
+          capabilities("unknown", "no swagger document on this instance", giteaForge.account),
+        ) as never,
     );
     await shown([pr(7, 0, {}, failing)], giteaForge);
     const r = mount().querySelector<HTMLElement>(".git-pr-row");
@@ -482,7 +489,7 @@ describe("the pull-request row's action state", () => {
   it("hides Re-run where the connection says it cannot re-run checks", async () => {
     const { readCapabilities } = await actions();
     vi.mocked(readCapabilities.dispatch).mockImplementation(
-      () => succeeds(capabilities("no", "swagger has no rerun verb")) as never,
+      () => succeeds(capabilities("no", "swagger has no rerun verb", giteaForge.account)) as never,
     );
     await shown([pr(7, 0, {}, failing)], giteaForge);
 
@@ -676,7 +683,7 @@ describe("the pull-request row's action state", () => {
     expect(statusOf(row(7))).toBe("");
   });
 
-  it("forgets a refusal when the connections change", async () => {
+  it("forgets a refusal when the connection is signed in again", async () => {
     const { rerunChecks } = await actions();
     vi.mocked(rerunChecks.dispatch).mockImplementationOnce(
       () => refuses("scope_insufficient", "needs the workflow scope") as never,
@@ -686,9 +693,10 @@ describe("the pull-request row's action state", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(buttonOf(row(7), "Re-run")?.disabled).toBe(true);
 
-    // A reconnect may grant the permission: the next read decides again.
-    H.sse.get("forges_changed")?.("", undefined);
-    frame(entry(githubForge, "2", [pr(7, 0, {}, failing)]));
+    // A new sign-in may grant the permission: the next read decides again.
+    const again = { ...githubForge, account: "acct-github-2" };
+    applyRows([again]);
+    frame(entry(again, "2", [pr(7, 0, {}, failing)]));
     await vi.advanceTimersByTimeAsync(0);
     expect(buttonOf(row(7), "Re-run")?.disabled).toBe(false);
     const { readCapabilities } = await actions();

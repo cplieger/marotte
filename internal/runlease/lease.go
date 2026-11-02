@@ -5,7 +5,11 @@
 // restart-orphan sweep's safety property: a TUI-launched run has no lease, so it is never swept.
 package runlease
 
-import "time"
+import (
+	"errors"
+	"slices"
+	"time"
+)
 
 // Origin says which launch produced the run: scheduled (bounded by its next slot and the
 // ceiling, unattended, sweepable), manual (ceiling, attended, sweepable), agent (ceiling
@@ -43,6 +47,15 @@ type Lease struct {
 	// ChatID is the chat whose agent launched the run. Empty means "no chat to
 	// exempt": the parentless launch verbs mint with no chat by design.
 	ChatID string `json:"chat_id,omitempty"`
+	// ParentSessionID is the run's parent session as marotte recorded it at launch or from
+	// `run_start`: a parentless run's host session, which a driving verb loads when it is not
+	// resident, because the run's steps take their policy from it.
+	ParentSessionID string `json:"parent_session_id,omitempty"`
+	// Host is a parentless run's host-session security input, resolved once at launch and never
+	// rewritten: a reload after a restart applies these presets, not whatever the profile is now.
+	// Nil on a chat-parented run, and on a parentless one from a build that did not record it,
+	// which HostSecurity refuses.
+	Host *HostSecurity `json:"host,omitempty"`
 	// Recipe is the run's recipe NAME, which is what the single-run rule keys on.
 	Recipe string `json:"recipe"`
 	Origin Origin `json:"origin"`
@@ -51,6 +64,35 @@ type Lease struct {
 	// Unattended marks a run with nobody to answer a permission request, which arms
 	// the deny-fast floor. Distinct from the origin: who launched it vs who watches.
 	Unattended bool `json:"unattended"`
+}
+
+// HostSecurity is what a parentless run's host session opens with.
+type HostSecurity struct {
+	// Presets are the KAS policy-preset ids the session sends; empty is the Custom profile.
+	Presets []string `json:"presets"`
+}
+
+// errNoHostSecurity refuses to reload a parentless run's host session whose launch recorded no
+// security input: any default would be a guess at the run's permissions.
+var errNoHostSecurity = errors.New("this run's security profile was not recorded at launch, so marotte cannot load its session; cancel it and launch it again")
+
+// HostPresets returns the presets a parentless run's host session reloads with, or
+// errNoHostSecurity when the lease recorded none.
+func (l *Lease) HostPresets() ([]string, error) {
+	if l.Host == nil || l.Host.Presets == nil {
+		return nil, errNoHostSecurity
+	}
+	return slices.Clone(l.Host.Presets), nil
+}
+
+// clone copies l, its host security included, so no caller shares the store's slice.
+func (l *Lease) clone() Lease {
+	out := *l
+	if out.Host != nil {
+		h := HostSecurity{Presets: slices.Clone(out.Host.Presets)}
+		out.Host = &h
+	}
+	return out
 }
 
 // Bounded reports whether marotte believes the run to be EXECUTING under a deadline it set.

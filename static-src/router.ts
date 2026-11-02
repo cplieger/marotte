@@ -5,10 +5,14 @@ import type { Route } from "./route-path.js";
  *  differently. */
 export type RouteOrigin = "deeplink" | "history" | "restore";
 
-/** Whether the document was RESTORED rather than navigated to. */
+/** Whether the document was RESTORED rather than navigated to. `wasDiscarded` is Chromium's page-lifecycle
+ *  flag for a tab the browser unloaded and reloaded on return; its navigation type is not guaranteed to say so. */
 export function navigationOrigin(): RouteOrigin {
   const [entry] = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
-  return entry?.type === "reload" || entry?.type === "back_forward" ? "restore" : "deeplink";
+  const discarded = (document as { readonly wasDiscarded?: boolean }).wasDiscarded === true;
+  return discarded || entry?.type === "reload" || entry?.type === "back_forward"
+    ? "restore"
+    : "deeplink";
 }
 
 /** How many callers are currently suppressing pushes. A COUNT, not a flag, because the boot's

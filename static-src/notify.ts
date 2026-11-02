@@ -3,37 +3,23 @@
 
 import { isIOS, isStandalone } from "./platform.js";
 import { openPushTarget } from "./notification-open.js";
-import { parsePushTarget, pushTargetTag, settleableTag, type PushTarget } from "./push-subject.js";
+import {
+  parsePushTarget,
+  pushTargetTag,
+  runAskOfTag,
+  settleableTag,
+  type PushTarget,
+} from "./push-subject.js";
 import { registerPush, unsubscribePush } from "./actions/notify.js";
 import { registerCleanup } from "./actions/index.js";
 import { createNotifyAsk, type NotifyAsk } from "./notify-ask.js";
 import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
 import { patchSettings } from "./persist.js";
+import { KEYED_PUSH_DEFAULTS, KEYED_PUSH_KINDS } from "./push-kinds.js";
 import type { EffectiveSettings, NotificationPayload } from "./wire/types.gen.js";
 
 type PushState =
   { kind: "idle" } | { kind: "registering" } | { kind: "registered" } | { kind: "failed" };
-
-/** The push kinds the user can switch off, keyed by wire value (`marotte.PushKind`)
- *  and paired with each settings key. `permission` has none on purpose: an ask
- *  blocks the turn, so a channel that could go dark would stall every later turn
- *  with nothing on screen to say why. */
-export const KEYED_PUSH_KINDS: Readonly<
-  Record<string, "notify_agent_finished" | "notify_pr_status" | "notify_run_outcome">
-> = {
-  agent_finished: "notify_agent_finished",
-  pr_status: "notify_pr_status",
-  run_outcome: "notify_run_outcome",
-};
-
-/** Each keyed kind's default (`pr_status` is OFF). A mirror the payload cannot
- *  replace: `EffectiveSettings` carries values in force, so a switched-off kind
- *  looks like one defaulting off. push-kinds.test.ts keeps the two in step. */
-export const KEYED_PUSH_DEFAULTS: Readonly<Record<keyof typeof KEYED_PUSH_KINDS, boolean>> = {
-  agent_finished: true,
-  pr_status: false,
-  run_outcome: true,
-};
 
 let swRegistration: ServiceWorkerRegistration | null = null;
 let enabled = false;
@@ -205,7 +191,7 @@ export function installNotifyAskGesture(): () => void {
 async function adoptGrant(): Promise<void> {
   if (!enabled) {
     const saved = await patchSettings({ notifications_enabled: true });
-    if (saved === null) {
+    if (saved.outcome !== "committed") {
       return;
     }
     enabled = true;
@@ -371,11 +357,41 @@ export async function closeNotificationsFor(target: PushTarget): Promise<void> {
   }
 }
 
-/** Retract every chat and run banner whose tag is not in `live` (a fresh hello's
- *  pending asks): the set is the whole truth, so anything else in that slot is stale. */
-export async function closeNotificationsExcept(live: ReadonlySet<string>): Promise<void> {
+/** Retract every chat, run and step-question banner whose tag is not in `live` (a fresh hello's
+ *  pending asks): the set is the whole truth, so anything else in that slot is stale. A
+ *  step-question banner of a run in `unread` stays, since that run's waits are not known yet. */
+export async function closeNotificationsExcept(
+  live: ReadonlySet<string>,
+  unread: ReadonlySet<string> = new Set(),
+): Promise<void> {
+  await closeTagsWhere((tag) => {
+    if (!settleableTag(tag) || live.has(tag)) {
+      return false;
+    }
+    const ask = runAskOfTag(tag);
+    if (ask === undefined) {
+      return true;
+    }
+    return ask.workflowID === "" || !unread.has(ask.workflowID);
+  });
+}
+
+/** Retract every banner of one run's step questions whose wait position is not in `positions`:
+ *  a readable snapshot of the run says those steps wait no more. */
+export async function closeRunAsksExcept(
+  workflowID: string,
+  positions: ReadonlySet<string>,
+): Promise<void> {
+  await closeTagsWhere((tag) => {
+    const ask = runAskOfTag(tag);
+    return ask?.workflowID === workflowID && !positions.has(ask.position);
+  });
+}
+
+/** Close this page's banners and the service worker's whose tag `stale` names. */
+async function closeTagsWhere(stale: (tag: string) => boolean): Promise<void> {
   for (const [tag, n] of shown) {
-    if (settleableTag(tag) && !live.has(tag)) {
+    if (stale(tag)) {
       shown.delete(tag);
       n.close();
     }
@@ -385,7 +401,7 @@ export async function closeNotificationsExcept(live: ReadonlySet<string>): Promi
     return;
   }
   for (const n of await reg.getNotifications()) {
-    if (settleableTag(n.tag) && !live.has(n.tag)) {
+    if (stale(n.tag)) {
       n.close();
     }
   }

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,7 +12,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/chatlock"
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/testsupport"
@@ -34,7 +35,7 @@ func effortReq(t *testing.T, chatID marotte.ChatID, level string) *marotte.Clien
 // and nothing touches a settings file.
 func setEffort(t *testing.T, host hostDouble, configDir string, chatID marotte.ChatID, level string) error {
 	t.Helper()
-	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: configDir}, host, chatlock.New(),
+	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: configDir}, host, keylock.New(cmp.Compare[marotte.ChatID]),
 		effortReq(t, chatID, level))
 	return err
 }
@@ -116,7 +117,7 @@ func TestCmdSetEffort_ARefusedSwitchWritesNoSeed(t *testing.T) {
 	host := newBridgeHost(store, b)
 	bus := &recordingBus{}
 
-	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, chatlock.New(),
+	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, keylock.New(cmp.Compare[marotte.ChatID]),
 		effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusBadGateway {
@@ -141,7 +142,7 @@ func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
 	host := newBridgeHost(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 	bus := &recordingBus{}
 
-	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, chatlock.New(),
+	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, keylock.New(cmp.Compare[marotte.ChatID]),
 		effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusOK {
@@ -157,6 +158,32 @@ func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
 	}
 	if n := bus.countOf(marotte.EventSettingsUpdated); n != 1 {
 		t.Errorf("settings_updated broadcasts = %d, want 1 so the other devices converge", n)
+	}
+}
+
+// A seed is read back only while the model offers it, so a tier the listed model lacks
+// would be a remembered value no surface can show.
+func TestCmdSetEffort_ATierTheListedModelLacksRecordsNoSeed(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, `{"last_effort_by_model":{"sonnet":"high"}}`)
+	store := testsupport.NewInMemoryChatStore()
+	seedChatOnModel(t, store, "c1", "sonnet")
+	deps := newBenchDeps()
+	deps.tiers = map[string][]string{"sonnet": {"low", "medium", "high"}}
+	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: deps, store: store}}
+	bus := &recordingBus{}
+
+	_, err := cmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host, keylock.New(cmp.Compare[marotte.ChatID]),
+		effortReq(t, "c1", "max"))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	if got, want := effortSeeds(t, dir), map[string]string{"sonnet": "high"}; !maps.Equal(got, want) {
+		t.Errorf("last_effort_by_model = %v, want %v kept", got, want)
+	}
+	if n := bus.countOf(marotte.EventSettingsUpdated); n != 0 {
+		t.Errorf("settings_updated broadcasts = %d, want 0", n)
 	}
 }
 
@@ -180,7 +207,7 @@ func TestCmdSetEffort_AChatWithNoModelIsNotSeeded(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
 
-	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: dir}, host, chatlock.New(),
+	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: dir}, host, keylock.New(cmp.Compare[marotte.ChatID]),
 		effortReq(t, "c-brand-new", "high"))
 
 	if statusOf(err) != http.StatusOK {
@@ -207,7 +234,7 @@ func TestCmdSetEffort_PersistsOnTheChatRecord(t *testing.T) {
 		t.Fatal("chat vanished")
 	}
 	if c.Effort != "high" {
-		t.Errorf("Effort = %q, want %q; the level has to survive a restart to reach StartOpts.Effort", c.Effort, "high")
+		t.Errorf("Effort = %q, want %q; the level has to survive a restart to reach SessionOpts.Effort", c.Effort, "high")
 	}
 	if b.gotMethod != marotte.MethodSetConfigOption {
 		t.Errorf("method = %q, want %q", b.gotMethod, marotte.MethodSetConfigOption)
@@ -244,7 +271,7 @@ type noBridgeDeps struct{ *storeDeps }
 func (*noBridgeDeps) Bridge(marotte.ChatID) Bridge { return nil }
 
 // A bridgeless chat is not a conflict: the persisted level is enough, because
-// spawnBridge applies it at session/new.
+// the session door applies it at session/new.
 func TestCmdSetEffort_NoBridgeIsNotAConflict(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
@@ -355,7 +382,7 @@ func TestCmdSetEffort_AnAcceptedTierRecordsOneRow(t *testing.T) {
 	seedChatOnModel(t, store, "c1", "opus-5")
 	host := effortHost(t, store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 
-	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, chatlock.New(), effortReq(t, "c1", "max"))
+	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, keylock.New(cmp.Compare[marotte.ChatID]), effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -373,7 +400,7 @@ func TestCmdSetEffort_ARefusedSwitchRecordsNoRow(t *testing.T) {
 	seedChatOnModel(t, store, "c1", "opus-5")
 	host := effortHost(t, store, &recordingBridge{callErr: errors.New("no such config option"), sessionID: "s"})
 
-	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, chatlock.New(), effortReq(t, "c1", "max"))
+	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, keylock.New(cmp.Compare[marotte.ChatID]), effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", statusOf(err))
@@ -393,7 +420,7 @@ func TestCmdSetEffort_ARepeatOfTheHeldTierRecordsNoSecondRow(t *testing.T) {
 	host := effortHost(t, store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 
 	for range 2 {
-		if _, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, chatlock.New(),
+		if _, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, keylock.New(cmp.Compare[marotte.ChatID]),
 			effortReq(t, "c1", "high")); statusOf(err) != http.StatusOK {
 			t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 		}
@@ -404,7 +431,7 @@ func TestCmdSetEffort_ARepeatOfTheHeldTierRecordsNoSecondRow(t *testing.T) {
 	}
 }
 
-// marotte.Chat.Effort is what spawnBridge reads for StartOpts.Effort, so the header
+// marotte.Chat.Effort is what the session door reads for SessionOpts.Effort, so the header
 // has to carry it too: the effort control renders the ACTIVE chat's level, and an
 // empty chat never fetches its full record.
 func TestChatHeader_CarriesEffort(t *testing.T) {

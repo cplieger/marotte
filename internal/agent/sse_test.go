@@ -16,7 +16,10 @@ import (
 
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/sse"
 	"github.com/cplieger/sse/ssetest"
 )
@@ -26,10 +29,11 @@ import (
 
 func TestEmit_AppendsToReplayBuffer(t *testing.T) {
 	h, _, _ := newTestHub()
+	base := h.bus.fanout.Position().Head
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 
-	evts := h.bus.fanout.Snapshot()
+	evts := ringSince(h, base)
 	if len(evts) != 2 {
 		t.Fatalf("replay len = %d, want 2", len(evts))
 	}
@@ -58,11 +62,12 @@ func TestEmit_CapsBufferAtReplayBufSize(t *testing.T) {
 func TestEmit_TopicCarriesChatID(t *testing.T) {
 	// emit maps ChatID onto the topic (empty is global); the stream is unfiltered, so the topic is diagnostic.
 	h, _, _ := newTestHub()
+	base := h.bus.fanout.Position().Head
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 	h.bus.emit(marotte.ServerEvent{Type: "connected"}) // global: empty topic
 
-	got := h.bus.fanout.Snapshot()
+	got := ringSince(h, base)
 	if len(got) != 3 {
 		t.Fatalf("buffered = %d events, want 3", len(got))
 	}
@@ -78,10 +83,9 @@ func TestEmit_TopicCarriesChatID(t *testing.T) {
 // subject_changed carrying its stamp, with a Warn; a frame under the cap publishes intact.
 func TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged(t *testing.T) {
 	var logs bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	h, _, _ := newTestHub()
+	base := len(h.bus.fanout.Snapshot())
 
 	stamped := marotte.NewEvent(marotte.EventEntryAppended, "c1", marotte.EntryAppendedPayload{
 		Entry: textEntry(t, "t1", 1, strings.Repeat("o", sse.MaxFrameBytes+1)),
@@ -94,7 +98,7 @@ func TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged(t *testing.T) {
 	})
 	h.bus.emit(small)
 
-	ring := h.bus.fanout.Snapshot()
+	ring := h.bus.fanout.Snapshot()[base:]
 	if len(ring) != 2 {
 		t.Fatalf("ring holds %d frames, want 2 (the substitute and the intact entry_appended)", len(ring))
 	}
@@ -129,16 +133,15 @@ func textEntry(t *testing.T, turn string, seq uint64, text string) marotte.Entry
 // TestEmit_AnUnstampedFrameOverTheCapIsDroppedWithAnError pins that no subject, no fetch to substitute.
 func TestEmit_AnUnstampedFrameOverTheCapIsDroppedWithAnError(t *testing.T) {
 	var logs bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&logs, nil)))
 	h, _, _ := newTestHub()
+	base := len(h.bus.fanout.Snapshot())
 
 	h.bus.emit(marotte.NewEvent(marotte.EventError, "c1", marotte.ErrorPayload{
 		Code: "huge", Message: strings.Repeat("x", sse.MaxFrameBytes+1),
 	}))
 
-	if n := len(h.bus.fanout.Snapshot()); n != 0 {
+	if n := len(h.bus.fanout.Snapshot()) - base; n != 0 {
 		t.Errorf("ring holds %d frames, want 0: an unstamped over-cap frame has no substitute", n)
 	}
 	if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "type=error") {
@@ -218,12 +221,24 @@ func TestHandleSSE_KeepaliveIsANamedIDLessFrameOutsideTheRing(t *testing.T) {
 	}
 }
 
+// ringSince is the replay ring after offset base, the head a test read before it emitted.
+func ringSince(h *Runtime, base uint64) []sse.ReplayEvent {
+	var out []sse.ReplayEvent
+	for _, e := range h.bus.fanout.Snapshot() {
+		if e.Offset > base {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 func cursorAt(h *Runtime, offset uint64) string {
 	return sse.Cursor{Epoch: h.bus.fanout.Position().Epoch, Offset: offset}.String()
 }
 
 func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
 	h, _, _ := newTestHub()
+	base := h.bus.fanout.Position().Head
 
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
@@ -232,7 +247,7 @@ func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
 	ctx := hookOnlyContext(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
 	req.Header.Set(wireHeader, "1")
-	req.Header.Set("Last-Event-ID", cursorAt(h, 1)) // skip event 1 only
+	req.Header.Set("Last-Event-ID", cursorAt(h, base+1)) // skip c1 only
 	rec := httptest.NewRecorder()
 
 	h.handleSSE(rec, req)
@@ -303,9 +318,17 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 	}{
 		{"event stream", http.MethodGet, "/api/events", ""},
 		{"command", http.MethodPost, "/api/command", `{"type":"create_chat","request_id":"r1"}`},
+		{"sync", http.MethodPost, "/api/sync", `{}`},
+		{"run launch", http.MethodPost, "/api/runs", `{}`},
+		{"run step verb", http.MethodPost, "/api/runs/wf_1/steps/a/cancel", ""},
+		{"run delete", http.MethodDelete, "/api/runs/wf_1", ""},
+		{"schedule put", http.MethodPost, "/api/schedules", `{}`},
+		{"schedule delete", http.MethodDelete, "/api/schedules/s1", ""},
+		{"engine restart", http.MethodPost, "/api/engine/restart", ""},
+		{"merge status", http.MethodGet, "/api/chats/c1/merges/op1", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, _, _ := newTestHub()
+			h := newDrainGateHub(t)
 			mux := http.NewServeMux()
 			h.RegisterRoutes(mux)
 			h.lifecycle.draining.Store(true)
@@ -331,19 +354,31 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 	}
 
 	t.Run("an ungated route still answers while draining", func(t *testing.T) {
-		h, _, _ := newTestHub()
+		h := newDrainGateHub(t)
 		mux := http.NewServeMux()
 		h.RegisterRoutes(mux)
 		h.lifecycle.draining.Store(true)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/config-template", nil)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-
-		if rec.Code == http.StatusServiceUnavailable {
-			t.Error("an ungated route answered 503: the drain gate has become global")
+		for _, path := range []string{"/api/config-template", "/api/runs/live", "/api/schedules", "/api/engine"} {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if rec.Code == http.StatusServiceUnavailable {
+				t.Errorf("GET %s answered 503: the drain gate has become global", path)
+			}
 		}
 	})
+}
+
+// newDrainGateHub carries a schedule store, so the schedule routes are registered at all.
+func newDrainGateHub(t *testing.T) *Runtime {
+	t.Helper()
+	h, _, _ := newTestHub()
+	st, err := schedule.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	h.runs.schedules = st
+	return h
 }
 
 type nonFlusherWriter struct {
@@ -413,38 +448,32 @@ func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.
 	}
 }
 
-// A parked run has no deadline and its event does not re-fire, so a reload with no replay leaves nothing to answer.
-func TestHandleSSE_ReplaysAParkedStepsQuestion(t *testing.T) {
+// Every connect carries every leased run's asks in its pending_snapshot, and a run whose lease ended is
+// not named, so a client that missed the run's last frame drops its card on the next connect.
+func TestHandleSSE_ThePendingSnapshotNamesEveryLeasedRunAndNoEndedOne(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.runs.asks.add(&runAsk{
-		chatID: "c1",
-		payload: marotte.RunInputNeededPayload{
-			WorkflowID: "wf_1", AskID: "a1", NodeID: "review", Question: "which branch?",
-		},
-	})
+	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", Origin: runlease.OriginAgent})
+	c := h.runs.cellFor("wf_1")
+	c.mu.Lock()
+	h.runs.publishLocked(t.Context(), c, []marotte.RunAsk{{
+		AskID: "a1", NodeID: "review", NodePath: []string{"wf_1", "review"}, StepSessionID: "sess_step",
+		Text: "which branch?", TextSource: marotte.RunAskTextAsked,
+	}}, true)
+	c.mu.Unlock()
 
-	body := coldConnectAs(t, h, true).Body.String()
-	if !strings.Contains(body, `"type":"run_input_needed"`) {
-		t.Fatalf("a parked step's question was not replayed, so the run stays parked with "+
-			"nothing on screen to answer it: %q", body)
-	}
-	if !strings.Contains(body, "which branch?") {
-		t.Errorf("the replayed ask carried no question, and no endpoint has one: %q", body)
-	}
 	v3 := coldConnectAs(t, h, false).Body.String()
-	if !strings.Contains(v3, "which branch?") {
-		t.Errorf("the v3 pending_snapshot does not carry the question: %q", v3)
+	if !strings.Contains(v3, `"type":"run_asks"`) || !strings.Contains(v3, "which branch?") {
+		t.Fatalf("the v3 pending_snapshot does not carry the run's asks: %q", v3)
+	}
+	// The connect re-read the run on the engine; its republish is a live frame, not the legacy connect's replay.
+	joinInflight(t, h)
+	if legacy := coldConnectAs(t, h, true).Body.String(); strings.Contains(legacy, `"type":"run_asks"`) {
+		t.Errorf("a legacy connect carried run_asks, which a v2 bundle cannot decode: %q", legacy)
 	}
 
-	// The claim deleted the entry, so a second connection must not re-offer it.
-	if _, ok := h.runs.asks.takeIfPresent("wf_1", "a1"); !ok {
-		t.Fatal("Setup: the ask could not be claimed")
-	}
-	if after := coldConnectAs(t, h, true).Body.String(); strings.Contains(after, `"type":"run_input_needed"`) {
-		t.Errorf("an answered ask was replayed to a later connection: %q", after)
-	}
-	if after := coldConnectAs(t, h, false).Body.String(); strings.Contains(after, "which branch?") {
-		t.Errorf("an answered ask rode a later v3 pending_snapshot: %q", after)
+	h.runs.releaseLease(t.Context(), "wf_1")
+	if after := coldConnectAs(t, h, false).Body.String(); strings.Contains(after, "which branch?") || strings.Contains(after, `"type":"run_asks"`) {
+		t.Errorf("a run whose lease ended rode a later pending_snapshot: %q", after)
 	}
 }
 
@@ -462,8 +491,8 @@ func TestHandleSSE_OnlyAReconnectAppliesNotificationTogglesEditedWhileTheStreamW
 			cs := newTestChatStore()
 			configDir := t.TempDir()
 			rec := newLiveRecorder(t)
-			h := New(context.Background(), t.TempDir(),
-				func() ACPBridge { return newFakeBridge() }, cs, WithConfigDir(configDir), WithPush(rec))
+			h := newRuntimeOn(context.Background(), t.TempDir(),
+				fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithConfigDir(configDir), WithPush(rec))
 			cs.wire(h)
 			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})

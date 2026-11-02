@@ -119,6 +119,10 @@ class Elements {
   get runBar(): HTMLUListElement {
     return byId("run-bar");
   }
+  /** The fold row's slot above the run list, outside the list's scroll clip. */
+  get runBarFold(): HTMLElement {
+    return byId("run-bar-fold");
+  }
   get steerStack(): HTMLUListElement {
     return byId("steer-stack");
   }
@@ -198,6 +202,19 @@ class Elements {
   /** Hides with the auth row; `settings.ts`'s `setAuthLine` is the one writer of both. */
   get stAuthSep(): HTMLElement {
     return byId("st-auth-sep");
+  }
+  /** The sign-in rows and their separator; `settings.ts`'s `setSignInRows` is their one writer. */
+  get stSignInSep(): HTMLElement {
+    return byId("st-signin-sep");
+  }
+  get stSignInMethod(): HTMLElement {
+    return byId("st-signin-method");
+  }
+  get stSignInURL(): HTMLElement {
+    return byId("st-signin-url");
+  }
+  get stSignInRegion(): HTMLElement {
+    return byId("st-signin-region");
   }
   get stAccount(): HTMLElement {
     return byId("st-account");

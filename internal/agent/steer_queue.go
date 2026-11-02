@@ -4,7 +4,7 @@ import (
 	"context"
 	"slices"
 
-	"github.com/cplieger/marotte/internal/chatlock"
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -14,8 +14,8 @@ import (
 type steerQueue struct {
 	recs  *steerRecords
 	coord *bridgeCoordinator
-	locks *chatlock.Set
-	// steps names the carrier whose read loop folds a step key's frames.
+	locks *keylock.Set[marotte.ChatID]
+	// steps names the host session whose read loop folds a step key's frames.
 	steps *stepSteers
 }
 
@@ -244,32 +244,49 @@ func (q steerQueue) BeginRemove(chatID marotte.ChatID, key, opID string) (needsC
 	return needsClear, refuse
 }
 
-func (rec *steerRecord) beginRemoveLocked(key, opID string, fx *steerFx) (needsClear bool, refuse string) {
+// removeResends reports, changing nothing, whether deleting key resubmits the rows kept with it: exactly where
+// BeginRemove marks the op's rows for a clear.
+func (q steerQueue) removeResends(chatID marotte.ChatID, key string) (resends bool) {
+	q.do(chatID, func(rec *steerRecord, _ *steerFx) {
+		_, rule, refuse := rec.removePlanLocked(key)
+		resends = refuse == "" && rule == rResubmit
+	})
+	return resends
+}
+
+// removePlanLocked is deleting key's decision, changing nothing: the row, its delete rule, or the refusal.
+func (rec *steerRecord) removePlanLocked(key string) (w *dockRow, rule rowRule, refuse string) {
 	if slices.ContainsFunc(rec.others, func(o marotte.SteerQueuedPayload) bool { return o.SteerID == key }) {
-		return false, command.SteerRefuseNotUser
+		return nil, rUnhandled, command.SteerRefuseNotUser
 	}
-	w := rec.row(key)
+	w = rec.row(key)
 	switch {
 	case w == nil:
-		return false, command.SteerRefuseNotWaiting
+		return nil, rUnhandled, command.SteerRefuseNotWaiting
 	case w.owner != "" && w.state.inKAS():
-		return false, command.SteerRefuseSettling
+		return nil, rUnhandled, command.SteerRefuseSettling
+	}
+	rule = rowRuleFor(w.state, deleteEvent(w.state))
+	if rule == rResubmit && len(rec.others) > 0 {
+		return nil, rUnhandled, command.SteerRefuseAgentRows
+	}
+	return w, rule, ""
+}
+
+func (rec *steerRecord) beginRemoveLocked(key, opID string, fx *steerFx) (needsClear bool, refuse string) {
+	w, rule, refuse := rec.removePlanLocked(key)
+	if refuse != "" {
+		return false, refuse
 	}
 	w.owner = ""
 	ev := deleteEvent(w.state)
-	switch rowRuleFor(w.state, ev) {
+	switch rule {
 	case rDeleted:
-		retire(w, deletedSteer(w), fx)
+		retire(w, nil, fx)
 		if channelRule(rec.channel, ev) == cOwed && rec.probe == "" && len(rec.unownedWaiting()) == 0 {
 			rec.channel = chanUnconfirmed
 		}
 	case rResubmit:
-		if len(rec.others) > 0 {
-			return false, command.SteerRefuseAgentRows
-		}
-		if rec.channel == chanNone && rec.starting != "" {
-			return false, command.SteerRefuseStarting
-		}
 		rec.mark(opID, key)
 		return true, ""
 	case rUnhandled, rImpossible, rKeep, rRead, rCleared, rDiscarded, rCollect, rJoinProbe, rRoute, rDrop, rPark:
@@ -346,7 +363,7 @@ func (rec *steerRecord) keepOwnedLocked(opID string, cleared []string, fx *steer
 			w.owner = ""
 			consumed = true
 		case w.key == rec.opTarget:
-			retire(w, deletedSteer(w), fx)
+			retire(w, nil, fx)
 		case w.state == rowRead:
 			w.owner = ""
 		default:
@@ -453,14 +470,10 @@ func (rec *steerRecord) takeUnread(owner string) []*dockRow {
 }
 
 // BeginDiscard makes every row the op's, a job's included.
-func (q steerQueue) BeginDiscard(chatID marotte.ChatID, opID string) (needsClear bool, refuse string) {
+func (q steerQueue) BeginDiscard(chatID marotte.ChatID, opID string) (needsClear bool) {
 	q.do(chatID, func(rec *steerRecord, fx *steerFx) {
 		userInKAS := false
 		rec.live(func(w *dockRow) { userInKAS = userInKAS || w.state.inKAS() })
-		if rec.channel == chanNone && rec.starting != "" && userInKAS {
-			refuse = command.SteerRefuseStarting
-			return
-		}
 		rec.op, rec.opTarget, rec.opEnd, rec.opEndStale, rec.opChannel = opID, "", nil, false, rec.channel
 		rec.live(func(w *dockRow) { w.owner = opID })
 		needsClear = userInKAS || len(rec.others) > 0
@@ -468,11 +481,11 @@ func (q steerQueue) BeginDiscard(chatID marotte.ChatID, opID string) (needsClear
 			rec.discardLocked(opID, fx)
 		}
 	})
-	return needsClear, refuse
+	return needsClear
 }
 
-// DiscardCleared: a row read before the clear landed keeps its read entry and gets
-// no deleted one. A clear with no reply leaves the rows the op's for EndOp.
+// DiscardCleared: a row read before the clear landed keeps its read entry; the rest
+// leave with none. A clear with no reply leaves the rows the op's for EndOp.
 func (q steerQueue) DiscardCleared(chatID marotte.ChatID, opID string, landed bool) command.SteerOpResult {
 	res := command.SteerOpResult{Reason: command.SteerRefuseChatGone}
 	q.do(chatID, func(rec *steerRecord, fx *steerFx) {
@@ -504,7 +517,7 @@ func (rec *steerRecord) discardLocked(opID string, fx *steerFx) {
 			continue
 		}
 		if rowRuleFor(w.state, evDiscard) == rDiscarded {
-			retire(w, deletedSteer(w), fx)
+			retire(w, nil, fx)
 		}
 	}
 	rec.release(opID)
@@ -641,6 +654,7 @@ func (q steerQueue) NextParked(chatID marotte.ChatID, turnID string) (key, text 
 		if !rec.names(turnID) {
 			return
 		}
+		rec.absorbed(turnID)
 		var parked []*dockRow
 		rec.live(func(w *dockRow) {
 			if w.owner != "" {

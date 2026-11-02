@@ -5,7 +5,7 @@
 // `.tool-group` selector alone does not mean "two or more" (consult `groupIsBare`). Collapse is
 // POSITIONAL: a group folds once something is posted after it, applied at construction when already
 // superseded (the only silent route) and by `autoCollapseGroup` live. A user click takes over.
-// FAILURE IS NOT NOISE: a failed member blocks or undoes the fold and sets the header's mark.
+// A failed member folds like any other; the header's mark and count carry the failure.
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
@@ -138,12 +138,9 @@ function ensureGroupDisclosure(group: HTMLElement, calls: HTMLElement[]): void {
 }
 
 /** Whether the region is created CLOSED: `autoCollapseGroup`'s carve-outs at construction (the
- *  verdict, then a reader's decision, a failure, a running member). */
+ *  verdict, then a reader's decision, a running member). */
 function bornCollapsed(group: HTMLElement, calls: HTMLElement[]): boolean {
   if (groupSuperseded.get(group) !== true || group.classList.contains(CLS_USER_TOGGLED)) {
-    return false;
-  }
-  if (countOutcomes(calls).failures > 0) {
     return false;
   }
   for (const c of calls) {
@@ -161,8 +158,8 @@ function markAutoCollapsed(group: HTMLElement): void {
   group.querySelector<HTMLElement>(".tool-group-header")?.setAttribute("aria-expanded", "false");
 }
 
-/** How many settled members failed, refused and were stopped, in ONE walk. Only `failures` blocks
- *  the FOLD; stopped and refused are settles. `denied` counts in none: a policy refusal never RAN. */
+/** How many settled members failed, refused and were stopped, in ONE walk, for the header. `denied`
+ *  counts in none: a policy refusal never RAN. */
 interface GroupCounts {
   readonly failures: number;
   readonly declined: number;
@@ -387,39 +384,8 @@ function onHeaderClick(group: HTMLDivElement, _header: HTMLDivElement): void {
   }
 }
 
-export function maybeCollapseGroup(node: HTMLElement): void {
-  const group = node.closest<HTMLElement>(".tool-group");
-  if (group === null) {
-    return;
-  }
-  // A bare group is never collapsed, so there is nothing to re-open. Its lone
-  // card carries its own failure mark, which is the actionable signal a group
-  // header would otherwise be standing in for.
-  if (groupIsBare(group)) {
-    return;
-  }
-  const calls = [
-    ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
-  ] as HTMLElement[];
-
-  // A failure defeats collapse in BOTH directions: it blocks an auto-collapse and re-opens a group
-  // that folded before the member settled. Failures only; a stopped member folds.
-  if (countOutcomes(calls).failures > 0) {
-    if (
-      group.classList.contains(CLS_AUTO_COLLAPSED) &&
-      !group.classList.contains(CLS_USER_TOGGLED)
-    ) {
-      group.classList.remove(CLS_AUTO_COLLAPSED);
-      groupCtls.get(group)?.open();
-      group.querySelector<HTMLElement>(".tool-group-header")?.setAttribute("aria-expanded", "true");
-      refreshGroupHeader(group);
-    }
-    return;
-  }
-}
-
 /** Collapse a group whose run of consecutive calls just ENDED. Exempt: a BARE group, a user toggle,
- *  a failure inside, a running member (whose status flip re-runs maybeCollapseGroup). THE LIVE PATH
+ *  a running member (folded by the render pass after its settle drops `data-start-ms`). THE LIVE PATH
  *  ONLY, and animated; a group condemned at creation is closed silently by `ensureGroupDisclosure`. */
 export function autoCollapseGroup(group: HTMLElement): void {
   // A BARE group's body region IS the lone card, and its header is hidden — so
@@ -444,11 +410,6 @@ export function autoCollapseGroup(group: HTMLElement): void {
   const calls = [
     ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
   ] as HTMLElement[];
-  // The FAILURE count alone, never the stopped one: a stopped member neither
-  // blocks the fold nor auto-opens the body, matching the delegate card.
-  if (countOutcomes(calls).failures > 0) {
-    return;
-  }
   for (const c of calls) {
     if (c.dataset["startMs"] !== undefined) {
       return;

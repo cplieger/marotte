@@ -1,9 +1,15 @@
-// The boundary rows seven entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
+// The boundary rows eight entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
 // `makeEvent`, so the block renderer declares no event vocabulary.
 
-import type { KindedEntry, ModelSwitchReason, TurnRevertCause } from "./types.js";
+import type {
+  EntryModelFallback,
+  KindedEntry,
+  ModelSwitchReason,
+  TurnRevertCause,
+} from "./types.js";
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
+import { wireDetailsSlide } from "./disclosure-row.js";
 import { effortLabel } from "./effort.js";
 import { renderMarkdownInto } from "./markdown.js";
 import { labelForMode } from "./roles.js";
@@ -14,12 +20,13 @@ type EventEntryKind =
   | "safety_blocked"
   | "model_switched"
   | "model_routed"
+  | "model_fallback"
   | "mode_switched"
   | "turn_revert";
 
 /**
- * The seven entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
- * seven: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
+ * The eight entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
+ * eight: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
  */
 export type EventEntry = { [K in EventEntryKind]: KindedEntry<K> }[EventEntryKind];
 
@@ -42,6 +49,9 @@ export function buildEvent(e: EventEntry): HTMLElement {
         "\u21bb",
         message === "" ? "Auto moved to a stronger model" : message,
       );
+    }
+    case "model_fallback": {
+      return boundary("switched", "\u21bb", fallbackLabel(e.payload));
     }
     case "mode_switched": {
       // One boundary row for both switches, so a reader learns one shape whichever thing moved.
@@ -111,13 +121,61 @@ const SWITCH_REASONS: Record<
   unavailable: (p) => `Switched from ${p.from} to ${p.to} · not available for this account`,
 };
 
+/**
+ * KAS's fallback notice: the cause from `trigger`, then a decline's reason (a non-empty `reason`, whatever `to`
+ * holds) or the model the turn moved to, which a `session` scope keeps for the rest of the session. Model ids stay
+ * raw, as `switchedLabel` shows them.
+ */
+function fallbackLabel(p: EntryModelFallback): string {
+  const cause = `${p.from} ${fallbackCause(p.trigger)}`;
+  const reason = p.reason ?? "";
+  if (reason !== "") {
+    const why = DECLINE_REASONS.get(reason) ?? reason;
+    return `${cause}, no fallback model available \u00b7 ${why}`;
+  }
+  const to = p.to ?? "";
+  if (to === "") {
+    return cause;
+  }
+  return p.scope === "session"
+    ? `${cause}, retried on ${to}, which now serves this session`
+    : `${cause}, retried on ${to}`;
+}
+
+/** KAS's `trigger` is open: a value it adds later reads as an unknown cause. */
+function fallbackCause(trigger: string): string {
+  switch (trigger) {
+    case "refusal":
+      return "refused this request";
+    case "availability":
+      return "was unavailable";
+    default:
+      return "stopped for an unknown reason";
+  }
+}
+
+/** KAS's decline codes the row words; any other code shows as sent. A Map, since the key is KAS's
+ *  text and an object would answer an inherited name. */
+const DECLINE_REASONS: ReadonlyMap<string, string> = new Map([
+  ["noServedTarget", "none of its fallback models is offered to this account"],
+  ["chainExhausted", "every fallback model was already tried"],
+  ["unsafeToReissue", "the turn had already run tools, so a retry could repeat them"],
+  ["raceLost", "the model changed while Kiro was switching"],
+]);
+
 function switchedBase(p: {
   readonly to: string;
   readonly from: string;
   readonly effort?: string;
+  readonly unoffered?: string;
 }): string {
   // `effortLabel`, never the live catalog: the row records the tier picked then.
-  const tier = p.effort === undefined || p.effort === "" ? "" : effortLabel({ id: p.effort });
+  const ran = p.effort === undefined || p.effort === "" ? "" : effortLabel({ id: p.effort });
+  const unoffered =
+    p.unoffered === undefined || p.unoffered === ""
+      ? ""
+      : `${effortLabel({ id: p.unoffered })} is not offered`;
+  const tier = [ran, unoffered].filter((part) => part !== "").join("; ");
   if (tier === "") {
     return `Switched to ${p.to}`;
   }
@@ -153,24 +211,30 @@ function compactionBreak(icon: string, label: string, summary: string): HTMLElem
   const root = el("details", { className: "compaction" }) as HTMLDetailsElement;
   // `.message assistant` is the app's markdown-prose skin.
   const body = el("div", { className: "compaction-body message assistant" });
-  root.append(
-    el(
-      "summary",
-      { className: "compaction-head" },
-      // Leads the row because it discloses: a disclosing chevron comes first and rotates, a navigating one trails.
-      chevronEl(),
-      el("span", { className: "compaction-icon" }, icon),
-      el("span", { className: "compaction-label" }, label),
-    ),
-    body,
+  const head = el(
+    "summary",
+    { className: "compaction-head" },
+    // Leads the row because it discloses: a disclosing chevron comes first and rotates, a navigating one trails.
+    chevronEl(),
+    el("span", { className: "compaction-icon" }, icon),
+    el("span", { className: "compaction-label" }, label),
   );
+  root.append(head, body);
   let rendered = false;
-  root.addEventListener("toggle", () => {
-    if (!root.open || rendered) {
+  const render = (): void => {
+    if (rendered) {
       return;
     }
     rendered = true;
     renderMarkdownInto(body, summary);
+  };
+  // Ahead of the slide's listener, which measures the open height: `toggle` fires a task too late for it.
+  head.addEventListener("click", render);
+  wireDetailsSlide(root);
+  root.addEventListener("toggle", () => {
+    if (root.open) {
+      render();
+    }
   });
   return root;
 }

@@ -46,15 +46,13 @@ const decodeForgesListResponse: Decoder<ForgesListResponse> = (v) => {
   return out;
 };
 
-/** Fetch the configured forges. Deduped so a poll tick, an SSE nudge and a
- *  read-through all coalesce into one request. Advisory data: no toast, no
- *  retry — the badge renders the failure as its own error state. */
+/** Fetch the configured forges. Not deduped: a read joined to one issued before a change would answer the old rows.
+ *  Advisory data: no toast, no retry; each surface renders the failure itself. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void as a generic argument for an action taking no args
 export const listForges = apiAction<void, ForgesListResponse>({
   name: "forges.list",
   request: () => ({ method: "GET", path: API_PATH_FORGES }),
   decode: (data) => decodeForgesListResponse(data),
-  dedupe: true,
   error: false,
   success: false,
 });

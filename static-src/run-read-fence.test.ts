@@ -72,7 +72,7 @@ function buildMode(): ReturnType<typeof composerMode> {
   const state = store.peekRunState("wf");
   expect(state?.status, "the run is cached and running").toBe("running");
   const s = state as RunState;
-  const step: ExecNode | undefined = workNodes(runToExec("wf", s, undefined, NO_ASKS).nodes)[0];
+  const step: ExecNode | undefined = workNodes(runToExec(s, undefined, NO_ASKS).nodes)[0];
   return composerMode({ workflowID: "wf", runLive: true, runPaused: false, step });
 }
 

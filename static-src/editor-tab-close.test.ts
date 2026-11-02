@@ -24,6 +24,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./icons.js", () => ({
+  ICON_MODEL_UI: "",
   ICON_CLOSE: "",
   ICON_TAB_CHAT: "",
   ICON_TAB_SETTINGS: "",
@@ -70,6 +71,7 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
 // large", so the open completes without a second read.
 vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => ({
+    apiBlobOrError: vi.fn(),
     apiGet: vi.fn(() => Promise.resolve(null)),
     apiGetTyped: m.tabListRead(),
     apiGetTypedOrError: vi.fn(() =>
@@ -132,8 +134,6 @@ vi.mock("./run-store.js", () => ({
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 vi.mock("./editor-conflict.js", () => ({
-  abortSuggestion: vi.fn(),
-  clearSuggestionState: vi.fn(),
   // Present-but-inert so real-ESM linking succeeds: the tab projection widened
   // this graph and these names are imported somewhere in it. No case here calls
   // them.

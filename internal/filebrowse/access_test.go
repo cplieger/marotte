@@ -24,6 +24,7 @@ func TestSensitive_DefaultRootKeepsEveryExistingEntry(t *testing.T) {
 		{Path: "/config/mcp-secrets.json", Family: true},
 		{Path: "/config/forge-store/", IsDir: true},
 		{Path: "/config/forge-connections.json", Family: true},
+		{Path: "/config/signin.json", Family: true},
 	}
 	for name, s := range map[string]Sensitive{"zero value": {}, "NewSensitive(\"\")": NewSensitive("")} {
 		t.Run(name, func(t *testing.T) {
@@ -32,7 +33,7 @@ func TestSensitive_DefaultRootKeepsEveryExistingEntry(t *testing.T) {
 			}
 		})
 	}
-	for _, p := range []string{"/config/forge-store/credentials.json", "/config/forge-connections.json"} {
+	for _, p := range []string{"/config/forge-store/credentials.json", "/config/forge-connections.json", "/config/signin.json"} {
 		if !(Sensitive{}).Blocks(p) {
 			t.Errorf("Blocks(%q) = false, want true", p)
 		}
@@ -67,6 +68,7 @@ func TestSensitive_BlocksTheCopiesAStoreMovesAside(t *testing.T) {
 		"forge-connections.json.corrupt.20260101-000000.12",
 		"mcp.json.corrupt.20260101-000000.12",
 		"mcp-secrets.json.corrupt",
+		"signin.json.corrupt",
 	} {
 		if p := filepath.Join(root, name); !sens.Blocks(p) {
 			t.Errorf("Blocks(%q) = false, want true", p)

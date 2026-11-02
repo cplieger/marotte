@@ -14,15 +14,13 @@ vi.mock("./api-client.js", () => ({
   }),
 }));
 
-// The four sinks, recorded rather than driven: each owns its own behaviour, and what this file
+// The sinks, recorded rather than driven: each owns its own behaviour, and what this file
 // decides is which of them the one reader still reaches.
-const mockSetCatalogEfforts = vi.fn();
 const mockSetCatalogModes = vi.fn();
 const mockSetPickerModels = vi.fn();
 const mockRefreshPickerIfVisible = vi.fn();
 const mockSetCatalogPhase = vi.fn();
 const mockRefreshContextUI = vi.fn();
-vi.mock("./effort.js", () => ({ setCatalogEfforts: mockSetCatalogEfforts }));
 vi.mock("./roles.js", () => ({ setCatalogModes: mockSetCatalogModes }));
 vi.mock("./picker.js", () => ({
   setPickerModels: mockSetPickerModels,
@@ -39,10 +37,11 @@ vi.mock("./store.js", { spy: true });
 const store = await import("./store.js");
 const { MODEL_CONTEXT_SIZES } = store;
 const { fetchCatalog } = await import("./session-catalog.js");
+const { BUS_CATALOG_MODELS, onBus } = await import("./bus.js");
 
-/** A catalog answer with the three lists the wire declares non-null. */
+/** A catalog answer with the two lists the wire declares non-null. */
 function catalog(over: Partial<ConfigTemplateResponse> = {}): ConfigTemplateResponse {
-  return { catalog: "ready", modes: [], models: [], effort_levels: [], ...over };
+  return { catalog: "ready", modes: [], models: [], ...over };
 }
 
 /** One model whose description states its window, which is the only place a context size is
@@ -81,18 +80,15 @@ beforeEach(() => {
 });
 
 describe("the one catalog reader", () => {
-  it("reads /api/config-template and seeds all three vocabularies", async () => {
+  it("reads /api/config-template and seeds both vocabularies", async () => {
     reply = catalog({
       modes: [{ id: "vibe", name: "Default" }],
       models: [model("m-big")],
-      effort_levels: [{ id: "max", name: "Max" }],
-      effort_active: "max",
     });
 
     await fetchCatalog();
 
     expect(reads).toEqual(["/api/config-template"]);
-    expect(mockSetCatalogEfforts).toHaveBeenCalledWith(reply.effort_levels, "max");
     expect(mockSetCatalogModes).toHaveBeenCalledWith(reply.modes);
     expect(mockSetPickerModels).toHaveBeenCalledTimes(1);
   });
@@ -172,21 +168,48 @@ describe("the one catalog reader", () => {
 
     await fetchCatalog();
 
-    expect(mockSetCatalogEfforts).not.toHaveBeenCalled();
     expect(mockSetCatalogModes).not.toHaveBeenCalled();
     expect(mockSetPickerModels).not.toHaveBeenCalled();
   });
 
   it("carries the model's default effort tier, which a control silently loses", async () => {
     reply = catalog({
-      models: [{ id: "m-big", name: "Big", has_effort: true, default_effort_level: "high" }],
+      models: [{ id: "m-big", name: "Big", default_effort_level: "high" }],
     });
 
     await fetchCatalog();
 
     const models = mockSetPickerModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
-    expect(models?.[0]?.has_effort).toBe(true);
     expect(models?.[0]?.default_effort_level).toBe("high");
+  });
+
+  it("carries the model's tier list, which the Run and Schedule forms offer", async () => {
+    reply = catalog({
+      models: [
+        { id: "m-big", name: "Big", effort_tiers: ["low", "high"] },
+        { id: "m-auto", name: "Auto", effort_tiers: [] },
+      ],
+    });
+
+    await fetchCatalog();
+
+    const models = mockSetPickerModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
+    expect(models?.[0]?.effort_tiers).toEqual(["low", "high"]);
+    expect(models?.[1]).not.toHaveProperty("effort_tiers");
+  });
+
+  it("tells the bus once a model list lands, after the picker holds it", async () => {
+    const seen: number[] = [];
+    const off = onBus(BUS_CATALOG_MODELS, () => {
+      seen.push(mockSetPickerModels.mock.calls.length);
+    });
+    reply = catalog();
+    await fetchCatalog();
+    expect(seen).toEqual([]);
+    reply = catalog({ models: [model("m-big")] });
+    await fetchCatalog();
+    off();
+    expect(seen).toEqual([1]);
   });
 
   it("carries whether the model's thinking can be turned off", async () => {

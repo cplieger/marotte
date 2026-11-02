@@ -81,6 +81,8 @@ type acpKiroBlock struct {
 	// Source marks the whole steering CHANNEL (progress rows, step notices, boundaries). The
 	// replay builder stamps it here, not on the update object.
 	Source string `json:"source"`
+	// AgentInitiatedReason names what started an engine turn, on AgentInitiated's frames.
+	AgentInitiatedReason agentInitiatedReason `json:"agentInitiatedReason"`
 	// Notification tags a row KAS wrote onto a chat on something else's behalf;
 	// "workflow-progress" is a step's progress, a user_message_chunk carrying JSON.
 	Notification struct {
@@ -99,6 +101,15 @@ type acpKiroBlock struct {
 	// bracket, and a zero-content auto-wake sends none.
 	AgentInitiated bool `json:"agentInitiated"`
 }
+
+// agentInitiatedReason is KAS's closed set of engine-turn causes (kiro-cli 2.32.0:
+// send-message-wake, workflow-complete-wake, notification-rewake). An unknown value is kept as
+// sent and matches no constant.
+type agentInitiatedReason string
+
+// reasonSendMessageWake is a turn KAS started to deliver a send_message or runtime note to an idle
+// session, or to re-deliver an info note after a reader's cancel (rewakeWithInfo).
+const reasonSendMessageWake agentInitiatedReason = "send-message-wake"
 
 // acpKiroBlockShadow strips the UnmarshalJSON method so the real decode does not recurse.
 type acpKiroBlockShadow acpKiroBlock
@@ -250,13 +261,14 @@ type acpPermissionKiroBlockShadow acpPermissionKiroBlock
 
 // UnmarshalJSON decodes the block and reports any member KAS sent that it does not read;
 // the declined ones are read elsewhere or belong to asks this frame does not render.
+// workflowPlan is a plan approval's structured step list, which the card has no view for.
 func (b *acpPermissionKiroBlock) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*acpPermissionKiroBlockShadow)(b)); err != nil {
 		return err
 	}
 	censusMeta("session/request_permission._meta.kiro", data, reflect.TypeFor[acpPermissionKiroBlockShadow](),
 		"command", "agentManagesTrust", "disclosedContext", "hookName", "executionId", "kind",
-		"requirementText", "question", "requirementRange", "requirementsFilePath")
+		"requirementText", "question", "requirementRange", "requirementsFilePath", "workflowPlan")
 	return nil
 }
 
@@ -458,9 +470,33 @@ type ACPSessionUpdateBase struct {
 		Kiro struct {
 			// Workflow is the discriminator the dispatcher classifies a step on.
 			Workflow *ACPWorkflowMeta `json:"workflow"`
-			Replay   bool             `json:"replay"`
+			// TurnStart and TurnEnd are the session's turn bracket on session_info_update.
+			TurnStart *bool     `json:"turnStart"`
+			TurnEnd   *struct{} `json:"turnEnd"`
+			Replay    bool      `json:"replay"`
 		} `json:"kiro"`
 	} `json:"_meta"`
+}
+
+// TurnEdge is the turn bracket a session/update frame carries, if any.
+type TurnEdge int
+
+// The two brackets and their absence.
+const (
+	TurnEdgeNone TurnEdge = iota
+	TurnEdgeStart
+	TurnEdgeEnd
+)
+
+// Edge reports the turn bracket this frame carries.
+func (b *ACPSessionUpdateBase) Edge() TurnEdge {
+	switch {
+	case b.Meta.Kiro.TurnStart != nil && *b.Meta.Kiro.TurnStart:
+		return TurnEdgeStart
+	case b.Meta.Kiro.TurnEnd != nil:
+		return TurnEdgeEnd
+	}
+	return TurnEdgeNone
 }
 
 // contentTypeContent is the ACP content-block type discriminator value "content".

@@ -39,12 +39,12 @@ func (st *Settings) cacheConfigurationState(raw json.RawMessage) {
 	st.kiroDefaults.stated, st.kiroDefaults.known = stated, true
 	st.kiroDefaults.mu.Unlock()
 	if !maps.Equal(before, st.KiroDefaults()) && st.broadcast != nil && st.lifecycle != nil {
-		st.broadcast(st.lifecycle.shutdownCtx, marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
+		settings.Announce(st.lifecycle.shutdownCtx, st.lifecycle.configDir, st.broadcast)
 	}
 }
 
 // KiroDefaults answers what each kiroDefaultKeys setting resolves to in kiro-cli, keyed by the
-// marotte setting key; empty until the utility bridge has reported a view. The caller drops the
+// marotte setting key; empty until the engine has reported a view. The caller drops the
 // keys the user has set.
 func (st *Settings) KiroDefaults() map[string]marotte.KiroDefault {
 	st.kiroDefaults.mu.Lock()

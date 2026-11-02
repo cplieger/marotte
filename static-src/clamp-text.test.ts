@@ -74,7 +74,12 @@ function paintTurns(chat: string, turnRows: Entry[][]): void {
 }
 
 const CSS = `
-  .ct-text { font: 16px/20px monospace; overflow-wrap: anywhere; }
+  .ct-text {
+    font: 16px/20px monospace;
+    overflow-wrap: anywhere;
+    --uip-disclosure-duration: 200ms;
+    --uip-disclosure-easing: ease;
+  }
   .ct-text[data-clamped] {
     display: -webkit-box;
     -webkit-line-clamp: 3;
@@ -142,6 +147,25 @@ async function observerRuns(): Promise<void> {
   });
 }
 
+/** The height slide's two ends on `box`. */
+function slideFrames(box: Element): { from: number; to: number } {
+  const [anim] = box.getAnimations();
+  const frames = (anim?.effect as KeyframeEffect | null)?.getKeyframes() ?? [];
+  return {
+    from: parseFloat(String(frames[0]?.["blockSize"])),
+    to: parseFloat(String(frames.at(-1)?.["blockSize"])),
+  };
+}
+
+async function finishSlides(box: Element): Promise<void> {
+  const anims = box.getAnimations();
+  for (const a of anims) {
+    a.finish();
+  }
+  await Promise.all(anims.map((a) => a.finished));
+  await Promise.resolve();
+}
+
 const ONE_LINE = "target main";
 const LONG = "the quick brown fox jumps over the lazy dog ".repeat(12);
 
@@ -150,7 +174,42 @@ describe("deciding whether the opener is needed", () => {
     const p = mount(ONE_LINE, 400);
     await observerRuns();
     expect(p.more.hidden).toBe(true);
-    expect(p.text.hasAttribute("data-clamped"), "clamped even so, harmlessly").toBe(true);
+    expect(p.text.hasAttribute("data-clamped")).toBe(false);
+  });
+
+  /** `n` lines of 20px each under the 3-line clamp, one per text line. */
+  function mountLines(n: number): Pair {
+    host.style.inlineSize = "400px";
+    const text = document.createElement("div");
+    text.className = "ct-text";
+    text.style.whiteSpace = "pre-line";
+    text.textContent = Array.from({ length: n }, (_, i) => `line ${String(i + 1)}`).join("\n");
+    const more = document.createElement("button");
+    more.type = "button";
+    host.replaceChildren(text, more);
+    attachClamp(text, more, { lines: 3 });
+    return { text, more };
+  }
+
+  for (const [n, cut] of [
+    [4, 1],
+    [5, 2],
+  ] as const) {
+    it(`shows a text the clamp would cut by ${String(cut)} line${cut > 1 ? "s" : ""} in full, with no opener`, async () => {
+      const p = mountLines(n);
+      await observerRuns();
+      expect(p.more.hidden).toBe(true);
+      expect(p.text.hasAttribute("data-clamped")).toBe(false);
+      expect(p.text.getBoundingClientRect().height).toBe(n * 20);
+    });
+  }
+
+  it("clamps a text cut by three lines behind its opener", async () => {
+    const p = mountLines(6);
+    await settles(p, false, "offered for a three-line cut");
+    expect(p.text.hasAttribute("data-clamped")).toBe(true);
+    expect(p.text.getBoundingClientRect().height).toBe(3 * 20);
+    expect(p.more.textContent).toBe("Show more");
   });
 
   it("shows the opener for a text that overflows", async () => {
@@ -200,9 +259,53 @@ describe("opening and closing", () => {
     expect(p.more.getAttribute("aria-expanded")).toBe("true");
 
     p.more.click();
+    await finishSlides(p.text);
     expect(p.text.hasAttribute("data-clamped")).toBe(true);
     expect(p.more.textContent).toBe("Show more");
     expect(p.more.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("slides open from the clamped height to the whole text, and shut again", async () => {
+    const p = mount(LONG, 400);
+    await settles(p, false, "offered");
+    const shut = p.text.getBoundingClientRect().height;
+    p.more.click();
+    const open = slideFrames(p.text);
+    expect(open.from).toBeCloseTo(shut, 1);
+    await finishSlides(p.text);
+    expect(open.to).toBeCloseTo(p.text.getBoundingClientRect().height, 1);
+    expect(open.to).toBeGreaterThan(shut);
+
+    p.more.click();
+    const close = slideFrames(p.text);
+    expect(close.from).toBeCloseTo(open.to, 1);
+    expect(close.to).toBeCloseTo(shut, 1);
+  });
+
+  it("keeps the text whole while it slides shut, a resize mid-slide included", async () => {
+    const p = mount(LONG, 400);
+    await settles(p, false, "offered");
+    p.more.click();
+    await finishSlides(p.text);
+    p.more.click();
+    expect(p.more.textContent, "the label flips at once").toBe("Show more");
+    host.style.inlineSize = "380px";
+    await observerRuns();
+    expect(p.text.getAnimations(), "still sliding").not.toHaveLength(0);
+    expect(p.text.hasAttribute("data-clamped"), "unclamped until the slide ends").toBe(false);
+    await finishSlides(p.text);
+    expect(p.text.hasAttribute("data-clamped")).toBe(true);
+  });
+
+  it("collapse() snaps shut, cancelling a slide still running", async () => {
+    const p = mount(LONG, 400);
+    await settles(p, false, "offered");
+    const handle = attachClamp(p.text, p.more);
+    p.more.click();
+    expect(p.text.getAnimations()).not.toHaveLength(0);
+    handle.collapse();
+    expect(p.text.getAnimations()).toHaveLength(0);
+    expect(p.text.hasAttribute("data-clamped")).toBe(true);
   });
 
   it("leaves an expansion alone when the box resizes under it", async () => {
@@ -341,8 +444,8 @@ describe("releasing", () => {
   });
 
   it("releases a mounted chat view's clamps when the view is disposed", async () => {
-    // `disposeChatView` is the one dispose every close path runs. Driven through steer notes: the turn header's
-    // clamp is CSS-only, so it would count 0 before and after the sweep.
+    // `disposeChatView` is the one dispose every close path runs. Each turn's header watches its prompt for a cut
+    // (`watchCut`) and each steer note clamps its text, so four turns are eight watched elements.
     const before = clampObservationCount();
     mountChatView();
     const chat = "c-clamp-dispose";
@@ -358,7 +461,7 @@ describe("releasing", () => {
       );
     }
     paintTurns(chat, turnRows);
-    expect(clampObservationCount() - before, "one per steer note").toBe(4);
+    expect(clampObservationCount() - before, "one per prompt and one per steer note").toBe(8);
 
     disposeChatView(chat);
     expect(clampObservationCount() - before).toBe(0);

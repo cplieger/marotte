@@ -11,7 +11,8 @@ import {
   effectiveRunID,
   entryAt,
   entryRenders,
-  firstPlanSeq,
+  NO_FOLDS,
+  turnFolds,
   planResidency,
   proseRunAt,
   runCardOwners,
@@ -46,8 +47,15 @@ function entry(
   return opts.lane === undefined ? base : Object.assign(base, { lane: opts.lane });
 }
 
+/** A text entry as a `#k` segment of ONE say, so adjacent ones are one message (`MessageRun`). */
 function text(seq: number, lane?: string): Entry {
-  return entry(seq, "text", { text: `p${String(seq)}` }, lane === undefined ? {} : { lane });
+  const id = `say#${String(seq)}`;
+  return entry(
+    seq,
+    "text",
+    { text: `p${String(seq)}` },
+    lane === undefined ? { id } : { id, lane },
+  );
 }
 
 function call(
@@ -167,13 +175,17 @@ describe("the entry space", () => {
 // --- The ONE render predicate ----------------------------------------------
 
 describe("entryRenders", () => {
-  it.each(["turn_open", "turn_close", "turn_bind", "tool_result", "reconciled"] as const)(
-    "refuses a %s, which renders elsewhere",
-    (kind) => {
-      // Header, footer, nothing, and its call's own card: exported so budget and spacer agree.
-      expect(entryRenders(entry(1, kind), "", -1)).toBe(false);
-    },
-  );
+  it.each([
+    "turn_open",
+    "turn_close",
+    "turn_bind",
+    "tool_result",
+    "reconciled",
+    "steer_cleared",
+  ] as const)("refuses a %s, which renders elsewhere", (kind) => {
+    // Header, footer, nothing, and its call's own card: exported so budget and spacer agree.
+    expect(entryRenders(entry(1, kind), "", NO_FOLDS)).toBe(false);
+  });
 
   it.each([
     "text",
@@ -184,39 +196,128 @@ describe("entryRenders", () => {
     "compaction",
     "model_switched",
     "model_routed",
+    "model_fallback",
     "mode_switched",
-    "turn_revert",
   ] as const)("draws a %s at its own position", (kind) => {
-    expect(entryRenders(entry(1, kind), "", -1)).toBe(true);
+    expect(entryRenders(entry(1, kind), "", NO_FOLDS)).toBe(true);
   });
 
   it("draws only the FIRST plan of the lane, every later one folding into its card", () => {
-    expect(entryRenders(entry(3, "plan"), "", 3)).toBe(true);
-    expect(entryRenders(entry(7, "plan"), "", 3)).toBe(false);
+    expect(entryRenders(entry(3, "plan"), "", { ...NO_FOLDS, plan: 3 })).toBe(true);
+    expect(entryRenders(entry(7, "plan"), "", { ...NO_FOLDS, plan: 3 })).toBe(false);
+  });
+
+  it("draws only the NEWEST revert of the lane, which replaces an earlier one's row", () => {
+    expect(entryRenders(entry(3, "turn_revert"), "", { ...NO_FOLDS, revert: 7 })).toBe(false);
+    expect(entryRenders(entry(7, "turn_revert"), "", { ...NO_FOLDS, revert: 7 })).toBe(true);
   });
 
   it("refuses an entry of any lane but the VIEW's root", () => {
     // `lane` is the view's root: `""` for the transcript, a delegate's uuid for its own page.
-    expect(entryRenders(text(1, "sub-A"), "", -1)).toBe(false);
-    expect(entryRenders(text(1, "sub-A"), "sub-A", -1)).toBe(true);
-    expect(entryRenders(text(1), "sub-A", -1)).toBe(false);
+    expect(entryRenders(text(1, "sub-A"), "", NO_FOLDS)).toBe(false);
+    expect(entryRenders(text(1, "sub-A"), "sub-A", NO_FOLDS)).toBe(true);
+    expect(entryRenders(text(1), "sub-A", NO_FOLDS)).toBe(false);
   });
 });
 
-describe("firstPlanSeq", () => {
-  it("names the first plan of the given lane", () => {
-    const t = turn("t1", [text(1), entry(2, "plan"), entry(3, "plan")]);
-    expect(firstPlanSeq(t, "")).toBe(2);
+describe("turnFolds", () => {
+  it("names the first plan and the newest revert of the given lane", () => {
+    const t = turn("t1", [
+      text(1),
+      entry(2, "plan"),
+      entry(3, "turn_revert"),
+      entry(4, "plan"),
+      entry(5, "turn_revert"),
+    ]);
+    expect(turnFolds(t, "")).toMatchObject({ plan: 2, revert: 5 });
+  });
+
+  it("hides a dropped agent note the same turn read, as a note or a take-up, and no other drop", () => {
+    const drop = (seq: number, id: string): Entry => ({
+      ...entry(seq, "steer", { text: "", origin: "agent", state: "dropped", reason: "boundary" }),
+      id,
+    });
+    const t = turn("t1", [
+      entry(1, "steer_delivered", { steer_id: "wfmsg-1", kas_id: "notify-a", read_ts: 1 }),
+      { ...entry(2, "steer", { text: "done", origin: "agent", state: "read" }), id: "notify-b" },
+      drop(3, "notify-a"),
+      drop(4, "notify-b"),
+      drop(5, "notify-c"),
+    ]);
+    const folds = turnFolds(t, "");
+    expect([...folds.readDrop].sort()).toEqual(["notify-a", "notify-b"]);
+    expect(t.body.filter((e) => entryRenders(e, "", folds)).map((e) => e.id)).toEqual([
+      "notify-b",
+      "notify-c",
+    ]);
   });
 
   it("is per LANE, so a delegate's plan is not the transcript's first", () => {
     const t = turn("t1", [entry(1, "plan", {}, { lane: "sub-A" }), entry(2, "plan")]);
-    expect(firstPlanSeq(t, "")).toBe(2);
-    expect(firstPlanSeq(t, "sub-A")).toBe(1);
+    expect(turnFolds(t, "").plan).toBe(2);
+    expect(turnFolds(t, "sub-A").plan).toBe(1);
   });
 
-  it("answers -1 for a turn holding no plan, which no seq can equal", () => {
-    expect(firstPlanSeq(turn("t1", [text(1)]), "")).toBe(-1);
+  // KAS re-pins the model before it sends the fallback notice, so the guessed "not available"
+  // switch row the re-pin wrote is the notice's to explain.
+  describe("a model fallback folds the re-pin row it explains", () => {
+    const repin = (seq: number, to = "sonnet-5"): Entry =>
+      entry(seq, "model_switched", { from: "opus-5", to, reason: "unavailable" });
+    const fallback = (seq: number, to = "sonnet-5"): Entry =>
+      entry(seq, "model_fallback", { from: "opus-5", to, trigger: "refusal", scope: "session" });
+
+    it("hides the switch row the next entry falls back from", () => {
+      const t = turn("t1", [text(1), repin(2), fallback(3)]);
+      const folds = turnFolds(t, "");
+      expect([...folds.fellBack]).toEqual([2]);
+      expect(t.body.filter((e) => entryRenders(e, "", folds)).map((e) => e.kind)).toEqual([
+        "text",
+        "model_fallback",
+      ]);
+    });
+
+    it.each([
+      ["moved to another model", [repin(1), fallback(2, "haiku-5")]],
+      ["was not the entry right before", [repin(1), text(2), fallback(3)]],
+      [
+        "named no reason",
+        [entry(1, "model_switched", { from: "opus-5", to: "sonnet-5" }), fallback(2)],
+      ],
+      [
+        "was declined, naming no model",
+        [
+          repin(1),
+          entry(2, "model_fallback", {
+            from: "opus-5",
+            trigger: "availability",
+            reason: "chainExhausted",
+          }),
+        ],
+      ],
+      [
+        "was a sub-agent's",
+        [
+          repin(1),
+          entry(2, "model_fallback", {
+            from: "opus-5",
+            to: "sonnet-5",
+            trigger: "availability",
+            scope: "session",
+            subagent: true,
+          }),
+        ],
+      ],
+    ] as const)("keeps a switch row whose fallback %s", (_why, body) => {
+      const t = turn("t1", [...body]);
+      expect(turnFolds(t, "").fellBack.size).toBe(0);
+      expect(
+        t.body.filter((e) => entryRenders(e, "", turnFolds(t, ""))).map((e) => e.kind),
+      ).toContain("model_switched");
+    });
+  });
+
+  it("answers -1 for a turn holding neither kind, which no seq can equal", () => {
+    expect(turnFolds(turn("t1", [text(1)]), "")).toEqual(NO_FOLDS);
   });
 });
 
@@ -355,32 +456,35 @@ describe("sliceTurn", () => {
     expect(sliceTurn(t, { from: 1, to: 3 })).toEqual({ from: 1, to: 3 });
   });
 
-  it("takes a hoisted firstPlan, so a caller in a loop needs no re-scan", () => {
+  it("takes hoisted folds, so a caller in a loop needs no re-scan", () => {
     // The plan at seq 2 renders, so it bounds the run either way; what the parameter proves
     // is that the caller's own answer is the one used.
     const t = turn("t1", [text(1), entry(2, "plan"), text(3)]);
-    expect(sliceTurn(t, { from: 3, to: 4 }, "", 2)).toEqual({ from: 3, to: 4 });
+    expect(sliceTurn(t, { from: 3, to: 4 }, "", { ...NO_FOLDS, plan: 2 })).toEqual({
+      from: 3,
+      to: 4,
+    });
   });
 });
 
 describe("proseRunAt", () => {
   it("answers the run's whole range for one of its members", () => {
     const t = turn("t1", [text(1), text(2), call(3)]);
-    expect(proseRunAt(t, 2, "", -1)).toEqual({ from: 1, to: 3 });
+    expect(proseRunAt(t, 2, "", NO_FOLDS)).toEqual({ from: 1, to: 3 });
   });
 
   it("answers null for a seq that is not prose this view draws", () => {
     // The MOUNT's door onto the same rule the window snap applies, so an edge and a bubble
     // cannot disagree about where a run begins.
     const t = turn("t1", [text(1), call(2), text(3, "sub-A")]);
-    expect(proseRunAt(t, 2, "", -1)).toBeNull();
-    expect(proseRunAt(t, 3, "", -1)).toBeNull();
-    expect(proseRunAt(t, 0, "", -1)).toBeNull();
+    expect(proseRunAt(t, 2, "", NO_FOLDS)).toBeNull();
+    expect(proseRunAt(t, 3, "", NO_FOLDS)).toBeNull();
+    expect(proseRunAt(t, 0, "", NO_FOLDS)).toBeNull();
   });
 
   it("agrees with sliceTurn on the run it names", () => {
     const t = turn("t1", texts(5));
-    const run = proseRunAt(t, 3, "", -1) as EntryRange;
+    const run = proseRunAt(t, 3, "", NO_FOLDS) as EntryRange;
     expect(sliceTurn(t, { from: 3, to: 4 })).toEqual(run);
   });
 
@@ -392,8 +496,9 @@ describe("proseRunAt", () => {
       entry(2, "turn_revert", { from: "t-9", from_n: 9, through: "t-9", cause: "rewind" }),
       text(3),
     ]);
-    expect(proseRunAt(cut, 1, "", -1)).toEqual({ from: 1, to: 2 });
-    expect(proseRunAt(cut, 3, "", -1)).toEqual({ from: 3, to: 4 });
+    const folds = turnFolds(cut, "");
+    expect(proseRunAt(cut, 1, "", folds)).toEqual({ from: 1, to: 2 });
+    expect(proseRunAt(cut, 3, "", folds)).toEqual({ from: 3, to: 4 });
 
     // The control: a turn_bind renders nothing, so the walk steps over it and keeps ONE run.
     const bound = turn("t1", [
@@ -401,7 +506,64 @@ describe("proseRunAt", () => {
       entry(2, "turn_bind", { kas_message_id: "kas-1", session_id: "sess-1" }),
       text(3),
     ]);
-    expect(proseRunAt(bound, 1, "", -1)).toEqual({ from: 1, to: 4 });
+    expect(proseRunAt(bound, 1, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
+  });
+
+  it("ends a run where the next text is ANOTHER message, with nothing drawn between", () => {
+    // Two says are two KAS messages: a reply, then the reply a notification woke the agent for.
+    const t = turn("t1", [
+      entry(1, "text", { text: "first reply." }, { id: "a-say" }),
+      entry(2, "text", { text: "second reply." }, { id: "b-say" }),
+    ]);
+    expect(proseRunAt(t, 1, "", NO_FOLDS)).toEqual({ from: 1, to: 2 });
+    expect(proseRunAt(t, 2, "", NO_FOLDS)).toEqual({ from: 2, to: 3 });
+    expect(sliceTurn(t, { from: 2, to: 3 })).toEqual({ from: 2, to: 3 });
+  });
+
+  it("keeps one message's `#k` segments one run across an entry that renders nothing", () => {
+    const t = turn("t1", [
+      entry(1, "text", { text: "one **tw" }, { id: "a-say" }),
+      entry(2, "tool_result", {}, { id: "c0:result" }),
+      entry(3, "text", { text: "o**" }, { id: "a-say#2" }),
+      entry(4, "text", { text: "next" }, { id: "b-say" }),
+    ]);
+    expect(proseRunAt(t, 3, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
+    expect(proseRunAt(t, 4, "", NO_FOLDS)).toEqual({ from: 4, to: 5 });
+  });
+
+  it("joins a text under a MINTED say to its neighbour, since a minted id ends no message", () => {
+    // turnlog mints `<turn>:e<k>` for id-less deltas; such an id says nothing about where a message ends.
+    const t = turn("t1", [
+      entry(1, "text", { text: "one " }, { id: "a-say" }),
+      entry(2, "tool_result", {}, { id: "c0:result" }),
+      entry(3, "text", { text: "two" }, { id: "t1:e4" }),
+    ]);
+    expect(proseRunAt(t, 3, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
+  });
+
+  it("never lets a MINTED segment bridge two named messages", () => {
+    // A minted segment joins the run before it; the named say after it is still another message.
+    const t = turn("t1", [
+      entry(1, "text", { text: "first reply." }, { id: "a-say" }),
+      entry(2, "tool_result", {}, { id: "c0:result" }),
+      entry(3, "text", { text: " more" }, { id: "t1:e4" }),
+      entry(4, "text", { text: "second reply." }, { id: "b-say" }),
+    ]);
+    expect(proseRunAt(t, 1, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
+    expect(proseRunAt(t, 3, "", NO_FOLDS)).toEqual({ from: 1, to: 4 });
+    expect(proseRunAt(t, 4, "", NO_FOLDS)).toEqual({ from: 4, to: 5 });
+    expect(sliceTurn(t, { from: 3, to: 4 })).toEqual({ from: 1, to: 4 });
+    expect(sliceTurn(t, { from: 4, to: 5 })).toEqual({ from: 4, to: 5 });
+  });
+
+  it("lets a run that opens on a MINTED segment take the first named say after it", () => {
+    const t = turn("t1", [
+      entry(1, "text", { text: "lead " }, { id: "t1:e1" }),
+      entry(2, "text", { text: "first reply." }, { id: "a-say" }),
+      entry(3, "text", { text: "second reply." }, { id: "b-say" }),
+    ]);
+    expect(proseRunAt(t, 1, "", NO_FOLDS)).toEqual({ from: 1, to: 3 });
+    expect(proseRunAt(t, 3, "", NO_FOLDS)).toEqual({ from: 3, to: 4 });
   });
 });
 

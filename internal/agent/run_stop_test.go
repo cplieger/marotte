@@ -38,7 +38,7 @@ func TestCancel_TellsKASTheUserAskedForIt(t *testing.T) {
 	}
 	leased(t, h.runs, "wf_1")
 
-	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 
@@ -62,7 +62,7 @@ func TestCancelRun_NamesTheRewindAsTheReason(t *testing.T) {
 
 func TestBoundCancel_AttributesNoOne(t *testing.T) {
 	const id = "wf_1"
-	h, br := askFixture(t, id, runChatID(id))
+	h, br := stepFixture(t, id)
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 
 	h.runs.cancelExpired(id, deadline)
@@ -77,7 +77,7 @@ func TestRetryTermination_KeepsTheUsersAttribution(t *testing.T) {
 	leased(t, h.runs, "wf_1")
 	h.runs.armDeadline(t.Context(), "wf_1")
 
-	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 	awaitCalls(t, br, methodKiroWorkflowCancel, 2, "the refused cancel was never re-attempted")
@@ -87,10 +87,13 @@ func TestRetryTermination_KeepsTheUsersAttribution(t *testing.T) {
 
 func TestPause_TellsKASTheUserAskedForIt(t *testing.T) {
 	h, _, br := newTestHub()
-	br.callResults = map[string]json.RawMessage{methodKiroWorkflowPause: json.RawMessage(`{}`)}
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowPause:   json.RawMessage(`{}`),
+		methodKiroWorkflowInspect: inspectReply(t, "wf_1", marotte.RunStatusRunning, ""),
+	}
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	if err := h.runs.pause(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.pause(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Pause: %v", err)
 	}
 
@@ -99,10 +102,13 @@ func TestPause_TellsKASTheUserAskedForIt(t *testing.T) {
 
 func TestResume_IsNotAttributed(t *testing.T) {
 	h, _, br := newTestHub()
-	br.callResults = map[string]json.RawMessage{methodKiroWorkflowResume: json.RawMessage(`{}`)}
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowResume:  json.RawMessage(`{}`),
+		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", ""),
+	}
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.resume(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -122,7 +128,7 @@ func TestDeleteChatStateByChain_AttributesByCause(t *testing.T) {
 			h, _, rig := newDeleteRig(t, kasRuns(t, map[string]any{
 				"workflowId": "wf_live", "name": "r", "status": "running", "parentSessionId": "sess_cur",
 			}))
-			insertChatBridge(t, h, rig, "c1", "sess_cur")
+			insertChatSession(t, h, rig, "c1", "sess_cur")
 
 			h.DeleteChatStateByChain(t.Context(), "c1", []string{"sess_cur"}, tc.cause)
 
@@ -145,7 +151,7 @@ func TestDeleteChatStateByChain_NamesTheChatDeletion(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	insertChatBridge(t, h, rig, "c1", "sess_cur")
+	insertChatSession(t, h, rig, "c1", "sess_cur")
 
 	h.DeleteChatStateByChain(t.Context(), "c1", []string{"sess_cur"}, command.RunStopChatDeleted)
 
@@ -166,7 +172,7 @@ func TestCloseChatState_NamesTheTabClose(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	insertChatBridge(t, h, rig, "c1", "sess_cur")
+	insertChatSession(t, h, rig, "c1", "sess_cur")
 
 	h.CloseChatState(t.Context(), "c1")
 
@@ -204,8 +210,8 @@ func TestPausePredicates_SpareAUserPark(t *testing.T) {
 			if h.runs.restartPaused(t.Context(), "wf_1") {
 				t.Error("restartPaused accepted a run the user parked, so the orphan sweep would cancel it")
 			}
-			if h.runs.involuntarilyPaused(t.Context(), "wf_1") {
-				t.Error("involuntarilyPaused accepted a run the user parked, so marotte would resume it unasked")
+			if resume, _ := autoResumable(t, h.runs, "wf_1"); resume {
+				t.Error("an automatic resume accepted a run the user parked, so marotte would resume it unasked")
 			}
 		})
 	}
@@ -248,7 +254,7 @@ func TestLaunch_OnlyAScheduledRunSendsALabel(t *testing.T) {
 	t.Run("scheduled", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_sched")
-		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1", time.Now().Add(time.Hour)); err != nil {
+		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1", marotte.RunDefaults{}, time.Now().Add(time.Hour)); err != nil {
 			t.Fatalf("LaunchScheduled: %v", err)
 		}
 		if got := br.paramsFor(methodKiroWorkflowNew)["runLabel"]; got != "publish · scheduled" {
@@ -258,7 +264,7 @@ func TestLaunch_OnlyAScheduledRunSendsALabel(t *testing.T) {
 	t.Run("manual", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_manual")
-		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
+		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 			t.Fatalf("Launch: %v", err)
 		}
 		if got, ok := br.paramsFor(methodKiroWorkflowNew)["runLabel"]; ok {

@@ -14,33 +14,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// A bridge whose stream ends while registered died on its own, and Forward must reap it:
-// an unreaped acp-server holds KAS's workflow ownership lease and refuses later resumes.
-func TestForward_ReapsARegisteredBridgeThatDied(t *testing.T) {
-	h, _, br := newTestHub()
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
-
-	// endStream, not Stop, or the fixture satisfies the assertion itself.
-	br.endStream()
-	h.coord.Forward("c1", br)
-
-	if !br.isStopped() {
-		t.Error("bridge.isStopped() = false, want true (a registered bridge that died must be reaped)")
-	}
-}
-
-// A bridge removed from the map first has its own closer; Forward must not reap it.
-func TestForward_DoesNotReapAnUnregisteredBridge(t *testing.T) {
-	h, _, br := newTestHub()
-
-	br.endStream()
-	h.coord.Forward("c1", br)
-
-	if br.isStopped() {
-		t.Error("bridge.isStopped() = true, want false (an unregistered exit is a deliberate teardown)")
-	}
-}
-
 // A waiting_on_user claim is owed to the agent; when it dies the claim is false.
 func TestForward_DischargesWaitingOnUserWhenTheAgentDies(t *testing.T) {
 	h, _, br := newTestHub()
@@ -76,13 +49,14 @@ func TestForward_LeavesANonWaitingStatusAlone(t *testing.T) {
 }
 
 // The exit line says which kind of exit it was and names the session. Not parallel: swaps the slog default.
-func TestForward_BridgeExitedNamesSessionAndWhetherItEndedItself(t *testing.T) {
+func TestForward_BridgeExitedNamesSessionAndCause(t *testing.T) {
 	cases := []struct {
 		name       string
+		cause      string
 		registered bool
 	}{
-		{name: "died while registered", registered: true},
-		{name: "removed before its stream ended", registered: false},
+		{name: "ended while registered", registered: true, cause: "ended"},
+		{name: "closed by marotte before its stream ended", cause: "closed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -108,19 +82,20 @@ func TestForward_BridgeExitedNamesSessionAndWhetherItEndedItself(t *testing.T) {
 			if got, want := exited["session_id"], string(br.SessionID()); got != want {
 				t.Errorf("bridge exited session_id = %v, want %q", got, want)
 			}
-			if got := exited["ended_itself"]; got != tc.registered {
-				t.Errorf("bridge exited ended_itself = %v, want %t", got, tc.registered)
+			if got := exited["cause"]; got != tc.cause {
+				t.Errorf("bridge exited cause = %v, want %q", got, tc.cause)
 			}
 		})
 	}
 }
 
-// A bridge's end retires the asks it carried, each announced as ended so a card on screen says why,
-// and nothing else: a successor's asks on the same chat stay answerable however the bridge ended,
-// even under the ACP ids the old bridge used, since every bridge mints them from zero. A stale entry
-// would also hold a crashed run's idle window open.
+// A session's end retires the asks it carried, each announced as ended so a card on screen says why,
+// and nothing else: a successor's asks on the same chat stay answerable however the session ended. After an engine
+// exit the next generation's connection mints ACP ids from zero again, so the successor reuses the old ids; a
+// session closed within one generation leaves a successor on the same connection, which never repeats an id. A stale
+// entry would also hold a crashed run's idle window open.
 func TestBridgeEnd_RetiresTheAsksItCarriedAsEnded(t *testing.T) {
-	for name, endedItself := range map[string]bool{"endedItself": true, "replacedBySuccessor": false} {
+	for name, engineExited := range map[string]bool{"engineExited": true, "replacedBySuccessor": false} {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			successor := newFakeBridge()
@@ -128,13 +103,17 @@ func TestBridgeEnd_RetiresTheAsksItCarriedAsEnded(t *testing.T) {
 				marotte.PermissionNeededPayload{RunID: "wf_1", NodeID: "a"}), br))
 			oldQuestion := requestIDOf(t, h.bus.PendingPermsAdd(8, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 				marotte.UserInputNeededPayload{}), br))
-			// The successor reuses both ids: 7 for the same kind, 8 for another.
-			succPerm := requestIDOf(t, h.bus.PendingPermsAdd(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+			succIDs := []int64{9, 10}
+			if engineExited {
+				// A new generation: 7 again for the same kind, 8 for another.
+				succIDs = []int64{7, 8}
+			}
+			succPerm := requestIDOf(t, h.bus.PendingPermsAdd(succIDs[0], marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 				marotte.PermissionNeededPayload{Options: []marotte.PermissionOption{{OptionID: "allow"}}}), successor))
-			succElicit := requestIDOf(t, h.bus.PendingPermsAdd(8, marotte.NewEvent(marotte.EventElicitationNeeded, "c1",
+			succElicit := requestIDOf(t, h.bus.PendingPermsAdd(succIDs[1], marotte.NewEvent(marotte.EventElicitationNeeded, "c1",
 				marotte.ElicitationNeededPayload{}), successor))
-			registered := ACPBridge(successor)
-			if endedItself {
+			registered := engineSession(successor)
+			if engineExited {
 				registered = br
 			}
 			h.bridge.mgr.insert("c1", &sharedBridge{bridge: registered, state: bridgeIdle})
@@ -168,8 +147,8 @@ func TestBridgeEnd_RetiresTheAsksItCarriedAsEnded(t *testing.T) {
 					t.Fatalf("%s to the successor = %d (%s), want 200", cmd.Type, rec.Code, rec.Body.String())
 				}
 			}
-			if got := successor.answeredIDs(); !slices.Equal(got, []int64{7, 8}) {
-				t.Errorf("successor answered ACP ids %v, want its own [7 8]", got)
+			if got := successor.answeredIDs(); !slices.Equal(got, succIDs) {
+				t.Errorf("successor answered ACP ids %v, want its own %v", got, succIDs)
 			}
 		})
 	}
@@ -192,7 +171,7 @@ func TestChatTeardown_RetiresTheBridgesAsksAsEnded(t *testing.T) {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 			askID := requestIDOf(t, h.bus.PendingPermsAdd(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
-				marotte.PermissionNeededPayload{}), br))
+				marotte.PermissionNeededPayload{}), guardSession(br)))
 			head := h.bus.fanout.Position().Head
 
 			teardown(h)
@@ -226,54 +205,12 @@ func mcpStatusFrame(t *testing.T, uris map[string]string) *marotte.RPCResponse {
 	return &marotte.RPCResponse{Method: methodV3MCPStatus, Params: params}
 }
 
-func poolBody(t *testing.T, h *Runtime, chatID string) string {
+func poolBody(t *testing.T, h *Runtime, query string) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	h.mcpRegistry.handlePool(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/pool?chat_id="+chatID, nil))
+	h.mcpRegistry.handlePool(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/pool"+query, nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /api/mcp/pool?chat_id=%s status = %d, want 200", chatID, rec.Code)
+		t.Fatalf("GET /api/mcp/pool%s status = %d, want 200", query, rec.Code)
 	}
 	return strings.TrimSpace(rec.Body.String())
-}
-
-// A replaced bridge still draining must not overwrite or clear the serving bridge's pool;
-// one dying with no replacement takes its pool.
-func TestForward_MCPPoolBelongsToTheBridgeThatReportedIt(t *testing.T) {
-	cases := []struct {
-		name     string
-		replaced bool
-		want     string
-	}{
-		{name: "bridge died", replaced: false, want: `{"servers":[]}`},
-		{
-			name: "old bridge reports and exits after its replacement", replaced: true,
-			want: `{"servers":[{"name":"docs","resources":[{"name":"new://r","uri":"new://r"}],"resource_templates":[]}]}`,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h, _, old := newTestHub()
-			if tc.replaced {
-				replacement := newFakeBridge()
-				h.bridge.mgr.insert("c1", &sharedBridge{bridge: replacement, state: bridgeIdle})
-				h.coord.recordPool(replacement, mcpStatusFrame(t, map[string]string{"docs": "new://r"}))
-			} else {
-				h.bridge.mgr.insert("c1", &sharedBridge{bridge: old, state: bridgeIdle})
-			}
-
-			old.deliver(mcpStatusFrame(t, map[string]string{"docs": "old://r"}))
-			old.endStream()
-			h.coord.Forward("c1", old)
-
-			if got := poolBody(t, h, "c1"); got != tc.want {
-				t.Errorf("c1 pool after the old bridge exited = %s, want %s", got, tc.want)
-			}
-			h.mcpRegistry.mu.RLock()
-			_, oldKept := h.mcpRegistry.pools[old]
-			h.mcpRegistry.mu.RUnlock()
-			if oldKept {
-				t.Error("the exited bridge's pool is still held, want it dropped")
-			}
-		})
-	}
 }

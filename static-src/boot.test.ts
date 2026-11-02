@@ -11,6 +11,7 @@ import type { BootSnapshot } from "./boot-snapshot.js";
 import type { IdentityVerdict } from "./identity.js";
 import type { EffectiveSettings } from "./persist.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
+import { signedIn } from "./__test-helpers__/identity.js";
 
 /** A promise plus the handle to settle it, so a test can hold one read open and
  *  watch what the boot does without it. */
@@ -51,9 +52,10 @@ const m = vi.hoisted(() => {
       claims.applyRoute.length = 0;
     },
     loadList: vi.fn(),
+    notifyStreamConnected: vi.fn(),
     loadSettings: vi.fn(),
     resolveIdentity: vi.fn(),
-    refreshRetention: vi.fn(),
+    adoptRetention: vi.fn(),
     listTabs: vi.fn(),
     renderIdentity: vi.fn(),
     restoreAll: vi.fn(),
@@ -107,6 +109,7 @@ const m = vi.hoisted(() => {
     }),
     initGovernance: vi.fn(),
     initRuntimeHealth: vi.fn(),
+    initEngineStatus: vi.fn(),
     initStatusVersions: vi.fn(),
     loadVersions: vi.fn(),
     fetchCatalog: vi.fn(),
@@ -142,6 +145,7 @@ const m = vi.hoisted(() => {
 });
 
 vi.mock("./actions/index.js", () => ({ subscribeByName: m.subscribeByName }));
+vi.mock("./forge-store.js", () => ({ notifyStreamConnected: m.notifyStreamConnected }));
 // Only the action's NAME is read here (boot.ts subscribes by it rather than by a
 // literal), so the definition itself needs no behaviour.
 vi.mock("./actions/settings.js", () => ({ logout: { name: "settings.logout" } }));
@@ -196,12 +200,13 @@ vi.mock("./route-path.js", async (importOriginal) => ({
 vi.mock("./chat.js", () => ({ createSession: m.createSession }));
 vi.mock("./governance.js", () => ({ initGovernance: m.initGovernance }));
 vi.mock("./runtime-health.js", () => ({ initRuntimeHealth: m.initRuntimeHealth }));
+vi.mock("./engine-status.js", () => ({ initEngineStatus: m.initEngineStatus }));
 vi.mock("./status.js", () => ({
   initStatusVersions: m.initStatusVersions,
   setStatus: m.setStatus,
 }));
 vi.mock("./versions.js", () => ({ loadVersions: m.loadVersions }));
-vi.mock("./retention.js", () => ({ refreshRetention: m.refreshRetention }));
+vi.mock("./retention.js", () => ({ adoptRetention: m.adoptRetention }));
 // Present so re-adding a boot call to it fails the assertion, not the LINK.
 vi.mock("./run-store.js", () => ({
   rebuildLiveRuns: m.rebuildLiveRuns,
@@ -248,7 +253,7 @@ async function freshBoot(): Promise<typeof BootModule> {
   return (await import(/* @vite-ignore */ `./boot.ts?t=${bootSeq}`)) as typeof BootModule;
 }
 
-const SIGNED_IN: IdentityVerdict = { state: "signed_in", email: "someone@example.test" };
+const SIGNED_IN: IdentityVerdict = signedIn("someone@example.test");
 
 /** A record with something in it, so a paint that DID happen is distinguishable
  *  from the empty default. */
@@ -264,7 +269,6 @@ function arrangeHappy(settings: EffectiveSettings = settingsPayload()): void {
   m.loadSettings.mockResolvedValue(settings);
   m.resolveIdentity.mockResolvedValue(SIGNED_IN);
   m.loadList.mockResolvedValue(true);
-  m.refreshRetention.mockResolvedValue(undefined);
   m.listTabs.mockResolvedValue(true);
   m.createSession.mockResolvedValue(undefined);
   m.getSessions.mockReturnValue([{ id: "c1" }]);
@@ -292,17 +296,15 @@ beforeEach(() => {
 });
 
 describe("the boot issues its reads together", () => {
-  it("has all five in flight before any of them answers", async () => {
+  it("has all four in flight before any of them answers", async () => {
     // Held open, all of them, so the only way a call can be recorded below is if
     // the boot issued it WITHOUT waiting for the others.
     const settings = deferred<EffectiveSettings>();
     const identity = deferred<IdentityVerdict>();
     const chats = deferred<boolean>();
-    const retention = deferred<undefined>();
     m.loadSettings.mockReturnValue(settings.promise);
     m.resolveIdentity.mockReturnValue(identity.promise);
     m.loadList.mockReturnValue(chats.promise);
-    m.refreshRetention.mockReturnValue(retention.promise);
 
     const { startBoot } = await freshBoot();
     const booted = startBoot({ applyRoute: m.applyRoute });
@@ -310,17 +312,19 @@ describe("the boot issues its reads together", () => {
     expect(m.loadSettings).toHaveBeenCalledTimes(1);
     expect(m.resolveIdentity).toHaveBeenCalledTimes(1);
     expect(m.loadList).toHaveBeenCalledTimes(1);
-    expect(m.refreshRetention).toHaveBeenCalledTimes(1);
     expect(m.readBootSnapshot).toHaveBeenCalledTimes(1);
     // And nothing has been adopted, because nothing has answered.
     expect(m.renderIdentity).not.toHaveBeenCalled();
     expect(m.restoreAll).not.toHaveBeenCalled();
+    expect(m.adoptRetention).not.toHaveBeenCalled();
 
-    settings.resolve(settingsPayload());
+    const payload = settingsPayload({ chat_retention_days: 0 });
+    settings.resolve(payload);
     identity.resolve(SIGNED_IN);
     chats.resolve(true);
-    retention.resolve(undefined);
     await booted;
+    // Retention comes from the settings answer, not a read of its own.
+    expect(m.adoptRetention).toHaveBeenCalledWith(payload);
   });
 
   it("renders the identity row without waiting for the chat list", async () => {
@@ -468,6 +472,18 @@ describe("the chat list is read once per cold boot", () => {
     onTransportStatus("connected");
 
     expect(m.loadList).toHaveBeenCalledTimes(2);
+  });
+
+  // The forge rows may have changed while the stream was down; forge-store reads only once it has started.
+  it("tells the forge store on a RE-connect, and not on the connection the boot rides", async () => {
+    const { startBoot, onTransportStatus } = await freshBoot();
+    onTransportStatus("connected");
+    await startBoot({ applyRoute: m.applyRoute });
+    expect(m.notifyStreamConnected).not.toHaveBeenCalled();
+    onTransportStatus("disconnected");
+    onTransportStatus("connected");
+
+    expect(m.notifyStreamConnected).toHaveBeenCalledTimes(1);
   });
 
   it("recovers a read that FAILED while the stream was already up", async () => {
@@ -1036,7 +1052,7 @@ describe("a boot inside a reload loop", () => {
     );
   });
 
-  it("skips the fetch-only fan-outs and keeps the two that report state", async () => {
+  it("skips the fetch-only fan-outs and keeps the three that report state", async () => {
     m.bootMode.mockReturnValue("reduced");
 
     const { startBoot } = await freshBoot();
@@ -1045,9 +1061,10 @@ describe("a boot inside a reload loop", () => {
     expect(m.fetchCatalog).not.toHaveBeenCalled();
     expect(m.loadVersions).not.toHaveBeenCalled();
     expect(m.initStatusVersions).not.toHaveBeenCalled();
-    // Capability, and a degraded runtime: what a reader in this state needs most.
+    // Capability, a degraded runtime and the agent engine: what a reader in this state needs most.
     expect(m.initGovernance).toHaveBeenCalledTimes(1);
     expect(m.initRuntimeHealth).toHaveBeenCalledTimes(1);
+    expect(m.initEngineStatus).toHaveBeenCalledTimes(1);
     // The live-runs inventory is not fetched: the `connected` handshake states it.
     expect(m.rebuildLiveRuns).not.toHaveBeenCalled();
   });

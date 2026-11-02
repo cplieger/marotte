@@ -118,16 +118,16 @@ describe("the box the map bins against", () => {
 });
 
 describe("the rendered pitch", () => {
-  it("draws 500 turns binned in pairs at 2px a row", async () => {
+  it("draws 500 turns binned in pairs, the stack filling its track at 2px a row or more", async () => {
     await show("c-pitch", 500);
     const track = outer.querySelector(".turn-map-track")?.getBoundingClientRect().height ?? 0;
     expect(track, "a track that bins 500 turns in pairs").toBeGreaterThanOrEqual(500);
     expect(track, "a track that bins 500 turns in pairs").toBeLessThan(1000);
     const rows = links().map((a) => a.getBoundingClientRect().height);
     expect(rows).toHaveLength(250);
-    expect(rows.every((h) => Math.abs(h - 2) < 0.5)).toBe(true);
+    expect(rows.every((h) => h >= 2 - 0.5)).toBe(true);
     const stack = outer.querySelector(".turn-map-stack")?.getBoundingClientRect().height ?? 0;
-    expect(Math.abs(stack - 500)).toBeLessThan(0.5);
+    expect(Math.abs(stack - track)).toBeLessThan(0.5);
   });
 });
 

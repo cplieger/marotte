@@ -92,14 +92,14 @@ func (rp *replay) OpenReplayProjection(ctx context.Context, chatID marotte.ChatI
 }
 
 // MarkReplayLoadedAt records the session/load response's read-loop position and attempts one
-// settle, from the spawn goroutine: a replay already drained has no later frame to notice it.
+// settle, from the session-open goroutine: a replay already drained has no later frame to notice it.
 func (rp *replay) MarkReplayLoadedAt(chatID marotte.ChatID, at drainPoint) {
 	lp := rp.claimSettled(chatID, at.gen, false, func(d *replayDrain) { d.markLoadedAt(at) })
 	rp.adopt(chatID, lp, settleOnLoad)
 }
 
 // DiscardReplayProjection drops a chat's projection unsettled after a failed load; the fresh
-// session the spawn falls back to settles its gate.
+// session the open falls back to settles its gate.
 func (rp *replay) DiscardReplayProjection(chatID marotte.ChatID) {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()

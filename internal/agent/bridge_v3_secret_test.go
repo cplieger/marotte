@@ -208,8 +208,8 @@ func TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 	}
 }
 
-// TestSecretStoreIsSharedAcrossBridges pins that one bridge's DCR result is visible to the next.
-func TestSecretStoreIsSharedAcrossBridges(t *testing.T) {
+// TestSecretStoreIsSharedAcrossSessions pins that one session's DCR result is visible to the next.
+func TestSecretStoreIsSharedAcrossSessions(t *testing.T) {
 	store := newSecretStore(t)
 	ctx := t.Context()
 
@@ -244,12 +244,15 @@ func TestSecretRequestReportsOnlyUndecodableParams(t *testing.T) {
 	})
 }
 
-func startedChatBridge(t *testing.T, opts ...Option) *fakeBridge {
+// startedChatEngine opens a chat and returns the engine its session opened on.
+func startedChatEngine(t *testing.T, opts ...Option) *fakeEngine {
 	t.Helper()
 	cs := newTestChatStore()
 	br := newFakeBridge()
-	h := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs, opts...)
+	src := fakeEngineOf(func() engineSession { return br }, br)
+	h := newRuntimeOn(context.Background(), t.TempDir(), src, cs, opts...)
 	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
@@ -259,26 +262,26 @@ func startedChatBridge(t *testing.T, opts ...Option) *fakeBridge {
 	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	if br.lastStartOpts() == nil {
-		t.Fatal("the bridge was never started, so there is nothing to assert on")
+	if br.lastSessionOpts() == nil {
+		t.Fatal("the session was never opened, so there is nothing to assert on")
 	}
-	return br
+	return src.current()
 }
 
-// TestChatSpawn_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore pins both directions:
+// TestEngineSpawn_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore pins both directions:
 // declared without a store loses every credential; withheld with one re-runs OAuth.
-func TestChatSpawn_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore(t *testing.T) {
+func TestEngineSpawn_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore(t *testing.T) {
 	t.Run("a runtime with a credential store declares the capability", func(t *testing.T) {
-		br := startedChatBridge(t, WithConfigDir(t.TempDir()))
-		if !br.lastStartOpts().SecretStorage {
+		e := startedChatEngine(t, WithConfigDir(t.TempDir()))
+		if !e.opts.SecretStorage {
 			t.Error("a runtime holding a credential store did not declare secretStorage, " +
 				"so KAS never asks it to persist one and MCP OAuth re-registers per spawn")
 		}
 	})
 
 	t.Run("a runtime without one declares it off", func(t *testing.T) {
-		br := startedChatBridge(t)
-		if br.lastStartOpts().SecretStorage {
+		e := startedChatEngine(t)
+		if e.opts.SecretStorage {
 			t.Error("a runtime with no credential store declared secretStorage, so KAS " +
 				"hands it credentials that go nowhere")
 		}

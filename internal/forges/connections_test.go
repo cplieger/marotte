@@ -2,59 +2,37 @@ package forges
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/forgeapi"
 )
 
-func testConnectionStore(t *testing.T) (*connectionStore, string) {
-	t.Helper()
-	dir := t.TempDir()
-	return &connectionStore{path: filepath.Join(dir, connectionsFileName)}, dir
-}
-
-func saveRecords(t *testing.T, s *connectionStore, recs ...connectionRecord) {
-	t.Helper()
-	if err := s.update(t.Context(), func([]connectionRecord) []connectionRecord { return recs }); err != nil {
-		t.Fatalf("update: %v", err)
-	}
-}
-
-func githubRecord() connectionRecord {
-	return connectionRecord{ID: "github:github.com", Kind: KindGitHub, Host: "github.com", WebBaseURL: "https://github.com"}
-}
-
 func TestConnectionRecords_RoundTripAtMode0600(t *testing.T) {
-	s, _ := testConnectionStore(t)
+	dir := t.TempDir()
+	gitea := specFor(KindGitea, "127.0.0.1:3000")
+	gitea.WebBaseURL, gitea.APIBaseURL = "http://127.0.0.1:3000", "http://127.0.0.1:3000/api/v1"
+	gitea.CAPEM, gitea.ClientCertPEM, gitea.ClientKeyPEM, gitea.Proxy = "ca", "cert", "key", "http://proxy:3128"
+	gitea.PrivateAddresses, gitea.PlaintextHTTP, gitea.OAuthClientID = true, true, "client"
+	gitea.RotationCursor, gitea.OwnerScopes, gitea.Slot = "cursor", []string{"acme", "group/sub"}, 1
 	want := []connectionRecord{
-		githubRecord(),
-		{
-			ID: "gitea:127.0.0.1:3000", Kind: KindGitea, Host: "127.0.0.1:3000",
-			WebBaseURL: "http://127.0.0.1:3000", APIBaseURL: "http://127.0.0.1:3000/api/v1",
-			CAPEM: "ca", ClientCertPEM: "cert", ClientKeyPEM: "key", Proxy: "http://proxy:3128",
-			PrivateAddresses: true, PlaintextHTTP: true, OAuthClientID: "client",
-			HelperValue: "/'bin/marotte' git-credential", RotationCursor: "cursor",
-			OwnerScopes: []string{"acme", "group/sub"},
-		},
+		{connectionSpec: githubRecord()},
+		{connectionSpec: gitea, Standing: standingRefused},
 	}
-	saveRecords(t, s, want...)
+	writeRecords(t, dir, want...)
 
-	got, err := s.load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
+	got, err := newRecordsFile(dir).load()
+	if err != nil || !got.verified {
+		t.Fatalf("load() = %+v, %v; want a verified file", got, err)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("load() = %+v, want %+v", got, want)
+	if !reflect.DeepEqual(got.recs, want) {
+		t.Errorf("load() = %+v, want %+v", got.recs, want)
 	}
-	info, err := os.Stat(s.path)
+	info, err := os.Stat(filepath.Join(dir, connectionsFileName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,22 +42,23 @@ func TestConnectionRecords_RoundTripAtMode0600(t *testing.T) {
 }
 
 func TestConnectionRecords_MalformedFileIsMovedAsideNotOverwritten(t *testing.T) {
-	s, dir := testConnectionStore(t)
+	dir := t.TempDir()
+	f := newRecordsFile(dir)
 	garbage := []byte(`{"connections": [`)
-	if err := os.WriteFile(s.path, garbage, 0o600); err != nil {
+	if err := os.WriteFile(f.path, garbage, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := s.load()
-	if err != nil || len(got) != 0 {
-		t.Fatalf("load() over a malformed file = %+v, %v; want no records and no error", got, err)
+	got, err := f.load()
+	if err != nil || len(got.recs) != 0 || got.verified {
+		t.Fatalf("load() over a malformed file = %+v, %v; want no records, no error and no verdict to sweep by", got, err)
 	}
 	aside, err := filepath.Glob(filepath.Join(dir, connectionsFileName+".corrupt.*"))
 	if err != nil || len(aside) != 1 {
 		t.Fatalf("corrupt copies = %v (%v), want exactly one", aside, err)
 	}
 
-	saveRecords(t, s, githubRecord())
+	writeRecords(t, dir, connectionRecord{connectionSpec: githubRecord()})
 	kept, err := os.ReadFile(aside[0])
 	if err != nil {
 		t.Fatal(err)
@@ -87,73 +66,21 @@ func TestConnectionRecords_MalformedFileIsMovedAsideNotOverwritten(t *testing.T)
 	if string(kept) != string(garbage) {
 		t.Errorf("corrupt copy = %q after a write, want the original %q", kept, garbage)
 	}
-	if recs, err := s.load(); err != nil || len(recs) != 1 {
+	if recs, err := f.load(); err != nil || len(recs.recs) != 1 {
 		t.Errorf("load() after the write = %+v, %v; want the one new record", recs, err)
 	}
 }
 
-// failRecordWritesAfterOneRead lets one record-file read through, the check a
-// connect or disconnect makes first, and refuses every later one, so the
-// write after it fails.
-func failRecordWritesAfterOneRead(t *testing.T) {
-	t.Helper()
-	orig := enforceFileMode
-	t.Cleanup(func() { enforceFileMode = orig })
-	reads := 0
-	enforceFileMode = func(path string, mode os.FileMode) (os.FileMode, error) {
-		reads++
-		if reads > 1 {
-			return 0o660, atomicfile.ErrModeNotStored
-		}
-		return orig(path, mode)
-	}
-}
-
-// The record is the commit point: a reconnect whose record write fails keeps
-// the credential that worked.
-func TestManagerConnect_AFailedRecordWriteKeepsTheWorkingCredential(t *testing.T) {
-	isolateGit(t)
-	m := recordManager(t, &whoamiCore{})
-	old, ok, err := m.store.Load("github:github.com")
-	if err != nil || !ok {
-		t.Fatalf("Setup: Load() = %v, %v, want the seeded credential", ok, err)
-	}
-	failRecordWritesAfterOneRead(t)
-
-	rec := githubRecord()
-	if err := m.connect(t.Context(), &rec, "token-new"); err == nil {
-		t.Fatal("connect() with the record write refused = nil, want its error")
-	}
-	if got, ok, err := m.store.Load("github:github.com"); err != nil || !ok || got.Token != old.Token {
-		t.Errorf("credential after the failed reconnect = %q, %v, %v; want the previous %q", got.Token, ok, err, old.Token)
-	}
-}
-
-// A disconnect whose record write fails leaves the record with the credential
-// it authenticates with.
-func TestManagerDisconnect_AFailedRecordWriteKeepsTheConnection(t *testing.T) {
-	isolateGit(t)
-	m := recordManager(t, &whoamiCore{})
-	failRecordWritesAfterOneRead(t)
-
-	if err := m.disconnect(t.Context(), m.get("github:github.com")); err == nil {
-		t.Fatal("disconnect() with the record write refused = nil, want its error")
-	}
-	if _, ok, err := m.store.Load("github:github.com"); err != nil || !ok {
-		t.Errorf("credential after the failed disconnect = %v, %v; want it kept beside the record", ok, err)
-	}
-}
-
 func TestConnectionRecords_WidenedModeFailsTheLoadWithAReason(t *testing.T) {
-	s, _ := testConnectionStore(t)
-	saveRecords(t, s, githubRecord())
+	dir := t.TempDir()
+	writeRecords(t, dir, connectionRecord{connectionSpec: githubRecord()})
 	orig := enforceFileMode
 	t.Cleanup(func() { enforceFileMode = orig })
 	enforceFileMode = func(string, os.FileMode) (os.FileMode, error) {
 		return 0o660, atomicfile.ErrModeNotStored
 	}
 
-	recs, err := s.load()
+	got, err := newRecordsFile(dir).load()
 	if err == nil {
 		t.Fatal("load() over an unverifiable mode returned no error")
 	}
@@ -162,94 +89,38 @@ func TestConnectionRecords_WidenedModeFailsTheLoadWithAReason(t *testing.T) {
 			t.Errorf("load() error %q does not name %q", err, want)
 		}
 	}
-	if len(recs) != 1 || recs[0].ID != "github:github.com" {
-		t.Errorf("load() records = %+v, want the one record listed for its disconnected row", recs)
-	}
-	if uErr := s.update(t.Context(), func([]connectionRecord) []connectionRecord { return nil }); uErr == nil {
-		t.Error("update() over an unverifiable mode succeeded; the file must not be written")
-	}
-	if _, statErr := os.Stat(s.path); statErr != nil {
-		t.Errorf("record file gone after a refused load: %v", statErr)
+	if len(got.recs) != 1 || got.recs[0].ID != "github:github.com" || got.verified {
+		t.Errorf("load() = %+v, want the one record listed and the file unverified", got)
 	}
 }
 
 func TestConnectionRecords_SymlinkAtTheNameIsRefused(t *testing.T) {
-	s, dir := testConnectionStore(t)
+	dir := t.TempDir()
+	f := newRecordsFile(dir)
 	target := filepath.Join(dir, "elsewhere.json")
 	if err := os.WriteFile(target, []byte(`{"connections":[]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(target, s.path); err != nil {
+	if err := os.Symlink(target, f.path); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.load(); err == nil {
+	if _, err := f.load(); err == nil {
 		t.Error("load() through a symlink at the name returned no error")
 	}
 }
 
-func TestConnectionRecords_OneWriterLosesNoUpdate(t *testing.T) {
-	s, _ := testConnectionStore(t)
-	saveRecords(t, s, githubRecord())
-
-	const n = 25
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		for i := range n {
-			host := fmt.Sprintf("gitea%d.test", i)
-			rec := connectionRecord{ID: MakeID(KindGitea, host), Kind: KindGitea, Host: host}
-			if err := s.update(t.Context(), func(recs []connectionRecord) []connectionRecord {
-				return append(recs, rec)
-			}); err != nil {
-				t.Errorf("connect %d: %v", i, err)
-			}
-		}
-	})
-	wg.Go(func() {
-		for i := range n {
-			if err := s.update(t.Context(), func(recs []connectionRecord) []connectionRecord {
-				for j := range recs {
-					if recs[j].ID == "github:github.com" {
-						recs[j].RotationCursor = fmt.Sprint(i)
-					}
-				}
-				return recs
-			}); err != nil {
-				t.Errorf("cursor %d: %v", i, err)
-			}
-		}
-	})
-	wg.Wait()
-
-	recs, err := s.load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(recs) != n+1 {
-		t.Errorf("load() = %d records, want %d: a connect was lost", len(recs), n+1)
-	}
-	if i := slices.IndexFunc(recs, func(r connectionRecord) bool { return r.ID == "github:github.com" }); i < 0 ||
-		recs[i].RotationCursor != fmt.Sprint(n-1) {
-		t.Errorf("github record = %+v, want rotation cursor %d: a cursor write-back was lost", recs, n-1)
-	}
-}
-
-func TestConnectionRecords_ProbeStateIsNotPersisted(t *testing.T) {
-	dir := t.TempDir()
-	seedStoreRecord(t, dir, "github:github.com", "alice")
-	m := NewManager(dir)
-	saveRecords(t, m.conns, githubRecord())
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	m.mu.Lock()
-	row := m.forges["github:github.com"]
-	row.Email, row.LastProbed, row.LastError = "alice@example.test", 42, "probe failed"
-	m.mu.Unlock()
-	if err := m.conns.update(t.Context(), func(recs []connectionRecord) []connectionRecord { return recs }); err != nil {
-		t.Fatal(err)
+// Only the standing persists of a status: the login, email and check time are
+// memory, learnt again at the next check.
+func TestConnectionRecords_OnlyTheStandingOfAStatusPersists(t *testing.T) {
+	isolateGit(t)
+	cfg := t.TempDir()
+	seedConnections(t, cfg, "alice", githubRecord())
+	m, _ := loadedManager(t, cfg, &whoamiCore{err: &forgeapi.Error{Kind: forgeapi.KindForbidden, Message: "an IP allowlist"}})
+	if _, err := m.check(t.Context(), "github:github.com", checkBudget); err != nil {
+		t.Fatalf("check() = %v", err)
 	}
 
-	raw, err := os.ReadFile(m.conns.path)
+	raw, err := os.ReadFile(filepath.Join(cfg, connectionsFileName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,11 +130,12 @@ func TestConnectionRecords_ProbeStateIsNotPersisted(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	for _, rec := range doc.Connections {
-		for _, key := range []string{"email", "last_probed", "last_error", "connected", "username"} {
-			if _, ok := rec[key]; ok {
-				t.Errorf("record file carries %q, which is probe state: %s", key, raw)
-			}
+	if len(doc.Connections) != 1 || string(doc.Connections[0]["standing"]) != `"refused"` {
+		t.Fatalf("record file = %s, want the one record standing refused", raw)
+	}
+	for _, key := range []string{"email", "checked_at", "error", "status", "username", "login"} {
+		if _, ok := doc.Connections[0][key]; ok {
+			t.Errorf("record file carries %q, which is memory: %s", key, raw)
 		}
 	}
 }
@@ -292,28 +164,46 @@ func TestConnectionRecords_KindFamilyTable(t *testing.T) {
 	if got := Kind("bitbucket").family(); got != forgeapi.FamilyUnknown {
 		t.Errorf("an unknown kind's family = %v, want FamilyUnknown", got)
 	}
-	rec := connectionRecord{ID: "codeberg:codeberg.org", Kind: KindCodeberg, Host: "codeberg.org"}
-	if got := rec.webBase(); got != "https://codeberg.org" {
+	spec := specFor(KindCodeberg, "codeberg.org")
+	if got := spec.webBase(); got != "https://codeberg.org" {
 		t.Errorf("webBase() with no stored base = %q, want https://codeberg.org", got)
 	}
 }
 
+// A record is admitted at boot by the rules that admitted it at sign-in; the
+// first of two records with one id wins.
 func TestConnectionRecords_InvalidRecordsAreDropped(t *testing.T) {
-	s, _ := testConnectionStore(t)
-	body := `{"connections":[
-		{"id":"github:github.com","kind":"github","host":"github.com"},
-		{"id":"github:evil.test","kind":"github","host":"github.com"},
-		{"id":"bitbucket:bitbucket.org","kind":"bitbucket","host":"bitbucket.org"},
-		{"id":"github:github.com","kind":"github","host":"github.com"}
-	]}`
-	if err := os.WriteFile(s.path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
+	dir := t.TempDir()
+	f := newRecordsFile(dir)
+	cases := map[string]string{
+		"the id another host makes": `{"id":"github:evil.test","kind":"github","host":"github.com","sign_in":"s","slot":0}`,
+		"an unknown kind":           `{"id":"bitbucket:bitbucket.org","kind":"bitbucket","host":"bitbucket.org","sign_in":"s","slot":0}`,
+		"no sign-in id":             `{"id":"gitlab:gitlab.com","kind":"gitlab","host":"gitlab.com","slot":0}`,
+		"a third slot":              `{"id":"gitlab:gitlab.com","kind":"gitlab","host":"gitlab.com","sign_in":"s","slot":2}`,
+		"an unknown standing":       `{"id":"gitlab:gitlab.com","kind":"gitlab","host":"gitlab.com","sign_in":"s","slot":0,"standing":"maybe"}`,
+		"a host with a path":        `{"id":"gitea:x.test/p","kind":"gitea","host":"x.test/p","sign_in":"s","slot":0}`,
+		"a web base on another host": `{"id":"gitlab:gitlab.com","kind":"gitlab","host":"gitlab.com","sign_in":"s","slot":0,` +
+			`"web_base_url":"https://evil.test"}`,
+		"a web base not in its stored form": `{"id":"gitlab:gitlab.com","kind":"gitlab","host":"gitlab.com","sign_in":"s",` +
+			`"slot":0,"web_base_url":"https://GITLAB.com/"}`,
+		"a sign-in id over its bound": `{"id":"gitlab:gitlab.com","kind":"gitlab","host":"gitlab.com","slot":0,"sign_in":"` +
+			strings.Repeat("s", maxSignInBytes+1) + `"}`,
 	}
-	recs, err := s.load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(recs) != 1 || recs[0].ID != "github:github.com" {
-		t.Errorf("load() = %+v, want only the one well-formed, first-seen record", recs)
+	for name, bad := range cases {
+		t.Run(name, func(t *testing.T) {
+			body := `{"connections":[` +
+				`{"id":"github:github.com","kind":"github","host":"github.com","sign_in":"first","slot":0},` + bad + `,` +
+				`{"id":"github:github.com","kind":"github","host":"github.com","sign_in":"second","slot":1}]}`
+			if err := os.WriteFile(f.path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := f.load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.recs) != 1 || got.recs[0].ID != "github:github.com" || got.recs[0].SignIn != "first" {
+				t.Errorf("load() = %+v, want only the one well-formed, first-seen record", got.recs)
+			}
+		})
 	}
 }

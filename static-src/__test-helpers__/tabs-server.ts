@@ -56,6 +56,10 @@ interface State {
   listCalls: number;
   /** Releasers for responses being HELD, or null when responses resolve at once. */
   held: (() => void)[] | null;
+  /** The read bound `ack_tab` clamps to, per tab id; an id absent here is unbounded. */
+  readBounds: Map<string, number>;
+  /** The chat that launched each run, as the server's run owner answers it. */
+  runLaunchers: Map<string, string>;
 }
 
 const state: State = {
@@ -69,6 +73,8 @@ const state: State = {
   listAnswers: [],
   listCalls: 0,
   held: null,
+  readBounds: new Map(),
+  runLaunchers: new Map(),
 };
 
 export const tabServer = {
@@ -84,6 +90,29 @@ export const tabServer = {
     state.listAnswers = [];
     state.listCalls = 0;
     state.held = null;
+    state.readBounds = new Map();
+    state.runLaunchers = new Map();
+  },
+
+  /** Record the chat that launched a run, so an `open_tab` for it naming no open parent nests
+   *  under that chat's tab (the server's `Membership.runTabParent`). */
+  setRunLauncher(workflowID: string, chatID: string): void {
+    state.runLaunchers.set(workflowID, chatID);
+  },
+
+  /** The read position the server's state names for a tab: `ack_tab` clamps to it. */
+  setReadBound(id: string, bound: number): void {
+    state.readBounds.set(id, bound);
+  },
+
+  /** Acknowledge a tab the way ANOTHER device does: the server's rule, then a frame with no
+   *  `op_id`. */
+  ackRemotely(id: string, seen: number): void {
+    const frame = commitAck(id, seen);
+    if (frame !== null) {
+      state.pending.pop();
+      ingest(frame);
+    }
   },
 
   setMode(mode: Interleaving): void {
@@ -182,6 +211,15 @@ export const tabServer = {
     return commitOpen(spec);
   },
 
+  /** Close a tab the way ANOTHER device does and withhold its frame, so the next command still
+   *  names it; `flushFrames` delivers the frame afterwards. */
+  closeElsewhere(id: string): void {
+    const removed = descendants(id);
+    state.subjects = state.subjects.filter((s) => !removed.includes(s.id));
+    state.version++;
+    state.pending.push({ removed_ids: removed, version: state.version });
+  },
+
   /** Close a tab the way ANOTHER device does: commit it and emit a frame with no
    *  `op_id`, so the projection runs its local cleanup and dispatches nothing. */
   closeRemotely(id: string): void {
@@ -213,6 +251,16 @@ function subjectFor(kind: TabKind, ref: string): TabSubject | undefined {
   return state.subjects.find((s) => s.kind === kind && s.ref === ref);
 }
 
+/** The tab a run's launching chat holds, reopened when it was closed (the server's
+ *  `Membership.launcherTab`); "" for any other kind or an unrecorded run. */
+function runLauncherTab(kind: TabKind, ref: string): string {
+  const chatID = kind === "run" ? (state.runLaunchers.get(ref) ?? "") : "";
+  if (chatID === "") {
+    return "";
+  }
+  return (subjectFor("chat", chatID) ?? commitOpen({ kind: "chat", ref: chatID, owns: true })).id;
+}
+
 /** Append a subject at its canonical position: a child after its parent's
  *  existing children, a top-level tab at the end. Mirrors the store's Open. */
 function commitOpen(spec: SeedSpec): TabSubject {
@@ -239,6 +287,27 @@ function commitOpen(spec: SeedSpec): TabSubject {
   state.version++;
   state.pending.push({ changed: subject, version: state.version });
   return subject;
+}
+
+/** The server's ack rule: clamp to the bound, store only a value past the stored one. Answers the
+ *  frame it queued, or null when nothing moved. */
+function commitAck(id: string, seen: number): TabsChangedPayload | null {
+  const at = state.subjects.findIndex((s) => s.id === id);
+  if (at < 0) {
+    return null;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by the index check
+  const before = state.subjects[at]!;
+  const clamped = Math.min(seen, state.readBounds.get(id) ?? Number.POSITIVE_INFINITY);
+  if (clamped <= (before.seen ?? 0)) {
+    return null;
+  }
+  const after: TabSubject = { ...before, seen: clamped };
+  state.subjects[at] = after;
+  state.version++;
+  const frame: TabsChangedPayload = { changed: after, version: state.version };
+  state.pending.push(frame);
+  return frame;
 }
 
 /** An id and every tab beneath it, deepest first, which is the order a close
@@ -286,10 +355,12 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
           body: { subject: existing, created: false, version: state.version },
         };
       }
+      const asked = (payload["parent"] as string | undefined) ?? "";
+      const held = asked !== "" && state.subjects.some((s) => s.id === asked);
       const subject = commitOpen({
         kind,
         ref,
-        parent: (payload["parent"] as string | undefined) ?? "",
+        parent: held ? asked : runLauncherTab(kind, ref),
         owns: payload["owns"] === true,
       });
       stamp(payload);
@@ -368,6 +439,14 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
       });
       stamp(payload);
       return { ok: true, status: 200, body: { subject: after, version: state.version } };
+    }
+    case "ack_tab": {
+      const id = payload["id"] as string;
+      if (commitAck(id, payload["seen"] as number) !== null) {
+        stamp(payload);
+      }
+      const seen = state.subjects.find((s) => s.id === id)?.seen ?? 0;
+      return { ok: true, status: 200, body: { version: state.version, seen } };
     }
     case "reorder_tabs": {
       const order = payload["order"] as string[];

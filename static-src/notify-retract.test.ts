@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { NotificationRegistration } from "./notify.js";
-import { chatTarget, runTarget } from "./push-subject.js";
+import { join } from "@cplieger/keyenc";
+import { chatTarget, pushTargetTag, runAskTarget, runTarget } from "./push-subject.js";
 import { noticeFor } from "./__test-helpers__/notice.js";
 
 vi.mock("./persist.js", () => ({
-  patchSettings: (): Promise<{ ok: boolean }> => Promise.resolve({ ok: true }),
+  patchSettings: (): Promise<{ outcome: string }> => Promise.resolve({ outcome: "committed" }),
 }));
 vi.mock("./actions/notify.js", () => ({
   registerPush: { dispatch: (): Promise<null> => Promise.resolve(null) },
@@ -160,6 +161,60 @@ describe("closeNotificationsExcept", () => {
       ["marotte:c1", true],
       ["marotte:c2", false],
       ["marotte", false],
+    ]);
+  });
+});
+
+describe("a step question's banners", () => {
+  const wait = (workflowID: string, step: string): string =>
+    join(workflowID, join(workflowID, step), `${step}-sess`);
+  const tag = (position: string): string => pushTargetTag(runAskTarget(position));
+
+  it("closes one run's banners for the waits a readable snapshot no longer holds, and no other run's", async () => {
+    const { reg, closed } = fakeRegistration([
+      tag(wait("wf_1", "a")),
+      tag(wait("wf_1", "b")),
+      tag(wait("wf_2", "a")),
+      "marotte:run:wf_1",
+    ]);
+    notify._setRegistrationForTest(() => Promise.resolve(reg));
+
+    await notify.closeRunAsksExcept("wf_1", new Set([wait("wf_1", "b")]));
+
+    expect(closed).toEqual([tag(wait("wf_1", "a"))]);
+  });
+
+  it("keeps a pending set's unread run's banners and closes the rest it does not name", async () => {
+    const { reg, closed } = fakeRegistration([
+      tag(wait("wf_1", "a")),
+      tag(wait("wf_2", "a")),
+      tag(wait("wf_3", "a")),
+    ]);
+    notify._setRegistrationForTest(() => Promise.resolve(reg));
+
+    await notify.closeNotificationsExcept(new Set([tag(wait("wf_3", "a"))]), new Set(["wf_2"]));
+
+    expect(closed).toEqual([tag(wait("wf_1", "a"))]);
+  });
+
+  it("keeps a hashed wait, which names no run, only when the set names it exactly", async () => {
+    const hashed = join("x".repeat(9000));
+    const { reg, closed } = fakeRegistration([tag(hashed)]);
+    notify._setRegistrationForTest(() => Promise.resolve(reg));
+
+    await notify.closeNotificationsExcept(new Set(), new Set([""]));
+
+    expect(closed).toEqual([tag(hashed)]);
+  });
+
+  it("closes the page's own banner for a wait that ended", async () => {
+    notify._setRegistrationForTest(() => Promise.resolve(null));
+    notify.notifyOffScreen(noticeFor(runAskTarget(wait("wf_1", "a")), "Ship it?"));
+
+    await notify.closeRunAsksExcept("wf_1", new Set());
+
+    expect(FakeNotification.instances.map((n) => [n.tag, n.closed])).toEqual([
+      [tag(wait("wf_1", "a")), true],
     ]);
   });
 });

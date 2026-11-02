@@ -1,9 +1,10 @@
 package command
 
 import (
+	"cmp"
 	"context"
 
-	"github.com/cplieger/marotte/internal/chatlock"
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 )
@@ -17,12 +18,12 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		Bus:      r.Bus,
 		Teardown: r.Teardown,
 		CloseChat: func(ctx context.Context, chatID marotte.ChatID) {
-			closeChatTeardown(ctx, r.Bridges, r.Stops, r.Teardown, chatID)
+			closeChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID)
 		},
 		// The delete grade, for a chat the close already erased: everything
 		// travels on the captured chain, since the record is gone by now.
 		DeleteChat: func(ctx context.Context, chatID marotte.ChatID, sessionChain []string) {
-			deleteChatTeardown(ctx, r.Bridges, r.Stops, r.Teardown, chatID, sessionChain)
+			deleteChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID, sessionChain)
 		},
 		// Fails toward KEEPING — deliberately not the purge's reader, whose
 		// 0-sentinel points the other way.
@@ -39,7 +40,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	})
 
 	d.Register(marotte.CmdCreateChat, bind1(mem, cmdCreateChat))
-	d.Register(marotte.CmdResumeSession, bind1(mem, cmdResumeSession))
+	d.Register(marotte.CmdResumeSession, bind2(mem, r.StepSessions, cmdResumeSession))
 	d.Register(marotte.CmdCompact, bind1(r.Bridges, cmdCompact))
 
 	d.Register(marotte.CmdOpenTab, bind1(mem, cmdOpenTab))
@@ -47,6 +48,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.Register(marotte.CmdReorderTabs, bind1(mem, cmdReorderTabs))
 	d.Register(marotte.CmdPinTab, bind1(mem, cmdPinTab))
 	d.Register(marotte.CmdReparentTab, bind1(mem, cmdReparentTab))
+	d.Register(marotte.CmdAckTab, bind1(mem, cmdAckTab))
 
 	d.Register(marotte.CmdApproveSpecPhase, bind3(r.SpecApprovals, r.Workspace, r.Bus, cmdApproveSpecPhase))
 
@@ -58,7 +60,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.Register(marotte.CmdElicitationResponse, bind1(r.Perms, cmdElicitationResponse))
 	d.Register(marotte.CmdUserInputResponse, bind1(r.Perms, cmdUserInputResponse))
 	d.Register(marotte.CmdRewindChat, bind5(r.Bridges, r.Chats, r.Admission, r.RunCutter, r.Bus, cmdRewindChat))
-	configLocks := chatlock.New()
+	configLocks := keylock.New(cmp.Compare[marotte.ChatID])
 	d.Register(marotte.CmdSetEffort, bind6(r.Bridges, r.Chats, r.Bus, r.Workspace, r.Effort, configLocks, cmdSetEffort))
 	d.Register(marotte.CmdSetThinking, bind3(r.Bridges, r.Chats, configLocks, cmdSetThinking))
 	d.Register(marotte.CmdSetMode, bind4(r.Bridges, r.Chats, r.Bus, r.Modes, cmdSetMode))
@@ -69,7 +71,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 
 	d.Register(marotte.CmdQueuePrompt, bind1(r.Queue, cmdQueuePrompt))
 	d.Register(marotte.CmdSetInterruptMode, bind1[chatMutator](r.Chats, cmdSetInterruptMode))
-	d.Register(marotte.CmdRenameChat, bind3(r.Bridges, r.Chats, r.Renamer, cmdRenameChat))
+	d.Register(marotte.CmdRenameChat, bind2(r.Chats, r.Renamer, cmdRenameChat))
 
 	prompt := &promptRoles{
 		bridges:     r.Bridges,
@@ -84,6 +86,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		jobs:        r.SteerJobs,
 		followups:   r.Queue,
 		compactor:   r.Compactor,
+		sendGate:    r.SendGate,
 		auth:        r.AuthReadiness,
 	}
 	d.prompts = prompt

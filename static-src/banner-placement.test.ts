@@ -5,8 +5,8 @@
 // equal-specificity ties are decided by that order.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { page } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
-import messagesCss from "./css/13-messages.css?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 describe("banner band placement (static/index.html)", () => {
@@ -150,11 +150,63 @@ describe("--chat-toolbar-h is the toolbar's real box height", () => {
 });
 
 describe("the banner band on a phone", () => {
-  it("returns to the flow", () => {
-    // Read off the CSSOM: the 1280px test viewport cannot reach it. On a short screen an
-    // overlay would cover the live turn, so the band takes flow space.
-    const media = messagesCss.match(/@media \(width <= 48rem\) \{\s*\.banner-stack \{([^}]*)\}/);
-    expect(media, "13-messages.css must carry the band's own <=48rem block").not.toBeNull();
-    expect(media?.[1]).toContain("position: static");
+  let styleEl: HTMLStyleElement;
+  let app: HTMLElement;
+  let entry: { readonly width: number; readonly height: number };
+
+  beforeAll(async () => {
+    entry = { width: window.innerWidth, height: window.innerHeight };
+    styleEl = mountAppCSS();
+    app = document.createElement("div");
+    app.id = "app";
+    app.innerHTML = `
+      <main id="chat-area">
+        <div class="chat-toolbar"><button type="button" class="icon-btn" aria-label="Search"></button></div>
+        <div id="chat-view" data-tab-view>
+          <div id="banner-stack" class="banner-stack"></div>
+          <div id="messages-wrap-outer"><div id="messages-wrap"></div></div>
+        </div>
+      </main>`;
+    document.body.appendChild(app);
+    await page.viewport(390, 844);
+    expect(window.innerWidth, "viewport actually resized").toBe(390);
+  });
+
+  afterAll(async () => {
+    styleEl?.remove();
+    app?.remove();
+    await page.viewport(entry.width, entry.height);
+  });
+
+  const rect = (sel: string): DOMRect =>
+    app.querySelector<HTMLElement>(sel)!.getBoundingClientRect();
+
+  it("meets the scroller to the toolbar's edge while empty, with no canvas strip between", () => {
+    // An empty band in flow would reserve its `--sp-2` offset as a strip of canvas that
+    // the scrolled turn card is clipped against.
+    expect(rect("#messages-wrap").top).toBeCloseTo(rect(".chat-toolbar").bottom, 1);
+    expect(getComputedStyle(app.querySelector("#banner-stack")!).position).toBe("absolute");
+  });
+
+  it("keeps a lone toast's anchor at the desktop offset below the toolbar", () => {
+    const band = rect("#banner-stack");
+    expect(band.height).toBe(0);
+    expect(band.bottom).toBeCloseTo(rect(".chat-toolbar").bottom + 8, 1);
+  });
+
+  it("returns to the flow once it holds a banner, under the toolbar and over the scroller", () => {
+    const stack = app.querySelector<HTMLElement>("#banner-stack")!;
+    const banner = document.createElement("div");
+    banner.className = "banner banner-error";
+    banner.innerHTML = `<span class="banner-msg">A message.</span>`;
+    stack.appendChild(banner);
+    try {
+      expect(getComputedStyle(stack).position).toBe("static");
+      expect(rect("#banner-stack").top).toBeCloseTo(rect(".chat-toolbar").bottom, 1);
+      expect(getComputedStyle(stack).paddingBlockStart).toBe("8px");
+      expect(rect("#messages-wrap").top).toBeCloseTo(rect("#banner-stack").bottom, 1);
+    } finally {
+      banner.remove();
+    }
   });
 });

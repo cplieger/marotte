@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/turnlog"
 	"github.com/cplieger/marotte/internal/workflow"
@@ -55,7 +56,10 @@ func (rs *Runs) RunNodeComplete(ctx context.Context, runID string, path []string
 		slog.Debug("run log: node_complete for a path with no open turn", "run", runID, "node_path", nodePath)
 	}
 	translate.PublishSealed(ctx, rs.bus, "", runID, sealed)
-	rs.noteStepEnded(ctx, runID, path, sealed)
+	rs.noteStepEnded(runID, path, sealed)
+	if closed {
+		rs.quietEdge()
+	}
 }
 
 // stepNoteRefused and stepNoteModelCallLimit name why a step left the launching chat a note, in its steer id.
@@ -72,29 +76,45 @@ func stepNoteID(workflowID, cause, nodePath string) string {
 
 // A step KAS graded completed that did not finish: declined, or stopped at kiro-cli's model-call limit.
 // It reaches the human reading the chat, not the agent (recordSteer never calls _session/steer).
-// Only CloseNode's close gets here.
-func (rs *Runs) noteStepEnded(ctx context.Context, workflowID string, path []string, sealed []turnlog.Sealed) {
-	c, ok := turnCloseOf(sealed)
+// Only CloseNode's close gets here. The grade needs KAS's record of the node, an engine read, so it runs off the
+// frame's goroutine.
+func (rs *Runs) noteStepEnded(workflowID string, path []string, sealed []turnlog.Sealed) {
+	tc, ok := turnCloseOf(sealed)
 	if !ok {
 		return
 	}
-	var cause string
-	switch {
-	case c.Outcome == marotte.TurnOutcomeRefused:
-		cause = stepNoteRefused
-	case c.FailureKind == marotte.FailureKindModelCallLimit:
-		cause = stepNoteModelCallLimit
-	default:
+	c := stepCloseOf(&tc)
+	if !c.mayNote() || rs.lifecycle == nil {
 		return
 	}
 	l, held := rs.lease(workflowID)
 	if !held || l.ChatID == "" || rs.coord == nil {
 		return
 	}
+	nodePath := workflow.PathKey(path)
+	rs.lifecycle.goUnlessDraining(func() {
+		ctx, cancel := rs.lifecycle.derivedContext()
+		defer cancel()
+		rs.noteGradedStepEnd(ctx, &l, path, c.graded(rs.kasStep(ctx, workflowID, nodePath)))
+	})
+}
+
+// noteGradedStepEnd leaves the note a graded step end calls for, if any.
+func (rs *Runs) noteGradedStepEnd(ctx context.Context, l *runlease.Lease, path []string, c stepClose) {
+	var cause string
+	switch {
+	case c.outcome == marotte.TurnOutcomeRefused:
+		cause = stepNoteRefused
+	case c.kind == marotte.FailureKindModelCallLimit:
+		cause = stepNoteModelCallLimit
+	default:
+		return
+	}
+	workflowID := l.WorkflowID
 	recipe := cmp.Or(l.Recipe, "Workflow run")
 	text := stepModelCallLimitNoteText(recipe, path)
 	if cause == stepNoteRefused {
-		text = stepRefusalNoteText(recipe, path, c.Refusal)
+		text = stepRefusalNoteText(recipe, path, c.refusal)
 	}
 	rs.coord.recordSteer(ctx, marotte.ChatID(l.ChatID), stepNoteID(workflowID, cause, workflow.PathKey(path)), &marotte.EntrySteer{
 		Text:       text,
@@ -121,9 +141,9 @@ func turnCloseOf(sealed []turnlog.Sealed) (marotte.EntryTurnClose, bool) {
 	return marotte.EntryTurnClose{}, false
 }
 
-// stepModelCallLimitNoteText names the step and carries the step close's own remedy.
+// stepModelCallLimitNoteText names the step by workflow.PathKey, as an included node's id holds a '/'.
 func stepModelCallLimitNoteText(recipe string, path []string) string {
-	return recipe + " step " + strings.Join(path, "/") + " stopped early. " + marotte.ModelCallLimitStepReason
+	return recipe + " step " + workflow.PathKey(path) + " stopped early. " + marotte.ModelCallLimitStepReason
 }
 
 // stepRefusalNoteText names the step and does not invite a re-run: a refusal is deterministic.
@@ -132,7 +152,7 @@ func stepRefusalNoteText(recipe string, path []string, r *marotte.RefusalInfo) s
 	var b strings.Builder
 	b.WriteString(recipe)
 	b.WriteString(" step ")
-	b.WriteString(strings.Join(path, "/"))
+	b.WriteString(workflow.PathKey(path))
 	b.WriteString(" was declined by the model")
 	if r != nil && r.Category != "" {
 		b.WriteString(" (")
@@ -152,7 +172,7 @@ func (rs *Runs) RunFoldTarget(ctx context.Context, step *translate.RunStep, chat
 	if rs.log == nil {
 		return nil, false
 	}
-	if t := rs.log.foldTurn(step); t != nil {
+	if t := rs.log.turn(step.RunID, step.NodePath); t != nil {
 		return t, true
 	}
 	if rs.log.hasClosed(step.RunID, step.NodePath) {
@@ -208,6 +228,7 @@ func (rs *Runs) closeRun(ctx context.Context, runID, status string) {
 		slog.Warn("run log: close run", "run", runID, "error", err)
 	}
 	translate.PublishSealed(ctx, rs.bus, "", runID, sealed)
+	rs.quietEdge()
 	// Words KAS took but never opened a turn for still belong to the step's record.
 	staged := rs.log.takeStaged(runID)
 	for _, path := range slices.Sorted(maps.Keys(staged)) {
@@ -236,7 +257,7 @@ func (rs *Runs) deleteRunLog(ctx context.Context, runID string) {
 	translate.PublishSealed(ctx, rs.bus, "", runID, sealed)
 }
 
-// The targets stay: a re-hosted run's next message binds them.
+// The targets stay: the run's next message on a reloaded host session binds them.
 func (rs *Runs) endHostedSteers(ctx context.Context, host marotte.ChatID) {
 	for _, workflowID := range rs.steers.runsHostedBy(host) {
 		rs.steers.end(ctx, workflowID, "", false)

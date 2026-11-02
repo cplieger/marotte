@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { signal } from "@cplieger/reactive";
 import type { PageFind } from "./find-registry.js";
 import type * as ModHistory from "./history.js";
@@ -6,6 +6,8 @@ import { ICON_TAB_RUN, outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { absoluteTime } from "./relative-time.js";
 import { forgetRun, noteRunChat } from "./run-store.js";
+import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 
 /**
  * Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (URL-keyed module map). The `.ts`
@@ -45,9 +47,6 @@ vi.mock("./actions/runs.js", () => ({
   deleteRun: { dispatch: deleteRunDispatch },
 }));
 vi.mock("./confirm.js", () => ({ confirm: confirmMock }));
-// The subtitle joins each row against the chat record the client holds, so the store is a real input here.
-const storeGet = vi.fn((_id: string): unknown => undefined);
-vi.mock("./store.js", () => ({ get: storeGet }));
 vi.mock("./roles.js", () => ({
   labelForMode: (id: string) => (id === "vibe" ? "Default" : id),
   // Present-but-inert for real-ESM linking; no case calls them.
@@ -379,7 +378,7 @@ describe("history: opening a row", () => {
     await failReload();
     current!.forceHistoryTab("runs");
     await openFind();
-    const input = document.getElementById("hist-filter-input") as HTMLInputElement;
+    const input = document.getElementById("hist-run-search-input") as HTMLInputElement;
     input.value = "feature";
     // Enter runs the filter in this tick, so the pane is read after its render.
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
@@ -983,6 +982,8 @@ async function search(
   result: unknown,
   query = "redis",
 ): Promise<{ table: HTMLElement; note: HTMLElement; find: PageFind }> {
+  // The box's debounce and the popup's close fallback run on the faked clock, stepped past rather than slept out.
+  useSteppableClock();
   mountView();
   dispatch.mockResolvedValue({ sessions: [], runs: [] });
   searchDispatch.mockResolvedValue(result as never);
@@ -994,11 +995,11 @@ async function search(
   const input = document.getElementById("hist-search-input") as HTMLInputElement;
   input.value = query;
   input.dispatchEvent(new Event("input"));
-  await vi.waitFor(() => {
+  await waitForOnClock(() => {
     if (searchDispatch.mock.calls.length === 0) {
       throw new Error("not searched");
     }
-  });
+  }, FRAME_BUDGET_MS);
   await vi.waitFor(() => {
     if ((document.getElementById("hist-search-note")?.textContent ?? "") === "") {
       throw new Error("no note yet");
@@ -1013,6 +1014,9 @@ async function search(
 
 describe("history: cross-chat search", () => {
   beforeEach(resetAll);
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("renders matching CHATS in the row shape, with the hit count in the time slot", async () => {
     const { table } = await search({
@@ -1191,15 +1195,16 @@ describe("history: cross-chat search", () => {
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
     // The popup hides on transitionend (or its 400ms fallback), and focus leaves the field only then.
-    await vi.waitFor(() => {
+    await waitForOnClock(() => {
       expect(find.focused()).toBe(false);
-    });
+    }, FRAME_BUDGET_MS);
     expect(input.value).toBe("");
-    await vi.waitFor(() => {
+    await waitForOnClock(() => {
       if (table.querySelectorAll('[data-key^="s:"]').length === 0) {
         throw new Error("list not restored");
       }
-    });
+    }, FRAME_BUDGET_MS);
+    await vi.runAllTimersAsync();
     expect(table.querySelector("[data-search-chat]")).toBeNull();
   });
 
@@ -1222,11 +1227,13 @@ describe("history: cross-chat search", () => {
     const input = document.getElementById("hist-search-input") as HTMLInputElement;
     input.value = "   ";
     input.dispatchEvent(new Event("input"));
-    await vi.waitFor(() => {
+    await waitForOnClock(() => {
       if (table.querySelectorAll('[data-key^="s:"]').length === 0) {
         throw new Error("list not restored");
       }
-    });
+    }, FRAME_BUDGET_MS);
+    // The box's debounce, and anything it queues, has run.
+    await vi.runAllTimersAsync();
     expect(searchDispatch).not.toHaveBeenCalled();
     expect(table.querySelector("[data-search-chat]")).toBeNull();
   });
@@ -1243,11 +1250,12 @@ describe("history: cross-chat search", () => {
     const input = document.getElementById("hist-search-input") as HTMLInputElement;
     input.value = "";
     input.dispatchEvent(new Event("input"));
-    await vi.waitFor(() => {
+    await waitForOnClock(() => {
       if (table.querySelectorAll('[data-key^="s:"]').length === 0) {
         throw new Error("list not restored");
       }
-    });
+    }, FRAME_BUDGET_MS);
+    await vi.runAllTimersAsync();
     expect(table.querySelector("[data-search-chat]")).toBeNull();
   });
 
@@ -1266,9 +1274,9 @@ describe("history: cross-chat search", () => {
   });
 });
 
-// The Runs box is a filter over the loaded list: there is no server-side run search, so the funnel.
+// The Runs box narrows the loaded list by name and recipe, but History has ONE find kind on both panes: the magnifier.
 
-describe("history: the runs filter", () => {
+describe("history: the runs search", () => {
   beforeEach(resetAll);
 
   const nightly = {
@@ -1298,7 +1306,7 @@ describe("history: the runs filter", () => {
       }
     });
     const find = await openFind();
-    const input = document.getElementById("hist-filter-input") as HTMLInputElement;
+    const input = document.getElementById("hist-run-search-input") as HTMLInputElement;
     input.value = query;
     input.dispatchEvent(new Event("input"));
     await vi.waitFor(() => {
@@ -1309,15 +1317,15 @@ describe("history: the runs filter", () => {
     return { runs: runsPane(), find };
   }
 
-  it("is the toolbar's destination on the Runs pane, and it is a filter", async () => {
+  it("is the toolbar's destination on the Runs pane, and it is a search like Chats'", async () => {
     const { find } = await filter("");
-    expect(find.kind()).toBe("filter");
-    const region = document.getElementById("hist-filter");
+    expect(find.kind()).toBe("search");
+    const region = document.getElementById("hist-run-search");
     expect(region?.getAttribute("role")).toBe("search");
-    expect(region?.getAttribute("aria-label")).toBe("Filter workflow runs");
-    // The funnel: it narrows what is on screen.
-    expect(document.querySelector("#hist-filter .page-find-icon polygon")).not.toBeNull();
-    expect(document.querySelector("#hist-filter .page-find-icon circle")).toBeNull();
+    expect(region?.getAttribute("aria-label")).toBe("Search workflow runs");
+    // The magnifier, as on Chats: the toolbar button must not change glyph when the pane switches.
+    expect(document.querySelector("#hist-run-search .page-find-icon circle")).not.toBeNull();
+    expect(document.querySelector("#hist-run-search .page-find-icon polygon")).toBeNull();
     // No request: the rows are already here.
     expect(searchDispatch).not.toHaveBeenCalled();
   });
@@ -1326,7 +1334,9 @@ describe("history: the runs filter", () => {
     const { runs } = await filter("night");
     expect(keysIn(runs)).toEqual(["r:wf_n"]);
     // The shared grammar over this pane's noun: what matched, then what was read.
-    expect(document.getElementById("hist-filter-note")?.textContent).toBe("1 run; 2 runs scanned");
+    expect(document.getElementById("hist-run-search-note")?.textContent).toBe(
+      "1 run; 2 runs scanned",
+    );
   });
 
   it("reads the recipe as well as the label", async () => {
@@ -1338,14 +1348,14 @@ describe("history: the runs filter", () => {
   it("says so when nothing survives, rather than painting an empty card", async () => {
     const { runs } = await filter("zzz");
     expect(keysIn(runs)).toEqual([]);
-    expect(runs.textContent).toBe("No workflow runs match the filter.");
-    expect(document.getElementById("hist-filter-note")?.textContent).toBe("No matches");
+    expect(runs.textContent).toBe("No workflow runs match the search.");
+    expect(document.getElementById("hist-run-search-note")?.textContent).toBe("No matches");
   });
 
   it("restores the whole list when the box is cleared, without a fetch", async () => {
     const { runs } = await filter("night");
     const before = dispatch.mock.calls.length;
-    const input = document.getElementById("hist-filter-input") as HTMLInputElement;
+    const input = document.getElementById("hist-run-search-input") as HTMLInputElement;
     input.value = "";
     input.dispatchEvent(new Event("input"));
     await vi.waitFor(() => {
@@ -1354,10 +1364,10 @@ describe("history: the runs filter", () => {
       }
     });
     expect(dispatch.mock.calls.length).toBe(before);
-    expect(document.getElementById("hist-filter-note")?.textContent).toBe("");
+    expect(document.getElementById("hist-run-search-note")?.textContent).toBe("");
   });
 
-  it("routes the page's find by pane: a search on Chats, a filter on Runs", async () => {
+  it("keeps the page's find kind through a pane switch, so the toolbar glyph does not change", async () => {
     mountView();
     dispatch.mockResolvedValue({ sessions: [], runs: [] });
     const { forceHistoryTab, loadHistoryView } = await freshModule();
@@ -1366,7 +1376,7 @@ describe("history: the runs filter", () => {
     const find = pageFind("history")!;
     expect(find.kind()).toBe("search");
     forceHistoryTab("runs");
-    expect(find.kind()).toBe("filter");
+    expect(find.kind()).toBe("search");
   });
 });
 
@@ -1551,51 +1561,62 @@ describe("history: the per-row delete", () => {
 });
 
 describe("history: the row's subtitle and time", () => {
-  function header(over: Record<string, unknown> = {}): unknown {
-    return {
-      id: "c-existing",
-      name: "Rebuild the rail",
-      model: "claude-opus-5",
-      current_mode_id: "vibe",
-      turn_count: 34,
-      usage: { credits: 12.5, context_pct: 0, context_size: 0 },
-      ...over,
-    };
-  }
+  /** The facts `/api/sessions` states for the chat that owns the row. */
+  const facts = {
+    model: "claude-opus-5",
+    current_mode_id: "vibe",
+    turn_count: 34,
+    credits: 12.5,
+  };
 
   const sub = (key: string): string | undefined =>
     rowOf(key).querySelector(".entry-sub")?.textContent ?? undefined;
 
   beforeEach(() => {
     resetAll();
-    storeGet.mockReturnValue(undefined);
   });
 
-  it("states model, mode, turns and credits from the chat record", async () => {
-    // Every field comes from /api/chats, already held, so the richer row costs no request. The count is the header's.
-    storeGet.mockReturnValue(header());
-    await render({ sessions: [ownedRow], runs: [] });
+  it("states model, mode, turns and credits from the session row", async () => {
+    await render({ sessions: [{ ...ownedRow, ...facts }], runs: [] });
     expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 34 turns · 12.50 cr");
   });
 
   it("omits a zero credit total rather than printing 0.00", async () => {
     // An unmetered chat would carry a cost column that says nothing.
-    storeGet.mockReturnValue(header({ turn_count: 1, usage: { credits: 0 } }));
-    await render({ sessions: [ownedRow], runs: [] });
+    await render({
+      sessions: [{ ...ownedRow, ...facts, turn_count: 1, credits: 0 }],
+      runs: [],
+    });
     expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 1 turn");
   });
 
   it("prefers the agent's own description to the facts", async () => {
-    storeGet.mockReturnValue(header());
-    await render({ sessions: [{ ...ownedRow, description: "reading files" }], runs: [] });
+    await render({
+      sessions: [{ ...ownedRow, ...facts, description: "reading files" }],
+      runs: [],
+    });
     expect(sub("s:sess_owned")).toBe("reading files");
   });
 
-  it("renders an EMPTY subtitle for a chat with no description the store does not know", async () => {
+  it("renders an EMPTY subtitle for a chat with no description and no facts", async () => {
     // Placeholders would read as fact; the line stays so the title keeps its offset.
-    storeGet.mockReturnValue(undefined);
     await render({ sessions: [ownedRow], runs: [] });
     expect(sub("s:sess_owned")).toBe("");
+  });
+
+  it("keeps the facts of a chat opened from History and closed again with no prompt", async () => {
+    // The row is hidden while its tab is open and returns when the tab closes. The facts ride the session row, so
+    // nothing the client drops on a tab close can take them.
+    const row = { ...ownedRow, ...facts };
+    hasTab.mockImplementation((_kind: string, ref?: string) => ref === "c-existing");
+    await render({ sessions: [chatRow, row], runs: [] });
+    expect(document.querySelector('[data-key="s:sess_owned"]')).toBeNull();
+
+    hasTab.mockReturnValue(false);
+    tabsVersion.value++;
+    await vi.waitFor(() => {
+      expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 34 turns · 12.50 cr");
+    });
   });
 
   it("states a run's duration, and nothing when it never started", async () => {
@@ -1650,14 +1671,17 @@ describe("history: the row's subtitle and time", () => {
     expect(sub("r:wf_bare")).toBe("");
   });
 
-  it("names the launching conversation when the store holds it", async () => {
-    storeGet.mockImplementation((id: string) =>
-      id === "c-launcher" ? header({ id, name: "Rebuild the rail" }) : undefined,
-    );
+  it("names the launching conversation from the run row", async () => {
     await render({
       sessions: [],
       runs: [
-        { ...runRow, parent_chat_id: "c-launcher", started_at: 1000, updated_at: 61000 },
+        {
+          ...runRow,
+          parent_chat_id: "c-launcher",
+          parent_chat_name: "Rebuild the rail",
+          started_at: 1000,
+          updated_at: 61000,
+        },
         { ...runRow, workflow_id: "wf_orphan", parent_chat_id: "c-gone" },
       ],
     });

@@ -10,16 +10,15 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// accountUsageCallTimeout bounds one _kiro/account/getUsage round-trip so a wedged RPC
-// cannot pin its caller and the utility session lease.
+// accountUsageCallTimeout bounds one _kiro/account/getUsage round-trip so a wedged RPC cannot pin its caller.
 const accountUsageCallTimeout = 45 * time.Second
 
-// AccountUsage fetches account usage via the utility bridge, constructing it lazily so
-// it works with no chat open. Uncached: the HTTP layer caches.
+// AccountUsage fetches account usage with an engine call, so it works with no chat open. Uncached: the HTTP layer
+// caches.
 func (rt *Runtime) AccountUsage(ctx context.Context) (*marotte.AccountUsage, error) {
 	cctx, cancel := context.WithTimeout(ctx, accountUsageCallTimeout)
 	defer cancel()
-	raw, err := rt.utility.get().session.accountUsageRaw(cctx)
+	raw, err := rt.engine.accountUsageRaw(cctx)
 	if err != nil {
 		return nil, err
 	}

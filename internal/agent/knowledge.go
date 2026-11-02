@@ -2,7 +2,7 @@ package agent
 
 // Knowledge-base management over KAS's _kiro/knowledge. The store lives at
 // $KIRO_HOME/.kiro/knowledge_bases/default, shared by every kiro-cli on that KIRO_HOME, so calls
-// go through the utility bridge WITHOUT a sessionId, which targets the global store. `add` is
+// are engine calls WITHOUT a sessionId, which targets the global store. `add` is
 // async (kiro-cli 2.12.0): progress appears in `show` as indexing:true, which the client polls.
 
 import (
@@ -16,12 +16,12 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 const keySubcommand = "subcommand"
 
-// knowledgeCallTimeout bounds one _kiro/knowledge round-trip; only the first call starts the utility bridge.
+// knowledgeCallTimeout bounds one _kiro/knowledge round-trip, the wait for the engine included.
 const knowledgeCallTimeout = 45 * time.Second
 
 // kasKnowledgeResult is the _kiro/knowledge reply: `show` fills Entries, mutations fill Message.
@@ -63,12 +63,11 @@ type knowledgeMessageResponse struct {
 	Message string `json:"message"`
 }
 
-// knowledgeCall issues one bounded _kiro/knowledge request on the utility bridge, never with a sessionId.
+// knowledgeCall issues one bounded _kiro/knowledge engine call, never with a sessionId.
 func (st *Settings) knowledgeCall(ctx context.Context, params map[string]any) (json.RawMessage, error) {
-	u := st.utility()
 	cctx, cancel := context.WithTimeout(ctx, knowledgeCallTimeout)
 	defer cancel()
-	return u.session.knowledgeRaw(cctx, params)
+	return st.engine.knowledgeRaw(cctx, params)
 }
 
 func parseKnowledgeResult(raw json.RawMessage) (*kasKnowledgeResult, error) {

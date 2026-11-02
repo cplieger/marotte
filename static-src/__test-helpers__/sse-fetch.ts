@@ -178,18 +178,3 @@ export function createScriptedFetch(): ScriptedFetch {
     },
   };
 }
-
-/** Yield until `predicate` holds or `timeoutMs` passes. A written frame reaches `onFrame` a few
- *  ticks later (ReadableStream + TextDecoder); the budget is wall-clock because on a loaded host
- *  a tick count runs out before the stream's own microtasks drain. */
-export async function until(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
-  const deadline = performance.now() + timeoutMs;
-  while (!predicate()) {
-    if (performance.now() >= deadline) {
-      throw new Error("until: predicate never held");
-    }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 0);
-    });
-  }
-}

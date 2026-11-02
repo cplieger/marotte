@@ -27,7 +27,7 @@ type AccountUsage struct {
 	// emits a required field.
 	OveragesEnabled bool `json:"overages_enabled"`
 	// Stale is true when this snapshot was served from the last-known
-	// cache because a fresh fetch failed (no live bridge, rate limit).
+	// cache because a fresh fetch failed (the engine not running, rate limit).
 	Stale bool `json:"stale,omitempty"`
 }
 

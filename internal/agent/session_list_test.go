@@ -177,16 +177,16 @@ func TestToResumable_TieBreakIgnoresArrivalOrder(t *testing.T) {
 	}
 }
 
-// Only ownership separates conversations: session/list carries no message count, and a utility turn gives its
-// session a title; unfiltered, the utility session sorted to the top.
+// Only ownership separates conversations: session/list carries no message count, and a session no chat owns can
+// carry a title; unfiltered, an observer pass's session sorts to the top.
 func TestToResumable_ExcludesEverySessionNoChatOwns(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"sess_real"}})
 	got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
 		// Newest, so it would sort first.
-		row("sess_utility_live", "New Session", "2026-08-02T13:00:00.000Z", false),
+		row("sess_observer_live", "New Session", "2026-08-02T13:00:00.000Z", false),
 		row("sess_real", "A real conversation", "2026-08-02T12:00:00.000Z", false),
-		// A retired utility session keeps its last turn's title.
-		row("sess_utility_retired", "Write a commit message", "2026-08-02T11:00:00.000Z", false),
+		// An unowned session with a title of its own.
+		row("sess_unowned_titled", "Review the change", "2026-08-02T11:00:00.000Z", false),
 		row("sess_tui", "Started from the terminal", "2026-08-02T10:00:00.000Z", false),
 	})
 
@@ -415,5 +415,50 @@ func TestHandleSessionList_SaysWhichListFailed(t *testing.T) {
 					tc.wantSessions, tc.wantRuns)
 			}
 		})
+	}
+}
+
+// TestWithChatFacts_CopiesHeaderFacts pins that a History row states its chat's model, mode, turns and credits from
+// the stored header, so a chat opened from History and closed again keeps its second line.
+func TestWithChatFacts_CopiesHeaderFacts(t *testing.T) {
+	rows := []marotte.ResumableSession{
+		{SessionID: "s1", ChatID: "c1"},
+		{SessionID: "s2", ChatID: "c-gone"},
+		{SessionID: "s3"},
+	}
+	headers := []marotte.ChatHeader{
+		{ID: "c0", Model: "other", TurnCount: 9},
+		{ID: "c1", Model: "claude-sonnet-5.5", CurrentModeID: "kiro_default", TurnCount: 2, Usage: marotte.Usage{Credits: 4.29}},
+	}
+
+	withChatFacts(rows, headers)
+
+	want := marotte.ResumableSession{SessionID: "s1", ChatID: "c1", Model: "claude-sonnet-5.5", CurrentModeID: "kiro_default", TurnCount: 2, Credits: 4.29}
+	if rows[0] != want {
+		t.Errorf("owned row = %+v, want %+v", rows[0], want)
+	}
+	if rows[1].Model != "" || rows[1].TurnCount != 0 {
+		t.Errorf("a row whose chat has no header gained facts: %+v", rows[1])
+	}
+	if rows[2].Model != "" {
+		t.Errorf("an unclaimed row gained facts: %+v", rows[2])
+	}
+}
+
+// TestWithParentNames_NamesTheLaunchingChat pins that a run row carries its launching chat's stored name.
+func TestWithParentNames_NamesTheLaunchingChat(t *testing.T) {
+	runs := []marotte.WorkflowRun{
+		{WorkflowID: "w1", ParentChatID: "c1"},
+		{WorkflowID: "w2"},
+		{WorkflowID: "w3", ParentChatID: "c-gone"},
+	}
+
+	withParentNames(runs, []marotte.ChatHeader{{ID: "c1", Name: "Fix the rail"}, {ID: "c2", Name: "Other"}})
+
+	if runs[0].ParentChatName != "Fix the rail" {
+		t.Errorf("launched run = %q, want the chat's name", runs[0].ParentChatName)
+	}
+	if runs[1].ParentChatName != "" || runs[2].ParentChatName != "" {
+		t.Errorf("a run with no launching header gained a name: %+v", runs[1:])
 	}
 }

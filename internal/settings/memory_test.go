@@ -13,13 +13,13 @@ func TestMemoryPreferenceFor_MapsEachDropdownValue(t *testing.T) {
 		mode string
 		want marotte.MemoryPreference
 	}{
-		{MemoryOff, marotte.MemoryPreference{Mode: "disabled"}},
+		{memoryOff, marotte.MemoryPreference{Mode: "disabled"}},
 		{memoryReadOnly, marotte.MemoryPreference{Mode: "read_only"}},
 		{memoryReadWrite, marotte.MemoryPreference{Mode: "read_write"}},
 		{memoryLearn, marotte.MemoryPreference{Mode: "read_write", Reflection: true}},
-		// kiro-cli's own default, so an unrecognised value never silently reads as Off.
-		{"", marotte.MemoryPreference{Mode: "read_write", Reflection: true}},
-		{"purple", marotte.MemoryPreference{Mode: "read_write", Reflection: true}},
+		// An unrecognised value takes kiro-cli's own default, Off.
+		{"", marotte.MemoryPreference{Mode: "disabled"}},
+		{"purple", marotte.MemoryPreference{Mode: "disabled"}},
 	}
 	for _, tc := range cases {
 		if got := MemoryPreferenceFor(tc.mode); got != tc.want {
@@ -29,12 +29,12 @@ func TestMemoryPreferenceFor_MapsEachDropdownValue(t *testing.T) {
 }
 
 func TestEffectiveFrom_MemoryModeDefaultsAndRejectsUnknownValues(t *testing.T) {
-	if got := EffectiveDefaults().MemoryMode; got != memoryLearn {
-		t.Errorf("EffectiveDefaults().MemoryMode = %q, want %q (kiro-cli's read_write + reflection)", got, memoryLearn)
+	if got := EffectiveDefaults().MemoryMode; got != memoryOff {
+		t.Errorf("EffectiveDefaults().MemoryMode = %q, want %q (kiro-cli's disabled)", got, memoryOff)
 	}
-	eff, rejected := EffectiveFrom(map[string]json.RawMessage{KeyMemoryMode: json.RawMessage(`"off"`)})
-	if eff.MemoryMode != MemoryOff || len(rejected) != 0 {
-		t.Errorf("stored off: MemoryMode = %q rejected = %v, want off and nothing rejected", eff.MemoryMode, rejected)
+	eff, rejected := EffectiveFrom(map[string]json.RawMessage{KeyMemoryMode: json.RawMessage(`"learn"`)})
+	if eff.MemoryMode != memoryLearn || len(rejected) != 0 {
+		t.Errorf("stored learn: MemoryMode = %q rejected = %v, want learn and nothing rejected", eff.MemoryMode, rejected)
 	}
 	eff, rejected = EffectiveFrom(map[string]json.RawMessage{KeyMemoryMode: json.RawMessage(`"always"`)})
 	if eff.MemoryMode != DefaultMemoryMode || !slices.Contains(rejected, KeyMemoryMode) {

@@ -15,9 +15,10 @@ func newWithholdHub(t *testing.T) (*Runtime, *runOutcomePush) {
 	t.Helper()
 	cs := newTestChatStore()
 	fp := newRunOutcomePush()
-	h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
+	settleBoot(t, h)
 	return h, fp
 }
 

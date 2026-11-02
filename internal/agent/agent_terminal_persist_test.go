@@ -13,7 +13,7 @@ func hubWithRealStore(t *testing.T) (*Runtime, *testChatStore) {
 	t.Helper()
 	cs := newTestChatStore()
 	br := newRecordingTermBridge()
-	h := New(t.Context(), t.TempDir(), func() ACPBridge { return br }, cs)
+	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return br }, laneOf(br)), cs)
 	cs.wire(h)
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
 	return h, cs
@@ -114,11 +114,11 @@ func TestPersistedToolCall_KASsFailedAfterTheReadersStopRecordsAborted(t *testin
 			h.translateACPEvent("c1", h.originOf("c1"), sessionUpdate(t,
 				`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"bash","kind":"execute","status":"pending"}`))
 			if tt.stopFirst {
-				h.coord.RequestStop("c1")
+				h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopReader))
 			}
 			h.translateACPEvent("c1", h.originOf("c1"), sessionUpdate(t, failed))
 			if !tt.stopFirst {
-				h.coord.RequestStop("c1")
+				h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopReader))
 			}
 			h.SettleTurnOnResponse(t.Context(), "c1", turnID, 0, &marotte.RPCResponse{})
 

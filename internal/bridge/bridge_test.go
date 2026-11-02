@@ -26,8 +26,8 @@ import (
 	"github.com/cplieger/slogx/capture"
 )
 
-func TestNew_FieldsAndAccessors(t *testing.T) {
-	b := New("/opt/kiro", "/work")
+func TestNewEngine_FieldsAndAccessors(t *testing.T) {
+	b := NewEngine("/opt/kiro", "/work")
 	// cliPath and workDir have no accessor, so pin them directly; TestStop_Idempotent covers channel init.
 	if b.cliPath != "/opt/kiro" {
 		t.Errorf("cliPath = %q", b.cliPath)
@@ -37,22 +37,19 @@ func TestNew_FieldsAndAccessors(t *testing.T) {
 	}
 }
 
-// TestNew_AccessorsReturnZeroValues pins a fresh bridge's zero values: empty strings, and non-nil empty slices.
-func TestNew_AccessorsReturnZeroValues(t *testing.T) {
-	b := New("/opt/kiro", "/work")
-	if got := b.SessionID(); got != "" {
-		t.Errorf("SessionID() = %q, want empty", got)
-	}
-	if got := b.ModelID(); got != "" {
+// TestSession_AccessorsReturnZeroValues pins a fresh session's zero values: empty strings, and empty slices.
+func TestSession_AccessorsReturnZeroValues(t *testing.T) {
+	s := newTestSession()
+	if got := s.ModelID(); got != "" {
 		t.Errorf("ModelID() = %q, want empty", got)
 	}
-	if got := b.CurrentMode(); got != "" {
+	if got := s.CurrentMode(); got != "" {
 		t.Errorf("CurrentMode() = %q, want empty", got)
 	}
-	if got := b.Modes(); len(got) != 0 {
+	if got := s.Modes(); len(got) != 0 {
 		t.Errorf("Modes() = %v, want empty slice", got)
 	}
-	if got := b.Models(); len(got) != 0 {
+	if got := s.Models(); len(got) != 0 {
 		t.Errorf("Models() = %v, want empty slice", got)
 	}
 }
@@ -77,7 +74,7 @@ func TestIsDeprecatedOrLegacy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		if got := modeltext.Hidden(tc.desc); got != tc.want {
-			t.Errorf("TagExcluded(%q, HiddenTags) = %v, want %v", tc.desc, got, tc.want)
+			t.Errorf("Hidden(%q) = %v, want %v", tc.desc, got, tc.want)
 		}
 	}
 }
@@ -118,7 +115,7 @@ func TestValidIdent(t *testing.T) {
 }
 
 func TestApplySessionResult_CopiesModesAndModels(t *testing.T) {
-	b := &Bridge{}
+	b := newTestSession()
 	// v3 shape: a modes block plus the catalog inside the configOptions "model" select, multipliers under _meta.kiro.
 	var r sessionCreated
 	if err := json.Unmarshal([]byte(`{
@@ -168,7 +165,7 @@ func TestApplySessionResult_CopiesModesAndModels(t *testing.T) {
 
 // With no modes or models block and no model id yet, the fallback model wins.
 func TestApplySessionResult_FallbackModelWhenMissing(t *testing.T) {
-	b := &Bridge{}
+	b := newTestSession()
 	b.mu.Lock()
 	b.applySessionResultLocked(&sessionCreated{}, "fallback")
 	b.mu.Unlock()
@@ -185,7 +182,7 @@ func TestApplySessionResult_FallbackModelWhenMissing(t *testing.T) {
 
 // The fallback does not overwrite a current model from the response.
 func TestApplySessionResult_FallbackIgnoredWhenCurrentPresent(t *testing.T) {
-	b := &Bridge{}
+	b := newTestSession()
 	r := sessionCreated{
 		ConfigOptions: []sessionConfigOption{
 			{ID: "model", CurrentValue: json.RawMessage(`"real-model"`)},
@@ -201,7 +198,7 @@ func TestApplySessionResult_FallbackIgnoredWhenCurrentPresent(t *testing.T) {
 
 // TestModes_ReturnedSliceIsDefensiveCopy pins that Modes returns a copy.
 func TestModes_ReturnedSliceIsDefensiveCopy(t *testing.T) {
-	b := &Bridge{}
+	b := newTestSession()
 	r := sessionCreated{
 		Modes: &sessionModes{
 			CurrentModeID: "m1",
@@ -228,7 +225,7 @@ func TestModes_ReturnedSliceIsDefensiveCopy(t *testing.T) {
 
 // TestModels_ReturnedSliceIsDefensiveCopy pins the same for Models.
 func TestModels_ReturnedSliceIsDefensiveCopy(t *testing.T) {
-	b := &Bridge{}
+	b := newTestSession()
 	var r sessionCreated
 	if err := json.Unmarshal([]byte(`{
 		"sessionId": "sess-1",
@@ -255,28 +252,28 @@ func TestModels_ReturnedSliceIsDefensiveCopy(t *testing.T) {
 }
 
 func TestStop_Idempotent(t *testing.T) {
-	b := New("/nonexistent/cli", "/work")
+	b := NewEngine("/nonexistent/cli", "/work")
 	// Never started: Stop must be safe, repeatedly.
 	b.Stop()
 	b.Stop() // would panic on close of closed channel without sync.Once
 	b.Stop()
 }
 
-// respondBridge returns a Bridge wired to a pipe so Respond output can be read back. Close pr when done.
-func respondBridge(t *testing.T) (*Bridge, *os.File) {
+// respondEngine returns an engine wired to a pipe so Respond output can be read back.
+func respondEngine(t *testing.T) (*Engine, *os.File) {
 	t.Helper()
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = pr.Close() })
-	b := New("/nonexistent", "/work")
-	b.stdin.Store(&stdinPipe{w: pw})
-	return b, pr
+	e := NewEngine("/nonexistent", "/work")
+	e.stdin.Store(&stdinPipe{w: pw})
+	return e, pr
 }
 
 func TestRespond_SuccessResult(t *testing.T) {
-	b, pr := respondBridge(t)
+	b, pr := respondEngine(t)
 	result := map[string]string{"content": "hello"}
 	if err := b.Respond(t.Context(), 42, result, nil); err != nil {
 		t.Fatal(err)
@@ -308,7 +305,7 @@ func TestRespond_SuccessResult(t *testing.T) {
 }
 
 func TestRespond_GenericError(t *testing.T) {
-	b, pr := respondBridge(t)
+	b, pr := respondEngine(t)
 	if err := b.Respond(t.Context(), 7, nil, errors.New("something broke")); err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +335,7 @@ func TestRespond_GenericError(t *testing.T) {
 }
 
 func TestRespond_BoundsAndFlattensGenericErrorMessage(t *testing.T) {
-	b, pr := respondBridge(t)
+	b, pr := respondEngine(t)
 	raw := "path\n\t\u202e" + strings.Repeat("x", 400)
 	if err := b.Respond(t.Context(), 8, nil, errors.New(raw)); err != nil {
 		t.Fatal(err)
@@ -367,29 +364,29 @@ func TestRespond_BoundsAndFlattensGenericErrorMessage(t *testing.T) {
 	}
 }
 
-// TestWrites_OnAnUnstartedBridgeRefuseRatherThanPanic pins the three write verbs without a stdin handle; each once
+// TestWrites_OnAnUnstartedEngineRefuseRatherThanPanic pins the three write verbs without a stdin handle; each once
 // panicked on a nil interface into an opaque 500.
-func TestWrites_OnAnUnstartedBridgeRefuseRatherThanPanic(t *testing.T) {
-	cases := map[string]func(*Bridge) error{
-		"Call": func(b *Bridge) error {
+func TestWrites_OnAnUnstartedEngineRefuseRatherThanPanic(t *testing.T) {
+	cases := map[string]func(*Engine) error{
+		"Call": func(b *Engine) error {
 			_, err := b.Call(t.Context(), marotte.MethodSetMode, nil)
 			return err
 		},
-		"CallAt": func(b *Bridge) error {
+		"CallAt": func(b *Engine) error {
 			_, _, err := b.CallAt(t.Context(), marotte.MethodSetMode, nil)
 			return err
 		},
-		"Notify": func(b *Bridge) error {
+		"Notify": func(b *Engine) error {
 			return b.Notify(t.Context(), marotte.MethodCancel, nil)
 		},
-		"Respond": func(b *Bridge) error {
+		"Respond": func(b *Engine) error {
 			return b.Respond(t.Context(), 1, map[string]string{}, nil)
 		},
 	}
 	for name, write := range cases {
 		t.Run(name, func(t *testing.T) {
-			// New without Start: a registered chat bridge's state, and a failed Start's.
-			err := write(New("/nonexistent", "/work"))
+			// NewEngine without Start: a failed Start's state.
+			err := write(NewEngine("/nonexistent", "/work"))
 			if !errors.Is(err, marotte.ErrBridgeNotStarted) {
 				t.Errorf("%s on an unstarted bridge = %v, want ErrBridgeNotStarted", name, err)
 			}
@@ -397,10 +394,10 @@ func TestWrites_OnAnUnstartedBridgeRefuseRatherThanPanic(t *testing.T) {
 	}
 }
 
-// TestCall_OnAnUnstartedBridgeLeavesNoPendingWaiter pins that a refused write deregisters its request, or a later response
+// TestCall_OnAnUnstartedEngineLeavesNoPendingWaiter pins that a refused write deregisters its request, or a later response
 // could reach a caller that is gone.
-func TestCall_OnAnUnstartedBridgeLeavesNoPendingWaiter(t *testing.T) {
-	b := New("/nonexistent", "/work")
+func TestCall_OnAnUnstartedEngineLeavesNoPendingWaiter(t *testing.T) {
+	b := NewEngine("/nonexistent", "/work")
 	if _, err := b.Call(t.Context(), marotte.MethodSetMode, nil); err == nil {
 		t.Fatal("Call on an unstarted bridge returned no error")
 	}
@@ -412,7 +409,7 @@ func TestCall_OnAnUnstartedBridgeLeavesNoPendingWaiter(t *testing.T) {
 }
 
 func TestRespond_TypedRPCError(t *testing.T) {
-	b, pr := respondBridge(t)
+	b, pr := respondEngine(t)
 	rpcErr := &marotte.RPCError{Code: -32001, Message: "custom error"}
 	if err := b.Respond(t.Context(), 99, nil, rpcErr); err != nil {
 		t.Fatal(err)
@@ -443,7 +440,7 @@ func TestRespond_TypedRPCError(t *testing.T) {
 }
 
 func TestCall_HappyPath(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -468,7 +465,7 @@ func TestCall_HappyPath(t *testing.T) {
 	var ch chan pendingReply
 	for k, v := range b.pending {
 		id = k
-		ch = v
+		ch = v.ch
 		break
 	}
 	delete(b.pending, id)
@@ -493,7 +490,7 @@ func TestCall_HappyPath(t *testing.T) {
 }
 
 func TestCall_ErrorResponse(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -518,7 +515,7 @@ func TestCall_ErrorResponse(t *testing.T) {
 	var ch chan pendingReply
 	for k, v := range b.pending {
 		id = k
-		ch = v
+		ch = v.ch
 		break
 	}
 	delete(b.pending, id)
@@ -546,7 +543,7 @@ func TestCall_ErrorResponse(t *testing.T) {
 }
 
 func TestCall_BridgeExitedSentinel(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -569,7 +566,7 @@ func TestCall_BridgeExitedSentinel(t *testing.T) {
 	b.pendingMu.Lock()
 	var ch chan pendingReply
 	for _, v := range b.pending {
-		ch = v
+		ch = v.ch
 		break
 	}
 	b.pendingMu.Unlock()
@@ -611,16 +608,11 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 		b.StopTimer()
 
 		pr, pw, _ := os.Pipe()
-		br := &Bridge{
-			stdout:  newFrameReader(bufio.NewReaderSize(pr, stdoutBufSize)),
-			pending: make(map[int64]chan pendingReply),
-			notifCh: make(chan marotte.Notification, 1024),
-			done:    make(chan struct{}),
-		}
+		br := readLoopEngine(pr)
 
 		const msgCount = 500
 		for id := int64(1); id <= msgCount/2; id++ {
-			br.pending[id] = make(chan pendingReply, 1)
+			br.pending[id] = &pendingEntry{ch: make(chan pendingReply, 1), lane: br.engineLane}
 		}
 
 		go func() {
@@ -640,10 +632,10 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 			pw.Close()
 		}()
 
-		// Drain notifCh so readLoop does not block.
+		// Drain the engine lane, as its consumer would.
 		drainDone := make(chan struct{})
 		go func() {
-			for range br.notifCh {
+			for range br.EngineNotifCh() {
 			}
 			close(drainDone)
 		}()
@@ -656,30 +648,24 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 	_ = notifLine
 }
 
-// TestRealBridge_Contract runs BridgeContractTest against the real Bridge over a fake kiro-cli script, so drift
-// fails at the lifecycle level without a real binary. Unknown id'd requests get an empty result.
-func TestRealBridge_Contract(t *testing.T) {
-	script := `#!/bin/sh
-# Fake kiro-cli ACP subprocess for contract testing.
-# Reads JSON-RPC requests from stdin, responds with minimal valid results.
+// fakeKASScript is a fake kiro-cli for the engine: it answers initialize, a session/new with the id marotte minted,
+// a session/load with the id it names, and every other request with an empty result.
+const fakeKASScript = `#!/bin/sh
 while IFS= read -r line; do
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  sid=$(echo "$line" | sed -n 's/.*"overrideSessionId":"\([^"]*\)".*/\1/p')
   case "$method" in
     initialize)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake-kiro"}}}\n' "$id"
       ;;
     session/new)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"test-sess-001","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"default mode"}]},"configOptions":[{"id":"model","currentValue":"model-1","options":[{"value":"model-1","name":"Test Model","description":"A test model","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s","modes":{"currentModeId":"agent","availableModes":[{"id":"agent","name":"Agent","description":"agent mode"},{"id":"code","name":"Code","description":"code mode"}]},"configOptions":[{"id":"model","currentValue":"model-1","options":[{"value":"model-1","name":"Test Model","description":"A test model","_meta":{"kiro":{"rateMultiplier":1.0}}},{"value":"auto","name":"Auto"}]}]}}\n' "$id" "$sid"
       ;;
     session/load)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"existing-sess","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"default mode"}]},"configOptions":[{"id":"model","currentValue":"model-1","options":[{"value":"model-1","name":"Test Model","description":"A test model","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id"
-      ;;
-    session/prompt)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"status":"ok"}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"modes":{"currentModeId":"agent","availableModes":[{"id":"agent","name":"Agent","description":"agent mode"}]},"configOptions":[{"id":"model","currentValue":"model-1","options":[{"value":"model-1","name":"Test Model","description":"A test model","_meta":{"kiro":{"rateMultiplier":1.0}}},{"value":"auto","name":"Auto"}]}]}}\n' "$id"
       ;;
     *)
-      # Notifications (no id) or unknown methods — ignore.
       if [ -n "$id" ]; then
         printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
       fi
@@ -687,91 +673,91 @@ while IFS= read -r line; do
   esac
 done
 `
+
+// startFakeEngine starts an engine over fakeKASScript; the test stops it at cleanup.
+func startFakeEngine(t *testing.T) *Engine {
+	t.Helper()
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "fake-kiro-cli")
-	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(scriptPath, []byte(fakeKASScript), 0o755); err != nil {
 		t.Fatalf("write fake script: %v", err)
 	}
-
-	// The concrete type; bridge_contract_test.go goes through the interface.
-	newBridge := func() *Bridge {
-		return New(scriptPath, dir)
+	e := NewEngine(scriptPath, dir)
+	// Not t.Context(): the lifetime must outlive the cleanup that stops the engine.
+	if err := e.Start(t.Context(), &marotte.EngineOpts{Lifetime: context.Background()}); err != nil {
+		t.Fatalf("Start: %v", err)
 	}
+	t.Cleanup(e.Stop)
+	return e
+}
 
-	t.Run("Start_sets_session_id", func(t *testing.T) {
-		b := newBridge()
-		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
-			t.Fatalf("Start: %v", err)
+// TestRealEngine_Contract runs the engine and its session doors over a fake kiro-cli script, so drift fails at the
+// lifecycle level without a real binary.
+func TestRealEngine_Contract(t *testing.T) {
+	t.Run("NewSession_mints_the_id", func(t *testing.T) {
+		e := startFakeEngine(t)
+		s, err := e.NewSession(t.Context(), &marotte.SessionOpts{Role: marotte.SessionRoleChat}, nil)
+		if err != nil {
+			t.Fatalf("NewSession: %v", err)
 		}
-		defer b.Stop()
-		if id := b.SessionID(); id == "" {
-			t.Error("SessionID empty after Start")
+		if id := string(s.SessionID()); !strings.HasPrefix(id, "sess_") {
+			t.Errorf("SessionID = %q, want a minted sess_ id", id)
+		}
+		if !s.Open() {
+			t.Error("a session whose door succeeded is not open")
 		}
 	})
 
-	t.Run("Start_with_existing_session", func(t *testing.T) {
-		b := newBridge()
-		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), SessionID: "existing-sess", Model: "model"}); err != nil {
-			t.Fatalf("Start: %v", err)
+	t.Run("LoadSession_keeps_the_id", func(t *testing.T) {
+		e := startFakeEngine(t)
+		s, err := e.LoadSession(t.Context(), &marotte.SessionOpts{SessionID: "existing-sess"}, nil)
+		if err != nil {
+			t.Fatalf("LoadSession: %v", err)
 		}
-		defer b.Stop()
-		if id := b.SessionID(); id != "existing-sess" {
+		if id := s.SessionID(); id != "existing-sess" {
 			t.Errorf("SessionID = %q, want existing-sess", id)
 		}
 	})
 
 	t.Run("Call_returns_response", func(t *testing.T) {
-		b := newBridge()
-		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
-			t.Fatalf("Start: %v", err)
-		}
-		defer b.Stop()
-		resp, err := b.Call(t.Context(), "session/prompt", nil)
+		e := startFakeEngine(t)
+		s, err := e.NewSession(t.Context(), &marotte.SessionOpts{}, nil)
 		if err != nil {
-			t.Fatalf("Call: %v", err)
+			t.Fatalf("NewSession: %v", err)
 		}
-		if resp == nil {
-			t.Fatal("Call returned nil response")
+		resp, _, err := s.PromptAt(t.Context(), nil, nil)
+		if err != nil || resp == nil {
+			t.Fatalf("Call = %v, %v; want a response", resp, err)
 		}
 	})
 
 	t.Run("Notify_does_not_error", func(t *testing.T) {
-		b := newBridge()
-		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
-			t.Fatalf("Start: %v", err)
-		}
-		defer b.Stop()
-		if err := b.Notify(t.Context(), "session/update", nil); err != nil {
+		e := startFakeEngine(t)
+		if err := e.Notify(t.Context(), "session/update", nil); err != nil {
 			t.Errorf("Notify: %v", err)
 		}
 	})
 
-	t.Run("Stop_closes_NotifCh", func(t *testing.T) {
-		b := newBridge()
-		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
-			t.Fatalf("Start: %v", err)
+	t.Run("Stop_closes_every_lane", func(t *testing.T) {
+		e := startFakeEngine(t)
+		s, err := e.NewSession(t.Context(), &marotte.SessionOpts{}, nil)
+		if err != nil {
+			t.Fatalf("NewSession: %v", err)
 		}
-		ch := b.NotifCh()
-		b.Stop()
-		select {
-		case _, ok := <-ch:
-			if ok {
-				for range ch {
+		e.Stop()
+		for name, ch := range map[string]<-chan marotte.Notification{"session": s.NotifCh(), "engine": e.EngineNotifCh()} {
+			select {
+			case _, ok := <-ch:
+				if ok {
+					for range ch {
+					}
 				}
+			case <-time.After(2 * time.Second):
+				t.Errorf("the %s lane is not closed after Stop", name)
 			}
-		case <-time.After(2 * time.Second):
-			t.Error("NotifCh not closed after Stop")
 		}
-	})
-
-	t.Run("ModelID_returns_value", func(t *testing.T) {
-		b := newBridge()
-		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
-			t.Fatalf("Start: %v", err)
-		}
-		defer b.Stop()
-		if id := b.ModelID(); id == "" {
-			t.Error("ModelID empty after Start")
+		if s.Open() {
+			t.Error("a session on a stopped engine still reports open")
 		}
 	})
 }
@@ -953,105 +939,64 @@ func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
 	})
 }
 
-// TestBridge_LifecycleContract pins that accessors keep their last values across New, Start and Stop.
-func TestBridge_LifecycleContract(t *testing.T) {
-	script := `#!/bin/sh
-while IFS= read -r line; do
-  id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
-  method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
-  case "$method" in
-    initialize)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
-      ;;
-    session/new)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"lifecycle-001","modes":{"currentModeId":"agent","availableModes":[{"id":"agent","name":"Agent","description":"agent mode"},{"id":"code","name":"Code","description":"code mode"}]},"configOptions":[{"id":"model","currentValue":"sonnet","options":[{"value":"sonnet","name":"Sonnet","description":"fast","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id"
-      ;;
-    *)
-      if [ -n "$id" ]; then
-        printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
-      fi
-      ;;
-  esac
-done
-`
-	dir := t.TempDir()
-	scriptPath := filepath.Join(dir, "fake-kiro")
-	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+// TestSession_LifecycleContract pins that a session's accessors keep their last values once it closes with its engine.
+func TestSession_LifecycleContract(t *testing.T) {
+	e := startFakeEngine(t)
+	s, err := e.NewSession(t.Context(), &marotte.SessionOpts{}, nil)
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	id := s.SessionID()
+	if got := s.ModelID(); got != "model-1" {
+		t.Errorf("ModelID = %q, want model-1", got)
+	}
+	if m := s.CurrentMode(); m != "agent" {
+		t.Errorf("CurrentMode = %q, want agent", m)
+	}
+	if modes := s.Modes(); len(modes) != 2 {
+		t.Errorf("Modes len = %d, want 2", len(modes))
+	}
+	if models := s.Models(); len(models) != 2 {
+		t.Errorf("Models len = %d, want 2", len(models))
 	}
 
-	b := New(scriptPath, dir)
-
-	// Pre-start: zero values.
-	if id := b.SessionID(); id != "" {
-		t.Errorf("pre-start SessionID = %q, want empty", id)
+	e.Stop()
+	if got := s.SessionID(); got != id {
+		t.Errorf("post-stop SessionID = %q, want %q (must not reset)", got, id)
 	}
-	if id := b.ModelID(); id != "" {
-		t.Errorf("pre-start ModelID = %q, want empty", id)
+	if got := s.ModelID(); got != "model-1" {
+		t.Errorf("post-stop ModelID = %q, want model-1 (must not reset)", got)
 	}
-	if m := b.CurrentMode(); m != "" {
-		t.Errorf("pre-start CurrentMode = %q, want empty", m)
+	if _, _, err := s.PromptAt(t.Context(), nil, nil); !errors.Is(err, marotte.ErrBridgeExited) {
+		t.Errorf("a call on a session of a stopped engine = %v, want ErrBridgeExited", err)
 	}
-
-	// No Model requested, so session/new's "sonnet" is the value under test
-	// (TestNewSession_AppliesRequestedModelAndEffort covers the override).
-	if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context()}); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	if id := b.SessionID(); id != "lifecycle-001" {
-		t.Errorf("post-start SessionID = %q, want lifecycle-001", id)
-	}
-	if id := b.ModelID(); id != "sonnet" {
-		t.Errorf("post-start ModelID = %q, want sonnet", id)
-	}
-	if m := b.CurrentMode(); m != "agent" {
-		t.Errorf("post-start CurrentMode = %q, want agent", m)
-	}
-	if modes := b.Modes(); len(modes) != 2 {
-		t.Errorf("post-start Modes len = %d, want 2", len(modes))
-	}
-	if models := b.Models(); len(models) != 1 {
-		t.Errorf("post-start Models len = %d, want 1", len(models))
-	}
-
-	// After Stop: last values retained.
-	b.Stop()
-	if id := b.SessionID(); id != "lifecycle-001" {
-		t.Errorf("post-stop SessionID = %q, want lifecycle-001 (must not reset)", id)
-	}
-	if id := b.ModelID(); id != "sonnet" {
-		t.Errorf("post-stop ModelID = %q, want sonnet (must not reset)", id)
-	}
-	if m := b.CurrentMode(); m != "agent" {
-		t.Errorf("post-stop CurrentMode = %q, want agent (must not reset)", m)
-	}
-
 	// Double Stop: no panic.
-	b.Stop()
+	e.Stop()
 }
 
 // TestBridgeRPC_ErrorClassification pins how Call maps JSON-RPC error codes to sentinels.
 func TestBridgeRPC_ErrorClassification(t *testing.T) {
 	cases := []struct {
-		name        string
-		message     string
-		wantMsg     string
-		code        int
-		wantNotIdle bool
+		name     string
+		message  string
+		wantMsg  string
+		code     int
+		wantBusy bool
 	}{
-		{name: "not-idle by code", code: -32001, message: "session busy", wantNotIdle: true},
-		{name: "not-idle by message only", code: -32099, message: "not idle", wantNotIdle: false, wantMsg: "not idle"},
-		{name: "parse error", code: -32700, message: "parse error", wantNotIdle: false, wantMsg: "parse error"},
-		{name: "invalid request", code: -32600, message: "invalid request", wantNotIdle: false, wantMsg: "invalid request"},
-		{name: "method not found", code: -32601, message: "method not found", wantNotIdle: false, wantMsg: "method not found"},
-		{name: "internal error", code: -32603, message: "internal error", wantNotIdle: false, wantMsg: "internal error"},
-		{name: "server-defined error", code: -32050, message: "custom server err", wantNotIdle: false, wantMsg: "custom server err"},
-		{name: "positive code", code: 1, message: "unknown positive", wantNotIdle: false, wantMsg: "unknown positive"},
+		{name: "session busy by code", code: -32002, message: "A prompt is already in-flight", wantBusy: true},
+		{name: "a -32001 answer is not busy", code: -32001, message: "No pending permission", wantMsg: "No pending permission"},
+		{name: "busy by message only", code: -32099, message: "A prompt is already in-flight", wantMsg: "A prompt is already in-flight"},
+		{name: "parse error", code: -32700, message: "parse error", wantMsg: "parse error"},
+		{name: "invalid request", code: -32600, message: "invalid request", wantMsg: "invalid request"},
+		{name: "method not found", code: -32601, message: "method not found", wantMsg: "method not found"},
+		{name: "internal error", code: -32603, message: "internal error", wantMsg: "internal error"},
+		{name: "server-defined error", code: -32050, message: "custom server err", wantMsg: "custom server err"},
+		{name: "positive code", code: 1, message: "unknown positive", wantMsg: "unknown positive"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			b := New("/nonexistent", "/work")
+			b := NewEngine("/nonexistent", "/work")
 			pr, pw, err := os.Pipe()
 			if err != nil {
 				t.Fatal(err)
@@ -1074,7 +1019,7 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 			b.pendingMu.Lock()
 			var ch chan pendingReply
 			for _, v := range b.pending {
-				ch = v
+				ch = v.ch
 				break
 			}
 			b.pendingMu.Unlock()
@@ -1089,13 +1034,13 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 				if r.err == nil {
 					t.Fatal("expected error, got nil")
 				}
-				if tc.wantNotIdle {
-					if !errors.Is(r.err, marotte.ErrNotIdle) {
-						t.Errorf("err = %v, want marotte.ErrNotIdle", r.err)
+				if tc.wantBusy {
+					if !errors.Is(r.err, marotte.ErrSessionBusy) {
+						t.Errorf("err = %v, want marotte.ErrSessionBusy", r.err)
 					}
 				} else {
-					if errors.Is(r.err, marotte.ErrNotIdle) {
-						t.Errorf("err = %v, should NOT be marotte.ErrNotIdle", r.err)
+					if errors.Is(r.err, marotte.ErrSessionBusy) {
+						t.Errorf("err = %v, should NOT be marotte.ErrSessionBusy", r.err)
 					}
 					if !strings.Contains(r.err.Error(), tc.wantMsg) {
 						t.Errorf("err = %v, want to contain %q", r.err, tc.wantMsg)
@@ -1129,11 +1074,7 @@ func BenchmarkBridgeRespond(b *testing.B) {
 		_ = pr.Close()
 	})
 
-	br := &Bridge{
-		done:    make(chan struct{}),
-		pending: make(map[int64]chan pendingReply),
-		notifCh: make(chan marotte.Notification, 16),
-	}
+	br := NewEngine("/nonexistent", "/work")
 	br.stdin.Store(&stdinPipe{w: pw})
 
 	ctx := b.Context()
@@ -1183,77 +1124,97 @@ type errReader struct{ failErr error }
 
 func (r errReader) Read([]byte) (int, error) { return 0, r.failErr }
 
-func readLoopBridge(r io.Reader) *Bridge {
-	return &Bridge{
-		stdout:  newFrameReader(bufio.NewReaderSize(r, stdoutBufSize)),
-		pending: make(map[int64]chan pendingReply),
-		notifCh: make(chan marotte.Notification, 1),
-		done:    make(chan struct{}),
-	}
+// readLoopEngine is an engine reading r with no process behind it.
+func readLoopEngine(r io.Reader) *Engine {
+	e := NewEngine("/nonexistent", "/work")
+	e.lifecycleCtx = context.Background()
+	e.stdout = newFrameReader(bufio.NewReaderSize(r, stdoutBufSize))
+	e.readLoopStarted.Store(true)
+	return e
 }
 
-// readFrame reads one frame the bridge wrote, so a test syncs on the write itself; bounded, failing with a
+// readFrame reads one frame the engine wrote, so a test syncs on the write itself; bounded, failing with a
 // diagnostic.
 func readFrame(t *testing.T, pr *os.File) {
 	t.Helper()
 	if err := pr.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		t.Fatalf("set read deadline on the bridge pipe: %v", err)
+		t.Fatalf("set read deadline on the engine pipe: %v", err)
 	}
 	if line, err := bufio.NewReader(pr).ReadBytes('\n'); err != nil {
-		t.Fatalf("read the framed request from the bridge pipe: %v (read %q)", err, line)
+		t.Fatalf("read the framed request from the engine pipe: %v (read %q)", err, line)
 	}
 }
 
-// waitPending polls until Call has registered n pending requests; injecting earlier blocks on a nil channel.
-func waitPending(t *testing.T, b *Bridge, n int) {
+// waitPending polls until n requests are pending; injecting earlier finds no entry.
+func waitPending(t *testing.T, e *Engine, n int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		b.pendingMu.Lock()
-		got := len(b.pending)
-		b.pendingMu.Unlock()
+		e.pendingMu.Lock()
+		got := len(e.pending)
+		e.pendingMu.Unlock()
 		if got >= n {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("bridge registered %d pending requests, want >=%d within 2s", got, n)
+			t.Fatalf("engine registered %d pending requests, want >=%d within 2s", got, n)
 		}
 		time.Sleep(time.Millisecond)
 	}
 }
 
-func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *marotte.RPCResponse) error {
+func runLoadSession(t *testing.T, e *Engine, fallback string, resp *marotte.RPCResponse) error {
 	t.Helper()
-	_, err := runLoadSessionOpts(t, b,
-		&marotte.StartOpts{SessionID: "acp-session-xyz", Model: fallback}, resp)
+	_, _, err := runLoadSessionOpts(t, e, &marotte.SessionOpts{SessionID: "acp-session-xyz", Model: fallback}, resp)
 	return err
 }
 
-// runNewSession drives newSession like runLoadSessionOpts: answers session/new with resp and every repair with
-// success, returning every frame written.
-func runNewSession(
-	t *testing.T, b *Bridge, opts *marotte.StartOpts, resp *marotte.RPCResponse,
-) ([]byte, error) {
+// runNewSession drives NewSession like runLoadSessionOpts: answers session/new with resp, its sessionId replaced by
+// the minted one, and every repair with success, returning every frame written and the session.
+func runNewSession(t *testing.T, e *Engine, opts *marotte.SessionOpts, resp *marotte.RPCResponse) ([]byte, *Session, error) {
 	t.Helper()
-	return driveSessionCall(t, b, resp, func(ctx context.Context) error {
-		return b.newSession(ctx, opts)
+	var s *Session
+	sent, err := driveSessionCall(t, e, resp, true, func(ctx context.Context) error {
+		var err error
+		s, err = e.NewSession(ctx, opts, nil)
+		return err
 	})
+	return sent, s, err
 }
 
-func runLoadSessionOpts(
-	t *testing.T, b *Bridge, opts *marotte.StartOpts, resp *marotte.RPCResponse,
-) ([]byte, error) {
+func runLoadSessionOpts(t *testing.T, e *Engine, opts *marotte.SessionOpts, resp *marotte.RPCResponse) ([]byte, *Session, error) {
 	t.Helper()
-	return driveSessionCall(t, b, resp, func(ctx context.Context) error {
-		return b.loadSession(ctx, opts)
+	var s *Session
+	sent, err := driveSessionCall(t, e, resp, false, func(ctx context.Context) error {
+		var err error
+		s, err = e.LoadSession(ctx, opts, nil)
+		return err
 	})
+	return sent, s, err
 }
 
-// driveSessionCall runs one session-creating call against an injected first response, answers every later request
-// with success, and returns everything written. Both verbs make follow-up repair calls, so answering only the first
-// hangs.
+// withMintedID rewrites a session/new result's sessionId to the id the entry's session was minted under.
+func withMintedID(entry *pendingEntry, resp *marotte.RPCResponse) *marotte.RPCResponse {
+	if resp == nil || len(resp.Result) == 0 || entry.sessionID == "" {
+		return resp
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(resp.Result, &m) != nil {
+		return resp
+	}
+	if _, ok := m["sessionId"]; !ok {
+		return resp
+	}
+	m["sessionId"], _ = json.Marshal(string(entry.sessionID))
+	raw, _ := json.Marshal(m)
+	return &marotte.RPCResponse{Result: raw, Error: resp.Error}
+}
+
+// driveSessionCall runs one call against an injected first response, answers every later request with success, and
+// returns everything written. mint rewrites the first response's sessionId to the minted id. Each reply is stamped
+// with its lane's position, as deliverResponse stamps it.
 func driveSessionCall(
-	t *testing.T, b *Bridge, resp *marotte.RPCResponse, run func(context.Context) error,
+	t *testing.T, e *Engine, resp *marotte.RPCResponse, mint bool, run func(context.Context) error,
 ) ([]byte, error) {
 	t.Helper()
 	pr, pw, err := os.Pipe()
@@ -1261,39 +1222,49 @@ func driveSessionCall(
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = pr.Close() })
-	b.stdin.Store(&stdinPipe{w: pw})
-
+	e.stdin.Store(&stdinPipe{w: pw})
+	if e.lifecycleCtx == nil {
+		e.lifecycleCtx = context.Background()
+	}
+	sent := make(chan []byte, 1)
+	go func() {
+		all, _ := io.ReadAll(pr)
+		sent <- all
+	}()
 	done := make(chan error, 1)
 	go func() {
 		done <- run(t.Context())
 	}()
 
 	answer := resp
+	first := true
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		select {
 		case callErr := <-done:
 			_ = pw.Close()
-			sent, _ := io.ReadAll(pr)
-			return sent, callErr
+			return <-sent, callErr
 		default:
 		}
-		var ch chan pendingReply
-		b.pendingMu.Lock()
-		for id, v := range b.pending {
-			ch = v
-			delete(b.pending, id)
+		var entry *pendingEntry
+		e.pendingMu.Lock()
+		for id, v := range e.pending {
+			entry = v
+			delete(e.pending, id)
 			break
 		}
-		b.pendingMu.Unlock()
-		if ch != nil {
-			// Stamped like dispatch: a preset deliveredSeq means that many notifications preceded the response.
-			ch <- pendingReply{resp: answer, seq: b.deliveredSeq}
+		e.pendingMu.Unlock()
+		if entry != nil {
+			if first && mint {
+				answer = withMintedID(entry, answer)
+			}
+			first = false
+			entry.ch <- pendingReply{resp: answer, seq: entry.lane.position()}
 			answer = &marotte.RPCResponse{Result: json.RawMessage(`{}`)}
 			continue
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the session call did not return, and no pending request was waiting for an answer")
+			t.Fatal("the call did not return, and no pending request was waiting for an answer")
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
@@ -1313,7 +1284,7 @@ func TestParseErrTracker_WindowStartSetAtBurst(t *testing.T) {
 
 // Stop must not dereference a nil Process (an unstarted command).
 func TestStop_SkipsKillWhenProcessNil(t *testing.T) {
-	b := New("cli", "work")
+	b := NewEngine("cli", "work")
 	b.cmd = exec.Command("sleep", "30") // never Start()ed -> Process is nil
 	b.Stop()                            // must return without panicking
 	if b.cmd == nil {
@@ -1328,7 +1299,7 @@ func TestStop_NoKillErrorLogOnLiveProcess(t *testing.T) {
 	}
 	c := capture.Default(t)
 
-	b := New("cli", "work")
+	b := NewEngine("cli", "work")
 	cmd := exec.Command("sleep", "30")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start sleep: %v", err)
@@ -1350,11 +1321,11 @@ func TestStop_NoKillErrorLogOnLiveProcess(t *testing.T) {
 // startProcess reports a spawn failure.
 func TestStartProcess_ReportsSpawnFailure(t *testing.T) {
 	bogus := filepath.Join(t.TempDir(), "no-such-kiro-cli")
-	b := New(bogus, t.TempDir())
+	b := NewEngine(bogus, t.TempDir())
 	// Not t.Context(): CommandContext binds the subprocess to lifecycleCtx, which must outlive t.Cleanup(b.Stop).
 	b.lifecycleCtx = context.Background()
 	t.Cleanup(b.Stop)
-	err := b.startProcess("")
+	err := b.startProcess()
 	if err == nil {
 		t.Fatal("startProcess with a nonexistent binary returned nil error, want a start failure")
 	}
@@ -1363,11 +1334,11 @@ func TestStartProcess_ReportsSpawnFailure(t *testing.T) {
 // startProcess assigns a 5s WaitDelay before the (failing) Start.
 func TestStartProcess_SetsWaitDelayToFiveSeconds(t *testing.T) {
 	bogus := filepath.Join(t.TempDir(), "no-such-kiro-cli")
-	b := New(bogus, t.TempDir())
+	b := NewEngine(bogus, t.TempDir())
 	// Not t.Context(), which is cancelled before cleanups run: lifecycleCtx must outlive t.Cleanup(b.Stop).
 	b.lifecycleCtx = context.Background()
 	t.Cleanup(b.Stop)
-	_ = b.startProcess("")
+	_ = b.startProcess()
 	if b.cmd == nil {
 		t.Fatal("b.cmd is nil; startProcess did not reach CommandContext")
 	}
@@ -1453,15 +1424,15 @@ func TestMatchesKeyword_SeparatorChain(t *testing.T) {
 
 // The exit drain logs how many in-flight calls it answered, and nothing when none: session/prompt has no deadline,
 // so a wedged kiro-cli is otherwise one prompt line then silence.
-func TestDrainPendingAndClose_ReportsTheStrandedCalls(t *testing.T) {
+func TestExitPath_ReportsTheStrandedCalls(t *testing.T) {
 	t.Run("names the count", func(t *testing.T) {
 		c := capture.Default(t)
-		b := New("/nonexistent", "/work")
+		b := NewEngine("/nonexistent", "/work")
 		for _, id := range []int64{1, 2} {
-			b.pending[id] = make(chan pendingReply, 1)
+			b.pending[id] = &pendingEntry{ch: make(chan pendingReply, 1), lane: b.engineLane}
 		}
 
-		b.drainPendingAndClose()
+		b.exitPath()
 
 		if !c.HasAttr("in flight", "failed_requests", "2") {
 			t.Errorf(`the exit drain did not report failed_requests=2; the count failPending
@@ -1471,9 +1442,9 @@ already computes is being discarded`)
 
 	t.Run("silent on an idle exit", func(t *testing.T) {
 		c := capture.Default(t)
-		b := New("/nonexistent", "/work")
+		b := NewEngine("/nonexistent", "/work")
 
-		b.drainPendingAndClose()
+		b.exitPath()
 
 		if c.Count("in flight") > 0 {
 			t.Errorf("the exit drain logged on an idle teardown; every tab close would carry the line")
@@ -1481,16 +1452,19 @@ already computes is being discarded`)
 	})
 }
 
-// readLoop logs "ACP read" on a non-EOF scanner error and reaps the bridge.
+// readLoop logs "ACP read" on a non-EOF scanner error and ends the engine.
 func TestReadLoop_LogsACPReadOnScanError(t *testing.T) {
 	c := capture.Default(t)
-	b := readLoopBridge(errReader{failErr: errors.New("read boom")})
+	b := readLoopEngine(errReader{failErr: errors.New("read boom")})
 
 	b.readLoop()
 	select {
 	case <-b.done:
 	case <-time.After(time.Second):
-		t.Fatal("readLoop did not reap bridge (done not closed)")
+		t.Fatal("readLoop did not end the engine (done not closed)")
+	}
+	if got := b.Exit().Reason; got != exitReadError {
+		t.Errorf("exit reason = %q, want %q", got, exitReadError)
 	}
 
 	if c.CountExact("ACP read") == 0 {
@@ -1501,13 +1475,16 @@ func TestReadLoop_LogsACPReadOnScanError(t *testing.T) {
 // readLoop logs nothing on a clean EOF.
 func TestReadLoop_NoACPReadOnCleanEOF(t *testing.T) {
 	c := capture.Default(t)
-	b := readLoopBridge(errReader{failErr: io.EOF})
+	b := readLoopEngine(errReader{failErr: io.EOF})
 
 	b.readLoop()
 	select {
 	case <-b.done:
 	case <-time.After(time.Second):
-		t.Fatal("readLoop did not reap bridge (done not closed)")
+		t.Fatal("readLoop did not end the engine (done not closed)")
+	}
+	if got := b.Exit().Reason; got != ExitEnded {
+		t.Errorf("exit reason = %q, want %q: the engine ended itself", got, ExitEnded)
 	}
 
 	if c.CountExact("ACP read") > 0 {
@@ -1517,7 +1494,7 @@ func TestReadLoop_NoACPReadOnCleanEOF(t *testing.T) {
 
 // Notify returns the context error and writes nothing when ctx is already canceled.
 func TestNotify_CanceledCtxReturnsErrNoWrite(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	w := &captureWriter{}
 	b.stdin.Store(&stdinPipe{w: w})
 
@@ -1535,7 +1512,7 @@ func TestNotify_CanceledCtxReturnsErrNoWrite(t *testing.T) {
 
 // Notify marshals and writes a frame on the happy path.
 func TestNotify_GoodCtxValidParamsWritesFrame(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	w := &captureWriter{}
 	b.stdin.Store(&stdinPipe{w: w})
 
@@ -1549,7 +1526,7 @@ func TestNotify_GoodCtxValidParamsWritesFrame(t *testing.T) {
 
 // Notify returns the marshal error and writes nothing for unmarshalable params.
 func TestNotify_MarshalErrorReturnsErrNoWrite(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	w := &captureWriter{}
 	b.stdin.Store(&stdinPipe{w: w})
 
@@ -1562,117 +1539,12 @@ func TestNotify_MarshalErrorReturnsErrNoWrite(t *testing.T) {
 	}
 }
 
-// writeFrame surfaces the underlying writer's error verbatim.
-func TestWriteFrame_ReturnsUnderlyingWriteError(t *testing.T) {
-	sentinel := errors.New("write boom")
-	b := New("/nonexistent", "/work")
-	b.stdin.Store(&stdinPipe{w: &captureWriter{failErr: sentinel}})
-
-	err := b.writeFrame([]byte("hello\n"))
-	if err == nil {
-		t.Fatalf("writeFrame with a failing writer returned nil, want an error")
-	}
-	if !errors.Is(err, sentinel) {
-		t.Errorf("writeFrame err = %v, want the underlying write error %v", err, sentinel)
-	}
-	// A plain write error is not a framing loss: nothing partial reached the scanner, and a dead peer's EOF reaps.
-	select {
-	case <-b.done:
-		t.Errorf("writeFrame reaped the bridge on a plain write error; only a partial frame is unrecoverable")
-	default:
-	}
-}
-
-// shortenWriteDeadline replaces the shipped stdin write deadline for one test, so removing the timer fails the
-// assertion. Callers must not run in parallel with anything that writes a frame.
-func shortenWriteDeadline(t *testing.T, d time.Duration) {
-	t.Helper()
-	orig := writeDeadline
-	writeDeadline = d
-	t.Cleanup(func() { writeDeadline = orig })
-}
-
-// waitReaped polls until the bridge's done channel closes, bounded. Stop runs asynchronously behind cmd.Wait.
-func waitReaped(t *testing.T, b *Bridge, what string) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		select {
-		case <-b.done:
-			return
-		default:
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%s: the bridge was never reaped", what)
-		}
-		time.Sleep(time.Millisecond)
-	}
-}
-
-// TestWriteFrame_ReapsTheBridgeWhenStdinStopsDraining pins that the write is bounded and that expiry kills the
-// bridge: it leaves a partial frame (65,536 of 1,048,576 bytes on a 64 KiB pipe), an unrecoverable desync.
-func TestWriteFrame_ReapsTheBridgeWhenStdinStopsDraining(t *testing.T) {
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	// pr is never drained: the wedge under test.
-	t.Cleanup(func() {
-		_ = pw.Close()
-		_ = pr.Close()
-	})
-	shortenWriteDeadline(t, 50*time.Millisecond)
-
-	b := New("/nonexistent", "/work")
-	b.stdin.Store(&stdinPipe{w: pw})
-	// Larger than the pipe buffer, so the write cannot complete.
-	err = b.writeFrame(make([]byte, 256*1024))
-	if !errors.Is(err, os.ErrDeadlineExceeded) {
-		t.Fatalf("writeFrame against an undrained pipe err = %v, want %v; the write is unbounded",
-			err, os.ErrDeadlineExceeded)
-	}
-	waitReaped(t, b, "a write deadline expired, leaving a partial frame on the wire")
-}
-
-// shortWriter reports fewer bytes than given with a nil error, which io.Writer permits, leaving a partial frame.
-type shortWriter struct{}
-
-func (shortWriter) Write(p []byte) (int, error) { return len(p) - 1, nil }
-func (shortWriter) Close() error                { return nil }
-
-// TestWriteFrame_ReapsTheBridgeOnAShortWrite pins that a short write reaps too.
-func TestWriteFrame_ReapsTheBridgeOnAShortWrite(t *testing.T) {
-	b := New("/nonexistent", "/work")
-	b.stdin.Store(&stdinPipe{w: shortWriter{}})
-
-	if err := b.writeFrame([]byte("hello\n")); err == nil {
-		t.Fatalf("writeFrame swallowed a short write; a truncated frame desyncs kiro-cli's scanner")
-	}
-	waitReaped(t, b, "a short write left a partial frame on the wire")
-}
-
-// TestWriteFrame_WritesThroughAWriterWithNoDeadline pins that the deadline applies only where the writer supports
-// one; the fixtures are not files.
-func TestWriteFrame_WritesThroughAWriterWithNoDeadline(t *testing.T) {
-	shortenWriteDeadline(t, time.Nanosecond)
-	w := &captureWriter{}
-	b := New("/nonexistent", "/work")
-	b.stdin.Store(&stdinPipe{w: w})
-
-	if err := b.writeFrame([]byte("hello\n")); err != nil {
-		t.Fatalf("writeFrame through a deadline-less writer: %v", err)
-	}
-	if !w.wrote() {
-		t.Errorf("writeFrame wrote nothing through a deadline-less writer")
-	}
-}
-
 // session/new carries the chat's model and effort level in _meta.kiro. KAS starts on `auto`, which has no tiers, so a
 // level set later is dropped (2.19.1) and the first prompt runs the default tier.
 func TestNewSession_SendsTheModelAndEffortInSessionMeta(t *testing.T) {
-	b := New("/nonexistent", "/work")
-	sent, err := runNewSession(t, b,
-		&marotte.StartOpts{Model: "claude-opus-5", Effort: "max"},
+	b := NewEngine("/nonexistent", "/work")
+	sent, _, err := runNewSession(t, b,
+		&marotte.SessionOpts{Model: "claude-opus-5", Effort: "max"},
 		&marotte.RPCResponse{Result: json.RawMessage(
 			`{"sessionId":"acp-session-xyz","configOptions":[` +
 				`{"id":"model","currentValue":"claude-opus-5","options":[{"value":"claude-opus-5","name":"O5","_meta":{"kiro":{"rateMultiplier":1}}}]},` +
@@ -1696,9 +1568,9 @@ func TestNewSession_SendsTheModelAndEffortInSessionMeta(t *testing.T) {
 
 // A build that ignores the meta keys still converges through the repair.
 func TestNewSession_RepairsWhenTheDoorWasIgnored(t *testing.T) {
-	b := New("/nonexistent", "/work")
-	sent, err := runNewSession(t, b,
-		&marotte.StartOpts{Effort: "max"},
+	b := NewEngine("/nonexistent", "/work")
+	sent, _, err := runNewSession(t, b,
+		&marotte.SessionOpts{Effort: "max"},
 		// The session came back at the model's default, not max.
 		&marotte.RPCResponse{Result: json.RawMessage(
 			`{"sessionId":"acp-session-xyz","configOptions":[{"id":"effortLevel","currentValue":"high","options":[{"value":"high"},{"value":"max"}]}]}`,
@@ -1716,9 +1588,9 @@ func TestNewSession_RepairsWhenTheDoorWasIgnored(t *testing.T) {
 // A malformed level never reaches the door (config.json is user-editable). Shape only: a well-formed unknown tier
 // flows.
 func TestNewSession_OmitsAMalformedLevelFromTheDoor(t *testing.T) {
-	b := New("/nonexistent", "/work")
-	sent, err := runNewSession(t, b,
-		&marotte.StartOpts{Effort: "TURBO"},
+	b := NewEngine("/nonexistent", "/work")
+	sent, _, err := runNewSession(t, b,
+		&marotte.SessionOpts{Effort: "TURBO"},
 		&marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)})
 	if err != nil {
 		t.Fatalf("newSession returned error: %v", err)
@@ -1731,9 +1603,9 @@ func TestNewSession_OmitsAMalformedLevelFromTheDoor(t *testing.T) {
 // A well-formed tier marotte does not name still reaches the door: gpt-luna ships "none", and the catalog is
 // upstream's.
 func TestNewSession_SendsAWellFormedUnknownLevel(t *testing.T) {
-	b := New("/nonexistent", "/work")
-	sent, err := runNewSession(t, b,
-		&marotte.StartOpts{Effort: "none"},
+	b := NewEngine("/nonexistent", "/work")
+	sent, _, err := runNewSession(t, b,
+		&marotte.SessionOpts{Effort: "none"},
 		&marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)})
 	if err != nil {
 		t.Fatalf("newSession returned error: %v", err)
@@ -1745,42 +1617,79 @@ func TestNewSession_SendsAWellFormedUnknownLevel(t *testing.T) {
 
 // loadSession applies a well-formed result: the parsed model, not the fallback.
 func TestLoadSession_AppliesParsedResult(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{
 		Result: json.RawMessage(`{"sessionId":"acp-session-xyz","configOptions":[{"id":"model","currentValue":"parsed-model","options":[{"value":"parsed-model","name":"Parsed","description":"ok","_meta":{"kiro":{"rateMultiplier":1}}}]}]}`),
 	}
-	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
+	_, s, err := runLoadSessionOpts(t, b, &marotte.SessionOpts{SessionID: "acp-session-xyz", Model: "fb-model"}, resp)
+	if err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
 	}
-	if got := b.ModelID(); got != "parsed-model" {
+	if got := s.ModelID(); got != "parsed-model" {
 		t.Errorf("loadSession ModelID() = %q, want %q (parsed result must be applied, not fallback)", got, "parsed-model")
 	}
 }
 
-// loadSession records the read-loop position of its response, the only thing a replay can be ordered against. 0,
-// or a position read afterwards, would make completion trivially true and adopt a partial transcript.
+// LoadSession records its lane's position at the response, the only thing a replay can be ordered against. 0, or a
+// position read afterwards, would make completion trivially true and adopt a partial transcript.
 func TestLoadSession_RecordsTheResponsePosition(t *testing.T) {
-	b := New("/nonexistent", "/work")
-	// Seven replay frames before the result, as a short transcript's load.
-	b.deliveredSeq = 7
-	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
-	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
-		t.Fatalf("loadSession returned error: %v", err)
+	e := NewEngine("/nonexistent", "/work")
+	e.lifecycleCtx = context.Background()
+	e.stdin.Store(&stdinPipe{w: &captureWriter{}})
+	type loaded struct {
+		s   *Session
+		err error
 	}
-	if got := b.SessionLoadSeq(); got != 7 {
-		t.Errorf("SessionLoadSeq() = %d, want 7 (the position the load result arrived at)", got)
+	done := make(chan loaded, 1)
+	go func() {
+		s, err := e.LoadSession(t.Context(), &marotte.SessionOpts{SessionID: "acp-session-xyz"}, nil)
+		done <- loaded{s, err}
+	}()
+	waitPending(t, e, 1)
+	var entry *pendingEntry
+	e.pendingMu.Lock()
+	for id, v := range e.pending {
+		entry = v
+		delete(e.pending, id)
+	}
+	e.pendingMu.Unlock()
+	// Seven replay frames reach the session's lane before the result, as a short transcript's load.
+	for range 7 {
+		entry.lane.push(&marotte.RPCResponse{Method: marotte.MethodSessionUpdate})
+	}
+	entry.ch <- pendingReply{resp: &marotte.RPCResponse{Result: json.RawMessage(`{}`)}, seq: entry.lane.position()}
+	waitPending(t, e, 1)
+	for {
+		select {
+		case got := <-done:
+			if got.err != nil {
+				t.Fatalf("LoadSession: %v", got.err)
+			}
+			if pos := got.s.SessionLoadSeq(); pos != 7 {
+				t.Errorf("SessionLoadSeq() = %d, want 7 (the position the load result arrived at)", pos)
+			}
+			return
+		default:
+		}
+		e.pendingMu.Lock()
+		for id, v := range e.pending {
+			delete(e.pending, id)
+			v.ch <- pendingReply{resp: &marotte.RPCResponse{Result: json.RawMessage(`{}`)}}
+		}
+		e.pendingMu.Unlock()
+		time.Sleep(time.Millisecond)
 	}
 }
 
 // session/new leaves the load position at zero: there is no replay.
 func TestNewSession_LeavesTheLoadPositionUnset(t *testing.T) {
-	b := New("/nonexistent", "/work")
-	b.deliveredSeq = 7
+	b := NewEngine("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"fresh"}`)}
-	if _, err := runNewSession(t, b, &marotte.StartOpts{}, resp); err != nil {
+	_, s, err := runNewSession(t, b, &marotte.SessionOpts{}, resp)
+	if err != nil {
 		t.Fatalf("newSession returned error: %v", err)
 	}
-	if got := b.SessionLoadSeq(); got != 0 {
+	if got := s.SessionLoadSeq(); got != 0 {
 		t.Errorf("SessionLoadSeq() = %d after session/new, want 0", got)
 	}
 }
@@ -1788,7 +1697,7 @@ func TestNewSession_LeavesTheLoadPositionUnset(t *testing.T) {
 // loadSession warns and falls back when the result cannot be parsed.
 func TestLoadSession_WarnsOnUnparseableResult(t *testing.T) {
 	c := capture.Default(t)
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
 	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
@@ -1800,12 +1709,13 @@ func TestLoadSession_WarnsOnUnparseableResult(t *testing.T) {
 
 // An unparseable result fills an empty model from the fallback (the `b.modelID == ""` gate).
 func TestLoadSession_FallbackModelAppliedOnUnparseableResult(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
-	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
+	_, s, err := runLoadSessionOpts(t, b, &marotte.SessionOpts{SessionID: "acp-session-xyz", Model: "fb-model"}, resp)
+	if err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
 	}
-	if got := b.ModelID(); got != "fb-model" {
+	if got := s.ModelID(); got != "fb-model" {
 		t.Errorf("loadSession ModelID() = %q, want %q (an empty model must be filled from the fallback on an unparseable result)", got, "fb-model")
 	}
 }
@@ -1834,14 +1744,14 @@ func TestApplySessionResult_ReportsAWorkflowsDisagreement(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := capture.Default(t)
-			b := New("/nonexistent", "/work")
-			b.features.Workflows = true
-			if err := runLoadSession(t, b, "fb-model",
+			b := NewEngine("/nonexistent", "/work")
+			if _, _, err := runLoadSessionOpts(t, b,
+				&marotte.SessionOpts{SessionID: "acp-session-xyz", Features: marotte.SessionFeatures{Workflows: true}},
 				&marotte.RPCResponse{Result: json.RawMessage(tc.result)}); err != nil {
 				t.Fatalf("loadSession returned error: %v", err)
 			}
 			got := c.CountExact("session resolved the workflows setting against what marotte declared; "+
-				"the agent's workflow tools are not what this spawn asked for") > 0
+				"the agent's workflow tools are not what this session asked for") > 0
 			if got != tc.wantWarn {
 				t.Errorf("warn logged = %v, want %v", got, tc.wantWarn)
 			}
@@ -1853,7 +1763,7 @@ func TestApplySessionResult_ReportsAWorkflowsDisagreement(t *testing.T) {
 // models asynchronously, so the catalog arrives later on config_option_update (kiro-cli 2.20.0), and an expired
 // token gives the same shape. The keep rests on a `continue` a refactor could drop.
 func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 
 	// Seed the catalog as a live session does, then resume.
 	seeded := &marotte.RPCResponse{
@@ -1863,11 +1773,12 @@ func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
 			`{"value":"seeded-model","name":"Seeded","description":"ok"},` +
 			`{"value":"gone-model","name":"Gone","description":"[Deprecated] retired"}]}]}`),
 	}
-	if _, err := runNewSession(t, b, &marotte.StartOpts{}, seeded); err != nil {
+	_, s, err := runNewSession(t, b, &marotte.SessionOpts{}, seeded)
+	if err != nil {
 		t.Fatalf("seeding newSession returned error: %v", err)
 	}
-	if len(b.Models()) != 1 || len(b.Catalog()) != 2 || len(b.Modes()) != 1 {
-		t.Fatalf("seed did not take: models=%v catalog=%v modes=%v", b.Models(), b.Catalog(), b.Modes())
+	if len(s.Models()) != 1 || len(s.Catalog()) != 2 || len(s.Modes()) != 1 {
+		t.Fatalf("seed did not take: models=%v catalog=%v modes=%v", s.Models(), s.Catalog(), s.Modes())
 	}
 
 	// Absent and empty are guarded by different code: `r.Modes != nil` and the length check.
@@ -1881,21 +1792,22 @@ func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
 		"empty block": `{"sessionId":"acp-session-xyz",` +
 			`"modes":{"currentModeId":"vibe","availableModes":[]},` +
 			`"configOptions":[{"id":"model","currentValue":"seeded-model","options":[]}]}`,
+		// kiro-cli 2.32.0's cold pin: the saved model as the only choice while KAS's catalog is empty.
+		"cold-catalog pin": `{"sessionId":"acp-session-xyz","configOptions":[` +
+			`{"id":"model","currentValue":"seeded-model","options":[{"value":"seeded-model","name":"Seeded"}]},` +
+			`{"id":"effortLevel","currentValue":"high","options":[{"value":"high","name":"High"}]}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			resumed := &marotte.RPCResponse{Result: json.RawMessage(result)}
-			if _, err := runLoadSessionOpts(t, b,
-				&marotte.StartOpts{SessionID: "acp-session-xyz"}, resumed); err != nil {
-				t.Fatalf("loadSession returned error: %v", err)
-			}
+			// A second result on the same handle, as a load result folds over what the session holds.
+			s.adoptLoadedSession("", &marotte.RPCResponse{Result: json.RawMessage(result)})
 
-			if got := b.Models(); len(got) != 1 || got[0].ID != "seeded-model" {
+			if got := s.Models(); len(got) != 1 || got[0].ID != "seeded-model" {
 				t.Errorf("Models() = %v, want the seeded catalog kept (an absent option is not an empty one)", got)
 			}
-			if got := b.Catalog(); len(got) != 2 {
+			if got := s.Catalog(); len(got) != 2 {
 				t.Errorf("Catalog() = %v, want the seeded unfiltered catalog kept: ApplyServedModels derives the entitlement set from it, so emptying it refuses a model the account holds", got)
 			}
-			if got := b.Modes(); len(got) != 1 || got[0].ID != "vibe" {
+			if got := s.Modes(); len(got) != 1 || got[0].ID != "vibe" {
 				t.Errorf("Modes() = %v, want the seeded mode list kept; nothing refreshes modes afterwards, so this loss is permanent for the session", got)
 			}
 		})
@@ -1905,11 +1817,11 @@ func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
 // A resume re-applies the chat's effort: nothing reconciles Chat.Effort, so a max chat resumed at KAS's level while
 // the pill said max.
 func TestLoadSession_ReAppliesTheChatsEffort(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
 
-	sent, err := runLoadSessionOpts(t, b,
-		&marotte.StartOpts{SessionID: "acp-session-xyz", Effort: "max"}, resp)
+	sent, _, err := runLoadSessionOpts(t, b,
+		&marotte.SessionOpts{SessionID: "acp-session-xyz", Effort: "max"}, resp)
 	if err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
 	}
@@ -1924,11 +1836,11 @@ func TestLoadSession_ReAppliesTheChatsEffort(t *testing.T) {
 
 // A chat with no level sends no effort option on resume.
 func TestLoadSession_SendsNoEffortWhenTheChatChoseNone(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
 
-	sent, err := runLoadSessionOpts(t, b,
-		&marotte.StartOpts{SessionID: "acp-session-xyz"}, resp)
+	sent, _, err := runLoadSessionOpts(t, b,
+		&marotte.SessionOpts{SessionID: "acp-session-xyz"}, resp)
 	if err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
 	}
@@ -1942,9 +1854,9 @@ func TestLoadSession_SendsNoEffortWhenTheChatChoseNone(t *testing.T) {
 func TestEnsureEffort_DropsAMalformedLevel(t *testing.T) {
 	for _, level := range []string{"", "HIGH", "max ", "9max"} {
 		t.Run(level, func(t *testing.T) {
-			b := New("/nonexistent", "/work")
-			sent, err := driveSessionCall(t, b, &marotte.RPCResponse{Result: json.RawMessage(`{}`)},
-				func(ctx context.Context) error { return b.EnsureEffort(ctx, level) })
+			b, s := engineWithSession()
+			sent, err := driveSessionCall(t, b, &marotte.RPCResponse{Result: json.RawMessage(`{}`)}, false,
+				func(ctx context.Context) error { return s.EnsureEffort(ctx, level) })
 			if err != nil {
 				t.Errorf("EnsureEffort(%q) = %v, want nil", level, err)
 			}
@@ -1957,13 +1869,13 @@ func TestEnsureEffort_DropsAMalformedLevel(t *testing.T) {
 
 // A level the session already reports costs no round trip, so the prompt path can call this per prompt.
 func TestEnsureEffort_SkipsTheLevelTheSessionReports(t *testing.T) {
-	b := New("/nonexistent", "/work")
-	b.mu.Lock()
-	b.effortLevel = "max"
-	b.mu.Unlock()
+	b, s := engineWithSession()
+	s.mu.Lock()
+	s.effortLevel = "max"
+	s.mu.Unlock()
 
-	sent, err := driveSessionCall(t, b, &marotte.RPCResponse{Result: json.RawMessage(`{}`)},
-		func(ctx context.Context) error { return b.EnsureEffort(ctx, "max") })
+	sent, err := driveSessionCall(t, b, &marotte.RPCResponse{Result: json.RawMessage(`{}`)}, false,
+		func(ctx context.Context) error { return s.EnsureEffort(ctx, "max") })
 	if err != nil {
 		t.Fatalf("EnsureEffort(the reported level) = %v, want nil", err)
 	}
@@ -1973,15 +1885,15 @@ func TestEnsureEffort_SkipsTheLevelTheSessionReports(t *testing.T) {
 }
 
 // A model swap clears the cached level so the next EnsureEffort asserts. On 2.19.1 a same-tier swap keeps it, a
-// swap to `auto` drops it, and the bridge sees neither.
+// swap to `auto` drops it, and the session sees neither.
 func TestSetModel_ClearsTheCachedEffortLevel(t *testing.T) {
-	b := New("/nonexistent", "/work")
-	b.mu.Lock()
-	b.effortLevel = "max"
-	b.mu.Unlock()
+	b, s := engineWithSession()
+	s.mu.Lock()
+	s.effortLevel = "max"
+	s.mu.Unlock()
 
-	sent, err := driveSessionCall(t, b, &marotte.RPCResponse{Result: json.RawMessage(`{}`)},
-		func(ctx context.Context) error { return b.SetModel(ctx, "claude-sonnet-5") })
+	sent, err := driveSessionCall(t, b, &marotte.RPCResponse{Result: json.RawMessage(`{}`)}, false,
+		func(ctx context.Context) error { return s.SetModel(ctx, "claude-sonnet-5") })
 	if err != nil {
 		t.Fatalf("SetModel returned error: %v", err)
 	}
@@ -1989,9 +1901,9 @@ func TestSetModel_ClearsTheCachedEffortLevel(t *testing.T) {
 		t.Fatalf("SetModel sent no model option; frames were:\n%s", sent)
 	}
 
-	b.mu.Lock()
-	got := b.effortLevel
-	b.mu.Unlock()
+	s.mu.Lock()
+	got := s.effortLevel
+	s.mu.Unlock()
 	if got != "" {
 		t.Errorf("cached effort level after a swap = %q, want it cleared", got)
 	}
@@ -2000,15 +1912,15 @@ func TestSetModel_ClearsTheCachedEffortLevel(t *testing.T) {
 // ObserveEffort is the other channel the level is reported on. Here the door asked max and got it, then KAS's
 // first-prompt pin moved the session to high on config_option_update; comparing max to max skipped the repair.
 func TestObserveEffort_MakesTheNextEnsureAssert(t *testing.T) {
-	b := New("/nonexistent", "/work")
-	b.mu.Lock()
-	b.effortLevel = "max" // what the session door asked for and the reply confirmed
-	b.mu.Unlock()
+	b, s := engineWithSession()
+	s.mu.Lock()
+	s.effortLevel = "max" // what the session door asked for and the reply confirmed
+	s.mu.Unlock()
 
-	b.ObserveEffort("high") // what the notification says it is running at now
+	s.ObserveEffort("high") // what the notification says it is running at now
 
-	sent, err := driveSessionCall(t, b, &marotte.RPCResponse{Result: json.RawMessage(`{}`)},
-		func(ctx context.Context) error { return b.EnsureEffort(ctx, "max") })
+	sent, err := driveSessionCall(t, b, &marotte.RPCResponse{Result: json.RawMessage(`{}`)}, false,
+		func(ctx context.Context) error { return s.EnsureEffort(ctx, "max") })
 	if err != nil {
 		t.Fatalf("EnsureEffort after an observation = %v, want nil", err)
 	}
@@ -2019,37 +1931,37 @@ func TestObserveEffort_MakesTheNextEnsureAssert(t *testing.T) {
 
 // An absent report keeps the previous value, matching applyEffortConfigOptionLocked.
 func TestObserveEffort_IgnoresAnEmptyReport(t *testing.T) {
-	b := New("/nonexistent", "/work")
-	b.mu.Lock()
-	b.effortLevel = "max"
-	b.mu.Unlock()
+	_, s := engineWithSession()
+	s.mu.Lock()
+	s.effortLevel = "max"
+	s.mu.Unlock()
 
-	b.ObserveEffort("")
+	s.ObserveEffort("")
 
-	b.mu.Lock()
-	got := b.effortLevel
-	b.mu.Unlock()
+	s.mu.Lock()
+	got := s.effortLevel
+	s.mu.Unlock()
 	if got != "max" {
 		t.Errorf("cached level after an empty report = %q, want it left at %q", got, "max")
 	}
 }
 
-// TestInitialize_HooksCapabilityOptIn pins that StartOpts.EnableHooks controls _meta.kiro.hooks: true declares
-// {enabled:true,v2:true} so KAS autofires .kiro/hooks/*.json itself; false omits it. openExternalUrl and
-// infrastructureSafety are declared either way.
-func TestInitialize_HooksCapabilityOptIn(t *testing.T) {
+// TestInitialize_DeclaresTheEngineCapabilities pins that the one engine always declares _meta.kiro.hooks
+// {enabled:true,v2:true}, so KAS autofires .kiro/hooks/*.json itself, beside openExternalUrl and infrastructureSafety.
+func TestInitialize_DeclaresTheEngineCapabilities(t *testing.T) {
 	// A fake kiro-cli that appends the raw initialize request to $INIT_CAPTURE.
 	script := `#!/bin/sh
 while IFS= read -r line; do
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  sid=$(echo "$line" | sed -n 's/.*"overrideSessionId":"\([^"]*\)".*/\1/p')
   case "$method" in
     initialize)
       printf '%s\n' "$line" >> "$INIT_CAPTURE"
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
       ;;
     session/new)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess_hooktest","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"d"}]},"configOptions":[{"id":"model","currentValue":"m","options":[{"value":"m","name":"M","description":"x","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"d"}]},"configOptions":[{"id":"model","currentValue":"m","options":[{"value":"m","name":"M","description":"x","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id" "$sid"
       ;;
     *)
       if [ -n "$id" ]; then printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"; fi
@@ -2065,13 +1977,13 @@ done
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	run := func(t *testing.T, enableHooks bool) string {
+	run := func(t *testing.T) string {
 		t.Helper()
 		capture := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capture)
-		b := New(scriptPath, dir)
+		b := NewEngine(scriptPath, dir)
 		// Knowledge on, so the per-key loop below has a true to check.
-		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "m", EnableHooks: enableHooks, Knowledge: true}); err != nil {
+		if err := b.Start(t.Context(), &marotte.EngineOpts{Lifetime: context.Background(), Knowledge: true}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -2082,8 +1994,8 @@ done
 		return string(data)
 	}
 
-	t.Run("enabled declares v2 hooks opt-in", func(t *testing.T) {
-		got := run(t, true)
+	t.Run("declares v2 hooks opt-in", func(t *testing.T) {
+		got := run(t)
 		if !strings.Contains(got, `"hooks":{"enabled":true,"v2":true}`) {
 			t.Errorf("initialize missing hooks opt-in; got: %s", got)
 		}
@@ -2093,7 +2005,7 @@ done
 		// Each settings key is asserted separately: an exact substring breaks on additions and once hid two missing keys,
 		// and each key gates a different KAS subsystem, silently when absent. `workflows` is per session and lives on the
 		// session door.
-		for _, key := range []string{"codeIntelligence", "knowledge", "subagentOrchestration", "goal"} {
+		for _, key := range []string{"codeIntelligence", "knowledge", "goal"} {
 			if !strings.Contains(got, `"`+key+`":{"enabled":true}`) {
 				t.Errorf("initialize missing the %s settings opt-in; got: %s", key, got)
 			}
@@ -2107,16 +2019,6 @@ done
 			t.Errorf("initialize missing the knowledge opt-in; got: %s", got)
 		}
 	})
-
-	t.Run("disabled omits the hooks opt-in", func(t *testing.T) {
-		got := run(t, false)
-		if strings.Contains(got, `"hooks"`) {
-			t.Errorf("initialize should omit hooks when EnableHooks=false; got: %s", got)
-		}
-		if !strings.Contains(got, `"openExternalUrl":true`) {
-			t.Errorf("initialize missing base kiro capabilities; got: %s", got)
-		}
-	})
 }
 
 // sessionDoorScript is a fake kiro-cli that appends every request to $RPC_CAPTURE, one JSON line each, so a test
@@ -2126,12 +2028,13 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "$RPC_CAPTURE"
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  sid=$(echo "$line" | sed -n 's/.*"overrideSessionId":"\([^"]*\)".*/\1/p')
   case "$method" in
     initialize)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
       ;;
     session/new|session/load)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess_doortest","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"d"}]},"configOptions":[{"id":"model","currentValue":"m","options":[{"value":"m","name":"M","description":"x","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"d"}]},"configOptions":[{"id":"model","currentValue":"m","options":[{"value":"m","name":"M","description":"x","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id" "$sid"
       ;;
     *)
       if [ -n "$id" ]; then printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"; fi
@@ -2140,10 +2043,37 @@ while IFS= read -r line; do
 done
 `
 
-// alsoContains narrows a repeated method (set_config_option carries model, effort and autopilot).
-func captureRequest(t *testing.T, method string, opts *marotte.StartOpts, alsoContains ...string) string {
+// openSessionOn starts e over its script and opens one session with opts: a load when opts names a session, else a
+// new one. The engine stops at cleanup.
+func openSessionOn(t *testing.T, e *Engine, opts *marotte.SessionOpts) (*Session, error) {
 	t.Helper()
-	data := captureRequests(t, opts)
+	return openSessionWith(t, e, &marotte.EngineOpts{}, opts)
+}
+
+// openSessionWith is openSessionOn with the engine's own options; their Lifetime is set here.
+func openSessionWith(t *testing.T, e *Engine, eo *marotte.EngineOpts, opts *marotte.SessionOpts) (*Session, error) {
+	t.Helper()
+	eo.Lifetime = context.Background()
+	if err := e.Start(t.Context(), eo); err != nil {
+		return nil, err
+	}
+	t.Cleanup(e.Stop)
+	if opts.SessionID != "" {
+		return e.LoadSession(t.Context(), opts, nil)
+	}
+	return e.NewSession(t.Context(), opts, nil)
+}
+
+// alsoContains narrows a repeated method (set_config_option carries model, effort and autopilot).
+func captureRequest(t *testing.T, method string, opts *marotte.SessionOpts, alsoContains ...string) string {
+	t.Helper()
+	return captureEngineRequest(t, method, &marotte.EngineOpts{}, opts, alsoContains...)
+}
+
+// captureEngineRequest is captureRequest with the engine's own options.
+func captureEngineRequest(t *testing.T, method string, eo *marotte.EngineOpts, opts *marotte.SessionOpts, alsoContains ...string) string {
+	t.Helper()
+	data := captureEngineRequests(t, eo, opts)
 	needles := append([]string{`"method":"` + method + `"`}, alsoContains...)
 	for line := range strings.SplitSeq(strings.TrimSpace(data), "\n") {
 		matched := true
@@ -2162,7 +2092,13 @@ func captureRequest(t *testing.T, method string, opts *marotte.StartOpts, alsoCo
 }
 
 // captureRequests returns the whole capture, for asserting a call the start must not make.
-func captureRequests(t *testing.T, opts *marotte.StartOpts) string {
+func captureRequests(t *testing.T, opts *marotte.SessionOpts) string {
+	t.Helper()
+	return captureEngineRequests(t, &marotte.EngineOpts{}, opts)
+}
+
+// captureEngineRequests is captureRequests with the engine's own options.
+func captureEngineRequests(t *testing.T, eo *marotte.EngineOpts, opts *marotte.SessionOpts) string {
 	t.Helper()
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "fake-kiro-cli")
@@ -2173,9 +2109,9 @@ func captureRequests(t *testing.T, opts *marotte.StartOpts) string {
 	capturePath := filepath.Join(t.TempDir(), "rpc.jsonl")
 	t.Setenv("RPC_CAPTURE", capturePath)
 
-	b := New(scriptPath, dir)
-	if err := b.Start(t.Context(), opts); err != nil {
-		t.Fatalf("Start: %v", err)
+	b := NewEngine(scriptPath, dir)
+	if _, err := openSessionWith(t, b, eo, opts); err != nil {
+		t.Fatalf("open session: %v", err)
 	}
 	b.Stop()
 
@@ -2214,8 +2150,8 @@ func metaKiroSettings(t *testing.T, line string) map[string]any {
 // TestSessionNewCarriesWorkflowsAtSessionDoor pins the workflows opt-in on session/new at KAS's depth. KAS resolves
 // it only per session, so on initialize it resolved false and the workflow tools silently vanished.
 func TestSessionNewCarriesWorkflowsAtSessionDoor(t *testing.T) {
-	line := captureRequest(t, "session/new", &marotte.StartOpts{
-		Lifetime: t.Context(), Model: "m", Features: marotte.AgentFeatures{Workflows: true},
+	line := captureRequest(t, "session/new", &marotte.SessionOpts{
+		Model: "m", Features: marotte.SessionFeatures{Workflows: true},
 	})
 	settings := metaKiroSettings(t, line)
 	got, ok := settings["workflows"].(map[string]any)
@@ -2233,9 +2169,9 @@ door. Captured:
 // TestSessionLoadCarriesWorkflowsAtSessionDoor pins the same key on session/load: KAS falls back to the value
 // persisted at creation, so a new-only key leaves resumed chats without the tools.
 func TestSessionLoadCarriesWorkflowsAtSessionDoor(t *testing.T) {
-	line := captureRequest(t, "session/load", &marotte.StartOpts{
-		Lifetime: t.Context(), Model: "m", SessionID: "sess_resume_door",
-		Features: marotte.AgentFeatures{Workflows: true},
+	line := captureRequest(t, "session/load", &marotte.SessionOpts{
+		Model: "m", SessionID: "sess_resume_door",
+		Features: marotte.SessionFeatures{Workflows: true},
 	})
 	settings := metaKiroSettings(t, line)
 	got, ok := settings["workflows"].(map[string]any)
@@ -2249,12 +2185,11 @@ lose a capability a fresh one has. Captured:
 	}
 }
 
-// TestSessionDoorCarriesDisableAutoCompaction pins StartOpts.DisableAutoCompaction on both verbs in both states, and
-// that the bridge reports what it sent.
+// TestSessionDoorCarriesDisableAutoCompaction pins SessionOpts.DisableAutoCompaction on both verbs in both states.
 func TestSessionDoorCarriesDisableAutoCompaction(t *testing.T) {
 	for _, method := range []string{"session/new", "session/load"} {
 		for _, disabled := range []bool{false, true} {
-			opts := &marotte.StartOpts{Lifetime: t.Context(), Model: "m", DisableAutoCompaction: disabled}
+			opts := &marotte.SessionOpts{Model: "m", DisableAutoCompaction: disabled}
 			if method == "session/load" {
 				opts.SessionID = "sess_resume_door"
 			}
@@ -2277,12 +2212,13 @@ func TestAutoCompactionDisabled_ReportsTheSentValue(t *testing.T) {
 		}
 		t.Setenv("HOME", t.TempDir())
 		t.Setenv("RPC_CAPTURE", filepath.Join(t.TempDir(), "rpc.jsonl"))
-		b := New(scriptPath, dir)
-		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "m", DisableAutoCompaction: disabled}); err != nil {
-			t.Fatalf("Start: %v", err)
+		b := NewEngine(scriptPath, dir)
+		s, err := openSessionOn(t, b, &marotte.SessionOpts{Model: "m", DisableAutoCompaction: disabled})
+		if err != nil {
+			t.Fatalf("open session: %v", err)
 		}
-		if got := b.AutoCompactionDisabled(); got != disabled {
-			t.Errorf("AutoCompactionDisabled() after Start(DisableAutoCompaction=%v) = %v", disabled, got)
+		if got := s.AutoCompactionDisabled(); got != disabled {
+			t.Errorf("AutoCompactionDisabled() after a door with DisableAutoCompaction=%v = %v", disabled, got)
 		}
 		b.Stop()
 	}
@@ -2293,7 +2229,7 @@ func TestAutoCompactionDisabled_ReportsTheSentValue(t *testing.T) {
 func TestSessionDoorWorkflowsFollowsTheSetting(t *testing.T) {
 	for _, method := range []string{"session/new", "session/load"} {
 		for _, on := range []bool{false, true} {
-			opts := &marotte.StartOpts{Lifetime: t.Context(), Model: "m", Features: marotte.AgentFeatures{Workflows: on}}
+			opts := &marotte.SessionOpts{Model: "m", Features: marotte.SessionFeatures{Workflows: on}}
 			if method == "session/load" {
 				opts.SessionID = "sess_resume_door"
 			}
@@ -2310,7 +2246,7 @@ func TestSessionDoorWorkflowsFollowsTheSetting(t *testing.T) {
 // TestSessionDoorCarriesBackgroundExecution pins settings.backgroundExecution as {"enabled":true} on both verbs.
 func TestSessionDoorCarriesBackgroundExecution(t *testing.T) {
 	for _, method := range []string{"session/new", "session/load"} {
-		opts := &marotte.StartOpts{Lifetime: t.Context(), Model: "m"}
+		opts := &marotte.SessionOpts{Model: "m"}
 		if method == "session/load" {
 			opts.SessionID = "sess_resume_door"
 		}
@@ -2327,7 +2263,7 @@ func TestSessionDoorCarriesBackgroundExecution(t *testing.T) {
 func TestSessionVerbs_CarryClientSteering(t *testing.T) {
 	doc := marotte.ClientSteeringDoc{Name: "marotte", Inclusion: "always", Content: "probe"}
 	for _, method := range []string{"session/new", "session/load"} {
-		opts := &marotte.StartOpts{Lifetime: t.Context(), Model: "m", Steering: []marotte.ClientSteeringDoc{doc}}
+		opts := &marotte.SessionOpts{Model: "m", Steering: []marotte.ClientSteeringDoc{doc}}
 		if method == "session/load" {
 			opts.SessionID = "sess_resume_door"
 		}
@@ -2350,7 +2286,7 @@ func TestSessionVerbs_CarryClientSteering(t *testing.T) {
 // TestSessionVerbs_NoSteeringSendsNoKey pins that a bridge without client steering sends no key, not [].
 func TestSessionVerbs_NoSteeringSendsNoKey(t *testing.T) {
 	for _, method := range []string{"session/new", "session/load"} {
-		opts := &marotte.StartOpts{Lifetime: t.Context(), Model: "m"}
+		opts := &marotte.SessionOpts{Model: "m"}
 		if method == "session/load" {
 			opts.SessionID = "sess_resume_door"
 		}
@@ -2363,10 +2299,10 @@ func TestSessionVerbs_NoSteeringSendsNoKey(t *testing.T) {
 
 // TestSessionDoor_ShellTypeMatchesTheResponder pins the door's shellType to the shell_type responder's answer.
 func TestSessionDoor_ShellTypeMatchesTheResponder(t *testing.T) {
-	if got := kascap.SessionMeta(&kascap.Spawn{})["shellType"]; got != marotte.HostShellType {
+	if got := kascap.SessionMeta(&kascap.SessionSpawn{})["shellType"]; got != marotte.HostShellType {
 		t.Errorf("session door shellType = %v, want marotte.HostShellType %q", got, marotte.HostShellType)
 	}
-	line := captureRequest(t, "session/new", &marotte.StartOpts{Lifetime: t.Context(), Model: "m"})
+	line := captureRequest(t, "session/new", &marotte.SessionOpts{Model: "m"})
 	if kiro := digObject(t, "the session door", line, "params", "_meta", "kiro"); kiro["shellType"] != marotte.HostShellType {
 		t.Errorf("session/new shellType = %v, want %q", kiro["shellType"], marotte.HostShellType)
 	}
@@ -2376,7 +2312,7 @@ func TestSessionDoor_ShellTypeMatchesTheResponder(t *testing.T) {
 // gets -32602 and the session stays in autopilot. Asserted on bytes.
 func TestApplySupervised_SendsTheStringKASDeclares(t *testing.T) {
 	line := captureRequest(t, "session/set_config_option",
-		&marotte.StartOpts{Lifetime: t.Context(), Model: "m", Supervised: true},
+		&marotte.SessionOpts{Model: "m", Supervised: true},
 		`"configId":"`+marotte.ConfigOptionAutopilot+`"`)
 	if !strings.Contains(line, `"value":"`+marotte.ConfigValueAutopilotOff+`"`) {
 		t.Errorf(`autopilot did not carry "value":%q on the wire; KAS refuses every other
@@ -2397,12 +2333,13 @@ const autopilotScript = `#!/bin/sh
 while IFS= read -r line; do
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  sid=$(echo "$line" | sed -n 's/.*"overrideSessionId":"\([^"]*\)".*/\1/p')
   case "$method" in
     initialize)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
       ;;
     session/new|session/load)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess_doortest"}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s"}}\n' "$id" "$sid"
       ;;
     *)
       if [ -n "$id" ]; then
@@ -2442,14 +2379,14 @@ func TestApplySupervised_RecordsWhetherTheSessionTookIt(t *testing.T) {
 				t.Setenv("AUTOPILOT_REFUSE", "1")
 			}
 
-			b := New(scriptPath, dir)
-			if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Supervised: tc.supervised}); err != nil {
-				t.Fatalf("Start: %v", err)
+			b := NewEngine(scriptPath, dir)
+			s, err := openSessionOn(t, b, &marotte.SessionOpts{Supervised: tc.supervised})
+			if err != nil {
+				t.Fatalf("open session: %v", err)
 			}
-			defer b.Stop()
 
 			// A refusal never fails the session.
-			if got := b.SupervisedApplied(); got != tc.want {
+			if got := s.SupervisedApplied(); got != tc.want {
 				t.Errorf("SupervisedApplied() = %v, want %v; the coordinator reads this to decide "+
 					"whether to tell the user the chat is running unsupervised", got, tc.want)
 			}
@@ -2461,7 +2398,7 @@ func TestApplySupervised_RecordsWhetherTheSessionTookIt(t *testing.T) {
 // autopilot (parent load reports "off", fork "on").
 func TestLoadSession_ReAssertsSupervised(t *testing.T) {
 	line := captureRequest(t, "session/set_config_option",
-		&marotte.StartOpts{Lifetime: t.Context(), SessionID: "sess_forked", Supervised: true},
+		&marotte.SessionOpts{SessionID: "sess_forked", Supervised: true},
 		`"configId":"`+marotte.ConfigOptionAutopilot+`"`)
 	if !strings.Contains(line, `"value":"`+marotte.ConfigValueAutopilotOff+`"`) {
 		t.Errorf(`a supervised resume did not carry "value":%q; the forked session then runs
@@ -2472,7 +2409,7 @@ every turn without asking. Captured:
 
 // An unsupervised resume sends nothing, or a restart would pin autopilot off unasked.
 func TestLoadSession_LeavesAnUnsupervisedResumeAlone(t *testing.T) {
-	data := captureRequests(t, &marotte.StartOpts{Lifetime: t.Context(), SessionID: "sess_plain"})
+	data := captureRequests(t, &marotte.SessionOpts{SessionID: "sess_plain"})
 	if strings.Contains(data, `"`+marotte.ConfigOptionAutopilot+`"`) {
 		t.Errorf("an unsupervised resume sent the autopilot option:\n%s", data)
 	}
@@ -2513,7 +2450,7 @@ func TestApplySessionResult_TakesFlatMetaTitle(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.body), &r); err != nil {
 				t.Fatalf("unmarshal session result: %v", err)
 			}
-			b := &Bridge{}
+			b := newTestSession()
 			b.mu.Lock()
 			b.applySessionResultLocked(&r, "")
 			b.mu.Unlock()
@@ -2561,7 +2498,7 @@ func TestApplySessionResult_TakesFlatMetaContextUsage(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.body), &r); err != nil {
 				t.Fatalf("unmarshal session result: %v", err)
 			}
-			b := &Bridge{}
+			b := newTestSession()
 			b.mu.Lock()
 			b.applySessionResultLocked(&r, "")
 			b.mu.Unlock()
@@ -2586,7 +2523,7 @@ func TestApplySessionResult_KeepsSummarizationThresholdOnAbsent(t *testing.T) {
 			if err := json.Unmarshal([]byte(body), &r); err != nil {
 				t.Fatalf("unmarshal session result: %v", err)
 			}
-			b := &Bridge{}
+			b := newTestSession()
 			b.mu.Lock()
 			b.summarizationPct = 80
 			b.applySessionResultLocked(&r, "")
@@ -2615,10 +2552,10 @@ func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
 
 	// Not t.Context(): the cancel fires from t.Cleanup, after t.Context() is cancelled.
 	ctx, cancel := context.WithCancel(context.Background())
-	b := New(scriptPath, dir)
+	b := NewEngine(scriptPath, dir)
 	// The bait speaks no ACP, so drive the spawn directly; Cancel fires from lifecycleCtx.
 	b.lifecycleCtx = ctx
-	if err := b.startProcess(""); err != nil {
+	if err := b.startProcess(); err != nil {
 		t.Fatalf("startProcess: %v", err)
 	}
 	t.Cleanup(func() {
@@ -2688,15 +2625,16 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "` + logPath + `"
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  sid=$(echo "$line" | sed -n 's/.*"overrideSessionId":"\([^"]*\)".*/\1/p')
   case "$method" in
     initialize)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
       ;;
     session/new)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess-new"}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s"}}\n' "$id" "$sid"
       ;;
     session/load)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess-load"}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s"}}\n' "$id" "$sid"
       ;;
     *)
       if [ -n "$id" ]; then
@@ -2713,20 +2651,20 @@ done
 
 	cases := []struct {
 		name   string
-		opts   *marotte.StartOpts
+		opts   *marotte.SessionOpts
 		method string
 	}{
-		{"session/new", &marotte.StartOpts{Lifetime: t.Context(), Model: "m"}, "session/new"},
-		{"session/load", &marotte.StartOpts{Lifetime: t.Context(), SessionID: "existing", Model: "m"}, "session/load"},
+		{"session/new", &marotte.SessionOpts{Model: "m"}, "session/new"},
+		{"session/load", &marotte.SessionOpts{SessionID: "existing", Model: "m"}, "session/load"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := os.WriteFile(logPath, nil, 0o600); err != nil {
 				t.Fatalf("reset log: %v", err)
 			}
-			b := New(scriptPath, dir)
-			if err := b.Start(t.Context(), tc.opts); err != nil {
-				t.Fatalf("Start: %v", err)
+			b := NewEngine(scriptPath, dir)
+			if _, err := openSessionOn(t, b, tc.opts); err != nil {
+				t.Fatalf("open session: %v", err)
 			}
 			b.Stop()
 
@@ -2768,12 +2706,13 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "` + logPath + `"
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  sid=$(echo "$line" | sed -n 's/.*"overrideSessionId":"\([^"]*\)".*/\1/p')
   case "$method" in
     initialize)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
       ;;
     session/new)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess-new"}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s"}}\n' "$id" "$sid"
       ;;
     *)
       if [ -n "$id" ]; then
@@ -2788,8 +2727,8 @@ done
 		t.Fatalf("write fake script: %v", err)
 	}
 
-	b := New(scriptPath, dir)
-	if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "m"}); err != nil {
+	b := NewEngine(scriptPath, dir)
+	if err := b.Start(t.Context(), &marotte.EngineOpts{Lifetime: context.Background()}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	b.Stop()
@@ -2813,7 +2752,7 @@ done
 			t.Errorf(`initialize declares %q, which is in KAS's CORE_IO_TOOL_IDS.
 That flips hasClientIOTools and swaps the agent onto the UNBOUNDED ExecuteBash,
 removing the 30 minute ceiling on every shell command. If this is intended, the
-bound has to be reintroduced deliberately (see bridge.go's clientCapabilities).
+bound has to be reintroduced deliberately (see engine.go's clientCapabilities).
 initialize was:
 %s`, id, initLine)
 		}
@@ -2825,31 +2764,25 @@ const initializeGoldenPath = "testdata/initialize.golden"
 
 const initializeGoldenCmd = "UPDATE_GOLDEN=1 go test ./internal/bridge/ -run TestInitializeDeclaresExactly"
 
-// initGateCases is the complete matrix of _meta.kiro runtime gates: SecretStorage and DisableTelemetry set a value,
-// EnableHooks key presence, Knowledge two values; ToolSearch must change nothing here. Presets ride the session door.
-// The order is the golden's line order.
+// initGateCases is the complete matrix of the engine's initialize gates: SecretStorage and DisableTelemetry set a
+// value, Knowledge two values, and the engine features. The order is the golden's line order.
 var initGateCases = []struct {
 	name          string
-	features      marotte.AgentFeatures
+	features      marotte.EngineFeatures
 	secretStorage bool
-	enableHooks   bool
-	toolSearch    bool
 	knowledge     bool
 	telemetryOff  bool
 }{
-	{"gates off", marotte.AgentFeatures{}, false, false, false, false, false},
-	{"secret storage only", marotte.AgentFeatures{}, true, false, false, false, false},
-	{"hooks only", marotte.AgentFeatures{}, false, true, false, false, false},
-	{"both gates on", marotte.AgentFeatures{}, true, true, false, false, false},
-	{"tool search on", marotte.AgentFeatures{}, false, false, true, false, false},
-	{"knowledge on", marotte.AgentFeatures{}, false, false, false, true, false},
-	// Proves spawn() copies StartOpts.Features.
-	{"agent capabilities on", marotte.AgentFeatures{
-		InlineAgents: true, SteeringReminders: true,
+	{"gates off", marotte.EngineFeatures{}, false, false, false},
+	{"secret storage only", marotte.EngineFeatures{}, true, false, false},
+	{"knowledge on", marotte.EngineFeatures{}, false, true, false},
+	// Proves Start copies EngineOpts.Features.
+	{"agent capabilities on", marotte.EngineFeatures{
+		SteeringReminders:  true,
 		InfraSafetyMonitor: "on", TerminalCommandTimeoutMs: 300000,
-	}, false, true, false, false, false},
-	{"telemetry off", marotte.AgentFeatures{}, false, false, false, false, true},
-	{"every gate on", marotte.AgentFeatures{}, true, true, true, true, false},
+	}, false, false, false},
+	{"telemetry off", marotte.EngineFeatures{}, false, false, true},
+	{"every gate on", marotte.EngineFeatures{}, true, true, false},
 }
 
 // TestInitializeDeclaresExactly pins every initialize request's exact bytes against a golden, since each failure is
@@ -2862,13 +2795,14 @@ func TestInitializeDeclaresExactly(t *testing.T) {
 while IFS= read -r line; do
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  sid=$(echo "$line" | sed -n 's/.*"overrideSessionId":"\([^"]*\)".*/\1/p')
   case "$method" in
     initialize)
       printf '%s\n' "$line" >> "$INIT_CAPTURE"
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
       ;;
     session/new)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess_golden","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"d"}]},"configOptions":[{"id":"model","currentValue":"m","options":[{"value":"m","name":"M","description":"x","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"d"}]},"configOptions":[{"id":"model","currentValue":"m","options":[{"value":"m","name":"M","description":"x","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id" "$sid"
       ;;
     *)
       if [ -n "$id" ]; then printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"; fi
@@ -2887,13 +2821,10 @@ done
 	for _, tc := range initGateCases {
 		capturePath := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capturePath)
-		b := New(scriptPath, dir)
-		err := b.Start(t.Context(), &marotte.StartOpts{
-			Lifetime:         t.Context(),
-			Model:            "m",
+		b := NewEngine(scriptPath, dir)
+		err := b.Start(t.Context(), &marotte.EngineOpts{
+			Lifetime:         context.Background(),
 			SecretStorage:    tc.secretStorage,
-			EnableHooks:      tc.enableHooks,
-			ToolSearch:       tc.toolSearch,
 			Knowledge:        tc.knowledge,
 			DisableTelemetry: tc.telemetryOff,
 			Features:         tc.features,
@@ -2956,14 +2887,14 @@ This is a WIRE change, not a refactor. If it is deliberate, regenerate with:
 }
 
 func TestInitialize_RetainsKiroAgentCapabilities(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{
 		"agentCapabilities":{"_meta":{"kiro":{
 			"extensionMethods":["_kiro/one","_kiro/two"],
 			"replayMarking":true
 		}}}
 	}`)}
-	if _, err := driveSessionCall(t, b, resp, b.initialize); err != nil {
+	if _, err := driveSessionCall(t, b, resp, false, b.initialize); err != nil {
 		t.Fatalf("initialize = %v, want nil", err)
 	}
 
@@ -2977,9 +2908,9 @@ func TestInitialize_RetainsKiroAgentCapabilities(t *testing.T) {
 }
 
 func TestInitialize_MissingKiroAgentCapabilitiesIsZeroValue(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"protocolVersion":1}`)}
-	if _, err := driveSessionCall(t, b, resp, b.initialize); err != nil {
+	if _, err := driveSessionCall(t, b, resp, false, b.initialize); err != nil {
 		t.Fatalf("initialize = %v, want nil", err)
 	}
 
@@ -2991,7 +2922,7 @@ func TestInitialize_MissingKiroAgentCapabilitiesIsZeroValue(t *testing.T) {
 
 func TestForwardStderr_TruncatesOneLineAndContinues(t *testing.T) {
 	logs := capture.Default(t)
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	b.lifecycleCtx = t.Context()
 	first := strings.Repeat("x", stderrLineCap+128)
 
@@ -3011,10 +2942,10 @@ func TestForwardStderr_TruncatesOneLineAndContinues(t *testing.T) {
 	}
 }
 
-// TestStdinPublication_IsRaceFree races Start assigning stdin against a writer: the bridge is registered before Start,
-// so a command can call into it mid-spawn. The subprocess exits at once; only publication is under test.
+// TestStdinPublication_IsRaceFree races Start assigning stdin against a writer: the engine lane exists before Start,
+// so a caller can write into it mid-spawn. The subprocess exits at once; only publication is under test.
 func TestStdinPublication_IsRaceFree(t *testing.T) {
-	b := New("/bin/true", t.TempDir())
+	b := NewEngine("/bin/true", t.TempDir())
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(func() { cancel(); b.Stop() })
 
@@ -3030,7 +2961,7 @@ func TestStdinPublication_IsRaceFree(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		// Start fails at the handshake after startProcess assigned stdin.
-		_ = b.Start(ctx, &marotte.StartOpts{Lifetime: ctx})
+		_ = b.Start(ctx, &marotte.EngineOpts{Lifetime: ctx})
 	}()
 	wg.Wait()
 }
@@ -3044,7 +2975,7 @@ func TestLoadSession_ReAssertsMemoryReflection(t *testing.T) {
 			want = marotte.ConfigValueAutopilotOn
 		}
 		line := captureRequest(t, "session/set_config_option",
-			&marotte.StartOpts{Lifetime: t.Context(), SessionID: "sess_mem", Memory: marotte.MemoryPreference{Mode: "read_write", Reflection: on}},
+			&marotte.SessionOpts{SessionID: "sess_mem", Memory: marotte.MemoryPreference{Mode: "read_write", Reflection: on}},
 			`"configId":"`+marotte.ConfigOptionMemoryReflection+`"`)
 		params := digObject(t, "the memoryReflection set_config_option params", line, "params")
 		if got, ok := params[keyConfigValue].(string); !ok || got != want {
@@ -3052,7 +2983,7 @@ func TestLoadSession_ReAssertsMemoryReflection(t *testing.T) {
 				on, params[keyConfigValue], params[keyConfigValue], want)
 		}
 	}
-	data := captureRequests(t, &marotte.StartOpts{Lifetime: t.Context(), Memory: marotte.MemoryPreference{Mode: "read_write", Reflection: true}})
+	data := captureRequests(t, &marotte.SessionOpts{Memory: marotte.MemoryPreference{Mode: "read_write", Reflection: true}})
 	if strings.Contains(data, `"`+marotte.ConfigOptionMemoryReflection+`"`) {
 		t.Errorf("a fresh session/new sent memoryReflection; the session door already carries it:\n%s", data)
 	}
@@ -3075,7 +3006,7 @@ func TestApplySessionResult_TakesFlatTitleSetByUser(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.body), &r); err != nil {
 				t.Fatalf("unmarshal session result: %v", err)
 			}
-			b := &Bridge{}
+			b := newTestSession()
 			b.mu.Lock()
 			b.applySessionResultLocked(&r, "")
 			b.mu.Unlock()

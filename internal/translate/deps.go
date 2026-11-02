@@ -22,21 +22,20 @@ type turnAccess interface {
 	// PromptTurn returns the chat's prompt-class turn awaiting or holding its
 	// bracket, the one a turn_bind joins; false when none is open.
 	PromptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool)
-	// StopRequestedAfter reports whether the reader asked to stop after the named turn
-	// opened; false for a turn the chat does not hold (a run's step turn).
-	StopRequestedAfter(chatID marotte.ChatID, turnID string) bool
+	// StopCauseAfter is the stop cause recorded for the chat's turns at or after the named turn's
+	// open (the newest stop's, a teardown's holding against a later stop of the same turns); none
+	// for no such stop or a turn the chat does not hold (a run's step turn).
+	StopCauseAfter(chatID marotte.ChatID, turnID string) marotte.TurnStopCause
 	// AppendBetweenTurns files a chat's lane-less entry after its newest turn's
 	// turn_close, minting a closed event carrier on an empty log. The carrier's
 	// turn_open and turn_close, when it minted one, come back for the announcement.
 	AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) ([]*marotte.Entry, error)
 }
 
-// RunStep names the step a run-log turn opens for: NodePath is its workflow.PathKey
-// and NodeID rides beside it, since the key is never split back.
+// RunStep names the step a run-log turn opens for: NodePath is its workflow.PathKey.
 type RunStep struct {
 	RunID     string
 	NodePath  string
-	NodeID    string
 	SessionID string
 	// Path is NodePath's segments when the opening frame carried them, since the key is never split back.
 	Path []string
@@ -70,18 +69,20 @@ type RunAppender interface {
 	// RunNodePaused ends the step's steering turn at its node_paused: the execution reading the
 	// buffer has stopped. The log's turn stays open.
 	RunNodePaused(ctx context.Context, runID string, path []string)
+	// RunPlanUpdate records a run's queued plan revision, or settles it with KAS's outcome.
+	RunPlanUpdate(ctx context.Context, chatID marotte.ChatID, runID string, u marotte.RunPlanUpdate)
 	// RunSteer files a step steer's durable entry in the path's open turn, else after its newest
 	// closed one.
 	RunSteer(ctx context.Context, runID, nodePath, steerID string, steer *marotte.EntrySteer)
-	// RunSteerDelivered files a workflow message's take-up where RunSteer would file a steer.
-	RunSteerDelivered(ctx context.Context, runID, nodePath string, d *marotte.EntrySteerDelivered)
-	// RunWaitingWorkflowMessages is the run log's workflow messages no take-up has settled, oldest
-	// first, every step's.
-	RunWaitingWorkflowMessages(ctx context.Context, runID string) ([]marotte.WorkflowMessage, error)
-	// RunPlanUpdate records a run's queued plan revision, or settles it with KAS's outcome.
-	RunPlanUpdate(ctx context.Context, chatID marotte.ChatID, runID string, u marotte.RunPlanUpdate)
-	// RunStepReading reports whether the step a StepSteerKey names is mid-turn, reading its buffer.
-	RunStepReading(key marotte.ChatID) bool
+	// RunSteerDelivered files a workflow message's take-up where RunSteer would file a steer, and
+	// reports whether it landed.
+	RunSteerDelivered(ctx context.Context, runID, nodePath string, d *marotte.EntrySteerDelivered) bool
+	// RunSteerCleared files a step's steering clear under clearID where RunSteer would file a steer,
+	// and reports whether it landed.
+	RunSteerCleared(ctx context.Context, runID, nodePath, clearID string, c *marotte.EntrySteerCleared) bool
+	// RunUnsettledWorkflowMessages is the run log's workflow messages nothing has settled
+	// (marotte.WorkflowMessageFold.Unsettled), oldest first, every step's.
+	RunUnsettledWorkflowMessages(ctx context.Context, runID string) ([]marotte.WorkflowMessage, error)
 }
 
 // turnBoundary is the wire's own turn bracket, which KAS emits for every
@@ -90,10 +91,13 @@ type turnBoundary interface {
 	// WireTurnStart binds the bracket to the pending pre-open, or closes a turn
 	// whose own end never arrived.
 	WireTurnStart(ctx context.Context, chatID marotte.ChatID)
-	// WireTurnEnd closes the chat's open turn with the wire's own outcome. A no-op
-	// when none is open. The wire carries no stop prose, so the failure reason is
+	// WireTurnEnd closes the chat's open turn with the wire's own outcome. A no-op when none is open or
+	// the open one is a prompt its turn_start has not bound. The wire carries no stop prose, so the failure reason is
 	// the outcome's own default.
 	WireTurnEnd(ctx context.Context, chatID marotte.ChatID, stop marotte.StopReason)
+	// WireTurnActivity carries KAS's own report of whether the chat's session runs a turn
+	// (focus_update's activity.turnActive), the backstop for a turn_end that never arrives.
+	WireTurnActivity(chatID marotte.ChatID, active bool)
 	// ReviseTurnBinding re-targets routing on an agent-initiated frame: a new
 	// wire_turn_start turn takes own and the prompt's turn drops back to pending.
 	ReviseTurnBinding(ctx context.Context, chatID marotte.ChatID)
@@ -133,7 +137,7 @@ type steerBuffer interface {
 // lands after the frame that caused it, so chat.ErrTombstoned is an expected
 // outcome here.
 type chatRecords interface {
-	// Get returns the chat header at id, or false if it does not exist.
+	// Get returns the chat header at id, or false if it does not exist or could not be read.
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
 	// Mutate is the header write primitive: load, apply, save, broadcast.
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
@@ -144,8 +148,9 @@ type chatRecords interface {
 	// EmptyCompactions is how many empty-summary compaction entries the chat's log
 	// holds, which numbers the next one's id.
 	EmptyCompactions(ctx context.Context, id marotte.ChatID) (int, error)
-	// WaitingWorkflowMessages is the chat log's workflow messages no take-up has settled, oldest first.
-	WaitingWorkflowMessages(ctx context.Context, id marotte.ChatID) ([]marotte.WorkflowMessage, error)
+	// UnsettledWorkflowMessages is the chat log's workflow messages nothing has settled
+	// (marotte.WorkflowMessageFold.Unsettled), oldest first.
+	UnsettledWorkflowMessages(ctx context.Context, id marotte.ChatID) ([]marotte.WorkflowMessage, error)
 	// DepartedName is the name a chat had when its record was deleted, for a notice
 	// its bridge raises before teardown; false for a chat that was not deleted.
 	DepartedName(id marotte.ChatID) (string, bool)
@@ -207,7 +212,7 @@ type Broadcaster interface {
 type pendingPermAdder interface {
 	// PendingPermsAdd records the ask KAS sent as acpID with the bridge it arrived on, which carries
 	// its answer and whose end retires it, and returns evt carrying the ask's own id: the request_id
-	// a client sees and echoes, since acpID restarts on every bridge.
+	// a client sees and echoes, since acpID restarts with every engine generation.
 	PendingPermsAdd(acpID int64, evt marotte.ServerEvent, origin AskOrigin) marotte.ServerEvent
 	// PendingPermsWithdraw retires the chat's ask for toolCallID, which KAS
 	// stopped waiting on, reporting whether one was open.
@@ -228,9 +233,10 @@ type pusher interface {
 }
 
 // sessionResolver answers a chat's parent ACP session id, or "" when no bridge
-// is running.
+// is running, and the chat whose resident session an ACP session id is.
 type sessionResolver interface {
 	ParentACPSession(chatID marotte.ChatID) string
+	ChatForACPSession(sessionID string) (marotte.ChatID, bool)
 }
 
 // hookStatusReader reports whether hook status display is enabled.
@@ -303,8 +309,11 @@ type Translator struct {
 	metering       turnMetering
 	// steps maps a workflow step's ACP session id to its run and node, fed from the
 	// wire (node_start) and from an inspect read.
-	steps   *stepRegistry
-	workDir string // last for fieldalignment, as in Roles
+	steps     *stepRegistry
+	read      *readSteers
+	wakes     *wakeLedger
+	slotWaits *slotWaits
+	workDir   string // last for fieldalignment, as in Roles
 }
 
 // New constructs a Translator over the roles the host supplies.
@@ -334,6 +343,9 @@ func New(r *Roles, opts ...Option) *Translator {
 		turnInterrupt:  r.TurnInterrupt,
 		metering:       r.Metering,
 		steps:          newStepRegistry(),
+		read:           newReadSteers(),
+		wakes:          newWakeLedger(),
+		slotWaits:      &slotWaits{},
 	}
 	for _, o := range opts {
 		o(t)
@@ -344,15 +356,6 @@ func New(r *Roles, opts ...Option) *Translator {
 // Option configures a Translator.
 type Option func(*Translator)
 
-// deriveSubSession returns the sessionID when it belongs to a subagent, and ""
-// for the launching chat itself or for a workflow step.
-func (t *Translator) deriveSubSession(chatID marotte.ChatID, sessionID string) string {
-	if t.classifyFrame(chatID, sessionID, false) == ownerSubagent {
-		return sessionID
-	}
-	return ""
-}
-
 // runOriginAccess answers where a run-shaped fact came from. In-memory on the host: a
 // run that outlives a restart reports false afterwards.
 type runOriginAccess interface {
@@ -361,11 +364,14 @@ type runOriginAccess interface {
 	IsScheduled(workflowID string) bool
 	// RunLabel is the label marotte gave a run at launch, "" when it gave none.
 	RunLabel(workflowID string) string
-	// RunNotice CONSUMES the oldest finished run whose completion notice KAS queued
-	// into chatID's steering buffer, answering its id and the instant it finished
-	// (Unix ms). False when no such run is recorded, in which case the notice is
-	// written without provenance rather than with a guess.
-	RunNotice(chatID marotte.ChatID) (workflowID string, producedTs int64, ok bool)
+	// RunNotice CONSUMES the finished run whose completion notice KAS queued into
+	// chatID's steering buffer and whose label the notice's text quotes, answering its
+	// id and the instant it finished (Unix ms). False when no recorded run matches, in
+	// which case the notice is written without provenance rather than with a guess.
+	RunNotice(chatID marotte.ChatID, text string) (workflowID string, producedTs int64, ok bool)
+	// ForgetRunNotices drops n of chatID's recorded notices, oldest first, for a clear
+	// that names that many notice ids and no text.
+	ForgetRunNotices(chatID marotte.ChatID, n int)
 }
 
 // runBoundsAccess reports the observable progress that rolls a run's idle window
@@ -381,8 +387,10 @@ type runBoundsAccess interface {
 // turnInterruptAccess carries terminal signals that arrive without a response frame: detected
 // here, terminated on the host. Advisory; a compaction failure does not prove the turn ended.
 type turnInterruptAccess interface {
-	CompactionFailed(chatID marotte.ChatID, detail string)
-	InterruptTurn(chatID marotte.ChatID, reason string)
+	// CompactionFailed bounds the silence of the turn the failure was recorded in.
+	CompactionFailed(chatID marotte.ChatID, turnID, detail string)
+	// InterruptTurn acts on the named turn only, so a turn that replaced it is never reached.
+	InterruptTurn(chatID marotte.ChatID, turnID, reason string)
 }
 
 // turnMetering is the per-turn accounting a turn_completion frame writes, split

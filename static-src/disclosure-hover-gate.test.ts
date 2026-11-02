@@ -39,12 +39,6 @@ const TRIGGERS: readonly Trigger[] = [
     what: "a tool card's summary row",
   },
   {
-    // Shares its rule with the leaf below; listed twice because a split leaving one behind would pass on the other.
-    file: "14-tools.css",
-    selector: ".subagent-container.has-disclosure > .subagent-header:hover",
-    what: "a delegate pipeline container's header",
-  },
-  {
     file: "14-tools.css",
     selector: "a.subagent-header:hover",
     what: "a delegate leaf card's head",

@@ -76,11 +76,11 @@ func profileFixture(t *testing.T, live []marotte.PolicyRule) (*Server, *fakeRelo
 		workDir:      work,
 		configDir:    t.TempDir(),
 	}
-	userPath, err := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: work})
+	userPath, err := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
 	if err != nil {
 		t.Fatalf("user path: %v", err)
 	}
-	wsPath, err := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
+	wsPath, err := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
 	if err != nil {
 		t.Fatalf("workspace path: %v", err)
 	}

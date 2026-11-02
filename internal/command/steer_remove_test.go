@@ -65,6 +65,10 @@ func (b *steerBridge) Call(ctx context.Context, method string, params any) (*mar
 	return &marotte.RPCResponse{Result: raw}, nil
 }
 
+func (b *steerBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *steerBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	resp, err := b.Call(ctx, method, params)
 	return resp, 0, err
@@ -122,7 +126,6 @@ func TestCmdSteerRemove_EachRefusalReachesTheReaderAsItsClass(t *testing.T) {
 		{refuse: SteerRefuseNotUser, wantStatus: http.StatusConflict, wantReason: SteerRefuseNotUser},
 		{refuse: SteerRefuseAgentRows, wantStatus: http.StatusConflict, wantReason: SteerRefuseAgentRows},
 		{refuse: SteerRefuseSettling, wantStatus: http.StatusConflict, wantReason: SteerRefuseSettling},
-		{refuse: SteerRefuseStarting, wantStatus: http.StatusConflict, wantReason: SteerRefuseStarting},
 		{refuse: SteerRefuseChatGone, wantStatus: http.StatusConflict, wantReason: SteerRefuseChatGone},
 		{refuse: SteerRefuseConsumed, wantStatus: http.StatusConflict, wantReason: SteerRefuseNotWaiting},
 		{refuse: SteerRefuseNoReply, wantStatus: http.StatusBadGateway},
@@ -348,21 +351,6 @@ func TestCmdSteerRemove_ADisconnectMidOpStillResubmits(t *testing.T) {
 	}
 }
 
-func TestCmdSteerClear_ARefusalReachesTheReaderAsItsClass(t *testing.T) {
-	b := newSteerBridge()
-	q := clearingQueue()
-	q.discardRef = SteerRefuseChatGone
-
-	_, err := cmdSteerClear(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), clearReq("c1"))
-
-	if statusOf(err) != http.StatusConflict || reasonOf(err) != SteerRefuseChatGone {
-		t.Errorf("status = %d %q, want 409 %q", statusOf(err), reasonOf(err), SteerRefuseChatGone)
-	}
-	if got := b.methods(); len(got) != 0 {
-		t.Errorf("a refused discard reached the wire: %v", got)
-	}
-}
-
 func TestCmdSteerClear_AClearWithNoReplyIsAGatewayError(t *testing.T) {
 	for _, tc := range []struct {
 		setup func(b *steerBridge, q *stubSteerQueue)
@@ -504,8 +492,8 @@ func TestDrain_UnreadSteersGoAsOnePromptNamingTheirKeys(t *testing.T) {
 	if p := h.opened[0]; p.Text != "first\n\nsecond" || !slices.Equal(p.Resends, []string{"steer-a", "steer-b"}) {
 		t.Errorf("prompt = %+v, want the rows joined in order, naming both keys", p)
 	}
-	if got, want := h.opened[0].Label, "Resending 2 messages the agent had not read"; got != want {
-		t.Errorf("prompt label = %q, want %q: a resend is a message marotte wrote, so it is labelled", got, want)
+	if got := h.opened[0].Label; got != "" {
+		t.Errorf("prompt label = %q, want none: the words are the user's, so they show as written", got)
 	}
 	if !slices.Equal(q.delivered, []string{"steer-a", "steer-b"}) {
 		t.Errorf("delivered = %v, want both keys retired after the open", q.delivered)
@@ -587,7 +575,7 @@ func TestResolveEnds_AStrayIsClearedOnlyWithNoHolder(t *testing.T) {
 		{name: "a clear's reply", wantLog: "strays-all", wantClear: true},
 		{name: "an agent row waiting", agentRows: true, wantLog: "release-in-kas"},
 		{name: "a prompt holding the chat", held: true, holder: marotte.TurnSourcePrompt, wantLog: "release-in-kas"},
-		{name: "a bare reservation", held: true, holder: marotte.TurnSourceLocalShell, wantLog: "release-in-kas"},
+		{name: "a bare reservation", held: true, holder: marotte.TurnSourceRevert, wantLog: "release-in-kas"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -669,6 +657,32 @@ func TestCmdCancel_TheLeadIsSetBeforeTheCancelAndUndoneIfItFails(t *testing.T) {
 	}
 }
 
+// A Stop pressed while the chat's session door is still open (no bridge yet) ends the admitted turn, so
+// the send-now row still leads its hand-on; an answer that could not be delivered undoes it.
+func TestCmdCancel_InTheSessionDoorWindowTheLeadIsStillSet(t *testing.T) {
+	for _, tc := range []struct {
+		permErr error
+		name    string
+		want    []string
+	}{
+		{name: "the stop lands", want: []string{"lead steer-a"}},
+		{name: "an answer is not delivered", permErr: ErrCancelNotDelivered, want: []string{"lead steer-a", "lead-undone steer-a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newCancelDeps(nil)
+			d.err = tc.permErr
+			q := newStubSteerQueue()
+			cmd := &marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-a"}`)}
+
+			_, _ = cmdCancel(t.Context(), d, d, d, d, q, cmd)
+
+			if got := q.callLog(); !slices.Equal(got, tc.want) {
+				t.Errorf("record calls = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // orderTeardown records the teardown's steps into a log the bridge shares.
 type orderTeardown struct {
 	log *[]string
@@ -700,10 +714,10 @@ func TestChatTeardown_TheSteerRecordGoesBeforeTheCancel(t *testing.T) {
 		want []string
 	}{
 		{name: "close", run: func(ctx context.Context, h hostDouble, td chatTeardown) {
-			closeChatTeardown(ctx, h, h, td, "c1")
+			closeChatTeardown(ctx, h, h, h, td, "c1")
 		}, want: []string{"begin keep=true", marotte.MethodCancel, "close"}},
 		{name: "delete", run: func(ctx context.Context, h hostDouble, td chatTeardown) {
-			deleteChatTeardown(ctx, h, h, td, "c1", []string{"sess-1"})
+			deleteChatTeardown(ctx, h, h, h, td, "c1", []string{"sess-1"})
 		}, want: []string{"begin keep=false", marotte.MethodCancel, "delete-by-chain tab-closed"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

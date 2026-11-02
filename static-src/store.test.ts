@@ -27,6 +27,9 @@ import {
   setTurnOpen,
   turnLive,
   isThinking,
+  isBusy,
+  dropTurnLocally,
+  clearTurnDropped,
   isEmptyChat,
   derivedHasMore,
   chatHoldingTurn,
@@ -769,6 +772,51 @@ describe("turnLive: liveness is the log", () => {
   });
 });
 
+describe("isBusy: what Send and the mid-turn gates read", () => {
+  it("is true for an open turn nothing has streamed into, which thinking alone misses", () => {
+    resetStore("a");
+    openTurnIn("a", "t1");
+    expect(isThinking("a")).toBe(false);
+    expect(isBusy("a")).toBe(true);
+  });
+
+  it("is true in Send's optimistic window, before any turn opened", () => {
+    resetStore("a");
+    setThinking("a", true);
+    expect(isBusy("a")).toBe(true);
+  });
+
+  it("is false once the open turn closes", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", sealed(turn, 1, "turn_close", { outcome: "completed" }));
+    expect(isBusy("a")).toBe(false);
+  });
+
+  it("reads a /drop as idle until a new turn opens", () => {
+    resetStore("a");
+    openTurnIn("a", "t1");
+    dropTurnLocally("a");
+    expect(isBusy("a")).toBe(false);
+    clearTurnDropped("a");
+    expect(isBusy("a")).toBe(true);
+  });
+
+  it("reads a /drop as idle until the agent streams again", () => {
+    resetStore("a");
+    openTurnIn("a", "t1");
+    dropTurnLocally("a");
+    setThinking("a", true);
+    setThinking("a", false);
+    expect(isBusy("a")).toBe(true);
+  });
+
+  it("is false for a chat it does not hold", () => {
+    setSessions([]);
+    expect(isBusy("ghost")).toBe(false);
+  });
+});
+
 describe("chatHoldingTurn", () => {
   it("names the chat whose window holds the turn", () => {
     setSessions([makeSession("a"), makeSession("b")]);
@@ -874,8 +922,7 @@ describe("runStatusFor", () => {
     expect(runStatusFor("completed", true)).toBe("input");
   });
 
-  it("reads a park on a person as input and any other park as waiting", () => {
-    expect(runStatusFor("paused", false, "need_input")).toBe("input");
+  it("reads a park as waiting, whatever it parked on", () => {
     expect(runStatusFor("paused")).toBe("waiting");
   });
 
@@ -914,6 +961,22 @@ describe("subagentStatusFor maps a delegate's invocation status to its dot", () 
 });
 
 describe("upsertHeader re-syncs an existing row", () => {
+  it("takes read_position in both directions, so every device folds the server's value", () => {
+    resetStore("a");
+    upsertHeader({ ...headerFor("a"), read_position: 4 });
+    expect(get("a")?.read_position).toBe(4);
+    upsertHeader({ ...headerFor("a"), read_position: 2 });
+    expect(get("a")?.read_position).toBe(2);
+    upsertHeader(headerFor("a"));
+    expect(get("a")?.read_position).toBe(0);
+  });
+
+  it("copies read_position into a row it creates", () => {
+    removeChat("fresh");
+    upsertHeader({ ...headerFor("fresh"), read_position: 3 });
+    expect(get("fresh")?.read_position).toBe(3);
+  });
+
   it("never lowers the turn count the client has already seen", () => {
     resetStore("a");
     const s = get("a") as Session;

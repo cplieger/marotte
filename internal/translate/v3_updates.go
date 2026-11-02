@@ -45,6 +45,8 @@ type sessionInfoKiroBlock struct {
 	} `json:"contextUsage"`
 	// Focus is the kind=="focus_update" block (see focus.go).
 	Focus *focusUpdate `json:"focus"`
+	// Activity rides the engine's own focus_update, FLAT beside Kind (see focus.go).
+	Activity *focusActivity `json:"activity"`
 	// Hook is the kind=="hook_update" block, one per hook execution (see hook_status.go).
 	Hook *hookUpdateBlock `json:"hook"`
 	// DisplayError is the kind=="display_error" block (see display_error.go).
@@ -71,9 +73,12 @@ type sessionInfoKiroBlock struct {
 	Content              string   `json:"content"`
 	NotificationSeverity string   `json:"notificationSeverity"`
 	Kind                 string   `json:"kind"`
+	// ActiveSessionID is the session holding KAS's one agent slot, on kind "queued", FLAT beside Kind.
+	ActiveSessionID string `json:"activeSessionId"`
 	// Message is model_routed's notice, FLAT beside Kind; display_error and interaction frames
 	// spread one too, read from their blocks instead.
 	Message string `json:"message"`
+	modelFallbackFields
 	// RequestIDs, Throughput and Recoveries ride turn_completion FLAT beside Kind.
 	RequestIDs []string        `json:"requestIds"`
 	Throughput *turnThroughput `json:"throughput"`
@@ -97,10 +102,11 @@ func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	// The live frame also spreads every event field flat beside its nested block; those of
-	// display_error and interaction_resolved are read from the block.
+	// display_error and interaction_resolved are read from the block, and a plan approval's
+	// flat `_meta` (its workflowPlan) is declined unread.
 	censusMeta("session_info_update._meta.kiro", data, reflect.TypeFor[sessionInfoKiroShadow](),
 		"errorType", "retryErrorType", "toolCallId", "outcome", "selectedOption",
-		"interactionType", "question", "options", "agentSubtaskId", "status")
+		"interactionType", "question", "options", "agentSubtaskId", "status", "_meta")
 	return nil
 }
 
@@ -145,24 +151,21 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	}
 	// Before the parent-only gate: a chat's steer belongs to the chat but is consumed by whichever
 	// execution is running. A step session's buffer is the step's own, so its frames go to its run.
-	sc := chatSteerScope(chatID)
-	if stepSteering(attr) {
-		sc = stepSteerScope(attr)
+	sc := frameSteerScope(chatID, attr)
+	if u.Meta.Kiro.TurnStart != nil {
+		t.wakes.turnStarted(t.bufferSession(sc))
 	}
 	if t.handleSteeringUpdate(ctx, sc, &u) {
 		return
 	}
-	// Before the gate too: a subagent's or a step's ask is filed under this chat.
+	// Before the step gate: a step's ask is filed under this chat too.
 	if t.handleAskInfo(chatID, &u.Meta.Kiro, attr) {
 		return
 	}
-	// By session, never by payload: `_meta.kiro.workflow` never reaches a session_info_update.
-	if attr.Subagent {
-		return
-	}
-	// A step's frame stops here: only its metering and credits reach the chat.
+	// A step's frame stops here: its model fallback and metering go to its run turn, and only its
+	// credits reach the chat.
 	if attr.Step {
-		t.billStepMetering(ctx, chatID, attr, &u.Meta.Kiro)
+		t.handleStepFrame(ctx, chatID, attr, &u.Meta.Kiro)
 		return
 	}
 	if h := u.Meta.Kiro.Hook; h != nil {
@@ -179,12 +182,16 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 		t.handleUserMessageID(ctx, chatID, id)
 		return
 	}
+	if u.Meta.Kiro.Kind == infoKindQueued {
+		t.handleSlotQueued(ctx, chatID, u.Meta.Kiro.ActiveSessionID)
+		return
+	}
 	if t.handleTurnEvent(ctx, chatID, &u.Meta.Kiro) {
 		return
 	}
 	// Adoption rules for an agent focus title are focus.go's.
 	if f := u.Meta.Kiro.Focus; f != nil {
-		t.handleFocusUpdate(ctx, chatID, f)
+		t.handleFocusUpdate(ctx, chatID, f, u.Meta.Kiro.Activity)
 		return
 	}
 	if s := u.Meta.Kiro.Summarization; s != nil && s.Status != "" {
@@ -201,9 +208,15 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	t.handleContextUsage(ctx, chatID, &u.Meta.Kiro)
 }
 
-// HandleStepInfoUpdate is the parentless run bridge's reading of a step's
-// session_info_update: the run turn's metering, the withdrawal of an ask filed under
-// `run:<id>`, and the step's own steering frames. It never reaches a chat header.
+func (t *Translator) handleStepFrame(ctx context.Context, chatID marotte.ChatID, attr FrameAttribution, k *sessionInfoKiroBlock) {
+	if !t.stepModelFallback(ctx, chatID, attr, k) {
+		t.billStepMetering(ctx, chatID, attr, k)
+	}
+}
+
+// HandleStepInfoUpdate is the parentless run host session's reading of a step's
+// session_info_update: the run turn's metering and model fallback, the withdrawal of an ask
+// filed under `run:<id>`, and the step's own steering frames. It never reaches a chat header.
 func (t *Translator) HandleStepInfoUpdate(ctx context.Context, key marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
@@ -214,6 +227,9 @@ func (t *Translator) HandleStepInfoUpdate(ctx context.Context, key marotte.ChatI
 		return
 	}
 	if stepSteering(attr) && t.handleSteeringUpdate(ctx, stepSteerScope(attr), &u) {
+		return
+	}
+	if t.stepModelFallback(ctx, key, attr, &u.Meta.Kiro) {
 		return
 	}
 	t.stepMetering(ctx, attr, &u.Meta.Kiro)
@@ -279,12 +295,17 @@ func (t *Translator) handleContextUsage(ctx context.Context, chatID marotte.Chat
 func (t *Translator) handleTurnEvent(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) bool {
 	switch {
 	case k.TurnStart != nil:
+		t.endSlotWait(ctx, chatID, true)
 		t.bracket.WireTurnStart(ctx, chatID)
 		return true
-	case t.handleWireTurnEnd(ctx, chatID, k.TurnEnd):
-		return true
+	case k.TurnEnd != nil:
+		t.endSlotWait(ctx, chatID, false)
+		return t.handleWireTurnEnd(ctx, chatID, k.TurnEnd)
 	case k.Kind == infoKindModelRouted:
 		t.handleModelRouted(ctx, chatID, k)
+		return true
+	case isModelFallbackKind(k.Kind):
+		t.handleModelFallback(ctx, chatID, k)
 		return true
 	}
 	return false
@@ -335,9 +356,9 @@ var knownSessionInfoKinds = map[string]struct{}{
 	infoKindTurnCompletion: {},
 	"context_usage":        {}, infoKindSeparator: {}, infoKindSummary: {},
 	"summarization_started": {}, "summarization_failed": {}, "summarization_completed": {},
-	"focus_update": {},
-	"recap":        {},
-	"queued":       {}, "repositories_update": {},
+	"focus_update":        {},
+	"recap":               {},
+	"repositories_update": {},
 }
 
 // logUnconsumedInfoKind reports a session_info_update nothing in the cascade consumed: a
@@ -459,22 +480,9 @@ func (t *Translator) persistUsage(ctx context.Context, chatID marotte.ChatID, pc
 // transcript rewrite: one point, the resolution the context ring renders.
 const contextPctEpsilon = 1.0
 
-// contextPctTiers are thresholds a crossing must always persist through: 95 is the
-// composer's cutoff, and 70 and 90 are the mid-range crossings nothing else pins.
-var contextPctTiers = [...]float64{70, 90, 95}
-
-// materialPctDelta reports whether prev → next is worth persisting: at least
-// contextPctEpsilon, or any move crossing a tier boundary.
+// materialPctDelta reports whether prev → next moves at least contextPctEpsilon.
 func materialPctDelta(prev, next float64) bool {
-	if math.Abs(next-prev) >= contextPctEpsilon {
-		return true
-	}
-	for _, tier := range contextPctTiers {
-		if (prev < tier) != (next < tier) {
-			return true
-		}
-	}
-	return false
+	return math.Abs(next-prev) >= contextPctEpsilon
 }
 
 // configOptionUpdate is the v3 config_option_update payload: the live model/mode/effort
@@ -514,6 +522,11 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID marott
 	if len(cat.models) == 0 && !cat.sawEffort && !cat.sawThinking {
 		return
 	}
+	// A cold pin's model and effort are the session's saved ones, which the chat already holds; its one-entry
+	// lists would replace the catalog, the served set and the tiers.
+	if marotte.ColdCatalogPin(cat.currentModel, modelIDs(cat.models)) {
+		return
+	}
 	t.catalog.SetModels(cat.models)
 	var repin *marotte.EntryModelSwitched
 	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
@@ -525,12 +538,13 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID marott
 			return changed
 		}
 		repin = cat.unsolicitedRepin(c)
-		if cat.applyCurrent(c) {
-			changed = true
-		}
 		if repin != nil {
 			// KAS cleared the level when it repinned; the tier was chosen for the old model.
+			// applyCurrent's adoption rule decides whether the frame's tier replaces it.
 			c.Effort = ""
+		}
+		if cat.applyCurrent(c) {
+			changed = true
 		}
 		return changed
 	})
@@ -545,14 +559,14 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID marott
 		sw := *repin
 		t.appendLaneless(ctx, chatID, marotte.EntryKindModelSwitched, "", sw,
 			func(ctx context.Context, turn *turnlog.Turn) ([]turnlog.Sealed, error) {
-				return turn.ModelSwitched(ctx, sw)
+				return turn.ModelSwitched(ctx, &sw)
 			})
 	}
 }
 
 // configCatalog is what one config_option_update says about the model and effortLevel
 // selects. sawEffort is separate because an EMPTY effort list (a model with no tiers)
-// must be applied, while a frame with no effort option leaves the tiers alone.
+// must be applied, while a frame naming neither a model nor effort leaves the tiers alone.
 type configCatalog struct {
 	currentModel    string
 	currentEffort   string
@@ -599,13 +613,15 @@ func readConfigCatalog(opts []configOption) configCatalog {
 func (cat *configCatalog) applyCurrent(c *marotte.Chat) bool {
 	changed := false
 	if cat.currentModel != "" && c.Model != cat.currentModel {
-		c.Model = cat.currentModel
+		c.MoveToModel(cat.currentModel)
 		changed = true
 	}
 	if cat.applyThinking(c) {
 		changed = true
 	}
-	if !cat.sawEffort {
+	// KAS builds every frame naming a model with that model's effort option, omitted for a
+	// tierless one, so such a frame without it clears the tiers.
+	if !cat.sawEffort && cat.currentModel == "" {
 		return changed
 	}
 	if !sameEffortLevels(c.EffortLevels, cat.efforts) {
@@ -614,6 +630,12 @@ func (cat *configCatalog) applyCurrent(c *marotte.Chat) bool {
 	}
 	if c.EffortActive != cat.currentEffort {
 		c.EffortActive = cat.currentEffort
+		changed = true
+	}
+	// A recorded session's level becomes the chat's when the record holds none, so every later
+	// door re-sends it. A session still opening has no id yet: its door pins the chat's level itself.
+	if c.Effort == "" && c.ACPSessionID != "" && marotte.EffortLevel(cat.currentEffort).Valid() {
+		c.Effort = cat.currentEffort
 		changed = true
 	}
 	return changed
@@ -683,21 +705,21 @@ func flattenModelChoices(choices []configChoice) []marotte.SessionModel {
 			continue
 		}
 		meta := choiceMeta(c.Meta)
-		out = append(out, marotte.SessionModel{
-			ID: c.Value, Name: c.Name, Description: c.Description,
-			HasEffort:          meta.Kiro.HasEffort,
-			DefaultEffortLevel: meta.Kiro.DefaultEffortLevel,
-			ThinkingToggleable: meta.Kiro.ThinkingToggleable,
-			ThinkingDefaultOff: meta.ThinkingDefaultOff(),
-			// handleConfigTemplate prefers this live catalog, so an unset multiplier renders `1x`.
-			RateMultiplier: meta.Kiro.RateMultiplier,
-		})
+		out = append(out, meta.SessionModel(c.Value, c.Name, c.Description))
 	}
 	return out
 }
 
+func modelIDs(models []marotte.SessionModel) []string {
+	ids := make([]string, len(models))
+	for i := range models {
+		ids[i] = models[i].ID
+	}
+	return ids
+}
+
 // Absent meta yields the zero value, which the client reads as "not plumbed": no tiers and no
-// credit readout. The tier list belongs to the `effortLevel` option, not to a model choice.
+// credit readout. handleConfigTemplate prefers this live catalog, so an unset multiplier renders `1x`.
 func choiceMeta(raw json.RawMessage) marotte.ModelChoiceMeta {
 	var m marotte.ModelChoiceMeta
 	if len(raw) == 0 {

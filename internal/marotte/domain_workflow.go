@@ -97,8 +97,9 @@ const (
 
 // RunPlanUpdate is a run's newest queued plan revision, under `plan_update` in GET
 // /api/runs/{id}. Pending counts the top-level steps queued and After names the top-level step
-// they replace the plan after; Reason is KAS's sentence for a rejection. Held in memory, as the
-// IDE holds it: a restart forgets it.
+// they replace the plan after; Reason is KAS's sentence for a rejection. A queued Outcome and its
+// Pending come from KAS's inspect, which keeps a queued revision across a restart; After and a
+// settled outcome are marotte's memory, which a marotte restart forgets.
 type RunPlanUpdate struct {
 	After   string         `json:"after,omitempty"`
 	Reason  string         `json:"reason,omitempty"`
@@ -181,59 +182,94 @@ type RunStepTranscript struct {
 	Subject []*SubjectStamp `json:"subject"`
 }
 
-// RunInputNeededPayload is the payload for type="run_input_needed": a workflow STEP
-// asked a question and the run is parked until somebody answers it. It carries its
-// payload rather than invalidating because the text is on no endpoint — KAS parks
-// with one fixed literal in `state.pauseReason` — and WorkflowID is the IDENTITY,
-// since the envelope's chat id is empty for a parentless run. Question MAY BE
-// EMPTY: the ask registry is in memory, so a restart loses the text while the run
-// stays parked. No Severity field — only `warning` parks a run.
-type RunInputNeededPayload struct {
+// RunAsksPayload is the payload for type="run_asks": every step of one run waiting on a person, as
+// marotte last read it, replacing the client's previous snapshot of that run whole. A newer
+// (epoch, seq) wins and an older or equal one is dropped. Reachable false means the asks are the
+// last ones read, or none when the run was not read this epoch, so a client closes nothing on it.
+// The run's final frame has no asks and Reachable true; a run a pending_snapshot no longer names
+// has ended.
+type RunAsksPayload struct {
 	WorkflowID string `json:"workflow_id"`
-	// AskID is composed with keyenc so a separator inside one part cannot forge it.
-	// The after-restart spelling must be DETERMINISTIC, or the read path that mints it
-	// on every refetch stacks duplicate cards.
-	AskID string `json:"ask_id"`
-	// NodeID addresses the asking step. MAY BE EMPTY — KAS sets it only for a step
-	// caller, and a run blocked by an unattributable ask is still blocked. No
-	// NodePath: the step-session registry holds no path, so a live ask could not.
-	NodeID string `json:"node_id"`
-	// StepSessionID is the ANSWER ADDRESS: KAS reroutes a `session/prompt` sent to the
-	// paused step's session into the run. Empty when the notify frame carried no
-	// caller session, and the answer path resolves it from a fresh `inspect`.
-	StepSessionID string `json:"step_session_id"`
-	AgentName     string `json:"agent_name"`
-	Question      string `json:"question"`
-	AskedAt       string `json:"asked_at"`
+	// ChatID is the launching chat, else `run:<workflowId>`, as the envelope's.
+	ChatID ChatID `json:"chat_id"`
+	Epoch  string `json:"epoch"`
+	// Asks is never null.
+	Asks      []RunAsk `json:"asks"`
+	Seq       uint64   `json:"seq"`
+	Reachable bool     `json:"reachable"`
 }
 
-// RunInputSettledPayload is the payload for type="run_input_settled": the ask is
-// answered or waived, so every surface still showing it must retire the card.
-//
-// Its own event rather than a member of decision_settled, which is keyed by an
-// int64 JSON-RPC request id: a run ask has no open request, so sharing that payload
-// would give one shape two mutually exclusive identity keys.
-type RunInputSettledPayload struct {
-	WorkflowID string    `json:"workflow_id"`
-	AskID      string    `json:"ask_id"`
-	SettledBy  SettledBy `json:"settled_by"`
+// RunAsk is one step waiting on a person, in run_asks and under `open_asks` in GET /api/runs/{id}.
+// AskID changes with every turn of the step marotte sees start, so an answer typed against an
+// older one is refused as stale. Blocked is absent when an answer may go.
+type RunAsk struct {
+	AskID         string     `json:"ask_id"`
+	NodeID        string     `json:"node_id"`
+	StepSessionID string     `json:"step_session_id"`
+	AgentName     string     `json:"agent_name"`
+	Text          string     `json:"text"`
+	TextSource    RunAskText `json:"text_source"`
+	// Reason is kiro-cli's sentence for why a step that has no completion signal is waiting, such
+	// as one whose signal it could not save; absent otherwise.
+	Reason   string        `json:"reason,omitempty"`
+	Blocked  RunAskBlocker `json:"blocked,omitempty"`
+	AskedAt  string        `json:"asked_at,omitempty"`
+	NodePath []string      `json:"node_path"`
 }
 
-// RunOpenAsk is one unanswered ask of a run, under `open_asks` in GET /api/runs/{id}, so an agent
-// handed a deferral can read the question. Question has no omitempty: after a restart a reconciled
-// ask's text is legitimately "", which must not read as absent. node_id is a step's whole address
-// here.
-type RunOpenAsk struct {
-	AskID     string `json:"ask_id"`
-	Question  string `json:"question"`
-	NodeID    string `json:"node_id,omitempty"`
-	AgentName string `json:"agent_name,omitempty"`
-	AskedAt   string `json:"asked_at,omitempty"`
-}
+// RunAskText says where an ask's text came from, so a card labels it: only `asked` is the step's
+// own question.
+type RunAskText string
+
+const (
+	// RunAskTextAsked is the warning the step sent in the turn that parked it.
+	RunAskTextAsked RunAskText = "asked"
+	// RunAskTextLastMessage is the step's last words, which may not be a question.
+	RunAskTextLastMessage RunAskText = "last_message"
+	// RunAskTextUnseen means marotte did not see what the step said.
+	RunAskTextUnseen RunAskText = "unseen"
+)
+
+// RunAskBlocker is why an ask cannot be answered now.
+type RunAskBlocker string
+
+const (
+	// RunAskStopping means a cancel or delete of the run is queued.
+	RunAskStopping RunAskBlocker = "stopping"
+	// RunAskPending means a prompt marotte sent to a step of this run is still being delivered.
+	RunAskPending RunAskBlocker = "pending"
+	// RunAskBranchRunning means another leaf node of the run, of any type, is still running.
+	RunAskBranchRunning RunAskBlocker = "branch_running"
+	// RunAskUnsettled means the run looks live but nothing has moved for a while.
+	RunAskUnsettled RunAskBlocker = "unsettled"
+	// RunAskSettling means the run looked live and moving at the last read; a read after a quiet
+	// spell reads unsettled instead.
+	RunAskSettling RunAskBlocker = "settling"
+)
+
+// RunAskRefusal is the machine `code` of a refused answer or step message about an ask.
+// Only RunAskRefusedSettling and RunAskRefusedUnreadable are worth retrying unchanged.
+type RunAskRefusal string
+
+// The ask refusal codes.
+const (
+	RunAskRefusedStopping      RunAskRefusal = "ask_stopping"
+	RunAskRefusedPending       RunAskRefusal = "ask_pending"
+	RunAskRefusedStale         RunAskRefusal = "ask_stale"
+	RunAskRefusedGone          RunAskRefusal = "ask_gone"
+	RunAskRefusedBranchRunning RunAskRefusal = "ask_branch_running"
+	RunAskRefusedUnsettled     RunAskRefusal = "ask_unsettled"
+	RunAskRefusedSettling      RunAskRefusal = "ask_settling"
+	RunAskRefusedUnreadable    RunAskRefusal = "ask_unreadable"
+	// RunAskRefusedUnnamed refuses words naming no ask for a path more than one started execution shares.
+	RunAskRefusedUnnamed RunAskRefusal = "ask_unnamed"
+	// RunAnswerPending refuses a resume, retry or pause while an answer to the run is in flight.
+	RunAnswerPending RunAskRefusal = "run_answer_pending"
+)
 
 // RunStepEnd is how a step's newest turn in the run's own log ended, under `step_ends` in GET /api/runs/{id}
 // keyed by node path, for a step whose turn closed broken. KAS grades a refused step, and one its iteration limit
-// stopped, `completed`, so its node status cannot say this.
+// stopped, `completed`, so its node status cannot say this; a step KAS completed on a success signal has no row.
 type RunStepEnd struct {
 	Outcome       TurnOutcome `json:"outcome"`
 	FailureReason string      `json:"failure_reason,omitempty"`
@@ -250,11 +286,7 @@ type RunStepStart struct {
 	Ended     bool   `json:"ended"`
 }
 
-// RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step.
-//
-// Empty Text is a 400 rather than a waive. Continuing without an answer is a
-// DIFFERENT verb (POST /api/runs/{id}/step with status `running`) — it drives the
-// step with KAS's default continuation, and an empty box must not reach it.
+// RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step. Empty Text is a 400.
 type RunAnswerRequest struct {
 	AskID string `json:"ask_id"`
 	Text  string `json:"text"`
@@ -266,6 +298,8 @@ type RunAnswerRequest struct {
 type RunStepMessageRequest struct {
 	Text      string `json:"text"`
 	MessageID string `json:"message_id"`
+	// AskID, when set, is the ask the words answer: a different ask at the path refuses them as stale.
+	AskID string `json:"ask_id,omitempty"`
 }
 
 // RunStepSteerRequest is POST /api/runs/{id}/steps/{path}/steer-remove's body: the unread row to
@@ -319,6 +353,17 @@ const (
 type RunLaunchRequest struct {
 	Inputs map[string]string `json:"inputs,omitempty"`
 	Source string            `json:"source"`
+	// Model and Effort are the run's step defaults (RunDefaults); empty sends none.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+}
+
+// RunDefaults are `_kiro/workflow/new`'s `modelId` and `effortLevel`: the model and effort tier
+// of every step that pins neither, over the recipe's own root values. The zero value sends
+// nothing, so KAS's own order applies.
+type RunDefaults struct {
+	Model  string
+	Effort string
 }
 
 // RunLaunchedResponse is POST /api/runs's reply. Name is the recipe's, so the
@@ -335,9 +380,15 @@ type Recipe struct {
 	Inputs      map[string]string `json:"inputs,omitempty"`
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"`
-	// Source is the launch key: `bundled://<name>` or a workspace
+	// ValidationError is KAS's reason the recipe cannot launch (a schema error, a shadowed name,
+	// an include that fails to expand), verbatim; empty for a launchable recipe.
+	ValidationError string `json:"validation_error,omitempty"`
+	// Source is the launch key: `bundled://<name>` or a workspace or home
 	// `*.workflow.json` path. Echoed back verbatim in RunLaunchRequest.
 	Source string `json:"source"`
+	// DocKey is a file-backed recipe's file as the configuration standing keys it (translate.DocKeyFromAbs of Source),
+	// so its row joins that item's standing; empty for a bundled recipe.
+	DocKey string `json:"doc_key,omitempty"`
 	// Plan is KAS's node plan, forwarded VERBATIM: what the recipe will do and on
 	// which model, raw for the reason at the top of this file. Last of the
 	// pointer-bearing fields on purpose — a slice's len/cap words end the GC scan

@@ -43,10 +43,15 @@ vi.mock("./actions/runs.js", () => ({
   },
 }));
 vi.mock("./run-view.js", () => ({ openRunView: vi.fn() }));
+const catalog = vi.hoisted(() => ({ models: [] as ModelInfo[] }));
+vi.mock("./picker.js", () => ({ getCachedModels: () => catalog.models }));
 // The unattended note's auto-approve read-out. Unmocked, refreshAutoApprove reaches /api/settings
 // through the actions transport (which the api-client mock does not cover), fire-and-forget, so the
 // request was still open when the window tore down and printed an unhandled AbortError.
-vi.mock("./persist.js", () => ({ loadSettings: vi.fn(async () => ({})) }));
+vi.mock("./persist.js", () => ({
+  loadSettings: vi.fn(async () => ({})),
+  refreshSettings: vi.fn(async () => ({})),
+}));
 
 // The Schedule button's actions: unmocked they reach the network, and a row's summary line is
 // decoration this suite does not assert on.
@@ -56,12 +61,24 @@ vi.mock("./actions/schedules.js", () => ({
   deleteSchedule: { dispatch: vi.fn(async () => null) },
 }));
 
+const standing = vi.hoisted(() => ({ files: new Map<string, ConfigStanding>() }));
+vi.mock("./config-standing.js", async (importOriginal) => {
+  const { signal } = await import("@cplieger/reactive");
+  const view = signal({ files: standing.files, servers: new Map(), loadErrors: new Map() });
+  return {
+    ...(await importOriginal<typeof ConfigStandingModule>()),
+    configStanding: view,
+  };
+});
+
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
-import { dispatch } from "./bus.js";
+import { BUS_CATALOG_MODELS, dispatch, emitBus } from "./bus.js";
+import { saveSchedule } from "./actions/schedules.js";
 import { openRunView } from "./run-view.js";
 import { launchRun, cancelRun } from "./actions/runs.js";
-import type { RecipesResponse, WorkflowRun, ResumableSession } from "./types.js";
-import type { RunStatus } from "./wire/types.gen.js";
+import type { ModelInfo, RecipesResponse, WorkflowRun, ResumableSession } from "./types.js";
+import type { ConfigStanding, RunStatus } from "./wire/types.gen.js";
+import type * as ConfigStandingModule from "./config-standing.js";
 
 let recipesReply: RecipesResponse = { recipes: [] };
 let runsReply: { sessions: ResumableSession[]; runs: WorkflowRun[] } = {
@@ -110,6 +127,64 @@ beforeEach(() => {
   runsReply = { sessions: [], runs: [] };
 });
 
+describe("configuration standing", () => {
+  const ROOT_A = "/workspace/a/.kiro/workflows/deploy.workflow.json";
+  const ROOT_B = "/workspace/b/.kiro/workflows/deploy.workflow.json";
+
+  function workspaceRecipe(source: string): RecipesResponse["recipes"][0] {
+    return { name: "deploy", source, doc_key: source.slice(1) };
+  }
+
+  function badges(panel: HTMLElement, source: string): string[] {
+    return [...panel.querySelectorAll(`[data-recipe="${source}"] .docs-badge-standing`)].map(
+      (b) => b.textContent ?? "",
+    );
+  }
+
+  beforeEach(() => {
+    standing.files.clear();
+  });
+
+  it("badges only the row whose file kiro-cli replaced, not a same-named one in another root", async () => {
+    standing.files.set(ROOT_A.slice(1), {
+      type: "workflow",
+      key: ROOT_A.slice(1),
+      kind: "displaced",
+      decided_by: "user-local",
+      decided_by_name: "Local Settings (~/.kiro)",
+    });
+    recipesReply = { recipes: [workspaceRecipe(ROOT_A), workspaceRecipe(ROOT_B), recipe("goal")] };
+    const panel = await render();
+    expect(badges(panel, ROOT_A)).toEqual(["Replaced by Local Settings (~/.kiro)"]);
+    expect(badges(panel, ROOT_B)).toEqual([]);
+    expect(badges(panel, "bundled://goal")).toEqual([]);
+    const rowB = panel.querySelector(`[data-recipe="${ROOT_B}"] .entry-badges`);
+    expect(rowB?.classList.contains("hidden"), "a row with no badge shows no badge strip").toBe(
+      true,
+    );
+  });
+
+  it("adds and drops the badge on a kept row as the standing changes", async () => {
+    recipesReply = { recipes: [workspaceRecipe(ROOT_A)] };
+    const panel = await render();
+    expect(badges(panel, ROOT_A)).toEqual([]);
+    standing.files.set(ROOT_A.slice(1), {
+      type: "workflow",
+      key: ROOT_A.slice(1),
+      kind: "disabled",
+      decided_by: "workspace",
+      decided_by_name: "Workspace",
+    });
+    renderRecipesPanel(panel);
+    expect(badges(panel, ROOT_A)).toEqual(["Off by Workspace"]);
+    const strip = panel.querySelector(`[data-recipe="${ROOT_A}"] .entry-badges`);
+    expect(strip?.classList.contains("hidden")).toBe(false);
+    standing.files.clear();
+    renderRecipesPanel(panel);
+    expect(badges(panel, ROOT_A)).toEqual([]);
+  });
+});
+
 describe("the Run ⇄ Cancel row", () => {
   it("labels an idle recipe Run and a live one Cancel", async () => {
     recipesReply = { recipes: [recipe("goal"), recipe("investigate")] };
@@ -141,16 +216,56 @@ describe("the Run ⇄ Cancel row", () => {
     expect(buttonFor(panel, "bundled://goal")?.textContent).toBe("Run");
   });
 
-  it("launches an input-less recipe on click and opens its run tab", async () => {
+  it("opens the form for an input-less recipe, its Launch focused, and sends Default as nothing", async () => {
     recipesReply = { recipes: [recipe("goal")] };
     const panel = await render();
 
     buttonFor(panel, "bundled://goal")?.click();
+    expect(vi.mocked(launchRun.dispatch)).not.toHaveBeenCalled();
+    const launchBtn = panel.querySelector<HTMLButtonElement>(".recipe-launch-btn");
+    expect(document.activeElement).toBe(launchBtn);
+    launchBtn?.click();
     expect(vi.mocked(launchRun.dispatch).mock.calls[0]?.[0]).toEqual({
       source: "bundled://goal",
       inputs: {},
     });
     expect(vi.mocked(openRunView)).toHaveBeenCalledWith("wf_new", "goal");
+  });
+
+  it("launches with the model and effort picked on the form", async () => {
+    catalog.models = [{ model_id: "opus", model_name: "Opus", effort_tiers: ["low", "high"] }];
+    recipesReply = { recipes: [recipe("picked")] };
+    const panel = await render();
+    buttonFor(panel, "bundled://picked")?.click();
+    const [model, effort] = [...panel.querySelectorAll<HTMLSelectElement>(".run-pick-select")];
+    if (model === undefined || effort === undefined) {
+      throw new Error("the Run form has no Model or no Effort select");
+    }
+    model.value = "opus";
+    model.dispatchEvent(new Event("change"));
+    effort.value = "high";
+    effort.dispatchEvent(new Event("change"));
+    panel.querySelector<HTMLButtonElement>(".recipe-launch-btn")?.click();
+    catalog.models = [];
+    expect(vi.mocked(launchRun.dispatch).mock.calls[0]?.[0]).toEqual({
+      source: "bundled://picked",
+      inputs: {},
+      model: "opus",
+      effort: "high",
+    });
+  });
+
+  it("gives an open Run form the catalog that lands after it opened", async () => {
+    catalog.models = [];
+    recipesReply = { recipes: [recipe("late")] };
+    const panel = await render();
+    buttonFor(panel, "bundled://late")?.click();
+    const model = panel.querySelector<HTMLSelectElement>(".run-pick-select");
+    expect([...(model?.options ?? [])].map((o) => o.value)).toEqual([""]);
+    catalog.models = [{ model_id: "opus", model_name: "Opus" }];
+    emitBus(BUS_CATALOG_MODELS);
+    catalog.models = [];
+    expect([...(model?.options ?? [])].map((o) => o.value)).toEqual(["", "opus"]);
   });
 
   it("cancels the LIVE run on click, whoever launched it", async () => {
@@ -185,6 +300,154 @@ describe("the Run ⇄ Cancel row", () => {
     };
     expect(args.source).toBe("bundled://goal");
     expect(args.inputs).toEqual({ prompt: "make the tests pass" });
+  });
+});
+
+describe("a recipe KAS cannot launch", () => {
+  const reason =
+    "Invalid workflow: include 'review' (./review-seats.workflow.json): recipe was not resolved";
+
+  it("offers no Run, and says why on the row and the button", async () => {
+    recipesReply = { recipes: [{ ...recipe("fix-and-review"), validation_error: reason }] };
+    const panel = await render();
+    const btn = buttonFor(panel, "bundled://fix-and-review");
+    expect(btn?.disabled).toBe(true);
+    expect(btn?.getAttribute("data-tooltip")).toBe(reason);
+    const line = panel.querySelector<HTMLElement>(
+      '[data-recipe="bundled://fix-and-review"] .entry-lines > .entry-sub:nth-child(1)',
+    );
+    expect(line?.textContent).toBe(reason);
+    expect(line?.classList.contains("entry-sub-error")).toBe(true);
+    const sched = panel.querySelector<HTMLButtonElement>(
+      '[data-recipe="bundled://fix-and-review"] .recipe-sched-btn',
+    );
+    expect(sched?.disabled).toBe(true);
+    btn?.click();
+    expect(launchRun.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("offers Run again, with its description, once a re-read finds it fixed", async () => {
+    recipesReply = { recipes: [{ ...recipe("fix-and-review"), validation_error: reason }] };
+    const panel = await render();
+    recipesReply = { recipes: [recipe("fix-and-review")] };
+    dispatch({ type: "recipes_changed", chat_id: "" });
+    await Promise.resolve();
+    await Promise.resolve();
+    const btn = buttonFor(panel, "bundled://fix-and-review");
+    expect(btn?.disabled).toBe(false);
+    expect(btn?.hasAttribute("data-tooltip")).toBe(false);
+    const line = panel.querySelector<HTMLElement>(
+      '[data-recipe="bundled://fix-and-review"] .entry-lines > .entry-sub:nth-child(1)',
+    );
+    expect(line?.textContent).toBe("fix-and-review desc");
+    expect(line?.classList.contains("entry-sub-error")).toBe(false);
+  });
+
+  describe("under an input form opened while it was valid", () => {
+    async function openTypedForm(): Promise<{
+      panel: HTMLElement;
+      form: HTMLFormElement;
+      field: HTMLInputElement;
+      launchBtn: HTMLButtonElement;
+    }> {
+      recipesReply = { recipes: [recipe("fix-and-review", { prompt: "prompt" })] };
+      const panel = await render();
+      // The open form is module state, so an earlier case can leave it open.
+      if (panel.querySelector(".recipe-input-form") === null) {
+        buttonFor(panel, "bundled://fix-and-review")?.click();
+      }
+      const form = panel.querySelector<HTMLFormElement>(".recipe-input-form");
+      if (form === null) {
+        throw new Error("the input form did not open");
+      }
+      const field = form.querySelector<HTMLInputElement>("input");
+      const launchBtn = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+      if (field === null || launchBtn === null) {
+        throw new Error("the input form has no field or no Launch");
+      }
+      field.value = "make the tests pass";
+      return { panel, form, field, launchBtn };
+    }
+
+    async function catalogChanges(next: RecipesResponse): Promise<void> {
+      recipesReply = next;
+      dispatch({ type: "recipes_changed", chat_id: "" });
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+
+    function submit(form: HTMLFormElement): void {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    }
+
+    it("turns Launch off with the reason, keeps what was typed, and refuses a submit", async () => {
+      const { panel, form, field, launchBtn } = await openTypedForm();
+      expect(launchBtn.disabled).toBe(false);
+
+      await catalogChanges({
+        recipes: [{ ...recipe("fix-and-review", { prompt: "prompt" }), validation_error: reason }],
+      });
+
+      expect(panel.querySelector(".recipe-input-form")).toBe(form);
+      expect(field.value).toBe("make the tests pass");
+      expect(launchBtn.disabled).toBe(true);
+      expect(launchBtn.getAttribute("data-tooltip")).toBe(reason);
+      submit(form);
+      expect(launchRun.dispatch).not.toHaveBeenCalled();
+    });
+
+    it("still folds the form from Run, then turns Run off, launching nothing", async () => {
+      const { panel } = await openTypedForm();
+      await catalogChanges({
+        recipes: [{ ...recipe("fix-and-review", { prompt: "prompt" }), validation_error: reason }],
+      });
+      const run = buttonFor(panel, "bundled://fix-and-review");
+      expect(run?.disabled).toBe(false);
+      expect(run?.getAttribute("aria-expanded")).toBe("true");
+      expect(run?.getAttribute("data-tooltip")).toBe(reason);
+
+      run?.click();
+      expect(panel.querySelector(".recipe-input-form")).toBeNull();
+      expect(run?.disabled).toBe(true);
+      expect(run?.getAttribute("aria-expanded")).toBe("false");
+      // Folded for good: a filter round trip does not bring it back.
+      renderRecipesPanel(panel, "no such recipe");
+      renderRecipesPanel(panel, "");
+      expect(panel.querySelector(".recipe-input-form")).toBeNull();
+      expect(launchRun.dispatch).not.toHaveBeenCalled();
+    });
+
+    it("mounts the form again with Launch off when a filter hides and re-shows it", async () => {
+      const { panel } = await openTypedForm();
+      await catalogChanges({
+        recipes: [{ ...recipe("fix-and-review", { prompt: "prompt" }), validation_error: reason }],
+      });
+      renderRecipesPanel(panel, "no such recipe");
+      expect(panel.querySelector(".recipe-input-form")).toBeNull();
+      renderRecipesPanel(panel, "");
+
+      const launchBtn = panel.querySelector<HTMLButtonElement>(
+        '.recipe-input-form button[type="submit"]',
+      );
+      expect(launchBtn?.disabled).toBe(true);
+      expect(launchBtn?.getAttribute("data-tooltip")).toBe(reason);
+    });
+
+    it("launches the typed inputs once a re-read finds it fixed", async () => {
+      const { form, launchBtn } = await openTypedForm();
+      await catalogChanges({
+        recipes: [{ ...recipe("fix-and-review", { prompt: "prompt" }), validation_error: reason }],
+      });
+      await catalogChanges({ recipes: [recipe("fix-and-review", { prompt: "prompt" })] });
+
+      expect(launchBtn.disabled).toBe(false);
+      expect(launchBtn.hasAttribute("data-tooltip")).toBe(false);
+      submit(form);
+      expect(vi.mocked(launchRun.dispatch).mock.calls[0]?.[0]).toEqual({
+        source: "bundled://fix-and-review",
+        inputs: { prompt: "make the tests pass" },
+      });
+    });
   });
 });
 
@@ -455,7 +718,68 @@ describe("the filter", () => {
     recipesReply = { recipes: [recipe("goal"), recipe("triage")] };
     const panel = await render("triage");
     buttonFor(panel, "bundled://triage")?.click();
+    panel.querySelector<HTMLButtonElement>(".recipe-launch-btn")?.click();
     expect(dispatched.filter((d) => d.name === "launch")).toHaveLength(1);
     expect(dispatched.at(-1)?.args).toMatchObject({ source: "bundled://triage" });
+  });
+});
+
+describe("the Schedule form", () => {
+  async function openSchedule(): Promise<HTMLButtonElement> {
+    recipesReply = { recipes: [recipe("nightly")] };
+    const panel = await render();
+    const btn = panel.querySelector<HTMLButtonElement>(".recipe-sched-btn");
+    if (btn === null) {
+      throw new Error("the row has no Schedule button");
+    }
+    btn.click();
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    return btn;
+  }
+
+  function scheduleModel(): HTMLSelectElement {
+    const sel = document.querySelector<HTMLSelectElement>(".sched-picker .run-pick-select");
+    if (sel === null) {
+      throw new Error("the Schedule form has no Model select");
+    }
+    return sel;
+  }
+
+  function clickSave(): void {
+    [...document.querySelectorAll<HTMLButtonElement>(".sched-picker button")]
+      .find((b) => b.textContent === "Save")
+      ?.click();
+  }
+
+  it("takes the catalog that lands after it opened", async () => {
+    catalog.models = [];
+    await openSchedule();
+    expect([...scheduleModel().options].map((o) => o.value)).toEqual([""]);
+    catalog.models = [{ model_id: "opus", model_name: "Opus" }];
+    emitBus(BUS_CATALOG_MODELS);
+    catalog.models = [];
+    expect([...scheduleModel().options].map((o) => o.value)).toEqual(["", "opus"]);
+  });
+
+  it("stays open with the reader's edits when the save is refused", async () => {
+    vi.mocked(saveSchedule.dispatch).mockClear();
+    const btn = await openSchedule();
+    clickSave();
+    await vi.waitFor(() => {
+      expect(vi.mocked(saveSchedule.dispatch)).toHaveBeenCalledTimes(1);
+    });
+    await Promise.resolve();
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("closes once the save lands", async () => {
+    vi.mocked(saveSchedule.dispatch).mockImplementationOnce(
+      (async () => ({})) as unknown as typeof saveSchedule.dispatch,
+    );
+    const btn = await openSchedule();
+    clickSave();
+    await vi.waitFor(() => {
+      expect(btn.getAttribute("aria-expanded")).toBe("false");
+    });
   });
 });

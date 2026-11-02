@@ -55,7 +55,7 @@ var durableWriteSites = []durableSite{{
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "restoreUnservedModel",
 	calls:   []string{"Mutate"},
-	because: "the selection a failed spawn puts back for the next spawn to record",
+	because: "the selection a failed session open puts back for the next open to record",
 }, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "closeTurnOnBridgeDeath",
@@ -104,6 +104,11 @@ var durableWriteSites = []durableSite{{
 	calls:   []string{"appendLaneless"},
 	because: "when a workflow message was taken up, which no replay carries",
 }, {
+	file:    "internal/translate/workflow_message.go",
+	fn:      "appendCleared",
+	calls:   []string{"appendLaneless"},
+	because: "where a receiver's steering epoch ended, which no replay carries and the next clear's settling reads",
+}, {
 	file:    "internal/agent/queue_drain.go",
 	fn:      "holdUnread",
 	calls:   []string{"Mutate"},
@@ -120,12 +125,17 @@ var abandonableWriteSites = []durableSite{{
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "tryLoadSession",
 	calls:   []string{"Mutate"},
-	because: "session-chain bookkeeping — no conversational record, and the next spawn records it again",
+	because: "session-chain bookkeeping — no conversational record, and the next session open records it again",
+}, {
+	file:    "internal/agent/bridge_coord.go",
+	fn:      "detachSession",
+	calls:   []string{"Mutate"},
+	because: "session-chain bookkeeping — a lost detach leaves the refused id, whose next load KAS refuses again and detaches",
 }, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "persistNewSessionMetadata",
 	calls:   []string{"Mutate"},
-	because: "the new session's id and facts — no conversational record; a record that did not take them fails the generation, which reaps the session, and the next open spawns again",
+	because: "the new session's id and facts — no conversational record; a record that did not take them fails the generation, which reaps the session, and the next open runs again",
 }, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "ReviseTurnBinding",
@@ -142,11 +152,6 @@ var abandonableWriteSites = []durableSite{{
 	calls:   []string{"OpenTurn", "WriteCounters"},
 	because: "the wire bracket's turn_open on the frame's context, the same class as ReviseTurnBinding",
 }, {
-	file:    "internal/agent/model_switch.go",
-	fn:      "cmdSwitchModel",
-	calls:   []string{"Mutate"},
-	because: "a model pick on the REQUEST's context, the same class as the command/* writes: a switch nobody is waiting for must not land",
-}, {
 	file:    "internal/agent/queue_drain.go",
 	fn:      "AppendIfLive",
 	calls:   []string{"Mutate"},
@@ -158,7 +163,7 @@ var abandonableWriteSites = []durableSite{{
 	because: "an unqueue_prompt on the REQUEST's context: a request that died never told the reader the row was discarded, and the dock still shows it",
 }, {
 	file:    "internal/translate/streaming_content.go",
-	fn:      "appendSteerAcks",
+	fn:      "appendSteerAck",
 	calls:   []string{"appendBetweenTurns"},
 	because: "a steer acknowledgement stripped from a delta, on the frame's context: it lands or is lost with the delta it came out of",
 }, {
@@ -176,6 +181,11 @@ var abandonableWriteSites = []durableSite{{
 	fn:      "handleModelRouted",
 	calls:   []string{"appendLaneless"},
 	because: "KAS's Auto routing notice, which KAS persists and replays, so the next load's merge restores it",
+}, {
+	file:    "internal/translate/model_fallback.go",
+	fn:      "handleModelFallback",
+	calls:   []string{"appendLaneless"},
+	because: "KAS's model fallback notice, which KAS persists and replays, so the next load's merge restores it",
 }, {
 	file:    "internal/translate/focus.go",
 	fn:      "applyFocusTitle",
@@ -223,7 +233,12 @@ var inheritedWriteSites = []durableSite{{
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "persistModelPick",
 	calls:   []string{"Mutate"},
-	because: "applyPendingModel's detach, and the spawn's own ctx at its fold",
+	because: "applyPendingModel's detach, and the session open's own ctx at its fold",
+}, {
+	file:    "internal/agent/model_switch.go",
+	fn:      "parkSwitch",
+	calls:   []string{"Mutate"},
+	because: "admitSwitchModel decides: the REQUEST's context, as the command/* writes, so a switch nobody is waiting for does not park; detached once its stop has landed, so the stop never stands without its park",
 }, {
 	file:    "internal/agent/queue_drain.go",
 	fn:      "NextUserRow",

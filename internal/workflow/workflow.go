@@ -7,6 +7,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -20,26 +21,38 @@ import (
 // session. Other fields stay on the wire, passed through by the read endpoint.
 type node struct {
 	// Iteration is the pass of an enclosing `repeat`; a pointer because pass 0 is the first.
-	Iteration *int   `json:"iteration"`
-	NodeID    string `json:"nodeId"`
-	Type      string `json:"type"`
-	SessionID string `json:"sessionId"`
-	Status    string `json:"status"`
-	Children  []node `json:"children"`
+	Iteration *int `json:"iteration"`
+	// AwaitingUserInput is a pointer because absent and false are different answers to W1.
+	AwaitingUserInput *bool  `json:"awaitingUserInput"`
+	NodeID            string `json:"nodeId"`
+	Type              string `json:"type"`
+	SessionID         string `json:"sessionId"`
+	Status            string `json:"status"`
+	AgentName         string `json:"agentName"`
+	CompletionSignal  string `json:"completionSignal"`
+	Children          []node `json:"children"`
 }
 
 // State is the run state `inspect` returns, decoded only as far as step identification
 // needs.
 type State struct {
-	Root       *node  `json:"root"`
-	WorkflowID string `json:"workflowId"`
-	Status     string `json:"status"`
+	Root            *node  `json:"root"`
+	WorkflowID      string `json:"workflowId"`
+	Status          string `json:"status"`
+	ParentSessionID string `json:"parentSessionId"`
+	// PauseReason is KAS's sentence for the run's latest park, whichever step parked.
+	PauseReason string `json:"pauseReason"`
 }
 
-// InspectResult is `_kiro/workflow/inspect`'s reply, decoded to the one part
+// InspectResult is `_kiro/workflow/inspect`'s reply, decoded to the parts
 // marotte reads. `nodePlan` rides through undecoded — see the package comment.
 type InspectResult struct {
-	State *State `json:"state"`
+	State      *State `json:"state"`
+	WorkflowID string `json:"workflowId"`
+	// PendingSteps is the queued replace_remaining plan, which KAS answers from its persisted
+	// pending-step-update.json even for a run it has not loaded. It stays raw so a shape change in
+	// this advisory key never fails the state's decode.
+	PendingSteps json.RawMessage `json:"pendingSteps"`
 }
 
 // StepSession names one step node, its ACP session and its PATH. The path addresses one
@@ -77,32 +90,19 @@ func StepSessions(s *State) []StepSession {
 // Steps returns EVERY step node in the same order, run or not, so a caller can tell "no
 // such step" from "not started".
 func Steps(s *State) []StepSession {
-	if s == nil || s.Root == nil {
-		return nil
-	}
 	var out []StepSession
-	walk(s.Root, nil, nil, &out)
+	for _, v := range nodes(s) {
+		if v.n.Type == "step" {
+			out = append(out, StepSession{NodeID: v.n.NodeID, SessionID: v.n.SessionID, Status: v.n.Status, Path: v.path})
+		}
+	}
 	return out
-}
-
-// Each level allocates its path at EXACT capacity, or a child's append writes into a sibling's
-// backing array.
-func walk(n, parent *node, trail []string, out *[]StepSession) {
-	path := make([]string, 0, len(trail)+1)
-	path = append(path, trail...)
-	path = append(path, pathSegment(n, parent))
-	if n.Type == "step" {
-		*out = append(*out, StepSession{NodeID: n.NodeID, SessionID: n.SessionID, Status: n.Status, Path: path})
-	}
-	for i := range n.Children {
-		walk(&n.Children[i], n, path, out)
-	}
 }
 
 // pathSegment is what KAS calls this node in a node PATH. A repeat's iteration container
 // is `<repeatId>#<n>` in the tree and `iter-<n>` on the wire, derived from its
 // `iteration`; with none it falls back to the node id. Siblings holding the same
-// translation: translate.runNodePath and run-store.ts.
+// translation: translate.runNodePath and run-node-key.ts.
 func pathSegment(n, parent *node) string {
 	if parent != nil && parent.Type == "repeat" && n.Iteration != nil {
 		return "iter-" + strconv.Itoa(*n.Iteration)
@@ -118,17 +118,9 @@ const unknownMethodMarker = "has no persistence classification"
 // answer, unlike a transient failure. Callers ask errors.Is.
 var ErrUnknownMethod = errors.New("workflow verb not registered on this kiro-cli build")
 
-// The two refusals KAS's run-ownership gate throws as plain Errors: a -32603 whose
-// `error.data.details` is the sentence (acp-server.js acquireRunOwnership and
-// ensureRunOwnership, kiro-cli 2.27.0). Each marker is shared by the load and mutate variants.
-const (
-	ownedElsewhereMarker = "appears to be running in another process"
-	justClaimedMarker    = "was just claimed by another process"
-)
-
-// ErrOwnedElsewhere means another process's ownership stamp names the run and KAS does
-// not judge that stamp stale.
-var ErrOwnedElsewhere = errors.New("another process holds this run")
+// The refusal KAS's run-claim gate throws as a plain Error: a -32603 whose `error.data.details` is the sentence
+// (acp-server.js acquireRunOwnership and ensureRunOwnership, kiro-cli 2.27.0), shared by the load and mutate variants.
+const justClaimedMarker = "was just claimed by another process"
 
 // ErrJustClaimed means another claim on the run is in flight right now.
 var ErrJustClaimed = errors.New("another claim on this run is in flight")
@@ -146,7 +138,6 @@ func Classify(err error) error {
 		marker   string
 	}{
 		{ErrUnknownMethod, unknownMethodMarker},
-		{ErrOwnedElsewhere, ownedElsewhereMarker},
 		{ErrJustClaimed, justClaimedMarker},
 	} {
 		if strings.Contains(details, c.marker) {

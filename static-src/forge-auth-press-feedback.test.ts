@@ -26,12 +26,16 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   confirm: H.confirm,
 }));
-// The forge store reads the list through an action; routed through the mocked client so each describe answers it.
-vi.mock("./forge-store.js", async (importOriginal) => {
-  const orig = await importOriginal<Record<string, unknown>>();
+// The rows read is routed through the mocked client, so each case answers the forge list first.
+vi.mock("./actions/forge-list.js", async (importOriginal) => {
   const { apiGetTyped } = await import("./api-client.js");
-  const read = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
-  return { ...orig, refreshForges: read, ensureForges: read };
+  return {
+    ...(await importOriginal<Record<string, unknown>>()),
+    listForges: {
+      dispatch: () =>
+        Promise.resolve(apiGetTyped("/api/forges", (v: unknown) => v)).then((v) => v ?? null),
+    },
+  };
 });
 vi.mock("./sse-adapter.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -65,8 +69,15 @@ import {
   expectBusy,
   expectIdle,
 } from "./__test-helpers__/press-feedback.js";
+import { _resetForTest as resetForgeStore } from "./forge-store.js";
+import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
+  resetForgeStore();
   H.confirm.mockImplementation(async () => true);
 });
 
@@ -77,8 +88,8 @@ describe("the Sources tab", () => {
     kind: "github",
     host: "github.com",
     username: "alice",
-    connected: true,
-    reconnect_required: false,
+    account: "acct-1",
+    status: "connected",
   };
   const FIRST_PAGE = "/api/forges/github%3Agithub.com/repos";
 
@@ -117,7 +128,7 @@ describe("the Sources tab", () => {
         case "/api/git/repos":
           return Promise.resolve(decode({ repos: [...clones] }));
         case FIRST_PAGE:
-          return Promise.resolve(decode({ repos: listed.map(repo) }));
+          return Promise.resolve(decode({ account: "acct-1", repos: listed.map(repo) }));
         default:
           return Promise.resolve(null);
       }
@@ -133,7 +144,7 @@ describe("the Sources tab", () => {
   async function show(names: string[], cloned: string[]): Promise<HTMLElement> {
     listed = names;
     clones = new Set(cloned);
-    await renderForgesPanel({ revalidate: false });
+    await renderForgesPanel();
     const d = host.querySelector<HTMLElement>(".forge-account-repos")!;
     toggle(d).click();
     return d;
@@ -171,7 +182,7 @@ describe("the Sources tab", () => {
     expectBusy(clone);
     await vi.waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]!.url).toBe("/api/git/clone");
-    await renderForgesPanel({ revalidate: false });
+    await renderForgesPanel();
     expectBusy(control("one", "Clone into workspace"));
     clones.add("one");
     calls[0]!.answer(cloneAnswer({ output: "Cloning into 'one'..." }));
@@ -181,6 +192,7 @@ describe("the Sources tab", () => {
   });
 
   it("Clone says a refusal in its row until the row's next press, with the control usable again", async () => {
+    useSteppableClock();
     await show(["one"], []);
     const calls = heldFetch();
 
@@ -191,8 +203,8 @@ describe("the Sources tab", () => {
     await vi.waitFor(() =>
       expect(note("one")).toBe("Could not clone. fatal: repository not found"),
     );
-    await vi.waitFor(() => expectIdle(control("one", "Clone into workspace")), { timeout: 3000 });
-    await renderForgesPanel({ revalidate: false });
+    await waitForOnClock(() => expectIdle(control("one", "Clone into workspace")), 3000);
+    await renderForgesPanel();
     expect(note("one")).toBe("Could not clone. fatal: repository not found");
     expect(toast.error).not.toHaveBeenCalled();
 
@@ -236,6 +248,7 @@ describe("the Sources tab", () => {
   });
 
   it("Remove local copy says a refusal in its row, which keeps its copy", async () => {
+    useSteppableClock();
     await show(["two"], ["two"]);
     const calls = heldFetch();
 
@@ -246,7 +259,7 @@ describe("the Sources tab", () => {
     await vi.waitFor(() =>
       expect(note("two")).toBe("Could not remove the local copy. remove failed"),
     );
-    await vi.waitFor(() => expectIdle(control("two", "Remove local copy")), { timeout: 3000 });
+    await waitForOnClock(() => expectIdle(control("two", "Remove local copy")), 3000);
     expect(row("two").querySelector(".git-sources-cloned-dot")).not.toBeNull();
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -348,6 +361,7 @@ describe("the Sources tab", () => {
   });
 
   it("Check is busy from a press that clears its row's last refusal, and says the next one", async () => {
+    useSteppableClock();
     await show([], []);
     const calls = heldFetch();
     const check = (): HTMLButtonElement | undefined =>
@@ -363,7 +377,7 @@ describe("the Sources tab", () => {
     await vi.waitFor(() =>
       expect(rowError()).toBe("Could not check the connection. the forge is unreachable"),
     );
-    await vi.waitFor(() => expectIdle(check()), { timeout: 3000 });
+    await waitForOnClock(() => expectIdle(check()), 3000);
 
     check()!.click();
 

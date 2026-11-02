@@ -6,6 +6,7 @@ import type { Mock } from "vitest";
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./icons.js", () => ({
+  ICON_MODEL_UI: "",
   ICON_CLOSE: "",
   ICON_TAB_CHAT: "",
   ICON_TAB_SETTINGS: "",
@@ -36,6 +37,7 @@ vi.mock("./icons.js", () => ({
   ICON_HOURGLASS: "",
   ICON_ALERT: "",
   ICON_PIN_FILLED: "",
+  ICON_CHEVRON_DOWN: "",
 }));
 vi.mock("./device-view.js", () => {
   let active = "";
@@ -85,6 +87,7 @@ vi.mock("./dom.js", () => ({
       },
     },
   ),
+  setBusy: vi.fn(),
   byId: (id: string) => {
     let el = document.getElementById(id);
     if (el === null) {
@@ -127,6 +130,7 @@ vi.mock("./transport.js", () =>
 );
 vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => ({
+    apiBlobOrError: vi.fn(),
     apiGetTyped: m.tabListRead(),
     apiGet: vi.fn(() => Promise.resolve(null)),
   })),

@@ -185,8 +185,8 @@ describe("the view signal", () => {
 describe("the refresh button", () => {
   function stageToolbar(): HTMLButtonElement {
     document.body.innerHTML = `
-      <div class="git-tab-toolbar">
-        <button type="button" id="git-refresh-prs-btn" class="icon-btn" aria-label="Refresh pull requests"></button>
+      <div class="page-toolbar">
+        <button type="button" id="git-refresh-prs-btn" class="action-pill" aria-label="Refresh pull requests"></button>
       </div>
       <div id="git-prs-mount" class="git-multirepo-mount" aria-live="polite"></div>`;
     const btn = document.getElementById("git-refresh-prs-btn");
@@ -197,7 +197,7 @@ describe("the refresh button", () => {
   }
 
   function statusText(): string {
-    return document.querySelector(".git-tab-toolbar [role='status']")?.textContent ?? "";
+    return document.querySelector(".page-toolbar [role='status']")?.textContent ?? "";
   }
 
   async function answerCycle(cycle: string | Promise<Record<string, unknown>>): Promise<void> {

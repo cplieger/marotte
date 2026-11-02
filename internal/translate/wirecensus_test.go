@@ -33,7 +33,7 @@ func resetCensus(t *testing.T) {
 func TestCensusMeta_ReportsAnUnknownFieldOnce(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	raw := json.RawMessage(`{"kind":"agent-subtask","cacheReadTokens":41}`)
 	for range 3 {
@@ -59,7 +59,7 @@ func TestCensusMeta_ReportsAnUnknownFieldOnce(t *testing.T) {
 func TestCensusMeta_NeverLogsAValue(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	const secret = "ya29.A0ARrdaM-NOT-A-REAL-TOKEN"
 	censusMeta("_meta.kiro", json.RawMessage(`{"someNewAuthField":"`+secret+`"}`),
@@ -82,7 +82,7 @@ func TestCensusMeta_NeverLogsAValue(t *testing.T) {
 func TestCensusMeta_FoldsCase(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	censusMeta("_meta.kiro", json.RawMessage(`{"MessageId":"m-1","AGENTSUBTASKID":"s-1"}`),
 		reflect.TypeFor[acpKiroBlockShadow]())
@@ -97,7 +97,7 @@ func TestCensusMeta_FoldsCase(t *testing.T) {
 func TestCensusMeta_DeclinedFieldsAreQuiet(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	censusMeta("_meta.kiro", json.RawMessage(`{"preview":{"originalContent":"..."}}`),
 		reflect.TypeFor[acpKiroBlockShadow](), "preview")
@@ -112,7 +112,7 @@ func TestCensusMeta_IsBounded(t *testing.T) {
 	t.Run("an oversized object is skipped", func(t *testing.T) {
 		resetCensus(t)
 		var logbuf bytes.Buffer
-		defer captureSlog(&logbuf)()
+		captureSlog(t, &logbuf)
 
 		big := `{"novelField":"` + strings.Repeat("x", maxCensusObjectBytes) + `"}`
 		censusMeta("_meta.kiro", json.RawMessage(big), reflect.TypeFor[acpKiroBlockShadow]())
@@ -125,7 +125,7 @@ func TestCensusMeta_IsBounded(t *testing.T) {
 	t.Run("the key budget latches the probe off", func(t *testing.T) {
 		resetCensus(t)
 		var logbuf bytes.Buffer
-		defer captureSlog(&logbuf)()
+		captureSlog(t, &logbuf)
 
 		// One novel field per frame, well past the cap.
 		for i := range maxCensusKeys * 2 {
@@ -153,7 +153,7 @@ func TestCensusMeta_IsBounded(t *testing.T) {
 func TestCensusMeta_SanitizesTheFieldName(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	// A name carrying a newline, a forged record after it, and far more bytes
 	// than the cap allows.
@@ -210,7 +210,7 @@ func TestCensusMeta_NeverBreaksADecode(t *testing.T) {
 func TestCensusMeteringUnit_ReportsAnUnsummedUnit(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	censusMeteringUnit("cacheRead")
 	censusMeteringUnit("cacheRead")
@@ -306,7 +306,7 @@ func TestJSONKindOf(t *testing.T) {
 func TestSessionInfoUpdate_CensusRunsOnTheRealFrame(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -322,6 +322,56 @@ func TestSessionInfoUpdate_CensusRunsOnTheRealFrame(t *testing.T) {
 	}
 	if !strings.Contains(out, "type=object") {
 		t.Errorf("the report does not name the new member's type: %s", out)
+	}
+}
+
+// TestPlanApproval_CensusIsQuiet pins the declines for a plan approval's members (kiro-cli 2.32.0's
+// shape): the ask's `workflowPlan` and its pending_interaction's flat `_meta` copy of it.
+func TestPlanApproval_CensusIsQuiet(t *testing.T) {
+	plan := map[string]any{
+		"workflowId": "wf_1", "kind": "launch", "workflowRef": "generated://plan",
+		"steps": []map[string]any{{"id": "build", "type": "step"}},
+	}
+	for name, deliver := range map[string]func(t *testing.T, tr *Translator){
+		"the permission ask": func(t *testing.T, tr *Translator) {
+			id := int64(4)
+			tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{ID: &id, Params: mustJSON(t, map[string]any{
+				"sessionId": "s",
+				"toolCall": map[string]any{
+					"toolCallId": "tc", "status": "pending", "title": "Add 1 workflow steps to wf_1",
+					"content": []map[string]any{{"type": "content", "content": map[string]any{"type": "text", "text": "1. build"}}},
+				},
+				"options": []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
+				"_meta": map[string]any{"kiro": map[string]any{
+					"toolId": "update_workflow", "workflowPlan": plan, "consentRound": 1,
+					"consent": map[string]any{"capability": "workflow", "resource": "replace_remaining"},
+				}},
+			})})
+		},
+		"its pending_interaction update": func(t *testing.T, tr *Translator) {
+			planMeta := map[string]any{"kiro": map[string]any{"workflowPlan": plan}}
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+				"_meta": map[string]any{"kiro": map[string]any{
+					"kind": "pending_interaction", "toolCallId": "tc", "interactionType": "tool_approval",
+					"question": "Add 1 workflow steps to wf_1", "options": []any{}, "_meta": planMeta,
+					"pendingInteraction": map[string]any{
+						"toolCallId": "tc", "interactionType": "tool_approval",
+						"question": "Add 1 workflow steps to wf_1", "options": []any{}, "_meta": planMeta,
+					},
+				}},
+			}), FrameAttribution{})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetCensus(t)
+			var logbuf bytes.Buffer
+			captureSlog(t, &logbuf)
+			deps, _ := newEventCaptureDeps()
+			deliver(t, New(rolesOf(deps)))
+			if out := logbuf.String(); strings.Contains(out, "UNKNOWN") {
+				t.Errorf("a plan approval reported a member marotte declines: %s", out)
+			}
+		})
 	}
 }
 
@@ -344,7 +394,7 @@ func TestKnownKeys_IsCachedPerType(t *testing.T) {
 func TestCensusMeta_DoesNotMutateTheCachedSet(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
-	defer captureSlog(&logbuf)()
+	captureSlog(t, &logbuf)
 
 	typ := reflect.TypeFor[acpKiroBlockShadow]()
 	before := len(knownKeys(typ))

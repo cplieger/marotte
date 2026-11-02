@@ -1,4 +1,4 @@
-// `uploadFiles`'s progress reporting. The container carries NO `role="progressbar"` (its children
+// `uploadFiles`'s request and progress reporting. The container carries NO `role="progressbar"` (its children
 // would be presentational, hiding Cancel), and the native <progress>'s value path has three states:
 // determinate sets a value, indeterminate REMOVES it, a later tick restores it. `upload.ts` is
 // excluded from coverage for its XHR shell; a fake XMLHttpRequest reaches every branch here.
@@ -48,17 +48,22 @@ class FakeXHR {
   };
   private readonly listeners = new Map<string, Listener[]>();
   sent = false;
+  method = "";
+  url = "";
+  body: unknown = undefined;
 
   constructor() {
     FakeXHR.last = this;
   }
 
-  open(): void {
-    /* nothing to record */
+  open(method: string, url: string): void {
+    this.method = method;
+    this.url = url;
   }
 
-  send(): void {
+  send(body?: unknown): void {
     this.sent = true;
+    this.body = body;
   }
 
   abort(): void {
@@ -235,5 +240,20 @@ describe("the failure paths write the label and nothing else", () => {
     xhr.fire("load");
     expect(label.textContent).toBe("upload too large");
     expect(bar.value).toBe(42);
+  });
+});
+
+describe("the request", () => {
+  // A ReadableStream body (File.stream(), fetch `duplex: "half"`) is not one WebKit sends.
+  it("POSTs a FormData whose parts are the File objects, never a stream", () => {
+    const { xhr } = start("a.png", "b.txt");
+    expect(xhr.method).toBe("POST");
+    expect(xhr.url).toBe("/api/file/upload");
+    expect(xhr.body).toBeInstanceOf(FormData);
+    const form = xhr.body as FormData;
+    expect(form.get("dir")).toBe("/uploads");
+    const parts = form.getAll("files");
+    expect(parts.every((p) => p instanceof File)).toBe(true);
+    expect(parts.map((p) => (p instanceof File ? p.name : p))).toEqual(["a.png", "b.txt"]);
   });
 });

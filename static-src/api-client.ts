@@ -194,11 +194,32 @@ export async function apiPostTyped<T>(
   return collapse(await fx.apiPostRaw<T>(path, body, reqOpts({ decoder }, signal)), "POST", path);
 }
 
+/** POST twin of `apiGetTypedOrError`, for a caller that shows the server's refusal sentence itself. Unlogged. */
+export async function apiPostTypedOrError<T>(
+  path: string,
+  body: unknown,
+  decoder: Decoder<T>,
+  signal?: AbortSignal,
+): Promise<ApiResult<T>> {
+  return toApiResult(await fx.apiPostRaw<T>(path, body, reqOpts({ decoder }, signal)));
+}
+
 /** GET variant for a caller to whom a non-2xx body is itself meaningful —
  *  /api/health's 503 `reason` is the canonical consumer. */
 export async function apiGetOrError<T>(path: string, signal?: AbortSignal): Promise<ApiResult<T>> {
   // Unlogged: that consumer polls health, where a 503 is an expected state.
   return toApiResult(await fx.apiGetRaw<T>(path, reqOpts({}, signal)));
+}
+
+/** A binary read: the 2xx body whole as a `Blob`, or fetch's failure envelope. Unlogged: the caller reports the failure. */
+export async function apiBlobOrError(
+  method: "GET" | "POST",
+  path: string,
+  body: unknown,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<FetchResult<Blob>> {
+  return fx.requestRaw(method, path, { as: "blob", body, signal, timeoutMs });
 }
 
 /** One AbortController slot: `start()` aborts the previous in-flight request

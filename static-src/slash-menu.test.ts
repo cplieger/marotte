@@ -2,6 +2,7 @@
 // is greyed mid-turn, and that a pick fills the composer, for the `/` commands and the `#` context
 // references alike.
 import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from "vitest";
+import { useSteppableClock } from "./__test-helpers__/fake-clock.js";
 import type * as ApiClient from "./api-client.js";
 import type * as Store from "./store.js";
 import type * as NoticeSubject from "./notice-subject.js";
@@ -450,9 +451,9 @@ describe("the # context menu", () => {
     expect(input.value).toBe("#[[steering:.kiro/steering/go.md]] ");
   });
 
-  function servePool(servers: unknown[], chat = "c-1"): void {
+  function servePool(servers: unknown[]): void {
     mockApiGetTyped.mockImplementation((path: string) =>
-      Promise.resolve(path === `/api/mcp/pool?chat_id=${chat}` ? servers : null),
+      Promise.resolve(path === "/api/mcp/pool" ? servers : null),
     );
   }
 
@@ -460,24 +461,24 @@ describe("the # context menu", () => {
     return { name, resources, resource_templates: templates };
   }
 
-  it("lists the active chat's own pool, so a server only another chat holds is absent", async () => {
+  it("lists the engine's one pool, read with no chat in the request", async () => {
     servePool([poolServer("gh", [{ name: "readme", uri: "gh://readme" }])]);
     type("#mcp:");
     await vi.waitFor(() => {
       expect(rowNames()).toEqual(["readme"]);
     });
-    expect(mockApiGetTyped.mock.calls.map(([p]) => p)).toEqual(["/api/mcp/pool?chat_id=c-1"]);
+    expect(mockApiGetTyped.mock.calls.map(([p]) => p)).toEqual(["/api/mcp/pool"]);
     press("Enter");
     expect(input.value).toBe("#[[mcp:gh:gh://readme]] ");
   });
 
-  it("lists no MCP resource when no chat is active, since no pool exists to resolve one", async () => {
+  it("lists the engine pool when no chat is active, since the pool is not a chat's", async () => {
     mockGetActiveId.mockReturnValue("");
+    servePool([poolServer("gh", [{ name: "readme", uri: "gh://readme" }])]);
     type("#mcp:");
     await vi.waitFor(() => {
-      expect(menu.textContent).toContain("No matches");
+      expect(rowNames()).toEqual(["readme"]);
     });
-    expect(mockApiGetTyped).not.toHaveBeenCalled();
   });
 
   it("fills an MCP template's variables before writing its token", async () => {
@@ -566,7 +567,7 @@ describe("the # context menu", () => {
     });
   });
 
-  it("re-reads an open #mcp: list when the chat's pool changes", async () => {
+  it("re-reads an open #mcp: list when the engine's pool changes", async () => {
     servePool([poolServer("gh", [{ name: "readme", uri: "gh://readme" }])]);
     type("#mcp:");
     await vi.waitFor(() => {
@@ -604,7 +605,7 @@ describe("the # context menu", () => {
     expect(rowNames()).toEqual(["home"]);
   });
 
-  it("lists the newly active chat's pool while #mcp: stays open", async () => {
+  it("keeps an open #mcp: list and reads nothing when another chat becomes active", async () => {
     onTestFinished(() => {
       setActive("");
     });
@@ -615,11 +616,12 @@ describe("the # context menu", () => {
       expect(rowNames()).toEqual(["readme"]);
     });
     mockGetActiveId.mockReturnValue("c-2");
-    servePool([poolServer("wiki", [{ name: "home", uri: "wiki://home" }])], "c-2");
+    servePool([poolServer("wiki", [{ name: "home", uri: "wiki://home" }])]);
     setActive("c-2");
-    await vi.waitFor(() => {
-      expect(rowNames()).toEqual(["home"]);
-    });
+    type("#mcp:");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(rowNames()).toEqual(["readme"]);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
   });
 
   function searchCalls(): number {
@@ -627,9 +629,13 @@ describe("the # context menu", () => {
   }
 
   it("cancels a file search still waiting out its debounce when the menu closes", async () => {
+    useSteppableClock();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     type("#file:a");
     input.dispatchEvent(new Event("blur"));
-    await new Promise((r) => setTimeout(r, 300));
+    await vi.runAllTimersAsync();
     expect(searchCalls()).toBe(0);
     expect(menu.hidden).toBe(true);
   });
@@ -706,7 +712,7 @@ describe("the # context menu", () => {
     });
   });
 
-  it("offers a retry when the chat's MCP pool cannot load", async () => {
+  it("offers a retry when the engine's MCP pool cannot load", async () => {
     type("#mcp:");
     await vi.waitFor(() => {
       expect(rowNames()).toEqual(["Retry"]);

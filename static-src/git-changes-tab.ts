@@ -3,6 +3,7 @@
 
 import { apiGet } from "./api-client.js";
 import { onSSE } from "./bus.js";
+import { usablePairs } from "./forge-store.js";
 import {
   ICON_REFRESH,
   ICON_REPO_EMPTY,
@@ -28,7 +29,7 @@ import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { gitRepoSkeleton, paintPlaceholder } from "./skeleton.js";
 import { reconcile } from "./reconcile.js";
 import { openChange } from "./navigate.js";
-import { el } from "@cplieger/reactive";
+import { effect, el, on } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
@@ -171,7 +172,7 @@ export function initChangesTab(): void {
   const pullAllBtn = document.getElementById("git-pull-all-btn") as HTMLButtonElement | null;
   if (pullAllBtn !== null) {
     pullAllBtn.innerHTML = ICON_GIT_DOWN_ARROW;
-    const status = el("span", { className: "git-tab-toolbar-error", role: "status" });
+    const status = el("span", { className: "page-toolbar-error", role: "status" });
     pullAllBtn.before(status);
     // The pass's refresh runs once the button settles, so the loading binding and the button's feedback end together.
     pullAllBtn.addEventListener("click", () => {
@@ -186,7 +187,7 @@ export function initChangesTab(): void {
     bindLoadingState(["git.pull_all", "git.pull"], pullAllBtn);
   }
 
-  // Refetch when the agent writes files or forge accounts change; debounced so bursts coalesce.
+  // Refetch when the agent writes files or the usable forge accounts change; debounced so bursts coalesce.
   let sseRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   const debouncedRefresh = (): void => {
     clearTimeout(sseRefreshTimer);
@@ -195,7 +196,15 @@ export function initChangesTab(): void {
     }, 300);
   };
   onSSE("turn_closed", debouncedRefresh);
-  onSSE("forges_changed", debouncedRefresh);
+  // A usable account's sign-in or sign-out changes what the rows link to; a retrying row's new message does not.
+  effect(
+    on(usablePairs, (now, prev) => {
+      if (now !== null && prev !== null && prev !== undefined) {
+        debouncedRefresh();
+      }
+      return undefined;
+    }),
+  );
 }
 
 /**

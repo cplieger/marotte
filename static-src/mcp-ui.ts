@@ -11,6 +11,7 @@ import { onSSE } from "./bus.js";
 import { GOVERNANCE_UNAVAILABLE, governanceReasonKind, onGovernanceChange } from "./governance.js";
 import type { GovernanceMCPRegistry, GovernanceStatePayload } from "./types.js";
 import { onModalClose, openModal } from "./modals.js";
+import { refreshConfigStanding, standingBadge } from "./config-standing.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { showToast } from "./toast.js";
 import { ICON_EDIT_UI, ICON_TRASH_UI, ICON_PLUS_UI, ICON_REFRESH, ICON_SPINNER } from "./icons.js";
@@ -21,13 +22,10 @@ import {
   type RuntimeState,
   type PrewarmState,
   type ServerDiscovery,
-  type MCPPromptInfo,
-  type MCPPromptArg,
-  type MCPResourceInfo,
-  type MCPResourceTemplateInfo,
   servers,
   unconfiguredNames,
   mcpState,
+  standingFor,
   statusSignalFor,
   prewarmSignalFor,
   discoverySignalFor,
@@ -44,11 +42,7 @@ import {
   saveServer,
   reconnectServer,
   relayOAuthCallback,
-  getPromptContent,
-  getResourceContent,
 } from "./actions/mcp.js";
-import { promptResultToText, resourceResultToText } from "./mcp-content.js";
-import { parseTemplate } from "./context-mentions.js";
 import { bindLoadingState, isPending, registerCleanup } from "./actions/index.js";
 
 let sectionBody: HTMLDivElement | null = null;
@@ -97,8 +91,7 @@ function buildSectionScaffold(): void {
   });
   addBtn = btn;
 
-  const actions = el("div", { className: "action-bar action-bar-inline" }, btn);
-  const actionRow = el("div", { className: "section-actions-row" }, actions);
+  const actionRow = el("div", { className: "page-toolbar" }, btn);
 
   govDisabledMsg = el("p", {
     className: "mcp-gov-disabled",
@@ -200,9 +193,9 @@ async function addRegistryServer(name: string): Promise<void> {
 }
 
 /**
- * Render the organization's registry: allowed catalog servers with Add, plus dropped servers with no row of their own
- * and entries the catalog lacks. Hidden when not restricted; Add disabled while `lockReason` is set. Exported for
- * testing.
+ * Render the organization's registry: a notice naming the configured servers it hides, allowed catalog servers with
+ * Add, and entries the catalog lacks. Hidden when not restricted; Add disabled while `lockReason` is set. Exported
+ * for testing.
  */
 export function renderRegistryPanel(
   host: HTMLElement,
@@ -254,11 +247,9 @@ export function renderRegistryPanel(
   } else {
     children.push(list);
   }
-  const rowless = reg.filtered.filter((name) => !have.has(name));
-  if (rowless.length > 0) {
-    children.push(
-      el("p", { className: "section-hint" }, `${NOT_IN_REGISTRY}: ${rowless.join(", ")}.`),
-    );
+  // After the catalog: the lead's "the servers below" names the catalog's rows.
+  if (reg.filtered.length > 0) {
+    children.push(renderHiddenNotice(reg.filtered));
   }
   if (reg.unresolved.length > 0) {
     children.push(
@@ -270,6 +261,23 @@ export function renderRegistryPanel(
     );
   }
   host.replaceChildren(...children);
+}
+
+/**
+ * Every configured server KAS drops in registry mode (its `accessModeFilteredServers`), whether or not this page
+ * holds its row: the TUI's managed view names the same list.
+ */
+function renderHiddenNotice(names: readonly string[]): HTMLElement {
+  return el(
+    "div",
+    { className: "mcp-registry-hidden", role: "note" },
+    el(
+      "p",
+      null,
+      "Your organization's MCP registry doesn't include these servers, so kiro-cli won't start them.",
+    ),
+    el("ul", { className: "mcp-registry-hidden-list" }, ...names.map((n) => el("li", null, n))),
+  );
 }
 
 /**
@@ -386,13 +394,14 @@ registerCleanup(() => {
 export function mountForeignRow(name: string): HTMLElement {
   const dot = el("span", { className: "mcp-dot", role: "img" });
   const nameEl = el("span", { className: "mcp-row-name" }, name);
+  const standingSlot = el("span", { className: "mcp-row-standing" });
   const originChip = buildOriginChip();
   const metaText = el("span", { className: "mcp-row-meta-text" });
   const discoveryBox = el("div", { className: "mcp-discovery" }) as HTMLDivElement;
   const body = el(
     "div",
     { className: "mcp-row-body" },
-    el("div", { className: "mcp-row-name-line" }, dot, nameEl),
+    el("div", { className: "mcp-row-name-line" }, dot, nameEl, standingSlot),
     el("div", { className: "mcp-row-meta" }, originChip, metaText),
     discoveryBox,
   );
@@ -416,6 +425,7 @@ export function mountForeignRow(name: string): HTMLElement {
       applyStatusDotForeign(dot, name, st);
       applyOriginChip(originChip, st);
       metaText.textContent = renderForeignMeta(st);
+      applyStanding(standingSlot, name);
       const live = carriesLiveReport(st, false);
       reconnectBtn.hidden = !live;
       syncOAuth(st, live);
@@ -495,7 +505,15 @@ export function mountRow(s: Server, id: string): HTMLElement {
   const dot = el("span", { className: "mcp-dot", role: "img" });
   const nameEl = el("span", { className: "mcp-row-name" });
   const transportBadge = el("span", { className: "mcp-transport" });
-  const nameLine = el("div", { className: "mcp-row-name-line" }, dot, nameEl, transportBadge);
+  const standingSlot = el("span", { className: "mcp-row-standing" });
+  const nameLine = el(
+    "div",
+    { className: "mcp-row-name-line" },
+    dot,
+    nameEl,
+    transportBadge,
+    standingSlot,
+  );
   const metaText = el("span", { className: "mcp-row-meta-text" });
   const meta = el("div", { className: "mcp-row-meta" }, metaText);
   const body = el("div", { className: "mcp-row-body" }, nameLine, meta);
@@ -556,6 +574,7 @@ export function mountRow(s: Server, id: string): HTMLElement {
       transportBadge.textContent = cur.transport;
       applyStatusDot(dot, cur, st, notInRegistry);
       metaText.textContent = renderMeta(cur, st, notInRegistry);
+      applyStanding(standingSlot, cur.name);
 
       const live = carriesLiveReport(st, true);
       reconnectBtn.hidden = !live;
@@ -567,6 +586,15 @@ export function mountRow(s: Server, id: string): HTMLElement {
 
   rowCleanups.set(id, cleanups);
   return row;
+}
+
+function applyStanding(slot: HTMLElement, name: string): void {
+  const s = standingFor(name);
+  if (s === undefined) {
+    slot.replaceChildren();
+    return;
+  }
+  slot.replaceChildren(standingBadge(s));
 }
 
 /**
@@ -957,12 +985,9 @@ function renderReconnectBtn(label: string, serverName: () => string): HTMLButton
       .dispatch(
         { server: serverName() },
         {
-          onSuccess: (res) => {
-            // The reconnect re-emits _kiro/mcp/status on every bridge; refetch for the dot and discovery.
+          onSuccess: () => {
+            // The reset re-emits _kiro/mcp/status; refetch for the dot and discovery.
             mcpState.refetchStatus();
-            if (res.reconnected === 0) {
-              showToast("No active chat to reconnect through. Open a chat first.", "info");
-            }
           },
         },
       )
@@ -1006,19 +1031,21 @@ function renderDiscovery(
   if (disc.prompts.length > 0) {
     details.appendChild(el("div", { className: "mcp-disc-group" }, "Prompts"));
     for (const p of disc.prompts) {
-      details.appendChild(buildPromptItem(serverName, p));
+      details.appendChild(discItem(p.name, p.description));
     }
   }
   if (disc.resources.length > 0) {
     details.appendChild(el("div", { className: "mcp-disc-group" }, "Resources"));
     for (const res of disc.resources) {
-      details.appendChild(buildResourceItem(serverName, res));
+      details.appendChild(discItem(orFallback(res.name, res.uri), res.description));
     }
   }
   if (disc.resource_templates.length > 0) {
     details.appendChild(el("div", { className: "mcp-disc-group" }, "Resource templates"));
     for (const t of disc.resource_templates) {
-      details.appendChild(buildTemplateItem(serverName, t));
+      details.appendChild(
+        discItem(orFallback(t.name, t.uri_template), t.description ?? t.uri_template),
+      );
     }
   }
   box.appendChild(details);
@@ -1036,191 +1063,10 @@ function discItemLabel(name: string, description: string | undefined): HTMLEleme
   return label;
 }
 
-function buildResourceItem(serverName: string, res: MCPResourceInfo): HTMLElement {
-  const label = discItemLabel(orFallback(res.name, res.uri), res.description);
-  const btn = el(
-    "button",
-    { type: "button", className: "mcp-disc-insert", "data-tooltip": "Insert into prompt" },
-    "Insert",
-  ) as HTMLButtonElement;
-  btn.addEventListener("click", () => {
-    void insertResource(serverName, res, btn);
-  });
-  return el("div", { className: "mcp-disc-item" }, label, btn);
-}
-
-function buildPromptItem(serverName: string, p: MCPPromptInfo): HTMLElement {
-  const displayName = orFallback(p.name, p.prompt_name);
-  const args = p.arguments ?? [];
-  const item = el("div", { className: "mcp-disc-item" }, discItemLabel(displayName, p.description));
-
-  if (args.length === 0) {
-    const btn = el(
-      "button",
-      { type: "button", className: "mcp-disc-insert", "data-tooltip": "Insert into prompt" },
-      "Insert",
-    ) as HTMLButtonElement;
-    btn.addEventListener("click", () => {
-      void insertPrompt(serverName, p, {}, btn);
-    });
-    item.appendChild(btn);
-    return item;
-  }
-
-  // Prompt with arguments: a toggle reveals an inline form; submit inserts.
-  const form = buildArgForm(args, (values, submit) => {
-    void insertPrompt(serverName, p, values, submit);
-  });
-  return withFillInForm(item, form, "Fill in arguments");
-}
-
-/** An item whose action is a hidden inline form, revealed by a "Fill in…" toggle. */
-function withFillInForm(item: HTMLElement, form: HTMLFormElement, tooltip: string): HTMLElement {
-  form.hidden = true;
-  const toggleBtn = el(
-    "button",
-    { type: "button", className: "mcp-disc-insert", "data-tooltip": tooltip },
-    "Fill in…",
-  ) as HTMLButtonElement;
-  toggleBtn.addEventListener("click", () => {
-    form.hidden = !form.hidden;
-  });
-  item.appendChild(toggleBtn);
-  return el("div", { className: "mcp-disc-prompt-wrap" }, item, form);
-}
-
-/**
- * A resource template's row: one field per variable, and Insert reads the expanded URI like a resource row. Empty
- * values are allowed, as in the composer's fill flow; a template `parseTemplate` refuses is listed without an action.
- */
-function buildTemplateItem(serverName: string, t: MCPResourceTemplateInfo): HTMLElement {
-  const item = el(
-    "div",
-    { className: "mcp-disc-item" },
-    discItemLabel(orFallback(t.name, t.uri_template), t.description ?? t.uri_template),
-  );
-  const parsed = parseTemplate(t.uri_template);
-  if (parsed === null) {
-    return item;
-  }
-  const fields = parsed.vars.map((name) => ({ name }));
-  const form = buildArgForm(fields, (values, submit) => {
-    const uri = parsed.expand(values);
-    void insertResource(
-      serverName,
-      { name: `${orFallback(t.name, t.uri_template)} (${uri})`, uri },
-      submit,
-    );
-  });
-  return withFillInForm(item, form, "Fill in template variables");
-}
-
-function buildArgForm(
-  args: readonly MCPPromptArg[],
-  onSubmit: (values: Record<string, string>, submit: HTMLButtonElement) => void,
-): HTMLFormElement {
-  const form = el("form", { className: "mcp-disc-arg-form" }) as HTMLFormElement;
-  const inputs = new Map<string, HTMLInputElement>();
-  for (const a of args) {
-    const input = el("input", {
-      type: "text",
-      className: "mcp-disc-arg-input",
-      placeholder: orFallback(a.description ?? "", a.name),
-    }) as HTMLInputElement;
-    if (a.required === true) {
-      input.required = true;
-    }
-    inputs.set(a.name, input);
-    form.appendChild(
-      el(
-        "label",
-        { className: "mcp-disc-arg-row" },
-        el(
-          "span",
-          { className: "mcp-disc-arg-name" },
-          a.required === true ? `${a.name} *` : a.name,
-        ),
-        input,
-      ),
-    );
-  }
-  const submit = el(
-    "button",
-    { type: "submit", className: "mcp-disc-insert" },
-    "Insert",
-  ) as HTMLButtonElement;
-  form.appendChild(submit);
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const values: Record<string, string> = {};
-    for (const [name, input] of inputs) {
-      if (input.value !== "") {
-        values[name] = input.value;
-      }
-    }
-    onSubmit(values, submit);
-  });
-  return form;
-}
-
-async function insertPrompt(
-  serverName: string,
-  p: MCPPromptInfo,
-  args: Record<string, string>,
-  btn: HTMLButtonElement,
-): Promise<void> {
-  setControlBusy(btn, true);
-  try {
-    const res = await getPromptContent.dispatch({
-      server: serverName,
-      prompt: p.prompt_name,
-      arguments: args,
-    });
-    if (res === null) {
-      return;
-    }
-    const text = promptResultToText(res);
-    if (text === "") {
-      showToast("Prompt returned no text.", "info");
-      return;
-    }
-    insertIntoPrompt(text);
-    showToast(`Inserted "${orFallback(p.name, p.prompt_name)}" into the prompt.`, "success");
-  } finally {
-    setControlBusy(btn, false);
-  }
-}
-
-async function insertResource(
-  serverName: string,
-  res: MCPResourceInfo,
-  btn: HTMLButtonElement,
-): Promise<void> {
-  setControlBusy(btn, true);
-  try {
-    const result = await getResourceContent.dispatch({ server: serverName, uri: res.uri });
-    if (result === null) {
-      return;
-    }
-    const text = resourceResultToText(result);
-    if (text === "") {
-      showToast("Resource has no text content to insert.", "info");
-      return;
-    }
-    const heading = orFallback(res.name, res.uri);
-    insertIntoPrompt(`# ${heading}\n\n${text}`);
-    showToast(`Inserted "${heading}" into the prompt.`, "success");
-  } finally {
-    setControlBusy(btn, false);
-  }
-}
-
-/** Keeps any draft and notifies prompt-input so it resizes and re-enables send. */
-function insertIntoPrompt(text: string): void {
-  const input = $.promptInput;
-  input.value = input.value === "" ? text : `${input.value}\n\n${text}`;
-  input.focus();
-  input.dispatchEvent(new Event("input", { bubbles: true }));
+/** A listed prompt, resource or template: its name and description, nothing to press. The composer reaches
+ *  them: a prompt is a slash command and a resource or template a `#mcp:` mention on the engine's pool. */
+function discItem(name: string, description: string | undefined): HTMLElement {
+  return el("div", { className: "mcp-disc-item" }, discItemLabel(name, description));
 }
 
 function openAddModal(): void {
@@ -1281,6 +1127,7 @@ export function initMCP(): void {
 
   mcpState.refetchServers();
   mcpState.refetchStatus();
+  refreshConfigStanding();
 }
 
 function updatePrewarmStatus(pkg: string, state: "installing" | "done" | "failed"): void {
@@ -1297,7 +1144,7 @@ function updatePrewarmStatus(pkg: string, state: "installing" | "done" | "failed
 // A toast when a server turns out to be broken, with no proactive probing: the failure is the one kiro-cli reported.
 
 /**
- * Dedupe on the state transition: every bridge emits its own status on connect, so a reconnect storm is a broadcast
+ * Dedupe on the state transition: KAS emits one status copy per resident session, so one reconnect is a broadcast
  * storm. Leaving `failed` re-arms it.
  */
 export function announceMCPFailure(server: string, reason: string, prevState: RuntimeState): void {

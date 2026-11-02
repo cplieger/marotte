@@ -6,14 +6,22 @@ import { settingsPayload } from "./__test-helpers__/settings.js";
 
 const mocks = vi.hoisted(() => ({
   apiGet: vi.fn<(path: string, signal?: AbortSignal) => Promise<unknown>>(),
-  patchSettings: vi.fn<(patch: Partial<EffectiveSettings>) => Promise<void>>(),
+  patchSettings:
+    vi.fn<
+      (patch: Partial<EffectiveSettings>, ...rest: unknown[]) => Promise<{ outcome: string }>
+    >(),
+  /** What persist.settingsAsShown answers. */
+  shown: null as EffectiveSettings | null,
 }));
 
 // Mock only the I/O edges. ui-primitives (buildChip), reconcile,
 // @cplieger/reactive (el), icons, and dom (byId/maybeEl over the real
 // document) stay real so we exercise the actual DOM behaviour.
 vi.mock("./api-client.js", () => ({ apiGet: mocks.apiGet }));
-vi.mock("./persist.js", () => ({ patchSettings: mocks.patchSettings }));
+vi.mock("./persist.js", () => ({
+  patchSettings: mocks.patchSettings,
+  settingsAsShown: () => mocks.shown,
+}));
 vi.mock("./actions/index.js", () => ({
   registerCleanup: vi.fn(),
   bindLoadingState: vi.fn(() => vi.fn()),
@@ -27,7 +35,12 @@ vi.mock("./actions/permissions.js", () => ({
   setSecurityProfile: { dispatch: vi.fn() },
 }));
 
-import { initPermissionsUI, agentIgnoreEntryError, AGENT_IGNORE_FLOOR } from "./permissions-ui.js";
+import {
+  applyPermissionsPanel,
+  initPermissionsUI,
+  agentIgnoreEntryError,
+  AGENT_IGNORE_FLOOR,
+} from "./permissions-ui.js";
 import { byId } from "./dom.js";
 
 function div(id: string): HTMLDivElement {
@@ -92,7 +105,8 @@ beforeEach(() => {
   document.body.appendChild(input("agent-ignore-input"));
   document.body.appendChild(button("agent-ignore-add"));
 
-  mocks.patchSettings.mockResolvedValue(undefined);
+  mocks.patchSettings.mockResolvedValue({ outcome: "failed" });
+  mocks.shown = null;
 });
 
 // Supervised default toggle.
@@ -107,7 +121,51 @@ describe("supervised default toggle", () => {
     box.dispatchEvent(new Event("change"));
     await flush();
 
-    expect(mocks.patchSettings).toHaveBeenCalledWith({ supervised_default: false });
+    expect(mocks.patchSettings).toHaveBeenCalledWith(
+      { supervised_default: false },
+      { el: box, key: "supervised_default", on: true },
+    );
+  });
+});
+
+// Another device's settings reach the panel through applyPermissionsPanel.
+
+describe("the panel follows the settings as shown", () => {
+  it("repaints the switch and the ignore list", () => {
+    initWith([".gitignore"], true);
+    applyPermissionsPanel(
+      settingsPayload({
+        agent_ignore_files: [".gitignore", ".npmignore"],
+        supervised_default: false,
+      }),
+    );
+    expect(byId<HTMLInputElement>("supervised-default-checkbox").checked).toBe(false);
+    expect(ignoreChips().map(chipLabel)).toEqual([".gitignore", ".npmignore"]);
+  });
+
+  it("builds an add from the list another device saved, not the one this page opened with", async () => {
+    initWith([".gitignore"]);
+    applyPermissionsPanel(settingsPayload({ agent_ignore_files: [".gitignore", ".npmignore"] }));
+    byId<HTMLInputElement>("agent-ignore-input").value = ".env.dec";
+    byId<HTMLButtonElement>("agent-ignore-add").click();
+    await flush();
+    expect(mocks.patchSettings).toHaveBeenCalledWith({
+      agent_ignore_files: [".gitignore", ".npmignore", ".env.dec"],
+    });
+  });
+
+  it("shows the list the settings hold once a write settles", async () => {
+    initWith([".gitignore"]);
+    // The write failed, so the settings as shown are what the server holds.
+    mocks.shown = settingsPayload({ agent_ignore_files: [".gitignore"] });
+    byId<HTMLInputElement>("agent-ignore-input").value = ".env.dec";
+    byId<HTMLButtonElement>("agent-ignore-add").click();
+    expect(ignoreChips().map(chipLabel), "the add, while its write is out").toEqual([
+      ".gitignore",
+      ".env.dec",
+    ]);
+    await flush();
+    expect(ignoreChips().map(chipLabel)).toEqual([".gitignore"]);
   });
 });
 
@@ -243,8 +301,8 @@ describe("the agent-ignore hint", () => {
 
 describe("agentIgnoreEntryError", () => {
   // The FLOOR arm is marotte's own and has no server counterpart, so nothing in internal/settings
-  // can fail if it goes: .kiroignore is a perfectly valid entry that is already sent on every
-  // spawn, and accepting it produces a duplicate row the panel then renders twice.
+  // can fail if it goes: .kiroignore is a perfectly valid entry that is already sent to the agent
+  // engine, and accepting it produces a duplicate row the panel then renders twice.
   it("refuses the floor, because it is already in the list", () => {
     expect(agentIgnoreEntryError(AGENT_IGNORE_FLOOR)).not.toBeNull();
   });
@@ -264,7 +322,7 @@ describe("the supervised-mode hint", () => {
   it("states the review, the per-chat override and the on-disk hazard", () => {
     expect(lead()).toContain("review its file changes");
     expect(lead()).toContain("default for new chats");
-    expect(lead()).toContain("chat-actions menu");
+    expect(lead()).toContain("chat-options menu");
     expect(lead()).toContain("on disk");
   });
 

@@ -22,6 +22,7 @@ export type {
   // The entry log: one envelope type plus one payload type per kind
   Entry,
   OpenEntry,
+  EntryModelFallback,
   EntryPrompt,
   EntrySteer,
   EntrySteerDelivered,
@@ -109,9 +110,6 @@ export type {
   RunStartedPayload,
   RunProgressPayload,
   RunFinishedPayload,
-  RunInputNeededPayload,
-  RunInputSettledPayload,
-  RunAnswerRequest,
   Recipe,
   RecipesResponse,
   RunLaunchRequest,
@@ -143,6 +141,7 @@ import type {
   EntryCompactionFailed,
   EntryKind,
   EntryModeSwitched,
+  EntryModelFallback,
   EntryModelRouted,
   EntryModelSwitched,
   EntryPlan,
@@ -150,6 +149,7 @@ import type {
   EntrySafetyBlocked,
   EntrySteer,
   EntrySteerAck,
+  EntrySteerCleared,
   EntrySteerDelivered,
   EntryText,
   EntryThinking,
@@ -184,12 +184,14 @@ export interface EntryPayload {
   steer: EntrySteer;
   steer_ack: EntrySteerAck;
   steer_delivered: EntrySteerDelivered;
+  steer_cleared: EntrySteerCleared;
   plan: EntryPlan;
   compaction: EntryCompaction;
   compaction_failed: EntryCompactionFailed;
   safety_blocked: EntrySafetyBlocked;
   model_switched: EntryModelSwitched;
   model_routed: EntryModelRouted;
+  model_fallback: EntryModelFallback;
   mode_switched: EntryModeSwitched;
   turn_revert: EntryTurnRevert;
   reconciled: EntryReconciled;
@@ -246,13 +248,12 @@ export interface ModelInfo {
    *  absent renders no readout, not `1x`. Every consumer goes through `rateLabel`. */
   rate_multiplier?: number;
   description?: string;
-  /** Whether this model has reasoning-effort levels at all (KAS
-   *  `_meta.kiro.hasEffort`). Absent on every model = the catalog does not carry
-   *  the capability, which the effort control reads as "show it anyway". */
-  has_effort?: boolean;
   /** This model's default tier (`_meta.kiro.defaultEffortLevel`): the pre-session fallback for the
-   *  live-level highlight. The tier LIST is Session.effort_levels. */
+   *  live-level highlight. */
   default_effort_level?: string;
+  /** This model's tier ids, lowest first (`_meta.kiro.effortLevels`); absent when it has none. A session's own
+   *  Session.effort_levels win over them. */
+  effort_tiers?: readonly string[];
   /** Whether thinking can be turned off on this model
    *  (`_meta.kiro.thinkingToggleable`); the effort slider then offers an Off stop. */
   thinking_toggleable?: boolean;
@@ -295,6 +296,9 @@ export interface PendingSteer {
   /** The server holds the row and could not deliver it to any turn (`steer_queued`
    *  state `unsent`); it goes with the chat's next prompt unless deleted first. */
   unsent?: true;
+  /** An `unsent` row that no clean turn close sends as a prompt of its own
+   *  (`SteerQueuedPayload.awaits_prompt`): a prompt's start carries it, so it costs the follow-ups no turn. */
+  awaitsPrompt?: true;
 }
 
 // --- Local session state (client-only projection of server chat) ---
@@ -334,6 +338,9 @@ export interface Session {
   /** How many turns the whole session holds, from `ChatHeader`. `has_more` is about
    *  this window's left edge; this is about the session. */
   turn_count: number;
+  /** `ChatHeader.read_position`: the server's read position for this chat, 0 when unknown. The
+   *  unread fold compares it with the tab's `seen` (attention.ts `cueClass`). */
+  read_position?: number;
   /** The turns a `turn_revert` took out of this window, client-only: a range-read answer decoded
    *  before the frame would otherwise re-seat them. Not "absent from `turn_order`", which also means
    *  a lost `turn_opened` that the repair must re-read. */
@@ -364,6 +371,8 @@ export interface Session {
   /** The model picked for the NEXT turn (`ChatHeader.pending_model`): the badge's ONE input, on every
    *  device. No local queue. */
   pending_model?: string;
+  /** The tier parked with `pending_model` (`ChatHeader.pending_effort`); empty carries `effort`. */
+  pending_effort?: string;
   supervised_mode?: boolean;
   /** What Send means while a turn runs: a steer into it, or a follow-up held for its
    *  end. From `ChatHeader.interrupt_mode`; absent is steer. */
@@ -396,6 +405,9 @@ export interface Session {
    *  PRESERVES rows the server did not name, so the mark keeps a hint for a deleted chat from
    *  outliving the answer that omitted it. */
   provisional?: true;
+  /** `/drop` waived the turns open when it ran, so `sessionBusy` reads them as idle; client-only,
+   *  cleared by the next live `turn_opened` or streamed entry. */
+  turn_dropped?: true;
 }
 
 // GET /api/sessions' row types are GENERATED (`ResumableSession`, `WorkflowRun`, wire/types.gen.ts).

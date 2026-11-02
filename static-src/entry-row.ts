@@ -14,6 +14,8 @@ interface EntrySubLine {
   readonly text: string;
   /** A path, a matcher or a command: an identifier rather than prose. */
   readonly mono?: boolean;
+  /** Why the row's subject cannot do its job, in the failure ink. */
+  readonly error?: boolean;
 }
 
 /** A timestamp (relative text plus absolute tooltip) or verbatim text with no tooltip (a count has no absolute form). */
@@ -45,13 +47,16 @@ function subNode(sub: EntrySub): HTMLElement {
     return el(
       "span",
       { className: "entry-lines" },
-      ...sub.lines.map((l) =>
-        el(
-          "span",
-          { className: l.mono === true ? "entry-sub entry-sub-mono" : "entry-sub" },
-          l.text,
-        ),
-      ),
+      ...sub.lines.map((l) => {
+        const cls = ["entry-sub"];
+        if (l.mono === true) {
+          cls.push("entry-sub-mono");
+        }
+        if (l.error === true) {
+          cls.push("entry-sub-error");
+        }
+        return el("span", { className: cls.join(" ") }, l.text);
+      }),
     );
   }
   const cls = sub.kind === "clamp" ? "entry-sub entry-sub-clamp" : "entry-sub";

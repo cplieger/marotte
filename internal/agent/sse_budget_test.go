@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/turnlog"
 )
@@ -44,10 +45,11 @@ func newBudgetRuntime(t *testing.T) *Runtime {
 	}
 	cs := newTestChatStore()
 	br := newFakeBridge()
-	rt := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs,
+	rt := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return br }, laneOf(br)), cs,
 		WithTabs(st), WithConfigDir(dir))
 	cs.wire(rt)
 	t.Cleanup(func() { shutdownHub(t, rt) })
+	settleBoot(t, rt)
 	return rt
 }
 
@@ -130,14 +132,22 @@ func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []marotte.ChatID) {
 		), nil)
 	}
 	for i := range fixturePendingRunAsks {
-		if !rt.runs.asks.add(&runAsk{chatID: ids[0], payload: marotte.RunInputNeededPayload{
-			WorkflowID: "wf-budget",
-			AskID:      fmt.Sprintf("ask-%d", i+1),
-			Question:   "Which branch should the step target?",
-		}}) {
-			tb.Fatalf("pending run ask %d was refused, so the fixture is short a frame", i+1)
+		id := fmt.Sprintf("wf-budget-%d", i+1)
+		if err := rt.runs.leaseStore().Put(tb.Context(), &runlease.Lease{
+			WorkflowID: id, ChatID: string(ids[0]), Origin: runlease.OriginAgent,
+		}); err != nil {
+			tb.Fatalf("lease %s: %v", id, err)
 		}
+		c := rt.runs.cellFor(id)
+		c.mu.Lock()
+		rt.runs.publishLocked(tb.Context(), c, []marotte.RunAsk{{
+			AskID: "ask-" + id, NodeID: "review", NodePath: []string{id, "review"}, StepSessionID: "sess_step",
+			Text: "Which branch should the step target?", TextSource: marotte.RunAskTextAsked,
+		}}, true)
+		c.mu.Unlock()
 	}
+	// Each lease kicked a background inspect on the engine; it lands before the test reads a version.
+	joinInflight(tb, rt)
 }
 
 // The recorder's Body is the measured bytes.

@@ -36,8 +36,15 @@ type fakeBridge struct {
 	// blockOn parks Call, after recording it, until the method's channel is closed; blockNotifyOn parks Notify.
 	blockOn       map[string]chan struct{}
 	blockNotifyOn map[string]chan struct{}
+	// blockWriteOn parks Call before its frame is written (writeRequest), the window between the send gate and the
+	// engine's write lock.
+	blockWriteOn map[string]chan struct{}
 	// onCall answers a Call instead of the scripted result, delivering its frames before returning, as KAS does.
 	onCall func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)
+	// onCallFails is onCall that may also fail the Call: the transport losing the write or its reply.
+	onCallFails func(method string, params map[string]any) (res json.RawMessage, frames []*marotte.RPCResponse, ok bool, err error)
+	// onNotify runs once a Notify is written, outside every lock: KAS's answer to a notification it read.
+	onNotify func(method string)
 	// refuseAfterCall is KAS refusing in band after onCall ran, so frames can fold before the refusal.
 	refuseAfterCall map[string]*marotte.RPCError
 	// failAfterCall is the transport failing after onCall ran: the words were written, then the reply was lost.
@@ -59,39 +66,43 @@ type fakeBridge struct {
 	sessionTitleSetByUser bool
 	calls                 []string
 	notifies              []string
+	// wire is every request and notification in write order (writeRequest, Notify).
+	wire []string
 	// notifyParams holds each Notify's params as JSON, index-aligned with notifies.
 	notifyParams            []string
 	contentCollectionWrites []string
-	// startOpts records what the most recent spawn was actually handed.
-	startOpts *marotte.StartOpts
-	// startGate holds a spawn open, so a bridge-ready test is not saved by an instantaneous Start.
+	// sessionOpts records what the most recent door was handed, engineOpts the engine it opened on.
+	sessionOpts *marotte.SessionOpts
+	engineOpts  *marotte.EngineOpts
+	// startGate holds a door open, so a session-ready test is not saved by an instantaneous door.
 	startGate chan struct{}
-	// stopGate holds a Stop open, as a slow process teardown does.
+	// stopGate holds a Close open, as a slow session teardown does.
 	stopGate chan struct{}
-	// onStart runs at the top of Start, so a test can change the world while a process spawns.
+	// closeErr refuses every Close, leaving the session open.
+	closeErr error
+	// onStart runs at the top of the door, so a test can change the world while a session opens.
 	onStart func()
-	// startErr fails every spawn: a server fault the REST layer classifies apart (errRunHostStart).
+	// startErr fails every door.
 	startErr error
-	// loadErr fails every spawn that names a session, while session/new still starts.
+	// loadErr fails every door that names a session, while session/new still opens.
 	loadErr error
-	// starts counts spawns; one factory serves utility and run bridges, so read it as a delta.
+	// starts counts doors; one factory serves chat and host sessions, so read it as a delta.
 	starts int
-	// afterInitialize runs inside Start between the timeout's initialize read and its re-read.
-	afterInitialize        func()
-	startIgnoreFiles       []string
-	startTerminalTimeoutMs int
-	// notifsOnStart is the transcript a session/load replays, pushed before Start returns.
+	// notifsOnStart is the transcript a session/load replays, pushed before the door returns.
 	notifsOnStart []*marotte.RPCResponse
 	// withholdReplay holds back that many trailing replay frames, which the load's position still
 	// counts, until releaseWithheld delivers them: a load that answered before its replay was read.
 	withholdReplay int
 	withheld       []*marotte.RPCResponse
 	mu             sync.Mutex
+	// writeMu is the engine's write lock: one frame at a time, a request's commit inside it.
+	writeMu sync.Mutex
 	// sendMu orders a send against the close: a real bridge reads no frame once stopped.
 	sendMu   sync.RWMutex
 	responds int
-	// respondedIDs are the ACP request ids answered, in order.
+	// respondedIDs are the ACP request ids answered, in order; responses holds each answer.
 	respondedIDs []int64
+	responses    map[int64]fakeResponse
 	// setModelFailures fails the next N SetModel calls.
 	setModelFailures int
 	// supervisedApplied is whether the session took `autopilot: off`, set by Start from opts.Supervised as the real bridge does.
@@ -101,27 +112,42 @@ type fakeBridge struct {
 	stopped                  bool
 	contentCollectionApplied bool
 	contentCollectionKnown   bool
-	// streamClosed guards the channel close apart from stopped, so endStream ends the stream without claiming a teardown.
+	// streamClosed guards the channel close apart from stopped, so endStream ends the stream without claiming a close.
 	streamClosed bool
 	started      bool
 }
 
+// newFakeBridge is an open session, as a door hands one out.
 func newFakeBridge() *fakeBridge {
 	return &fakeBridge{
 		sessionID: "fake-sess-" + time.Now().Format("150405.000"),
 		modelID:   "fake-model",
 		notifCh:   make(chan marotte.Notification, 16),
+		started:   true,
 	}
 }
 
-func (b *fakeBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
+// reopen makes a closed fake a new session handle: a fresh stream, as the engine gives each door. The engine fake
+// calls it before attach, since an attached forward may read NotifCh before the door runs.
+func (b *fakeBridge) reopen() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.stopped {
+		b.stopped, b.streamClosed = false, false
+		b.notifCh = make(chan marotte.Notification, 16)
+	}
+}
+
+// door is the fake's session/new (load false) or session/load: it records the options and, on a load, replays the
+// transcript before returning, as KAS does.
+func (b *fakeBridge) door(ctx context.Context, so *marotte.SessionOpts, eo *marotte.EngineOpts, load bool) error {
 	if b.onStart != nil {
 		b.onStart()
 	}
 	b.mu.Lock()
 	gate := b.startGate
 	startErr := b.startErr
-	if opts.SessionID != "" && b.loadErr != nil {
+	if load && b.loadErr != nil {
 		startErr = b.loadErr
 	}
 	b.mu.Unlock()
@@ -138,27 +164,16 @@ func (b *fakeBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 	b.mu.Lock()
 	b.started = true
 	b.starts++
-	b.startOpts = opts
-	if opts.SessionID != "" {
-		b.sessionID = opts.SessionID
+	b.sessionOpts, b.engineOpts = so, eo
+	if so.SessionID != "" {
+		b.sessionID = so.SessionID
 	}
-	// Mirrors applySupervised recording the accepted assert; false would make every supervised chat look refused.
-	b.supervisedApplied = opts.Supervised && !b.supervisedAssertFails
+	// Mirrors the door recording the accepted assert; false would make every supervised chat look refused.
+	b.supervisedApplied = so.Supervised && !b.supervisedAssertFails
 	notifs := b.notifsOnStart
 	keep := len(notifs) - min(b.withholdReplay, len(notifs))
-	_, doorAssertFails := b.callErrs[marotte.MethodSetConfigOption]
 	b.mu.Unlock()
-	b.startLive(ctx, opts)
-	if opts.ContentCollection != nil {
-		enabled, _ := opts.ContentCollection(ctx)
-		b.mu.Lock()
-		b.contentCollectionApplied, b.contentCollectionKnown = enabled, !doorAssertFails
-		b.mu.Unlock()
-	}
-
-	// Only a Start naming a session replays, or the utility bridge on this factory would too. Pushed before
-	// returning, or the barrier settles on frame 1.
-	if opts.SessionID == "" {
+	if !load {
 		return nil
 	}
 	for _, n := range notifs[:keep] {
@@ -182,63 +197,6 @@ func (b *fakeBridge) releaseWithheld() {
 	}
 }
 
-func (b *fakeBridge) startLive(ctx context.Context, opts *marotte.StartOpts) {
-	var files []string
-	if opts.IgnoreFiles != nil {
-		files = opts.IgnoreFiles(ctx)
-	}
-	var ms int
-	if opts.TerminalTimeout != nil {
-		ms = opts.TerminalTimeout(ctx)
-		if b.afterInitialize != nil {
-			b.afterInitialize()
-		}
-		if again := opts.TerminalTimeout(ctx); again != ms && b.startSendLands(marotte.MethodTerminalSettingsChanged) {
-			ms = again
-		}
-	}
-	if len(files) == 0 || !b.startSendLands(marotte.MethodPolicyIgnoreFilesChanged) {
-		files = nil
-	}
-	b.mu.Lock()
-	b.startIgnoreFiles, b.startTerminalTimeoutMs = files, ms
-	b.mu.Unlock()
-}
-
-func (b *fakeBridge) startSendLands(method string) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.notifyErrs[method] == nil
-}
-
-func (b *fakeBridge) StartLive() (ignoreFiles []string, terminalTimeoutMs int) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.startIgnoreFiles, b.startTerminalTimeoutMs
-}
-
-func (b *fakeBridge) RefreshContentCollection(ctx context.Context) (bool, error) {
-	b.mu.Lock()
-	opts := b.startOpts
-	sid := b.sessionID
-	applied, known := b.contentCollectionApplied, b.contentCollectionKnown
-	b.mu.Unlock()
-	if opts == nil || opts.ContentCollection == nil {
-		return false, nil
-	}
-	enabled, readable := opts.ContentCollection(ctx)
-	if !readable || (known && applied == enabled) {
-		return enabled, nil
-	}
-	params := marotte.ContentCollectionParams(sid, enabled)
-	_, err := b.Call(ctx, marotte.MethodSetConfigOption, params)
-	b.mu.Lock()
-	b.contentCollectionWrites = append(b.contentCollectionWrites, params["value"].(string))
-	b.contentCollectionApplied, b.contentCollectionKnown = enabled, err == nil
-	b.mu.Unlock()
-	return enabled, err
-}
-
 // Zero until a Start names a session.
 func (b *fakeBridge) SessionLoadSeq() uint64 {
 	b.mu.Lock()
@@ -246,33 +204,58 @@ func (b *fakeBridge) SessionLoadSeq() uint64 {
 	return b.loadSeq
 }
 
-func (b *fakeBridge) lastStartOpts() *marotte.StartOpts {
+func (b *fakeBridge) lastSessionOpts() *marotte.SessionOpts {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.startOpts
+	return b.sessionOpts
 }
 
 // Read it as a delta.
+// fake is the plain fake under a wrapper that embeds it.
+func (b *fakeBridge) fake() *fakeBridge { return b }
+
+// doorAssertFails reports whether this session's door write of content collection fails.
+func (b *fakeBridge) doorAssertFails() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	_, fails := b.callErrs[marotte.MethodSetConfigOption]
+	return fails
+}
+
 func (b *fakeBridge) startCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.starts
 }
 
-// isStopped reports whether Stop ran, which also ends the frame stream.
-func (b *fakeBridge) isStopped() bool {
+// isClosed reports whether a Close landed, which also ends the frame stream.
+func (b *fakeBridge) isClosed() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.stopped
 }
 
-func (b *fakeBridge) Stop() {
+// Close is session/close: the frame stream ends and the session is no longer open. closeErr refuses it.
+func (b *fakeBridge) Close(ctx context.Context) error {
 	b.mu.Lock()
-	gate := b.stopGate
+	gate, refusal := b.stopGate, b.closeErr
 	b.mu.Unlock()
 	if gate != nil {
-		<-gate
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+	if refusal != nil {
+		return refusal
+	}
+	b.end()
+	return nil
+}
+
+// end closes the session's stream as an engine end does: no session/close is written.
+func (b *fakeBridge) end() {
 	b.sendMu.Lock()
 	defer b.sendMu.Unlock()
 	b.mu.Lock()
@@ -282,6 +265,12 @@ func (b *fakeBridge) Stop() {
 		close(b.notifCh)
 	}
 	b.mu.Unlock()
+}
+
+func (b *fakeBridge) Open() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.started && !b.stopped
 }
 
 // endStream ends the frame stream without marking the bridge stopped.
@@ -296,7 +285,36 @@ func (b *fakeBridge) endStream() {
 	b.mu.Unlock()
 }
 
+// forgetCalls drops the call record, so a test reads only the calls its own act made.
+func (b *fakeBridge) forgetCalls() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.calls, b.lastParams, b.callDeadline = nil, nil, nil
+}
+
+// errFakePromptNotACall is the fake's copy of the engine refusing a session/prompt asked of a plain call.
+var errFakePromptNotACall = errors.New("fake: session/prompt is written only by PromptAt")
+
 func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
+	if method == marotte.MethodPrompt {
+		return nil, errFakePromptNotACall
+	}
+	return b.callScript(ctx, method, params, b.deliver, nil)
+}
+
+// PromptAt answers the session/prompt from the script, its commit run as the engine runs it (writeRequest).
+func (b *fakeBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	resp, err := b.callScript(ctx, marotte.MethodPrompt, params, b.deliver, commit)
+	return resp, b.seqNow(), err
+}
+
+// callScript answers one call from the script, pushing the frames it carries through deliver before returning.
+func (b *fakeBridge) callScript(
+	ctx context.Context, method string, params any, deliver func(*marotte.RPCResponse), commit func() error,
+) (*marotte.RPCResponse, error) {
+	if err := b.writeRequest(ctx, method, commit); err != nil {
+		return nil, err
+	}
 	b.mu.Lock()
 	b.calls = append(b.calls, method)
 	if p, ok := params.(map[string]any); ok {
@@ -327,12 +345,22 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*maro
 	blocker := b.blockOn[method]
 	sessionID := b.sessionID
 	hook := b.onCall
+	failingHook := b.onCallFails
 	refusal := b.refuseAfterCall[method]
 	failure := b.failAfterCall[method]
 	b.mu.Unlock()
+	p, _ := params.(map[string]any)
 	if hook != nil {
-		p, _ := params.(map[string]any)
 		if r, hooked, ok := hook(method, p); ok {
+			res, frames = r, hooked
+		}
+	}
+	if failingHook != nil {
+		r, hooked, ok, err := failingHook(method, p)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			res, frames = r, hooked
 		}
 	}
@@ -352,11 +380,11 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*maro
 	}
 	// After unlocking, once the Call has begun; notifCh is buffered. Stamped with this bridge's session id, or the own-session screen drops them.
 	for _, text := range chunks {
-		b.deliver(newSessionChunkMsg(sessionID, text))
+		deliver(newSessionChunkMsg(sessionID, text))
 	}
 	// Before the return, which the settle barrier relies on.
 	for _, f := range frames {
-		b.deliver(f)
+		deliver(f)
 	}
 	return &marotte.RPCResponse{Result: res}, nil
 }
@@ -372,17 +400,22 @@ func (b *fakeBridge) deliver(msg *marotte.RPCResponse) {
 	}
 	b.deliveredSeq++
 	seq := b.deliveredSeq
+	ch := b.notifCh
 	b.mu.Unlock()
-	b.notifCh <- marotte.Notification{Msg: msg, Seq: seq}
+	ch <- marotte.Notification{Msg: msg, Seq: seq}
 }
 
 // CallAt is Call plus the read loop position at which the response arrived.
 func (b *fakeBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	resp, err := b.Call(ctx, method, params)
+	return resp, b.seqNow(), err
+}
+
+// seqNow is the read loop position the fake has delivered up to.
+func (b *fakeBridge) seqNow() uint64 {
 	b.mu.Lock()
-	seq := b.deliveredSeq
-	b.mu.Unlock()
-	return resp, seq, err
+	defer b.mu.Unlock()
+	return b.deliveredSeq
 }
 
 // paramsFor returns the params captured for the most recent Call to method.
@@ -390,13 +423,6 @@ func (b *fakeBridge) paramsFor(method string) map[string]any {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.lastParams[method]
-}
-
-// callHadDeadline reports whether the latest Call to method carried a context deadline.
-func (b *fakeBridge) callHadDeadline(method string) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.callDeadline[method]
 }
 
 func (b *fakeBridge) Notify(ctx context.Context, method string, params any) error {
@@ -414,15 +440,62 @@ func (b *fakeBridge) Notify(ctx context.Context, method string, params any) erro
 			return ctx.Err()
 		}
 	}
-	b.mu.Lock()
-	if err := b.notifyErrs[method]; err != nil {
-		b.mu.Unlock()
+	hook, err := b.writeNotify(method, raw)
+	if err != nil {
 		return err
+	}
+	if hook != nil {
+		hook(method)
+	}
+	return nil
+}
+
+// writeNotify puts a notification on the wire under writeMu, as the engine writes one.
+func (b *fakeBridge) writeNotify(method string, raw []byte) (func(string), error) {
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := b.notifyErrs[method]; err != nil {
+		return nil, err
 	}
 	b.notifies = append(b.notifies, method)
 	b.notifyParams = append(b.notifyParams, string(raw))
+	b.wire = append(b.wire, method)
+	return b.onNotify, nil
+}
+
+// writeRequest is a request's frame going out as the engine writes one: parked on blockWriteOn before the write,
+// then its commit and its place on the wire under writeMu, which every Notify also takes.
+func (b *fakeBridge) writeRequest(ctx context.Context, method string, commit func() error) error {
+	b.mu.Lock()
+	gate := b.blockWriteOn[method]
+	b.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
+	if commit != nil {
+		if err := commit(); err != nil {
+			return err
+		}
+	}
+	b.mu.Lock()
+	b.wire = append(b.wire, method)
 	b.mu.Unlock()
 	return nil
+}
+
+// wireLog is every request and notification method in the order its frame went out.
+func (b *fakeBridge) wireLog() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.wire)
 }
 
 func (b *fakeBridge) notified(method string) []string {
@@ -437,18 +510,29 @@ func (b *fakeBridge) notified(method string) []string {
 	return out
 }
 
-func (b *fakeBridge) notifyLog() []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return slices.Clone(b.notifies)
+// fakeResponse is one answer a fake session wrote.
+type fakeResponse struct {
+	result any
+	err    error
 }
 
-func (b *fakeBridge) Respond(_ context.Context, id int64, _ any, _ error) error {
+func (b *fakeBridge) Respond(_ context.Context, id int64, result any, err error) error {
 	b.mu.Lock()
 	b.responds++
 	b.respondedIDs = append(b.respondedIDs, id)
+	if b.responses == nil {
+		b.responses = map[int64]fakeResponse{}
+	}
+	b.responses[id] = fakeResponse{result: result, err: err}
 	b.mu.Unlock()
 	return nil
+}
+
+func (b *fakeBridge) responseTo(id int64) (fakeResponse, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	r, ok := b.responses[id]
+	return r, ok
 }
 
 func (b *fakeBridge) answeredIDs() []int64 {
@@ -492,6 +576,13 @@ func (b *fakeBridge) setCallErr(method string, err error) {
 	b.callErrs[method] = err
 }
 
+// clearCallErr lifts setCallErr's failure.
+func (b *fakeBridge) clearCallErr(method string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.callErrs, method)
+}
+
 func (b *fakeBridge) setNotifyErr(method string, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -499,15 +590,6 @@ func (b *fakeBridge) setNotifyErr(method string, err error) {
 		b.notifyErrs = map[string]error{}
 	}
 	b.notifyErrs[method] = err
-}
-
-func (b *fakeBridge) blockNotify(method string, gate chan struct{}) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.blockNotifyOn == nil {
-		b.blockNotifyOn = map[string]chan struct{}{}
-	}
-	b.blockNotifyOn[method] = gate
 }
 
 func (b *fakeBridge) setCallRPCErr(method string, err *marotte.RPCError) {
@@ -549,11 +631,11 @@ func (b *fakeBridge) SupervisedApplied() bool {
 	return b.supervisedApplied
 }
 
-// AutoCompactionDisabled mirrors the real bridge: the value the last spawn SENT.
+// AutoCompactionDisabled mirrors the real session: the value the last door SENT.
 func (b *fakeBridge) AutoCompactionDisabled() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.startOpts != nil && b.startOpts.DisableAutoCompaction
+	return b.sessionOpts != nil && b.sessionOpts.DisableAutoCompaction
 }
 
 func (b *fakeBridge) ModelID() marotte.ModelID {
@@ -668,10 +750,11 @@ func (b *fakeBridge) lastEffort() string {
 	return b.effort
 }
 
-func (b *fakeBridge) NotifCh() <-chan marotte.Notification { return b.notifCh }
-
-// newNoopBridge is for benchmarks where the bridge is never called.
-func newNoopBridge() ACPBridge { return &fakeBridge{notifCh: make(chan marotte.Notification)} }
+func (b *fakeBridge) NotifCh() <-chan marotte.Notification {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.notifCh
+}
 
 type testChatStore struct {
 	*chat.Store
@@ -719,7 +802,7 @@ func (s *testChatStore) seed(tb testing.TB, id marotte.ChatID, fill func(c *maro
 	}
 }
 
-// Forward runs one bridge's forward loop in the caller, taking the chat's forward attachment first.
-func (bc *bridgeCoordinator) Forward(chatID marotte.ChatID, bridge ACPBridge) {
+// Forward runs one session's forward loop in the caller, taking the chat's forward attachment first.
+func (bc *bridgeCoordinator) Forward(chatID marotte.ChatID, bridge engineSession) {
 	bc.forwardAt(chatID, bridge, bc.turns.attachForward(chatID))
 }

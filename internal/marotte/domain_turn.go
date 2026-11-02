@@ -12,6 +12,21 @@ var ErrNoSuchTurn = errors.New("no such turn")
 // and scoped to the turn.
 type InterruptCause string
 
+// TurnStopCause is who asked to stop a chat's turn, recorded where the stop is issued, so marotte
+// can classify the steering clear that stop's session/cancel produces.
+type TurnStopCause uint8
+
+const (
+	// TurnStopNone is no stop since the turn opened.
+	TurnStopNone TurnStopCause = iota
+	// TurnStopReader is the reader's Stop: KAS re-prompts every unread notification the cancel
+	// cleared (cancelLocalTurn's rewakeClearedNotifications).
+	TurnStopReader
+	// TurnStopTeardown is a tab close or a chat delete: KAS's cancel starts re-delivering the
+	// notifications it cleared, and the session/close or session/delete that follows aborts that turn.
+	TurnStopTeardown
+)
+
 // TurnResult is what a finalized turn reports. Immutable once the turn's
 // completion handle fires.
 type TurnResult struct {
@@ -46,9 +61,10 @@ type TurnOpenSource int
 const (
 	// TurnSourcePrompt is a user prompt marotte is about to send.
 	TurnSourcePrompt TurnOpenSource = iota
-	// TurnSourceLocalShell is a `!cmd` turn marotte runs itself, with no
-	// session/prompt behind it. No model, and it REFUSES while a turn is open.
-	TurnSourceLocalShell
+	// TurnSourceRevert holds a chat's slot while a rewind's revert lands: no
+	// session/prompt is behind it, so a prompt waits rather than steering into it.
+	// It only reserves: a turn opened under it would read as a revert carrier and be hidden.
+	TurnSourceRevert
 	// TurnSourceWireTurnStart is a turn marotte did not open: a turn_start with
 	// nothing pending to bind, or a fold with no open turn, is the first it hears.
 	TurnSourceWireTurnStart
@@ -64,10 +80,10 @@ const (
 )
 
 // PromptClass reports whether a turn opened by this source is a user prompt
-// marotte dispatched — the holders a second prompt can reach with a steer, which
-// is what the admission refusal arm keys on and its ONLY reader. A workflow
-// step's turn is deliberately not one: a steer aimed into it is read as that
-// step's own input rather than as the reader's correction.
+// marotte dispatched, which steer routing, parked-steer delivery and admission
+// (SteerableHolder) key on. A workflow step's turn is deliberately not one: a
+// steer aimed into it is read as that step's own input rather than as the
+// reader's correction.
 func (s TurnOpenSource) PromptClass() bool {
 	switch s {
 	case TurnSourcePrompt, TurnSourceEmptyRetry:
@@ -77,11 +93,19 @@ func (s TurnOpenSource) PromptClass() bool {
 	}
 }
 
+// SteerableHolder reports whether a prompt refused by a holder of this source is
+// answered Busy, which the client turns into a steer or a queued follow-up. A
+// wire turn qualifies: KAS reads a steer at its next node boundary as for any
+// turn, and a session/prompt beside it would abort it.
+func (s TurnOpenSource) SteerableHolder() bool {
+	return s.PromptClass() || s == TurnSourceWireTurnStart
+}
+
 // UserAnswered reports whether opening a turn from this source IS the user
 // answering a question the agent left standing, which is what discharges the
-// retained waiting_on_user status. A `!cmd` is not one: it reaches no agent.
-// Separate from PromptClass because that predicate answers for admission, and
-// widening one for admission reasons must not move a cache lifecycle.
+// retained waiting_on_user status.
+// Separate from PromptClass because that predicate answers for steering and
+// admission, and widening one for those reasons must not move a cache lifecycle.
 func (s TurnOpenSource) UserAnswered() bool {
 	switch s {
 	case TurnSourcePrompt, TurnSourceEmptyRetry:
@@ -92,9 +116,8 @@ func (s TurnOpenSource) UserAnswered() bool {
 }
 
 // Acknowledgeable reports whether a wire turn_start may bind to this source. Only
-// a source that sent a session/prompt qualifies: a localShell turn has no bracket
-// coming and a wireTurnStart turn was created BY one. A binding is revisable, so
-// nothing irreversible may rest on it.
+// a source that sent a session/prompt qualifies: a wireTurnStart turn was created
+// BY one. A binding is revisable, so nothing irreversible may rest on it.
 func (s TurnOpenSource) Acknowledgeable() bool {
 	switch s {
 	case TurnSourcePrompt, TurnSourceEmptyRetry:

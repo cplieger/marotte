@@ -61,9 +61,9 @@ func sendSteer(ctx context.Context, sb SessionCaller, steerID, text string) (ste
 	return decodeSteerReply(resp), err
 }
 
-// SteerTarget is one steering buffer and what reaches it: a chat's own session, or a run step's
-// session on its run's carrier. Key names the buffer's record in Queue and Ledger. Caller is nil
-// when no live process holds the session.
+// SteerTarget is one steering buffer and what reaches it: a chat's own session, or one of a
+// run's step sessions. Key names the buffer's record in Queue and Ledger. Caller is nil when the
+// session is not resident.
 type SteerTarget struct {
 	Caller SessionCaller
 	Queue  SteerQueue
@@ -95,7 +95,7 @@ func decodeSteerReply(resp *marotte.RPCResponse) steerReply {
 }
 
 // cmdSteer delivers a message into the running turn. It requires a holder whose turn drains the
-// buffer: a steer to an idle chat or a `!cmd` turn would sit unread. Every steer command takes the
+// buffer: a steer to an idle chat or a rewind would sit unread. Every steer command takes the
 // chat's steer lock, so a delete's clear and resubmit never interleave with a new steer.
 func cmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
@@ -127,15 +127,18 @@ func cmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComman
 // The error is the send carrying key. turn is the prompt turn a delivery is aimed at, empty for a
 // new steer.
 func steerOne(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, key, text, turn string) (refuse string, err error) {
+	return SteerInto(ctx, roles.steerTarget(chatID), steerHolder(roles, chatID, turn), key, text)
+}
+
+func steerHolder(roles *promptRoles, chatID marotte.ChatID, turn string) SteerHolder {
 	source, held := roles.admission.AdmissionHolderSource(chatID)
-	h := SteerHolder{
-		Held:        held && source != marotte.TurnSourceLocalShell,
+	return SteerHolder{
+		Held:        held && source != marotte.TurnSourceRevert,
 		PromptClass: source.PromptClass(),
 		Live:        roles.bridges.BridgeLive(chatID),
 		Turn:        turn,
 		Delivering:  turn != "",
 	}
-	return SteerInto(ctx, roles.steerTarget(chatID), h, key, text)
 }
 
 // SteerInto routes one steer row into t's buffer under the holder h and sends what the record
@@ -216,7 +219,7 @@ func steerAccepted(steerID string) map[string]any {
 }
 
 // cmdSteerClear is Discard all. It does not cancel the turn, and a row the agent
-// read before the clear landed keeps its read entry rather than a deleted one.
+// read before the clear landed keeps its read entry.
 func cmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -236,14 +239,11 @@ func cmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientC
 	return responseWith(map[string]any{"cleared": cleared}), nil
 }
 
-// ClearSteersIn discards every row of t's buffer. endOp ends the op under the steer lock the
-// caller holds; it runs only when a clear was issued.
+// ClearSteersIn discards every row of t's buffer. endOp ends the op under the steer lock the caller
+// holds; it runs only when a clear was issued.
 func ClearSteersIn(ctx context.Context, t SteerTarget, endOp func(opID string)) ([]string, error) {
 	opID := ids.NewMessageID()
-	needsClear, refuse := t.Queue.BeginDiscard(t.Key, opID)
-	if refuse != "" {
-		return nil, steerRefusal(refuse)
-	}
+	needsClear := t.Queue.BeginDiscard(t.Key, opID)
 	cleared := []string{}
 	if needsClear {
 		rpcCtx, cancel := context.WithTimeout(durable.Context(ctx), steerRemoveBudget)

@@ -91,46 +91,22 @@ func TestRunLog_ANodeStartOpensOneTurnPerStepInstance(t *testing.T) {
 	}
 }
 
-// TestRunLog_OpenNodeIDsNamesEachOpenStepsOwnID pins the id answered whole: one holding "/", and one whose
-// path is over keyenc.MaxComponentBytes, so its key is a hash.
-func TestRunLog_OpenNodeIDsNamesEachOpenStepsOwnID(t *testing.T) {
-	r := newRunLog(t.TempDir())
-	long := strings.Repeat("x", 9<<10)
-	for _, path := range [][]string{{"wf1", "grp", "a/b"}, {"wf1", "b"}, {"wf1", long}} {
-		step := &translate.RunStep{RunID: "wf1", NodePath: workflow.PathKey(path), NodeID: path[len(path)-1]}
-		if _, _, err := r.open(t.Context(), step, "c-1"); err != nil {
-			t.Fatalf("Open(%.40q): %v", path, err)
-		}
-	}
-	got := r.openNodeIDs("wf1")
-	if want := map[string]struct{}{"a/b": {}, "b": {}, long: {}}; !maps.Equal(got, want) {
-		t.Errorf("OpenNodeIDs() = %d ids, has the %d-byte id: %t; has a/b: %t; want a/b, b and the long id",
-			len(got), len(long), hasNodeID(got, long), hasNodeID(got, "a/b"))
-	}
-}
-
-// A content frame can open a step's turn before node_start names the node; the id still lands.
-func TestRunLog_ALaterOpenNamesATurnOpenedWithNoNodeID(t *testing.T) {
+// KAS sends node_start twice per step and only the second names the session; it continues the open turn.
+func TestRunLog_ASecondNodeStartContinuesTheOpenTurn(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	step := &translate.RunStep{RunID: "wf1", NodePath: workflow.PathKey([]string{"wf1", "a"})}
-	if _, _, err := r.open(t.Context(), step, "c-1"); err != nil {
-		t.Fatalf("Open(no id): %v", err)
+	first, _, err := r.open(t.Context(), step, "c-1")
+	if err != nil {
+		t.Fatalf("Open(no session): %v", err)
 	}
-	step.NodeID = "a"
-	if _, reopened, err := r.open(t.Context(), step, "c-1"); err != nil || reopened != nil {
-		t.Fatalf("Open(with id) = %v, %v; want the open turn and no second turn_open", reopened, err)
-	}
-	if got := r.openNodeIDs("wf1"); !maps.Equal(got, map[string]struct{}{"a": {}}) {
-		t.Errorf("OpenNodeIDs() = %v, want [a]", got)
+	step.SessionID = "step-session-a"
+	again, reopened, err := r.open(t.Context(), step, "c-1")
+	if err != nil || reopened != nil || again != first {
+		t.Fatalf("Open(with session) = %p, %v, %v; want the open turn %p and no second turn_open", again, reopened, err, first)
 	}
 }
 
-func hasNodeID(m map[string]struct{}, k string) bool {
-	_, ok := m[k]
-	return ok
-}
-
-func TestRunLog_AnEmptyChatIDRecordsTheParentlessBridgeAsHost(t *testing.T) {
+func TestRunLog_AnEmptyChatIDRecordsTheParentlessHostSessionAsHost(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	if _, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: "root/step"}, ""); err != nil {
 		t.Fatal(err)
@@ -254,19 +230,20 @@ func TestRunLog_ARecordedRefusalOutranksTheNodeCompleteStatus(t *testing.T) {
 	}
 }
 
-func TestRunLog_AStepStoppedAtTheModelCallLimitNeverReadsCompleted(t *testing.T) {
+// TestRunLog_ACloseKeepsKASsStatusOverAToolUseStop pins that a tool_use stop alone never fails a step at its close:
+// kiro-cli ends a turn on tool_use both at its model-call limit and after a tool that ends the turn, and only KAS's
+// node record, read later, tells the two apart.
+func TestRunLog_ACloseKeepsKASsStatusOverAToolUseStop(t *testing.T) {
 	cases := []struct {
 		desc    string
 		status  string
 		reason  string
 		outcome marotte.TurnOutcome
-		kind    marotte.FailureKind
 		want    string
 	}{
-		// The measured shape: KAS reports `completed` with no reason after a last turn_end of tool_use.
-		{"a step KAS reports as completed", "completed", "", marotte.TurnOutcomeFailed, marotte.FailureKindModelCallLimit, marotte.ModelCallLimitStepReason},
-		{"KAS's own failure keeps its account", "failed", "boom", marotte.TurnOutcomeFailed, "", "boom"},
-		{"a cancel keeps its account", "cancelled", "", marotte.TurnOutcomeCancelled, "", ""},
+		{"a step KAS reports as completed", "completed", "", marotte.TurnOutcomeCompleted, ""},
+		{"KAS's own failure keeps its account", "failed", "boom", marotte.TurnOutcomeFailed, "boom"},
+		{"a cancel keeps its account", "cancelled", "", marotte.TurnOutcomeCancelled, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
@@ -283,9 +260,9 @@ func TestRunLog_AStepStoppedAtTheModelCallLimitNeverReadsCompleted(t *testing.T)
 			}
 			entries := runLogEntries(t, r, "wf1")
 			c := closeEntryOf(t, entries[len(entries)-1])
-			if c.Outcome != tc.outcome || c.FailureKind != tc.kind || c.FailureReason != tc.want || c.StopReasonRaw != "tool_use" {
-				t.Errorf("CloseNode(%q, %q) after turn_end tool_use wrote turn_close {%s %q %q %s}, want {%s %q %q tool_use}",
-					tc.status, tc.reason, c.Outcome, c.FailureKind, c.FailureReason, c.StopReasonRaw, tc.outcome, tc.kind, tc.want)
+			if c.Outcome != tc.outcome || c.FailureKind != "" || c.FailureReason != tc.want || c.StopReasonRaw != "tool_use" {
+				t.Errorf("CloseNode(%q, %q) after turn_end tool_use wrote turn_close {%s %q %q %s}, want {%s \"\" %q tool_use}",
+					tc.status, tc.reason, c.Outcome, c.FailureKind, c.FailureReason, c.StopReasonRaw, tc.outcome, tc.want)
 			}
 		})
 	}
@@ -305,12 +282,20 @@ func closeStep(t *testing.T, r *runLog, path string, raw marotte.StopReason, sta
 	}
 }
 
-func TestRunLog_StepEndsNamesTheStepsWhoseNewestTurnClosedBroken(t *testing.T) {
+func TestRunLog_StepEndsGradesEachPathsNewestCloseUnderKAS(t *testing.T) {
 	var (
-		capped = workflow.PathKey([]string{"wf1", "capped"})
-		clean  = workflow.PathKey([]string{"wf1", "clean"})
-		rerun  = workflow.PathKey([]string{"wf1", "rerun"})
+		capped  = workflow.PathKey([]string{"wf1", "capped"})
+		handoff = workflow.PathKey([]string{"wf1", "handoff"})
+		clean   = workflow.PathKey([]string{"wf1", "clean"})
+		rerun   = workflow.PathKey([]string{"wf1", "rerun"})
 	)
+	// KAS's record: every step completed, and only the handoff signalled success.
+	kas := map[string]workflow.StepRecord{
+		capped:  {Status: "completed"},
+		handoff: {Status: "completed", CompletionSignal: "success"},
+		clean:   {Status: "completed"},
+		rerun:   {Status: "completed"},
+	}
 	limit := marotte.RunStepEnd{
 		Outcome:       marotte.TurnOutcomeFailed,
 		FailureReason: marotte.ModelCallLimitStepReason,
@@ -320,12 +305,13 @@ func TestRunLog_StepEndsNamesTheStepsWhoseNewestTurnClosedBroken(t *testing.T) {
 		dir := t.TempDir()
 		w := newRunLog(dir)
 		closeStep(t, w, capped, marotte.StopReasonToolUse, "completed")
+		closeStep(t, w, handoff, marotte.StopReasonToolUse, "completed")
 		closeStep(t, w, clean, marotte.StopReasonEndTurn, "completed")
-		// A rerun of a path that once failed: its newest turn is what the step says now.
+		// A rerun of a path that once stopped early: its newest turn is what the step says now.
 		closeStep(t, w, rerun, marotte.StopReasonToolUse, "completed")
 		closeStep(t, w, rerun, marotte.StopReasonEndTurn, "completed")
 
-		got, err := newRunLog(dir).stepEnds(t.Context(), "wf1")
+		got, err := newRunLog(dir).stepEnds(t.Context(), "wf1", kas)
 		if err != nil {
 			t.Fatalf("StepEnds: %v", err)
 		}
@@ -337,12 +323,12 @@ func TestRunLog_StepEndsNamesTheStepsWhoseNewestTurnClosedBroken(t *testing.T) {
 	t.Run("a close after the first read keeps the answer current", func(t *testing.T) {
 		r := newRunLog(t.TempDir())
 		closeStep(t, r, clean, marotte.StopReasonEndTurn, "completed")
-		if got, err := r.stepEnds(t.Context(), "wf1"); err != nil || len(got) != 0 {
+		if got, err := r.stepEnds(t.Context(), "wf1", kas); err != nil || len(got) != 0 {
 			t.Fatalf("StepEnds before any broken close = %+v, %v, want none", got, err)
 		}
 		closeStep(t, r, capped, marotte.StopReasonToolUse, "completed")
 
-		got, err := r.stepEnds(t.Context(), "wf1")
+		got, err := r.stepEnds(t.Context(), "wf1", kas)
 		if err != nil {
 			t.Fatalf("StepEnds: %v", err)
 		}
@@ -350,8 +336,15 @@ func TestRunLog_StepEndsNamesTheStepsWhoseNewestTurnClosedBroken(t *testing.T) {
 			t.Errorf("StepEnds after the capped close = %+v, want %+v", got, want)
 		}
 	})
+	t.Run("with KAS's record unread a tool_use stop names nothing", func(t *testing.T) {
+		r := newRunLog(t.TempDir())
+		closeStep(t, r, capped, marotte.StopReasonToolUse, "completed")
+		if got, err := r.stepEnds(t.Context(), "wf1", nil); err != nil || len(got) != 0 {
+			t.Errorf("StepEnds with no KAS record = %+v, %v, want none", got, err)
+		}
+	})
 	t.Run("a run with no log answers nothing", func(t *testing.T) {
-		got, err := newRunLog(t.TempDir()).stepEnds(t.Context(), "wf1")
+		got, err := newRunLog(t.TempDir()).stepEnds(t.Context(), "wf1", kas)
 		if err != nil || got != nil {
 			t.Errorf("StepEnds with no log = %+v, %v, want nil, nil", got, err)
 		}
@@ -462,7 +455,7 @@ func TestRunLog_StepStartsKeepsAnAttemptAcrossAResume(t *testing.T) {
 			t.Fatal(err)
 		}
 		r := newRunLog(dir)
-		if _, err := r.stepEnds(t.Context(), "wf1"); err != nil {
+		if _, err := r.stepEnds(t.Context(), "wf1", nil); err != nil {
 			t.Fatalf("StepEnds: %v", err)
 		}
 		assertStarts(t, r, step, startOf(first, true))
@@ -770,7 +763,7 @@ func TestRunLog_StepTurnsStampCertifiesTheServedEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if _, err := turn.ModelSwitched(ctx, marotte.EntryModelSwitched{From: "m-old", To: "m-new"}); err != nil {
+	if _, err := turn.ModelSwitched(ctx, &marotte.EntryModelSwitched{From: "m-old", To: "m-new"}); err != nil {
 		t.Fatalf("ModelSwitched: %v", err)
 	}
 	// A seal after the read: the counter moves, the page does not.

@@ -83,6 +83,7 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 		OAuthClientID:          strings.TrimSpace(in.OAuthClientID),
 		OAuthClientMetadataURL: strings.TrimSpace(in.OAuthClientMetadataURL),
 		OAuthRedirectURI:       strings.TrimSpace(in.OAuthRedirectURI),
+		OAuthScopes:            trimmedScopes(in.OAuthScopes),
 		Prewarm:                in.Prewarm,
 		Enabled:                in.Enabled,
 		WaitForReady:           in.WaitForReady,
@@ -112,6 +113,10 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 		s.mu.Unlock()
 		slog.Info("mcp: server already configured with this spec; keeping the stored one",
 			"id", existing.ID, "name", existing.Name)
+		// A reinstall is how a user repairs a server missing from KAS's file.
+		if _, err := s.healKASLocked(ctx, "reinstall"); err != nil {
+			return nil, err
+		}
 		return out, nil
 	}
 	s.servers = append(s.servers, rec)
@@ -126,6 +131,18 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 		"transport", rec.Transport, "enabled", rec.Enabled)
 	s.notifyChange()
 	return maskedCopy(rec), nil
+}
+
+// trimmedScopes copies scopes with each entry trimmed; an empty list is absent.
+func trimmedScopes(scopes []string) []string {
+	if len(scopes) == 0 {
+		return nil
+	}
+	out := make([]string, len(scopes))
+	for i, sc := range scopes {
+		out[i] = strings.TrimSpace(sc)
+	}
+	return out
 }
 
 // importOutcome names what one entry of a pasted block did.
@@ -151,24 +168,10 @@ type importResult struct {
 // A name configured with the SAME spec is `unchanged`; with a DIFFERENT spec the paste fails rather
 // than silently overwriting.
 func (s *Store) importServers(ctx context.Context, in []*Server) ([]importResult, error) {
-	if len(in) == 0 {
-		return nil, errors.New("no servers to connect")
-	}
-	if len(in) > maxImportServers {
-		return nil, fmt.Errorf("too many servers in one paste (%d, max %d)", len(in), maxImportServers)
-	}
-	// validate and de-duplicate before taking the lock: both are pure, and a
-	// block that cannot land should not have made every other caller wait.
-	seen := make(map[string]struct{}, len(in))
-	for _, sv := range in {
-		if err := validate(sv); err != nil {
-			return nil, fmt.Errorf("server %q: %w", sv.Name, err)
-		}
-		key := strings.ToLower(sv.Name)
-		if _, dup := seen[key]; dup {
-			return nil, fmt.Errorf("%q %w", sv.Name, errImportDuplicate)
-		}
-		seen[key] = struct{}{}
+	// Before taking the lock: the check is pure, and a block that cannot land
+	// should not have made every other caller wait.
+	if err := validateImport(in); err != nil {
+		return nil, err
 	}
 
 	now := time.Now().UnixMilli()
@@ -194,7 +197,10 @@ func (s *Store) importServers(ctx context.Context, in []*Server) ([]importResult
 	}
 	if created == 0 {
 		s.mu.Unlock()
-		slog.Info("mcp: import matched the stored set; nothing written", "servers", len(in))
+		slog.Info("mcp: import matched the stored set; record unchanged", "servers", len(in))
+		if _, err := s.healKASLocked(ctx, "import"); err != nil {
+			return nil, err
+		}
 		return results, nil
 	}
 	if err := s.persist(ctx); err != nil {
@@ -206,6 +212,28 @@ func (s *Store) importServers(ctx context.Context, in []*Server) ([]importResult
 	slog.Info("mcp: servers imported", "created", created, "entries", len(in))
 	s.notifyChange()
 	return results, nil
+}
+
+// validateImport validates and de-duplicates one pasted block.
+func validateImport(in []*Server) error {
+	if len(in) == 0 {
+		return errors.New("no servers to connect")
+	}
+	if len(in) > maxImportServers {
+		return fmt.Errorf("too many servers in one paste (%d, max %d)", len(in), maxImportServers)
+	}
+	seen := make(map[string]struct{}, len(in))
+	for _, sv := range in {
+		if err := validate(sv); err != nil {
+			return fmt.Errorf("server %q: %w", sv.Name, err)
+		}
+		key := nameKey(sv.Name)
+		if _, dup := seen[key]; dup {
+			return fmt.Errorf("%q %w", sv.Name, errImportDuplicate)
+		}
+		seen[key] = struct{}{}
+	}
+	return nil
 }
 
 // importOneLocked appends one entry, or reports that the stored record already
@@ -227,6 +255,7 @@ func (s *Store) importOneLocked(sv *Server, now int64) (importResult, error) {
 	rec.Env = copyPairs(sv.Env)
 	rec.Headers = copyPairs(sv.Headers)
 	rec.DisabledTools = append([]string(nil), sv.DisabledTools...)
+	rec.OAuthScopes = slices.Clone(sv.OAuthScopes)
 	rec.CreatedAt = now
 	rec.UpdatedAt = now
 	s.servers = append(s.servers, &rec)
@@ -271,6 +300,7 @@ func (s *Store) update(ctx context.Context, id serverID, in *Server) (*Server, e
 		OAuthClientID:          strings.TrimSpace(in.OAuthClientID),
 		OAuthClientMetadataURL: strings.TrimSpace(in.OAuthClientMetadataURL),
 		OAuthRedirectURI:       strings.TrimSpace(in.OAuthRedirectURI),
+		OAuthScopes:            trimmedScopes(in.OAuthScopes),
 		Prewarm:                in.Prewarm,
 		Enabled:                in.Enabled,
 		WaitForReady:           in.WaitForReady,
@@ -303,7 +333,7 @@ func (s *Store) update(ctx context.Context, id serverID, in *Server) (*Server, e
 }
 
 // setEnabled flips the enabled flag for one server. Returns the updated
-// masked copy.
+// masked copy. An unchanged flag writes no record but heals KAS's file.
 func (s *Store) setEnabled(ctx context.Context, id serverID, enabled bool) (*Server, error) {
 	if err := s.acquireWrite(ctx); err != nil {
 		return nil, err
@@ -318,6 +348,10 @@ func (s *Store) setEnabled(ctx context.Context, id serverID, enabled bool) (*Ser
 	if s.servers[idx].Enabled == enabled {
 		out := maskedCopy(s.servers[idx])
 		s.mu.Unlock()
+		// The record is unchanged, but the toggle doubles as the UI's repair of a drifted KAS file.
+		if _, err := s.healKASLocked(ctx, "toggle"); err != nil {
+			return nil, err
+		}
 		return out, nil
 	}
 	// Snapshot the struct by value so rollback restores the pre-mutation

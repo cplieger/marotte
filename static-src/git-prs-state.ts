@@ -1,8 +1,11 @@
 // The PR tab's canonical state: each connection's inventory entry as the poller wrote it, and the rows an optimistic
 // close or merge hides. Groups are derived on every read, so the entries stay the one copy. Its own module to break
-// the git-prs-tab.ts / actions/git-prs.ts cycle.
+// the git-prs-tab.ts / actions/git-prs.ts cycle. The connection rows are forge-store.ts's.
 
 import { join } from "@cplieger/keyenc";
+
+import { usableStatus } from "./forge-auth-status.js";
+import { forgeRows, onRowsApplied, usableAccount } from "./forge-store.js";
 
 import type { GitPR as PR, GitRepoGroup as RepoGroup } from "./git-types.js";
 import type {
@@ -33,7 +36,6 @@ interface Mark {
 
 const entries = new Map<string, InventoryEntry>();
 const hidden = new Map<string, Mark>();
-const forges = new Map<string, ConfiguredForge>();
 let held = false;
 let paintFn: (() => void) | null = null;
 
@@ -48,24 +50,34 @@ export function cycleAfter(a: string, b: string): boolean {
   return a.length !== b.length ? a.length > b.length : a > b;
 }
 
-/** The connection rows the derived groups take their kind and host from. */
-export function setPRForges(rows: readonly ConfiguredForge[]): void {
-  forges.clear();
-  for (const f of rows) {
-    forges.set(f.id, f);
+// An entry read through an account its row no longer holds goes as the rows apply, so no reader sees a previous
+// sign-in's or an unusable row's pull requests while the next inventory read is pending.
+onRowsApplied(() => {
+  for (const e of [...entries.values()]) {
+    if (usableAccount(e.forge_id) !== e.account) {
+      entries.delete(e.forge_id);
+      dropMarks(e.forge_id);
+    }
   }
+});
+
+/** Whether `e` may be adopted: read through its row's usable account, or arriving before any rows are read. */
+function admitted(e: InventoryEntry): boolean {
+  return forgeRows() === null || usableAccount(e.forge_id) === e.account;
 }
 
-/** The connected connections, in id order: the order the inventory answers in. */
+/** The usable connections, in id order: the order the inventory answers in. */
 export function connectedForges(): ConfiguredForge[] {
-  return [...forges.values()].filter((f) => f.connected).sort((a, b) => cmp(a.id, b.id));
+  return (forgeRows()?.forges ?? [])
+    .filter((f) => usableStatus(f.status))
+    .sort((a, b) => cmp(a.id, b.id));
 }
 
-/** The connections that need a new sign-in, in id order. The inventory reads
- *  none of them, so the tab names each one rather than dropping it. */
+/** The connections no inventory is coming for (a dead token, a refusal, an unusable forge store), in id order. The
+ *  tab names each one rather than dropping it. */
 export function lapsedForges(): ConfiguredForge[] {
-  return [...forges.values()]
-    .filter((f) => !f.connected && f.reconnect_required)
+  return (forgeRows()?.forges ?? [])
+    .filter((f) => !usableStatus(f.status))
     .sort((a, b) => cmp(a.id, b.id));
 }
 
@@ -84,6 +96,9 @@ export function applyInventoryList(list: InventoryList, opts: { reset?: boolean 
   }
   const adopted: number[] = [];
   list.entries.forEach((e, i) => {
+    if (!admitted(e)) {
+      return;
+    }
     const cur = entries.get(e.forge_id);
     if (opts.reset === true || cur === undefined || cycleAfter(e.cycle_id, cur.cycle_id)) {
       entries.set(e.forge_id, e);
@@ -100,9 +115,13 @@ export function applyInventoryList(list: InventoryList, opts: { reset?: boolean 
 }
 
 /** Adopt one connection's entry from a forge_inventory frame. A frame whose
- *  cycle is not after the held entry's is a late one and is ignored. Answers
+ *  cycle is not after the held entry's is a late one, and one read through
+ *  another sign-in than the row's is a stale one; both are ignored. Answers
  *  whether the entry was replaced. */
 export function applyInventoryEntry(e: InventoryEntry): boolean {
+  if (!admitted(e)) {
+    return false;
+  }
   const cur = entries.get(e.forge_id);
   if (cur !== undefined && !cycleAfter(e.cycle_id, cur.cycle_id)) {
     return false;
@@ -164,9 +183,10 @@ interface Derived {
 }
 
 function listed(): Derived[] {
+  const rows = forgeRows()?.forges ?? [];
   const out: Derived[] = [];
   for (const e of [...entries.values()].sort((a, b) => cmp(a.forge_id, b.forge_id))) {
-    const f = forges.get(e.forge_id);
+    const f = rows.find((r) => r.id === e.forge_id);
     if (f !== undefined && (e.state === "ready" || e.state === "partial")) {
       out.push(derive(e, f));
     }
@@ -287,11 +307,10 @@ export function reinsertPRInGroups(result: PRRemoveResult): void {
 }
 
 /** Forget everything held, for a suite's next case. */
-// deadset:ignore DS1004 -- test seam: resets the held PR entries, hidden set and forges
+// deadset:ignore DS1004 -- test seam: resets the held PR entries and hidden set
 export function _resetForTest(): void {
   entries.clear();
   hidden.clear();
-  forges.clear();
   held = false;
 }
 

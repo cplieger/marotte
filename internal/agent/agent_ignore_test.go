@@ -3,135 +3,81 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-type notifyProbeBridge struct {
-	*fakeBridge
-
-	mu   sync.Mutex
-	sent [][]string
-}
-
-func newNotifyProbeBridge() *notifyProbeBridge {
-	return &notifyProbeBridge{fakeBridge: newFakeBridge()}
-}
-
-func (b *notifyProbeBridge) Notify(_ context.Context, method string, params any) error {
-	if method != marotte.MethodPolicyIgnoreFilesChanged {
-		return nil
-	}
-	m, ok := params.(map[string]any)
-	if !ok {
-		return nil
-	}
-	files, ok := m[marotte.ParamIgnoreFiles].([]string)
-	if !ok {
-		return nil
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.sent = append(b.sent, slices.Clone(files))
-	return nil
-}
-
-func (b *notifyProbeBridge) ignoreFrames() [][]string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return slices.Clone(b.sent)
-}
-
-func twoLiveBridges(t *testing.T, configDir string) (*Runtime, map[marotte.ChatID]*notifyProbeBridge) {
+// ignoreFrames is every ignore list the engine lane was sent, oldest first.
+func ignoreFrames(t *testing.T, lane *fakeBridge) [][]string {
 	t.Helper()
-	var mu sync.Mutex
-	made := []*notifyProbeBridge{}
-	factory := func() ACPBridge {
-		p := newNotifyProbeBridge()
-		mu.Lock()
-		made = append(made, p)
-		mu.Unlock()
-		return p
+	var out [][]string
+	for _, raw := range lane.notified(marotte.MethodPolicyIgnoreFilesChanged) {
+		var p struct {
+			Files []string `json:"files"`
+		}
+		if err := json.Unmarshal([]byte(raw), &p); err != nil {
+			t.Fatalf("decode an ignore-list frame %s: %v", raw, err)
+		}
+		out = append(out, p.Files)
 	}
+	return out
+}
 
+// liveEngine is a runtime with two open chats over one engine; the ignore frames sent before it returns are dropped.
+func liveEngine(t *testing.T, configDir string) (*Runtime, *fakeBridge) {
+	t.Helper()
+	lane := newFakeBridge()
 	cs := newTestChatStore()
-	h := New(context.Background(), t.TempDir(), factory, cs, WithConfigDir(configDir))
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, lane), cs,
+		WithConfigDir(configDir))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
-
-	ctx := t.Context()
-	probes := map[marotte.ChatID]*notifyProbeBridge{}
 	for _, id := range []marotte.ChatID{"c1", "c2"} {
-		if _, err := cs.Mutate(ctx, id, func(c *marotte.Chat, _ bool) bool { c.Name = string(id); return true }); err != nil {
-			t.Fatalf("seed chat %s: %v", id, err)
-		}
-		mu.Lock()
-		before := len(made)
-		mu.Unlock()
-		if _, err := h.coord.openBridge(ctx, id, ""); err != nil {
-			t.Fatalf("OpenBridge %s: %v", id, err)
-		}
-		mu.Lock()
-		fresh := made[before:]
-		mu.Unlock()
-		if len(fresh) != 1 {
-			t.Fatalf("OpenBridge %s built %d bridges, want exactly 1", id, len(fresh))
-		}
-		probes[id] = fresh[0]
+		openChat(t, h, id)
 	}
-	return h, probes
+	lane.mu.Lock()
+	lane.notifies, lane.notifyParams = nil, nil
+	lane.mu.Unlock()
+	return h, lane
 }
 
-// TestSettingsWrite_PushesTheIgnoreListToEveryLiveBridge asserts each probe individually: an
-// aggregate count passes a loop that sent one bridge two frames and the other none.
-func TestSettingsWrite_PushesTheIgnoreListToEveryLiveBridge(t *testing.T) {
+// A settings write sends the ignore list once, on the engine, however many sessions are open.
+func TestSettingsWrite_SendsTheIgnoreListOnceOnTheEngine(t *testing.T) {
 	dir := t.TempDir()
-	h, probes := twoLiveBridges(t, dir)
+	h, lane := liveEngine(t, dir)
 	writeIgnoreFiles(t, dir, []string{".gitignore"})
 
 	h.ReconcileSessionSettings(t.Context())
 
 	want := []string{settings.AgentIgnoreFloor, ".gitignore"}
-	for id, p := range probes {
-		frames := p.ignoreFrames()
-		if len(frames) != 1 {
-			t.Errorf("chat %s received %d ignore-list frames, want 1", id, len(frames))
-			continue
-		}
-		if !slices.Equal(frames[0], want) {
-			t.Errorf("chat %s was sent %v, want %v: the floor leads and the user's entries follow", id, frames[0], want)
-		}
+	frames := ignoreFrames(t, lane)
+	if len(frames) != 1 || !slices.Equal(frames[0], want) {
+		t.Errorf("engine ignore-list frames = %v, want exactly [%v]: the floor leads and the user's entries follow", frames, want)
 	}
 }
 
 // TestSettingsWrite_SendsNoIgnoreListFromAnUnreadableDocument pins the absence of a
-// frame: `{files: []}` would clear enforcement in KAS for every open chat.
+// frame: `{files: []}` would clear enforcement in KAS for every session.
 func TestSettingsWrite_SendsNoIgnoreListFromAnUnreadableDocument(t *testing.T) {
 	logs := captureLogs(t)
 	dir := t.TempDir()
 	writeIgnoreFiles(t, dir, []string{".gitignore"})
-	h, probes := twoLiveBridges(t, dir)
+	h, lane := liveEngine(t, dir)
 
-	// Corrupt after the bridges are up, so each one already holds a list.
+	// Corrupt after the engine is up, so it already holds a list.
 	if err := os.WriteFile(filepath.Join(dir, settings.Filename), []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("corrupt settings: %v", err)
 	}
 	h.ReconcileSessionSettings(t.Context())
 
-	for id, p := range probes {
-		if frames := p.ignoreFrames(); len(frames) != 0 {
-			t.Errorf("chat %s was sent %v from an unparseable document; kiro-cli must keep enforcing the previous list", id, frames)
-		}
+	if frames := ignoreFrames(t, lane); len(frames) != 0 {
+		t.Errorf("the engine was sent %v from an unparseable document; kiro-cli must keep enforcing the previous list", frames)
 	}
 	// Silence toward KAS must still be logged.
 	if !strings.Contains(logs.String(), "agent ignore files not pushed") {
@@ -144,7 +90,7 @@ func TestSettingsWrite_SendsNoIgnoreListFromAnUnreadableDocument(t *testing.T) {
 func TestSettingsWrite_TellsTheClientTheIgnoreListIsUnreadable(t *testing.T) {
 	dir := t.TempDir()
 	writeIgnoreFiles(t, dir, []string{".gitignore"})
-	h, _ := twoLiveBridges(t, dir)
+	h, _ := liveEngine(t, dir)
 
 	if err := os.WriteFile(filepath.Join(dir, settings.Filename), []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("corrupt settings: %v", err)
@@ -170,15 +116,15 @@ func TestSettingsWrite_TellsTheClientTheIgnoreListIsUnreadable(t *testing.T) {
 	if got[0].Source != settings.Filename {
 		t.Errorf("policy error names source %q, want %q: the reader has to know WHICH document to fix", got[0].Source, settings.Filename)
 	}
-	if msg := got[0].Message; !strings.Contains(msg, "already running keep enforcing their previous list") ||
+	if msg := got[0].Message; !strings.Contains(msg, "keeps enforcing its previous list") ||
 		!strings.Contains(msg, "enforces only "+settings.AgentIgnoreFloor) {
-		t.Errorf("policy error message %q does not name both populations: running chats keep their list, a chat started "+
-			"meanwhile enforces only %s", msg, settings.AgentIgnoreFloor)
+		t.Errorf("policy error message %q does not name both outcomes: the running engine keeps its list, an engine "+
+			"restarted meanwhile enforces only %s", msg, settings.AgentIgnoreFloor)
 	}
 }
 
-// TestSpawnIgnoreFiles_AnEmptyDocumentStillCarriesTheFloor pins the spawn's fail mode,
-// deliberately the opposite of the fan-out's: a fresh connection has nothing to keep.
+// TestSpawnIgnoreFiles_AnEmptyDocumentStillCarriesTheFloor pins the engine spawn's fail mode,
+// deliberately the opposite of the live push's: a fresh connection has nothing to keep.
 func TestSpawnIgnoreFiles_AnEmptyDocumentStillCarriesTheFloor(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -206,62 +152,20 @@ func TestSpawnIgnoreFiles_AnEmptyDocumentStillCarriesTheFloor(t *testing.T) {
 	}
 }
 
-// TestStartOptsLiterals_AllCarryIgnoreFiles reads the SOURCE: a new spawn site omitting
-// IgnoreFiles fails silently, since KAS reports nothing for a missing notification.
-func TestStartOptsLiterals_AllCarryIgnoreFiles(t *testing.T) {
-	t.Parallel()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read the runtime package directory: %v", err)
-	}
-	fset := token.NewFileSet()
-	literals := 0
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		file, pErr := parser.ParseFile(fset, name, nil, 0)
-		if pErr != nil {
-			t.Fatalf("parse %s: %v", name, pErr)
-		}
-		ast.Inspect(file, func(n ast.Node) bool {
-			lit, ok := n.(*ast.CompositeLit)
-			if !ok || !isStartOptsType(lit.Type) {
-				return true
-			}
-			literals++
-			if !hasKey(lit, "IgnoreFiles") {
-				t.Errorf("%s:%d builds a marotte.StartOpts with no IgnoreFiles; that bridge would enforce no ignore file at all, and nothing else about it would look wrong",
-					name, fset.Position(lit.Pos()).Line)
-			}
-			return true
-		})
-	}
-	// A floor rather than an exact count, so a scan that stopped finding sites fails instead of passing vacuously.
-	if literals < 5 {
-		t.Fatalf("found %d marotte.StartOpts literals, want at least 5; the scan is not reaching the spawn sites", literals)
-	}
-}
+// The one engine build carries the ignore-list resolver, read at send time with the floor leading.
+func TestResolveEngine_CarriesTheIgnoreListResolver(t *testing.T) {
+	dir := t.TempDir()
+	writeIgnoreFiles(t, dir, []string{".gitignore"})
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil),
+		newTestChatStore(), WithConfigDir(dir))
+	t.Cleanup(func() { shutdownHub(t, h) })
 
-func isStartOptsType(expr ast.Expr) bool {
-	sel, ok := expr.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "StartOpts" {
-		return false
+	opts := h.resolveEngine(t.Context(), "/fake/kiro-cli-chat").opts
+	if opts.IgnoreFiles == nil {
+		t.Fatal("EngineOpts.IgnoreFiles = nil, so the engine starts enforcing nothing")
 	}
-	pkg, ok := sel.X.(*ast.Ident)
-	return ok && pkg.Name == "marotte"
-}
-
-func hasKey(lit *ast.CompositeLit, field string) bool {
-	for _, elt := range lit.Elts {
-		kv, ok := elt.(*ast.KeyValueExpr)
-		if !ok {
-			continue
-		}
-		if key, ok := kv.Key.(*ast.Ident); ok && key.Name == field {
-			return true
-		}
+	writeIgnoreFiles(t, dir, []string{".dockerignore"})
+	if got, want := opts.IgnoreFiles(t.Context()), []string{settings.AgentIgnoreFloor, ".dockerignore"}; !slices.Equal(got, want) {
+		t.Errorf("IgnoreFiles() after a save = %v, want %v read at send time", got, want)
 	}
-	return false
 }

@@ -5,10 +5,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestPendingPermsTracker_ConcurrentAddTakeList races Add, TakeIfPresent, ClearForChat and List under -race.
+// TestPendingPermsTracker_ConcurrentAddTakeList races Add, TakeIfPresent, clearInputs and List under -race.
 func TestPendingPermsTracker_ConcurrentAddTakeList(t *testing.T) {
 	tracker := newPendingPermsTracker()
 	const N = 100
@@ -24,20 +25,20 @@ func TestPendingPermsTracker_ConcurrentAddTakeList(t *testing.T) {
 
 	wg.Go(func() {
 		for i := range N {
-			evt := marotte.ServerEvent{ChatID: marotte.ChatID("chat-2"), Type: "permission_needed"}
+			evt := marotte.ServerEvent{ChatID: marotte.ChatID("chat-2"), Type: marotte.EventElicitationNeeded}
 			tracker.add(int64(N+i), evt, nil)
 		}
 	})
 
 	wg.Go(func() {
 		for i := range N {
-			tracker.takeIfPresent("chat-1", int64(i))
+			tracker.takeIfPresent("chat-1", int64(i), marotte.DecisionKindPermission)
 		}
 	})
 
 	wg.Go(func() {
 		for range 10 {
-			tracker.clearForChat("chat-2")
+			tracker.clearInputs("chat-2", command.ScopeChatAndRuns)
 		}
 	})
 
@@ -68,7 +69,7 @@ func TestPendingPermsTracker_TakeIfPresent_OneWinnerPerRequest(t *testing.T) {
 		for range answerers {
 			wg.Go(func() {
 				<-start
-				got, ok := tracker.takeIfPresent("chat-1", id)
+				got, ok := tracker.takeIfPresent("chat-1", id, marotte.DecisionKindPermission)
 				if !ok {
 					return
 				}
@@ -85,7 +86,7 @@ func TestPendingPermsTracker_TakeIfPresent_OneWinnerPerRequest(t *testing.T) {
 		if n := wins.Load(); n != 1 {
 			t.Fatalf("round %d: %d answerers claimed one request, want exactly 1", round, n)
 		}
-		if _, ok := tracker.takeIfPresent("chat-1", id); ok {
+		if _, ok := tracker.takeIfPresent("chat-1", id, marotte.DecisionKindPermission); ok {
 			t.Fatalf("round %d: request still claimable after being taken", round)
 		}
 	}

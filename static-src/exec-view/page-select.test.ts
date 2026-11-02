@@ -27,7 +27,7 @@ function loop(last: ExecState): ExecRun {
     state: last,
     children: [pass(0, step("loop:iter-0:a", "fail")), pass(1, step("loop:iter-1:a", last))],
   };
-  return { id: "wf_1", label: "run", state: "running", nodes: [repeat], live: true };
+  return { label: "run", state: "running", nodes: [repeat], live: true };
 }
 
 let host: HTMLElement | undefined;
@@ -38,13 +38,15 @@ afterEach(() => {
 });
 
 function selectedPath(run: ExecRun): string {
-  const view = buildExecPage({ emptyNote: () => "" });
   host = document.createElement("div");
-  host.appendChild(view.root);
+  const dock = document.createElement("div");
+  const view = buildExecPage({ emptyNote: () => "", dock });
+  host.append(view.root, dock);
   document.body.appendChild(host);
   view.render(run);
+  const path = host.querySelector<HTMLElement>(".ev-row.ev-selected")?.dataset["path"] ?? "";
   view.dispose();
-  return host.querySelector<HTMLElement>(".ev-row.ev-selected")?.dataset["path"] ?? "";
+  return path;
 }
 
 describe("the page's default selection", () => {

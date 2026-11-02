@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// TestRevertVocabulary pins the two kinds R2 adds and the source name the
-// no-survivor carrier opens under. `revert` is a TurnOpenSourceName with no
-// TurnOpenSource behind it, like `event`, so Name never answers it.
+// TestRevertVocabulary pins the revert's two entry kinds and the source name the
+// no-survivor carrier opens under, which TurnSourceRevert alone answers.
 func TestRevertVocabulary(t *testing.T) {
 	if got := EntryKindTurnRevert; got != "turn_revert" {
 		t.Errorf("EntryKindTurnRevert = %q, want %q", got, "turn_revert")
@@ -19,8 +18,8 @@ func TestRevertVocabulary(t *testing.T) {
 		t.Errorf("TurnOpenNameRevert = %q, want %q", got, "revert")
 	}
 	for s := range TurnOpenSource(32) {
-		if got := s.Name(); got == TurnOpenNameRevert {
-			t.Errorf("TurnOpenSource(%d).Name() = %q, want no source to answer it", s, got)
+		if got := s.Name(); (got == TurnOpenNameRevert) != (s == TurnSourceRevert) {
+			t.Errorf("TurnOpenSource(%d).Name() = %q, want %q from TurnSourceRevert alone", s, got, TurnOpenNameRevert)
 		}
 	}
 	if got := TurnRevertCauseRewind; got != "rewind" {

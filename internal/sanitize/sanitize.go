@@ -2,7 +2,7 @@
 // client, or written to a log: ANSI escape sequences and the invisible Unicode codepoints
 // (TAG characters, zero-width joiners, bidi overrides) that carry prompt injections.
 //
-// Output is for MULTI-LINE transcript content (tool output, a shell capture, an export):
+// Output is for MULTI-LINE transcript content (tool output, a command's captured output, an export):
 // hidden runes are deleted. A single-line surface takes runesafe's
 // SanitizeSingleLineBounded instead, which replaces them with a visible space.
 // internal/ansitext parses the same sequences to KEEP them as style spans.
@@ -25,8 +25,7 @@ var ansiRe = regexp.MustCompile(
 		`|\x1b[NOPX^_78=>c]`, // SS2/SS3/DCS/SOS/PM/APC/save/restore/RIS/keypad
 )
 
-// StripANSI removes ANSI escape sequences from a string.
-func StripANSI(s string) string {
+func stripANSI(s string) string {
 	for {
 		out := ansiRe.ReplaceAllString(s, "")
 		if out == s {
@@ -72,7 +71,7 @@ func isHidden(r rune) bool {
 // It terminates: after the first pass every pass only removes runes.
 func Output(s string) string {
 	for {
-		out := Unicode(StripANSI(s))
+		out := Unicode(stripANSI(s))
 		if out == s {
 			return strings.ReplaceAll(out, "\x1b", "\uFFFD")
 		}

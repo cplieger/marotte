@@ -6,10 +6,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Mock } from "vitest";
 import { effect } from "@cplieger/reactive";
+import { mountLiveRegions } from "@cplieger/ui-primitives/announce";
 
 // Mock dependencies that tabs.ts imports at module level.
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./icons.js", () => ({
+  ICON_MODEL_UI: "",
   ICON_CLOSE: "",
   ICON_TAB_CHAT: "",
   ICON_TAB_SETTINGS: "",
@@ -92,6 +94,7 @@ vi.mock("./dom.js", () => ({
     },
   ),
   // `byId` (page-title.ts, every view switch) must exist for real ESM linking.
+  setBusy: vi.fn(),
   byId: (id: string) => {
     let el = document.getElementById(id);
     if (el === null) {
@@ -148,6 +151,7 @@ vi.mock("./transport.js", () =>
 );
 vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => ({
+    apiBlobOrError: vi.fn(),
     apiGetTyped: m.tabListRead(),
     // Present-but-inert so real-ESM linking succeeds: tabs.ts imports
     // `normalizeDirPath` from files-shared.js, which imports this name. No case
@@ -171,6 +175,7 @@ import {
   tabSetVersion,
   activeChatRef,
   setOnEmpty,
+  EMPTY_RESPAWN_MS,
   setTabPinned,
   openFilesView,
   toggleFilesView,
@@ -209,6 +214,7 @@ import {
 } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { bindTabsSync, tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
+import { until } from "./__test-helpers__/until.js";
 import type { TabKind } from "./types.js";
 
 // The harness takes the sync layer's two entry points by hand: its own module
@@ -341,6 +347,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   _resetTabsSyncForTest();
 });
 
@@ -548,9 +555,17 @@ describe("closeTab", () => {
   });
 });
 
+/** The empty-state respawn is a timer: a faked clock steps to its due time rather than sleeping it
+ *  out, and runs with real time so the harness's zero-delay deliveries still land on their own. */
+function fakeRespawnClock(): void {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+}
+
 // The last-tab close looks like pre-boot state, so the DOM subscriber must not skip it, or the row
 // lingers until the empty-state respawn and both animate at once.
 describe("closing the last tab", () => {
+  beforeEach(fakeRespawnClock);
+
   it("starts the closed row's exit on close, not on the respawn", async () => {
     expect.assertions(2);
     await openChat("only");
@@ -587,14 +602,14 @@ describe("closing the last tab", () => {
     setOnEmpty(onEmpty);
     await openChat("only");
     tabServer.closeRemotely(chatID("only"));
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).not.toHaveBeenCalled();
 
     // The local close still respawns: an empty strip is a dead end the reader did
     // not ask for when they closed the tab themselves.
     await openChat("mine");
     await closeTab(chatID("mine"));
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).toHaveBeenCalledTimes(1);
   });
 
@@ -623,14 +638,14 @@ describe("closing the last tab", () => {
     // The reader closes the last tab. The strip is empty, the respawn is due —
     // and deferred, because "held"'s remove is still pending.
     await closeTab(chatID("mine"));
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).not.toHaveBeenCalled();
 
     // The response finally arrives: closed [] — the other device's close won.
     // Semantic confirmation settles the op and re-arms the respawn.
     removeCommitted("op-held", [], tabServer.version());
     expect(onConfirm).toHaveBeenCalledTimes(1);
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).toHaveBeenCalledTimes(1);
   });
 
@@ -652,13 +667,13 @@ describe("closing the last tab", () => {
 
     // The dispatch times out: no restore, no retire — verifying.
     opTimedOut("op-held");
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).not.toHaveBeenCalled();
 
     // An authoritative snapshot (a gap re-list, a verify tick — one mechanism)
     // no longer holds the row: silent confirmation, and the respawn re-arms.
     await listTabs();
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).toHaveBeenCalledTimes(1);
   });
 
@@ -688,7 +703,7 @@ describe("closing the last tab", () => {
     await settleTabs();
     await closeTab(chatID("mine"));
     opTimedOut("op-held");
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).not.toHaveBeenCalled();
 
     // The authoritative list still holds "held": restore, not confirm. The strip
@@ -696,7 +711,7 @@ describe("closing the last tab", () => {
     await listTabs();
     expect(rollback).toHaveBeenCalledTimes(1);
     expect(hasTab("chat", "held")).toBe(true);
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).not.toHaveBeenCalled();
   });
 });
@@ -1039,6 +1054,7 @@ describe("a resync that drops the active tab", () => {
     // `local: false`: a strip emptied by another device must not mint a chat here,
     // which is the shape of the loop that minted one every 1.5s on the live instance.
     expect.assertions(2);
+    fakeRespawnClock();
     const onEmpty = vi.fn();
     setOnEmpty(onEmpty);
     const ids = await openChats("a", "b");
@@ -1046,7 +1062,7 @@ describe("a resync that drops the active tab", () => {
     await resyncWithout(ids["a"] ?? "", ids["b"] ?? "");
 
     expect(getActiveTabId()).toBe("");
-    await new Promise((r) => setTimeout(r, 700));
+    await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).not.toHaveBeenCalled();
   });
 });
@@ -1681,15 +1697,20 @@ describe("cueCandidates", () => {
     setTabStatus(chatID("c-failed"), "failed");
 
     expect(cueCandidates()).toEqual([
-      { id: chatID("c-done"), status: "done" },
-      { id: chatID("c-failed"), status: "failed" },
+      { id: chatID("c-done"), kind: "chat", ref: "c-done", status: "done", seen: 0 },
+      { id: chatID("c-failed"), kind: "chat", ref: "c-failed", status: "failed", seen: 0 },
     ]);
 
-    // And a tab whose dot has never been written reports "" rather than a guess —
-    // attention.ts reads that as NO INFORMATION and keeps the acknowledgement,
-    // which is what stops a boot restore re-lighting a dismissed cue.
+    // And a tab whose dot has never been written reports "" rather than a guess, which no cue
+    // counts.
     await openChat("c-fresh");
-    expect(cueCandidates()).toContainEqual({ id: chatID("c-fresh"), status: "" });
+    expect(cueCandidates()).toContainEqual({
+      id: chatID("c-fresh"),
+      kind: "chat",
+      ref: "c-fresh",
+      status: "",
+      seen: 0,
+    });
   });
 
   it("excludes a VIEW tab, so one chat is never counted twice", async () => {
@@ -1700,7 +1721,7 @@ describe("cueCandidates", () => {
     setTabStatus(chatID("c-owned"), "done");
     setTabStatus(chatID("c-watched"), "done");
 
-    expect(cueCandidates()).toEqual([{ id: chatID("c-owned"), status: "done" }]);
+    expect(cueCandidates().map((c) => c.id)).toEqual([chatID("c-owned")]);
   });
 
   it("reports a RUN tab's dot, which is the one non-chat kind that bears a cue", async () => {
@@ -1711,7 +1732,9 @@ describe("cueCandidates", () => {
     await openRunTab("wf_1", "A run");
     setTabStatus(tabIdFor("run", "wf_1"), "done");
 
-    expect(cueCandidates()).toEqual([{ id: tabIdFor("run", "wf_1"), status: "done" }]);
+    expect(cueCandidates()).toEqual([
+      { id: tabIdFor("run", "wf_1"), kind: "run", ref: "wf_1", status: "done", seen: 0 },
+    ]);
   });
 
   it("excludes an editor tab, whose dirty mark is not an agent state", async () => {
@@ -1732,9 +1755,9 @@ describe("cueCandidates", () => {
     setTabStatus(chatID("c-launcher"), "failed");
     setTabStatus(tabIdFor("run", "wf_2"), "done");
 
-    expect(cueCandidates()).toEqual([
-      { id: chatID("c-launcher"), status: "failed" },
-      { id: tabIdFor("run", "wf_2"), status: "done" },
+    expect(cueCandidates().map((c) => [c.id, c.status])).toEqual([
+      [chatID("c-launcher"), "failed"],
+      [tabIdFor("run", "wf_2"), "done"],
     ]);
   });
 
@@ -1750,11 +1773,20 @@ describe("cueCandidates", () => {
     setTabStatus(chatID("c-owned-remote"), "done");
     setTabStatus(chatID("c-view-remote"), "done");
 
-    expect(cueCandidates()).toContainEqual({
-      id: chatID("c-owned-remote"),
-      status: "done",
-    });
+    expect(cueCandidates().map((c) => c.id)).toContain(chatID("c-owned-remote"));
     expect(cueCandidates().map((c) => c.id)).not.toContain(chatID("c-view-remote"));
+  });
+
+  it("reports the seen marker a later frame carries", async () => {
+    expect.assertions(1);
+    const { cueCandidates } = await import("./tabs.js");
+    const sub = tabServer.openElsewhere({ kind: "chat", ref: "c-read" });
+    tabServer.flushFrames();
+    await settleTabs();
+    tabServer.emitRaw({ changed: { ...sub, seen: 4 }, version: tabServer.version() + 1 });
+    await settleTabs();
+
+    expect(cueCandidates()[0]?.seen).toBe(4);
   });
 
   // `owns` never changes after open, so a row's `spec` is a SNAPSHOT and a later frame cannot promote
@@ -3019,6 +3051,15 @@ describe("a drop is shown before the server confirms it", () => {
 // Move up/down moves a GROUP within its pin partition, committed like a drop.
 
 describe("Move up / Move down in the chat menu", () => {
+  // The root pair app boot mounts; the outer beforeEach has just reset the body.
+  let releaseRegions: () => void = () => undefined;
+  beforeEach(() => {
+    releaseRegions = mountLiveRegions(document.body);
+  });
+  afterEach(() => {
+    releaseRegions();
+  });
+
   /** Open the context menu on `ref`'s row and answer with the items it offered. */
   async function menuFor(ref: string): Promise<ContextMenuItem[]> {
     await paint();
@@ -3039,12 +3080,13 @@ describe("Move up / Move down in the chat menu", () => {
     return found;
   }
 
-  function announced(): Promise<string> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve(document.querySelector('[role="status"][aria-live="polite"]')?.textContent ?? "");
-      }, 150);
+  async function expectAnnounced(expected: string): Promise<void> {
+    const live = (): string =>
+      document.querySelector('[role="status"][aria-live="polite"]')?.textContent ?? "";
+    await until(() => live() === expected, `the live region to read "${expected}"`, {
+      detail: () => `it reads "${live()}"`,
     });
+    expect(live()).toBe(expected);
   }
 
   it("offers both after Pin and before the exports, on every chat row", async () => {
@@ -3126,7 +3168,7 @@ describe("Move up / Move down in the chat menu", () => {
     await openChats("a", "b");
     renameTab(chatID("b"), "Bee");
     item(await menuFor("b"), "Move up").action();
-    expect(await announced()).toBe("Moved Bee to position 1");
+    await expectAnnounced("Moved Bee to position 1");
   });
 
   it("sends nothing from a disabled item", async () => {

@@ -54,7 +54,7 @@ export const STATE_WORD: Readonly<Record<ExecState, string>> = {
   pending: "not started",
   running: "running",
   waiting: "waiting",
-  input: "waiting for your answer",
+  input: "waiting for answer",
   unknown: "unknown",
   ok: "succeeded",
   fail: "failed",

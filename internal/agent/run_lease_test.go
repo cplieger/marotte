@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 )
@@ -35,7 +36,7 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_manual")
 
-		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
+		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 			t.Fatalf("Launch: %v", err)
 		}
 		l, ok := h.runs.lease("wf_manual")
@@ -66,7 +67,7 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_sched")
 
-		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1", slot); err != nil {
+		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1", marotte.RunDefaults{}, slot); err != nil {
 			t.Fatalf("LaunchScheduled: %v", err)
 		}
 		l, ok := h.runs.lease("wf_sched")
@@ -110,7 +111,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	h.runs.schedules = st
 
 	before := time.Now()
-	if _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil); lErr != nil {
+	if _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); lErr != nil {
 		t.Fatalf("Launch: %v", lErr)
 	}
 	wantSlot, err := schedule.NextRunFrom(spec, anchor, before)
@@ -182,7 +183,7 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 			}
 			h.runs.schedules = st
 
-			if _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil); lErr != nil {
+			if _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); lErr != nil {
 				t.Fatalf("Launch: %v", lErr)
 			}
 			l, _ := h.runs.lease("wf_manual")
@@ -196,7 +197,7 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 	t.Run("no schedule store at all", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_manual")
-		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
+		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 			t.Fatalf("Launch: %v", err)
 		}
 		if l, _ := h.runs.lease("wf_manual"); !l.SlotAt.IsZero() {
@@ -212,7 +213,7 @@ func TestLaunchRun_ReleasesTheLeaseWhenInvokeFails(t *testing.T) {
 	delete(br.callResults, methodKiroWorkflowInvoke)
 	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errRecipeBusy}
 
-	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err == nil {
+	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err == nil {
 		t.Fatal("a failed invoke reported success")
 	}
 	if _, ok := h.runs.lease("wf_1"); ok {
@@ -236,7 +237,7 @@ func TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, _, _ := newTestHub()
 			const id = "wf_1"
-			h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
+			h.runs.grantLease(t.Context(), id, "publish", manualLaunch(), hostSec())
 
 			h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
 				"workflowId": id, "status": tc.status,
@@ -261,7 +262,7 @@ func heldRun(t *testing.T, id, recipe string) (*Runtime, *fakeBridge) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	h.runs.leases = st
-	h.runs.grantLease(t.Context(), id, recipe, manualLaunch())
+	h.runs.grantLease(t.Context(), id, recipe, manualLaunch(), hostSec())
 	return h, br
 }
 
@@ -337,7 +338,7 @@ func TestCancelRun_ACancelledContextEndsTheWait(t *testing.T) {
 // LiveRuns answers leased runs by recipe; released or unknown ids are not live.
 func TestLiveRuns_NamesTheHeldLeasesByRecipe(t *testing.T) {
 	h, _ := heldRun(t, "wf_held", "code-review")
-	h.runs.grantLease(t.Context(), "wf_released", "publish", manualLaunch())
+	h.runs.grantLease(t.Context(), "wf_released", "publish", manualLaunch(), hostSec())
 	h.runs.releaseLease(t.Context(), "wf_released")
 
 	got := h.runs.LiveRuns([]string{"wf_held", "wf_released", "wf_unknown"})
@@ -351,7 +352,7 @@ func TestLiveRuns_NamesTheHeldLeasesByRecipe(t *testing.T) {
 func TestLeaseStore_FallsBackToMemory(t *testing.T) {
 	t.Parallel()
 	h := &Runs{}
-	h.grantLease(t.Context(), "wf_1", "publish", manualLaunch())
+	h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 	if _, ok := h.lease("wf_1"); !ok {
 		t.Fatal("a runtime with no durable store lost the lease, so the run would be unbounded")
 	}
@@ -366,7 +367,7 @@ func TestGrantLease_ReportsAnEnvelopeItCouldNotPersist(t *testing.T) {
 		logs := captureLogs(t)
 		h := &Runs{leases: undurableLeaseStore(t)}
 
-		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch())
+		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
 		if _, held := h.lease("wf_1"); !held {
 			t.Fatal("the failed persist also dropped the in-memory lease, so this process " +
@@ -386,7 +387,7 @@ func TestGrantLease_ReportsAnEnvelopeItCouldNotPersist(t *testing.T) {
 		logs := captureLogs(t)
 		h := &Runs{}
 
-		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch())
+		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
 		if out := logs.String(); strings.Contains(out, `"msg":"`+wantLine+`"`) {
 			t.Errorf("a lease that persisted fine was reported as lost: %s", out)
@@ -401,7 +402,7 @@ func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
 	t.Run("a release that could not be written is reported", func(t *testing.T) {
 		logs := captureLogs(t)
 		h := &Runs{leases: undurableLeaseStore(t)}
-		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch())
+		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
 		h.releaseLease(t.Context(), "wf_1")
 
@@ -414,7 +415,7 @@ func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
 	t.Run("an ordinary release is quiet about it", func(t *testing.T) {
 		logs := captureLogs(t)
 		h := &Runs{}
-		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch())
+		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
 		h.releaseLease(t.Context(), "wf_1")
 

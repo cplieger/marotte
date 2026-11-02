@@ -6,7 +6,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// FuzzResolveSwitchModel asserts no panic and consistent resolution for arbitrary model strings.
+// FuzzResolveSwitchModel asserts a request names its own model, auto included, or the chat's for none.
 func FuzzResolveSwitchModel(f *testing.F) {
 	f.Add("claude-sonnet", "claude-opus")
 	f.Add("claude-sonnet", "")
@@ -17,22 +17,14 @@ func FuzzResolveSwitchModel(f *testing.F) {
 	f.Fuzz(func(t *testing.T, current, requested string) {
 		chat := &marotte.Chat{Model: current}
 		p := marotte.SwitchModelCommand{Model: requested}
-		model, isSwitch := resolveSwitchModel(chat, p)
+		model := resolveSwitchModel(chat, p)
 
-		if requested == "" || requested == "auto" || requested == current {
-			if isSwitch {
-				t.Errorf("resolveSwitchModel(%q, %q) isSwitch=true, want false", current, requested)
-			}
-			if model != current {
-				t.Errorf("resolveSwitchModel(%q, %q) model=%q, want %q", current, requested, model, current)
-			}
-		} else {
-			if !isSwitch {
-				t.Errorf("resolveSwitchModel(%q, %q) isSwitch=false, want true", current, requested)
-			}
-			if model != requested {
-				t.Errorf("resolveSwitchModel(%q, %q) model=%q, want %q", current, requested, model, requested)
-			}
+		want := requested
+		if requested == "" {
+			want = current
+		}
+		if model != want {
+			t.Errorf("resolveSwitchModel(%q, %q) = %q, want %q", current, requested, model, want)
 		}
 	})
 }

@@ -1,13 +1,19 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { page } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { binTurns } from "./rail-select.js";
 import type { TurnSummary } from "./rail-merge.js";
 
-/** Wide enough that the map is shown and the resume control docks in its column: both turn on
- *  `@container chat-area (width >= 57.5rem)`. */
+/** Wide enough that the map sits in the gutter beside the column (`@container chat-area (width >=
+ *  57.5rem)`); narrower, it sits at the chat area's end over a reserved strip. */
 const WIDE_PX = 1120;
 const NARROW_PX = 800;
+/** The suite's viewport (vitest.config.ts), restored after a case that resizes it. */
+const VIEWPORT = { width: 1280, height: 720 };
+/** The sidebar's width beside a chat area wider than the phone layout (`--sidebar-w-min`). */
+const SIDEBAR_PX = 260;
+const TOUCH_TARGET_PX = 48;
 /** Sub-pixel slack. Every number here is a used value the engine rounds. */
 const EPS = 0.5;
 
@@ -48,6 +54,7 @@ function lengthOf(host: HTMLElement, token: string): number {
 
 interface Map {
   outer: HTMLElement;
+  card: HTMLElement;
   nav: HTMLElement;
   track: HTMLElement;
   stack: HTMLElement;
@@ -74,6 +81,13 @@ function buildMap(opts: { turns: number; width?: number; height?: number }): Map
   outer.id = "messages-wrap-outer";
   const scroller = document.createElement("div");
   scroller.id = "messages-wrap";
+  const transcript = document.createElement("div");
+  transcript.className = "transcript-view";
+  const card = document.createElement("div");
+  card.className = "turn";
+  card.textContent = "A turn card whose prose runs the full width of the transcript column.";
+  transcript.appendChild(card);
+  scroller.appendChild(transcript);
   outer.appendChild(scroller);
 
   const nav = document.createElement("nav");
@@ -93,6 +107,7 @@ function buildMap(opts: { turns: number; width?: number; height?: number }): Map
 
   const resume = document.createElement("button");
   resume.id = "scroll-bottom";
+  resume.className = "scroll-resume";
   resume.type = "button";
   resume.textContent = "Latest";
   outer.appendChild(resume);
@@ -104,7 +119,6 @@ function buildMap(opts: { turns: number; width?: number; height?: number }): Map
   const set = Array.from({ length: opts.turns }, (_, i) => turn(i + 1));
   const layout = binTurns(set, track.clientHeight);
   stack.style.setProperty("--turn-map-slots", String(layout.slots));
-  stack.style.setProperty("--turn-map-total", String(layout.total));
   for (const bin of layout.bins) {
     const li = document.createElement("li");
     li.className = "turn-pill";
@@ -115,11 +129,33 @@ function buildMap(opts: { turns: number; width?: number; height?: number }): Map
     li.appendChild(a);
     stack.appendChild(li);
   }
-  return { outer, nav, track, stack, buttons: [prev, next], resume };
+  return { outer, card, nav, track, stack, buttons: [prev, next], resume };
 }
 
 function pills(m: Map): HTMLElement[] {
   return [...m.stack.querySelectorAll<HTMLElement>(".turn-pill")];
+}
+
+/** Every row 2px to 8px tall, each starting exactly where the one above ends, the first at the
+ *  stack's top and the last at its foot. */
+function expectTiled(m: Map): void {
+  const stack = m.stack.getBoundingClientRect();
+  const rows = pills(m).map((p) => p.getBoundingClientRect());
+  const count = rows.length;
+  expect(count).toBeGreaterThan(1);
+  near(rows[0]?.top ?? -1, stack.top, `${String(count)} rows: first row's top`);
+  near(rows.at(-1)?.bottom ?? -1, stack.bottom, `${String(count)} rows: last row's bottom`);
+  rows.forEach((cur, i) => {
+    expect(cur.height, `row ${String(i)} height`).toBeGreaterThanOrEqual(2 - EPS);
+    expect(cur.height, `row ${String(i)} height`).toBeLessThanOrEqual(8 + EPS);
+    const prev = rows[i - 1];
+    if (prev !== undefined) {
+      expect(
+        cur.top - prev.bottom,
+        `${String(count)} rows: row ${String(i)} against the one above`,
+      ).toBe(0);
+    }
+  });
 }
 
 describe("the stack is only as tall as its turns need", () => {
@@ -128,7 +164,7 @@ describe("the stack is only as tall as its turns need", () => {
     near(m.stack.getBoundingClientRect().height, 40, "stack height");
   });
 
-  it("puts each row at --rail-at times the stack's travel", () => {
+  it("puts each row at its slot times the row pitch", () => {
     const m = buildMap({ turns: 5 });
     const top = m.stack.getBoundingClientRect().top;
     expect(pills(m).map((p) => Math.round(p.getBoundingClientRect().top - top))).toEqual([
@@ -170,23 +206,55 @@ describe("the stack is only as tall as its turns need", () => {
 });
 
 describe("a long chat fills the track at no less than 2px a row", () => {
-  it("tiles 200 rows with no overlap and no gap", () => {
+  it("tiles 200 rows in whole pixels, with no overlap and no gap", () => {
     const m = buildMap({ turns: 200, height: 900 });
-    const rows = pills(m).map((p) => p.getBoundingClientRect());
-    expect(rows).toHaveLength(200);
-    for (let i = 1; i < rows.length; i++) {
-      const prev = rows[i - 1];
-      const cur = rows[i];
-      if (prev === undefined || cur === undefined) {
-        continue;
-      }
-      expect(cur.height).toBeGreaterThanOrEqual(2 - EPS);
-      expect(cur.height).toBeLessThanOrEqual(8 + EPS);
-      near(cur.top, prev.bottom, `row ${String(i)} meets the one above`);
+    expect(pills(m)).toHaveLength(200);
+    expectTiled(m);
+  });
+
+  // 198 turns on this track is a 2.9px pitch: rows alternate 2px and 3px.
+  it("tiles the stack at a fractional pitch, with no overlap and no gap", () => {
+    for (const turns of [75, 120, 198, 351]) {
+      const m = buildMap({ turns, height: 700 });
+      const pitch = m.stack.getBoundingClientRect().height / pills(m).length;
+      expect(Number.isInteger(pitch), `${String(turns)} turns: a fractional pitch`).toBe(false);
+      expectTiled(m);
+      area?.remove();
     }
   });
 
-  it("draws 500 binned turns at the 2px pitch, the stack shorter than its track", () => {
+  it("hands every pixel of the stack to a row, so the pointer never falls between two", () => {
+    const m = buildMap({ turns: 198, height: 700 });
+    const box = m.stack.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const orphans: number[] = [];
+    for (let y = Math.ceil(box.top) + 0.25; y < box.bottom; y += 1) {
+      if (document.elementFromPoint(x, y)?.closest(".turn-pill") === null) {
+        orphans.push(y - box.top);
+      }
+    }
+    expect(orphans, "stack pixels no row covers").toEqual([]);
+  });
+
+  it("keeps the bars one height and one pixel of ground apart at a fractional pitch", () => {
+    const m = buildMap({ turns: 198, height: 700 });
+    const bars = pills(m).map((p) => {
+      const link = p.querySelector<HTMLElement>(".turn-pill-link");
+      const cs = getComputedStyle(link ?? p, "::before");
+      const top = p.getBoundingClientRect().top + parseFloat(cs.top);
+      return { top, bottom: top + parseFloat(cs.blockSize), h: parseFloat(cs.blockSize) };
+    });
+    expect(new Set(bars.map((b) => b.h)).size, "one bar height down the map").toBe(1);
+    for (let i = 1; i < bars.length; i++) {
+      const gap = (bars[i]?.top ?? 0) - (bars[i - 1]?.bottom ?? 0);
+      expect(gap, `ground above bar ${String(i)}`).toBeGreaterThanOrEqual(1 - EPS);
+      const offset = (bars[i]?.top ?? 0) - m.stack.getBoundingClientRect().top;
+      near(offset, Math.round(offset), `bar ${String(i)} on a whole pixel`);
+    }
+  });
+
+  it("fills the track with binned turns, at no less than 2px a row", () => {
+    // The pitch follows the ROW count: 500 turns binned in pairs make 250 rows over the whole track.
     const m = buildMap({ turns: 500, height: 800 });
     const track = m.track.getBoundingClientRect().height;
     expect(track, "a track that bins 500 turns in pairs").toBeGreaterThanOrEqual(500);
@@ -194,9 +262,23 @@ describe("a long chat fills the track at no less than 2px a row", () => {
     const rows = pills(m).map((p) => p.getBoundingClientRect().height);
     expect(rows).toHaveLength(250);
     for (const h of rows) {
-      near(h, 2, "row pitch");
+      expect(h).toBeGreaterThanOrEqual(2 - EPS);
     }
-    near(m.stack.getBoundingClientRect().height, 500, "stack height");
+    near(m.stack.getBoundingClientRect().height, track, "stack height");
+  });
+
+  it("fills the track whatever the pitch's fraction, at every turn count past 8px a row", () => {
+    for (const turns of [75, 120, 198, 351]) {
+      const m = buildMap({ turns, height: 700 });
+      const track = m.track.getBoundingClientRect();
+      const stack = m.stack.getBoundingClientRect();
+      expect(track.height / turns, `${String(turns)} turns outgrow 8px a row`).toBeLessThan(8);
+      near(stack.height, track.height, `${String(turns)} turns: stack height`);
+      const rows = pills(m).map((p) => p.getBoundingClientRect());
+      near(rows[0]?.top ?? 0, track.top, `${String(turns)} turns: first row's top`);
+      near(rows.at(-1)?.bottom ?? 0, track.bottom, `${String(turns)} turns: last row's bottom`);
+      area?.remove();
+    }
   });
 
   it("bins 1000 turns into rows of at least 2px and keeps the last at the foot", () => {
@@ -217,6 +299,22 @@ describe("the map's foot clears the docked resume control", () => {
     near(gap, lengthOf(m.outer, "--sp-2"), "clearance");
   });
 
+  it.each([
+    ["coarse", WIDE_PX],
+    ["fine", NARROW_PX],
+  ])(
+    "leaves the foot bare on a %s pointer in a %ipx chat area, where the control does not dock",
+    (tier, width) => {
+      document.documentElement.dataset["pointer"] = tier;
+      const m = buildMap({ turns: 5, width });
+      near(
+        m.outer.getBoundingClientRect().bottom - m.nav.getBoundingClientRect().bottom,
+        lengthOf(m.outer, "--sp-3"),
+        "map foot to the wrapper's end",
+      );
+    },
+  );
+
   it("sizes the docked control to the hit floor", () => {
     const m = buildMap({ turns: 5 });
     near(
@@ -225,31 +323,81 @@ describe("the map's foot clears the docked resume control", () => {
       "control height",
     );
   });
-
-  it("leaves the control floating at the column's centre on a coarse pointer, with no map", () => {
-    document.documentElement.dataset["pointer"] = "coarse";
-    const m = buildMap({ turns: 5 });
-    const box = m.resume.getBoundingClientRect();
-    const outer = m.outer.getBoundingClientRect();
-    near(box.left + box.width / 2, outer.left + outer.width / 2, "control centre");
-  });
 });
 
-describe("the map draws only where the gutter holds it and a pointer can aim at it", () => {
-  it("shows the map in a wide chat on a fine pointer", () => {
-    const m = buildMap({ turns: 5 });
+/** Lay the page out at a device's size, with the chat area the shell would give it: the whole
+ *  width in the phone layout, the width beside the sidebar past it. */
+async function device(width: number, height: number): Promise<number> {
+  await page.viewport(width, height);
+  expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
+    width,
+    height,
+  ]);
+  return width <= 768 ? width : width - SIDEBAR_PX;
+}
+
+describe("the map's visibility follows the phone-shaped screen query, never the pointer tier", () => {
+  afterEach(async () => {
+    await page.viewport(VIEWPORT.width, VIEWPORT.height);
+  });
+
+  it.each([
+    ["fine", WIDE_PX],
+    ["coarse", WIDE_PX],
+    ["fine", NARROW_PX],
+    ["coarse", NARROW_PX],
+  ])("shows the map on a %s pointer in a %ipx chat area", (tier, width) => {
+    document.documentElement.dataset["pointer"] = tier;
+    const m = buildMap({ turns: 5, width });
     expect(getComputedStyle(m.nav).display).toBe("flex");
   });
 
-  it("hides the map under 57.5rem of chat area", () => {
-    const m = buildMap({ turns: 5, width: NARROW_PX });
-    expect(getComputedStyle(m.nav).display).toBe("none");
+  it.each([
+    ["an iPad in portrait", 820, 1180],
+    ["an iPad in landscape", 1180, 820],
+  ])("shows the map on %s in touch mode and in mouse mode", async (_, w, h) => {
+    const width = await device(w, h);
+    for (const tier of ["coarse", "fine"]) {
+      document.documentElement.dataset["pointer"] = tier;
+      const m = buildMap({ turns: 5, width, height: h - 100 });
+      expect(getComputedStyle(m.nav).display, tier).toBe("flex");
+      expect(
+        m.nav.getBoundingClientRect().right,
+        `${tier}: inside the chat area`,
+      ).toBeLessThanOrEqual(area?.getBoundingClientRect().right ?? 0);
+      area?.remove();
+    }
   });
 
-  it("hides the map on a coarse pointer at any width", () => {
-    document.documentElement.dataset["pointer"] = "coarse";
-    const m = buildMap({ turns: 5 });
-    expect(getComputedStyle(m.nav).display).toBe("none");
+  it.each([
+    ["a phone in portrait", 390, 844],
+    ["a phone in landscape", 844, 390],
+    ["a large phone in landscape", 932, 430],
+  ])("hides the map on %s, in touch mode and in mouse mode", async (_, w, h) => {
+    const width = await device(w, h);
+    for (const tier of ["coarse", "fine"]) {
+      document.documentElement.dataset["pointer"] = tier;
+      const m = buildMap({ turns: 5, width, height: h - 100 });
+      expect(getComputedStyle(m.nav).display, tier).toBe("none");
+      const scroller = m.card.closest("#messages-wrap");
+      expect(
+        parseFloat(scroller === null ? "" : getComputedStyle(scroller).paddingInlineEnd),
+        `${tier}: no strip reserved for a map that is not drawn`,
+      ).toBeLessThan(lengthOf(m.outer, "--rail-w"));
+      area?.remove();
+    }
+  });
+
+  it("keeps the transcript column clear of the map where the chat area leaves no gutter", () => {
+    for (const tier of ["fine", "coarse"]) {
+      document.documentElement.dataset["pointer"] = tier;
+      const m = buildMap({ turns: 5, width: NARROW_PX });
+      const gap = m.nav.getBoundingClientRect().left - m.card.getBoundingClientRect().right;
+      expect(gap, `${tier}: card edge to map`).toBeGreaterThanOrEqual(
+        lengthOf(m.outer, "--sp-2") - EPS,
+      );
+      area?.remove();
+    }
   });
 
   it("hides a map the renderer has not marked shown, its track still measured", () => {
@@ -265,9 +413,30 @@ describe("the map draws only where the gutter holds it and a pointer can aim at 
   });
 });
 
+/** Whether a press at (x, y) reaches `el` (its box or an expander drawn for it). */
+function hits(el: Element, x: number, y: number): boolean {
+  const at = document.elementFromPoint(x, y);
+  return at !== null && (at === el || el.contains(at));
+}
+
+/** Whether a press at each edge of the `size`-square centred on `el` reaches it. The edge midpoints,
+ *  because a rounded box's corners are outside its own hit area. */
+function targetCovers(el: HTMLElement, size: number): boolean {
+  const r = el.getBoundingClientRect();
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  const half = size / 2 - 0.5;
+  return [
+    [cx, cy - half],
+    [cx, cy + half],
+    [cx - half, cy],
+    [cx + half, cy],
+  ].every(([x, y]) => hits(el, x ?? 0, y ?? 0));
+}
+
 describe("the step buttons meet the hit floor", () => {
-  // Fine tier only: on a coarse pointer the map does not draw. They are the equivalent control
-  // that lets the rows sit under the floor (WCAG 2.5.8).
+  // They are the equivalent control that lets the rows sit under the floor
+  // (https://www.w3.org/TR/WCAG22/#target-size-minimum).
   it("on a fine pointer", () => {
     const m = buildMap({ turns: 5 });
     const floor = lengthOf(m.outer, "--hit-floor");
@@ -275,5 +444,68 @@ describe("the step buttons meet the hit floor", () => {
       expect(b.getBoundingClientRect().height).toBeGreaterThanOrEqual(floor - EPS);
       expect(b.getBoundingClientRect().width).toBeGreaterThanOrEqual(floor - EPS);
     }
+  });
+});
+
+describe("a finger's targets in touch mode", () => {
+  afterEach(async () => {
+    await page.viewport(VIEWPORT.width, VIEWPORT.height);
+  });
+
+  it.each([WIDE_PX, NARROW_PX])(
+    "gives the step buttons 48 by 48 and the resume control a 48px target in a %ipx chat area",
+    (width) => {
+      document.documentElement.dataset["pointer"] = "coarse";
+      const m = buildMap({ turns: 5, width });
+      for (const b of m.buttons) {
+        const r = b.getBoundingClientRect();
+        expect(r.width, "width").toBeGreaterThanOrEqual(TOUCH_TARGET_PX - EPS);
+        expect(r.height, "height").toBeGreaterThanOrEqual(TOUCH_TARGET_PX - EPS);
+      }
+      for (const b of [...m.buttons, m.resume]) {
+        expect(targetCovers(b, TOUCH_TARGET_PX), "the whole 48px square presses it").toBe(true);
+      }
+    },
+  );
+
+  it("gives the phone's corner resume control a 48 by 48 target", async () => {
+    const width = await device(390, 844);
+    document.documentElement.dataset["pointer"] = "coarse";
+    const m = buildMap({ turns: 5, width, height: 700 });
+    expect(targetCovers(m.resume, TOUCH_TARGET_PX)).toBe(true);
+  });
+
+  it.each([WIDE_PX, NARROW_PX])(
+    "makes the press-and-drag band at least 44px wide and wider than the bars in a %ipx chat area",
+    (width) => {
+      document.documentElement.dataset["pointer"] = "coarse";
+      const m = buildMap({ turns: 5, width });
+      const band = m.track.getBoundingClientRect();
+      expect(band.width).toBeGreaterThanOrEqual(44);
+      const link = m.stack.querySelector(".turn-pill-link");
+      const bar = parseFloat(getComputedStyle(link ?? m.stack, "::before").inlineSize);
+      expect(band.width).toBeGreaterThan(bar);
+      const y = pills(m)[2]?.getBoundingClientRect();
+      const mid = (y?.top ?? 0) + (y?.height ?? 0) / 2;
+      expect(hits(m.track, band.left + 0.5, mid), "the band's start edge").toBe(true);
+      expect(hits(m.track, band.right - 0.5, mid), "the band's end edge").toBe(true);
+    },
+  );
+
+  it("shows the step glyphs at rest, with no hover to reveal them", () => {
+    document.documentElement.dataset["pointer"] = "coarse";
+    const m = buildMap({ turns: 5 });
+    for (const b of m.buttons) {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      b.appendChild(svg);
+      expect(getComputedStyle(svg).opacity).toBe("1");
+    }
+  });
+
+  it("still hides them at rest in mouse mode, for the hover to reveal", () => {
+    const m = buildMap({ turns: 5 });
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    m.buttons[0]?.appendChild(svg);
+    expect(getComputedStyle(svg).opacity).toBe("0");
   });
 });

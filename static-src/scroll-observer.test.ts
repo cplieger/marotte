@@ -2,7 +2,8 @@
 // scrollport is.
 
 import { describe, it, expect, afterAll, beforeAll, beforeEach } from "vitest";
-import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
+import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
+import { framesDrained } from "./__test-helpers__/frame-queue.js";
 import type { Entry, TurnState } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
 
@@ -141,7 +142,8 @@ let seq = 0;
 
 function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknown): Entry {
   return {
-    id: `${turnID}-e${String(at)}`,
+    // A text entry is a `#k` segment of the turn's one say, so the paragraphs are one message.
+    id: kind === "text" ? `${turnID}-say#${String(at)}` : `${turnID}-e${String(at)}`,
     turn: turnID,
     lane: "",
     kind,
@@ -152,7 +154,7 @@ function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknow
 }
 
 /** One prompt-opened turn: its `turn_open` header, `BLOCKS` paragraphs of prose, and its close.
- *  Consecutive `text` entries of one lane are ONE prose run, so the paragraphs land in a single
+ *  Consecutive `text` entries of one message are ONE prose run, so the paragraphs land in a single
  *  bubble — the same wrapped-text volume per card the loop is measured over. */
 function turnEntries(t: number): Entry[] {
   const id = `t${String(t)}`;
@@ -200,10 +202,6 @@ function paint(): void {
   bumpMessages(id, "load");
 }
 
-/** Frames the settle waits for: the deferred write lands on the next one, the resize it causes
- *  is delivered on the one after, and the rest are margin. */
-const SETTLE_FRAMES = 6;
-
 /** Resolved from inside the callback, so the awaiting code runs in that same phase, ahead of any
  *  callback registered after this one. */
 async function frame(): Promise<void> {
@@ -214,19 +212,10 @@ async function frame(): Promise<void> {
   });
 }
 
-/** Let the engine finish delivering: several frames plus a macrotask, which is where a deferred
- *  observation lands and where the loop error would arrive. */
+/** Let the engine finish delivering: until a frame queues no deferred write, read on a task after
+ *  that frame's observations and the loop error one reports. */
 async function settle(): Promise<void> {
-  for (let f = 0; f < SETTLE_FRAMES; f++) {
-    await new Promise<void>((r) => {
-      requestAnimationFrame(() => {
-        r();
-      });
-    });
-  }
-  await new Promise<void>((r) => {
-    setTimeout(r, 100);
-  });
+  await framesDrained("the observers' deferred writes");
 }
 
 /** Per-site counts as they stood when the case started. A DELTA rather than a reset, because
@@ -254,12 +243,11 @@ function report(): string {
     .join("; ");
 }
 
-// The subject IS frames, and a browser running the whole suite delivers them at 1Hz partway through
-// (`__test-helpers__/frame-budget.ts`), so the per-test timeout has to be sized in seconds per
-// frame waited for.
+// The subject IS frames, and a full-suite browser can deliver them at 1Hz
+// (`__test-helpers__/frame-budget.ts`), so the timeout covers a whole drain budget.
 describe(
   "the transcript's resize observers over real layout",
-  { timeout: testTimeoutFor(framesBudgetMs(SETTLE_FRAMES)) },
+  { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
   () => {
     let style: HTMLStyleElement;
 
@@ -312,7 +300,7 @@ describe(
     // crossing and a style mutation all reach the same re-derivation by other callers.
     it(
       "releases the deferred batch OUTSIDE the resize delivery",
-      { timeout: testTimeoutFor(framesBudgetMs(SETTLE_FRAMES * 3)) },
+      { timeout: testTimeoutFor(3 * FRAME_BUDGET_MS) },
       async () => {
         const outer = document.getElementById("messages-wrap-outer")!;
         outer.style.height = "600px";
@@ -357,7 +345,7 @@ describe(
     // end.
     it(
       "keeps the batch held when the content grows before the deferred apply",
-      { timeout: testTimeoutFor(framesBudgetMs(SETTLE_FRAMES * 3)) },
+      { timeout: testTimeoutFor(3 * FRAME_BUDGET_MS) },
       async () => {
         const outer = document.getElementById("messages-wrap-outer")!;
         outer.style.height = "600px";

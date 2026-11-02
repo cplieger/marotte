@@ -5,6 +5,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,8 +42,18 @@ func subjectFor(doc persistedTabs, kind marotte.TabKind, ref string) (marotte.Ta
 	return marotte.TabSubject{}, false
 }
 
-// newTabbedRuntime returns the temp config dir too, so a test can read the document.
-func newTabbedRuntime(t *testing.T) (*Runtime, string) {
+// tabbedRig is a runtime over a real tab store, with the chat store and the engine's scripts a test
+// arranges through.
+type tabbedRig struct {
+	h     *Runtime
+	chats *testChatStore
+	br    *fakeBridge
+	// dir is the temp config dir, so a test can read the document.
+	dir string
+}
+
+// newTabbedRig settles the engine's boot, so a test may edit br's scripts afterwards.
+func newTabbedRig(t *testing.T) tabbedRig {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := tabs.NewStore(dir)
@@ -50,11 +62,18 @@ func newTabbedRuntime(t *testing.T) (*Runtime, string) {
 	}
 	cs := newTestChatStore()
 	br := newFakeBridge()
-	h := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs,
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return br }, laneOf(br)), cs,
 		WithTabs(st), WithConfigDir(dir))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	return h, dir
+	settleBoot(t, h)
+	return tabbedRig{h: h, chats: cs, br: br, dir: dir}
+}
+
+func newTabbedRuntime(t *testing.T) (*Runtime, string) {
+	t.Helper()
+	r := newTabbedRig(t)
+	return r.h, r.dir
 }
 
 // The subject's Ref is the chat id, its ID what a run tab nests under.
@@ -99,6 +118,217 @@ func TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat(t *testing.T) {
 	}
 }
 
+// TestAcceptance_AnEndedRunOpensAsAChildOfItsChat drives the `open_tab` a run's outcome notification
+// sends when clicked, which carries only the workflow id and arrives after the run ended and its lease
+// was released: the run inventory still names the session that launched it.
+func TestAcceptance_AnEndedRunOpensAsAChildOfItsChat(t *testing.T) {
+	for name, tc := range map[string]struct {
+		row        map[string]any
+		wantNested bool
+	}{
+		"launched by the chat's session": {
+			row:        map[string]any{"workflowId": "wf_ended", "name": "publish-pr", "status": "completed", "parentSessionId": "sess_launcher"},
+			wantNested: true,
+		},
+		"launched by no session (scheduled, or from the Workflows page)": {
+			row: map[string]any{"workflowId": "wf_ended", "name": "nightly", "status": "completed"},
+		},
+		"launched by a session no chat holds": {
+			row: map[string]any{"workflowId": "wf_ended", "name": "publish-pr", "status": "failed", "parentSessionId": "sess_stranger"},
+		},
+		"listed nowhere": {
+			row: map[string]any{"workflowId": "wf_other", "name": "publish-pr", "status": "completed", "parentSessionId": "sess_launcher"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newTabbedRig(t)
+			chatTab := openChatTab(t, r.h, "op-chat")
+			if _, err := r.chats.Mutate(t.Context(), marotte.ChatID(chatTab.Ref), func(c *marotte.Chat, _ bool) bool {
+				c.RecordSession("sess_launcher")
+				return true
+			}); err != nil {
+				t.Fatalf("record the chat's session: %v", err)
+			}
+			r.br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t, tc.row)}
+			if _, held := r.h.runs.lease("wf_ended"); held {
+				t.Fatal("the ended run holds a lease, so this does not exercise the inventory read")
+			}
+
+			rec := postCmd(t, r.h, marotte.ClientCommand{
+				Type:    marotte.CmdOpenTab,
+				Payload: json.RawMessage(`{"kind":"run","ref":"wf_ended","owns":false,"op_id":"opended"}`),
+			})
+			if rec.Code != 200 {
+				t.Fatalf("open_tab = %d, want 200: %s", rec.Code, rec.Body.String())
+			}
+
+			opened, ok := subjectFor(readTabsFile(t, r.dir), marotte.TabKindRun, "wf_ended")
+			if !ok {
+				t.Fatal("the click opened no run tab")
+			}
+			want := ""
+			if tc.wantNested {
+				want = chatTab.ID
+			}
+			if opened.Parent != want {
+				t.Errorf("parent = %q, want %q", opened.Parent, want)
+			}
+		})
+	}
+}
+
+// TestAcceptance_AnEndedRunReopensItsClosedChatTab drives the same click when the launching chat's
+// tab was closed and its record kept: the chat's tab comes back with the run nested under it.
+func TestAcceptance_AnEndedRunReopensItsClosedChatTab(t *testing.T) {
+	r := newTabbedRig(t)
+	const launcher = marotte.ChatID("c-launcher")
+	if _, err := r.chats.Mutate(t.Context(), launcher, func(c *marotte.Chat, _ bool) bool {
+		c.Name = marotte.DefaultChatName
+		c.RecordSession("sess_launcher")
+		return true
+	}); err != nil {
+		t.Fatalf("seed the tabless chat: %v", err)
+	}
+	r.br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t, map[string]any{
+		"workflowId": "wf_ended", "name": "publish-pr", "status": "completed", "parentSessionId": "sess_launcher",
+	})}
+
+	rec := postCmd(t, r.h, marotte.ClientCommand{
+		Type:    marotte.CmdOpenTab,
+		Payload: json.RawMessage(`{"kind":"run","ref":"wf_ended","owns":false,"op_id":"opended"}`),
+	})
+	if rec.Code != 200 {
+		t.Fatalf("open_tab = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	doc := readTabsFile(t, r.dir)
+	chatTab, ok := subjectFor(doc, marotte.TabKindChat, string(launcher))
+	if !ok {
+		t.Fatal("the launching chat's tab was not reopened")
+	}
+	opened, ok := subjectFor(doc, marotte.TabKindRun, "wf_ended")
+	if !ok {
+		t.Fatal("the click opened no run tab")
+	}
+	if opened.Parent != chatTab.ID {
+		t.Errorf("parent = %q, want the reopened chat tab %q", opened.Parent, chatTab.ID)
+	}
+}
+
+// TestAcceptance_AnUnreadableLauncherOpensNoRunTab pins that a failed read refuses the click, because
+// a run opened top level then could never nest once the read recovers.
+func TestAcceptance_AnUnreadableLauncherOpensNoRunTab(t *testing.T) {
+	for name, arrange := range map[string]func(t *testing.T, r tabbedRig){
+		"the run inventory cannot be read": func(_ *testing.T, r tabbedRig) {
+			r.br.callErrs = map[string]error{methodKiroWorkflowList: errors.New("the engine went away")}
+		},
+		"a chat file cannot be read": func(t *testing.T, r tabbedRig) {
+			r.br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t, map[string]any{
+				"workflowId": "wf_ended", "name": "publish-pr", "status": "completed", "parentSessionId": "sess_launcher",
+			})}
+			unreadable := filepath.Join(r.chats.Dir(), "c9")
+			if err := os.MkdirAll(unreadable, 0o700); err != nil {
+				t.Fatalf("Setup: %s", err)
+			}
+			if err := os.WriteFile(filepath.Join(unreadable, "chat.json"), []byte("{"), 0o600); err != nil {
+				t.Fatalf("Setup: %s", err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newTabbedRig(t)
+			openChatTab(t, r.h, "op-chat")
+			arrange(t, r)
+
+			rec := postCmd(t, r.h, marotte.ClientCommand{
+				Type:    marotte.CmdOpenTab,
+				Payload: json.RawMessage(`{"kind":"run","ref":"wf_ended","owns":false,"op_id":"opended"}`),
+			})
+
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Errorf("open_tab = %d, want 503: %s", rec.Code, rec.Body.String())
+			}
+			if tab, ok := subjectFor(readTabsFile(t, r.dir), marotte.TabKindRun, "wf_ended"); ok {
+				t.Errorf("a run tab %+v was opened on an unread launcher", tab)
+			}
+		})
+	}
+}
+
+// liveRunOfTablessChat seeds a chat with no tab and starts a run its lease names.
+func liveRunOfTablessChat(t *testing.T, r tabbedRig, launcher marotte.ChatID, workflowID string) {
+	t.Helper()
+	if _, err := r.chats.Mutate(t.Context(), launcher, func(c *marotte.Chat, _ bool) bool {
+		c.Name = marotte.DefaultChatName
+		return true
+	}); err != nil {
+		t.Fatalf("seed the tabless chat: %v", err)
+	}
+	r.h.translateACPEvent(launcher, r.h.originOf(launcher), runNotif(methodWFRunStart, map[string]any{
+		"workflowId": workflowID, "workflowName": "publish-pr",
+	}))
+	if l, held := r.h.runs.lease(workflowID); !held || l.ChatID != string(launcher) {
+		t.Fatalf("lease = %+v held %v, want one naming %q", l, held, launcher)
+	}
+}
+
+// TestAcceptance_ALiveRunWhoseLauncherCannotBeReadOpensNoRunTab — the lease names the chat, its tab
+// is closed and its record unreadable, so it may still exist: the click is refused, not top level.
+func TestAcceptance_ALiveRunWhoseLauncherCannotBeReadOpensNoRunTab(t *testing.T) {
+	r := newTabbedRig(t)
+	bystander := openChatTab(t, r.h, "op-chat")
+	const launcher = marotte.ChatID("c-launcher")
+	liveRunOfTablessChat(t, r, launcher, "wf_live")
+	if err := os.WriteFile(filepath.Join(r.chats.Dir(), string(launcher), "chat.json"), []byte("{"), 0o600); err != nil {
+		t.Fatalf("Setup: %s", err)
+	}
+
+	rec := postCmd(t, r.h, marotte.ClientCommand{
+		Type:    marotte.CmdOpenTab,
+		Payload: json.RawMessage(`{"kind":"run","ref":"wf_live","owns":false,"op_id":"oplive"}`),
+	})
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("open_tab = %d, want 503: %s", rec.Code, rec.Body.String())
+	}
+	doc := readTabsFile(t, r.dir)
+	if tab, ok := subjectFor(doc, marotte.TabKindRun, "wf_live"); ok {
+		t.Errorf("a run tab %+v was opened on an unread launcher", tab)
+	}
+	if len(doc.Tabs) != 1 || doc.Tabs[0].ID != bystander.ID {
+		t.Errorf("tabs.json holds %v, want only the bystander %q: nothing opened", doc.Tabs, bystander.ID)
+	}
+}
+
+// TestAcceptance_AClosedSuppliedParentStillNestsTheRun — the page named the launching chat's tab and
+// another device closed it first: the launcher's tab comes back with the run nested under it.
+func TestAcceptance_AClosedSuppliedParentStillNestsTheRun(t *testing.T) {
+	r := newTabbedRig(t)
+	const launcher = marotte.ChatID("c-launcher")
+	liveRunOfTablessChat(t, r, launcher, "wf_live")
+
+	rec := postCmd(t, r.h, marotte.ClientCommand{
+		Type:    marotte.CmdOpenTab,
+		Payload: json.RawMessage(`{"kind":"run","ref":"wf_live","parent":"t-closed-elsewhere","owns":false,"op_id":"oplive"}`),
+	})
+	if rec.Code != 200 {
+		t.Fatalf("open_tab = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	doc := readTabsFile(t, r.dir)
+	chatTab, ok := subjectFor(doc, marotte.TabKindChat, string(launcher))
+	if !ok {
+		t.Fatal("the launching chat's tab was not reopened")
+	}
+	opened, ok := subjectFor(doc, marotte.TabKindRun, "wf_live")
+	if !ok {
+		t.Fatal("the click opened no run tab")
+	}
+	if opened.Parent != chatTab.ID {
+		t.Errorf("parent = %q, want the reopened chat tab %q", opened.Parent, chatTab.ID)
+	}
+}
+
 // TestAcceptance_AParentlessRunKeepsItsLeaseWithNoChat pins that a manual or scheduled run's lease exists and names no chat.
 func TestAcceptance_AParentlessRunKeepsItsLeaseWithNoChat(t *testing.T) {
 	h, _ := newTabbedRuntime(t)
@@ -113,7 +343,7 @@ func TestAcceptance_AParentlessRunKeepsItsLeaseWithNoChat(t *testing.T) {
 		"workflowId": "wf_scheduled", "nodeId": "coder",
 	}))
 
-	// The orphan sweep and deadline read it; fillRunParent answers off its chat id.
+	// The orphan sweep and deadline read it; RunChat answers off its chat id.
 	if l, held := h.runs.lease("wf_scheduled"); !held {
 		t.Error("the parentless run lost its lease, so nothing bounds or sweeps it")
 	} else if l.ChatID != "" {

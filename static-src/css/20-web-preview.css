@@ -97,15 +97,17 @@
   }
 }
 
-/* The transcript card a markdown link to a workspace page becomes. A button,
-   so it is phrasing content and legal inside the paragraph it replaces a link in. */
+/* The transcript card a markdown link to a workspace page becomes. A button, so it
+   is phrasing content and legal inside the paragraph it replaces a link in, laid out
+   as a full-width block there: the sentence breaks above and below it, never onto
+   the card's line (its trailing punctuation is smd-renderer.ts `holdObjectTail`'s). */
 .preview-card {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: var(--sp-2);
-  max-inline-size: 100%;
+  inline-size: 100%;
+  margin-block: var(--sp-2);
   padding: var(--sp-1) var(--sp-2);
-  vertical-align: middle;
   font: inherit;
   color: var(--c-text-primary);
   background: var(--c-bg-secondary);
@@ -147,6 +149,7 @@
 
 .preview-card-open {
   flex: none;
+  margin-inline-start: auto;
   font-size: var(--fs-sm);
   color: var(--c-link);
 }

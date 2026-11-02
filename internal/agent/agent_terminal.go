@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/marotte/internal/ansitext"
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/sanitize"
@@ -58,10 +59,7 @@ type agentTerminal struct {
 	chatID marotte.ChatID
 	signal string
 	// turn is the spawning turn's id, so an interrupt kills only that turn's processes.
-	turn string
-	// session is the ACP session the create named, so run bounds can attribute a waiting
-	// command to a run's own step. Empty answers false everywhere.
-	session  string
+	turn     string
 	exitCode int
 	// pgid is the group the command leads, read right after Start; 0 when none. Guarded by procMu.
 	pgid int
@@ -298,41 +296,14 @@ func (at *agentTerminals) turnOf(chatID marotte.ChatID) string {
 	return turn
 }
 
-// LiveTerminalForSession reports whether the chat holds a running terminal whose create
-// named one of these sessions. Narrowed by session because a run's steps share the carrier
-// chat; a session-less terminal answers false, so the bound applies.
-func (at *agentTerminals) LiveTerminalForSession(chatID marotte.ChatID, sessions map[string]struct{}) bool {
-	if len(sessions) == 0 {
-		return false
-	}
-	at.mu.Lock()
-	defer at.mu.Unlock()
-	for _, id := range at.byChatID[chatID] {
-		term, ok := at.terms[id]
-		if !ok {
-			continue
-		}
-		if _, named := sessions[term.session]; !named {
-			continue
-		}
-		select {
-		case <-term.done:
-		default:
-			return true
-		}
-	}
-	return false
-}
-
-// KillForTurn kills only the running terminals the chat's current turn created; an idle chat
-// kills nothing. It leaves them registered: KAS still tracks each id and reads its output and
-// exit after the cancel, so only its release, the bridge's end, a chat delete or the drain
-// unregisters one.
-func (at *agentTerminals) KillForTurn(chatID marotte.ChatID) {
-	cur := at.turnOf(chatID)
-	if cur == "" {
+// KillForTurn kills only the running terminals the named turn created; a zero ref kills nothing.
+// It leaves them registered: KAS still tracks each id and reads its output and exit after the
+// cancel, so only its release, the bridge's end, a chat delete or the drain unregisters one.
+func (at *agentTerminals) KillForTurn(turn command.TurnRef) {
+	if !turn.Named() {
 		return
 	}
+	chatID, cur := turn.Chat, turn.Turn
 	at.mu.Lock()
 	var doomed []doomedTerminal
 	for _, id := range at.byChatID[chatID] {
@@ -434,7 +405,7 @@ func (at *agentTerminals) release(chatID marotte.ChatID, terminalID string) (*ag
 
 // releaseForBridge releases every terminal origin created, as KAS's session dispose would if
 // the closed connection could still carry it: retired, unregistered, its group killed. Like
-// terminal/release, a finished command's backgrounded child is left running. A run bridge's
+// terminal/release, a finished command's backgrounded child is left running. A run host session's
 // retired records go with it, since a run chat has no turn whose close would evict them.
 func (at *agentTerminals) releaseForBridge(chatID marotte.ChatID, origin acpResponder) {
 	if origin == nil {
@@ -506,14 +477,14 @@ func (rt *Runtime) handleTerminalRequest(ctx context.Context, chatID marotte.Cha
 		if msg.ID == nil {
 			return
 		}
-		slog.Warn("chat bridge: refusing an unimplemented terminal verb",
+		slog.Warn("chat session: refusing an unimplemented terminal verb",
 			"method", method, "chat_id", chatID, "id", *msg.ID)
 		if err := respondOn(ctx, rt.bridge.mgr, chatID, origin, msg, nil,
 			&marotte.RPCError{
 				Code:    marotte.RPCCodeMethodNotFound,
 				Message: "unimplemented terminal method: " + method,
 			}); err != nil {
-			slog.Error("chat bridge: terminal refusal could not be delivered; the turn may be wedged",
+			slog.Error("chat session: terminal refusal could not be delivered; the turn may be wedged",
 				"method", method, "chat_id", chatID, "error", err)
 		}
 	}
@@ -533,11 +504,11 @@ var agentShell = sync.OnceValue(func() string {
 // KAS leaves `args` UNSET and puts the whole line in `command` (kiro-cli 2.18.0), so an absent
 // `args` runs through a shell and a present one, empty included, is an argv. Presence, not length,
 // decides.
-func agentCommand(ctx context.Context, command string, args *[]string) *exec.Cmd {
+func agentCommand(ctx context.Context, line string, args *[]string) *exec.Cmd {
 	if args != nil {
-		return exec.CommandContext(ctx, command, *args...) // #nosec G204 -- agent-controlled
+		return exec.CommandContext(ctx, line, *args...) // #nosec G204 -- agent-controlled
 	}
-	return exec.CommandContext(ctx, agentShell(), "-c", command) // #nosec G204 -- agent-controlled
+	return exec.CommandContext(ctx, agentShell(), "-c", line) // #nosec G204 -- agent-controlled
 }
 
 func derefArgs(args *[]string) []string {
@@ -549,9 +520,9 @@ func derefArgs(args *[]string) []string {
 
 // failCreate answers and logs a terminal/create that could not start; without it a failed exec leaves no server-side trace.
 func (at *agentTerminals) failCreate(
-	ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse, command, reason string,
+	ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse, line, reason string,
 ) {
-	slog.Warn("agent terminal create failed", "chat_id", chatID, "cmd", command, "reason", reason)
+	slog.Warn("agent terminal create failed", "chat_id", chatID, "cmd", line, "reason", reason)
 	at.fail(ctx, chatID, origin, msg, reason)
 }
 
@@ -580,9 +551,6 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	var params struct {
 		Command string `json:"command"`
 		Cwd     string `json:"cwd"`
-		// SessionID names which workflow step asked; absent decodes to "" so the terminal is
-		// still created, bounded rather than immortal.
-		SessionID string `json:"sessionId"`
 		// Args is a pointer so an explicit `[]` stays distinct from an omitted field.
 		Args *[]string `json:"args"`
 		// Env is the ACP terminal/create env array (KAS zEnvVariable {name,value}).
@@ -624,11 +592,12 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 		cmd.Env = env
 	}
 	if params.Cwd != "" {
-		abs, err := at.lifecycle.resolveInsideWorkDir(params.Cwd)
+		abs, err := at.lifecycle.resolveCwd(ctx, params.Cwd)
 		if err != nil {
 			stop()
 			cmdCancel()
-			at.failCreate(ctx, chatID, origin, msg, params.Command, "cwd escapes workspace: "+err.Error())
+			at.failCreate(ctx, chatID, origin, msg, params.Command,
+				"cwd is outside the workspace and every additional directory: "+err.Error())
 			return
 		}
 		cmd.Dir = abs
@@ -683,7 +652,6 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	// ids follow call order, and a client drops output for an unknown terminal id.
 	at.mu.Lock()
 	term.turn = turn
-	term.session = params.SessionID
 	term.origin = origin
 	at.terms[termID] = term
 	at.byChatID[chatID] = append(at.byChatID[chatID], termID)

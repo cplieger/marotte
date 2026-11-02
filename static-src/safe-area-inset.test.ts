@@ -285,6 +285,62 @@ describe("the composer's bottom clearance", () => {
   });
 });
 
+describe("an installed iPhone's composer clearance", () => {
+  // A frame cannot be put in `display-mode: standalone` (CDP's media emulation has no such feature),
+  // so the query is swapped for an always-true one and every other term of the rule stays shipped.
+  function standalone(css: string): string {
+    const swapped = css.replace(/\(display-mode:\s*standalone\)/g, "(min-width: 0px)");
+    expect(swapped, "the stylesheet carries a display-mode: standalone rule").not.toBe(css);
+    return swapped;
+  }
+
+  function pageBelowCard(d: Document, css: string, s: HTMLStyleElement): number {
+    s.textContent = css;
+    const { form, box } = mountComposer(d);
+    return form.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom;
+  }
+
+  it("spends the whole inset below the card on a phone, past the browser tab's cap", () => {
+    const page = pageBelowCard(doc, standalone(substituted(true, 0)), sheet);
+    expect(page, `${page}px of page below the card`).toBeCloseTo(INSET_BOTTOM, 0);
+    const browserTab = pageBelowCard(doc, substituted(true, 0), sheet);
+    expect(page, "more than the capped share a browser tab keeps").toBeGreaterThan(browserTab);
+  });
+
+  it("keeps the house gap on an installed phone with no inset", () => {
+    const page = pageBelowCard(doc, standalone(substituted(false, 0)), sheet);
+    expect(page).toBeCloseTo(12, 0);
+  });
+
+  it("leaves an installed iPad exactly as it was", () => {
+    const css = substituted(true, 0, INSET_BOTTOM_IPAD);
+    const shipped = pageBelowCard(ipadDoc, css, ipadSheet);
+    const installed = pageBelowCard(ipadDoc, standalone(css), ipadSheet);
+    expect(installed).toBe(shipped);
+    expect(installed).toBeCloseTo(INSET_BOTTOM_IPAD, 0);
+  });
+
+  it("keeps the cap on a 744px window, which only the rule's own width gate keeps out", () => {
+    // 744px is inside the phone block's `width <= 48rem`. A device inset above the cap is what tells the
+    // capped rule from the full one; the iPad's own 20px is under it.
+    ipad.width = "744";
+    try {
+      const css = substituted(true, 0, INSET_BOTTOM);
+      const shipped = pageBelowCard(ipadDoc, css, ipadSheet);
+      expect(pageBelowCard(ipadDoc, standalone(css), ipadSheet)).toBe(shipped);
+      expect(shipped, "the capped rule answers here").toBeLessThan(INSET_BOTTOM);
+    } finally {
+      ipad.width = "1106";
+    }
+  });
+
+  it("leaves an installed phone in landscape exactly as it was", () => {
+    const css = substituted(true, 0, 21);
+    const shipped = pageBelowCard(wideDoc, css, wideSheet);
+    expect(pageBelowCard(wideDoc, standalone(css), wideSheet)).toBe(shipped);
+  });
+});
+
 describe("the tabbed pages' sticky header", () => {
   it("adds no second top inset under a title bar that already paid it", () => {
     withInsets(true);

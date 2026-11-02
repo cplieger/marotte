@@ -114,6 +114,14 @@
   color: var(--c-text-secondary);
 }
 
+/* kiro-cli loaded the item, but another layer replaced it or switched it off:
+   a fact about the composed configuration, not a fault, so no warning ink. The
+   dashed edge sets it apart from the solid neutral badges beside it. */
+.docs-badge-standing {
+  background: transparent;
+  border-style: dashed;
+}
+
 /* KAS reports this hook as effectively off (an untrusted workspace, an empty
    command). Amber and advisory, matching the note it replaces: the row's toggle
    may well read enabled, and this is why that is not the whole story. */
@@ -209,6 +217,49 @@
   &:focus {
     border-color: var(--c-accent);
   }
+}
+
+/* The run's Model and Effort selects, on the input form and the schedule form.
+   Labelled like the form's input fields; `hidden` needs its own rule, since
+   the field sets `display`. */
+.run-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: end;
+}
+
+.run-pick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  font-size: var(--fs-form-label);
+  color: var(--c-text-secondary);
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+.run-pick-select {
+  min-block-size: var(--btn-h);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--c-bg-primary);
+  color: var(--c-text-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  font-size: var(--fs-sm);
+
+  &:focus {
+    border-color: var(--c-accent);
+  }
+}
+
+/* The schedule form's controls are dense. */
+.sched-row .run-pick-select {
+  min-block-size: var(--ctl-h-dense);
+  background: var(--c-bg-secondary);
+  border-radius: var(--r-sm);
 }
 
 /* --- Workflow schedules --------------------------------------------------- */
@@ -308,7 +359,6 @@
   padding: var(--sp-2);
   background: var(--c-bg-tertiary);
   border-radius: var(--r-sm);
-  border-inline-start: 2px solid var(--c-accent);
 }
 
 /* Pause: the state Save produces when this is unchecked, so keeping a rule and
@@ -326,8 +376,8 @@
 /* The unattended note. Quieter than the summary (that is the rule the user is
    building; this is the standing policy it will run under) but not a footnote:
    it sits above the actions, because it is what should be read before Save. The
-   yellow edge is the app's caution vocabulary, the same one the always-loaded
-   inclusion badge uses. */
+   yellow wash and title are the app's caution vocabulary, the same one the
+   always-loaded inclusion badge uses. */
 .sched-note {
   display: flex;
   flex-direction: column;
@@ -336,7 +386,6 @@
   padding: var(--sp-2);
   border-radius: var(--r-sm);
   background: color-mix(in oklch, var(--c-yellow) 8%, transparent);
-  border-inline-start: 2px solid color-mix(in oklch, var(--c-yellow) 45%, transparent);
 }
 
 .sched-note-title {
@@ -439,30 +488,6 @@
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
   white-space: nowrap;
-}
-
-.docs-head-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-
-  & > .seg-bar {
-    flex: 1;
-    min-inline-size: 0;
-  }
-}
-
-/* Sized on every tab, empty or not, so switching tabs moves nothing. */
-.docs-new-slot {
-  flex: none;
-  inline-size: max(var(--btn-h), var(--hit-floor));
-  display: flex;
-  justify-content: center;
-}
-
-.docs-new-btn {
-  inline-size: 100%;
-  block-size: var(--btn-h);
 }
 
 .docs-new-popover {

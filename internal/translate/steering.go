@@ -1,14 +1,15 @@
 package translate
 
 // Mid-turn steering, inbound: steering_queued feeds the dock (or an agent notice when a
-// severity is set), steering_injected appends the steer as read, steering_cleared appends the
-// unread ones as dropped. These carry no sub-block (KAS spreads them flat into _meta.kiro), so
+// severity is set), steering_injected appends the steer as read, steering_cleared settles the
+// unread ones and records itself with its cause. These carry no sub-block (KAS spreads them flat into _meta.kiro), so
 // this is the one place the cascade dispatches on the kind string.
 
 import (
 	"context"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -27,6 +28,8 @@ type steerScope struct {
 	// run and path are set for a run step, whose log and run tab take the frame instead of a chat's.
 	run  string
 	path string
+	// session is the KAS session whose steering buffer the frame reports, when the frame named one.
+	session string
 }
 
 func chatSteerScope(chatID marotte.ChatID) steerScope { return steerScope{key: chatID} }
@@ -37,7 +40,18 @@ func stepSteering(attr FrameAttribution) bool {
 
 // A step session's rows are the step's, never the launching chat's.
 func stepSteerScope(attr FrameAttribution) steerScope {
-	return steerScope{key: marotte.StepSteerKey(attr.SessionID), run: attr.RunID, path: attr.NodePath}
+	return steerScope{key: marotte.StepSteerKey(attr.SessionID), run: attr.RunID, path: attr.NodePath, session: attr.SessionID}
+}
+
+// frameSteerScope is the steer scope of a frame's session: a known step's, else the chat's with the
+// frame's session.
+func frameSteerScope(chatID marotte.ChatID, attr FrameAttribution) steerScope {
+	if stepSteering(attr) {
+		return stepSteerScope(attr)
+	}
+	sc := chatSteerScope(chatID)
+	sc.session = attr.SessionID
+	return sc
 }
 
 func (sc steerScope) event(p *marotte.SteerQueuedPayload) marotte.ServerEvent {
@@ -51,8 +65,9 @@ func (sc steerScope) event(p *marotte.SteerQueuedPayload) marotte.ServerEvent {
 
 // handleSteeringUpdate forwards a steering sub-kind and reports whether it
 // consumed the frame, so a steering frame never falls through to the unknown-kind
-// tail. A recognised kind whose ids are empty is consumed and dropped: an event
-// with no id would put a chip on screen nothing can resolve or clear.
+// tail. A queued or injected frame with no id is consumed and dropped: an event
+// with no id would put a chip on screen nothing can resolve or clear. A clear
+// naming none still empties the buffer.
 func (t *Translator) handleSteeringUpdate(ctx context.Context, sc steerScope, u *sessionInfoUpdate) bool {
 	k := &u.Meta.Kiro
 	switch k.Kind {
@@ -67,10 +82,7 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, sc steerScope, u 
 		}
 		return true
 	case kindSteeringCleared:
-		// KAS clears at EVERY turn boundary, so an empty list is the normal case.
-		if len(k.MessageIDs) > 0 {
-			t.steeringCleared(ctx, sc, k)
-		}
+		t.steeringCleared(ctx, sc, k, t.read.take(sc.key))
 		return true
 	}
 	return false
@@ -102,6 +114,10 @@ func (t *Translator) steeringQueued(ctx context.Context, sc steerScope, k *sessi
 }
 
 func (t *Translator) steeringInjected(ctx context.Context, sc steerScope, k *sessionInfoKiroBlock) {
+	// A repeated frame for an id this turn already read would settle a second identical message.
+	if !t.read.add(sc.key, k.MessageID) {
+		return
+	}
 	// The bare text, as KAS persists it, or the merge would see two steers.
 	text := k.Content
 	if k.NotificationSeverity != "" {
@@ -115,57 +131,119 @@ func (t *Translator) steeringInjected(ctx context.Context, sc steerScope, k *ses
 		Text: text, Origin: t.steerOrigin(sc.key, k.MessageID), State: marotte.SteerStateRead,
 		Severity: k.NotificationSeverity,
 	}
-	t.stampRunNotice(sc, k.MessageID, steer)
+	t.stampRunNotice(sc, k.MessageID, text, steer)
 	steer.Resends = t.steerBufferRead(sc.key, k.MessageID)
 	t.appendSteer(ctx, sc, k.MessageID, steer)
 }
 
-// steeringCleared appends a dropped entry for every AGENT row still held (unread). A user row's
-// entry is the host's. An agent note this process never held is recorded TEXT-LESS: the merge
-// fills the missing words.
-func (t *Translator) steeringCleared(ctx context.Context, sc steerScope, k *sessionInfoKiroBlock) {
+// steeringCleared settles what a clear took (settleClear owns the workflow messages and files the
+// clear, before which nothing else is written and without which nothing is). A held AGENT row gets
+// a dropped entry; a user row's entry is the host's; any other agent note (a run notice) is
+// recorded TEXT-LESS for the merge to fill. An id `read` names was injected this turn and writes
+// nothing beside its read row. A clear inside the reader's cancel drops no agent note: KAS
+// re-prompts every unread notification it cleared as its own turn (cancelLocalTurn's
+// rewakeClearedNotifications).
+func (t *Translator) steeringCleared(ctx context.Context, sc steerScope, k *sessionInfoKiroBlock, read map[string]struct{}) {
 	held := make(map[string]marotte.SteerQueuedPayload)
-	for _, p := range t.steerBufferCleared(sc.key, k.MessageIDs) {
-		held[p.SteerID] = p
+	cleared := t.steerBufferCleared(sc.key, k.MessageIDs)
+	for i := range cleared {
+		held[cleared[i].SteerID] = cleared[i]
 	}
-	for _, id := range k.MessageIDs {
-		if p, ok := held[id]; ok {
-			t.appendSteer(ctx, sc, id, &marotte.EntrySteer{
-				Text: p.Text, Origin: p.Origin, State: marotte.SteerStateDropped,
-				Reason: marotte.SteerReasonBoundary,
-			})
-			continue
-		}
-		if t.steerOrigin(sc.key, id) == marotte.SteerOriginUser {
-			continue
-		}
-		// A workflow message's row already stands; the clear settles it.
-		if !strings.HasPrefix(id, runNoticeIDPrefix) && t.workflowMessageCleared(ctx, sc) {
-			continue
-		}
-		steer := &marotte.EntrySteer{
-			Origin: marotte.SteerOriginAgent, State: marotte.SteerStateDropped,
-			Reason: marotte.SteerReasonBoundary,
-		}
-		t.stampRunNotice(sc, id, steer)
-		t.appendSteer(ctx, sc, id, steer)
+	cause := marotte.SteerClearCauseBoundary
+	if t.clearIsCancels(sc) {
+		cause = marotte.SteerClearCauseCancel
+	}
+	c := t.classifyCleared(sc, k.MessageIDs, read, held, cause)
+	if !t.settleClear(ctx, sc, cause, c.messages, k.MessageIDs) {
+		return
+	}
+	for _, d := range c.drops {
+		t.appendSteer(ctx, sc, d.id, d.steer)
+	}
+	if c.notices > 0 && t.runOrigin != nil && sc.run == "" {
+		t.runOrigin.ForgetRunNotices(sc.key, c.notices)
 	}
 }
 
+// clearedIDs is a clear's unread ids sorted by what they write: the dropped rows, and the counts of
+// run notices and workflow messages.
+type clearedIDs struct {
+	drops    []clearedDrop
+	notices  int
+	messages int
+}
+
+type clearedDrop struct {
+	steer *marotte.EntrySteer
+	id    string
+}
+
+func (t *Translator) classifyCleared(
+	sc steerScope, ids []string, read map[string]struct{}, held map[string]marotte.SteerQueuedPayload, cause marotte.SteerClearCause,
+) clearedIDs {
+	var c clearedIDs
+	boundary := cause == marotte.SteerClearCauseBoundary
+	for _, id := range ids {
+		if _, ok := read[id]; ok {
+			continue
+		}
+		if strings.HasPrefix(id, runNoticeIDPrefix) {
+			c.notices++
+		}
+		p, isHeld := held[id]
+		switch {
+		case isHeld:
+			if boundary {
+				c.drops = append(c.drops, clearedDrop{id: id, steer: &marotte.EntrySteer{
+					Text: p.Text, Origin: p.Origin, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
+				}})
+			}
+		case t.steerOrigin(sc.key, id) == marotte.SteerOriginUser:
+		case workflowMessageNotifyID(id):
+			c.messages++
+		case boundary:
+			c.drops = append(c.drops, clearedDrop{id: id, steer: &marotte.EntrySteer{
+				Origin: marotte.SteerOriginAgent, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
+			}})
+		}
+	}
+	return c
+}
+
+// workflowMessageNotifyID reports whether a steering id has the shape KAS mints for a
+// `_kiro/session/notify` message (`notify-<uuid>`); a run notice's `notify-wf-` is not one.
+func workflowMessageNotifyID(id string) bool {
+	return strings.HasPrefix(id, notifyIDPrefix) && !strings.HasPrefix(id, runNoticeIDPrefix)
+}
+
+const notifyIDPrefix = "notify-"
+
+// clearIsCancels reports whether a chat's clear ends a turn the reader stopped: KAS clears the buffer inside
+// session/cancel, before the turn's end. A teardown's cancel is a boundary (marotte.TurnStopTeardown).
+func (t *Translator) clearIsCancels(sc steerScope) bool {
+	if sc.run != "" {
+		return false
+	}
+	turn, ok := t.turns.OwnTurn(sc.key)
+	if !ok {
+		turn, ok = t.turns.PromptTurn(sc.key)
+	}
+	return ok && t.turns.StopCauseAfter(sc.key, turn.ID()) == marotte.TurnStopReader
+}
+
 // runNoticeIDPrefix is the id shape KAS mints for a finished run's completion notice
-// (`notify-wf-<uuid>`; emitWorkflowNotification, parent_busy_queued). The uuid is
-// random, so the run it reports is not in the id: RunNotice supplies it.
+// (`notify-wf-<uuid>`; autoWakeParentOnComplete, parent_busy_queued). The uuid is
+// random, so the run it reports is not in the id: RunNotice finds it by the notice's words.
 const runNoticeIDPrefix = "notify-wf-"
 
-// stampRunNotice writes the provenance of a finished run's notice: its run id and
-// when the run finished, so a notice read long after its run can say so. Any other
-// steer, a step's mid-run send_message included, leaves both absent. Read or dropped,
-// each notice consumes its run: the two queues pair in order.
-func (t *Translator) stampRunNotice(sc steerScope, steerID string, steer *marotte.EntrySteer) {
+// stampRunNotice writes the provenance of a finished run's notice read with these words: its run id and
+// when the run finished, so a notice read long after its run can say so. Any other steer, a step's
+// mid-run send_message included, leaves both absent, as does a notice no recorded run's label matches.
+func (t *Translator) stampRunNotice(sc steerScope, steerID, text string, steer *marotte.EntrySteer) {
 	if t.runOrigin == nil || sc.run != "" || !strings.HasPrefix(steerID, runNoticeIDPrefix) {
 		return
 	}
-	if wf, ts, ok := t.runOrigin.RunNotice(sc.key); ok {
+	if wf, ts, ok := t.runOrigin.RunNotice(sc.key, text); ok {
 		steer.OriginRun, steer.ProducedTs = wf, ts
 	}
 }
@@ -178,8 +256,8 @@ func stripNotificationPrefix(text string) string {
 	return notificationPrefixRe.ReplaceAllString(text, "")
 }
 
-// appendSteer writes a steer's DURABLE entry, lane-less: into the open turn (sealing every lane), else
-// after the newest close. A chat's steer is the chat's whatever execution read it; a step's is its
+// appendSteer writes a steer's DURABLE entry, lane-less: into the open turn (turnlog.Turn.Steer, which
+// seals nothing), else after the newest close. A chat's steer is the chat's whatever execution read it; a step's is its
 // run's. The id is KAS's steer id, which the replay stamps too.
 func (t *Translator) appendSteer(ctx context.Context, sc steerScope, steerID string, steer *marotte.EntrySteer) {
 	if sc.run != "" {
@@ -201,22 +279,19 @@ func (t *Translator) steerReadByAck(ctx context.Context, chatID marotte.ChatID, 
 		return
 	}
 	p := held[0]
+	t.read.add(chatID, steerID)
 	steer := &marotte.EntrySteer{
 		Text: p.Text, Origin: p.Origin, State: marotte.SteerStateRead, Resends: p.Replaces,
 	}
-	t.stampRunNotice(chatSteerScope(chatID), steerID, steer)
+	t.stampRunNotice(chatSteerScope(chatID), steerID, p.Text, steer)
 	t.appendSteerInLane(ctx, chatID, lane, steerID, steer)
 }
 
-// appendSteerInLane is appendSteer for a steer one lane's own acknowledgement
-// evidenced: in that lane, so the entry says WHICH agent read it, sealing only it.
+// appendSteerInLane is appendSteer for a steer one lane's own acknowledgement evidenced, filed by
+// turnlog.Turn.SteerRead.
 func (t *Translator) appendSteerInLane(
 	ctx context.Context, chatID marotte.ChatID, lane, steerID string, steer *marotte.EntrySteer,
 ) {
-	if lane == "" {
-		t.appendSteer(ctx, chatSteerScope(chatID), steerID, steer)
-		return
-	}
 	ctx = durable.Context(ctx)
 	turn, ok := t.turns.OwnTurn(chatID)
 	if !ok {
@@ -224,7 +299,7 @@ func (t *Translator) appendSteerInLane(
 		t.appendBetweenTurns(ctx, chatID, marotte.EntryKindSteer, steerID, steer)
 		return
 	}
-	sealed, err := turn.SteerInLane(ctx, lane, steerID, steer)
+	sealed, err := turn.SteerRead(ctx, lane, steerID, steer)
 	t.publishSealed(ctx, chatScope(chatID), sealed)
 	if err != nil {
 		appendFailed(chatScope(chatID), string(marotte.EntryKindSteer), err)
@@ -274,4 +349,39 @@ func (t *Translator) steerOrigin(chatID marotte.ChatID, steerID string) marotte.
 		return marotte.SteerOriginAgent
 	}
 	return t.steers.SteerOrigin(chatID, steerID)
+}
+
+// readSteers holds, per steer scope, the ids its turn read since the scope's last steering_cleared.
+type readSteers struct {
+	by map[marotte.ChatID]map[string]struct{}
+	mu sync.Mutex
+}
+
+func newReadSteers() *readSteers {
+	return &readSteers{by: make(map[marotte.ChatID]map[string]struct{})}
+}
+
+// add records id as read and reports whether it was new.
+func (r *readSteers) add(key marotte.ChatID, id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ids := r.by[key]
+	if ids == nil {
+		ids = make(map[string]struct{})
+		r.by[key] = ids
+	}
+	if _, seen := ids[id]; seen {
+		return false
+	}
+	ids[id] = struct{}{}
+	return true
+}
+
+// take answers the scope's ids and forgets them.
+func (r *readSteers) take(key marotte.ChatID) map[string]struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ids := r.by[key]
+	delete(r.by, key)
+	return ids
 }

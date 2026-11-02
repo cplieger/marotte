@@ -16,11 +16,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func hubWithBridge(t *testing.T, workDir string, br ACPBridge) *Runtime {
+func hubWithBridge(t *testing.T, workDir string, br engineSession) *Runtime {
 	t.Helper()
 	cs := newTestChatStore()
-	factory := func() ACPBridge { return br }
-	h := New(t.Context(), workDir, factory, cs)
+	factory := func() engineSession { return br }
+	h := newRuntimeOn(t.Context(), workDir, fakeEngineOf(factory, nil), cs)
 	cs.wire(h)
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -32,7 +32,7 @@ func hubWithBridge(t *testing.T, workDir string, br ACPBridge) *Runtime {
 	if err != nil {
 		t.Fatalf("Setup: OpenBridge(c1): %v", err)
 	}
-	sb.bridge = br
+	sb.bridge = guardSession(br)
 	h.bridge.mgr.mu.Lock()
 	h.bridge.mgr.bridges["c1"] = sb
 	h.bridge.mgr.mu.Unlock()

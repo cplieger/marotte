@@ -22,12 +22,6 @@ class SessionContextController {
     return this.lastModelCache;
   }
   setLastModel(id: string): void {
-    // Guard against redundant writes: an earlier bug had the SSE settings_updated handler calling
-    // setLastModel with the server-confirmed value, which patched it straight back, which triggered
-    // another settings_updated, which… looped at debounce speed forever.
-    if (this.lastModelCache === id) {
-      return;
-    }
     this.lastModelCache = id;
     void patchSettings({ last_model: id });
   }
@@ -69,7 +63,8 @@ export function setLastModel(id: string): void {
   instance.setLastModel(id);
 }
 
-/** Restore last_model from settings on startup. */
+/** Adopt last_model from settings the server holds. Cache-only: the server's value is no pick to
+ *  write back, and writing it would undo a pick still on its way. */
 export function restoreLastModel(id: string | undefined): void {
   instance.restoreLastModel(id);
 }

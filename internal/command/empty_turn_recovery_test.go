@@ -22,14 +22,22 @@ type recoveryOutcome struct {
 	mu          sync.Mutex
 }
 
+// OpenTurn refuses an open replacing a stopped turn, as the registry does in its open section.
 func (o *recoveryOutcome) OpenTurn(_ context.Context, _ marotte.ChatID, open TurnOpen) (string, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if open.Replaces != "" && o.stopped {
+		return "", ErrTurnStopped
+	}
 	o.openedTurns = append(o.openedTurns, open.Source)
 	return "t-" + strconv.Itoa(len(o.openedTurns)), nil
 }
 
-func (*recoveryOutcome) StartTurn(context.Context, marotte.ChatID, string) bool { return true }
+func (*recoveryOutcome) StartTurn(context.Context, TurnRef, context.CancelCauseFunc) bool {
+	return true
+}
+
+func (*recoveryOutcome) EndPromptCall(TurnRef) {}
 
 func (*recoveryOutcome) AwaitTurn(context.Context, marotte.ChatID, string) (marotte.TurnResult, error) {
 	return marotte.TurnResult{}, marotte.ErrNoSuchTurn
@@ -89,8 +97,6 @@ func (o *recoveryOutcome) ReleaseTurnReservation(marotte.ChatID) {
 	o.reserved = false
 }
 
-func (*recoveryOutcome) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
-
 func (*recoveryOutcome) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string, marotte.FailureKind, uint64) {
 }
 
@@ -99,7 +105,7 @@ func (*recoveryOutcome) AbandonInFlightTurn(context.Context, marotte.ChatID, str
 // "did the gate fire".
 type recoveryBridges struct {
 	*benchDeps
-	// onOpen runs inside OpenBridge, standing in for whatever lands mid-spawn.
+	// onOpen runs inside OpenBridge, standing in for whatever lands mid-open.
 	onOpen func()
 	bridge *recoveryBridge
 	closed int
@@ -130,6 +136,10 @@ func (*recoveryBridge) Call(context.Context, string, any) (*marotte.RPCResponse,
 	return &marotte.RPCResponse{}, nil
 }
 
+func (b *recoveryBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
+}
+
 func (b *recoveryBridge) CallAt(context.Context, string, any) (*marotte.RPCResponse, uint64, error) {
 	b.calls++
 	return &marotte.RPCResponse{}, 0, nil
@@ -140,10 +150,6 @@ func (*recoveryBridge) Respond(context.Context, int64, any, error) error { retur
 func (*recoveryBridge) SessionID() marotte.SessionID                     { return "s1" }
 func (*recoveryBridge) TryAcquireForPrompt() bool                        { return true }
 func (*recoveryBridge) ReleaseAfterPrompt()                              {}
-func (*recoveryBridge) BeginPromptCall(context.CancelCauseFunc) uint64   { return 1 }
-func (*recoveryBridge) EndPromptCall()                                   {}
-func (*recoveryBridge) ArmCancelGrace(uint64, time.Duration) bool        { return true }
-func (*recoveryBridge) PromptGeneration() uint64                         { return 1 }
 
 // The four clauses, each one moved on its own from a firing baseline. Every row
 // but the first must NOT re-prompt.
@@ -225,10 +231,10 @@ func TestRecoverEmptyTurn_GateRequiresAllClauses(t *testing.T) {
 	}
 }
 
-// TestRecoverEmptyTurn_StopDuringRespawnSendsNothing: a stop landing while the
-// retry's bridge spawns reaches no bridge that could carry it, so the retry's own
+// TestRecoverEmptyTurn_StopDuringReopenSendsNothing: a stop landing while the
+// retry's session opens reaches no bridge that could carry it, so the retry's own
 // read is the only thing between the reader's Stop and a second paid prompt.
-func TestRecoverEmptyTurn_StopDuringRespawnSendsNothing(t *testing.T) {
+func TestRecoverEmptyTurn_StopDuringReopenSendsNothing(t *testing.T) {
 	outcome := &recoveryOutcome{}
 	bridges := &recoveryBridges{benchDeps: newBenchDeps()}
 	bridges.onOpen = func() {
@@ -250,7 +256,7 @@ func TestRecoverEmptyTurn_StopDuringRespawnSendsNothing(t *testing.T) {
 		t.Errorf("turns opened = %v, want none for a stopped retry", outcome.openedTurns)
 	}
 	if bridges.bridge == nil || bridges.bridge.calls != 0 {
-		t.Errorf("prompt calls on the respawned bridge = %v, want 0", bridges.bridge)
+		t.Errorf("prompt calls on the reloaded session = %v, want 0", bridges.bridge)
 	}
 }
 
@@ -272,6 +278,10 @@ func (b *orderedRetryBridges) OpenBridge(context.Context, marotte.ChatID, string
 type orderedRetryBridge struct {
 	recoveryBridge
 	add func(string)
+}
+
+func (b *orderedRetryBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
+	return promptViaCallAt(ctx, b, params, commit)
 }
 
 func (b *orderedRetryBridge) CallAt(_ context.Context, method string, _ any) (*marotte.RPCResponse, uint64, error) {

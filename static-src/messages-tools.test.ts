@@ -3,10 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ToolCall } from "./types.js";
 import type * as ToolSchema from "./tool-schema.js";
 
-// Heavy DOM deps mocked; store-signals, output-render and reactive stay real (the paint goes through them).
-vi.mock("./tool-group.js", () => ({
-  maybeCollapseGroup: vi.fn(),
-}));
+// store-signals, output-render and reactive stay real (the paint goes through them).
 // Spread from the original: the module is pure and the title cases exercise its real display-title functions.
 vi.mock("./tool-schema.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ToolSchema>()),

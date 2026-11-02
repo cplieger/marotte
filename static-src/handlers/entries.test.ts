@@ -7,6 +7,7 @@ vi.mock("../store.js", () => ({
   appendEntry: vi.fn(),
   applyDelta: vi.fn(),
   applyToolProgress: vi.fn(() => ({})),
+  clearTurnDropped: vi.fn(),
   get: vi.fn(() => ({ thinking: false })),
   markSteersCompacted: vi.fn(),
   openEntry: vi.fn(),
@@ -26,6 +27,7 @@ import {
   appendEntry,
   applyDelta,
   applyToolProgress,
+  clearTurnDropped,
   get,
   markSteersCompacted,
   openEntry,
@@ -69,6 +71,7 @@ const EVERY_OP = [
   refusal,
   compacted,
   thinking,
+  vi.mocked(clearTurnDropped),
 ];
 
 function send<K extends keyof SSEPayloads>(type: K, payload: unknown, chatID = CHAT): void {
@@ -96,6 +99,8 @@ describe("each event is one call into one store operation", () => {
     // No `thinking` latch here: a turn with no `turn_close` IS the liveness, and this frame
     // is what puts one in the store.
     expect(thinking).not.toHaveBeenCalled();
+    // A new turn is running, so an earlier `/drop` no longer waives the chat's open turns.
+    expect(vi.mocked(clearTurnDropped)).toHaveBeenCalledWith(CHAT);
   });
 
   it("opens the entry an entry_opened announces", () => {

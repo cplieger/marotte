@@ -85,7 +85,7 @@ describe("row actions a finger cannot hover are shown on a coarse pointer", () =
 // (WCAG 2.5.5, Apple's HIG) and the box stays small. Every case measures BOTH numbers.
 // ---------------------------------------------------------------------------
 
-/** The composer's `+` menu, as chat-options.ts builds it. Synthetic rather than
+/** The composer's chat-options menu, as chat-options.ts builds it. Synthetic rather than
  *  the real card: the subject here is the stylesheet, and chat-options.test.ts
  *  owns the DOM this mirrors. */
 const OPT_ROWS = [
@@ -183,7 +183,7 @@ describe("a native box control paints its own size and grows only its target", (
     }
   });
 
-  it("the + menu's supervised switch paints at 1rem on both tiers", () => {
+  it("the chat-options menu's supervised switch paints at 1rem on both tiers", () => {
     mount(optMenuHTML());
     const input = boxHost.querySelector(".chat-opt-row > input");
     if (input === null) {
@@ -198,7 +198,7 @@ describe("a native box control paints its own size and grows only its target", (
   });
 });
 
-describe("the + menu's switch takes its target from its row, not an expander", () => {
+describe("the chat-options menu's switch takes its target from its row, not an expander", () => {
   it("gives the row itself at least --hit-floor on both tiers", () => {
     // The switch drops the expander because its <label> is the bigger target, so a shrunk row fails here.
     mount(optMenuHTML());
@@ -338,7 +338,7 @@ describe("the file browser's git letter grows its target, not its mark", () => {
   });
 });
 
-describe("every + menu row's label starts on one x", () => {
+describe("every chat-options menu row's label starts on one x", () => {
   it("puts an action row's name and the switch row's name in the same column", () => {
     // The switch row lacked its neighbours' transparent 1px border and led with the checkbox, so its
     // label started 9px (fine) / 29px (coarse) right of theirs.

@@ -4,7 +4,8 @@
 // conversion runs BEFORE code decoration (markdown.ts `decorate`), so a fence never reaches
 // `finalizeBlock`'s innerHTML. A `data:` URL because the CSP is `img-src 'self' data:`
 // (internal/server/security.go), and `src` is set OUTSIDE `set_attr_dom`, whose `isSafeUrl`
-// rejects `data:`. The carrier is a closed ```svg fence; never add `mermaid` here.
+// rejects `data:`. The carrier is a closed ```svg fence; a ```mermaid one is `mermaid-block.ts`'s, which draws
+// markup and so cannot share this inert path.
 
 import { el } from "@cplieger/reactive";
 import { extractLang } from "./code-blocks.js";

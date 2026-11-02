@@ -3,7 +3,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { entryRenders, firstPlanSeq, rendersNothing } from "./block-window.js";
+import { entryRenders, rendersNothing, turnFolds } from "./block-window.js";
 import { makeTurn } from "./__test-helpers__/model.js";
 import type { Turn } from "./turns.js";
 import type { Entry, EntryKind } from "./wire/types.gen.js";
@@ -18,12 +18,14 @@ const KIND_SET: Record<EntryKind, true> = {
   steer: true,
   steer_ack: true,
   steer_delivered: true,
+  steer_cleared: true,
   plan: true,
   compaction: true,
   compaction_failed: true,
   safety_blocked: true,
   model_switched: true,
   model_routed: true,
+  model_fallback: true,
   mode_switched: true,
   turn_revert: true,
   reconciled: true,
@@ -40,8 +42,8 @@ const bodyArb = fc.array(
 
 /** The count `rendersNothing` replaced: every entry the body draws in `lane`, read over the whole body. */
 function drawnCount(t: Turn, lane = ""): number {
-  const firstPlan = firstPlanSeq(t, lane);
-  return t.body.filter((e) => entryRenders(e, lane, firstPlan)).length;
+  const folds = turnFolds(t, lane);
+  return t.body.filter((e) => entryRenders(e, lane, folds)).length;
 }
 
 /** `body` whose entries past the first THROW when read, so a scan that does not stop at the

@@ -10,6 +10,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,6 +37,11 @@ type rewriteSite struct {
 
 func (s rewriteSite) String() string { return fmt.Sprintf("%s:%d in %s", s.file, s.line, s.fn) }
 
+func hasGoMod(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "go.mod"))
+	return err == nil
+}
+
 func TestSwapMerged_RewriteHasOneProductionCaller(t *testing.T) {
 	root := moduleRoot(t)
 	var sites []rewriteSite
@@ -46,7 +52,9 @@ func TestSwapMerged_RewriteHasOneProductionCaller(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
-			if callerSkipDirs[d.Name()] {
+			// A directory with its own go.mod is another module, outside the root module this census
+			// covers, as `go ./...` excludes it; a scratch worktree of this repo is one such module.
+			if callerSkipDirs[d.Name()] || (path != root && hasGoMod(path)) {
 				return fs.SkipDir
 			}
 			return nil

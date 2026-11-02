@@ -84,6 +84,11 @@ export function scrollToBottom(): void {
 export function setLoadMore(fn: (() => void) | null, hasMore: boolean): void {
   getInstance().setLoadMore(fn, hasMore);
 }
+/** @internal Test seam: publishes what the history-edge observer would, which fake geometry cannot produce. */
+// deadset:ignore DS1004 -- test seam: the history edge's published position
+export function noteHistoryEdge(near: boolean): void {
+  getInstance().noteHistoryEdge(near);
+}
 /** Re-measure the older-page pass in flight where the reader stands now; a no-op once the page has landed. A writer
  *  that may land the page calls it just before writing, because the browser can move the scroller before that move's
  *  `scroll` event runs. */
@@ -104,6 +109,9 @@ export function onTranscriptMutate(cb: () => void): () => void {
 }
 export function onReaderGesture(cb: () => void): () => void {
   return getInstance().onReaderGesture(cb);
+}
+export function onLiveEdgeRequest(cb: () => void): () => void {
+  return getInstance().onLiveEdgeRequest(cb);
 }
 /** Register `cb` for a scroll that has settled into one frame; returns the unregister. */
 export function onViewportChange(cb: () => void): () => void {

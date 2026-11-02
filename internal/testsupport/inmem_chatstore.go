@@ -38,6 +38,12 @@ func (s *InMemoryChatStore) Get(_ context.Context, id marotte.ChatID) (*marotte.
 	return cloneChat(c), true
 }
 
+// Lookup is Get with the store's error arm; an in-memory record is never unreadable.
+func (s *InMemoryChatStore) Lookup(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool, error) {
+	c, found := s.Get(ctx, id)
+	return c, found, nil
+}
+
 // List returns headers for all stored chats.
 func (s *InMemoryChatStore) List(_ context.Context) []marotte.ChatHeader {
 	s.mu.Lock()

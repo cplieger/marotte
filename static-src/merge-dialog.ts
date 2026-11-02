@@ -2,11 +2,12 @@
 // pick (`last_merge_method`, cross-device) where offered, else the first listed; a changed pick persists on confirm.
 
 import { createDialog, type DialogController } from "@cplieger/ui-primitives/dialog";
-import { el } from "@cplieger/reactive";
+import { computed, effect, el } from "@cplieger/reactive";
 
 import { loadSettings } from "./persist.js";
 import { patchAppSettings } from "./actions/settings.js";
 import { readAffordances } from "./actions/git-prs.js";
+import { ensureForges, usableAccount } from "./forge-store.js";
 
 /** What the caller renders into the dialog chrome, and the repository whose
  *  merge methods it offers. */
@@ -72,18 +73,58 @@ function controllerFor(dlg: HTMLDialogElement): DialogController {
   return ctl;
 }
 
-async function readMethods(opts: MergeDialogOpts): Promise<{ methods: string[]; error: string }> {
-  const o = await readAffordances.dispatch({ forge_id: opts.forge_id, repo_id: opts.repo_id })
-    .outcome;
-  if (o.status !== "success") {
-    const why = o.status === "error" ? o.error.message : "the read was cancelled";
-    return { methods: [], error: `Could not read this repository's merge methods. ${why}` };
+const ACCOUNT_GONE = "This forge account can no longer be used. Check it in Sources.";
+const ACCOUNT_CHANGED =
+  "This forge account changed while the dialog was open. Close it and open it again.";
+
+/** Why methods read through `account` cannot be offered for connection `forgeId`; "" when they can. */
+function accountProblem(forgeId: string, account: string | undefined): string {
+  const now = usableAccount(forgeId);
+  if (now === undefined) {
+    return ACCOUNT_GONE;
   }
-  const methods = o.value.merge_strategies;
-  return {
-    methods,
-    error: methods.length === 0 ? "The forge names no merge method for this repository." : "",
-  };
+  return now === account ? "" : ACCOUNT_CHANGED;
+}
+
+/**
+ * The repository's merge methods and the account they were read through, which is the row's current one. An answer
+ * read through another account is read once more (the first dispatch has settled, so it is not joined); a second
+ * such answer, or a row that can no longer be used, offers nothing.
+ */
+async function readMethods(
+  opts: MergeDialogOpts,
+): Promise<{ methods: string[]; account?: string | undefined; error: string }> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const o = await readAffordances.dispatch({ forge_id: opts.forge_id, repo_id: opts.repo_id })
+      .outcome;
+    if (o.status !== "success") {
+      const why = o.status === "error" ? o.error.message : "the read was cancelled";
+      return {
+        methods: [],
+        error: `Could not read this repository's merge methods. ${why}`,
+      };
+    }
+    if ((await ensureForges()) === null) {
+      return {
+        methods: [],
+        error:
+          "Could not read this repository's merge methods. The forge accounts could not be read.",
+      };
+    }
+    const problem = accountProblem(opts.forge_id, o.value.account);
+    if (problem === ACCOUNT_GONE) {
+      return { methods: [], error: ACCOUNT_GONE };
+    }
+    if (problem === "") {
+      const methods = o.value.merge_strategies;
+      return {
+        methods,
+        account: o.value.account,
+        error: methods.length === 0 ? "The forge names no merge method for this repository." : "",
+      };
+    }
+  }
+  return { methods: [], error: ACCOUNT_CHANGED };
 }
 
 function methodRow(method: string, checked: boolean): HTMLElement {
@@ -180,10 +221,12 @@ export async function openMergeMethodDialog(opts: MergeDialogOpts): Promise<stri
         ctl.close();
       });
     }
+    let unfollow = (): void => undefined;
     // Any close path resolves null unless the confirm already settled.
     dlg.addEventListener(
       "close",
       () => {
+        unfollow();
         settle(null);
       },
       { once: true },
@@ -203,11 +246,23 @@ export async function openMergeMethodDialog(opts: MergeDialogOpts): Promise<stri
       }
       const remembered = settings?.last_merge_method ?? "";
       initial = read.methods.includes(remembered) ? remembered : (read.methods[0] ?? "");
-      for (const m of read.methods) {
-        methods.appendChild(methodRow(m, m === initial));
-      }
-      setStatus(status, "", "");
-      freshConfirm.disabled = false;
+      // Until close, the methods are offered only while the row is still signed in as the account they were read
+      // through: the merge itself goes through whichever account the row holds.
+      const problem = computed(() => accountProblem(opts.forge_id, read.account));
+      unfollow = effect(() => {
+        for (const row of methods.querySelectorAll(".pr-merge-method")) {
+          row.remove();
+        }
+        freshConfirm.disabled = problem.value !== "";
+        if (problem.value !== "") {
+          setStatus(status, problem.value, "error");
+          return;
+        }
+        for (const m of read.methods) {
+          methods.appendChild(methodRow(m, m === initial));
+        }
+        setStatus(status, "", "");
+      });
     });
   });
 }

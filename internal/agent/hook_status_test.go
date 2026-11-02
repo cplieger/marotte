@@ -81,3 +81,13 @@ func TestHookStatusCache_EqualLengthRenamePublishInvalidates(t *testing.T) {
 		t.Errorf("cachedBoolField.get() after an equal-length rename publish of %s = true, want false", v2)
 	}
 }
+
+func TestHookStatusCache_BOMPrefixedFileIsRead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cli.json")
+	if err := os.WriteFile(path, append([]byte{0xEF, 0xBB, 0xBF}, `{"k":false}`...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := newCachedBoolField(path, "k", true).get(); got {
+		t.Errorf("cachedBoolField.get() over a BOM-prefixed {\"k\":false} = true, want false (the default leaked through)")
+	}
+}

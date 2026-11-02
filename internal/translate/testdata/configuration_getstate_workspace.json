@@ -1,0 +1,155 @@
+{
+ "view": {
+  "observer": "workspace",
+  "roots": [
+   "/ws/r1",
+   "/ws/r2"
+  ]
+ },
+ "layers": [
+  {
+   "id": "kiro-agent-defaults",
+   "name": "Kiro Defaults"
+  },
+  {
+   "id": "client-defaults",
+   "name": "Client defaults"
+  },
+  {
+   "id": "kiro-service",
+   "name": "Kiro"
+  },
+  {
+   "id": "organization",
+   "name": "Your Organization"
+  },
+  {
+   "id": "machine",
+   "name": "Machine Administrator"
+  },
+  {
+   "id": "user-synced",
+   "name": "Cloud Config"
+  },
+  {
+   "id": "user-local",
+   "name": "Local Settings (~/.kiro)"
+  },
+  {
+   "id": "kiro-agent",
+   "name": "Kiro Agent"
+  },
+  {
+   "id": "client-connection",
+   "name": "This Client"
+  },
+  {
+   "id": "workspace",
+   "name": "Workspace"
+  },
+  {
+   "id": "agent",
+   "name": "Agent"
+  },
+  {
+   "id": "session",
+   "name": "This Session"
+  }
+ ],
+ "settings": [],
+ "resources": [
+  {
+   "type": "steering",
+   "items": []
+  },
+  {
+   "type": "agent",
+   "items": [
+    {
+     "krn": "krn:kiro-agent-defaults::agent/wf-auto-researcher",
+     "layer": "kiro-agent-defaults",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "id": "wf-auto-researcher",
+      "name": "wf-auto-researcher",
+      "description": "Autonomous research subagent. Reads directions, runs experiments, benchmarks results, and commits improvements."
+     }
+    },
+    {
+     "krn": "krn:user-local::agent/.kiro/agents/scribe.md",
+     "layer": "user-local",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "id": "scribe",
+      "name": "scribe",
+      "description": "Writes release notes from the git log"
+     }
+    },
+    {
+     "krn": "krn:workspace:13a4f519f9cdd122:agent/.kiro/agents/dup.md",
+     "layer": "workspace",
+     "standing": {
+      "kind": "active"
+     },
+     "readFrom": {
+      "krn": "krn:workspace:13a4f519f9cdd122:file/.kiro/agents/dup.md",
+      "uri": "file:///ws/r1/.kiro/agents/dup.md"
+     },
+     "value": {
+      "id": "dup",
+      "name": "dup",
+      "description": "dup from r1"
+     }
+    },
+    {
+     "krn": "krn:workspace:13a4f519f9cdd122:agent/.kiro/agents/semantic_reviewer.md",
+     "layer": "workspace",
+     "standing": {
+      "kind": "active"
+     },
+     "readFrom": {
+      "krn": "krn:workspace:13a4f519f9cdd122:file/.kiro/agents/semantic_reviewer.md",
+      "uri": "file:///ws/r1/.kiro/agents/semantic_reviewer.md"
+     },
+     "value": {
+      "id": "semantic_reviewer",
+      "name": "semantic_reviewer",
+      "description": "override from r1"
+     }
+    },
+    {
+     "krn": "krn:workspace:2d361211d09ea397:agent/.kiro/agents/dup.md",
+     "layer": "workspace",
+     "standing": {
+      "kind": "active"
+     },
+     "readFrom": {
+      "krn": "krn:workspace:2d361211d09ea397:file/.kiro/agents/dup.md",
+      "uri": "file:///ws/r2/.kiro/agents/dup.md"
+     },
+     "value": {
+      "id": "dup",
+      "name": "dup",
+      "description": "dup from r2"
+     }
+    },
+    {
+     "krn": "krn:user-local::agent/.kiro/agents/dup.md",
+     "layer": "user-local",
+     "standing": {
+      "kind": "active"
+     },
+     "value": {
+      "id": "dup",
+      "name": "dup",
+      "description": "dup from ~/.kiro"
+     }
+    }
+   ]
+  }
+ ]
+}

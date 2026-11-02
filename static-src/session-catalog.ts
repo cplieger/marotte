@@ -1,15 +1,15 @@
 // The workspace's mode, model and effort catalog: ONE reader of `GET /api/config-template`, because
-// the endpoint is a utility-bridge RPC and a second reader seeding the same surfaces costs another
-// subprocess round trip per boot and per gap.
+// the endpoint is an agent engine call and a second reader seeding the same surfaces costs another
+// engine round trip per boot and per gap.
 
 import type { ModelInfo, SessionModel } from "./types.js";
 import { apiGetTyped } from "./api-client.js";
+import { BUS_CATALOG_MODELS, emitBus } from "./bus.js";
 import { observeStamp } from "./subject-versions.js";
 import { decodeConfigTemplateResponse } from "./wire/decoders.gen.js";
 import type { ConfigTemplateResponse } from "./wire/types.gen.js";
 import { CATALOG_REQUEST_TIMEOUT_MS, refreshCatalog } from "./model-catalog.js";
 import { setCatalogModes } from "./roles.js";
-import { setCatalogEfforts } from "./effort.js";
 import { refreshPickerIfVisible, setCatalogPhase, setPickerModels } from "./picker.js";
 import { refreshContextUI } from "./context-ui.js";
 import { MODEL_CONTEXT_SIZES, contextSizeFor, getActive, parseContextSize } from "./store.js";
@@ -21,12 +21,14 @@ function toModelInfo(m: SessionModel): ModelInfo {
     model_name: m.name,
     ...(m.description === undefined || m.description === "" ? {} : { description: m.description }),
     ...(m.rate_multiplier === undefined ? {} : { rate_multiplier: m.rate_multiplier }),
-    ...(m.has_effort === undefined ? {} : { has_effort: m.has_effort }),
     ...(m.thinking_toggleable === true ? { thinking_toggleable: true } : {}),
     ...(m.thinking_default_off === true ? { thinking_default_off: true } : {}),
     ...(m.default_effort_level === undefined || m.default_effort_level === ""
       ? {}
       : { default_effort_level: m.default_effort_level }),
+    ...(m.effort_tiers === undefined || m.effort_tiers.length === 0
+      ? {}
+      : { effort_tiers: m.effort_tiers }),
   };
 }
 
@@ -50,14 +52,9 @@ export function fetchCatalog(
         // The `catalog` digest stamp, once the answer is applied below. First rather than last only
         // because nothing below can fail: every arm is a store write.
         observeStamp(d.subject);
-        // ONE rule over all three: an EMPTY list is the absence of a vocabulary rather than a
-        // value, so it never replaces one an earlier answer landed. Per list because each arrives
-        // empty on its own, a merely COLD cache included.
-        if (d.effort_levels.length > 0) {
-          // A chat with no bridge has no session catalog, so without this the effort control has
-          // neither its tier list nor the level the next session would run at.
-          setCatalogEfforts(d.effort_levels, d.effort_active ?? "");
-        }
+        // ONE rule over both: an EMPTY list is the absence of a vocabulary rather than a value,
+        // so it never replaces one an earlier answer landed. Per list because each arrives empty
+        // on its own, a merely COLD cache included.
         if (d.modes.length > 0) {
           setCatalogModes(d.modes);
         }
@@ -74,8 +71,8 @@ export function fetchCatalog(
           if (active.usage.context_size === 0 && active.model !== "") {
             active.usage.context_size = contextSizeFor(active.model);
           }
-          // The model pill names the chat's reasoning tier from the catalog's own capability gate
-          // and default rung. Nothing else repaints it on this path.
+          // The model pill names the chat's reasoning tier from the model's catalog tiers and
+          // default. Nothing else repaints it on this path.
           refreshContextUI(active);
         }
       },
@@ -97,4 +94,5 @@ function populatePickerModels(models: ModelInfo[], activeModel: string): void {
   }
   setPickerModels(models);
   refreshPickerIfVisible(activeModel === "" ? undefined : activeModel);
+  emitBus(BUS_CATALOG_MODELS);
 }

@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -41,40 +43,21 @@ func (w *recordingWire) transport() http.RoundTripper {
 	})
 }
 
-func testStore(t *testing.T) *creds.FileStore {
-	t.Helper()
-	store, reason := openCredentialStore(t.TempDir())
-	if store == nil {
-		t.Fatalf("Setup: open store: %s", reason)
+func TestOpenConn_CarriesTheConnectionAndTheStoredToken(t *testing.T) {
+	cfg := t.TempDir()
+	spec := specFor(KindGitHub, "ghe.example.com")
+	spec.WebBaseURL = "https://ghe.example.com"
+	store := openTestStore(t, cfg)
+	if err := store.Save(slotKey(spec.ID, 0), staticCredential(&spec, "alice", "ghe-token")); err != nil {
+		t.Fatal(err)
 	}
-	return store
-}
-
-func saveStatic(t *testing.T, store *creds.FileStore, rec *connectionRecord, token string) {
-	t.Helper()
-	if err := store.Save(rec.ID, creds.Record{
-		Family: rec.Kind.family(), WebBaseURL: rec.webBase(), Kind: forgeapi.CredKindStaticPAT,
-		Token: token, Issued: time.Now(), Account: "alice",
-	}); err != nil {
-		t.Fatalf("Setup: save credential: %v", err)
-	}
-}
-
-func TestClientFor_CarriesTheRecordsConnectionAndOptions(t *testing.T) {
-	store := testStore(t)
-	rec := connectionRecord{
-		ID: "github:ghe.example.com", Kind: KindGitHub, Host: "ghe.example.com", WebBaseURL: "https://ghe.example.com",
-	}
-	saveStatic(t, store, &rec, "ghe-token")
 	wire := &recordingWire{body: `{"login":"alice"}`}
-	f := newClientFactory()
-	f.extra = []forgeapi.Option{forgeapi.WithWireTransport(wire.transport())}
 
-	c, err := f.clientFor(store, &rec)
+	core, _, _, err := openConn(store, &spec, newFamilyClient, []forgeapi.Option{forgeapi.WithWireTransport(wire.transport())})
 	if err != nil {
-		t.Fatalf("clientFor(%+v) = %v", rec, err)
+		t.Fatalf("openConn(%+v) = %v", spec, err)
 	}
-	acct, err := c.core.Whoami(t.Context())
+	acct, err := core.Whoami(t.Context())
 	if err != nil || acct.Login != "alice" {
 		t.Fatalf("Whoami() = %+v, %v; want alice", acct, err)
 	}
@@ -90,34 +73,7 @@ func TestClientFor_CarriesTheRecordsConnectionAndOptions(t *testing.T) {
 	}
 }
 
-func TestClientFor_RebuildsOnlyWhenTheRecordChanges(t *testing.T) {
-	store := testStore(t)
-	rec := githubRecord()
-	saveStatic(t, store, &rec, "tok")
-	f := newClientFactory()
-	built := 0
-	f.newCore = func(*connectionRecord, []forgeapi.Option) (forgeapi.Core, error) {
-		built++
-		return &fakeCore{}, nil
-	}
-
-	first, _ := f.clientFor(store, &rec)
-	bookkeeping := rec
-	bookkeeping.HelperValue, bookkeeping.RotationCursor = "/bin/marotte git-credential", "cursor"
-	bookkeeping.OwnerScopes = []string{"acme"}
-	second, _ := f.clientFor(store, &bookkeeping)
-	if built != 1 || first.core != second.core {
-		t.Errorf("a record differing only in its helper value, rotation cursor and owner scopes built %d clients, want 1 reused",
-			built)
-	}
-	moved := rec
-	moved.WebBaseURL = "https://github.example.com"
-	if _, err := f.clientFor(store, &moved); err != nil || built != 2 {
-		t.Errorf("a re-addressed record built %d clients (err %v), want a second one", built, err)
-	}
-}
-
-func TestSourceFor_CarriesTheRecordsPostures(t *testing.T) {
+func TestOpenConn_TheSourceCarriesTheConnectionsPostures(t *testing.T) {
 	var refreshes int
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/login/oauth/access_token" {
@@ -131,14 +87,13 @@ func TestSourceFor_CarriesTheRecordsPostures(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	host := strings.TrimPrefix(srv.URL, "https://")
-	rec := connectionRecord{
-		ID: MakeID(KindGitHub, host), Kind: KindGitHub, Host: host, WebBaseURL: srv.URL,
-		CAPEM:            string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})),
-		PrivateAddresses: true,
-	}
-	store := testStore(t)
+	spec := specFor(KindGitHub, host)
+	spec.WebBaseURL = srv.URL
+	spec.CAPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
+	spec.PrivateAddresses = true
+	store := openTestStore(t, t.TempDir())
 	now := time.Now().Truncate(time.Second)
-	if err := store.Save(rec.ID, creds.Record{
+	if err := store.Save(slotKey(spec.ID, 0), creds.Record{
 		Family: forgeapi.FamilyGitHub, WebBaseURL: srv.URL, Kind: forgeapi.CredKindRotatingOAuth,
 		Token: "token-old", Issued: now.Add(-8 * time.Hour), Expiry: now.Add(time.Minute),
 		RefreshToken: "refresh-old", RefreshExpiry: now.Add(30 * 24 * time.Hour), ClientID: "client", Account: "alice",
@@ -146,9 +101,9 @@ func TestSourceFor_CarriesTheRecordsPostures(t *testing.T) {
 		t.Fatalf("Setup: save credential: %v", err)
 	}
 
-	src, err := newClientFactory().sourceFor(store, &rec)
+	_, src, _, err := openConn(store, &spec, newFamilyClient, nil)
 	if err != nil {
-		t.Fatalf("sourceFor(a private-range record) = %v", err)
+		t.Fatalf("openConn(a private-range record) = %v", err)
 	}
 	token, err := src.Token(t.Context())
 	if err != nil || token != "token-new" || refreshes != 1 {
@@ -156,10 +111,175 @@ func TestSourceFor_CarriesTheRecordsPostures(t *testing.T) {
 			token, err, refreshes)
 	}
 
-	_, err = creds.NewSource(store, rec.ID, connectionFor(&rec))
+	_, err = creds.NewSource(store, slotKey(spec.ID, 0), connectionFor(&spec))
 	var ferr *forgeapi.Error
 	if !errors.As(err, &ferr) || ferr.Code != forgeapi.CodePrivateAddressRefused {
 		t.Errorf("a source built without the record's postures = %v, want %q", err, forgeapi.CodePrivateAddressRefused)
+	}
+}
+
+func TestStoredToken_ReadsTheStoreOncePerRequest(t *testing.T) {
+	spec := specFor(KindGitHub, "ghe.example.com")
+	spec.WebBaseURL = "https://ghe.example.com"
+	key := slotKey(spec.ID, 0)
+	store := &failingLoads{FileStore: openTestStore(t, t.TempDir()), key: key}
+	if err := store.Save(key, staticCredential(&spec, "alice", "ghe-token")); err != nil {
+		t.Fatal(err)
+	}
+	wire := &recordingWire{body: `{"login":"alice"}`}
+	core, _, _, err := openConn(store, &spec, newFamilyClient, []forgeapi.Option{forgeapi.WithWireTransport(wire.transport())})
+	if err != nil {
+		t.Fatalf("openConn(%+v) = %v", spec, err)
+	}
+	store.resetLoads()
+
+	for range 3 {
+		if _, err := core.Whoami(t.Context()); err != nil {
+			t.Fatalf("Whoami() = %v", err)
+		}
+	}
+	if got, sent := store.loads(), len(wire.seen); sent != 3 || got != sent {
+		t.Errorf("%d requests read the credential store %d times, want 3 requests and one read each", sent, got)
+	}
+}
+
+// A refresh the forge answered but the store could not take leaves the new pair
+// held in this process: a reader's request goes out with that pair's token, from
+// one read, and never with the token it replaced.
+func TestStoredToken_SendsAHeldRotatedPairsToken(t *testing.T) {
+	cfg := t.TempDir()
+	dir := filepath.Join(cfg, credentialStoreDir)
+	var (
+		mu        sync.Mutex
+		sent      []string
+		refreshes atomic.Int32
+	)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/login/oauth/access_token":
+			if refreshes.Add(1) == 1 {
+				if err := os.Chmod(dir, 0o750); err != nil {
+					t.Errorf("widen the store: %v", err)
+				}
+			}
+			_, _ = io.WriteString(w, rotatedAnswer)
+		case "/api/v3/user":
+			mu.Lock()
+			sent = append(sent, r.Header.Get("Authorization"))
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"login":"alice"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	ts := &tokenServer{srv: srv}
+	spec := ts.record()
+	key := slotKey(spec.ID, spec.Slot)
+	store := &failingLoads{FileStore: openTestStore(t, cfg), key: key}
+	if err := store.Save(key, rotatingCredential(srv.URL, time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	core, src, _, err := openConn(store, &spec, newFamilyClient, nil)
+	if err != nil {
+		t.Fatalf("openConn(%+v) = %v", spec, err)
+	}
+	if token, err := src.Token(t.Context()); err == nil || token != "" {
+		t.Fatalf("Setup: the refresh's Token() with the store refusing the write = (%q, %v), want the store's failure", token, err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("Setup: narrow the store: %v", err)
+	}
+	store.resetLoads()
+
+	acct, err := core.Whoami(t.Context())
+	if err != nil || acct.Login != "alice" {
+		t.Errorf("Whoami() with a rotated pair held = (%+v, %v), want alice", acct, err)
+	}
+	if got := store.loads(); got != 1 {
+		t.Errorf("the request read the credential store %d times, want 1", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sent) != 1 || !strings.HasSuffix(sent[0], " token-new") {
+		t.Errorf("the forge saw Authorization %q, want one request carrying the held pair's token-new", sent)
+	}
+	if slices.ContainsFunc(sent, func(h string) bool { return strings.Contains(h, "token-old") }) {
+		t.Errorf("the forge saw Authorization %q, want the replaced token-old never sent", sent)
+	}
+	if n := refreshes.Load(); n != 1 {
+		t.Errorf("the forge saw %d token requests, want 1: a reader's request never refreshes", n)
+	}
+}
+
+func TestStoredToken_HandsOverOrRefusesFromOneRead(t *testing.T) {
+	spec := specFor(KindGitHub, "ghe.example.com")
+	spec.WebBaseURL = "https://ghe.example.com"
+	key := slotKey(spec.ID, 0)
+	now := time.Now().Truncate(time.Second)
+	rotating := func(expiry time.Time, mark creds.Usability) *creds.Record {
+		return &creds.Record{
+			Family: forgeapi.FamilyGitHub, WebBaseURL: spec.WebBaseURL, Kind: forgeapi.CredKindRotatingOAuth,
+			Token: "token-old", Issued: now.Add(-8 * time.Hour), Expiry: expiry, Usability: mark,
+			RefreshToken: "refresh-old", RefreshExpiry: now.Add(30 * 24 * time.Hour), ClientID: "client", Account: "alice",
+		}
+	}
+	static := staticCredential(&spec, "alice", "ghe-token")
+	reconnect := &forgeapi.Error{Kind: forgeapi.KindUnauthorized, Code: forgeapi.CodeReconnectRequired, Message: reconnectReason}
+	renewed := &forgeapi.Error{Kind: forgeapi.KindTransient, Retryable: true, Message: "the token expired; it is renewed on the next check"}
+	unreadable := &forgeapi.Error{Kind: forgeapi.KindTransient, Retryable: true, Message: "the credential store could not be read"}
+	cases := []struct {
+		rec        *creds.Record
+		want       *forgeapi.Error
+		name       string
+		token      string
+		unreadable bool
+	}{
+		{name: "a valid static token is handed over", rec: &static, token: "ghe-token"},
+		{name: "a token due for refresh is handed over until it expires", rec: rotating(now.Add(time.Minute), creds.UsabilityUnmarked), token: "token-old"},
+		{name: "an expired token waits for the next check", rec: rotating(now.Add(-time.Minute), creds.UsabilityUnmarked), want: renewed},
+		{name: "a refused record requires a reconnect", rec: rotating(now.Add(8*time.Hour), creds.UsabilityReconnectRequired), want: reconnect},
+		{name: "a spent record requires a reconnect", rec: rotating(now.Add(8*time.Hour), creds.UsabilitySpent), want: reconnect},
+		{name: "no record requires a reconnect", want: reconnect},
+		{name: "an unreadable store fails as transient", rec: &static, unreadable: true, want: unreadable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &failingLoads{FileStore: openTestStore(t, t.TempDir()), key: key}
+			if tc.rec != nil {
+				if err := store.Save(key, *tc.rec); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, _, cred, err := openConn(store, &spec, newFamilyClient, nil)
+			if err != nil {
+				t.Fatalf("openConn(%+v) = %v", spec, err)
+			}
+			store.resetLoads()
+			if tc.unreadable {
+				store.fail = map[int]bool{1: true}
+			}
+
+			token, err := cred.Token(t.Context())
+			if token != tc.token {
+				t.Errorf("Token() = %q, want %q", token, tc.token)
+			}
+			var ferr *forgeapi.Error
+			switch {
+			case tc.want == nil && err != nil:
+				t.Errorf("Token() error = %v, want none", err)
+			case tc.want != nil && (!errors.As(err, &ferr) || ferr.Kind != tc.want.Kind || ferr.Code != tc.want.Code ||
+				ferr.Retryable != tc.want.Retryable || ferr.Message != tc.want.Message):
+				t.Errorf("Token() error = %#v, want %#v", err, tc.want)
+			}
+			if got := store.loads(); got != 1 {
+				t.Errorf("Token() read the credential store %d times, want 1", got)
+			}
+			if stored, _, _ := store.FileStore.Load(key); tc.rec != nil && stored.Token != tc.rec.Token {
+				t.Errorf("the stored token became %q, want %q: a read never refreshes", stored.Token, tc.rec.Token)
+			}
+		})
 	}
 }
 
@@ -215,63 +335,80 @@ func (f *fakeCore) ListMyPRs(_ context.Context, opts ...forgeapi.ListOption) (fo
 	return forgeapi.Page[forgeapi.PullRequest]{Items: f.prs}, nil
 }
 
-func recordManager(t *testing.T, core forgeapi.Core) *Manager {
-	t.Helper()
-	rec := githubRecord()
-	return recordManagerFor(t, &rec, core)
-}
-
-func recordManagerFor(t *testing.T, rec *connectionRecord, core forgeapi.Core) *Manager {
-	t.Helper()
-	stubPath(t)
-	cfg := t.TempDir()
-	seedStoreRecord(t, cfg, rec.ID, "bob")
-	m := NewManager(cfg)
-	saveRecords(t, m.conns, *rec)
-	m.clients.newCore = func(*connectionRecord, []forgeapi.Option) (forgeapi.Core, error) { return core, nil }
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatalf("Setup: Refresh() = %v", err)
-	}
-	return m
-}
-
-func TestManagerProbe_RecordRowAsksTheLibrary(t *testing.T) {
-	m := recordManager(t, &fakeCore{})
-
-	if err := m.probeConnection(t.Context(), "github:github.com"); err != nil {
-		t.Fatalf("Probe() with no CLI on PATH = %v, want the library's Whoami", err)
-	}
-	if got := m.get("github:github.com"); got.Email != "bob@example.com" || !got.Connected || got.LastProbed == 0 {
-		t.Errorf("row after Probe() = %+v, want connected with the library's email and a probe time", got)
-	}
-}
-
-func TestManagerClient_DegradedRecordIsUnavailable(t *testing.T) {
-	stubPath(t)
-	m := NewManager(t.TempDir())
-	saveRecords(t, m.conns, githubRecord())
-	m.store, m.storeReason = nil, "the store is broken"
-	if err := m.Refresh(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	_, err := m.client("github:github.com")
-	if !errors.Is(err, errConnectionUnusable) || !strings.Contains(err.Error(), "the store is broken") {
-		t.Errorf("client() over a degraded store = %v, want errConnectionUnusable naming the reason", err)
-	}
-}
-
-func TestRepoNames_RecordRowListsThroughTheManager(t *testing.T) {
+// HeldRepoNames announces the page its read stored, then answers it for the
+// account it was read through and nil for any other.
+func TestHeldRepoNames_AnnouncesTheLandingAndAnswersOnlyItsAccount(t *testing.T) {
 	core := &fakeCore{repos: forgeapi.Page[forgeapi.Repository]{Items: []forgeapi.Repository{
 		{Ref: forgeapi.RepoRef{DisplayPath: "bob/one"}},
 		{Ref: forgeapi.RepoRef{DisplayPath: "bob/two"}},
 	}}}
+	stubPath(t)
+	cfg := t.TempDir()
+	rec := githubRecord()
+	seedConnections(t, cfg, "bob", rec)
+	m, changes := loadedManager(t, cfg, core)
+	listed := Change{ID: rec.ID, ReposListed: true}
+
+	m.HeldRepoNames(t.Context(), rec.ID, testSignIn)
+	deadline := time.Now().Add(5 * time.Second)
+	for !slices.Contains(changes.all(), listed) {
+		if time.Now().After(deadline) {
+			t.Fatalf("notified %+v after the read, want %+v", changes.all(), listed)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got, want := m.HeldRepoNames(t.Context(), rec.ID, testSignIn), []string{"bob/one", "bob/two"}; !slices.Equal(got, want) {
+		t.Errorf("HeldRepoNames(%q) = %v, want %v", testSignIn, got, want)
+	}
+	if got := m.HeldRepoNames(t.Context(), rec.ID, "someone-else"); got != nil {
+		t.Errorf("HeldRepoNames(another account) = %v, want nil", got)
+	}
+}
+
+// gatedRepos is fakeCore with a repository list that answers once release closes.
+type gatedRepos struct {
+	*fakeCore
+	release chan struct{}
+}
+
+func (g *gatedRepos) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Repository], error) {
+	select {
+	case <-g.release:
+	case <-ctx.Done():
+		return forgeapi.Page[forgeapi.Repository]{}, ctx.Err()
+	}
+	return g.fakeCore.ListRepos(ctx, opts...)
+}
+
+// HeldRepoNames answers at once while the forge has not answered, and the
+// names once the read it started lands.
+func TestHeldRepoNames_NeverWaitsOnTheForge(t *testing.T) {
+	core := &gatedRepos{release: make(chan struct{}), fakeCore: &fakeCore{repos: forgeapi.Page[forgeapi.Repository]{
+		Items: []forgeapi.Repository{{Ref: forgeapi.RepoRef{DisplayPath: "bob/one"}}},
+	}}}
 	m := recordManager(t, core)
 
-	names, err := m.RepoNames(t.Context(), "github:github.com")
-	if err != nil {
-		t.Fatalf("RepoNames() = %v", err)
+	done := make(chan []string, 1)
+	go func() { done <- m.HeldRepoNames(t.Context(), "github:github.com", testSignIn) }()
+	select {
+	case names := <-done:
+		if names != nil {
+			t.Errorf("HeldRepoNames() before any read = %v, want nil", names)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("HeldRepoNames() waited on the forge's repository list")
 	}
-	if want := []string{"bob/one", "bob/two"}; !slices.Equal(names, want) {
-		t.Errorf("RepoNames() = %v, want %v", names, want)
+
+	close(core.release)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got := m.HeldRepoNames(t.Context(), "github:github.com", testSignIn)
+		if slices.Equal(got, []string{"bob/one"}) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("HeldRepoNames() after the read landed = %v, want [bob/one]", got)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

@@ -100,6 +100,44 @@ func TestChatStatusCache(t *testing.T) {
 	}
 }
 
+// A waiting_on_user the engine stated for the live turn's own ask goes with the turn, even when
+// marotte closes it without the engine's reverting frames.
+func TestClearAtTurnEnd_DropsEngineAskWaiting(t *testing.T) {
+	c := newChatStatusCache()
+	c.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, TurnScoped: true})
+	c.clearAtTurnEnd("c1")
+	if got := c.Get("c1"); got.Status != "" {
+		t.Errorf("turn-scoped waiting_on_user survived turn end: %+v", got)
+	}
+	if rows, _ := c.snapshotStamped(nil); len(rows.Rows) != 0 {
+		t.Errorf("status_snapshot rows = %+v, want none", rows.Rows)
+	}
+}
+
+// The newest status-bearing frame decides: the engine's turn-end restatement of a declaration
+// (turnActive false) is the agent's claim again and outlives the turn.
+func TestMerge_TurnEndRestatementRetainsDeclaration(t *testing.T) {
+	c := newChatStatusCache()
+	c.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, TurnScoped: true})
+	c.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
+	c.clearAtTurnEnd("c1")
+	if got := c.Get("c1"); got.Status != marotte.ChatStatusWaitingOnUser {
+		t.Errorf("a declaration restated at turn end was dropped: %+v", got)
+	}
+}
+
+func TestMerge_DescriptionOnlyKeepsTurnScoped(t *testing.T) {
+	c := newChatStatusCache()
+	c.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, TurnScoped: true})
+	if got := c.Merge("c1", marotte.ChatStatusPayload{Description: "approve the curl call"}); !got.TurnScoped {
+		t.Errorf("merged payload = %+v, want a description-only frame to keep TurnScoped", got)
+	}
+	c.clearAtTurnEnd("c1")
+	if got := c.Get("c1"); got.Status != "" {
+		t.Errorf("turn-scoped waiting_on_user survived turn end after a description-only frame: %+v", got)
+	}
+}
+
 // TestDischargeWaiting_BroadcastsTheClear pins that other devices need the empty chat_status frame,
 // published only when the claim actually went.
 func TestDischargeWaiting_BroadcastsTheClear(t *testing.T) {
@@ -310,7 +348,7 @@ func TestEmitChatStatus_DoesNotStageAMergedDescription(t *testing.T) {
 	rt.bus.Broadcast(t.Context(), marotte.NewEvent(marotte.EventChatStatus, "c1",
 		marotte.ChatStatusPayload{Status: "in_progress"}))
 
-	// Read the field directly: claimOwn would move the turn into finalizing.
+	// Read the field directly: claimTurn would move the turn into finalizing.
 	lc, ok := rt.coord.turns.lookup("c1")
 	if !ok {
 		t.Fatal("no chat lifecycle for c1")
@@ -342,7 +380,6 @@ func chatStatusFrames(t *testing.T, events []sse.ReplayEvent) []marotte.ChatStat
 	return out
 }
 
-// TestOpenTurn_DischargesTheWaitingRetention pins that a prompt's turn_open answers the claim; a `!cmd` reaches no agent.
 func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
 	waiting := marotte.ChatStatusPayload{
 		Status:      marotte.ChatStatusWaitingOnUser,
@@ -366,23 +403,6 @@ func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
 		// A second device converges on the frame.
 		if got := chatStatusFrames(t, bufferedSince(rt, head)); len(got) != 1 {
 			t.Errorf("the prompt published %d chat_status frames, want 1: %+v", len(got), got)
-		}
-	})
-
-	t.Run("a local shell does not", func(t *testing.T) {
-		rt, cs, _ := newTestHub()
-		seedChat(t, cs, "c1")
-		rt.bus.chatStatus.Merge("c1", waiting)
-
-		if _, err := rt.OpenTurn(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourceLocalShell, Prompt: prompt, Init: name}); err != nil {
-			t.Fatalf("the fixture could not open a shell turn: %v", err)
-		}
-		got := rt.bus.chatStatus.Get("c1")
-		if got.Status != marotte.ChatStatusWaitingOnUser {
-			t.Errorf("status is %q, want %q: a `!cmd` reaches no agent, so it answers nothing", got.Status, marotte.ChatStatusWaitingOnUser)
-		}
-		if got.Description != waiting.Description {
-			t.Errorf("description is %q, want %q", got.Description, waiting.Description)
 		}
 	})
 }

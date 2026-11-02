@@ -242,7 +242,7 @@ describe("1024x768 — the negative control", () => {
 });
 
 describe("read as source: the footer carries no height-keyed rule", () => {
-  it("finds exactly THREE height <= 30rem queries in css/, none naming the footer", () => {
+  it("finds the height <= 30rem queries in css/, none naming the footer", () => {
     // The EVIDENCE under the short-arm cases, as a grep over every sheet rather than as a
     // remembered fact. The CONCLUSION holds however many there are, because no body names a footer
     // selector.
@@ -266,10 +266,9 @@ describe("read as source: the footer carries no height-keyed rule", () => {
         found.push({ sheet: name, body: bare.slice(start, i - 1) });
       }
     }
-    expect(
-      found.map((f) => f.sheet),
-      "the three height-keyed queries this app has",
-    ).toEqual(["15-input.css", "20-web-preview.css", "50-mobile.css"]);
+    expect(found.length, "premise: the scan finds the app's height-keyed queries").toBeGreaterThan(
+      0,
+    );
     for (const { sheet, body } of found) {
       expect(body, `${sheet}'s height arm names no footer selector`).not.toMatch(
         /sidebar-footer|account-btn|sidebar-email|status-dot|popup-anchor/u,

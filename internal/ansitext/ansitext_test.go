@@ -622,7 +622,7 @@ func FuzzParse(f *testing.F) {
 			}
 		}
 
-		// 4. The text never carries an ESC: it is persisted and re-served, so this is what replaces sanitize.StripANSI.
+		// 4. The text never carries an ESC: it is persisted and re-served, so this is what replaces sanitize.Output's ANSI stripping.
 		if strings.ContainsRune(text, 0x1b) {
 			t.Fatalf("plain text still contains ESC: %q", text)
 		}

@@ -29,55 +29,37 @@ func TestShutdownCompletesWithoutHanging(t *testing.T) {
 	}
 }
 
-// hangingBridge's Call blocks until Stop, so Shutdown must stop bridges before inflight.Wait.
-type hangingBridge struct {
-	*fakeBridge
-
-	released   chan struct{}
-	once       sync.Once
-	stopCalled atomic.Bool
-}
-
-func newHangingBridge() *hangingBridge {
-	return &hangingBridge{
-		fakeBridge: newFakeBridge(),
-		released:   make(chan struct{}),
+// newHangingEngine is a source whose engine lane parks session/prompt until the engine stops, so Shutdown must stop
+// the engine before inflight.Wait.
+func newHangingEngine() (src *fakeEngineSource, stopCalled *atomic.Bool) {
+	released := make(chan struct{})
+	lane := newFakeBridge()
+	lane.blockOn = map[string]chan struct{}{marotte.MethodPrompt: released}
+	src = fakeEngineOf(func() engineSession { return newFakeBridge() }, lane)
+	stopCalled = new(atomic.Bool)
+	var once sync.Once
+	src.stopHook = func() {
+		stopCalled.Store(true)
+		once.Do(func() { close(released) })
 	}
+	return src, stopCalled
 }
 
-func (b *hangingBridge) Call(_ context.Context, _ string, _ any) (*marotte.RPCResponse, error) {
-	<-b.released
-	return &marotte.RPCResponse{}, nil
-}
-
-func (b *hangingBridge) Stop() {
-	b.stopCalled.Store(true)
-	b.once.Do(func() { close(b.released) })
-	b.fakeBridge.Stop()
-}
-
-func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
-	// A Call that returns only when its bridge stops.
+func TestShutdown_StopsTheEngineBeforeWaitingOnInflight(t *testing.T) {
 	cs := newTestChatStore()
-	hb := newHangingBridge()
-	factory := func() ACPBridge { return hb }
-	h := New(t.Context(), "/tmp/work", factory, cs)
+	src, stopCalled := newHangingEngine()
+	h := newRuntimeOn(t.Context(), "/tmp/work", src, cs)
 	cs.wire(h)
+	if !awaitEngine(h) {
+		t.Fatal("the engine never became ready")
+	}
 
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	// Registered directly: this tests Shutdown ordering.
-	sb := &sharedBridge{bridge: hb}
-	h.bridge.mgr.mu.Lock()
-	h.bridge.mgr.bridges["c1"] = sb
-	h.bridge.mgr.mu.Unlock()
-
-	// An in-flight prompt awaiting the Call.
+	// An in-flight call awaiting the engine.
 	h.lifecycle.inflight.Add(1)
 	callDone := make(chan struct{})
 	go func() {
 		defer h.lifecycle.inflight.Done()
-		_, _ = hb.Call(t.Context(), "session/prompt", nil)
+		_, _ = src.current().Call(t.Context(), marotte.MethodPrompt, nil)
 		close(callDone)
 	}()
 
@@ -91,70 +73,22 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("Shutdown deadlocked waiting for in-flight Call")
+		t.Fatal("Shutdown deadlocked waiting for an in-flight call")
 	}
 	select {
 	case <-callDone:
 	case <-time.After(1 * time.Second):
-		t.Error("Call never returned despite Stop")
+		t.Error("the call never returned despite the engine stop")
 	}
-	if !hb.stopCalled.Load() {
-		t.Error("Stop was not called on the bridge")
-	}
-}
-
-// barrierBridge's Stop returns once every bridge in its group entered Stop, so a serial shutdown never fills it.
-type barrierBridge struct {
-	*fakeBridge
-
-	entered *sync.WaitGroup
-	all     chan struct{}
-	timeout chan struct{}
-}
-
-func (b *barrierBridge) Stop() {
-	b.entered.Done()
-	select {
-	case <-b.all:
-	case <-time.After(5 * time.Second):
-		close(b.timeout)
-	}
-	b.fakeBridge.Stop()
-}
-
-// Stops must run side by side, or N bridges cost N graces.
-func TestShutdown_StopsBridgesConcurrently(t *testing.T) {
-	h, _, _ := newTestHub()
-	var entered sync.WaitGroup
-	all := make(chan struct{})
-	ids := []marotte.ChatID{"c1", "c2", "c3"}
-	entered.Add(len(ids))
-	timeouts := make([]chan struct{}, 0, len(ids))
-	h.bridge.mgr.mu.Lock()
-	for _, id := range ids {
-		tc := make(chan struct{})
-		timeouts = append(timeouts, tc)
-		h.bridge.mgr.bridges[id] = &sharedBridge{bridge: &barrierBridge{fakeBridge: newFakeBridge(), entered: &entered, all: all, timeout: tc}}
-	}
-	h.bridge.mgr.mu.Unlock()
-	go func() { entered.Wait(); close(all) }()
-
-	if err := h.Shutdown(context.Background()); err != nil {
-		t.Fatalf("Shutdown: %v", err)
-	}
-	for i, tc := range timeouts {
-		select {
-		case <-tc:
-			t.Errorf("bridge %s waited 5s in Stop for its siblings; Shutdown stopped the bridges one at a time", ids[i])
-		default:
-		}
+	if !stopCalled.Load() {
+		t.Error("Stop was not called on the engine")
 	}
 }
 
 // TestInterfaceSatisfaction breaks the build if the shared fakes drift from their interfaces.
 func TestInterfaceSatisfaction(_ *testing.T) {
 	var _ chatRecords = (*testChatStore)(nil)
-	var _ ACPBridge = (*fakeBridge)(nil)
+	var _ engineSession = (*fakeBridge)(nil)
 }
 
 // TestShutdown_BoundsAWedgedHandler pins that a handler that never decrements inflight must not hold Shutdown, which
@@ -188,25 +122,23 @@ func TestShutdown_BoundsAWedgedHandler(t *testing.T) {
 	}
 }
 
-// stallingStopBridge's Stop blocks until released, like kiro-cli in its SIGTERM grace.
-type stallingStopBridge struct {
-	*fakeBridge
-
-	release chan struct{}
+// stallingStopEngine's Stop blocks until release closes, like kiro-cli in its SIGTERM grace.
+func stallingStopEngine(release <-chan struct{}) *fakeEngineSource {
+	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
+	src.stopHook = func() { <-release }
+	return src
 }
 
-func (b *stallingStopBridge) Stop() {
-	<-b.release
-	b.fakeBridge.Stop()
-}
-
-// The utility bridge's Stop is bounded by ctx too.
-func TestShutdown_BoundsAStallingUtilityStop(t *testing.T) {
-	h, _, _ := newTestHub()
-	br := &stallingStopBridge{fakeBridge: newFakeBridge(), release: make(chan struct{})}
-	t.Cleanup(func() { close(br.release) })
-	s := &utilitySession{shutdownCtx: t.Context(), started: true, bridge: br}
-	h.utility = &utilityLease{rt: &utilityRuntime{session: s, textgen: newUtilityAgent(s)}}
+// The one engine stop is bounded by ctx.
+func TestShutdown_BoundsAStallingEngineStop(t *testing.T) {
+	release := make(chan struct{})
+	cs := newTestChatStore()
+	h := newRuntimeOn(context.Background(), t.TempDir(), stallingStopEngine(release), cs)
+	cs.wire(h)
+	if !awaitEngine(h) {
+		t.Fatal("the engine never became ready")
+	}
+	t.Cleanup(func() { close(release) })
 
 	const budget = 150 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
@@ -216,11 +148,11 @@ func TestShutdown_BoundsAStallingUtilityStop(t *testing.T) {
 	go func() { done <- h.Shutdown(ctx) }()
 	select {
 	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "utility bridge teardown") {
-			t.Errorf("Shutdown = %v, want an error naming the utility bridge teardown", err)
+		if err == nil || !strings.Contains(err.Error(), "engine teardown") {
+			t.Errorf("Shutdown = %v, want an error naming the engine teardown", err)
 		}
 	case <-time.After(20 * budget):
-		t.Fatalf("Shutdown still running %v into a %v budget: the utility Stop is unbounded", 20*budget, budget)
+		t.Fatalf("Shutdown still running %v into a %v budget: the engine stop is unbounded", 20*budget, budget)
 	}
 }
 
@@ -235,8 +167,8 @@ func TestShutdown_WaitsForARunningSweep(t *testing.T) {
 		return nil, false
 	}
 	cs := newTestChatStore()
-	h := New(context.Background(), t.TempDir(),
-		func() ACPBridge { return newFakeBridge() }, cs,
+	h := newRuntimeOn(context.Background(), t.TempDir(),
+		fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
 		WithSessionReaper(kirosession.New(t.TempDir(), testReaperWorkDir), refs))
 	cs.wire(h)
 
@@ -267,8 +199,8 @@ func TestSweepSessionsLoop_WaitsForTheListenerToBind(t *testing.T) {
 	newGatedHub := func(t *testing.T, gate <-chan struct{}, refs func(context.Context) (map[string]struct{}, bool)) *Runtime {
 		t.Helper()
 		cs := newTestChatStore()
-		h := New(context.Background(), t.TempDir(),
-			func() ACPBridge { return newFakeBridge() }, cs,
+		h := newRuntimeOn(context.Background(), t.TempDir(),
+			fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
 			WithSessionReaper(kirosession.New(t.TempDir(), testReaperWorkDir), refs),
 			WithSessionSweepGate(gate))
 		cs.wire(h)
@@ -345,7 +277,7 @@ func TestShutdown_JoinsTheTickerLoops(t *testing.T) {
 // TestShutdown_WaitsForARunningMCPNotifier holds the notifier inside its callback (the environment.md
 // generator): an unjoined loop here produces no other symptom.
 func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
-	h := newHubWithMCPConfig(nil)
+	h := newHubWithMCPConfig(t, nil)
 
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -377,43 +309,43 @@ func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
 	shutdownHub(t, h)
 }
 
-type lifetimeWatchingBridge struct {
-	*fakeBridge
-
+// lifetimeWatchingEngine records whether the runtime's lifetime was still live when the engine was stopped.
+type lifetimeWatchingEngine struct {
 	lifetime  context.Context
 	stopErr   error
 	sawLive   atomic.Bool
 	stopCount atomic.Int32
 }
 
-func (b *lifetimeWatchingBridge) Stop() {
-	b.stopErr = b.lifetime.Err()
-	b.sawLive.Store(b.stopErr == nil)
-	b.stopCount.Add(1)
-	b.fakeBridge.Stop()
+func (w *lifetimeWatchingEngine) stop() {
+	w.stopErr = w.lifetime.Err()
+	w.sawLive.Store(w.stopErr == nil)
+	w.stopCount.Add(1)
 }
 
-// TestShutdown_CancelsTheLifetimeAfterDrainingBridges pins that cancelling before the drain left a bridge dying on its
-// own to reach the death closer with a dead context. close(lifecycle.done) stays at step 0.
-func TestShutdown_CancelsTheLifetimeAfterDrainingBridges(t *testing.T) {
+// TestShutdown_CancelsTheLifetimeAfterStoppingTheEngine pins that cancelling before the drain and the engine stop
+// left a session ending in that window to reach the death closer with a dead context. close(lifecycle.done) stays
+// at step 0.
+func TestShutdown_CancelsTheLifetimeAfterStoppingTheEngine(t *testing.T) {
 	cs := newTestChatStore()
-	watcher := &lifetimeWatchingBridge{fakeBridge: newFakeBridge()}
-	h := New(t.Context(), t.TempDir(), func() ACPBridge { return watcher }, cs)
+	watcher := &lifetimeWatchingEngine{}
+	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
+	src.stopHook = watcher.stop
+	h := newRuntimeOn(t.Context(), t.TempDir(), src, cs)
 	watcher.lifetime = h.lifecycle.shutdownCtx
 	cs.wire(h)
-
-	sb := &sharedBridge{bridge: watcher}
-	h.bridge.mgr.mu.Lock()
-	h.bridge.mgr.bridges["c1"] = sb
-	h.bridge.mgr.mu.Unlock()
+	if !awaitEngine(h) {
+		t.Fatal("the engine never became ready")
+	}
+	h.bridge.mgr.insert("c1", &sharedBridge{bridge: newFakeBridge(), state: bridgeIdle})
 
 	shutdownHub(t, h)
 
 	if watcher.stopCount.Load() == 0 {
-		t.Fatal("the bridge was never stopped, so the ordering was not exercised")
+		t.Fatal("the engine was never stopped, so the ordering was not exercised")
 	}
 	if !watcher.sawLive.Load() {
-		t.Errorf("the lifetime was already %v when the bridge was stopped; a bridge dying in that "+
+		t.Errorf("the lifetime was already %v when the engine was stopped; a session ending in that "+
 			"window reaches the death closer with a dead context on an untracked goroutine",
 			watcher.stopErr)
 	}

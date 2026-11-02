@@ -39,33 +39,35 @@ export function decorateCodeBlocks(root: HTMLElement): void {
 
 /**
  * Decorate the block currently streaming in, if any: the last `<pre>` (the parser is append-only). A `final`
- * wrapper is left alone, so this is safe after every parse slice.
+ * wrapper is left alone, so this is safe after every parse slice. Returns that `<pre>` while it is still
+ * provisional, else null.
  */
-export function decorateStreamingCodeTail(root: HTMLElement): void {
+export function decorateStreamingCodeTail(root: HTMLElement): HTMLElement | null {
   const pres = root.querySelectorAll("pre");
   const last = pres[pres.length - 1];
   if (last === undefined) {
-    return;
+    return null;
   }
-  decorateBlock(last, true);
+  return decorateBlock(last, true) ? last : null;
 }
 
 /**
  * `provisional`: chrome only. No highlight (a half-written statement highlights wrong) and no Run (an incomplete
- * command must not reach a shell).
+ * command must not reach a shell). False when the block was already final.
  */
-function decorateBlock(pre: HTMLElement, provisional: boolean): void {
+function decorateBlock(pre: HTMLElement, provisional: boolean): boolean {
   const existing = pre.parentElement;
   const wrapped = existing?.classList.contains("code-wrap") === true ? existing : null;
   if (wrapped?.getAttribute(STATE_ATTR) === "final") {
-    return;
+    return false;
   }
   const wrap = wrapped ?? wrapBlock(pre);
   if (provisional) {
     wrap.setAttribute(STATE_ATTR, "streaming");
-    return;
+    return true;
   }
   finalizeBlock(wrap, pre);
+  return true;
 }
 
 /** Copy reads the text at click time, so one button serves a streaming block and a finished one. */
@@ -150,10 +152,14 @@ export function isRunnableShell(lang: string, text: string): boolean {
   return !/[\r\n]/.test(trimmed);
 }
 
-function makeCopyButton(getText: () => string): HTMLButtonElement {
+/** Copy reads `getText` at click time; `className` is the button family of the row it joins. */
+export function makeCopyButton(
+  getText: () => string,
+  className = "code-act-btn",
+): HTMLButtonElement {
   const btn = el(
     "button",
-    { className: "code-act-btn", "data-tooltip": "Copy", "aria-label": "Copy" },
+    { className, "data-tooltip": "Copy", "aria-label": "Copy" },
     iconEl(ICON_COPY),
   ) as HTMLButtonElement;
   let timer: ReturnType<typeof setTimeout> | undefined;

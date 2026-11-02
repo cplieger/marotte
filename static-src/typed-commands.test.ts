@@ -1,8 +1,9 @@
 // The typed-command table. Small on purpose, and what matters is the BOUNDARY:
 // everything the table does not claim must fall through untouched, or marotte
 // starts silently swallowing text KAS itself parses.
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as Persist from "./persist.js";
+import { settingsPayload } from "./__test-helpers__/settings.js";
 
 const dispatch = vi.fn();
 vi.mock("./actions/chat.js", () => ({
@@ -23,18 +24,25 @@ vi.mock("./notice-subject.js", () => ({
   },
 }));
 
-const memoryMode = vi.hoisted(() => ({ value: "off" as string | null }));
-vi.mock("./persist.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof Persist>()),
-  loadSettings: vi.fn(() =>
-    Promise.resolve(memoryMode.value === null ? null : { memory_mode: memoryMode.value }),
-  ),
-}));
+// `shared` routes loadSettings to the real shared read.
+const memoryMode = vi.hoisted(() => ({ value: "off" as string | null, shared: false }));
+vi.mock("./persist.js", async (importOriginal) => {
+  const real = await importOriginal<typeof Persist>();
+  return {
+    ...real,
+    loadSettings: vi.fn(() =>
+      memoryMode.shared
+        ? real.loadSettings()
+        : Promise.resolve(memoryMode.value === null ? null : { memory_mode: memoryMode.value }),
+    ),
+  };
+});
 const applyRoute = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock("./route-apply.js", () => ({ applyRoute }));
 
 const { handleTypedCommand } = await import("./typed-commands.js");
 const store = await import("./store.js");
+const persist = await import("./persist.js");
 
 beforeEach(() => {
   dispatch.mockReset();
@@ -125,6 +133,70 @@ describe("handleTypedCommand /memories", () => {
   });
 });
 
+// The real shared read, the network held: a read older than settings the page already holds must not decide.
+describe("handleTypedCommand /memories over the shared settings read", () => {
+  let gets: ((revision: number, mode: string) => void)[] = [];
+
+  beforeEach(() => {
+    applyRoute.mockClear();
+    gets = [];
+    persist.__testResetTracking();
+    memoryMode.shared = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            gets.push((revision, mode) => {
+              resolve(
+                Response.json(settingsPayload({ settings_revision: revision, memory_mode: mode })),
+              );
+            });
+          }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    memoryMode.shared = false;
+  });
+
+  it("decides from the read sent after a newer settings event, not the older one it joined", async () => {
+    void persist.loadSettings();
+    persist.noteSettingsEvent({ settings_epoch: 0, settings_revision: 2 });
+    void persist.refreshSettings();
+    expect(handleTypedCommand("c1", "/memories")).toBe(true);
+    await vi.waitFor(() => {
+      expect(gets).toHaveLength(1);
+    });
+    gets[0]?.(1, "learn");
+    await vi.waitFor(() => {
+      expect(gets).toHaveLength(2);
+    });
+    gets[1]?.(2, "off");
+    await vi.waitFor(() => {
+      expect(toasts).toEqual([
+        "Memory is off. Turn it on in Settings > General to review memories.",
+      ]);
+    });
+    expect(applyRoute).not.toHaveBeenCalled();
+  });
+
+  it("opens Memories as for an unread setting when the read answers below the held revision", async () => {
+    expect(persist.adoptSettings(settingsPayload({ settings_revision: 2 }))).toBe(true);
+    expect(handleTypedCommand("c1", "/memories")).toBe(true);
+    await vi.waitFor(() => {
+      expect(gets).toHaveLength(1);
+    });
+    gets[0]?.(1, "off");
+    await vi.waitFor(() => {
+      expect(applyRoute).toHaveBeenCalledWith({ kind: "docs", tab: "memories" });
+    });
+    expect(toasts).toEqual([]);
+  });
+});
+
 // `/drop` is the one verb that asks the engine for nothing. That is its whole
 // contract, so the tests assert BOTH halves: the composer leaves steer mode, and
 // no command travels.
@@ -167,11 +239,30 @@ describe("handleTypedCommand /drop", () => {
 
   it("returns the composer to prompt mode by clearing thinking", () => {
     seedThinking("c1");
-    expect(store.isThinking("c1")).toBe(true);
+    expect(store.isBusy("c1")).toBe(true);
     expect(handleTypedCommand("c1", "/drop")).toBe(true);
     // This is what makes the next Send a PROMPT rather than a steer: submit.ts
     // branches on exactly this read.
-    expect(store.isThinking("c1")).toBe(false);
+    expect(store.isBusy("c1")).toBe(false);
+  });
+
+  // A turn the client holds open with no close (one the agent started, or one whose close never
+  // arrived) is what `isBusy` reads besides `thinking`, so `/drop` has to waive it too.
+  it("returns the composer to prompt mode beside an open turn that never streamed", () => {
+    seedThinking("c1");
+    store.setThinking("c1", false);
+    store.openTurn("c1", {
+      id: "t-wake-open",
+      turn: "t-wake",
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "wire_turn_start", n: 1 },
+    });
+    expect(store.isBusy("c1")).toBe(true);
+    expect(handleTypedCommand("c1", "/drop")).toBe(true);
+    expect(store.isBusy("c1")).toBe(false);
+    expect(toasts.at(-1)).toContain("not told to stop");
   });
 
   it("dispatches no command, so it needs nothing from the engine", () => {
@@ -196,8 +287,8 @@ describe("handleTypedCommand /drop", () => {
   it("touches only the named chat", () => {
     seedThinking("c1", "c2");
     handleTypedCommand("c2", "/drop");
-    expect(store.isThinking("c1")).toBe(true);
-    expect(store.isThinking("c2")).toBe(false);
+    expect(store.isBusy("c1")).toBe(true);
+    expect(store.isBusy("c2")).toBe(false);
   });
 
   it("does not claim /drop with arguments", () => {

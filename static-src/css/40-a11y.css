@@ -72,8 +72,7 @@
  * the padding box of the nearest ancestor that clips. A member is here because that
  * distance is under the reach on an edge the clip applies to, which is a wider
  * condition than being FLUSH: seven members are flush on the edges they lose (0px in,
- * so the whole band falls outside), `.code-act-btn` sits 2px inside `.code-wrap` and
- * loses 1px of its top band, and `.forge-account-repos-summary` is flush on the
+ * so the whole band falls outside), and `.forge-account-repos-summary` is flush on the
  * inline-start edge, on the inline-end one unless a batch button sits beside it, and
  * on the block-end edge while its list is closed. Without
  * this rule, measured: 3px lost per flush edge, leaving the bottom band alone where a
@@ -82,11 +81,13 @@
  * rather than 2.4.11 degrading.
  *
  * What keeps a clipper's OTHER controls out is measured against that same reach, and
- * for all but one of them it is inner padding: an account row's own actions clear by
+ * for all but two of them it is inner padding: an account row's own actions clear by
  * 8px and its repo rows by 4px, `.git-file-list`'s path button by 14px, `.diff-pane`'s
  * whitespace checkbox by 4px, `.mcp-row`'s buttons and `.pill-model-list`'s rows and
- * tiers by 8px. `.tool-call`'s disclosure is the exception and its numbers move with
- * something else: it is absolutely positioned, so 12px of inline clearance is a
+ * tiers by 8px. The two exceptions' numbers move with something else. `.code-wrap`'s
+ * header buttons clear the block edges by 4px because `.code-head`'s row is taller
+ * than they are, so a row height or a button height changes it. `.tool-call`'s
+ * disclosure is absolutely positioned, so 12px of inline clearance is a
  * declared `inset-inline-end` and 6px of block clearance is half the card's spare
  * height, which a `min-height`, a font-size or a second summary row changes without
  * touching any padding. `focus-ring-clip.test.ts` pins every one of those numbers, so a
@@ -104,8 +105,8 @@
  * rather than a new concession. The TURN card's own ledger is deliberately NOT here:
  * `.turn` is `overflow: visible`, so nothing clips its ring.
  *
- * `.run-open`'s inline clearance is 4px, which makes it the tightest member — under
- * `.code-act-btn`'s 5px — and it still clears the 2px band by 2px. The delegate
+ * `.run-open`'s inline clearance is 4px, which makes it the tightest member, and it
+ * still clears the 2px band by 2px. The delegate
  * ledger's is 8px, and it is 8px because the gutter MOVED onto that button for this
  * reason (14-tools.css); with the gutter on the row it was 0px.
  *
@@ -125,8 +126,8 @@
  * Same token and same reasoning as `.turn-file-row` and `.ev-tl-lane`, and the offset
  * is all this declares — the floor above keeps the ring's width and colour. Because it
  * EQUALS that width the band lands in [0, 2px] inside the border box, so each member's
- * own padding is what clears its icon and name (5px at the tightest, the code block's
- * action button); `focus-ring-clip.test.ts` pins that on all four edges, so a member
+ * own padding is what clears its icon and name (4px at the tightest, `.run-open`'s
+ * inline padding); `focus-ring-clip.test.ts` pins that on all four edges, so a member
  * with thinner padding fails there rather than painting the ring over its own text.
  *
  * RESIDUAL: a square ring inside a ROUNDED clip loses its corner while its card clips to
@@ -139,7 +140,6 @@
  * across four stylesheets, to round an outline the cards already clip identically at
  * rest and on hover. */
 a.subagent-header:focus-visible,
-.subagent-container.has-disclosure > .subagent-header:focus-visible,
 .subagent-foot > .subagent-footer > .turn-ledger-summary:focus-visible,
 /* The status card's account link, which sits 4px inside its clipper's padding box
    (15-input.css). `.pill-expand-content` is `overflow: auto`, so it clips at that
@@ -150,7 +150,6 @@ a.subagent-header:focus-visible,
 a.run-step-head:focus-visible,
 .run-open:focus-visible,
 .tool-group-header:focus-visible,
-.code-act-btn:focus-visible,
 .git-repo-section-header:focus-visible,
 .git-repo-section-header-toggle:focus-visible,
 .forge-account-repos-summary:focus-visible {
@@ -173,7 +172,7 @@ a.run-step-head:focus-visible,
  * `:where()` scores ZERO, so this is a floor and not a mandate — the two states
  * that are NOT "unavailable" opt out on their own specificity and say why at
  * their own rule:
- *   - a disabled control that is BUSY (`.conflict-btn`, `.mcp-disc-insert`) dims
+ *   - a disabled control that is BUSY (`aria-busy`, the next rule) dims
  *     less and takes `cursor: progress`, because it is coming back;
  *   - a control disabled because it is a READOUT rather than a refusal
  *     (`.turn-ledger-summary` with no files to list, `.send-btn`) declares
@@ -193,13 +192,13 @@ a.run-step-head:focus-visible,
 /* THE BUSY FACE: a control disabled because its own work is in flight, which is
  * a different state from unavailable and now says so in one place. It was three
  * spellings — `.btn-loading` (0.7 plus a `pointer-events: none` that `disabled`
- * already provides), `.conflict-btn` and `.mcp-disc-insert` (0.6 and
+ * already provides), `.conflict-btn` (0.6 and
  * `cursor: wait`), and the reconnect button (0.7, keyed on the attribute) — and
  * every one of them DIMMED it.
  *
  * Dimming is what this removes rather than re-numbers. A busy control is
- * communicating: it grows a spinner and its label becomes "Suggesting…",
- * "Delivering…", "Cancel". Fading the very words that report the work is the
+ * communicating: it grows a spinner and its label becomes "Delivering…" or
+ * "Cancel". Fading the very words that report the work is the
  * defect the three opacities were arguing about, so the answer is `opacity: 1`
  * and no second token.
  *

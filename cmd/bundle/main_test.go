@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -170,8 +171,8 @@ func TestCleanOutputs_KeepsADirectoryHoldingACommittedAsset(t *testing.T) {
 func stampOf(t *testing.T, files map[string]string) precacheManifest {
 	t.Helper()
 	dir := stageOut(t, files)
-	if err := writePrecacheManifest(); err != nil {
-		t.Fatalf("writePrecacheManifest() = %v", err)
+	if err := writePrecacheManifest(nil); err != nil {
+		t.Fatalf("writePrecacheManifest(nil) = %v", err)
 	}
 	body, err := os.ReadFile(filepath.Join(dir, outDir, precacheName))
 	if err != nil {
@@ -251,8 +252,8 @@ func TestWritePrecacheManifest_NoChunksDirectory(t *testing.T) {
 		"app.js":    "entry\n",
 		"style.css": "css\n",
 	})
-	if err := writePrecacheManifest(); err != nil {
-		t.Fatalf("writePrecacheManifest() = %v", err)
+	if err := writePrecacheManifest(nil); err != nil {
+		t.Fatalf("writePrecacheManifest(nil) = %v", err)
 	}
 	body, err := os.ReadFile(filepath.Join(dir, outDir, precacheName))
 	if err != nil {
@@ -260,6 +261,90 @@ func TestWritePrecacheManifest_NoChunksDirectory(t *testing.T) {
 	}
 	if !strings.Contains(string(body), `"assets":[]`) {
 		t.Errorf("manifest = %s, want an empty assets list", body)
+	}
+}
+
+// TestWritePrecacheManifest_LeavesOutOnDemandChunks: a chunk the page fetches only for a diagram is
+// not fetched for every device at each deploy.
+func TestWritePrecacheManifest_LeavesOutOnDemandChunks(t *testing.T) {
+	dir := stageOut(t, map[string]string{
+		"chunks/editor-AAAA1111.js": "chunk\n",
+		"chunks/lazy-BBBB2222.js":   "pele\n",
+	})
+	if err := writePrecacheManifest(map[string]bool{"chunks/lazy-BBBB2222.js": true}); err != nil {
+		t.Fatalf("writePrecacheManifest() = %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, outDir, precacheName))
+	if err != nil {
+		t.Fatalf("read %s: %v", precacheName, err)
+	}
+	var got precacheManifest
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal %s: %v", precacheName, err)
+	}
+	if want := []string{"chunks/editor-AAAA1111.js"}; !slices.Equal(got.Assets, want) {
+		t.Errorf("assets = %v, want %v", got.Assets, want)
+	}
+}
+
+// TestOnDemandChunks_OnlyAPurelyOnDemandChunk: a chunk mixing app code with pele stays precached.
+func TestOnDemandChunks_OnlyAPurelyOnDemandChunk(t *testing.T) {
+	meta := `{"outputs":{
+		"static/chunks/lazy-AAAA1111.js":{"inputs":{"static-src/node_modules/pele/dist/esm/lazy.js":{}}},
+		"static/chunks/lazy-AAAA1111.js.map":{"inputs":{}},
+		"static/chunks/mixed-BBBB2222.js":{"inputs":{"static-src/node_modules/pele/dist/esm/core.js":{},"static-src/editor.ts":{}}},
+		"static/chunks/peleish-CCCC3333.js":{"inputs":{"static-src/node_modules/pele-extra/index.js":{}}},
+		"static/app.js":{"inputs":{"static-src/app.ts":{}}}
+	}}`
+	got, err := onDemandChunks(meta)
+	if err != nil {
+		t.Fatalf("onDemandChunks() = %v", err)
+	}
+	if want := map[string]bool{"chunks/lazy-AAAA1111.js": true}; !maps.Equal(got, want) {
+		t.Errorf("onDemandChunks() = %v, want %v", got, want)
+	}
+	if _, err := onDemandChunks("{"); err == nil {
+		t.Error("onDemandChunks(truncated metafile) = nil error, want one")
+	}
+}
+
+// TestBundleScripts_ReportsTheChunkADynamicPeleImportEmits: the real esbuild metafile names the
+// split-out pele chunk, and only it.
+func TestBundleScripts_ReportsTheChunkADynamicPeleImportEmits(t *testing.T) {
+	dir := stageScripts(t, "self.onconnect = () => {};\n")
+	pele := filepath.Join(dir, srcDir, "node_modules", "pele")
+	if err := os.MkdirAll(pele, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	pkg := `{"name":"pele","type":"module","exports":{"./lazy":"./lazy.js"}}`
+	for name, body := range map[string]string{
+		"package.json": pkg,
+		"lazy.js":      "export const draw = () => 'svg';\n",
+	} {
+		if err := os.WriteFile(filepath.Join(pele, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := "declare const __SSE_WORKER_URL__: string;\nconsole.log(__SSE_WORKER_URL__);\n" +
+		"void import('pele/lazy').then((m) => console.log(m.draw()));\n"
+	if err := os.WriteFile(filepath.Join(dir, srcDir, "app.ts"), []byte(app), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := bundleScripts()
+	if err != nil {
+		t.Fatalf("bundleScripts() = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("on-demand chunks = %v, want exactly the pele chunk", got)
+	}
+	for name := range got {
+		body, err := os.ReadFile(filepath.Join(dir, outDir, filepath.FromSlash(name)))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if !strings.Contains(string(body), "svg") {
+			t.Errorf("%s = %s, want the pele module's code", name, body)
+		}
 	}
 }
 
@@ -330,7 +415,7 @@ func TestBundleScripts_InjectsTheHashedWorkerURL(t *testing.T) {
 		if err := cleanOutputs(); err != nil {
 			t.Fatalf("cleanOutputs() = %v", err)
 		}
-		if err := bundleScripts(); err != nil {
+		if _, err := bundleScripts(); err != nil {
 			t.Fatalf("bundleScripts() = %v", err)
 		}
 	}

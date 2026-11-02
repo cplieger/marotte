@@ -12,7 +12,7 @@ import {
   attachmentGeneration,
   type AttachedFile,
 } from "./attachments.js";
-import { get, isThinking, hasMessage, hasQueued, holdsSteer } from "./store.js";
+import { get, isBusy, hasMessage, hasQueued, holdsSteer } from "./store.js";
 import { queuePrompt, steerChat } from "./actions/chat.js";
 import type { ActionOutcome } from "./actions/index.js";
 import { clearAgentDown, reportSendRefused } from "./send-state.js";
@@ -24,7 +24,7 @@ import { chatNotice } from "./notice-subject.js";
 
 type SubmitResult = "sent" | "steered" | "queued" | "held" | "failed";
 
-/** The send-error face for 409 "starting": holder-neutral (a shell holder is not "starting"). The
+/** The send-error face for 409 "starting": holder-neutral (a rewind holder is not "starting"). The
  *  next Send retries and clears it. */
 const STARTING_FACE = "The chat is busy right now. Send again to retry";
 
@@ -100,7 +100,7 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
   }
   // Held before the attachments are taken, so a busy chat keeps its pill row. The
   // text goes back once the composer's own clear (after this synchronous prefix) has run.
-  const reason = isThinking(chatID) ? promptOnlyReason(text) : null;
+  const reason = isBusy(chatID) ? promptOnlyReason(text) : null;
   if (reason !== null) {
     chatNotice(chatID, reason);
     await Promise.resolve();
@@ -120,7 +120,7 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
     deleted: false,
   };
   return whileInFlight(send, (s) =>
-    isThinking(chatID) ? busy(s, CONVERT_BUDGET) : prompt(s, CONVERT_BUDGET),
+    isBusy(chatID) ? busy(s, CONVERT_BUDGET) : prompt(s, CONVERT_BUDGET),
   );
 }
 
@@ -136,7 +136,7 @@ export function submitLabelled(
     return Promise.resolve("failed");
   }
   const send: Send = { kind: "labelled", chatID, text, messageID: newMessageID(), displayText };
-  return isThinking(chatID) ? busy(send, CONVERT_BUDGET) : prompt(send, CONVERT_BUDGET);
+  return isBusy(chatID) ? busy(send, CONVERT_BUDGET) : prompt(send, CONVERT_BUDGET);
 }
 
 /** One send's inputs, carried unchanged through every conversion. Only a typed send came from

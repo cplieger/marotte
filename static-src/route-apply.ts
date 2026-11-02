@@ -150,8 +150,7 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
       return import("./run-view.js")
         .then(async ({ openRunView }) => {
           // Deep link: the run's name is not in the URL, so the tab is titled by id until the fetch
-          // supplies the real name. It still nests under the launching chat when this client knows
-          // which one it was.
+          // supplies the real name.
           await openRunView(route.id, route.id, "", route.node ?? "");
         })
         .catch(() => {

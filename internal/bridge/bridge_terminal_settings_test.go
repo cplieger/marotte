@@ -15,13 +15,13 @@ func startWithTimeouts(t *testing.T, answers ...int) string {
 	t.Helper()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "requests.log")
-	b := New(configOptionFake(t, logPath), dir)
+	b := NewEngine(configOptionFake(t, logPath), dir)
 	t.Cleanup(b.Stop)
 
 	var mu sync.Mutex
 	calls := 0
-	opts := &marotte.StartOpts{
-		Lifetime: t.Context(),
+	opts := &marotte.EngineOpts{
+		Lifetime: context.Background(),
 		TerminalTimeout: func(context.Context) int {
 			mu.Lock()
 			defer mu.Unlock()
@@ -33,6 +33,7 @@ func startWithTimeouts(t *testing.T, answers ...int) string {
 	if err := b.Start(t.Context(), opts); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	syncWithScript(t, b)
 	raw, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read request log: %v", err)
@@ -40,7 +41,7 @@ func startWithTimeouts(t *testing.T, answers ...int) string {
 	return string(raw)
 }
 
-// A save after StartOpts is built but before initialize reaches the spawn through the initialize read.
+// A save after EngineOpts is built but before initialize reaches the spawn through the initialize read.
 func TestStart_InitializeCarriesTheTimeoutReadAtSendTime(t *testing.T) {
 	got := startWithTimeouts(t, 300000)
 

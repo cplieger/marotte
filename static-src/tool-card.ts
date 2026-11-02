@@ -122,8 +122,8 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     node.insertAdjacentHTML("beforeend", detailsShell());
     // Declared once so the load and the `data-disclosable` arms agree.
     const deferred: DeferredCtx = { opts, depth1, info };
-    // Born open only where the reader had it open. Expand-on-fail is the live status
-    // FLIP's (`expandToolDetails`); deriving it here would open every failed call in a
+    // Born open only where the reader had it open. Expand-on-decline is the live status
+    // FLIP's (`expandToolDetails`); deriving it here would open every declined call in a
     // reopened chat.
     const buildOpen = opts.detailsOpen === true;
     wireToggle(node, detailsBody(node, deferred), buildOpen);
@@ -681,7 +681,7 @@ function fileLinkLabel(info: ToolRenderInfo): string {
 const detailCtls = new WeakMap<HTMLElement, DisclosureController>();
 
 // Per-card deferred body builders: `expandToolDetails` opens WITHOUT a click, so it runs
-// the builder itself before the failure path reads the output back.
+// the builder itself.
 const detailBuilders = new WeakMap<HTMLElement, () => void>();
 
 /** Wire a card's details region. `initialOpen` creates the controller ALREADY OPEN, the
@@ -719,7 +719,7 @@ function wireToggle(el: HTMLElement, buildBody: () => void, initialOpen: boolean
   detailCtls.set(el, ctl);
 }
 
-/** Force-open a card's details (a failed tool's error output). A BARE card is refused,
+/** Force-open a card's details (a declined tool's reason). A BARE card is refused,
  *  since it has no chevron to close it again; the body is built BEFORE the open. */
 export function expandToolDetails(card: HTMLElement): void {
   if (card.querySelector(".tool-disclosure") === null) {

@@ -1,7 +1,6 @@
 // The document-oriented `.kiro` inventory behind GET /api/workspace/kiro-docs: one row per
-// file with its front-matter. /api/workspace/kiro-config stays ENTITY-oriented because
-// role-picker.ts depends on that shape. Each category names its own root, so markdown no
-// category claims gets no row.
+// file with its front-matter. Each category names its own root, so markdown no category claims
+// gets no row.
 
 package server
 
@@ -24,7 +23,7 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/steering"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // Document categories, matching the page's sub-tabs. Wire values the client keys tabs off.
@@ -161,7 +160,7 @@ type kiroRoot struct {
 }
 
 // kiroRoots enumerates the `.kiro` trees in scope: the workspace root's plus one per non-dot
-// subdirectory, the same walk as collectKiroConfig.
+// subdirectory.
 func (s *Server) kiroRoots() []kiroRoot {
 	workBase := strings.TrimPrefix(s.workDir, "/")
 	specRoots := spec.Roots(s.workDir)

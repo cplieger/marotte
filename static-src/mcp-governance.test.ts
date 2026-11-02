@@ -312,20 +312,10 @@ describe("renderRegistryPanel", () => {
     expect(host.textContent).toContain("Internal docs search");
   });
 
-  it("names the dropped servers with no row here and the entries its catalog lacks", () => {
+  it("names the entries its catalog lacks", () => {
     const host = document.createElement("div");
     renderRegistryPanel(host, registry, configured, () => Promise.resolve());
-    expect(host.textContent).toContain(
-      "Not allowed by your organization's MCP registry: my-local.",
-    );
     expect(host.textContent).toContain("Not in your organization's catalog: gone.");
-  });
-
-  // The server's own row says it was dropped, so the panel does not repeat it.
-  it("leaves a dropped server this page configures to its own row", () => {
-    const host = document.createElement("div");
-    renderRegistryPanel(host, registry, [{ name: "my-local" } as Server], () => Promise.resolve());
-    expect(host.textContent).not.toContain("my-local");
   });
 
   it("disables Add while an administrator denies MCP", () => {
@@ -381,5 +371,77 @@ describe("renderRegistryPanel", () => {
     renderRegistryPanel(host, registry, configured, onAdd);
     host.querySelector<HTMLButtonElement>('[aria-label="Add tickets"]')?.click();
     expect(onAdd).toHaveBeenCalledWith("tickets");
+  });
+});
+
+describe("the registry-hidden notice", () => {
+  function hiddenNames(host: HTMLElement): string[] | null {
+    const notice = host.querySelector(".mcp-registry-hidden");
+    if (notice === null) {
+      return null;
+    }
+    return [...notice.querySelectorAll("li")].map((li) => li.textContent);
+  }
+
+  function reg(filtered: string[]): GovernanceMCPRegistry {
+    return { servers: [{ name: "docs", enabled: true }], filtered, unresolved: [] };
+  }
+
+  // A hidden server this page holds a row for is named too, as the TUI's managed view does.
+  it("lists exactly the configured servers the registry hides, and says why", () => {
+    const host = document.createElement("div");
+    renderRegistryPanel(
+      host,
+      reg(["my-local", "workspace-one"]),
+      [{ name: "my-local" } as Server, { name: "docs" } as Server],
+      () => Promise.resolve(),
+    );
+    expect(hiddenNames(host)).toEqual(["my-local", "workspace-one"]);
+    expect(host.querySelector(".mcp-registry-hidden p")?.textContent).toBe(
+      "Your organization's MCP registry doesn't include these servers, so kiro-cli won't start them.",
+    );
+  });
+
+  // The panel's lead says "only the servers below can run", so the catalog comes first.
+  it("sits after the catalog the lead points at", () => {
+    const host = document.createElement("div");
+    renderRegistryPanel(host, reg(["my-local"]), [], () => Promise.resolve());
+    const notice = host.querySelector(".mcp-registry-hidden");
+    const catalog = host.querySelector(".mcp-registry-list");
+    if (notice === null || catalog === null) {
+      throw new Error("the panel drew no notice or no catalog");
+    }
+    expect(catalog.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("is absent when the registry hides no configured server", () => {
+    const host = document.createElement("div");
+    renderRegistryPanel(host, reg([]), [], () => Promise.resolve());
+    expect(host.classList.contains("hidden")).toBe(false);
+    expect(hiddenNames(host)).toBeNull();
+  });
+
+  it("follows the governance state as it changes", () => {
+    const host = document.createElement("div");
+    const dispose = bindRegistryPanel(host);
+    try {
+      applyMcpRowPolicy(govState({ mcp_registry: reg(["alpha", "beta"]) }));
+      expect(hiddenNames(host)).toEqual(["alpha", "beta"]);
+
+      applyMcpRowPolicy(govState({ mcp_registry: reg(["beta"]) }));
+      expect(hiddenNames(host)).toEqual(["beta"]);
+
+      applyMcpRowPolicy(govState({ mcp_registry: reg([]) }));
+      expect(hiddenNames(host)).toBeNull();
+
+      applyMcpRowPolicy(govState({ mcp_registry: reg(["gamma"]) }));
+      expect(hiddenNames(host)).toEqual(["gamma"]);
+
+      applyMcpRowPolicy(govState());
+      expect(hiddenNames(host)).toBeNull();
+    } finally {
+      dispose();
+      applyMcpRowPolicy(govState());
+    }
   });
 });

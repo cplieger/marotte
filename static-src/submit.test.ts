@@ -83,6 +83,7 @@ import {
   setThinking,
   steerCount,
   openTurn,
+  appendEntry,
   recordSteerQueued,
   setChatInterruptMode,
 } from "./store.js";
@@ -203,11 +204,20 @@ describe("submitPrompt on an idle chat", () => {
   // An ACCEPTED prompt that then lost its turn must not return to the composer: `CmdPrompt` persists
   // the user row before the ACP call and never rolls it back.
   describe("a prompt the server already accepted", () => {
-    /** Fail the send, but echo the user row first, the way the server does. */
+    /** Fail the send, but echo the user row first, the way the server does, and the close
+     *  its failure writes. */
     function failAfterEcho(): void {
       mockSendPromptTo.mockImplementation(
         async (chatID: string, text: string, opts: { messageID: string }) => {
           echoTurnOpen(chatID, opts.messageID, text);
+          appendEntry(chatID, {
+            id: `${opts.messageID}-close`,
+            turn: `turn-${opts.messageID}`,
+            kind: "turn_close",
+            seq: 1,
+            ts: 2,
+            payload: { outcome: "failed" },
+          });
           return "failed";
         },
       );
@@ -814,6 +824,68 @@ describe("submitPrompt in Queue mode", () => {
     expect(await submitPrompt("c1", "hello")).toBe("failed");
     expect(mockRestoreFailedSend).not.toHaveBeenCalled();
     expect(mockAddAttachmentTo).not.toHaveBeenCalled();
+  });
+});
+
+// A turn the agent started itself (a notification wake): `turn_opened` arrived, nothing has streamed
+// yet, so `thinking` is still false. A prompt here would make KAS abort that turn.
+describe("submitPrompt beside a turn the agent started that has not streamed", () => {
+  function wakeTurnChat(mode: "steer" | "queue"): void {
+    resetStore("c1");
+    setChatInterruptMode("c1", mode);
+    openTurn("c1", {
+      id: "t-wake-open",
+      turn: "t-wake",
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "wire_turn_start", n: 1 },
+    });
+  }
+
+  it("steers into it in Steer mode and never sends a prompt", async () => {
+    wakeTurnChat("steer");
+
+    expect(await submitPrompt("c1", "also check the logs")).toBe("steered");
+    expect(mockSteer).toHaveBeenCalledTimes(1);
+    expect(steeredText()).toBe("also check the logs");
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+    expect(mockQueue).not.toHaveBeenCalled();
+  });
+
+  it("queues behind it in Queue mode and never sends a prompt", async () => {
+    wakeTurnChat("queue");
+
+    expect(await submitPrompt("c1", "then add tests")).toBe("queued");
+    expect(queuedArgs()).toMatchObject({ chatID: "c1", text: "then add tests" });
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+    expect(mockSteer).not.toHaveBeenCalled();
+  });
+
+  it("queues a labelled send behind it", async () => {
+    wakeTurnChat("steer");
+
+    expect(await submitLabelled("c1", "the findings", "Merging findings")).toBe("queued");
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+  });
+
+  it("holds a context reference, which only a new turn resolves", async () => {
+    wakeTurnChat("steer");
+
+    expect(await submitPrompt("c1", "look at #[[file:a.ts]] too")).toBe("held");
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+  });
+
+  // The wake turn ended while the steer was in flight: the server's no_turn makes it the prompt.
+  it("sends the prompt it should have been when the turn ended first", async () => {
+    wakeTurnChat("steer");
+    mockSteer.mockReturnValue(steerRefused("nothing is running", "no_turn"));
+    mockSendPromptTo.mockResolvedValue("sent");
+
+    expect(await submitPrompt("c1", "hello")).toBe("sent");
+    expect(mockSteer).toHaveBeenCalledTimes(1);
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
   });
 });
 

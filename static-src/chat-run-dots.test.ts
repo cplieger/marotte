@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { signal } from "@cplieger/reactive";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-import type { RunNode, RunState } from "./run-store.js";
+import type { RunState } from "./run-store.js";
 import type { TabKind } from "./types.js";
 
 const m = {
@@ -57,29 +57,6 @@ vi.mock("./run-store.js", () => ({
     void runsVersion.value;
     return m.states.get(id);
   }),
-  // The REAL park rule, both arms (a parallel branch's park reaches only the second).
-  isNeedInputPark: (state: RunState | undefined): boolean => {
-    if (state?.status !== "paused") {
-      return false;
-    }
-    const reason = state.pauseReason;
-    const byReason =
-      reason === "Step requested user input via send_message." ||
-      (reason !== undefined &&
-        reason.startsWith("Step '") &&
-        (reason.endsWith("' is waiting for user input.") ||
-          reason.endsWith("' is waiting for the next user message.")));
-    const parked = (function find(n: RunNode | undefined): boolean {
-      if (n === undefined) {
-        return false;
-      }
-      if (n.status === "paused" && n.completionSignal === "need_input") {
-        return true;
-      }
-      return (n.children ?? []).some(find);
-    })(state.root);
-    return byReason || parked;
-  },
   // The tab factory's own read, inert: a Browser-Mode mock is linked as real ESM,
   // so a name any module in the graph reaches has to exist on it.
   runLabelOf: vi.fn(() => ""),
@@ -135,6 +112,7 @@ vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((mod) => {
     const listTabs = mod.tabListRead();
     return {
+      apiBlobOrError: vi.fn(),
       apiGetTyped: vi.fn((path: string, decode: unknown) =>
         path === "/api/tabs" ? listTabs(path) : mockApiGetTyped(path, decode),
       ),
@@ -169,6 +147,7 @@ vi.mock("./dom.js", () => {
         },
       },
     ),
+    setBusy: vi.fn(),
     byId: vi.fn(() => document.createElement("div")),
     forceReflow: vi.fn(() => 0),
   };
@@ -383,11 +362,18 @@ describe("N live runs fold onto one mark", () => {
   });
 
   it("needs a decision when a run is parked on a person", () => {
+    liveRun("wf_1", "c1", { status: "paused" });
+    m.asks.push("wf_1");
+    dockChanged();
+    expect(markState(chat)).toBe("input");
+  });
+
+  it("only waits for a need-input park the store holds no ask for", () => {
     liveRun("wf_1", "c1", {
       status: "paused",
       pauseReason: "Step requested user input via send_message.",
     });
-    expect(markState(chat)).toBe("input");
+    expect(markState(chat)).toBe("waiting");
   });
 
   it("needs a decision when the dock holds an unanswered ask for the run", () => {
@@ -410,10 +396,9 @@ describe("N live runs fold onto one mark", () => {
   it("puts a run wanting a decision ahead of both", () => {
     liveRun("wf_working", "c1", { status: "running" });
     liveRun("wf_parked", "c1", { status: "paused" });
-    liveRun("wf_asking", "c1", {
-      status: "paused",
-      pauseReason: "Step requested user input via send_message.",
-    });
+    liveRun("wf_asking", "c1", { status: "paused" });
+    m.asks.push("wf_asking");
+    dockChanged();
     expect(markState(chat)).toBe("input");
   });
 
@@ -555,10 +540,9 @@ describe("the fold's arithmetic survives in the phrase and the tooltip", () => {
   it("breaks three runs down so one wanting a decision does not read as one run", () => {
     liveRun("wf_a", "c1", { status: "running" });
     liveRun("wf_b", "c1", { status: "running" });
-    liveRun("wf_c", "c1", {
-      status: "paused",
-      pauseReason: "Step requested user input via send_message.",
-    });
+    liveRun("wf_c", "c1", { status: "paused" });
+    m.asks.push("wf_c");
+    dockChanged();
     // One mark, so the count and split survive only in this string.
     expect(markOf(chat).dataset["tooltip"]).toBe("3 workflow runs, 1 needs a decision");
   });
@@ -696,10 +680,9 @@ describe("the mark takes space only while a run is live", () => {
     const a = await openSubject("chat", "cA");
     const b = await openSubject("chat", "cB");
     await paint();
-    liveRun("wf_1", "cA", {
-      status: "paused",
-      pauseReason: "Step requested user input via send_message.",
-    });
+    liveRun("wf_1", "cA", { status: "paused" });
+    m.asks.push("wf_1");
+    dockChanged();
     // `input`'s halo is a box-shadow, so the widest state still costs only mark and gap.
     expect(markState(a)).toBe("input");
     await settle(a);

@@ -20,10 +20,6 @@ vi.mock("../run-store.js", () => ({
   noteRunLive: vi.fn(),
   noteRunSettled: vi.fn(),
   hasLiveRunForChat: vi.fn(() => false),
-  // The chat-parented discriminator, and the handler's ONLY input for it: a
-  // non-empty answer both says the run was launched from a conversation and names
-  // it. `""` is the parentless population.
-  runChatID: vi.fn(() => "c1"),
   runLabelOf: vi.fn(() => ""),
   // A run's own LOG: the five operations the six entry events reach. Present here
   // because Browser Mode links a mock for real, so a factory missing one name fails
@@ -34,32 +30,20 @@ vi.mock("../run-store.js", () => ({
   sealRunEntry: vi.fn(),
   appendRunEntry: vi.fn(),
 }));
-// `vi.hoisted` because the factory is lifted and the value is asserted on.
-const { mockSubmitPrompt } = vi.hoisted(() => ({
-  mockSubmitPrompt: vi.fn(async (): Promise<"sent" | "steered" | "failed"> => "sent"),
-}));
-vi.mock("../submit.js", () => ({ submitLabelled: mockSubmitPrompt }));
 // The launching chat's own liveness, for the orphan sweep's two gates. Mocked
 // because what this suite pins is WHEN the sweep fires, not how a chat comes to
 // be thinking.
-vi.mock("../store.js", () => ({ isThinking: vi.fn(() => false) }));
+vi.mock("../store.js", () => ({ isBusy: vi.fn(() => false) }));
 vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
 vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
-// The dock is mocked (`decision-dock.test.ts`); this pins one decision with the ENVELOPE's chat id
-// and that its submit reaches the right verb.
+// The dock is mocked (`decision-dock.test.ts`); the run-asks store is real.
 vi.mock("../decision-dock.js", () => ({
-  pushDecision: vi.fn(),
-  collapseSettledRunInput: vi.fn(),
-  dropRunAsks: vi.fn(),
+  dropRunRequests: vi.fn(),
   dropTurnDecisions: vi.fn(),
-}));
-vi.mock("../actions/runs.js", () => ({
-  answerRunInput: { dispatch: vi.fn() },
-  continueRunStep: { dispatch: vi.fn() },
 }));
 vi.mock("../notify.js", () => ({
   notifyOffScreen: vi.fn(),
-  closeNotificationsFor: vi.fn(() => Promise.resolve()),
+  closeRunAsksExcept: vi.fn(() => Promise.resolve()),
 }));
 
 import "./run.js";
@@ -79,21 +63,16 @@ import {
   hasLiveRunForChat,
   openRunEntry,
   openRunTurn,
-  runChatID,
   runLabelOf,
   sealRunEntry,
 } from "../run-store.js";
-import { isThinking } from "../store.js";
+import { isBusy } from "../store.js";
 import { trackRun } from "../run-dots.js";
 import { info, success, error } from "../toast.js";
-import {
-  pushDecision,
-  collapseSettledRunInput,
-  dropRunAsks,
-  dropTurnDecisions,
-} from "../decision-dock.js";
-import { answerRunInput, continueRunStep } from "../actions/runs.js";
-import { closeNotificationsFor, notifyOffScreen } from "../notify.js";
+import { dropRunRequests, dropTurnDecisions } from "../decision-dock.js";
+import { _resetRunAsksForTest, runAskPosition, runAsksOf } from "../run-asks.js";
+import { closeRunAsksExcept, notifyOffScreen } from "../notify.js";
+import type { RunAsk } from "../wire/types.gen.js";
 
 const invalidate = vi.mocked(invalidateRun);
 const invalidateControls = vi.mocked(invalidateRunControls);
@@ -107,23 +86,18 @@ const track = vi.mocked(trackRun);
 const toastInfo = vi.mocked(info);
 const toastSuccess = vi.mocked(success);
 const toastError = vi.mocked(error);
-const enqueue = vi.mocked(pushDecision);
-const retireAsk = vi.mocked(collapseSettledRunInput);
-const dropAsks = vi.mocked(dropRunAsks);
+const dropAsks = vi.mocked(dropRunRequests);
 const sweepOrphans = vi.mocked(dropTurnDecisions);
-const chatThinking = vi.mocked(isThinking);
+const chatThinking = vi.mocked(isBusy);
 const siblingRunLive = vi.mocked(hasLiveRunForChat);
-const launchingChat = vi.mocked(runChatID);
 const fetchedLabel = vi.mocked(runLabelOf);
 const runTurnOpened = vi.mocked(openRunTurn);
 const runEntryOpened = vi.mocked(openRunEntry);
 const runDelta = vi.mocked(applyRunDelta);
 const runSealed = vi.mocked(sealRunEntry);
 const runAppended = vi.mocked(appendRunEntry);
-const answer = vi.mocked(answerRunInput.dispatch);
-const waive = vi.mocked(continueRunStep.dispatch);
 const notify = vi.mocked(notifyOffScreen);
-const closeNotifications = vi.mocked(closeNotificationsFor);
+const closeStale = vi.mocked(closeRunAsksExcept);
 
 /** Every toast raised, in order, whatever its level. */
 function toasts(): string[] {
@@ -149,22 +123,16 @@ beforeEach(() => {
   toastInfo.mockClear();
   toastSuccess.mockClear();
   toastError.mockClear();
-  enqueue.mockClear();
-  retireAsk.mockClear();
   dropAsks.mockClear();
+  closeStale.mockClear();
+  _resetRunAsksForTest();
   sweepOrphans.mockClear();
   chatThinking.mockReset();
   chatThinking.mockReturnValue(false);
   siblingRunLive.mockReset();
   siblingRunLive.mockReturnValue(false);
-  launchingChat.mockReset();
-  launchingChat.mockReturnValue("c1");
   fetchedLabel.mockReset();
   fetchedLabel.mockReturnValue("");
-  mockSubmitPrompt.mockClear();
-  mockSubmitPrompt.mockResolvedValue("sent");
-  answer.mockClear();
-  waive.mockClear();
   notify.mockClear();
   listRefetches = 0;
 });
@@ -173,8 +141,7 @@ type RunEvent =
   | "run_started"
   | "run_progress"
   | "run_finished"
-  | "run_input_needed"
-  | "run_input_settled"
+  | "run_asks"
   | "turn_opened"
   | "entry_opened"
   | "entry_delta"
@@ -192,8 +159,7 @@ const _keys: readonly (keyof SSEPayloads)[] = [
   "run_started",
   "run_progress",
   "run_finished",
-  "run_input_needed",
-  "run_input_settled",
+  "run_asks",
   "turn_opened",
   "entry_opened",
   "entry_delta",
@@ -213,16 +179,16 @@ describe("run SSE handlers", () => {
     }
   });
 
-  // The verb set changes only when a run ENDS, so that is the affordance's second and last refetch
-  // (the first is a tab opening); per frame would add a round trip to every node event.
-  it("refetches the affordance when a run ENDS, and never mid-run", () => {
+  // A resume's run_start moves the verb set as much as an ending does, and both reach it through
+  // the state re-read (`run-store.ts` refetches the verbs behind it), so no frame asks for the
+  // affordance itself.
+  it("re-reads the state on a start and an end, and leaves the affordance to that read", () => {
     send("run_progress", { workflow_id: "wf_1", kind: "node_start", node_path: ["seq", "coder"] });
     send("run_started", { workflow_id: "wf_1", name: "x" });
-    expect(invalidateControls).not.toHaveBeenCalled();
-
     send("run_finished", { workflow_id: "wf_1", status: "failed", name: "x" });
-    expect(invalidateControls).toHaveBeenCalledTimes(1);
-    expect(invalidateControls).toHaveBeenLastCalledWith("wf_1");
+
+    expect(invalidate).toHaveBeenLastCalledWith("wf_1");
+    expect(invalidateControls).not.toHaveBeenCalled();
   });
 
   // A notice for the run can arrive before its inspect read settles, so the label
@@ -372,9 +338,9 @@ describe("run SSE handlers", () => {
     expect(invalidate).toHaveBeenCalledWith("wf_pause");
   });
 
-  // A run's ask is filed under the LAUNCHING chat and `dropTurnDecisions` exempts run-scoped asks,
-  // so only a terminal finish releases it (else the chat stays `input` amber).
-  it("drops the run's unanswered asks on every terminal finish", () => {
+  // A step's request is filed under the LAUNCHING chat and `dropTurnDecisions` exempts run-scoped
+  // ones, so only a terminal finish releases it (else the chat stays `input` amber).
+  it("drops the run's unanswered requests on every terminal finish", () => {
     for (const status of ["completed", "failed", "aborted", "cancelled", "exploded"]) {
       dropAsks.mockClear();
       send("run_finished", { workflow_id: "wf_ask", status });
@@ -427,7 +393,7 @@ describe("run SSE handlers", () => {
     it("sweeps nothing for a PARENTLESS run, which has no chat to sweep", () => {
       // A manual or scheduled run's lifecycle frames are workspace-global (empty
       // envelope chat id) and its asks are keyed to the synthetic `run:<id>`, which
-      // `dropRunAsks` already reaches.
+      // `dropRunRequests` already reaches.
       send("run_finished", { workflow_id: "wf_orphan", status: "completed" }, "");
       expect(sweepOrphans).not.toHaveBeenCalled();
     });
@@ -642,6 +608,22 @@ describe("a run's own log", () => {
     expect(invalidate).toHaveBeenLastCalledWith(RUN);
   });
 
+  it("refetches the run when a step's turn closes on a tool_use stop the server grades", () => {
+    // A completed close with a `tool_use` stop is the model-call limit only under KAS's record of
+    // the step, which the run read's `step_ends` carries.
+    send(
+      "turn_closed",
+      {
+        workflow_id: RUN,
+        entry: entry("turn_close", { outcome: "completed", stop_reason_raw: "tool_use" }, 2),
+      },
+      "",
+    );
+
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenLastCalledWith(RUN);
+  });
+
   it("leaves a frame carrying no workflow id to the chat's own handler", () => {
     // The other half of the partition, and the half that cannot be asserted from the
     // chat handler's suite: this module has to do NOTHING for a chat's log, or one frame
@@ -659,193 +641,85 @@ describe("a run's own log", () => {
   });
 });
 
-// The one run event carrying a payload: KAS parks with a fixed `pauseReason` and an empty
-// `pauseDetail`, so `inspect` never says what was asked. The chat id comes off the ENVELOPE (the
-// launching chat, or `run:<workflowId>` for a parentless run).
-describe("a step's question", () => {
-  interface AskDecision {
-    kind: string;
-    chatID: string;
-    runID?: string;
-    askID: string;
-    submit: (text: string | null) => void;
-    defer?: () => void | Promise<void>;
+// Which steps of a run wait on a person: the server's snapshot, applied to the one store whole. The
+// chat id comes off the ENVELOPE (the launching chat, or `run:<workflowId>` for a parentless run).
+describe("a run's step questions", () => {
+  function stepAsk(over: Partial<RunAsk> = {}): RunAsk {
+    return {
+      ask_id: "ask:7",
+      node_id: "review",
+      node_path: ["wf_1", "review"],
+      step_session_id: "sess-1",
+      agent_name: "reviewer",
+      text: "Ship it?",
+      text_source: "asked",
+      ...over,
+    };
   }
 
-  function ask(over: Record<string, unknown> = {}, chatID = "c1"): AskDecision {
+  let seq = 0;
+  function snapshot(asks: RunAsk[], over: Record<string, unknown> = {}, chatID = "c1"): void {
+    seq++;
     send(
-      "run_input_needed",
-      {
-        workflow_id: "wf_1",
-        ask_id: "notify:7",
-        node_id: "review",
-        step_session_id: "sess-1",
-        agent_name: "reviewer",
-        question: "Ship it?",
-        asked_at: "2026-09-03T10:00:00Z",
-        ...over,
-      },
+      "run_asks",
+      { workflow_id: "wf_1", chat_id: chatID, epoch: "e1", seq, reachable: true, asks, ...over },
       chatID,
     );
-    return enqueue.mock.calls.at(-1)?.[0] as unknown as AskDecision;
   }
 
-  it("enqueues one decision keyed to the LAUNCHING chat", () => {
-    const d = ask();
-    expect(enqueue).toHaveBeenCalledTimes(1);
-    expect(d.kind).toBe("run_input");
-    expect(d.chatID).toBe("c1");
-    // Both, because they are what the two hosts match on: the composer's dock
-    // takes the chat id, a run tab's takes either.
-    expect(d.runID).toBe("wf_1");
-    expect(d.askID).toBe("notify:7");
+  it("replaces the run's snapshot in the store", () => {
+    snapshot([stepAsk()]);
+    expect(runAsksOf("wf_1")?.asks.map((a) => a.ask_id)).toEqual(["ask:7"]);
+    snapshot([stepAsk({ ask_id: "ask:8" })]);
+    expect(runAsksOf("wf_1")?.asks.map((a) => a.ask_id)).toEqual(["ask:8"]);
   });
 
-  it("keys a PARENTLESS run's ask to the synthetic run chat the server sent", () => {
-    // A manual or scheduled run has no launching chat, so the envelope carries
-    // `run:<workflowId>` and the run tab's dock is the surface that matches.
-    const d = ask({}, "run:wf_1");
-    expect(d.chatID).toBe("run:wf_1");
-    expect(d.runID).toBe("wf_1");
-  });
-
-  it("tracks the run so its tab dot reports the block", () => {
-    ask();
+  it("tracks the run and records its launching chat while a step waits", () => {
+    snapshot([stepAsk()]);
     expect(track).toHaveBeenCalledWith("wf_1");
-  });
-
-  // On the connect replay this frame can be the FIRST one a client sees for a run,
-  // so without it the run card's footer link opens the tab top-level instead of
-  // beside the conversation that launched it.
-  it("records the launching chat, like the three lifecycle events do", () => {
-    ask();
     expect(noteChat).toHaveBeenCalledWith("wf_1", "c1");
   });
 
-  it("hands the synthetic run chat through unchanged and lets the store refuse it", () => {
-    // `run:<workflowId>` is not a chat id, and the run store is where that rule
-    // lives — a caller-side filter would be a second copy of it. See run-store.ts.
-    ask({}, "run:wf_1");
-    expect(noteChat).toHaveBeenCalledWith("wf_1", "run:wf_1");
+  it("tracks nothing for a snapshot that holds no ask", () => {
+    snapshot([], { reachable: false });
+    expect(track).not.toHaveBeenCalled();
+    expect(noteChat).not.toHaveBeenCalled();
   });
 
-  // The ask is also the moment a client that missed every lifecycle frame learns the
-  // run exists, so the inventory has to hear about it — PARKED, because a run waiting
-  // on a person writes nothing, so the row's `executing` flag is false.
-  it("notes the run live and PARKED, so the eviction exemption keeps answering no", () => {
-    ask();
-    expect(noteLive).toHaveBeenCalledWith("wf_1", "c1", false);
-    expect(noteSettled).not.toHaveBeenCalled();
+  it("closes the banners of the run's waits a readable snapshot no longer holds", () => {
+    const kept = stepAsk({
+      ask_id: "ask:8",
+      node_path: ["wf_1", "build"],
+      step_session_id: "sess-2",
+    });
+    snapshot([kept]);
+    expect(closeStale).toHaveBeenLastCalledWith("wf_1", new Set([runAskPosition("wf_1", kept)]));
+    snapshot([]);
+    expect(closeStale).toHaveBeenLastCalledWith("wf_1", new Set());
   });
 
-  it("notes a parentless run's ask against no chat at all, not the synthetic key", () => {
-    // The row still belongs in the inventory (its own tab dot reads it), and
-    // `runChatID` is what keeps `run:<workflowId>` out of the chat field.
-    launchingChat.mockReturnValue("");
-    ask({}, "run:wf_1");
-    expect(noteLive).toHaveBeenCalledWith("wf_1", "", false);
+  it("closes nothing on a snapshot marotte could not read", () => {
+    snapshot([], { reachable: false });
+    expect(closeStale).not.toHaveBeenCalled();
   });
 
-  // The server's `notification` frame carries this ask's words; a second page-side notice
+  it("ignores a stale snapshot entirely", () => {
+    snapshot([stepAsk()], { seq: 5 });
+    closeStale.mockClear();
+    track.mockClear();
+    snapshot([], { seq: 4 });
+    expect(runAsksOf("wf_1")?.asks).toHaveLength(1);
+    expect(closeStale).not.toHaveBeenCalled();
+    expect(track).not.toHaveBeenCalled();
+  });
+
+  // The server's `notification` frame carries the question's words; a second page-side notice
   // would show it twice.
-  it("raises no notification of its own", () => {
-    ask();
+  it("raises no notification and refetches nothing", () => {
+    snapshot([stepAsk()]);
     expect(notify).not.toHaveBeenCalled();
-  });
-
-  it("refetches nothing: the question is on no endpoint", () => {
-    ask();
     expect(invalidate).not.toHaveBeenCalled();
     expect(listRefetches).toBe(0);
     expect(toasts()).toEqual([]);
-  });
-
-  it("sends text to the ANSWER verb, addressed by ask id", () => {
-    ask().submit("yes, ship it");
-    expect(answer).toHaveBeenCalledWith({
-      workflowID: "wf_1",
-      ask_id: "notify:7",
-      text: "yes, ship it",
-    });
-    expect(waive).not.toHaveBeenCalled();
-  });
-
-  it("sends null to the CONTINUE verb, addressed by NODE", () => {
-    // The step-status verb takes a node, not an ask: it clears the node's
-    // need-input signal so the step re-runs with its own default continuation.
-    ask().submit(null);
-    expect(waive).toHaveBeenCalledWith({ workflowID: "wf_1", nodeID: "review" });
-    expect(answer).not.toHaveBeenCalled();
-  });
-
-  // Deferring to the launching agent: the prompt reaches the LAUNCHING CHAT and carries the two
-  // routes, not the question the reader chose not to read.
-  describe("deferring to the launching agent", () => {
-    it("prompts the LAUNCHING chat and names the run, not the question", async () => {
-      const d = ask();
-      await d.defer?.();
-
-      expect(mockSubmitPrompt).toHaveBeenCalledTimes(1);
-      const [chat, text, label] = mockSubmitPrompt.mock.calls[0] as unknown as [
-        string,
-        string,
-        string,
-      ];
-      expect(label).toBe("Deferred the open question on workflow run wf_1");
-      // The run id would address the run to nobody: a prompt is delivered to a chat.
-      expect(chat).toBe("c1");
-      expect(text).toContain("wf_1");
-      // Neither the ask id (opaque, and long) nor the question, which is the thing
-      // the reader handed over rather than read.
-      expect(text).not.toContain("notify:7");
-      expect(text).not.toContain("Ship it?");
-      // The two routes, so the agent can act on it without being told how.
-      expect(text).toContain("GET /api/runs/wf_1");
-      expect(text).toContain("POST /api/runs/wf_1/answer");
-      // The body's field NAMES, quoted, because they are unguessable (`text`, not `answer`).
-      expect(text).toContain('"ask_id"');
-      expect(text).toContain('"text"');
-    });
-
-    it("carries NO deferral for a parentless run, which has no agent to ask", () => {
-      // `runChatID` answering "" is the whole discriminator: noteRunChat refuses the
-      // synthetic `run:` key, so a run nothing launched from a conversation has no
-      // chat to prompt and the card must not offer the button at all.
-      launchingChat.mockReturnValue("");
-      const d = ask({}, "run:wf_1");
-      expect(d.defer).toBeUndefined();
-      // The property is ABSENT rather than undefined, which is what the card reads.
-      expect("defer" in d).toBe(false);
-    });
-
-    it("throws on a refusal, so the card hands its button back", () => {
-      // submit.ts returns "failed" rather than throwing and reports the refusal
-      // through send-state, so the throw is what the card's failure arm needs and no
-      // toast is owed here.
-      mockSubmitPrompt.mockResolvedValue("failed");
-      const d = ask();
-      return expect(d.defer?.()).rejects.toThrow(/wf_1/);
-    });
-  });
-
-  it("retires the card on the settle frame, and the banner tagged with the run", () => {
-    send("run_input_settled", {
-      workflow_id: "wf_1",
-      ask_id: "notify:7",
-      settled_by: "user",
-    });
-    expect(retireAsk).toHaveBeenCalledWith("wf_1", "notify:7", "user");
-    expect(closeNotifications).toHaveBeenCalledWith({ kind: "run", workflowID: "wf_1" });
-    // Not an invalidation either: the run's own status never described the ask.
-    expect(invalidate).not.toHaveBeenCalled();
-  });
-
-  it("carries the unattended settler through rather than flattening it", () => {
-    send("run_input_settled", {
-      workflow_id: "wf_1",
-      ask_id: "notify:7",
-      settled_by: "unattended",
-    });
-    expect(retireAsk).toHaveBeenCalledWith("wf_1", "notify:7", "unattended");
   });
 });

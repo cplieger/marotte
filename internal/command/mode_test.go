@@ -1,13 +1,14 @@
 package command
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/chatlock"
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -75,16 +76,16 @@ func TestCmdSetMode_NoOpAndAutoCreate(t *testing.T) {
 	})
 }
 
-// TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot pins applySessionConfig's
+// TestSessionConfig_ColdOpenPersistsAndASessionRefusalDoesNot pins applySessionConfig's
 // distinction from both sides: a bridge not yet started is a chat with no session and persists, a
 // session refusal does not.
-func TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot(t *testing.T) {
+func TestSessionConfig_ColdOpenPersistsAndASessionRefusalDoesNot(t *testing.T) {
 	tests := map[string]struct {
 		callErr     error
 		wantStatus  int
 		wantApplied bool
 	}{
-		"a cold-spawning bridge persists": {
+		"a bridge opening its session persists": {
 			callErr:     fmt.Errorf("write frame: %w", marotte.ErrBridgeNotStarted),
 			wantApplied: true,
 		},
@@ -117,7 +118,7 @@ func TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot(t *testing.T) 
 				}
 				cmd := &marotte.ClientCommand{Type: marotte.CmdSetEffort, ChatID: "c1", Payload: payload}
 
-				_, err = cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, chatlock.New(), cmd)
+				_, err = cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, keylock.New(cmp.Compare[marotte.ChatID]), cmd)
 
 				assertConfigOutcome(t, err, test.wantStatus)
 				c, ok := store.Get(t.Context(), "c1")
@@ -149,7 +150,7 @@ func assertConfigOutcome(t *testing.T, err error, wantStatus int) {
 	t.Helper()
 	if wantStatus == 0 {
 		if err != nil {
-			t.Fatalf("a cold-spawning bridge answered %v; the pick is lost and the pill rolls back", err)
+			t.Fatalf("a bridge opening its session answered %v; the pick is lost and the pill rolls back", err)
 		}
 		return
 	}

@@ -47,6 +47,10 @@ func TestHandleAssistantChunk_SentinelEndsTheTurn(t *testing.T) {
 	if got := deps.turnInterrupts[0].chatID; got != chatID {
 		t.Errorf("interrupted chat %q, want %q", got, chatID)
 	}
+	// The turn the notice folded into, named so the host never reaches a turn that replaced it.
+	if folded, ok := deps.OwnTurn(chatID); !ok || deps.turnInterrupts[0].turnID != folded.ID() {
+		t.Errorf("interrupted turn %q, want the notice's own turn (%v, open %v)", deps.turnInterrupts[0].turnID, folded, ok)
+	}
 	if got := deps.turnInterrupts[0].reason; got != interruptReason {
 		t.Errorf("reason = %q, want %q — the divider has no other source for it", got, interruptReason)
 	}
@@ -143,6 +147,6 @@ func TestHandleAssistantChunk_SentinelEndsTheTurnOnce(t *testing.T) {
 
 	if len(deps.turnInterrupts) != 2 {
 		t.Errorf("got %d interrupts for 2 sentinel deltas, want 2; the one-shot lives on "+
-			"the host (sharedBridge.interruptTurn), not here", len(deps.turnInterrupts))
+			"the host (bridgeCoordinator.InterruptTurn), not here", len(deps.turnInterrupts))
 	}
 }

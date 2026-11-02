@@ -25,7 +25,7 @@ func (b *recordingBroadcaster) Broadcast(_ context.Context, evt marotte.ServerEv
 
 func (b *recordingBroadcaster) Epoch() string { return b.epoch }
 
-func pushPoller(t *testing.T, cores map[string]forgeapi.Core, origins []RepoOrigin, recs ...connectionRecord,
+func pushPoller(t *testing.T, cores map[string]forgeapi.Core, origins []RepoOrigin, recs ...connectionSpec,
 ) (*PRStatusPoller, *fakeGate, *recordingBroadcaster, *subject.Versions, *Manager) {
 	t.Helper()
 	m := sourceManager(t, cores, recs...)
@@ -78,7 +78,7 @@ func TestInventory_ChangedEntryBroadcastsOnce(t *testing.T) {
 		p.sweep(t.Context())
 
 		frames := framesByConnection(t, b.events)
-		for _, rec := range []connectionRecord{gh, gl} {
+		for _, rec := range []connectionSpec{gh, gl} {
 			got := frames[rec.ID]
 			if len(got) != 1 {
 				t.Errorf("cycle %d broadcast %d frames for %s, want one whatever its scope count", cycle+1, len(got), rec.ID)
@@ -114,7 +114,7 @@ func TestInventory_UnchangedCycleBroadcastsNothing(t *testing.T) {
 	if len(core.asked) != 3 {
 		t.Fatalf("Setup: lists made = %d, want 3: the push-only cycle must have read the authored call", len(core.asked))
 	}
-	p.inventoryFor(m.List(t.Context()))
+	p.inventoryFor(m.readers())
 
 	if len(b.events) != 1 || inventoryVersion(v, rec.ID) != "1" {
 		t.Errorf("after a push-only cycle and a read: %d frames, version %q; want 1 and \"1\": neither writes the entry",
@@ -133,18 +133,14 @@ func TestInventory_VersionBumpsWithTheEntry(t *testing.T) {
 			got, len(b.events), lastStamp(b))
 	}
 
-	if err := m.store.Delete(rec.ID); err != nil {
-		t.Fatalf("Setup: delete the credential: %v", err)
-	}
-	m.invalidate()
+	dropCredential(t, m, rec.ID)
 	p.sweep(t.Context())
 	if got := inventoryVersion(v, rec.ID); got != "3" || len(b.events) != 2 {
 		t.Errorf("after the connection was dropped: version %q, %d frames; want \"3\" and no frame: "+
 			"a client holding the entry must read it changed", got, len(b.events))
 	}
 
-	seedStoreRecord(t, m.configDir, rec.ID, "bob")
-	m.invalidate()
+	addConnections(t, m, "bob", rec)
 	p.sweep(t.Context())
 	if got := inventoryVersion(v, rec.ID); got != "4" || lastStamp(b) != "4" {
 		t.Errorf("after it reconnected: version %q, last stamp %q; want \"4\", never a version a client already holds",

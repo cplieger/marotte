@@ -102,21 +102,60 @@ func TestHandleSessionInfoUpdate_FocusStatusOnly(t *testing.T) {
 	}
 }
 
-// Subagent focus frames are dropped by the parent-only gate.
-func TestHandleSessionInfoUpdate_FocusDropsSubagent(t *testing.T) {
+// The engine's own focus_update carries `activity`; with turnActive its status is the live
+// turn's, an outstanding ask included, and marks the payload turn-scoped. Serial: it resets the
+// census ledger and swaps the slog default.
+func TestFocusUpdate_EngineActivityMarksTurnScoped(t *testing.T) {
+	for _, tc := range []struct {
+		activity map[string]any
+		name     string
+		want     bool
+	}{
+		{name: "turn active", activity: map[string]any{"turnActive": true, "runningWorkflows": 0, "pausedWorkflows": 0}, want: true},
+		{name: "turn ended", activity: map[string]any{"turnActive": false, "runningWorkflows": 0, "pausedWorkflows": 0}},
+		{name: "agent declaration"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetCensus(t)
+			var logbuf bytes.Buffer
+			captureSlog(t, &logbuf)
+			deps, events, _ := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+			kiro := map[string]any{"kind": "focus_update", "focus": map[string]any{"status": "waiting_on_user"}, "status": "waiting_on_user"}
+			if tc.activity != nil {
+				kiro["activity"] = tc.activity
+			}
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+				"sessionUpdate": "session_info_update", "_meta": map[string]any{"kiro": kiro},
+			}), FrameAttribution{})
+
+			got := chatStatusPayloads(t, events)
+			if len(got) != 1 || got[0].Status != marotte.ChatStatusWaitingOnUser || got[0].TurnScoped != tc.want {
+				t.Errorf("chat_status payloads = %+v, want one waiting_on_user with TurnScoped %t", got, tc.want)
+			}
+			if strings.Contains(logbuf.String(), "UNKNOWN _meta.kiro field") {
+				t.Errorf("the activity block was reported as unread:\n%s", logbuf.String())
+			}
+		})
+	}
+}
+
+// A step's focus frames are dropped by the parent-only gate.
+func TestHandleSessionInfoUpdate_FocusDropsAStepFrame(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"title": "Sub focus", "status": "in_progress",
-	}), FrameAttribution{Subagent: true, SessionID: "sub-1"})
+	}), FrameAttribution{Step: true, SessionID: "sess-step", RunID: "wf_1"})
 
 	c, _ := store.Get(t.Context(), "c1")
 	if c.Name != "A" {
 		t.Errorf("chat name = %q, want untouched", c.Name)
 	}
 	if got := chatStatusPayloads(t, events); len(got) != 0 {
-		t.Fatalf("chat_status from a subagent frame: %+v", got)
+		t.Fatalf("chat_status from a step frame: %+v", got)
 	}
 }
 
@@ -383,7 +422,7 @@ func TestHandleSessionInfoUpdate_FocusRefusalLevel(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			t.Cleanup(captureSlog(&buf))
+			captureSlog(t, &buf)
 			deps, _, _ := depsWithStore(t, "c1")
 			tr := New(rolesOf(deps))
 

@@ -65,7 +65,6 @@ vi.mock("./api-client.js", () => ({
   apiGetOrError: vi.fn(),
 }));
 vi.mock("./actions/editor.js", () => ({
-  suggestResolution: undefined,
   fetchAgentLines: { cancel: () => undefined, dispatch: () => Promise.resolve(null) },
   loadDiff: { dispatch: () => ({ outcome: Promise.resolve(diff.outcome) }) },
 }));

@@ -60,15 +60,16 @@
                wording and are repainted on init from the tier actually in force;
                `aria-label` is the accessible name and does not flip.
 
-               Both faces are Lucide verbatim — `mouse` and `pointer` — and the
-               coarse one's THREE folded fingers are load-bearing rather than
-               detail: a two-path reduction of it shipped until 2026-09, and one
-               long finger centred between a single knuckle and a thumb reads as
-               an obscene gesture. Whatever redraws this keeps folded fingers on
-               BOTH sides of the extended one. -->
+               The fine face is Lucide's `mouse`; the coarse face is Lucide's
+               `pointer` redrawn narrower (17 units wide). Its THREE folded
+               fingers are load-bearing rather than detail: a two-path reduction
+               of it shipped until 2026-09, and one long finger centred between
+               a single knuckle and a thumb reads as an obscene gesture.
+               Whatever redraws this keeps folded fingers on BOTH sides of the
+               extended one. -->
           <button type="button" id="pointer-mode-btn" class="icon-btn hidden" data-tooltip="Mouse mode. Switch to touch mode" aria-label="Touch mode" aria-pressed="false">
             <svg class="pointer-icon-fine ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="7"/><path d="M12 7v4"/></svg>
-            <svg class="pointer-icon-coarse hidden ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M22 14a8 8 0 0 1-8 8"/><path d="M18 11v-1a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1"/><path d="M10 9.5V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v10"/><path d="M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>
+            <svg class="pointer-icon-coarse hidden ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 14V4.75a1.75 1.75 0 0 1 3.5 0V10"/><path d="M13.5 11V9.5a1.75 1.75 0 0 0-3.5 0V11"/><path d="M17 12V10.5a1.75 1.75 0 0 0-3.5 0V12"/><path d="M17 12.5a1.75 1.75 0 1 1 3.5 0v2A6.5 6.5 0 0 1 14 21h-2c-2.2 0-3.4-.7-4.5-1.8l-3.6-3.6a1.6 1.6 0 0 1 2.3-2.3l.3.3"/></svg>
           </button>
           <button type="button" id="sidebar-close" class="icon-btn sidebar-close-only" data-tooltip="Close menu" aria-label="Close menu">
             <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -80,7 +81,7 @@
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
           New chat
         </button>
-        <button type="button" id="history-btn" class="sidebar-action-btn sidebar-history-btn" data-tooltip="History" aria-label="History">
+        <button type="button" id="history-btn" class="sidebar-action-btn sidebar-history-btn" data-tooltip="History" aria-label="History" aria-pressed="false">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
         </button>
       </div>
@@ -135,6 +136,11 @@
                  Its separator hides with it, or a hidden row leaves a dangling rule. -->
             <span class="pill-sep" id="st-auth-sep" hidden></span>
             <span class="pill-detail" id="st-auth" hidden></span>
+            <!-- How the account signed in: the method, start URL and region. -->
+            <span class="pill-sep" id="st-signin-sep" hidden></span>
+            <span class="pill-detail" id="st-signin-method" hidden></span>
+            <span class="pill-detail" id="st-signin-url" hidden></span>
+            <span class="pill-detail" id="st-signin-region" hidden></span>
             <a class="pill-account" id="st-account" hidden
                href="https://app.kiro.dev/account/usage" target="_blank" rel="noopener">
               <span class="pill-account-lines">
@@ -207,14 +213,14 @@
         <button type="button" id="find-btn" class="icon-btn" data-tooltip="Search (Ctrl+F)" aria-label="Search" aria-pressed="false">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg>
         </button>
-        <button type="button" id="files-btn" class="icon-btn" data-tooltip="File browser" aria-label="File browser">
+        <button type="button" id="files-btn" class="icon-btn" data-tooltip="File browser" aria-label="File browser" aria-pressed="false">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h3l3 3h6a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z"/></svg>
         </button>
-        <button type="button" id="git-btn" class="icon-btn" data-tooltip="Toggle git" aria-label="Toggle git">
+        <button type="button" id="git-btn" class="icon-btn" data-tooltip="Toggle git" aria-label="Toggle git" aria-pressed="false">
           <svg class="git-btn-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>
           <span id="git-badge" class="git-badge hidden"></span>
         </button>
-        <button type="button" id="shell-btn" class="icon-btn" data-tooltip="Toggle shell" aria-label="Toggle shell">
+        <button type="button" id="shell-btn" class="icon-btn" data-tooltip="Toggle shell" aria-label="Toggle shell" aria-pressed="false">
           <!-- Boxed prompt, DELIBERATELY not the bare `>_` on the shell panel's own
                header and on tool cards: a bare prompt reaches 12 of the grid's 15
                units, so in this row it reads short against its boxed neighbours.
@@ -226,8 +232,8 @@
                inner ink) and sized to 3.75x7.5 to fill the box. -->
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7.5 7.5l3.75 3.75-3.75 3.75"/><path d="M12.75 15h3.75"/></svg>
         </button>
-        <button type="button" id="docs-btn" class="icon-btn" data-tooltip="Kiro docs" aria-label="Kiro docs">
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5C9 3.5 6 3 4.5 3Q3 3 3 4.5V18Q3 19.5 4.5 19.5C6 19.5 9 20 12 21C15 20 18 19.5 19.5 19.5Q21 19.5 21 18V4.5Q21 3 19.5 3C18 3 15 3.5 12 4.5Z"/><path d="M12 4.5v16.5"/></svg>
+        <button type="button" id="docs-btn" class="icon-btn" data-tooltip="Kiro docs" aria-label="Kiro docs" aria-pressed="false">
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.25C10 4.7 7.5 3.5 4.5 3.5Q3 3.5 3 5V16.75Q3 18.25 4.5 18.25C7.5 18.25 10 19.45 12 21C14 19.45 16.5 18.25 19.5 18.25Q21 18.25 21 16.75V5Q21 3.5 19.5 3.5C16.5 3.5 14 4.7 12 6.25Z"/><path d="M12 6.25v14.75"/></svg>
         </button>
         <!-- LAST of the persistent buttons, and deliberately not last child: the
              hamburger below is `display: none` above 48rem, so Settings IS the
@@ -236,7 +242,7 @@
              button exists. Nothing reads this button's parent — settings.ts binds
              its click, tabs.ts puts it in ACTIVE_BTN, app.ts clicks it from the
              keyboard shortcut, and 61-mcp-tools.css rotates its glyph on `.active`. -->
-        <button type="button" id="settings-btn" class="icon-btn" data-tooltip="Settings" aria-label="Settings">
+        <button type="button" id="settings-btn" class="icon-btn" data-tooltip="Settings" aria-label="Settings" aria-pressed="false">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
         <button type="button" id="menu-toggle" class="icon-btn mobile-only" data-tooltip="Menu" aria-label="Menu">
@@ -267,7 +273,7 @@
               <div class="picker-grid"></div>
             </div>
           </div>
-          <button type="button" id="scroll-bottom" class="hidden" data-tooltip="Scroll to bottom" aria-label="Scroll to bottom">
+          <button type="button" id="scroll-bottom" class="scroll-resume hidden" data-tooltip="Scroll to bottom" aria-label="Scroll to bottom">
             <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M7 13l5 5 5-5M7 6l5 5 5-5"/></svg>
             <span>Latest</span>
           </button>
@@ -307,7 +313,12 @@
                Same mechanical property as the dock (see 26-dock.css): the bar
                GROWS upward and #messages-wrap shrinks by exactly this region's
                height, so nothing is covered. -->
-          <ul id="run-bar" class="run-bar hidden" aria-label="Workflow runs from this chat"></ul>
+          <!-- The host is the rows' container, so a container query can change the list's own columns.
+               The fold row sits above the list, outside its scroll clip. -->
+          <div class="run-bar-host">
+            <div id="run-bar-fold" class="run-bar-fold" hidden></div>
+            <ul id="run-bar" class="run-bar hidden" aria-label="Workflow runs from this chat"></ul>
+          </div>
           <!-- Mid-turn messages KAS is holding, oldest at the top: a new one
                appears at the bottom and pushes the older ones up. A SIBLING of
                .prompt-box for the same reason the dock is one — these are
@@ -387,24 +398,23 @@
                 </button>
                 <span id="role-list" class="pill-expand-content pill-role-list hidden"></span>
               </span>
-              <!-- Chat actions: the composer's tray for everything that acts on
+              <!-- Chat options: the composer's tray for everything that acts on
                    THIS chat without changing per message — attach a file, start
                    a goal run, branch a tangent, and the supervised switch. A
                    menu rather than four more pills: a pill earns its slot by
                    changing per message (model, mode), and four that do not
                    would grow the row without bound on a phone.
 
-                   `+` because three of the four ADD something to the chat, and
-                   it is the conventional composer glyph for such a tray. The
-                   tooltip and the aria-label say "Chat actions" — one wording
-                   for both, so the accessible name cannot drift from the visible
-                   one, and it is the wording that stays true for the switch too.
+                   Sliders, not `+`: the menu holds settings and actions alike,
+                   and a `+` reads as attach. The tooltip and the aria-label say
+                   "Chat options" — one wording for both, so the accessible name
+                   cannot drift from the visible one.
 
                    Every row is appended by chat-options.ts; the card is
                    deliberately empty here. -->
               <span class="pill-slot">
-                <button id="chat-options-btn" class="pill pill-expandable" type="button" data-tooltip="Chat actions" aria-label="Chat actions">
-                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <button id="chat-options-btn" class="pill pill-expandable" type="button" data-tooltip="Chat options" aria-label="Chat options">
+                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
                 </button>
                 <span id="chat-options-card" class="pill-expand-content chat-options-card hidden"></span>
               </span>
@@ -584,7 +594,7 @@
 
             <div class="page-section" id="general-agent-section">
               <h2 class="section-title">Agent capabilities</h2>
-              <p class="section-hint">What the agent can use. Changes reach new chats, and open chats at their next message.</p>
+              <p class="section-hint">What the agent can use. Changes reach new chats, and open chats at their next message, except a row that says it applies after the agent engine restarts.</p>
               <div class="section-option">
                 <label class="toggle">
                   <input type="checkbox" id="flag-knowledge" aria-label="Knowledge base search" checked>
@@ -600,15 +610,15 @@
               </div>
               <div class="section-option">
                 <label class="toggle">
-                  <input type="checkbox" id="flag-tool-search" aria-label="Load MCP tools on demand">
+                  <input type="checkbox" id="flag-model-fallback" aria-label="Model fallback" aria-describedby="flag-model-fallback-hint">
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
                   <div class="section-title-status-row">
-                    <span class="section-option-label">Load MCP tools on demand</span>
-                    <span class="settings-save-status hidden" data-save-status="tool_search_enabled" aria-live="polite"></span>
+                    <span class="section-option-label">Model fallback</span>
+                    <span class="settings-save-status hidden" data-save-status="model_fallback_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Off (default), the agent sees every MCP tool's description on every message, which uses context. On, it sees only tool names and loads the ones it needs, which is worth it if you have many tools.</p>
+                  <p class="section-hint" id="flag-model-fallback-hint">When a model declines a request or is unavailable, Kiro retries the turn on another model from its fallback chain, and the chat may move to that model unless you picked one. Off by default, as in Kiro.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -618,12 +628,12 @@
                     <span class="settings-save-status hidden" data-save-status="memory_mode" aria-live="polite"></span>
                   </div>
                   <select id="memory-mode" class="rf-select" aria-describedby="memory-mode-hint">
-                    <option value="off">Off</option>
+                    <option value="off" selected>Off</option>
                     <option value="read_only">Read only</option>
                     <option value="read_write">Read and write when the agent decides</option>
-                    <option value="learn" selected>Read and write, and also learn from conversations in the background</option>
+                    <option value="learn">Read and write, and also learn from conversations in the background</option>
                   </select>
-                  <p class="section-hint" id="memory-mode-hint">Lets the agent remember your preferences and facts about your projects from one chat to the next. The last option is the default and matches kiro-cli. Pick Read only to keep what it knows without adding more, or Off to stop it. Unless Memory is Off, you can review and delete memories in Docs → Memories.</p>
+                  <p class="section-hint" id="memory-mode-hint">Lets the agent remember your preferences and facts about your projects from one chat to the next. Off is the default and matches kiro-cli. Pick Read only to keep what it knows without adding more, or one of the last two to let it add memories. Unless Memory is Off, you can review and delete memories in Docs → Memories.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -679,19 +689,6 @@
               </div>
               <div class="section-option">
                 <label class="toggle">
-                  <input type="checkbox" id="flag-inline-agents" aria-label="Inline helper agents">
-                  <span class="toggle-slider"></span>
-                </label>
-                <div>
-                  <div class="section-title-status-row">
-                    <span class="section-option-label">Inline helper agents</span>
-                    <span class="settings-save-status hidden" data-save-status="inline_agents_enabled" aria-live="polite"></span>
-                  </div>
-                  <p class="section-hint">Lets the agent hand part of a task to a one-off helper with a model and effort it picks, instead of only to your saved agents. Off by default. Helpers have the agent's own permissions and tools.</p>
-                </div>
-              </div>
-              <div class="section-option">
-                <label class="toggle">
                   <input type="checkbox" id="flag-steering-reminders" aria-label="Steering reminders">
                   <span class="toggle-slider"></span>
                 </label>
@@ -729,7 +726,7 @@
                     <option value="on">On</option>
                     <option value="off">Off</option>
                   </select>
-                  <p class="section-hint" id="auto-routing-hint">In a chat on Auto, Kiro may move to a stronger model partway through when a task needs it, and the chat notes where it did. Default follows Kiro; choose Off to keep a chat on the model it started with.</p>
+                  <p class="section-hint" id="auto-routing-hint">In a chat on Auto, Kiro may move to a stronger model partway through when a task needs it, and the chat notes where it did. Default follows Kiro; choose Off to keep a chat on the model it started with. Choosing On or Off also replaces Kiro's server-tuned context hand-off wording with its built-in one.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -761,7 +758,7 @@
               </div>
               <div class="section-option">
                 <label class="toggle">
-                  <input type="checkbox" id="flag-workflows" aria-label="Workflows" checked>
+                  <input type="checkbox" id="flag-workflows" aria-label="Workflows" aria-describedby="flag-workflows-hint" checked>
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
@@ -769,7 +766,7 @@
                     <span class="section-option-label">Workflows</span>
                     <span class="settings-save-status hidden" data-save-status="workflows_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Lets the agent start and manage multi-step workflow runs. Runs you start from Docs &gt; Workflows work either way. On by default.</p>
+                  <p class="section-hint" id="flag-workflows-hint">On: the agent hands work to workflows that run in the background while you keep chatting. Off: it uses subagents instead and waits for each to finish before it continues. Runs you start from Docs &gt; Workflows work either way. On by default.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -797,6 +794,28 @@
               </div>
             </div>
 
+            <div class="page-section" id="general-engine-section">
+              <h2 class="section-title">Agent engine</h2>
+              <p class="section-hint">One kiro-cli agent engine runs every chat and workflow. It restarts by itself when a setting below needs it and nothing is running.</p>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <span class="section-option-label">Restart the agent engine</span>
+                  <button type="button" id="engine-restart" class="btn-small" aria-describedby="engine-restart-hint">Restart now</button>
+                  <p class="section-hint" id="engine-restart-hint">Applies any pending setting at once, or recovers an engine that stopped answering. Running replies stop, and running workflows pause and resume by themselves. Restarting also stops a signed-out account at once.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="engine-heap-mib">Agent engine memory limit</label>
+                    <span class="settings-save-status hidden" data-save-status="engine_heap_mib" aria-live="polite"></span>
+                  </div>
+                  <input type="number" id="engine-heap-mib" class="rf-input rf-number" autocomplete="off" min="1024" max="65536" step="256" inputmode="numeric" placeholder="Default" aria-describedby="engine-heap-mib-hint">
+                  <p class="section-hint" id="engine-heap-mib-hint">The most memory, in MiB, the agent engine's JavaScript heap may use, from 1024 to 65536 and at most the container's memory limit minus 512. Empty keeps kiro-cli's default, about 4 GB. It bounds the JavaScript heap only, not the engine's native memory.</p>
+                </div>
+              </div>
+            </div>
+
             <div class="page-section" id="general-data-section">
               <h2 class="section-title">Data sharing</h2>
               <p class="section-hint">What Marotte and kiro-cli share with AWS. Both are off by default.</p>
@@ -810,12 +829,12 @@
                     <span class="section-option-label">Share content with AWS for service improvement</span>
                     <span class="settings-save-status hidden" data-save-status="content_collection_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Lets AWS use what Marotte sends the model to improve its service: your chats, workflow runs, and the code and diffs behind generated commit messages, PR descriptions and error explanations. A change applies at the next model request.</p>
+                  <p class="section-hint">Lets AWS use what Marotte sends the model to improve its service: your chats and workflow runs. A change applies at the next model request.</p>
                 </div>
               </div>
               <div class="section-option">
                 <label class="toggle">
-                  <input type="checkbox" id="flag-telemetry" aria-label="kiro-cli telemetry">
+                  <input type="checkbox" id="flag-telemetry" aria-label="kiro-cli telemetry" checked>
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
@@ -823,7 +842,7 @@
                     <span class="section-option-label">kiro-cli telemetry</span>
                     <span class="settings-save-status hidden" data-save-status="telemetry.enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Sends usage data from kiro-cli and the chats it runs, linked to your signed-in account, to the Kiro team. Open chats switch at their next message; a workflow already running may keep the old setting until it finishes.</p>
+                  <p class="section-hint">Covers both kinds of kiro-cli telemetry: its usage telemetry, which sends usage data from kiro-cli and the chats it runs to the Kiro team, linked to your signed-in account, and its legacy toolkit telemetry. On by default, as in kiro-cli.</p>
                 </div>
               </div>
             </div>
@@ -886,25 +905,23 @@
             <div class="page-section">
               <h2 class="section-title">Tools &amp; runtimes</h2>
               <p class="section-hint">Languages, language servers and CLIs the agent can use, installed into persistent storage. The pin keeps a tool at its current version.</p>
-              <div class="section-actions-row">
-                <div class="action-bar action-bar-inline">
-                  <button type="button" id="tool-update-btn" class="action-pill" aria-label="Update all tools">
-                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-                    <span>Update all</span>
-                  </button>
-                  <button type="button" id="tool-add-btn" class="action-pill" aria-label="Add tool">
-                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-                    <span>Add tool</span>
-                  </button>
-                  <button type="button" id="tool-catalog-refresh-btn" class="action-pill" aria-label="Refresh the tool catalog">
-                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-                    <span>Refresh catalog</span>
-                  </button>
-                  <button type="button" id="tool-cancel-btn" class="action-pill hidden" aria-label="Cancel the running tool job">
-                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                    <span>Cancel</span>
-                  </button>
-                </div>
+              <div class="page-toolbar">
+                <button type="button" id="tool-update-btn" class="action-pill" aria-label="Update all tools">
+                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+                  <span>Update all</span>
+                </button>
+                <button type="button" id="tool-add-btn" class="action-pill" aria-label="Add tool">
+                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                  <span>Add tool</span>
+                </button>
+                <button type="button" id="tool-catalog-refresh-btn" class="action-pill" aria-label="Refresh the tool catalog">
+                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                  <span>Refresh catalog</span>
+                </button>
+                <button type="button" id="tool-cancel-btn" class="action-pill hidden" aria-label="Cancel the running tool job">
+                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                  <span>Cancel</span>
+                </button>
               </div>
               <p id="tool-catalog-meta" class="section-hint hidden" aria-live="polite"></p>
               <div id="tool-update-output" class="rolling-output hidden" role="log" aria-live="polite" aria-label="Tool install output"></div>
@@ -942,7 +959,7 @@
 
           <!-- Permissions: active (Cedar) policy + supervised mode + agent ignore files -->
           <div class="settings-panel hidden" data-settings-panel="permissions">
-            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces, including shell commands. Supervised mode and agent ignore files are separate layers under it. The review gate is kiro-cli's own, and marotte only sets a value for it. Defaults here apply to new conversations, and the chat-actions menu next to the prompt changes the conversation you are in.</p>
+            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces, including shell commands. Supervised mode and agent ignore files are separate layers under it. The review gate is kiro-cli's own, and marotte only sets a value for it. Defaults here apply to new conversations, and the chat-options menu next to the prompt changes the conversation you are in.</p>
 
             <div class="page-section" id="security-profile-section">
               <h2 class="section-title">Security profile</h2>
@@ -1019,7 +1036,7 @@
                 <h2 class="section-title">Supervised mode, the default for new chats</h2>
                 <span class="settings-save-status hidden" data-save-status="supervised_default" aria-live="polite"></span>
               </div>
-              <p class="section-hint">Pauses each turn so you can review its file changes: every file starts ticked, and any you untick is undone. This sets the default for new chats, which you can change per chat from the chat-actions menu, and the changes are already on disk during review, so a running dev server may pick them up.</p>
+              <p class="section-hint">Pauses each turn so you can review its file changes: every file starts ticked, and any you untick is undone. This sets the default for new chats, which you can change per chat from the chat-options menu, and the changes are already on disk during review, so a running dev server may pick them up.</p>
               <div class="section-option">
                 <label class="toggle">
                   <input type="checkbox" id="supervised-default-checkbox" aria-label="Turn on Supervised mode for new conversations">
@@ -1069,6 +1086,27 @@
                 </p>
               </div>
             </div>
+
+            <div class="page-section">
+              <div id="agent-dirs-section">
+                <div class="section-title-status-row">
+                  <h2 class="section-title">Additional directories</h2>
+                  <span class="settings-save-status hidden" data-save-status="additional_directories" aria-live="polite"></span>
+                </div>
+                <p class="section-hint">Directories outside the workspace that the agent can read, write and start shell commands in; the workspace and marotte's config directory cannot be added. A change reaches the file tools, the folder a shell command may start in and the file browser at once, and kiro-cli whenever a chat's session opens or reloads: at its next message, or when you fork or rewind it. A running workflow keeps the list it started with.</p>
+                <div id="agent-dirs-chips" class="chip-list"></div>
+                <ul id="agent-dirs-refused" class="section-hint agent-dirs-error agent-dirs-refused hidden"></ul>
+                <div class="rule-form" data-rule-form="directory" role="group" aria-label="Add an additional directory">
+                  <label class="rf-field rf-grow">
+                    <span class="rf-label">Directory</span>
+                    <input id="agent-dirs-input" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="/data" aria-describedby="agent-dirs-error">
+                  </label>
+                  <button id="agent-dirs-add" class="btn rf-submit" type="button">Add</button>
+                </div>
+                <p id="agent-dirs-error" class="section-hint agent-dirs-error hidden" role="alert"></p>
+                <p id="agent-dirs-empty-hint" class="section-hint hidden">Nothing added. Agents reach only the workspace.</p>
+              </div>
+            </div>
           </div>
 
           <!-- Instructions: global textarea + steering docs + skills + agents -->
@@ -1088,11 +1126,9 @@
             <div class="page-section" id="knowledge-section">
               <h2 class="section-title">Knowledge bases</h2>
               <p class="section-hint">Folders indexed so the agent can search them, which needs <strong>Knowledge base search</strong> on in <strong>General</strong>. Indexing runs in the background.</p>
-              <div class="section-actions-row">
-                <div class="action-bar action-bar-inline">
-                  <button type="button" id="knowledge-add-btn" class="action-pill" data-tooltip="Add knowledge base" aria-label="Add knowledge base"></button>
-                  <button type="button" id="knowledge-clear-btn" class="action-pill hidden" data-tooltip="Remove all" aria-label="Remove all knowledge bases"></button>
-                </div>
+              <div class="page-toolbar">
+                <button type="button" id="knowledge-add-btn" class="action-pill" data-tooltip="Add knowledge base" aria-label="Add knowledge base"></button>
+                <button type="button" id="knowledge-clear-btn" class="action-pill hidden" data-tooltip="Remove all" aria-label="Remove all knowledge bases"></button>
               </div>
               <p id="knowledge-hint" class="section-hint knowledge-hint" hidden>Knowledge is turned off. Enable it in <strong>General</strong> for the agent to use these bases during chats.</p>
               <div id="knowledge-list" class="list-container"><div class="list-empty">No knowledge bases yet. Add your own <code>docs/</code> folder, or a documentation repository cloned into the workspace, such as <code>refs/rust-book/src</code> from rust-lang/book.</div></div>
@@ -1113,48 +1149,46 @@
         <div class="page-shell">
           <header class="page-header">
 
-            <div class="docs-head-row">
-              <nav id="docs-tab-bar" class="seg-bar" role="tablist" aria-label="Kiro document categories">
-                <button type="button" class="seg active" role="tab" aria-selected="true" data-docs-tab="steering" aria-label="Steering">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
-                  <span class="seg-label">Steering</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="skills" aria-label="Skills">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                  <span class="seg-label">Skills</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="prompts" aria-label="Prompts">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M13 8H7"/><path d="M17 12H7"/></svg>
-                  <span class="seg-label">Prompts</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="agents" aria-label="Agents">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/></svg>
-                  <span class="seg-label">Agents</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="specs" aria-label="Specs">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
-                  <span class="seg-label">Specs</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="hooks" aria-label="Hooks">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0020 0h-3"/></svg>
-                  <span class="seg-label">Hooks</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="workflows" aria-label="Workflows">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/></svg>
-                  <span class="seg-label">Workflows</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="memories" aria-label="Memories">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>
-                  <span class="seg-label">Memories</span>
-                </button>
-                <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="powers" aria-label="Powers">
-                  <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
-                  <span class="seg-label">Powers</span>
-                </button>
-              </nav>
-              <div id="docs-new-slot" class="docs-new-slot"></div>
-            </div>
+            <nav id="docs-tab-bar" class="seg-bar" role="tablist" aria-label="Kiro document categories">
+              <button type="button" class="seg active" role="tab" aria-selected="true" data-docs-tab="steering" aria-label="Steering">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+                <span class="seg-label">Steering</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="skills" aria-label="Skills">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span class="seg-label">Skills</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="prompts" aria-label="Prompts">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M13 8H7"/><path d="M17 12H7"/></svg>
+                <span class="seg-label">Prompts</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="agents" aria-label="Agents">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/></svg>
+                <span class="seg-label">Agents</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="specs" aria-label="Specs">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
+                <span class="seg-label">Specs</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="hooks" aria-label="Hooks">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0020 0h-3"/></svg>
+                <span class="seg-label">Hooks</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="workflows" aria-label="Workflows">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/></svg>
+                <span class="seg-label">Workflows</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="memories" aria-label="Memories">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>
+                <span class="seg-label">Memories</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="powers" aria-label="Powers">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
+                <span class="seg-label">Powers</span>
+              </button>
+            </nav>
           </header>
+          <div id="docs-new-slot" class="page-toolbar"></div>
           <div data-docs-panel="steering" class="docs-panel"></div>
           <div data-docs-panel="skills" class="docs-panel hidden"></div>
           <div data-docs-panel="prompts" class="docs-panel hidden"></div>
@@ -1192,25 +1226,25 @@
           </header>
           <!-- Changes tab -->
           <div data-git-panel="changes" class="git-panel">
-            <div class="git-tab-toolbar">
-              <button type="button" id="git-pull-all-btn" class="icon-btn" data-tooltip="Pull every repo that can fast-forward" aria-label="Pull every repo that can fast-forward"></button>
-              <button type="button" id="git-refresh-all-btn" class="icon-btn" data-tooltip="Refresh all repos" aria-label="Refresh all repos"></button>
+            <div class="page-toolbar">
+              <button type="button" id="git-pull-all-btn" class="action-pill" data-tooltip="Pull every repo that can fast-forward" aria-label="Pull every repo that can fast-forward"></button>
+              <button type="button" id="git-refresh-all-btn" class="action-pill" data-tooltip="Refresh all repos" aria-label="Refresh all repos"></button>
             </div>
             <div id="git-changes-mount" class="git-multirepo-mount" aria-live="polite"></div>
           </div>
 
           <!-- Pull requests tab -->
           <div data-git-panel="prs" class="git-panel hidden">
-            <div class="git-tab-toolbar">
-              <button type="button" id="git-refresh-prs-btn" class="icon-btn" data-tooltip="Refresh pull requests" aria-label="Refresh pull requests"></button>
+            <div class="page-toolbar">
+              <button type="button" id="git-refresh-prs-btn" class="action-pill" data-tooltip="Refresh pull requests" aria-label="Refresh pull requests"></button>
             </div>
             <div id="git-prs-mount" class="git-multirepo-mount" aria-live="polite"></div>
           </div>
 
           <!-- Sources tab: forge accounts + per-forge cloneable repos -->
           <div data-git-panel="sources" class="git-panel hidden">
-            <div class="git-tab-toolbar">
-              <button type="button" id="git-refresh-sources-btn" class="icon-btn" data-tooltip="Refresh accounts and repositories" aria-label="Refresh accounts and repositories"></button>
+            <div class="page-toolbar">
+              <button type="button" id="git-refresh-sources-btn" class="action-pill" data-tooltip="Refresh accounts and repositories" aria-label="Refresh accounts and repositories"></button>
             </div>
             <div id="git-sources-mount" class="git-sources-mount"></div>
           </div>
@@ -1242,7 +1276,7 @@
             <input type="text" id="pr-title" class="tool-form-input" autocomplete="off">
           </label>
           <label class="pr-dialog-field">
-            <span class="forge-field-label">Description: Markdown, AI-generated, edit freely</span>
+            <span class="forge-field-label">Description: Markdown, starts as the branch's commits, edit freely</span>
             <textarea id="pr-body" class="tool-form-input pr-body-textarea" rows="10" spellcheck="false"></textarea>
           </label>
           <label class="pr-dialog-check">
@@ -1253,7 +1287,6 @@
         </div>
         <footer class="pr-dialog-footer">
           <button type="button" class="btn-small" data-pr-close>Cancel</button>
-          <button type="button" id="pr-generate-btn" class="btn-small">Regenerate description</button>
           <button type="button" id="pr-submit-btn" class="btn-small btn-primary">Open pull request</button>
         </footer>
       </dialog>
@@ -1454,13 +1487,13 @@
                surface, so the separator tint became the panel's background flush
                to the border — a grey box with no padding. -->
           <div id="run-body"></div>
-          <button type="button" id="run-scroll-bottom" class="hidden" data-tooltip="Scroll to bottom" aria-label="Scroll to bottom">
+          <button type="button" id="run-scroll-bottom" class="scroll-resume hidden" data-tooltip="Scroll to bottom" aria-label="Scroll to bottom">
             <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M7 13l5 5 5-5M7 6l5 5 5-5"/></svg>
             <span>Latest</span>
           </button>
         </div>
         <div class="run-bottom-bar bottom-bar">
-          <div id="run-boxes" class="run-boxes"></div>
+          <div id="run-exec-dock" class="ev-dock-host"></div>
           <div id="run-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
           <ul id="run-steer-stack" class="steer-stack hidden" aria-label="Messages sent to the selected step"></ul>
           <!-- method="dialog" for the reason #prompt-form carries it: a stray submit does nothing. -->
@@ -1483,15 +1516,18 @@
       </div>
 
       <!-- One SUBAGENT execution, read on its own page. The content is the shared
-           exec view (static-src/exec-view/), the same surface the run tab uses, so
-           this holds no header of its own — buildExecPage draws the identity row,
-           the timeline, the tree and the detail pane. No composer and no decision
-           dock: a delegate takes its instructions from the agent that dispatched
-           it, and its permission asks are queued under the launching chat, so both
-           would be controls for something this page cannot address. -->
+           exec view (static-src/exec-view/), the same surface the run tab uses:
+           buildExecPage draws the detail pane into the body and the run dock into
+           the bottom bar. No composer and no decision dock: a delegate takes its
+           instructions from the agent that dispatched it, and its permission asks
+           are queued under the launching chat, so both would be controls for
+           something this page cannot address. -->
       <div id="subagent-view" class="hidden" data-tab-view>
         <div class="page-content">
           <div id="subagent-body"></div>
+        </div>
+        <div class="run-bottom-bar bottom-bar">
+          <div id="subagent-exec-dock" class="ev-dock-host"></div>
         </div>
       </div>
 

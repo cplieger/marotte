@@ -41,9 +41,11 @@ func (rt *Runtime) registerCommandHandlers() {
 		Status:        rt,
 		AuthReadiness: rt.authReadiness,
 		Compactor:     rt,
+		SendGate:      rt.coord,
 		Renamer:       rt,
 		SpecApprovals: specApprovalsOrNil(rt.specApprovals),
 		Tangents:      rt,
+		StepSessions:  rt,
 	})
 
 	rt.dispatcher.Register(marotte.CmdSwitchModel, rt.cmdSwitchModel)

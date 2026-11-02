@@ -43,7 +43,7 @@ func newRunPushHub(t *testing.T) (*Runtime, *runOutcomePush) {
 	t.Helper()
 	cs := newTestChatStore()
 	fp := newRunOutcomePush()
-	h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	return h, fp
@@ -99,8 +99,8 @@ func TestObserveComplete_DetailIsTheStopReasonElseTheParent(t *testing.T) {
 	h, fp := newRunPushHub(t)
 	ctx := t.Context()
 	h.chatStore.(*testChatStore).seed(t, "c1", func(c *marotte.Chat) { c.Name = "Ship it" })
-	h.runs.grantLease(ctx, "wf_1", "deploy", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"})
-	h.runs.grantLease(ctx, "wf_2", "deploy", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"})
+	h.runs.grantLease(ctx, "wf_1", "deploy", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"}, hostSec())
+	h.runs.grantLease(ctx, "wf_2", "deploy", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"}, hostSec())
 
 	h.runs.observeComplete(ctx, "c1", runNotif(methodWFRunComplete, map[string]any{
 		"workflowId": "wf_1", "status": "completed",
@@ -123,17 +123,17 @@ func TestObserveComplete_APauseNotifiesOnlyAParentlessRun(t *testing.T) {
 	pause := map[string]any{"pause": map[string]any{"kind": "maxIterations"}}
 	t.Run("parentless", func(t *testing.T) {
 		h, fp := newRunPushHub(t)
-		h.runs.grantLease(t.Context(), "wf_1", "code-review", manualLaunch())
+		h.runs.grantLease(t.Context(), "wf_1", "code-review", manualLaunch(), hostSec())
 		h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
 			"workflowId": "wf_1", "status": "paused", "finalState": pause,
 		}))
-		if got := awaitRunPush(t, fp); got.body != "Workflow paused · iteration limit reached" {
+		if got := awaitRunPush(t, fp); got.body != "Workflow paused · pass limit reached" {
 			t.Errorf("a parentless paused run pushed %q", got.body)
 		}
 	})
 	t.Run("with a parent agent", func(t *testing.T) {
 		h, fp := newRunPushHub(t)
-		h.runs.grantLease(t.Context(), "wf_1", "code-review", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"})
+		h.runs.grantLease(t.Context(), "wf_1", "code-review", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"}, hostSec())
 		h.runs.observeComplete(t.Context(), "c1", runNotif(methodWFRunComplete, map[string]any{
 			"workflowId": "wf_1", "status": "paused", "finalState": pause,
 		}))
@@ -146,7 +146,7 @@ func TestObserveComplete_APauseNotifiesOnlyAParentlessRun(t *testing.T) {
 	})
 	t.Run("parentless, paused for another reason", func(t *testing.T) {
 		h, fp := newRunPushHub(t)
-		h.runs.grantLease(t.Context(), "wf_1", "code-review", manualLaunch())
+		h.runs.grantLease(t.Context(), "wf_1", "code-review", manualLaunch(), hostSec())
 		h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
 			"workflowId": "wf_1", "status": "paused", "finalState": map[string]any{"pause": map[string]any{"kind": "stepInput"}},
 		}))
@@ -163,7 +163,7 @@ func TestObserveComplete_APauseNotifiesOnlyAParentlessRun(t *testing.T) {
 func TestObserveComplete_LabelFallsBackToTheLeasesRecipe(t *testing.T) {
 	h, fp := newRunPushHub(t)
 	ctx := t.Context()
-	h.runs.grantLease(ctx, "wf_1", "code-review", manualLaunch())
+	h.runs.grantLease(ctx, "wf_1", "code-review", manualLaunch(), hostSec())
 
 	h.runs.observeComplete(ctx, "", runNotif(methodWFRunComplete, map[string]any{
 		"workflowId": "wf_1", "status": "completed",
@@ -175,17 +175,24 @@ func TestObserveComplete_LabelFallsBackToTheLeasesRecipe(t *testing.T) {
 	}
 }
 
-// A step's question is notified under its run, naming the step: it parks the run on a person.
-func TestHandleSessionNotify_NotifiesTheStepsQuestion(t *testing.T) {
+// A step's question is notified under its run, naming the step, tagged by its wait's position so a
+// re-park replaces the banner and two parked branches hold two.
+func TestRunAsks_NotifiesTheStepsQuestion(t *testing.T) {
 	h, fp := newRunPushHub(t)
-	h.runs.grantLease(t.Context(), "wf_1", "code-review", manualLaunch())
-	h.runs.notifyAsk(t.Context(), &runAsk{chatID: "run:wf_1", payload: marotte.RunInputNeededPayload{
-		WorkflowID: "wf_1", NodeID: "n1", AgentName: "reviewer", Question: "Merge it?",
-	}})
+	h.runs.grantLease(t.Context(), "wf_1", "code-review", manualLaunch(), hostSec())
+	c := h.runs.cellFor("wf_1")
+	ask := marotte.RunAsk{
+		AskID: "a1", NodeID: "n1", NodePath: []string{"wf_1", "n1"}, StepSessionID: "sess_step",
+		AgentName: "reviewer", Text: "Merge it?", TextSource: marotte.RunAskTextAsked,
+	}
+	c.mu.Lock()
+	n := h.runs.publishLocked(t.Context(), c, []marotte.RunAsk{ask}, true)
+	c.mu.Unlock()
+	h.runs.sendNotices(t.Context(), c, n)
 	got := awaitRunPush(t, fp)
 	want := runPushSent{
 		title: "code-review", body: "Input required · reviewer: Merge it?",
-		kind: marotte.PushKindPermission, subject: marotte.RunSubject("wf_1"),
+		kind: marotte.PushKindPermission, subject: marotte.RunAskSubject(askPosition("wf_1", &ask)),
 	}
 	if got != want {
 		t.Errorf("step question pushed %+v, want %+v", got, want)

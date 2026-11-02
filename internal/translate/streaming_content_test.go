@@ -4,27 +4,21 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"log"
 	"log/slog"
 	"slices"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/slogx/capture"
 )
 
 var errBoom = errors.New("persist boom")
 
-// captureSlog redirects the default slog logger to buf, restoring it (and the log package's writer
-// and flags, which slog.SetDefault redirects) on cleanup. Not parallel-safe.
-func captureSlog(buf *bytes.Buffer) func() {
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	return func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	}
+// captureSlog redirects the default slog logger to buf until tb ends. Not parallel-safe.
+func captureSlog(tb testing.TB, buf *bytes.Buffer) {
+	tb.Helper()
+	capture.SwapDefault(tb, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 }
 
 // TestHandlePlan_UnmarshalGuard pins that a plan frame is one plan entry in the

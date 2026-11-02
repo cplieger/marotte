@@ -15,7 +15,9 @@ const severityError = "error"
 // still says what became of the last one.
 const maxRunPlans = 256
 
-// In memory, as Kiro's run view keeps it: KAS persists no revision.
+// runPlans is what KAS does not persist of a run's plan revisions: the top-level step a queued one
+// was stamped after, and the last one's settled outcome. KAS keeps the queued revision itself and
+// answers it on inspect (servedPlan).
 type runPlans struct {
 	byRun map[string]marotte.RunPlanUpdate
 	order []string
@@ -28,8 +30,14 @@ func (rs *Runs) RunPlanUpdate(ctx context.Context, chatID marotte.ChatID, runID 
 		u.After = rs.runningTopStep(runID)
 	}
 	rs.mu.Lock()
-	if prev, ok := rs.plans.byRun[runID]; ok && u.Outcome != marotte.RunPlanQueued {
-		u.Pending, u.After = prev.Pending, prev.After
+	if prev, ok := rs.plans.byRun[runID]; ok {
+		switch {
+		case u.Outcome != marotte.RunPlanQueued:
+			u.Pending, u.After = prev.Pending, prev.After
+		case u.After == "" && prev.Outcome == marotte.RunPlanQueued:
+			// KAS replays the queued frame when a client verb loads the run, after its step turns closed.
+			u.After = prev.After
+		}
 	}
 	rs.plans.put(runID, u)
 	rs.mu.Unlock()
@@ -52,11 +60,24 @@ func (p *runPlans) put(runID string, u marotte.RunPlanUpdate) {
 	p.byRun[runID] = u
 }
 
-func (rs *Runs) planUpdate(runID string) (marotte.RunPlanUpdate, bool) {
+// servedPlan is a run read's `plan_update`, given the count of top-level steps KAS's inspect says are
+// queued (-1 when unknown). KAS is the authority for a queued revision: one it no longer holds was
+// applied or dropped, and a settled outcome is served from memory until another is queued.
+func (rs *Runs) servedPlan(runID string, pending int) *marotte.RunPlanUpdate {
 	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	u, ok := rs.plans.byRun[runID]
-	return u, ok
+	mem, ok := rs.plans.byRun[runID]
+	rs.mu.Unlock()
+	switch {
+	case pending > 0:
+		u := marotte.RunPlanUpdate{Outcome: marotte.RunPlanQueued, Pending: pending}
+		if ok && mem.Outcome == marotte.RunPlanQueued {
+			u.After = mem.After
+		}
+		return &u
+	case !ok, pending == 0 && mem.Outcome == marotte.RunPlanQueued:
+		return nil
+	}
+	return &mem
 }
 
 // runningTopStep is the top-level step an open step turn sits under: KAS applies a queued

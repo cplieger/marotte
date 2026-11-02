@@ -28,6 +28,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID marotte.Ch
 	if !ok {
 		return
 	}
+	t.workflowMessageWoke(ctx, chatID, attr, chunk.Meta.Kiro.AgentInitiatedReason)
 	lane := chunk.Meta.Kiro.AgentSubtaskID
 	sayID := cmp.Or(chunk.Meta.Kiro.ReplayID, chunk.Meta.Kiro.MessageID)
 
@@ -41,36 +42,70 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID marotte.Ch
 		return
 	}
 
-	text := chunk.Content.Text
-	if !isReasoning {
-		// Text only: KAS reads markers from text entries. turnlog settles the carry at the seal.
-		var carry string
-		var acks []steerAck
-		text, carry, acks = stripSteerAcks(turn.Carry(lane), text)
-		turn.SetSteerCarry(lane, sayID, carry)
-		// BEFORE the empty-text return: a closing marker usually arrives as its own delta.
-		t.appendSteerAcks(ctx, chatID, lane, attr, acks)
-		if text == "" {
-			return
-		}
+	// Markers are stripped from text only: KAS reads acks from text entries.
+	if isReasoning {
+		ok = t.foldDelta(ctx, sc, turn, lane, sayID, chunk.Content.Text, true)
+	} else {
+		ok = t.foldText(ctx, sc, turn, chatID, lane, sayID, attr, chunk.Content.Text)
+	}
+	if !ok {
+		return
 	}
 
+	// Last: the notice must be in the log and on the wire before the turn ends.
+	t.interruptIfFiltered(chatID, turn.ID(), interrupted)
+}
+
+// foldText folds a text delta with its steer ack markers stripped, filing each span of prose and
+// each ack in stream order: an ack seals the lane, so prose the stream put after a marker opens
+// the say's next segment. The carry is cleared before the chunk's own folds and stored after the
+// last, so no seal they trigger releases bytes that belong after it. False when a fold failed.
+func (t *Translator) foldText(
+	ctx context.Context,
+	sc entryScope,
+	turn *turnlog.Turn,
+	chatID marotte.ChatID,
+	lane, sayID string,
+	attr FrameAttribution,
+	text string,
+) bool {
+	carry, sealed, err := turn.TakeCarry(ctx, lane, sayID)
+	t.publishSealed(ctx, sc, sealed)
+	if err != nil {
+		appendFailed(sc, "text delta", err)
+		return false
+	}
+	texts, acks, held := splitSteerAcks(carry, text)
+	ok := true
+	for i, seg := range texts {
+		if seg != "" && !t.foldDelta(ctx, sc, turn, lane, sayID, seg, false) {
+			ok = false
+		}
+		if i < len(acks) {
+			t.appendSteerAck(ctx, chatID, lane, attr, acks[i])
+		}
+	}
+	turn.SetSteerCarry(lane, sayID, held)
+	return ok
+}
+
+// foldDelta folds one text or reasoning delta into lane's open entry and announces it, with
+// whatever the fold sealed ahead of it. False when the append failed.
+func (t *Translator) foldDelta(ctx context.Context, sc entryScope, turn *turnlog.Turn, lane, sayID, delta string, isReasoning bool) bool {
 	var sealed []turnlog.Sealed
 	var err error
 	if isReasoning {
-		sealed, err = turn.ThinkingDelta(ctx, lane, sayID, text)
+		sealed, err = turn.ThinkingDelta(ctx, lane, sayID, delta)
 	} else {
-		sealed, err = turn.TextDelta(ctx, lane, sayID, text)
+		sealed, err = turn.TextDelta(ctx, lane, sayID, delta)
 	}
 	t.publishSealed(ctx, sc, sealed)
 	if err != nil {
 		appendFailed(sc, "text delta", err)
-		return
+		return false
 	}
-	t.publishOpen(ctx, sc, turn, lane, text)
-
-	// Last: the notice must be in the log and on the wire before the turn ends.
-	t.interruptIfFiltered(chatID, interrupted)
+	t.publishOpen(ctx, sc, turn, lane, delta)
+	return true
 }
 
 // markRefusal seals lane and latches the turn's refusal when chunk carries _meta.kiro.refusal,
@@ -99,47 +134,42 @@ func (t *Translator) markRefusal(
 	}
 	// First-wins: a second tagged chunk cannot relabel the turn.
 	turn.SetRefusal(refusal)
-	t.interruptIfFiltered(chatID, interrupted)
+	t.interruptIfFiltered(chatID, turn.ID(), interrupted)
 	return true
 }
 
 // interruptIfFiltered ends the turn when the chunk was kiro-cli's tool-use filter notice; one
 // owner for both the fold and the refusal branch.
-func (t *Translator) interruptIfFiltered(chatID marotte.ChatID, interrupted bool) {
+func (t *Translator) interruptIfFiltered(chatID marotte.ChatID, turnID string, interrupted bool) {
 	if !interrupted {
 		return
 	}
 	slog.Warn("kiro-cli interrupted its own tool use; ending the turn",
-		"chat_id", chatID, "reason", interruptReason)
-	t.turnInterrupt.InterruptTurn(chatID, interruptReason)
+		"chat_id", chatID, "turn", turnID, "reason", interruptReason)
+	t.turnInterrupt.InterruptTurn(chatID, turnID, interruptReason)
 }
 
-// appendSteerAcks records each steer whose ack marker just closed: the read, then the agent's
+// appendSteerAck records a steer whose ack marker just closed: the read, then the agent's
 // statement, in the chat's own turn. A delegate's chunk keeps its lane; a step's is lane-less.
-func (t *Translator) appendSteerAcks(ctx context.Context, chatID marotte.ChatID, lane string, attr FrameAttribution, acks []steerAck) {
-	if len(acks) == 0 {
+func (t *Translator) appendSteerAck(ctx context.Context, chatID marotte.ChatID, lane string, attr FrameAttribution, ack steerAck) {
+	if ack.SteerID == "" || ack.Text == "" {
 		return
 	}
 	if attr.Step {
 		lane = ""
 	}
-	for _, ack := range acks {
-		if ack.SteerID == "" || ack.Text == "" {
-			continue
-		}
-		// The read before the ack: a reader meets the steer above the agent's statement.
-		t.steerReadByAck(ctx, chatID, lane, ack.SteerID)
-		turn, ok := t.turns.OwnTurn(chatID)
-		if !ok {
-			t.appendBetweenTurns(ctx, chatID, marotte.EntryKindSteerAck, marotte.SteerAckID(ack.SteerID),
-				marotte.EntrySteerAck{SteerID: ack.SteerID, Text: ack.Text})
-			continue
-		}
-		sealed, err := turn.SteerAck(ctx, lane, ack.SteerID, ack.Text)
-		t.publishSealed(ctx, chatScope(chatID), sealed)
-		if err != nil {
-			appendFailed(chatScope(chatID), "steer_ack", err)
-		}
+	// The read before the ack: a reader meets the steer above the agent's statement.
+	t.steerReadByAck(ctx, chatID, lane, ack.SteerID)
+	turn, ok := t.turns.OwnTurn(chatID)
+	if !ok {
+		t.appendBetweenTurns(ctx, chatID, marotte.EntryKindSteerAck, marotte.SteerAckID(ack.SteerID),
+			marotte.EntrySteerAck{SteerID: ack.SteerID, Text: ack.Text})
+		return
+	}
+	sealed, err := turn.SteerAck(ctx, lane, ack.SteerID, ack.Text)
+	t.publishSealed(ctx, chatScope(chatID), sealed)
+	if err != nil {
+		appendFailed(chatScope(chatID), "steer_ack", err)
 	}
 }
 

@@ -1,0 +1,4 @@
+{
+  "pause": "Pause requested by owning parent/orchestrator; human intent not verified.",
+  "resume": "Resume requested by owning parent/orchestrator; human intent not verified."
+}

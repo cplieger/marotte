@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
@@ -22,6 +21,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/slogx/capture"
 )
 
 func testDir(t *testing.T) (h *Handler, dir, prefix string) {
@@ -2200,6 +2200,7 @@ func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
 		"config/home/.gitconfig",
 		"config/mcp.json",
 		"config/mcp-secrets.json",
+		"config/signin.json",
 	}
 	h := testHandlerAt(t, "/config")
 	for _, p := range credPaths {
@@ -2348,21 +2349,8 @@ func TestListFiles_Root_MountEntriesCarryStattedMetadata(t *testing.T) {
 func captureFilebrowseLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	swapDefaultLogger(t, slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return buf
-}
-
-// swapDefaultLogger installs h as the slog default for the duration of tb; see
-// captureFilebrowseLogs for why the log package's writer is restored with it.
-func swapDefaultLogger(tb testing.TB, h slog.Handler) {
-	tb.Helper()
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	tb.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(h))
 }
 
 // A writability probe that works says nothing. Every directory listing runs one,

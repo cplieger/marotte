@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -57,7 +58,7 @@ func TestUpdate_ConcurrentWritersLoseNoKey(t *testing.T) {
 	for i := range writers {
 		wg.Go(func() {
 			key := "k" + strconv.Itoa(i)
-			if _, err := Update(t.Context(), dir, setKey(key, key)); err != nil {
+			if _, err := Update(t.Context(), dir, setKey(key, key), nil); err != nil {
 				errs <- err
 			}
 		})
@@ -97,7 +98,7 @@ func TestUpdate_RefusesAnUnreadableDocument(t *testing.T) {
 			dir := t.TempDir()
 			writeConfig(t, dir, tc.body)
 
-			_, err := Update(t.Context(), dir, setKey(KeyTheme, "light"))
+			_, err := Update(t.Context(), dir, setKey(KeyTheme, "light"), nil)
 
 			if !errors.Is(err, ErrUnreadable) {
 				t.Fatalf("Update over %s = %v, want ErrUnreadable", tc.desc, err)
@@ -118,7 +119,7 @@ func TestUpdate_RefusesAnUnreadableDocument(t *testing.T) {
 func TestUpdate_AbsentFileIsNotAFailure(t *testing.T) {
 	dir := t.TempDir()
 
-	merged, err := Update(t.Context(), dir, setKey(KeyTheme, "light"))
+	merged, err := Update(t.Context(), dir, setKey(KeyTheme, "light"), nil)
 	if err != nil {
 		t.Fatalf("Update with no file: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestUpdate_ReturnsTheMergedDocument(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, `{"theme":"dark"}`)
 
-	merged, err := Update(t.Context(), dir, setKey(KeyLastModel, "opus"))
+	merged, err := Update(t.Context(), dir, setKey(KeyLastModel, "opus"), nil)
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -162,7 +163,7 @@ func TestUpdate_ANewValueIsVisibleToTheNextRead(t *testing.T) {
 	if _, err := Update(t.Context(), dir, func(doc map[string]json.RawMessage) error {
 		doc[KeyDebugLogs] = json.RawMessage(`true`)
 		return nil
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
@@ -181,7 +182,7 @@ func TestUpdate_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := Update(t.Context(), dir, setKey(KeyTheme, "light"))
+		_, err := Update(t.Context(), dir, setKey(KeyTheme, "light"), nil)
 		done <- err
 	}()
 
@@ -217,7 +218,7 @@ func TestUpdate_SizeCapIsInclusive(t *testing.T) {
 			const doc = `{"theme":"dark"}`
 			writeConfig(t, dir, doc+spaces(tt.size-len(doc)))
 
-			_, err := Update(t.Context(), dir, setKey(KeyLastModel, "opus"))
+			_, err := Update(t.Context(), dir, setKey(KeyLastModel, "opus"), nil)
 
 			if tt.wantErr {
 				if !errors.Is(err, ErrUnreadable) {
@@ -248,7 +249,7 @@ func TestUpdate_AFailingMergeWritesNothing(t *testing.T) {
 	writeConfig(t, dir, stored)
 	sentinel := errors.New("nope")
 
-	_, err := Update(t.Context(), dir, func(map[string]json.RawMessage) error { return sentinel })
+	_, err := Update(t.Context(), dir, func(map[string]json.RawMessage) error { return sentinel }, nil)
 
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("Update = %v, want the merge's own error", err)
@@ -267,7 +268,7 @@ func TestUpdate_AFailingMergeWritesNothing(t *testing.T) {
 func TestUpdate_WritesAnOwnerOnlyDocument(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "config")
 
-	if _, err := Update(t.Context(), dir, setKey(KeyTheme, "light")); err != nil {
+	if _, err := Update(t.Context(), dir, setKey(KeyTheme, "light"), nil); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	for p, want := range map[string]os.FileMode{
@@ -281,5 +282,52 @@ func TestUpdate_WritesAnOwnerOnlyDocument(t *testing.T) {
 		if got := info.Mode().Perm(); got != want {
 			t.Errorf("%s mode = %#o, want %#o", p, got, want)
 		}
+	}
+}
+
+func TestEngineHeapMiB_BoundedByContainerLimit(t *testing.T) {
+	fourGiB := func() (int64, string) { return 4 << 30, "cgroup v2" }
+	for _, tc := range []struct {
+		name string
+		mib  int
+		ok   bool
+	}{
+		{"zero keeps kiro-cli's default", 0, true},
+		{"under the floor", 1023, false},
+		{"the floor", 1024, true},
+		{"within the container's limit less the headroom", 3584, true},
+		{"past the container's limit less the headroom", 3700, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateEngineHeapMiB(json.RawMessage(strconv.Itoa(tc.mib)), "", fourGiB)
+			if (err == nil) != tc.ok {
+				t.Errorf("validateEngineHeapMiB(%d) = %v, want ok=%v", tc.mib, err, tc.ok)
+			}
+		})
+	}
+	t.Run("no container limit keeps the absolute ceiling", func(t *testing.T) {
+		unlimited := func() (int64, string) { return 0, "" }
+		if err := validateEngineHeapMiB(json.RawMessage("65536"), "", unlimited); err != nil {
+			t.Errorf("65536 with no limit = %v, want accepted", err)
+		}
+		if err := validateEngineHeapMiB(json.RawMessage("65537"), "", unlimited); err == nil {
+			t.Error("65537 with no limit was accepted")
+		}
+	})
+	t.Run("a non-integer is refused", func(t *testing.T) {
+		if err := validateEngineHeapMiB(json.RawMessage(`"2048"`), "", fourGiB); err == nil {
+			t.Error("a string value was accepted")
+		}
+	})
+}
+
+func TestEngineHeapMiB_RefusedWhenNodeOptionsIsMalformed(t *testing.T) {
+	unlimited := func() (int64, string) { return 0, "" }
+	err := validateEngineHeapMiB(json.RawMessage("2048"), `--title="unterminated`, unlimited)
+	if err == nil || !strings.Contains(err.Error(), "NODE_OPTIONS environment variable is malformed") {
+		t.Errorf("a malformed NODE_OPTIONS = %v, want the malformed refusal", err)
+	}
+	if err := validateEngineHeapMiB(json.RawMessage("0"), `--title="unterminated`, unlimited); err != nil {
+		t.Errorf("the default with a malformed NODE_OPTIONS = %v, want accepted: 0 applies nothing", err)
 	}
 }

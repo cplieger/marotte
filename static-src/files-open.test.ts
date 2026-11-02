@@ -116,7 +116,7 @@ vi.mock("./store.js", async (importOriginal) => ({
 import { $ } from "./dom.js";
 import { apiGetOrError } from "./api-client.js";
 import { openFile, openFileInBackground } from "./editor-openers.js";
-import { FB_NAME } from "./files-shared.js";
+import { FB_ENTER_ROWS, FB_NAME, FB_NO_ENTER_ATTR } from "./files-shared.js";
 import { initFileBrowser, releaseFilesTab, showFilesTab } from "./files.js";
 import { openTab } from "./tabs.js";
 import { setWorkspaceRoot } from "./workspace.js";
@@ -208,5 +208,63 @@ describe("middle-clicking a file row", () => {
     middleClick(await rowIn("/workspace/demo", "notes.txt"));
     expect(openFileInBackground).toHaveBeenCalledWith("/workspace/demo/notes.txt");
     expect(openTab).not.toHaveBeenCalled();
+  });
+});
+
+describe("a long listing's row entry animation", () => {
+  const dir = "/workspace/many";
+
+  async function listing(names: string[]): Promise<HTMLElement[]> {
+    vi.mocked(apiGetOrError).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { files: names.map((name) => ({ name, isDir: false })), writable: true },
+      error: "",
+    });
+    showFilesTab(dir);
+    await new Promise((r) => setTimeout(r, 0));
+    return [...$.fbList.children] as HTMLElement[];
+  }
+
+  const names = (from: number, to: number): string[] =>
+    Array.from({ length: to - from }, (_, i) => `f${String(from + i).padStart(4, "0")}.txt`);
+  const marked = (rows: HTMLElement[]): number[] =>
+    rows.flatMap((r, i) => (r.hasAttribute(FB_NO_ENTER_ATTR) ? [i + 1] : []));
+
+  async function freshListing(files: string[]): Promise<HTMLElement[]> {
+    if (shown !== "") {
+      releaseFilesTab(shown);
+    }
+    shown = dir;
+    $.fbList.replaceChildren();
+    return listing(files);
+  }
+
+  it("marks the files past the hundredth a pass mounts (the parent row is already there)", async () => {
+    const rows = await freshListing(names(0, 130));
+    expect(rows).toHaveLength(131);
+    expect(marked(rows)).toEqual(Array.from({ length: 30 }, (_, i) => FB_ENTER_ROWS + 2 + i));
+  });
+
+  it("keeps a settled row's mark and marks no later row, whatever the pass adds or removes", async () => {
+    await freshListing(names(0, 130));
+    const crossing = ([...$.fbList.children] as HTMLElement[])[FB_ENTER_ROWS + 1]!;
+
+    // A row above is removed: the marked row shifts across the boundary and stays marked.
+    const removed = await listing(names(1, 130));
+    expect(removed.indexOf(crossing)).toBe(FB_ENTER_ROWS);
+    expect(crossing.hasAttribute(FB_NO_ENTER_ATTR)).toBe(true);
+    expect(removed.filter((r) => r.hasAttribute(FB_NO_ENTER_ATTR))).toHaveLength(30);
+
+    // A pass that mounts one row near the top animates it.
+    const top = await listing(["a0000.txt", ...names(1, 130)]);
+    expect(top[1]!.dataset["name"]).toBe("a0000.txt");
+    expect(top[1]!.hasAttribute(FB_NO_ENTER_ATTR)).toBe(false);
+
+    // A pass that mounts one row past the hundredth animates it too: it is the only mount.
+    const late = await listing(["a0000.txt", ...names(1, 120), "f0120b.txt", ...names(120, 130)]);
+    const added = late.find((r) => r.dataset["name"] === "f0120b.txt");
+    expect(late.indexOf(added!)).toBeGreaterThan(FB_ENTER_ROWS);
+    expect(added!.hasAttribute(FB_NO_ENTER_ATTR)).toBe(false);
   });
 });

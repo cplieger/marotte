@@ -226,7 +226,7 @@ func TestSequence_MCPStatus_CapturesToolsPromptsAndResources(t *testing.T) {
 						{"name": "Args Prompt", "promptName": "args-prompt", "arguments": []map[string]any{
 							{"name": "city", "required": true},
 						}},
-						{"name": "no id", "promptName": ""}, // dropped: no machine name
+						{"name": "no id", "promptName": ""}, // dropped: no promptName
 					},
 					"resources": []map[string]any{
 						{"name": "doc", "uri": "demo://doc", "mimeType": "text/markdown"},
@@ -247,11 +247,8 @@ func TestSequence_MCPStatus_CapturesToolsPromptsAndResources(t *testing.T) {
 	if len(prompts) != 2 {
 		t.Fatalf("prompts = %+v, want 2 (empty promptName dropped)", prompts)
 	}
-	if prompts[0].PromptName != "simple-prompt" || prompts[1].PromptName != "args-prompt" {
-		t.Errorf("prompt names = %+v", prompts)
-	}
-	if len(prompts[1].Arguments) != 1 || !prompts[1].Arguments[0].Required {
-		t.Errorf("args = %+v", prompts[1].Arguments)
+	if prompts[0].Name != "Simple Prompt" || prompts[0].Description != "no args" || prompts[1].Name != "Args Prompt" {
+		t.Errorf("prompts = %+v, want Simple Prompt (no args) then Args Prompt", prompts)
 	}
 	if len(resources) != 1 || resources[0].URI != "demo://doc" {
 		t.Errorf("resources = %+v, want 1 (empty uri dropped)", resources)

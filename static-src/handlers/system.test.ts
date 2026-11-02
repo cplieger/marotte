@@ -2,7 +2,7 @@
 // snapshots, page resume and mode_changed. The REAL store: liveness is the LOG, so a running turn
 // is opened and a settled chat carries `last_turn_outcome`. store-load.ts and tabs.ts stay mocked.
 
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   setSessions,
   setActive,
@@ -17,10 +17,18 @@ import {
   transcriptStale,
 } from "../store.js";
 import { observeStamp, _resetForTest as resetVersions } from "../subject-versions.js";
-import { workspaceRoot, _resetForTest as resetWorkspace, setWorkspaceRoot } from "../workspace.js";
+import {
+  additionalDirectories,
+  workspaceRoot,
+  _resetForTest as resetWorkspace,
+  setWorkspaceRoot,
+} from "../workspace.js";
+import { settingsPayload } from "../__test-helpers__/settings.js";
 import { liveRunsForChat, registerLiveRunObserver, runChatID } from "../run-store.js";
 import type { Session } from "../types.js";
-import type { Entry } from "../wire/types.gen.js";
+import type { Entry, RunAsk, RunAsksPayload } from "../wire/types.gen.js";
+import { _resetRunAsksForTest, runAskPosition, runAsksOf } from "../run-asks.js";
+import { pushTargetTag, runAskTarget } from "../push-subject.js";
 // The two modules the factories below spread rather than replace. Type-only, so neither
 // adds a runtime edge the `vi.mock` would have to reach around.
 import type * as RunStore from "../run-store.js";
@@ -77,6 +85,7 @@ vi.mock("../settings.js", () => ({
   // retention, the agent capabilities and the debug level.
   applyGeneralPanel: vi.fn(),
 }));
+vi.mock("../permissions-ui.js", () => ({ applyPermissionsPanel: vi.fn() }));
 vi.mock("../session-context.js", () => ({
   // Undefined: present only so real-ESM linking succeeds.
   setLastModel: undefined,
@@ -88,12 +97,22 @@ vi.mock("../status.js", () => ({
   // Present-but-undefined, for the reason above.
   updateContextBar: undefined,
 }));
-vi.mock("../retention.js", () => ({ refreshRetention: vi.fn() }));
+vi.mock("../retention.js", () => ({ adoptRetention: vi.fn() }));
 
 // A call count is the assertion: the catalog rides no frame, so a gap is the only signal that it
 // may have changed during the outage.
 const mockFetchCatalog = vi.fn(() => Promise.resolve());
 vi.mock("../session-catalog.js", () => ({ fetchCatalog: mockFetchCatalog }));
+
+// The engine banner's store is a boundary: the event and the gap hand it the status, and it paints.
+const { mockAdoptEngineStatus, mockReconcileEngineStatus } = vi.hoisted(() => ({
+  mockAdoptEngineStatus: vi.fn(),
+  mockReconcileEngineStatus: vi.fn(() => Promise.resolve()),
+}));
+vi.mock("../engine-status.js", () => ({
+  adoptEngineStatus: mockAdoptEngineStatus,
+  reconcileEngineStatus: mockReconcileEngineStatus,
+}));
 
 // PARTIAL: the gap door's two run readers are spies (they share a token and both fetch), while
 // `adoptConnectRuns` is REAL, since the state it seeds is what the connect door owns. `vi.hoisted`
@@ -149,6 +168,12 @@ vi.mock("../bus.js", async (importOriginal) => {
     decodeEnvelope: real.decodeEnvelope,
     dispatch: vi.fn((evt: unknown) => {
       dispatched.push(evt);
+      // The one item whose handler this file loads: the run handlers' `run_asks`, so a snapshot's
+      // run items reach the real store.
+      const e = evt as { type: string; chat_id?: string; payload: unknown };
+      if (e.type === "run_asks") {
+        fireSSE(e.type, e.chat_id ?? "", e.payload);
+      }
     }),
     onBus: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
       busHandlers.set(event, handler);
@@ -158,8 +183,18 @@ vi.mock("../bus.js", async (importOriginal) => {
   });
 });
 
+// The run handlers' tab-dot tracking reaches the tab strip, and their card verbs the send path,
+// neither of which this file drives.
+vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
+vi.mock("../submit.js", () => ({
+  forgetDeletedChat: vi.fn(),
+  submitPrompt: vi.fn(),
+  submitLabelled: vi.fn(),
+}));
+
 // Import after mocks so system.ts registers its handlers against the bus mock.
 await import("./system.js");
+await import("./run.js");
 
 function makeSession(id: string, over: Partial<Session> = {}): Session {
   return {
@@ -177,6 +212,44 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
     working_label: "Thinking",
     ...over,
   };
+}
+
+function stepAsk(workflowID: string, over: Partial<RunAsk> = {}): RunAsk {
+  return {
+    ask_id: `${workflowID}:ask`,
+    node_id: "review",
+    node_path: [workflowID, "review"],
+    step_session_id: `${workflowID}-sess`,
+    agent_name: "reviewer",
+    text: "Ship it?",
+    text_source: "asked",
+    ...over,
+  };
+}
+
+let askSeq = 0;
+
+function runAsksFrame(
+  workflowID: string,
+  asks: RunAsk[],
+  chatID = `run:${workflowID}`,
+  over: Partial<RunAsksPayload> = {},
+): RunAsksPayload {
+  askSeq++;
+  return {
+    workflow_id: workflowID,
+    chat_id: chatID,
+    epoch: "e1",
+    seq: askSeq,
+    reachable: true,
+    asks,
+    ...over,
+  };
+}
+
+/** The tag a step question's banner carries, as the server's subject names it. */
+function askTag(workflowID: string, a: RunAsk): string {
+  return pushTargetTag(runAskTarget(runAskPosition(workflowID, a)));
 }
 
 /** Open a turn in `chatID`'s resident log. LIVENESS IS THE LOG, so this is how a case
@@ -227,6 +300,7 @@ beforeEach(() => {
   mockApiGet.mockResolvedValue(null);
   mockApiGetTyped.mockResolvedValue(null);
   dispatched.length = 0;
+  _resetRunAsksForTest();
   setSessions([]);
   resetWorkspace();
   resetVersions();
@@ -479,6 +553,13 @@ describe("BUS_RECONCILE handler", () => {
     expect(mockFetchCatalog).toHaveBeenCalledWith({ signal });
   });
 
+  // The engine_status event fires only on a change, so one lost in the gap would leave a stale banner.
+  it("re-reads the engine status under the run's signal", () => {
+    setSessions([makeSession("a")]);
+    const signal = fireReconcile();
+    expect(mockReconcileEngineStatus).toHaveBeenCalledWith(signal);
+  });
+
   it("drops every held turn-rail index, which no stamp certifies", () => {
     setSessions([makeSession("a")]);
     fireReconcile();
@@ -616,29 +697,9 @@ describe("pending_snapshot handler", () => {
     expect(hasPendingDecision("a")).toBe(false);
   });
 
-  it("drops a RUN-keyed ask too, which the per-session sweep cannot reach", async () => {
-    // The sweep walks `getSessions()`, and `run:<workflowId>` is no chat, so a
-    // parentless run's ask — and any ask the server reconstructed for a run nothing
-    // hosts — would escape it.
-    const { pushDecision, runPendingAsks, _resetForTest } = await import("../decision-dock.js");
-    _resetForTest();
-    setSessions([makeSession("a")]);
-    pushDecision({
-      kind: "run_input",
-      chatID: "run:wf_1",
-      runID: "wf_1",
-      askID: "reconciled:root/review",
-      payload: {
-        workflow_id: "wf_1",
-        ask_id: "reconciled:root/review",
-        node_id: "review",
-        step_session_id: "sess_step",
-        agent_name: "reviewer",
-        question: "",
-        asked_at: "2026-09-03T10:00:00Z",
-      },
-      submit: vi.fn(),
-    });
+  it("forgets a run's step questions too, which no session row reaches", async () => {
+    const { runPendingAsks } = await import("../decision-dock.js");
+    fireSSE("run_asks", "run:wf_1", runAsksFrame("wf_1", [stepAsk("wf_1")]));
     expect(runPendingAsks("wf_1").count).toBe(1);
 
     fireSSE("pending_snapshot", "", { items: [] });
@@ -706,24 +767,24 @@ describe("pending_snapshot handler", () => {
     expect(errors).toHaveBeenCalledTimes(1);
   });
 
-  it("retracts every chat and run banner the snapshot does not name, whether or not this tab held the ask", async () => {
+  it("retracts every chat, run and step-question banner the snapshot does not name, whether or not this tab held the ask", async () => {
     // a's and wf_1's asks were answered elsewhere, so their banners come down (a never rendered here);
-    // b's is re-offered and stays. The registration is faked to observe the closed tags.
+    // b's request and wf_2's step question are re-offered and stay. The registration is faked to
+    // observe the closed tags.
     const { pushDecision, _resetForTest } = await import("../decision-dock.js");
     const { _setRegistrationForTest } = await import("../notify.js");
     _resetForTest();
     const closed: string[] = [];
+    const waiting = stepAsk("wf_2");
+    const kept = askTag("wf_2", waiting);
+    const gone = askTag("wf_1", stepAsk("wf_1"));
     _setRegistrationForTest(() =>
       Promise.resolve({
         getNotifications: () =>
           Promise.resolve(
-            [
-              "marotte:a",
-              "marotte:b",
-              "marotte:run:wf_1",
-              "marotte:run:wf_2",
-              "marotte:pr:x#1",
-            ].map((tag) => ({ tag, close: () => closed.push(tag) }) as unknown as Notification),
+            ["marotte:a", "marotte:b", "marotte:run:wf_1", kept, gone, "marotte:pr:x#1"].map(
+              (tag) => ({ tag, close: () => closed.push(tag) }) as unknown as Notification,
+            ),
           ),
       }),
     );
@@ -740,25 +801,11 @@ describe("pending_snapshot handler", () => {
       fireSSE("pending_snapshot", "", {
         items: [
           { type: "permission_needed", chat_id: "b", payload: { request_id: 1 } },
-          // Chat-parented, so the envelope's chat id is the launching chat and the
-          // run's tag has to be derived from the payload rather than read off it.
-          {
-            type: "run_input_needed",
-            chat_id: "c",
-            payload: {
-              workflow_id: "wf_2",
-              ask_id: "reconciled:root/review",
-              node_id: "review",
-              step_session_id: "sess_step",
-              agent_name: "reviewer",
-              question: "",
-              asked_at: "2026-09-03T10:00:00Z",
-            },
-          },
+          { type: "run_asks", chat_id: "c", payload: runAsksFrame("wf_2", [waiting], "c") },
         ],
       });
       await vi.waitFor(() => {
-        expect(closed).toEqual(["marotte:a", "marotte:run:wf_1"]);
+        expect(closed).toEqual(["marotte:a", "marotte:run:wf_1", gone]);
       });
     } finally {
       _setRegistrationForTest(null);
@@ -797,6 +844,144 @@ describe("pending_snapshot handler", () => {
     } finally {
       _setRegistrationForTest(null);
     }
+  });
+});
+
+// A client holding a run's question that misses the run's final `run_asks` (it was offline, its tab
+// slept, or the server restarted): the next connect's pending set is the whole truth, so the
+// question leaves the store and both of its banners close.
+
+describe("a client that missed a run's final run_asks", () => {
+  /** A page notification as `notifyOffScreen` raises one, recorded so its close is observable. */
+  class PageNotification {
+    static readonly permission = "granted";
+    static readonly raised: PageNotification[] = [];
+    closed = false;
+    readonly tag: string;
+    constructor(_title: string, opts: { tag: string }) {
+      this.tag = opts.tag;
+      PageNotification.raised.push(this);
+    }
+    addEventListener(): void {
+      // No click or close is driven here.
+    }
+    close(): void {
+      this.closed = true;
+    }
+  }
+
+  let tray: { tag: string; closed: boolean }[] = [];
+
+  beforeEach(async () => {
+    const notify = await import("../notify.js");
+    PageNotification.raised.length = 0;
+    vi.stubGlobal("Notification", PageNotification);
+    notify.setNotificationsEnabled(true);
+    notify.setOnScreen(() => false);
+    tray = [];
+    notify._setRegistrationForTest(() =>
+      Promise.resolve({
+        getNotifications: () =>
+          Promise.resolve(
+            tray
+              .filter((n) => !n.closed)
+              .map(
+                (n) =>
+                  ({
+                    tag: n.tag,
+                    close: () => {
+                      n.closed = true;
+                    },
+                  }) as unknown as Notification,
+              ),
+          ),
+      }),
+    );
+  });
+
+  afterEach(async () => {
+    const notify = await import("../notify.js");
+    notify._setRegistrationForTest(null);
+    notify.setNotificationsEnabled(false);
+    notify.setOnScreen(() => document.visibilityState === "visible");
+    vi.unstubAllGlobals();
+  });
+
+  /** Hold ask A of wf_1, launched from c1, with its page banner and its tray banner up. */
+  async function holdAskA(): Promise<RunAsk> {
+    const { notifyOffScreen } = await import("../notify.js");
+    setSessions([makeSession("c1")]);
+    const a = stepAsk("wf_1");
+    fireSSE("run_asks", "c1", runAsksFrame("wf_1", [a], "c1"));
+    const subject = `runask:${runAskPosition("wf_1", a)}`;
+    expect(notifyOffScreen({ kind: "permission", title: "c1", body: "Ship it?", subject })).toBe(
+      true,
+    );
+    tray.push({ tag: askTag("wf_1", a), closed: false });
+    return a;
+  }
+
+  async function heldEverywhere(held: boolean): Promise<void> {
+    const { runPendingAsks } = await import("../decision-dock.js");
+    expect(runAsksOf("wf_1") !== undefined).toBe(held);
+    expect(runPendingAsks("wf_1").count).toBe(held ? 1 : 0);
+  }
+
+  it("drops the question and closes both banners once the run's cell is gone", async () => {
+    await holdAskA();
+    await heldEverywhere(true);
+
+    fireSSE("pending_snapshot", "", { items: [] });
+
+    await heldEverywhere(false);
+    await vi.waitFor(() => {
+      expect(PageNotification.raised.map((n) => n.closed)).toEqual([true]);
+      expect(tray.map((n) => n.closed)).toEqual([true]);
+    });
+  });
+
+  it("does the same after a restart, whose new epoch no longer names the run", async () => {
+    await holdAskA();
+    const other = stepAsk("wf_9");
+    tray.push({ tag: askTag("wf_9", other), closed: false });
+
+    // The new process holds another run it has not read yet: named, unreachable, no asks.
+    fireSSE("pending_snapshot", "", {
+      items: [
+        {
+          type: "run_asks",
+          chat_id: "run:wf_9",
+          payload: runAsksFrame("wf_9", [], "run:wf_9", { epoch: "e2", seq: 1, reachable: false }),
+        },
+      ],
+    });
+
+    await heldEverywhere(false);
+    expect(runAsksOf("wf_9")?.reachable).toBe(false);
+    await vi.waitFor(() => {
+      expect(PageNotification.raised.map((n) => n.closed)).toEqual([true]);
+      // wf_1's banner closes; wf_9's stays until the run is read.
+      expect(tray.map((n) => n.closed)).toEqual([true, false]);
+    });
+  });
+
+  it("keeps the question's banners while the snapshot names its run unreadable", async () => {
+    const a = await holdAskA();
+
+    fireSSE("pending_snapshot", "", {
+      items: [
+        {
+          type: "run_asks",
+          chat_id: "c1",
+          payload: runAsksFrame("wf_1", [a], "c1", { reachable: false }),
+        },
+      ],
+    });
+
+    await heldEverywhere(true);
+    await Promise.resolve();
+    expect(PageNotification.raised.map((n) => n.closed)).toEqual([false]);
+    expect(tray.map((n) => n.closed)).toEqual([false]);
   });
 });
 
@@ -867,17 +1052,33 @@ describe("the reconcile runs the shared turn teardown", () => {
   });
 });
 
-// `refreshRetention` and the spawn-time capability reads carry the EFFECT; this re-seeds the
+// `adoptRetention` and the session-door capability reads carry the EFFECT; this re-seeds the
 // controls on a second device (as `syncSettings` does for notifications).
 describe("settings_updated re-seeds the General panel", () => {
-  it("hands the refetched payload to applyGeneralPanel", async () => {
+  it("hands the refetched payload to applyGeneralPanel and the retention state", async () => {
     const { syncSettings, applyGeneralPanel } = await import("../settings.js");
-    const payload = { chat_retention_days: -1 };
-    vi.mocked(syncSettings).mockResolvedValueOnce(payload as never);
+    const { adoptRetention } = await import("../retention.js");
+    const { applyPermissionsPanel } = await import("../permissions-ui.js");
+    const payload = settingsPayload({ chat_retention_days: -1 });
+    vi.mocked(syncSettings).mockResolvedValueOnce(payload);
 
-    fireSSE("settings_updated", "", {});
+    fireSSE("settings_updated", "", { settings_epoch: 0, settings_revision: 0 });
     await vi.waitFor(() => {
-      expect(applyGeneralPanel).toHaveBeenCalledWith(payload);
+      expect(applyGeneralPanel).toHaveBeenCalledWith(payload, payload);
+    });
+    expect(adoptRetention).toHaveBeenCalledWith(payload);
+    expect(applyPermissionsPanel).toHaveBeenCalledWith(payload);
+  });
+
+  it("adopts the refetched additional directories as linkable roots", async () => {
+    const { syncSettings } = await import("../settings.js");
+    vi.mocked(syncSettings).mockResolvedValueOnce(
+      settingsPayload({ additional_directories: ["/data"] }),
+    );
+
+    fireSSE("settings_updated", "", { settings_epoch: 0, settings_revision: 0 });
+    await vi.waitFor(() => {
+      expect(additionalDirectories()).toEqual(["/data"]);
     });
   });
 
@@ -892,16 +1093,30 @@ describe("settings_updated re-seeds the General panel", () => {
     };
     window.addEventListener("unhandledrejection", onReject);
     try {
-      fireSSE("settings_updated", "", {});
+      fireSSE("settings_updated", "", { settings_epoch: 0, settings_revision: 0 });
       // Two task boundaries: the rejection is raised inside the refetch's own `.then`, so
       // the event is delivered a task after the microtask that produced it.
       await new Promise((r) => setTimeout(r, 0));
       await new Promise((r) => setTimeout(r, 0));
 
       expect(applyGeneralPanel).not.toHaveBeenCalled();
+      expect(vi.mocked((await import("../retention.js")).adoptRetention)).not.toHaveBeenCalled();
       expect(rejected, "the refusal is a return, not a throw").toEqual([]);
     } finally {
       window.removeEventListener("unhandledrejection", onReject);
     }
+  });
+});
+
+describe("engine_status", () => {
+  it("hands the whole status to the engine store", () => {
+    const status = {
+      since: "2026-10-16T00:00:00Z",
+      state: "restarting",
+      busy: { turns: [], runs: [] },
+      restart: { pending: false, reasons: [] },
+    };
+    fireSSE("engine_status", "", status);
+    expect(mockAdoptEngineStatus).toHaveBeenCalledWith(status);
   });
 });

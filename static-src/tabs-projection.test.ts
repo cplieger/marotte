@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./icons.js", () => ({
+  ICON_MODEL_UI: "",
   ICON_CLOSE: "",
   ICON_TAB_CHAT: "",
   ICON_TAB_SETTINGS: "",
@@ -69,6 +70,7 @@ vi.mock("./dom.js", () => ({
   ),
   // `byId` (via page-title.ts) must exist for real ESM linking. Inlined: a hoisted `vi.mock` factory
   // cannot reach a helper. Resolve-or-create, since the real one throws.
+  setBusy: vi.fn(),
   byId: (id: string): HTMLElement => {
     let el = document.getElementById(id);
     if (el === null) {
@@ -135,6 +137,7 @@ vi.mock("./transport.js", () =>
 );
 vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => ({
+    apiBlobOrError: vi.fn(),
     apiGetTyped: m.tabListRead(),
     // tabs.ts reaches api-client.ts through the files-shared.js edge the
     // multi-instance browser added, so the real link needs this name present.
@@ -530,14 +533,11 @@ describe("a skipped version", () => {
 // sorts LAST, never read as closed.
 describe("a tabs_changed whose order omits a tab we hold", () => {
   it("keeps that tab, at the END of the strip, and never closes it", async () => {
-    expect.assertions(4);
+    expect.assertions(3);
     tabServer.setMode("event-first");
     await openTab({ kind: "chat", ref: "a" });
     await openTab({ kind: "chat", ref: "b" });
     await openTab({ kind: "chat", ref: "c" });
-    const closed: string[] = [];
-    const { setOnTabClosed } = await import("./tabs.js");
-    setOnTabClosed((id) => closed.push(id));
 
     // The order names two of the three. The third is not a closure and must not be
     // read as one.
@@ -551,7 +551,6 @@ describe("a tabs_changed whose order omits a tab we hold", () => {
     // LAST rather than first: an unnamed tab ahead of the strip would put a tab the
     // server has not told us about in front of the arrangement the reader made.
     expect(await rowRefs()).toEqual(["c", "a", "b"]);
-    expect(closed).toEqual([]);
     expect(tabServer.sentOfType("close_tab")).toHaveLength(0);
   });
 

@@ -13,6 +13,7 @@ import settingsSrc from "./settings.ts?raw";
 import filesSrc from "./files.ts?raw";
 import appSrc from "./app.ts?raw";
 import sidebarHistorySrc from "./sidebar-history.ts?raw";
+import runViewSrc from "./run-view.ts?raw";
 
 // Pinned literally: the trailing `\(` makes the guard read calls, not mentions in prose.
 const TOGGLE_CALL = /\btoggle[A-Za-z]*View\s*\(/;
@@ -61,14 +62,14 @@ const POPULATION: readonly { readonly name: string; readonly src: string; readon
       why: "a PAGE module owns its content and its activation hooks, never a door that can close its own tab",
     },
     {
+      name: "run-view.ts",
+      src: runViewSrc,
+      why: "the one door every run opener goes through, a notification click among them",
+    },
+    {
       name: "history.ts",
       src: historySrc,
       why: "the same, and the other place the trap lived: a show* wrapper that toggled",
-    },
-    {
-      name: "sidebar-history.ts",
-      src: sidebarHistorySrc,
-      why: "the sidebar's History: a drawer door, so a toggle would close the tab asked for",
     },
   ];
 
@@ -85,6 +86,7 @@ describe("the source guard", () => {
     { name: "settings.ts", src: settingsSrc },
     { name: "files.ts", src: filesSrc },
     { name: "app.ts", src: appSrc },
+    { name: "sidebar-history.ts", src: sidebarHistorySrc },
   ])("$name still contains a toggle call, so the pattern matches", ({ src }) => {
     expect.assertions(1);
     expect(src).toMatch(TOGGLE_CALL);
@@ -114,6 +116,7 @@ vi.mock("./git-tabs.js", () => ({ forceGitTab: mocks.forceGitTab }));
 // call OBSERVABLE without pulling the git view into this fixture.
 vi.mock("./git-prs-tab.js", () => ({ requestPRFocus: mocks.requestPRFocus }));
 vi.mock("./icons.js", () => ({
+  ICON_MODEL_UI: "",
   ICON_CLOSE: "",
   ICON_TAB_CHAT: "",
   ICON_TAB_SETTINGS: "",
@@ -169,6 +172,7 @@ vi.mock("./dom.js", () => ({
       },
     },
   ),
+  setBusy: vi.fn(),
   byId: (id: string) => {
     let el = document.getElementById(id);
     if (el === null) {
@@ -214,6 +218,7 @@ vi.mock("./transport.js", () =>
 );
 vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => ({
+    apiBlobOrError: vi.fn(),
     apiGetTyped: m.tabListRead(),
     apiGet: vi.fn(() => Promise.resolve(null)),
   })),

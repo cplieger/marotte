@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { entryRenders, firstPlanSeq } from "./block-window.js";
+import { entryRenders, turnFolds } from "./block-window.js";
 import { payloadOf, projectTurns } from "./turns.js";
 import type { Entry, EntryKind } from "./wire/types.gen.js";
 import type { TurnState } from "./types.js";
@@ -104,11 +104,12 @@ describe("the fold contract shared with the Go implementation", () => {
           if (turn === undefined) {
             throw new Error("the turn was not projected; the case above names it");
           }
-          const entry = turn.body.find((e) => e.id === row.id);
+          // By seq too: a dropped agent note shares its read twin's id.
+          const entry = turn.body.find((e) => e.id === row.id && e.seq === row.seq);
           if (entry === undefined) {
             throw new Error(`entry ${row.id} is not in the turn's body`);
           }
-          expect(entryRenders(entry, "", firstPlanSeq(turn, ""))).toBe(row.renders);
+          expect(entryRenders(entry, "", turnFolds(turn, ""))).toBe(row.renders);
         });
       }
     });

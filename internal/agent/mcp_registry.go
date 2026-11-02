@@ -15,7 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 type mcpServerState = marotte.MCPServerState
@@ -48,33 +48,32 @@ type mcpServerRuntime struct {
 }
 
 type mcpRegistry struct {
-	// bridges looks up a chat's live bridge; live control needs a chat bridge, not the utility one.
-	bridges *bridgeManager
+	// config is the name sets marotte configured. Optional: without it every server is unconfigured.
+	config mcpNameSets `wiring:"optional"`
+	// engine is the one engine whose MCP pool every session shares; live control is an engine call.
+	engine *engineOwner
 	// bus publishes the four MCP lifecycle events.
 	bus *bus
 	// lifetime supplies the done channel the debounce loop exits on.
 	lifetime *lifetime
-	// config is the name sets marotte configured. Optional: without it every server is unconfigured.
-	config  mcpNameSets `wiring:"optional"`
-	servers map[string]*mcpServerRuntime
-	// pools is each live bridge's last status snapshot, keyed by bridge; only that bridge's forward
-	// loop writes or drops it.
-	pools map[ACPBridge][]poolServerJSON
+	servers  map[string]*mcpServerRuntime
 	// onChange is installed later by SetMCPOnChange.
 	onChange func() `wiring:"optional"`
 	// notifyCh coalesces onChange signals within the debounce window (capacity 1).
 	notifyCh chan struct{}
-	mu       sync.RWMutex
+	// pool is the engine's last status snapshot: KAS sends its one pool's _kiro/mcp/status to every session, so any
+	// copy is the engine's. Cleared at the engine's end.
+	pool []poolServerJSON
+	mu   sync.RWMutex
 }
 
-func newMCPRegistry(bridges *bridgeManager, b *bus, lt *lifetime, cfg mcpNameSets) *mcpRegistry {
+func newMCPRegistry(engine *engineOwner, b *bus, lt *lifetime, cfg mcpNameSets) *mcpRegistry {
 	r := &mcpRegistry{
-		bridges:  bridges,
+		engine:   engine,
 		bus:      b,
 		lifetime: lt,
 		config:   cfg,
 		servers:  make(map[string]*mcpServerRuntime),
-		pools:    make(map[ACPBridge][]poolServerJSON),
 		notifyCh: make(chan struct{}, 1),
 	}
 	return r
@@ -109,8 +108,6 @@ func (reg *mcpRegistry) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mcp/status", reg.handleStatus)
 	mux.HandleFunc("/api/mcp/pool", reg.handlePool)
 	mux.HandleFunc("/api/mcp/reconnect", reg.handleReconnect)
-	mux.HandleFunc("/api/mcp/prompt", reg.handlePrompt)
-	mux.HandleFunc("/api/mcp/resource", reg.handleResource)
 	// Registered here, or the "/api/mcp/" subtree reads "oauth-relay" as a server id and 404s.
 	mux.HandleFunc("/api/mcp/oauth-relay", reg.handleOAuthRelay)
 }
@@ -125,7 +122,7 @@ func (reg *mcpRegistry) RecordConnected(ctx context.Context, name string, src ma
 	reg.signalChange()
 }
 
-func (reg *mcpRegistry) setPool(bridge ACPBridge, servers []translate.MCPPoolServer) {
+func (reg *mcpRegistry) setPool(servers []translate.MCPPoolServer) {
 	pool := make([]poolServerJSON, 0, len(servers))
 	for _, s := range servers {
 		row := poolServerJSON{Name: s.Name, Resources: s.Resources, ResourceTemplates: s.ResourceTemplates}
@@ -139,17 +136,16 @@ func (reg *mcpRegistry) setPool(bridge ACPBridge, servers []translate.MCPPoolSer
 	}
 	slices.SortFunc(pool, func(a, b poolServerJSON) int { return cmp.Compare(a.Name, b.Name) })
 	reg.mu.Lock()
-	reg.pools[bridge] = pool
+	changed := !slices.EqualFunc(reg.pool, pool, poolServerEqual)
+	reg.pool = pool
 	reg.mu.Unlock()
-	reg.poolChanged()
+	if changed {
+		reg.poolChanged()
+	}
 }
 
-// dropPool forgets bridge's pool once its forward loop has exited.
-func (reg *mcpRegistry) dropPool(bridge ACPBridge) {
-	reg.mu.Lock()
-	delete(reg.pools, bridge)
-	reg.mu.Unlock()
-	reg.poolChanged()
+func poolServerEqual(a, b poolServerJSON) bool {
+	return a.Name == b.Name && slices.Equal(a.Resources, b.Resources) && slices.Equal(a.ResourceTemplates, b.ResourceTemplates)
 }
 
 // poolChanged tells clients a pool moved, so a `#` menu re-reads it.
@@ -163,51 +159,20 @@ type poolServerJSON struct {
 	ResourceTemplates []marotte.MCPResourceTemplateInfo `json:"resource_templates"`
 }
 
-// handlePool serves GET /api/mcp/pool?chat_id=<id>: the serving bridge's resources and
-// templates, sorted by server; empty with no bridge.
+// handlePool serves GET /api/mcp/pool: the engine's MCP resources and templates, sorted by server; empty before any
+// session reported them.
 func (reg *mcpRegistry) handlePool(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	chatID := marotte.ChatID(r.URL.Query().Get("chat_id"))
-	if chatID == "" {
-		httpreply.BadRequest(w, "chat_id required")
-		return
-	}
-	out := reg.servingPool(chatID)
+	reg.mu.RLock()
+	out := slices.Clone(reg.pool)
+	reg.mu.RUnlock()
 	if out == nil {
 		out = []poolServerJSON{}
 	}
 	webhttp.WriteJSON(w, map[string][]poolServerJSON{"servers": out})
-}
-
-var poolSelected = func() {}
-
-// servingPoolAttempts bounds the re-reads a bridge replacement can force.
-const servingPoolAttempts = 3
-
-// A failed session/load can swap the bridge mid-read while the old pool is still held, so the
-// selection is re-checked; one that keeps moving answers no pool.
-func (reg *mcpRegistry) servingPool(chatID marotte.ChatID) []poolServerJSON {
-	if reg.bridges == nil {
-		return nil
-	}
-	for range servingPoolAttempts {
-		sb := reg.bridges.get(chatID)
-		if sb == nil {
-			return nil
-		}
-		b := sb.current()
-		poolSelected()
-		reg.mu.RLock()
-		pool := reg.pools[b]
-		reg.mu.RUnlock()
-		if reg.bridges.get(chatID) == sb && sb.current() == b {
-			return pool
-		}
-	}
-	return nil
 }
 
 // RecordOAuth marks a server as waiting for OAuth and broadcasts the URL.
@@ -284,13 +249,18 @@ func (reg *mcpRegistry) releaseOAuthRelay(a oauthAttempt) {
 	}
 }
 
-// clearAll wipes the registry and broadcasts mcp_disconnected per server, when the last bridge
-// exits: MCP subprocesses live inside kiro-cli.
+// clearAll wipes the registry and the pool and broadcasts mcp_disconnected per server when the engine ends: MCP
+// subprocesses live inside kiro-cli.
 func (reg *mcpRegistry) clearAll(ctx context.Context) {
 	reg.mu.Lock()
 	prev := reg.servers
 	reg.servers = make(map[string]*mcpServerRuntime)
+	hadPool := len(reg.pool) > 0
+	reg.pool = nil
 	reg.mu.Unlock()
+	if hadPool {
+		reg.poolChanged()
+	}
 
 	if len(prev) == 0 {
 		return

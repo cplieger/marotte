@@ -6,9 +6,13 @@ import { createModal, type ModalController } from "@cplieger/ui-primitives/modal
 import { el } from "@cplieger/reactive";
 import { pollUntil, registerCleanup } from "./actions/index.js";
 import { $, byId } from "./dom.js";
-import { apiGetTyped, apiPost } from "./api-client.js";
-import { decodeLoginOptions, decodeWhoamiResponse } from "./wire/decoders.gen.js";
-import type { LoginOptions } from "./wire/types.gen.js";
+import { apiGetTyped, apiPostTypedOrError } from "./api-client.js";
+import {
+  decodeLoginOptions,
+  decodeLoginResponse,
+  decodeWhoamiResponse,
+} from "./wire/decoders.gen.js";
+import type { LoginOptions, LoginResponse, WhoamiResponse } from "./wire/types.gen.js";
 import { isSafeUrl } from "./utils-url.js";
 
 const controllers = new Map<HTMLElement, ModalController>();
@@ -151,14 +155,87 @@ export function closeTopModal(): boolean {
   return false;
 }
 
-let loginPollAbort: AbortController | null = null;
-let loginPollUnregister: (() => void) | null = null;
+/** What one /api/whoami answer means for the sign-in attempt POST /api/login numbered. A switch keeps the old
+ *  account signed in until the new one commits, so only the attempt's own state ends the wait. */
+type LoginPollVerdict =
+  | { readonly kind: "waiting" }
+  | { readonly kind: "signed_in" }
+  | { readonly kind: "ended"; readonly text: string };
 
-function abortLoginPoll(): void {
-  loginPollAbort?.abort();
-  loginPollAbort = null;
-  loginPollUnregister?.();
-  loginPollUnregister = null;
+const WAITING: LoginPollVerdict = { kind: "waiting" };
+
+const TEXT_SIGN_IN_FAILED = "The sign-in did not complete. Try again.";
+const TEXT_SIGN_IN_CANCELLED = "The sign-in was cancelled. Try again.";
+const TEXT_SIGN_IN_SUPERSEDED =
+  "Another sign-in started, so this one stopped. Check the account menu.";
+const TEXT_SIGN_IN_LOST = "marotte restarted before the sign-in finished. Try again.";
+const TEXT_SIGNED_OUT_AFTER =
+  "The sign-in finished, then the account was signed out. Sign in again.";
+const TEXT_SIGN_IN_TIMED_OUT = "The sign-in did not finish in time. Try again.";
+const TEXT_SIGN_IN_UNREACHABLE = "marotte could not be reached. Try again.";
+const TEXT_SIGN_IN_NOT_STARTED = "The sign-in could not start. Try again.";
+
+function ended(text: string): LoginPollVerdict {
+  return { kind: "ended", text };
+}
+
+export function loginPollVerdict(wd: WhoamiResponse, attempt: number): LoginPollVerdict {
+  const seen = wd.loginAttempt ?? 0;
+  if (seen > attempt) {
+    return ended(TEXT_SIGN_IN_SUPERSEDED);
+  }
+  // The vault numbers attempts from 1 at each start, so an older number means this attempt died with the process.
+  if (seen < attempt) {
+    return ended(TEXT_SIGN_IN_LOST);
+  }
+  switch (wd.loginState) {
+    case "signed_in":
+      return wd.state === "signed_in" ? { kind: "signed_in" } : ended(TEXT_SIGNED_OUT_AFTER);
+    case "failed":
+      return ended(wd.loginError ?? TEXT_SIGN_IN_FAILED);
+    case "cancelled":
+      return ended(TEXT_SIGN_IN_CANCELLED);
+    default:
+      return WAITING;
+  }
+}
+
+/** Past the vault's 16-minute poll bound, so the server's own ending, with its reason, is what the reader sees. */
+const LOGIN_POLL_DEADLINE_MS = 17 * 60_000;
+const LOGIN_POLL_INTERVAL_MS = 3000;
+
+/** The open modal's one sign-in, from its POST to its last poll: a close or a new start aborts it, so an answer that
+ *  lands after paints nothing, polls nothing and signs nobody in. */
+let loginAbort: AbortController | null = null;
+let loginUnregister: (() => void) | null = null;
+
+function loginButtons(): HTMLButtonElement[] {
+  return [...document.querySelectorAll<HTMLButtonElement>("#login-modal .modal-btn")];
+}
+
+/** The doors stay closed while an attempt is out: the server refuses a second one until the first ends. */
+function setLoginButtonsDisabled(disabled: boolean): void {
+  for (const b of loginButtons()) {
+    b.disabled = disabled;
+  }
+}
+
+function abortLogin(): void {
+  loginAbort?.abort();
+  loginAbort = null;
+  loginUnregister?.();
+  loginUnregister = null;
+  setLoginButtonsDisabled(false);
+}
+
+function startLogin(): AbortSignal {
+  abortLogin();
+  const ctrl = new AbortController();
+  loginAbort = ctrl;
+  loginUnregister = registerCleanup(() => {
+    ctrl.abort();
+  });
+  return ctrl.signal;
 }
 
 export function showLoginModal(): void {
@@ -195,7 +272,7 @@ export function hideLoginModal(): void {
 export function initLoginModal(onLoggedIn: () => void): void {
   // Every login-modal close path must stop the poll; with no Close button, all
   // dismissals funnel through the controller's onClose.
-  onModalClose($.loginModal, abortLoginPoll);
+  onModalClose($.loginModal, abortLogin);
 
   const freeBtn = byId<HTMLButtonElement>("modal-login-free");
   const ssoBtn = byId<HTMLButtonElement>("modal-login-sso");
@@ -248,109 +325,75 @@ function doLogin(
   status: HTMLDivElement,
   onLoggedIn: () => void,
 ): void {
-  loginPollAbort?.abort();
-  loginPollAbort = null;
-
-  const btns = document.querySelectorAll("#login-modal .modal-btn");
-  for (const b of btns) {
-    (b as HTMLButtonElement).disabled = true;
-  }
-
-  interface LoginResp {
-    url?: string;
-    code?: string;
-    error?: string;
-    raw?: string;
-  }
-  const enable = (): void => {
-    for (const b of btns) {
-      (b as HTMLButtonElement).disabled = false;
+  const signal = startLogin();
+  setLoginButtonsDisabled(true);
+  void apiPostTypedOrError("/api/login", body, decodeLoginResponse, signal).then((r) => {
+    if (signal.aborted) {
+      return;
     }
-  };
+    if (!r.ok || r.data === null) {
+      status.textContent = loginStartError(r.status, r.error);
+      abortLogin();
+      return;
+    }
+    showDeviceCode(status, r.data);
+    void pollLoginAttempt(r.data.attempt, status, onLoggedIn, signal);
+  });
+}
 
-  void apiPost<LoginResp>("/api/login", body)
-    .then((d) => {
-      if (d === null) {
-        status.textContent = "Server error";
-        return;
-      }
-      if (d.error !== undefined) {
-        // kiro-cli refuses a fresh login while a session exists (usually a whoami parse
-        // miss); reload so checkAuthAndStart re-runs with the tolerant parser.
-        if (d.error === "already_logged_in") {
-          status.textContent = "";
-          status.append("You're already signed in. ");
-          const reloadBtn = el("button", { type: "button", className: "btn-small" }, "Reload");
-          reloadBtn.style.marginInlineStart = "var(--sp-2)";
-          reloadBtn.addEventListener("click", () => {
-            location.reload();
-          });
-          status.append(reloadBtn);
-          return;
-        }
-        const detail = d.raw !== undefined ? `\n\nCLI output:\n${d.raw}` : "";
-        status.textContent = d.error + detail;
-        return;
-      }
-      if (d.url !== undefined) {
-        const codeText = d.code !== undefined ? `Code: ${d.code}` : "";
-        status.textContent = "";
-        if (codeText) {
-          status.append(codeText);
-          status.append(el("br"));
-        }
-        if (isSafeUrl(d.url)) {
-          const link = el(
-            "a",
-            { href: d.url, target: "_blank", rel: "noopener" },
-            "Open login page",
-          );
-          link.style.color = "var(--c-accent)";
-          status.append(link);
-        } else {
-          const span = el("span", null, d.url);
-          span.style.color = "var(--c-text-tertiary)";
-          status.append(span);
-        }
-        status.append(el("br"));
-        const hint = el("span", null, "Complete login in the browser, then come back.");
-        hint.style.color = "var(--c-text-tertiary)";
-        status.append(hint);
-        const MAX_POLL_ATTEMPTS = 200; // ~10 minutes at 3s intervals
-        const ctrl = new AbortController();
-        loginPollAbort = ctrl;
-        loginPollUnregister?.();
-        loginPollUnregister = registerCleanup(() => loginPollAbort?.abort());
-        const signal = AbortSignal.any([
-          ctrl.signal,
-          AbortSignal.timeout(MAX_POLL_ATTEMPTS * 3000),
-        ]);
-        void (async () => {
-          // Poll until signed_in, a dismiss, or the deadline. `signed_out` and
-          // `unavailable` keep polling: both are expected mid-window.
-          const outcome = await pollUntil(
-            (s) => apiGetTyped("/api/whoami", decodeWhoamiResponse, s),
-            {
-              intervalMs: 3000,
-              until: (wd) => wd.state === "signed_in",
-              signal,
-            },
-          );
-          if (outcome.status === "done") {
-            loginPollAbort = null;
-            loginPollUnregister?.(); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-            loginPollUnregister = null;
-            onLoggedIn();
-            return;
-          }
-          if (ctrl.signal.aborted) {
-            return;
-          }
-          loginPollUnregister?.(); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-          loginPollUnregister = null;
-          status.textContent = "Login timed out. Please reload and try again.";
-        })();
-      }
-    })
-    .finally(enable);
+function loginStartError(httpStatus: number, error: string): string {
+  if (error !== "") {
+    return error;
+  }
+  return httpStatus === 0 ? TEXT_SIGN_IN_UNREACHABLE : TEXT_SIGN_IN_NOT_STARTED;
+}
+
+function showDeviceCode(status: HTMLDivElement, d: LoginResponse): void {
+  status.replaceChildren(`Code: ${d.code}`, el("br"));
+  if (isSafeUrl(d.url)) {
+    const link = el(
+      "a",
+      { href: d.url, target: "_blank", rel: "noopener" },
+      "Open the sign-in page",
+    );
+    link.style.color = "var(--c-accent)";
+    status.append(link);
+  } else {
+    const span = el("span", null, d.url);
+    span.style.color = "var(--c-text-tertiary)";
+    status.append(span);
+  }
+  status.append(el("br"));
+  const hint = el("span", null, "Approve the sign-in in the browser, then come back.");
+  hint.style.color = "var(--c-text-tertiary)";
+  status.append(hint);
+}
+
+/** Polls whoami until `attempt` signs in or ends, the sign-in is aborted, or the deadline. */
+async function pollLoginAttempt(
+  attempt: number,
+  status: HTMLDivElement,
+  onLoggedIn: () => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const outcome = await pollUntil((s) => apiGetTyped("/api/whoami", decodeWhoamiResponse, s), {
+    intervalMs: LOGIN_POLL_INTERVAL_MS,
+    until: (wd) => loginPollVerdict(wd, attempt).kind !== "waiting",
+    timeoutMs: LOGIN_POLL_DEADLINE_MS,
+    signal,
+  });
+  if (signal.aborted) {
+    return;
+  }
+  abortLogin();
+  if (outcome.status !== "done") {
+    status.textContent = TEXT_SIGN_IN_TIMED_OUT;
+    return;
+  }
+  const verdict = loginPollVerdict(outcome.result, attempt);
+  if (verdict.kind === "ended") {
+    status.textContent = verdict.text;
+    return;
+  }
+  onLoggedIn();
 }

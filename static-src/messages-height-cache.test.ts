@@ -18,7 +18,6 @@ for (const id of [
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 vi.mock("./actions/messages.js", () => ({
   copyClipboard: { dispatch: () => Promise.resolve() },
-  explainError: { dispatch: () => Promise.resolve(null) },
 }));
 vi.mock("./api-client.js", async () => ({
   ...(await vi.importActual<Record<string, unknown>>("./api-client.js")),
@@ -39,7 +38,7 @@ import type { Entry, TurnState } from "./types.js";
 const CHAT = "c-height";
 const TURN = "t1";
 
-/** Eight `text` entries in one lane are one prose run: one row (`ENTRY_ESTIMATE_PX.text`, 48) plus `ROW_GAP_PX` (12). */
+/** Eight `text` entries of one message are one prose run: one row (`ENTRY_ESTIMATE_PX.text`, 48) plus `ROW_GAP_PX` (12). */
 const COLD_PX = 60;
 
 /** No estimate produces this, so a read answering it came from the cache, plus the boundary gap. */
@@ -50,7 +49,9 @@ const MEASURED_TOTAL_PX = 1011;
 const RUN = { from: 1, to: 9 } as const;
 
 function sealed(at: number, kind: Entry["kind"], payload: unknown): Entry {
-  return { id: `${TURN}-e${String(at)}`, turn: TURN, kind, seq: at, ts: at + 1, payload } as Entry;
+  // A text entry is a `#k` segment of one say, so the eight are one message and one run.
+  const id = kind === "text" ? `${TURN}-say#${String(at)}` : `${TURN}-e${String(at)}`;
+  return { id, turn: TURN, kind, seq: at, ts: at + 1, payload } as Entry;
 }
 
 /** One turn: a prompt, eight sealed text entries, a close. */

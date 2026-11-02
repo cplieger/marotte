@@ -3,18 +3,19 @@ package agent
 import (
 	"testing"
 
-	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // ownID is the id of the chat's own open turn, read the way the lifecycle holds
 // it rather than by claiming it.
 func ownID(h *Runtime, chatID marotte.ChatID) (string, bool) {
-	t, ok := h.coord.turns.ownTurn(chatID)
-	if !ok {
+	lc := h.coord.turns.lifecycleFor(chatID)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.own == nil || lc.own.finalizing {
 		return "", false
 	}
-	return t.ID, true
+	return lc.own.ID, true
 }
 
 // pendingID reads the unacknowledged prompt turn's id from the lifecycle: bindPending retires what it binds.
@@ -72,9 +73,8 @@ func TestWireTurnStart_BindsThePendingPreOpen(t *testing.T) {
 func TestWireTurnStart_ClosesATurnWhoseEndNeverArrived(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
+	// streamingPromptTurn's turn_start acknowledges it, so the next bracket finds nothing pending.
 	first, _ := streamingPromptTurn(t, h, chatID, "the first turn's reply")
-	// Acknowledge it, so the next bracket finds nothing pending.
-	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
 
 	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
 
@@ -208,24 +208,6 @@ func TestFold_WithNoOpenTurnOpensAWireTurn(t *testing.T) {
 	if len(entries) != 1 || entries[0].Kind != marotte.EntryKindTurnOpen || entries[0].ID != id {
 		t.Errorf("entries = %+v, want the turn_open alone on disk while the text coalesces", entries)
 	}
-}
-
-// A local shell turn refuses while another turn is open; the admission slot only covers turns marotte prompted.
-func TestOpenTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
-	h, cs, _ := newTestHub()
-	const chatID marotte.ChatID = "c1"
-	cs.seed(t, chatID, func(c *marotte.Chat) { c.Name = "A" })
-	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
-
-	if id, err := h.coord.OpenTurn(t.Context(), chatID, command.TurnOpen{
-		Source: marotte.TurnSourceLocalShell, Prompt: &marotte.EntryPrompt{ID: "m-shell", Text: "!ls"},
-	}); err == nil {
-		t.Errorf("OpenTurn(local_shell) = %q, want a refusal while an agent turn is open", id)
-	}
-
-	h.translateACPEvent(chatID, h.originOf(chatID), newTurnEndMsg("end_turn"))
-	id := shellTurn(t, h, chatID)
-	h.coord.ReleaseTurn(chatID, id)
 }
 
 // After a revision the agent's turn_end closes the agent's turn, the next turn_start binds the prompt, and the

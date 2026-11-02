@@ -54,50 +54,69 @@ const {
 
 let activeId = "";
 
-vi.mock("./store.js", () => ({
-  // A real spy: seeding a created chat recomputes the DERIVED usage.context_size, a function
-  // of the model the header cannot carry.
-  setModel: vi.fn(),
-  getActiveId: () => activeId,
-  getActive: vi.fn(() => undefined),
-  get: vi.fn(() => undefined),
-  getSessions: vi.fn(() => []),
-  // The per-row strip effect's tracked read; inert until a case aims it.
-  watchSession: vi.fn(() => undefined),
-  // Present for real-ESM linking (`chat-settled.js` imports it), with the real derivation as
-  // in `__test-helpers__/store-mock.ts`.
-  turnLive: (s: { thinking: boolean; turn_open?: boolean; provisional?: boolean }) =>
-    s.thinking || s.turn_open === true || s.provisional === true,
-  setActive: vi.fn((id: string) => {
-    activeId = id;
-  }),
-  upsertHeader: vi.fn(),
-  // The real predicate, transcribed: the model-picker branch keys on it, so a
-  // stub returning a constant would send every fixture down one arm.
-  isEmptyChat: (s: { turn_count: number; turn_order: unknown[] } | undefined) =>
-    s === undefined || (s.turn_count === 0 && s.turn_order.length === 0),
-  contextSizeFor: vi.fn(() => 0),
-  defaultUsage: vi.fn(() => ({
-    context_pct: 0,
-    context_size: 0,
-    credits: 0,
-    last_turn_ms: 0,
-    has_real_data: false,
-  })),
-  activeSession: { value: undefined },
-  removeChat: vi.fn(),
-  // The dot's seed at tab creation; the finished-turn mark is the header's
-  // `last_turn_outcome`.
-  tabStatusFor: vi.fn(() => ""),
-  // The activation refetch gate, TRUE by default; the gate describe drives both verdicts. The
-  // predicate's truth table is store.test.ts's; this suite owns the routing.
-  transcriptStale: vi.fn(() => true),
-}));
+const messageVersions = new Map<string, { value: number }>();
+
+function bumpMessageVersion(id: string): void {
+  const held = messageVersions.get(id);
+  if (held !== undefined) {
+    held.value += 1;
+  }
+}
+
+vi.mock("./store.js", async () => {
+  const { signal } = await import("@cplieger/reactive");
+  return {
+    // The pager effect's tracked read; a case bumps it through `bumpMessageVersion`.
+    messagesVersionOf: (id: string) => {
+      const held = messageVersions.get(id) ?? signal(0);
+      messageVersions.set(id, held);
+      return held;
+    },
+    // A real spy: seeding a created chat recomputes the DERIVED usage.context_size, a function
+    // of the model the header cannot carry.
+    setModel: vi.fn(),
+    getActiveId: () => activeId,
+    getActive: vi.fn(() => undefined),
+    get: vi.fn(() => undefined),
+    getSessions: vi.fn(() => []),
+    // The per-row strip effect's tracked read; inert until a case aims it.
+    watchSession: vi.fn(() => undefined),
+    // Present for real-ESM linking (`chat-settled.js` imports it), with the real derivation as
+    // in `__test-helpers__/store-mock.ts`.
+    turnLive: (s: { thinking: boolean; turn_open?: boolean; provisional?: boolean }) =>
+      s.thinking || s.turn_open === true || s.provisional === true,
+    setActive: vi.fn((id: string) => {
+      activeId = id;
+    }),
+    upsertHeader: vi.fn(),
+    // The real predicate, transcribed: the model-picker branch keys on it, so a
+    // stub returning a constant would send every fixture down one arm.
+    isEmptyChat: (s: { turn_count: number; turn_order: unknown[] } | undefined) =>
+      s === undefined || (s.turn_count === 0 && s.turn_order.length === 0),
+    contextSizeFor: vi.fn(() => 0),
+    defaultUsage: vi.fn(() => ({
+      context_pct: 0,
+      context_size: 0,
+      credits: 0,
+      last_turn_ms: 0,
+      has_real_data: false,
+    })),
+    activeSession: { value: undefined },
+    removeChat: vi.fn(),
+    // The dot's seed at tab creation; the finished-turn mark is the header's
+    // `last_turn_outcome`.
+    tabStatusFor: vi.fn(() => ""),
+    // The activation refetch gate, TRUE by default; the gate describe drives both verdicts. The
+    // predicate's truth table is store.test.ts's; this suite owns the routing.
+    transcriptStale: vi.fn(() => true),
+  };
+});
 // The loader, stubbed: `resolveUnknownChat` owns the ROUTING of each verdict; the
 // status-to-verdict mapping is store-load.test.ts's.
 vi.mock("./store-load.js", () => ({
   loadList: vi.fn(),
   loadMessages: vi.fn(),
+  loadOlderTurns: vi.fn(),
   confirmChatExists: vi.fn(),
 }));
 vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
@@ -226,7 +245,7 @@ import { addAttachment, unownedAttachmentPaths } from "./attachments.js";
 import { dropDecisions } from "./decision-dock.js";
 import { get, watchSession, removeChat, setActive, upsertHeader } from "./store.js";
 import { transcriptStale } from "./store.js";
-import { loadList, loadMessages, confirmChatExists } from "./store-load.js";
+import { loadList, loadMessages, loadOlderTurns, confirmChatExists } from "./store-load.js";
 import { loadTurnRail, pointTurnRail, setLoadMore, disposeChatView } from "./messages.js";
 import { seedComposerState } from "./composer-state.js";
 import { info } from "./toast.js";
@@ -396,6 +415,22 @@ describe("createSession is async, and what that means for its callers", () => {
   it("seeds the row from the SERVER's header rather than a local guess", async () => {
     await chatModule.createSession();
     expect(vi.mocked(upsertHeader).mock.calls.at(-1)?.[0]).toMatchObject({ id: "c-created" });
+  });
+
+  // The reply's header predates the chat's log, so its read position is 0; a frame that landed
+  // first carries the log's, and the late reply must not erase it.
+  it("keeps a read position an earlier frame put on the row", async () => {
+    vi.mocked(get).mockReturnValueOnce({ read_position: 2 } as ReturnType<typeof get>);
+    await chatModule.createSession();
+    expect(vi.mocked(upsertHeader).mock.calls.at(-1)?.[0]).toMatchObject({
+      id: "c-created",
+      read_position: 2,
+    });
+  });
+
+  it("takes the reply's header as is when no frame came first", async () => {
+    await chatModule.createSession();
+    expect(vi.mocked(upsertHeader).mock.calls.at(-1)?.[0]).not.toHaveProperty("read_position");
   });
 });
 
@@ -758,7 +793,7 @@ describe("openTangentChat", () => {
 });
 
 // No transcript context menu: a tangent inherits the whole conversation, so a
-// phrase-scoped gesture would mislead. The `+` menu is the door.
+// phrase-scoped gesture would mislead. The chat-options menu is the door.
 describe("no transcript context menu", () => {
   it("exports no initTranscriptContextMenu", () => {
     expect(chatModule).not.toHaveProperty("initTranscriptContextMenu");
@@ -1101,6 +1136,54 @@ describe("activateChatView routes on the staleness verdict", () => {
     activateChatView("c-paged");
 
     expect(setLoadMore).toHaveBeenCalledWith(expect.any(Function), true);
+  });
+
+  it("keeps the history edge in step with has_more when another pager moves it", () => {
+    // The turn map and the in-chat search page the same window; a fetcher captured at activation would go on
+    // offering pages after they loaded the last one.
+    const session = {
+      id: "c-paged",
+      name: "seeded",
+      model: "",
+      turn_order: ["t3"],
+      turn_count: 3,
+      has_more: true,
+      usage: { context_size: 1 },
+      draft: "",
+    };
+    vi.mocked(get).mockReturnValue(session as never);
+    vi.mocked(transcriptStale).mockReturnValue(false);
+    activeId = "c-paged";
+    activateChatView("c-paged");
+    expect(setLoadMore).toHaveBeenLastCalledWith(expect.any(Function), true);
+
+    session.has_more = false;
+    bumpMessageVersion("c-paged");
+
+    expect(setLoadMore).toHaveBeenLastCalledWith(null, false);
+  });
+
+  it("pages through the shared loader, whose cursor is the window as it stands", () => {
+    const session = {
+      id: "c-paged",
+      name: "seeded",
+      model: "",
+      turn_order: ["t3"],
+      turn_count: 3,
+      has_more: true,
+      usage: { context_size: 1 },
+      draft: "",
+    };
+    vi.mocked(get).mockReturnValue(session as never);
+    vi.mocked(transcriptStale).mockReturnValue(false);
+    vi.mocked(loadOlderTurns).mockResolvedValue(true);
+    activeId = "c-paged";
+    activateChatView("c-paged");
+
+    const fetchOlder = vi.mocked(setLoadMore).mock.lastCall?.[0];
+    fetchOlder?.();
+
+    expect(loadOlderTurns).toHaveBeenCalledExactlyOnceWith("c-paged");
   });
 
   it("a stale window refetches messages, then forces the rail behind the load", async () => {

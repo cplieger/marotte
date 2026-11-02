@@ -1,43 +1,30 @@
 package agent
 
-// Live MCP control over KAS's _kiro/mcp/*: reconnect fans out to every live bridge (each has its
-// own pool); getPrompt/getResource read one bridge's pool. _kiro/mcp/toggle is not wired: it is
-// a global notification with no serverName.
+// Live MCP control over KAS's _kiro/mcp/*: reconnect is one engine call, since every session shares the engine's
+// pool. _kiro/mcp/toggle is not wired: it is a global notification with no serverName.
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 const (
-	// mcpReconnectTimeout bounds one bridge's resetServer (may include an OAuth redirect); bridge.Call has no timeout.
+	// mcpReconnectTimeout bounds an engine that never answers resetServer (an engine call has no timeout). KAS itself
+	// answers within 60 s whether or not the reset finished (kiro-cli 2.31.0 awaitBoundedReset), so the reply is
+	// never the verdict: the server's state arrives on _kiro/mcp/status.
 	mcpReconnectTimeout = 90 * time.Second
-	// mcpFetchTimeout bounds a getPrompt / getResource round-trip.
-	mcpFetchTimeout = 30 * time.Second
 )
-
-var errNoLiveBridge = errors.New("no active chat session")
 
 // keyServerName is the _kiro/mcp/* params key naming the server.
 const keyServerName = "serverName"
 
 const keyExitCode = "exitCode"
-
-// firstLiveBridge returns one live bridge, or nil; a read answers for its pool.
-func (reg *mcpRegistry) firstLiveBridge() *sharedBridge {
-	for _, sb := range reg.bridges.all() {
-		return sb
-	}
-	return nil
-}
 
 // serverReachable reports whether live control may name this server: enabled in marotte's store,
 // or reported running by KAS. A nil mcpConfig accepts any non-empty name.
@@ -57,70 +44,35 @@ func (reg *mcpRegistry) serverReachable(ctx context.Context, name string) bool {
 	return ok && s.State != mcpStateDisabled
 }
 
-// reconnectServer sends _kiro/mcp/resetServer to every live bridge concurrently and returns how
-// many it targeted. Per-bridge errors are logged.
-func (reg *mcpRegistry) reconnectServer(ctx context.Context, name string) int {
-	bridges := reg.bridges.all()
-	if len(bridges) == 0 {
-		return 0
+// errMCPResetNoEngine is a reconnect asked while no engine is ready to take it.
+var errMCPResetNoEngine = errors.New("the agent engine is not running")
+
+// reconnectServer sends _kiro/mcp/resetServer to the engine: errMCPResetNoEngine while the engine is down, else the
+// call's failure or refusal (logged).
+func (reg *mcpRegistry) reconnectServer(ctx context.Context, name string) error {
+	h, release, ok := reg.engine.tryDoor()
+	if !ok {
+		return errMCPResetNoEngine
 	}
+	defer release()
 	cctx, cancel := context.WithTimeout(ctx, mcpReconnectTimeout)
 	defer cancel()
-
-	var wg sync.WaitGroup
-	for chatID, sb := range bridges {
-		wg.Go(func() {
-			if _, err := sb.bridge.Call(cctx, methodV3MCPResetServer, map[string]any{keyServerName: name}); err != nil {
-				slog.Warn("mcp reconnect: bridge call failed",
-					"chat_id", chatID, "server", name, "error", err)
-			}
-		})
+	resp, err := h.Call(cctx, methodV3MCPResetServer, map[string]any{keyServerName: name})
+	if err == nil && resp != nil && resp.Error != nil {
+		err = resp.Error
 	}
-	wg.Wait()
-	return len(bridges)
-}
-
-// args is always an object.
-func (reg *mcpRegistry) promptFor(ctx context.Context, server, promptName string, args map[string]any) (json.RawMessage, error) {
-	if args == nil {
-		args = map[string]any{}
-	}
-	return reg.fetch(ctx, methodV3MCPGetPrompt, map[string]any{
-		keyServerName: server,
-		"promptName":  promptName,
-		"arguments":   args,
-	})
-}
-
-func (reg *mcpRegistry) resourceFor(ctx context.Context, server, uri string) (json.RawMessage, error) {
-	return reg.fetch(ctx, methodV3MCPGetResource, map[string]any{
-		keyServerName: server,
-		"uri":         uri,
-	})
-}
-
-func (reg *mcpRegistry) fetch(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
-	sb := reg.firstLiveBridge()
-	if sb == nil {
-		return nil, errNoLiveBridge
-	}
-	cctx, cancel := context.WithTimeout(ctx, mcpFetchTimeout)
-	defer cancel()
-	resp, err := sb.bridge.Call(cctx, method, params)
 	if err != nil {
-		return nil, err
+		slog.Warn("mcp reconnect: the engine refused or did not answer the reset", "server", name, "error", err)
 	}
-	if resp == nil {
-		return nil, errors.New("empty MCP response")
-	}
-	return resp.Result, nil
+	return err
 }
 
 type mcpReconnectReq struct {
 	Server string `json:"server"`
 }
 
-// handleReconnect serves POST /api/mcp/reconnect {server}, returning {"reconnected": N} bridges targeted.
+// handleReconnect serves POST /api/mcp/reconnect {server}: 204 once the engine took the reset, 503 while no engine
+// is running, 502 when it refused or did not answer.
 func (reg *mcpRegistry) handleReconnect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -134,84 +86,13 @@ func (reg *mcpRegistry) handleReconnect(w http.ResponseWriter, r *http.Request) 
 		httpreply.NotFound(w, "unknown or disabled MCP server")
 		return
 	}
-	n := reg.reconnectServer(r.Context(), body.Server)
-	webhttp.WriteJSON(w, map[string]int{"reconnected": n})
-}
-
-type mcpGetPromptReq struct {
-	Arguments map[string]any `json:"arguments"`
-	Server    string         `json:"server"`
-	Prompt    string         `json:"prompt"`
-}
-
-func (reg *mcpRegistry) handlePrompt(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
+	switch err := reg.reconnectServer(r.Context(), body.Server); {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, errMCPResetNoEngine):
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+			httpreply.ErrorJSON("The agent engine is not running. Try again once it is back."))
+	default:
+		webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("kiro-cli did not reset the server."))
 	}
-	var body mcpGetPromptReq
-	if !httpreply.DecodeJSON(w, r, &body) {
-		return
-	}
-	if body.Prompt == "" {
-		httpreply.BadRequest(w, "prompt required")
-		return
-	}
-	if !reg.serverReachable(r.Context(), body.Server) {
-		httpreply.NotFound(w, "unknown or disabled MCP server")
-		return
-	}
-	res, err := reg.promptFor(r.Context(), body.Server, body.Prompt, body.Arguments)
-	if err != nil {
-		writeFetchErr(w, err)
-		return
-	}
-	writeMCPResult(w, res)
-}
-
-type mcpGetResourceReq struct {
-	Server string `json:"server"`
-	URI    string `json:"uri"`
-}
-
-func (reg *mcpRegistry) handleResource(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
-	var body mcpGetResourceReq
-	if !httpreply.DecodeJSON(w, r, &body) {
-		return
-	}
-	if body.URI == "" {
-		httpreply.BadRequest(w, "uri required")
-		return
-	}
-	if !reg.serverReachable(r.Context(), body.Server) {
-		httpreply.NotFound(w, "unknown or disabled MCP server")
-		return
-	}
-	res, err := reg.resourceFor(r.Context(), body.Server, body.URI)
-	if err != nil {
-		writeFetchErr(w, err)
-		return
-	}
-	writeMCPResult(w, res)
-}
-
-// writeMCPResult writes the raw result verbatim, or {} when empty.
-func writeMCPResult(w http.ResponseWriter, res json.RawMessage) {
-	if len(res) == 0 {
-		res = json.RawMessage("{}")
-	}
-	webhttp.WriteJSON(w, res)
-}
-
-func writeFetchErr(w http.ResponseWriter, err error) {
-	if errors.Is(err, errNoLiveBridge) {
-		httpreply.Conflict(w, "no active chat session. Open a chat to use MCP prompts and resources")
-		return
-	}
-	slog.Warn("mcp fetch failed", "error", err)
-	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("MCP server request failed"))
 }

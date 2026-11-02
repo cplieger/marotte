@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -31,7 +32,7 @@ func TestCatalog_AnEmptyListIsNotAnEmptyCatalog(t *testing.T) {
 	if !slices.Equal(modes, seededModes) {
 		t.Errorf("modes = %v, want the seeded %v", modes, seededModes)
 	}
-	if !slices.Equal(models, seededModels) {
+	if !reflect.DeepEqual(models, seededModels) {
 		t.Errorf("models = %v, want the seeded %v", models, seededModels)
 	}
 }
@@ -80,21 +81,23 @@ func TestCatalog_SeedingIsNotSharedWithTheCaller(t *testing.T) {
 	}
 }
 
-func TestCatalog_DefaultEffortFor(t *testing.T) {
+// tiersOf tells a model no session has reported from one reported with no tiers.
+func TestCatalog_TiersOf(t *testing.T) {
 	c := &catalog{}
 	c.SetModels([]marotte.SessionModel{
-		{ID: "m1", DefaultEffortLevel: "high"},
-		{ID: "m2"},
+		{ID: "m1", DefaultEffortLevel: "high", EffortTiers: []string{"low", "high"}},
+		{ID: "m2", DefaultEffortLevel: "high"},
 	})
 
-	tests := map[string]string{
-		"m1": "high",
-		"m2": "",
-		"m9": "",
+	tests := map[string]modelTiers{
+		"m1": {known: tiersListed, levels: []string{"low", "high"}, def: "high"},
+		"m2": {known: tiersNone},
+		"m9": {known: tiersUnknown},
 	}
 	for model, want := range tests {
-		if got := c.defaultEffortFor(model); got != want {
-			t.Errorf("DefaultEffortFor(%q) = %q, want %q", model, got, want)
+		got := c.tiersOf(model)
+		if got.known != want.known || got.def != want.def || !slices.Equal(got.levels, want.levels) {
+			t.Errorf("tiersOf(%q) = %+v, want %+v", model, got, want)
 		}
 	}
 }
@@ -110,7 +113,7 @@ func TestCatalog_ConcurrentReadersAndWriters(t *testing.T) {
 		})
 		wg.Go(func() {
 			_, _, _ = c.modesModelsStamped()
-			_ = c.defaultEffortFor("m")
+			_ = c.tiersOf("m")
 		})
 	}
 	wg.Wait()

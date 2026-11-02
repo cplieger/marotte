@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { userEvent } from "vitest/browser";
 
-import { loadCSS, mountAppCSS, ruleBody, ruleContaining } from "./__test-helpers__/css-rules.js";
+import {
+  atRuleBody,
+  loadCSS,
+  mountAppCSS,
+  ruleBody,
+  ruleContaining,
+} from "./__test-helpers__/css-rules.js";
 
 const messagesCSS = loadCSS("13-messages.css");
 const REVEAL_QUERY = "any-hover: hover";
@@ -67,6 +73,7 @@ function build(chatWidth: number): Fixture {
   const resume = document.createElement("button");
   resume.type = "button";
   resume.id = "scroll-bottom";
+  resume.className = "scroll-resume";
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("class", "ic-ui");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -244,6 +251,30 @@ describe("icon-only at rest, the label on hover", () => {
     expect(after.right).toBeLessThan(area?.getBoundingClientRect().right ?? 0);
   });
 
+  it("declares the glyph column as the svg's width, so every engine sizes the hovered box to its label", async () => {
+    // Gecko sizes this shrink-to-fit box from each item's WIDTH and Blink from its flex-basis, so a
+    // column carried only by a basis renders fine here and clips the label in Firefox by the
+    // difference from `.ic-ui`'s own 16px. The computed width is what both engines agree on.
+    const { resume, label, map } = build(LABEL_PX);
+    const svg = resume.querySelector("svg");
+    if (svg === null) {
+      throw new Error("no glyph");
+    }
+    // `inline-size` reads back the USED width, which a basis also produces in this engine; the
+    // computed basis is what tells the two declarations apart.
+    expect(getComputedStyle(svg).flexBasis).toBe("auto");
+    const borders = 2;
+    near(
+      svg.getBoundingClientRect().width,
+      map.getBoundingClientRect().width - borders,
+      "svg width",
+    );
+
+    label.textContent = "12 new blocks";
+    await userEvent.hover(resume);
+    expect(label.scrollWidth).toBeLessThanOrEqual(label.clientWidth);
+  });
+
   it("shows the label on keyboard focus too", async () => {
     // Hover alone would hide the count from a keyboard user permanently.
     const { resume, label, lastCardButton, card } = build(LABEL_PX);
@@ -314,7 +345,8 @@ describe("the reveal, read as source", () => {
     // with, so always-on is the right default rather than a fallback. Read as source because a test
     // page cannot answer `(any-hover: none)`.
     const container = ruleBody(messagesCSS, "@container chat-area (width >= 70rem)");
-    const beforeHoverGate = container.split("@media")[0] ?? "";
+    const docked = atRuleBody(container, "not (any-pointer: coarse)");
+    const beforeHoverGate = docked.split("@media")[0] ?? "";
     expect(beforeHoverGate).not.toBe("");
     const shown = ruleContaining(beforeHoverGate, `${DOCKED} > span`, "top");
     expect(shown.body).toMatch(/display:\s*block/u);

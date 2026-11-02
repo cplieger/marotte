@@ -3,6 +3,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
+import { framesDrained } from "./__test-helpers__/frame-queue.js";
 import type { Session } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 
@@ -88,8 +89,34 @@ async function until(pred: () => boolean, what: string): Promise<void> {
   }
 }
 
+/** Frames until the scroller's position and size have held for two frames: an observer's answer
+ *  lands a frame after the layout it reads, so one still frame can sit between a write and its
+ *  consequence. Resumes on a task, past the last frame's observer delivery. */
 async function land(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 120));
+  const scene = (): string =>
+    [wrap.scrollTop, wrap.scrollHeight, wrap.clientHeight, messagesEl.childElementCount].join("|");
+  const start = performance.now();
+  let seen = scene();
+  let still = 0;
+  while (still < 2) {
+    if (performance.now() - start > FRAME_BUDGET_MS) {
+      throw new Error(`the scroller was still moving after ${String(FRAME_BUDGET_MS)}ms: ${seen}`);
+    }
+    await new Promise<void>((r) => {
+      requestAnimationFrame(() => {
+        r();
+      });
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    const now = scene();
+    still = now === seen ? still + 1 : 0;
+    seen = now;
+  }
+}
+
+/** Until no frame callback is left queued, so a write the controller still owes is seen. */
+async function drained(): Promise<void> {
+  await framesDrained("the controller's queued frames");
 }
 
 function readerScrollTo(top: number): void {
@@ -132,6 +159,8 @@ describe("an older page landing through the paint", () => {
     readerScrollTo(60);
     await land();
     expect(load).toHaveBeenCalledTimes(1);
+    await drained();
+    expect(load).toHaveBeenCalledTimes(1);
     readerScrollTo(30);
     await land();
     const was = cardFor("t4").getBoundingClientRect().top;
@@ -142,6 +171,7 @@ describe("an older page landing through the paint", () => {
     scroll.rebaseLoadMore();
     document.getElementById("load-more-skeleton")?.remove();
     await land();
+    await drained();
 
     expect(cardFor("t4").getBoundingClientRect().top).toBe(was);
   });

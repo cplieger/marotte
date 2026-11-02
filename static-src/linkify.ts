@@ -6,7 +6,7 @@ import { fileIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { FILE_EXTS } from "./file-extensions.js";
 import { UPLOADS_DIR } from "./upload-policy.js";
-import { followRoot, workspaceRootOrDefault } from "./workspace.js";
+import { additionalDirectories, followRoot, workspaceRootOrDefault } from "./workspace.js";
 
 const SUFFIX = "(?:" + FILE_EXTS.join("|") + ")";
 
@@ -15,17 +15,17 @@ const RELATIVE_PATH = "[\\w.-]+\\/[\\w./-]*\\." + SUFFIX;
 const FIXED_ROOTS = ["/config", UPLOADS_DIR] as const;
 
 /**
- * Roots an absolute path must start under: the mounts `/api/file` can open (`browseRoots` in
- * internal/composition/config.go), so `/etc/*.conf` in shell output is not linked. A `/` work dir is never a mount.
- * An extra `MAROTTE_BROWSE_ROOTS` mount is missed, the safe direction.
+ * Roots an absolute path must start under, the mounts `/api/file` can open, so `/etc/*.conf` in shell
+ * output is not linked. A `/` work dir is never a mount. An extra `MAROTTE_BROWSE_ROOTS` mount is
+ * missed, the safe direction.
  */
 function linkableRoots(): readonly string[] {
   const root = workspaceRootOrDefault();
-  return root === "/" ? FIXED_ROOTS : [root, ...FIXED_ROOTS];
+  return [...(root === "/" ? [] : [root]), ...FIXED_ROOTS, ...additionalDirectories()];
 }
 
 interface PathPatterns {
-  readonly root: string;
+  readonly roots: readonly string[];
   /** Non-global, for acceptNode (no lastIndex mutation). */
   readonly test: RegExp;
   /** Global, for the replacePaths exec loop. */
@@ -37,14 +37,14 @@ interface PathPatterns {
 let compiled: PathPatterns | null = null;
 
 function patterns(): PathPatterns {
-  const root = workspaceRootOrDefault();
-  if (compiled?.root !== root) {
-    const roots = linkableRoots().map((r) => r.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&"));
+  const linkable = linkableRoots();
+  if (compiled === null || !sameRoots(compiled.roots, linkable)) {
+    const roots = linkable.map((r) => r.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&"));
     const absolute = "(?:" + roots.join("|") + ")\\/[\\w.-][\\w./-]*\\." + SUFFIX;
     const pattern =
       "(?<![\\w/.-])(" + absolute + "|" + RELATIVE_PATH + ")(?::(\\d+)(?::\\d+)?)?(?![\\w/.-])";
     compiled = {
-      root,
+      roots: linkable,
       test: new RegExp(pattern),
       exec: new RegExp(pattern, "g"),
       absolute: new RegExp("^" + absolute + "$"),
@@ -53,7 +53,12 @@ function patterns(): PathPatterns {
   return compiled;
 }
 
-const SKIP_TAGS = "code, pre, a, button";
+function sameRoots(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((r, i) => r === b[i]);
+}
+
+/** `svg`: a drawn diagram's label is SVG `<text>`, which cannot hold the HTML button a path becomes. */
+const SKIP_TAGS = "code, pre, a, button, svg";
 
 /**
  * Injected, like `initAttachmentPillCallbacks`: importing the opener would close a ring through the editor. A no-op

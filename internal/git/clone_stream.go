@@ -10,12 +10,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/procgroup"
 )
 
 // cloneCeiling bounds the whole clone, stall detection included, against a remote that drips
@@ -33,6 +32,10 @@ var cloneStallTimeout = 90 * time.Second
 
 var errCloneStalled = errors.New("transfer stalled")
 
+// transferWaitDelay bounds the transfer after a stall or ceiling kill: os/exec then closes the pipes
+// a child that escaped the group still holds, which ends forwardProgress's read.
+const transferWaitDelay = 5 * time.Second
+
 // On an ordinary failure the output carries git's own message; on a stall or ceiling kill it is
 // EMPTY and the error names the reason, since the tail would be a progress line.
 func runTransfer(ctx context.Context, dir string, onProgress func(string), args ...string) (string, error) {
@@ -42,7 +45,9 @@ func runTransfer(ctx context.Context, dir string, onProgress func(string), args 
 	tctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	cmd := gitExec(tctx, dir, args...)
-	killWholeGroup(cmd)
+	// A head-only kill leaves git-remote-https holding the stderr pipe, blocking the read loop past
+	// the stall.
+	procgroup.OwnGroup(cmd, transferWaitDelay)
 	stdout := &cappedBuffer{cap: 64 * 1024}
 	cmd.Stdout = stdout
 	stderr, err := cmd.StderrPipe()
@@ -79,19 +84,6 @@ func runTransfer(ctx context.Context, dir string, onProgress func(string), args 
 			"error", logsafe.Field(readErr.Error()))
 	}
 	return out, waitErr
-}
-
-// killWholeGroup puts the transfer in its own process group and makes the context kill the GROUP: a
-// head-only kill leaves git-remote-https holding the stderr pipe, blocking the read loop past the
-// stall.
-func killWholeGroup(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
 }
 
 // stallWatchdog cancels the transfer when no activity arrives for stall.

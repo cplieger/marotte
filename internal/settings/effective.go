@@ -55,6 +55,7 @@ const (
 func EffectiveDefaults() marotte.EffectiveSettings {
 	return marotte.EffectiveSettings{
 		AgentIgnoreFiles:      DefaultAgentIgnoreFiles(),
+		AdditionalDirectories: defaultAdditionalDirectories(),
 		AutoCompactionEnabled: DefaultAutoCompactionEnabled,
 		AutoCompactPct:        DefaultAutoCompactPct,
 		ChatRetentionDays:     DefaultChatRetentionDays,
@@ -66,9 +67,9 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		// choice sends nothing, so kiro-cli's experiment decides.
 		SpecPlanning:              defaultSpecPlanning,
 		SpecPlanningAskFirst:      defaultSpecPlanningAskFirst,
-		InlineAgents:              defaultInlineAgents,
 		SteeringReminders:         defaultSteeringReminders,
 		WorkflowsEnabled:          DefaultWorkflowsEnabled,
+		ModelFallback:             defaultModelFallback,
 		WorkValidation:            defaultWorkValidation,
 		CloudFormationSafetyCheck: defaultCloudFormationSafety,
 		AutoRouting:               defaultAutoRouting,
@@ -78,6 +79,8 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		// Empty objects, not nil: nil marshals as null and no field here is optional.
 		LastEffortByModel: map[string]string{},
 		KiroDefaults:      map[string]marotte.KiroDefault{},
+		// Resolved per GET against the filesystem (AgentDirs.Assess); nothing stored is refused.
+		AdditionalDirectoriesRefused: map[string]string{},
 		// The per-kind push defaults are not uniform; no polarity is safe for a client to guess.
 		NotifyAgentFinished: DefaultNotifyAgentFinished,
 		NotifyPRStatus:      DefaultNotifyPRStatus,
@@ -137,6 +140,7 @@ func EffectiveFrom(stored map[string]json.RawMessage) (effective marotte.Effecti
 func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMessage) error {
 	return map[string]func(json.RawMessage) error{
 		KeyAgentIgnoreFiles:      func(r json.RawMessage) error { return decodeInto(&out.AgentIgnoreFiles, r) },
+		KeyAdditionalDirectories: func(r json.RawMessage) error { return decodeInto(&out.AdditionalDirectories, r) },
 		KeyAutoCompactionEnabled: func(r json.RawMessage) error { return decodeInto(&out.AutoCompactionEnabled, r) },
 		KeyAutoCompactPct:        func(r json.RawMessage) error { return decodeAutoCompactPct(&out.AutoCompactPct, r) },
 		KeyChatRetentionDays:     func(r json.RawMessage) error { return decodeInto(&out.ChatRetentionDays, r) },
@@ -150,7 +154,6 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 			return decodeInto(&out.ContentCollection, r)
 		},
 		KeyGuardPayloadLinks:    func(r json.RawMessage) error { return decodeInto(&out.GuardPayloadLinks, r) },
-		KeyToolSearchEnabled:    func(r json.RawMessage) error { return decodeInto(&out.ToolSearchEnabled, r) },
 		KeyMemoryMode:           func(r json.RawMessage) error { return decodeMemoryMode(&out.MemoryMode, r) },
 		KeyMCPWaitForReady:      func(r json.RawMessage) error { return decodeInto(&out.MCPWaitForReady, r) },
 		KeyNotificationsEnabled: func(r json.RawMessage) error { return decodeInto(&out.NotificationsEnabled, r) },
@@ -164,9 +167,9 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 			return decodeChecked(&out.SpecPlanning, r, KeySpecPlanning, ValidSpecPlanning)
 		},
 		KeySpecPlanningAskFirst: func(r json.RawMessage) error { return decodeInto(&out.SpecPlanningAskFirst, r) },
-		KeyInlineAgents:         func(r json.RawMessage) error { return decodeInto(&out.InlineAgents, r) },
 		KeySteeringReminders:    func(r json.RawMessage) error { return decodeInto(&out.SteeringReminders, r) },
 		KeyWorkflowsEnabled:     func(r json.RawMessage) error { return decodeInto(&out.WorkflowsEnabled, r) },
+		KeyModelFallback:        func(r json.RawMessage) error { return decodeInto(&out.ModelFallback, r) },
 		KeyWorkValidation: func(r json.RawMessage) error {
 			return decodeChecked(&out.WorkValidation, r, KeyWorkValidation, ValidFeatureChoice)
 		},
@@ -185,6 +188,9 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeyTerminalCommandTimeoutMs: func(r json.RawMessage) error {
 			return decodeChecked(&out.TerminalCommandTimeoutMs, r, KeyTerminalCommandTimeoutMs, ValidTerminalCommandTimeoutMs)
 		},
+		KeyEngineHeapMiB:    func(r json.RawMessage) error { return decodeInto(&out.EngineHeapMiB, r) },
+		KeySettingsEpoch:    func(r json.RawMessage) error { return decodeStampField(&out.SettingsEpoch, r) },
+		KeySettingsRevision: func(r json.RawMessage) error { return decodeStampField(&out.SettingsRevision, r) },
 	}
 }
 

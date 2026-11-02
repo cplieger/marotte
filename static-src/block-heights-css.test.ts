@@ -4,8 +4,8 @@
 // padding + border)`, a function of the CSS alone, read off the LAST instance's rect (the
 // containment ROOT's rect is the rendered-skipped box). The premise: the last instance is
 // skipped and the first is not. `thinking` and `steerNote` have no reserve and are
-// measured as real heights on the opposite premise. The pipeline case reads container
-// totals instead. 10 cases per tier, through one `tierCases` helper.
+// measured as real heights on the opposite premise. 9 cases per tier, through one `tierCases`
+// helper.
 
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 // `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` throws.
@@ -16,7 +16,7 @@ vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { ENTRY_ESTIMATE_PX, ROW_GAP_PX, type EntryEstimates } from "./block-heights.js";
-import { buildSubagentCard, buildSubagentContainer } from "./fundamentals/subagent-block.js";
+import { buildSubagentCard } from "./fundamentals/subagent-block.js";
 import { buildRunCard } from "./fundamentals/run-card.js";
 import { buildReasoning } from "./fundamentals/reasoning.js";
 import { buildSteerNote } from "./fundamentals/steer-note.js";
@@ -39,20 +39,11 @@ const LOADED_BUDGET_MS = 30_000;
  */
 const FONT_SLACK_PX = 1;
 
-/** Class that turns the skip off, so the same list reads a second time with every box
- *  genuinely rendered. Only the PIPELINE case needs it — see `readTotals`. */
-const FORCE = "block-heights-force-render";
-
 let style: HTMLStyleElement;
-let force: HTMLStyleElement;
 let host: HTMLElement;
 
 beforeAll(() => {
   style = mountAppCSS();
-  // (0,2,0) against `.subagent-block`'s own (0,1,0), so it wins wherever it is inserted.
-  force = document.createElement("style");
-  force.textContent = `.${FORCE} .subagent-block { content-visibility: visible }`;
-  document.head.appendChild(force);
   host = document.createElement("div");
   // Out of the way of anything else the page holds, and a fixed inline size so a
   // box's own width never depends on the body's flow.
@@ -62,7 +53,6 @@ beforeAll(() => {
 
 afterAll(() => {
   style.remove();
-  force.remove();
   host.remove();
   document.documentElement.removeAttribute("data-pointer");
 });
@@ -124,27 +114,6 @@ function runCard(i: number): HTMLElement {
     onOpenChange: () => undefined,
   });
   return view.root;
-}
-
-/**
- * A COLLAPSED pipeline container over `stages` settled stage cards, from its real builder:
- * `subagentCard` prices a WHOLE pipeline, so the cards inside must contribute nothing.
- */
-function pipelineBox(stages: number): (i: number) => HTMLElement {
-  return (i: number): HTMLElement => {
-    const c = buildSubagentContainer(
-      `Subagent pipeline \u00b7 ${String(stages)} stages`,
-      "completed",
-      {
-        startOpen: false,
-      },
-    );
-    c.setSummary({ elapsedMs: 3_000 });
-    for (let s = 0; s < stages; s++) {
-      c.body.append(subagentCard(i * 100 + s));
-    }
-    return c.root;
-  };
 }
 
 /** A plan card with ONE entry: the reserve counts one entry row. */
@@ -250,85 +219,6 @@ async function read(build: (i: number) => HTMLElement): Promise<Reading> {
   };
 }
 
-interface Totals {
-  /** The box each instance resolves to when RENDERED, the list's row gaps taken back
-   *  out. This is the number a stage card can move. */
-  readonly perBox: number;
-  /** Skipped total minus rendered total: 0 when the estimate IS the resting shape. */
-  readonly drift: number;
-  /** The collapsed body's own terms, echoed so a red case names what moved. */
-  readonly bodyTerms: { readonly contentVisibility: string; readonly blockSize: string };
-}
-
-/**
- * How far an inflated estimate must move the total before the readings can be believed; a
- * floor, not an expectation.
- */
-const PREMISE_FLOOR = INSTANCES * 10;
-
-/** Far from every real box height here, so the shift it produces cannot be a rounding difference. */
-const PROBE_PX = 400;
-
-/**
- * The CONTAINER TOTAL over one list, read three times: on the estimate, on a wrong one,
- * and with the skip forced off. The only instrument that sees a stage card's contribution:
- * a skipped container's rect is its reserve, and an inner card's rect is its real box.
- * The probe reading comes before the force-render, after which a box remembers its size.
- */
-async function readTotals(build: (i: number) => HTMLElement): Promise<Totals> {
-  const wrap = document.createElement("div");
-  wrap.style.cssText = `height:${String(WRAP_H)}px;overflow-y:auto;`;
-  const list = document.createElement("div");
-  list.className = "turn-body";
-  for (let i = 0; i < INSTANCES; i++) {
-    list.appendChild(build(i));
-  }
-  wrap.appendChild(list);
-  host.replaceChildren(wrap);
-
-  await frame();
-  finishAnimations(wrap);
-  await frame();
-  const skipped = list.scrollHeight;
-  const body = list.firstElementChild?.querySelector(".subagent-body") ?? null;
-  const bodyCS = body === null ? null : getComputedStyle(body);
-
-  const probeStyle = document.createElement("style");
-  probeStyle.textContent = `.turn-body .subagent-block { contain-intrinsic-size: auto ${String(PROBE_PX)}px }`;
-  document.head.appendChild(probeStyle);
-  await frame();
-  const probed = list.scrollHeight;
-  probeStyle.remove();
-
-  list.classList.add(FORCE);
-  await frame();
-  finishAnimations(wrap);
-  await frame();
-  const rendered = list.scrollHeight;
-  list.classList.remove(FORCE);
-
-  expect(
-    probed - skipped,
-    "boxes are being skipped, and the estimate is what their height is made of",
-  ).toBeGreaterThan(PREMISE_FLOOR);
-
-  const pad = (() => {
-    const cs = getComputedStyle(list);
-    return Number.parseFloat(cs.paddingBlockStart) + Number.parseFloat(cs.paddingBlockEnd);
-  })();
-
-  return {
-    // `.turn-body` puts N-1 gaps between N boxes and its own padding is in `scrollHeight`,
-    // both read off the container rather than stated.
-    perBox: (rendered - (INSTANCES - 1) * ROW_GAP_PX - pad) / INSTANCES,
-    drift: skipped - rendered,
-    bodyTerms: {
-      contentVisibility: bodyCS?.contentVisibility ?? "(no body)",
-      blockSize: bodyCS?.blockSize ?? "(no body)",
-    },
-  };
-}
-
 /** The received `terms` are echoed into the expected object so a failure prints them beside the
  *  number without asserting them. */
 function expectShadows(r: Reading, want: number, label: string): void {
@@ -410,34 +300,6 @@ function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
       // This reserve states the CONTENT height alone, so padding adds on top. Tier-invariant,
       // which running both tiers proves.
       expectShadows(await read(planCard), est().planCard, "planCard");
-    },
-    LOADED_BUDGET_MS,
-  );
-
-  it(
-    "prices a whole PIPELINE at `subagentCard`, whatever its stage count",
-    async () => {
-      await enter();
-      // A stage card inside the collapsed body (`content-visibility: hidden` at height 0) adds
-      // nothing, so one card prices the whole pipeline: read at ONE stage and at THREE.
-      const one = await readTotals(pipelineBox(1));
-      const three = await readTotals(pipelineBox(3));
-      expect(
-        {
-          oneStage: one.perBox,
-          threeStages: three.perBox,
-          oneStageDrift: one.drift,
-          threeStagesDrift: three.drift,
-          ...three.bodyTerms,
-        },
-        "a pipeline is one card, and its stages are out of the box's layout",
-      ).toEqual({
-        oneStage: est().subagentCard,
-        threeStages: est().subagentCard,
-        oneStageDrift: 0,
-        threeStagesDrift: 0,
-        ...three.bodyTerms,
-      });
     },
     LOADED_BUDGET_MS,
   );

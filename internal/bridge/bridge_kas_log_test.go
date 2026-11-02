@@ -16,25 +16,25 @@ const kasLoggingBlock = `"logging":{"logDir":"/config/home/.kiro/logs/2026-10-05
 	`{"name":"mcp","filePath":"/config/home/.kiro/logs/2026-10-05T01-02-03Z/mcp.log"}]}`
 
 func TestInitialize_DecodesKASLogging(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"agentCapabilities":{"_meta":{"kiro":{` + kasLoggingBlock + `}}}}`)}
-	if _, err := driveSessionCall(t, b, resp, b.initialize); err != nil {
+	if _, err := driveSessionCall(t, b, resp, false, b.initialize); err != nil {
 		t.Fatalf("initialize = %v, want nil", err)
 	}
 
 	const dir = "/config/home/.kiro/logs/2026-10-05T01-02-03Z"
-	if got := b.kasLogDir(); got != dir {
+	if got := b.KASLogDir(); got != dir {
 		t.Errorf("KASLogDir() = %q, want %q", got, dir)
 	}
 }
 
 func TestInitialize_MalformedKASLoggingKeepsTheHandshake(t *testing.T) {
-	b := New("/nonexistent", "/work")
+	b := NewEngine("/nonexistent", "/work")
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"agentCapabilities":{"_meta":{"kiro":{"logging":"nope","replayMarking":true}}}}`)}
-	if _, err := driveSessionCall(t, b, resp, b.initialize); err != nil {
+	if _, err := driveSessionCall(t, b, resp, false, b.initialize); err != nil {
 		t.Fatalf("initialize = %v, want nil (a bad logging block is diagnostic only)", err)
 	}
-	if got := b.kasLogDir(); got != "" {
+	if got := b.KASLogDir(); got != "" {
 		t.Errorf("KASLogDir() = %q, want empty", got)
 	}
 	if !b.agentKiro.Load().ReplayMarking {
@@ -70,36 +70,39 @@ done
 	return path
 }
 
-func TestStart_BridgeStartedCarriesTheKASLogDir(t *testing.T) {
+func TestStart_EngineStartedCarriesTheKASLogDir(t *testing.T) {
 	logs := capture.Default(t)
-	b := New(writeKASLogScript(t, `"result":{"sessionId":"sess-1"}`), t.TempDir())
-	if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context()}); err != nil {
+	b := NewEngine(writeKASLogScript(t, `"result":{"sessionId":"sess-1"}`), t.TempDir())
+	if err := b.Start(t.Context(), &marotte.EngineOpts{Lifetime: t.Context()}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(b.Stop)
 
-	got, ok := logs.AttrValueExact("bridge started", "kas_log_dir")
+	got, ok := logs.AttrValueExact("engine started", "kas_log_dir")
 	if !ok || got != "/config/home/.kiro/logs/2026-10-05T01-02-03Z" {
-		t.Errorf(`"bridge started" kas_log_dir = %q (present %v), want the advertised dir`, got, ok)
+		t.Errorf(`"engine started" kas_log_dir = %q (present %v), want the advertised dir`, got, ok)
 	}
 }
 
-func TestStart_HandshakeFailureLogsTheKASLogDir(t *testing.T) {
+func TestNewSession_DoorFailureLogsTheKASLogDir(t *testing.T) {
 	logs := capture.Default(t)
-	b := New(writeKASLogScript(t, `"error":{"code":-32603,"message":"boom"}`), t.TempDir())
-	if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context()}); err == nil {
-		b.Stop()
-		t.Fatal("Start = nil, want the session/new error")
+	b := NewEngine(writeKASLogScript(t, `"error":{"code":-32603,"message":"boom"}`), t.TempDir())
+	if err := b.Start(t.Context(), &marotte.EngineOpts{Lifetime: t.Context()}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(b.Stop)
+	if _, err := b.NewSession(t.Context(), &marotte.SessionOpts{Role: marotte.SessionRoleChat}, nil); err == nil {
+		t.Fatal("NewSession = nil, want the session/new error")
 	}
 
-	got, ok := logs.AttrValueExact("bridge handshake failed", "kas_log_dir")
+	got, ok := logs.AttrValueExact("session door failed", "kas_log_dir")
 	if !ok || got != "/config/home/.kiro/logs/2026-10-05T01-02-03Z" {
-		t.Errorf(`"bridge handshake failed" kas_log_dir = %q (present %v), want the advertised dir`, got, ok)
+		t.Errorf(`"session door failed" kas_log_dir = %q (present %v), want the advertised dir`, got, ok)
 	}
-	if n := logs.CountLevel(slog.LevelWarn, "bridge handshake failed"); n != 1 {
-		t.Errorf(`"bridge handshake failed" at Warn = %d lines, want 1`, n)
+	if n := logs.CountLevel(slog.LevelWarn, "session door failed"); n != 1 {
+		t.Errorf(`"session door failed" at Warn = %d lines, want 1`, n)
 	}
-	if logs.Contains("bridge started") {
-		t.Error(`a failed handshake logged "bridge started"`)
+	if logs.Contains("session opened") {
+		t.Error(`a failed door logged "session opened"`)
 	}
 }

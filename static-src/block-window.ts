@@ -1,10 +1,10 @@
 // Residency: which ENTRIES a paint may mount, one contiguous window of a turn's `seq` space
 // grown around the reader's position. Pure and DOM-free; which turns is the caller's policy.
 
-import { toolResultID } from "./entry-ids.js";
+import { MessageRun, toolResultID } from "./entry-ids.js";
 import { isInternalToolTitle } from "./tool-schema.js";
 import type { Entry } from "./types.js";
-import { payloadOf, type Turn } from "./turns.js";
+import { isSubagentFallback, payloadOf, type Turn } from "./turns.js";
 
 /**
  * What one paint's WINDOW may mount. Two budgets (a tool card is a whole disclosure, a text
@@ -69,15 +69,15 @@ export function turnSpan(t: Turn): number {
 
 /**
  * Whether this view renders anything AT THIS ENTRY'S OWN POSITION; the budget and the price
- * must answer identically. `lane` is the VIEW's root; `firstPlan` is that lane's
- * `firstPlanSeq`. `turn_open`, `turn_close`, `tool_result`, `turn_bind` and `reconciled`
- * render elsewhere or nowhere.
+ * must answer identically. `lane` is the VIEW's root; `folds` is that lane's `turnFolds`.
+ * `turn_open`, `turn_close`, `tool_result`, `turn_bind` and `reconciled` render elsewhere or
+ * nowhere.
  */
-export function entryRenders(e: Entry, lane: string, firstPlan: number): boolean {
+export function entryRenders(e: Entry, lane: string, folds: TurnFolds): boolean {
   if (e.kind === "steer") {
     // A steer is the READER's words, so it renders in the parent's flow whichever lane consumed
     // it; the lane reaches the note as a marker (`buildSteerNote`).
-    return lane === "";
+    return lane === "" && !(folds.readDrop.has(e.id) && payloadOf(e, "steer")?.state === "dropped");
   }
   if ((e.lane ?? "") !== lane) {
     return false;
@@ -89,25 +89,116 @@ export function entryRenders(e: Entry, lane: string, firstPlan: number): boolean
     case "tool_result":
     case "reconciled":
     case "steer_delivered":
+    case "steer_cleared":
       return false;
     case "plan":
-      return firstPlan === e.seq;
+      return folds.plan === e.seq;
+    case "turn_revert":
+      return folds.revert === e.seq;
+    case "model_switched":
+      return !folds.fellBack.has(e.seq);
     default:
       return true;
   }
 }
 
-/**
- * The `seq` of the turn's first `plan` in `lane`, or -1: the one that renders. Hoisted ONCE
- * per turn per pass for `entryRenders`, since a long turn holds several plans.
- */
-export function firstPlanSeq(t: Turn, lane: string): number {
-  for (const e of t.body) {
-    if (e.kind === "plan" && (e.lane ?? "") === lane) {
-      return e.seq;
+/** The one entry of each folding kind that renders in a lane, by `seq`, -1 for none: the FIRST
+ *  `plan` (a later one replaces its card's state) and the NEWEST `turn_revert` (rewinding to the
+ *  same turn again replaces its "Rewound to here" row). `readDrop` holds the turn's dropped agent
+ *  notes whose id the same turn read, as a read note or a take-up's `kas_id`: KAS's boundary clear
+ *  names what the turn injected, and that is no loss to show. `fellBack` holds the `seq` of each
+ *  `model_switched{reason: "unavailable"}` whose next entry in the lane is the chat's own (not a
+ *  sub-agent's) `model_fallback` to the same model, per `fallsBackFrom`: KAS re-pins before it
+ *  sends the notice, so the switch row's guessed cause is the notice's to state. */
+export interface TurnFolds {
+  readonly plan: number;
+  readonly revert: number;
+  readonly readDrop: ReadonlySet<string>;
+  readonly fellBack: ReadonlySet<number>;
+}
+
+/** `entries`' folds per lane. Hoisted ONCE per turn per pass, since a long turn holds several
+ *  plans; takes a `TurnState`'s entries or a `Turn`'s body alike. */
+export function foldsByLane(entries: readonly Entry[]): Map<string, TurnFolds> {
+  const readDrop = readDrops(entries);
+  const out = new Map<
+    string,
+    { plan: number; revert: number; readDrop: ReadonlySet<string>; fellBack: Set<number> }
+  >();
+  const fold = (lane: string) => {
+    let f = out.get(lane);
+    if (f === undefined) {
+      f = { plan: -1, revert: -1, readDrop, fellBack: new Set() };
+      out.set(lane, f);
+    }
+    return f;
+  };
+  const prevInLane = new Map<string, Entry>();
+  for (const e of entries) {
+    const lane = e.lane ?? "";
+    const prev = prevInLane.get(lane);
+    prevInLane.set(lane, e);
+    if (e.kind === "plan") {
+      const f = fold(lane);
+      if (f.plan < 0) {
+        f.plan = e.seq;
+      }
+    } else if (e.kind === "turn_revert") {
+      fold(lane).revert = e.seq;
+    } else if (e.kind === "model_fallback" && prev !== undefined && fallsBackFrom(prev, e)) {
+      fold(lane).fellBack.add(prev.seq);
     }
   }
-  return -1;
+  if (readDrop.size > 0 && !out.has("")) {
+    out.set("", { plan: -1, revert: -1, readDrop, fellBack: new Set() });
+  }
+  return out;
+}
+
+/** Whether `fallback` names the move `prev` recorded as an unexplained re-pin. A sub-agent's
+ *  fallback never moves the chat's model, so it explains no chat re-pin. */
+function fallsBackFrom(prev: Entry, fallback: Entry): boolean {
+  const switched = payloadOf(prev, "model_switched");
+  const to = payloadOf(fallback, "model_fallback")?.to ?? "";
+  return (
+    switched?.reason === "unavailable" &&
+    !isSubagentFallback(fallback) &&
+    to !== "" &&
+    switched.to === to
+  );
+}
+
+const NONE: ReadonlySet<string> = new Set();
+const NO_SEQS: ReadonlySet<number> = new Set();
+
+/** The ids of `entries`' dropped agent notes the same entries read (`TurnFolds.readDrop`). */
+function readDrops(entries: readonly Entry[]): ReadonlySet<string> {
+  const read = new Set<string>();
+  const dropped: string[] = [];
+  for (const e of entries) {
+    const steer = payloadOf(e, "steer");
+    if (steer?.origin === "agent") {
+      if (steer.state === "dropped") {
+        dropped.push(e.id);
+      } else {
+        read.add(e.id);
+      }
+    }
+    const d = payloadOf(e, "steer_delivered");
+    if (d?.kas_id !== undefined && d.kas_id !== "") {
+      read.add(d.kas_id);
+    }
+  }
+  const out = dropped.filter((id) => read.has(id));
+  return out.length === 0 ? NONE : new Set(out);
+}
+
+/** The folds of a lane that holds no folding kind. */
+export const NO_FOLDS: TurnFolds = { plan: -1, revert: -1, readDrop: NONE, fellBack: NO_SEQS };
+
+/** `t`'s folds in `lane`. */
+export function turnFolds(t: Turn, lane: string): TurnFolds {
+  return foldsByLane(t.body).get(lane) ?? NO_FOLDS;
 }
 
 /**
@@ -165,12 +256,26 @@ export function runCardOwners(turns: readonly Turn[], lane = ""): ReadonlyMap<st
  * the first drawn entry. The lane's first `plan` is resolved on arrival, in `seq` order.
  */
 export function rendersNothing(t: Turn, lane = ""): boolean {
-  let firstPlan = -1;
+  // The whole body is read only for a dropped agent note, whose answer turns on entries anywhere in the body.
+  let readDrop: ReadonlySet<string> | undefined;
+  let plan = -1;
   for (const e of t.body) {
-    if (firstPlan < 0 && e.kind === "plan" && (e.lane ?? "") === lane) {
-      firstPlan = e.seq;
+    if (plan < 0 && e.kind === "plan" && (e.lane ?? "") === lane) {
+      plan = e.seq;
     }
-    if (entryRenders(e, lane, firstPlan)) {
+    // Any revert in the lane answers: the newest one renders, whichever that is. A switch row a
+    // fallback folds answers too, since the fallback after it renders.
+    const renders =
+      e.kind === "turn_revert"
+        ? (e.lane ?? "") === lane
+        : entryRenders(e, lane, {
+            plan,
+            revert: -1,
+            readDrop:
+              payloadOf(e, "steer")?.state === "dropped" ? (readDrop ??= readDrops(t.body)) : NONE,
+            fellBack: NO_SEQS,
+          });
+    if (renders) {
       return false;
     }
   }
@@ -202,9 +307,9 @@ export function sliceTurn(
   t: Turn,
   range: EntryRange,
   lane = "",
-  // The lane's `firstPlanSeq`, resolved below only for a caller that holds none: a caller
-  // inside a per-item loop already has it (`firstPlanSeq` states why one is hoisted).
-  firstPlan?: number,
+  // The lane's `turnFolds`, resolved below only for a caller that holds none: a caller
+  // inside a per-item loop already has them (`foldsByLane` states why they are hoisted).
+  folds?: TurnFolds,
 ): EntryRange {
   const span = turnSpan(t);
   const from = Math.min(Math.max(range.from, 0), span);
@@ -212,8 +317,11 @@ export function sliceTurn(
   if (from >= to) {
     return { from, to };
   }
-  const plan = firstPlan ?? firstPlanSeq(t, lane);
-  return { from: runStart(t, from, lane, plan), to: runEnd(t, to - 1, lane, plan) + 1 };
+  const f = folds ?? turnFolds(t, lane);
+  return {
+    from: runBounds(t, from, lane, f)?.from ?? from,
+    to: runBounds(t, to - 1, lane, f)?.to ?? to,
+  };
 }
 
 /**
@@ -224,60 +332,82 @@ export function proseRunAt(
   t: Turn,
   seq: number,
   lane: string,
-  firstPlan: number,
+  folds: TurnFolds,
 ): EntryRange | null {
-  if (!inProseRun(t, seq, lane, firstPlan)) {
-    return null;
+  return runBounds(t, seq, lane, folds);
+}
+
+/** Whether `e`, a text entry following the run `run`, continues its message: where `proseRunAt` places it sealed. */
+export function continuesRun(
+  t: Turn,
+  run: EntryRange,
+  e: { readonly id: string; readonly turn: string },
+  lane: string,
+  folds: TurnFolds,
+): boolean {
+  const msg = new MessageRun();
+  for (let seq = run.from; seq < run.to; seq++) {
+    const m = entryAt(t, seq);
+    if (m !== undefined && inProseRun(t, seq, lane, folds)) {
+      msg.take(m);
+    }
   }
-  return { from: runStart(t, seq, lane, firstPlan), to: runEnd(t, seq, lane, firstPlan) + 1 };
+  return msg.take(e);
 }
 
 /** Whether `seq` is a `text` entry this view draws — a prose run's member. */
-function inProseRun(t: Turn, seq: number, lane: string, firstPlan: number): boolean {
+function inProseRun(t: Turn, seq: number, lane: string, folds: TurnFolds): boolean {
   const e = entryAt(t, seq);
-  return e?.kind === "text" && entryRenders(e, lane, firstPlan);
+  return e?.kind === "text" && entryRenders(e, lane, folds);
 }
 
-/** The first `seq` of the prose run `seq` sits in, or `seq` when it is not in one. An entry
- *  that renders nothing does not break a run, so the walk steps over it. */
-function runStart(t: Turn, seq: number, lane: string, firstPlan: number): number {
-  if (!inProseRun(t, seq, lane, firstPlan)) {
-    return seq;
+/**
+ * The run `seq` sits in, from its first text member to past its last, or null when `seq` is not prose. Runs
+ * partition a STRETCH (text entries with nothing drawn between them) by `MessageRun`, fed from the stretch's
+ * start, so every caller sees one partition whichever member it asks from.
+ */
+function runBounds(t: Turn, seq: number, lane: string, folds: TurnFolds): EntryRange | null {
+  if (!inProseRun(t, seq, lane, folds)) {
+    return null;
   }
-  let first = seq;
+  let start = seq;
   for (let i = seq - 1; i > 0; i--) {
     const e = entryAt(t, i);
     if (e === undefined) {
       break;
     }
-    if (inProseRun(t, i, lane, firstPlan)) {
-      first = i;
-    } else if (entryRenders(e, lane, firstPlan)) {
+    if (inProseRun(t, i, lane, folds)) {
+      start = i;
+    } else if (entryRenders(e, lane, folds)) {
       break;
     }
   }
-  return first;
-}
-
-/** The last `seq` of the prose run `seq` sits in, or `seq` when it is not in one. */
-function runEnd(t: Turn, seq: number, lane: string, firstPlan: number): number {
-  if (!inProseRun(t, seq, lane, firstPlan)) {
-    return seq;
-  }
-  let last = seq;
+  let run = new MessageRun();
+  let from = start;
+  let last = start;
   const span = turnSpan(t);
-  for (let i = seq + 1; i < span; i++) {
+  for (let i = start; i < span; i++) {
     const e = entryAt(t, i);
     if (e === undefined) {
       break;
     }
-    if (inProseRun(t, i, lane, firstPlan)) {
-      last = i;
-    } else if (entryRenders(e, lane, firstPlan)) {
-      break;
+    if (!inProseRun(t, i, lane, folds)) {
+      if (entryRenders(e, lane, folds)) {
+        break;
+      }
+      continue;
     }
+    if (!run.take(e)) {
+      if (i > seq) {
+        break;
+      }
+      run = new MessageRun();
+      run.take(e);
+      from = i;
+    }
+    last = i;
   }
-  return last;
+  return { from, to: last + 1 };
 }
 
 /**
@@ -299,16 +429,16 @@ export function planResidency(
   // one flat pass mints the sequence and the flags together.
   const isTool: boolean[] = [];
   const isFree: boolean[] = [];
-  // Kept per turn so the final loop hands it to `sliceTurn` instead of re-scanning the body.
-  const firstPlans: number[] = [];
+  // Kept per turn so the final loop hands them to `sliceTurn` instead of re-scanning the body.
+  const turnFoldsAt: TurnFolds[] = [];
   for (const t of turns) {
     const base = isTool.length;
     const span = turnSpan(t);
-    const firstPlan = firstPlanSeq(t, lane);
-    firstPlans.push(firstPlan);
+    const folds = turnFolds(t, lane);
+    turnFoldsAt.push(folds);
     for (let seq = 0; seq < span; seq++) {
       const e = entryAt(t, seq);
-      const free = e === undefined || !entryRenders(e, lane, firstPlan);
+      const free = e === undefined || !entryRenders(e, lane, folds);
       isFree.push(free);
       isTool.push(!free && e.kind === "tool_call");
     }
@@ -379,7 +509,7 @@ export function planResidency(
     const from = Math.max(lo, base);
     const to = Math.min(hi, base + (spans[i] ?? 0));
     if (from < to) {
-      plan.set(t.id, sliceTurn(t, { from: from - base, to: to - base }, lane, firstPlans[i]));
+      plan.set(t.id, sliceTurn(t, { from: from - base, to: to - base }, lane, turnFoldsAt[i]));
     }
   }
   return plan;

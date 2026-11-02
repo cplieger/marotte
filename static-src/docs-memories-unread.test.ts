@@ -24,13 +24,16 @@ vi.mock("./api-client.js", async (importOriginal) => ({
         ? { docs: [], truncated: false }
         : path === "/api/steering/issues"
           ? { issues: {} }
-          : { hooks: [] },
+          : path === "/api/config/standing"
+            ? { standing: [], load_errors: {} }
+            : { hooks: [] },
     ),
   ),
 }));
 vi.mock("./persist.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Persist>()),
   loadSettings: vi.fn(() => Promise.resolve(null)),
+  refreshSettings: vi.fn(() => Promise.resolve(null)),
 }));
 vi.mock("./router.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Router>()),
@@ -67,7 +70,7 @@ const TABS = ["steering", "memories"];
 beforeAll(() => {
   document.body.innerHTML = `
     <div id="docs-view">
-      <div id="docs-new-slot"></div>
+      <div id="docs-new-slot" class="page-toolbar"></div>
       <nav id="docs-tab-bar" class="seg-bar">${TABS.map(
         (t) =>
           `<button type="button" class="seg" data-docs-tab="${t}"><span class="seg-label">${t}</span></button>`,

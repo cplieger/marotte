@@ -1,8 +1,19 @@
 // Tests for the run tab: its control row, its structure, its outputs and its empty-step notes.
 
-import { vi, describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
+import {
+  vi,
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  beforeAll,
+  afterAll,
+  onTestFinished,
+} from "vitest";
+import { page } from "vitest/browser";
 import type * as RunStore from "./run-store.js";
-import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
 /** The run store's own module type, so the partial mock below keeps every export it does not
  *  override. Spelled as a namespace type import rather than an inline `import()` annotation,
@@ -19,8 +30,11 @@ interface RunInspectReply {
     /** KAS's own answer to "was this launched by an agent": an ACP session id, empty for a
      *  manual and a scheduled launch alike. */
     parentSessionId?: string;
+    pauseReason?: string;
+    pauseDetail?: { class?: string; code?: string };
   };
   nodePlan?: unknown;
+  step_ends?: Record<string, { outcome: string; failure_kind?: string; failure_reason?: string }>;
 }
 
 /** What a door decided, which is all a door decides now: `owns` (does the × stop the run) and
@@ -64,7 +78,7 @@ const m = vi.hoisted(() => ({
    *  flag (its own `turn_close` absence). Per path rather than a flat list, because the module's
    *  one view effect legitimately paints the PREVIOUS case's plan on its first pass of the next
    *  one, and a cumulative list would carry that. */
-  paint: new Map<string, { turns: number; live: boolean[] }>(),
+  paint: new Map<string, { turns: number; live: boolean[]; closes: (string | undefined)[] }>(),
   /** `<kind>:<ref>` for every open tab, as `hasTab` sees it. */
   tabsOpen: new Set<string>(),
   /** The step read's VERDICT per node path, which is all a read carries now: its entries are
@@ -84,6 +98,7 @@ const m = vi.hoisted(() => ({
 // `mockReset: true` wipes every implementation between tests, so these are ARMED in beforeEach
 // rather than only here. Each test now genuinely fetches.
 vi.mock("./api-client.js", () => ({
+  apiBlobOrError: vi.fn(),
   // Present-but-inert so real-ESM linking succeeds: other modules in this graph read it.
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
@@ -204,7 +219,7 @@ vi.mock("./run-chat-steps.js", () => ({
     apply: (
       paints: ReadonlyMap<
         string,
-        readonly { turn: { id: string; body: unknown[] }; live: boolean }[]
+        readonly { turn: { id: string; body: Entry[] }; live: boolean }[]
       >,
     ) => {
       for (const [path, list] of paints) {
@@ -212,6 +227,12 @@ vi.mock("./run-chat-steps.js", () => ({
         m.paint.set(path, {
           turns: list.length,
           live: list.map((p) => p.live),
+          // Each painted turn's close as `outcome/failure_kind`, the grade the pane is handed.
+          closes: list.map((p) => {
+            const close = p.turn.body.find((e) => e.kind === "turn_close")?.payload as
+              { outcome: string; failure_kind?: string } | undefined;
+            return close === undefined ? undefined : `${close.outcome}/${close.failure_kind ?? ""}`;
+          }),
         });
         const host = hostFor(path);
         m.hosted.push(host);
@@ -254,6 +275,7 @@ vi.mock("./run-step-transcript.js", async () => {
 // composition root), so it is the seam this suite paints through; a door carries no `onShow` of
 // its own.
 import { openRunTab } from "./tabs.js";
+import { runPendingAsks } from "./decision-dock.js";
 import { openRunView, refreshRun, showRun } from "./run-view.js";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
 // The MOCK's signal, which is the one the view effect subscribes to. Imported so a case can drive
@@ -299,6 +321,10 @@ async function paint(
     nodePlan?: unknown;
     /** The RUN's own answer to "was this launched by an agent". Defaults from `parentless`. */
     parentSessionId?: string;
+    /** More of the run's state, as `inspect` carries it (a pause reason). */
+    state?: { pauseReason?: string; pauseDetail?: { class?: string; code?: string } };
+    /** The run read's `step_ends`, the server's grade of each step under KAS's record. */
+    stepEnds?: RunInspectReply["step_ends"];
   } = {},
 ): Promise<{ labels: string[]; refusals: string[]; tab: OpenedTab; body: HTMLElement }> {
   const id = opts.id ?? "wf_1";
@@ -312,10 +338,12 @@ async function paint(
       ...(opts.root === undefined ? {} : { root: opts.root }),
       ...(opts.inputs === undefined ? {} : { inputs: opts.inputs }),
       ...(parentSessionId === "" ? {} : { parentSessionId }),
+      ...opts.state,
     },
     // Beside `state`, not inside it: the plan is its own member of KAS's inspect reply and the
     // store keeps the two apart for that reason.
     ...(opts.nodePlan === undefined ? {} : { nodePlan: opts.nodePlan }),
+    ...(opts.stepEnds === undefined ? {} : { step_ends: opts.stepEnds }),
   };
   m.reply.current = reply;
   m.controls.current =
@@ -323,12 +351,19 @@ async function paint(
       ? undefined
       : (opts.controls ?? CONTROLS_FOR[status] ?? { verbs: [], parent_chat_id: "" });
 
+  // The run view as `static/index.html` lays it out: the scrolling body, then the bottom bar's
+  // run dock and decision dock. `body` is the whole view, so a case reads either half.
   document.body.replaceChildren();
   const body = document.createElement("div");
-  body.id = "run-body";
+  const runBody = document.createElement("div");
+  runBody.id = "run-body";
+  const execDock = document.createElement("div");
+  execDock.id = "run-exec-dock";
+  execDock.className = "ev-dock-host";
   const dock = document.createElement("div");
   dock.id = "run-dock";
-  document.body.append(body, dock);
+  body.append(runBody, execDock, dock);
+  document.body.append(body);
 
   door(id, "nightly");
   const tab = m.opened.at(-1);
@@ -346,10 +381,10 @@ async function paint(
     await Promise.resolve();
   }
 
-  const labels = [...body.querySelectorAll(".run-controls button")].map((b) =>
-    (b.textContent ?? "").trim(),
+  const labels = [...execDock.querySelectorAll<HTMLButtonElement>(".run-controls button")].map(
+    (b) => b.getAttribute("aria-label") ?? "",
   );
-  const refusals = [...body.querySelectorAll(".run-control-refusal")].map((n) =>
+  const refusals = [...execDock.querySelectorAll(".ev-dock-note")].map((n) =>
     (n.textContent ?? "").trim(),
   );
   return { labels, refusals, tab, body };
@@ -363,7 +398,7 @@ function logStep(
   workflowID: string,
   nodePath: string,
   text: string,
-  opts: { live?: boolean; attempt?: number } = {},
+  opts: { live?: boolean; attempt?: number; close?: unknown } = {},
 ): void {
   const turn = `t-${workflowID}-${nodePath}-${String(opts.attempt ?? 1)}`;
   const entry = (seq: number, kind: Entry["kind"], payload: unknown): Entry => ({
@@ -381,7 +416,7 @@ function logStep(
   );
   appendRunEntry(workflowID, entry(1, "text", { text }));
   if (opts.live !== true) {
-    appendRunEntry(workflowID, entry(2, "turn_close", { outcome: "completed" }));
+    appendRunEntry(workflowID, entry(2, "turn_close", opts.close ?? { outcome: "completed" }));
   }
 }
 
@@ -484,12 +519,16 @@ describe("run view controls", () => {
     const stuck = await paint(openRunView, "running", {
       controls: {
         verbs: [],
-        refused: { pause: "This run has no live engine on this server." },
+        refused: {
+          pause: "A pause is already requested; the run stops at the end of its current step.",
+        },
         parent_chat_id: "",
       },
     });
     expect(stuck.labels).toEqual([]);
-    expect(stuck.refusals).toEqual(["This run has no live engine on this server."]);
+    expect(stuck.refusals).toEqual([
+      "A pause is already requested; the run stops at the end of its current step.",
+    ]);
   });
 
   // Before the answer lands there is nothing to render.
@@ -544,7 +583,7 @@ describe("run view controls", () => {
     const painted = await paint(openRunView, "aborted");
     const retry = [
       ...painted.body.querySelectorAll<HTMLButtonElement>(".run-controls button"),
-    ].find((b) => (b.textContent ?? "").includes("Retry"));
+    ].find((b) => (b.getAttribute("aria-label") ?? "").includes("Retry"));
     retry?.click();
     expect(m.dispatched).toEqual(["retry:wf_1"]);
   });
@@ -559,11 +598,12 @@ describe("run view controls", () => {
         parent_chat_id: "",
       },
     });
-    expect(painted.labels).toEqual(["Add iterations", "End this loop", "Cancel"]);
+    expect(painted.labels).toEqual(["Add passes", "End this loop", "Cancel"]);
     const count = painted.body.querySelector<HTMLInputElement>(".run-extend-count");
     if (count === null) {
-      throw new Error("no count field beside Add iterations");
+      throw new Error("no count field beside Add passes");
     }
+    expect(count.getAttribute("aria-label")).toBe("Passes to add");
     count.value = "5";
     const buttons = [...painted.body.querySelectorAll<HTMLButtonElement>(".run-controls button")];
     buttons[0]?.click();
@@ -600,6 +640,86 @@ describe("run view controls", () => {
     expect(m.dispatched).toEqual(['finish_loop:{"workflowID":"wf_1","nodeID":"loop-2"}']);
   });
 
+  /** Every run-verb button in a painted row, with what a reader and a screen reader get from it. */
+  function verbFaces(body: HTMLElement): {
+    name: string | null;
+    glyph: boolean;
+    btn: HTMLButtonElement;
+  }[] {
+    return [...body.querySelectorAll<HTMLButtonElement>(".run-controls button")].map((btn) => ({
+      name: btn.getAttribute("aria-label"),
+      glyph: btn.querySelector(":scope > svg") !== null,
+      btn,
+    }));
+  }
+
+  const ROWS: readonly (readonly [status: string, verbs: string[]])[] = [
+    ["running", ["Pause", "Cancel"]],
+    ["paused", ["Resume", "Cancel"]],
+    ["aborted", ["Retry failed steps"]],
+  ];
+
+  it.each(ROWS)("draws each %s verb icon-only on a desktop, named", async (status, verbs) => {
+    const painted = await paint(openRunView, status);
+    const faces = verbFaces(painted.body);
+    expect(faces.map((f) => f.name)).toEqual(verbs);
+    for (const face of faces) {
+      expect(face.glyph, `${face.name ?? ""} has no glyph`).toBe(true);
+      expect(face.btn.textContent, `${face.name ?? ""} shows a word`).toBe("");
+      const box = face.btn.getBoundingClientRect();
+      expect(box.width, `${face.name ?? ""} is not square`).toBeCloseTo(box.height, 0);
+    }
+  });
+
+  it.each(ROWS)("draws each %s verb icon-only on a phone, named and square", async (status) => {
+    try {
+      await page.viewport(390, 844);
+      const painted = await paint(openRunView, status);
+      const faces = verbFaces(painted.body);
+      expect(faces.length).toBeGreaterThan(0);
+      for (const face of faces) {
+        expect(face.name, "the accessible name survives the hidden word").toBeTruthy();
+        expect(face.glyph).toBe(true);
+        const box = face.btn.getBoundingClientRect();
+        expect(box.width, `${face.name ?? ""} is not square`).toBeCloseTo(box.height, 0);
+      }
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      for (const face of faces) {
+        const box = face.btn.getBoundingClientRect();
+        expect(box.width, `${face.name ?? ""} under the coarse hit floor`).toBeGreaterThanOrEqual(
+          44,
+        );
+        expect(box.height, `${face.name ?? ""} under the coarse hit floor`).toBeGreaterThanOrEqual(
+          44,
+        );
+      }
+    } finally {
+      document.documentElement.removeAttribute("data-pointer");
+      await page.viewport(1280, 720);
+    }
+  });
+
+  it("draws Cancel neutral at rest and red with the red wash under focus", async () => {
+    const painted = await paint(openRunView, "running");
+    const cancel = verbFaces(painted.body).find((f) => f.name === "Cancel");
+    const pause = verbFaces(painted.body).find((f) => f.name === "Pause");
+    expect(cancel?.btn.classList.contains("is-danger")).toBe(true);
+    if (cancel === undefined || pause === undefined) {
+      throw new Error("no Cancel or Pause");
+    }
+    expect(getComputedStyle(cancel.btn).color).toBe(getComputedStyle(pause.btn).color);
+    const rule = ruleBody(loadCSS("31-exec-view.css"), ".run-icon-btn");
+    for (const state of ["&.is-danger:hover", "&.is-danger:focus-visible"]) {
+      const at = rule.indexOf(`${state} {`);
+      expect(at, state).toBeGreaterThan(-1);
+      const body = rule.slice(at, rule.indexOf("}", at));
+      expect(body, state).toContain("color: var(--c-red)");
+      expect(body, state).toContain(
+        "background: color-mix(in srgb, var(--c-red) 15%, transparent)",
+      );
+    }
+  });
+
   it("draws no repeat control when the server named no paused node", async () => {
     const painted = await paint(openRunView, "paused", {
       controls: { verbs: ["extend", "finish_loop", "cancel"], parent_chat_id: "" },
@@ -632,6 +752,446 @@ function resultKeys(body: HTMLElement): (string | null)[] {
 function selectRow(body: HTMLElement, path: string): void {
   body.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
 }
+
+describe("the run dock", () => {
+  const live = (status: string): unknown => ({
+    nodeId: "wf_1",
+    type: "sequence",
+    status,
+    children: [{ nodeId: "coder", type: "step", status, children: [] }],
+  });
+  const names = (sel: string): string[] =>
+    [...document.querySelectorAll<HTMLButtonElement>(`${sel} .run-controls button`)].map(
+      (b) => b.getAttribute("aria-label") ?? "",
+    );
+  const flush = async (): Promise<void> => {
+    for (let i = 0; i < 20; i++) {
+      await Promise.resolve();
+    }
+  };
+  const verb = (name: string): HTMLButtonElement => {
+    const btn = document.querySelector<HTMLButtonElement>(
+      `#run-exec-dock .run-controls button[aria-label="${name}"]`,
+    );
+    if (btn === null) {
+      throw new Error(`no ${name} in the dock`);
+    }
+    return btn;
+  };
+  /** The dock's statement of what wants the reader: a note under the head, never in it. */
+  const alertText = (): string =>
+    document.querySelector("#run-exec-dock .ev-dock-note .ev-dock-note-text")?.textContent ?? "";
+  const alertRole = (): string | null | undefined =>
+    document.querySelector("#run-exec-dock .ev-dock-note")?.closest("ul")?.getAttribute("role");
+  // A pause is the head's, in the progress's place, and a hidden status region says it.
+  const pauseText = (): string =>
+    document.querySelector("#run-exec-dock .ev-dock-head .ev-alert-text")?.textContent ?? "";
+  const pauseSaid = (): Element | null =>
+    document.querySelector("#run-exec-dock .ev-dock-pause-said");
+  const expectPause = (text: string): void => {
+    expect(pauseText()).toBe(text);
+    expect(pauseSaid()?.textContent).toBe(text);
+    expect(pauseSaid()?.getAttribute("role")).toBe("status");
+    expect(document.querySelector("#run-exec-dock .ev-dock-note")).toBeNull();
+  };
+
+  it("holds the run's name, state, progress and clock, and the page none of them", async () => {
+    const { body } = await paint(openRunView, "running", {
+      root: {
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [
+          {
+            nodeId: "a",
+            type: "step",
+            status: "completed",
+            startedAt: "2026-08-26T18:00:00Z",
+            endedAt: "2026-08-26T18:01:00Z",
+            children: [],
+          },
+          { nodeId: "b", type: "step", status: "running", children: [] },
+        ],
+      },
+      inputs: { repo: "marotte" },
+    });
+    const dock = document.getElementById("run-exec-dock")!;
+    expect(dock.querySelector(".ev-sum-state")?.textContent).toBe("running");
+    expect(dock.querySelector(".ev-sum-compact")?.textContent).toBe("2/2");
+    expect(dock.querySelector(".ev-sum-clock")?.textContent).not.toBe("");
+    const page = body.querySelector("#run-body")!;
+    for (const gone of [".ev-head", ".ev-inputs", ".ev-alert", ".ev-notice", ".run-controls"]) {
+      expect(page.querySelector(gone), gone).toBeNull();
+    }
+  });
+
+  it("puts every offered verb on the dock and none on the step", async () => {
+    await paint(openRunView, "running", { root: live("running") });
+    expect(names("#run-exec-dock")).toEqual(["Pause", "Cancel"]);
+    expect(names("#run-body")).toEqual([]);
+    expect(verb("Pause").getAttribute("data-tooltip")).toBe(
+      "Pause the run at the end of its current step",
+    );
+  });
+
+  it("dispatches Pause, Resume and Cancel for the run", async () => {
+    await paint(openRunView, "running", { root: live("running") });
+    verb("Pause").click();
+    verb("Cancel").click();
+    await paint(openRunView, "paused", { root: live("paused") });
+    verb("Resume").click();
+    expect(m.dispatched).toEqual(["pause:wf_1", "cancel:wf_1", "resume:wf_1"]);
+  });
+
+  // The stuck Resume: a resume's run_start re-reads only the state, so before the store tied the
+  // verbs to the status, the row kept Resume after the run was running again.
+  it("turns Resume into Pause once the resumed run reads running", async () => {
+    await paint(openRunView, "paused", { root: live("paused") });
+    expect(names("#run-exec-dock")).toEqual(["Resume", "Cancel"]);
+    m.reply.current = {
+      workflowId: "wf_1",
+      state: { workflowId: "wf_1", status: "running", root: live("running") },
+    } satisfies RunInspectReply;
+    m.controls.current = CONTROLS_FOR["running"];
+    invalidateRun("wf_1");
+    await flush();
+    expect(names("#run-exec-dock")).toEqual(["Pause", "Cancel"]);
+  });
+
+  it("keeps the same verbs element, and focus in it, across a repaint", async () => {
+    await paint(openRunView, "running", { root: live("running") });
+    const pause = verb("Pause");
+    pause.focus();
+    invalidateRun("wf_1");
+    await flush();
+    expect(verb("Pause")).toBe(pause);
+    expect(document.activeElement).toBe(pause);
+  });
+
+  describe("each notice", () => {
+    it("waiting on a step's question: shows it whole in its region, with no Answer", async () => {
+      vi.mocked(runPendingAsks).mockReturnValue({
+        count: 1,
+        asked: [
+          {
+            nodeID: "coder",
+            sessionID: "",
+            answer: true,
+            path: "",
+            askID: "a1",
+            text: "Which branch?",
+          },
+        ],
+        label: "Which branch?",
+      });
+      await paint(openRunView, "running", { root: live("running") });
+      const dock = document.getElementById("run-exec-dock")!;
+      expect(dock.querySelector(".ev-dock-ask-q")?.textContent).toBe("Which branch?");
+      expect(dock.querySelector(".ev-dock-head")?.textContent).not.toContain("Which branch?");
+      expect(dock.querySelector('button[aria-label="Answer"], .ev-dock-alert-act')).toBeNull();
+    });
+
+    it("paused at a loop's limit: Add passes with its count and End this loop", async () => {
+      await paint(openRunView, "paused", {
+        root: live("paused"),
+        state: { pauseReason: "Repeat 'loop-1' reached maxIterations." },
+        controls: {
+          verbs: ["extend", "finish_loop", "cancel"],
+          pause_node_id: "loop-1",
+          parent_chat_id: "",
+        },
+      });
+      expectPause("Waiting: Repeat 'loop-1' reached maxIterations.");
+      expect(names("#run-exec-dock")).toEqual(["Add passes", "End this loop", "Cancel"]);
+      const count = document.querySelector<HTMLInputElement>("#run-exec-dock .run-extend-count")!;
+      count.value = "4";
+      verb("Add passes").click();
+      verb("End this loop").click();
+      expect(m.dispatched).toEqual([
+        'extend:{"workflowID":"wf_1","nodeID":"loop-1","iterations":4}',
+        'finish_loop:{"workflowID":"wf_1","nodeID":"loop-1"}',
+      ]);
+    });
+
+    it("failed: names the step and its reason as an alert, with Retry", async () => {
+      await paint(openRunView, "failed", {
+        root: {
+          nodeId: "wf_1",
+          type: "sequence",
+          status: "failed",
+          children: [
+            {
+              nodeId: "build",
+              type: "step",
+              status: "failed",
+              failureReason: "exit status 2",
+              children: [],
+            },
+          ],
+        },
+      });
+      expect(alertText()).toBe("build failed: exit status 2");
+      expect(alertRole()).toBe("alert");
+      verb("Retry failed steps").click();
+      expect(m.dispatched).toEqual(["retry:wf_1"]);
+    });
+
+    it("interrupted: states the restart, with Resume", async () => {
+      await paint(openRunView, "paused", {
+        root: live("paused"),
+        state: { pauseReason: "Interrupted by agent restart; the previously running step re-runs" },
+      });
+      expectPause("Waiting: Interrupted by agent restart; the previously running step re-runs");
+      expect(names("#run-exec-dock")).toEqual(["Resume", "Cancel"]);
+    });
+
+    it("unreachable host: states the pause and its error code, with Resume", async () => {
+      await paint(openRunView, "paused", {
+        root: live("paused"),
+        state: {
+          pauseReason: "host unreachable",
+          pauseDetail: { class: "transient-error", code: "ECONNREFUSED" },
+        },
+      });
+      expectPause("Waiting: host unreachable \u00b7 after a transient error (ECONNREFUSED)");
+      expect(names("#run-exec-dock")).toEqual(["Resume", "Cancel"]);
+    });
+
+    it("validation error: the failed step's reason as an alert, with Retry", async () => {
+      await paint(openRunView, "failed", {
+        root: {
+          nodeId: "wf_1",
+          type: "sequence",
+          status: "failed",
+          children: [
+            {
+              nodeId: "plan",
+              type: "step",
+              status: "failed",
+              failureReason: "input 'branch' is required",
+              children: [],
+            },
+          ],
+        },
+      });
+      expect(alertText()).toBe("plan failed: input 'branch' is required");
+      expect(alertRole()).toBe("alert");
+      expect(names("#run-exec-dock")).toEqual(["Retry failed steps"]);
+    });
+
+    it("no verb: the server's sentences as notes", async () => {
+      await paint(openRunView, "running", {
+        root: live("running"),
+        controls: {
+          verbs: [],
+          refused: {
+            pause: "A pause is already requested; the run stops at the end of its current step.",
+          },
+          parent_chat_id: "",
+        },
+      });
+      expect(
+        [...document.querySelectorAll("#run-exec-dock .ev-dock-note")].map((n) => n.textContent),
+      ).toEqual(["A pause is already requested; the run stops at the end of its current step."]);
+      expect(names("#run-exec-dock")).toEqual([]);
+    });
+  });
+
+  it("shows what a running step last printed on its live row", async () => {
+    logStep("wf_1", "wf_1:printer", "Reading the brief\nChecking the tree", { live: true });
+    await paint(openRunView, "running", {
+      root: {
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "printer", type: "step", status: "running", children: [] }],
+      },
+    });
+    expect(document.querySelector("#run-exec-dock .ev-dock-tail")?.textContent).toBe(
+      "Checking the tree",
+    );
+  });
+
+  // A continuation after a throttled turn opens a new turn that prints nothing for minutes.
+  it("keeps the previous turn's line while the step's newest turn is silent", async () => {
+    logStep("wf_1", "wf_1:resumer", "Running the suite");
+    const turn = "t-wf_1-wf_1:resumer-2";
+    openRunTurn("wf_1", {
+      id: `${turn}-0`,
+      turn,
+      lane: "",
+      kind: "turn_open",
+      payload: { source: "workflow_step", node_path: "wf_1:resumer", n: 1 },
+      seq: 0,
+      ts: 0,
+    });
+    await paint(openRunView, "running", {
+      root: {
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "resumer", type: "step", status: "running", children: [] }],
+      },
+    });
+    expect(document.querySelector("#run-exec-dock .ev-dock-tail")?.textContent).toBe(
+      "Running the suite",
+    );
+  });
+
+  it("offers no Answer for a request decision: its own card answers it", async () => {
+    vi.mocked(runPendingAsks).mockReturnValue({
+      count: 1,
+      asked: [{ nodeID: "", sessionID: "", answer: false, text: "Allow git push?" }],
+      label: "Allow git push?",
+    });
+    await paint(openRunView, "running", { root: live("running") });
+    expect(document.querySelector('#run-exec-dock button[aria-label="Answer"]')).toBeNull();
+    expect(document.querySelector("#run-exec-dock .ev-dock-ask")).toBeNull();
+  });
+
+  describe("a tab opened while parallel steps are printing", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const fan = (seats: readonly string[]): unknown => ({
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [
+        {
+          nodeId: "fan",
+          type: "parallel",
+          status: "running",
+          children: seats.map((nodeId) => ({
+            nodeId,
+            type: "step",
+            status: "running",
+            children: [],
+          })),
+        },
+      ],
+    });
+    const flush = async (): Promise<void> => {
+      for (let i = 0; i < 20; i++) {
+        await Promise.resolve();
+      }
+    };
+    const tails = (): string[] =>
+      [...document.querySelectorAll("#run-exec-dock .ev-dock-tail")]
+        .map((n) => n.textContent ?? "")
+        .sort();
+    /** What `fetchStep`'s `finally` does with an answer: record the verdict, bump the version. */
+    const answer = async (path: string, state: "unavailable" | "ready"): Promise<void> => {
+      m.reads.set(path, { state });
+      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
+      await flush();
+    };
+
+    it("gives every folded row the line its step printed before the tab opened", async () => {
+      const seats = ["late-a", "late-b", "late-c"];
+      const paths = seats.map((s) => `wf_1:fan:${s}`);
+      await paint(openRunView, "running", { root: fan(seats) });
+      expect([...m.requested].sort()).toEqual(paths);
+      expect(tails()).toEqual(["", "", ""]);
+
+      // Each read's answer, adopted into the run's log as `fetchStep` does; no live frame follows.
+      for (const path of paths) {
+        logStep("wf_1", path, `started ${path}\nlatest ${path}`, { live: true });
+        await answer(path, "ready");
+      }
+      expect(tails()).toEqual(paths.map((p) => `latest ${p}`));
+
+      vi.advanceTimersByTime(60_000);
+      invalidateRun("wf_1");
+      await flush();
+      expect(m.requested).toHaveLength(3);
+    });
+
+    it("reads nothing for a sibling whose turn the log already holds", async () => {
+      logStep("wf_1", "wf_1:fan:held-b", "already here", { live: true });
+      await paint(openRunView, "running", { root: fan(["held-a", "held-b"]) });
+      expect(m.requested).toEqual(["wf_1:fan:held-a"]);
+    });
+
+    it("re-asks a sibling whose catch-up failed, three times at most", async () => {
+      await paint(openRunView, "running", { root: fan(["miss-a", "miss-b"]) });
+      // With no start recorded, the first seat is the shown one and settles its own read.
+      const [shown, sibling] = ["wf_1:fan:miss-a", "wf_1:fan:miss-b"];
+      expect(document.querySelector("#run-body .ev-d-title")?.textContent).toBe("miss-a");
+      expect(m.requested).toEqual([shown, sibling]);
+      await answer(shown, "ready");
+      await answer(sibling, "unavailable");
+      vi.advanceTimersByTime(999);
+      expect(m.requested).toHaveLength(2);
+      vi.advanceTimersByTime(1);
+      expect(m.requested).toEqual([shown, sibling, sibling]);
+      for (const delay of [2000, 4000, 8000, 16_000]) {
+        await answer(sibling, "unavailable");
+        vi.advanceTimersByTime(delay);
+      }
+      expect(m.requested).toEqual([shown, sibling, sibling, sibling, sibling]);
+    });
+
+    it("keeps re-asking a sibling after its own output arrives, until a read answers", async () => {
+      await paint(openRunView, "running", { root: fan(["moot-a", "moot-b"]) });
+      await answer("wf_1:fan:moot-a", "ready");
+      await answer("wf_1:fan:moot-b", "unavailable");
+      logStep("wf_1", "wf_1:fan:moot-b", "printed meanwhile", { live: true, attempt: 2 });
+      await flush();
+      expect(tails()).toEqual(["", "printed meanwhile"]);
+      vi.advanceTimersByTime(1000);
+      expect(m.requested.filter((p) => p === "wf_1:fan:moot-b")).toHaveLength(2);
+
+      await answer("wf_1:fan:moot-b", "ready");
+      vi.advanceTimersByTime(60_000);
+      expect(m.requested.filter((p) => p === "wf_1:fan:moot-b")).toHaveLength(2);
+    });
+
+    it("reads a sibling the reader picks after it printed over a failed catch-up", async () => {
+      await paint(openRunView, "running", { root: fan(["pick-a", "pick-b"]) });
+      await answer("wf_1:fan:pick-a", "ready");
+      await answer("wf_1:fan:pick-b", "unavailable");
+      logStep("wf_1", "wf_1:fan:pick-b", "printed meanwhile", { live: true, attempt: 2 });
+      await flush();
+      document
+        .querySelector<HTMLElement>('.ev-row[data-path="wf_1:fan:pick-b"] > .ev-row-main')
+        ?.click();
+      await flush();
+      expect(document.querySelector("#run-body .ev-d-title")?.textContent).toBe("pick-b");
+      expect(m.requested.filter((p) => p === "wf_1:fan:pick-b")).toHaveLength(2);
+    });
+
+    it("drops a sibling's pending re-ask when the tab shows another run", async () => {
+      await paint(openRunView, "running", { root: fan(["gone-a", "gone-b"]) });
+      await answer("wf_1:fan:gone-a", "ready");
+      await answer("wf_1:fan:gone-b", "unavailable");
+      await paint(openRunView, "completed", {
+        id: "wf_other",
+        root: { nodeId: "wf_other", type: "sequence", status: "completed", children: [] },
+      });
+      const asked = m.requested.length;
+      vi.advanceTimersByTime(60_000);
+      expect(m.requested).toHaveLength(asked);
+    });
+
+    it("drops a sibling's pending re-ask when the page is rebuilt", async () => {
+      await paint(openRunView, "running", { root: fan(["again-a", "again-b"]) });
+      await answer("wf_1:fan:again-a", "ready");
+      await answer("wf_1:fan:again-b", "unavailable");
+      // A fresh run body remounts the same run's page, which asks once afresh and is answered.
+      await paint(openRunView, "running", { root: fan(["again-a", "again-b"]) });
+      expect(m.requested.slice(2)).toEqual(["wf_1:fan:again-a", "wf_1:fan:again-b"]);
+      await answer("wf_1:fan:again-b", "ready");
+      const asked = m.requested.length;
+      vi.advanceTimersByTime(60_000);
+      expect(m.requested).toHaveLength(asked);
+    });
+  });
+});
 
 describe("run view step results", () => {
   // PER-STEP SCOPING. Two settled steps with different captures: only the selected one's is on
@@ -800,8 +1360,8 @@ describe("run view step results have no toggle", () => {
   });
 });
 
-// PLACEMENT: the region is a child of `.ev-page` sitting AFTER `.ev-panes`, at the column's full
-// width.
+// PLACEMENT: the region is a child of `.ev-page` sitting AFTER the detail pane, at the column's
+// full width.
 
 describe("run view step results placement", () => {
   async function page(): Promise<HTMLElement> {
@@ -821,23 +1381,22 @@ describe("run view step results placement", () => {
   it("follows the step and output boxes among the page's children", async () => {
     const el = await page();
     const kids = [...el.children].map((n) => n.className.split(" ")[0]);
-    expect(kids.indexOf("ev-panes")).toBeGreaterThanOrEqual(0);
-    expect(kids.indexOf("ev-results")).toBeGreaterThan(kids.indexOf("ev-panes"));
+    expect(kids.indexOf("ev-pane")).toBeGreaterThanOrEqual(0);
+    expect(kids.indexOf("ev-results")).toBeGreaterThan(kids.indexOf("ev-pane"));
   });
 
-  it("renders at the same width as the panes above it", async () => {
+  it("renders at the same width as the detail above it", async () => {
     const el = await page();
     const results = el.querySelector<HTMLElement>(".ev-results")!;
-    const panes = el.querySelector<HTMLElement>(".ev-panes")!;
+    const panes = el.querySelector<HTMLElement>(".ev-pane")!;
     // The premise: both boxes really were laid out.
     expect(panes.getBoundingClientRect().width).toBeGreaterThan(0);
     expect(results.getBoundingClientRect().width).toBe(panes.getBoundingClientRect().width);
   });
 });
 
-// THE CLAMP on a result box, reusing the page's own affordance: `clamp-text.ts` `attachClamp`, the
-// `data-clamped` attribute and the `.ev-in-more` opener skin, the same three the header's
-// instructions use.
+// THE CLAMP on a result box: `clamp-text.ts` `attachClamp`, the `data-clamped` attribute and the
+// `.ev-r-more` text opener.
 
 describe("run view step result clamp", () => {
   async function capture(output: string): Promise<HTMLElement> {
@@ -905,74 +1464,25 @@ describe("run view step result clamp", () => {
   });
 });
 
-// The header's instructions: clamped to three lines with an opener that appears ONLY when the
-// content really overflows.
-describe("run view instructions", () => {
-  function openers(body: HTMLElement): HTMLButtonElement[] {
-    return [...body.querySelectorAll<HTMLButtonElement>(".ev-in-more")];
-  }
+// The run's inputs: one key/value line each above the dock panel's switcher, absent with none.
+describe("run view inputs", () => {
+  const keys = (body: HTMLElement): (string | null)[] =>
+    [...body.querySelectorAll("#run-exec-dock .ev-dock-input > dt")].map((n) => n.textContent);
+  const values = (body: HTMLElement): (string | null)[] =>
+    [...body.querySelectorAll("#run-exec-dock .ev-dock-input > dd")].map((n) => n.textContent);
 
-  it("renders the value in its own clamped box", async () => {
+  it("draws one line per input in the dock's panel, and no Inputs segment", async () => {
     const { body } = await paint(openRunView, "running", {
       inputs: { repo: "marotte", target: "static-src" },
     });
-    expect([...body.querySelectorAll(".ev-in-k")].map((n) => n.textContent)).toEqual([
-      "repo",
-      "target",
-    ]);
-    expect([...body.querySelectorAll(".ev-in-text")].map((n) => n.textContent)).toEqual([
-      "marotte",
-      "static-src",
-    ]);
+    expect(keys(body)).toEqual(["repo", "target"]);
+    expect(values(body)).toEqual(["marotte", "static-src"]);
+    expect(body.querySelector('[data-ev-seg="inputs"]')).toBeNull();
   });
 
-  // A character count also gets this case right, so it is the floor rather than the proof.
-  it("offers NO opener on a short instruction", async () => {
-    const { body } = await paint(openRunView, "running", {
-      inputs: { repo: "marotte" },
-    });
-    expect(openers(body).map((b) => b.hidden)).toEqual([true]);
-    await settleClamp();
-    expect(openers(body).map((b) => b.hidden)).toEqual([true]);
-  });
-
-  it("offers an opener on an instruction that overflows the clamp", async () => {
-    // Long enough to overflow three lines at any width this suite can run at. Newlines would NOT do
-    // it: the value is not preformatted, so they collapse to spaces — which is exactly why the
-    // character/newline guess cannot be trusted and the observer has the last word.
-    const { body } = await paint(openRunView, "running", {
-      inputs: { task: "converge the chevrons and then the boxes ".repeat(80).trim() },
-    });
-    await settleClamp();
-    const [more] = openers(body);
-    const text = body.querySelector<HTMLElement>(".ev-in-text");
-    // The premise: the clamp really is clipping this value.
-    expect(text!.scrollHeight - text!.clientHeight).toBeGreaterThan(1);
-    expect(more?.hidden).toBe(false);
-    expect(more?.tagName).toBe("BUTTON");
-    // A real control with a real state, reachable by keyboard because it is a button.
-    expect(more?.getAttribute("aria-expanded")).toBe("false");
-    expect(more?.textContent).toBe("Show more");
-    expect(text?.hasAttribute("data-clamped")).toBe(true);
-
-    more?.click();
-    expect(text?.hasAttribute("data-clamped")).toBe(false);
-    expect(more?.getAttribute("aria-expanded")).toBe("true");
-    expect(more?.textContent).toBe("Show less");
-  });
-
-  // THE MEASUREMENT CASE. This value is longer than the character fallback and still fits three
-  // lines at this width, so the pre-layout guess says "overflows" and the observer must overrule
-  // it. A character-count implementation leaves an opener here that opens nothing.
-  it("withdraws the opener when layout says the long value fits", async () => {
-    const long = "shipped ".repeat(40).trim();
-    expect(long.length).toBeGreaterThan(220);
-    const { body } = await paint(openRunView, "running", { inputs: { task: long } });
-    await settleClamp();
-    const text = body.querySelector<HTMLElement>(".ev-in-text");
-    // The premise, or this case would assert nothing: the text really is not clipped at this width.
-    expect(text!.scrollHeight - text!.clientHeight).toBeLessThanOrEqual(1);
-    expect(openers(body).map((b) => b.hidden)).toEqual([true]);
+  it("hides the lines for a run with no inputs", async () => {
+    const { body } = await paint(openRunView, "running", {});
+    expect(body.querySelector<HTMLElement>("#run-exec-dock .ev-dock-inputs")?.hidden).toBe(true);
   });
 
   /** A settled step whose capture this render carries. */
@@ -1002,32 +1512,29 @@ describe("run view instructions", () => {
     }
   }
 
-  // `render` runs on every store invalidation — dozens of times a minute on a live run — so an
-  // unguarded rebuild would discard the reader's expansion and re-wire every clamp. Node identity
-  // is the assertion because that is what survives.
-  it("does not rebuild the list when the inputs are unchanged", async () => {
+  // `render` runs on every store invalidation, so an unguarded rebuild would take a reader's
+  // focus off an input's link. Node identity is the assertion because that is what survives.
+  it("does not rebuild the lines when the inputs are unchanged", async () => {
     const { body, tab } = await paint(openRunView, "running", {
       inputs: { repo: "marotte" },
       root: capturing("first"),
     });
-    const before = body.querySelector(".ev-in-v");
+    const before = body.querySelector(".ev-dock-input");
     await rerender(tab.id, { repo: "marotte" }, "second");
-
     // The premise, or this case asserts nothing: the page really did re-render.
     expect(body.querySelector(".ev-r-text")?.textContent).toContain("second");
-    expect(body.querySelector(".ev-in-v")).toBe(before);
+    expect(body.querySelector(".ev-dock-input")).toBe(before);
   });
 
-  it("rebuilds the list when the inputs change", async () => {
+  it("rebuilds the lines when the inputs change", async () => {
     const { body, tab } = await paint(openRunView, "running", {
       inputs: { repo: "marotte" },
       root: capturing("first"),
     });
-    const before = body.querySelector(".ev-in-v");
+    const before = body.querySelector(".ev-dock-input");
     await rerender(tab.id, { repo: "subflux" }, "second");
-
-    expect(body.querySelector(".ev-in-v")).not.toBe(before);
-    expect(body.querySelector(".ev-in-text")?.textContent).toBe("subflux");
+    expect(body.querySelector(".ev-dock-input")).not.toBe(before);
+    expect(values(body)).toEqual(["subflux"]);
   });
 });
 
@@ -1646,6 +2153,48 @@ describe("run view step transcripts", () => {
     expect(m.paint.get("wf_1:closed")?.live).toEqual([false]);
   });
 
+  // A live `turn_close` on a `tool_use` stop says KAS's `completed`: only the run read's `step_ends`,
+  // graded under KAS's record of the node, can say the step hit the model-call limit, and the held
+  // close is never replaced (a re-read of the same entry is a redelivery). The row grades the
+  // step's NEWEST attempt only: an earlier attempt keeps the close it ended with.
+  it("paints a step's newest turn with the run read's grade of the step", async () => {
+    const toolUse = { outcome: "completed", stop_reason_raw: "tool_use" };
+    logStep("wf_1", "wf_1:limited", "first attempt", {
+      attempt: 1,
+      close: { outcome: "interrupted" },
+    });
+    logStep("wf_1", "wf_1:limited", "working", { attempt: 2, close: toolUse });
+    logStep("wf_1", "wf_1:handoff", "plan accepted", { close: toolUse });
+    const root = {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [
+        { nodeId: "limited", type: "step", status: "completed", children: [] },
+        { nodeId: "handoff", type: "step", status: "completed", children: [] },
+      ],
+    };
+    await paint(openRunView, "running", {
+      root,
+      stepEnds: {
+        "wf_1:limited": {
+          outcome: "failed",
+          failure_kind: "model_call_limit",
+          failure_reason: "kiro-cli stopped this step after 300 model calls in one turn.",
+        },
+      },
+    });
+    await painted("wf_1:limited");
+    await painted("wf_1:handoff");
+
+    expect(m.paint.get("wf_1:limited")?.closes).toEqual([
+      "interrupted/",
+      "failed/model_call_limit",
+    ]);
+    // A step KAS completed on a success signal has no row, so its turn keeps its own close.
+    expect(m.paint.get("wf_1:handoff")?.closes).toEqual(["completed/"]);
+  });
+
   // A step's prose GROWS after the first paint, and the pane has to follow it or the transcript is
   // only correct for entries that arrived before the tab was opened. The run log's own version
   // signal is what `installViewEffect` reads, so an append is the whole trigger.
@@ -1720,14 +2269,207 @@ describe("run view step reads", () => {
     }
   });
 
-  // GATE 2. A busy session cannot be `session/load`ed, so a live step's read is refused by
-  // construction — and its entries reach the pane on the run's own log meanwhile.
-  it("arms no read for a step still in flight", async () => {
-    for (const status of ["running", "paused"]) {
+  // GATE 2. A live step's later entries reach the pane on the run's own log, but what it printed
+  // before this page held the log arrives only through a read: a step stalled for minutes (a
+  // throttled model) sends no next entry to reveal the gap. The server answers it from the run's
+  // log; a transient miss is retried by the ladder cases below.
+  it("reads a step still in flight once when the page holds none of it", async () => {
+    for (const [i, status] of ["running", "paused"].entries()) {
       m.requested.length = 0;
-      await paint(openRunView, "running", { root: oneStep(status) });
-      expect(m.requested).toEqual([]);
+      await paint(openRunView, "running", { root: oneNamedStep(`live${String(i)}`, status) });
+      expect(m.requested).toEqual([`wf_1:live${String(i)}`]);
     }
+  });
+
+  it("reads nothing for a step in flight whose turn the page holds", async () => {
+    logStep("wf_1", "wf_1:streaming", "working", { live: true });
+    await paint(openRunView, "running", { root: oneNamedStep("streaming", "running") });
+    expect(m.requested).toEqual([]);
+    expect(m.reread).toEqual([]);
+  });
+
+  // A transient miss moves neither the shown path nor its state, so only the ladder asks again.
+  describe("after a transient miss", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** What `fetchStep`'s `finally` does with an answer: record the verdict, bump the version. */
+    async function answer(path: string, state: "unavailable" | "ready"): Promise<void> {
+      m.reads.set(path, { state });
+      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
+      for (let i = 0; i < 20; i++) {
+        await Promise.resolve();
+      }
+    }
+
+    it("asks again for a running step whose catch-up failed, until one answers", async () => {
+      await paint(openRunView, "running", { root: oneNamedStep("retry1", "running") });
+      expect(m.requested).toEqual(["wf_1:retry1"]);
+
+      await answer("wf_1:retry1", "unavailable");
+      vi.advanceTimersByTime(999);
+      expect(m.requested).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      expect(m.requested).toEqual(["wf_1:retry1", "wf_1:retry1"]);
+
+      await answer("wf_1:retry1", "ready");
+      vi.advanceTimersByTime(60_000);
+      expect(m.requested).toHaveLength(2);
+
+      // A later miss is a new question, back on the first rung.
+      await answer("wf_1:retry1", "unavailable");
+      vi.advanceTimersByTime(1000);
+      expect(m.requested).toHaveLength(3);
+    });
+
+    it("stops after three retries", async () => {
+      await paint(openRunView, "running", { root: oneNamedStep("retry2", "running") });
+      for (const delay of [1000, 2000, 4000, 8000]) {
+        await answer("wf_1:retry2", "unavailable");
+        vi.advanceTimersByTime(delay);
+      }
+      expect(m.requested).toHaveLength(4);
+    });
+
+    // Output streamed after the tab opened says nothing about what the step printed before it.
+    it("keeps asking for the step's earlier output after new output arrives", async () => {
+      await paint(openRunView, "running", { root: oneNamedStep("retry3", "running") });
+      await answer("wf_1:retry3", "unavailable");
+      logStep("wf_1", "wf_1:retry3", "printed meanwhile", { live: true, attempt: 2 });
+      for (let i = 0; i < 20; i++) {
+        await Promise.resolve();
+      }
+      vi.advanceTimersByTime(1000);
+      expect(m.requested).toEqual(["wf_1:retry3", "wf_1:retry3"]);
+
+      await answer("wf_1:retry3", "ready");
+      vi.advanceTimersByTime(60_000);
+      expect(m.requested).toHaveLength(2);
+    });
+
+    // An answered catch-up owes nothing, so the settled step's missing close takes the re-read.
+    it("re-reads a step whose catch-up answered once it settles with its close missing", async () => {
+      await paint(openRunView, "running", { root: oneNamedStep("unclosed", "running") });
+      logStep("wf_1", "wf_1:unclosed", "adopted", { live: true });
+      await answer("wf_1:unclosed", "ready");
+      m.reply.current = {
+        workflowId: "wf_1",
+        state: {
+          workflowId: "wf_1",
+          status: "completed",
+          root: oneNamedStep("unclosed", "completed"),
+        },
+      } satisfies RunInspectReply;
+      invalidateRun("wf_1");
+      for (let i = 0; i < 20; i++) {
+        await Promise.resolve();
+      }
+      expect(m.requested).toEqual(["wf_1:unclosed"]);
+      expect(m.reread).toEqual(["wf_1:unclosed"]);
+    });
+
+    it("asks again when the reader returns to a step that printed after its retries ran out", async () => {
+      const { body } = await paint(openRunView, "running", {
+        root: {
+          nodeId: "wf_1",
+          type: "sequence",
+          status: "running",
+          children: [
+            { nodeId: "back", type: "step", status: "running", children: [] },
+            { nodeId: "away", type: "step", status: "completed", children: [] },
+          ],
+        },
+      });
+      await answer("wf_1:back", "unavailable");
+      for (const delay of [1000, 2000, 4000]) {
+        vi.advanceTimersByTime(delay);
+        await answer("wf_1:back", "unavailable");
+      }
+      expect(m.requested).toHaveLength(4);
+      logStep("wf_1", "wf_1:back", "printed meanwhile", { live: true, attempt: 2 });
+      const pick = async (path: string): Promise<void> => {
+        body.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
+        for (let i = 0; i < 20; i++) {
+          await Promise.resolve();
+        }
+      };
+      await pick("wf_1:away");
+      await pick("wf_1:back");
+      expect(m.requested.slice(4)).toEqual(["wf_1:away", "wf_1:back"]);
+    });
+
+    // A new hole is a new question, so its failed repair gets three retries of its own even after
+    // the catch-up's ladder ran out.
+    it("gives a later hole all three retries after the catch-up's ran out", async () => {
+      const turn = "t-wf_1-wf_1:retry5-1";
+      const text = (seq: number): Entry => ({
+        id: `${turn}-${String(seq)}`,
+        turn,
+        lane: "",
+        kind: "text",
+        payload: { text: "more" },
+        seq,
+        ts: 0,
+      });
+      const flush = async (): Promise<void> => {
+        for (let i = 0; i < 20; i++) {
+          await Promise.resolve();
+        }
+      };
+      await paint(openRunView, "running", { root: oneNamedStep("retry5", "running") });
+      await answer("wf_1:retry5", "unavailable");
+      for (const delay of [1000, 2000, 4000]) {
+        vi.advanceTimersByTime(delay);
+        await answer("wf_1:retry5", "unavailable");
+      }
+      expect(m.requested).toHaveLength(4);
+      logStep("wf_1", "wf_1:retry5", "printed meanwhile", { live: true });
+      await flush();
+      for (let seq = 2; seq < 6; seq++) {
+        appendRunEntry("wf_1", text(seq));
+        await flush();
+        vi.advanceTimersByTime(8000);
+      }
+      expect(m.requested).toHaveLength(4);
+
+      // A seq gap holes the turn and its repair read fails: the ladder starts over at three.
+      appendRunEntry("wf_1", text(9));
+      await flush();
+      expect(m.reread).toEqual(["wf_1:retry5"]);
+      await answer("wf_1:retry5", "unavailable");
+      for (const delay of [1000, 2000, 4000]) {
+        vi.advanceTimersByTime(delay);
+        await answer("wf_1:retry5", "unavailable");
+      }
+      expect(m.requested).toHaveLength(7);
+    });
+
+    it("asks nothing for a step the reader has left", async () => {
+      const { body } = await paint(openRunView, "running", {
+        root: {
+          nodeId: "wf_1",
+          type: "sequence",
+          status: "running",
+          children: [
+            { nodeId: "left", type: "step", status: "running", children: [] },
+            { nodeId: "next", type: "step", status: "completed", children: [] },
+          ],
+        },
+      });
+      expect(m.requested).toEqual(["wf_1:left"]);
+      await answer("wf_1:left", "unavailable");
+      // A step that needs its own read, which its selection issues once.
+      body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:next"] > .ev-row-main')?.click();
+      for (let i = 0; i < 20; i++) {
+        await Promise.resolve();
+      }
+      vi.advanceTimersByTime(60_000);
+      expect(m.requested).toEqual(["wf_1:left", "wf_1:next"]);
+    });
   });
 
   // ...and gate 2 is a DEFERRAL, not a refusal, which is the half a path-keyed guard loses.
@@ -1735,7 +2477,9 @@ describe("run view step reads", () => {
     const { body } = await paint(openRunView, "running", {
       root: twoLeaves("running", "pending"),
     });
-    expect(m.requested).toEqual([]);
+    // The in-flight read is gate 2's own case.
+    expect(m.requested).toEqual(["wf_1:coder"]);
+    m.requested.length = 0;
 
     // The reader's own gesture. A row is an ordinary `treeitem` whose click selects it
     // (`exec-view/tree.ts`), so this is the real pin rather than a reach into state.
@@ -1757,8 +2501,9 @@ describe("run view step reads", () => {
 
     expect(body.querySelector<HTMLElement>(".ev-d-title")?.textContent).toBe("coder");
     // EXACTLY one, which is the other half: arming per repaint would re-ask on every frame of a
-    // live run, and `unavailable` is a verdict a repeat ask retries.
-    expect(m.requested).toEqual(["wf_1:coder"]);
+    // live run, and `unavailable` is a verdict a repeat ask retries. `verify` is the dock row's own
+    // catch-up, now that it runs.
+    expect(m.requested).toEqual(["wf_1:coder", "wf_1:verify"]);
   });
 
   // GATE 3, and the one that makes the log the SOURCE rather than a preference: the turn is already
@@ -1991,6 +2736,14 @@ describe("the page's scroll position", () => {
         status: "completed",
         agentName: "wf-coder",
         children: [],
+        // The shown step's results are what the page scrolls, so the first one is long.
+        ...(i === 0
+          ? {
+              artifacts: Object.fromEntries(
+                Array.from({ length: 40 }, (_, k) => [`part-${String(k)}`, `result ${String(k)}`]),
+              ),
+            }
+          : {}),
       })),
     };
   }
@@ -2065,6 +2818,9 @@ describe("the page's scroll position", () => {
     resume.style.position = "absolute";
     resume.appendChild(document.createElement("span"));
     content.appendChild(resume);
+    const execDock = document.createElement("div");
+    execDock.id = "run-exec-dock";
+    view.appendChild(execDock);
     const dock = document.createElement("div");
     dock.id = "run-dock";
     document.body.append(view, dock);
@@ -2110,6 +2866,10 @@ describe("the page's scroll position", () => {
   // A shrink that brings the end to the reader returns them to Following with no scroll event, so
   // the state a run parks with has to come from the follower, not from the last scroll.
   it("keeps a run that shrank back to Following across a run switch", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     await activate("wf_shrink_a");
     await frames();
     const body = document.getElementById("run-body");
@@ -2119,7 +2879,9 @@ describe("the page's scroll position", () => {
     const spacer = document.createElement("div");
     spacer.style.height = "250px";
     body.appendChild(spacer);
-    await new Promise((r) => setTimeout(r, 800));
+    await frames();
+    // Past the open's pin window on the follower's `Date.now()` clock.
+    vi.advanceTimersByTime(800);
     await frames();
     // Inside the live-edge band once the spacer goes, outside it while the spacer stands.
     const parkedAt = bottom() - 300;
@@ -2128,7 +2890,7 @@ describe("the page's scroll position", () => {
     const resume = document.getElementById("run-scroll-bottom");
     expect(resume?.classList.contains("hidden")).toBe(false);
     // Past the reader's own control window, so the layout may release them.
-    await new Promise((r) => setTimeout(r, 350));
+    vi.advanceTimersByTime(350);
     let scrolls = 0;
     const count = (): void => {
       scrolls++;

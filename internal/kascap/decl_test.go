@@ -58,7 +58,7 @@ func TestNoSendWithoutReason(t *testing.T) {
 				t.Errorf("%s is withheld but declares a wire value (%v); a value that is never sent will drift",
 					rowID(row), row.value)
 			}
-			if row.gate != nil || row.promptGate != nil {
+			if row.gated() {
 				t.Errorf("%s is withheld but declares a gate; the gate can never run", rowID(row))
 			}
 		})
@@ -128,20 +128,16 @@ func TestDeclIsWellFormed(t *testing.T) {
 			if row.resolver == "" {
 				t.Errorf("%s declares no resolver", rowID(row))
 			}
-			gated := row.gate != nil || row.promptGate != nil
+			gated := row.gated()
 			if row.send && row.value == nil && !gated {
 				t.Errorf("%s is sent with neither a value nor a gate, so it would send JSON null", rowID(row))
 			}
 			if row.send && row.value != nil && gated {
 				t.Errorf("%s declares both a value and a gate; the gate always wins, so the value is a lie", rowID(row))
 			}
-			// Each projection hands its door's rows only the input that door has, so the other gate
-			// would be called with nil.
-			if row.door == doorPrompt && row.gate != nil {
-				t.Errorf("%s is a prompt-door row with a Spawn gate; use promptGate", rowID(row))
-			}
-			if row.door != doorPrompt && row.promptGate != nil {
-				t.Errorf("%s declares a promptGate off the prompt door", rowID(row))
+			// OwnsEnv drops an inherited value of the row's name; anywhere else that name is no variable.
+			if row.settingOwned && (row.door != doorEnvironment || !row.send) {
+				t.Errorf("%s is settingOwned but not a sent environment row", rowID(row))
 			}
 			if seen[rowID(row)+string(row.door)] {
 				t.Errorf("%s is declared twice on the same door", rowID(row))
@@ -151,11 +147,62 @@ func TestDeclIsWellFormed(t *testing.T) {
 	}
 }
 
+func (d decl) gated() bool { return d.engineGate != nil || d.sessionGate != nil || d.promptGate != nil }
+
+// gateFault reports why a row's gate reads another door's input, or "" when it reads its own. Each projection hands
+// its rows only its own door's input, so a mismatched gate would be called with nil; the typed gates make "this
+// setting needs an engine restart" a fact of the row's door.
+func gateFault(d decl) string {
+	engineDoor := d.door == doorConnection || d.door == doorEnvironment
+	switch {
+	case d.engineGate != nil && !engineDoor:
+		return "reads EngineSpawn off the connection and environment doors"
+	case d.sessionGate != nil && d.door != doorSession:
+		return "reads SessionSpawn off the session door"
+	case d.promptGate != nil && d.door != doorPrompt:
+		return "reads Prompt off the prompt door"
+	}
+	n := 0
+	for _, set := range []bool{d.engineGate != nil, d.sessionGate != nil, d.promptGate != nil} {
+		if set {
+			n++
+		}
+	}
+	if n > 1 {
+		return "declares more than one gate"
+	}
+	return ""
+}
+
+func TestTable_GateMatchesDoor(t *testing.T) {
+	t.Run("the real table", func(t *testing.T) {
+		for _, row := range table {
+			if fault := gateFault(row); fault != "" {
+				t.Errorf("%s %s", rowID(row), fault)
+			}
+		}
+	})
+	t.Run("the check catches a gate on the wrong door", func(t *testing.T) {
+		for _, bad := range []decl{
+			{key: "x", door: doorSession, engineGate: func(*EngineSpawn) (any, bool) { return true, true }},
+			{key: "x", door: doorConnection, sessionGate: func(*SessionSpawn) (any, bool) { return true, true }},
+			{key: "x", door: doorEnvironment, promptGate: func(*Prompt) (any, bool) { return true, true }},
+			{key: "x", door: doorPrompt, sessionGate: func(*SessionSpawn) (any, bool) { return true, true }},
+		} {
+			if gateFault(bad) == "" {
+				t.Errorf("gateFault(%s on %s) = \"\", want a fault", rowID(bad), bad.door)
+			}
+		}
+	})
+}
+
 // TestSettingRowsCarryTheEnabledObject asserts that isSettingEnabled returns val.enabled for an object and
 // false otherwise, so every sent settings value must be {"enabled": …}.
 func TestSettingRowsCarryTheEnabledObject(t *testing.T) {
 	vetoRows := map[string]bool{
 		"steeringSupervisor": true,
+		// KAS's own default, sent so every session states it.
+		"_providerPowers": true,
 	}
 
 	checked := 0
@@ -290,40 +337,60 @@ type settingValue struct {
 	gated  bool
 }
 
+// engineStates and sessionStates are the gate inputs every sent row's values are read under: all off, all on, and
+// every follow-kiro-cli choice explicitly off.
+var (
+	engineStates = []struct {
+		name  string
+		spawn EngineSpawn
+	}{
+		{"with every gate field off", EngineSpawn{}},
+		{"with every gate field on", EngineSpawn{
+			SecretStorage: true, Knowledge: true, InfraSafetyMonitor: "on",
+			AutoRouting: "on", AutoDelegation: "on",
+			TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
+			DisableTelemetry: true, ModelFallback: true,
+		}},
+		{"with every choice off", EngineSpawn{AutoRouting: "off", AutoDelegation: "off", InfraSafetyMonitor: "off"}},
+	}
+	sessionStates = []struct {
+		name  string
+		spawn SessionSpawn
+	}{
+		{"with every gate field off", SessionSpawn{}},
+		{"with every gate field on", SessionSpawn{
+			OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000",
+			Presets:           []string{"read-workspace"},
+			SpecPlan:          "full", SpecAskClarification: true, WorkValidation: "on",
+			MemoryMode: "read_write", MemoryReflection: true,
+			Workflows: true, DisableAutoCompaction: true,
+		}},
+		{"with every choice off", SessionSpawn{WorkValidation: "off"}},
+	}
+)
+
 // settingValuesOf returns every wire value a sent row can put on the wire: the compiled one, or
-// the gate's answer in both Spawn or both Prompt states.
+// the gate's answer in each state of its door's input.
 func settingValuesOf(t *testing.T, row decl) []settingValue {
 	t.Helper()
-	if row.promptGate != nil {
-		return promptValuesOf(t, row)
-	}
-	if row.gate == nil {
-		return []settingValue{{value: row.value, origin: "(compiled)", gated: false}}
-	}
 	var out []settingValue
-	for _, st := range []struct {
-		name  string
-		spawn Spawn
-	}{
-		{"with every gate field off", Spawn{}},
-		{"with every gate field on", Spawn{
-			SecretStorage: true, Hooks: true,
-			Presets:   []string{"read-workspace"},
-			Knowledge: true, ToolLoad: true,
-			SpecPlan: "full", SpecAskClarification: true,
-			WorkValidation: "on", InfraSafetyMonitor: "on",
-			AutoRouting: "on", AutoDelegation: "on", ConfigurationState: true,
-			TerminalCommandTimeoutMs: 300000,
-			InlineAgents:             true, SteeringReminders: true,
-			MemoryMode: "read_write", MemoryReflection: true,
-			Workflows:            true,
-			DisableSessionTitles: true, DisableAutoCompaction: true,
-		}},
-		{"with every choice off", Spawn{AutoRouting: "off", AutoDelegation: "off"}},
-	} {
-		if v, present := row.gate(&st.spawn); present {
-			out = append(out, settingValue{value: v, origin: st.name, gated: true})
+	switch {
+	case row.promptGate != nil:
+		return promptValuesOf(t, row)
+	case row.engineGate != nil:
+		for _, st := range engineStates {
+			if v, present := row.engineGate(&st.spawn); present {
+				out = append(out, settingValue{value: v, origin: st.name, gated: true})
+			}
 		}
+	case row.sessionGate != nil:
+		for _, st := range sessionStates {
+			if v, present := row.sessionGate(&st.spawn); present {
+				out = append(out, settingValue{value: v, origin: st.name, gated: true})
+			}
+		}
+	default:
+		return []settingValue{{value: row.value, origin: "(compiled)", gated: false}}
 	}
 	if len(out) == 0 {
 		t.Fatalf("%s is sent but its gate withholds in every state, so it can never reach the wire", rowID(row))
@@ -345,30 +412,13 @@ func promptValuesOf(t *testing.T, row decl) []settingValue {
 	return out
 }
 
-// The tool-search setting must stay off the wire: "Load MCP tools on demand"
-// drives the tool_load arm through the child environment, and a still-sent
-// toolSearch key would reinstate the array-growing mode if that arm were removed.
-func TestToolSearchSettingIsWithheld(t *testing.T) {
-	row := findRow(t, resolverSetting, "toolSearch")
-	if row.send {
-		t.Errorf("%s is sent; it must be a withheld claim row", rowID(row))
-	}
-	if row.gate != nil || row.value != nil {
-		t.Errorf("%s carries a gate or value; a withheld row has no wire value", rowID(row))
-	}
-}
-
-// findRow returns the one row with this identity, failing when it is absent so a
-// renamed key surfaces as a missing row rather than a vacuous pass.
-func findRow(t *testing.T, r resolver, key string) decl {
-	t.Helper()
+// No engine reads these two delegation keys, so no row may send or claim them.
+func TestDeadDelegationSettingsAreNotDeclared(t *testing.T) {
 	for _, row := range table {
-		if row.resolver == r && row.key == key {
-			return row
+		if row.key == "subagentOrchestration" || row.key == "inlineAgents" {
+			t.Errorf("%s is declared; KAS has no reader for it", rowID(row))
 		}
 	}
-	t.Fatalf("no %s.%s row in the table", r, key)
-	return decl{}
 }
 
 // TestBuildersDoNotAliasTheTable pins that a caller cannot corrupt the table through a payload it
@@ -376,14 +426,14 @@ func findRow(t *testing.T, r resolver, key string) decl {
 func TestBuildersDoNotAliasTheTable(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		build func(*Spawn) map[string]any
+		build func() map[string]any
 		key   string
 	}{
-		{"connection", Capabilities, "codeIntelligence"},
-		{"session", SessionMeta, "backgroundExecution"},
+		{"connection", func() map[string]any { return Capabilities(&EngineSpawn{}) }, "codeIntelligence"},
+		{"session", func() map[string]any { return SessionMeta(&SessionSpawn{}) }, "backgroundExecution"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			first := settingsOf(t, tc.build(&Spawn{}))
+			first := settingsOf(t, tc.build())
 			entry, ok := first[tc.key].(map[string]any)
 			if !ok {
 				t.Fatalf("no %s settings object; got %T", tc.key, first[tc.key])
@@ -391,7 +441,7 @@ func TestBuildersDoNotAliasTheTable(t *testing.T) {
 			entry["enabled"] = false
 			delete(first, tc.key)
 
-			second := settingsOf(t, tc.build(&Spawn{}))
+			second := settingsOf(t, tc.build())
 			again, ok := second[tc.key].(map[string]any)
 			if !ok {
 				t.Fatalf("mutating one payload's settings object removed %s from the next one", tc.key)

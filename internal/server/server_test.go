@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -16,6 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/slogx/capture"
 )
 
 type testPush struct{}
@@ -44,8 +44,8 @@ func TestSafeKiroSetting(t *testing.T) {
 		{"chat.enableTodoList", ""},
 		{"compaction.excludeContextWindowPercent", ""},
 		{"compaction.excludeMessages", ""},
-		// Live upstream readers, but reached through internal/kascap's doors, not this endpoint.
 		{"toolSearch.enabled", ""},
+		// Live upstream readers, but reached through internal/kascap's doors, not this endpoint.
 		{"chat.disableAutoCompaction", ""},
 	}
 	for _, tt := range tests {
@@ -182,65 +182,8 @@ func TestModelHidden(t *testing.T) {
 	for _, tt := range tests {
 		got := modeltext.Hidden(tt.desc)
 		if got != tt.want {
-			t.Errorf("TagExcluded(%q, HiddenTags) = %v, want %v", tt.desc, got, tt.want)
+			t.Errorf("Hidden(%q) = %v, want %v", tt.desc, got, tt.want)
 		}
-	}
-}
-
-func TestStripCodeFence(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"no fence passthrough", "plain text\nmore lines", "plain text\nmore lines"},
-		{"fence with language tag", "```go\nfunc main() {}\n```", "func main() {}"},
-		{"fence without language tag", "```\nsome code\n```", "some code"},
-		{"fence with trailing whitespace", "```js\nlet x = 1;\n```  \n", "let x = 1;"},
-		{"bare triple backtick no newline", "```", "```"},
-		{"empty content between fences", "```\n\n```", ""},
-		{"multiline content", "```python\nimport os\nprint(os.getcwd())\n```", "import os\nprint(os.getcwd())"},
-		{"no trailing fence", "```go\nfunc main() {}", "func main() {}"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := modeltext.StripCodeFence(tt.input)
-			if got != tt.want {
-				t.Errorf("StripCodeFence(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseSteeringInclusion(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{"standard front-matter", "---\ninclusion: manual\ndescription: test\n---\n# Doc", "manual"},
-		{"always inclusion", "---\ninclusion: always\n---\n# Doc", "always"},
-		{"fileMatch inclusion", "---\ninclusion: fileMatch\nfileMatchPattern: \"**/*.go\"\n---\n# Doc", "fileMatch"},
-		{"no front-matter defaults to always", "# Just a heading\nSome content", "always"},
-		{"empty file defaults to always", "", "always"},
-		{"front-matter without inclusion defaults to always", "---\ndescription: no inclusion key\n---\n# Doc", "always"},
-		{"unclosed front-matter defaults to always", "---\ninclusion: manual\n# No closing fence", "always"},
-		{"inclusion with extra whitespace", "---\ninclusion:   manual  \n---\n# Doc", "manual"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseSteeringInclusion([]byte(tt.content))
-			if got != tt.want {
-				t.Errorf("parseSteeringInclusion() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseSteeringInclusion_NilData(t *testing.T) {
-	got := parseSteeringInclusion(nil)
-	if got != "always" {
-		t.Errorf("parseSteeringInclusion(nil) = %q, want %q", got, "always")
 	}
 }
 
@@ -346,106 +289,6 @@ func findSubstring(s, sub string) bool {
 		}
 	}
 	return false
-}
-
-func FuzzParseSteeringInclusion(f *testing.F) {
-	seeds := []string{
-		"---\ninclusion: manual\ndescription: test\n---\n# Doc",
-		"---\ninclusion: always\n---\n# Doc",
-		"---\ninclusion: fileMatch\nfileMatchPattern: \"**/*.go\"\n---\n# Doc",
-		"# Just a heading\nSome content",
-		"",
-		"---\ndescription: no inclusion key\n---\n# Doc",
-		"---\ninclusion: manual\n# No closing fence",
-		"---\ninclusion:   manual  \n---\n# Doc",
-		"---\n---\n",
-		"---\n\n---\n",
-		"---\n---",
-		string([]byte{0x00, 0x01, 0x02}),
-		"---\n" + strings.Repeat("a", 10000) + "\n---\n",
-	}
-	for _, s := range seeds {
-		f.Add(s)
-	}
-	f.Fuzz(func(t *testing.T, content string) {
-		_ = parseSteeringInclusion([]byte(content))
-	})
-}
-
-func BenchmarkScanKiroDirFS(b *testing.B) {
-	makeDocs := func(n int) fstest.MapFS {
-		m := fstest.MapFS{
-			"steering":  &fstest.MapFile{Mode: fs.ModeDir},
-			"skills":    &fstest.MapFile{Mode: fs.ModeDir},
-			"skills/s1": &fstest.MapFile{Mode: fs.ModeDir},
-			"agents":    &fstest.MapFile{Mode: fs.ModeDir},
-			"agents/a.md": &fstest.MapFile{
-				Data: []byte("---\ninclusion: always\n---\n# Agent"),
-			},
-		}
-		for i := range n {
-			// strconv.Itoa: a 26-letter suffix collided past 26 entries.
-			name := "steering/doc" + strconv.Itoa(i) + ".md"
-			m[name] = &fstest.MapFile{
-				Data: []byte("---\ninclusion: manual\ndescription: benchmark doc\n---\n# Heading\nContent here for realism.\n"),
-			}
-		}
-		return m
-	}
-
-	// The axis FLATTENS at maxSteeringPerDir (20): the 50 case measures the capped path.
-	for _, count := range []int{5, 20, 50} {
-		b.Run(strconv.Itoa(count)+"_docs", func(b *testing.B) {
-			m := makeDocs(count)
-			ctx := b.Context()
-			b.ReportAllocs()
-			for b.Loop() {
-				_ = scanKiroDirFS(ctx, m, "test/.kiro")
-			}
-		})
-	}
-}
-
-func FuzzScanKiroDirFS(f *testing.F) {
-	f.Add("normal.md", "other.md", "skill1")
-	f.Add("has-dash.md", "agent.md", "sk")
-	f.Add("", ".hidden.md", "")
-	f.Add("a.txt", "b.md", "dir")
-
-	f.Fuzz(func(t *testing.T, steeringName, agentName, skillName string) {
-		m := fstest.MapFS{
-			"steering": &fstest.MapFile{Mode: fs.ModeDir},
-			"agents":   &fstest.MapFile{Mode: fs.ModeDir},
-			"skills":   &fstest.MapFile{Mode: fs.ModeDir},
-		}
-		if steeringName != "" {
-			m["steering/"+steeringName] = &fstest.MapFile{
-				Data: []byte("---\ninclusion: always\n---\n# Doc"),
-			}
-		}
-		if agentName != "" {
-			m["agents/"+agentName] = &fstest.MapFile{
-				Data: []byte("# Agent"),
-			}
-		}
-		if skillName != "" {
-			m["skills/"+skillName] = &fstest.MapFile{Mode: fs.ModeDir}
-		}
-
-		items := scanKiroDirFS(t.Context(), m, "prefix/.kiro")
-
-		for _, item := range items {
-			if strings.Contains(item.Path, "\x00") {
-				t.Errorf("item.Path contains null byte: %q", item.Path)
-			}
-			if item.Type != "steering" && item.Type != "skill" && item.Type != "agent" {
-				t.Errorf("item.Type = %q, want steering|skill|agent", item.Type)
-			}
-			if item.Name == "" {
-				t.Errorf("item.Name is empty for path %q", item.Path)
-			}
-		}
-	})
 }
 
 // TestHandleHealth_envelopeMatchesTheLibrary pins the two wire properties shared with
@@ -622,51 +465,11 @@ func TestNotifyPermissionKeyIsUnreachable(t *testing.T) {
 	}
 }
 
-func hasKiroConfigItem(items []kiroConfigItem, typ, name string) bool {
-	for _, it := range items {
-		if it.Type == typ && it.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-// TestScanKiroDirFS_returnsAllSections pins an item from every section of one scan.
-func TestScanKiroDirFS_returnsAllSections(t *testing.T) {
-	mfs := fstest.MapFS{
-		"steering":            &fstest.MapFile{Mode: fs.ModeDir},
-		"steering/foo.md":     &fstest.MapFile{Data: []byte("---\ninclusion: manual\n---\n# Foo")},
-		"skills":              &fstest.MapFile{Mode: fs.ModeDir},
-		"skills/bar":          &fstest.MapFile{Mode: fs.ModeDir},
-		"skills/bar/SKILL.md": &fstest.MapFile{Data: []byte("# Bar")},
-		"agents":              &fstest.MapFile{Mode: fs.ModeDir},
-		"agents/baz.md":       &fstest.MapFile{Data: []byte("# Baz")},
-	}
-
-	items := scanKiroDirFS(t.Context(), mfs, "P/.kiro")
-
-	if !hasKiroConfigItem(items, "steering", "foo") {
-		t.Errorf("scanKiroDirFS missing steering item 'foo'; got %+v", items)
-	}
-	if !hasKiroConfigItem(items, "skill", "bar") {
-		t.Errorf("scanKiroDirFS missing skill item 'bar'; got %+v", items)
-	}
-	if !hasKiroConfigItem(items, "agent", "baz") {
-		t.Errorf("scanKiroDirFS missing agent item 'baz'; got %+v", items)
-	}
-}
-
 // The default is process-wide, so a test using it must not run in parallel.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return buf
 }
 

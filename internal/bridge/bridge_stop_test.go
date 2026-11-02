@@ -14,26 +14,25 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// A Start that fails before any process leaves no read loop, so Stop closes NotifCh and a forward loop still ends.
-func TestStop_ClosesTheStreamOfABridgeThatNeverStarted(t *testing.T) {
-	for name, opts := range map[string]*marotte.StartOpts{
+// A Start that fails before any process leaves no read loop, so Stop closes the engine lane and its consumer ends.
+func TestStop_ClosesTheStreamOfAnEngineThatNeverStarted(t *testing.T) {
+	for name, opts := range map[string]*marotte.EngineOpts{
 		"no kiro-cli installed":     {Lifetime: t.Context()},
-		"an invalid session id":     {Lifetime: t.Context(), SessionID: "not a session id"},
 		"no lifetime for the spawn": {},
 	} {
 		t.Run(name, func(t *testing.T) {
-			b := New("", t.TempDir())
+			b := NewEngine("", t.TempDir())
 			if err := b.Start(t.Context(), opts); err == nil {
 				t.Fatal("Setup: Start succeeded with no kiro-cli to run")
 			}
 			b.Stop()
 			select {
-			case _, open := <-b.NotifCh():
+			case _, open := <-b.EngineNotifCh():
 				if open {
-					t.Error("NotifCh delivered a frame from a bridge that never started")
+					t.Error("the engine lane delivered a frame from an engine that never started")
 				}
 			case <-time.After(time.Second):
-				t.Error("NotifCh is still open after Stop, so a consumer ranging over it never ends")
+				t.Error("the engine lane is still open after Stop, so a consumer ranging over it never ends")
 			}
 		})
 	}
@@ -44,11 +43,11 @@ type callAtResult struct {
 	seq uint64
 }
 
-func callAtAsync(t *testing.T, b *Bridge) <-chan callAtResult {
+func callAtAsync(t *testing.T, b *Engine) <-chan callAtResult {
 	t.Helper()
 	done := make(chan callAtResult, 1)
 	go func() {
-		_, seq, err := b.CallAt(t.Context(), marotte.MethodPrompt, map[string]any{})
+		_, seq, err := b.request(t.Context(), b.engineLane, "", marotte.MethodPrompt, map[string]any{}, nil, nil)
 		done <- callAtResult{err: err, seq: seq}
 	}()
 	return done
@@ -77,9 +76,11 @@ func TestCallAt_StopAfterTheWriteSettlesAtTheDeliveredPosition(t *testing.T) {
 		t.Fatalf("Setup: stdin pipe: %v", err)
 	}
 	t.Cleanup(func() { _ = outR.Close(); _ = inR.Close() })
-	b := New("/unused", "/work")
+	b := NewEngine("/unused", "/work")
 	b.stdout = newFrameReader(bufio.NewReaderSize(outR, stdoutBufSize))
 	b.stdin.Store(&stdinPipe{w: inW})
+	b.lifecycleCtx = t.Context()
+	b.readLoopStarted.Store(true)
 	go b.readLoop()
 	frame := `{"jsonrpc":"2.0","method":"session/update","params":{}}` + "\n"
 	if _, err := outW.WriteString(strings.Repeat(frame, 3)); err != nil {
@@ -87,18 +88,20 @@ func TestCallAt_StopAfterTheWriteSettlesAtTheDeliveredPosition(t *testing.T) {
 	}
 	for i := range 3 {
 		select {
-		case <-b.NotifCh():
+		case <-b.EngineNotifCh():
 		case <-time.After(2 * time.Second):
-			t.Fatalf("Setup: notification %d never reached NotifCh", i+1)
+			t.Fatalf("Setup: notification %d never reached the engine lane", i+1)
 		}
 	}
 
 	done := callAtAsync(t, b)
 	readFrame(t, inR)
-	b.Stop()
+	stopped := make(chan struct{})
+	go func() { b.Stop(); close(stopped) }()
 	// What the reap does to a live process: its stdout ends.
 	_ = outW.Close()
 	got := awaitCallAt(t, done)
+	<-stopped
 
 	if !errors.Is(got.err, marotte.ErrBridgeExited) {
 		t.Fatalf("CallAt written before Stop: error = %v, want ErrBridgeExited", got.err)
@@ -110,14 +113,14 @@ func TestCallAt_StopAfterTheWriteSettlesAtTheDeliveredPosition(t *testing.T) {
 
 // With no read loop to drain, Stop settles the written request itself, at the same position.
 func TestCallAt_StopWithNoReadLoopSettlesAtTheDeliveredPosition(t *testing.T) {
-	b := New("/unused", "/work")
+	b := NewEngine("/unused", "/work")
 	inR, inW, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("Setup: stdin pipe: %v", err)
 	}
 	t.Cleanup(func() { _ = inR.Close() })
 	b.stdin.Store(&stdinPipe{w: inW})
-	b.deliveredSeq = 3
+	b.engineLane.seq = 3
 
 	done := callAtAsync(t, b)
 	readFrame(t, inR)
@@ -134,9 +137,10 @@ func TestCallAt_StopWithNoReadLoopSettlesAtTheDeliveredPosition(t *testing.T) {
 
 // Once the read loop has failed its pending requests, nothing can settle a new one, so it is refused unwritten
 // rather than reported as written and lost.
-func TestCallAt_OnABridgeWhoseReadLoopExitedRefusesWithoutWriting(t *testing.T) {
-	b := New("/unused", "/work")
+func TestCallAt_OnAnEngineWhoseReadLoopExitedRefusesWithoutWriting(t *testing.T) {
+	b := NewEngine("/unused", "/work")
 	b.stdout = newFrameReader(bufio.NewReaderSize(strings.NewReader(""), stdoutBufSize))
+	b.readLoopStarted.Store(true)
 	b.readLoop()
 	b.Stop()
 	// A stdin that still takes bytes: the window before the reap closes it.
@@ -160,10 +164,11 @@ func TestCallAt_OnABridgeWhoseReadLoopExitedRefusesWithoutWriting(t *testing.T) 
 }
 
 // A response after the read loop exited would reach no agent, so it is refused unwritten and reported as the
-// bridge's exit.
-func TestRespond_OnABridgeWhoseReadLoopExitedRefusesWithoutWriting(t *testing.T) {
-	b := New("/unused", "/work")
+// engine's exit.
+func TestRespond_OnAnEngineWhoseReadLoopExitedRefusesWithoutWriting(t *testing.T) {
+	b := NewEngine("/unused", "/work")
 	b.stdout = newFrameReader(bufio.NewReaderSize(strings.NewReader(""), stdoutBufSize))
+	b.readLoopStarted.Store(true)
 	b.readLoop()
 	b.Stop()
 	// A stdin that still takes bytes: the window before the reap closes it.
@@ -189,7 +194,7 @@ func TestRespond_OnABridgeWhoseReadLoopExitedRefusesWithoutWriting(t *testing.T)
 // The exit drain waits out a response already being written, so a response is wholly written before the close or
 // refused after it, never reported written once the read loop is gone.
 func TestClosePending_WaitsOutAResponseBeingWritten(t *testing.T) {
-	b := New("/unused", "/work")
+	b := NewEngine("/unused", "/work")
 	inR, inW, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("Setup: stdin pipe: %v", err)
@@ -207,7 +212,7 @@ func TestClosePending_WaitsOutAResponseBeingWritten(t *testing.T) {
 	closed := make(chan struct{})
 	go func() { b.closePending(); close(closed) }()
 	deadline := time.Now().Add(10 * time.Second)
-	for !parkedOnMutexIn("(*Bridge).closePending") {
+	for !parkedOnMutexIn("(*Engine).closePending") {
 		select {
 		case <-closed:
 			t.Fatal("closePending returned while a response was mid-write, want it to wait for the write")
@@ -229,21 +234,22 @@ func TestClosePending_WaitsOutAResponseBeingWritten(t *testing.T) {
 // The response fence is published before the exit drain contends for the pending-request lock, so a response begun
 // after the read loop exited is refused unwritten even while that drain is blocked.
 func TestRespond_AfterReadLoopExitIsRefusedWhileTheDrainWaitsOnPendingRequests(t *testing.T) {
-	b := New("/unused", "/work")
+	b := NewEngine("/unused", "/work")
 	b.stdout = newFrameReader(bufio.NewReaderSize(strings.NewReader(""), stdoutBufSize))
 	inR, inW, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("Setup: stdin pipe: %v", err)
 	}
 	t.Cleanup(func() { _ = inR.Close(); _ = inW.Close() })
-	// The read loop's exit reaps the bridge; a stdin that reap cannot close leaves the fence the only refusal.
+	// The read loop's exit reaps the engine; a stdin that reap cannot close leaves the fence the only refusal.
 	b.stdin.Store(&stdinPipe{w: unclosableWriter{inW}})
+	b.readLoopStarted.Store(true)
 
 	b.pendingMu.Lock()
 	exited := make(chan struct{})
 	go func() { b.readLoop(); close(exited) }()
 	deadline := time.Now().Add(10 * time.Second)
-	for !parkedOnMutexIn("(*Bridge).closePending") {
+	for !parkedOnMutexIn("(*Engine).closePending") {
 		if time.Now().After(deadline) {
 			b.pendingMu.Unlock()
 			t.Fatal("Setup: the read loop's exit drain did not reach the held pending-request lock within 10s")
@@ -270,7 +276,7 @@ func TestRespond_AfterReadLoopExitIsRefusedWhileTheDrainWaitsOnPendingRequests(t
 // A request begun while the exit drain waits out an earlier response is refused unwritten: the fence closes every
 // outbound frame at once, so no request reaches a stdin the read loop no longer answers.
 func TestCallAt_DuringTheExitDrainsWaitOnAResponseIsRefusedWithoutWriting(t *testing.T) {
-	b := New("/unused", "/work")
+	b := NewEngine("/unused", "/work")
 	inR, inW, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("Setup: stdin pipe: %v", err)
@@ -285,10 +291,10 @@ func TestCallAt_DuringTheExitDrainsWaitOnAResponseIsRefusedWithoutWriting(t *tes
 	}
 	closed := make(chan struct{})
 	go func() { b.closePending(); close(closed) }()
-	awaitParkedOnMutex(t, "(*Bridge).closePending")
+	awaitParkedOnMutex(t, "(*Engine).closePending")
 
 	called := callAtAsync(t, b)
-	awaitParkedOnMutex(t, "(*Bridge).CallAt")
+	awaitParkedOnMutex(t, "(*Engine).request")
 	var wrote bytes.Buffer
 	copied := make(chan error, 1)
 	go func() { _, cErr := io.Copy(&wrote, inR); copied <- cErr }()

@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 func newRoutedStore(t *testing.T) (*Store, *http.ServeMux) {
@@ -613,5 +613,33 @@ func TestNameConflictStillRoutesTo409(t *testing.T) {
 	rec := doJSON(t, mux, http.MethodPost, "/api/mcp", body)
 	if rec.Code != http.StatusConflict {
 		t.Errorf("duplicate-name create status = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPatchOne_UnchangedFlagReRendersADriftedFile(t *testing.T) {
+	s, mux := newRoutedStore(t)
+	created, err := s.Create(t.Context(), &Server{
+		Transport: TransportStdio, Name: "agent-mail", Command: "bash", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := os.WriteFile(s.kasPath, []byte(`{"mcpServers": {}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	record, err := os.ReadFile(s.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doJSON(t, mux, http.MethodPatch, "/api/mcp/"+string(created.ID), map[string]bool{"enabled": true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d, body %s; want 200", rec.Code, rec.Body)
+	}
+	if _, ok := readKASServers(t, s.kasPath)["agent-mail"]; !ok {
+		t.Error("PATCH with the unchanged flag left agent-mail missing from KAS's file")
+	}
+	if after, _ := os.ReadFile(s.path); !bytes.Equal(record, after) {
+		t.Errorf("PATCH with the unchanged flag rewrote the record:\n%s\nto\n%s", record, after)
 	}
 }

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// TestEnsureCodeIntelligence_Guards pins the three no-op paths; reaching the utility session
+// TestEnsureCodeIntelligence_Guards pins the three no-op paths; reaching an observer pass
 // would fail or hang, so returning cleanly is the assertion.
 func TestEnsureCodeIntelligence_Guards(t *testing.T) {
 	dir := t.TempDir()
@@ -50,7 +50,9 @@ func TestEnsureCodeIntelligence_Guards(t *testing.T) {
 // firing too wide silently disables code intelligence.
 func TestEnsureCodeIntelligence_WiredAndUnconfiguredRunsTheInit(t *testing.T) {
 	logs := captureLogs(t)
-	h, _, br := newTestHub()
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br := oneObserver(t, h)
 	br.callResults = map[string]json.RawMessage{
 		methodKiroCodeIntel: json.RawMessage(`{"success":true,"message":"started go, typescript"}`),
 	}

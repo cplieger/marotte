@@ -4,11 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 type fakeCLIRunner struct {
@@ -240,6 +246,78 @@ func TestExecCLIRunner_RunStdoutCapped_LogsCapturedStderr(t *testing.T) {
 			t.Errorf("a run with no stderr logged a capture:\n%s", logs.String())
 		}
 	})
+}
+
+// TestExecCLIRunner_DeadlineKillsTheWholeGroup: `settings` forks kiro-cli-chat, so the fake CLI
+// forks a child that holds the output pipe; the deadline must end the call and the child.
+func TestExecCLIRunner_DeadlineKillsTheWholeGroup(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	r := &execCLIRunner{cliPath: func() string { return sh }}
+	const deadline = 200 * time.Millisecond
+	cases := map[string]func(ctx context.Context, script string) error{
+		"Run": func(ctx context.Context, script string) error {
+			_, err := r.Run(ctx, "-c", script)
+			return err
+		},
+		"RunStdoutCapped": func(ctx context.Context, script string) error {
+			_, _, err := r.RunStdoutCapped(ctx, 1024, "-c", script)
+			return err
+		},
+	}
+	for name, call := range cases {
+		t.Run(name, func(t *testing.T) {
+			pidFile := filepath.Join(t.TempDir(), "child.pid")
+			ctx, cancel := context.WithTimeout(t.Context(), deadline)
+			defer cancel()
+			start := time.Now()
+			err := call(ctx, `sleep 30 &
+echo $! > "`+pidFile+`"
+sleep 30`)
+			elapsed := time.Since(start)
+			child := readChildPID(t, pidFile)
+			t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+			if err == nil {
+				t.Error("a call past its deadline returned nil")
+			}
+			if limit := deadline + cliWaitDelay + time.Second; elapsed > limit {
+				t.Errorf("the call returned after %s, want under %s: the forked child held the pipe", elapsed, limit)
+			}
+			gone := time.Now().Add(2 * time.Second)
+			for processAlive(child) {
+				if !time.Now().Before(gone) {
+					t.Fatalf("the forked child %d outlived the deadline", child)
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		})
+	}
+}
+
+func readChildPID(t *testing.T, path string) int {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the fake CLI never recorded its child: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatalf("parse child pid %q: %v", raw, err)
+	}
+	return pid
+}
+
+// processAlive treats a zombie as dead: an orphan waits on PID 1 to reap it.
+func processAlive(pid int) bool {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	s := string(b)
+	i := strings.LastIndexByte(s, ')')
+	return i < 0 || i+2 >= len(s) || s[i+2] != 'Z'
 }
 
 func TestHandleVersion_NamesTheConfigDir(t *testing.T) {

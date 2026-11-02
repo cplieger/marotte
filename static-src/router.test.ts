@@ -247,6 +247,19 @@ describe("navigationOrigin", () => {
     expect(navigationOrigin()).toBe("restore");
   });
 
+  it("reads a tab the browser discarded and reloaded as a restore, whatever the navigation type", () => {
+    // A discarded tab comes back on its last URL: a deep link here would re-open a chat closed elsewhere.
+    expect.assertions(1);
+    reports("navigate");
+    Object.defineProperty(document, "wasDiscarded", { value: true, configurable: true });
+
+    try {
+      expect(navigationOrigin()).toBe("restore");
+    } finally {
+      Reflect.deleteProperty(document, "wasDiscarded");
+    }
+  });
+
   it("reads a deliberate navigation as a deep link", () => {
     expect.assertions(1);
     reports("navigate");

@@ -34,8 +34,7 @@ function radiusOf(el: Element): number {
 }
 
 describe("the three menu surfaces derive one corner from one shape", () => {
-  // All three are a 1px border with a --sp-1 list inset, so one derivation serves them. It also
-  // closes the pair the user named, since the composer is --r-lg and the top-right menu was --r.
+  // All three are a 1px border with a --sp-1 list inset, so one derivation serves them.
   it.each([
     ["popup", "popup-list", "popup-item"],
     ["tab-context-menu", "", "tab-context-item"],

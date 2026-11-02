@@ -22,7 +22,7 @@ import (
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/workflow"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // handleRun serves GET /api/runs/{workflowId}: the run's full state. It grades a failed read three ways,
@@ -37,18 +37,21 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	raw, err := rr.runs.rawInspect(r.Context(), id)
+	read, err := rr.runs.positionedRead(r.Context(), id)
 	if err != nil {
 		writeInspectErr(w, id, err)
 		return
 	}
-	// A run parked on a person with no ask here gets one reconstructed (the restart path); the response stays
-	// verbatim and the ask travels on `run_input_needed`.
-	rr.runs.reconcileNeedInput(r.Context(), id, raw)
+	raw := read.raw
+	position, err := read.position()
+	if err != nil {
+		slog.Warn("workflow inspect: the run's read position could not be computed",
+			"workflow_id", logsafe.Field(id), "error", err)
+	}
 	var ends map[string]marotte.RunStepEnd
 	var starts map[string]marotte.RunStepStart
 	if rr.runs.log != nil {
-		ends, err = rr.runs.log.stepEnds(r.Context(), id)
+		ends, err = rr.runs.log.stepEnds(r.Context(), id, kasSteps(read.in))
 		if err != nil {
 			slog.Warn("workflow inspect: the run log's step ends could not be read",
 				"workflow_id", logsafe.Field(id), "error", err)
@@ -59,12 +62,14 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 				"workflow_id", logsafe.Field(id), "error", err)
 		}
 	}
-	// After the reconcile, which mints the restart-recovered ask.
-	var plan *marotte.RunPlanUpdate
-	if u, ok := rr.runs.planUpdate(id); ok {
-		plan = &u
+	pending := -1
+	if read.in.OK {
+		pending = read.in.Pending
 	}
-	out, err := withRunExtras(raw, rr.runs.asks.snapshotRun(id), ends, starts, plan)
+	plan := rr.runs.servedPlan(id, pending)
+	out, err := withRunExtras(raw, runExtras{
+		asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan, readPosition: position,
+	})
 	if err != nil {
 		slog.Warn("workflow inspect: the reply could not carry the run's open asks, step ends, step starts and plan update",
 			"workflow_id", logsafe.Field(id), "error", err)
@@ -97,19 +102,118 @@ func writeInspectErr(w http.ResponseWriter, id string, err error) {
 	httpreply.NotFound(w, "workflow run not found")
 }
 
+// runRead is GET /api/runs/{id}'s reads: the run's state as KAS sent it and as decoded (inErr says
+// why it did not decode), and its asks with whether they were read.
+type runRead struct {
+	inErr     error
+	raw       json.RawMessage
+	asks      []marotte.RunAsk
+	in        workflow.Inspect
+	reachable bool
+}
+
+// openRun reads a leased run's state and asks together, from one engine read, so one reply can never pair a step
+// paused on its question with no asks. An unleased run (a TUI launch) has no cell, so its asks are none, read only
+// when the run is over.
+func (rs *Runs) openRun(ctx context.Context, workflowID string) (runRead, error) {
+	c := rs.cellFor(workflowID)
+	if c == nil {
+		raw, err := rs.rawInspect(ctx, workflowID)
+		if err != nil {
+			return runRead{}, err
+		}
+		in, dErr := workflow.DecodeInspect(workflowID, raw)
+		return runRead{
+			raw: raw, in: in, inErr: dErr, reachable: dErr == nil && marotte.RunStatus(in.State.Status).Terminal(),
+		}, nil
+	}
+	r, err := rs.readAsks(ctx, c)
+	switch {
+	case err == nil:
+		return runRead{raw: r.raw, in: r.in, asks: wireAsks(r.asks), reachable: true}, nil
+	case r.raw != nil:
+		// The engine answered something this build cannot read: the state goes out as KAS gave it.
+		return runRead{raw: r.raw, inErr: err, asks: rs.lastAsks(c), reachable: false}, nil
+	}
+	return runRead{}, err
+}
+
+func (rs *Runs) lastAsks(c *askCell) []marotte.RunAsk {
+	rs.asks.mu.Lock()
+	defer rs.asks.mu.Unlock()
+	return c.last.Asks
+}
+
+// runExtras are marotte's top-level keys on GET /api/runs/{id}.
+type runExtras struct {
+	ends          map[string]marotte.RunStepEnd
+	starts        map[string]marotte.RunStepStart
+	plan          *marotte.RunPlanUpdate
+	asks          []marotte.RunAsk
+	readPosition  uint64
+	asksReachable bool
+}
+
+// runReadPosition is a run's read position: the turns its own log holds plus one once KAS reports
+// it terminal, else 0. The plus one gives a run that settled with no step turn a position, so it
+// lights once; a retry's step turns raise it, so a retried run lights again when it settles.
+func runReadPosition(status marotte.RunStatus, turns uint64) uint64 {
+	if !status.Terminal() {
+		return 0
+	}
+	return turns + 1
+}
+
+// positionedRead is a run read with its log's turn count, taken BEFORE the state: a retry's step
+// turn opened after a terminal state was read cannot pair with that state into a position no reply
+// describes.
+type positionedRead struct {
+	turnsErr error
+	runRead
+	turns uint64
+}
+
+func (rs *Runs) positionedRead(ctx context.Context, workflowID string) (positionedRead, error) {
+	var p positionedRead
+	if rs.log != nil {
+		p.turns, p.turnsErr = rs.log.turnHighWater(ctx, workflowID)
+	}
+	read, err := rs.openRun(ctx, workflowID)
+	p.runRead = read
+	return p, err
+}
+
+// position is the read's runReadPosition; an unreadable state or turn count is an error.
+func (p *positionedRead) position() (uint64, error) {
+	if err := errors.Join(p.inErr, p.turnsErr); err != nil {
+		return 0, err
+	}
+	return runReadPosition(marotte.RunStatus(p.in.State.Status), p.turns), nil
+}
+
+// RunReadBound is the run's read position now, read as GET /api/runs/{id} reads it: the clamp for an
+// acknowledgement (command.runOwner). It errors when the run's state or log cannot be read.
+func (rs *Runs) RunReadBound(ctx context.Context, workflowID string) (uint64, error) {
+	read, err := rs.positionedRead(ctx, workflowID)
+	if err != nil {
+		return 0, err
+	}
+	return read.position()
+}
+
 // withRunExtras splices marotte's top-level keys into KAS's reply, decoding to raw values so future
 // keys survive and nested values stay byte-identical: `open_asks`, `step_ends` and `step_starts`, never
-// null because an agent could not tell "none" from "unsupported", and `plan_update` when a revision was seen.
-func withRunExtras(
-	raw json.RawMessage, asks []marotte.RunOpenAsk, ends map[string]marotte.RunStepEnd,
-	starts map[string]marotte.RunStepStart, plan *marotte.RunPlanUpdate,
-) (json.RawMessage, error) {
+// null because an agent could not tell "none" from "unsupported", `asks_reachable`, false when
+// `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), and
+// `plan_update` when servedPlan answers one.
+func withRunExtras(raw json.RawMessage, x runExtras) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, err
 	}
+	asks, ends, starts, plan := x.asks, x.ends, x.starts, x.plan
 	if asks == nil {
-		asks = []marotte.RunOpenAsk{}
+		asks = []marotte.RunAsk{}
 	}
 	if ends == nil {
 		ends = map[string]marotte.RunStepEnd{}
@@ -133,8 +237,14 @@ func withRunExtras(
 		obj = make(map[string]json.RawMessage, 4)
 	}
 	obj["open_asks"] = encodedAsks
+	if obj["asks_reachable"], err = json.Marshal(x.asksReachable); err != nil {
+		return nil, err
+	}
 	obj["step_ends"] = encodedEnds
 	obj["step_starts"] = encodedStarts
+	if obj["read_position"], err = json.Marshal(x.readPosition); err != nil {
+		return nil, err
+	}
 	if plan != nil {
 		if obj["plan_update"], err = json.Marshal(plan); err != nil {
 			return nil, err
@@ -327,8 +437,15 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.DecodeJSON(w, r, &req) {
 		return
 	}
-	id, name, err := rr.runs.launch(r.Context(), req.Source, req.Inputs)
+	defaults := marotte.RunDefaults{Model: req.Model, Effort: req.Effort}
+	if err := rr.runs.checkRunDefaults(r.Context(), defaults); writeDefaultsErr(w, err) {
+		return
+	}
+	id, name, err := rr.runs.launch(r.Context(), req.Source, req.Inputs, defaults)
 	if err != nil {
+		if writeStatusErr(w, err) {
+			return
+		}
 		if errors.Is(err, errRecipeBusy) {
 			httpreply.Conflict(w, errRecipeBusy.Error())
 			return
@@ -400,7 +517,7 @@ func (rr *runRoutes) handleExtend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rr.writeRepeatResult(w, verbExtend, id,
-		rr.runs.extendRepeat(r.Context(), id, body.NodeID, body.Iterations))
+		rr.runs.extendRepeat(r.Context(), id, body.NodeID, body.Iterations, callerOf(r)))
 }
 
 func (rr *runRoutes) handleFinishLoop(w http.ResponseWriter, r *http.Request) {
@@ -423,7 +540,7 @@ func (rr *runRoutes) handleFinishLoop(w http.ResponseWriter, r *http.Request) {
 	rr.writeRepeatResult(w, verbFinishLoop, id, rr.runs.finishRepeat(r.Context(), id, body.NodeID))
 }
 
-// writeRepeatResult answers the repeat verbs: failed spawn 500, an {updated:false} decline 409 with KAS's reason.
+// writeRepeatResult answers the repeat verbs: failed host session 500, an {updated:false} decline 409 with KAS's reason.
 func (rr *runRoutes) writeRepeatResult(w http.ResponseWriter, verb, id string, err error) {
 	switch {
 	case err == nil:
@@ -477,45 +594,6 @@ func (rr *runRoutes) handleDelete(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbDelete)
 }
 
-// handleStepStatus serves POST /api/runs/{id}/step: mark a step completed, failed or running. Its own handler: it has a body.
-func (rr *runRoutes) handleStepStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
-	id := r.PathValue("id")
-	if id == "" {
-		httpreply.BadRequest(w, "missing workflow id")
-		return
-	}
-	var body struct {
-		NodeID string `json:"node_id"`
-		Status string `json:"status"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpreply.BadRequest(w, "invalid step-status payload")
-		return
-	}
-	// errRunHostStart is a server fault (500), errStepStatusRefused and errLaunchSessionUnavailable are run states (409), anything else 400.
-	err := rr.runs.setStepStatus(r.Context(), id, body.NodeID, body.Status)
-	switch {
-	case err == nil:
-		webhttp.Ok(w)
-	case errors.Is(err, errRunNotListed):
-		httpreply.NotFound(w, errRunNotListed.Error())
-	case errors.Is(err, errLaunchSessionUnavailable):
-		httpreply.Conflict(w, launchSessionUnavailableText)
-	case errors.Is(err, errRunHostStart):
-		slog.Warn("run step status: could not host the run", "workflow_id", logsafe.Field(id),
-			"node_id", logsafe.Field(body.NodeID), "error", err)
-		httpreply.InternalError(w, errors.New("step status update failed"))
-	case errors.Is(err, errStepStatusRefused):
-		httpreply.Conflict(w, rpcerr.Text(err))
-	default:
-		httpreply.BadRequest(w, rpcerr.Text(err))
-	}
-}
-
 // REST: a parentless run's ask has no chat id.
 func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -535,24 +613,19 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		webhttp.Ok(w)
-	case errors.Is(err, errAskAlreadySettled):
-		// Another surface got there first.
-		httpreply.Conflict(w, err.Error())
+	case writeStatusErr(w, err):
 	case errors.Is(err, errStepUnrecorded):
 		// placeStepMessage logged the fault.
 		httpreply.ServerError(w, errStepUnrecorded.Error(), nil)
 	case errors.Is(err, errStepUnconfirmed):
 		// sendStepWords logged the fault.
 		httpreply.ServerError(w, errStepUnconfirmed.Error(), nil)
-	case errors.Is(err, errRunNotParked):
-		// The retryable refusal: the card is back, so the 409 carries the retry sentence.
-		httpreply.Conflict(w, err.Error())
 	case errors.Is(err, errRunNotListed):
 		httpreply.NotFound(w, errRunNotListed.Error())
 	case errors.Is(err, errLaunchSessionUnavailable):
 		httpreply.Conflict(w, launchSessionUnavailableText)
 	case errors.Is(err, errRunHostStart):
-		// A failed spawn is this server's fault.
+		// A failed host session is this server's fault.
 		slog.Warn("run answer: could not host the run", "workflow_id", logsafe.Field(id),
 			"ask_id", logsafe.Field(body.AskID), "error", err)
 		httpreply.InternalError(w, errors.New("answer failed"))
@@ -579,7 +652,7 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 		if !httpreply.DecodeJSON(w, r, &body) {
 			return
 		}
-		out, err := rr.runs.messageStep(r.Context(), id, nodePath, body.Text, body.MessageID)
+		out, err := rr.runs.messageStep(r.Context(), id, nodePath, body.Text, body.MessageID, body.AskID)
 		if err != nil {
 			rr.writeStepErr(w, "message", id, nodePath, err)
 			return
@@ -607,15 +680,25 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// A refusal keeps its status and reason; a failed read or re-host is graded as the run verbs grade it.
+// writeStatusErr answers an error that names its own status, with its machine reason as `code`,
+// reporting whether it did.
+func writeStatusErr(w http.ResponseWriter, err error) bool {
+	status, reason, ok := command.StatusOf(err)
+	if !ok {
+		return false
+	}
+	body := httpreply.ErrorJSON(rpcerr.Text(err))
+	if reason != "" {
+		// `code`, the key a REST client's error reads its machine reason from.
+		body = httpreply.ErrorJSONWithCode(rpcerr.Text(err), reason)
+	}
+	webhttp.WriteJSONStatus(w, status, body)
+	return true
+}
+
+// A refusal keeps its status and reason; a failed read or host load is graded as the run verbs grade it.
 func (rr *runRoutes) writeStepErr(w http.ResponseWriter, verb, id, nodePath string, err error) {
-	if status, reason, ok := command.StatusOf(err); ok {
-		body := httpreply.ErrorJSON(rpcerr.Text(err))
-		if reason != "" {
-			// `code`, the key a REST client's error reads its machine reason from.
-			body = httpreply.ErrorJSONWithCode(rpcerr.Text(err), reason)
-		}
-		webhttp.WriteJSONStatus(w, status, body)
+	if writeStatusErr(w, err) {
 		return
 	}
 	switch {
@@ -623,8 +706,6 @@ func (rr *runRoutes) writeStepErr(w http.ResponseWriter, verb, id, nodePath stri
 		httpreply.NotFound(w, errStepUnknown.Error())
 	case errors.Is(err, errStepUnreadable):
 		writeInspectErr(w, id, err)
-	case errors.Is(err, errAskAlreadySettled), errors.Is(err, errRunNotParked):
-		httpreply.Conflict(w, err.Error())
 	case errors.Is(err, errStepUnrecorded):
 		// placeStepMessage logged the fault.
 		httpreply.ServerError(w, errStepUnrecorded.Error(), nil)
@@ -640,7 +721,7 @@ func (rr *runRoutes) writeStepErr(w http.ResponseWriter, verb, id, nodePath stri
 // KAS refuses with -32603 throws; it is one trip stale.
 type runVerb struct {
 	name  string
-	issue func(*Runs, context.Context, string) error
+	issue func(*Runs, context.Context, string, controlCaller) error
 	// method is explicit on every verb.
 	method string
 	// from lists legal statuses; empty is unrestricted.
@@ -668,11 +749,18 @@ var (
 	}
 	// Unrestricted, and the only way a row leaves History.
 	runVerbDelete = runVerb{
-		name:   verbDelete,
-		issue:  (*Runs).delete,
+		name: verbDelete,
+		issue: func(rs *Runs, ctx context.Context, id string, _ controlCaller) error {
+			return rs.delete(ctx, id)
+		},
 		method: http.MethodDelete,
 	}
 )
+
+// verbUnavailableText refuses verb for a run in status.
+func verbUnavailableText(verb, status string) string {
+	return verb + " is not available for a " + status + " run"
+}
 
 // verbDelete is the History row's delete, kept out of run_affordance.go's table since it is never drawn as a control.
 const verbDelete = "delete"
@@ -702,7 +790,7 @@ func (rr *runRoutes) permits(
 		httpreply.Conflict(w, sentence)
 		return aff, false
 	}
-	httpreply.Conflict(w, verb+" is not available for a "+status+" run")
+	httpreply.Conflict(w, verbUnavailableText(verb, status))
 	return aff, false
 }
 
@@ -715,8 +803,9 @@ const deleteUnconfirmedText = "The delete was sent, but its answer was lost. " +
 // InternalError is for faults that are not the reader's.
 func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err error) {
 	switch {
+	case writeStatusErr(w, err):
 	case errors.Is(err, errRunHostStart):
-		// First: a re-host KAS refused wraps an *RPCError under this sentinel.
+		// First: a host load KAS refused wraps an *RPCError under this sentinel.
 		slog.Warn("run control failed",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
 		httpreply.InternalError(w, errors.New(verb+" failed"))
@@ -727,8 +816,8 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		slog.Info("run control unavailable: the run's launching session cannot be opened here",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
 		httpreply.Conflict(w, launchSessionUnavailableText)
-	case errors.Is(err, errRetryEngineSlow):
-		slog.Warn("run control timed out starting an engine", "verb", verb, "workflow_id", logsafe.Field(id))
+	case errors.Is(err, errRetrySlow):
+		slog.Warn("run control timed out loading the run's session", "verb", verb, "workflow_id", logsafe.Field(id))
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
 	case errors.Is(err, errRunDeleting):
 		httpreply.Conflict(w, "This run is already being deleted.")
@@ -743,7 +832,8 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON(errRetryOutcomeUnreadable.Error()))
 	case errors.Is(err, workflow.ErrJustClaimed):
-		// KAS says "another process", but usually it is a second verb on this carrier (the host lock is not held across the RPC).
+		// KAS says "another process", but on one engine it queues a second claim and refuses only once the holder
+		// overstayed its 30 s claim TTL (kiro-cli 2.31.0 takeLocalClaimTurn).
 		slog.Info("run control refused: another claim on the run is in flight",
 			"verb", verb, "workflow_id", logsafe.Field(id), "detail", rpcerr.Details(err))
 		httpreply.Conflict(w, runClaimInFlightText)
@@ -763,6 +853,17 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 func isRPCRefusal(err error) bool {
 	_, ok := errors.AsType[*marotte.RPCError](err)
 	return ok
+}
+
+// callerOf is who sent r. A browser sends Sec-Fetch-Site only to a potentially trustworthy URL
+// (https://www.w3.org/TR/fetch-metadata/), so a plain-HTTP LAN origin gets none, but it sends Origin on every non-GET
+// fetch (https://fetch.spec.whatwg.org/#origin-header), and curl sends neither. This is attribution, not access
+// control: a caller that forges either header changes only how the run words its control.
+func callerOf(r *http.Request) controlCaller {
+	if r.Header.Get("Sec-Fetch-Site") == "" && r.Header.Get("Origin") == "" {
+		return callerAPI
+	}
+	return callerPage
 }
 
 func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb runVerb) {
@@ -788,11 +889,11 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 			return
 		}
 		if !slices.Contains(verb.from, marotte.RunStatus(status)) {
-			httpreply.Conflict(w, verb.name+" is not available for a "+status+" run")
+			httpreply.Conflict(w, verbUnavailableText(verb.name, status))
 			return
 		}
 	}
-	if err := verb.issue(rr.runs, r.Context(), id); err != nil {
+	if err := verb.issue(rr.runs, r.Context(), id, callerOf(r)); err != nil {
 		rr.writeControlErr(w, verb.name, id, err)
 		return
 	}

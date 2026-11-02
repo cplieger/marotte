@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -19,7 +21,7 @@ import (
 type stepSteerTarget struct {
 	workflowID string
 	nodePath   string
-	// host is the chat whose bridge carries the run: the launching chat, or `run:<id>`.
+	// host is the chat whose session carries the run: the launching chat, or `run:<id>`.
 	host marotte.ChatID
 }
 
@@ -27,26 +29,32 @@ type stepSteerTarget struct {
 //
 // gate orders a step message's transition against the step's turn ends: the verb decision and its
 // delivery, every step `_session/steer` and every step steering turn end take it, so nothing decided
-// before an end reaches KAS after it. Its holders never wait on a carrier's read loop or a steer op
+// before an end reaches KAS after it. Its holders never wait on a host session's read loop or a steer op
 // lock, because the ends run on that read loop.
 type stepSteers struct {
 	recs    *steerRecords
 	queue   steerQueue
 	ledger  command.SteerRecorder
 	targets map[string]stepSteerTarget
-	gate    runLocks
-	mu      sync.Mutex
+	// engine carries every steer as an engine call naming the step's session.
+	engine *engineOwner
+	// retiredCh closes at the next target retirement; nil until retired asks for it.
+	retiredCh chan struct{}
+	gate      *keylock.Set[string]
+	mu        sync.Mutex
 }
 
 func newStepSteers(recs *steerRecords, ledger command.SteerRecorder) *stepSteers {
-	return &stepSteers{recs: recs, ledger: ledger, targets: make(map[string]stepSteerTarget)}
+	return &stepSteers{
+		recs: recs, ledger: ledger, targets: make(map[string]stepSteerTarget), gate: keylock.New(cmp.Compare[string]),
+	}
 }
 
 func (s *stepSteers) lock(ctx context.Context, workflowID string) (unlock func(), err error) {
 	if s == nil {
 		return func() {}, nil
 	}
-	return s.gate.acquire(ctx, workflowID)
+	return s.gate.Lock(ctx, workflowID)
 }
 
 func (s *stepSteers) target(key marotte.ChatID) (stepSteerTarget, bool) {
@@ -127,8 +135,25 @@ func (s *stepSteers) endLocked(workflowID, nodePath string, forget bool) {
 		s.recs.forgetStep(key)
 		s.mu.Lock()
 		delete(s.targets, session)
+		if s.retiredCh != nil {
+			close(s.retiredCh)
+			s.retiredCh = nil
+		}
 		s.mu.Unlock()
 	}
+}
+
+// retired closes at the next target's retirement, any step's; nil (never ready) on a nil *stepSteers.
+func (s *stepSteers) retired() <-chan struct{} {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.retiredCh == nil {
+		s.retiredCh = make(chan struct{})
+	}
+	return s.retiredCh
 }
 
 func (rs *Runs) noteStepSteer(ctx context.Context, key marotte.ChatID, steerID string, steer *marotte.EntrySteer) {
@@ -151,30 +176,34 @@ func (s *stepSteers) event(key marotte.ChatID, p *marotte.SteerQueuedPayload) (m
 }
 
 // steerTarget addresses a step's steers. Its lease is the run's admission of the whole operation, so
-// a step's session is mutated only by a caller holding one.
-func (s *stepSteers) steerTarget(_ runLease, carrier acpSessionCaller, session string) command.SteerTarget {
+// a step's session is mutated only by a caller holding one; a admits its steers (admitRunWork), and a zero a sends
+// none. The steer is an engine call naming the step's session.
+func (s *stepSteers) steerTarget(_ runLease, a runAdmission, session string) command.SteerTarget {
 	t := command.SteerTarget{Queue: s.queue, Ledger: s.ledger, Key: marotte.StepSteerKey(session)}
-	if carrier != nil {
-		t.Caller = stepCaller{carrier: carrier, steers: s, session: marotte.SessionID(session)}
+	if s.engine != nil {
+		t.Caller = stepCaller{
+			via: engineCaller{o: s.engine}, steers: s, session: marotte.SessionID(session), admission: a,
+		}
 	}
 	return t
 }
 
 var errStepSteerEnded = errors.New("the step's turn ended before the message was sent")
 
-// Every step session is resident on its run's carrier. A `_session/steer` goes out under the run's gate,
-// and only while the step's steering turn is bound.
+// A `_session/steer` goes out only while the step's steering turn is bound, carrying admission to the engine's
+// run-work guard (guardRunWork).
 type stepCaller struct {
-	carrier acpSessionCaller
-	steers  *stepSteers
-	session marotte.SessionID
+	via       engineCaller
+	steers    *stepSteers
+	admission runAdmission
+	session   marotte.SessionID
 }
 
 var _ command.SessionCaller = stepCaller{}
 
 func (c stepCaller) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
 	if method != marotte.MethodSessionSteer {
-		return c.carrier.Call(ctx, method, params)
+		return c.via.Call(ctx, method, params)
 	}
 	key := marotte.StepSteerKey(string(c.session))
 	t, ok := c.steers.target(key)
@@ -189,11 +218,11 @@ func (c stepCaller) Call(ctx context.Context, method string, params any) (*marot
 	if !c.steers.recs.stepOpen(key) {
 		return nil, errStepSteerEnded
 	}
-	return c.carrier.Call(ctx, method, params)
+	return c.via.Call(c.admission.bind(ctx), method, params)
 }
 
 func (c stepCaller) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
-	return c.carrier.CallAt(ctx, method, params)
+	return c.via.CallAt(ctx, method, params)
 }
 
 func (c stepCaller) SessionID() marotte.SessionID { return c.session }
@@ -224,10 +253,11 @@ func (rs *Runs) RunSteer(ctx context.Context, runID, nodePath, steerID string, s
 	}
 }
 
-// RunSteerDelivered files a workflow message's take-up in the path's open run turn, else after its newest closed turn.
-func (rs *Runs) RunSteerDelivered(ctx context.Context, runID, nodePath string, d *marotte.EntrySteerDelivered) {
+// RunSteerDelivered files a workflow message's take-up in the path's open run turn, else after its newest closed
+// turn, and reports whether it landed.
+func (rs *Runs) RunSteerDelivered(ctx context.Context, runID, nodePath string, d *marotte.EntrySteerDelivered) bool {
 	if rs.log == nil {
-		return
+		return false
 	}
 	ctx = durable.Context(ctx)
 	if t := rs.log.turn(runID, nodePath); t != nil {
@@ -237,22 +267,53 @@ func (rs *Runs) RunSteerDelivered(ctx context.Context, runID, nodePath string, d
 			slog.Error("run log: a workflow message's take-up was not recorded in its turn",
 				"run", runID, "node_path", nodePath, "steer", d.SteerID, "error", err)
 		}
-		return
+		return err == nil
 	}
 	raw, err := json.Marshal(d)
 	if err != nil {
-		return
+		return false
 	}
 	e := &marotte.Entry{Kind: marotte.EntryKindSteerDelivered, ID: marotte.SteerDeliveredID(d.SteerID), Payload: raw}
 	if err := rs.RunAppendAfterClosed(ctx, runID, nodePath, e); err != nil {
 		slog.Error("run log: a workflow message's take-up has no turn to land in",
 			"run", runID, "node_path", nodePath, "steer", d.SteerID, "error", err)
+		return false
 	}
+	return true
 }
 
-// RunWaitingWorkflowMessages answers the run log's workflow messages no take-up has settled, oldest
+// RunSteerCleared files a step's steering clear under clearID in the path's open run turn, else
+// after its newest closed turn, and reports whether it landed.
+func (rs *Runs) RunSteerCleared(ctx context.Context, runID, nodePath, clearID string, c *marotte.EntrySteerCleared) bool {
+	if rs.log == nil {
+		return false
+	}
+	ctx = durable.Context(ctx)
+	if t := rs.log.turn(runID, nodePath); t != nil {
+		sealed, err := t.SteerCleared(ctx, clearID, c)
+		translate.PublishSealed(ctx, rs.bus, "", runID, sealed)
+		if err != nil {
+			slog.Error("run log: a step's steering clear was not recorded in its turn",
+				"run", runID, "node_path", nodePath, "clear", clearID, "error", err)
+		}
+		return err == nil
+	}
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return false
+	}
+	e := &marotte.Entry{Kind: marotte.EntryKindSteerCleared, ID: clearID, Payload: raw}
+	if err := rs.RunAppendAfterClosed(ctx, runID, nodePath, e); err != nil {
+		slog.Error("run log: a step's steering clear has no turn to land in",
+			"run", runID, "node_path", nodePath, "clear", clearID, "error", err)
+		return false
+	}
+	return true
+}
+
+// RunUnsettledWorkflowMessages answers the run log's workflow messages nothing has settled, oldest
 // first; none for a run with no log.
-func (rs *Runs) RunWaitingWorkflowMessages(ctx context.Context, runID string) ([]marotte.WorkflowMessage, error) {
+func (rs *Runs) RunUnsettledWorkflowMessages(ctx context.Context, runID string) ([]marotte.WorkflowMessage, error) {
 	if rs.log == nil {
 		return nil, nil
 	}
@@ -260,12 +321,7 @@ func (rs *Runs) RunWaitingWorkflowMessages(ctx context.Context, runID string) ([
 	if err != nil || l == nil {
 		return nil, err
 	}
-	return l.WaitingWorkflowMessages(), nil
-}
-
-// RunStepReading reports whether the step session key names is bound to a live execution.
-func (rs *Runs) RunStepReading(key marotte.ChatID) bool {
-	return rs.steers != nil && rs.steers.recs.stepOpen(key)
+	return l.UnsettledWorkflowMessages(), nil
 }
 
 // RunNodePaused ends the paused step's steering turn: the execution that read its buffer has stopped.
@@ -286,4 +342,17 @@ func (s *stepSteers) runsHostedBy(host marotte.ChatID) []string {
 		}
 	}
 	return slices.Sorted(maps.Keys(runs))
+}
+
+// engineCaller is an engine-level caller, for a step session marotte holds no lane for: the reply comes back by id.
+type engineCaller struct{ o *engineOwner }
+
+func (c engineCaller) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
+	resp, _, err := c.o.callAt(ctx, method, params)
+	return resp, err
+}
+
+func (c engineCaller) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
+	resp, at, err := c.o.callAt(ctx, method, params)
+	return resp, at.seq, err
 }

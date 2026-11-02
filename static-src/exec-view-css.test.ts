@@ -3,8 +3,9 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { chevronEl } from "./chevron.js";
-import { attachClamp, releaseClampsIn } from "./clamp-text.js";
+import { attachClamp, releaseClamp, releaseClampsIn } from "./clamp-text.js";
 import execPageSrc from "./exec-view/page.ts?raw";
+import { buildExecTimeline } from "./exec-view/timeline.js";
 import { buildExecTree } from "./exec-view/tree.js";
 import type { ExecNode } from "./exec-view/model.js";
 
@@ -308,69 +309,36 @@ describe("a row inside the group box is a band, not a pill", () => {
   });
 });
 
-describe("the run's task instructions read as a card", () => {
-  function inputs(hidden: boolean): HTMLElement {
-    const dl = document.createElement("dl");
-    dl.className = "ev-inputs";
-    dl.hidden = hidden;
-    const k = document.createElement("dt");
-    k.className = "ev-in-k";
-    k.textContent = "task";
-    const v = document.createElement("dd");
-    v.className = "ev-in-v";
-    v.textContent = "converge the chevrons";
-    dl.append(k, v);
-    return dl;
-  }
-
-  it("takes the same fill, radius and padding as the timeline card", () => {
-    // Read off `.ev-tl`: the claim is that they are the same card.
-    const tl = document.createElement("div");
-    tl.className = "ev-tl";
-    const reference = mount(tl);
-    const want = {
-      bg: css(reference, "background-color"),
-      radius: css(reference, "border-top-left-radius"),
-      pad: css(reference, "padding-top"),
-    };
-    expect(want.bg).not.toBe("rgba(0, 0, 0, 0)");
-
-    const box = mount(inputs(false));
-    expect(css(box, "background-color")).toBe(want.bg);
-    expect(css(box, "border-top-left-radius")).toBe(want.radius);
-    expect(css(box, "padding-top")).toBe(want.pad);
-  });
-
-  it("disappears entirely when hidden, rather than becoming an empty card", () => {
-    // No author `[hidden]` rule here, so the UA's `[hidden]` loses to the bare class.
-    const box = mount(inputs(true));
-    expect(css(box, "display")).toBe("none");
-    expect(box.getBoundingClientRect().height).toBe(0);
-  });
-});
-
-// Two clamps, one opener skin; `run-page-layout.test.ts` pins the shared selector, this pins what it paints.
-describe("both clamp openers wear one skin", () => {
-  it("resolves to the same ink, size and underline", () => {
+// Every clamp opener is the house text button; `run-page-layout.test.ts` pins the exec view's shared selector.
+describe("every clamp opener wears one text-button skin", () => {
+  it("resolves to the same ink, size and underline, and says what it does in words", () => {
     const row = document.createElement("div");
-    const instructions = document.createElement("button");
-    instructions.type = "button";
-    instructions.className = "ev-in-more";
-    instructions.textContent = "Show more";
-    const report = document.createElement("button");
-    report.type = "button";
-    report.className = "ev-r-more";
-    report.textContent = "Show more";
-    row.append(instructions, report);
+    const openers = ["ev-dock-ask-more", "ev-r-more", "dock-ask-more", "steer-note-more"].map(
+      (c) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = c;
+        return b;
+      },
+    );
+    const text = document.createElement("div");
+    text.textContent = "words ".repeat(400);
+    row.append(text, ...openers);
     mount(row);
+    const [first, ...rest] = openers;
+    attachClamp(text, first!, { lines: 3 });
 
+    expect(first!.textContent).toBe("Show more");
+    expect(first!.querySelector(".disclosure-chevron")).toBeNull();
     // Premise: the skin is in force, not the UA button default.
-    expect(css(instructions, "text-decoration-line")).toBe("underline");
-    expect(css(instructions, "background-color")).toBe("rgba(0, 0, 0, 0)");
-
-    for (const prop of ["color", "font-size", "text-decoration-line", "border-top-width"]) {
-      expect(css(report, prop), prop).toBe(css(instructions, prop));
+    expect(css(first!, "text-decoration-line")).toBe("underline");
+    expect(css(first!, "background-color")).toBe("rgba(0, 0, 0, 0)");
+    for (const b of rest) {
+      for (const prop of ["color", "font-size", "text-decoration-line", "border-top-width"]) {
+        expect(css(b, prop), `${b.className} ${prop}`).toBe(css(first!, prop));
+      }
     }
+    releaseClamp(text);
   });
 });
 
@@ -549,27 +517,32 @@ describe("the run page's collapsed report ends on a whole line", () => {
     readonly bottom: number;
   }
 
-  /** Every line band, rects merged by vertical overlap; a single `Range` returns a bounding box. */
+  /** Every line band, rects merged by vertical overlap; a single `Range` returns a bounding box.
+   *  Sorted by top first: a top-aligned row lists a wrapped cell's second line before the next cell's first. */
   function textBands(box: HTMLElement): Band[] {
-    const bands: Band[] = [];
+    const rects: Band[] = [];
     const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
     const range = document.createRange();
     for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
       range.selectNodeContents(node);
       for (const rect of range.getClientRects()) {
-        if (rect.height <= 0) {
-          continue;
+        if (rect.height > 0) {
+          rects.push({ top: rect.top, bottom: rect.bottom });
         }
-        const open = bands[bands.length - 1];
-        if (open !== undefined && rect.top < open.bottom - 0.5) {
-          bands[bands.length - 1] = {
-            top: Math.min(open.top, rect.top),
-            bottom: Math.max(open.bottom, rect.bottom),
-          };
-          continue;
-        }
-        bands.push({ top: rect.top, bottom: rect.bottom });
       }
+    }
+    rects.sort((x, y) => x.top - y.top);
+    const bands: Band[] = [];
+    for (const rect of rects) {
+      const open = bands[bands.length - 1];
+      if (open !== undefined && rect.top < open.bottom - 0.5) {
+        bands[bands.length - 1] = {
+          top: Math.min(open.top, rect.top),
+          bottom: Math.max(open.bottom, rect.bottom),
+        };
+        continue;
+      }
+      bands.push(rect);
     }
     return bands;
   }
@@ -746,8 +719,14 @@ describe("the run page's collapsed report ends on a whole line", () => {
     line.append(document.createTextNode("lead "), img, document.createTextNode(" trail"));
     // The bait window is the font's descent; the negative margin slides the line into it.
     line.style.marginBlockStart = "-3.6px";
-    // A rule as the tail, so the walk does not close the cut band early on text below the clip.
-    const { text, more, handle } = resultBox(para(74, "alpha"), line, document.createElement("hr"));
+    // A rule as the tail, so the walk does not close the cut band early on text below the clip; the
+    // paragraph under it makes the cut more than the clamp leaves uncut.
+    const { text, more, handle } = resultBox(
+      para(74, "alpha"),
+      line,
+      document.createElement("hr"),
+      para(60, "omega"),
+    );
 
     expect(text.scrollHeight - text.clientHeight, "the report overflows the clamp").toBeGreaterThan(
       1,
@@ -1159,5 +1138,57 @@ describe("a run step's transcript spaces its blocks the way a chat turn does", (
     expect(css(runCode, "background-color")).toBe(css(chatCode, "background-color"));
     expect(css(runCode, "font-family")).toBe(css(chatCode, "font-family"));
     expect(css(runCode, "font-size")).toBe(css(chatCode, "font-size"));
+  });
+});
+
+// The selected fill hosts primary and secondary ink only (`ink-ramp.node.test.ts`), so an included
+// step's dimmed `review/` in tertiary ink there would fail contrast.
+describe("an included step's qualifier on the selected fill", () => {
+  const included = (id: string): ExecNode => ({
+    path: `wf:${id}`,
+    label: `review/${id}`,
+    qualifier: "review/",
+    kind: "step",
+    state: "ok",
+    children: [],
+    start: "2026-10-07T10:00:00Z",
+    end: "2026-10-07T10:01:00Z",
+  });
+  const nodes = [included("advisor"), included("critic")];
+
+  /** The colour a token resolves to inside `scope`, read off a probe that paints it. */
+  function tokenColor(scope: HTMLElement, token: string): string {
+    const probe = document.createElement("span");
+    probe.style.color = `var(${token})`;
+    scope.appendChild(probe);
+    const out = getComputedStyle(probe).color;
+    probe.remove();
+    return out;
+  }
+
+  function qualifierInk(root: HTMLElement, rowSel: string, path: string): string {
+    const q = root.querySelector<HTMLElement>(`${rowSel}[data-path="${path}"] .ev-q`);
+    expect(q?.textContent).toBe("review/");
+    return getComputedStyle(q!).color;
+  }
+
+  it("takes the selected muted ink on a selected tree row", () => {
+    const tree = buildExecTree(vi.fn());
+    mount(tree.root);
+    tree.render(nodes, "wf:advisor");
+    const muted = tokenColor(tree.root, "--c-selected-muted-fg");
+    expect(qualifierInk(tree.root, ".ev-row", "wf:advisor")).toBe(muted);
+    expect(qualifierInk(tree.root, ".ev-row", "wf:critic")).toBe(
+      tokenColor(tree.root, "--c-text-tertiary"),
+    );
+  });
+
+  it("takes the selected muted ink on a selected timeline lane", () => {
+    const timeline = buildExecTimeline(vi.fn());
+    mount(timeline.root);
+    timeline.render(nodes, "wf:advisor", false);
+    const muted = tokenColor(timeline.root, "--c-selected-muted-fg");
+    expect(qualifierInk(timeline.root, ".ev-tl-lane", "wf:advisor")).toBe(muted);
+    expect(qualifierInk(timeline.root, ".ev-tl-lane", "wf:critic")).not.toBe(muted);
   });
 });

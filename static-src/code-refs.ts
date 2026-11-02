@@ -7,6 +7,7 @@ import { isSafeURL } from "./url-safety.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_SCALE, ICON_EXTERNAL } from "./icons.js";
 import { featureDisabled } from "./governance.js";
+import { targetOpen, wireDetailsSlide } from "./disclosure-row.js";
 
 const CLS = "code-refs";
 
@@ -26,7 +27,8 @@ export function syncCodeReferences(wrap: HTMLElement, refs?: readonly CodeRefere
   if (existing !== null && existing.dataset["count"] === String(shown.length)) {
     return;
   }
-  const wasOpen = existing?.open ?? false;
+  // A closing slide still renders open; its target is the reader's choice.
+  const wasOpen = existing === null ? false : targetOpen(existing, existing.open);
   const built = buildCodeRefs(shown, wasOpen);
   if (existing === null) {
     wrap.appendChild(built);
@@ -60,6 +62,7 @@ function buildCodeRefs(refs: readonly CodeReference[], open: boolean): HTMLDetai
     list.appendChild(buildItem(ref));
   }
   details.appendChild(list);
+  wireDetailsSlide(details);
   return details;
 }
 

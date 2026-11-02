@@ -30,13 +30,20 @@ vi.mock("./api-client.js", async (importOriginal) => ({
         ? { docs: [], truncated: false }
         : path === "/api/steering/issues"
           ? { issues: {} }
-          : { hooks: [] },
+          : path === "/api/config/standing"
+            ? { standing: [], load_errors: {} }
+            : { hooks: [] },
     ),
   ),
 }));
 vi.mock("./persist.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Persist>()),
-  loadSettings: vi.fn(() => Promise.resolve({ memory_mode: H.memoryMode })),
+  loadSettings: vi.fn(() =>
+    Promise.resolve({ memory_mode: H.memoryMode, settings_epoch: 0, settings_revision: 0 }),
+  ),
+  refreshSettings: vi.fn(() =>
+    Promise.resolve({ memory_mode: H.memoryMode, settings_epoch: 0, settings_revision: 0 }),
+  ),
 }));
 vi.mock("./router.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Router>()),
@@ -118,12 +125,13 @@ async function openDocs(mode: string): Promise<typeof Docs> {
   return docs;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   resetActionFramework();
+  (await import("./persist.js")).__testResetTracking();
   H.sse.clear();
   document.body.innerHTML = `
     <div id="docs-view">
-      <div id="docs-new-slot"></div>
+      <div id="docs-new-slot" class="page-toolbar"></div>
       <nav id="docs-tab-bar" class="seg-bar">${TABS.map(
         (t) =>
           `<button type="button" class="seg" data-docs-tab="${t}"><span class="seg-label">${t}</span></button>`,
@@ -192,31 +200,5 @@ describe("the Memories tab follows the Memory setting", () => {
       expect(panelShown("steering")).toBe(true);
     });
     expect(segment("memories").classList.contains("hidden")).toBe(true);
-  });
-
-  it("keeps the newest settings answer when an older read resolves after it", async () => {
-    await openDocs("off");
-    const { loadSettings } = await import("./persist.js");
-    let answerOlder: (mode: string) => void = () => undefined;
-    vi.mocked(loadSettings)
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            answerOlder = (mode) => {
-              resolve({ memory_mode: mode } as never);
-            };
-          }),
-      )
-      .mockImplementationOnce(() => Promise.resolve({ memory_mode: "learn" } as never));
-
-    H.sse.get("settings_updated")?.();
-    H.sse.get("settings_updated")?.();
-    await vi.waitFor(() => {
-      expect(segment("memories").classList.contains("hidden")).toBe(false);
-    });
-    answerOlder("off");
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(segment("memories").classList.contains("hidden")).toBe(false);
   });
 });

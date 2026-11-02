@@ -10,7 +10,9 @@ export type ContentKind = "text" | "binary" | "not_utf8" | "too_large";
 
 export type DecisionKind = "permission" | "elicitation" | "user_input";
 
-export type EntryKind = "turn_open" | "turn_bind" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
+export type EngineState = "starting" | "ready" | "restarting" | "down";
+
+export type EntryKind = "turn_open" | "turn_bind" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed";
 
@@ -19,6 +21,8 @@ export type FailureKind = "context_limit" | "model_call_limit";
 export type FileMatchKind = "content" | "name" | "dir";
 
 export type ForgeKind = "github" | "gitlab" | "gitea" | "codeberg";
+
+export type ForgeStatus = "connected" | "retrying" | "refused" | "reconnect" | "unusable";
 
 export type InterruptMode = "steer" | "queue";
 
@@ -48,6 +52,12 @@ export type RefusalCode = "changed" | "too_large" | "binary" | "invalid_file_id"
 
 export type RegistryFailureReason = "rate_limited" | "rejected" | "unavailable";
 
+export type RunAskBlocker = "stopping" | "pending" | "branch_running" | "unsettled" | "settling";
+
+export type RunAskRefusal = "ask_stopping" | "ask_pending" | "ask_stale" | "ask_gone" | "ask_branch_running" | "ask_unsettled" | "ask_settling" | "ask_unreadable" | "ask_unnamed" | "run_answer_pending";
+
+export type RunAskText = "asked" | "last_message" | "unseen";
+
 export type RunNodeStatus = "pending" | "running" | "paused" | "completed" | "failed" | "aborted" | "skipped";
 
 export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "loop_iteration" | "watch_poll" | "paused" | "steps_queued";
@@ -74,7 +84,7 @@ export type SpecDocRole = "requirements" | "design" | "tasks" | "other";
 
 export type SteerOrigin = "user" | "agent" | "parent" | "step";
 
-export type SteerReason = "restart" | "boundary" | "deleted";
+export type SteerReason = "restart" | "boundary";
 
 export type SteerRowState = "queued" | "unsent" | "removed";
 
@@ -90,7 +100,7 @@ export type ToolStatus = "pending" | "in_progress" | "completed" | "failed" | "a
 
 export type Transport = "stdio" | "http" | "sse" | "registry";
 
-export type TurnOpenSourceName = "prompt" | "local_shell" | "wire_turn_start" | "empty_retry" | "event" | "revert" | "workflow_step";
+export type TurnOpenSourceName = "prompt" | "wire_turn_start" | "empty_retry" | "event" | "revert" | "workflow_step";
 
 export type TurnOutcome = "running" | "completed" | "cancelled" | "interrupted" | "failed" | "refused" | "unknown" | "empty";
 
@@ -134,7 +144,7 @@ export interface AccountUsage {
   overages_enabled: boolean;
   /**
  * Stale is true when this snapshot was served from the last-known
- * cache because a fresh fetch failed (no live bridge, rate limit).
+ * cache because a fresh fetch failed (the engine not running, rate limit).
  */
   stale?: boolean;
 }
@@ -173,6 +183,13 @@ export interface Affordance {
   support: string;
   source: string;
   detail: string;
+}
+
+/** AgentLoadError is the last load error kiro-cli reported for an agent file. */
+export interface AgentLoadError {
+  at: string;
+  reason_code: string;
+  error: string;
 }
 
 /**
@@ -231,6 +248,8 @@ export interface Attachment {
 export interface Capabilities {
   connection: Record<string, Affordance>;
   grant: Record<string, Affordance>;
+  /** Account is the sign-in the answer was read through. */
+  account: string;
 }
 
 /**
@@ -305,8 +324,9 @@ export interface ChatHeader {
   /** Thinking and ThinkingActive mirror Chat's for the effort slider's Off stop. */
   thinking?: string;
   thinking_active?: string;
-  /** PendingModel mirrors Chat's: the model badge reads it off the header. */
+  /** PendingModel and PendingEffort mirror Chat's for the model badge and the pill's card. */
   pending_model?: string;
+  pending_effort?: string;
   effort_levels?: SessionEffortLevel[];
   /** The model and mode vocabulary is a workspace fact (agent.catalog), never here. */
   id: string;
@@ -319,6 +339,11 @@ export interface ChatHeader {
   usage: Usage;
   created_at: number;
   updated_at: number;
+  /**
+ * ReadPosition is wire-only: EntryLog.ReadPosition of the opened log, 0 when the log is not
+ * open. chat.Store fills it; Chat.Header does not.
+ */
+  read_position?: number;
   turn_count: number;
   supervised_mode?: boolean;
   /** Tangent mirrors Chat's for the merge controls. */
@@ -357,7 +382,7 @@ export interface CodeReference {
  * attributions on the in-flight turn. References is the full deduped list, so a later
  * notification REPLACES rather than appends. Live only; the durable value is the
  * turn_close aggregate's code_references. Chat-scoped: KAS broadcasts one references
- * list to every session in the bridge process, so a step's copy carries the chat's own
+ * list to every session on the engine, so a step's copy carries the chat's own
  * attributions and there is nothing a run-scoped frame could report that this one does
  * not.
  */
@@ -385,6 +410,30 @@ export interface CommitChecks {
 }
 
 /**
+ * ConfigStanding is one non-active item of the workspace's composed configuration. Key is the Docs row's Path for a
+ * file-backed item (steering, agent, workflow) and the server name for an MCP server; an item with neither has no
+ * row to join. Kind is kiro-cli's reason (`displaced`, `disabled`), kept as it came.
+ */
+export interface ConfigStanding {
+  type: string;
+  key: string;
+  kind: string;
+  decided_by: string;
+  decided_by_name: string;
+  compose?: string;
+  setting?: string;
+}
+
+/**
+ * ConfigStandingResponse is GET /api/config/standing's answer. LoadErrors is keyed by the Docs row's Path, and is
+ * shown whether or not the row also has a standing.
+ */
+export interface ConfigStandingResponse {
+  load_errors: Record<string, AgentLoadError>;
+  standing: ConfigStanding[];
+}
+
+/**
  * ConfigTemplateResponse is the GET /api/config-template reply: the pre-session mode and
  * model catalog plus its verdict. Not …Payload: wirespec's binding tests key on that
  * suffix, and this is bound to no SSE event.
@@ -397,62 +446,43 @@ export interface ConfigTemplateResponse {
   subject?: SubjectStamp;
   default_model?: string;
   /**
- * EffortActive is the `effortLevel` option's currentValue: the tier a fresh
- * session would run at.
- */
-  effort_active?: string;
-  /**
  * Catalog has NO omitempty, so wiregen emits a required TypeScript field the
  * retry policy can rely on.
  */
   catalog: CatalogState;
   catalog_reason?: CatalogReason;
   /**
- * The three lists are non-null on every path, so a generated decoder requiring an
- * array cannot fail on a failure body.
+ * Both lists are non-null on every path, so a generated decoder requiring an array
+ * cannot fail on a failure body.
  */
   modes: SessionMode[];
   models: SessionModel[];
-  effort_levels: SessionEffortLevel[];
 }
 
-/** ConfiguredForge is one connected forge backend: a connection record's row. */
+/**
+ * ConfiguredForge is one connection as Sources lists it. Error is present
+ * exactly when Status is not connected.
+ */
 export interface ConfiguredForge {
+  error?: ForgeError;
   id: string;
   kind: ForgeKind;
   host: string;
   username?: string;
   email?: string;
-  last_error?: string;
   /**
- * ErrorCode and ErrorKind are LastError's code and kind in the error
- * envelope's terms. The code connection_unusable marks a row no request can
- * serve until the record file or the credential store is repaired.
+ * Account names the sign-in, so a reply read through an older one can be
+ * told apart; a new sign-in as the same user changes it.
  */
-  error_code?: string;
-  error_kind?: string;
+  account: string;
+  status: ForgeStatus;
   /**
  * OwnerScopes are the owners a present cycle reads beside the connection's
  * own pull requests.
  */
   owner_scopes?: string[];
-  last_probed?: number;
-  /**
- * RetryAfterS is the wait the refusal behind LastError asked for, counted
- * from LastProbed.
- */
-  retry_after_s?: number;
-  /**
- * Connected says requests may use the connection. A connected row's
- * LastError is a temporary failure the next probe retries: any other
- * failure disconnects the row.
- */
-  connected: boolean;
-  /**
- * ReconnectRequired says the stored credential can be neither used nor
- * renewed: only a new sign-in revives the connection.
- */
-  reconnect_required: boolean;
+  /** CheckedAt is the last check's end in Unix milliseconds, absent before one. */
+  checked_at?: number;
 }
 
 /**
@@ -631,6 +661,12 @@ export interface EffectiveSettings {
  */
   kiro_defaults: Record<string, KiroDefault>;
   /**
+ * AdditionalDirectoriesRefused maps each AdditionalDirectories entry that
+ * settings.AgentDirs.Assess refuses at this GET to its reason; it is never stored, and an
+ * entry absent from it is granted.
+ */
+  additional_directories_refused: Record<string, string>;
+  /**
  * Theme is "", "dark", "light" or "system". The empty string is a REAL value
  * meaning nothing has been chosen, which the client resolves to the OS
  * preference; it is deliberately not normalised to "system" here, because the
@@ -652,7 +688,7 @@ export interface EffectiveSettings {
  */
   last_merge_method: string;
   /**
- * MemoryMode is the Memory dropdown's value (settings.MemoryOff and its three
+ * MemoryMode is the Memory dropdown's value ("off" and its three
  * siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
  */
   memory_mode: string;
@@ -678,6 +714,12 @@ export interface EffectiveSettings {
  */
   agent_ignore_files: string[];
   /**
+ * AdditionalDirectories is the stored list of directories beyond the workspace that agents
+ * may read and write, default EMPTY. An entry that settings.AgentDirs.Assess refuses stays
+ * listed, grants nothing, and is a key of AdditionalDirectoriesRefused.
+ */
+  additional_directories: string[];
+  /**
  * ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
  * Zero is the most destructive value in the document, so absent must never
  * resolve to it.
@@ -693,6 +735,16 @@ export interface EffectiveSettings {
  * unset (kiro-cli's 120 s).
  */
   terminal_command_timeout_ms: number;
+  /** EngineHeapMiB is the agent engine's JavaScript heap limit in MiB; 0 is kiro-cli's default. */
+  engine_heap_mib: number;
+  /**
+ * SettingsEpoch and SettingsRevision are config.json's version (settings.KeySettingsEpoch and
+ * KeySettingsRevision), both 0 before the first write and compared epoch first. A deleted or
+ * restored config.json serves a lower version, which a page holding a higher one refuses until
+ * the next write starts a later epoch.
+ */
+  settings_epoch: number;
+  settings_revision: number;
   /**
  * AutoCompactionEnabled defaults TRUE: off means nothing compacts a chat
  * until the reader presses Compact.
@@ -715,8 +767,6 @@ export interface EffectiveSettings {
  * reads it.
  */
   guard_payload_links: boolean;
-  /** ToolSearchEnabled defaults off, matching kiro-cli. */
-  tool_search_enabled: boolean;
   /**
  * MCPWaitForReady renders waitForReady on every server in KAS's MCP file, so
  * a prompt waits for the servers to settle. Default off.
@@ -737,17 +787,20 @@ export interface EffectiveSettings {
  * SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
  * unattended run's permission ask at its deadline and is fail-closed by
  * decision. DebugLogs raises the log level. All three default off.
- * SpecPlanningAskFirst, InlineAgents and SteeringReminders default off,
- * matching kiro-cli. WorkflowsEnabled defaults ON (user's choice, where the
- * TUI's default is off).
+ * SpecPlanningAskFirst and SteeringReminders default off, matching kiro-cli.
+ * WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
  */
   spec_planning_ask_first: boolean;
-  inline_agents_enabled: boolean;
   steering_reminders_enabled: boolean;
   workflows_enabled: boolean;
   supervised_default: boolean;
   scheduled_auto_approve: boolean;
   debug_logs: boolean;
+  /**
+ * ModelFallback defaults off, matching kiro-cli: on, KAS may retry a turn its model refused or
+ * could not serve on the next model of its fallback chain, or record why it declined to.
+ */
+  model_fallback_enabled: boolean;
 }
 
 /**
@@ -763,7 +816,6 @@ export interface ElicitationNeededPayload {
   message?: string;
   url?: string;
   tool_call_id?: string;
-  sub_session_id?: string;
   /**
  * RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
  * attributed to its run and node from the step-session registry.
@@ -803,6 +855,57 @@ export interface ElicitationRequestSchema {
   required?: string[];
 }
 
+/** EngineBusy is what a restart now would interrupt. */
+export interface EngineBusy {
+  turns: EngineBusyTurn[];
+  runs: EngineBusyRun[];
+}
+
+/** EngineBusyRun is a workflow run a restart would pause and resume. */
+export interface EngineBusyRun {
+  workflow_id: string;
+  name: string;
+}
+
+/** EngineBusyTurn is a chat whose reply a restart would stop. */
+export interface EngineBusyTurn {
+  chat_id: string;
+  name: string;
+}
+
+/** EngineExit is the engine's last end: its cause and when. */
+export interface EngineExit {
+  at: string;
+  reason: string;
+}
+
+/** EngineRestart is whether a restart is pending and what it would apply. */
+export interface EngineRestart {
+  reasons: string[];
+  pending: boolean;
+}
+
+/** EngineStatus is GET /api/engine's answer and the engine_status event's payload. */
+export interface EngineStatus {
+  since: string;
+  last_exit?: EngineExit;
+  state: EngineState;
+  busy: EngineBusy;
+  restart: EngineRestart;
+  version: EngineStatusVersion;
+}
+
+/**
+ * EngineStatusVersion orders snapshots that reach a reader by two paths, the GET and the event, in any order, and
+ * across marotte restarts: BootMS is the Unix millisecond the process's engine owner was built and Seq rises with each
+ * snapshot it takes. A snapshot is newer when (BootMS, Seq) is higher, compared in that order. The order across
+ * processes holds while the wall clock does not step back past a restart.
+ */
+export interface EngineStatusVersion {
+  boot_ms: number;
+  seq: number;
+}
+
 /**
  * Entry is one sealed row of a turn's log. Every field but Payload is the
  * envelope. An Entry exists on disk and on the wire only after its payload is
@@ -828,7 +931,7 @@ export interface Entry {
 /**
  * EntryAppendedPayload is the payload for type="entry_appended": a born-sealed
  * entry (turn_bind, tool_call, tool_result, steer, steer_ack, plan, compaction,
- * compaction_failed, safety_blocked, model_switched, model_routed), or a text entry opened and
+ * compaction_failed, safety_blocked, model_switched, model_routed, model_fallback), or a text entry opened and
  * sealed in one step, which never had an entry_opened and so travels as one frame.
  */
 export interface EntryAppendedPayload {
@@ -872,6 +975,22 @@ export interface EntryModeSwitched {
 }
 
 /**
+ * EntryModelFallback is the model_fallback payload: KAS's fallback decision after From refused a
+ * turn or was unavailable. A non-empty Reason marks a decline; KAS's notice for a retry carries To
+ * and Scope and no Reason, and ModelFallbackScopeSession means To now serves the session. Every
+ * string is KAS's open vocabulary, display-sanitized. Subagent is set only in an entry an earlier
+ * build recorded: the translator now drops a sub-agent's fallback, and readers hide such an entry.
+ */
+export interface EntryModelFallback {
+  from: string;
+  to?: string;
+  scope?: string;
+  trigger: string;
+  reason?: string;
+  subagent?: boolean;
+}
+
+/**
  * EntryModelRouted is the model_routed payload: KAS's Auto routing moved the chat's requests up a
  * model category inside a turn. It names no model, because KAS keeps reporting Auto; Message is
  * KAS's own notice text, treated at the decode door.
@@ -893,6 +1012,8 @@ export interface EntryModelSwitched {
  * level another build wrote decodes rather than throws.
  */
   effort?: string;
+  /** Unoffered is the tier the chat wanted that To does not offer, so it runs at Effort instead. */
+  unoffered?: string;
   /** Reason is set only on a switch KAS made by itself. */
   reason?: ModelSwitchReason;
 }
@@ -970,7 +1091,7 @@ export interface EntrySealedPayload {
  * (KAS's vocabulary) is set on a note KAS's buffer carried; State is absent where nothing stamped it
  * (a replay-projected steer, a workflow message). OriginRun is the run a note came from. ProducedTs
  * is when the words were sent and ReadTs when the receiver took a workflow message up; both label,
- * never order, and a log read fills ReadTs (or the dropped state) from steer_delivered. Step names
+ * never order, and a log read fills ReadTs, or Cleared, from steer_delivered. Step names
  * the step on a workflow message's far end, in the launching chat's log only; StepPath is its node
  * path on both sides' rows, and Chat the launching chat on the step's row. Resends names the steer
  * rows (dock keys) this one re-sends, taken from the steer record at the read.
@@ -981,6 +1102,10 @@ export interface EntrySteer {
   state?: SteerState;
   reason?: SteerReason;
   severity?: string;
+  /** KASID is the id the notify frame gave a workflow message (`notifyId`), empty while it carries none. */
+  kas_id?: string;
+  /** ToSession is the KAS session a workflow message was sent to, on the receiver's row only. */
+  to_session?: string;
   origin_run?: string;
   step?: string;
   step_path?: string;
@@ -988,6 +1113,11 @@ export interface EntrySteer {
   resends?: string[];
   produced_ts?: number;
   read_ts?: number;
+  /**
+ * Cleared marks a workflow message its receiver's buffer was emptied of before any take-up or
+ * wake proved it read; State stays absent, since whether it was read is not known.
+ */
+  cleared?: boolean;
 }
 
 /**
@@ -1000,16 +1130,27 @@ export interface EntrySteerAck {
 }
 
 /**
+ * EntrySteerCleared is the steer_cleared payload: KAS emptied Session's steering buffer, naming
+ * IDs, for Cause. It ends the epoch of every workflow message filed before it whose ToSession is
+ * Session, settling each one still unsettled cleared. It renders nothing.
+ */
+export interface EntrySteerCleared {
+  cause: string;
+  session: string;
+  ids: string[];
+}
+
+/**
  * EntrySteerDelivered is the steer_delivered payload: the receiver took up the workflow message
- * SteerID names, recorded at send, at ReadTs; Dropped instead says KAS cleared it unread at a turn
- * boundary. It renders on that message's row, not where it sits. KASID is the id KAS persisted the
- * message under, which its replay row carries.
+ * SteerID names, recorded at send, at ReadTs; Cleared instead says a steering clear emptied the
+ * receiver's buffer at ReadTs with no proof it was read. It renders on that message's row, not
+ * where it sits. KASID is the id KAS persisted the message under, which its replay row carries.
  */
 export interface EntrySteerDelivered {
   steer_id: string;
   kas_id?: string;
   read_ts: number;
-  dropped?: boolean;
+  cleared?: boolean;
 }
 
 /** EntryText is the text payload. */
@@ -1138,9 +1279,9 @@ export interface EntryTurnClose {
 }
 
 /**
- * EntryTurnOpen is the turn_open payload. Prompt is present for a prompt,
- * local_shell or empty_retry turn and absent otherwise. Run, NodePath and
- * SessionID are set on a run log's turns only.
+ * EntryTurnOpen is the turn_open payload. Prompt is present for a prompt or
+ * empty_retry turn and absent otherwise. Run, NodePath and SessionID are set on
+ * a run log's turns only.
  */
 export interface EntryTurnOpen {
   prompt?: EntryPrompt;
@@ -1179,7 +1320,7 @@ export interface ErrorPayload {
   /**
  * TurnScoped reports that this failure finalized a turn whose entry log now carries
  * the same text durably, so the reason is already in that turn's card. A property of the EMISSION,
- * not of the Code: the recovery's respawn failure shares ErrCodeRecoveryFailed with
+ * not of the Code: the recovery's reopen failure shares ErrCodeRecoveryFailed with
  * the retry turn's abandon and closes no turn, so no per-code answer fits. Absent
  * means NO, the safe direction — report the failure rather than trust an inline row
  * that may not exist.
@@ -1313,6 +1454,21 @@ export interface FileWriteResult {
   file_id: string;
   size: number;
   ok: boolean;
+}
+
+/**
+ * ForgeError is why a connection is not connected, in the error envelope's
+ * terms.
+ */
+export interface ForgeError {
+  message: string;
+  code?: string;
+  kind?: string;
+  /**
+ * RetryAt is when the forge's rate limit lets a request through again, in
+ * Unix milliseconds; absent when the forge named no wait.
+ */
+  retry_at?: number;
 }
 
 /** GitHubRateLimit is the wire form of a [GitHubRateLimitError]. */
@@ -1480,15 +1636,6 @@ export interface Inventory {
   apt_packages?: AptPackage[];
 }
 
-/** InventoryBudget is a connection's request budget as its client last read it. */
-export interface InventoryBudget {
-  /** Remaining is -1 where the family reports none. */
-  remaining: number;
-  /** Reset is unix ms, absent where the family reports none. */
-  reset?: number;
-  last_cost: number;
-}
-
 /**
  * InventoryChangedPayload is the forge_inventory event: one connection's entry
  * as the cycle that wrote it left it.
@@ -1503,8 +1650,12 @@ export interface InventoryChangedPayload {
  */
 export interface InventoryEntry {
   error?: InventoryError;
-  budget?: InventoryBudget;
   forge_id: string;
+  /**
+ * Account is the sign-in the entry was read through; a client drops an
+ * entry whose account is not its row's.
+ */
+  account: string;
   /** State is "loading", "ready", "partial" or "failed". */
   state: string;
   /**
@@ -1768,6 +1919,24 @@ export interface LoginOptions {
 }
 
 /**
+ * LoginResponse is POST /api/login's answer: what the user opens and enters, and the attempt whoami reports on, so a
+ * switch whose old account stays signed in is told apart from the new sign-in's outcome.
+ */
+export interface LoginResponse {
+  url: string;
+  code: string;
+  attempt: number;
+}
+
+/**
+ * LoginResult is a token sign-in's 200 answer: the id the server minted for the
+ * saved connection.
+ */
+export interface LoginResult {
+  forge_id: string;
+}
+
+/**
  * MCPConnectedPayload is the payload for type="mcp_connected", emitted
  * when kiro-cli reports _kiro.dev/mcp/server_initialized.
  */
@@ -1777,7 +1946,7 @@ export interface MCPConnectedPayload {
 
 /**
  * MCPDisconnectedPayload is the payload for type="mcp_disconnected".
- * Emitted when the runtime's last bridge exits: kiro-cli's MCP subprocesses
+ * Emitted per server when the agent engine ends: kiro-cli's MCP subprocesses
  * shut down with it, so no configured server is currently live.
  * Clients use this to clear their runtime-state map.
  */
@@ -2024,8 +2193,8 @@ export interface PartialResult {
 /**
  * PendingSnapshotPayload is the payload for type="pending_snapshot": every
  * pending item across every chat, each a complete ServerEvent envelope of one
- * of the five ask kinds (permission_needed, elicitation_needed,
- * user_input_needed, run_input_needed, steer_queued). Raw so the client can
+ * of the five kinds (permission_needed, elicitation_needed, user_input_needed,
+ * steer_queued, and one run_asks per run marotte answers for). Raw so the client can
  * re-dispatch each through the decoder it already has for that type; the
  * stamp rides the snapshot's own envelope, never an item.
  */
@@ -2060,10 +2229,9 @@ export interface PermissionNeededPayload {
  * (switch_mode gets a different dialog from an execute_bash prompt).
  */
   kind?: ToolKind;
-  sub_session_id?: string;
   /**
  * RunID + NodeID attribute a WORKFLOW STEP's ask to its run, stamped from the
- * step-session registry whichever bridge the ask arrived on, so a run tab can render
+ * step-session registry whichever lane the ask arrived on, so a run tab can render
  * the ask of a run it is watching even though the ask is keyed to the launching chat.
  */
   run_id?: string;
@@ -2094,7 +2262,7 @@ export interface PermissionNeededPayload {
   consent_round?: number;
   /**
  * RequestID is marotte's id for this ask, unique in the process, which the answer echoes;
- * never the ACP request id, which every bridge mints from zero. All three asks share it.
+ * never the ACP request id, which KAS mints and may repeat after an engine restart. All three asks share it.
  */
   request_id: number;
   /**
@@ -2199,8 +2367,8 @@ export interface PolicyRuleCore {
 
 /**
  * PolicyView is the GET /api/permissions response: the native policy rule
- * set plus the metadata the editor needs. Available is false when no bridge
- * could answer (the view falls back to reading the editable files directly).
+ * set plus the metadata the editor needs. Available is false when the engine
+ * could not answer (the view falls back to reading the editable files directly).
  * Capabilities is what the rule-adder's dropdown OFFERS: the suggested set
  * unioned with every capability the live rules already use, so it can learn a
  * name marotte shipped without.
@@ -2238,6 +2406,8 @@ export interface PollResult {
   status: string;
   error?: string;
   code?: string;
+  /** ForgeID is the id the server minted for the saved connection, on complete. */
+  forge_id?: string;
 }
 
 /**
@@ -2286,15 +2456,11 @@ export interface PreviewStamp {
 }
 
 /**
- * ProbeResult is a probe's answer: the row as the probe left it, whether that
- * row is connected, and the failure's sentence when the identity read failed.
- * A temporary failure on a connected row answers its sentence beside connected
- * true.
+ * ProbeResult is a Check's answer: the row as the check left it, its status
+ * and reason included.
  */
 export interface ProbeResult {
   forge?: ConfiguredForge;
-  error?: string;
-  connected: boolean;
 }
 
 /**
@@ -2322,10 +2488,20 @@ export interface Recipe {
   name: string;
   description?: string;
   /**
- * Source is the launch key: `bundled://<name>` or a workspace
+ * ValidationError is KAS's reason the recipe cannot launch (a schema error, a shadowed name,
+ * an include that fails to expand), verbatim; empty for a launchable recipe.
+ */
+  validation_error?: string;
+  /**
+ * Source is the launch key: `bundled://<name>` or a workspace or home
  * `*.workflow.json` path. Echoed back verbatim in RunLaunchRequest.
  */
   source: string;
+  /**
+ * DocKey is a file-backed recipe's file as the configuration standing keys it (translate.DocKeyFromAbs of Source),
+ * so its row joins that item's standing; empty for a bundled recipe.
+ */
+  doc_key?: string;
   /**
  * Plan is KAS's node plan, forwarded VERBATIM: what the recipe will do and on
  * which model, raw for the reason at the top of this file. Last of the
@@ -2494,8 +2670,12 @@ export interface Repo {
   fork?: boolean;
 }
 
-/** RepoAffordances is what a repository allows. */
+/**
+ * RepoAffordances is what a repository allows. Account is the sign-in the
+ * affordances route read it through, absent on a repository row.
+ */
 export interface RepoAffordances {
+  account?: string;
   has_issues: Affordance;
   can_push: Affordance;
   merge_train: Affordance;
@@ -2511,6 +2691,8 @@ export interface RepoAffordances {
 export interface RepoList {
   partial?: PartialResult;
   next?: string;
+  /** Account is the sign-in the page was read through. */
+  account: string;
   repos: Repo[];
 }
 
@@ -2534,20 +2716,63 @@ export interface ResumableSession {
   description?: string;
   /** ChatID names the marotte chat that already owns this session, if any. */
   chat_id?: string;
+  /**
+ * Model, CurrentModeID, TurnCount and Credits are the owning chat's header facts, so the History row states
+ * them without the chat being open in a tab.
+ */
+  model?: string;
+  current_mode_id?: string;
+  credits?: number;
   updated_at: number;
   created_at?: number;
+  turn_count?: number;
 }
 
-/**
- * RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step.
- * //
- * Empty Text is a 400 rather than a waive. Continuing without an answer is a
- * DIFFERENT verb (POST /api/runs/{id}/step with status `running`) — it drives the
- * step with KAS's default continuation, and an empty box must not reach it.
- */
+/** RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step. Empty Text is a 400. */
 export interface RunAnswerRequest {
   ask_id: string;
   text: string;
+}
+
+/**
+ * RunAsk is one step waiting on a person, in run_asks and under `open_asks` in GET /api/runs/{id}.
+ * AskID changes with every turn of the step marotte sees start, so an answer typed against an
+ * older one is refused as stale. Blocked is absent when an answer may go.
+ */
+export interface RunAsk {
+  ask_id: string;
+  node_id: string;
+  step_session_id: string;
+  agent_name: string;
+  text: string;
+  text_source: RunAskText;
+  /**
+ * Reason is kiro-cli's sentence for why a step that has no completion signal is waiting, such
+ * as one whose signal it could not save; absent otherwise.
+ */
+  reason?: string;
+  blocked?: RunAskBlocker;
+  asked_at?: string;
+  node_path: string[];
+}
+
+/**
+ * RunAsksPayload is the payload for type="run_asks": every step of one run waiting on a person, as
+ * marotte last read it, replacing the client's previous snapshot of that run whole. A newer
+ * (epoch, seq) wins and an older or equal one is dropped. Reachable false means the asks are the
+ * last ones read, or none when the run was not read this epoch, so a client closes nothing on it.
+ * The run's final frame has no asks and Reachable true; a run a pending_snapshot no longer names
+ * has ended.
+ */
+export interface RunAsksPayload {
+  workflow_id: string;
+  /** ChatID is the launching chat, else `run:<workflowId>`, as the envelope's. */
+  chat_id: string;
+  epoch: string;
+  /** Asks is never null. */
+  asks: RunAsk[];
+  seq: number;
+  reachable: boolean;
 }
 
 /**
@@ -2616,54 +2841,6 @@ export interface RunFinishedPayload {
 }
 
 /**
- * RunInputNeededPayload is the payload for type="run_input_needed": a workflow STEP
- * asked a question and the run is parked until somebody answers it. It carries its
- * payload rather than invalidating because the text is on no endpoint — KAS parks
- * with one fixed literal in `state.pauseReason` — and WorkflowID is the IDENTITY,
- * since the envelope's chat id is empty for a parentless run. Question MAY BE
- * EMPTY: the ask registry is in memory, so a restart loses the text while the run
- * stays parked. No Severity field — only `warning` parks a run.
- */
-export interface RunInputNeededPayload {
-  workflow_id: string;
-  /**
- * AskID is composed with keyenc so a separator inside one part cannot forge it.
- * The after-restart spelling must be DETERMINISTIC, or the read path that mints it
- * on every refetch stacks duplicate cards.
- */
-  ask_id: string;
-  /**
- * NodeID addresses the asking step. MAY BE EMPTY — KAS sets it only for a step
- * caller, and a run blocked by an unattributable ask is still blocked. No
- * NodePath: the step-session registry holds no path, so a live ask could not.
- */
-  node_id: string;
-  /**
- * StepSessionID is the ANSWER ADDRESS: KAS reroutes a `session/prompt` sent to the
- * paused step's session into the run. Empty when the notify frame carried no
- * caller session, and the answer path resolves it from a fresh `inspect`.
- */
-  step_session_id: string;
-  agent_name: string;
-  question: string;
-  asked_at: string;
-}
-
-/**
- * RunInputSettledPayload is the payload for type="run_input_settled": the ask is
- * answered or waived, so every surface still showing it must retire the card.
- * //
- * Its own event rather than a member of decision_settled, which is keyed by an
- * int64 JSON-RPC request id: a run ask has no open request, so sharing that payload
- * would give one shape two mutually exclusive identity keys.
- */
-export interface RunInputSettledPayload {
-  workflow_id: string;
-  ask_id: string;
-  settled_by: SettledBy;
-}
-
-/**
  * RunLaunchRequest is POST /api/runs's body: launch one recipe, PARENTLESS.
  * //
  * Source is `_kiro/workflow/listRecipes`' own value verbatim. The server
@@ -2674,6 +2851,9 @@ export interface RunInputSettledPayload {
 export interface RunLaunchRequest {
   inputs?: Record<string, string>;
   source: string;
+  /** Model and Effort are the run's step defaults (RunDefaults); empty sends none. */
+  model?: string;
+  effort?: string;
 }
 
 /**
@@ -2686,24 +2866,11 @@ export interface RunLaunchedResponse {
 }
 
 /**
- * RunOpenAsk is one unanswered ask of a run, under `open_asks` in GET /api/runs/{id}, so an agent
- * handed a deferral can read the question. Question has no omitempty: after a restart a reconciled
- * ask's text is legitimately "", which must not read as absent. node_id is a step's whole address
- * here.
- */
-export interface RunOpenAsk {
-  ask_id: string;
-  question: string;
-  node_id?: string;
-  agent_name?: string;
-  asked_at?: string;
-}
-
-/**
  * RunPlanUpdate is a run's newest queued plan revision, under `plan_update` in GET
  * /api/runs/{id}. Pending counts the top-level steps queued and After names the top-level step
- * they replace the plan after; Reason is KAS's sentence for a rejection. Held in memory, as the
- * IDE holds it: a restart forgets it.
+ * they replace the plan after; Reason is KAS's sentence for a rejection. A queued Outcome and its
+ * Pending come from KAS's inspect, which keeps a queued revision across a restart; After and a
+ * settled outcome are marotte's memory, which a marotte restart forgets.
  */
 export interface RunPlanUpdate {
   after?: string;
@@ -2800,7 +2967,7 @@ export interface RunStartedPayload {
 /**
  * RunStepEnd is how a step's newest turn in the run's own log ended, under `step_ends` in GET /api/runs/{id}
  * keyed by node path, for a step whose turn closed broken. KAS grades a refused step, and one its iteration limit
- * stopped, `completed`, so its node status cannot say this.
+ * stopped, `completed`, so its node status cannot say this; a step KAS completed on a success signal has no row.
  */
 export interface RunStepEnd {
   outcome: TurnOutcome;
@@ -2816,6 +2983,8 @@ export interface RunStepEnd {
 export interface RunStepMessageRequest {
   text: string;
   message_id: string;
+  /** AskID, when set, is the ask the words answer: a different ask at the path refuses them as stale. */
+  ask_id?: string;
 }
 
 /**
@@ -3095,6 +3264,11 @@ export interface SessionMode {
   name: string;
   description?: string;
   source?: string;
+  /**
+ * Shadows is the Source of the mode this custom agent replaces under the same id, set only on
+ * GET /api/config-template's catalog; empty when it replaces nothing.
+ */
+  shadows?: string;
 }
 
 /**
@@ -3105,23 +3279,31 @@ export interface SessionModel {
   id: string;
   name: string;
   description?: string;
-  /**
- * DefaultEffortLevel is this MODEL's default level. Never seed Chat.Effort from it:
- * that would pin the default to every later session through StartOpts.Effort.
- */
+  /** DefaultEffortLevel is this MODEL's default level, the last rung of a chat's first level on it. */
   default_effort_level?: string;
-  rate_multiplier?: number;
   /**
- * HasEffort reports whether this model offers effort tiers. KAS silently drops a
- * level sent to a tierless model (`auto`), so the effort row hides.
+ * EffortTiers are the model's tier ids, lowest first; empty when KAS named none. KAS
+ * silently drops a level sent to a tierless model (`auto`), so the effort row hides.
  */
-  has_effort?: boolean;
+  effort_tiers?: string[];
+  rate_multiplier?: number;
   /**
  * ThinkingToggleable reports whether thinking can be turned off for this model;
  * ThinkingDefaultOff, whether that is the model's default.
  */
   thinking_toggleable?: boolean;
   thinking_default_off?: boolean;
+}
+
+/**
+ * SettingsUpdatedPayload is the payload for type="settings_updated": config.json's version
+ * (EffectiveSettings.SettingsEpoch and SettingsRevision) once the change it announces is stored.
+ * settings.Update's events leave in version order; settings.Announce reports the version stored
+ * now, which a config.json restored from outside can lower, so a client refuses a lower one.
+ */
+export interface SettingsUpdatedPayload {
+  settings_epoch: number;
+  settings_revision: number;
 }
 
 /** ShowRefusal is a refused GET /api/git/show's body; it carries no content. */
@@ -3369,6 +3551,11 @@ export interface SteerQueuedPayload {
  * a resubmit repaints nothing; a ROW frame (SteerID is the row's key) leaves it empty.
  */
   replaces?: string[];
+  /**
+ * AwaitsPrompt is set on an unsent row that no clean turn close sends as a prompt of its own: a
+ * prompt that has opened carries it into its turn, or KAS may re-inject it after a load.
+ */
+  awaits_prompt?: boolean;
 }
 
 /** SteeringIssue is one configuration problem KAS found in a steering document. */
@@ -3403,10 +3590,10 @@ export interface SubjectStamp {
 
 /**
  * SystemNoticePayload is the payload for type="system_notice". The frame names no
- * session, so the chat id is the bridge that received it: a chat's, a run's
- * (`run:<id>`), or empty for the utility session. Live only, never persisted.
+ * session, so the chat id is the lane that received it: a chat's, a run's
+ * (`run:<id>`), or empty for the engine's own lane. Live only, never persisted.
  * ChatName is the chat's name when the notice was raised, so a client whose row is
- * gone or renamed still names it; empty for a run, the utility session, or no record.
+ * gone or renamed still names it; empty for a run, the engine lane, or no record.
  */
 export interface SystemNoticePayload {
   level: NoticeLevel;
@@ -3465,6 +3652,11 @@ export interface TabSubject {
  * cycle check is needed.
  */
   parent: string;
+  /**
+ * Seen is the read position the reader last acknowledged for a chat or run tab, 0 for none;
+ * only ack_tab moves it, never backward.
+ */
+  seen?: number;
   /**
  * Pinned sorts a tab ahead of every unpinned one. The partition is applied
  * by the client when it renders (applyPinOrder); the stored slice keeps the
@@ -3963,7 +4155,6 @@ export interface Usage {
 export interface UserInputNeededPayload {
   question: string;
   tool_call_id?: string;
-  sub_session_id?: string;
   /**
  * RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
  * attributed to its run and node from the step-session registry.
@@ -3998,7 +4189,8 @@ export interface UserInputSubOption {
 
 /**
  * WhoamiResponse is /api/whoami's typed wire shape. State is the discriminator and each other field belongs to one
- * arm. Unlisted kiro-cli fields are dropped, so a compromised or upgraded CLI cannot leak attributes to the browser.
+ * arm. The Login* fields report the latest sign-in attempt on every arm: a poll waits for its own attempt to leave
+ * pending, since a switch keeps the old account signed in until the new one commits.
  */
 export interface WhoamiResponse {
   state: WhoamiState;
@@ -4008,8 +4200,14 @@ export interface WhoamiResponse {
   accountType?: string;
   startUrl?: string;
   region?: string;
-  /** Reason belongs to the unavailable arm: a server-authored phrase, never CLI output. */
+  /** Reason belongs to the unavailable arm: a server-authored phrase. */
   reason?: string;
+  /** LoginState is the attempt's signin.AttemptState, LoginError a failed attempt's user text. */
+  loginState?: string;
+  loginError?: string;
+  loginAttempt?: number;
+  /** APIKey is true while KIRO_API_KEY signs the engine in: sign-in and sign-out answer 409, so the UI offers neither. */
+  apiKey?: boolean;
 }
 
 /**
@@ -4030,6 +4228,11 @@ export interface WorkflowRun {
   status?: RunStatus;
   /** ParentChatID is the marotte chat that launched the run, via its session chain. */
   parent_chat_id?: string;
+  /**
+ * ParentChatName is that chat's name from its stored header, so the History row names it without the chat
+ * being open in a tab.
+ */
+  parent_chat_name?: string;
   /**
  * EndReason says which bound stopped the run ("overran", "stalled", "orphaned"):
  * KAS reports `cancelled` for a bound and a person alike. In-memory, so a run

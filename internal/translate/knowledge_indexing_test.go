@@ -62,9 +62,9 @@ func TestHandleKnowledgeIndexing(t *testing.T) {
 			want:   &marotte.KnowledgeIndexingPayload{Name: "do cs", Phase: marotte.KnowledgeIndexingStarted, FileCount: 1},
 		},
 		{
-			name:   "a_subagent_session_is_not_the_chats_index",
+			name:   "a_step_session_is_not_the_chats_index",
 			phase:  marotte.KnowledgeIndexingStarted,
-			params: map[string]any{"sessionId": "sess-child", "name": "docs", "fileCount": 3},
+			params: map[string]any{"sessionId": "sess-step", "name": "docs", "fileCount": 3},
 		},
 		{
 			name:   "a_frame_with_no_session_is_dropped",

@@ -1,11 +1,11 @@
 package agent
 
 import (
-	"maps"
 	"slices"
 	"strconv"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -108,51 +108,54 @@ func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 	}
 }
 
-// Keeping the closing chat's entries strands a card; dropping another chat's refuses its answer.
-func TestPendingPermsTracker_ClearForChat_DropsOnlyThatChat(t *testing.T) {
+// A Stop drops its chat's own input asks only: another chat's, a run step's and every permission ask stay.
+func TestPendingPermsTracker_ClearInputs_DropsOnlyThatChatsOwnInputAsks(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	var chat2 []int64
-	for i, chatID := range []marotte.ChatID{"chat-1", "chat-2", "chat-1", "chat-2"} {
-		evt := tracker.add(int64(i), marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
-			marotte.PermissionNeededPayload{}), nil)
-		if chatID == "chat-2" {
-			chat2 = append(chat2, requestIDOf(t, evt))
+	add := func(chatID marotte.ChatID, typ marotte.EventType, payload any) int64 {
+		return requestIDOf(t, tracker.add(0, marotte.NewEvent(typ, chatID, payload), nil))
+	}
+	dropped := add("chat-1", marotte.EventElicitationNeeded, marotte.ElicitationNeededPayload{})
+	kept := []int64{
+		add("chat-1", marotte.EventPermissionNeeded, marotte.PermissionNeededPayload{}),
+		add("chat-1", marotte.EventUserInputNeeded, marotte.UserInputNeededPayload{RunID: "wf-1"}),
+		add("chat-2", marotte.EventElicitationNeeded, marotte.ElicitationNeededPayload{}),
+	}
+
+	tracker.clearInputs("chat-1", command.ScopeChatSession)
+
+	var got []int64
+	for _, evt := range tracker.list("") {
+		got = append(got, requestIDOf(t, evt))
+	}
+	if slices.Contains(got, dropped) {
+		t.Errorf("List = %v after clearInputs, want the chat's own elicitation %d gone", got, dropped)
+	}
+	for _, id := range kept {
+		if !slices.Contains(got, id) {
+			t.Errorf("List = %v after clearInputs, want %d kept", got, id)
 		}
-	}
-
-	tracker.clearForChat("chat-1")
-
-	if got := listIDs(t, tracker.list("chat-1")); len(got) != 0 {
-		t.Errorf("List(\"chat-1\") = %v after ClearForChat(\"chat-1\"), want none", got)
-	}
-	if got := listIDs(t, tracker.list("chat-2")); !slices.Equal(got, chat2) {
-		t.Errorf("List(\"chat-2\") = %v after ClearForChat(\"chat-1\"), want %v", got, chat2)
-	}
-	// The surviving chat's answers are still accepted.
-	if _, ok := tracker.takeIfPresent("chat-2", chat2[0]); !ok {
-		t.Errorf("TakeIfPresent(\"chat-2\", %d) = false: another chat's clear took chat-2's entry", chat2[0])
 	}
 }
 
 // An empty chat id is not a wildcard.
-func TestPendingPermsTracker_ClearForChat_EmptyChatIDClearsNothing(t *testing.T) {
+func TestPendingPermsTracker_ClearInputs_EmptyChatIDClearsNothing(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
 	for _, id := range []int64{1, 2} {
-		tracker.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
-			marotte.PermissionNeededPayload{}), nil)
+		tracker.add(id, marotte.NewEvent(marotte.EventElicitationNeeded, "chat-1",
+			marotte.ElicitationNeededPayload{}), nil)
 	}
 
-	tracker.clearForChat("")
+	tracker.clearInputs("", command.ScopeChatAndRuns)
 
 	if got := len(tracker.list("")); got != 2 {
-		t.Errorf("List(\"\") holds %d asks after ClearForChat(\"\"), want 2", got)
+		t.Errorf("List(\"\") holds %d asks after clearInputs(\"\"), want 2", got)
 	}
 }
 
 // TestPendingPermsTracker_ReusedACPIDsAreSeparateAsks pins identity by ask id, never by ACP id:
-// every bridge mints ACP ids from zero, so two chats, or one chat's old bridge and its successor,
+// every engine generation mints ACP ids from zero, so an old generation's session and its successor's
 // send the same one. Each stays listed, answerable and retired by its own origin.
 func TestPendingPermsTracker_ReusedACPIDsAreSeparateAsks(t *testing.T) {
 	t.Parallel()
@@ -162,7 +165,6 @@ func TestPendingPermsTracker_ReusedACPIDsAreSeparateAsks(t *testing.T) {
 		oldChat, succChat marotte.ChatID
 		oldKind, succKind marotte.EventType
 	}{
-		{"two chats", "chat-1", "chat-2", marotte.EventPermissionNeeded, marotte.EventUserInputNeeded},
 		{"successor, same kind", "chat-1", "chat-1", marotte.EventPermissionNeeded, marotte.EventPermissionNeeded},
 		{"successor, other kind", "chat-1", "chat-1", marotte.EventPermissionNeeded, marotte.EventElicitationNeeded},
 	} {
@@ -179,11 +181,12 @@ func TestPendingPermsTracker_ReusedACPIDsAreSeparateAsks(t *testing.T) {
 			}
 			ended := tracker.endOrigin(old)
 			if len(ended) != 1 || ended[0].id != oldID || ended[0].evt.Type != tc.oldKind {
-				t.Errorf("EndOrigin(old) = %+v, want only the old bridge's ask %d", ended, oldID)
+				t.Errorf("EndOrigin(old) = %+v, want only the old session's ask %d", ended, oldID)
 			}
-			ask, ok := tracker.takeIfPresent(tc.succChat, succID)
+			succKind, _ := marotte.DecisionKindForEvent(tc.succKind)
+			ask, ok := tracker.takeIfPresent(tc.succChat, succID, succKind)
 			if !ok {
-				t.Fatalf("the successor's ask %d is no longer answerable after the old bridge ended", succID)
+				t.Fatalf("the successor's ask %d is no longer answerable after the old session ended", succID)
 			}
 			if ask.origin != acpResponder(succ) || ask.acpID != reused || ask.evt.Type != tc.succKind {
 				t.Errorf("claim = {origin %p, acp %d, %q}, want the successor's {%p, %d, %q}",
@@ -193,9 +196,9 @@ func TestPendingPermsTracker_ReusedACPIDsAreSeparateAsks(t *testing.T) {
 	}
 }
 
-// The unattended floor claims by bridge and ACP id: a successor's ask under the old bridge's id is
+// The unattended floor claims by session and ACP id: a successor's ask under the old session's id is
 // not the floor's to answer.
-func TestPendingPermsTracker_TakeOnOrigin_ClaimsOnlyThatBridgesAsk(t *testing.T) {
+func TestPendingPermsTracker_TakeOnOrigin_ClaimsOnlyThatSessionsAsk(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
 	old, succ := newFakeBridge(), newFakeBridge()
@@ -209,7 +212,7 @@ func TestPendingPermsTracker_TakeOnOrigin_ClaimsOnlyThatBridgesAsk(t *testing.T)
 		t.Fatalf("TakeOnOrigin(successor, 7) = (%d, origin %p, %t), want the successor's ask %d", id, ask.origin, ok, succID)
 	}
 	if got := listIDs(t, tracker.list("")); !slices.Equal(got, []int64{oldID}) {
-		t.Errorf("asks pending = %v, want the old bridge's [%d] untouched", got, oldID)
+		t.Errorf("asks pending = %v, want the old session's [%d] untouched", got, oldID)
 	}
 	if _, _, ok := tracker.takeOnOrigin(succ, 7); ok {
 		t.Error("TakeOnOrigin claimed the successor's ask twice")
@@ -222,11 +225,28 @@ func TestPendingPermsTracker_TakeIfPresent_RefusesAnotherChatsAsk(t *testing.T) 
 	tracker := newPendingPermsTracker()
 	id := requestIDOf(t, tracker.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-3",
 		marotte.PermissionNeededPayload{}), nil))
-	if _, ok := tracker.takeIfPresent("chat-4", id); ok {
+	if _, ok := tracker.takeIfPresent("chat-4", id, marotte.DecisionKindPermission); ok {
 		t.Errorf("TakeIfPresent(\"chat-4\", %d) succeeded against chat-3's ask", id)
 	}
 	if _, _, offered := tracker.takePermissionOption("chat-4", id, ""); offered {
 		t.Errorf("TakePermissionOption(\"chat-4\", %d) succeeded against chat-3's ask", id)
+	}
+}
+
+// A user-input or elicitation answer naming a permission ask's id claims nothing: its result
+// would reach session/request_permission past the advertised-option check.
+func TestPendingPermsTracker_TakeIfPresent_RefusesAnotherKindsAsk(t *testing.T) {
+	t.Parallel()
+	tracker := newPendingPermsTracker()
+	id := requestIDOf(t, tracker.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-3",
+		marotte.PermissionNeededPayload{Options: []marotte.PermissionOption{{OptionID: "allow_once"}}}), nil))
+	for _, kind := range []marotte.DecisionKind{marotte.DecisionKindUserInput, marotte.DecisionKindElicitation} {
+		if _, ok := tracker.takeIfPresent("chat-3", id, kind); ok {
+			t.Errorf("TakeIfPresent(%q) claimed a permission ask", kind)
+		}
+	}
+	if _, _, offered := tracker.takePermissionOption("chat-3", id, "allow_once"); !offered {
+		t.Error("the permission ask was not left pending for its own answer")
 	}
 }
 
@@ -306,36 +326,5 @@ func TestClearForRun_RefusesAnEmptyRunID(t *testing.T) {
 
 	if got := len(tracker.list("")); got != 1 {
 		t.Errorf("an empty run id left %d cards, want the chat's own 1", got)
-	}
-}
-
-// TestOpenNodesForRun_NamesTheRunsOwnUnansweredSteps pins the idle window's evidence, across chats and kinds.
-func TestOpenNodesForRun_NamesTheRunsOwnUnansweredSteps(t *testing.T) {
-	t.Parallel()
-	tracker := newPendingPermsTracker()
-	first := requestIDOf(t, tracker.add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
-		marotte.PermissionNeededPayload{RunID: "wf_1", NodeID: "a"}), nil))
-	tracker.add(2, marotte.NewEvent(marotte.EventElicitationNeeded, runChatID("wf_1"),
-		marotte.ElicitationNeededPayload{RequestID: 2, RunID: "wf_1", NodeID: "b"}), nil)
-	tracker.add(3, marotte.NewEvent(marotte.EventUserInputNeeded, "c-parent",
-		marotte.UserInputNeededPayload{RequestID: 3, RunID: "wf_1", NodeID: "c"}), nil)
-	tracker.add(4, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
-		marotte.PermissionNeededPayload{RequestID: 4, RunID: "wf_1"}), nil)
-	tracker.add(5, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
-		marotte.PermissionNeededPayload{RequestID: 5, RunID: "wf_2", NodeID: "d"}), nil)
-
-	got := slices.Sorted(maps.Keys(tracker.openNodesForRun("wf_1")))
-	if want := []string{"a", "b", "c"}; !slices.Equal(got, want) {
-		t.Errorf("OpenNodesForRun(wf_1) = %v, want %v: every kind, any chat, no node-less ask", got, want)
-	}
-
-	if _, ok := tracker.takeIfPresent("c-parent", first); !ok {
-		t.Fatal("node a's ask was not pending")
-	}
-	if _, held := tracker.openNodesForRun("wf_1")["a"]; held {
-		t.Error("an answered decision still names its node")
-	}
-	if got := tracker.openNodesForRun(""); got != nil {
-		t.Errorf("OpenNodesForRun(\"\") = %v, want nil: an empty run would match every chat ask", got)
 	}
 }

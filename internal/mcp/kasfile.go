@@ -29,7 +29,7 @@ const kasServerKey = "mcpServers"
 // and writeKASConfig preserves it verbatim.
 const kasPowersKey = "powers"
 
-// The file is a handful of server declarations; a larger one is not something to merge into.
+// The file is a handful of server declarations; a larger one is refused, neither merged into nor overwritten.
 const kasFileMaxBytes = 4 << 20
 
 // kasServer is one entry of KAS's `mcpServers` map, matching its
@@ -37,7 +37,7 @@ const kasFileMaxBytes = 4 << 20
 // emitted: every one is `omitempty`, because an explicit null or zero is
 // a different declaration than an absent field.
 //
-// Deliberately absent: `cwd` (no field for it; reachable by hand-editing the file).
+// Deliberately absent: `cwd` (no field for it, and HealKASConfig reverts a hand-added one).
 type kasServer struct {
 	// Type is emitted for a registry entry only, where it is the declaration.
 	Type          string            `json:"type,omitempty"`
@@ -47,6 +47,7 @@ type kasServer struct {
 	URL           string            `json:"url,omitempty"`
 	Headers       map[string]string `json:"headers,omitempty"`
 	OAuth         *kasOAuth         `json:"oauth,omitempty"`
+	OAuthScopes   []string          `json:"oauthScopes,omitempty"`
 	DisabledTools []string          `json:"disabledTools,omitempty"`
 	// Timeout is milliseconds, and it is both KAS's connect timeout and the
 	// budget a waitForReady server gets inside a prompt. Zero is KAS's default.
@@ -102,6 +103,7 @@ func renderKASServers(servers []*Server, policy kasRenderPolicy) map[string]kasS
 			if oauth != (kasOAuth{}) {
 				entry.OAuth = &oauth
 			}
+			entry.OAuthScopes = s.OAuthScopes
 		case TransportRegistry:
 			entry.Type = string(TransportRegistry)
 		default:
@@ -139,21 +141,25 @@ func pairsRecord(in []keyPair) map[string]string {
 }
 
 // writeKASConfig renders the server set into KAS's config file, preserving
-// every top-level key it does not own. An unreadable existing file is replaced
-// rather than fatal, or the agent would stay on a stale server set the UI
-// cannot fix. The wait setting is read per write, which is how a settings
-// flip reaches the file. MUST be called on the write turn, or before New
-// returns: it records the wait value the file now holds.
+// every top-level key it does not own. An existing file it cannot read is left
+// as it is and the write fails with ErrKASUnreadable. The wait setting is read
+// per write, which is how a settings flip reaches the file. MUST be called on
+// the write turn, or before New returns: it records the wait value the file now
+// holds.
 func (s *Store) writeKASConfig(ctx context.Context, servers []*Server) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	doc, err := s.readKASConfig()
+	if err != nil {
+		return err
+	}
 	policy, _ := s.renderPolicy(ctx)
-	return s.writeKASConfigWith(ctx, servers, policy)
+	return s.writeKASConfigWith(ctx, doc, servers, policy)
 }
 
-func (s *Store) writeKASConfigWith(ctx context.Context, servers []*Server, policy kasRenderPolicy) error {
-	doc := s.readKASConfig()
+// writeKASConfigWith puts the rendered servers into doc, a readKASConfig result, and writes it.
+func (s *Store) writeKASConfigWith(ctx context.Context, doc map[string]json.RawMessage, servers []*Server, policy kasRenderPolicy) error {
 	rendered, err := renderServersKey(servers, policy)
 	if err != nil {
 		return err
@@ -199,15 +205,18 @@ func (s *Store) WritePowersServers(ctx context.Context, servers map[string]json.
 		return false, err
 	}
 	defer s.releaseWrite()
-	doc, docOK := s.readKASDoc()
+	doc, fresh, err := s.readKASDoc()
+	if err != nil {
+		return false, err
+	}
 	rawBlock, hasBlock := doc[kasPowersKey]
 	block := objectOrEmpty(rawBlock)
-	if docOK && powersBlockMatches(block, hasBlock, servers) {
+	if !fresh && powersBlockMatches(block, hasBlock, servers) {
 		return false, nil
 	}
 	var resent *renderedWait
-	if !docOK {
-		// The document was replaced whole, so marotte's own key goes back with it.
+	if fresh {
+		// The file held no document, so marotte's own key goes back with the block.
 		policy, _ := s.renderPolicy(ctx)
 		rendered, err := renderServersKey(s.servers, policy)
 		if err != nil {
@@ -216,23 +225,11 @@ func (s *Store) WritePowersServers(ctx context.Context, servers map[string]json.
 		doc[kasServerKey] = rendered
 		resent = &renderedWait{waitForReady: policy.waitAll, known: true}
 	}
-	if len(servers) == 0 {
-		delete(block, kasServerKey)
-	} else {
-		rendered, err := json.Marshal(servers)
-		if err != nil {
-			return false, fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
-		}
-		block[kasServerKey] = rendered
+	if err := setOrDelete(block, kasServerKey, servers); err != nil {
+		return false, err
 	}
-	if len(block) == 0 {
-		delete(doc, kasPowersKey)
-	} else {
-		rendered, err := json.Marshal(block)
-		if err != nil {
-			return false, fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
-		}
-		doc[kasPowersKey] = rendered
+	if err := setOrDelete(doc, kasPowersKey, block); err != nil {
+		return false, err
 	}
 	if err := s.writeKASDoc(ctx, doc); err != nil {
 		return true, err
@@ -251,6 +248,19 @@ func powersBlockMatches(block map[string]json.RawMessage, hasBlock bool, servers
 		return !hasCurrent && (!hasBlock || len(block) > 0)
 	}
 	return sameServers(objectOrEmpty(rawCurrent), servers)
+}
+
+func setOrDelete(obj map[string]json.RawMessage, key string, value map[string]json.RawMessage) error {
+	if len(value) == 0 {
+		delete(obj, key)
+		return nil
+	}
+	rendered, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
+	}
+	obj[key] = rendered
+	return nil
 }
 
 // objectOrEmpty decodes a member that must be a JSON object. Anything else,
@@ -297,7 +307,11 @@ func (s *Store) RenderKASConfig(ctx context.Context) error {
 	if !readable {
 		return nil
 	}
-	return s.writeKASConfigWith(ctx, s.servers, policy)
+	doc, err := s.readKASConfig()
+	if err != nil {
+		return err
+	}
+	return s.writeKASConfigWith(ctx, doc, s.servers, policy)
 }
 
 // RenderedWaitForReady reports the mcp_wait_for_ready value KAS's config file
@@ -311,43 +325,86 @@ func (s *Store) RenderedWaitForReady() (waitForReady, known bool) {
 // readKASConfig returns the existing document's top-level keys minus
 // `mcpServers`, so a write can put ours back without touching `powers` or
 // anything else.
-func (s *Store) readKASConfig() map[string]json.RawMessage {
-	doc, _ := s.readKASDoc()
+func (s *Store) readKASConfig() (map[string]json.RawMessage, error) {
+	doc, _, err := s.readKASDoc()
+	if err != nil {
+		return nil, err
+	}
 	delete(doc, kasServerKey)
-	return doc
+	return doc, nil
 }
 
-// readKASDoc returns every top-level key of the existing document, or an empty
-// one for an absent, oversized or malformed file. ok is false when a file is
-// there but is not a readable JSON object, so the caller knows to replace it.
-func (s *Store) readKASDoc() (doc map[string]json.RawMessage, ok bool) {
-	empty := map[string]json.RawMessage{}
+// ErrKASUnreadable refuses a write over a KAS config file that exists but is not a JSON object
+// marotte can read: rewriting it would drop every key marotte does not own. KAS parses the file
+// as JSONC, so a hand-written comment is valid to KAS and still lands here. The store logs each
+// refusal of one file state once, so a caller retrying it need not log it again.
+var ErrKASUnreadable = errors.New("kas mcp.json is not a readable JSON object")
+
+// kasUnreadableHint is ErrKASUnreadable's text for the person whose save it refused.
+const kasUnreadableHint = "marotte could not read ~/.kiro/settings/mcp.json, so it left the file unchanged. The file must be plain JSON with no comments and under 4 MB. Fix the file or move it aside, then save again."
+
+// readKASDoc returns every top-level key of the existing document; an absent file is an empty
+// one. fresh is true when the file holds no document (only whitespace or JSON null, after an
+// optional UTF-8 BOM), so the caller replaces it whole and puts marotte's own key back. A file
+// that cannot be stat'd, read or parsed, or is over kasFileMaxBytes, returns ErrKASUnreadable.
+// MUST be called on the write turn, or before New returns: it records the last refusal.
+func (s *Store) readKASDoc() (doc map[string]json.RawMessage, fresh bool, err error) {
 	info, err := os.Stat(s.kasPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return empty, true
+		s.kasRefused = ""
+		return map[string]json.RawMessage{}, false, nil
 	}
-	if err != nil || info.Size() > kasFileMaxBytes {
-		if err != nil {
-			slogWarnKAS("stat failed", s.kasPath, err)
-		}
-		return empty, false
+	if err != nil {
+		return nil, false, s.refuseKAS(nil, err)
+	}
+	if info.Size() > kasFileMaxBytes {
+		return nil, false, s.refuseKAS(info, fmt.Errorf("%d bytes is over the %d-byte merge cap", info.Size(), kasFileMaxBytes))
 	}
 	data, err := os.ReadFile(s.kasPath)
 	if err != nil {
-		slogWarnKAS("read failed", s.kasPath, err)
-		return empty, false
+		return nil, false, s.refuseKAS(info, err)
 	}
-	// KAS parses this with JSONC, so a hand-written file may carry comments that
-	// encoding/json rejects. Losing an unknown key is the cost of not vendoring a
-	// JSONC parser to preserve keys marotte does not write; it is logged.
-	if err := json.Unmarshal(data, &doc); err != nil {
-		slogWarnKAS("existing file unparseable, its non-mcpServers keys will be dropped", s.kasPath, err)
-		return empty, false
+	data, empty := decodeUserJSON(data)
+	if !empty {
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return nil, false, s.refuseKAS(info, err)
+		}
 	}
+	s.kasRefused = ""
 	if doc == nil {
-		return empty, false
+		return map[string]json.RawMessage{}, true, nil
 	}
-	return doc, true
+	return doc, false, nil
+}
+
+// refuseKAS returns the refusal, logged at Error the first time for one file state (size,
+// modification time and cause) and at Debug while that state repeats. The path is safe to log;
+// the file's CONTENT is not, and no caller passes it.
+func (s *Store) refuseKAS(info os.FileInfo, cause error) error {
+	key := cause.Error()
+	if info != nil {
+		key = fmt.Sprintf("%d:%d:%s", info.Size(), info.ModTime().UnixNano(), key)
+	}
+	msg := "mcp: kas config file is not a readable JSON object; leaving it unchanged and refusing the write"
+	if key == s.kasRefused {
+		slog.Debug(msg, "path", s.kasPath, "error", cause)
+	} else {
+		s.kasRefused = key
+		slog.Error(msg, "path", s.kasPath, "error", cause)
+	}
+	return fmt.Errorf("%w: %w", ErrKASUnreadable, cause)
+}
+
+// utf8BOM is the byte-order mark a Windows editor prepends to a saved UTF-8 file.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
+// decodeUserJSON prepares a hand-editable JSON file for json.Unmarshal: it strips a leading
+// UTF-8 BOM, and empty reports content that is only JSON whitespace (RFC 8259 §2: space, tab,
+// LF, CR), which both readers take as no servers. \v and \f are not JSON whitespace, so
+// bytes.TrimSpace would wave through a file JSON rejects.
+func decodeUserJSON(data []byte) (doc []byte, empty bool) {
+	doc = bytes.TrimPrefix(data, utf8BOM)
+	return doc, len(bytes.Trim(doc, " \t\n\r")) == 0
 }
 
 // kasConfigPath is the file KAS reads for user-level MCP servers.
@@ -357,10 +414,4 @@ func (s *Store) readKASDoc() (doc map[string]json.RawMessage, ok bool) {
 // plausible accidental commit of a file holding OAuth client secrets.
 func kasConfigPath() string {
 	return workspace.KiroSettingsPath("mcp.json")
-}
-
-// slogWarnKAS logs a KAS-config read problem. The path is safe to log; the
-// file's CONTENT is not, so no branch here touches it.
-func slogWarnKAS(msg, path string, err error) {
-	slog.Warn("mcp: kas config "+msg, "path", path, "error", err)
 }

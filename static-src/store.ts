@@ -55,7 +55,11 @@ import {
   writeEntryText,
 } from "./store-signals.js";
 import { noteToolActivity } from "./tool-silence.js";
-import { releaseWorkflowTakeUps, settleWorkflowMessages } from "./workflow-delivery.js";
+import {
+  releaseWorkflowTakeUps,
+  settleWorkflowMessages,
+  turnsInOrder,
+} from "./workflow-delivery.js";
 
 // One version signal per chat, so a background chat's stream cannot repaint the visible transcript.
 // Every bump carries a RenderCause, declared at the branch that knows what changed; causes merge
@@ -216,9 +220,11 @@ export function watchSession(id: string): Session | undefined {
 /** Whether `chatID`'s log already holds a turn this client's prompt opened. */
 export function hasMessage(chatID: string, messageID: string): boolean {
   const s = sessions.get(chatID);
-  if (s === undefined) {
-    return false;
-  }
+  return s !== undefined && promptOpened(s, messageID);
+}
+
+/** Whether one of `s`'s resident turns was opened by the prompt under `messageID`. */
+export function promptOpened(s: Session, messageID: string): boolean {
   for (const state of s.turns.values()) {
     const first = state.entries[0];
     if (first !== undefined && payloadOf(first, "turn_open")?.prompt?.id === messageID) {
@@ -397,6 +403,50 @@ export function isThinking(id: string): boolean {
   return get(id)?.thinking ?? false;
 }
 
+/** Is a turn RUNNING as Send and every mid-turn gate read it? `thinking` alone misses a turn the
+ *  agent started itself until it streams, and a prompt sent beside that turn cancels it;
+ *  `turnLive` alone misses Send's optimistic window before `turn_opened`. `/drop` waives the
+ *  turns open when it ran (`Session.turn_dropped`). */
+export function sessionBusy(s: Session): boolean {
+  return s.thinking || (s.turn_dropped !== true && turnLive(s));
+}
+
+/** `sessionBusy` by id, untracked. */
+export function isBusy(id: string): boolean {
+  const s = get(id);
+  return s !== undefined && sessionBusy(s);
+}
+
+/** `sessionBusy` as a TRACKED read. Opening or closing a turn changes the turn map in place and
+ *  bumps only the transcript version, so the read subscribes to that too. */
+export function watchBusy(id: string): boolean {
+  touch(messagesVersionOf(id));
+  const s = watchSession(id);
+  return s !== undefined && sessionBusy(s);
+}
+
+/** `/drop`: the chat reads idle to the composer until a new turn opens (`clearTurnDropped`) or
+ *  streams (`setThinking`). */
+export function dropTurnLocally(id: string): void {
+  if (get(id) === undefined) {
+    return;
+  }
+  setThinking(id, false);
+  sessions.update(id, (s) => ({ ...s, turn_dropped: true }));
+}
+
+/** A live `turn_opened` ends a `/drop`'s waiver: the new turn is running. */
+export function clearTurnDropped(id: string): void {
+  if (get(id)?.turn_dropped !== true) {
+    return;
+  }
+  sessions.update(id, (s) => {
+    const next = { ...s };
+    delete next.turn_dropped;
+    return next;
+  });
+}
+
 /** Whether a chat holds no conversation at all: nothing on the record and nothing resident. Both
  *  halves are load-bearing, which is why this is one predicate. */
 export function isEmptyChat(s: Session | undefined): boolean {
@@ -417,6 +467,7 @@ export function setThinking(id: string, v: boolean): void {
     if (v) {
       delete next.agent_status;
       delete next.turn_open;
+      delete next.turn_dropped;
     }
     return next;
   });
@@ -497,8 +548,9 @@ export function outcomeLatch(outcome: TurnOutcome | undefined): "done" | "failed
 }
 
 /** Derive the chat tab's activity-dot state. ONE rule, shared by the store effect and the
- *  turn-lifecycle handlers. Order is precedence, and `pendingAsk` is a parameter because
- *  `decision-dock.ts` imports this module. */
+ *  turn-lifecycle handlers. Order is precedence. `input` comes only from `pendingAsk` (the dock's
+ *  decisions, `hasPendingDecision`), a parameter because
+ *  `decision-dock.ts` imports this module; `waiting` only from the chat's own `chat_status`. */
 export type TabDotState = "" | "input" | "failed" | "working" | "waiting" | "done" | "idle";
 
 export function tabStatusFor(s: Session | undefined, pendingAsk = false): TabDotState {
@@ -522,20 +574,13 @@ export function tabStatusFor(s: Session | undefined, pendingAsk = false): TabDot
   return latch === "done" ? "done" : "idle";
 }
 
-/** The pause classes the dot vocabulary distinguishes. A classified value rather than the raw
- *  `pauseReason`, so this module never learns KAS's pause sentences or its node signals:
- *  `run-store.ts` owns that rule and hands the answer over already decided. */
-export type RunPauseClass = "" | "need_input";
-
 /** The same dot vocabulary for a workflow RUN, which has no `Session` behind it. Its own
  *  function rather than a branch in `tabStatusFor` because the two inputs share not one field;
- *  what they share is the OUTPUT vocabulary and precedence. `paused` is `waiting` — stopped, not
- *  finished — EXCEPT for a step parked on a person, which is `input`, the park being the half
- *  that survives a client which never received the card. */
+ *  what they share is the OUTPUT vocabulary and precedence. `paused` is `waiting`, stopped and not
+ *  finished; a step waiting on a person is `pendingAsk`, which `runPendingAsks` decides. */
 export function runStatusFor(
   status: ClassifiedRunStatus | undefined,
   pendingAsk = false,
-  pause: RunPauseClass = "",
 ): TabDotState {
   if (pendingAsk) {
     return "input";
@@ -546,7 +591,7 @@ export function runStatusFor(
     case "running":
       return "working";
     case "paused":
-      return pause === "need_input" ? "input" : "waiting";
+      return "waiting";
     case "failed":
     case "aborted":
       return "failed";
@@ -701,9 +746,9 @@ export function recordSteerQueued(id: string, frame: SteerFrame): void {
 }
 
 /** Remove every CONFIRMED waiting steer, returning a snapshot to restore from. The optimistic
- *  half of `chat.clear_steers`; the transcript's record is the `steer` entry the server appends
- *  for each cleared id, so nothing here writes one. A `pending` entry STAYS — it is not in KAS's
- *  buffer yet, so removing it locally would hide a message still on its way. */
+ *  half of `chat.clear_steers`; a discarded row leaves on the server's `removed` frame and writes
+ *  no transcript entry. A `pending` entry STAYS — it is not in KAS's buffer yet, so removing it
+ *  locally would hide a message still on its way. */
 export function dropConfirmedSteers(id: string): readonly PendingSteer[] {
   const s = get(id);
   if (s?.steers === undefined) {
@@ -795,10 +840,14 @@ export function upsertHeader(h: ChatHeader): void {
         // has not closed yet is not counted, and a rewind's shrink heals on that rewind's own
         // refetch.
         turn_count: Math.max(s.turn_count, h.turn_count),
+        // Authoritative both ways, unlike `turn_count`: a rewind lowers it, and every device must
+        // fold the same value or one counts a chat another has read.
+        read_position: h.read_position ?? 0,
         // The model badge's ONE input, and a header read is its authority in both directions: the
         // apply at a turn's close arrives with the field empty, which is what clears the pending
         // pick on every device.
         pending_model: h.pending_model ?? "",
+        pending_effort: h.pending_effort ?? "",
         // Both are header-authoritative: an absent field is steer and no follow-ups.
         interrupt_mode: h.interrupt_mode ?? "steer",
         queued: h.queued_prompts ?? [],
@@ -836,7 +885,9 @@ export function upsertHeader(h: ChatHeader): void {
     thinking_active: h.thinking_active ?? "",
     usage: h.usage,
     turn_count: h.turn_count,
+    read_position: h.read_position ?? 0,
     pending_model: h.pending_model ?? "",
+    pending_effort: h.pending_effort ?? "",
     interrupt_mode: h.interrupt_mode ?? "steer",
     queued: h.queued_prompts ?? [],
     tangent: h.tangent ?? false,
@@ -1013,7 +1064,7 @@ function applyRevert(chatID: string, s: Session, entry: Entry): void {
     for (const id of dropped.keys()) {
       s.turns.delete(id);
     }
-    releaseWorkflowTakeUps(dropped.values(), s.turns.values());
+    releaseWorkflowTakeUps(dropped.values(), turnsInOrder(s.turn_order, s.turns));
     s.turn_order = s.turn_order.filter((id) => !dropped.has(id));
     // The window's own record of what the revert took, read by the range read's seat as the abort's
     // belt. Extended rather than replaced: a second rewind's window does not un-revert the first
@@ -1063,8 +1114,12 @@ export function appendEntry(chatID: string, entry: Entry): void {
     // exists in which the steer is in neither place.
     retireSteerRows(chatID, entry);
   }
-  if (entry.kind === "steer" || entry.kind === "steer_delivered") {
-    settleWorkflowMessages(s.turns.values());
+  if (
+    entry.kind === "steer" ||
+    entry.kind === "steer_delivered" ||
+    entry.kind === "steer_cleared"
+  ) {
+    settleWorkflowMessages(turnsInOrder(s.turn_order, s.turns));
   }
   if (entry.kind === "tool_result") {
     publishSettledCall(chatID, state, entry);

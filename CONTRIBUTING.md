@@ -9,7 +9,7 @@ A change to how chats or settings are stored adds no migration code, compatibili
 ## Rules
 
 - Every change a user makes to chat state goes through `POST /api/command`, is written to disk, and reaches every open tab over `/api/events`. The transcript draws a user message only after `turn_opened` arrives, so two devices never show different chats.
-- A chat's record is removed only by `delete_chat`, by closing its tab while chat retention is off, and by the retention purge. A bridge exit, model switch, restart or error never removes one.
+- A chat's record is removed only by `delete_chat`, by closing its tab while chat retention is off, and by the retention purge. A session or engine exit, model switch, restart or error never removes one.
 - kiro-cli's ACP notifications become marotte entries and events in `internal/translate` before anything reaches a client. Never forward a raw ACP frame. The client has no type or decoder for one, so it would drop or misread it.
 - A failed user action shows its action's toast. A form validation error shows beside the field that failed, and a condition the user must see on every view is a banner in `banner-stack.ts`. Background polls and stream errors only log.
 - An action whose failure a form or a banner already shows sets `error: false`, or the user sees the same failure twice.
@@ -18,7 +18,7 @@ A change to how chats or settings are stored adds no migration code, compatibili
 
 ## Checks
 
-The census tests in `internal/kascap` compare the capability table with kiro-cli's own agent-server bundle under `~/.local/share/kiro-cli/kas/`. CI has no bundle and skips them.
+The census tests in `internal/kascap` compare the capability table with kiro-cli's own agent-server bundle under `~/.local/share/kiro-cli/kas/`. On a pull request that changes `KIRO_CLI_VERSION` or a `KIRO_CLI_SHA256` digest, CI downloads each release archive whose pin changed, x86_64 and aarch64 alike, checks its sha256, reads the agent server out of it and runs them against each. Every other CI run skips them.
 
 After a change to that package, run `go test -v ./internal/kascap/` on a machine with the pinned kiro-cli, and check that no census test reports SKIP. A failure prints the `-update` command, and every line it adds is a capability to judge.
 
@@ -28,3 +28,5 @@ The `e2e-sse` test project runs against a real server binary and skips unless `S
 go build -tags marotte_test -o /tmp/marotte-test .
 cd static-src && SSE_FIXTURE=/tmp/marotte-test npx vitest --run --project e2e-sse
 ```
+
+A second marotte you start by hand needs its own `KIRO_CONFIG_DIR`, `HOME` and `KIRO_HOME`, or it finds the running one's lock and refuses to start.

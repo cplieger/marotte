@@ -221,11 +221,19 @@ func TestSetEnabled_TogglesAndPersists(t *testing.T) {
 	if len(s.enabledRaw(t.Context())) != 0 {
 		t.Error("disabled server leaked into EnabledRaw")
 	}
-	// Second set to same value is a true no-op: the idempotent branch
-	// returns early before persist or timestamp updates.
-	_, err = s.setEnabled(t.Context(), orig.ID, false)
+	record, err := os.ReadFile(s.path)
 	if err != nil {
-		t.Errorf("idempotent set: %v", err)
+		t.Fatal(err)
+	}
+	again, err := s.setEnabled(t.Context(), orig.ID, false)
+	if err != nil {
+		t.Fatalf("idempotent set: %v", err)
+	}
+	if again.UpdatedAt != got.UpdatedAt {
+		t.Errorf("idempotent set moved UpdatedAt from %d to %d", got.UpdatedAt, again.UpdatedAt)
+	}
+	if after, _ := os.ReadFile(s.path); string(after) != string(record) {
+		t.Errorf("idempotent set rewrote the record:\n%s\nto\n%s", record, after)
 	}
 }
 
@@ -637,6 +645,43 @@ func TestUpdate_RejectsRenameToExistingName(t *testing.T) {
 		Transport: TransportStdio, Name: "BETA", Command: "bash",
 	}); err != errNameConflict {
 		t.Errorf("Update rename-to-conflict = %v, want ErrNameConflict", err)
+	}
+}
+
+// KAS folds '-' to '_' in a tool's invocation id (mcp_<server>_<tool>), so names differing only there would
+// collide on every same-named tool.
+func TestCreate_HyphenUnderscoreFoldIsADuplicate(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "foo-bar", Command: "bash"}); err != nil {
+		t.Fatalf("Create foo-bar: %v", err)
+	}
+	for _, name := range []string{"foo_bar", "FOO-BAR", "Foo_Bar"} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: name, Command: "zsh"}); !errors.Is(err, errNameConflict) {
+				t.Errorf("Create(%q) beside foo-bar = %v, want errNameConflict", name, err)
+			}
+		})
+	}
+	for _, name := range []string{"foobar", "foo-baz", "foo--bar"} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: name, Command: "zsh"}); err != nil {
+				t.Errorf("Create(%q) beside foo-bar = %v, want a distinct server admitted", name, err)
+			}
+		})
+	}
+}
+
+func TestUpdate_RejectsRenameOntoTheFoldOfAnExistingName(t *testing.T) {
+	s := newTestStore(t)
+	a, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "alpha", Command: "bash"})
+	if err != nil {
+		t.Fatalf("Create alpha: %v", err)
+	}
+	if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "my-beta", Command: "bash"}); err != nil {
+		t.Fatalf("Create my-beta: %v", err)
+	}
+	if _, err := s.update(t.Context(), a.ID, &Server{Transport: TransportStdio, Name: "my_beta", Command: "bash"}); !errors.Is(err, errNameConflict) {
+		t.Errorf("Update rename alpha -> my_beta = %v, want errNameConflict", err)
 	}
 }
 
@@ -1127,5 +1172,143 @@ func TestImportServers_AcceptsExactlyTheCap(t *testing.T) {
 	if len(results) != maxImportServers {
 		t.Errorf("ImportServers(%d servers) returned %d results, want %d",
 			maxImportServers, len(results), maxImportServers)
+	}
+}
+
+// corruptSiblings lists the mcp.json.corrupt.* files load moved aside in dir.
+func corruptSiblings(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "mcp.json.corrupt.") {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
+func TestLoad_BOMPrefixedRecordLoadsItsServers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mcp.json")
+	record := `{"version":1,"servers":[{"id":"abc","name":"bom","transport":"stdio","command":"bash","enabled":true}]}`
+	if err := os.WriteFile(path, append([]byte{0xEF, 0xBB, 0xBF}, record...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kas := filepath.Join(dir, "kas-mcp.json")
+
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if list := s.list(t.Context()); len(list) != 1 || list[0].Name != "bom" {
+		t.Errorf("list = %#v, want the BOM-prefixed record's one server", list)
+	}
+	if got := corruptSiblings(t, dir); len(got) != 0 {
+		t.Errorf("a BOM-prefixed record was moved aside as corrupt: %v", got)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("mcp.json is gone after load: %v", err)
+	}
+	if _, ok := readKASServers(t, kas)["bom"]; !ok {
+		t.Errorf("KAS's file lacks the record's server: %s", readKAS(t, kas)[kasServerKey])
+	}
+}
+
+// Not parallel: it swaps the process-wide slog default.
+func TestLoad_EmptyRecordIsNoServersNotCorrupt(t *testing.T) {
+	for _, tc := range []struct{ name, content string }{
+		{name: "zero bytes", content: ""},
+		{name: "spaces", content: "  "},
+		{name: "json whitespace", content: " \t\r\n"},
+		{name: "bom only", content: "\xEF\xBB\xBF\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureSlog(t)
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			s, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if n := len(s.list(t.Context())); n != 0 {
+				t.Errorf("list has %d servers, want none", n)
+			}
+			if got := corruptSiblings(t, dir); len(got) != 0 {
+				t.Errorf("an empty record was moved aside: %v", got)
+			}
+			if strings.Contains(logs.String(), "level=WARN") || strings.Contains(logs.String(), "level=ERROR") {
+				t.Errorf("an empty record logged a warning:\n%s", logs.String())
+			}
+		})
+	}
+}
+
+// \v and \f are whitespace to unicode.IsSpace but not to JSON, so a file of
+// only them is garbage and keeps the corrupt-aside path.
+func TestLoad_VerticalTabOnlyRecordStaysCorrupt(t *testing.T) {
+	for _, tc := range []struct{ name, content string }{
+		{name: "vertical tab", content: "\x0b"},
+		{name: "form feed", content: "\x0c"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if got := corruptSiblings(t, dir); len(got) != 1 {
+				t.Errorf("corrupt siblings = %v, want the %q-only record moved aside", got, tc.content)
+			}
+		})
+	}
+}
+
+func TestCreate_IdenticalSpecReRendersADriftedFile(t *testing.T) {
+	s := newTestStore(t)
+	spec := &Server{Transport: TransportStdio, Name: "agent-mail", Command: "bash", Enabled: true}
+	if _, err := s.Create(t.Context(), spec); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := os.WriteFile(s.kasPath, []byte(`{"mcpServers": {}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Create(t.Context(), spec); err != nil {
+		t.Fatalf("reinstall: %v", err)
+	}
+	if _, ok := readKASServers(t, s.kasPath)["agent-mail"]; !ok {
+		t.Error("reinstalling the identical spec left agent-mail missing from KAS's file")
+	}
+}
+
+func TestImport_UnchangedBlockReRendersADriftedFile(t *testing.T) {
+	s := newTestStore(t)
+	entry := func() []*Server {
+		return []*Server{{Transport: TransportStdio, Name: "agent-mail", Command: "bash", Enabled: true}}
+	}
+	if _, err := s.importServers(t.Context(), entry()); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if err := os.WriteFile(s.kasPath, []byte(`{"mcpServers": {}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := s.importServers(t.Context(), entry())
+	if err != nil {
+		t.Fatalf("re-import: %v", err)
+	}
+	if len(results) != 1 || results[0].Outcome != importUnchanged {
+		t.Errorf("re-import results = %+v, want one unchanged", results)
+	}
+	if _, ok := readKASServers(t, s.kasPath)["agent-mail"]; !ok {
+		t.Error("re-importing the unchanged block left agent-mail missing from KAS's file")
 	}
 }

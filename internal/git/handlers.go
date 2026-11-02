@@ -66,6 +66,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/git/show", h.handleShow)
 	mux.HandleFunc("/api/git/clone", h.handleClone)
 	mux.HandleFunc("/api/git/log", h.handleLog)
+	mux.HandleFunc("/api/git/branch-commits", h.handleBranchCommits)
 	mux.HandleFunc("/api/git/branches", h.handleBranches)
 	mux.HandleFunc("/api/git/checkout", h.handleCheckout)
 	mux.HandleFunc("/api/git/stash", h.handleStash)

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -407,6 +408,59 @@ func TestImport_OAuthObjectReachesTheRecord(t *testing.T) {
 	}
 }
 
+func TestImport_OAuthScopesReachTheRecord(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	got := decodeImport(t, postImport(t, mux, `{
+	  "mcpServers": {"graph": {"url":"https://mcp.example/mcp",
+	    "oauthScopes": [" read ", "write"]}}
+	}`))
+	if joined := strings.Join(got.Notes, "\n"); strings.Contains(joined, "oauthScopes") {
+		t.Errorf("notes = %q, want no ignoring note for a key the record now carries", joined)
+	}
+	raw := s.enabledRaw(t.Context())
+	if len(raw) != 1 || !slices.Equal(raw[0].OAuthScopes, []string{"read", "write"}) {
+		t.Errorf("stored = %+v, want oauth_scopes [read write], each entry trimmed", raw)
+	}
+}
+
+// RFC 6749 section 3.3: the order of scopes does not matter, so a reordered re-paste is the same connection.
+func TestImport_ReorderedScopesAreTheSameSpec(t *testing.T) {
+	s, mux := newRoutedStore(t)
+	const block = `{"mcpServers":{"g":{"url":"https://mcp.example/mcp","oauthScopes":%s}}}`
+
+	_ = decodeImport(t, postImport(t, mux, fmt.Sprintf(block, `["read","write"]`)))
+	got := decodeImport(t, postImport(t, mux, fmt.Sprintf(block, `["write","read"]`)))
+	if len(got.Results) != 1 || got.Results[0].Outcome != importUnchanged {
+		t.Errorf("reordered re-paste results = %#v, want unchanged", got.Results)
+	}
+	if rec := postImport(t, mux, fmt.Sprintf(block, `["read","admin"]`)); rec.Code != http.StatusConflict {
+		t.Errorf("different-scopes re-paste = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	if n := len(s.list(t.Context())); n != 1 {
+		t.Errorf("stored = %d, want 1", n)
+	}
+}
+
+// A local server has no OAuth sign-in, so the block's OAuth keys are dropped and the user is told.
+func TestImport_OAuthKeysOnAStdioBlockAreNoted(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	got := decodeImport(t, postImport(t, mux, `{
+	  "mcpServers": {"x": {"command":"npx","oauth":{"clientId":"cid"},"oauthScopes":["read"]}}
+	}`))
+	joined := strings.Join(got.Notes, "\n")
+	for _, key := range []string{`ignoring "oauth"`, `ignoring "oauthScopes"`} {
+		if !strings.Contains(joined, key) {
+			t.Errorf("notes = %q, want one %s", joined, key)
+		}
+	}
+	raw := s.enabledRaw(t.Context())
+	if len(raw) != 1 || raw[0].OAuthClientID != "" || len(raw[0].OAuthScopes) != 0 {
+		t.Errorf("stored = %+v, want the stdio server with no OAuth fields", raw)
+	}
+}
+
 func TestImport_ClientSecretIsRefusedByName(t *testing.T) {
 	s, mux := newRoutedStore(t)
 
@@ -753,6 +807,18 @@ func TestImport_CaseOnlyDuplicateNamesAreRefused(t *testing.T) {
 		`{"mcpServers":{"GitHub":{"command":"a"},"github":{"command":"a"}}}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
+	}
+	if got := len(s.list(t.Context())); got != 0 {
+		t.Errorf("stored = %d, want 0", got)
+	}
+}
+
+func TestImport_HyphenUnderscoreDuplicateNamesAreRefused(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	rec := postImport(t, mux, `{"mcpServers":{"foo-bar":{"command":"a"},"foo_bar":{"command":"b"}}}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), errImportDuplicate.Error()) {
+		t.Fatalf("import = %d %s, want 400 naming the duplicate", rec.Code, rec.Body.String())
 	}
 	if got := len(s.list(t.Context())); got != 0 {
 		t.Errorf("stored = %d, want 0", got)

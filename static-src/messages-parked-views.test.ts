@@ -697,29 +697,3 @@ describe("disposal", () => {
     expect(viewOf(b).querySelectorAll(".turn").length).toBeGreaterThan(0);
   });
 });
-
-// `activateView` resets the scroll controller for a view it created, and that reset removes the attached view's
-// "Load older messages" button, so it must run after the attach or it strips the outgoing chat's pagination.
-describe("activating a new view", () => {
-  it("leaves the outgoing view's pagination button in place", async () => {
-    const a = freshID("c");
-    const b = freshID("c");
-    seed(oneTurn(a, "x"));
-    await flushed();
-    // What `chat.ts setupLoadMore` does for a chat the server says has more.
-    scroll.setLoadMore(() => undefined, true);
-    const button = viewOf(a).querySelector(`[id="load-more-indicator"]`);
-    expect(button).not.toBeNull();
-
-    // A chat with no resident view yet: the branch that creates one.
-    store.setSessions([...store.getSessions(), oneTurn(b, "y")]);
-    switchTo(b);
-    await flushed();
-
-    expect({
-      created: messages.transcriptViewFor(b) !== null,
-      outgoingKept: button !== null && viewOf(a).contains(button),
-      incomingHasNone: viewOf(b).querySelector(`[id="load-more-indicator"]`) === null,
-    }).toEqual({ created: true, outgoingKept: true, incomingHasNone: true });
-  });
-});

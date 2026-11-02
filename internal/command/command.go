@@ -20,7 +20,7 @@ import (
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // maxCommandBody caps the whole POST /api/command envelope: the largest
@@ -38,8 +38,8 @@ type Handler func(ctx context.Context, cmd *marotte.ClientCommand) (any, error)
 // optional machine-readable reason the error envelope emits as its additive
 // `reason` field. The status rides the error per call site rather than a
 // sentinel-to-status table, because the same sentinel can mean different
-// statuses in different places (e.g. ErrChatNotFound is 409 from a shell
-// command but 404 from set_mode).
+// statuses in different places (e.g. ErrChatNotFound is 409 from a prompt
+// but 404 from set_mode).
 type statusError struct {
 	err    error
 	reason string
@@ -137,6 +137,25 @@ func (d *Dispatcher) Register(t marotte.CommandType, h Handler) {
 	d.mu.Unlock()
 }
 
+func (d *Dispatcher) handler(t marotte.CommandType) (Handler, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	fn, ok := d.handlers[t]
+	return fn, ok
+}
+
+// Run applies cmd through its registered handler in process, for a command that applies another's
+// effect as part of its own: no envelope, no idempotency replay, no answer discharge, and the
+// handler's response is dropped.
+func (d *Dispatcher) Run(ctx context.Context, cmd *marotte.ClientCommand) error {
+	fn, ok := d.handler(cmd.Type)
+	if !ok {
+		return StatusError(http.StatusInternalServerError, errors.New("unknown command: "+string(cmd.Type)))
+	}
+	_, err := fn(ctx, cmd)
+	return err
+}
+
 // ResolveAfterClose resolves the pending turn ends of the closed turn and older
 // under the chat's steer lock, then routes the rows it made unsent into a prompt
 // that already started. The zero EndFacts answers when nothing is registered.
@@ -217,9 +236,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d.mu.RLock()
-	fn, ok := d.handlers[cmd.Type]
-	d.mu.RUnlock()
+	fn, ok := d.handler(cmd.Type)
 	if !ok {
 		httpreply.BadRequest(w, "unknown command: "+string(cmd.Type))
 		return

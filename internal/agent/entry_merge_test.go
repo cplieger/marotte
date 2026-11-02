@@ -823,6 +823,49 @@ func TestMergeEntries_ARecordSaySplitAtAnAckKeepsEverySegment(t *testing.T) {
 	}
 }
 
+// TestMergeEntries_AMessageAheadOfAWholeSayPairsBoth pins the record a mid-stream workflow
+// message leaves: its row ahead of the whole say, which KAS's replay holds as one message with
+// the row after it. Both pair, nothing is inserted and the say is one entry.
+func TestMergeEntries_AMessageAheadOfAWholeSayPairsBoth(t *testing.T) {
+	const words = "Task 12 round 3, Claude seat: APPROVE."
+	thinking := func(text string) entryRow {
+		return entryRow{kind: marotte.EntryKindThinking, id: "S", payload: marotte.EntryThinking{Text: text}}
+	}
+	record := []recordTurn{recTurn(t, "T1",
+		openRow("T1", 1, nil),
+		steerRow(marotte.WorkflowMessageIDPrefix+"1", marotte.EntrySteer{
+			Text: words, Origin: marotte.SteerOriginStep, Step: "review-claude", ProducedTs: 5,
+		}),
+		entryRow{
+			kind: marotte.EntryKindSteerDelivered, id: marotte.SteerDeliveredID(marotte.WorkflowMessageIDPrefix + "1"),
+			payload: marotte.EntrySteerDelivered{SteerID: marotte.WorkflowMessageIDPrefix + "1", KASID: "notify-1", ReadTs: 9},
+		},
+		thinking("I need to locate the arrapi agent on Agent Mail, register"),
+		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
+	)}
+	projected := []translate.ProjectedTurn{projTurn(t, "P1",
+		openRow("P1", 0, nil),
+		thinking("I need to locate the arrapi agent on Agent Mail, register"),
+		steerRow("notify-1", marotte.EntrySteer{Text: words, Origin: marotte.SteerOriginStep}),
+		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
+	)}
+
+	merged, changed := mergeEntries(record, projected, "sid-1")
+	want := []string{
+		"T1", marotte.WorkflowMessageIDPrefix + "1",
+		marotte.SteerDeliveredID(marotte.WorkflowMessageIDPrefix + "1"), "S", "T1:e1",
+	}
+	if got := idsOf(merged[0]); !equalStrings(got, want) {
+		t.Fatalf("entry ids = %v, want %v:\n%s", got, want, dumpMerged(merged))
+	}
+	if changed {
+		t.Errorf("changed = true, want the record standing as it is:\n%s", dumpMerged(merged))
+	}
+	if n := countKind(merged[0], marotte.EntryKindThinking); n != 1 {
+		t.Errorf("the merged turn holds %d thinking entries, want one", n)
+	}
+}
+
 // TestMergeEntries_ADivergingSayKeepsTheRecordsText pins the no-prefix case.
 func TestMergeEntries_ADivergingSayKeepsTheRecordsText(t *testing.T) {
 	record := []recordTurn{recTurn(t, "T1",
@@ -1345,5 +1388,52 @@ func TestMergeEntries_AWorkflowMessagePairsOnTheIDItsTakeUpNamed(t *testing.T) {
 	want := []string{"T1", "S", a, marotte.SteerDeliveredID(a), b, "notify-x", marotte.SteerDeliveredID(b), "T1:e1"}
 	if got := idsOf(merged[0]); !equalStrings(got, want) {
 		t.Fatalf("entry ids = %v, want %v:\n%s", got, want, dumpMerged(merged))
+	}
+}
+
+// The recorded shape of a restart that interrupted a prompt turn while KAS still queued it: the next load's replay
+// carried a bracket pair with no timestamp and no content, inserted after that turn. No merged
+// entry may keep ts 0: the inserted turn takes the time of the entry before it.
+func TestMergeEntries_AnInsertedTurnWithNoTimestampTakesItsPredecessors(t *testing.T) {
+	const sid = "sess-blocked"
+	rec := recTurn(t, "t-stopped",
+		openRow("t-stopped", 5, &marotte.EntryPrompt{ID: "m-asked", Text: "check the build lanes"}),
+		bindRow("t-stopped:e1", "kas-msg-1", sid),
+		liveClose("t-stopped:e2", marotte.TurnOutcomeInterrupted, marotte.StopReasonInterrupted),
+		steerRow("steer-late", marotte.EntrySteer{
+			Text: "?", Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonRestart,
+		}),
+	)
+	for i, ts := range []int64{1000, 1100, 5000, 5100} {
+		rec.Entries[i].Ts = ts
+	}
+	projected := []translate.ProjectedTurn{
+		projTurn(t, "P-stopped", openRow("P-stopped", 0, &marotte.EntryPrompt{
+			ID: "kas-msg-1", Text: "check the build lanes",
+		})),
+		projTurn(t, "proj-inserted",
+			openRow("proj-inserted", 0, nil),
+			closeRow("proj-inserted-close", marotte.EntryTurnClose{
+				Outcome: marotte.TurnOutcomeCancelled, StopReasonRaw: "cancelled",
+			}),
+		),
+	}
+	projected[0].Entries[0].Ts = 1090
+
+	merged, changed := mergeEntries([]recordTurn{rec}, projected, sid)
+	if !changed || len(merged) != 2 {
+		t.Fatalf("merged %d turns (changed %v), want the stopped turn and the inserted one:\n%s", len(merged), changed, dumpMerged(merged))
+	}
+	for _, e := range merged[1].Entries {
+		if e.Ts != 5100 {
+			t.Errorf("inserted %s ts = %d, want 5100, the entry before it", e.Kind, e.Ts)
+		}
+	}
+	for i := range merged {
+		for _, e := range merged[i].Entries {
+			if e.Ts == 0 {
+				t.Errorf("merged %s %s has ts 0", e.Kind, e.ID)
+			}
+		}
 	}
 }

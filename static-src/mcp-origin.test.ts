@@ -3,13 +3,18 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // The status fetch is the only input to the read-only name list.
 const statusResponse = { servers: [] as Record<string, unknown>[] };
+const standingResponse = { standing: [] as Record<string, unknown>[], load_errors: {} };
 // The real signature, generics included: tsconfig.test.json checks the factory against Partial<typeof module>.
 vi.mock(import("./api-client.js"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
     apiGetTyped: async <T>(path: string, decode: Decoder<T>): Promise<T | null> =>
-      path === "/api/mcp/status" ? decode(statusResponse) : null,
+      path === "/api/mcp/status"
+        ? decode(statusResponse)
+        : path === "/api/config/standing"
+          ? decode(standingResponse)
+          : null,
   };
 });
 // Only the two members mcp-ui.ts calls at module scope are replaced.
@@ -42,6 +47,7 @@ import {
   unconfiguredNames,
 } from "./mcp-state.js";
 import type { RuntimeStatus, Server } from "./mcp-state.js";
+import { configStanding, refreshConfigStanding } from "./config-standing.js";
 import type { MCPOrigin } from "./wire/types.gen.js";
 
 function status(over: Partial<RuntimeStatus> = {}): RuntimeStatus {
@@ -479,7 +485,7 @@ describe("resource templates after a status fetch", () => {
 });
 
 describe("a configured row's prompts & resources disclosure", () => {
-  it("counts and lists resource templates beside resources, one field per variable", async () => {
+  it("counts and lists prompts, resources and templates as plain rows", async () => {
     const s = configured("tpl-row");
     servers.setAll([s]);
     statusResponse.servers = [
@@ -515,19 +521,49 @@ describe("a configured row's prompts & resources disclosure", () => {
     );
     expect(names).toEqual(["projects", "inbox", "broken"]);
 
-    const inbox = box?.querySelectorAll(".mcp-disc-prompt-wrap")[0];
-    const form = inbox?.querySelector<HTMLFormElement>("form.mcp-disc-arg-form");
-    expect(form?.hidden).toBe(true);
-    inbox?.querySelector<HTMLButtonElement>(".mcp-disc-item .mcp-disc-insert")?.click();
-    expect(form?.hidden).toBe(false);
-    const fields = [...(form?.querySelectorAll(".mcp-disc-arg-name") ?? [])].map(
-      (f) => f.textContent,
-    );
-    expect(fields).toEqual(["agent"]);
-
-    // A template parseTemplate refuses is listed without an action rather than dropped.
+    // Listed, not actionable: the composer reaches them (a slash command, a `#mcp:` mention).
+    expect(box?.querySelectorAll("button, form, input")).toHaveLength(0);
+    const inbox = [...(box?.querySelectorAll(".mcp-disc-item") ?? [])].at(1);
+    expect(inbox?.querySelector(".mcp-disc-item-desc")?.textContent).toBe("One agent's inbox");
     const broken = [...(box?.querySelectorAll(".mcp-disc-item") ?? [])].at(-1);
     expect(broken?.querySelector(".mcp-disc-item-name")?.textContent).toBe("broken");
-    expect(broken?.querySelector(".mcp-disc-insert")).toBeNull();
+  });
+});
+
+describe("a server another layer switched off", () => {
+  async function standing(...entries: Record<string, unknown>[]): Promise<void> {
+    standingResponse.standing = entries;
+    const before = configStanding.peek();
+    refreshConfigStanding();
+    await vi.waitFor(() => {
+      expect(configStanding.peek()).not.toBe(before);
+    });
+  }
+
+  const offByWorkspace = {
+    type: "mcp-server",
+    key: "kas-off",
+    kind: "disabled",
+    decided_by: "workspace",
+    decided_by_name: "Workspace",
+  };
+
+  it("badges marotte's own row and a read-only row with the layer, and drops it when the server is back", async () => {
+    const s = configured("kas-off");
+    servers.setAll([s]);
+    await standing(offByWorkspace);
+    const own = mountRow(s, s.id);
+    const theirs = mountForeignRow("kas-off");
+    const other = mountForeignRow("kas-on");
+    for (const row of [own, theirs]) {
+      const badge = row.querySelector(".mcp-row-standing .docs-badge-standing");
+      expect(badge?.textContent).toBe("Off by Workspace");
+      expect(badge?.getAttribute("data-tooltip")).toBe("A Workspace setting switched this off.");
+    }
+    expect(other.querySelector(".docs-badge-standing")).toBeNull();
+
+    await standing();
+    expect(own.querySelector(".docs-badge-standing")).toBeNull();
+    expect(theirs.querySelector(".docs-badge-standing")).toBeNull();
   });
 });

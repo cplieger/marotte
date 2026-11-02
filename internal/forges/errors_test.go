@@ -156,6 +156,8 @@ type listErrCore struct {
 	err error
 }
 
+func (listErrCore) Close() {}
+
 func (c listErrCore) ListPRs(context.Context, forgeapi.RepoRef, ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
 	return forgeapi.Page[forgeapi.PullRequest]{}, c.err
 }

@@ -13,8 +13,6 @@ import (
 
 // In-memory state only; durable state is the delete grade's.
 func (rt *Runtime) cleanupChatState(ctx context.Context, chatID marotte.ChatID) {
-	// The chat's runs end with it, so its step asks are answerable by nobody.
-	rt.runs.asks.clearChat(chatID)
 	// waiting_on_user outlives ClearAtTurnEnd, so clear it here.
 	rt.bus.chatStatus.clear(chatID)
 	rt.beginSteerTeardown(ctx, chatID, false)
@@ -52,7 +50,8 @@ func (rt *Runtime) beginSteerTeardown(ctx context.Context, chatID marotte.ChatID
 		return
 	}
 	resent := rt.resentKeys(durable.Context(ctx), chatID)
-	for _, p := range unread {
+	for i := range unread {
+		p := &unread[i]
 		if resent[p.SteerID] {
 			continue
 		}
@@ -65,26 +64,16 @@ func (rt *Runtime) beginSteerTeardown(ctx context.Context, chatID marotte.ChatID
 // sessionDeleteTimeout bounds one session/delete: KAS quiesces an active turn first.
 const sessionDeleteTimeout = 30 * time.Second
 
-// deleteSessions sends session/delete for every id in the chain on the chat's live bridge, else
-// the utility session. A refusal Warns; Reap is the fallback.
+// deleteSessions sends an engine-level session/delete for every id in the chain. A refusal Warns; Reap is the
+// fallback.
 func (rt *Runtime) deleteSessions(ctx context.Context, chatID marotte.ChatID, chain []string) {
-	sb := rt.bridge.mgr.get(chatID)
-	if sb != nil && !sb.startedPastSpawn() {
-		sb = nil
-	}
 	for _, id := range chain {
 		if id == "" {
 			continue
 		}
 		dctx, cancel := context.WithTimeout(ctx, sessionDeleteTimeout)
-		var err error
-		if sb != nil {
-			err = runCallErr(sb.Call(dctx, marotte.MethodSessionDelete, map[string]any{marotte.KeySessionID: id}))
-		} else {
-			// Raw params: scopedParams would inject the utility's own session id.
-			_, err = rt.utility.get().session.rawCall(dctx, "session delete", marotte.MethodSessionDelete,
-				callerParams(map[string]any{marotte.KeySessionID: id}))
-		}
+		_, err := rt.engine.rawCall(dctx, "session delete", marotte.MethodSessionDelete,
+			map[string]any{marotte.KeySessionID: id})
 		cancel()
 		if err != nil {
 			slog.Warn("delete: session delete failed; the reaper removes it", "session_id", id, "chat_id", chatID, "error", rpcerr.Text(err))

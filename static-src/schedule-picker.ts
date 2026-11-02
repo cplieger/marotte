@@ -3,6 +3,7 @@
 import { el } from "@cplieger/reactive";
 import { LAST_DAY, INTERVAL_BOUNDS } from "./schedule-types.js";
 import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./schedule-types.js";
+import type { RunDefaults, RunDefaultsPicker } from "./run-defaults-picker.js";
 
 const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 const WEEKDAY_NAMES = [
@@ -219,7 +220,10 @@ interface PickerOptions {
    *  in rather than fetched here so this module stays a pure form over the data its caller
    *  already holds. */
   autoApprove: boolean;
-  onSave: (spec: ScheduleSpec, enabled: boolean) => void;
+  /** The Model and Effort selects, opened on the stored pick. The caller builds them so it can hand
+   *  them a newer catalog while the form is open. */
+  picks: RunDefaultsPicker;
+  onSave: (spec: ScheduleSpec, enabled: boolean, defaults: RunDefaults) => void;
   onRemove: () => void;
   onClose: () => void;
   /** Injected rather than imported: it keeps this module out of the tab/router graph, which is what
@@ -412,8 +416,9 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
   );
 
   const save = el("button", { type: "button", className: "btn-small btn-primary" }, "Save");
+  const picks = opts.picks;
   save.addEventListener("click", () => {
-    opts.onSave(spec, enabled);
+    opts.onSave(spec, enabled, picks.value());
   });
   const cancel = el("button", { type: "button", className: "btn-small" }, "Cancel");
   cancel.addEventListener("click", opts.onClose);
@@ -433,6 +438,7 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
     el("div", { className: "sched-row" }, freqSel),
     el("div", { className: "sched-row" }, detail),
     summary,
+    el("div", { className: "sched-row" }, picks.el),
     enabledRow,
     // Below the rule and above the actions: it is what the user should have read before pressing
     // Save, not a footnote after it.

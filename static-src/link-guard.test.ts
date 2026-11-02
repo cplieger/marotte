@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   adoptLinkGuard,
+  formDiagramLink,
   formPayloadLink,
   installLinkGuard,
   linkAnchor,
@@ -165,5 +166,46 @@ describe("installLinkGuard", () => {
     const before = host.firstElementChild;
     stop = installLinkGuard();
     expect(host.firstElementChild).toBe(before);
+  });
+});
+
+// A diagram link is an SVG `<a>`, which cannot hold the copy button: the switch takes and gives back its href.
+describe("formDiagramLink", () => {
+  function svgLink(url: string): SVGAElement {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const a = document.createElementNS("http://www.w3.org/2000/svg", "a");
+    a.setAttribute("href", url);
+    a.append(document.createElementNS("http://www.w3.org/2000/svg", "text"));
+    svg.append(a);
+    host.append(svg);
+    return a;
+  }
+
+  it("withholds a payload-shaped href while ON, keeping the link in place", () => {
+    const a = svgLink(URL_);
+    formDiagramLink(a, URL_);
+    expect(a.hasAttribute("href")).toBe(false);
+    expect(a.isConnected).toBe(true);
+    expect(a.hasAttribute("data-payload-url")).toBe(true);
+  });
+
+  it("leaves an ordinary link alone", () => {
+    const a = svgLink("https://example.com/docs");
+    formDiagramLink(a, "https://example.com/docs");
+    expect(a.getAttribute("href")).toBe("https://example.com/docs");
+    expect(a.hasAttribute("data-payload-url")).toBe(false);
+  });
+
+  it("follows the switch both ways", () => {
+    const a = svgLink(URL_);
+    formDiagramLink(a, URL_);
+    adoptLinkGuard(settingsPayload({ guard_payload_links: false }));
+    reformPayloadLinks(host);
+    expect(a.getAttribute("href")).toBe(URL_);
+    expect(a.isConnected).toBe(true);
+    adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
+    reformPayloadLinks(host);
+    expect(a.hasAttribute("href")).toBe(false);
+    expect(host.querySelector("button")).toBeNull();
   });
 });

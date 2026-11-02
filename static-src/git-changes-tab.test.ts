@@ -59,6 +59,7 @@ vi.mock("./api-client.js", () => ({
   apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
 }));
 vi.mock("./bus.js", () => ({ onSSE: vi.fn() }));
+vi.mock("./forge-store.js", () => ({ forgeRows: () => null, usablePairs: () => [] }));
 vi.mock("./confirm.js", () => ({ confirm: confirmDialog }));
 vi.mock("./navigate.js", () => ({ openChange }));
 vi.mock("./actions/index.js", () => ({
@@ -80,7 +81,6 @@ vi.mock("./actions/git-changes.js", () => ({
   stash: recorder("stash"),
   stashPop: recorder("stashPop"),
   commit: recorder("commit"),
-  generateCommitMessage: recorder("generateCommitMessage"),
 }));
 vi.mock("./search-popup.js", () => ({
   createSearchPopup: vi.fn((spec: unknown) => {
@@ -743,9 +743,9 @@ describe("a repo with nothing uncommitted", () => {
 describe("Pull all", () => {
   async function bootToolbar(repos: GitRepoStatus[]): Promise<HTMLButtonElement> {
     document.body.innerHTML = `<div id="git-view">
-      <div class="git-tab-toolbar">
-        <button type="button" id="git-pull-all-btn" class="icon-btn"></button>
-        <button type="button" id="git-refresh-all-btn" class="icon-btn"></button>
+      <div class="page-toolbar">
+        <button type="button" id="git-pull-all-btn" class="action-pill"></button>
+        <button type="button" id="git-refresh-all-btn" class="action-pill"></button>
       </div>
       <div id="git-changes-mount" class="git-multirepo-mount" aria-live="polite"></div>
     </div>`;

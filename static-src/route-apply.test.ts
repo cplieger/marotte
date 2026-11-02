@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { useSteppableClock } from "./__test-helpers__/fake-clock.js";
 import type * as Router from "./router.js";
 import type * as Chat from "./chat.js";
 import type * as StoreLoad from "./store-load.js";
@@ -200,6 +201,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   _resetTabsSyncForTest();
 });
 
@@ -218,6 +220,8 @@ async function settled(check: () => boolean, what: string): Promise<void> {
 
 const page = "/workspace/demo/index.html";
 const webRoute: Route = { kind: "web", path: page };
+const otherPage = "/workspace/demo/other.html";
+const otherWebRoute: Route = { kind: "web", path: otherPage };
 
 describe("applyRoute for a web preview", () => {
   it("opens the preview tab a deep link names", async () => {
@@ -237,15 +241,18 @@ describe("applyRoute for a web preview", () => {
   });
 
   it("refuses to reopen a closed preview tab from a history entry", async () => {
-    expect.assertions(4);
+    expect.assertions(5);
     await applyRoute(webRoute, "deeplink");
     await settled(() => tabIdFor("web", page) !== "", "the web tab opened");
     await closeTab(tabIdFor("web", page));
     await settled(() => tabIdFor("web", page) === "", "the web tab closed");
+    useSteppableClock();
     await applyRoute(webRoute, "history");
-    await new Promise((r) => {
-      setTimeout(r, 20);
-    });
+    // Any timer the route queued has run, and a second page opened after that rides the same open
+    // path, so a reopen started by either would have landed first.
+    await vi.runAllTimersAsync();
+    await applyRoute(otherWebRoute, "deeplink");
+    await settled(() => tabIdFor("web", otherPage) !== "", "the other web tab opened");
     expect(tabIdFor("web", page)).toBe("");
     expect(replaceRoute).toHaveBeenCalledTimes(1);
   });
@@ -267,9 +274,14 @@ describe("applyRoute for a turn permalink", () => {
     vi.mocked(getActiveId).mockReturnValue("c1");
     vi.mocked(switchSession).mockResolvedValue("activated");
     jumpToTurn.mockClear();
+    useSteppableClock();
     await applyRoute({ kind: "chat", id: "c1" }, "deeplink");
-    await new Promise((r) => setTimeout(r, 20));
-    expect(jumpToTurn).not.toHaveBeenCalled();
+    // Any timer the route queued has run, and a permalink applied after that lands through the
+    // same switch and import, so a jump started by either would be recorded ahead of it.
+    await vi.runAllTimersAsync();
+    await applyRoute({ kind: "chat", id: "c1", turn: 7 }, "deeplink");
+    await settled(() => jumpToTurn.mock.calls.length > 0, "the permalink's jump ran");
+    expect(jumpToTurn.mock.calls).toEqual([["c1", 7]]);
   });
 });
 
