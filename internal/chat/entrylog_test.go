@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -236,6 +237,37 @@ func TestEntryLog_ATornTailIsDroppedAndSeqContinues(t *testing.T) {
 	}
 	if got := fileHead(t, filepath.Join(f.root, entriesFileName), len(whole)); got != string(whole) {
 		t.Error("the surviving bytes are not the prefix that was there before the tail was planted")
+	}
+}
+
+// A complete line that cannot be read is corruption, not a torn write: the open fails and every byte stays, the
+// entries after it included.
+func TestEntryLog_AnUnreadableCompleteLineFailsTheOpenAndKeepsTheLog(t *testing.T) {
+	f := newLogFixture(t)
+	turn := f.prompt("hello")
+	f.append(turn, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "one"})
+	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
+	path := filepath.Join(f.root, entriesFileName)
+	whole, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the log: %v", err)
+	}
+	first := bytes.IndexByte(whole, '\n') + 1
+	corrupt := slices.Concat(whole[:first], []byte("{not an entry}\n"), whole[first:])
+	if err := os.WriteFile(path, corrupt, fileMode); err != nil {
+		t.Fatalf("plant a corrupt line: %v", err)
+	}
+
+	if err := f.log.Close(); err != nil {
+		t.Fatalf("close log: %v", err)
+	}
+	if lg, err := OpenEntryLog(t.Context(), f.root, f.header); err == nil {
+		_ = lg.Close()
+		t.Error("the log opened over a corrupt complete line; want the open refused")
+	}
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, corrupt) {
+		t.Errorf("the open changed the log: %d bytes left of %d; the entries after the corrupt line are gone",
+			len(got), len(corrupt))
 	}
 }
 

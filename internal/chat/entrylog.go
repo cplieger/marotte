@@ -910,7 +910,7 @@ func firstLineOf(text string) string {
 	return string([]rune(line)[:firstLineMax]) + "\u2026"
 }
 
-// rescanLocked rebuilds the index in one pass, truncating an unreadable tail, then applies what the pass cannot
+// rescanLocked rebuilds the index in one pass, truncating a torn tail, then applies what the pass cannot
 // decide line by line: every turn_revert window, and reverting incomplete carriers.
 func (l *EntryLog) rescanLocked() error {
 	l.turns = make(map[string]*turnState)
@@ -960,7 +960,11 @@ func (l *EntryLog) scanFileLocked() error {
 			return nil
 		}
 		if err := l.observeLineLocked(line, off, rerr); err != nil {
-			// The first unreadable line ends the log: an O_APPEND line is whole or a torn tail.
+			// A write appends a whole line or tears its final bytes, so only a final line with no newline is a torn
+			// tail. A read error or a bad complete line is not one, and truncating there would delete what follows.
+			if !errors.Is(rerr, io.EOF) {
+				return fmt.Errorf("entry log: %s: unreadable at offset %d, left as it is: %w", l.path(), off, err)
+			}
 			return l.dropTailLocked(off, err)
 		}
 		off += int64(len(line))
