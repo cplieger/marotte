@@ -826,6 +826,8 @@ func TestInspectCloneDest(t *testing.T) {
 		switch s {
 		case destAbsent:
 			return "destAbsent"
+		case destForeign:
+			return "destForeign"
 		case destEmpty:
 			return "destEmpty"
 		case destRepo:
@@ -867,8 +869,8 @@ func TestInspectCloneDest(t *testing.T) {
 		want destState
 	}{
 		{"absent", filepath.Join(base, "nope"), destAbsent},
-		{"plain file", plainFile, destAbsent},
-		{"symlink to a directory", link, destAbsent},
+		{"plain file", plainFile, destForeign},
+		{"symlink to a directory", link, destForeign},
 		{"empty directory", empty, destEmpty},
 		{"git repository", filepath.Join(base, "repo"), destRepo},
 		{"directory with content", filepath.Join(base, "occupied"), destOccupied},
@@ -946,6 +948,39 @@ func TestClone_FailedCloneRemovesTheDestinationItCreated(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(work, "loki")); !errors.Is(statErr, fs.ErrNotExist) {
 		t.Errorf("destination survives the failed clone: stat err = %v, want ErrNotExist", statErr)
+	}
+}
+
+// A failed clone onto a name that already holds a file or a symlink removes nothing: what sits there is the user's,
+// and git's own refusal is the answer.
+func TestClone_FailedCloneLeavesANonDirectoryDestination(t *testing.T) {
+	cases := map[string]func(t *testing.T, dest string){
+		"a file": func(t *testing.T, dest string) {
+			if err := os.WriteFile(dest, []byte("notes"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a symlink": func(t *testing.T, dest string) {
+			if err := os.Symlink(t.TempDir(), dest); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, plant := range cases {
+		t.Run(name, func(t *testing.T) {
+			work := t.TempDir()
+			dest := filepath.Join(work, "loki")
+			plant(t, dest)
+			stageFakeGit(t, `echo "fatal: destination path 'loki' already exists" >&2`)
+			h := NewHandler(work)
+
+			if _, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git", nil); err == nil {
+				t.Fatal("clone with a failing git: err = nil, want failure")
+			}
+			if _, statErr := os.Lstat(dest); statErr != nil {
+				t.Errorf("%s at the destination was removed by the failed clone: %v", name, statErr)
+			}
+		})
 	}
 }
 
