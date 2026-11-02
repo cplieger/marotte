@@ -78,20 +78,27 @@ func healBootModes(configDir, toolsDir, home, kiroHome string) {
 		add(kiroHome, tighten, false)
 	}
 	for _, r := range filemode.SetDirModes(dirs) {
-		dir := logsafe.Field(r.Path)
-		switch {
-		case r.Err == nil && engineRoots[r.Path]:
-			slog.Warn("a folder the tools engine checks let other accounts write; removing that, but anything they wrote there stays",
-				"dir", dir, "mode", octal(r.Old), "new_mode", octal(r.New))
-		case r.Err == nil:
-			slog.Warn("changed the mode of a folder marotte uses", "dir", dir, "mode", octal(r.Old), "new_mode", octal(r.New))
-		case errors.Is(r.Err, filemode.ErrNotADir):
-			slog.Warn("a folder marotte sets the mode of is a symlink or not a folder, so it and the folders below it keep their modes",
-				"dir", dir)
-		default:
-			slog.Warn("could not set the mode of a folder marotte uses, so it and the folders below it keep their modes",
-				"dir", dir, "error", logsafe.Field(r.Err.Error()))
-		}
+		logModeResult(r, engineRoots[r.Path])
+	}
+}
+
+func logModeResult(r filemode.DirModeResult, engineRoot bool) {
+	dir := logsafe.Field(r.Path)
+	switch {
+	case r.Err == nil && engineRoot:
+		slog.Warn("a folder the tools engine checks let other accounts write; removing that, but anything they wrote there stays",
+			"dir", dir, "mode", octal(r.Old), "new_mode", octal(r.New))
+	case r.Err == nil:
+		slog.Warn("changed the mode of a folder marotte uses", "dir", dir, "mode", octal(r.Old), "new_mode", octal(r.New))
+	case errors.Is(r.Err, filemode.ErrNotADir):
+		slog.Warn("found a symlink or a non-folder where marotte sets folder modes, so it and the folders below it keep their modes",
+			"dir", dir)
+	case r.Stopped:
+		slog.Warn("could not open a folder where marotte sets folder modes, so it and the folders below it keep their modes",
+			"dir", dir, "error", logsafe.Field(r.Err.Error()))
+	default:
+		slog.Warn("could not set the mode of a folder marotte uses, so it keeps its mode",
+			"dir", dir, "error", logsafe.Field(r.Err.Error()))
 	}
 }
 

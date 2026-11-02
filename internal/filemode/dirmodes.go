@@ -32,38 +32,42 @@ func Exactly(perm fs.FileMode) func(fs.FileMode) fs.FileMode {
 // ErrNotADir marks a symlink, or something other than a folder, where SetDirModes expected a folder.
 var ErrNotADir = errors.New("is a symlink or not a folder")
 
-// DirModeResult is one change SetDirModes made, or the place it stopped.
+// DirModeResult is one change SetDirModes made, or one failure. Err is nil for a change; Path may
+// be a folder on the way to a listed one.
 type DirModeResult struct {
-	// Err is nil for a change. Otherwise Path, which may be a folder on the way to a listed one,
-	// and every folder below it kept their modes.
 	Err      error
 	Path     string
 	Old, New fs.FileMode
+	// Stopped reports that Path could not be opened, so every folder below it kept its mode too. A
+	// failure with Stopped false (fstat or fchmod) leaves only Path's mode.
+	Stopped bool
 }
 
 // SetDirModes gives each folder its wanted mode with fchmod on a descriptor opened without
 // following a symlink, so neither a planted link nor a later rename redirects it. A folder beneath
-// another listed one (by its name or its kernel path) is opened from it one name at a time, any
-// other through its parent, which the kernel resolves. A missing folder is skipped with everything
-// below it, and special bits are kept. Results hold each change and each failure once.
+// another listed one (by its name or its kernel path, in any listing order) is opened from it one
+// name at a time, any other through its parent, which the kernel resolves. A missing folder is
+// skipped with everything below it, and special bits are kept. Results hold each change and each
+// failure once.
 func SetDirModes(dirs []DirMode) []DirModeResult {
-	w := &dirWalk{opened: map[string]walkStep{}}
+	w := &dirWalk{opened: map[string]walkStep{}, entering: map[string]bool{}}
 	defer w.close()
 	sorted := make([]DirMode, 0, len(dirs))
 	for _, d := range dirs {
 		d.Path = filepath.Clean(d.Path)
-		sorted = append(sorted, d)
-		w.listed = append(w.listed, d.Path)
-	}
-	// Shallow first, so a folder's base is open, and its kernel path known, before the walk needs it.
-	slices.SortStableFunc(sorted, func(a, b DirMode) int {
-		return cmp.Compare(strings.Count(a.Path, "/"), strings.Count(b.Path, "/"))
-	})
-	for _, d := range sorted {
 		if !filepath.IsAbs(d.Path) {
 			w.results = append(w.results, DirModeResult{Path: d.Path, Err: errors.New("is not an absolute path")})
 			continue
 		}
+		sorted = append(sorted, d)
+		w.listed = append(w.listed, d.Path)
+	}
+	w.learnKernelPaths()
+	// Only the results' order: a parent's change is reported before its children's.
+	slices.SortStableFunc(sorted, func(a, b DirMode) int {
+		return cmp.Compare(strings.Count(a.Path, "/"), strings.Count(b.Path, "/"))
+	})
+	for _, d := range sorted {
 		if fd, ok := w.open(d.Path); ok {
 			w.set(fd, d)
 		}
@@ -85,11 +89,32 @@ type walkStep struct {
 	fd  int
 }
 
+// kernelName is a listed folder and the path the kernel gives it.
+type kernelName struct{ name, kernel string }
+
 type dirWalk struct {
-	opened  map[string]walkStep
-	listed  []string
-	fds     []int
-	results []DirModeResult
+	opened   map[string]walkStep
+	entering map[string]bool
+	listed   []string
+	kernels  []kernelName
+	fds      []int
+	results  []DirModeResult
+}
+
+// learnKernelPaths opens each listed folder only to read its kernel path, changing nothing, so open
+// reaches a folder named through that path from the listed one, whichever is opened first.
+func (w *dirWalk) learnKernelPaths() {
+	for _, p := range w.listed {
+		fd, err := openAnchor(p)
+		if err != nil {
+			continue
+		}
+		k, kerr := kernelPath(fd)
+		_ = unix.Close(fd)
+		if kerr == nil && k != p {
+			w.kernels = append(w.kernels, kernelName{name: p, kernel: k})
+		}
+	}
 }
 
 func (w *dirWalk) close() {
@@ -101,6 +126,12 @@ func (w *dirWalk) close() {
 func (w *dirWalk) open(p string) (int, bool) {
 	if s, ok := w.opened[p]; ok {
 		return s.fd, s.err == nil
+	}
+	w.entering[p] = true
+	defer delete(w.entering, p)
+	if !w.openKernelBases(p) {
+		w.opened[p] = walkStep{fd: -1, err: errSkipped}
+		return -1, false
 	}
 	var fd int
 	var err error
@@ -117,20 +148,35 @@ func (w *dirWalk) open(p string) (int, bool) {
 	if err != nil {
 		w.opened[p] = walkStep{fd: -1, err: err}
 		if !errors.Is(err, fs.ErrNotExist) {
-			w.results = append(w.results, DirModeResult{Path: p, Err: err})
+			w.results = append(w.results, DirModeResult{Path: p, Err: err, Stopped: true})
 		}
 		return -1, false
 	}
 	w.fds = append(w.fds, fd)
 	w.opened[p] = walkStep{fd: fd}
 	// Below the folder's kernel path the walk goes on from this descriptor as well.
-	if k, kerr := os.Readlink("/proc/self/fd/" + strconv.Itoa(fd)); kerr == nil && k != p {
+	if k, kerr := kernelPath(fd); kerr == nil && k != p {
 		if _, seen := w.opened[k]; !seen {
 			w.opened[k] = walkStep{fd: fd}
 		}
 	}
 	testHookOpened(p)
 	return fd, true
+}
+
+// openKernelBases opens each listed folder whose kernel path holds p, so hasBase sees it, and
+// reports false when one of them was refused.
+func (w *dirWalk) openKernelBases(p string) bool {
+	for _, r := range w.kernels {
+		// entering skips p itself and breaks a cycle of folders named through each other's kernel paths.
+		if w.entering[r.name] || !beneath(r.kernel, p) {
+			continue
+		}
+		if _, ok := w.open(r.name); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // hasBase reports whether p lies strictly beneath a listed folder or one the walk opened.
@@ -145,6 +191,8 @@ func (w *dirWalk) hasBase(p string) bool {
 	}
 	return false
 }
+
+func kernelPath(fd int) (string, error) { return os.Readlink("/proc/self/fd/" + strconv.Itoa(fd)) }
 
 func beneath(dir, p string) bool {
 	rel, err := filepath.Rel(dir, p)

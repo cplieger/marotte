@@ -7,13 +7,17 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
+	"syscall"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/filemode"
 )
 
 const (
 	msgEngineRootTightened = "a folder the tools engine checks let other accounts write; removing that, but anything they wrote there stays"
 	msgModeChanged         = "changed the mode of a folder marotte uses"
-	msgModeLeft            = "a folder marotte sets the mode of is a symlink or not a folder, so it and the folders below it keep their modes"
+	msgModeLeft            = "found a symlink or a non-folder where marotte sets folder modes, so it and the folders below it keep their modes"
 )
 
 type modeLog struct {
@@ -234,6 +238,76 @@ func TestHealBootModes_SymlinkedHomeWithKiroHomeAtItsTarget(t *testing.T) {
 	}
 	if got := permOf(t, realHome); got != 0o777 {
 		t.Errorf("the symlinked HOME's target became %04o, want 0777 kept", got)
+	}
+}
+
+// The config dir named through a symlinked path longer than its kernel path, with HOME named
+// through that kernel path: a symlink planted between them is not followed.
+func TestHealBootModes_ConfigNamedDeeperThanItsKernelPath(t *testing.T) {
+	l := newBootLayout(t, 0o777)
+	base := filepath.Dir(l.config)
+	mkdirMode(t, filepath.Join(base, "a", "b", "c"), 0o755)
+	if err := os.Symlink(base, filepath.Join(base, "a", "b", "c", "d")); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside")
+	mkdirMode(t, outside, 0o755)
+	if err := os.Rename(l.home, filepath.Join(outside, "home")); err != nil {
+		t.Fatal(err)
+	}
+	planted := filepath.Join(l.config, "x")
+	if err := os.Symlink(outside, planted); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(planted, "home")
+	logs := captureDefaultLogger(t)
+
+	healBootModes(filepath.Join(base, "a", "b", "c", "d", "config"), l.tools, home, filepath.Join(home, ".kiro"))
+
+	for _, d := range []string{"home", "home/.ssh", "home/.kiro", "home/.cache"} {
+		if got := permOf(t, filepath.Join(outside, d)); got != 0o777 {
+			t.Errorf("outside %s became %04o, want 0777 kept", d, got)
+		}
+	}
+	if got := permOf(t, l.tools); got != 0o755 {
+		t.Errorf("tools dir mode = %04o, want 0755", got)
+	}
+	var left []string
+	for _, rec := range modeLogs(t, logs) {
+		if rec.Msg == msgModeLeft {
+			left = append(left, rec.Dir)
+		}
+	}
+	if !slices.Equal(left, []string{planted}) {
+		t.Errorf("left folders named %v, want only %s", left, planted)
+	}
+}
+
+// Only a folder that could not be opened takes the folders below it along; a refused chmod leaves
+// that one folder, and its warning says so.
+func TestLogModeResult_NamesWhatKeptItsMode(t *testing.T) {
+	cases := map[string]struct {
+		result    filemode.DirModeResult
+		wantBelow bool
+	}{
+		"refused chmod": {result: filemode.DirModeResult{Path: "/config/tools", Old: 0o775, Err: syscall.EROFS}},
+		"refused open":  {result: filemode.DirModeResult{Path: "/config/tools", Err: syscall.EACCES, Stopped: true}, wantBelow: true},
+		"symlink":       {result: filemode.DirModeResult{Path: "/config/tools", Err: filemode.ErrNotADir, Stopped: true}, wantBelow: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			logs := captureDefaultLogger(t)
+
+			logModeResult(tc.result, true)
+
+			got := modeLogs(t, logs)
+			if len(got) != 1 || got[0].Dir != tc.result.Path {
+				t.Fatalf("logged %+v, want one line naming %s", got, tc.result.Path)
+			}
+			if below := strings.Contains(got[0].Msg, "folders below it"); below != tc.wantBelow {
+				t.Errorf("message %q mentions the folders below: %v, want %v", got[0].Msg, below, tc.wantBelow)
+			}
+		})
 	}
 }
 
