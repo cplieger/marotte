@@ -48,7 +48,7 @@ func countingSteering(t *testing.T, w *wiredForges) (*forgeSteering, *atomic.Int
 	generated := &atomic.Int32{}
 	s := &forgeSteering{
 		appCtx: context.WithoutCancel(t.Context()), m: w.m,
-		generate: func(context.Context) { generated.Add(1) },
+		generate: func(context.Context) error { generated.Add(1); return nil },
 	}
 	w.notifier.steer = s
 	return s, generated

@@ -111,13 +111,13 @@ func (g *Generator) SetToolsSnapshot(fn func() (tools []InstalledTool, ok bool))
 // event storms regenerate often). Calls serialise: each one's snapshots, render and write finish
 // before the next call takes its snapshots. The snapshot callbacks run under that serialisation
 // alone, so one must never wait on a goroutine that is calling Generate. A cancelled ctx stops a
-// call before its snapshots and again before its render, and a write failing once it is cancelled
-// logs nothing, so a shutdown logs no failed write.
-func (g *Generator) Generate(ctx context.Context) {
+// call before its snapshots, its render and its write, returning the wrapped ctx.Err(). Generate
+// logs no failure: it returns each one, and the caller judges it.
+func (g *Generator) Generate(ctx context.Context) error {
 	g.genMu.Lock()
 	defer g.genMu.Unlock()
-	if ctx.Err() != nil {
-		return
+	if err := stopped(ctx); err != nil {
+		return err
 	}
 
 	g.mu.Lock()
@@ -138,31 +138,38 @@ func (g *Generator) Generate(ctx context.Context) {
 	if toolsFn != nil {
 		tools, toolsOK = toolsFn()
 	}
-	if ctx.Err() != nil {
-		return
+	if err := stopped(ctx); err != nil {
+		return err
 	}
 
 	content := g.render(ctx, mcp, snapshotFn != nil, forges, forgeFn != nil, tools, toolsOK)
+	if err := stopped(ctx); err != nil {
+		return err
+	}
 	steeringFile := workspace.KiroSteeringPath("environment.md")
 
 	// readCappedFile, not os.ReadFile: a FIFO or symlink may stand here (invariant 6). Any error
 	// falls through to the write, which replaces a bogus file.
 	if existing, readErr := readCappedFile(steeringFile, steeringCompareCap); readErr == nil && bytes.Equal(existing, content) {
 		slog.Debug("steering: content unchanged, skipping write", "path", steeringFile)
-		return
+		return nil
 	}
 
 	// 0600 for a file listing the workspace layout and MCP server names; WithMkdirMode creates the
 	// parent narrowly (MkdirAll would widen it to 0755).
-	if _, wErr := atomicfile.WriteFile(ctx, steeringFile, content,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); wErr != nil {
-		if ctx.Err() != nil {
-			return
-		}
-		slog.Error("steering: write", "path", steeringFile, "error", wErr)
-		return
+	if _, err := atomicfile.WriteFile(ctx, steeringFile, content,
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
+		return fmt.Errorf("steering: write %s: %w", steeringFile, err)
 	}
 	slog.Info("steering: wrote", "path", steeringFile, "bytes", len(content))
+	return nil
+}
+
+func stopped(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("steering: generate stopped: %w", err)
+	}
+	return nil
 }
 
 // hasMCP and hasForges say whether a snapshot callback was wired at all, which decides whether the

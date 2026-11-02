@@ -110,7 +110,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	kiro := startKiroCLI(ctx, cfg)
 
 	steer := newSteering(cfg)
-	steer.Generate(ctx)
+	regenerateSteering(ctx, steer.Generate)
 
 	legacyCheckpoints := filepath.Join(cfg.ConfigDir, "checkpoints")
 	if err := os.RemoveAll(legacyCheckpoints); err != nil {
@@ -209,10 +209,10 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	steer.SetMCPSnapshot(func() steering.MCPSnapshot {
 		return steering.MCPSnapshot{Servers: h.MCPSnapshot()}
 	})
-	h.SetMCPOnChange(func() { steer.Generate(appCtx) })
+	h.SetMCPOnChange(func() { regenerateSteering(appCtx, steer.Generate) })
 	healer := &kasHealer{heal: mcpStore.HealKASConfig, afterHeal: h.SyncPowers, every: kasHealInterval}
 	h.SetPreSessionOpen(func(ctx context.Context) {
-		steer.Generate(ctx)
+		regenerateSteering(ctx, steer.Generate)
 		healer.healOnce(ctx, "session_open")
 	})
 	stopKASHeal := runBackground(appCtx, "kas mcp config heal", healer.run)
@@ -553,7 +553,7 @@ type forgeSteering struct {
 	// must not outlive the process.
 	appCtx   context.Context
 	m        *forges.Manager
-	generate func(context.Context)
+	generate func(context.Context) error
 	last     steering.ForgeSnapshot
 	mu       sync.Mutex
 }
@@ -571,7 +571,7 @@ func (s *forgeSteering) sync() {
 	s.mu.Unlock()
 	// Generate scans the workspace, so an unmoved snapshot skips it.
 	if changed {
-		s.generate(s.appCtx)
+		regenerateSteering(s.appCtx, s.generate)
 	}
 }
 
@@ -686,6 +686,16 @@ func newSteering(cfg *Config) *steering.Generator {
 	return steering.New(cfg.WorkDir, cfg.ConfigDir, toolsDir)
 }
 
+// regenerateSteering runs generate and logs its failure at ERROR, except the ctx's own error, which
+// is a quiet stop. It judges the error alone, so a write failing while a cancel is pending logs.
+func regenerateSteering(ctx context.Context, generate func(context.Context) error) {
+	err := generate(ctx)
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+	slog.Error("steering: environment.md not written", "error", err)
+}
+
 // wireToolsSteering lists the engine's installed tools in environment.md and regenerates it off the
 // boot path, since a first inventory runs every tool's probe; without that regeneration the file
 // lists no tools until the next session opens. stop cancels that regeneration and waits for it with
@@ -697,7 +707,7 @@ func wireToolsSteering(appCtx context.Context, tools *toolsSlot, steer *steering
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		steer.Generate(ctx)
+		regenerateSteering(ctx, steer.Generate)
 	}()
 	return func() {
 		cancel()
