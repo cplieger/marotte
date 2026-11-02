@@ -39,16 +39,17 @@ type DirModeResult struct {
 	Path     string
 	Old, New fs.FileMode
 	// Stopped reports that Path could not be opened, so every folder below it kept its mode too. A
-	// failure with Stopped false (fstat or fchmod) leaves only Path's mode.
+	// failure with Stopped false (fstat or the mode change) leaves only Path's mode.
 	Stopped bool
 }
 
-// SetDirModes gives each folder its wanted mode with fchmod on a descriptor opened without
-// following a symlink, so neither a planted link nor a later rename redirects it. A folder beneath
-// another listed one (by its name or its kernel path, in any listing order) is opened from it one
-// name at a time, any other through its parent, which the kernel resolves. A missing folder is
-// skipped with everything below it, and special bits are kept. Results hold each change and each
-// failure once.
+// SetDirModes gives each folder its wanted mode through an O_PATH descriptor opened without
+// following a symlink, so it needs no read permission and a rename after the open cannot redirect
+// it. A folder beneath another listed one (by its name or its kernel path, in any listing order) is
+// opened from it one name at a time, so no symlink at or below a listed folder is followed; any
+// other folder is opened through its parent, whose path the kernel resolves, symlinks included. A
+// missing folder is skipped with everything below it, and special bits are kept. Results hold each
+// change and each failure once.
 func SetDirModes(dirs []DirMode) []DirModeResult {
 	w := &dirWalk{opened: map[string]walkStep{}, entering: map[string]bool{}}
 	defer w.close()
@@ -81,8 +82,26 @@ var errSkipped = errors.New("skipped")
 // testHookOpened runs after each folder is opened, so a test can rename it from under the walk.
 var testHookOpened = func(string) {}
 
-// fchmod is unix.Fchmod, replaced by a test to make it fail.
-var fchmod = unix.Fchmod
+// chmodFD is changeMode, replaced by a test to make it fail.
+var chmodFD = changeMode
+
+// chmodEmptyPath is fchmodat2 with AT_EMPTY_PATH, replaced by a test to take changeMode's fallback.
+var chmodEmptyPath = func(fd int, mode uint32) error { return unix.Fchmodat(fd, "", mode, unix.AT_EMPTY_PATH) }
+
+// changeMode sets the mode of the folder an O_PATH descriptor holds; fchmod refuses one with EBADF.
+// fchmodat2 needs Linux 6.6, and a seccomp profile that predates it refuses it with EPERM, so those
+// refusals fall back to chmod through /proc/self/fd/<fd>, a link to the opened folder itself.
+func changeMode(fd int, mode uint32) error {
+	err := chmodEmptyPath(fd, mode)
+	if !errors.Is(err, unix.ENOSYS) && !errors.Is(err, unix.EOPNOTSUPP) && !errors.Is(err, unix.EPERM) {
+		return err
+	}
+	link := "/proc/self/fd/" + strconv.Itoa(fd)
+	if perr := unix.Fchmodat(unix.AT_FDCWD, link, mode, 0); perr != nil {
+		return fmt.Errorf("fchmodat2: %v; chmod %s: %w", err, link, perr)
+	}
+	return nil
+}
 
 type walkStep struct {
 	err error
@@ -199,12 +218,15 @@ func beneath(dir, p string) bool {
 	return err == nil && rel != "." && filepath.IsLocal(rel)
 }
 
+// pathDirFlags open a folder as a handle that needs only search permission on its parent.
+const pathDirFlags = unix.O_PATH | unix.O_DIRECTORY | unix.O_CLOEXEC
+
 func openAnchor(p string) (int, error) {
 	parent := filepath.Dir(p)
 	if parent == p {
-		return unix.Open(p, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+		return unix.Open(p, pathDirFlags, 0)
 	}
-	pfd, err := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	pfd, err := unix.Open(parent, pathDirFlags, 0)
 	if err != nil {
 		return -1, fmt.Errorf("open %s: %w", parent, err)
 	}
@@ -212,11 +234,11 @@ func openAnchor(p string) (int, error) {
 	return openNoFollow(pfd, filepath.Base(p))
 }
 
-// openNoFollow opens name in dirfd as a folder. O_NONBLOCK keeps a FIFO at the name from blocking
-// the boot.
+// openNoFollow opens name in dirfd as a folder. With O_PATH, O_NOFOLLOW and O_DIRECTORY the kernel
+// refuses a symlink at the name with ENOTDIR rather than handing back the link.
 func openNoFollow(dirfd int, name string) (int, error) {
-	fd, err := unix.Openat(dirfd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
-	if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR) {
+	fd, err := unix.Openat(dirfd, name, pathDirFlags|unix.O_NOFOLLOW, 0)
+	if errors.Is(err, unix.ENOTDIR) {
 		return -1, ErrNotADir
 	}
 	return fd, err
@@ -233,7 +255,7 @@ func (w *dirWalk) set(fd int, d DirMode) {
 	if want == old {
 		return
 	}
-	if err := fchmod(fd, st.Mode&0o7000|uint32(want)); err != nil {
+	if err := chmodFD(fd, st.Mode&0o7000|uint32(want)); err != nil {
 		w.results = append(w.results, DirModeResult{Path: d.Path, Old: old, Err: err})
 		return
 	}

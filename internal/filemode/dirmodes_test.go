@@ -4,8 +4,10 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -367,14 +369,14 @@ func TestSetDirModes_ReportsAFailedChmodAndGoesOn(t *testing.T) {
 	mkdirAt(t, a, 0o775)
 	mkdirAt(t, b, 0o775)
 	var calls int
-	fchmod = func(fd int, mode uint32) error {
+	chmodFD = func(fd int, mode uint32) error {
 		calls++
 		if calls == 1 {
 			return syscall.EROFS
 		}
-		return unix.Fchmod(fd, mode)
+		return changeMode(fd, mode)
 	}
-	t.Cleanup(func() { fchmod = unix.Fchmod })
+	t.Cleanup(func() { chmodFD = changeMode })
 
 	got := SetDirModes(tighten(a, b))
 
@@ -387,20 +389,20 @@ func TestSetDirModes_ReportsAFailedChmodAndGoesOn(t *testing.T) {
 	}
 }
 
-// A refused fchmod leaves only that folder's mode: the walk goes on through its descriptor, so a
+// A refused mode change leaves only that folder's mode: the walk goes on through its descriptor, so a
 // listed folder below it is still set.
 func TestSetDirModes_AFailedChmodLeavesOnlyThatFolder(t *testing.T) {
 	root := t.TempDir()
 	parent, child := filepath.Join(root, "tools"), filepath.Join(root, "tools", "bin")
 	mkdirAt(t, child, 0o775)
 	mkdirAt(t, parent, 0o775)
-	fchmod = func(fd int, mode uint32) error {
+	chmodFD = func(fd int, mode uint32) error {
 		if k, err := kernelPath(fd); err == nil && k == parent {
 			return syscall.EROFS
 		}
-		return unix.Fchmod(fd, mode)
+		return changeMode(fd, mode)
 	}
-	t.Cleanup(func() { fchmod = unix.Fchmod })
+	t.Cleanup(func() { chmodFD = changeMode })
 
 	got := SetDirModes(tighten(parent, child))
 
@@ -419,5 +421,174 @@ func TestSetDirModes_RefusesARelativePath(t *testing.T) {
 	got := SetDirModes(tighten("relative/dir"))
 	if f := failedAt(got); !slices.Equal(f, []string{"relative/dir"}) {
 		t.Errorf("failures at %v, want the relative path", f)
+	}
+}
+
+// unprivilegedDirEnv names the folder a test re-run by unprivilegedDir works in.
+const unprivilegedDirEnv = "FILEMODE_UNPRIVILEGED_DIR"
+
+// unprivilegedDir returns a folder the calling top-level test owns as an account that cannot open
+// a folder it lacks read permission on. As root it re-runs that test as uid 65534 and returns ""
+// once the re-run passed, so the caller returns.
+func unprivilegedDir(t *testing.T) string {
+	t.Helper()
+	if dir := os.Getenv(unprivilegedDirEnv); dir != "" {
+		return dir
+	}
+	if os.Getuid() != 0 {
+		return t.TempDir()
+	}
+	base := t.TempDir()
+	for _, d := range []string{filepath.Dir(base), base} {
+		if err := os.Chmod(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := filepath.Join(base, "filemode.test")
+	copyExecutable(t, bin)
+	work := filepath.Join(base, "work")
+	if err := os.Mkdir(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(work, 65534, 65534); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
+	cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		return strings.HasPrefix(kv, "GOCOVERDIR=")
+	}), unprivilegedDirEnv+"="+work)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534}}
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "--- PASS: "+t.Name()) {
+		t.Fatalf("re-run as uid 65534: %v\n%s", err, out)
+	}
+	return ""
+}
+
+// copyExecutable copies the test binary to dst, world-executable; ForkLock keeps a concurrent fork
+// from holding it open for writing when it runs (ETXTBSY, golang/go#22315).
+func copyExecutable(t *testing.T, dst string) {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
+	if err := os.WriteFile(dst, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// restoreOnCleanup makes each folder listable again before the temp folder is removed.
+func restoreOnCleanup(t *testing.T, dirs ...string) {
+	t.Cleanup(func() {
+		for _, d := range dirs {
+			_ = os.Chmod(d, 0o755)
+		}
+	})
+}
+
+// An owner may change the mode of a folder it can enter but not list, and of one inside a folder it
+// cannot list; symlinks there are still refused.
+func TestSetDirModes_SetsFoldersTheOwnerCannotRead(t *testing.T) {
+	work := unprivilegedDir(t)
+	if work == "" {
+		return
+	}
+	outside := filepath.Join(work, "outside")
+	mkdirAt(t, outside, 0o777)
+	tools := filepath.Join(work, "tools")
+	mkdirAt(t, filepath.Join(tools, "bin"), 0o775)
+	symlink(t, outside, filepath.Join(tools, "npm"))
+	mkdirAt(t, tools, 0o330)
+	locked := filepath.Join(work, "locked")
+	home := filepath.Join(locked, "home")
+	mkdirAt(t, home, 0o300)
+	mkdirAt(t, locked, 0o100)
+	link := filepath.Join(work, "link")
+	symlink(t, outside, link)
+	restoreOnCleanup(t, tools, locked, home)
+
+	got := SetDirModes([]DirMode{
+		{Path: tools, Want: NoGroupOrOtherWrite},
+		{Path: filepath.Join(tools, "bin"), Want: NoGroupOrOtherWrite},
+		{Path: filepath.Join(tools, "npm"), Want: NoGroupOrOtherWrite},
+		{Path: home, Want: Exactly(0o755)},
+		{Path: link, Want: NoGroupOrOtherWrite},
+	})
+
+	for path, want := range map[string]fs.FileMode{
+		tools: 0o310, filepath.Join(tools, "bin"): 0o755, home: 0o755, locked: 0o100, outside: 0o777,
+	} {
+		if m := modeOf(t, path); m != want {
+			t.Errorf("%s mode = %04o, want %04o", path, m, want)
+		}
+	}
+	if f := failedAt(got); !slices.Equal(f, []string{link, filepath.Join(tools, "npm")}) {
+		t.Errorf("failures at %v, want the two symlinks", f)
+	}
+	for _, r := range got {
+		if r.Err != nil && !errors.Is(r.Err, ErrNotADir) {
+			t.Errorf("failure at %s = %v, want ErrNotADir", r.Path, r.Err)
+		}
+	}
+}
+
+// Where fchmodat2 is missing or refused, the mode still changes, on the folder that was opened.
+func TestSetDirModes_FallsBackFromARefusedFchmodat2(t *testing.T) {
+	for _, refusal := range []error{unix.ENOSYS, unix.EOPNOTSUPP, unix.EPERM} {
+		t.Run(refusal.Error(), func(t *testing.T) {
+			orig := chmodEmptyPath
+			chmodEmptyPath = func(int, uint32) error { return refusal }
+			t.Cleanup(func() {
+				chmodEmptyPath = orig
+				testHookOpened = func(string) {}
+			})
+			root := t.TempDir()
+			dir, moved, outside := filepath.Join(root, "dir"), filepath.Join(root, "moved"), filepath.Join(root, "outside")
+			mkdirAt(t, dir, 0o775)
+			mkdirAt(t, outside, 0o777)
+			testHookOpened = func(string) {
+				if err := os.Rename(dir, moved); err != nil {
+					t.Fatal(err)
+				}
+				symlink(t, outside, dir)
+			}
+
+			got := SetDirModes(tighten(dir))
+
+			if want := []DirModeResult{{Path: dir, Old: 0o775, New: 0o755}}; !slices.Equal(got, want) {
+				t.Errorf("results = %+v, want %+v", got, want)
+			}
+			if m := modeOf(t, moved); m != 0o755 {
+				t.Errorf("opened folder mode = %04o, want 0755", m)
+			}
+			if m := modeOf(t, outside); m != 0o777 {
+				t.Errorf("outside folder mode = %04o, want 0777 kept", m)
+			}
+		})
+	}
+}
+
+// A refusal fchmodat2 does not fall back from is the folder's failure.
+func TestSetDirModes_ReportsAnotherFchmodat2Refusal(t *testing.T) {
+	orig := chmodEmptyPath
+	chmodEmptyPath = func(int, uint32) error { return unix.EROFS }
+	t.Cleanup(func() { chmodEmptyPath = orig })
+	dir := filepath.Join(t.TempDir(), "dir")
+	mkdirAt(t, dir, 0o775)
+
+	got := SetDirModes(tighten(dir))
+
+	if len(got) != 1 || !errors.Is(got[0].Err, unix.EROFS) {
+		t.Errorf("results = %+v, want one EROFS", got)
+	}
+	if m := modeOf(t, dir); m != 0o775 {
+		t.Errorf("mode = %04o, want 0775 kept", m)
 	}
 }
