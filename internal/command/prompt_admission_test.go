@@ -341,6 +341,7 @@ func TestCmdPrompt_A409WritesNothing(t *testing.T) {
 	}{
 		"plain busy":       {refusal: AdmissionBusy, wantReason: ""},
 		"starting variant": {refusal: AdmissionStarting, wantReason: "starting"},
+		"chat gone":        {refusal: AdmissionChatGone, wantReason: "chat_not_found"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

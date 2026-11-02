@@ -279,7 +279,7 @@ func TestAfterTurnClose_Order(t *testing.T) {
 		return inner(ctx, b)
 	}
 	bc := &bridgeCoordinator{
-		turns:             newTurnRegistry(),
+		turns:             newTurnRegistry(nopTurnRecords{}),
 		lifecycle:         &lifetime{shutdownCtx: t.Context()},
 		applyPendingModel: func(context.Context, marotte.ChatID) { record("model") },
 		autoCompact:       r.ac,

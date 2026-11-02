@@ -311,12 +311,12 @@ func (s *Store) saveLocked(ctx context.Context, chatID marotte.ChatID, mutate fu
 // newRecord is the zero record a create starts from. A late write must not resurrect a deleted chat as a ghost row:
 // the refusal is named because a caller reading it as success would spawn a bridge for output discarded at persist.
 func (s *Store) newRecord(chatID marotte.ChatID) (*marotte.Chat, error) {
+	if s.inTeardown(chatID) {
+		return nil, ErrInTeardown
+	}
 	if s.isTombstoned(chatID) {
 		slog.Info("chat: refused to resurrect tombstoned id", "chat_id", logsafe.Field(string(chatID)))
 		return nil, ErrTombstoned
-	}
-	if s.inTeardown(chatID) {
-		return nil, ErrInTeardown
 	}
 	return &marotte.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}, nil
 }

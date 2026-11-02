@@ -434,13 +434,16 @@ func startPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
 }
 
 // reservePromptAdmission takes the chat's admission slot for a prompt: AdmissionBusy answers the plain
-// 409 (which the client steers or queues, per the chat's mode), AdmissionStarting 409 with reason "starting".
+// 409 (which the client steers or queues, per the chat's mode), AdmissionStarting 409 with reason "starting",
+// AdmissionChatGone 409 with reason "chat_not_found".
 func reservePromptAdmission(ctx context.Context, roles *promptRoles, chatID marotte.ChatID) error {
 	switch roles.admission.ReserveTurnForPrompt(ctx, chatID, AdmissionWait) {
 	case AdmissionAcquired:
 		return nil
 	case AdmissionBusy:
 		return StatusError(http.StatusConflict, errBusy)
+	case AdmissionChatGone:
+		return StatusErrorReason(http.StatusConflict, reasonChatGone, ErrChatNotFound)
 	default:
 		return StatusErrorReason(http.StatusConflict, reasonStarting, errBusy)
 	}

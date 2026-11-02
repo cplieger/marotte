@@ -112,7 +112,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		bridge:         h.bridge,
 		chatStore:      h.chatStore,
 		catalog:        h.catalog,
-		turns:          newTurnRegistry(),
+		turns:          newTurnRegistry(h.chatStore),
 		broadcast:      h.bus.Broadcast,
 		translateEvent: h.translateACPEvent,
 		// Read per call: agentTerms is built after the coordinator.

@@ -600,3 +600,69 @@ func TestSessionOwners_AnUnlistableDirectoryIsNotListed(t *testing.T) {
 		t.Errorf("listed=%v complete=%v for a directory that cannot be read", scan.Listed, scan.Complete)
 	}
 }
+
+func TestOpenTurn_HoldsTheTurnAndStampsUse(t *testing.T) {
+	s, _ := newTestStore(t)
+	seedChat(t, s, "c1")
+	ageChat(t, s, "c1", 48*time.Hour)
+	before := readChat(t, s, "c1").UpdatedAt
+	if _, err := s.OpenTurn(t.Context(), "c1", &TurnSpec{Source: marotte.TurnOpenNameWireTurnStart}, nil); err != nil {
+		t.Fatal(err)
+	}
+	c := readChat(t, s, "c1")
+	if f := c.Keep[marotte.KeyTurn]; !f.Process || f.Boot != s.Boot() {
+		t.Errorf("turn fact = %+v, want a process fact of this boot", f)
+	}
+	if c.UpdatedAt <= before {
+		t.Errorf("UpdatedAt %d not after %d: a turn opening is use", c.UpdatedAt, before)
+	}
+}
+
+func TestOpenTurn_ACreatedRecordHoldsTheTurn(t *testing.T) {
+	s, _ := newTestStore(t)
+	init := func(c *marotte.Chat) { c.Name = "new" }
+	if _, err := s.OpenTurn(t.Context(), "fresh", &TurnSpec{Source: marotte.TurnOpenNameWireTurnStart}, init); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readChat(t, s, "fresh").Keep[marotte.KeyTurn]; !ok {
+		t.Error("a record OpenTurn created carries no turn fact")
+	}
+}
+
+func TestOpenTurn_AFailedFactWritePendsAndTheOpenProceeds(t *testing.T) {
+	s, _ := newTestStore(t)
+	seedChat(t, s, "c1")
+	failHeaderWrites(t, "c1")
+	if _, err := s.OpenTurn(t.Context(), "c1", &TurnSpec{Source: marotte.TurnOpenNameWireTurnStart}, nil); err != nil {
+		t.Fatalf("OpenTurn with a failing header write = %v, want the open to proceed", err)
+	}
+	if !s.hasPending("c1") {
+		t.Error("the turn fact the open could not write is not pending")
+	}
+}
+
+func TestOpenTurn_AChatInTeardownIsRefusedEvenWithInit(t *testing.T) {
+	for name, tombstoneLive := range map[string]bool{"tombstone live": true, "tombstone expired": false} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := newTestStore(t)
+			seedChat(t, s, "torn")
+			s.beginTeardown("torn", nil)
+			if _, err := s.Delete(t.Context(), "torn"); err != nil {
+				t.Fatal(err)
+			}
+			if !tombstoneLive {
+				s.tombMu.Lock()
+				delete(s.tombstone, "torn")
+				s.tombMu.Unlock()
+			}
+			init := func(c *marotte.Chat) { c.Name = "reborn" }
+			_, err := s.OpenTurn(t.Context(), "torn", &TurnSpec{Source: marotte.TurnOpenNameWireTurnStart}, init)
+			if !errors.Is(err, ErrInTeardown) {
+				t.Errorf("OpenTurn of a chat in teardown = %v, want ErrInTeardown", err)
+			}
+			if err := s.headerErr("torn"); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("the refused open left a record: %v", err)
+			}
+		})
+	}
+}

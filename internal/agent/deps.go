@@ -57,6 +57,7 @@ type bridgeChatRecords interface {
 
 type chatRecords interface {
 	bridgeChatRecords
+	turnRecords
 
 	List(ctx context.Context) []marotte.ChatHeader
 	// SessionOwners is the membership coordinator's fresh chain read, passed on

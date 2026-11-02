@@ -432,6 +432,9 @@ const (
 	// reports with no steerable turn. Answered as 409 with the additive
 	// `reason: "starting"`, which hands the text back.
 	AdmissionStarting
+	// AdmissionChatGone is a chat whose record was deleted or whose purge teardown
+	// still runs: nothing was reserved. Answered as 409 `reason: "chat_not_found"`.
+	AdmissionChatGone
 )
 
 // turnAdmission is the chat's admission slot as the command handlers hold it:

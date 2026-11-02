@@ -10,20 +10,39 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
+// reserveResult is reserveLocked's answer.
+type reserveResult int
+
+const (
+	reserveRefused  reserveResult = iota // the slot is held, or KAS's state admits nothing now
+	reserveOK                            // the slot is taken and the chat's turn fact held or pended
+	reserveChatGone                      // the chat's record is deleted or in its purge teardown; nothing was taken
+)
+
 // Every reservation sends a session/prompt or opens a turn, so none is taken beside a bracketed wire turn
-// (bracketedWireLocked) or while KAS's state admits none (kasPermits). Caller holds mu.
-func (lc *chatLifecycle) reserveLocked(source marotte.TurnOpenSource) bool {
+// (bracketedWireLocked) or while KAS's state admits none (kasPermits). The turn fact is held before reserved is set,
+// in the same section, so the retention purge never sees a reserved chat without it. Caller holds mu.
+func (lc *chatLifecycle) reserveLocked(source marotte.TurnOpenSource, hold func() error) reserveResult {
 	if lc.reserved || !lc.kas.may().admit || lc.bracketedWireLocked() {
-		return false
+		return reserveRefused
+	}
+	if err := hold(); errors.Is(err, chat.ErrTombstoned) {
+		return reserveChatGone
 	}
 	lc.reserved = true
 	lc.reservedSource = source
 	lc.admission++
-	return true
+	return reserveOK
+}
+
+// holdTurn is reserveLocked's hold for chatID.
+func (r *turnRegistry) holdTurn(chatID marotte.ChatID) func() error {
+	return func() error { return r.records.HoldTurn(context.Background(), chatID) }
 }
 
 // holderSourceLocked names the admission holder: the bracket-owed prompt turn, else the reservation, else own. A
@@ -46,7 +65,7 @@ func (r *turnRegistry) tryReserve(chatID marotte.ChatID, source marotte.TurnOpen
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	return lc.fenceHoldsLocked(fence) && lc.reserveLocked(source)
+	return lc.fenceHoldsLocked(fence) && lc.reserveLocked(source, r.holdTurn(chatID)) == reserveOK
 }
 
 // tryReserveIdle takes the slot iff nothing holds admission, an open wire turn included, in one acquisition.
@@ -57,7 +76,7 @@ func (r *turnRegistry) tryReserveIdle(chatID marotte.ChatID, source marotte.Turn
 	if _, held := lc.holderSourceLocked(); held {
 		return false
 	}
-	return lc.reserveLocked(source)
+	return lc.reserveLocked(source, r.holdTurn(chatID)) == reserveOK
 }
 
 // promptHolder names the prompt-class turn holding admission: the bracket-owed one, else a non-finalizing own one.
@@ -86,9 +105,10 @@ func (r *turnRegistry) releaseReservation(chatID marotte.ChatID) {
 	lc.reservedSource = 0
 	lc.wakeLocked()
 	idle := !lc.liveLockedState()
+	announce := idle && r.records.EndTurn(context.Background(), chatID)
 	lc.mu.Unlock()
 	if idle {
-		r.idle(chatID)
+		r.idle(chatID, announce)
 	}
 }
 
@@ -102,15 +122,15 @@ func (lc *chatLifecycle) bracketedWireLocked() bool {
 
 // reserveOrHolder tries the reservation and on refusal reports whether a steerable holder refused it, with the
 // next-change channel, in one acquisition, so a release between try and park cannot strand the waiter.
-func (r *turnRegistry) reserveOrHolder(chatID marotte.ChatID, source marotte.TurnOpenSource) (ok, busy bool, changed <-chan struct{}) {
+func (r *turnRegistry) reserveOrHolder(chatID marotte.ChatID, source marotte.TurnOpenSource) (res reserveResult, busy bool, changed <-chan struct{}) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	if lc.reserveLocked(source) {
-		return true, false, nil
+	if res = lc.reserveLocked(source, r.holdTurn(chatID)); res != reserveRefused {
+		return res, false, nil
 	}
 	holder, held := lc.holderSourceLocked()
-	return false, lc.kas.may().steerHolder && held && holder.SteerableHolder(), lc.changed
+	return res, lc.kas.may().steerHolder && held && holder.SteerableHolder(), lc.changed
 }
 
 // admissionHolder reports the holder's source (open turn, else reservation), false when neither.
@@ -162,9 +182,9 @@ func (bc *bridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID ma
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for {
-		ok, busy, changed := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt)
-		if ok {
-			return command.AdmissionAcquired
+		res, busy, changed := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt)
+		if res != reserveRefused {
+			return admissionOf(chatID, res)
 		}
 		if busy {
 			return command.AdmissionBusy
@@ -382,14 +402,23 @@ func (lc *chatLifecycle) idleSinceLocked(t *activeTurn, arm uint64) bool {
 
 // One last try first.
 func (bc *bridgeCoordinator) expiredAdmission(chatID marotte.ChatID) command.AdmissionOutcome {
-	ok, busy, _ := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt)
-	if ok {
-		return command.AdmissionAcquired
+	res, busy, _ := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt)
+	if res != reserveRefused {
+		return admissionOf(chatID, res)
 	}
 	if busy {
 		return command.AdmissionBusy
 	}
 	return command.AdmissionStarting
+}
+
+// admissionOf maps a reservation that was not refused.
+func admissionOf(chatID marotte.ChatID, res reserveResult) command.AdmissionOutcome {
+	if res == reserveChatGone {
+		slog.Info("prompt refused: the chat was deleted", "chat_id", chatID)
+		return command.AdmissionChatGone
+	}
+	return command.AdmissionAcquired
 }
 
 // The manager registers before Start, so presence is not liveness.

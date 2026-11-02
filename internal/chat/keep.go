@@ -332,6 +332,22 @@ func (s *Store) turnFactLocked(ctx context.Context, chatID marotte.ChatID, c *ma
 	s.settlePending(chatID, flushed)
 }
 
+// openTurnFactLocked is OpenTurn's write: the turn fact, rewritten whatever boot held it, and the UpdatedAt stamp,
+// since a turn opening is use. A failure pends the fact: a wire turn cannot be refused.
+func (s *Store) openTurnFactLocked(ctx context.Context, chatID marotte.ChatID) {
+	c, err := s.loadKeepLocked(ctx, chatID)
+	if err == nil {
+		flushed := s.flushPendingLocked(chatID, c)
+		setKeep(c, marotte.KeyTurn, s.newFact(KeepProcess))
+		c.UpdatedAt = time.Now().UnixMilli()
+		if err = s.writeHeader(ctx, chatID, c); err == nil {
+			s.settlePending(chatID, flushed)
+			return
+		}
+	}
+	s.pend(chatID, marotte.KeyTurn, s.newFact(KeepProcess), err)
+}
+
 // Rollback undoes one failed open: while the record still carries the claim's token it deletes a key the claim found
 // absent and otherwise writes back the value the claim overwrote. A fact another writer took since, or one the claim
 // did not create, survives unchanged. A missing record answers nil; a read or write error is returned and the fact
