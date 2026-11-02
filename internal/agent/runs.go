@@ -61,6 +61,10 @@ type Runs struct {
 	life runLifecycle
 	// recorded is the keep-state reconcile's runs/ attribution, which RunsParentedBy reads (run_owner.go).
 	recorded recordedRuns
+	// lives serializes each run's lease grants and releases with its keep facts (run_life.go).
+	lives runLives
+	// absence is each held lease's absence clock, in memory only (run_orphan.go).
+	absence runAbsence
 	// sweep pauses the running runs while the gate is closed (run_gate.go).
 	sweep gateSweep
 	// hosts serializes, per run, making its launching session resident (ensureResident). hosts, resumes and
@@ -79,11 +83,20 @@ type Runs struct {
 	mu              sync.Mutex
 }
 
-// runChatReader is the chat store as the run surface uses it: session chains and the chat owning a run's parent session.
+// runChatReader is the chat store as the run surface uses it: session chains, the chat owning a run's parent session,
+// and the run keep facts.
 type runChatReader interface {
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
 	// SessionOwners is one fresh owner scan, the attribution every run keep fact and the purge teardown share.
 	SessionOwners(ctx context.Context) chat.OwnerScan
+	Hold(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
+	HoldOrPend(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
+	Rollback(ctx context.Context, claim *chat.Claim) error
+	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
+	ReleaseAll(ctx context.Context, key string, ev chat.Evidence) error
+	HoldUnattributed(workflowID string)
+	ClearUnattributed(workflowID string)
+	SessionInTeardown(sessionID string) bool
 }
 
 // useLog installs the run record.

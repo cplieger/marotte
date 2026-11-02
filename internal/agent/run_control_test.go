@@ -397,7 +397,7 @@ func TestHealBudget_BoundsThePauseHealLoopAndProgressRefillsIt(t *testing.T) {
 		if _, ok := h.runs.claimHeal("wf_1"); !ok {
 			t.Fatal("setup: the first attempt was refused")
 		}
-		h.runs.forgetBounds(t.Context(), "wf_1")
+		h.runs.forgetBounds(t.Context(), "wf_1", endTerminal, h.runs.lifeOf("wf_1"))
 		if attempt, _ := h.runs.claimHeal("wf_1"); attempt != 1 {
 			t.Errorf("attempt number after the run ended = %d, want 1; a workflow id KAS reuses "+
 				"would inherit a spent budget", attempt)

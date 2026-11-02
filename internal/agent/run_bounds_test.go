@@ -455,7 +455,7 @@ func TestCancelExpiredRun_ASupersededTimerDoesNothing(t *testing.T) {
 		t.Error("the deadline was claimed twice")
 	}
 	// A released lease: a pending timer must not resurrect a cancel.
-	h.releaseLease(t.Context(), id)
+	h.releaseLease(t.Context(), id, endTerminal, h.lifeOf(id))
 	if h.claimExpiredDeadline(id, live.Deadline) {
 		t.Error("a released run was claimed by its pending timer")
 	}
@@ -670,7 +670,7 @@ func TestForgetRunBounds_ClearsTheClaimOnATerminalRun(t *testing.T) {
 	h.armDeadline(t.Context(), id)
 	h.claimTermination(id)
 
-	h.forgetBounds(t.Context(), id)
+	h.forgetBounds(t.Context(), id, endTerminal, h.lifeOf(id))
 
 	h.mu.Lock()
 	claims := len(h.bounds.terminating)
@@ -719,7 +719,7 @@ func TestForgetRunBounds_ARefillInsideTheTeardownLeavesNoTimer(t *testing.T) {
 		t.Fatal("the leased run has no ask cell, so nothing in the teardown broadcasts")
 	}
 
-	h.forgetBounds(t.Context(), id)
+	h.forgetBounds(t.Context(), id, endTerminal, h.lifeOf(id))
 
 	if bus.refills == 0 {
 		t.Fatal("the teardown broadcast nothing, so no refill was driven inside it")

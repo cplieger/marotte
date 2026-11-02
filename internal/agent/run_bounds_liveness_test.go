@@ -307,7 +307,7 @@ func TestFinishTermination_NotesTheStopWhenTheTerminalFrameWinsTheRace(t *testin
 		if method != methodKiroWorkflowCancel {
 			return nil, nil, false
 		}
-		h.runs.forgetBounds(t.Context(), id)
+		h.runs.forgetBounds(t.Context(), id, endTerminal, h.runs.lifeOf(id))
 		return json.RawMessage(`{}`), nil, true
 	}
 	host := &sharedBridge{bridge: br, state: bridgeIdle}

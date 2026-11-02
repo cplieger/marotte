@@ -20,17 +20,18 @@ func TestStore_RoundTripsALeaseAcrossARestart(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	slot := time.Date(2026, 8, 1, 4, 0, 0, 0, time.UTC)
-	absentAt := time.Date(2026, 8, 1, 3, 30, 0, 0, time.UTC)
 	want := Lease{
-		StartedAt:     time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC),
-		Deadline:      slot,
-		SlotAt:        slot,
-		FirstAbsentAt: absentAt,
-		WorkflowID:    "wf_1",
-		Recipe:        "publish",
-		Origin:        OriginScheduled,
-		ScheduleID:    "sched-1",
-		Unattended:    true,
+		StartedAt:    time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC),
+		Deadline:     slot,
+		SlotAt:       slot,
+		WorkflowID:   "wf_1",
+		Recipe:       "publish",
+		Origin:       OriginScheduled,
+		ScheduleID:   "sched-1",
+		Life:         "life-1",
+		KeepChats:    []string{"chat-a", "chat-b"},
+		Unattended:   true,
+		Unattributed: true,
 	}
 	if err := s.Put(t.Context(), &want); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -56,8 +57,9 @@ func TestStore_RoundTripsALeaseAcrossARestart(t *testing.T) {
 	if !got.StartedAt.Equal(want.StartedAt) {
 		t.Errorf("StartedAt = %v, want %v", got.StartedAt, want.StartedAt)
 	}
-	if !got.FirstAbsentAt.Equal(absentAt) {
-		t.Errorf("FirstAbsentAt = %v, want %v; the continuous-absence clock did not survive restart", got.FirstAbsentAt, absentAt)
+	if got.Life != "life-1" || !slices.Equal(got.KeepChats, want.KeepChats) || !got.Unattributed {
+		t.Errorf("life/keep/unattributed = %q/%v/%v, want %q/%v/true; a restart lost the run's keep state",
+			got.Life, got.KeepChats, got.Unattributed, want.Life, want.KeepChats)
 	}
 	// The DEADLINE must NOT survive: it was set by a dead process.
 	if got.Bounded() {
@@ -238,35 +240,86 @@ func TestStore_DropsUnusableLeasesOnLoad(t *testing.T) {
 	}
 }
 
-// TestStore_SetFirstAbsentAtTracksContinuousAbsence: the first miss stamps the
-// persisted clock, and a later sighting clears it.
-func TestStore_SetFirstAbsentAtTracksContinuousAbsence(t *testing.T) {
+// TestStore_ReleaseEndsOnlyTheLifeItNames: a release reading an older life leaves a newer grant's lease.
+func TestStore_ReleaseEndsOnlyTheLifeItNames(t *testing.T) {
 	t.Parallel()
 	s := NewMemory()
-	const id = "wf_1"
-	if err := s.Put(t.Context(), &Lease{WorkflowID: id, Origin: OriginManual}); err != nil {
+	if err := s.Put(t.Context(), &Lease{WorkflowID: "wf_1", Origin: OriginAgent, Life: "life-2"}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
+	if got, err := s.Release(t.Context(), "wf_1", "life-1"); err != nil || got != ReleaseSuperseded {
+		t.Errorf("Release(life-1) = %v, %v, want ReleaseSuperseded", got, err)
+	}
+	if _, ok := s.Get("wf_1"); !ok {
+		t.Fatal("an older life's release deleted the newer life's lease")
+	}
+	if got, err := s.Release(t.Context(), "wf_1", "life-2"); err != nil || got != Released {
+		t.Errorf("Release(life-2) = %v, %v, want Released", got, err)
+	}
+	if got, err := s.Release(t.Context(), "wf_1", "life-2"); err != nil || got != ReleaseAbsent {
+		t.Errorf("Release of a gone lease = %v, %v, want ReleaseAbsent", got, err)
+	}
+}
 
-	absentAt := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
-	if err := s.SetFirstAbsentAt(t.Context(), id, absentAt); err != nil {
-		t.Fatalf("SetFirstAbsentAt: %v", err)
+// TestStore_KeepChatsOnlyGrow: SetKeepChats and Renew union their holders; a call naming fewer removes none.
+func TestStore_KeepChatsOnlyGrow(t *testing.T) {
+	t.Parallel()
+	s := NewMemory()
+	if err := s.Put(t.Context(), &Lease{WorkflowID: "wf_1", Origin: OriginAgent, KeepChats: []string{"c2"}}); err != nil {
+		t.Fatalf("Put: %v", err)
 	}
-	got, _ := s.Get(id)
-	if !got.FirstAbsentAt.Equal(absentAt) {
-		t.Errorf("FirstAbsentAt = %v, want %v", got.FirstAbsentAt, absentAt)
+	steps := []struct {
+		name string
+		do   func() error
+		want []string
+	}{
+		{"add", func() error { return s.SetKeepChats(t.Context(), "wf_1", []string{"c1"}) }, []string{"c1", "c2"}},
+		{"fewer", func() error { return s.SetKeepChats(t.Context(), "wf_1", nil) }, []string{"c1", "c2"}},
+		{"renew", func() error { return s.Renew(t.Context(), "wf_1", "life-9", []string{"c3"}) }, []string{"c1", "c2", "c3"}},
 	}
+	for _, st := range steps {
+		if err := st.do(); err != nil {
+			t.Fatalf("%s: %v", st.name, err)
+		}
+		if got, _ := s.Get("wf_1"); !slices.Equal(got.KeepChats, st.want) {
+			t.Errorf("%s: KeepChats = %v, want %v", st.name, got.KeepChats, st.want)
+		}
+	}
+	if got, _ := s.Get("wf_1"); got.Life != "life-9" {
+		t.Errorf("Renew left life %q, want life-9", got.Life)
+	}
+	if err := s.SetKeepChats(t.Context(), "wf_gone", []string{"c1"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetKeepChats(wf_gone) = %v, want ErrNotFound", err)
+	}
+}
 
-	if err := s.SetFirstAbsentAt(t.Context(), id, time.Time{}); err != nil {
-		t.Fatalf("clear FirstAbsentAt: %v", err)
+// TestNewStore_DropsAnInvalidKeepHolderAndAnOldAbsenceClock: a holder naming no chat is dropped on load, and a dev
+// file's first_absent_at loads and is gone after the next write.
+func TestNewStore_DropsAnInvalidKeepHolderAndAnOldAbsenceClock(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	raw := `{"version":1,"leases":[{"workflow_id":"wf_1","origin":"agent","recipe":"r",` +
+		`"first_absent_at":"2026-10-01T00:00:00Z","keep_chats":["ok-1","../x"]}]}`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	got, _ = s.Get(id)
-	if !got.FirstAbsentAt.IsZero() {
-		t.Errorf("FirstAbsentAt = %v after the run reappeared, want zero", got.FirstAbsentAt)
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
 	}
-
-	if err := s.SetFirstAbsentAt(t.Context(), "wf_gone", absentAt); !errors.Is(err, ErrNotFound) {
-		t.Errorf("SetFirstAbsentAt(wf_gone) = %v, want ErrNotFound", err)
+	got, ok := s.Get("wf_1")
+	if !ok || !slices.Equal(got.KeepChats, []string{"ok-1"}) {
+		t.Fatalf("lease = %+v, %v, want KeepChats [ok-1]", got, ok)
+	}
+	if err := s.SetUnattributed(t.Context(), "wf_1", true); err != nil {
+		t.Fatalf("SetUnattributed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "first_absent_at") {
+		t.Errorf("the rewritten file still carries first_absent_at:\n%s", data)
 	}
 }
 
@@ -317,13 +370,13 @@ func TestStore_ReleaseIsIdempotent(t *testing.T) {
 	if err := s.Put(t.Context(), &Lease{WorkflowID: "wf_1", Origin: OriginManual}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if err := s.Release(t.Context(), "wf_1"); err != nil {
+	if _, err := s.Release(t.Context(), "wf_1", ""); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
-	if err := s.Release(t.Context(), "wf_1"); err != nil {
+	if _, err := s.Release(t.Context(), "wf_1", ""); err != nil {
 		t.Errorf("a second release failed: %v", err)
 	}
-	if err := s.Release(t.Context(), ""); err != nil {
+	if _, err := s.Release(t.Context(), "", ""); err != nil {
 		t.Errorf("releasing the empty id failed: %v", err)
 	}
 	if _, ok := s.Get("wf_1"); ok {
@@ -398,7 +451,7 @@ func TestStore_WritesA0600File(t *testing.T) {
 	if err := os.Chmod(path, 0o666); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	if err := s.Release(t.Context(), "wf_1"); err != nil {
+	if _, err := s.Release(t.Context(), "wf_1", ""); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 	fi, err = os.Stat(path)
@@ -439,20 +492,20 @@ func TestStore_ListStampedPairsTheSetWithItsVersion(t *testing.T) {
 	if _, v := s.ListStamped(); v != "2" {
 		t.Errorf("after an unchanged SetDeadline: version = %q, want \"2\" (nothing moved)", v)
 	}
-	if err := s.SetFirstAbsentAt(ctx, "wf_1", time.Now()); err != nil {
-		t.Fatalf("SetFirstAbsentAt: %v", err)
+	if err := s.SetKeepChats(ctx, "wf_1", []string{"c1"}); err != nil {
+		t.Fatalf("SetKeepChats: %v", err)
 	}
 	if _, v := s.ListStamped(); v != "3" {
-		t.Errorf("after SetFirstAbsentAt: version = %q, want \"3\"", v)
+		t.Errorf("after SetKeepChats: version = %q, want \"3\"", v)
 	}
-	if err := s.Release(ctx, "wf_1"); err != nil {
+	if _, err := s.Release(ctx, "wf_1", ""); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 	got, afterRelease := s.ListStamped()
 	if len(got) != 0 || afterRelease != "4" {
 		t.Errorf("after Release: ListStamped = (%d leases, %q), want (0, \"4\")", len(got), afterRelease)
 	}
-	if err := s.Release(ctx, "wf_1"); err != nil {
+	if _, err := s.Release(ctx, "wf_1", ""); err != nil {
 		t.Fatalf("Release repeat: %v", err)
 	}
 	if _, v := s.ListStamped(); v != "4" {

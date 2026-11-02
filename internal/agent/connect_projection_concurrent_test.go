@@ -73,7 +73,7 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 					Recipe:     "r",
 					Origin:     runlease.OriginManual,
 				})
-				_ = store.Release(ctx, id)
+				_, _ = store.Release(ctx, id, "")
 			}
 		})
 	}

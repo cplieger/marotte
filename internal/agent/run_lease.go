@@ -13,6 +13,8 @@ import (
 	"unicode/utf16"
 
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
@@ -26,6 +28,14 @@ type launchOrigin struct {
 	// chatID is the launching chat for an agent's run (runStartLaunch), empty for a parentless launch.
 	chatID string
 	origin runlease.Origin
+}
+
+// leaseKeep is what a grant records of the run's keep facts.
+type leaseKeep struct {
+	// chats hold the run's keep fact, recorded as the lease's KeepChats.
+	chats []string
+	// unattributed records a run whose launching chat could not be named (observeStart).
+	unattributed bool
 }
 
 // manualLaunch is the Run button and a parentless run's retry: attended, no schedule row. The slot depends on the resolved recipe, so launch sets it.
@@ -45,13 +55,15 @@ func retryLaunch(o *runOrigin) launchOrigin {
 // grantRetryLease leases a retried run from its gate's origin, parent session included: the retry's run_start finds
 // the lease held and adds no chat to it. A parentless retry is a new launch decision, so its host session reloads
 // with the profile's presets as they are now, recorded here.
-func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOrigin) {
+func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOrigin, keep []marotte.ChatID) lifeRead {
 	var host *runlease.HostSecurity
 	if o.parent.chat == "" {
 		host = hostSecurityOf(securityPresets(ctx, rs.lifecycle.configDir))
 	}
-	rs.grantLease(ctx, workflowID, o.recipe, retryLaunch(o), host)
+	lo := retryLaunch(o)
+	life := rs.grantKeeping(ctx, workflowID, o.recipe, &lo, host, &leaseKeep{chats: chatIDs(keep)})
 	rs.recordParentSession(ctx, workflowID, o.parent.session)
+	return life
 }
 
 // settleMissedEnd ends a scheduled run whose terminal frame marotte missed, as observeComplete would have, before a
@@ -140,14 +152,23 @@ func (rs *Runs) leaseStore() *runlease.Store {
 	return rs.leases
 }
 
-// grantLease records a run's envelope between `new` and `invoke`, before anything executes. Unattended
-// only for a scheduled run. A persist failure is logged: the in-memory lease still bounds the run.
-// grantLease records a run marotte put on the wire; host is a parentless launch's host-session security input, nil
-// for a chat-parented run.
-func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o launchOrigin, host *runlease.HostSecurity) {
-	if workflowID == "" {
-		return
+// grantLease records a run marotte put on the wire, between `new` and `invoke`, before anything executes; host is a
+// parentless launch's host-session security input, nil for a chat-parented run. Unattended only for a scheduled run.
+// A persist failure is logged: the in-memory lease still bounds the run. It answers the life it granted, which the
+// minting call's rollback ends (releaseLease); the start count is read before the grant.
+func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o launchOrigin, host *runlease.HostSecurity) lifeRead {
+	return rs.grantKeeping(ctx, workflowID, recipe, &o, host, nil)
+}
+
+// grantKeeping is grantLease recording keep, the run's keep holders, on the lease; nil records none.
+func (rs *Runs) grantKeeping(
+	ctx context.Context, workflowID, recipe string, o *launchOrigin, host *runlease.HostSecurity, keep *leaseKeep,
+) lifeRead {
+	if !ids.ValidChatID(workflowID) {
+		slog.Warn("run lease not granted: the workflow id is not a plain name", "workflow_id", logsafe.Field(workflowID))
+		return lifeRead{}
 	}
+	life := lifeRead{token: newLifeToken(), held: true, starts: rs.lives.startCount(workflowID)}
 	l := runlease.Lease{
 		StartedAt:  time.Now(),
 		SlotAt:     o.slotAt,
@@ -156,8 +177,12 @@ func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o lau
 		Recipe:     recipe,
 		Origin:     o.origin,
 		ScheduleID: o.scheduleID,
+		Life:       life.token,
 		Unattended: o.origin == runlease.OriginScheduled,
 		Host:       host,
+	}
+	if keep != nil {
+		l.KeepChats, l.Unattributed = keep.chats, keep.unattributed
 	}
 	if err := rs.leaseStore().Put(ctx, &l); err != nil {
 		slog.Error("run lease not persisted; this run's envelope will not survive a restart",
@@ -168,24 +193,7 @@ func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o lau
 	rs.writeSchedule(run, func() error { return rs.schedules.RecordStart(ctx, run) })
 	// Named from the grant on, so every pending_snapshot names every run marotte answers for.
 	rs.cellFor(workflowID)
-}
-
-// Idempotent: the terminal frame and cancel both release. Every path that ends a run comes here, so
-// the run's asks end here too, after the store forgot the lease.
-func (rs *Runs) releaseLease(ctx context.Context, workflowID string) {
-	if workflowID == "" {
-		return
-	}
-	l, held := rs.lease(workflowID)
-	if err := rs.leaseStore().Release(ctx, workflowID); err != nil {
-		slog.Warn("run lease not released on disk", "workflow_id", workflowID, "error", err)
-	}
-	rs.endLife(workflowID)
-	rs.endAsks(ctx, workflowID)
-	rs.quietEdge()
-	if held && rs.coord != nil {
-		rs.coord.releaseIfUnheld(marotte.ChatID(l.ChatID))
-	}
+	return life
 }
 
 // recordParentSession stamps the run's parent session on its lease, the one host its asks are read through.
@@ -240,9 +248,15 @@ func (rs *Runs) LiveRuns(workflowIDs []string) []command.LiveRunRef {
 }
 
 // CancelRun cancels one run for the reader and waits for its lease release. command.ErrRunStillLive
-// when the wait runs out; the cancel landed either way.
+// when the wait runs out; the cancel landed either way. A run KAS answers "workflow not found" has nothing to stop:
+// nil, with its lease and keep facts untouched, since absence releases nothing.
 func (rs *Runs) CancelRun(ctx context.Context, workflowID string) error {
 	if err := rs.cancelAs(ctx, workflowID, userStop(stopWhyRewound)); err != nil {
+		if workflowNotFound(err) {
+			slog.Info("rewind: a run the cut launched is unknown to the engine; nothing to stop",
+				"workflow_id", workflowID)
+			return nil
+		}
 		return err
 	}
 	deadline := time.NewTimer(rewindCancelWait)

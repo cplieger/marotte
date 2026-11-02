@@ -2,13 +2,15 @@ package agent
 
 // Restart orphans: runs marotte launched whose owning process died. The boot sweep asks "is this system
 // idle", the admission backstop "may this run start". No automatic relaunch. A run absent from a good
-// list starts a persisted clock; six continuous hours releases the lease as bookkeeping.
+// list starts an in-memory clock; six continuous hours reports it and ends its asks, and releases nothing.
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -30,7 +32,8 @@ const reasonOrphaned = "stopped because the server restarted while it was runnin
 // sweepOrphaned clears every lease whose run a dead process left paused. Best-effort: skipping costs a stale
 // row, cancelling a live run destroys work. Reports whether it reached KAS.
 func (rs *Runs) sweepOrphaned(ctx context.Context) (reached bool) {
-	if len(rs.leaseStore().List()) == 0 {
+	before := rs.leaseStore().List()
+	if len(before) == 0 {
 		// No leases: nothing to ask.
 		return true
 	}
@@ -47,7 +50,7 @@ func (rs *Runs) sweepOrphaned(ctx context.Context) (reached bool) {
 	for i := range runs {
 		status[runs[i].WorkflowID] = marotte.RunStatus(runs[i].Status)
 	}
-	rs.reconcileLeasePresence(cctx, status, time.Now(), true)
+	rs.reconcileLeasePresence(cctx, before, status, time.Now(), true)
 
 	held := rs.leaseStore().List()
 	for i := range held {
@@ -106,6 +109,10 @@ func (rs *Runs) askBootPass(ctx context.Context) {
 		if c == nil {
 			continue
 		}
+		if rs.absence.notFound(id) {
+			// KAS has no such run: no asks to read, and no reason to make its chat resident.
+			continue
+		}
 		if leases[i].Origin == runlease.OriginAgent {
 			if _, err := rs.ensureResident(ctx, id); err != nil {
 				slog.Warn("boot: a chat-parented run's chat could not be reopened", "workflow_id", id, "error", err)
@@ -127,7 +134,8 @@ func (rs *Runs) releaseIfOver(ctx context.Context, workflowID string) {
 	if workflowID == "" {
 		return
 	}
-	if _, held := rs.lease(workflowID); !held {
+	life := rs.lifeOf(workflowID)
+	if !life.held {
 		// Already released.
 		return
 	}
@@ -140,13 +148,15 @@ func (rs *Runs) releaseIfOver(ctx context.Context, workflowID string) {
 	if l, held := rs.lease(workflowID); held {
 		rs.recordScheduleEnding(ctx, scheduleRun(&l), res.State.Status, res.State.StopReason)
 	}
-	rs.releaseLease(ctx, workflowID)
+	rs.releaseLease(ctx, workflowID, endTerminal, life)
 }
 
-// reconcileLeasePresence settles every lease against one run list: terminal releases, listed resets the
-// absence clock, absent starts or spends it. Absence never cancels. Boot passes inspectAbsent.
-func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]marotte.RunStatus, now time.Time, inspectAbsent bool) {
-	held := rs.leaseStore().List()
+// reconcileLeasePresence settles the leases held, read before the run list status, against that list: terminal
+// releases, listed clears the absence clock, absent starts or spends it. Absence never cancels and releases nothing.
+// Boot passes inspectAbsent.
+func (rs *Runs) reconcileLeasePresence(
+	ctx context.Context, held []runlease.Lease, status map[string]marotte.RunStatus, now time.Time, inspectAbsent bool,
+) {
 	for i := range held {
 		l := &held[i]
 		st, known := status[l.WorkflowID]
@@ -155,36 +165,40 @@ func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]ma
 				slog.Info("releasing the lease of a run with terminal status",
 					"workflow_id", l.WorkflowID, "recipe", l.Recipe, "status", st)
 				rs.recordScheduleEnding(ctx, scheduleRun(l), st, "")
-				rs.releaseLease(ctx, l.WorkflowID)
+				rs.releaseLease(ctx, l.WorkflowID, endTerminal, lifeOfLease(l))
 				continue
 			}
-			if !l.FirstAbsentAt.IsZero() {
-				rs.setFirstAbsentAt(ctx, l.WorkflowID, time.Time{})
-			}
+			rs.forgetAbsence(l.WorkflowID)
 			continue
 		}
-
-		if inspectAbsent && rs.inspectConfirmsGone(ctx, l.WorkflowID) {
-			slog.Info("boot: releasing the lease of a run inspect confirmed is over",
-				"workflow_id", l.WorkflowID, "recipe", l.Recipe)
-			rs.releaseLease(ctx, l.WorkflowID)
-			continue
+		if inspectAbsent {
+			terminal, notFound := rs.inspectTerminal(ctx, l.WorkflowID)
+			if terminal {
+				slog.Info("boot: releasing the lease of a run inspect says is over",
+					"workflow_id", l.WorkflowID, "recipe", l.Recipe)
+				rs.releaseLease(ctx, l.WorkflowID, endTerminal, lifeOfLease(l))
+				continue
+			}
+			if notFound {
+				rs.absence.markNotFound(l.WorkflowID, now)
+			}
 		}
 		rs.observeAbsentLease(ctx, l, now)
 	}
 }
 
-// inspectConfirmsGone asks KAS about one absent run; any failure but workflowNotFound leaves the lease.
-func (rs *Runs) inspectConfirmsGone(ctx context.Context, workflowID string) bool {
+// inspectTerminal asks KAS about one absent run: terminal only for a reply naming it with a terminal status;
+// notFound for KAS's "workflow not found", which is absence, not an end.
+func (rs *Runs) inspectTerminal(ctx context.Context, workflowID string) (terminal, notFound bool) {
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
-		return workflowNotFound(err)
+		return false, workflowNotFound(err)
 	}
 	var res inspectRunState
 	if json.Unmarshal(raw, &res) != nil {
-		return false
+		return false, false
 	}
-	return res.WorkflowID == workflowID && res.State.Status.Terminal()
+	return res.WorkflowID == workflowID && res.State.Status.Terminal(), false
 }
 
 // workflowNotFound reports KAS's WorkflowNotFoundError from a search that covered every session (kiro-cli 2.37.0
@@ -201,27 +215,94 @@ func workflowNotFound(err error) bool {
 	return json.Unmarshal(e.Data, &data) == nil && data.ErrorType == "WorkflowNotFoundError" && !data.SearchIncomplete
 }
 
-// Only leaseAbsenceBudget of unbroken absence releases, and the row says the outcome is unknown.
+// observeAbsentLease runs the in-memory absence clock: past leaseAbsenceBudget, once per process, it reports every
+// holder, records the unknown outcome, ends the run's asks and lets its chats' idle bridges close. The lease and its
+// keep facts stay until the run's end is seen.
 func (rs *Runs) observeAbsentLease(ctx context.Context, l *runlease.Lease, now time.Time) {
-	if l.FirstAbsentAt.IsZero() {
-		rs.setFirstAbsentAt(ctx, l.WorkflowID, now)
+	since, spent := rs.absence.observe(l.WorkflowID, now)
+	if !spent {
 		return
 	}
-	if now.Sub(l.FirstAbsentAt) < leaseAbsenceBudget {
-		return
+	for _, h := range leaseHolders(l) {
+		slog.Warn(logMsgRunAbsentKept, "chat_id", h, "workflow_id", l.WorkflowID,
+			"absent_since", since, "absent_for", now.Sub(since).Round(time.Second))
 	}
-
-	slog.Warn("run stayed absent past the lease budget; no terminal signal was ever seen",
-		"workflow_id", l.WorkflowID, "recipe", l.Recipe, "first_absent_at", l.FirstAbsentAt)
 	rs.recordScheduleOutcome(ctx, scheduleRun(l), schedule.Outcome{Status: schedule.StatusUnknown, Reason: reasonLeaseAbsent})
-	rs.releaseLease(ctx, l.WorkflowID)
+	rs.endAsks(ctx, l.WorkflowID)
+	if rs.coord != nil {
+		for _, h := range leaseHolders(l) {
+			rs.coord.releaseIfUnheld(h)
+		}
+	}
 }
 
-func (rs *Runs) setFirstAbsentAt(ctx context.Context, workflowID string, at time.Time) {
-	if err := rs.leaseStore().SetFirstAbsentAt(ctx, workflowID, at); err != nil {
-		slog.Warn("run lease absence clock not persisted",
-			"workflow_id", workflowID, "error", err)
+// logMsgRunAbsentKept is fixed text: an alert rule keys on it.
+const logMsgRunAbsentKept = "keep fact kept: a run stayed absent past the lease budget with no terminal signal; " +
+	"its chat stays kept until the run's end is seen"
+
+func (rs *Runs) forgetAbsence(workflowID string) { rs.absence.forget(workflowID) }
+
+// runAbsence is each held lease's absence clock. It lives in memory, so a restart restarts it: the clock decides
+// nothing durable. The zero value is usable.
+type runAbsence struct {
+	runs map[string]absentRun
+	mu   sync.Mutex
+}
+
+type absentRun struct {
+	since time.Time
+	// past is set once the clock spent leaseAbsenceBudget; notFound once a boot inspect answered "workflow not found".
+	past, notFound bool
+}
+
+// observe starts the clock at now if it is not running, and reports once, when it first passes the budget.
+func (a *runAbsence) observe(workflowID string, now time.Time) (since time.Time, spent bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.runs == nil {
+		a.runs = map[string]absentRun{}
 	}
+	r, ok := a.runs[workflowID]
+	if !ok {
+		r.since = now
+	}
+	if !r.past && now.Sub(r.since) >= leaseAbsenceBudget {
+		r.past, spent = true, true
+	}
+	a.runs[workflowID] = r
+	return r.since, spent
+}
+
+func (a *runAbsence) markNotFound(workflowID string, now time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.runs == nil {
+		a.runs = map[string]absentRun{}
+	}
+	r, ok := a.runs[workflowID]
+	if !ok {
+		r.since = now
+	}
+	r.notFound = true
+	a.runs[workflowID] = r
+}
+
+func (a *runAbsence) forget(workflowID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.runs, workflowID)
+}
+
+func (a *runAbsence) past(workflowID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.runs[workflowID].past
+}
+
+func (a *runAbsence) notFound(workflowID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.runs[workflowID].notFound
 }
 
 // clearBlockingOrphan is the admission backstop: clear a blocking row if it is marotte's own orphan.
@@ -270,7 +351,7 @@ func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 		"origin", string(l.Origin), "schedule_id", l.ScheduleID)
 	// The schedule's row too, or every later slot is refused as an overlap.
 	rs.recordScheduleOutcome(ctx, scheduleRun(l), schedule.Outcome{Status: schedule.StatusFailed, Reason: reasonOrphaned})
-	rs.releaseLease(ctx, l.WorkflowID)
+	rs.releaseLease(ctx, l.WorkflowID, endCancelled, lifeOfLease(l))
 	return true
 }
 

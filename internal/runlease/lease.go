@@ -7,8 +7,12 @@ package runlease
 
 import (
 	"errors"
+	"log/slog"
 	"slices"
 	"time"
+
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/logsafe"
 )
 
 // Origin says which launch produced the run: scheduled (bounded by its next slot and the
@@ -40,8 +44,6 @@ type Lease struct {
 	// SlotAt is when this run's own next scheduled slot comes due — an INPUT to
 	// Deadline, immutable, so a re-arm re-applies it. Zero for every other origin.
 	SlotAt time.Time `json:"slot_at,omitzero"`
-	// FirstAbsentAt starts the continuous-absence clock. A listed run clears it.
-	FirstAbsentAt time.Time `json:"first_absent_at,omitzero"`
 	// WorkflowID is KAS's id for the run, and the lease's key.
 	WorkflowID string `json:"workflow_id"`
 	// ChatID is the chat whose agent launched the run. Empty means "no chat to
@@ -61,11 +63,15 @@ type Lease struct {
 	Origin Origin `json:"origin"`
 	// ScheduleID names the row that asked for the run. Set iff Origin is scheduled.
 	ScheduleID string `json:"schedule_id,omitempty"`
+	// Life names the grant that made this lease: a release ends only the life it read (Store.Release).
+	Life string `json:"life,omitempty"`
 	// KeepChats is every chat holding this run's keep fact; the run's end releases it on each. It only grows.
 	KeepChats []string `json:"keep_chats,omitempty"`
 	// Unattended marks a run with nobody to answer a permission request, which arms
 	// the deny-fast floor. Distinct from the origin: who launched it vs who watches.
 	Unattended bool `json:"unattended"`
+	// Unattributed marks a live run whose launching chat could not be named, which keeps every chat until it is.
+	Unattributed bool `json:"unattributed,omitempty"`
 }
 
 // HostSecurity is what a parentless run's host session opens with.
@@ -96,6 +102,34 @@ func (l *Lease) clone() Lease {
 		out.Host = &h
 	}
 	return out
+}
+
+// addKeepChats unions add into KeepChats, sorted, and reports whether it grew.
+func (l *Lease) addKeepChats(add []string) bool {
+	merged := slices.Clone(l.KeepChats)
+	for _, id := range add {
+		if !slices.Contains(merged, id) {
+			merged = append(merged, id)
+		}
+	}
+	if len(merged) == len(l.KeepChats) {
+		return false
+	}
+	slices.Sort(merged)
+	l.KeepChats = merged
+	return true
+}
+
+// validKeepChats drops a holder id that could not name a chat, with a WARN; its chat keeps the fact until the
+// reconcile names the holders again.
+func validKeepChats(workflowID string, chats []string) []string {
+	return slices.DeleteFunc(chats, func(id string) bool {
+		if ids.ValidChatID(id) {
+			return false
+		}
+		slog.Warn("run lease: dropped a keep holder that names no chat", "workflow_id", workflowID, "holder", logsafe.Field(id))
+		return true
+	})
 }
 
 // Bounded reports whether marotte believes the run to be EXECUTING under a deadline it set.

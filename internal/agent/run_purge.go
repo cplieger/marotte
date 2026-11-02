@@ -16,6 +16,9 @@ type RunPurgeResult struct {
 	Errors       int
 }
 
+// ReattributeRuns is Runs.ReattributeRuns, a retention side pass.
+func (rt *Runtime) ReattributeRuns(ctx context.Context) { rt.runs.ReattributeRuns(ctx) }
+
 // PurgeParentlessRuns deletes finished runs no chat claims once older than window (from last update); zero
 // deletes them all. Shown, live or paused runs and unreadable ages are kept; a chat-launched run goes with its chat.
 func (rt *Runtime) PurgeParentlessRuns(ctx context.Context, window time.Duration) RunPurgeResult {
@@ -74,7 +77,7 @@ func (rt *Runtime) purgeCandidate(ctx context.Context, r *kasWorkflowRun, window
 		res.Kept++
 		return
 	}
-	err := rt.runs.deleteAs(ctx, r.WorkflowID, runStop{})
+	err := rt.runs.deleteAs(ctx, r.WorkflowID, runStop{}, notFoundRefused)
 	done()
 	if err != nil {
 		res.Errors++

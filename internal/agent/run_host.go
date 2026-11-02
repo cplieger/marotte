@@ -136,14 +136,14 @@ func (rs *Runs) launchAs(
 	rs.coord.goForward(runChatID(wfID), host)
 	relay.begin()
 	// The run's envelope, before anything can execute (runlease.Lease).
-	rs.grantLease(cctx, wfID, recipe.Name, o, hostSecurityOf(presets))
+	life := rs.grantLease(cctx, wfID, recipe.Name, o, hostSecurityOf(presets))
 	rs.recordParentSession(cctx, wfID, string(parent))
 	// Visible to Route before invoke is written, so the run's first frame reaches the host's lane.
 	rs.router.registerOwner(wfID, parent)
 	if _, err := rs.write(cctx, a, sb, wfID, methodKiroWorkflowInvoke,
 		map[string]any{keyWorkflowID: wfID}, mutationDrive); err != nil {
 		// Created but never started.
-		rs.releaseLease(cctx, wfID)
+		rs.releaseLease(cctx, wfID, endRolledBack, life)
 		rs.coord.closeBridge(cctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
 		return "", "", fmt.Errorf("workflow invoke: %w", err)
 	}
@@ -242,8 +242,18 @@ func (rs *Runs) cancelRPC(ctx context.Context, workflowID string, stop runStop) 
 // is closed. errRunDeleting refuses a run another delete holds; errDeleteUnconfirmed reports a delete
 // KAS was sent whose outcome is still being read back.
 func (rs *Runs) delete(ctx context.Context, workflowID string) error {
-	return rs.deleteAs(ctx, workflowID, userStop(""))
+	return rs.deleteAs(ctx, workflowID, userStop(""), notFoundTaken)
 }
+
+// notFoundAnswer is how a delete reads KAS's "workflow not found".
+type notFoundAnswer int
+
+const (
+	// notFoundRefused: a refusal, for an automatic delete of a run it just listed, where not found is absence.
+	notFoundRefused notFoundAnswer = iota
+	// notFoundTaken: the user's delete of a run KAS has nothing of, which is the user's evidence the run is gone.
+	notFoundTaken
+)
 
 var errDeleteUnconfirmed = errors.New("the delete reached the run's agent but its answer was lost; " +
 	"the run takes no messages until marotte reads back whether it is gone")
@@ -251,8 +261,8 @@ var errDeleteUnconfirmed = errors.New("the delete reached the run's agent but it
 // deleteReconcileRetry is how long an unconfirmed delete waits before its run is read again. A var for tests.
 var deleteReconcileRetry = 30 * time.Second
 
-// deleteAs is Delete attributed to stop.
-func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop) error {
+// deleteAs is Delete attributed to stop, reading "workflow not found" as notFound says.
+func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop, notFound notFoundAnswer) error {
 	if workflowID == "" {
 		return errors.New("missing workflow id")
 	}
@@ -265,6 +275,11 @@ func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop) e
 		got, err = rs.deleteCall(sctx, workflowID, stop)
 		return got != kasRefused
 	})
+	if got == kasRefused && notFound == notFoundTaken && workflowNotFound(err) {
+		slog.Info("a deleted run was unknown to the engine; dropping what marotte keeps about it",
+			"workflow_id", workflowID)
+		got = kasTook
+	}
 	switch got {
 	case kasRefused:
 		d.settle()
@@ -358,7 +373,7 @@ func (rs *Runs) readBack(ctx context.Context, workflowID string) readBackVerdict
 func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string) {
 	rs.deleteRunLog(ctx, workflowID)
 	rs.coord.closeBridge(ctx, runChatID(workflowID), marotte.TurnOutcomeInterrupted)
-	rs.forgetBounds(ctx, workflowID)
+	rs.forgetBounds(ctx, workflowID, endDeleted, rs.lifeOf(workflowID))
 	rs.clearEnd(workflowID)
 	if rs.log != nil {
 		if err := rs.log.removeDir(workflowID); err != nil {
@@ -419,24 +434,18 @@ func (rs *Runs) retry(
 
 	// Threaded from the gate: nothing here can learn it once the run re-drives.
 	recipe := aff.origin.recipe
-	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
-	// which reads its presets from it.
 	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
 		rs.settleMissedEnd(cctx, &l, aff.status)
 	}
-	minted := false
-	if _, held := rs.lease(workflowID); held {
-		// A manual or agent lease is the one the gate's origin would grant; the run under it is a new one all the same.
-		rs.restartLife(cctx, workflowID)
-	} else {
-		rs.grantRetryLease(cctx, workflowID, &aff.origin)
-		minted = true
+	// The keep facts and lease before the verb, since retry's `run_start` can beat the reply, and before the host
+	// session's load, which reads its presets from the lease.
+	start, err := rs.beginRetryLife(cctx, workflowID, &aff.origin)
+	if err != nil {
+		return out, err
 	}
 	host, err := rs.ensureResident(cctx, workflowID)
 	if err != nil {
-		if minted {
-			rs.releaseLease(cctx, workflowID)
-		}
+		rs.abandonRetry(cctx, workflowID, &start, true)
 		return out, rs.retryResidencyErr(cctx, err)
 	}
 	err = rs.controlSerialized(cctx, workflowID, func(sctx context.Context) error {
@@ -451,9 +460,7 @@ func (rs *Runs) retry(
 	}
 	if err != nil {
 		// Return the minted lease, except on a context error, where KAS may have taken the retry and would run deadline-less.
-		if minted && !isCtxErr(err) {
-			rs.releaseLease(cctx, workflowID)
-		}
+		rs.abandonRetry(cctx, workflowID, &start, !isCtxErr(err))
 		return out, err
 	}
 	// Only on success: a refused retry re-drove nothing.
@@ -809,6 +816,8 @@ func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Reci
 // recipeIdle enforces the single-run rule (one live run per recipe, globally) against KAS's run list, the only source that sees runs
 // marotte did not launch. The leases explain a blocking row as marotte's own orphan.
 func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
+	// Before the list: a lease's life is read before the evidence that ends it.
+	held := rs.leaseStore().List()
 	runs, err := rs.list(ctx, nil)
 	if err != nil {
 		// Launching blind could allow a second live run.
@@ -818,7 +827,7 @@ func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 	for i := range runs {
 		status[runs[i].WorkflowID] = runs[i].Status
 	}
-	rs.reconcileLeasePresence(ctx, status, time.Now(), false)
+	rs.reconcileLeasePresence(ctx, held, status, time.Now(), false)
 
 	for i := range runs {
 		// WorkflowName is the recipe; Name carries any stamped label, which made this guard fail open.
@@ -1309,7 +1318,7 @@ func (rs *Runs) deleteForSessions(ctx context.Context, chatID marotte.ChatID, se
 		if len(owners.Of(r.ParentSessionID)) == 0 {
 			continue
 		}
-		if dErr := rs.deleteAs(ctx, r.WorkflowID, stop); dErr != nil {
+		if dErr := rs.deleteAs(ctx, r.WorkflowID, stop, notFoundRefused); dErr != nil {
 			slog.Warn("delete: run delete failed", "workflow_id", r.WorkflowID, "chat_id", chatID, "error", dErr)
 		}
 	}

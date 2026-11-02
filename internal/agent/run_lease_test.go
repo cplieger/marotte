@@ -299,7 +299,7 @@ func TestCancelRun_ReturnsOnceTheLeaseIsReleasedInsideTheWait(t *testing.T) {
 		}
 		// The node boundary, a few polls after the cancel.
 		time.Sleep(6 * rewindCancelPoll)
-		h.runs.releaseLease(t.Context(), "wf_1")
+		h.runs.releaseLease(t.Context(), "wf_1", endTerminal, h.runs.lifeOf("wf_1"))
 	}()
 
 	if err := h.runs.CancelRun(t.Context(), "wf_1"); err != nil {
@@ -341,7 +341,7 @@ func TestCancelRun_ACancelledContextEndsTheWait(t *testing.T) {
 func TestLiveRuns_NamesTheHeldLeasesAndNoOthers(t *testing.T) {
 	h, _ := heldRun(t, "wf_held", "code-review")
 	h.runs.grantLease(t.Context(), "wf_released", "publish", manualLaunch(), hostSec())
-	h.runs.releaseLease(t.Context(), "wf_released")
+	h.runs.releaseLease(t.Context(), "wf_released", endTerminal, h.runs.lifeOf("wf_released"))
 
 	got := h.runs.LiveRuns([]string{"wf_held", "wf_released", "wf_unknown"})
 	want := []command.LiveRunRef{{ID: "wf_held", Label: "code-review"}}
@@ -406,7 +406,7 @@ func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
 		h := &Runs{leases: undurableLeaseStore(t)}
 		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
-		h.releaseLease(t.Context(), "wf_1")
+		h.releaseLease(t.Context(), "wf_1", endTerminal, h.lifeOf("wf_1"))
 
 		if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
 			t.Errorf("a release that stayed on disk said nothing; want a line reading %q. Got: %s",
@@ -419,7 +419,7 @@ func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
 		h := &Runs{}
 		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
-		h.releaseLease(t.Context(), "wf_1")
+		h.releaseLease(t.Context(), "wf_1", endTerminal, h.lifeOf("wf_1"))
 
 		if out := logs.String(); strings.Contains(out, `"msg":"`+wantLine+`"`) {
 			t.Errorf("a release that worked was reported as failed: %s", out)

@@ -558,11 +558,13 @@ func (rs *Runs) retryTermination(ctx context.Context, workflowID, reason string,
 	})
 }
 
-// forgetBounds drops a run's deadline, budgets, accounting, claim and lease once it stopped for good;
+// forgetBounds drops a run's deadline, budgets, accounting, claim and lease once the life it read stopped for good;
 // the one site every origin reaches. The lease goes FIRST: it is the refill's door, so a late
-// progress frame cannot file a timer nothing removes.
-func (rs *Runs) forgetBounds(ctx context.Context, workflowID string) {
-	rs.releaseLease(ctx, workflowID)
+// progress frame cannot file a timer nothing removes. A newer life keeps every bound.
+func (rs *Runs) forgetBounds(ctx context.Context, workflowID string, end runEnd, life lifeRead) {
+	if rs.releaseLease(ctx, workflowID, end, life) == runlease.ReleaseSuperseded {
+		return
+	}
 	rs.stopTimer(workflowID)
 	rs.releaseTermination(workflowID)
 	rs.clearHeals(workflowID)
@@ -651,7 +653,7 @@ func (rs *Runs) rearmRetried(ctx context.Context, workflowID string, o *runOrigi
 	rs.clearEnd(workflowID)
 	rs.disarmDeadline(ctx, workflowID)
 	if _, held := rs.lease(workflowID); !held {
-		rs.grantRetryLease(ctx, workflowID, o)
+		rs.grantRetryLease(ctx, workflowID, o, nil)
 	}
 	rs.armDeadline(ctx, workflowID)
 }
@@ -847,13 +849,11 @@ func runStartLaunch(chatID marotte.ChatID) launchOrigin {
 	return launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}
 }
 
-// `run_start` is the first sight of an agent-launched run, so its lease is minted here; it also
+// `run_start` is the first sight of an agent-launched run, so its keep facts and lease are written here; it also
 // re-arms a resumed run.
 func (rs *Runs) observeStart(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" {
-		if _, held := rs.lease(f.WorkflowID); !held {
-			rs.grantLease(ctx, f.WorkflowID, f.WorkflowName, runStartLaunch(chatID), nil)
-		}
+		rs.startLife(ctx, chatID, &f)
 		rs.recordParentSession(ctx, f.WorkflowID, f.ParentSessionID)
 		rs.armDeadline(ctx, f.WorkflowID)
 	}
@@ -868,6 +868,8 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 		rs.signals.runStopped(f.WorkflowID)
 	}
 	if f.WorkflowID != "" && f.Status.Terminal() {
+		// The life this frame ends, read before anything else can start a newer one.
+		life := rs.lifeOf(f.WorkflowID)
 		// Before HandleRunComplete: the client repaints on its `run_finished` invalidation.
 		rs.closeRun(ctx, f.WorkflowID, string(f.Status))
 		rs.recordRunNotice(chatID, f.WorkflowID, cmp.Or(f.FinalState.RunLabel, f.FinalState.WorkflowName, f.WorkflowID))
@@ -876,7 +878,7 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 		if l, held := rs.lease(f.WorkflowID); held {
 			rs.recordScheduleEnding(ctx, scheduleRun(&l), f.Status, f.FinalState.StopReason)
 		}
-		rs.forgetBounds(ctx, f.WorkflowID)
+		rs.forgetBounds(ctx, f.WorkflowID, endTerminal, life)
 		rs.translate.ForgetRunSteps(f.WorkflowID)
 		if rs.runEnded != nil {
 			defer rs.runEnded()

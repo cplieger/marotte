@@ -67,6 +67,11 @@ type chatRecords interface {
 	Rollback(ctx context.Context, claim *chat.Claim) error
 	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
 	SessionInTeardown(sessionID string) bool
+	// HoldOrPend, ReleaseAll and the unattributed marks are the run keep-fact writes (runChatReader).
+	HoldOrPend(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
+	ReleaseAll(ctx context.Context, key string, ev chat.Evidence) error
+	HoldUnattributed(workflowID string)
+	ClearUnattributed(workflowID string)
 	// SetDraft and SetAttachments are passed on to the command dispatcher.
 	SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error)
 	SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error)

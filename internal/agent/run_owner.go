@@ -139,6 +139,15 @@ func (rs *Runs) RunsParentedBy(ctx context.Context, sessionID string) (live, all
 	return slices.Sorted(maps.Keys(liveSet)), slices.Sorted(maps.Keys(allSet)), nil
 }
 
+// RecordedRuns answers every workflow id with a run record under runs/, the fill-in's candidates beside the leases
+// and the run list. No run log answers none.
+func (rs *Runs) RecordedRuns(context.Context) ([]string, error) {
+	if rs.log == nil {
+		return nil, nil
+	}
+	return rs.log.recorded()
+}
+
 // recordedRuns holds the live runs the keep-state reconcile found only under runs/, by parent session, and whether it
 // has read runs/ this boot.
 type recordedRuns struct {

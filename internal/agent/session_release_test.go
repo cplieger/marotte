@@ -106,7 +106,7 @@ func TestReleaseIfUnheld_RunsWhenTheTurnEndsAndWhenTheRunEnds(t *testing.T) {
 		h, _, sb := releaseFixture(t)
 		h.runs.grantLease(t.Context(), "wf_1", "fix", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"}, hostSec())
 
-		h.runs.releaseLease(t.Context(), "wf_1")
+		h.runs.releaseLease(t.Context(), "wf_1", endTerminal, h.runs.lifeOf("wf_1"))
 
 		if !released(t, h, sb) {
 			t.Error("the chat's run ended and its unheld session stayed resident")
@@ -165,7 +165,7 @@ func TestReleaseIfUnheld_NeverClosesAStepSession(t *testing.T) {
 	h.runs.router.registerOwner("wf_1", sb.SessionID())
 	h.runs.router.seedSteps("wf_1", []string{"sess_step"})
 
-	h.runs.releaseLease(t.Context(), "wf_1")
+	h.runs.releaseLease(t.Context(), "wf_1", endTerminal, h.runs.lifeOf("wf_1"))
 
 	if !released(t, h, sb) {
 		t.Fatal("Setup: the chat's own session was not released")

@@ -387,7 +387,7 @@ func TestSweepOrphanedRuns_AbsenceStartsAClockWithoutReleasing(t *testing.T) {
 	if !held {
 		t.Fatal("an absent run lost its lease without terminal evidence")
 	}
-	if got.FirstAbsentAt.IsZero() {
+	if _, running := h.runs.absence.runs[got.WorkflowID]; !running {
 		t.Error("an absent run did not start its continuous-absence clock")
 	}
 	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
@@ -405,10 +405,10 @@ func TestRecipeIdle_ReappearanceClearsTheAbsenceClock(t *testing.T) {
 	}
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginManual,
-		FirstAbsentAt: time.Now().Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
+	h.runs.absence.observe("wf_1", time.Now().Add(-time.Hour))
 
 	if err := h.runs.recipeIdle(t.Context(), "another-recipe"); err != nil {
 		t.Fatalf("recipeIdle(another-recipe): %v", err)
@@ -417,13 +417,14 @@ func TestRecipeIdle_ReappearanceClearsTheAbsenceClock(t *testing.T) {
 	if !held {
 		t.Fatal("a listed live run lost its lease")
 	}
-	if !got.FirstAbsentAt.IsZero() {
-		t.Errorf("FirstAbsentAt = %v after reappearance, want zero", got.FirstAbsentAt)
+	if _, running := h.runs.absence.runs[got.WorkflowID]; running {
+		t.Error("the absence clock still runs after the run reappeared")
 	}
 }
 
-// TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome pins the six-hour backstop; absence never cancels.
-func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t *testing.T) {
+// TestSweepOrphanedRuns_ContinuousAbsenceBackstopKeepsTheLeaseAndRecordsOutcome pins the six-hour backstop: it reports
+// and records the unknown outcome, and neither cancels nor releases, since absence is not an end.
+func TestSweepOrphanedRuns_ContinuousAbsenceBackstopKeepsTheLeaseAndRecordsOutcome(t *testing.T) {
 	logs := captureLogs(t)
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
@@ -447,22 +448,25 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 	h.runs.schedules = st
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginScheduled,
-		ScheduleID: entry.ID(), FirstAbsentAt: time.Now().Add(-6 * time.Hour),
+		ScheduleID: entry.ID(), ChatID: "chat-1",
 	}); err != nil {
 		t.Fatalf("Put lease: %v", err)
 	}
+	h.runs.absence.observe("wf_1", time.Now().Add(-6*time.Hour))
 
 	h.runs.sweepOrphaned(t.Context())
 
-	if _, held := h.runs.lease("wf_1"); held {
-		t.Error("a lease continuously absent past the budget was not released")
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Error("the absence backstop released the lease, and with it the run's keep holders")
+	}
+	if !h.runs.absence.past("wf_1") {
+		t.Error("the absence clock did not record that it spent its budget")
 	}
 	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 		t.Fatal("the absence backstop cancelled the run")
 	}
-	if out := logs.String(); !strings.Contains(out, `"level":"WARN"`) ||
-		!strings.Contains(out, "no terminal signal was ever seen") {
-		t.Errorf("absence backstop log = %s, want WARN stating no terminal signal was seen", out)
+	if out := logs.String(); !strings.Contains(out, `"level":"WARN"`) || !strings.Contains(out, logMsgRunAbsentKept) {
+		t.Errorf("absence backstop log = %s, want the WARN %q", out, logMsgRunAbsentKept)
 	}
 	rows := st.List()
 	if len(rows) != 1 {
@@ -475,9 +479,9 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 	}
 }
 
-// TestSweepOrphanedRuns_InspectUnknownReleasesImmediately pins the definitive
-// per-run answer KAS gives after its stale-run reconciliation.
-func TestSweepOrphanedRuns_InspectUnknownReleasesImmediately(t *testing.T) {
+// TestSweepOrphanedRuns_InspectUnknownKeepsTheLease: "workflow not found" is absence, so the lease stays, its clock
+// starts, and the boot pass reads no asks for it.
+func TestSweepOrphanedRuns_InspectUnknownKeepsTheLease(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
 	br.callRPCErrs = map[string]*marotte.RPCError{
@@ -491,8 +495,11 @@ func TestSweepOrphanedRuns_InspectUnknownReleasesImmediately(t *testing.T) {
 
 	h.runs.sweepOrphaned(t.Context())
 
-	if _, held := h.runs.lease("wf_1"); held {
-		t.Error("inspect confirmed an unknown workflow, but its lease survived")
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Error("inspect answered not found and the lease was released; absence released a run's keep state")
+	}
+	if !h.runs.absence.notFound("wf_1") {
+		t.Error("the not-found answer was not recorded for the boot pass")
 	}
 }
 
@@ -509,9 +516,9 @@ func TestSweepOrphanedRuns_InspectFailureStartsTheClock(t *testing.T) {
 
 	h.runs.sweepOrphaned(t.Context())
 
-	got, held := h.runs.lease("wf_1")
-	if !held || got.FirstAbsentAt.IsZero() {
-		t.Errorf("lease after inspect failure = %+v, held=%v; want held with absence clock", got, held)
+	_, held := h.runs.lease("wf_1")
+	if _, running := h.runs.absence.runs["wf_1"]; !held || !running {
+		t.Errorf("lease after inspect failure: held=%v clock=%v; want held with absence clock", held, running)
 	}
 }
 

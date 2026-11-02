@@ -96,7 +96,7 @@ func TestRunAsks_ACellLivesExactlyAsLongAsItsLease(t *testing.T) {
 		t.Fatalf("Setup: the read found %d asks, want 1", len(r.asks))
 	}
 
-	h.runs.releaseLease(t.Context(), "wf_1")
+	h.runs.releaseLease(t.Context(), "wf_1", endTerminal, h.runs.lifeOf("wf_1"))
 
 	frames := runAsksFrames(t, h, "wf_1")
 	final := frames[len(frames)-1]
@@ -117,7 +117,7 @@ func TestRunAsks_ACellLivesExactlyAsLongAsItsLease(t *testing.T) {
 func TestRunAsks_SeqGrowsAcrossARebuiltCell(t *testing.T) {
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	readNow(t, h, "wf_1")
-	h.runs.releaseLease(t.Context(), "wf_1")
+	h.runs.releaseLease(t.Context(), "wf_1", endTerminal, h.runs.lifeOf("wf_1"))
 	frames := runAsksFrames(t, h, "wf_1")
 	ended := frames[len(frames)-1].Seq
 
@@ -145,7 +145,7 @@ func TestRunAsks_ACreateRacingTheEndLeavesNoCell(t *testing.T) {
 		// Hold the cells' lock so the release and the trigger both queue on it.
 		rs.asks.mu.Lock()
 		var wg sync.WaitGroup
-		wg.Go(func() { rs.releaseLease(t.Context(), "wf_1") })
+		wg.Go(func() { rs.releaseLease(t.Context(), "wf_1", endTerminal, rs.lifeOf("wf_1")) })
 		waitFor(t, func() bool { _, held := rs.lease("wf_1"); return !held })
 		wg.Go(func() { rs.cellFor("wf_1") })
 		rs.asks.mu.Unlock()
@@ -492,7 +492,7 @@ func TestRunAsks_AnEndMidVerb(t *testing.T) {
 		go func() { done <- h.runs.answerInput(t.Context(), "wf_1", askID, "teal", nil) }()
 		waitForCall(t, br, marotte.MethodPrompt)
 
-		h.runs.releaseLease(t.Context(), "wf_1")
+		h.runs.releaseLease(t.Context(), "wf_1", endTerminal, h.runs.lifeOf("wf_1"))
 		ended := len(runAsksFrames(t, h, "wf_1"))
 		close(held)
 		if err := <-done; err != nil {
@@ -515,7 +515,7 @@ func TestRunAsks_AnEndMidVerb(t *testing.T) {
 			return c.stopping
 		})
 
-		h.runs.releaseLease(t.Context(), "wf_1")
+		h.runs.releaseLease(t.Context(), "wf_1", endTerminal, h.runs.lifeOf("wf_1"))
 
 		select {
 		case <-sent:
