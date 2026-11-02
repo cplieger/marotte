@@ -5,40 +5,74 @@
 CONFIG_DIR=$(realpath -sm -- "${KIRO_CONFIG_DIR:-/config}")
 TOOLS=$(realpath -sm -- "${MAROTTE_TOOLS_DIR:-$CONFIG_DIR/tools}")
 
+# Make an untrusted value (a name off the /config volume, dpkg output) safe inside
+# a quoted logfmt field, so a crafted name cannot close the field and append keys.
+# Truncate the raw value first, or the doubling could split a `\\` pair; then
+# double backslashes, replace non-printables, and neutralize the quote. $2 is the
+# input bound (default 200).
+logfmt_value() {
+  local raw=$1 safe
+  safe=${raw:0:${2:-200}}
+  safe=${safe//\\/\\\\}
+  safe=${safe//[![:print:]]/?}
+  safe=${safe//\"/\'}
+  printf '%s' "$safe"
+}
+
 # The image's ENV names the default tools tree in PATH, GOPATH and GOBIN; a configured tools
 # dir takes those entries over, and is added to a PATH that lacks them, so a shell and the
 # server resolve what the engine installs. A GOPATH or GOBIN the operator set elsewhere is kept.
+# A dir holding ':' cannot be a PATH or GOPATH entry, so it is left out of both with a warning
+# naming $3, the variable that set it.
 rebase_tools_env() {
-  local from=$1 to=$2 rest entry out=""
+  local from=$1 to=$2 src=${3:-KIRO_CONFIG_DIR} listed=1 rest entry out=""
+  case "$to" in
+    *:*)
+      listed=""
+      printf 'level=warn msg="the tools folder holds a colon, which PATH and GOPATH cannot carry, so a shell reaches what the tools engine installs only by its full path" dir="%s" env=%s component=entrypoint\n' "$(logfmt_value "$to")" "$src" >&2
+      ;;
+  esac
   rest=${PATH:+$PATH:}
   while [ -n "$rest" ]; do
     entry=${rest%%:*}
     rest=${rest#*:}
     case "$entry" in
-      "$from/bin") entry="$to/bin" ;;
-      "$from/go/bin") entry="$to/go/bin" ;;
+      "$from/bin" | "$from/go/bin")
+        [ -n "$listed" ] || continue
+        entry=$to${entry#"$from"}
+        ;;
     esac
     out="$out:$entry"
   done
-  case "$out:" in
-    *":$to/bin:"*) ;;
-    *) out=":$to/bin$out" ;;
-  esac
-  case "$out:" in
-    *":$to/go/bin:"*) ;;
-    *)
-      out="$out:"
-      out=${out/":$to/bin:"/":$to/bin:$to/go/bin:"}
-      out=${out%:}
+  if [ -n "$listed" ]; then
+    case "$out:" in
+      *":$to/bin:"*) ;;
+      *) out=":$to/bin$out" ;;
+    esac
+    case "$out:" in
+      *":$to/go/bin:"*) ;;
+      *)
+        out="$out:"
+        out=${out/":$to/bin:"/":$to/bin:$to/go/bin:"}
+        out=${out%:}
+        ;;
+    esac
+  fi
+  PATH=${out#:}
+  case "${GOPATH-}" in
+    "" | "$from/go")
+      if [ -n "$listed" ]; then
+        GOPATH="$to/go"
+      else
+        unset GOPATH
+      fi
       ;;
   esac
-  PATH=${out#:}
-  case "${GOPATH-}" in "" | "$from/go") GOPATH="$to/go" ;; esac
   case "${GOBIN-}" in "" | "$from/bin") GOBIN="$to/bin" ;; esac
   export GOPATH GOBIN
 }
 
-rebase_tools_env /config/tools "$TOOLS"
+rebase_tools_env /config/tools "$TOOLS" "${MAROTTE_TOOLS_DIR:+MAROTTE_TOOLS_DIR}"
 
 # kiro-cli pins, tracked by Renovate against
 # https://desktop-release.q.us-east-1.amazonaws.com/index.json. The server installs
@@ -116,20 +150,6 @@ mkdir -p "$CONFIG_DIR" "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
     sleep 10
     exit 1
   }
-
-# Make an untrusted value (a name off the /config volume, dpkg output) safe inside
-# a quoted logfmt field, so a crafted name cannot close the field and append keys.
-# Truncate the raw value first, or the doubling could split a `\\` pair; then
-# double backslashes, replace non-printables, and neutralize the quote. $2 is the
-# input bound (default 200).
-logfmt_value() {
-  local raw=$1 safe
-  safe=${raw:0:${2:-200}}
-  safe=${safe//\\/\\\\}
-  safe=${safe//[![:print:]]/?}
-  safe=${safe//\"/\'}
-  printf '%s' "$safe"
-}
 
 # Returns 1, with marotte's own refusal line, when a running marotte holds one of the
 # folders: this script's deletions below would otherwise run against its live tree

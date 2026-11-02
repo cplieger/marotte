@@ -78,21 +78,43 @@ modes=$(stat -c %a "$WORK/custom/config" "$WORK/custom/tools" "$WORK/custom/tool
 
 load_function rebase_tools_env
 
-# printenv, because a bash child would source BASH_ENV first.
+# printenv, because a bash child would source BASH_ENV first. stderr goes to $REBASE_ERR.
+REBASE_ERR="$WORK/rebase.err"
 rebase() {
   (
     PATH=$3
     export GOPATH=$4 GOBIN=$5
-    rebase_tools_env "$1" "$2"
+    rebase_tools_env "$1" "$2" "${6-}"
     /usr/bin/printenv PATH GOPATH GOBIN | /usr/bin/paste -sd'|'
-  )
+  ) 2>"$REBASE_ERR"
 }
 
 IMAGE_PATH="/config/tools/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/bin:/bin"
 got=$(rebase /config/tools /config/tools "$IMAGE_PATH" /config/tools/go /config/tools/bin)
-[ "$got" = "$IMAGE_PATH|/config/tools/go|/config/tools/bin" ] \
-  && ok "the default tools dir leaves the image's PATH, GOPATH and GOBIN as they are" \
-  || no "default tools dir" "child saw $got"
+[ "$got" = "$IMAGE_PATH|/config/tools/go|/config/tools/bin" ] && [ ! -s "$REBASE_ERR" ] \
+  && ok "the default tools dir leaves the image's PATH, GOPATH and GOBIN as they are, silently" \
+  || no "default tools dir" "child saw $got; stderr: $(cat "$REBASE_ERR")"
+
+# PATH and GOPATH split on ':', so such a dir would become two entries, one of them relative.
+colon_warn() {
+  printf 'level=warn msg="the tools folder holds a colon, which PATH and GOPATH cannot carry, so a shell reaches what the tools engine installs only by its full path" dir="%s" env=%s component=entrypoint\n' "$1" "$2"
+}
+got=$(rebase /config/tools '/srv/a:b' "$IMAGE_PATH" /config/tools/go /config/tools/bin MAROTTE_TOOLS_DIR)
+[ "$got" = "/config/home/.local/bin:/usr/bin:/bin|/srv/a:b/bin" ] \
+  && [ "$(cat "$REBASE_ERR")" = "$(colon_warn '/srv/a:b' MAROTTE_TOOLS_DIR)" ] \
+  && ok "a tools dir holding a colon is left off PATH and GOPATH, the image's entries go, and the warning names it" \
+  || no "colon tools dir" "child saw $got; stderr: $(cat "$REBASE_ERR")"
+
+got=$(rebase /config/tools '/m:x/tools' "/usr/bin:/config/tools/bin2:/bin" /home/go /home/go/bin)
+[ "$got" = "/usr/bin:/config/tools/bin2:/bin|/home/go|/home/go/bin" ] \
+  && [ "$(cat "$REBASE_ERR")" = "$(colon_warn '/m:x/tools' KIRO_CONFIG_DIR)" ] \
+  && ok "a colon tools dir derived from KIRO_CONFIG_DIR is named so, gains no entries, and an operator GOPATH stays" \
+  || no "colon tools dir from the config dir" "child saw $got; stderr: $(cat "$REBASE_ERR")"
+
+got=$(rebase /config/tools "$(printf '/srv/a:"b\tc')" "$IMAGE_PATH" "" "" MAROTTE_TOOLS_DIR)
+grep -qF "dir=\"/srv/a:'b?c\" env=MAROTTE_TOOLS_DIR" "$REBASE_ERR" && [ "$(grep -c . "$REBASE_ERR")" -eq 1 ] \
+  && ok "the colon warning makes the dir safe inside its logfmt field" \
+  || no "colon warning logfmt" "stderr: $(cat "$REBASE_ERR")"
 
 got=$(rebase /config/tools /srv/t "$IMAGE_PATH" /config/tools/go /config/tools/bin)
 [ "$got" = "/srv/t/bin:/srv/t/go/bin:/config/home/.local/bin:/usr/bin:/bin|/srv/t/go|/srv/t/bin" ] \
@@ -164,7 +186,7 @@ grep -q '^ENV PATH="/config/tools/bin:/config/tools/go/bin:' "$DOCKERFILE" \
   && ok "the Dockerfile's PATH, GOPATH and GOBIN name the default tools tree the boot rebases from" \
   || no "Dockerfile ENV" "the image no longer exports the /config/tools entries rebase_tools_env replaces"
 
-call=$(grep -n '^rebase_tools_env /config/tools "$TOOLS"$' "$ENTRYPOINT" | cut -d: -f1)
+call=$(grep -n '^rebase_tools_env /config/tools "$TOOLS" "${MAROTTE_TOOLS_DIR:+MAROTTE_TOOLS_DIR}"$' "$ENTRYPOINT" | cut -d: -f1)
 roots_at=$(grep -n '^TOOLS=' "$ENTRYPOINT" | cut -d: -f1)
 dropin=$(grep -n '^if ! install_path_dropin; then$' "$ENTRYPOINT" | cut -d: -f1)
 [ -n "$call" ] && [ -n "$roots_at" ] && [ -n "$dropin" ] && [ "$roots_at" -lt "$call" ] && [ "$call" -lt "$dropin" ] \
