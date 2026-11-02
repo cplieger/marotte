@@ -338,11 +338,8 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req *ChatCreate) (Ch
 		purging = slices.ContainsFunc(c.SessionChain(), m.sessionPurging)
 		return !purging
 	})
-	if err != nil {
-		return ChatOpened{}, StatusError(http.StatusInternalServerError, err)
-	}
-	if purging {
-		return ChatOpened{}, StatusError(http.StatusConflict, errRunPurging)
+	if refused := createRefusal(err, purging); refused != nil {
+		return ChatOpened{}, refused
 	}
 	c, ok := m.chats.Get(ctx, chatID)
 	if !ok {
@@ -371,6 +368,22 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req *ChatCreate) (Ch
 		return ChatOpened{}, err
 	}
 	return ChatOpened{Chat: c, Subject: opened.Subject, Version: opened.Version, Replay: replay}, nil
+}
+
+// createRefusal maps the record write's outcome: an id or a bound session whose purge teardown is running, then a
+// recently deleted id, are the client's to retry later, not server faults.
+func createRefusal(err error, purging bool) error {
+	switch {
+	case errors.Is(err, chat.ErrInTeardown):
+		return StatusError(http.StatusConflict, errChatPurging)
+	case errors.Is(err, chat.ErrTombstoned):
+		return StatusError(http.StatusConflict, err)
+	case err != nil:
+		return StatusError(http.StatusInternalServerError, err)
+	case purging:
+		return StatusError(http.StatusConflict, errRunPurging)
+	}
+	return nil
 }
 
 // resolvedChat reports the chat an op_id has already created, without minting
