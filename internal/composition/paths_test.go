@@ -226,6 +226,27 @@ func TestToolsEnv(t *testing.T) {
 			envValue{"/gb", true},
 		},
 		{
+			"a rejected dir leaves only the other roots of a GOPATH list", "a/../t`x",
+			map[string]string{"PATH": "/usr/bin", "GOPATH": "/operator/go:a/../t`x/go:/config/tools/go:/g"},
+			"/usr/bin",
+			envValue{"/operator/go:/g", true},
+			envValue{},
+		},
+		{
+			"a rejected dir holding the separator leaves the GOPATH roots outside its run", "/srv/a:b",
+			map[string]string{"PATH": "/usr/bin", "GOPATH": "/srv/a:/srv/a:b/go:/operator/go"},
+			"/usr/bin",
+			envValue{"/srv/a:/operator/go", true},
+			envValue{},
+		},
+		{
+			"no tools dir leaves only the other roots of a GOPATH list", "",
+			map[string]string{"PATH": "/usr/bin", "GOPATH": "/config/tools/go:/operator/go"},
+			"/usr/bin",
+			envValue{"/operator/go", true},
+			envValue{},
+		},
+		{
 			"no tools dir keeps an operator's GOPATH and GOBIN", "",
 			map[string]string{"PATH": "/usr/bin", "GOPATH": "/g", "GOBIN": "/gb"},
 			"/usr/bin",
@@ -383,6 +404,33 @@ func TestRunPaths_RemovesARejectedToolsFolderInEitherSpelling(t *testing.T) {
 				if v, ok := env[k]; ok {
 					t.Errorf("%s = %q stayed exported, want it unset", k, v)
 				}
+			}
+		})
+	}
+}
+
+// A GOPATH may list the rejected folder's go/ beside the operator's own roots, so only that root
+// goes, also when a colon splits it into several entries.
+func TestRunPaths_KeepsTheOtherGoRootsBesideARejectedToolsFolder(t *testing.T) {
+	for _, tc := range []struct{ name, toolsDir string }{
+		{"a refused character", "/t`x"},
+		{"the separator", "/a:b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			t.Setenv("HOME", base+"/home")
+			t.Setenv("KIRO_CONFIG_DIR", base+"/c")
+			t.Setenv("MAROTTE_TOOLS_DIR", base+tc.toolsDir)
+			t.Setenv("KIRO_HOME", "")
+			t.Setenv("PATH", "/usr/bin")
+			t.Setenv("GOPATH", base+tc.toolsDir+"/go:/operator/go")
+			t.Setenv("GOBIN", "")
+			_, gotTools, env := evalPaths(t, shells(t)[0])
+			if gotTools != "" {
+				t.Errorf("TOOLS = %q, want empty", gotTools)
+			}
+			if env["GOPATH"] != "/operator/go" {
+				t.Errorf("exported GOPATH = %q, want /operator/go", env["GOPATH"])
 			}
 		})
 	}

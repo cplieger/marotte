@@ -109,7 +109,8 @@ type envValue struct {
 // entries become the dir's, a PATH lacking the dir's bin and go/bin gets them in the image's order,
 // and a GOPATH or GOBIN the operator set to another value is kept. For a rejected or absent dir the
 // image's entries and the rejected dir's own, in its configured and its absolute spelling, are
-// removed, and every other entry and value stays.
+// removed from PATH, from every root of a GOPATH list and from GOBIN, and every other entry and
+// value stays.
 func toolsEnv(root toolsRoot, lookup func(string) (string, bool)) (path string, gopath, gobin envValue) {
 	toolsDir, err := root.use()
 	pathValue, _ := lookup("PATH")
@@ -129,27 +130,27 @@ func toolsEnv(root toolsRoot, lookup func(string) (string, bool)) (path string, 
 			entries = dropRun(entries, filepath.SplitList(dir+"/go/bin"))
 		}
 		return strings.Join(entries, string(filepath.ListSeparator)),
-			derivedEnv(lookup, "GOPATH", "", imageToolsDir+"/go", root.dir+"/go", root.spelled+"/go"),
+			goPathWithout(lookup, imageToolsDir+"/go", root.dir+"/go", root.spelled+"/go"),
 			derivedEnv(lookup, "GOBIN", "", imageToolsDir+"/bin", root.dir+"/bin", root.spelled+"/bin")
 	}
-	var goPathWant, goBinWant string
-	if toolsDir != "" {
-		bin, goBin := toolsDir+"/bin", toolsDir+"/go/bin"
-		if !slices.Contains(entries, bin) {
-			entries = slices.Insert(entries, 0, bin)
-		}
-		if !slices.Contains(entries, goBin) {
-			entries = slices.Insert(entries, slices.Index(entries, bin)+1, goBin)
-		}
-		goPathWant, goBinWant = toolsDir+"/go", bin
+	if toolsDir == "" {
+		return strings.Join(entries, string(filepath.ListSeparator)),
+			goPathWithout(lookup, imageToolsDir+"/go"),
+			derivedEnv(lookup, "GOBIN", "", imageToolsDir+"/bin")
+	}
+	bin, goBin := toolsDir+"/bin", toolsDir+"/go/bin"
+	if !slices.Contains(entries, bin) {
+		entries = slices.Insert(entries, 0, bin)
+	}
+	if !slices.Contains(entries, goBin) {
+		entries = slices.Insert(entries, slices.Index(entries, bin)+1, goBin)
 	}
 	return strings.Join(entries, string(filepath.ListSeparator)),
-		derivedEnv(lookup, "GOPATH", goPathWant, imageToolsDir+"/go"),
-		derivedEnv(lookup, "GOBIN", goBinWant, imageToolsDir+"/bin")
+		derivedEnv(lookup, "GOPATH", toolsDir+"/go", imageToolsDir+"/go"),
+		derivedEnv(lookup, "GOBIN", bin, imageToolsDir+"/bin")
 }
 
-// dropRun removes every run of consecutive entries equal to run: a dir holding the list separator
-// sits in a PATH as several entries. A run the image's own system PATH holds is kept, since
+// dropRun is removeRuns for PATH, keeping a run the image's own system PATH holds, since
 // /usr/sbin:/usr names /usr/sbin and /usr/bin as its bin.
 func dropRun(entries, run []string) []string {
 	for i := range imageSystemPath {
@@ -157,6 +158,23 @@ func dropRun(entries, run []string) []string {
 			return entries
 		}
 	}
+	return removeRuns(entries, run)
+}
+
+// goPathWithout returns GOPATH with every root in ours removed, unset when no root remains.
+func goPathWithout(lookup func(string) (string, bool), ours ...string) envValue {
+	v, _ := lookup("GOPATH")
+	roots := filepath.SplitList(v)
+	for _, root := range ours {
+		roots = removeRuns(roots, filepath.SplitList(root))
+	}
+	kept := strings.Join(roots, string(filepath.ListSeparator))
+	return envValue{value: kept, set: kept != ""}
+}
+
+// removeRuns removes every run of consecutive entries equal to run: a dir holding the list
+// separator sits in a list as several entries.
+func removeRuns(entries, run []string) []string {
 	kept := make([]string, 0, len(entries))
 	for i := 0; i < len(entries); {
 		if runAt(entries, run, i) {
