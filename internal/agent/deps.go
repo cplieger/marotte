@@ -59,9 +59,13 @@ type chatRecords interface {
 	bridgeChatRecords
 
 	List(ctx context.Context) []marotte.ChatHeader
-	// SessionClaimed is the membership coordinator's fresh chain read, passed on
+	// SessionOwners is the membership coordinator's fresh chain read, passed on
 	// as command.sessionClaims.
-	SessionClaimed(ctx context.Context, sessionID string) (claimed, complete bool)
+	SessionOwners(ctx context.Context) chat.OwnerScan
+	// Hold, Rollback and Release are the keep-fact writes command.chatStore passes on.
+	Hold(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
+	Rollback(ctx context.Context, claim *chat.Claim) error
+	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
 	ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool)
 	// SetDraft and SetAttachments are passed on to the command dispatcher.
 	SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error)

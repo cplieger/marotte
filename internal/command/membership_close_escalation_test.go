@@ -56,7 +56,7 @@ func newEscalationHostOver(store chatStore, tabSet TabSet, retention retentionRe
 		h.st = realStore
 	}
 	h.mem = newMembership(&membershipDeps{
-		Chats:    store,
+		Chats:    withKeep(store),
 		Tabs:     tabSet,
 		Bus:      bus,
 		Teardown: h.teardown,
@@ -197,9 +197,13 @@ func (*fixedTabs) Open(context.Context, marotte.OpenTab) (marotte.TabSubject, bo
 	return marotte.TabSubject{}, false, 0, errors.New("not staged")
 }
 
-func (f *fixedTabs) Close(context.Context, string) ([]marotte.TabSubject, uint64, error) {
-	return f.closed, 3, nil
+func (f *fixedTabs) Close(context.Context, string) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error) {
+	return f.closed, nil, 3, nil
 }
+
+func (*fixedTabs) Owed() []tabs.OwedRelease { return nil }
+
+func (*fixedTabs) Settle(context.Context, []string) error { return nil }
 
 func (*fixedTabs) Reorder(context.Context, []string) (uint64, error) { return 0, nil }
 
@@ -400,10 +404,10 @@ type cancelOnCommitTabs struct {
 	cancel context.CancelFunc
 }
 
-func (c *cancelOnCommitTabs) Close(ctx context.Context, id string) ([]marotte.TabSubject, uint64, error) {
-	closed, v, err := c.Store.Close(ctx, id)
+func (c *cancelOnCommitTabs) Close(ctx context.Context, id string) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error) {
+	closed, owed, v, err := c.Store.Close(ctx, id)
 	c.cancel()
-	return closed, v, err
+	return closed, owed, v, err
 }
 
 // TestCloseTab_ClientAbandonedRequestStillRollsForward: a request context

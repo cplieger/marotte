@@ -48,7 +48,7 @@ func cmdCreateChat(ctx context.Context, mem *Membership, cmd *marotte.ClientComm
 	if !validIdent(p.Model) || !validIdent(p.OpID) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	opened, err := mem.CreateChatAndOpen(ctx, ChatCreate{
+	opened, err := mem.CreateChatAndOpen(ctx, &ChatCreate{
 		OpID:   p.OpID,
 		ChatID: cmd.ChatID,
 		Init: func(c *marotte.Chat) {

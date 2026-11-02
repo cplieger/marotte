@@ -54,7 +54,7 @@ func newRunTabMembership(t *testing.T, chats chatStore, runs runOwner) (*Members
 		t.Fatalf("open tab store: %v", err)
 	}
 	bus := &tabBus{}
-	return newMembership(&membershipDeps{Chats: chats, Tabs: st, Bus: bus, Runs: runs}), st
+	return newMembership(&membershipDeps{Chats: withKeep(chats), Tabs: st, Bus: bus, Runs: runs}), st
 }
 
 func runTabParent(t *testing.T, st *tabs.Store, workflowID string) string {
@@ -207,7 +207,7 @@ func TestOpenTab_ReopensAClosedLaunchersTab(t *testing.T) {
 	}
 	bus := &tabBus{}
 	mem := newMembership(&membershipDeps{
-		Chats: store, Tabs: st, Bus: bus,
+		Chats: withKeep(store), Tabs: st, Bus: bus,
 		Runs: &fakeRunOwner{chats: map[string]marotte.ChatID{"wf_1": "c-launcher"}},
 	})
 	seedRecord(t, store, "c-launcher")
@@ -307,8 +307,8 @@ func TestOpenTab_RefusesANewRunTabWhoseLauncherRecordCouldNotBeRead(t *testing.T
 
 	_, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}, "op-run")
 
-	if code, _, _ := StatusOf(err); code != http.StatusServiceUnavailable || !errors.Is(err, errRunLauncherUnread) {
-		t.Errorf("OpenTab(run) = %v (status %d), want the 503 unread launcher", err, code)
+	if code, _, _ := StatusOf(err); code != http.StatusServiceUnavailable || !errors.Is(err, errChatUnread) {
+		t.Errorf("OpenTab(run) = %v (status %d), want the 503 unread chat", err, code)
 	}
 	if open, _ := st.List(); len(open) != 0 {
 		t.Errorf("the set holds %v, want nothing opened", open)
@@ -324,7 +324,7 @@ func closedSuppliedParent(t *testing.T, mem *Membership, st *tabs.Store, store *
 	if err != nil {
 		t.Fatalf("open the launching chat's tab: %v", err)
 	}
-	if _, _, err := st.Close(t.Context(), seen.Subject.ID); err != nil {
+	if _, _, _, err := st.Close(t.Context(), seen.Subject.ID); err != nil {
 		t.Fatalf("close it elsewhere: %v", err)
 	}
 	return seen.Subject.ID

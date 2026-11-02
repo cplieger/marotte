@@ -585,9 +585,8 @@ func TestSessionOwners_NamesReadAndSkippedChats(t *testing.T) {
 	if got := OwnersOfChain("x", []string{"p", "q"}).Of("p"); !slices.Equal(got, []marotte.ChatID{"x"}) {
 		t.Errorf("OwnersOfChain.Of = %v", got)
 	}
-	claimed, complete := s.SessionClaimed(t.Context(), "sess_3")
-	if claimed || complete {
-		t.Errorf("SessionClaimed over an unread owner = %v, %v; want unclaimed and incomplete", claimed, complete)
+	if got := scan.Owners.Of("sess_3"); len(got) != 0 || scan.Complete {
+		t.Errorf("Of(sess_3) over an unread owner = %v, complete %v; want no owner and incomplete", got, scan.Complete)
 	}
 }
 

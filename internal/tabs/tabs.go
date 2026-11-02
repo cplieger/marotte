@@ -86,6 +86,7 @@ var (
 // unreadable document already warns and starts empty.
 type file struct {
 	Tabs    []marotte.TabSubject `json:"tabs"`
+	Owed    []OwedRelease        `json:"owed,omitempty"`
 	Version uint64               `json:"version"`
 }
 
@@ -97,6 +98,7 @@ type Store struct {
 	// path is immutable after construction, so it is read without a lock.
 	path    string
 	tabs    []marotte.TabSubject // guarded by stateMu
+	owed    []OwedRelease        // guarded by stateMu
 	version uint64               // guarded by stateMu
 	stateMu sync.Mutex           // guards tabs and version; held briefly, NEVER across I/O
 	writeMu sync.Mutex           // serialises mutate-and-persist; the I/O lock
@@ -123,6 +125,7 @@ func NewStore(dir string) (*Store, error) {
 		return s, fmt.Errorf("parse %s (starting empty): %w", s.path, err)
 	}
 	s.tabs = sanitize(doc.Tabs)
+	s.owed = sanitizeOwed(doc.Owed)
 	// The version is adopted as read even when sanitize dropped an entry: no event is emitted at
 	// load, and the list endpoint returns the sanitized set with its version.
 	s.version = doc.Version
@@ -194,7 +197,7 @@ func sanitize(in []marotte.TabSubject) []marotte.TabSubject {
 // persist writes the whole document atomically. atomicfile verifies the 0600 on the temp
 // descriptor; do not add an EnforceFile by NAME after it.
 func (s *Store) persist(ctx context.Context, st *state) error {
-	data, err := json.MarshalIndent(file{Tabs: st.tabs, Version: st.version}, "", "  ")
+	data, err := json.MarshalIndent(file{Tabs: st.tabs, Owed: st.owed, Version: st.version}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode tabs: %w", err)
 	}

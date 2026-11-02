@@ -107,13 +107,6 @@ func (s *Store) ReferencedSessionIDs(ctx context.Context) (refs map[string]struc
 	return refs, complete
 }
 
-// SessionClaimed reports whether any chat's session chain holds sessionID, and whether every chat file that exists
-// was read. It reads SessionOwners, so it shares the one ownership test the teardown deletes runs by.
-func (s *Store) SessionClaimed(ctx context.Context, sessionID string) (claimed, complete bool) {
-	scan := s.SessionOwners(ctx)
-	return len(scan.Owners.Of(sessionID)) > 0, scan.Complete
-}
-
 // listWithCompleteness is List plus the read-completeness flag the sweep needs,
 // coalescing concurrent refreshes into one directory scan.
 //

@@ -167,7 +167,7 @@ func TestClose_RemovesTheSubtreeInOneMutation(t *testing.T) {
 	survivor := mustOpen(t, s, chatSpec("c-survivor"))
 	_, before := s.List()
 
-	closed, version, err := s.Close(t.Context(), parent.ID)
+	closed, _, version, err := s.Close(t.Context(), parent.ID)
 	if err != nil {
 		t.Fatalf("Close(%q): %v", parent.ID, err)
 	}
@@ -201,7 +201,7 @@ func TestClose_ScattersDoNotEscape(t *testing.T) {
 		t.Fatalf("Setup: Reorder: %v", err)
 	}
 
-	closed, _, err := s.Close(t.Context(), parent.ID)
+	closed, _, _, err := s.Close(t.Context(), parent.ID)
 	if err != nil {
 		t.Fatalf("Close(%q): %v", parent.ID, err)
 	}
@@ -219,12 +219,12 @@ func TestClose_ScattersDoNotEscape(t *testing.T) {
 func TestClose_AnIDThatIsNotOpenIsNotAFailure(t *testing.T) {
 	s, _ := newTestStore(t)
 	only := mustOpen(t, s, chatSpec("c-a"))
-	if _, _, err := s.Close(t.Context(), only.ID); err != nil {
+	if _, _, _, err := s.Close(t.Context(), only.ID); err != nil {
 		t.Fatalf("Setup: Close(%q): %v", only.ID, err)
 	}
 	_, after := s.List()
 
-	closed, version, err := s.Close(t.Context(), only.ID)
+	closed, _, version, err := s.Close(t.Context(), only.ID)
 	if err != nil {
 		t.Errorf("Close(%q) twice = %v, want no error", only.ID, err)
 	}

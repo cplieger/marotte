@@ -30,6 +30,7 @@ func wireRetention(appCtx context.Context, cfg *Config, chatStore *chat.Store, h
 				r := h.PurgeParentlessRuns(pctx, window)
 				return archive.PurgeResult{NextDeadline: r.NextDeadline, Purged: r.Purged, Kept: r.Kept, Errors: r.Errors}
 			},
+			h.Membership().SettleOwed,
 		},
 	})
 	if err != nil {

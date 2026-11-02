@@ -151,8 +151,8 @@ func TestPurgeParentlessRuns_ARunTabCannotOpenWhileItsDeleteIsInFlight(t *testin
 	}
 }
 
-func resumeSession(opID, sessionID string) command.ChatCreate {
-	return command.ChatCreate{OpID: opID, Init: func(c *marotte.Chat) { c.RecordSession(sessionID) }}
+func resumeSession(opID, sessionID string) *command.ChatCreate {
+	return &command.ChatCreate{OpID: opID, Init: func(c *marotte.Chat) { c.RecordSession(sessionID) }}
 }
 
 // A claim after the snapshot still spares the run; the order is fixed, not timed.

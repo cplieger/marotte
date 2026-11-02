@@ -79,7 +79,7 @@ func newTabbedRuntime(t *testing.T) (*Runtime, string) {
 // The subject's Ref is the chat id, its ID what a run tab nests under.
 func openChatTab(t *testing.T, h *Runtime, opID string) marotte.TabSubject {
 	t.Helper()
-	opened, err := h.Membership().CreateChatAndOpen(t.Context(), command.ChatCreate{
+	opened, err := h.Membership().CreateChatAndOpen(t.Context(), &command.ChatCreate{
 		OpID: opID,
 		Init: func(c *marotte.Chat) { c.Name = marotte.DefaultChatName },
 	})

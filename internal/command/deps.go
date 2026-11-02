@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workspace"
 )
@@ -101,11 +102,10 @@ type sessionLoader interface {
 // ErrChatGone reports a chat whose record no longer exists; a bridge open wraps it.
 var ErrChatGone = errors.New("chat not found")
 
-// sessionClaims reports whether any chat's session chain holds sessionID, from a
-// read that sees every record written before the call. complete is false when a
-// chat file that exists could not be read.
+// sessionClaims names every session's owning chats, from a read that sees every record written
+// before the call; the scan says which records it could not read.
 type sessionClaims interface {
-	SessionClaimed(ctx context.Context, sessionID string) (claimed, complete bool)
+	SessionOwners(ctx context.Context) chat.OwnerScan
 }
 
 // stepSessions answers whether a KAS session is a workflow step's, read from KAS's session list.
@@ -785,7 +785,7 @@ type Roles struct {
 	// Chats is the chat store directly, not through a getter on a wider composite —
 	// that composite would need to carry Broadcast and the run surface too, which is
 	// how a host becomes the one thing that qualifies.
-	Chats chatStore
+	Chats membershipChats
 	// Sessions answers whether a chat already claims a KAS session, read fresh
 	// so the run purge can decide under the membership lock.
 	Sessions  sessionClaims
