@@ -95,7 +95,7 @@ export function ensureEntryTextSig(
 }
 
 /** The open entry's streaming signal, or undefined when nothing minted one. */
-// deadset:ignore DS1004 -- test seam: observes the open entry streaming signals
+// deadset:ignore DS1102 -- test seam: observes the open entry streaming signals
 export function entryTextSig(
   turnID: string,
   entryID: string,
@@ -161,7 +161,7 @@ export function clearTurnSigs(turnID: string): void {
 
 /** Drop every streaming and lane signal between cases; production disposes per turn through
  *  `clearTurnSigs`. */
-// deadset:ignore DS1004 -- test seam: resets the streaming and lane signals and the per-turn keys
+// deadset:ignore DS1102 -- test seam: resets the streaming and lane signals and the per-turn keys
 export function clearAllEntrySigs(): void {
   entryTextSigs.clearAll();
   laneSigs.clearAll();

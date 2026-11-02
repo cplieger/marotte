@@ -510,7 +510,7 @@ export function handleEditorFindHotkey(e: KeyboardEvent): boolean {
 }
 
 /** @internal Test seam. */
-// deadset:ignore DS1004 -- test seam: observes whether the editor find bar is open
+// deadset:ignore DS1102 -- test seam: observes whether the editor find bar is open
 export function _isEditorFindOpen(): boolean {
   return isOpen();
 }

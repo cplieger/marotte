@@ -55,7 +55,7 @@ export function registerTabsTarget(next: TabsTarget): void {
 
 /** The version the projection reflects. Nothing in the app branches on it: every rule that
  *  consumes it is in this file. */
-// deadset:ignore DS1004 -- test seam: observes the local tab list version
+// deadset:ignore DS1102 -- test seam: observes the local tab list version
 export function tabsVersion(): number {
   return localVersion;
 }
@@ -604,7 +604,7 @@ export function permute<T>(
 
 /** @internal Test seam: drop the target, the version, the queue and every
  *  pending correlation and op. */
-// deadset:ignore DS1004 -- test seam: resets the target, version, queue and pending ops
+// deadset:ignore DS1102 -- test seam: resets the target, version, queue and pending ops
 export function _resetTabsSyncForTest(): void {
   target = null;
   localVersion = 0;

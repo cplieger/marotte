@@ -7,7 +7,8 @@
       "static-src/app.ts",
       "static-src/prepaint.ts",
       "static-src/sse-worker.ts",
-      "static-src/sw.ts"
+      "static-src/sw.ts",
+      "internal/spec/testdata/gen-goldens.mjs"
     ]
   }
 }

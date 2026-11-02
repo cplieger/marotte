@@ -152,7 +152,7 @@ export function initSteeringEditor(): void {
 
 /** Drop the read state, so one test's document is not the next test's answer. Production never
  *  needs it: the state's lifetime is the page. */
-// deadset:ignore DS1004 -- test seam: resets the steering read state, etag and pending save
+// deadset:ignore DS1102 -- test seam: resets the steering read state, etag and pending save
 export function _resetSteeringForTest(): void {
   reading = false;
   etag = "";

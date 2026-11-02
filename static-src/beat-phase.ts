@@ -87,7 +87,7 @@ export function initBeatPhase(): void {
 }
 
 /** Test seam. Detaches the listener too, so the next init cannot add a second one. */
-// deadset:ignore DS1004 -- test seam: resets the attached phase listener
+// deadset:ignore DS1102 -- test seam: resets the attached phase listener
 export function resetBeatPhaseForTest(): void {
   attached?.abort();
   attached = undefined;

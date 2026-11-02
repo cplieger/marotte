@@ -276,7 +276,7 @@ export async function readMoreListing(id: string): Promise<string | undefined> {
 }
 
 /** Forget every row and listing, for a suite's next case; the subscriptions stay. */
-// deadset:ignore DS1004 -- test seam: resets the held rows, listings and read counters
+// deadset:ignore DS1102 -- test seam: resets the held rows, listings and read counters
 export function _resetForTest(): void {
   rows.value = null;
   failed.value = false;

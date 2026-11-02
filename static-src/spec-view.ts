@@ -1427,19 +1427,19 @@ function renderTaskNode(node: SpecTaskNode, depth: number, ctx: NodeCtx): HTMLEl
 }
 
 /** @internal The state map's keys, for the lifetime test. */
-// deadset:ignore DS1004 -- test seam: observes the spec page state map's keys
+// deadset:ignore DS1102 -- test seam: observes the spec page state map's keys
 export function _openStates(): string[] {
   return [...states.keys()];
 }
 
 /** @internal One ref's state, for the tests. */
-// deadset:ignore DS1004 -- test seam: observes one ref's spec page state
+// deadset:ignore DS1102 -- test seam: observes one ref's spec page state
 export function _stateOf(ref: string): SpecPageState | undefined {
   return states.get(ref);
 }
 
 /** @internal Drop every state and the shown ref between cases. */
-// deadset:ignore DS1004 -- test seam: resets every spec page state and the shown ref
+// deadset:ignore DS1102 -- test seam: resets every spec page state and the shown ref
 export function _resetForTest(): void {
   for (const ref of [...states.keys()]) {
     release(ref);

@@ -80,7 +80,7 @@ function requireOpeners(kind: TabKind): TabOpeners {
 }
 
 /** Drop the registration. Test isolation only; production never unregisters. */
-// deadset:ignore DS1004 -- test seam: resets the registered tab openers
+// deadset:ignore DS1102 -- test seam: resets the registered tab openers
 export function _resetTabOpenersForTest(): void {
   openers = null;
 }

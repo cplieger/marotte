@@ -1019,7 +1019,7 @@ function buildCard(d: Decision): HTMLElement {
 }
 
 /** Reset module state between tests. `endPhase` first: a pending timer would fire into the next test's DOM. */
-// deadset:ignore DS1004 -- test seam: resets the mounted hosts, queues and held answers
+// deadset:ignore DS1102 -- test seam: resets the mounted hosts, queues and held answers
 export function _resetForTest(): void {
   for (const h of hosts) {
     endPhase(h);
@@ -1031,7 +1031,7 @@ export function _resetForTest(): void {
 }
 
 /** @internal Number of mounted hosts: the one observable of a release. */
-// deadset:ignore DS1004 -- test seam: observes the mounted host list
+// deadset:ignore DS1102 -- test seam: observes the mounted host list
 export function _hostCount(): number {
   return hosts.length;
 }

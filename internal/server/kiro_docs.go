@@ -72,6 +72,7 @@ type KiroDoc struct {
 
 	// ReadOnly says this row is not writable, so it renders without edit or delete. omitempty, so
 	// read-only is only ever asserted by the server, never produced by a field failing to arrive.
+	//deadset:ignore DS1102 -- the web client decodes it (wire/decoders.gen.ts) and renders a read-only row (docs.ts); the provenance tests pin that no scanned row sets it
 	ReadOnly bool `json:"read_only,omitempty"`
 
 	// DeleteProtected says this row renders without DELETE but keeps its edit: set for an entry

@@ -307,7 +307,7 @@ export function reinsertPRInGroups(result: PRRemoveResult): void {
 }
 
 /** Forget everything held, for a suite's next case. */
-// deadset:ignore DS1004 -- test seam: resets the held PR entries and hidden set
+// deadset:ignore DS1102 -- test seam: resets the held PR entries and hidden set
 export function _resetForTest(): void {
   entries.clear();
   hidden.clear();

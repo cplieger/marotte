@@ -2365,7 +2365,7 @@ export async function openEditorView(
 // --- Test helpers (no-op in production; used by tabs.test.ts) ---
 
 /** Reset all projection state. Exported for test isolation only. */
-// deadset:ignore DS1004 -- test seam: resets the tab projection state, callbacks and timers
+// deadset:ignore DS1102 -- test seam: resets the tab projection state, callbacks and timers
 export function _resetForTest(): void {
   tabNotice = bareTabNotice;
   state.tabs = [];

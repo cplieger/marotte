@@ -48,7 +48,7 @@ export function forgetSubject(kind: string, ref: string): void {
 }
 
 /** A fresh, unbound map with no reporter. Test isolation only; production never resets. */
-// deadset:ignore DS1004 -- test seam: resets the subject version map and its reporter
+// deadset:ignore DS1102 -- test seam: resets the subject version map and its reporter
 export function _resetForTest(): void {
   map = createVersionMap();
   sink = null;

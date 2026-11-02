@@ -1184,34 +1184,34 @@ function showSkeleton(): () => void {
 }
 
 /** @internal Test seam: inject rows without a fetch. */
-// deadset:ignore DS1004 -- test seam: seeds the docs inventory without a fetch
+// deadset:ignore DS1102 -- test seam: seeds the docs inventory without a fetch
 export function _setDocsForTest(list: KiroDoc[]): void {
   docs = list;
 }
 
 /** @internal Test seam: inject hook state without a fetch, keyed the way the
  *  join keys it. */
-// deadset:ignore DS1004 -- test seam: seeds the hook state map without a fetch
+// deadset:ignore DS1102 -- test seam: seeds the hook state map without a fetch
 export function _setHooksForTest(list: HookState[]): void {
   hooks = new Map(list.map((h) => [hookKey(hookScopeOf(h), h.file_path ?? "", h.name), h]));
 }
 
 /** @internal Test seam for the Hooks tab's row set — the one tab that is not a
  *  pure filter of the inventory. */
-// deadset:ignore DS1004 -- test seam: reads the Hooks rows built from the docs inventory and the hook-state map
+// deadset:ignore DS1102 -- test seam: reads the Hooks rows built from the docs inventory and the hook-state map
 export function _hookRowsForTest(): KiroDoc[] {
   return hookRows();
 }
 
 /** @internal Test seam for one rendered row. */
-// deadset:ignore DS1004 -- test seam: renders one row from the hook, steering-issue and repository-status state
+// deadset:ignore DS1102 -- test seam: renders one row from the hook, steering-issue and repository-status state
 export function _renderRowForTest(doc: KiroDoc): HTMLElement {
   return buildRow(doc);
 }
 
 /** @internal Test seam: repaint the active panel from the seeded state, without
  *  a fetch. */
-// deadset:ignore DS1004 -- test seam: repaints from the active tab, docs inventory, hook map and filter state
+// deadset:ignore DS1102 -- test seam: repaints from the active tab, docs inventory, hook map and filter state
 export function _renderActiveForTest(): void {
   renderActive();
 }

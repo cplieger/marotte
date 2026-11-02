@@ -161,7 +161,7 @@ export function showToast(
 }
 
 /** Test-only: clear all visible + queued toasts and remove the stack. */
-// deadset:ignore DS1004 -- test seam: resets the sticky and owed toasts and the stack
+// deadset:ignore DS1102 -- test seam: resets the sticky and owed toasts and the stack
 export function _resetForTest(): void {
   sticky.length = 0;
   owed.length = 0;

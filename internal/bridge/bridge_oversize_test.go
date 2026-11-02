@@ -133,7 +133,7 @@ type stepRouter struct{}
 
 func (stepRouter) Route(*FrameHead) marotte.SessionID { return "" }
 
-//deadset:ignore DS1103 -- reportDroppedFrame reaches it through its stepRunner type assertion
+//deadset:ignore DS1101 -- reportDroppedFrame reaches it through its stepRunner type assertion
 func (stepRouter) StepRun(marotte.SessionID) (string, bool) { return "wf_1", true }
 
 func TestReadLoop_OversizeStepNotificationFailsNothing(t *testing.T) {

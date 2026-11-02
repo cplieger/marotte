@@ -146,7 +146,7 @@ function notifyAsk(): NotifyAsk {
 
 /** Drop the ask's per-page flags. Exported for test isolation only — the browser
  *  module registry is URL-keyed, so a suite cannot re-evaluate this module. */
-// deadset:ignore DS1004 -- test seam: resets the per-page permission ask
+// deadset:ignore DS1102 -- test seam: resets the per-page permission ask
 export function _resetNotifyAskForTest(): void {
   ask = null;
 }
@@ -331,7 +331,7 @@ async function defaultRegistration(): Promise<NotificationRegistration | null> {
 }
 
 /** Point the retraction at another registration; tests only. */
-// deadset:ignore DS1004 -- test seam: replaces the retraction's service worker registration lookup
+// deadset:ignore DS1102 -- test seam: replaces the retraction's service worker registration lookup
 export function _setRegistrationForTest(
   fn: (() => Promise<NotificationRegistration | null>) | null,
 ): void {

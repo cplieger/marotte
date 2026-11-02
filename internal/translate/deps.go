@@ -268,6 +268,7 @@ type terminalReader interface {
 // registry and the administrator rules it composes into the lock map.
 type governanceAccess interface {
 	// SetGovernance replaces the cached account profile.
+	//deadset:ignore DS1102 -- the tests seed the profile through it; production caches it in agent.Settings.applyGovernance
 	SetGovernance(ctx context.Context, state marotte.GovernanceStatePayload)
 	// SetMCPRegistry replaces the organization's MCP registry; nil means no registry.
 	SetMCPRegistry(ctx context.Context, registry *marotte.GovernanceMCPRegistry)

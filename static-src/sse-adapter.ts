@@ -569,7 +569,7 @@ export async function adoptPushSubscription(
 /** Undo `init` completely, for tests that boot the module more than once. `vi.resetModules()`
  *  cannot substitute in Browser Mode: the module map is URL-keyed, so a re-import hands back
  *  this instance with its stream live. */
-// deadset:ignore DS1004 -- test seam: resets the stream attachment, worker override, sinks and hydrate timer
+// deadset:ignore DS1102 -- test seam: resets the stream attachment, worker override, sinks and hydrate timer
 export function _resetForTest(): void {
   attachment?.detach();
   attachment = null;
@@ -592,14 +592,14 @@ export function _resetForTest(): void {
 }
 
 /** Attach the next `init` to a host the suite holds instead of a SharedWorker. */
-// deadset:ignore DS1004 -- test seam: replaces the SharedWorker spawn with a suite-held host
+// deadset:ignore DS1102 -- test seam: replaces the SharedWorker spawn with a suite-held host
 export function _spawnWorkerForTest(spawn: (() => SharedWorkerLike) | null): void {
   spawnOverride = spawn;
 }
 
 /** The two reconciliation bodies, reachable for their tests without a live stream or a live
  *  worker. */
-// deadset:ignore DS1004 -- test seam: reconciles the subject-version map and the projections its digest repairs
+// deadset:ignore DS1102 -- test seam: reconciles the subject-version map and the projections its digest repairs
 export { revalidate as _revalidateForTest, tabRevalidate as _tabRevalidateForTest };
 
 registerCleanup(() => {

@@ -24,14 +24,3 @@ func (v *chatVersions) bump(id marotte.ChatID) string {
 	v.counters[id]++
 	return strconv.FormatUint(v.counters[id], 10)
 }
-
-// current reads the `chat` version the last write to id minted, "" before any.
-func (v *chatVersions) current(id marotte.ChatID) string {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	n, ok := v.counters[id]
-	if !ok {
-		return ""
-	}
-	return strconv.FormatUint(n, 10)
-}

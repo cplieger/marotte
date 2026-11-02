@@ -608,7 +608,7 @@ async function deleteMany(ids: string[], all = false): Promise<void> {
 }
 
 /** Test seam: forget module state between cases. */
-// deadset:ignore DS1004 -- test seam: resets the memory list, filter, selection and editor state
+// deadset:ignore DS1102 -- test seam: resets the memory list, filter, selection and editor state
 export function _resetMemoriesForTest(): void {
   memories = [];
   cap = 1000;
