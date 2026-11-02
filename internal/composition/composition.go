@@ -385,16 +385,18 @@ func (a *App) Shutdown() {
 	if a.mcpPrewarm != nil {
 		a.mcpPrewarm.Stop()
 	}
-	callIfSet(a.stopToolsSteering)
-	if a.tools != nil {
-		a.tools.Close()
-	}
 	// Immediately BEFORE the runtime's teardown and no earlier: sooner would signal the
 	// push service's Done while the poller that consults it is still running.
 	callIfSet(a.stopApp)
 	a.shutdownHub()
 	// After the runtime's teardown, which may still call the vault: a renewal's save lands before exit.
 	callIfSet(a.waitSignIn)
+	// Last: the boot regeneration may sit in the engine's probes, which no ctx bounds, so a stop
+	// timeout must not cut the two waits above. A job event after the hub's teardown is dropped.
+	callIfSet(a.stopToolsSteering)
+	if a.tools != nil {
+		a.tools.Close()
+	}
 	runtime.KeepAlive(a.roots)
 }
 
