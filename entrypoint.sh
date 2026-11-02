@@ -109,17 +109,25 @@ emit_path_dropin() {
   printf "PATH='%s'\nexport PATH\n" "$quoted"
 }
 
-# Through a temp file so a login shell never sources a half-written assignment;
-# the mktemp suffix keeps run-parts from matching it.
+# $1 is the profile.d folder. Through a temp file so a login shell never sources a half-written
+# assignment; the mktemp suffix keeps run-parts from matching it. A failed write still succeeds
+# when the file already holds this boot's text; a different file is removed, since a login shell
+# would source a previous boot's PATH from it.
 install_path_dropin() {
-  local dir=/etc/profile.d target tmp
+  local dir=$1 target tmp
   target="$dir/10-marotte-path.sh"
   [ -d "$dir" ] || return 1
-  tmp=$(mktemp "$target.XXXXXX") || return 1
-  if emit_path_dropin >"$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$target"; then
-    return 0
+  if tmp=$(mktemp "$target.XXXXXX"); then
+    if emit_path_dropin >"$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$target"; then
+      return 0
+    fi
+    rm -f "$tmp"
   fi
-  rm -f "$tmp"
+  [ -e "$target" ] || return 1
+  [ -f "$target" ] && [ "$(<"$target")" = "$(emit_path_dropin)" ] && return 0
+  rm -f "$target" 2>/dev/null
+  [ -e "$target" ] \
+    && printf 'WARNING: could not remove %s, written by an earlier boot; a login shell sources its PATH, which may not be this boot'\''s\n' "$target" >&2
   return 1
 }
 
@@ -131,7 +139,7 @@ offer_login_path() {
   unset MAROTTE_PATH_DROPIN
   if [ "$1" -ne 0 ]; then
     [ -z "$TOOLS" ] || printf "WARNING: running as uid %s, not root, so /etc/profile.d/10-marotte-path.sh is not written; a login shell (the browser shell runs bash --login) does not search %s, so run an engine-installed tool there by its full path (%s/<tool>)\n" "$1" "$(logfmt_value "$TOOLS/bin" 4096)" "$(logfmt_value "$TOOLS/bin" 4096)" >&2
-  elif install_path_dropin; then
+  elif install_path_dropin /etc/profile.d; then
     export MAROTTE_PATH_DROPIN=1
   elif [ -n "$TOOLS" ]; then
     printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) will not see %s, so an engine-installed tool will not resolve by name there\n" "$(logfmt_value "$TOOLS/bin" 4096)" >&2

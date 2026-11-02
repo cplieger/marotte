@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# The `mkdir -p` of every directory the container needs, with its fail-CLOSED branch, taken inline
-# with extract_range. The ONE place the entrypoint aborts on
-# /config state (nothing to persist, nothing to serve); a healthy image never shows it. Lint:
+# The entrypoint's `mkdir -p` of every directory the container needs and its fatal branch, taken
+# inline with extract_range; a healthy image never takes that branch. Lint:
 #   SC2015 - `[ cond ] && ok || no` cannot mis-fire: lib.sh's ok/no always return 0.
 #   SC2016 - the range pattern matches the entrypoint's literal "$CONFIG_DIR" text.
 #   SC2034 - these variables are inputs to entrypoint.sh code sourced at RUNTIME.

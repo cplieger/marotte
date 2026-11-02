@@ -129,6 +129,59 @@ for sh in /bin/sh /bin/bash; do
     || no "$sh drop-in" "PATH '$got', want '$want'; stderr: $(cat "$err")"
 done
 
+# install_path_dropin against a scratch profile.d. install_case <mktemp fails: 0|1> <rm fails: 0|1>
+# prints "<rc>|<the drop-in's text, or absent>|<stderr>".
+load_function install_path_dropin
+pd="$WORK/profile.d"
+target="$pd/10-marotte-path.sh"
+install_case() {
+  (
+    # shellcheck disable=SC2329 # the stubs shadow the commands install_path_dropin runs
+    if [ "$1" -ne 0 ]; then mktemp() { return 1; }; fi
+    # shellcheck disable=SC2329
+    if [ "$2" -ne 0 ]; then rm() { return 1; }; fi
+    rc=0
+    install_path_dropin "$pd" 2>"$WORK/install.err" || rc=$?
+    text=absent
+    [ ! -e "$target" ] || text=$(<"$target")
+    printf '%s|%s|%s' "$rc" "$text" "$(cat "$WORK/install.err")"
+  )
+}
+current=$(emit_path_dropin)
+[ -n "$current" ] || {
+  printf 'harness error: emit_path_dropin printed nothing\n' >&2
+  exit 1
+}
+mkdir -p "$pd"
+printf 'PATH=stale\n' >"$target"
+got=$(install_case 0 0)
+[ "$got" = "0|$current|" ] && [ "$(stat -c %a "$target")" = 644 ] && [ "$(find "$pd" -mindepth 1 | wc -l)" -eq 1 ] \
+  && ok "the drop-in replaces an earlier one with this boot's PATH, mode 644, leaving no temp file" \
+  || no "drop-in write" "got '$got', mode $(stat -c %a "$target"), entries: $(ls -A "$pd")"
+printf 'PATH=stale\n' >"$target"
+got=$(install_case 1 0)
+[ "$got" = "1|absent|" ] \
+  && ok "a failed write removes an earlier boot's drop-in, so no login shell sources its PATH" \
+  || no "failed write, earlier drop-in" "got '$got', want '1|absent|'"
+emit_path_dropin >"$target"
+got=$(install_case 1 0)
+[ "$got" = "0|$current|" ] \
+  && ok "a failed write over a drop-in already holding this boot's PATH keeps it and succeeds" \
+  || no "failed write, current drop-in" "got '$got'"
+printf 'PATH=stale\n' >"$target"
+got=$(install_case 1 1)
+case "$got" in
+  "1|PATH=stale|WARNING: could not remove $target, written by an earlier boot; "*)
+    ok "an earlier drop-in that cannot be removed is named in a warning"
+    ;;
+  *) no "failed write, earlier drop-in kept" "got '$got'" ;;
+esac
+rm -rf "$pd"
+got=$(install_case 0 0)
+[ "$got" = "1|absent|" ] \
+  && ok "with no profile.d folder the drop-in reports failure and writes nothing" \
+  || no "no profile.d" "got '$got', want '1|absent|'"
+
 # Only root may write /etc/profile.d. Another uid tries nothing and names the full-path fallback.
 load_function logfmt_value
 load_function offer_login_path
@@ -141,6 +194,7 @@ offer() {
     rc=$1
     install_path_dropin() {
       calls=$((calls + 1))
+      [ "$#" -eq 1 ] && [ "$1" = /etc/profile.d ] || return 97
       return "$rc"
     }
     export MAROTTE_PATH_DROPIN=1

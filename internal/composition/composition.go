@@ -66,6 +66,8 @@ type App struct {
 	stopForgeKeeper func()
 	// stopKASHeal stops the KAS MCP file heal loop and waits for its goroutine.
 	stopKASHeal func()
+	// stopToolsSteering waits for the boot's environment.md regeneration, which reads the tools engine.
+	stopToolsSteering func()
 	// stopApp ends the app's LIFETIME: what every process-bound component is parented on.
 	stopApp func()
 	// waitSignIn waits for the sign-in vault's goroutines, which end with the app's lifetime.
@@ -226,7 +228,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	wireToolsSteering(appCtx, tools, steer)
+	stopToolsSteering := wireToolsSteering(appCtx, tools, steer)
 
 	gitHandler := git.NewHandler(cfg.WorkDir, git.WithShowMax(filebrowse.WholeFileMax))
 	ensureUploadDir()
@@ -334,20 +336,21 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	built = true
 	return &App{
-		Runtime:         h,
-		Server:          srv,
-		purgeScheduler:  purgeScheduler,
-		mcpPrewarm:      mcpPrewarm,
-		tools:           tools,
-		stopKiro:        kiro.stop,
-		stopOrphanSweep: stopOrphanSweep,
-		stopKiroSeed:    stopKiroSeed,
-		stopPRPoller:    stopPRPoller,
-		stopForgeKeeper: stopForgeKeeper,
-		stopKASHeal:     stopKASHeal,
-		stopApp:         stopApp,
-		waitSignIn:      vault.Wait,
-		roots:           roots,
+		Runtime:           h,
+		Server:            srv,
+		purgeScheduler:    purgeScheduler,
+		mcpPrewarm:        mcpPrewarm,
+		tools:             tools,
+		stopKiro:          kiro.stop,
+		stopOrphanSweep:   stopOrphanSweep,
+		stopKiroSeed:      stopKiroSeed,
+		stopPRPoller:      stopPRPoller,
+		stopForgeKeeper:   stopForgeKeeper,
+		stopKASHeal:       stopKASHeal,
+		stopToolsSteering: stopToolsSteering,
+		stopApp:           stopApp,
+		waitSignIn:        vault.Wait,
+		roots:             roots,
 	}, nil
 }
 
@@ -382,6 +385,7 @@ func (a *App) Shutdown() {
 	if a.mcpPrewarm != nil {
 		a.mcpPrewarm.Stop()
 	}
+	callIfSet(a.stopToolsSteering)
 	if a.tools != nil {
 		a.tools.Close()
 	}
@@ -682,10 +686,10 @@ func newSteering(cfg *Config) *steering.Generator {
 
 // wireToolsSteering lists the engine's installed tools in environment.md and regenerates it off the
 // boot path, since a first inventory runs every tool's probe; without that regeneration the file
-// lists no tools until the next session opens.
-func wireToolsSteering(appCtx context.Context, tools *toolsSlot, steer *steering.Generator) {
+// lists no tools until the next session opens. stop waits for that regeneration.
+func wireToolsSteering(appCtx context.Context, tools *toolsSlot, steer *steering.Generator) (stop func()) {
 	steer.SetToolsSnapshot(tools.installedTools)
-	go steer.Generate(appCtx)
+	return runBackground(appCtx, "tools steering", steer.Generate)
 }
 
 // githubTokenFor is the tools engine's GitHub credential: the github.com connection's

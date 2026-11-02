@@ -72,7 +72,9 @@ type Generator struct {
 	workDir       string
 	configDir     string
 	toolsDir      string
-	mu            sync.Mutex
+	mu            sync.Mutex // guards the snapshot callbacks only
+	// genMu is held from the snapshots to the write, so an older generation never overwrites a newer one.
+	genMu sync.Mutex
 }
 
 // New returns a Generator. Each directory must pass CheckPath; toolsDir is the tools engine's root,
@@ -81,8 +83,7 @@ func New(workDir, configDir, toolsDir string) *Generator {
 	return &Generator{workDir: workDir, configDir: configDir, toolsDir: toolsDir}
 }
 
-// SetMCPSnapshot wires a snapshot callback (unset omits the MCP section). The callback runs
-// OUTSIDE the generator's mutex, so it may take agent locks.
+// SetMCPSnapshot wires a snapshot callback (unset omits the MCP section).
 func (g *Generator) SetMCPSnapshot(fn func() MCPSnapshot) {
 	g.mu.Lock()
 	g.mcpSnapshot = fn
@@ -99,39 +100,38 @@ func (g *Generator) SetForgeSnapshot(fn func() ForgeSnapshot) {
 
 // SetToolsSnapshot wires a callback that returns the installed tools, with ok false when the
 // tools engine is down or its inventory failed. Unset or not ok omits the Installed tools
-// section. The callback runs outside the generator's mutex.
+// section.
 func (g *Generator) SetToolsSnapshot(fn func() (tools []InstalledTool, ok bool)) {
 	g.mu.Lock()
 	g.toolsSnapshot = fn
 	g.mu.Unlock()
 }
 
-// Generate renders environment.md and writes it atomically, holding g.mu across the write so
-// calls serialise, and skips a byte-identical write (MCP event storms regenerate often).
+// Generate renders environment.md and writes it atomically, and skips a byte-identical write (MCP
+// event storms regenerate often). Calls serialise: each one's snapshots, render and write finish
+// before the next call takes its snapshots. The snapshot callbacks run under that serialisation
+// alone, so one must never wait on a goroutine that is calling Generate.
 func (g *Generator) Generate(ctx context.Context) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
+	g.genMu.Lock()
+	defer g.genMu.Unlock()
 
-	// Read the callback under g.mu, call it outside (see SetMCPSnapshot).
+	g.mu.Lock()
 	snapshotFn := g.mcpSnapshot
 	forgeFn := g.forgeSnapshot
 	toolsFn := g.toolsSnapshot
+	g.mu.Unlock()
 	var mcp MCPSnapshot
 	var forges ForgeSnapshot
 	var tools []InstalledTool
 	var toolsOK bool
-	if snapshotFn != nil || forgeFn != nil || toolsFn != nil {
-		g.mu.Unlock()
-		if snapshotFn != nil {
-			mcp = snapshotFn()
-		}
-		if forgeFn != nil {
-			forges = forgeFn()
-		}
-		if toolsFn != nil {
-			tools, toolsOK = toolsFn()
-		}
-		g.mu.Lock()
+	if snapshotFn != nil {
+		mcp = snapshotFn()
+	}
+	if forgeFn != nil {
+		forges = forgeFn()
+	}
+	if toolsFn != nil {
+		tools, toolsOK = toolsFn()
 	}
 
 	content := g.render(ctx, mcp, snapshotFn != nil, forges, forgeFn != nil, tools, toolsOK)

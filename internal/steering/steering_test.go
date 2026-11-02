@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -582,6 +583,50 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	}
 	if !strings.Contains(s, "## Capabilities") {
 		t.Errorf("steering file truncated under concurrency; no Capabilities section:\n%s", s)
+	}
+}
+
+func TestGenerate_AnOlderGenerationNeverOverwritesANewerOne(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	g := New(t.TempDir(), t.TempDir(), "")
+	entered, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	g.SetToolsSnapshot(func() ([]InstalledTool, bool) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release
+			return []InstalledTool{{Name: "old", Version: "1"}}, true
+		}
+		return []InstalledTool{{Name: "new", Version: "2"}}, true
+	})
+
+	firstDone, secondDone := make(chan struct{}), make(chan struct{})
+	go func() {
+		g.Generate(t.Context())
+		close(firstDone)
+	}()
+	<-entered
+	go func() {
+		g.Generate(t.Context())
+		close(secondDone)
+	}()
+	// The second generation either waits for the first (correct) or finishes while the first is
+	// held in its snapshot; either way the first is released only after this window.
+	select {
+	case <-secondDone:
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	<-firstDone
+	<-secondDone
+
+	got, err := os.ReadFile(filepath.Join(home, ".kiro", "steering", "environment.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "- new 2\n") || strings.Contains(string(got), "- old 1") {
+		t.Errorf("environment.md holds the older generation's tools, not the newer one's:\n%s", got)
 	}
 }
 

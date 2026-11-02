@@ -50,7 +50,7 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 		"`/t/bin` is the tools engine's single bin dir",
 		"`/t/bin/<tool>`",
 		"Pin `HOME=/h` on any command",
-		"sources `/etc/profile.d/10-marotte-path.sh`, which the entrypoint wrote at this start, so an installed tool resolves by bare name there too",
+		"sources `/etc/profile.d/10-marotte-path.sh`, which holds this start's PATH, so an installed tool resolves by bare name there too",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
@@ -144,9 +144,9 @@ func TestWriteRuntime_RootWithoutAWrittenDropInGetsTheAbsolutePath(t *testing.T)
 			var b strings.Builder
 			writeRuntime(&b, "/cfg", "/t")
 			out := b.String()
-			want := "takes its PATH from `/etc/profile`, which leaves out `/t/bin`: the entrypoint did not write " +
-				"`/etc/profile.d/10-marotte-path.sh` at this start (the boot log's WARNING says why, or the server " +
-				"started without the entrypoint). There a user runs an installed tool by its absolute path (`/t/bin/<tool>`). Pin `HOME=/h`"
+			want := "may not search `/t/bin`: the entrypoint could not give `/etc/profile.d/10-marotte-path.sh` this " +
+				"start's PATH (the boot log's WARNING says why, or the server started without the entrypoint). There a " +
+				"user runs an installed tool by its absolute path (`/t/bin/<tool>`). Pin `HOME=/h`"
 			if !strings.Contains(out, want) {
 				t.Errorf("writeRuntime output missing %q:\n%s", want, out)
 			}

@@ -109,8 +109,8 @@ func writePath(b *strings.Builder, toolsDir string) bool {
 	return onPath
 }
 
-// dropInEnv is set to "1" by entrypoint.sh's offer_login_path only after it wrote the drop-in at
-// this start, which it tries only as root; any other value or none means no login shell has it.
+// dropInEnv is set to "1" by entrypoint.sh's offer_login_path only once the drop-in holds this
+// start's PATH, which it tries only as root; any other value or none promises nothing about a login shell's PATH.
 const dropInEnv = "MAROTTE_PATH_DROPIN"
 
 func writeShellHint(b *strings.Builder, toolsDir string, onPath bool) {
@@ -126,12 +126,13 @@ func writeShellHint(b *strings.Builder, toolsDir string, onPath bool) {
 		b.WriteString(", not root, so the entrypoint writes no drop-in restoring it. There a user runs an ")
 		b.WriteString("installed tool by its absolute ")
 	case dropIn != "1":
-		b.WriteString(fromProfile + toolsDir + "/bin`: the entrypoint did not write `/etc/profile.d/10-marotte-path.sh` ")
-		b.WriteString("at this start (the boot log's WARNING says why, or the server started without the entrypoint). ")
-		b.WriteString("There a user runs an installed tool by its absolute ")
+		b.WriteString("- A login shell, the browser Shell panel's `bash --login` included, may not search `" + toolsDir + "/bin`: ")
+		b.WriteString("the entrypoint could not give `/etc/profile.d/10-marotte-path.sh` this start's PATH (the boot log's ")
+		b.WriteString("WARNING says why, or the server started without the entrypoint). There a user runs an installed tool ")
+		b.WriteString("by its absolute ")
 	default:
 		b.WriteString("- Every login shell, the browser Shell panel's `bash --login` included, sources ")
-		b.WriteString("`/etc/profile.d/10-marotte-path.sh`, which the entrypoint wrote at this start, so an ")
+		b.WriteString("`/etc/profile.d/10-marotte-path.sh`, which holds this start's PATH, so an ")
 		b.WriteString("installed tool resolves by bare name there too; any shell also finds it by its absolute ")
 	}
 	b.WriteString("path (`" + toolsDir + "/bin/<tool>`)")
