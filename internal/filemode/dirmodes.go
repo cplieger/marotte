@@ -82,18 +82,17 @@ var errSkipped = errors.New("skipped")
 // testHookOpened runs after each folder is opened, so a test can rename it from under the walk.
 var testHookOpened = func(string) {}
 
-// chmodFD is changeMode, replaced by a test to make it fail.
 var chmodFD = changeMode
 
-// chmodEmptyPath is fchmodat2 with AT_EMPTY_PATH, replaced by a test to take changeMode's fallback.
 var chmodEmptyPath = func(fd int, mode uint32) error { return unix.Fchmodat(fd, "", mode, unix.AT_EMPTY_PATH) }
 
 // changeMode sets the mode of the folder an O_PATH descriptor holds; fchmod refuses one with EBADF.
-// fchmodat2 needs Linux 6.6, and a seccomp profile that predates it refuses it with EPERM, so those
-// refusals fall back to chmod through /proc/self/fd/<fd>, a link to the opened folder itself.
+// fchmodat2 needs Linux 6.6 (x/sys's Fchmodat answers its ENOSYS as EOPNOTSUPP), and a seccomp
+// profile that predates it refuses it with EPERM, so those refusals fall back to chmod through
+// /proc/self/fd/<fd>, a link to the opened folder itself.
 func changeMode(fd int, mode uint32) error {
 	err := chmodEmptyPath(fd, mode)
-	if !errors.Is(err, unix.ENOSYS) && !errors.Is(err, unix.EOPNOTSUPP) && !errors.Is(err, unix.EPERM) {
+	if !errors.Is(err, unix.EOPNOTSUPP) && !errors.Is(err, unix.EPERM) {
 		return err
 	}
 	link := "/proc/self/fd/" + strconv.Itoa(fd)

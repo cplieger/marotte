@@ -541,7 +541,7 @@ func TestSetDirModes_SetsFoldersTheOwnerCannotRead(t *testing.T) {
 
 // Where fchmodat2 is missing or refused, the mode still changes, on the folder that was opened.
 func TestSetDirModes_FallsBackFromARefusedFchmodat2(t *testing.T) {
-	for _, refusal := range []error{unix.ENOSYS, unix.EOPNOTSUPP, unix.EPERM} {
+	for _, refusal := range []error{unix.EOPNOTSUPP, unix.EPERM} {
 		t.Run(refusal.Error(), func(t *testing.T) {
 			orig := chmodEmptyPath
 			chmodEmptyPath = func(int, uint32) error { return refusal }
