@@ -798,7 +798,9 @@ export interface EffectiveSettings {
   debug_logs: boolean;
   /**
  * ModelFallback defaults off, matching kiro-cli: on, KAS may retry a turn its model refused or
- * could not serve on the next model of its fallback chain, or record why it declined to.
+ * could not serve on the next model of its fallback chain, or record why it declined to, except a
+ * refusal on Auto, which the withheld KIRO_FEATURE_MODEL_FALLBACK_AUTO_REFUSAL_ENABLED row leaves
+ * to kiro-cli's experiment default.
  */
   model_fallback_enabled: boolean;
 }

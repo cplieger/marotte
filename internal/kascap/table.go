@@ -424,6 +424,12 @@ var table = []decl{
 		send:     false,
 	},
 	{
+		key:      "KIRO_FEATURE_CONSOLIDATE_DISCLOSURES_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
 		key:      "KIRO_FEATURE_KIRO_INFRA_SAFETY_MONITOR_ENABLED",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
@@ -437,6 +443,24 @@ var table = []decl{
 	},
 	{
 		key:      "KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
+		key:      "KIRO_FEATURE_MEMORY_QUALITY_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
+		key:      "KIRO_FEATURE_MEMORY_SYNC_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
+		key:      "KIRO_FEATURE_MODEL_FALLBACK_AUTO_REFUSAL_ENABLED",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
 		send:     false,
@@ -519,6 +543,12 @@ var table = []decl{
 	},
 	{
 		key:      "KIRO_DISABLE_RECAP",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
+		key:      "KIRO_DISABLE_SUGGESTED_PROMPTS",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
 		send:     false,

@@ -95,7 +95,7 @@ func TestEffective_AgentCapabilityDefaultsAreKiroCLIs(t *testing.T) {
 	if !DefaultWorkflowsEnabled {
 		t.Error("DefaultWorkflowsEnabled = false, want true")
 	}
-	// kiro-cli ships both model-fallback flags off.
+	// kiro-cli ships the refusal and availability fallback flags off.
 	if defaultModelFallback {
 		t.Error("defaultModelFallback = true, want false")
 	}
