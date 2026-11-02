@@ -51,7 +51,7 @@ environment:
 
 Each number you list says that account already has at least the power of this server, so its write access gains it nothing. That is true of an administrator who already has root on the host. It is false of an ordinary account, and listing one gives it a way in. A malformed entry is skipped with a warning.
 
-The tools engine makes a similar check, without this exception: it does not start while another account can write to the config folder, the tools folder or a folder it installs into, and the **Tools** tab in **Settings** then says "Tools are off", with the server log naming each folder. So at every start the container removes group and other write from those folders.
+The tools engine makes a similar check, without this exception: it does not start while another account can write to the config folder, the tools folder or a folder it installs into, and the **Tools** tab in **Settings** then says "Tools are off", with the server log naming each folder. So at every start the container removes group and other write from those folders and logs a warning naming each one it changed and the mode it had. Anything another account wrote into such a folder before stays, so check what it holds if that account is not one you trust.
 
 ## Extra file-browser folders (`MAROTTE_BROWSE_ROOTS`)
 

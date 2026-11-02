@@ -9,6 +9,8 @@ set -u
 . "$(dirname -- "$0")/lib.sh"
 new_workdir >/dev/null
 
+load_function own_place
+load_function tighten_dir
 load_function tighten_engine_roots
 
 CONFIG="$WORK/config"
@@ -31,9 +33,20 @@ done
 
 rc=0
 tighten_engine_roots "$CONFIG" "$TOOLS" >"$WORK/out.log" 2>"$WORK/err.log" || rc=$?
-[ "$rc" -eq 0 ] && [ ! -s "$WORK/err.log" ] \
-  && ok "the pass returns 0 and prints nothing" \
-  || no "status" "rc=$rc: $(cat "$WORK/err.log")"
+[ "$rc" -eq 0 ] && [ ! -s "$WORK/out.log" ] \
+  && ok "the pass returns 0 and prints nothing on stdout" \
+  || no "status" "rc=$rc: $(cat "$WORK/out.log")"
+
+warned() {
+  grep -c "^level=warn msg=\"a folder the tools engine checks let other accounts write; removing that, but anything they wrote there stays\" dir=\"$1\" mode=$2 component=entrypoint\$" "$WORK/err.log"
+}
+[ "$(wc -l <"$WORK/err.log")" -eq 11 ] && [ "$(warned "$CONFIG" 777)" = 1 ] \
+  && [ "$(warned "$TOOLS" 777)" = 1 ] && [ "$(warned "$TOOLS/npm/lib/node_modules" 775)" = 1 ] \
+  && ok "each of the 11 writable judged dirs is named once with the mode it had" \
+  || no "warnings" "$(cat "$WORK/err.log")"
+! grep -q -e 'interpreters' -e 'kiro-cli-versions' "$WORK/err.log" \
+  && ok "no warning names a directory left alone" \
+  || no "spurious warning" "$(cat "$WORK/err.log")"
 
 [ "$(stat -c %a "$CONFIG")" = 755 ] && [ "$(stat -c %a "$TOOLS")" = 755 ] \
   && ok "the config and tools dirs lose group and other write" \
@@ -104,18 +117,54 @@ tighten_engine_roots "$C6" "$C6/tools" 2>"$WORK/err.log"
   || no "symlinked config" "its target became $(stat -c %a "$O6")"
 
 # An empty tools path would otherwise turn "$tools/bin" into /bin. The stub records argv
-# instead of touching the host's root directories.
+# and the directory it ran in instead of touching the host's root directories.
 C4="$WORK/c4"
 mkdir -p "$C4" || exit 1
+chmod 0775 "$C4" || exit 1
 : >"$WORK/chmod.log"
-# shellcheck disable=SC2329 # called by the loaded tighten_engine_roots
-chmod() { printf '%s\n' "$*" >>"$WORK/chmod.log"; }
+# shellcheck disable=SC2329 # called by the loaded tighten_dir
+chmod() { printf '%s %s\n' "$(pwd -P)" "$*" >>"$WORK/chmod.log"; }
 rc=0
 tighten_engine_roots "$C4" "" 2>"$WORK/err.log" || rc=$?
 unset -f chmod
-[ "$rc" -eq 0 ] && [ "$(cat "$WORK/chmod.log")" = "go-w -- $C4" ] \
+[ "$rc" -eq 0 ] && [ "$(cat "$WORK/chmod.log")" = "$(realpath "$C4") go-w ." ] \
   && ok "an empty tools path touches only the config dir" \
   || no "empty tools path" "rc=$rc, chmod calls: $(tr '\n' '|' <"$WORK/chmod.log")"
+
+# The config dir becomes a symlink to an outside tree right before chmod runs.
+C7="$WORK/c7"
+O7="$WORK/outside-swap"
+mkdir -p "$C7" "$O7" || exit 1
+chmod 0775 "$C7" "$O7" || exit 1
+# shellcheck disable=SC2329 # called by the loaded tighten_dir
+chmod() {
+  if [ ! -L "$C7" ]; then
+    mv -- "$C7" "$C7.moved" && ln -s -- "$O7" "$C7" || return 1
+  fi
+  command chmod "$@"
+}
+tighten_engine_roots "$C7" "$C7/tools" 2>"$WORK/err.log"
+unset -f chmod
+[ -L "$C7" ] && [ "$(stat -c %a "$O7")" = 775 ] && [ "$(stat -c %a "$C7.moved")" = 755 ] \
+  && ok "a swap after the place check cannot redirect chmod; the checked directory is tightened" \
+  || no "swap race" "swapped $([ -L "$C7" ] && echo yes || echo no), outside $(stat -c %a "$O7"), checked dir $(stat -c %a "$C7.moved" 2>&1)"
+
+C8="$WORK/c8"
+mkdir -p "$C8" || exit 1
+chmod 0775 "$C8" || exit 1
+# shellcheck disable=SC2329 # called by the loaded tighten_dir
+chmod() { return 1; }
+rc=0
+tighten_engine_roots "$C8" "$C8/tools" 2>"$WORK/err.log" || rc=$?
+unset -f chmod
+[ "$rc" -eq 0 ] && grep -qx "level=warn msg=\"could not remove group and other write; the tools engine will refuse this folder\" dir=\"$C8\" component=entrypoint" "$WORK/err.log" \
+  && ok "a failed chmod is warned about and the boot goes on" \
+  || no "chmod failure" "rc=$rc, $(cat "$WORK/err.log")"
+
+tighten_engine_roots "$CONFIG" "$TOOLS" >"$WORK/out.log" 2>"$WORK/err.log"
+[ ! -s "$WORK/out.log" ] && [ ! -s "$WORK/err.log" ] \
+  && ok "a second pass over tightened dirs is silent" \
+  || no "second pass" "$(cat "$WORK/out.log" "$WORK/err.log")"
 
 EMPTY="$WORK/empty"
 mkdir -p "$EMPTY" || exit 1

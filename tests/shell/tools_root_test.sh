@@ -59,6 +59,8 @@ check_roots "$CWD/data|$CWD/t" KIRO_CONFIG_DIR=data/ MAROTTE_TOOLS_DIR=./t
 check_roots "$CWD/link|$CWD/link/tools" KIRO_CONFIG_DIR=link
 
 # A custom root whose host stamped every folder 0770.
+load_function own_place
+load_function tighten_dir
 load_function tighten_engine_roots
 mkdir -p "$WORK/custom/config" "$WORK/custom/tools/npm/lib" || exit 1
 chmod 0770 "$WORK/custom/config" "$WORK/custom/tools" "$WORK/custom/tools/npm" "$WORK/custom/tools/npm/lib" || exit 1
@@ -66,7 +68,7 @@ chmod 0770 "$WORK/custom/config" "$WORK/custom/tools" "$WORK/custom/tools/npm" "
   export KIRO_CONFIG_DIR="$WORK/custom/config" MAROTTE_TOOLS_DIR="$WORK/custom/tools"
   . "$ROOTS"
   tighten_engine_roots "$CONFIG_DIR" "$TOOLS"
-)
+) 2>"$WORK/tighten.log"
 modes=$(stat -c %a "$WORK/custom/config" "$WORK/custom/tools" "$WORK/custom/tools/npm" "$WORK/custom/tools/npm/lib" | tr '\n' ' ')
 [ "$modes" = "750 750 750 750 " ] \
   && ok "the configured config and tools dirs are the ones the boot tightens" \

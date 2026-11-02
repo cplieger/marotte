@@ -156,28 +156,44 @@ refuse_held_roots() {
 
 refuse_held_roots "$CONFIG_DIR" "$KIRO_HOME" "$TOOLS" || exit 1
 
-# Drops group and other write from every directory the tools engine's root-integrity
-# check judges, since one left writable boots marotte with no tools engine. The list
-# is held to toolbelt's documented one by TestEntrypointTightensEveryRootTheEngineJudges.
-# chmod follows a symlink at any depth, so a child is touched only when it resolves to
-# its own place in the tools tree; the engine names the symlink. Parents lose write
-# before a child is resolved, so a group writer cannot swap it between check and chmod.
+# Prints the physical path of the entry $1 names: its parent resolved, its own name kept,
+# so a symlink there leads somewhere else.
+own_place() {
+  local parent
+  parent=$(realpath -e -- "$(dirname -- "$1")") || return 1
+  printf '%s/%s\n' "${parent%/}" "$(basename -- "$1")"
+}
+
+# Removes group and other write from directory $1 when it lies at $2, with a warning,
+# since what another account wrote there meanwhile stays. The subshell holds the directory
+# as its cwd, so chmod acts on the inode pwd -P placed and a later swap cannot redirect it.
+tighten_dir() {
+  local dir=$1 want=$2 mode
+  (
+    if ! cd -- "$dir" 2>/dev/null || [ "$(pwd -P)" != "$want" ]; then
+      exit 0
+    fi
+    mode=$(stat -c %a .) || exit 0
+    [ $((8#$mode & 0022)) -ne 0 ] || exit 0
+    printf 'level=warn msg="a folder the tools engine checks let other accounts write; removing that, but anything they wrote there stays" dir="%s" mode=%s component=entrypoint\n' "$dir" "$mode" >&2
+    chmod go-w . \
+      || printf 'level=warn msg="could not remove group and other write; the tools engine will refuse this folder" dir="%s" component=entrypoint\n' "$dir" >&2
+  )
+}
+
+# Tightens every directory the tools engine's root-integrity check judges, since one left
+# writable boots marotte with no tools engine. The list is held to toolbelt's documented
+# one by TestEntrypointTightensEveryRootTheEngineJudges. A child counts only at its own
+# place under the tools dir, so a symlink at any depth is left for the engine to name.
 tighten_engine_roots() {
   local config=$1 tools=$2 real dir
-  if [ -d "$config" ] && [ ! -L "$config" ]; then
-    chmod go-w -- "$config" || true
-  fi
-  if [ ! -d "$tools" ] || [ -L "$tools" ]; then
-    return 0
-  fi
-  real=$(realpath -e -- "$tools") || return 0
-  chmod go-w -- "$real" || true
+  real=$(own_place "$config") && tighten_dir "$config" "$real"
+  real=$(own_place "$tools") || return 0
+  tighten_dir "$tools" "$real"
   for dir in "$tools/bin" "$tools/opt" \
     "$tools/npm" "$tools/npm/bin" "$tools/npm/lib" "$tools/npm/lib/node_modules" \
     "$tools/python" "$tools/python/bin" "$tools/python/tools" "$tools/python/interpreters"; do
-    if [ -d "$dir" ] && [ "$(realpath -e -- "$dir" 2>/dev/null)" = "$real/${dir#"$tools"/}" ]; then
-      chmod go-w -- "$dir" || true
-    fi
+    tighten_dir "$dir" "$real/${dir#"$tools"/}"
   done
 }
 
