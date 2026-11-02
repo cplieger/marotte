@@ -31,7 +31,7 @@ func leased(t *testing.T, h *Runs, workflowID string) {
 // firing after its test (the floor is minutes) would cancel through a nil one and crash the package.
 func boundsRuns(t *testing.T) *Runs {
 	t.Helper()
-	h := &Runs{}
+	h := &Runs{chats: newTestChatStore()}
 	t.Cleanup(func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -1019,7 +1019,7 @@ func TestObserveComplete_ForgetsStepSessionsOnlyOnATerminalStatus(t *testing.T) 
 		t.Run(tc.status, func(t *testing.T) {
 			t.Parallel()
 			rec := &recordingRunTranslator{}
-			rs := &Runs{translate: rec}
+			rs := &Runs{chats: newTestChatStore(), translate: rec}
 
 			rs.observeComplete(t.Context(), "c-1", runNotif(methodWFRunComplete, map[string]any{
 				"workflowId": "wf_1", "status": tc.status,

@@ -78,7 +78,7 @@ func TestPendingPermsTracker_EveryMutationMovesTheSharedCounter(t *testing.T) {
 
 func TestRunAsks_EveryPublishMovesTheSharedCounter(t *testing.T) {
 	v := &subject.Versions{}
-	rs := &Runs{}
+	rs := &Runs{chats: newTestChatStore()}
 	rs.asks.versions = v
 	if err := rs.leaseStore().Put(t.Context(), &runlease.Lease{WorkflowID: "wf-1", Origin: runlease.OriginManual}); err != nil {
 		t.Fatalf("Setup: lease: %v", err)
@@ -120,7 +120,7 @@ func TestPendingStores_ShareOneCounter(t *testing.T) {
 	v := &subject.Versions{}
 	tr := newPendingPermsTracker()
 	tr.versions = v
-	rs := &Runs{}
+	rs := &Runs{chats: newTestChatStore()}
 	rs.asks.versions = v
 	if err := rs.leaseStore().Put(t.Context(), &runlease.Lease{WorkflowID: "wf-1", Origin: runlease.OriginManual}); err != nil {
 		t.Fatalf("Setup: lease: %v", err)

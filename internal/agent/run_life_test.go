@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -129,26 +130,181 @@ func TestReleaseLease_EachEnd(t *testing.T) {
 	}
 }
 
-// G5-1: a terminal frame for life 1 whose release lands after a retry granted life 2 leaves life 2 alone.
-func TestReleaseLease_AnOlderLifesEndKeepsTheRetrysLife(t *testing.T) {
-	h, cs := newLifeRig(t, nil)
-	startRun(t, h, "", "wf_1", "sess_launcher")
-	life1 := h.runs.lifeOf("wf_1")
-	start, err := h.runs.beginRetryLife(t.Context(), "wf_1", &runOrigin{parent: runParent{chat: "c-launcher", session: "sess_launcher"}})
-	if err != nil {
-		t.Fatalf("beginRetryLife: %v", err)
+// lifeRaceRig is one release site's run: a run of c-launcher's, a fake engine, and next, which grants the run a
+// retry's newer life once, from inside the hook a cell arms between the site's read of the life and its release.
+type lifeRaceRig struct {
+	h     *Runtime
+	cs    *testChatStore
+	br    *fakeBridge
+	next  func()
+	life2 string
+}
+
+// hookOn makes r.next run inside the engine's answer to method.
+func (r *lifeRaceRig) hookOn(method string) {
+	r.br.onCall = func(m string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if m == method {
+			r.next()
+		}
+		return nil, nil, false
 	}
-	if got := h.runs.releaseLease(t.Context(), "wf_1", endTerminal, life1); got != runlease.ReleaseSuperseded {
-		t.Errorf("life 1's release = %v, want ReleaseSuperseded", got)
+}
+
+// Every site that ends a run's lease reads the life it ends and releases it later; a retry granting a newer life
+// in between keeps that life's lease and keep fact, and the run is not marked ended.
+func TestRunLife_AReleaseOfAnOlderLifeKeepsTheNewerLife(t *testing.T) {
+	origin := &runOrigin{parent: runParent{chat: "c-launcher", session: "sess_launcher"}}
+	cells := map[string]struct {
+		lane    marotte.ChatID
+		noStart bool
+		arm     func(t *testing.T, r *lifeRaceRig)
+		release func(t *testing.T, r *lifeRaceRig)
+	}{
+		"terminal_frame": {
+			lane: "c-launcher",
+			arm: func(_ *testing.T, r *lifeRaceRig) {
+				hook := func(id marotte.ChatID) {
+					if id == "c-launcher" {
+						r.next()
+					}
+				}
+				r.cs.onGet.Store(&hook)
+			},
+			release: func(t *testing.T, r *lifeRaceRig) {
+				r.h.runs.observeComplete(t.Context(), "c-launcher", runNotif(methodWFRunComplete, map[string]any{
+					"workflowId": "wf_1", "status": "completed",
+				}))
+			},
+		},
+		"terminal_list_row": {
+			arm: func(t *testing.T, r *lifeRaceRig) {
+				r.br.callResults[methodKiroWorkflowList] = kasRuns(t, map[string]any{"workflowId": "wf_1", "status": "completed"})
+				r.hookOn(methodKiroWorkflowList)
+			},
+			release: func(t *testing.T, r *lifeRaceRig) { r.h.runs.sweepOrphaned(t.Context()) },
+		},
+		"terminal_inspect_of_an_absent_run": {
+			arm: func(t *testing.T, r *lifeRaceRig) {
+				r.br.callResults[methodKiroWorkflowList] = kasRuns(t)
+				r.br.callResults[methodKiroWorkflowInspect] = inspectReply(t, "wf_1", "completed", "")
+				r.hookOn(methodKiroWorkflowInspect)
+			},
+			release: func(t *testing.T, r *lifeRaceRig) { r.h.runs.sweepOrphaned(t.Context()) },
+		},
+		"orphan_cancel": {
+			arm: func(t *testing.T, r *lifeRaceRig) {
+				r.br.callResults[methodKiroWorkflowList] = kasRuns(t, map[string]any{"workflowId": "wf_1", "status": marotte.RunStatusPaused})
+				r.br.callResults[methodKiroWorkflowInspect] = inspectPaused(t, "wf_1", stalePauseReason)
+				r.br.callResults[methodKiroWorkflowCancel] = json.RawMessage(`{}`)
+				r.hookOn(methodKiroWorkflowCancel)
+			},
+			release: func(t *testing.T, r *lifeRaceRig) {
+				r.h.runs.sweepOrphaned(t.Context())
+				if !slices.Contains(r.br.callLog(), methodKiroWorkflowCancel) {
+					t.Error("Setup: the sweep sent no orphan cancel")
+				}
+			},
+		},
+		"release_if_over": {
+			arm: func(t *testing.T, r *lifeRaceRig) {
+				r.br.callResults[methodKiroWorkflowInspect] = inspectReply(t, "wf_1", "aborted", "")
+				r.hookOn(methodKiroWorkflowInspect)
+			},
+			release: func(t *testing.T, r *lifeRaceRig) { r.h.runs.releaseIfOver(t.Context(), "wf_1") },
+		},
+		"user_delete": {
+			arm: func(_ *testing.T, r *lifeRaceRig) {
+				r.br.callResults[methodKiroWorkflowDelete] = json.RawMessage(`{}`)
+				r.hookOn(methodKiroWorkflowDelete)
+			},
+			release: func(t *testing.T, r *lifeRaceRig) {
+				if err := r.h.runs.deleteAs(t.Context(), "wf_1", userStop(""), notFoundTaken); err != nil {
+					t.Errorf("deleteAs = %v", err)
+				}
+			},
+		},
+		"user_delete_read_back": {
+			arm: func(_ *testing.T, r *lifeRaceRig) {
+				r.br.failAfterCall = map[string]error{methodKiroWorkflowDelete: marotte.ErrBridgeExited}
+				r.br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowInspect: {
+					Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`),
+				}}
+				r.hookOn(methodKiroWorkflowDelete)
+			},
+			release: func(t *testing.T, r *lifeRaceRig) {
+				if err := r.h.runs.deleteAs(t.Context(), "wf_1", userStop(""), notFoundTaken); err != nil {
+					t.Errorf("deleteAs read back as gone = %v, want nil", err)
+				}
+			},
+		},
+		"launch_rollback": {
+			noStart: true,
+			arm: func(_ *testing.T, r *lifeRaceRig) {
+				launchableRecipe(r.br, "wf_1")
+				r.br.onCallFails = func(m string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool, error) {
+					if m != methodKiroWorkflowInvoke {
+						return nil, nil, false, nil
+					}
+					r.next()
+					return nil, nil, false, errRecipeBusy
+				}
+			},
+			release: func(t *testing.T, r *lifeRaceRig) {
+				if _, _, err := r.h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err == nil {
+					t.Error("Setup: the launch with a failing invoke succeeded")
+				}
+			},
+		},
+		"retry_rollback": {
+			noStart: true,
+			arm:     func(*testing.T, *lifeRaceRig) {},
+			release: func(t *testing.T, r *lifeRaceRig) {
+				first, err := r.h.runs.beginRetryLife(t.Context(), "wf_1", origin)
+				if err != nil || !first.minted {
+					t.Fatalf("Setup: the first retry = %+v, %v; want a minted lease", first, err)
+				}
+				r.next()
+				r.h.runs.abandonRetry(t.Context(), "wf_1", &first, true)
+			},
+		},
 	}
-	if l, held := h.runs.lease("wf_1"); !held || l.Life != start.life.token {
-		t.Errorf("lease = %+v held %v, want life 2 (%s)", l, held, start.life.token)
-	}
-	if !holdsKey(t, cs, "c-launcher", runKey) {
-		t.Error("life 1's end released life 2's keep fact")
-	}
-	if h.runs.lives.endedThisBoot("wf_1") {
-		t.Error("life 1's end marked the retried run ended")
+	for name, tc := range cells {
+		t.Run(name, func(t *testing.T) {
+			h, cs, br := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			cs.seed(t, "c-launcher", func(c *marotte.Chat) { c.RecordSession("sess_launcher") })
+			r := &lifeRaceRig{h: h, cs: cs, br: br}
+			if br.callResults == nil {
+				br.callResults = map[string]json.RawMessage{}
+			}
+			var once sync.Once
+			r.next = func() {
+				once.Do(func() {
+					start, err := h.runs.beginRetryLife(context.Background(), "wf_1", origin)
+					if err != nil {
+						t.Errorf("Setup: the retry's new life: %v", err)
+					}
+					r.life2 = start.life.token
+				})
+			}
+			if !tc.noStart {
+				startRun(t, h, tc.lane, "wf_1", "sess_launcher")
+			}
+			tc.arm(t, r)
+			tc.release(t, r)
+			if r.life2 == "" {
+				t.Fatal("Setup: the hook never granted the newer life")
+			}
+			if l, held := h.runs.lease("wf_1"); !held || l.Life != r.life2 {
+				t.Errorf("lease = %+v held %v, want the newer life %s", l, held, r.life2)
+			}
+			if !holdsKey(t, cs, "c-launcher", runKey) {
+				t.Error("the older life's release took the newer life's keep fact")
+			}
+			if h.runs.lives.endedThisBoot("wf_1") {
+				t.Error("the older life's release marked the retried run ended")
+			}
+		})
 	}
 }
 
@@ -227,7 +383,7 @@ func TestDeleteAs_NotFoundIsTakenOnlyForTheUsersDelete(t *testing.T) {
 	}
 }
 
-// G5-2: a rewind past a run kiro-cli lost lands, and the run's lease and fact stay.
+// A rewind past a run kiro-cli lost lands, and the run's lease and fact stay.
 func TestCancelRun_NotFoundHasNothingToStop(t *testing.T) {
 	h, cs := newLifeRig(t, map[string]*marotte.RPCError{methodKiroWorkflowCancel: {
 		Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`),

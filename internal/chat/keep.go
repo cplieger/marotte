@@ -423,6 +423,36 @@ func (s *Store) releaseLocked(ctx context.Context, chatID marotte.ChatID, key st
 	return nil
 }
 
+// ReleaseIfHeldAs is Release for a releaser that read the fact outside the record lock: it removes key only while the
+// record, pending holds flushed, still carries exactly want, so a fact a newer writer took since survives. released
+// reports whether it removed the fact; a missing record answers false and nil.
+func (s *Store) ReleaseIfHeldAs(ctx context.Context, chatID marotte.ChatID, key string, want marotte.KeepFact, ev Evidence) (released bool, err error) {
+	if !ev.valid() {
+		return false, errNoEvidence
+	}
+	m := s.lock(chatID)
+	m.Lock()
+	defer m.Unlock()
+	c, err := s.loadKeepLocked(ctx, chatID)
+	if isAbsence(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	flushed := s.flushPendingLocked(chatID, c)
+	if f, had := c.Keep[key]; !had || f != want {
+		return false, nil
+	}
+	deleteKeep(c, key)
+	if err := s.writeHeader(ctx, chatID, c); err != nil {
+		return false, err
+	}
+	s.settlePending(chatID, flushed)
+	slog.Debug("keep fact released", "chat_id", chatID, "key", key, "evidence", ev.String())
+	return true, nil
+}
+
 // ReleaseAll is Release over every record holding key, for an evidence end with no lease naming the holders. One
 // fresh scan names them, and only those records are locked. A record the scan could not read keeps its fact, with a
 // WARN, until a later boot's reconcile reads the end; the error then reports it.

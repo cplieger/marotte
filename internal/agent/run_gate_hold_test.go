@@ -2843,7 +2843,7 @@ func (c *holdCell) drive(t *testing.T, s *holdStep) {
 		c.k.vanish()
 	case evDelete:
 		c.k.vanish()
-		c.h.runs.teardownDeleted(t.Context(), c.id)
+		c.h.runs.teardownDeleted(t.Context(), c.id, c.h.runs.lifeOf(c.id))
 	case evRestartClosed, evRestartOpen:
 		c.restart(t, s)
 	case evEngineEnd:

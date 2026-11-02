@@ -27,7 +27,7 @@ type keepChats interface {
 	SessionOwners(ctx context.Context) chat.OwnerScan
 	Reconciled(id marotte.ChatID) bool
 	Boot() string
-	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
+	ReleaseIfHeldAs(ctx context.Context, id marotte.ChatID, key string, want marotte.KeepFact, ev chat.Evidence) (bool, error)
 }
 
 type keepMembership interface {
@@ -134,12 +134,12 @@ type keepCandidate struct {
 	parents []string
 }
 
-// keepFact is one fact a round found on a record.
+// keepFact is one fact a round found on a record, with the value it read.
 type keepFact struct {
 	chatID marotte.ChatID
 	key    string
 	wf     string
-	since  int64
+	fact   marotte.KeepFact
 }
 
 // keepRoundState is one round's reads, shared by its steps.
@@ -434,7 +434,7 @@ func keepPreviousBootFact(d *keepStateDeps, st *keepRoundState, id marotte.ChatI
 		row, listed := st.listed[wf]
 		switch {
 		case !listed:
-			st.unlisted = append(st.unlisted, keepFact{chatID: id, key: key, wf: wf, since: f.Since})
+			st.unlisted = append(st.unlisted, keepFact{chatID: id, key: key, wf: wf, fact: f})
 		case row.Terminal:
 			r.Release(key, chat.EvidenceRunTerminal)
 			st.released[kind]++
@@ -444,7 +444,7 @@ func keepPreviousBootFact(d *keepStateDeps, st *keepRoundState, id marotte.ChatI
 			return
 		}
 		if _, owed := st.owed[keepFactRef{chatID: id, key: key}]; !owed {
-			st.stuckTabs = append(st.stuckTabs, keepFact{chatID: id, key: key, since: f.Since})
+			st.stuckTabs = append(st.stuckTabs, keepFact{chatID: id, key: key, fact: f})
 		}
 	}
 }
@@ -473,14 +473,14 @@ func keepSettleUnlisted(ctx context.Context, d *keepStateDeps, st *keepRoundStat
 	}
 	for _, f := range st.stuckTabs {
 		slog.Warn("keep fact stuck: no open tab shows it and no close recorded its release; the chat stays kept",
-			"chat_id", f.chatID, "key", f.key, "age", keepAge(f.since))
+			"chat_id", f.chatID, "key", f.key, "age", keepAge(f.fact.Since))
 	}
 }
 
 func keepSettleUnlistedFact(ctx context.Context, d *keepStateDeps, st *keepRoundState, f *keepFact, terminal bool, inspectErr error) {
 	if inspectErr != nil {
 		slog.Warn("keep fact stuck: no source shows the run ended; the chat stays kept",
-			"chat_id", f.chatID, "workflow_id", f.wf, "age", keepAge(f.since), "remedy", keepStateRemedy)
+			"chat_id", f.chatID, "workflow_id", f.wf, "age", keepAge(f.fact.Since), "remedy", keepStateRemedy)
 		st.stuckRuns++
 		return
 	}
@@ -490,11 +490,15 @@ func keepSettleUnlistedFact(ctx context.Context, d *keepStateDeps, st *keepRound
 	if _, held := d.leases.Get(f.wf); held {
 		return
 	}
-	if err := d.chats.Release(ctx, f.chatID, f.key, chat.EvidenceRunTerminal); err != nil {
+	// The inspect ran outside the record lock: a life that started since wrote its own value, which stays.
+	released, err := d.chats.ReleaseIfHeldAs(ctx, f.chatID, f.key, f.fact, chat.EvidenceRunTerminal)
+	if err != nil {
 		slog.Warn("keep fact not released; the chat is kept until it is", "chat_id", f.chatID, "key", f.key, "error", err)
 		return
 	}
-	st.released[marotte.KeepKindRun]++
+	if released {
+		st.released[marotte.KeepKindRun]++
+	}
 }
 
 func keepAge(since int64) time.Duration {

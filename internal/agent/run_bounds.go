@@ -868,7 +868,7 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 		rs.signals.runStopped(f.WorkflowID)
 	}
 	if f.WorkflowID != "" && f.Status.Terminal() {
-		// The life this frame ends, read before anything else can start a newer one.
+		// releaseLease leaves a lease whose life token changed since this read.
 		life := rs.lifeOf(f.WorkflowID)
 		// Before HandleRunComplete: the client repaints on its `run_finished` invalidation.
 		rs.closeRun(ctx, f.WorkflowID, string(f.Status))

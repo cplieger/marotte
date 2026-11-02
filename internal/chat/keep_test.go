@@ -373,6 +373,34 @@ func TestRelease_DropsAPendedHoldEvenWhenTheRecordIsUnreadable(t *testing.T) {
 	}
 }
 
+func TestReleaseIfHeldAs_RemovesOnlyTheValueItWasGiven(t *testing.T) {
+	s, _ := newTestStore(t)
+	seedChat(t, s, "c1")
+	if _, err := s.Hold(t.Context(), "c1", "run:wf_1", KeepDurable); err != nil {
+		t.Fatal(err)
+	}
+	read := readChat(t, s, "c1").Keep["run:wf_1"]
+	if _, err := s.Hold(t.Context(), "c1", "run:wf_1", KeepDurable); err != nil {
+		t.Fatal(err)
+	}
+	if released, err := s.ReleaseIfHeldAs(t.Context(), "c1", "run:wf_1", read, EvidenceRunTerminal); err != nil || released {
+		t.Errorf("ReleaseIfHeldAs of a value rewritten since = %v, %v; want kept", released, err)
+	}
+	now := readChat(t, s, "c1").Keep["run:wf_1"]
+	if now == (marotte.KeepFact{}) {
+		t.Fatal("the newer fact was removed")
+	}
+	if released, err := s.ReleaseIfHeldAs(t.Context(), "c1", "run:wf_1", now, EvidenceRunTerminal); err != nil || !released {
+		t.Errorf("ReleaseIfHeldAs of the value held = %v, %v; want released", released, err)
+	}
+	if _, ok := readChat(t, s, "c1").Keep["run:wf_1"]; ok {
+		t.Error("the fact is still held")
+	}
+	if released, err := s.ReleaseIfHeldAs(t.Context(), "gone", "run:wf_1", now, EvidenceRunTerminal); err != nil || released {
+		t.Errorf("ReleaseIfHeldAs on a missing record = %v, %v; want false, nil", released, err)
+	}
+}
+
 func TestReleaseAll_ReleasesEveryHolderTheScanReads(t *testing.T) {
 	s, _ := newTestStore(t)
 	key, _ := marotte.KeyRun("wf_1")

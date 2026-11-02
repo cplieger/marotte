@@ -32,12 +32,17 @@ type fakeKASRuns struct {
 	rows        []agent.RunRow
 	recorded    []string
 	inspected   []string
-	mu          sync.Mutex
+	// onInspect runs inside InspectRunRow before it answers: a write landing while the reconcile waits on KAS.
+	onInspect func(wf string)
+	mu        sync.Mutex
 }
 
 func (f *fakeKASRuns) RunRows(context.Context) ([]agent.RunRow, error) { return f.rows, f.rowsErr }
 
 func (f *fakeKASRuns) InspectRunRow(_ context.Context, wf string) (agent.RunRow, error) {
+	if f.onInspect != nil {
+		f.onInspect(wf)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.inspected = append(f.inspected, wf)
@@ -401,6 +406,29 @@ func TestKeepRound_ReleasesAPreviousBootsFactOnlyOnEvidence(t *testing.T) {
 	}
 	if c, _, _ := r.chats.Lookup(t.Context(), "c-leased"); c.Keep[runKey("wf_leased")].Boot != first.chats.Boot() {
 		t.Errorf("c-leased fact = %+v, want the earlier boot's fact untouched: a held lease's end releases it", c.Keep)
+	}
+}
+
+// A run's newer life writes its fact before its lease, so a terminal inspect of the previous boot's run can land
+// in between: the release takes only the value the round read, and the newer life's fact stays.
+func TestKeepRound_ATerminalInspectLeavesANewerLifesFact(t *testing.T) {
+	root := t.TempDir()
+	first := newKeepRig(t, root)
+	seedChat(t, first.chats, "c-1", "sess_1")
+	hold(t, first.chats, "c-1", runKey("wf_1"))
+	r := newKeepRig(t, root)
+	r.runs.inspect["wf_1"] = agent.RunRow{WorkflowID: "wf_1", Terminal: true}
+	r.runs.onInspect = func(string) { hold(t, r.chats, "c-1", runKey("wf_1")) }
+
+	if !r.round(t) {
+		t.Fatal("keepRound did not finish")
+	}
+	c, _, err := r.chats.Lookup(t.Context(), "c-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f, ok := c.Keep[runKey("wf_1")]; !ok || f.Boot != r.chats.Boot() {
+		t.Errorf("c-1 Keep = %v, want the newer life's fact of this boot kept", c.Keep)
 	}
 }
 

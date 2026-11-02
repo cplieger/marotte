@@ -760,6 +760,8 @@ type testChatStore struct {
 	*chat.Store
 	// ownerScan, when set, rewrites every SessionOwners answer, for a test about a scan's timing or completeness.
 	ownerScan func(ctx context.Context, scan chat.OwnerScan) chat.OwnerScan
+	// onGet, when set, runs before every Get, for a test that lands a write inside a caller's read.
+	onGet atomic.Pointer[func(id marotte.ChatID)]
 	// Gets counts Get calls, for a test about how often the store is read.
 	Gets atomic.Int64
 }
@@ -796,6 +798,9 @@ func (s *testChatStore) wire(h *Runtime) {
 
 func (s *testChatStore) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
 	s.Gets.Add(1)
+	if hook := s.onGet.Load(); hook != nil {
+		(*hook)(id)
+	}
 	return s.Store.Get(ctx, id)
 }
 

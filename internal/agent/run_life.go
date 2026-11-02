@@ -204,9 +204,6 @@ func (rs *Runs) dropLease(ctx context.Context, workflowID, life string) runlease
 // releaseRunFacts releases run:<workflowID> on the lease's holders, or on every record holding it when no lease
 // names them, and clears the unattributed mark. A failed release keeps that chat until a later boot reads the end.
 func (rs *Runs) releaseRunFacts(ctx context.Context, workflowID string, ev chat.Evidence, l *runlease.Lease) {
-	if rs.chats == nil {
-		return
-	}
 	key, ok := marotte.KeyRun(workflowID)
 	if !ok {
 		return
@@ -279,17 +276,13 @@ func (rs *Runs) startLife(ctx context.Context, chatID marotte.ChatID, f *lifecyc
 	}
 	unlock := rs.lives.lock(wf)
 	defer unlock()
-	var holders []marotte.ChatID
-	unattributed := false
-	if rs.chats != nil {
-		holders, unattributed = rs.startHolders(ctx, chatID, f.ParentSessionID)
-		for _, h := range holders {
-			rs.holdRunFact(ctx, h, key, wf)
-		}
-		if unattributed {
-			rs.chats.HoldUnattributed(wf)
-			slog.Warn(logMsgRunUnattributed, "workflow_id", wf)
-		}
+	holders, unattributed := rs.startHolders(ctx, chatID, f.ParentSessionID)
+	for _, h := range holders {
+		rs.holdRunFact(ctx, h, key, wf)
+	}
+	if unattributed {
+		rs.chats.HoldUnattributed(wf)
+		slog.Warn(logMsgRunUnattributed, "workflow_id", wf)
 	}
 	l, held := rs.lease(wf)
 	if !held {
@@ -340,9 +333,6 @@ func (rs *Runs) recordKeepChats(ctx context.Context, l *runlease.Lease, holders 
 // ReattributeRuns retries every lease marked unattributed with a fresh owner scan; one that lists the chats
 // directory holds the run's keep facts on its holders, records them and clears the mark. A purge side pass.
 func (rs *Runs) ReattributeRuns(ctx context.Context) {
-	if rs.chats == nil {
-		return
-	}
 	leases := rs.leaseStore().List()
 	for i := range leases {
 		if leases[i].Unattributed {
@@ -438,9 +428,6 @@ func (rs *Runs) beginRetryLife(ctx context.Context, workflowID string, o *runOri
 // retryHolders names a retry's holders by RunHolders over one fresh owner scan, refusing a run whose launching
 // session is in teardown, and one whose scan could not read every chat and found no holder.
 func (rs *Runs) retryHolders(ctx context.Context, workflowID string, o *runOrigin) ([]marotte.ChatID, error) {
-	if rs.chats == nil {
-		return nil, nil
-	}
 	if o.parent.session != "" && rs.chats.SessionInTeardown(o.parent.session) {
 		slog.Info("retry refused: the run's launching chat is being deleted", "workflow_id", workflowID)
 		return nil, command.StatusError(http.StatusConflict, errRetryChatPurging)

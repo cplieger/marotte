@@ -270,6 +270,7 @@ func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop, n
 	if err != nil {
 		return err
 	}
+	d.ending = rs.lifeOf(workflowID)
 	var got kasVerdict
 	rs.stopSerialized(ctx, workflowID, func(sctx context.Context) bool {
 		got, err = rs.deleteCall(sctx, workflowID, stop)
@@ -290,7 +291,7 @@ func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop, n
 		return rs.reconcileDelete(ctx, d, err)
 	case kasTook:
 	}
-	rs.teardownDeleted(ctx, workflowID)
+	rs.teardownDeleted(ctx, workflowID, d.ending)
 	d.settle()
 	return nil
 }
@@ -325,7 +326,7 @@ func (rs *Runs) reconcileDelete(ctx context.Context, d *runDeletion, cause error
 		d.settle()
 		return cause
 	case runGone:
-		rs.teardownDeleted(ctx, d.workflowID)
+		rs.teardownDeleted(ctx, d.workflowID, d.ending)
 		d.settle()
 		return nil
 	case runUnread:
@@ -369,11 +370,12 @@ func (rs *Runs) readBack(ctx context.Context, workflowID string) readBackVerdict
 	return runKept
 }
 
-// teardownDeleted drops everything marotte keeps about a run KAS deleted.
-func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string) {
+// teardownDeleted drops everything marotte keeps about a run KAS deleted; its lease and keep facts only while
+// ending is still the run's life.
+func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string, ending lifeRead) {
 	rs.deleteRunLog(ctx, workflowID)
 	rs.coord.closeBridge(ctx, runChatID(workflowID), marotte.TurnOutcomeInterrupted)
-	rs.forgetBounds(ctx, workflowID, endDeleted, rs.lifeOf(workflowID))
+	rs.forgetBounds(ctx, workflowID, endDeleted, ending)
 	rs.clearEnd(workflowID)
 	if rs.log != nil {
 		if err := rs.log.removeDir(workflowID); err != nil {

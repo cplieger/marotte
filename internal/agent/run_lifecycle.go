@@ -103,7 +103,10 @@ func (lease runLease) end() {
 
 // runDeletion is a Delete's hold on its run: closed to new leases until settle.
 type runDeletion struct {
-	life       *runLifecycle
+	life *runLifecycle
+	// ending is the run life the delete ends, read once the delete holds the run: a retry renewing the lease
+	// while KAS deletes keeps its own life.
+	ending     lifeRead
 	workflowID string
 }
 
