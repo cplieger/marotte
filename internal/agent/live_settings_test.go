@@ -431,7 +431,10 @@ func TestOpenBridge_AnUnparseableDocumentPushesNothingAndTheFixedOnePushesItsVal
 	rec := newLiveRecorder(t)
 	h, configDir := reopenFixture(t, rec.options()...)
 	rec.openWithStore(t, configDir)
-	rewriteConfigByHand(t, configDir, nonDefaultLiveValues)
+	// No debug_logs in any document: moving it restarts the engine, which then reads the timeout at its spawn rather
+	// than taking a frame on br.
+	rewriteConfigByHand(t, configDir, `{"agent_ignore_files":[".gitignore"],"terminal_command_timeout_ms":300000,`+
+		`"content_collection_enabled":true,"mcp_wait_for_ready":true,"notify_pr_status":true}`)
 	openChat(t, h, "c1")
 	br := fakeSourceOf(t, h).lane
 	before := pushesSeen(br, rec)
@@ -447,9 +450,6 @@ func TestOpenBridge_AnUnparseableDocumentPushesNothingAndTheFixedOnePushesItsVal
 	got := pushesSeen(br, rec)
 	if want := append(before.terminal, jsonOf(t, marotte.TerminalSettingsParams(45000))); !slices.Equal(got.terminal, want) {
 		t.Errorf("the open once config.json parsed sent timeout frames %v, want %v", got.terminal, want)
-	}
-	if want := append(before.debug, false); !slices.Equal(got.debug, want) {
-		t.Errorf("the open once config.json parsed set debug logs %v, want %v", got.debug, want)
 	}
 }
 
