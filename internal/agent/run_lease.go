@@ -218,12 +218,12 @@ var rewindCancelWait = 20 * time.Second
 
 const rewindCancelPoll = 50 * time.Millisecond
 
-// LiveRuns filters workflowIDs to those still leased, labelled by recipe, satisfying command.runCutter.
+// LiveRuns filters workflowIDs to those still leased, labelled by display name, satisfying command.runCutter.
 func (rs *Runs) LiveRuns(workflowIDs []string) []command.LiveRunRef {
 	var live []command.LiveRunRef
 	for _, id := range workflowIDs {
 		if l, ok := rs.lease(id); ok {
-			live = append(live, command.LiveRunRef{ID: id, Label: l.Recipe})
+			live = append(live, command.LiveRunRef{ID: id, Label: rs.leasedRunName(&l)})
 		}
 	}
 	return live

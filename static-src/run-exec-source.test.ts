@@ -744,7 +744,7 @@ describe("runToExec alert precedence", () => {
     );
     expect(failed.alert?.kind).toBe("failed");
     // It names the step, because "the run failed" sends a reader looking for which.
-    expect(failed.alert?.text).toContain("a failed: exit 1");
+    expect(failed.alert?.text).toContain("Failed at a: exit 1");
   });
 
   it("names the transient-error code behind a pause", () => {
@@ -1034,6 +1034,24 @@ describe("runToExec reads the run log's step ends", () => {
     expect(run.alert?.text).toBe("The run failed");
   });
 
+  it("names the step a failed run failed at, with its reason", () => {
+    const run = runToExec(
+      stateWith(
+        {
+          nodeId: "wf_1",
+          type: "sequence",
+          status: "failed",
+          children: [step("build", "failed", { failureReason: "exit status 2" })],
+        },
+        { status: "failed" },
+      ),
+      undefined,
+      NO_ASKS,
+      "",
+    );
+    expect(run.alert).toEqual({ kind: "failed", text: "Failed at build: exit status 2" });
+  });
+
   it("keeps KAS's own account for a step it did not grade completed", () => {
     const run = runToExec(
       tree(step("build", "failed", { failureReason: "exit 1" })),
@@ -1044,6 +1062,71 @@ describe("runToExec reads the run log's step ends", () => {
     );
     expect(run.nodes[0]?.state).toBe("fail");
     expect(run.nodes[0]?.failure).toBe("exit 1");
+  });
+
+  describe("an engine end's interruption", () => {
+    const LOST = "The connection to the agent closed before the turn finished.";
+    const build = nodePathKey(["wf_1", "build"]);
+
+    it("never fails a step KAS completed after it, and reads it resumed", () => {
+      const run = runToExec(
+        tree(step("build", "completed")),
+        undefined,
+        NO_ASKS,
+        "",
+        new Map([[build, { outcome: "interrupted", failure_reason: LOST, resumed: true }]]),
+      );
+      expect(run.nodes[0]?.state).toBe("ok");
+      expect(run.nodes[0]?.failure).toBeUndefined();
+      expect(run.nodes[0]?.interruption).toBe("Interrupted, resumed");
+    });
+
+    it("reads a step running again as resumed", () => {
+      const run = runToExec(
+        tree(step("build", "running")),
+        undefined,
+        NO_ASKS,
+        "",
+        new Map([[build, { outcome: "interrupted", failure_reason: LOST, resumed: true }]]),
+      );
+      expect(run.nodes[0]?.state).toBe("running");
+      expect(run.nodes[0]?.interruption).toBe("Interrupted, resumed");
+    });
+
+    it("reads a step nothing resumed as interrupted, with the reason, never failed", () => {
+      const run = runToExec(
+        stateWith(
+          {
+            nodeId: "wf_1",
+            type: "sequence",
+            status: "paused",
+            children: [step("build", "paused")],
+          },
+          { status: "paused" },
+        ),
+        undefined,
+        NO_ASKS,
+        "",
+        new Map([[build, { outcome: "interrupted", failure_reason: LOST }]]),
+      );
+      expect(run.nodes[0]?.state).toBe("waiting");
+      expect(run.nodes[0]?.failure).toBeUndefined();
+      expect(run.nodes[0]?.interruption).toBe(`Interrupted: ${LOST}`);
+    });
+
+    it("falls back to the outcome's sentence for an interruption with no reason", () => {
+      const run = runToExec(
+        tree(step("build", "running")),
+        undefined,
+        NO_ASKS,
+        "",
+        new Map([[build, { outcome: "interrupted" }]]),
+      );
+      expect(run.nodes[0]?.state).toBe("running");
+      expect(run.nodes[0]?.interruption).toBe(
+        "Interrupted: The turn was interrupted before the agent finished.",
+      );
+    });
   });
 
   it("leaves a completed step with no end, and an end at another path, alone", () => {

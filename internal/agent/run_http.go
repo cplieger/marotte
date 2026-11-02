@@ -67,8 +67,9 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		pending = read.in.Pending
 	}
 	plan := rr.runs.servedPlan(id, pending)
-	out, err := withRunExtras(raw, runExtras{
+	out, err := withRunExtras(raw, &runExtras{
 		asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan, readPosition: position,
+		displayName: rr.runs.runName(id),
 	})
 	if err != nil {
 		slog.Warn("workflow inspect: the reply could not carry the run's open asks, step ends, step starts and plan update",
@@ -149,6 +150,7 @@ type runExtras struct {
 	ends          map[string]marotte.RunStepEnd
 	starts        map[string]marotte.RunStepStart
 	plan          *marotte.RunPlanUpdate
+	displayName   string
 	asks          []marotte.RunAsk
 	readPosition  uint64
 	asksReachable bool
@@ -204,9 +206,9 @@ func (rs *Runs) RunReadBound(ctx context.Context, workflowID string) (uint64, er
 // withRunExtras splices marotte's top-level keys into KAS's reply, decoding to raw values so future
 // keys survive and nested values stay byte-identical: `open_asks`, `step_ends` and `step_starts`, never
 // null because an agent could not tell "none" from "unsupported", `asks_reachable`, false when
-// `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), and
-// `plan_update` when servedPlan answers one.
-func withRunExtras(raw json.RawMessage, x runExtras) (json.RawMessage, error) {
+// `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), `display_name`
+// (Runs.runName, "" when nothing names the run), and `plan_update` when servedPlan answers one.
+func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, err
@@ -243,6 +245,9 @@ func withRunExtras(raw json.RawMessage, x runExtras) (json.RawMessage, error) {
 	obj["step_ends"] = encodedEnds
 	obj["step_starts"] = encodedStarts
 	if obj["read_position"], err = json.Marshal(x.readPosition); err != nil {
+		return nil, err
+	}
+	if obj["display_name"], err = json.Marshal(x.displayName); err != nil {
 		return nil, err
 	}
 	if plan != nil {

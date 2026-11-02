@@ -410,7 +410,7 @@ func (rs *Runs) noteRunEnd(ctx context.Context, l *runlease.Lease, reason string
 	workflowID := l.WorkflowID
 	producedTs := time.Now().UnixMilli()
 	rs.coord.recordSteer(ctx, marotte.ChatID(l.ChatID), runEndNoteID(workflowID, producedTs), &marotte.EntrySteer{
-		Text:       cmp.Or(l.Recipe, "Workflow run") + " " + text,
+		Text:       cmp.Or(rs.leasedRunName(l), "Workflow run") + " " + text,
 		Origin:     marotte.SteerOriginAgent,
 		State:      marotte.SteerStateRead,
 		Severity:   "warning",
@@ -816,20 +816,26 @@ func (rs *Runs) parentChat(chatID marotte.ChatID, workflowID string) marotte.Cha
 	return chatID
 }
 
-// frameLabel names the run a lifecycle frame is about, as its tab does.
+// frameLabel names the run a lifecycle frame is about. run_complete's top-level name is empty,
+// so a frame naming nothing falls back to runName.
 func (rs *Runs) frameLabel(f *lifecycleFrame) string {
 	return cmp.Or(marotte.RunDisplayName(f.FinalState.RunLabel, f.FinalState.WorkflowName),
-		marotte.RunDisplayName("", f.WorkflowName), marotte.RunDisplayName("", rs.tabLabel(f.WorkflowID)))
+		marotte.RunDisplayName("", f.WorkflowName), rs.runName(f.WorkflowID))
 }
 
-// tabLabel is the name a run's tab shows: the label the launch sent KAS, else its recipe.
-// run_complete's top-level name is empty, so a terminal run is named from its lease.
-func (rs *Runs) tabLabel(workflowID string) string {
-	l, ok := rs.lease(workflowID)
-	if !ok {
-		return ""
+// runName is a run's display name (marotte.RunDisplayName), "" when nothing names it yet.
+func (rs *Runs) runName(workflowID string) string {
+	if l, ok := rs.lease(workflowID); ok {
+		return rs.leasedRunName(&l)
 	}
-	return cmp.Or(launchOrigin{origin: l.Origin}.runLabel(l.Recipe), l.Recipe)
+	return rs.translate.RunName(workflowID)
+}
+
+// leasedRunName is the display name of the run l leases: the translator's, else the label its
+// launch sent KAS, else its recipe's own name.
+func (rs *Runs) leasedRunName(l *runlease.Lease) string {
+	return cmp.Or(rs.translate.RunName(l.WorkflowID),
+		marotte.RunDisplayName(launchOrigin{origin: l.Origin}.runLabel(l.Recipe), l.Recipe))
 }
 
 // A node pause is a step waiting inside a running run.

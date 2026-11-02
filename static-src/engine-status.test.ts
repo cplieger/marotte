@@ -3,7 +3,7 @@ import type * as ApiClient from "./api-client.js";
 import type * as BannerStack from "./banner-stack.js";
 import type * as Confirm from "./confirm.js";
 import type * as SettingsActions from "./actions/settings.js";
-import type { EngineStatus } from "./wire/types.gen.js";
+import type { EngineBusy, EngineStatus } from "./wire/types.gen.js";
 
 vi.mock("./banner-stack.js", async (importOriginal) => ({
   ...(await importOriginal<typeof BannerStack>()),
@@ -341,7 +341,7 @@ describe("restart confirmation", () => {
         runs: [{ workflow_id: "wf_1", name: "W" }],
       }),
     ).toBe(
-      "Restarting stops the reply in 2 chats: A, B, and pauses 1 workflow: W, which resumes by itself.",
+      "Restarting stops the reply in 2 chats: A and B, and pauses 1 workflow run: W, which resumes by itself.",
     );
     expect(
       restartConfirmText({
@@ -351,12 +351,38 @@ describe("restart confirmation", () => {
           { workflow_id: "wf_2", name: "X" },
         ],
       }),
-    ).toBe("Restarting pauses 2 workflows: wf_1, X, which resume by themselves.");
+      "a run the server cannot name yet is never named by its id",
+    ).toBe("Restarting pauses 2 workflow runs: X and a workflow, which resume by themselves.");
     expect(restartConfirmText({ turns: [{ chat_id: "c-1", name: "" }], runs: [] })).toBe(
       "Restarting stops the reply in 1 chat: Untitled chat.",
     );
     expect(restartConfirmText({ turns: [], runs: [] })).toBe(
       "Restart the agent engine? Nothing is running, so nothing is interrupted.",
+    );
+  });
+
+  it("groups and counts many runs, naming each run's chat, and shows the named ones first", () => {
+    const run = (n: number, name: string, chat?: string): EngineBusy["runs"][number] => ({
+      workflow_id: `wf_${String(n)}`,
+      name,
+      ...(chat === undefined ? {} : { chat_name: chat }),
+    });
+    const runs = [
+      ...Array.from({ length: 12 }, (_, i) => run(i, "", "marotte")),
+      run(12, "Fix the run bar", "Findings cleanup"),
+      run(13, "Review", "animap"),
+      run(14, "Review", "animap"),
+      run(15, "Docs"),
+    ];
+    expect(restartConfirmText({ turns: [], runs })).toBe(
+      "Restarting pauses 16 workflow runs: Fix the run bar (Findings cleanup), Review (animap) ×2, Docs, and 12 more, which resume by themselves.",
+    );
+  });
+
+  it("counts the chats past the first few", () => {
+    const turns = ["A", "B", "C", "D", "E"].map((name) => ({ chat_id: `c-${name}`, name }));
+    expect(restartConfirmText({ turns, runs: [] })).toBe(
+      "Restarting stops the reply in 5 chats: A, B, C, and 2 more.",
     );
   });
 

@@ -67,14 +67,16 @@ export interface RunNode {
   startGen?: number;
 }
 
-/** A run's whole state. `runLabel` is the name a launcher gave this execution and `workflowName`
- *  the recipe's; `stopInitiator`/`stopReason` are KAS's attribution of a requested stop or pause
+/** A run's whole state. `runLabel` is the name a launcher gave this execution, `workflowName` the
+ *  recipe's, and `displayName` the server's name for the run (`display_name`), the one a surface
+ *  shows; `stopInitiator`/`stopReason` are KAS's attribution of a requested stop or pause
  *  (a person's, an orchestrator's or marotte's sign-in pause) and are unset when the run failed,
  *  which is what separates a requested stop from "it failed" in the card's alert. */
 export interface RunState {
   workflowId: string;
   workflowName?: string;
   runLabel?: string;
+  displayName?: string;
   status?: ClassifiedRunStatus;
   inputs?: Record<string, string>;
   artifacts?: Record<string, string>;
@@ -207,7 +209,7 @@ interface RawRunNode extends Omit<RunNode, "status" | "children"> {
   children?: RawRunNode[];
 }
 
-interface RawRunState extends Omit<RunState, "status" | "root"> {
+interface RawRunState extends Omit<RunState, "status" | "root" | "displayName"> {
   status?: string;
   root?: RawRunNode;
 }
@@ -220,6 +222,8 @@ interface RawRunInspect extends Omit<RunInspect, "state"> {
   /** marotte's own key beside KAS's reply: when each node's current attempt began in the run's log. */
   step_starts?: Record<string, RunStepStart>;
   read_position?: unknown;
+  /** marotte's own key beside KAS's reply: the run's display name, "" when nothing names it. */
+  display_name?: unknown;
 }
 
 /** The reply's read position, 0 for none or a value that is not a non-negative safe integer. */
@@ -783,6 +787,9 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
         state.planUpdate = planUpdate;
       }
       state.readPosition = readPositionOf(d.read_position);
+      if (typeof d.display_name === "string" && d.display_name !== "") {
+        state.displayName = d.display_name;
+      }
       if (state.root !== undefined) {
         stampStarts(workflowID, state.root);
       }
@@ -931,13 +938,10 @@ export function forgetRun(workflowID: string): void {
   logObserver?.forget(workflowID);
 }
 
-/** What this run is CALLED, or `""` when nothing has been fetched for it yet: the launcher's
- *  label for this execution first, the recipe's name second. UNTRACKED, like `runPlan`. */
+/** What this run is CALLED: the server's display name from the read, else the lifecycle frame's,
+ *  else `""`. UNTRACKED, like `runPlan`. */
 export function runLabelOf(workflowID: string): string {
-  const state = peekRunState(workflowID);
-  const label = state?.runLabel ?? "";
-  const fetched = label === "" ? (state?.workflowName ?? "") : label;
-  return fetched !== "" ? fetched : (frameLabels.get(workflowID) ?? "");
+  return peekRunState(workflowID)?.displayName ?? frameLabels.get(workflowID) ?? "";
 }
 
 // What may be done to a run: `GET /api/runs/{id}/controls`.

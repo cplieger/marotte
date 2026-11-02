@@ -45,6 +45,9 @@ export interface ExecNode {
   facts?: ExecFact[];
   /** Why this node ended badly, never blank: the source's reason trimmed, or its outcome's default sentence. */
   failure?: string;
+  /** What an engine end did to the step's newest turn: "Interrupted, resumed", or "Interrupted: <reason>" while
+   *  nothing has resumed it. Never a failure. */
+  interruption?: string;
   /** What the node produced, as markdown. */
   output?: string;
   /** The card's result text: the capture verbatim, or a decoded watch's last output line (its

@@ -61,10 +61,13 @@ type EngineBusyTurn struct {
 	Name   string `json:"name"`
 }
 
-// EngineBusyRun is a workflow run a restart would pause and resume.
+// EngineBusyRun is a workflow run a restart would pause and resume. Name is its display name
+// (RunDisplayName), "" when nothing names it yet; ChatName is its launching chat's, "" for a
+// parentless run.
 type EngineBusyRun struct {
 	WorkflowID string `json:"workflow_id"`
 	Name       string `json:"name"`
+	ChatName   string `json:"chat_name,omitempty"`
 }
 
 // EngineExit is the engine's last end: its cause and when.

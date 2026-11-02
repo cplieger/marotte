@@ -983,6 +983,8 @@ type noopRunTranslator struct{}
 func (noopRunTranslator) HandleRunStart(context.Context, marotte.ChatID, *marotte.RPCResponse)    {}
 func (noopRunTranslator) HandleRunComplete(context.Context, marotte.ChatID, *marotte.RPCResponse) {}
 func (noopRunTranslator) RecordInspect(context.Context, json.RawMessage)                          {}
+func (noopRunTranslator) RunName(string) string                                                   { return "" }
+
 func (noopRunTranslator) HandleWorkflowMessage(context.Context, marotte.ChatID, *marotte.RPCResponse) {
 }
 

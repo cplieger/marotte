@@ -730,6 +730,7 @@ const arbModel = fc.letrec<{
     {
       workflow_id: fc.string(),
       name: fc.string(),
+      chat_name: fc.string(),
     },
     { requiredKeys: ["workflow_id", "name"] },
   ),
@@ -2144,6 +2145,7 @@ const arbModel = fc.letrec<{
       outcome: arbTurnOutcome,
       failure_reason: fc.string(),
       failure_kind: arbFailureKind,
+      resumed: fc.boolean(),
     },
     { requiredKeys: ["outcome"] },
   ),

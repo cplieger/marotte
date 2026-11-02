@@ -37,9 +37,8 @@ let recipes: Recipe[] = [];
 let filterText = "";
 
 /** Live (non-terminal) run per RECIPE; the single-run rule makes the recipe a sufficient key.
- *  Keyed on `workflow_name`, never `name` — `name` is the DISPLAY label (`runLabel ??
- *  workflowName` upstream), so a labelled run filed itself under a key no recipe row looks up
- *  and its row offered Run over a live run. */
+ *  Keyed on `workflow_name`, never `name`: `name` is the DISPLAY label, so a labelled run would
+ *  file itself under a key no recipe row looks up and its row would offer Run over a live run. */
 let liveRuns = new Map<string, WorkflowRun>();
 
 let container: HTMLElement | null = null;
@@ -289,9 +288,7 @@ async function refreshRuns(): Promise<void> {
   }
   const next = new Map<string, WorkflowRun>();
   for (const run of d.runs) {
-    // An older server sends no workflow_name; fall back to the display name so the row keeps its
-    // pre-2.21.1 behaviour rather than losing every key.
-    const recipe = run.workflow_name ?? run.name;
+    const recipe = run.workflow_name ?? "";
     const status = classifyRunStatus(run.status);
     if (recipe !== "" && (status === undefined || !runStatusTerminal(status))) {
       next.set(recipe, run);

@@ -315,6 +315,7 @@ func TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat(t *testing.T) {
 	h.runs.observeStart(t.Context(), "", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_manual", "workflowName": "nightly",
 	}))
+	awaitCalls(t, br, methodKiroWorkflowInspect, 2, "each run start asks for its run's name")
 	calls := len(br.callLog())
 
 	out := getLiveRuns(t, h.runRoutes)
