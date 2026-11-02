@@ -285,7 +285,13 @@ import { stepTranscriptVersion } from "./run-step-transcript.js";
 // The REAL invalidation (the run-store mock overrides only its launching-chat memory), so a case
 // can drive a second fetch of the SAME run: that is how a step settling under the reader's cursor
 // reaches the page in production.
-import { appendRunEntry, invalidateRun, invalidateRunControls, openRunTurn } from "./run-store.js";
+import {
+  appendRunEntry,
+  forgetRun,
+  invalidateRun,
+  invalidateRunControls,
+  openRunTurn,
+} from "./run-store.js";
 // The REAL router: a zero-import leaf, so no mock, and taking the node from the PARSER rather than
 // a literal is what makes the fragment case below cover the
 import { parseRoute } from "./route-path.js";
@@ -310,10 +316,7 @@ async function paint(
     /** Answer the affordance fetch with nothing, which is what a failed fetch and the moment
      *  before the first one resolves both look like to the store. */
     noControls?: boolean;
-    /** Defaults to `wf_1`; a case that needs a run this client holds NOTHING for names its own,
-     *  because the store's caches live for the module's lifetime and there is no reset that a
-     *  subscribed view survives (forgetting a run drops the very signal the view's effect is
-     *  watching). */
+    /** Defaults to `wf_1`, which `beforeEach` forgets. */
     id?: string;
     /** Whether the run was launched MANUALLY. */
     parentless?: boolean;
@@ -478,6 +481,9 @@ beforeEach(() => {
   vi.mocked(apiGetTyped).mockImplementation((_path, decode) =>
     Promise.resolve(m.controls.current === undefined ? null : decode(m.controls.current)),
   );
+  // `showRun` paints the shown run's cached state at once, so a case must not inherit the last
+  // case's `wf_1`.
+  forgetRun("wf_1");
 });
 
 describe("run view controls", () => {
@@ -2277,6 +2283,9 @@ describe("run view step reads", () => {
   it("reads a step still in flight once when the page holds none of it", async () => {
     for (const [i, status] of ["running", "paused"].entries()) {
       m.requested.length = 0;
+      // A fresh tab per status: the mocked request has no no-refetch gate, so a cached `live0`
+      // painted on the second show would be asked for again.
+      forgetRun("wf_1");
       await paint(openRunView, "running", { root: oneNamedStep(`live${String(i)}`, status) });
       expect(m.requested).toEqual([`wf_1:live${String(i)}`]);
     }
@@ -2772,9 +2781,6 @@ describe("the page's scroll position", () => {
   /** Activate a run tab the way the factory does, and wait for its page. */
   async function activate(id: string): Promise<void> {
     showRun(id);
-    // Stands in for `rerenderDocks`, which the dock mock replaces: in production that bump is what
-    // re-runs the one view effect for the newly shown run.
-    stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
     refreshRun(id);
     await vi.waitFor(() => {
       expect(document.querySelector(`.ev-row[data-path*="${id}-step-0"]`)).not.toBeNull();
