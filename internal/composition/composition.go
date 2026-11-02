@@ -368,8 +368,9 @@ func (a *App) Run() error {
 	return err
 }
 
-// Shutdown stops background services in reverse order. Every member is treated as optional: a
-// panic on a service never started would abort the teardown of the rest.
+// Shutdown stops background services, mostly in reverse order; a comment marks each step whose
+// position is load-bearing. Every member is treated as optional: a panic on a service never
+// started would abort the teardown of the rest.
 func (a *App) Shutdown() {
 	callIfSet(a.stopPRPoller)
 	callIfSet(a.stopForgeKeeper)
@@ -391,8 +392,9 @@ func (a *App) Shutdown() {
 	a.shutdownHub()
 	// After the runtime's teardown, which may still call the vault: a renewal's save lands before exit.
 	callIfSet(a.waitSignIn)
-	// Last: the boot regeneration may sit in the engine's probes, which no ctx bounds, so a stop
-	// timeout must not cut the two waits above. A job event after the hub's teardown is dropped.
+	// Last: the boot regeneration may wait in Inventory, which takes no ctx (each probe keeps
+	// toolbelt's own 10s timeout), so the wait can outlast a stop and must not hold back the two
+	// above. A job event after the hub's teardown is dropped.
 	callIfSet(a.stopToolsSteering)
 	if a.tools != nil {
 		a.tools.Close()

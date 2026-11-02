@@ -82,8 +82,8 @@ func TestApp_ShutdownStopsToolsSteeringBeforeClosingTheEngine(t *testing.T) {
 }
 
 // TestApp_ShutdownStopsTheToolsEngineAfterTheRuntimeAndSignIn drives App.Shutdown: the boot
-// regeneration may wait out the engine's probes, which no ctx bounds, so the runtime teardown and
-// the sign-in vault's save come first, and a job event the engine still broadcasts is dropped.
+// regeneration may wait in Inventory, which takes no ctx, so the runtime teardown and the sign-in
+// vault's save come first, and a job event the engine still broadcasts is dropped.
 func TestApp_ShutdownStopsTheToolsEngineAfterTheRuntimeAndSignIn(t *testing.T) {
 	logs := &lockedBuffer{}
 	capture.SwapDefault(t, slog.New(slog.NewTextHandler(logs, nil)))
