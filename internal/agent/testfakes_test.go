@@ -601,6 +601,31 @@ func (b *fakeBridge) setCallRPCErr(method string, err *marotte.RPCError) {
 	b.callRPCErrs[method] = err
 }
 
+// setFailAfterCall makes method fail with err once the engine has taken it, under the mutex.
+func (b *fakeBridge) setFailAfterCall(method string, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.failAfterCall == nil {
+		b.failAfterCall = map[string]error{}
+	}
+	b.failAfterCall[method] = err
+}
+
+// setOnCall and setOnCallFails install a call hook under the mutex, for a bridge whose background readers already call.
+func (b *fakeBridge) setOnCall(hook func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.onCall = hook
+}
+
+func (b *fakeBridge) setOnCallFails(
+	hook func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool, error),
+) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.onCallFails = hook
+}
+
 // setStartGate parks every later Start until the returned channel closes.
 func (b *fakeBridge) setStartGate(gate chan struct{}) {
 	b.mu.Lock()

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -18,13 +19,11 @@ func retryRig(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	cs.seed(t, "c-launcher", func(c *marotte.Chat) { c.RecordSession("sess_launcher") })
-	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_1", "name": "r", "workflowName": "r", "status": "failed", "parentSessionId": "sess_launcher",
-		}),
-		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "failed", ""),
-		methodKiroWorkflowRetry:   retryReply(t, "wf_1", "running"),
-	}
+	br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{
+		"workflowId": "wf_1", "name": "r", "workflowName": "r", "status": "failed", "parentSessionId": "sess_launcher",
+	}))
+	br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "failed", ""))
+	br.setCallResult(methodKiroWorkflowRetry, retryReply(t, "wf_1", "running"))
 	startRun(t, h, "c-launcher", "wf_1", "sess_launcher")
 	return h, cs, br
 }
@@ -38,14 +37,13 @@ func retryNow(t *testing.T, h *Runtime) error {
 
 // onMethod runs f inside the engine's answer to method, once.
 func onMethod(br *fakeBridge, method string, f func()) {
-	done := false
-	br.onCall = func(m string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
-		if m == method && !done {
-			done = true
-			f()
+	var once sync.Once
+	br.setOnCall(func(m string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if m == method {
+			once.Do(f)
 		}
 		return nil, nil, false
-	}
+	})
 }
 
 func staleFailedFrame(t *testing.T, h *Runtime) {
@@ -142,7 +140,7 @@ func TestRunLife_TerminalEvidenceEndsOnlyAStartedLife(t *testing.T) {
 		},
 		"a_refused_retry_leaves_its_life_endable": {
 			act: func(t *testing.T, h *Runtime, br *fakeBridge) {
-				br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowRetry: {Code: -32603, Message: "run is not failed"}}
+				br.setCallRPCErr(methodKiroWorkflowRetry, &marotte.RPCError{Code: -32603, Message: "run is not failed"})
 				if err := retryNow(t, h); err == nil {
 					t.Fatal("Setup: the refused retry succeeded")
 				}
@@ -151,7 +149,7 @@ func TestRunLife_TerminalEvidenceEndsOnlyAStartedLife(t *testing.T) {
 		},
 		"a_retry_whose_answer_timed_out_keeps_waiting_for_its_start": {
 			act: func(t *testing.T, h *Runtime, br *fakeBridge) {
-				br.failAfterCall = map[string]error{methodKiroWorkflowRetry: context.DeadlineExceeded}
+				br.setFailAfterCall(methodKiroWorkflowRetry, context.DeadlineExceeded)
 				if err := retryNow(t, h); err == nil {
 					t.Fatal("Setup: the timed-out retry succeeded")
 				}
@@ -209,8 +207,8 @@ func TestRunLife_ADeleteEndsWhicheverLifeIsCurrent(t *testing.T) {
 		},
 		"a_life_renewed_during_the_read_back_is_ended": {
 			arm: func(t *testing.T, h *Runtime, br *fakeBridge, after *func()) {
-				br.failAfterCall = map[string]error{methodKiroWorkflowDelete: marotte.ErrBridgeExited}
-				br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowInspect: workflowNotFoundErr()}
+				br.setFailAfterCall(methodKiroWorkflowDelete, marotte.ErrBridgeExited)
+				br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 				var start retryStart
 				onMethod(br, methodKiroWorkflowDelete, func() {
 					var err error
@@ -225,7 +223,7 @@ func TestRunLife_ADeleteEndsWhicheverLifeIsCurrent(t *testing.T) {
 	for name, tc := range cells {
 		t.Run(name, func(t *testing.T) {
 			h, cs, br := retryRig(t)
-			br.callResults[methodKiroWorkflowDelete] = json.RawMessage(`{}`)
+			br.setCallResult(methodKiroWorkflowDelete, json.RawMessage(`{}`))
 			after := func() {}
 			tc.arm(t, h, br, &after)
 			if err := h.runs.deleteAs(t.Context(), "wf_1", userStop(""), notFoundTaken); err != nil {
@@ -252,8 +250,8 @@ func TestRetry_SettlingAMissedScheduledEndLeavesTheRetrysLife(t *testing.T) {
 	const id = "wf_1"
 	launchScheduled(t, h, br, &entry, id)
 	scheduled, _ := h.runs.lease(id)
-	br.callResults[methodKiroWorkflowRetry] = retryReply(t, id, "running")
-	br.callResults[methodKiroWorkflowList] = kasRuns(t, map[string]any{"workflowId": id, "name": "nightly", "status": "failed"})
+	br.setCallResult(methodKiroWorkflowRetry, retryReply(t, id, "running"))
+	br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{"workflowId": id, "name": "nightly", "status": "failed"}))
 
 	if _, err := h.runs.retry(t.Context(), id, h.runs.affordance(t.Context(), id, "failed")); err != nil {
 		t.Fatalf("Retry: %v", err)

@@ -142,12 +142,12 @@ type lifeRaceRig struct {
 
 // hookOn makes r.next run inside the engine's answer to method.
 func (r *lifeRaceRig) hookOn(method string) {
-	r.br.onCall = func(m string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+	r.br.setOnCall(func(m string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if m == method {
 			r.next()
 		}
 		return nil, nil, false
-	}
+	})
 }
 
 // Every site that ends one life of a run's lease reads it and releases it later; a retry granting a newer life in
@@ -179,24 +179,24 @@ func TestRunLife_AReleaseOfAnOlderLifeKeepsTheNewerLife(t *testing.T) {
 		},
 		"terminal_list_row": {
 			arm: func(t *testing.T, r *lifeRaceRig) {
-				r.br.callResults[methodKiroWorkflowList] = kasRuns(t, map[string]any{"workflowId": "wf_1", "status": "completed"})
+				r.br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{"workflowId": "wf_1", "status": "completed"}))
 				r.hookOn(methodKiroWorkflowList)
 			},
 			release: func(t *testing.T, r *lifeRaceRig) { r.h.runs.sweepOrphaned(t.Context()) },
 		},
 		"terminal_inspect_of_an_absent_run": {
 			arm: func(t *testing.T, r *lifeRaceRig) {
-				r.br.callResults[methodKiroWorkflowList] = kasRuns(t)
-				r.br.callResults[methodKiroWorkflowInspect] = inspectReply(t, "wf_1", "completed", "")
+				r.br.setCallResult(methodKiroWorkflowList, kasRuns(t))
+				r.br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "completed", ""))
 				r.hookOn(methodKiroWorkflowInspect)
 			},
 			release: func(t *testing.T, r *lifeRaceRig) { r.h.runs.sweepOrphaned(t.Context()) },
 		},
 		"orphan_cancel": {
 			arm: func(t *testing.T, r *lifeRaceRig) {
-				r.br.callResults[methodKiroWorkflowList] = kasRuns(t, map[string]any{"workflowId": "wf_1", "status": marotte.RunStatusPaused})
-				r.br.callResults[methodKiroWorkflowInspect] = inspectPaused(t, "wf_1", stalePauseReason)
-				r.br.callResults[methodKiroWorkflowCancel] = json.RawMessage(`{}`)
+				r.br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{"workflowId": "wf_1", "status": marotte.RunStatusPaused}))
+				r.br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", stalePauseReason))
+				r.br.setCallResult(methodKiroWorkflowCancel, json.RawMessage(`{}`))
 				r.hookOn(methodKiroWorkflowCancel)
 			},
 			release: func(t *testing.T, r *lifeRaceRig) {
@@ -208,7 +208,7 @@ func TestRunLife_AReleaseOfAnOlderLifeKeepsTheNewerLife(t *testing.T) {
 		},
 		"release_if_over": {
 			arm: func(t *testing.T, r *lifeRaceRig) {
-				r.br.callResults[methodKiroWorkflowInspect] = inspectReply(t, "wf_1", "aborted", "")
+				r.br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "aborted", ""))
 				r.hookOn(methodKiroWorkflowInspect)
 			},
 			release: func(t *testing.T, r *lifeRaceRig) { r.h.runs.releaseIfOver(t.Context(), "wf_1") },
@@ -217,13 +217,13 @@ func TestRunLife_AReleaseOfAnOlderLifeKeepsTheNewerLife(t *testing.T) {
 			noStart: true,
 			arm: func(_ *testing.T, r *lifeRaceRig) {
 				launchableRecipe(r.br, "wf_1")
-				r.br.onCallFails = func(m string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool, error) {
+				r.br.setOnCallFails(func(m string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool, error) {
 					if m != methodKiroWorkflowInvoke {
 						return nil, nil, false, nil
 					}
 					r.next()
 					return nil, nil, false, errors.New("invoke refused")
-				}
+				})
 			},
 			release: func(t *testing.T, r *lifeRaceRig) {
 				if _, _, err := r.h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err == nil {
@@ -250,9 +250,6 @@ func TestRunLife_AReleaseOfAnOlderLifeKeepsTheNewerLife(t *testing.T) {
 			t.Cleanup(func() { shutdownHub(t, h) })
 			cs.seed(t, "c-launcher", func(c *marotte.Chat) { c.RecordSession("sess_launcher") })
 			r := &lifeRaceRig{h: h, cs: cs, br: br}
-			if br.callResults == nil {
-				br.callResults = map[string]json.RawMessage{}
-			}
 			var once sync.Once
 			r.next = func() {
 				once.Do(func() {

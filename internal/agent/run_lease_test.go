@@ -19,6 +19,8 @@ import (
 
 // launchableRecipe is the reply set a launch needs: one recipe, an empty run list, ids for new and invoke.
 func launchableRecipe(br *fakeBridge, workflowID string) {
+	br.mu.Lock()
+	defer br.mu.Unlock()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(
 			`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`,
