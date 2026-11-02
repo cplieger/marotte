@@ -80,6 +80,8 @@ type TabSet interface {
 	Subtree(id string) []marotte.TabSubject
 	Owed() []tabs.OwedRelease
 	Settle(ctx context.Context, entryIDs []string) error
+	// Unread names the arrangement the store could not read at boot; empty when it read it.
+	Unread() string
 }
 
 // membershipChats is the chat store as the coordinator uses it: the handlers' chatStore plus the
@@ -919,16 +921,34 @@ func (m *Membership) wakeRetention() {
 	}
 }
 
-// AdmitRunPurge answers whether the run purge may delete workflowID, launched from parentSessionID:
-// false while a tab shows the run, while any chat's chain holds that session, or when the chats
-// cannot all be read. On true both are marked purging until the caller runs done, so OpenTab and
-// CreateChatAndOpen refuse them. Checks and marks share mu, so nothing commits between the decision
-// and the delete.
-func (m *Membership) AdmitRunPurge(ctx context.Context, workflowID, parentSessionID string) (done func(), ok bool) {
+// ArrangementUnreadError is AdmitRunPurge's refusal while the tab arrangement could not be read at boot:
+// whether a tab shows the run is then unknown. Aside is the tab store's Unread.
+type ArrangementUnreadError struct{ Aside string }
+
+func (e *ArrangementUnreadError) Error() string {
+	return "the tab arrangement could not be read (" + e.Aside + "), so no run purge is admitted"
+}
+
+// errRunPurgeKept is AdmitRunPurge's refusal of a run something still keeps.
+var errRunPurgeKept = errors.New("the run is shown, claimed or in a chat's teardown")
+
+// AdmitRunPurge answers whether the run purge may delete workflowID, launched from parentSessionID,
+// refusing with *ArrangementUnreadError while the tab arrangement is unread, and otherwise while a tab
+// shows the run, while any chat's chain holds that session or it is in a chat's retention teardown,
+// or when the chats cannot all be read. On nil both are marked purging until the caller runs done,
+// so OpenTab and CreateChatAndOpen refuse them. Checks and marks share mu, so nothing commits
+// between the decision and the delete.
+func (m *Membership) AdmitRunPurge(ctx context.Context, workflowID, parentSessionID string) (done func(), refused error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.runTabOpen(workflowID) || !m.sessionUnclaimed(ctx, parentSessionID) {
-		return nil, false
+	if m.tabs != nil {
+		if aside := m.tabs.Unread(); aside != "" {
+			return nil, &ArrangementUnreadError{Aside: aside}
+		}
+	}
+	if m.runTabOpen(workflowID) || !m.sessionUnclaimed(ctx, parentSessionID) ||
+		(parentSessionID != "" && m.chats.SessionInTeardown(parentSessionID)) {
+		return nil, errRunPurgeKept
 	}
 	m.purgingRuns[workflowID] = struct{}{}
 	if parentSessionID != "" {
@@ -945,7 +965,7 @@ func (m *Membership) AdmitRunPurge(ctx context.Context, workflowID, parentSessio
 		if m.purgingSessions[parentSessionID] <= 0 {
 			delete(m.purgingSessions, parentSessionID)
 		}
-	}, true
+	}, nil
 }
 
 // requireRecord is a fresh create's precondition: 404 when the record is gone, 503 when it could

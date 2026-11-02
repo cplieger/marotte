@@ -804,6 +804,9 @@ func openTabStore(dir string) *tabs.Store {
 	if err != nil {
 		slog.Warn("tab arrangement starting empty", "error", err)
 	}
+	if aside := st.Unread(); aside != "" {
+		slog.Warn("tab arrangement unread: the run purge deletes no run until the aside is removed or restored", "aside", aside)
+	}
 	return st
 }
 
@@ -834,7 +837,8 @@ func heldUnlessDraining(hold func() (release func(), ok bool),
 }
 
 // pruneTabs is the tab set's one-shot LOAD-TIME crash recovery for a crash between the
-// coordinator's two writes. Only CHAT tabs are checked against the chat store; a missing file is no
+// coordinator's two writes. Only CHAT tabs are checked against the chat store, and only a record
+// that is plainly absent drops its tab: an unreadable one may still exist. A missing file is no
 // reason to close an editor, run or singleton tab. It then opens each remaining chat tab's log, so
 // its read position is projected from the first request.
 func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
@@ -845,8 +849,12 @@ func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
 		if t.Kind != marotte.TabKindChat {
 			return true
 		}
-		_, ok := chats.Get(ctx, marotte.ChatID(t.Ref))
-		return ok
+		_, found, err := chats.Lookup(ctx, marotte.ChatID(t.Ref))
+		if err != nil {
+			slog.Warn("tab prune kept a chat tab whose record could not be read", "chat_id", logsafe.Field(t.Ref), "error", err)
+			return true
+		}
+		return found
 	})
 	switch {
 	case err != nil:
@@ -873,6 +881,9 @@ func openRunLeaseStore(dir string) *runlease.Store {
 	st, err := runlease.NewStore(dir)
 	if err != nil {
 		slog.Warn("run leases starting empty; runs from before this boot will not be swept", "error", err)
+	}
+	if aside := st.Unread(); aside != "" {
+		slog.Warn("run leases unread: no chat from before this boot is purged until the aside is removed or restored", "aside", aside)
 	}
 	return st
 }

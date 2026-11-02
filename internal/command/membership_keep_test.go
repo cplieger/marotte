@@ -574,3 +574,41 @@ func TestCreateChatAndOpen_RefusesASessionThatLaunchedALiveOrShownRun(t *testing
 		})
 	}
 }
+
+func TestAdmitRunPurge_RefusesWhileTheArrangementIsUnread(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tabs.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("Setup: write tabs.json: %v", err)
+	}
+	st, _ := tabs.NewStore(dir)
+	if st.Unread() == "" {
+		t.Fatal("Setup: the tab store read a garbage arrangement")
+	}
+	store, err := chat.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("Setup: chat.NewStore: %v", err)
+	}
+	mem := newMembership(&membershipDeps{Chats: store, Tabs: st, Bus: &tabBus{}, Sessions: store, Runs: &fakeRunOwner{}})
+
+	_, refused := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_host")
+	var unread *ArrangementUnreadError
+	if !errors.As(refused, &unread) || unread.Aside != st.Unread() {
+		t.Errorf("AdmitRunPurge with the arrangement unread = %v, want *ArrangementUnreadError naming %s", refused, st.Unread())
+	}
+}
+
+func TestAdmitRunPurge_RefusesARunWhoseLauncherIsInTeardown(t *testing.T) {
+	f := newKeepFixture(t)
+	f.seedTabless(t, "c-launcher", "sess_launcher")
+	f.purgeParked(t, "c-launcher")
+
+	if _, refused := f.mem.AdmitRunPurge(t.Context(), "wf_1", "sess_launcher"); refused == nil {
+		t.Error("AdmitRunPurge admitted a run whose launching chat's teardown still runs, want a refusal")
+	}
+	f.store.EndTeardown("c-launcher", []string{"sess_launcher"})
+	done, refused := f.mem.AdmitRunPurge(t.Context(), "wf_1", "sess_launcher")
+	if refused != nil {
+		t.Fatalf("AdmitRunPurge after the teardown ended = %v, want it admitted", refused)
+	}
+	done()
+}

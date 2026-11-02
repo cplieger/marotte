@@ -24,6 +24,8 @@ var (
 	errRunNoLauncher = errors.New("the run names no launching session")
 	// errRunRecordsUnread: the runs recorded under runs/ were not attributed yet this boot.
 	errRunRecordsUnread = errors.New("the recorded runs were not read yet")
+	// errRunLeasesUnread: the lease file could not be read at boot, so the leases it held are unknown.
+	errRunLeasesUnread = errors.New("the run lease file could not be read")
 )
 
 // runHolders names the chats a run's keep fact goes to: every chat whose session chain holds one of the run's
@@ -104,8 +106,11 @@ func (rs *Runs) ownersOf(ctx context.Context, parents []string, l *runlease.Leas
 // RunsParentedBy answers the runs sessionID launched (command.runOwner): live holds every lease naming it as parent,
 // every listed non-terminal row with that parent and every run recorded under runs/ that the keep-state reconcile
 // attributed to it; all adds the listed terminal rows. Until the reconcile has read runs/ this boot, and on an
-// unreadable inventory, it errors.
+// unreadable inventory or lease file, it errors.
 func (rs *Runs) RunsParentedBy(ctx context.Context, sessionID string) (live, all []string, err error) {
+	if aside := rs.leaseStore().Unread(); aside != "" {
+		return nil, nil, fmt.Errorf("%w: %s", errRunLeasesUnread, aside)
+	}
 	recorded, read := rs.recorded.parentedBy(sessionID)
 	if !read {
 		return nil, nil, errRunRecordsUnread

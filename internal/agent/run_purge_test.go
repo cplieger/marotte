@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -46,12 +48,21 @@ func newEngineRig(
 	scan func(context.Context, chat.OwnerScan) chat.OwnerScan,
 ) (*Runtime, *deleteRig) {
 	t.Helper()
-	rig := &deleteRig{results: map[string]json.RawMessage{methodKiroWorkflowDelete: json.RawMessage(`{}`)}, rpcErrs: rpcErrs}
-	maps.Copy(rig.results, results)
 	st, err := tabs.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("Setup: tabs.NewStore: %v", err)
 	}
+	return newEngineRigOver(t, results, rpcErrs, scan, st)
+}
+
+// newEngineRigOver is newEngineRig over the tab store st.
+func newEngineRigOver(
+	t *testing.T, results map[string]json.RawMessage, rpcErrs map[string]*marotte.RPCError,
+	scan func(context.Context, chat.OwnerScan) chat.OwnerScan, st *tabs.Store,
+) (*Runtime, *deleteRig) {
+	t.Helper()
+	rig := &deleteRig{results: map[string]json.RawMessage{methodKiroWorkflowDelete: json.RawMessage(`{}`)}, rpcErrs: rpcErrs}
+	maps.Copy(rig.results, results)
 	cs := newTestChatStore()
 	cs.ownerScan = scan
 	h := newRuntimeOn(t.Context(), testReaperWorkDir, rig.engine(), cs, WithTabs(st))
@@ -289,5 +300,45 @@ func TestObserveComplete_OnlyATerminalRunWakesRetention(t *testing.T) {
 				t.Errorf("observeComplete(%q) woke retention %d times, want %d", tc.status, wakes, tc.wakes)
 			}
 		})
+	}
+}
+
+func TestPurgeParentlessRuns_ARunNamingNoValidLaunchingSessionIsKept(t *testing.T) {
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	runs := purgeRuns(t,
+		purgeRow("wf_no_parent", "completed", "", old),
+		purgeRow("wf_bad_parent", "completed", "../sess", old),
+		purgeRow("wf_parentless", "completed", "sess_host", old),
+	)
+	h, rig := newPurgeRig(t, runs, nil, true)
+
+	res := h.PurgeParentlessRuns(t.Context(), 0)
+
+	if got := deletedRunIDs(rig); !slices.Equal(got, []string{"wf_parentless"}) {
+		t.Errorf("PurgeParentlessRuns deleted %v, want only [wf_parentless]: a run whose launcher is unknown is not parentless", got)
+	}
+	if res.Kept != 2 {
+		t.Errorf("PurgeParentlessRuns kept %d, want 2", res.Kept)
+	}
+}
+
+func TestPurgeParentlessRuns_DeletesNothingWhileTheArrangementIsUnread(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tabs.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("Setup: write tabs.json: %v", err)
+	}
+	st, _ := tabs.NewStore(dir)
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	h, rig := newEngineRigOver(t, map[string]json.RawMessage{
+		methodKiroWorkflowList: purgeRuns(t, purgeRow("wf_parentless", "completed", "sess_host", old)),
+	}, nil, nil, st)
+
+	res := h.PurgeParentlessRuns(t.Context(), 0)
+
+	if got := deletedRunIDs(rig); len(got) != 0 {
+		t.Errorf("PurgeParentlessRuns deleted %v with the tab arrangement unread, want nothing: no tab is known not to show it", got)
+	}
+	if res.Kept != 1 {
+		t.Errorf("PurgeParentlessRuns kept %d, want 1", res.Kept)
 	}
 }

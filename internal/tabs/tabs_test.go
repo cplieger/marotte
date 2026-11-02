@@ -336,9 +336,10 @@ func TestStore_PersistFailureLeavesNothingBehind(t *testing.T) {
 		t.Fatalf("Setup: write %s: %v", dir, err)
 	}
 
+	// A path under a file holds no arrangement, so nothing is unread and writes resume once it is a directory.
 	s, err := NewStore(dir)
-	if err == nil {
-		t.Error("NewStore(dir that is a file) = nil error, want a diagnostic")
+	if err != nil || s.Unread() != "" {
+		t.Errorf("NewStore(dir that is a file) = %v with Unread() %q, want a first run", err, s.Unread())
 	}
 
 	_, _, version, err := s.Open(t.Context(), chatSpec("c-a"))

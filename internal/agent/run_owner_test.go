@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -202,5 +204,19 @@ func TestRunsParentedBy_NamesLiveAndShownCandidates(t *testing.T) {
 	}
 	if want := []string{"wf_done", "wf_leased", "wf_recorded", "wf_running"}; !slices.Equal(all, want) {
 		t.Errorf("all = %v, want %v", all, want)
+	}
+}
+
+func TestRunsParentedBy_AnUnreadLeaseFileIsAnError(t *testing.T) {
+	h, _ := newPurgeRigScan(t, purgeRuns(t), nil)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, runlease.FileName), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("Setup: write runs.json: %v", err)
+	}
+	h.runs.leases, _ = runlease.NewStore(dir)
+	h.runs.recorded.set(map[string]string{})
+
+	if _, _, err := h.runs.RunsParentedBy(t.Context(), "sess_s"); !errors.Is(err, errRunLeasesUnread) {
+		t.Errorf("RunsParentedBy with the lease file unread = %v, want errRunLeasesUnread", err)
 	}
 }

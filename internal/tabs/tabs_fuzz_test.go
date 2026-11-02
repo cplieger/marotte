@@ -1,6 +1,7 @@
 package tabs
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -32,9 +33,19 @@ func FuzzNewStore(f *testing.F) {
 		}
 
 		// The error is a warning; a store always comes back.
-		s, _ := NewStore(dir)
+		s, loadErr := NewStore(dir)
 		if s == nil {
 			t.Fatal("NewStore returned a nil store; the caller has nothing to run on")
+		}
+		// A document it could not read is kept aside byte for byte and named by Unread; one it read is not.
+		if loadErr == nil && s.Unread() != "" {
+			t.Fatalf("NewStore read the document yet Unread() = %q", s.Unread())
+		}
+		if loadErr != nil {
+			kept, err := os.ReadFile(s.Unread())
+			if err != nil || !bytes.Equal(kept, doc) {
+				t.Fatalf("NewStore could not read the document (%v) and the aside %q does not hold it: %v", loadErr, s.Unread(), err)
+			}
 		}
 
 		tabs, _ := s.List()

@@ -7,6 +7,7 @@ package runlease
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"time"
@@ -130,6 +131,18 @@ func validKeepChats(workflowID string, chats []string) []string {
 		slog.Warn("run lease: dropped a keep holder that names no chat", "workflow_id", workflowID, "holder", logsafe.Field(id))
 		return true
 	})
+}
+
+// check refuses a lease the store cannot act on, on Put and on load alike, so the store never writes
+// a lease its own load would refuse.
+func (l *Lease) check() error {
+	if !ids.ValidChatID(l.WorkflowID) {
+		return fmt.Errorf("lease workflow id %q is not a valid workflow id", logsafe.Field(l.WorkflowID))
+	}
+	if !l.Origin.valid() {
+		return fmt.Errorf("lease origin %q is not one of scheduled/manual/agent", l.Origin)
+	}
+	return nil
 }
 
 // Bounded reports whether marotte believes the run to be EXECUTING under a deadline it set.

@@ -214,29 +214,38 @@ func TestStore_RefusesALeaseItCouldNotActOn(t *testing.T) {
 	}
 }
 
-// TestStore_DropsUnusableLeasesOnLoad is the read-side rule: a hand-edited or partial record
-// must not become a sweep candidate.
-func TestStore_DropsUnusableLeasesOnLoad(t *testing.T) {
+// TestStore_ALeaseItCannotActOnMovesTheFileAside: a hand-edited or partial record is not a sweep candidate, and
+// dropping it alone would let the next write erase its keep holders, so the whole file goes aside.
+func TestStore_ALeaseItCannotActOnMovesTheFileAside(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	body := `{"version":1,"leases":[` +
-		`{"workflow_id":"wf_good","origin":"manual","recipe":"publish"},` +
-		`{"workflow_id":"","origin":"manual"},` +
-		`{"workflow_id":"wf_unknown_origin","origin":"tui"}` +
-		`]}`
-	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(body), 0o600); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	s, err := NewStore(dir)
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	held := s.List()
-	if len(held) != 1 || held[0].WorkflowID != "wf_good" {
-		t.Fatalf("held %+v, want only wf_good", held)
-	}
-	if _, ok := s.Get("wf_unknown_origin"); ok {
-		t.Error("a lease with an unknown origin loaded, and the sweep can now reach it")
+	for name, bad := range map[string]string{
+		"an empty workflow id":  `{"workflow_id":"","origin":"manual"}`,
+		"a path as workflow id": `{"workflow_id":"../x","origin":"manual"}`,
+		"an unknown origin":     `{"workflow_id":"wf_unknown_origin","origin":"tui"}`,
+		"no origin":             `{"workflow_id":"wf_no_origin"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			body := `{"version":1,"leases":[{"workflow_id":"wf_good","origin":"manual","keep_chats":["c-a"]},` + bad + `]}`
+			if err := os.WriteFile(filepath.Join(dir, FileName), []byte(body), 0o600); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			s, err := NewStore(dir)
+			if err == nil {
+				t.Error("NewStore over a lease it cannot act on = nil error, want a diagnostic")
+			}
+			if got := s.List(); len(got) != 0 {
+				t.Errorf("held %+v, want none from a file moved aside", got)
+			}
+			if s.Unread() == "" {
+				t.Fatal("Unread() is empty, want the aside")
+			}
+			kept, err := os.ReadFile(s.Unread())
+			if err != nil || string(kept) != body {
+				t.Errorf("the aside holds %q (%v), want the file unchanged", kept, err)
+			}
+		})
 	}
 }
 

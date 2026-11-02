@@ -29,6 +29,7 @@ import (
 	"syscall"
 
 	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/marotte/internal/asidefile"
 	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -97,41 +98,55 @@ type file struct {
 // The caller must hand version N's event to its hub before starting the mutation that makes
 // N+1 (the membership coordinator's lock does); a slip costs a client re-list, not a tab.
 type Store struct {
-	// path is immutable after construction, so it is read without a lock.
+	// path, unread and refuseWrites are immutable after construction, so they are read without a lock.
 	path    string
+	unread  string
 	tabs    []marotte.TabSubject // guarded by stateMu
 	owed    []OwedRelease        // guarded by stateMu
 	version uint64               // guarded by stateMu
 	stateMu sync.Mutex           // guards tabs and version; held briefly, NEVER across I/O
 	writeMu sync.Mutex           // serialises mutate-and-persist; the I/O lock
+	// refuseWrites makes persist fail with errWriteRefused (see keepAside and findAside).
+	refuseWrites bool
 }
 
-// NewStore opens (or starts) the store at <dir>/tabs.json. It ALWAYS returns a usable store;
-// the error is diagnostic (warn and continue, invariant 6). The mode verdict comes BEFORE any
-// read: filemode.EnforceFile refuses a planted symlink and a FIFO that would block boot.
+// NewStore opens (or starts) the store at <dir>/tabs.json. It ALWAYS returns a store; the error is
+// diagnostic (warn and continue, invariant 6). An arrangement it cannot read is moved aside and the
+// store starts empty with Unread set; see Unread for when writes are then refused.
 func NewStore(dir string) (*Store, error) {
 	s := &Store{path: filepath.Join(dir, fileName)}
+	if err := s.load(); err != nil {
+		err = s.keepAside(err)
+		return s, err
+	}
+	err := s.markEarlierAside(dir)
+	return s, err
+}
+
+// load reads tabs.json; a missing file is a first run, not an error. The mode verdict comes BEFORE
+// any read: filemode.EnforceFile refuses a planted symlink and a FIFO that would block boot.
+func (s *Store) load() error {
 	if _, err := filemode.EnforceFile(s.path, fileMode); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return s, nil // first run
+		if asidefile.Absent(err) {
+			return nil
 		}
 		// No read on this branch: the name is exactly what could not be verified.
-		return s, fmt.Errorf("verify mode of %s (starting empty): %w", s.path, err)
+		return fmt.Errorf("verify mode of %s: %w", s.path, err)
 	}
 	data, err := readBounded(s.path)
 	if err != nil {
-		return s, fmt.Errorf("read %s (starting empty): %w", s.path, err)
+		return fmt.Errorf("read %s: %w", s.path, err)
 	}
 	var doc file
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return s, fmt.Errorf("parse %s (starting empty): %w", s.path, err)
+		return fmt.Errorf("parse %s: %w", s.path, err)
 	}
 	s.tabs = sanitize(doc.Tabs)
 	s.owed = sanitizeOwed(doc.Owed)
 	// The version is adopted as read even when sanitize dropped an entry: no event is emitted at
 	// load, and the list endpoint returns the sanitized set with its version.
 	s.version = doc.Version
-	return s, nil
+	return nil
 }
 
 // readBounded reads with EnforceFile's refusals and the size bound applied to the READ.
@@ -213,6 +228,9 @@ func sanitizeLaunch(t *marotte.TabSubject) {
 // persist writes the whole document atomically. atomicfile verifies the 0600 on the temp
 // descriptor; do not add an EnforceFile by NAME after it.
 func (s *Store) persist(ctx context.Context, st *state) error {
+	if s.refuseWrites {
+		return fmt.Errorf("%w: %s", errWriteRefused, s.unread)
+	}
 	data, err := json.MarshalIndent(file{Tabs: st.tabs, Owed: st.owed, Version: st.version}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode tabs: %w", err)
