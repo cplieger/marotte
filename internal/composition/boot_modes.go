@@ -25,7 +25,6 @@ var engineRootDirs = []string{
 	"python", "python/bin", "python/tools", "python/interpreters",
 }
 
-// homeDirs are the folders below HOME that lose group and other write.
 var homeDirs = []string{
 	".local", ".local/share", ".local/share/kiro-cli", ".cache", ".cache/go-build",
 	".docker", ".docker/cli-plugins",

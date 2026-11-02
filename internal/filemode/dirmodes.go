@@ -108,7 +108,6 @@ type walkStep struct {
 	fd  int
 }
 
-// kernelName is a listed folder and the path the kernel gives it.
 type kernelName struct{ name, kernel string }
 
 type dirWalk struct {

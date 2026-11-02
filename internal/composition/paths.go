@@ -25,7 +25,6 @@ const imageToolsDir = "/config/tools"
 
 var errToolsDirUnusable = errors.New("the tools engine is off because its folder cannot be used")
 
-// bootPaths is the one derivation of the config and tools dirs, for the server and the entrypoint.
 type bootPaths struct {
 	configDir string
 	tools     toolsRoot
