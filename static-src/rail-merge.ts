@@ -3,7 +3,7 @@
 // window cannot see the turns paged out. Pure and DOM-free, like `turns.ts` beside it.
 
 import { OUTCOME_LABEL } from "./turn-severity.js";
-import { wakeText } from "./turn-wake.js";
+import { wakeLine } from "./turn-wake.js";
 import { turnLedger } from "./turns.js";
 import type { Turn, TurnOutcome } from "./turns.js";
 
@@ -153,8 +153,7 @@ function residentRow(t: Turn): TurnSummary {
     outcome: t.outcome,
     agent_initiated: t.trigger === undefined,
   };
-  // A wake's line as `internal/chat/entrylog.go` railLineLocked joins it: label, then message.
-  const line = firstLine(t.trigger?.text ?? wakeText(t).replace("\n", ": "));
+  const line = firstLine(t.trigger?.text ?? wakeRailText(t));
   if (line !== "") {
     out.first_line = line;
   }
@@ -163,6 +162,18 @@ function residentRow(t: Turn): TurnSummary {
     out.elapsed_ms = elapsedMs;
   }
   return out;
+}
+
+/** A wake's rail text as `internal/chat/entrylog.go` railLineOf joins it: label, then message. */
+function wakeRailText(t: Turn): string {
+  if (t.wake === undefined) {
+    return "";
+  }
+  const { label, body, fallback } = wakeLine(t.wake);
+  if (fallback) {
+    return "";
+  }
+  return body === "" ? label : `${label}: ${body}`;
 }
 
 /** A request's first line, whitespace-collapsed and rune-safe. A TWIN of `internal/chat/entrylog.go`
