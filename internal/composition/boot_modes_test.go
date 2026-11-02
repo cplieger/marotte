@@ -21,10 +21,9 @@ const (
 )
 
 type modeLog struct {
-	Msg     string `json:"msg"`
-	Dir     string `json:"dir"`
-	Mode    string `json:"mode"`
-	NewMode string `json:"new_mode"`
+	Msg  string `json:"msg"`
+	Dir  string `json:"dir"`
+	Mode string `json:"mode"`
 }
 
 func modeLogs(t *testing.T, logs *bytes.Buffer) []modeLog {
