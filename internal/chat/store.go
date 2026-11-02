@@ -321,16 +321,15 @@ func (s *Store) newRecord(chatID marotte.ChatID) (*marotte.Chat, error) {
 	return &marotte.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}, nil
 }
 
-// admitSave refuses a save that binds a session whose chat is being torn down, and starts a created record with no
-// keep facts, so a fork's Init copying its parent cannot carry the parent's.
+// admitSave refuses a save that binds a session whose chat is being torn down, and starts a created record's keep
+// state (startKeep).
 func (s *Store) admitSave(chatID marotte.ChatID, c *marotte.Chat, exists bool, priorChain []string) error {
 	if s.bindsTornDownSession(priorChain, c.SessionChain()) {
 		slog.Info("chat: refused to bind a session whose chat is being torn down", "chat_id", logsafe.Field(string(chatID)))
 		return ErrInTeardown
 	}
 	if !exists {
-		c.Keep = nil
-		c.KeepFilledAt = time.Now().UnixMilli()
+		startKeep(c)
 	}
 	return nil
 }

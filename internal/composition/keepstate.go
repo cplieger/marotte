@@ -2,6 +2,7 @@ package composition
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"maps"
 	"slices"
@@ -146,7 +147,7 @@ type keepFact struct {
 type keepRoundState struct {
 	listed     map[string]agent.RunRow
 	candidates map[string]*keepCandidate
-	// tabHolders is each open run tab's holders after step 4, whether or not its write persisted.
+	// tabHolders is each open run tab's resolved holders, whether or not its write persisted.
 	tabHolders map[string][]string
 	owed       map[keepFactRef]struct{}
 	added      map[string]int
@@ -164,7 +165,7 @@ type keepFactRef struct {
 	key    string
 }
 
-// keepRound runs steps 2 to 6 once and answers when to retry, or done when no record is left unreconciled.
+// keepRound runs one round and answers when to retry, or done when no record is left unreconciled.
 func keepRound(ctx context.Context, d *keepStateDeps, retry, listRetry time.Duration) (time.Duration, bool) {
 	if aside := d.leases.Unread(); aside != "" {
 		slog.Warn("keep-state reconcile: the run lease file was unreadable; purging nothing", "aside", aside)
@@ -204,8 +205,8 @@ func keepRound(ctx context.Context, d *keepStateDeps, retry, listRetry time.Dura
 	return retry, left == 0
 }
 
-// keepReconcileRead runs step 5 over every record the scan read and answers how many records stay unreconciled,
-// the scan's skipped ones included: those are reached only by a later round's scan.
+// keepReconcileRead reconciles every record the scan read and answers how many stay unreconciled, the scan's
+// skipped ones included: those are reached only by a later round's scan. A record deleted since the scan is done.
 func keepReconcileRead(ctx context.Context, d *keepStateDeps, st *keepRoundState, scan *chat.OwnerScan) (left int) {
 	for _, id := range slices.Sorted(maps.Keys(scan.Read)) {
 		if d.chats.Reconciled(id) {
@@ -214,6 +215,9 @@ func keepReconcileRead(ctx context.Context, d *keepStateDeps, st *keepRoundState
 		err := d.membership.ReconcileTabs(ctx, id, func(r *chat.KeepRecord, open []marotte.TabSubject) {
 			keepReconcileRecord(d, st, id, r, open)
 		})
+		if errors.Is(err, chat.ErrChatNotFound) || errors.Is(err, chat.ErrTombstoned) {
+			continue
+		}
 		if err != nil {
 			slog.Warn("keep-state reconcile: a chat could not be reconciled", "chat_id", id, "error", err)
 			left++
@@ -227,7 +231,7 @@ func keepReconcileRead(ctx context.Context, d *keepStateDeps, st *keepRoundState
 	return left
 }
 
-// keepCandidates collects step 3's candidates: every non-terminal listed run, every held lease, and every run
+// keepCandidates collects the round's live-run candidates: every non-terminal listed run, every held lease, and every run
 // record under runs/ that KAS keeps state for and inspects as non-terminal. False stalls the round.
 func keepCandidates(ctx context.Context, d *keepStateDeps, st *keepRoundState) bool {
 	for wf, r := range st.listed {
@@ -308,7 +312,7 @@ func keepAttribute(ctx context.Context, d *keepStateDeps, st *keepRoundState, ow
 	return true
 }
 
-// keepResolveRunTabs is step 4's run-tab half: each open run tab's holders, grown and never shrunk. A run tab whose
+// keepResolveRunTabs resolves each open run tab's holders, grown and never shrunk. A run tab whose
 // owner cannot be read, or an unresolved one whose run cannot be found, stalls the round.
 func keepResolveRunTabs(ctx context.Context, d *keepStateDeps, st *keepRoundState) bool {
 	open, _ := d.tabs.List()
@@ -361,7 +365,7 @@ func keepOwed(st *keepRoundState, e *tabs.OwedRelease) {
 	}
 }
 
-// keepReconcileRecord is step 5 over one record, under Membership's mu and the record lock.
+// keepReconcileRecord reconciles one record, under Membership's mu and the record lock.
 func keepReconcileRecord(d *keepStateDeps, st *keepRoundState, id marotte.ChatID, r *chat.KeepRecord, open []marotte.TabSubject) {
 	facts := r.Facts()
 	for _, key := range slices.Sorted(maps.Keys(facts)) {
@@ -458,7 +462,7 @@ func keepShown(open []marotte.TabSubject, kind, chatID, wf string) bool {
 	})
 }
 
-// keepSettleUnlisted is step 6's run half: one inspect per unlisted run a previous boot's fact names. A terminal reply
+// keepSettleUnlisted settles the run facts no listed row decided: one inspect per unlisted run a previous boot's fact names. A terminal reply
 // releases the fact; anything short of a status leaves it, reported as stuck.
 func keepSettleUnlisted(ctx context.Context, d *keepStateDeps, st *keepRoundState) {
 	byRun := map[string][]keepFact{}

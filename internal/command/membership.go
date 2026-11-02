@@ -189,22 +189,23 @@ type Membership struct {
 	mu sync.Mutex
 }
 
-// membershipDeps is Membership's constructor argument. Every field is required
-// except Tabs, DeleteChat, Retention and SupervisedDefault, which default to
-// the safe direction.
+// membershipDeps is Membership's constructor argument; each optional field's comment says what its nil does.
 type membershipDeps struct {
-	Chats      membershipChats
-	Tabs       TabSet
-	Bus        broadcaster
-	Teardown   chatTeardown
-	CloseChat  chatCloser
+	Chats membershipChats
+	// Tabs nil answers every tab mutation 503 and opens chats with no tab.
+	Tabs      TabSet
+	Bus       broadcaster
+	Teardown  chatTeardown
+	CloseChat chatCloser
+	// DeleteChat or Retention nil makes a tab close only close: no chat is deleted with it.
 	DeleteChat chatDeleter
 	Retention  retentionRead
 	// SupervisedDefault answers the workspace-wide Supervised default a new record is seeded from.
 	// A function so the coordinator keeps no filesystem knowledge and cannot disagree with the
 	// prompt path's reader; nil is false.
 	SupervisedDefault func(context.Context) bool
-	Runs              runOwner
+	// Runs nil refuses every new run tab and every create that claims a session's runs (503).
+	Runs runOwner
 	// Sessions answers the run purge's claim check. Nil spares every run with a
 	// parent session (the fail-toward-keeping direction).
 	Sessions sessionClaims

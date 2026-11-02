@@ -2,7 +2,8 @@ package chat
 
 // Keep facts: every reason a chat must not be purged is written onto its own chat.json under the record lock, by the
 // subsystem where it happens, and leaves only on evidence that its thing ended (Release), by the rollback of the claim
-// that wrote it (Rollback), or with the record. This file holds the only writers of marotte.Chat.Keep.
+// that wrote it (Rollback), or with the record. Every writer of marotte.Chat.Keep is here; startKeep is the one a
+// create calls.
 
 import (
 	"context"
@@ -421,6 +422,13 @@ func (s *Store) releaseLocked(ctx context.Context, chatID marotte.ChatID, key st
 		slog.Debug("keep fact released", "chat_id", chatID, "key", key, "evidence", ev.String())
 	}
 	return nil
+}
+
+// startKeep gives a created record no keep facts, so a fork's Init copying its parent cannot carry the parent's, and
+// starts its fill-in stamp.
+func startKeep(c *marotte.Chat) {
+	c.Keep = nil
+	c.KeepFilledAt = time.Now().UnixMilli()
 }
 
 // ReleaseIfHeldAs is Release for a releaser that read the fact outside the record lock: it removes key only while the

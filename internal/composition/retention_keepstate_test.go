@@ -22,7 +22,7 @@ type seamCell struct {
 func sess(id string) string { return "sess_" + id }
 
 // TestRetention_KeepState drives the composed retention wiring: every keep fact set and unset through its writer,
-// the races of the design, and the regressions of the incident and the earlier fix's last review.
+// the races between them and the purge, and the regressions the purge has had.
 func TestRetention_KeepState(t *testing.T) {
 	cells := map[string]seamCell{
 		// The incident: a chat idle past retention with its tab open, across a restart.
@@ -411,7 +411,7 @@ func TestRetention_KeepState(t *testing.T) {
 				t.Error("the chain is still in teardown after it ended")
 			}
 		}},
-		// C6-1: a run tab whose launcher cannot be read is refused, even under an open supplied parent.
+		// A run tab whose launcher cannot be read is refused, even under an open supplied parent.
 		"c6_1_launcher_unread": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			parent := b.create(t, "c-p", sess("c-p"))
@@ -424,7 +424,7 @@ func TestRetention_KeepState(t *testing.T) {
 				t.Errorf("a run tab %s was written for a run whose launcher is unknown", tab)
 			}
 		}},
-		// C1-2: an unreadable arrangement keeps a held chat and a pre-upgrade chat alike.
+		// An unreadable arrangement keeps a held chat and a pre-upgrade chat alike.
 		"tabs_unreadable": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
 			b1 := bootSeam(t, root, eng, logs, seamOpts{})
 			b1.create(t, "c-held", sess("c-held"))
@@ -439,7 +439,7 @@ func TestRetention_KeepState(t *testing.T) {
 			b.kept(t, "c-held", sess("c-held"))
 			b.kept(t, "c-old", sess("c-old"))
 		}},
-		// ORCH-6: the browser's route restore writes the arrangement after a degraded boot; the held chat stays
+		// The browser's route restore writes the arrangement after a degraded boot; the held chat stays
 		// kept, and stays kept across the next restart.
 		"orch6_first_tab_write": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
 			b1 := bootSeam(t, root, eng, logs, seamOpts{})

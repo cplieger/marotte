@@ -490,6 +490,42 @@ func TestKeepRound_AFailedReconcileWriteLeavesTheRoundUnfinished(t *testing.T) {
 	}
 }
 
+// deletingReconcile is the real coordinator with one record deleted after the round's scan read it.
+type deletingReconcile struct {
+	keepMembership
+	chats *chat.Store
+	gone  marotte.ChatID
+}
+
+func (f *deletingReconcile) ReconcileTabs(ctx context.Context, id marotte.ChatID, fn func(*chat.KeepRecord, []marotte.TabSubject)) error {
+	if id == f.gone {
+		if _, err := f.chats.Delete(ctx, id); err != nil {
+			return err
+		}
+	}
+	return f.keepMembership.ReconcileTabs(ctx, id, fn)
+}
+
+func TestKeepRound_ARecordDeletedSinceTheScanIsNotLeftUnreconciled(t *testing.T) {
+	root := t.TempDir()
+	first := newKeepRig(t, root)
+	seedChat(t, first.chats, "c-a", "sess_a")
+	seedChat(t, first.chats, "c-b", "sess_b")
+	r := newKeepRig(t, root)
+	r.deps.membership = &deletingReconcile{keepMembership: r.deps.membership, chats: r.chats, gone: "c-a"}
+	logs := captureSeamLogs(t)
+
+	if !r.round(t) {
+		t.Error("keepRound reported a record deleted since its scan as unreconciled")
+	}
+	if logs.has("a chat could not be reconciled") {
+		t.Error("the reconcile warned about a record that was deleted")
+	}
+	if !r.chats.Reconciled("c-b") {
+		t.Error("c-b was not reconciled")
+	}
+}
+
 func TestReconcileKeepState_StopsOnceEveryRecordIsReconciled(t *testing.T) {
 	root := t.TempDir()
 	first := newKeepRig(t, root)
