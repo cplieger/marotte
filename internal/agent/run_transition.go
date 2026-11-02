@@ -27,6 +27,8 @@ const (
 	byHeal
 	// byOrphanSweep cancels a run a dead process left paused.
 	byOrphanSweep
+	// byUnattended ends a scheduled run's pause that nobody resumed within its budget (watchUnattendedPause).
+	byUnattended
 )
 
 // runPhase is the state an actor expects its run in; with the actor it names the request.
@@ -52,6 +54,7 @@ var (
 	gateFind     = runWant{actor: byGate, from: phasePaused}
 	healResume   = runWant{actor: byHeal, from: phasePaused}
 	orphanCancel = runWant{actor: byOrphanSweep, from: phasePaused}
+	pauseExpiry  = runWant{actor: byUnattended, from: phasePaused}
 )
 
 // runSeen is a run's state as one inspect under its resume lock reads it.
@@ -96,6 +99,8 @@ const (
 	actFinish
 	// actKeepHold acts on the gate's own pause a finder read (keepHold).
 	actKeepHold
+	// actEndUnattended ends a scheduled run paused with nobody to resume it (endUnattended).
+	actEndUnattended
 )
 
 // runTransitions is the one table of the pause and resume verbs marotte writes of a run: a row per request, a cell
@@ -119,6 +124,7 @@ var runTransitions = map[runWant]map[runSeen]runAction{
 	gateFind:     {seenGatePaused: actKeepHold},
 	healResume:   {seenGatePaused: actHeal, seenRestartPaused: actHeal, seenInvoluntary: actHeal},
 	orphanCancel: {seenRestartPaused: actCancelOrphan},
+	pauseExpiry:  {seenRestartPaused: actEndUnattended, seenInvoluntary: actEndUnattended, seenOtherPause: actEndUnattended},
 }
 
 // The refusals a person's request gets when the table changes nothing.
@@ -211,7 +217,7 @@ func (rs *Runs) carryOut(ctx context.Context, workflowID string, req *runRequest
 	case actHoldPause:
 		return rs.holdPause(ctx, workflowID)
 	case actHeal:
-		c.outcome, c.charged = rs.heal(ctx, workflowID, req)
+		c.outcome, c.charged = rs.heal(ctx, workflowID, req, r)
 		return nil
 	case actCancelOrphan:
 		rs.disarmDeadline(ctx, workflowID)
@@ -221,6 +227,8 @@ func (rs *Runs) carryOut(ctx context.Context, workflowID string, req *runRequest
 	case actKeepHold:
 		rs.keepHold(workflowID)
 		return nil
+	case actEndUnattended:
+		return rs.endUnattended(ctx, workflowID, req, r)
 	}
 	if r.seen != seenUnreadable {
 		c.outcome = resumeSkipped
@@ -370,9 +378,10 @@ func (rs *Runs) holdPause(ctx context.Context, workflowID string) error {
 	return nil
 }
 
-// heal resumes a run under the gate's admission and the run's heal budget, holding it while the gate is closed and
-// parking it for the user once the budget is spent. It reports whether a heal stands after it.
-func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest) (resumeOutcome, bool) {
+// heal resumes a run under the gate's admission and the run's heal budget, holding it while the gate is closed and,
+// once the budget is spent, parking it for the user or ending a scheduled run, which has none. It reports whether a
+// heal stands after it.
+func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest, r *pauseRead) (resumeOutcome, bool) {
 	charged := req.charged
 	a, aErr := rs.admitRunWork(holdClosed, workflowID, req.chatID)
 	if aErr != nil {
@@ -382,14 +391,7 @@ func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest) (r
 	if !charged {
 		attempts, ok := rs.claimHeal(workflowID)
 		if !ok {
-			slog.Warn("a run keeps pausing for a cause nobody chose; leaving it paused for a resume by hand",
-				"workflow_id", workflowID, "chat_id", req.chatID, "attempts", attempts)
-			if err := rs.parkForUser(ctx, workflowID); err != nil {
-				slog.Warn("a run marotte no longer resumes still reads as resuming automatically",
-					"workflow_id", workflowID, "chat_id", req.chatID, "error", err)
-				return resumeFailed, false
-			}
-			return resumeSkipped, false
+			return rs.healSpent(ctx, workflowID, req, attempts, r), false
 		}
 		claimed = true
 	}
@@ -403,6 +405,27 @@ func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest) (r
 		return resumeFailed, charged
 	}
 	return resumeWritten, charged
+}
+
+// healSpent is heal past the run's budget: a scheduled run is ended, since nobody would resume it, and any other is
+// parked for the user.
+func (rs *Runs) healSpent(
+	ctx context.Context, workflowID string, req *runRequest, attempts int, r *pauseRead,
+) resumeOutcome {
+	if l, held := rs.lease(workflowID); held && l.Unattended {
+		if err := rs.endUnattended(ctx, workflowID, req, r); err != nil {
+			return resumeFailed
+		}
+		return resumeSkipped
+	}
+	slog.Warn("a run keeps pausing for a cause nobody chose; leaving it paused for a resume by hand",
+		"workflow_id", workflowID, "chat_id", req.chatID, "attempts", attempts)
+	if err := rs.parkForUser(ctx, workflowID); err != nil {
+		slog.Warn("a run marotte no longer resumes still reads as resuming automatically",
+			"workflow_id", workflowID, "chat_id", req.chatID, "error", err)
+		return resumeFailed
+	}
+	return resumeSkipped
 }
 
 // parkForUser stamps a paused run marotte no longer resumes as the user's to resume: KAS keeps a pause asked of a

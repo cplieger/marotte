@@ -150,9 +150,7 @@ var deleteOutcomes = []deleteOutcome{
 		name: "unknown_run_gone", after: "gone",
 		arm: func(g *deleteGate, br *fakeBridge, _ *stepScript) {
 			g.outcome = deleteAnswer(nil, engineExited)
-			br.setCallRPCErr(methodKiroWorkflowInspect, &marotte.RPCError{
-				Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`),
-			})
+			br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 		},
 	},
 }

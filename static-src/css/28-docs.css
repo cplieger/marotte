@@ -167,9 +167,10 @@
 
 /* --- Workflows tab -------------------------------------------------------- */
 
-/* Cancel is a stop: it reads as destructive, same as every other danger
-   control. */
-.recipe-run-btn.danger {
+/* Cancel is a stop and an orphaned schedule's Delete removes it: both read as
+   destructive, same as every other danger control. */
+.recipe-run-btn.danger,
+.recipe-sched-delete-btn {
   color: var(--c-red);
   border-color: color-mix(in oklch, var(--c-red) 40%, transparent);
 

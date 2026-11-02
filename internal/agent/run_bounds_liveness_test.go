@@ -4,6 +4,7 @@ package agent
 // fires only on a true stall. A step hung inside its turn meets the backstop alone (cancelExpired).
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -15,6 +16,9 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/workflow"
 )
+
+// noRetry is the retry of a stop whose cancel the test answers.
+func noRetry(context.Context) error { return nil }
 
 func stagedExpiry(t *testing.T, rs *Runs, id string, launch launchOrigin) time.Time {
 	t.Helper()
@@ -254,7 +258,7 @@ func TestFinishTermination_TellsTheLaunchingChatWhy(t *testing.T) {
 	h.runs.grantLease(t.Context(), id, "nightly", launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
 	before := time.Now().UnixMilli()
 
-	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}); err != nil {
+	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}, noRetry); err != nil {
 		t.Fatalf("finishTermination: %v", err)
 	}
 
@@ -310,7 +314,7 @@ func TestFinishTermination_NotesTheStopWhenTheTerminalFrameWinsTheRace(t *testin
 	h.bridge.mgr.insert(chatID, host)
 	h.runs.grantLease(t.Context(), id, "nightly", launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
 
-	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}); err != nil {
+	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}, noRetry); err != nil {
 		t.Fatalf("finishTermination: %v", err)
 	}
 
@@ -335,7 +339,7 @@ func TestFinishTermination_AParentlessRunLeavesNoNote(t *testing.T) {
 	h.bridge.mgr.insert(runChatID(id), host)
 	leased(t, h.runs, id)
 
-	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}); err != nil {
+	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}, noRetry); err != nil {
 		t.Fatalf("finishTermination: %v", err)
 	}
 	if got := h.runs.endReason(id); got != runEndStalled {

@@ -508,7 +508,7 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 		t.Fatalf("schedule.NewStore: %v", err)
 	}
 	entry := schedule.Entry{
-		ID: "sched-1", Source: "bundled://nightly", Enabled: true,
+		Source: "bundled://nightly", Enabled: true,
 		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
 	}
 	if pErr := st.Put(t.Context(), &entry); pErr != nil {
@@ -517,7 +517,7 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	h.runs.schedules = st
 
 	// A slot INSIDE the floor, so the armed deadline lands later than SlotAt.
-	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch("sched-1", time.Now().Add(30*time.Second)), hostSec())
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(entry.ID(), time.Now().Add(30*time.Second)), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
 	if !l.Deadline.After(l.SlotAt) {

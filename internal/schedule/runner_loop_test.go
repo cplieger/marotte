@@ -18,7 +18,6 @@ func bubbleFixture(t *testing.T, anchorOffset time.Duration) (*Store, *fakeLaunc
 		t.Fatalf("NewStore: %v", err)
 	}
 	e := Entry{
-		ID:     "s1",
 		Source: "bundled://demo",
 		// The floor interval, so the schedule's step cannot be confused with the tick cadence.
 		Spec:    Spec{Freq: FreqMinutely, Interval: minMinuteInterval},

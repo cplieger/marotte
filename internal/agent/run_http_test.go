@@ -239,10 +239,7 @@ func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
 			// KAS resolved the id and refused: the answer will not change.
 			name: "the engine answered ABOUT the run",
 			arm: func(br *fakeBridge) {
-				br.setCallRPCErr(methodKiroWorkflowInspect, &marotte.RPCError{
-					Code: -32603, Message: "Internal error",
-					Data: json.RawMessage(`{"details":"workflow not found"}`),
-				})
+				br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 			},
 			want: http.StatusNotFound,
 		},

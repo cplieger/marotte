@@ -53,6 +53,8 @@ type runAffordance struct {
 	// PauseNodeID is the repeat a maxIterations pause stopped at, "" otherwise; the
 	// extend and finish_loop verbs address it.
 	PauseNodeID string
+	// status is the gate's read of the run's status, the ending Retry records for a run whose end marotte missed.
+	status marotte.RunStatus
 	// Verbs are the offered controls, in the order a row presents them.
 	Verbs []string
 }
@@ -128,6 +130,7 @@ func (rs *Runs) affordance(ctx context.Context, workflowID, status string) *runA
 	f.asking = rs.pausedOnAsks(workflowID)
 	aff := affordanceOf(&f)
 	aff.origin = o
+	aff.status = marotte.RunStatus(status)
 	return &aff
 }
 

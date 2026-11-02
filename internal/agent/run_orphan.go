@@ -9,11 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/workflow"
@@ -79,7 +77,14 @@ func (rs *Runs) BootSweep(ctx context.Context) (reached bool) {
 	}
 	defer release()
 	rs.findHoldsAsync()
-	if !rs.sweepOrphaned(ctx) {
+	reached = rs.sweepOrphaned(ctx)
+	// After the sweep, which releases the orphans; a clock needs no answer from KAS.
+	rs.watchParkedSlots()
+	leases := rs.leaseStore().List()
+	for i := range leases {
+		rs.watchUnattendedPause(leases[i].WorkflowID)
+	}
+	if !reached {
 		return false
 	}
 	rs.askBootPass(ctx)
@@ -132,6 +137,9 @@ func (rs *Runs) releaseIfOver(ctx context.Context, workflowID string) {
 	}
 	slog.Info("releasing the lease of a run that stopped without a terminal frame",
 		"workflow_id", workflowID, "status", res.State.Status)
+	if l, held := rs.lease(workflowID); held {
+		rs.recordScheduleEnding(ctx, scheduleRun(&l), res.State.Status, res.State.StopReason)
+	}
 	rs.releaseLease(ctx, workflowID)
 }
 
@@ -146,6 +154,7 @@ func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]ma
 			if st.Terminal() {
 				slog.Info("releasing the lease of a run with terminal status",
 					"workflow_id", l.WorkflowID, "recipe", l.Recipe, "status", st)
+				rs.recordScheduleEnding(ctx, scheduleRun(l), st, "")
 				rs.releaseLease(ctx, l.WorkflowID)
 				continue
 			}
@@ -178,9 +187,18 @@ func (rs *Runs) inspectConfirmsGone(ctx context.Context, workflowID string) bool
 	return res.WorkflowID == workflowID && res.State.Status.Terminal()
 }
 
-// workflowNotFound matches KAS's unknown-workflow refusal by text: it is an untyped throw.
+// workflowNotFound reports KAS's WorkflowNotFoundError from a search that covered every session (kiro-cli 2.37.0
+// acp-server.js): KAS sets searchIncomplete when a relayed session it could not reach may still hold the run.
 func workflowNotFound(err error) bool {
-	return strings.Contains(strings.ToLower(rpcerr.Details(err)), "workflow not found")
+	e, ok := errors.AsType[*marotte.RPCError](err)
+	if !ok {
+		return false
+	}
+	var data struct {
+		ErrorType        string `json:"errorType"`
+		SearchIncomplete bool   `json:"searchIncomplete"`
+	}
+	return json.Unmarshal(e.Data, &data) == nil && data.ErrorType == "WorkflowNotFoundError" && !data.SearchIncomplete
 }
 
 // Only leaseAbsenceBudget of unbroken absence releases, and the row says the outcome is unknown.
@@ -195,7 +213,7 @@ func (rs *Runs) observeAbsentLease(ctx context.Context, l *runlease.Lease, now t
 
 	slog.Warn("run stayed absent past the lease budget; no terminal signal was ever seen",
 		"workflow_id", l.WorkflowID, "recipe", l.Recipe, "first_absent_at", l.FirstAbsentAt)
-	rs.recordScheduleOutcome(ctx, l.ScheduleID, schedule.Outcome{Status: schedule.StatusUnknown, Reason: reasonLeaseAbsent})
+	rs.recordScheduleOutcome(ctx, scheduleRun(l), schedule.Outcome{Status: schedule.StatusUnknown, Reason: reasonLeaseAbsent})
 	rs.releaseLease(ctx, l.WorkflowID)
 }
 
@@ -251,7 +269,7 @@ func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 	slog.Error(logMsgRunOrphaned, "workflow_id", l.WorkflowID, "recipe", l.Recipe,
 		"origin", string(l.Origin), "schedule_id", l.ScheduleID)
 	// The schedule's row too, or every later slot is refused as an overlap.
-	rs.recordScheduleOutcome(ctx, l.ScheduleID, schedule.Outcome{Status: schedule.StatusFailed, Reason: reasonOrphaned})
+	rs.recordScheduleOutcome(ctx, scheduleRun(l), schedule.Outcome{Status: schedule.StatusFailed, Reason: reasonOrphaned})
 	rs.releaseLease(ctx, l.WorkflowID)
 	return true
 }
@@ -377,6 +395,11 @@ func (rs *Runs) observeInspected(ctx context.Context, workflowID string) error {
 	case marotte.RunStatusRunning:
 		if !rs.bounded(workflowID) {
 			rs.armDeadline(ctx, workflowID)
+		}
+	case marotte.RunStatusPaused:
+		if rs.bounded(workflowID) {
+			rs.parkDeadline(ctx, workflowID)
+			rs.watchUnattendedPause(workflowID)
 		}
 	default:
 		if rs.bounded(workflowID) {

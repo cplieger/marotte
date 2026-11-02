@@ -20,6 +20,7 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/workflow"
 	"github.com/cplieger/webhttp/v4"
@@ -100,7 +101,7 @@ func writeInspectErr(w http.ResponseWriter, id string, err error) {
 	}
 	slog.Warn("workflow inspect failed", "workflow_id", logsafe.Field(id),
 		"error", err, "detail", rpcerr.Details(err))
-	httpreply.NotFound(w, "workflow run not found")
+	httpreply.NotFound(w, "run not found")
 }
 
 // runRead is GET /api/runs/{id}'s reads: the run's state as KAS sent it and as decoded (inErr says
@@ -401,7 +402,7 @@ func (rr *runRoutes) status(ctx context.Context, workflowID string) (string, err
 	raw, err := rr.runs.rawInspect(ctx, workflowID)
 	if err != nil {
 		// Both mean no status to gate on.
-		if errors.Is(err, workflow.ErrUnknownMethod) {
+		if errors.Is(err, workflow.ErrUnknownMethod) || workflowNotFound(err) {
 			return "", nil
 		}
 		return "", err
@@ -451,8 +452,8 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		if writeStatusErr(w, err) {
 			return
 		}
-		if errors.Is(err, errRecipeBusy) {
-			httpreply.Conflict(w, errRecipeBusy.Error())
+		if busy, ok := errors.AsType[*schedule.BusyError](err); ok {
+			httpreply.Conflict(w, busy.Error())
 			return
 		}
 		slog.Warn("run launch failed", "source", logsafe.Field(req.Source), "error", err, "detail", rpcerr.Details(err))
@@ -816,6 +817,8 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		httpreply.InternalError(w, errors.New(verb+" failed"))
 	case errors.Is(err, errRunNotListed):
 		httpreply.NotFound(w, errRunNotListed.Error())
+	case workflowNotFound(err):
+		httpreply.NotFound(w, "run not found")
 	case errors.Is(err, errLaunchSessionUnavailable):
 		// A state of the run.
 		slog.Info("run control unavailable: the run's launching session cannot be opened here",
