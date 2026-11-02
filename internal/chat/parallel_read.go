@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/parallel"
@@ -15,25 +17,32 @@ type chatEntry struct {
 	path string
 }
 
-// readHeadersParallel reads chat headers concurrently (8 workers) and returns those read. No per-chat lock: reads are
-// read-only and writes are atomic renames.
-func readHeadersParallel(
-	ctx context.Context,
-	valid []chatEntry,
-) (headersOut []marotte.ChatHeader, complete bool) {
+// scannedRow is one header a scan read, with the holder keys of its keep facts, which ChatHeader does not carry.
+type scannedRow struct {
+	id     marotte.ChatID
+	keep   []string
+	header marotte.ChatHeader
+}
+
+// readHeadersParallel reads chat headers concurrently (8 workers). skipped names every chat that exists and was not
+// read: a read failure, or a slot the fan-out never visited. No per-chat lock: reads are read-only and writes are
+// atomic renames.
+func readHeadersParallel(ctx context.Context, valid []chatEntry) (rows []scannedRow, skipped []marotte.ChatID) {
 	if len(valid) == 0 {
-		return nil, true
+		return nil, nil
 	}
 	const maxWorkers = 8
 	type result struct {
-		header marotte.ChatHeader
-		ok     bool
-		// lost: the chat exists but could not be read; !ok also covers a vanished one.
+		row     scannedRow
+		ok      bool
+		visited bool
+		// lost: the chat exists but could not be read; a visited !ok && !lost slot vanished meanwhile.
 		lost bool
 	}
 	results := make([]result, len(valid))
 
-	ran := parallel.Bounded(ctx, valid, maxWorkers, func(idx int, ce chatEntry) {
+	parallel.Bounded(ctx, valid, maxWorkers, func(idx int, ce chatEntry) {
+		results[idx].visited = true
 		c, err := NewEntryHeader(ce.path).Read(ctx)
 		if err != nil {
 			// ENOENT is a concurrent delete; anything else leaves an existing chat missing, which a keep-list caller must not
@@ -41,24 +50,24 @@ func readHeadersParallel(
 			if !errors.Is(err, os.ErrNotExist) {
 				slog.Warn("chat: skipping unreadable file",
 					"chat_id", ce.id, "error", err)
-				results[idx] = result{lost: true}
+				results[idx].lost = true
 			}
 			return
 		}
-		results[idx] = result{header: c.Header(), ok: true}
+		results[idx].row = scannedRow{id: marotte.ChatID(ce.id), header: c.Header(), keep: slices.Sorted(maps.Keys(c.Keep))}
+		results[idx].ok = true
 	})
 
-	headers := make([]marotte.ChatHeader, 0, len(valid))
-	// An unvisited slot is zero-valued, so completeness comes from the count: a truncated scan marked complete would let
-	// the session reaper delete the KAS sessions of every chat it missed.
-	complete = ran == len(valid)
+	rows = make([]scannedRow, 0, len(valid))
 	for i := range results {
 		switch {
 		case results[i].ok:
-			headers = append(headers, results[i].header)
-		case results[i].lost:
-			complete = false
+			rows = append(rows, results[i].row)
+		case results[i].lost || !results[i].visited:
+			// An unvisited slot is a chat the scan never read: a truncated scan marked complete would let the session
+			// reaper delete the KAS sessions of every chat it missed.
+			skipped = append(skipped, marotte.ChatID(valid[i].id))
 		}
 	}
-	return headers, complete
+	return rows, skipped
 }

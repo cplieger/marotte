@@ -31,15 +31,15 @@ func TestReadHeadersParallel_CancelledScanIsNotComplete(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	headers, complete := readHeadersParallel(ctx, []chatEntry{
+	rows, skipped := readHeadersParallel(ctx, []chatEntry{
 		{id: "a", path: s.dir + "/a"},
 		{id: "b", path: s.dir + "/b"},
 		{id: "c", path: s.dir + "/c"},
 	})
 
-	if complete {
-		t.Errorf("complete = true after a cancelled scan that returned %d of 3 headers; "+
-			"a partial keep-list marked complete is what deletes a live chat's sessions", len(headers))
+	if len(rows)+len(skipped) != 3 {
+		t.Errorf("rows %d + skipped %d != 3 after a cancelled scan; "+
+			"a chat the scan never read must be named as skipped, or a partial keep-list reads as whole", len(rows), len(skipped))
 	}
 }
 

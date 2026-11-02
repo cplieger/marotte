@@ -64,23 +64,26 @@ type OpenTurnTail struct {
 // without it, an append arriving after a concurrent Delete would re-create the chat
 // directory as a ghost row.
 type Store struct {
-	broadcast   broadcaster
-	versions    *subject.Versions
-	epoch       func() string
-	listScans   listFlight
-	onPurge     func(chatID marotte.ChatID, sessionChain []string)
-	isLive      func(chatID marotte.ChatID) bool
-	hasOpenTab  func(chatID marotte.ChatID) bool
-	live        func(chatID marotte.ChatID) bool
-	openTurns   func(chatID marotte.ChatID) []OpenTurnTail
-	tombstone   map[marotte.ChatID]tombstone
-	archive     *archive.Service
-	dequeued    dequeues
-	locks       sync.Map
-	logs        sync.Map
-	dir         string
-	index       searchIndex
-	fileCap     chatFileCap
+	broadcast  broadcaster
+	versions   *subject.Versions
+	epoch      func() string
+	listScans  listFlight
+	onPurge    func(chatID marotte.ChatID, sessionChain []string)
+	isLive     func(chatID marotte.ChatID) bool
+	hasOpenTab func(chatID marotte.ChatID) bool
+	live       func(chatID marotte.ChatID) bool
+	openTurns  func(chatID marotte.ChatID) []OpenTurnTail
+	tombstone  map[marotte.ChatID]tombstone
+	archive    *archive.Service
+	dequeued   dequeues
+	locks      sync.Map
+	logs       sync.Map
+	dir        string
+	index      searchIndex
+	fileCap    chatFileCap
+	// boot is minted once per process; a process-scope keep fact under another boot id is dead.
+	boot        string
+	keep        keepSets
 	archiveOnce sync.Once
 	tombMu      sync.Mutex
 }
@@ -121,6 +124,8 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 		fileCap:   resolveChatFileCap(),
 		tombstone: make(map[marotte.ChatID]tombstone),
 		versions:  &subject.Versions{},
+		keep:      newKeepSets(),
+		boot:      randomHex(16),
 	}
 	// Options land AFTER the derivation so an option overrides it, and the
 	// derivation's own log line still records what the container asked for.
@@ -274,18 +279,16 @@ func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate 
 func (s *Store) saveLocked(ctx context.Context, chatID marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (version string, saved *marotte.Chat, exists bool, err error) {
 	c, err := s.load(ctx, chatID)
 	exists = err == nil
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	var priorChain []string
+	switch {
+	case exists:
+		priorChain = c.SessionChain()
+	case !errors.Is(err, os.ErrNotExist):
 		return "", nil, exists, err
-	}
-	if !exists {
-		// A late write must not resurrect a deleted chat as a ghost row. The refusal is named
-		// because a caller reading it as success would spawn a bridge for output discarded at
-		// persist.
-		if s.isTombstoned(chatID) {
-			slog.Info("chat: refused to resurrect tombstoned id", "chat_id", logsafe.Field(string(chatID)))
-			return "", nil, exists, ErrTombstoned
+	default:
+		if c, err = s.newRecord(chatID); err != nil {
+			return "", nil, exists, err
 		}
-		c = &marotte.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}
 	}
 	stripped := exists && s.dequeued.strip(chatID, c)
 	originalCreatedAt := c.CreatedAt
@@ -307,6 +310,9 @@ func (s *Store) saveLocked(ctx context.Context, chatID marotte.ChatID, mutate fu
 		return "", nil, exists, fmt.Errorf("chat mutate: mutator reassigned id %q → %q", chatID, c.ID)
 	}
 	c.CreatedAt = originalCreatedAt
+	if err := s.admitSave(chatID, c, exists, priorChain); err != nil {
+		return "", nil, exists, err
+	}
 	if err := validateChatUTF8(c); err != nil {
 		return "", nil, exists, err
 	}
@@ -316,11 +322,41 @@ func (s *Store) saveLocked(ctx context.Context, chatID marotte.ChatID, mutate fu
 	if stripped {
 		s.dequeued.settle(chatID)
 	}
+	if !exists {
+		s.markReconciled(chatID)
+	}
 	// The cross-chat filter indexes the title, so a header write invalidates it.
 	s.index.drop(chatID)
 	version = s.versions.BumpCounter(subject.KindChat, string(chatID))
 	slog.Debug("chat mutate", "chat_id", logsafe.Field(string(chatID)), "existed", exists)
 	return version, c, exists, nil
+}
+
+// newRecord is the zero record a create starts from. A late write must not resurrect a deleted chat as a ghost row:
+// the refusal is named because a caller reading it as success would spawn a bridge for output discarded at persist.
+func (s *Store) newRecord(chatID marotte.ChatID) (*marotte.Chat, error) {
+	if s.isTombstoned(chatID) {
+		slog.Info("chat: refused to resurrect tombstoned id", "chat_id", logsafe.Field(string(chatID)))
+		return nil, ErrTombstoned
+	}
+	if s.inTeardown(chatID) {
+		return nil, ErrInTeardown
+	}
+	return &marotte.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}, nil
+}
+
+// admitSave refuses a save that binds a session whose chat is being torn down, and starts a created record with no
+// keep facts, so a fork's Init copying its parent cannot carry the parent's.
+func (s *Store) admitSave(chatID marotte.ChatID, c *marotte.Chat, exists bool, priorChain []string) error {
+	if s.bindsTornDownSession(priorChain, c.SessionChain()) {
+		slog.Info("chat: refused to bind a session whose chat is being torn down", "chat_id", logsafe.Field(string(chatID)))
+		return ErrInTeardown
+	}
+	if !exists {
+		c.Keep = nil
+		c.KeepFilledAt = time.Now().UnixMilli()
+	}
+	return nil
 }
 
 // validateChatUTF8 returns errInvalidUTF8 when the chat name or the composer draft
