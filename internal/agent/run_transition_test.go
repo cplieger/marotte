@@ -295,7 +295,7 @@ var transitionAsks = []transitionAsk{
 			if !held {
 				t.Fatal("Setup: the run holds no lease")
 			}
-			if h.runs.clearOrphaned(t.Context(), &l) {
+			if h.runs.clearOrphaned(t.Context(), &l, h.runs.lifeOf(l.WorkflowID)) {
 				return "cancelled"
 			}
 			return "left"

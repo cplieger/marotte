@@ -51,21 +51,37 @@ func (e runEnd) evidence() (chat.Evidence, bool) {
 	return 0, false
 }
 
-// lifeRead is the life a release ends, read where its evidence was read: the lease's grant token, whether a lease
-// was held, and for a minting call the run_start count at its mint.
+// lifeRead is the life a release ends, read before the KAS call whose answer is its evidence: the lease's life
+// token, whether a lease was held, and the run_start count then.
 type lifeRead struct {
 	token  string
 	starts uint64
 	held   bool
 }
 
-// lifeOfLease is the life of a lease read from the store.
-func lifeOfLease(l *runlease.Lease) lifeRead { return lifeRead{token: l.Life, held: true} }
-
 // lifeOf reads workflowID's current life.
 func (rs *Runs) lifeOf(workflowID string) lifeRead {
+	starts := rs.lives.startCount(workflowID)
 	l, held := rs.lease(workflowID)
-	return lifeRead{token: l.Life, held: held, starts: rs.lives.startCount(workflowID)}
+	return lifeRead{token: l.Life, held: held, starts: starts}
+}
+
+// leaseLife is a held lease with its life, as one snapshot read them.
+type leaseLife struct {
+	lease runlease.Lease
+	life  lifeRead
+}
+
+// leaseLives snapshots every held lease with its life, for a site whose evidence is a later KAS read.
+func (rs *Runs) leaseLives() []leaseLife {
+	leases := rs.leaseStore().List()
+	out := make([]leaseLife, len(leases))
+	for i := range leases {
+		out[i] = leaseLife{lease: leases[i], life: lifeRead{
+			token: leases[i].Life, held: true, starts: rs.lives.startCount(leases[i].WorkflowID),
+		}}
+	}
+	return out
 }
 
 func newLifeToken() string {
@@ -76,12 +92,14 @@ func newLifeToken() string {
 
 // runLives serializes, per run, every change of its life: observeStart's holds and grant, a retry's holds and
 // renewal, and every release of its lease and facts, so a release cannot interleave with a newer life's holds.
-// starts counts observeStart calls; ended is endedThisBoot. The zero value is usable.
+// starts counts observeStart calls; ended is endedThisBoot; awaiting counts retries whose life has not seen its
+// run_start, while terminal evidence is the previous life's. The zero value is usable.
 type runLives struct {
-	locks  *keylock.Set[string]
-	starts map[string]uint64
-	ended  map[string]struct{}
-	mu     sync.Mutex
+	locks    *keylock.Set[string]
+	starts   map[string]uint64
+	awaiting map[string]int
+	ended    map[string]struct{}
+	mu       sync.Mutex
 }
 
 // lock holds workflowID's life. It never waits on KAS: only local disk writes run under it.
@@ -96,6 +114,8 @@ func (v *runLives) lock(workflowID string) (unlock func()) {
 	return unlock
 }
 
+// bumpStart counts a run_start and ends every retry's wait for it, together: a reader never sees the wait ended
+// without the count moved.
 func (v *runLives) bumpStart(workflowID string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -103,6 +123,34 @@ func (v *runLives) bumpStart(workflowID string) {
 		v.starts = map[string]uint64{}
 	}
 	v.starts[workflowID]++
+	delete(v.awaiting, workflowID)
+}
+
+func (v *runLives) await(workflowID string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.awaiting == nil {
+		v.awaiting = map[string]int{}
+	}
+	v.awaiting[workflowID]++
+}
+
+// unawait drops one retry's wait, for a retry KAS did not take.
+func (v *runLives) unawait(workflowID string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.awaiting[workflowID] <= 1 {
+		delete(v.awaiting, workflowID)
+		return
+	}
+	v.awaiting[workflowID]--
+}
+
+// unstartedSince reports, in one read, a run_start since the count starts or a retry still awaiting its own.
+func (v *runLives) unstartedSince(workflowID string, starts uint64) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.starts[workflowID] != starts || v.awaiting[workflowID] > 0
 }
 
 func (v *runLives) startCount(workflowID string) uint64 {
@@ -138,8 +186,9 @@ func (v *runLives) endedThisBoot(workflowID string) bool {
 
 // releaseLease ends one life of a run's lease (runEnd names why). An evidence end marks the run ended, releases the
 // lease, then the keep facts of every holder, in that order: a reconcile re-checking under a record lock sees the
-// lease held or the run ended. endRolledBack releases only the lease, and only while no run_start arrived since its
-// mint. ReleaseSuperseded means a newer life holds the run, which keeps its lease and facts; nothing else is done.
+// lease held or the run ended. Terminal evidence ends only the started life it read; endDeleted ends the current
+// life; endRolledBack only the lease its own call minted, while no run_start arrived since. ReleaseSuperseded means
+// another life holds the run, which keeps its lease and facts; nothing else is done.
 func (rs *Runs) releaseLease(ctx context.Context, workflowID string, end runEnd, life lifeRead) runlease.ReleaseOutcome {
 	if workflowID == "" {
 		return runlease.ReleaseAbsent
@@ -173,7 +222,7 @@ func (rs *Runs) endLife(ctx context.Context, workflowID string, end runEnd, life
 		}
 		return l, true, rs.dropLease(ctx, workflowID, l.Life)
 	}
-	if held && (!life.held || l.Life != life.token) {
+	if end != endDeleted && held && rs.lifeMovedOn(workflowID, &l, life) {
 		return l, true, runlease.ReleaseSuperseded
 	}
 	if !held && rs.lives.endedThisBoot(workflowID) {
@@ -191,6 +240,11 @@ func (rs *Runs) endLife(ctx context.Context, workflowID string, end runEnd, life
 	}
 	rs.releaseRunFacts(ctx, workflowID, ev, holders)
 	return l, held, outcome
+}
+
+// lifeMovedOn reports whether the held lease l is no longer the started life a terminal-evidence site read.
+func (rs *Runs) lifeMovedOn(workflowID string, l *runlease.Lease, life lifeRead) bool {
+	return !life.held || l.Life != life.token || rs.lives.unstartedSince(workflowID, life.starts)
 }
 
 func (rs *Runs) dropLease(ctx context.Context, workflowID, life string) runlease.ReleaseOutcome {
@@ -375,6 +429,7 @@ var (
 	errRetryChatPurging = errors.New("the chat that launched this run is being deleted, so nothing was retried")
 	errRetryChatGone    = errors.New("the chat that launched this run was deleted, so nothing was retried")
 	errRetryChatUnread  = errors.New("the chat that launched this run could not be read, so nothing was retried. Try again")
+	errRetryRunDeleting = errors.New("this run is being deleted, so nothing was retried")
 )
 
 // retryStart is what beginRetryLife took: its claims, the life it granted, and whether it minted the lease.
@@ -413,6 +468,7 @@ func (rs *Runs) beginRetryLife(ctx context.Context, workflowID string, o *runOri
 		}
 		start.claims = append(start.claims, claim)
 	}
+	rs.lives.await(workflowID)
 	if _, held := rs.lease(workflowID); held {
 		start.life = lifeRead{token: newLifeToken(), held: true, starts: rs.lives.startCount(workflowID)}
 		if err := rs.leaseStore().Renew(ctx, workflowID, start.life.token, chatIDs(holders)); err != nil {
@@ -456,11 +512,14 @@ func retryHoldErr(workflowID string, err error) error {
 	return command.StatusError(http.StatusServiceUnavailable, errRetryChatUnread)
 }
 
-// abandonRetry undoes a failed retry: the lease it minted when release is set, then its own claims once no lease
-// holds the run. A lease still held keeps its facts, so nothing is rolled back under it.
+// abandonRetry undoes a failed retry. release says KAS did not take it: its wait for a run_start ends and the lease
+// it minted goes. Its own claims go once no lease holds the run; a lease still held keeps its facts.
 func (rs *Runs) abandonRetry(ctx context.Context, workflowID string, start *retryStart, release bool) {
-	if start.minted && release {
-		rs.releaseLease(ctx, workflowID, endRolledBack, start.life)
+	if release {
+		rs.lives.unawait(workflowID)
+		if start.minted {
+			rs.releaseLease(ctx, workflowID, endRolledBack, start.life)
+		}
 	}
 	if _, held := rs.lease(workflowID); held {
 		return

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"regexp"
 	"slices"
@@ -271,7 +272,6 @@ func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop, n
 	if err != nil {
 		return err
 	}
-	d.ending = rs.lifeOf(workflowID)
 	var got kasVerdict
 	rs.stopSerialized(ctx, workflowID, func(sctx context.Context) bool {
 		got, err = rs.deleteCall(sctx, workflowID, stop)
@@ -297,7 +297,7 @@ func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop, n
 		return rs.reconcileDelete(ctx, d, err)
 	case kasTook:
 	}
-	rs.teardownDeleted(ctx, workflowID, d.ending)
+	rs.teardownDeleted(ctx, workflowID)
 	d.settle()
 	return unknown
 }
@@ -348,7 +348,7 @@ func (rs *Runs) reconcileDelete(ctx context.Context, d *runDeletion, cause error
 		d.settle()
 		return cause
 	case runGone:
-		rs.teardownDeleted(ctx, d.workflowID, d.ending)
+		rs.teardownDeleted(ctx, d.workflowID)
 		d.settle()
 		return nil
 	case runUnread:
@@ -392,12 +392,12 @@ func (rs *Runs) readBack(ctx context.Context, workflowID string) readBackVerdict
 	return runKept
 }
 
-// teardownDeleted drops everything marotte keeps about a run KAS deleted; its lease and keep facts only while
-// ending is still the run's life.
-func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string, ending lifeRead) {
+// teardownDeleted drops everything marotte keeps about a run KAS deleted, whatever life its lease is on: no retry
+// runs while a delete holds the run (retry's admission).
+func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string) {
 	rs.deleteRunLog(ctx, workflowID)
 	rs.coord.closeBridge(ctx, runChatID(workflowID), marotte.TurnOutcomeInterrupted)
-	rs.forgetBounds(ctx, workflowID, endDeleted, ending)
+	rs.forgetBounds(ctx, workflowID, endDeleted, lifeRead{})
 	rs.clearEnd(workflowID)
 	if rs.log != nil {
 		if err := rs.log.removeDir(workflowID); err != nil {
@@ -456,10 +456,18 @@ func (rs *Runs) retry(
 	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
 	defer cancel()
 
+	// Held to the end, so a delete waits out this retry and none starts during a delete: a delete ends whatever life
+	// is current.
+	admitted, err := rs.life.admit(workflowID)
+	if err != nil {
+		return out, command.StatusError(http.StatusConflict, errRetryRunDeleting)
+	}
+	defer admitted.end()
 	// Threaded from the gate: nothing here can learn it once the run re-drives.
 	recipe := aff.origin.recipe
+	life := rs.lifeOf(workflowID)
 	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
-		rs.settleMissedEnd(cctx, &l, aff.status)
+		rs.settleMissedEnd(cctx, &l, life, aff.status)
 	}
 	// The keep facts and lease before the verb, since retry's `run_start` can beat the reply, and before the host
 	// session's load, which reads its presets from the lease.
@@ -841,7 +849,7 @@ func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Reci
 // marotte did not launch. The leases explain a blocking row as marotte's own orphan.
 func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 	// Before the list: a lease's life is read before the evidence that ends it.
-	held := rs.leaseStore().List()
+	held := rs.leaseLives()
 	runs, err := rs.list(ctx, nil)
 	if err != nil {
 		// Launching blind could allow a second live run.

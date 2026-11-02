@@ -150,8 +150,9 @@ func (r *lifeRaceRig) hookOn(method string) {
 	}
 }
 
-// Every site that ends a run's lease reads the life it ends and releases it later; a retry granting a newer life
-// in between keeps that life's lease and keep fact, and the run is not marked ended.
+// Every site that ends one life of a run's lease reads it and releases it later; a retry granting a newer life in
+// between keeps that life's lease and keep fact, and the run is not marked ended. A delete ends every life
+// (TestRunLife_ADeleteEndsWhicheverLifeIsCurrent).
 func TestRunLife_AReleaseOfAnOlderLifeKeepsTheNewerLife(t *testing.T) {
 	origin := &runOrigin{parent: runParent{chat: "c-launcher", session: "sess_launcher"}}
 	cells := map[string]struct {
@@ -211,29 +212,6 @@ func TestRunLife_AReleaseOfAnOlderLifeKeepsTheNewerLife(t *testing.T) {
 				r.hookOn(methodKiroWorkflowInspect)
 			},
 			release: func(t *testing.T, r *lifeRaceRig) { r.h.runs.releaseIfOver(t.Context(), "wf_1") },
-		},
-		"user_delete": {
-			arm: func(_ *testing.T, r *lifeRaceRig) {
-				r.br.callResults[methodKiroWorkflowDelete] = json.RawMessage(`{}`)
-				r.hookOn(methodKiroWorkflowDelete)
-			},
-			release: func(t *testing.T, r *lifeRaceRig) {
-				if err := r.h.runs.deleteAs(t.Context(), "wf_1", userStop(""), notFoundTaken); err != nil {
-					t.Errorf("deleteAs = %v", err)
-				}
-			},
-		},
-		"user_delete_read_back": {
-			arm: func(_ *testing.T, r *lifeRaceRig) {
-				r.br.failAfterCall = map[string]error{methodKiroWorkflowDelete: marotte.ErrBridgeExited}
-				r.br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowInspect: workflowNotFoundErr()}
-				r.hookOn(methodKiroWorkflowDelete)
-			},
-			release: func(t *testing.T, r *lifeRaceRig) {
-				if err := r.h.runs.deleteAs(t.Context(), "wf_1", userStop(""), notFoundTaken); err != nil {
-					t.Errorf("deleteAs read back as gone = %v, want nil", err)
-				}
-			},
 		},
 		"launch_rollback": {
 			noStart: true,

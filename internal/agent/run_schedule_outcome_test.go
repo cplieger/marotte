@@ -426,7 +426,7 @@ func TestScheduledRun_AReleaseWithoutAFrameRecordsTheEnding(t *testing.T) {
 		const id = "wf_1"
 		launchScheduled(t, h, br, &entry, id)
 
-		h.runs.reconcileLeasePresence(t.Context(), h.runs.leaseStore().List(),
+		h.runs.reconcileLeasePresence(t.Context(), h.runs.leaseLives(),
 			map[string]marotte.RunStatus{id: marotte.RunStatusCompleted}, time.Now(), false)
 
 		if row := onlyRow(t, st); string(row.LastStatus) != "completed" {

@@ -31,7 +31,7 @@ const reasonOrphaned = "stopped because the server restarted while it was runnin
 // sweepOrphaned clears every lease whose run a dead process left paused. Best-effort: skipping costs a stale
 // row, cancelling a live run destroys work. Reports whether it reached KAS.
 func (rs *Runs) sweepOrphaned(ctx context.Context) (reached bool) {
-	before := rs.leaseStore().List()
+	before := rs.leaseLives()
 	if len(before) == 0 {
 		// No leases: nothing to ask.
 		return true
@@ -51,9 +51,9 @@ func (rs *Runs) sweepOrphaned(ctx context.Context) (reached bool) {
 	}
 	rs.reconcileLeasePresence(cctx, before, status, time.Now(), true)
 
-	held := rs.leaseStore().List()
+	held := rs.leaseLives()
 	for i := range held {
-		l := &held[i]
+		l := &held[i].lease
 		st, known := status[l.WorkflowID]
 		if !known {
 			// Absence starts a clock and clears nothing.
@@ -63,7 +63,7 @@ func (rs *Runs) sweepOrphaned(ctx context.Context) (reached bool) {
 		case l.Origin == runlease.OriginAgent:
 			// KAS parents an agent's run on its chat, so it heals with that chat.
 		case st == marotte.RunStatusPaused && rs.restartPaused(cctx, l.WorkflowID):
-			rs.clearOrphaned(cctx, l)
+			rs.clearOrphaned(cctx, l, held[i].life)
 		}
 	}
 	return true
@@ -154,17 +154,17 @@ func (rs *Runs) releaseIfOver(ctx context.Context, workflowID string) {
 // releases, listed clears the absence clock, absent starts or spends it. Absence never cancels and releases nothing.
 // Boot passes inspectAbsent.
 func (rs *Runs) reconcileLeasePresence(
-	ctx context.Context, held []runlease.Lease, status map[string]marotte.RunStatus, now time.Time, inspectAbsent bool,
+	ctx context.Context, held []leaseLife, status map[string]marotte.RunStatus, now time.Time, inspectAbsent bool,
 ) {
 	for i := range held {
-		l := &held[i]
+		l, life := &held[i].lease, held[i].life
 		st, known := status[l.WorkflowID]
 		if known {
 			if st.Terminal() {
 				slog.Info("releasing the lease of a run with terminal status",
 					"workflow_id", l.WorkflowID, "recipe", l.Recipe, "status", st)
 				rs.recordScheduleEnding(ctx, scheduleRun(l), st, "")
-				rs.releaseLease(ctx, l.WorkflowID, endTerminal, lifeOfLease(l))
+				rs.releaseLease(ctx, l.WorkflowID, endTerminal, life)
 				continue
 			}
 			rs.forgetAbsence(l.WorkflowID)
@@ -175,7 +175,7 @@ func (rs *Runs) reconcileLeasePresence(
 			if terminal {
 				slog.Info("boot: releasing the lease of a run inspect says is over",
 					"workflow_id", l.WorkflowID, "recipe", l.Recipe)
-				rs.releaseLease(ctx, l.WorkflowID, endTerminal, lifeOfLease(l))
+				rs.releaseLease(ctx, l.WorkflowID, endTerminal, life)
 				continue
 			}
 			if notFound {
@@ -311,6 +311,7 @@ func (rs *Runs) clearBlockingOrphan(ctx context.Context, workflowID string, stat
 		// A running row is not an orphan.
 		return false
 	}
+	life := rs.lifeOf(workflowID)
 	l, held := rs.lease(workflowID)
 	if !held || l.Origin == runlease.OriginAgent {
 		// No lease means the TUI's; an agent's run belongs to its chat.
@@ -319,14 +320,14 @@ func (rs *Runs) clearBlockingOrphan(ctx context.Context, workflowID string, stat
 	if !rs.restartPaused(ctx, workflowID) {
 		return false
 	}
-	return rs.clearOrphaned(ctx, &l)
+	return rs.clearOrphaned(ctx, &l, life)
 }
 
 // clearOrphaned is the shared release: claim, then re-read and cancel in one transition, under the run's resume lock
 // so no resume of marotte's lands between them, then record and release, as finishTermination orders it. A resume
 // from outside marotte can still land between the read and the cancel; do not drop the auto-cancel without a
 // compare-and-cancel.
-func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
+func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease, life lifeRead) bool {
 	if !rs.claimTermination(l.WorkflowID) {
 		// Already ending; the winner releases.
 		return false
@@ -350,7 +351,7 @@ func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 		"origin", string(l.Origin), "schedule_id", l.ScheduleID)
 	// The schedule's row too, or every later slot is refused as an overlap.
 	rs.recordScheduleOutcome(ctx, scheduleRun(l), schedule.Outcome{Status: schedule.StatusFailed, Reason: reasonOrphaned})
-	rs.releaseLease(ctx, l.WorkflowID, endCancelled, lifeOfLease(l))
+	rs.releaseLease(ctx, l.WorkflowID, endCancelled, life)
 	return true
 }
 

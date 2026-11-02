@@ -617,7 +617,7 @@ func TestClearOrphanedRun_RefusesWhenTheRunNoLongerReadsAsAnOrphan(t *testing.T)
 				t.Fatalf("Put: %v", err)
 			}
 
-			if h.runs.clearOrphaned(t.Context(), &l) {
+			if h.runs.clearOrphaned(t.Context(), &l, h.runs.lifeOf(l.WorkflowID)) {
 				t.Error("a run that no longer reads as an orphan was cleared")
 			}
 			if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
