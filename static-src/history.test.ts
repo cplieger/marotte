@@ -820,6 +820,16 @@ describe("history: an overrun reads differently from a cancel", () => {
     expect(openName(row)).toBe("Open feature-pipeline, aborted");
   });
 
+  it("says a scheduled run was ended for a pause nobody resumed", async () => {
+    await render({
+      sessions: [],
+      runs: [{ ...runRow, status: "aborted", end_reason: "unattended" }],
+    });
+    const row = rowOf("r:wf_1");
+    expect(sub(row)).toContain("stopped: it paused with nobody to resume it");
+    expect(openName(row)).toBe("Open feature-pipeline, aborted");
+  });
+
   it("says nothing extra for a user cancel, which is the same status", async () => {
     // The distinguisher is the absence of a reason: a person's abort has no sentence.
     await render({ sessions: [], runs: [runAt("aborted")] });

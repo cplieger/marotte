@@ -184,7 +184,9 @@ func TestRecordEnd_IsNotStampedOnARunThatDidNotStop(t *testing.T) {
 		br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
 		leased(t, h.runs, "wf_1")
 
-		h.runs.cancelBounded("wf_1", runEndOverran)
+		if err := h.runs.cancelBounded("wf_1", runEndOverran, time.Now()); err == nil {
+			t.Error("cancelBounded reported a refused cancel as landed, so cancelExpired would record it")
+		}
 
 		if got := h.runs.endReason("wf_1"); got != "" {
 			t.Errorf("endReason = %q after a REFUSED cancel, want \"\": the History row would "+
@@ -200,7 +202,9 @@ func TestRecordEnd_IsNotStampedOnARunThatDidNotStop(t *testing.T) {
 		}
 		leased(t, h.runs, "wf_1")
 
-		h.runs.cancelBounded("wf_1", runEndOverran)
+		if err := h.runs.cancelBounded("wf_1", runEndOverran, time.Now()); err != nil {
+			t.Errorf("cancelBounded = %v for a landed cancel", err)
+		}
 
 		if got := h.runs.endReason("wf_1"); got != runEndOverran {
 			t.Errorf("endReason = %q after a LANDED ceiling cancel, want %q: the row would "+
@@ -249,6 +253,26 @@ func TestRetryTermination_IsBoundedAndDoesNotReFireForever(t *testing.T) {
 	if !h.runs.bounded("wf_1") {
 		t.Error("the spent retry budget unbounded the run; the bound belongs on OUR " +
 			"attempts to end it, never on the record that we are bounding it")
+	}
+}
+
+// TestRetryTermination_AStallCancelRefusedOnceIsRetried pins that a deadline's refused cancel is retried and lands
+// with the reason the expiry decided.
+func TestRetryTermination_AStallCancelRefusedOnceIsRetried(t *testing.T) {
+	const id = "wf_1"
+	h, br := stepFixture(t, id)
+	setCancelRetryDelay(h.runs, time.Millisecond)
+	refuseCancelOnce(br)
+	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
+
+	h.runs.cancelExpired(id, deadline)
+
+	if got := waitForEndReason(h, id, 5*time.Second); got != runEndStalled {
+		t.Fatalf("a stalled run whose cancel was refused once recorded %q, want %q; calls were %v",
+			got, runEndStalled, br.callLog())
+	}
+	if got := callsOf(br, methodKiroWorkflowCancel); got != 2 {
+		t.Errorf("the cancel was sent %d times, want 2: the refused one and its retry", got)
 	}
 }
 
@@ -340,6 +364,49 @@ func TestRetryTermination_ARunNoLongerBoundedIsLeftAlone(t *testing.T) {
 	if got := callsOf(br, methodKiroWorkflowCancel); got != before {
 		t.Errorf("a run marotte had stopped bounding was cancelled anyway (%d → %d calls)",
 			before, got)
+	}
+}
+
+// A refused cancel's re-attempt speaks for the run it was refused on: once that run ended and a person retried the
+// same workflow id, the re-attempt must not cancel the retried run.
+func TestRetryTermination_ARetriedRunIsNotCancelledForItsLastRun(t *testing.T) {
+	for name, endSeen := range map[string]bool{"its end seen": true, "its end missed": false} {
+		t.Run(name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			br.callResults = map[string]json.RawMessage{
+				methodKiroWorkflowRetry: json.RawMessage(`{}`),
+				methodKiroWorkflowList: json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish",` +
+					`"status":"failed","parentSessionId":"` + testLaunchSession + `"}]}`),
+			}
+			br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
+			const base = 200 * time.Millisecond
+			setCancelRetryDelay(h.runs, base)
+			leased(t, h.runs, "wf_1")
+			h.runs.armDeadline(t.Context(), "wf_1")
+
+			if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err == nil {
+				t.Fatal("Cancel reported success for a refused cancel")
+			}
+			before := callsOf(br, methodKiroWorkflowCancel)
+			// The run fails on its own and a person retries it before the re-attempt comes due.
+			if endSeen {
+				h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
+					"workflowId": "wf_1", "status": "failed",
+				}))
+			}
+			if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "failed")); err != nil {
+				t.Fatalf("Retry: %v", err)
+			}
+			if !h.runs.bounded("wf_1") {
+				t.Fatal("Setup: the retried run is not bounded, so the re-attempt's guard would leave it alone anyway")
+			}
+
+			time.Sleep(2 * base)
+
+			if got := callsOf(br, methodKiroWorkflowCancel); got != before {
+				t.Errorf("the retried run was cancelled by its last run's re-attempt (%d → %d calls)", before, got)
+			}
+		})
 	}
 }
 

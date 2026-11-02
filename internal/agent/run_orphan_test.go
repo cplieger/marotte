@@ -127,7 +127,7 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 
 	t.Run("a failed inspect leaves the run alone", func(t *testing.T) {
 		h, _, br := newTestHub()
-		br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
+		br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
 		if h.runs.restartPaused(t.Context(), "wf_1") {
 			t.Error("an unreadable pause reason was treated as a dead process; at boot the " +
 				"likeliest cause is that kiro-cli is still installing")
@@ -305,16 +305,20 @@ func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 		t.Fatalf("schedule.NewStore: %v", err)
 	}
 	entry := schedule.Entry{
-		ID: "sched-1", Source: "bundled://nightly", Enabled: true,
+		Source: "bundled://nightly", Enabled: true,
 		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
 	}
 	if err := st.Put(t.Context(), &entry); err != nil {
 		t.Fatalf("Put schedule: %v", err)
 	}
+	// The fire's grant: the row tracks wf_1, the only run whose outcome lands on it.
+	if err := st.RecordStart(t.Context(), schedule.Run{ScheduleID: entry.ID(), WorkflowID: "wf_1"}); err != nil {
+		t.Fatalf("RecordStart: %v", err)
+	}
 	h.runs.schedules = st
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "nightly", Origin: runlease.OriginScheduled,
-		ScheduleID: "sched-1", Unattended: true,
+		ScheduleID: entry.ID(), Unattended: true,
 	}); err != nil {
 		t.Fatalf("Put lease: %v", err)
 	}
@@ -370,7 +374,7 @@ func TestSweepOrphanedRuns_ReleasesTerminalLeasesImmediately(t *testing.T) {
 func TestSweepOrphanedRuns_AbsenceStartsAClockWithoutReleasing(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
-	br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
+	br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginManual,
 	}); err != nil {
@@ -423,23 +427,27 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 	logs := captureLogs(t)
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
-	br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
+	br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
 
 	st, err := schedule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("schedule.NewStore: %v", err)
 	}
 	entry := schedule.Entry{
-		ID: "sched-1", Source: "bundled://publish", Enabled: true,
+		Source: "bundled://publish", Enabled: true,
 		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
 	}
 	if err := st.Put(t.Context(), &entry); err != nil {
 		t.Fatalf("Put schedule: %v", err)
 	}
+	// The fire's grant: the row tracks wf_1, the only run whose outcome lands on it.
+	if err := st.RecordStart(t.Context(), schedule.Run{ScheduleID: entry.ID(), WorkflowID: "wf_1"}); err != nil {
+		t.Fatalf("RecordStart: %v", err)
+	}
 	h.runs.schedules = st
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginScheduled,
-		ScheduleID: "sched-1", FirstAbsentAt: time.Now().Add(-6 * time.Hour),
+		ScheduleID: entry.ID(), FirstAbsentAt: time.Now().Add(-6 * time.Hour),
 	}); err != nil {
 		t.Fatalf("Put lease: %v", err)
 	}
@@ -473,10 +481,7 @@ func TestSweepOrphanedRuns_InspectUnknownReleasesImmediately(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
 	br.callRPCErrs = map[string]*marotte.RPCError{
-		methodKiroWorkflowInspect: {
-			Code: -32603, Message: "Internal error",
-			Data: json.RawMessage(`{"details":"workflow not found"}`),
-		},
+		methodKiroWorkflowInspect: workflowNotFoundErr(),
 	}
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginManual,
@@ -495,7 +500,7 @@ func TestSweepOrphanedRuns_InspectUnknownReleasesImmediately(t *testing.T) {
 func TestSweepOrphanedRuns_InspectFailureStartsTheClock(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
-	br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
+	br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginAgent,
 	}); err != nil {
@@ -514,7 +519,7 @@ func TestSweepOrphanedRuns_InspectFailureStartsTheClock(t *testing.T) {
 func TestSweepOrphanedRuns_EmptySuccessfulListReleasesNothing(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
-	br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
+	br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
 	for _, id := range []string{"wf_1", "wf_2", "wf_3"} {
 		if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 			WorkflowID: id, Recipe: "publish", Origin: runlease.OriginManual,
@@ -533,7 +538,7 @@ func TestSweepOrphanedRuns_EmptySuccessfulListReleasesNothing(t *testing.T) {
 // TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails pins that at boot kiro-cli may still be installing.
 func TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails(t *testing.T) {
 	h, _, br := newTestHub()
-	br.callErrs = map[string]error{methodKiroWorkflowList: errRecipeBusy}
+	br.callErrs = map[string]error{methodKiroWorkflowList: errHoldFault}
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginScheduled,
 	}); err != nil {
@@ -562,7 +567,7 @@ func TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails(t *testing.T) {
 		}),
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
 	}
-	br.callErrs = map[string]error{methodKiroWorkflowCancel: errRecipeBusy}
+	br.callErrs = map[string]error{methodKiroWorkflowCancel: errHoldFault}
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginManual,
 	}); err != nil {
@@ -904,7 +909,7 @@ func TestAutomaticResume_KeepsItsSiblingsThreeConditions(t *testing.T) {
 
 	t.Run("a failed inspect leaves the run paused", func(t *testing.T) {
 		h, _, br := newTestHub()
-		br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
+		br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
 		if resume, read := autoResumable(t, h.runs, "wf_1"); resume || read {
 			t.Errorf("an automatic resume = %v, read %v for a failed inspect, want neither", resume, read)
 		}
@@ -970,7 +975,7 @@ func TestReleaseIfOver_RefusesEveryReplyThatDoesNotSayTheRunIsOver(t *testing.T)
 // bridge's, so it keeps the lease, the cheaper mistake.
 func TestReleaseIfOver_LeavesARunItCouldNotReadAlone(t *testing.T) {
 	h, _, br := newTestHub()
-	br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
+	br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
 	leased(t, h.runs, "wf_1")
 
 	h.runs.releaseIfOver(t.Context(), "wf_1")

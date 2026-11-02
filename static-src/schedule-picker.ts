@@ -41,8 +41,8 @@ export function clampInterval(spec: ScheduleSpec): void {
   spec.interval = Math.min(Math.max(spec.interval ?? b.min, b.min), b.max);
 }
 
-/** The unattended approval budget, in minutes, mirroring internal/hub's
- *  `unattendedApprovalBudget` (180 seconds). Stated to the user because the question a schedule
+/** The unattended approval budget, in minutes, mirroring internal/agent's
+ *  `unattendedApprovalBudget` (180 seconds), which `unattendedPauseBudget` takes too. Stated to the user because the question a schedule
  *  form has to answer is what happens when the job asks for something and nobody is there. Go's
  *  TestUnattendedBudget_MatchesTheDisclaimer fails if the two drift; change both together. */
 const UNATTENDED_BUDGET_MINUTES = 3;
@@ -142,6 +142,8 @@ export function describeOutcome(view: ScheduleView): string {
   switch (status) {
     case "started":
       return `last started${stamp}`;
+    case "completed":
+      return `last completed${stamp}`;
     case "failed":
       return `last failed${stamp}${because}`;
     case "unknown":
@@ -195,7 +197,7 @@ export function buildUnattendedNote(
     el(
       "div",
       { className: "sched-note-body" },
-      `Nobody is watching a scheduled run. If the workflow asks for a permission the active policy does not already allow, ${outcome}.`,
+      `Nobody is watching a scheduled run. If the workflow asks for a permission the active policy does not already allow, ${outcome}. If the run pauses and nobody resumes it within ${UNATTENDED_BUDGET_MINUTES} minutes, it is cancelled.`,
     ),
     el(
       "div",

@@ -101,6 +101,10 @@ A steering doc or agent that kiro-cli loaded but does not use carries a badge na
 
 **Run** opens a form under the workflow with its inputs and a **Model** and **Effort** choice. The choice applies to every step that does not name its own model or effort. **Default** sends neither, so the workflow's own settings apply. A schedule keeps its own choice for every run it starts. When you launch or save, marotte refuses a model or effort level your account does not offer. Without that check, kiro-cli would accept it and fail the step later.
 
+A schedule whose workflow file is gone stays on the **Workflows** panel, marked orphaned, with a **Delete schedule** button.
+
+A workflow step's file tools reach the same folders as a chat's: `/workspace`, `/uploads` for reading, and the [additional directories](configuration.md#folders-the-agent-can-use-beyond-workspace) you grant. A step that reads another path, such as `/config/home/.kiro/sessions`, fails with `path escapes workspace`, so write that step to read the file with a shell command.
+
 Instructions for every chat and knowledge bases are under **Custom instructions** in **Settings**, and **Settings** also has a diagnostics report you can copy. **Data sharing** on its **General** tab holds the **kiro-cli telemetry** switch, one switch for kiro-cli's usage telemetry and its legacy toolkit telemetry. It is on by default, as in kiro-cli, and an enterprise organization's usage-analytics setting overrides it. The sidebar shows your account's usage and switches between light, dark and system themes. The prompt bar shows the current chat's context use and credits. Open tabs follow you to every device, while each device keeps its own active tab, shell panel height and sidebar width.
 
 ## Knowledge bases

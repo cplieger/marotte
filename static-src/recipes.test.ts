@@ -56,7 +56,7 @@ vi.mock("./persist.js", () => ({
 // The Schedule button's actions: unmocked they reach the network, and a row's summary line is
 // decoration this suite does not assert on.
 vi.mock("./actions/schedules.js", () => ({
-  loadSchedules: { dispatch: vi.fn(async () => ({ schedules: [] })) },
+  loadSchedules: { dispatch: vi.fn(async () => schedulesReply) },
   saveSchedule: { dispatch: vi.fn(async () => null) },
   deleteSchedule: { dispatch: vi.fn(async () => null) },
 }));
@@ -73,14 +73,16 @@ vi.mock("./config-standing.js", async (importOriginal) => {
 
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { BUS_CATALOG_MODELS, dispatch, emitBus } from "./bus.js";
-import { saveSchedule } from "./actions/schedules.js";
+import { deleteSchedule, loadSchedules, saveSchedule } from "./actions/schedules.js";
 import { openRunView } from "./run-view.js";
-import { launchRun, cancelRun } from "./actions/runs.js";
+import { launchRun, cancelRun, loadRecipes } from "./actions/runs.js";
 import type { ModelInfo, RecipesResponse, WorkflowRun, ResumableSession } from "./types.js";
 import type { ConfigStanding, RunStatus } from "./wire/types.gen.js";
+import type { SchedulesResponse, ScheduleView } from "./schedule-types.js";
 import type * as ConfigStandingModule from "./config-standing.js";
 
 let recipesReply: RecipesResponse = { recipes: [] };
+let schedulesReply: SchedulesResponse = { schedules: [] };
 let runsReply: { sessions: ResumableSession[]; runs: WorkflowRun[] } = {
   sessions: [],
   runs: [],
@@ -130,6 +132,7 @@ beforeEach(() => {
   vi.mocked(launchRun.dispatch).mockClear();
   vi.mocked(cancelRun.dispatch).mockClear();
   recipesReply = { recipes: [] };
+  schedulesReply = { schedules: [] };
   runsReply = { sessions: [], runs: [] };
 });
 
@@ -794,5 +797,91 @@ describe("the Schedule form", () => {
     await vi.waitFor(() => {
       expect(btn.getAttribute("aria-expanded")).toBe("false");
     });
+  });
+});
+
+describe("a schedule whose recipe is gone", () => {
+  const GONE = "/workspace/.kiro/workflows/weekly-smoke.workflow.json";
+
+  function scheduleOf(source: string, id: string, name: string): ScheduleView {
+    return { id, source, name, enabled: true, spec: { freq: "daily", hour: 3, minute: 0 } };
+  }
+
+  function orphans(panel: HTMLElement): HTMLElement[] {
+    return [...panel.querySelectorAll<HTMLElement>("[data-orphan-schedule]")];
+  }
+
+  async function settled(): Promise<void> {
+    await vi.waitFor(() => {
+      expect(vi.mocked(loadSchedules.dispatch)).toHaveBeenCalled();
+    });
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  beforeEach(() => {
+    vi.mocked(loadSchedules.dispatch).mockClear();
+    vi.mocked(deleteSchedule.dispatch).mockClear();
+  });
+
+  it("is listed under the recipes with a Delete that removes it", async () => {
+    recipesReply = { recipes: [recipe("nightly")] };
+    schedulesReply = {
+      schedules: [
+        scheduleOf("bundled://nightly", "kept", "nightly"),
+        scheduleOf(GONE, "gone", "weekly-smoke"),
+      ],
+    };
+    const panel = await render();
+    await settled();
+
+    const rows = orphans(panel);
+    expect(rows.map((r) => r.dataset["orphanSchedule"])).toEqual(["gone"]);
+    const row = rows[0];
+    if (row === undefined) {
+      throw new Error("no orphaned schedule row");
+    }
+    expect(names(panel)).toEqual(["nightly", "weekly-smoke"]);
+    expect(row.textContent).toContain(GONE);
+    const del = row.querySelector<HTMLButtonElement>(".recipe-sched-delete-btn");
+    expect(del?.textContent).toBe("Delete schedule");
+
+    schedulesReply = { schedules: [scheduleOf("bundled://nightly", "kept", "nightly")] };
+    del?.click();
+    await vi.waitFor(() => {
+      expect(orphans(panel)).toHaveLength(0);
+    });
+    expect(vi.mocked(deleteSchedule.dispatch).mock.calls.map((c) => c[0])).toEqual(["gone"]);
+  });
+
+  it("is listed when no recipe is left at all", async () => {
+    schedulesReply = { schedules: [scheduleOf(GONE, "gone", "weekly-smoke")] };
+    const panel = await render();
+    await settled();
+
+    expect(orphans(panel)).toHaveLength(1);
+    expect(panel.textContent).not.toContain("No workflows available");
+  });
+
+  it("is not claimed while the recipe list could not be read", async () => {
+    vi.mocked(loadRecipes.dispatch).mockImplementationOnce(
+      (async () => null) as unknown as typeof loadRecipes.dispatch,
+    );
+    schedulesReply = { schedules: [scheduleOf(GONE, "gone", "weekly-smoke")] };
+    const panel = document.createElement("div");
+    document.body.appendChild(panel);
+    renderRecipesPanel(panel);
+    await settled();
+
+    expect(orphans(panel)).toHaveLength(0);
+  });
+
+  it("answers the filter like a recipe row", async () => {
+    recipesReply = { recipes: [recipe("nightly")] };
+    schedulesReply = { schedules: [scheduleOf(GONE, "gone", "weekly-smoke")] };
+    expect(orphans(await render("nightly"))).toHaveLength(0);
+    await settled();
+    const panel = await render("smoke");
+    await settled();
+    expect(orphans(panel)).toHaveLength(1);
   });
 });

@@ -1091,9 +1091,7 @@ func TestSignInGate_TheSweepPausesOnlyARunItReadRunning(t *testing.T) {
 			g.br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_other", marotte.RunStatusRunning, ""))
 		}},
 		{name: "a run KAS no longer knows", wantErr: false, set: func(g *gateRun) {
-			g.br.setCallRPCErr(methodKiroWorkflowInspect, &marotte.RPCError{
-				Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`),
-			})
+			g.br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

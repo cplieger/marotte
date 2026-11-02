@@ -39,13 +39,15 @@ export interface ScheduleSpec {
 export interface ScheduleView {
   id: string;
   source: string;
+  /** The recipe's name when the schedule was saved. */
+  name?: string;
   spec: ScheduleSpec;
   enabled: boolean;
   /** RFC3339; the server computes this so the client never does. */
   next_run_at?: string;
   last_run_at?: string;
   /** How the last slot ended; mirrors internal/schedule.status. */
-  last_status?: "started" | "failed" | "unknown";
+  last_status?: "started" | "completed" | "failed" | "unknown";
   /** Why, as plain text for a person to read. */
   last_reason?: string;
   /** The run's model and effort pick, sent at each fire; absent is Default. */

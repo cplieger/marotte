@@ -40,9 +40,7 @@ var transitionStates = []transitionState{
 		return inspectReply(t, "wf_other", marotte.RunStatusPaused, stalePauseReason)
 	})},
 	{name: "a run KAS no longer knows", seen: seenGone, set: func(_ *testing.T, br *fakeBridge) {
-		br.setCallRPCErr(methodKiroWorkflowInspect, &marotte.RPCError{
-			Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`),
-		})
+		br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 	}},
 	{name: "running", seen: seenRunning, set: inspectAs(func(t *testing.T) json.RawMessage {
 		return inspectReply(t, gateRunID, marotte.RunStatusRunning, "")
@@ -480,7 +478,7 @@ var (
 	}
 	transitionOwned = []string{
 		"Runs.transition", "Runs.carryOut", "Runs.writePause", "Runs.sendResume", "Runs.resumeAsked", "Runs.holdPause",
-		"Runs.heal", "Runs.parkForUser", "Runs.writeHealResume", "Runs.finishAsked", "Runs.keepHold",
+		"Runs.heal", "Runs.healSpent", "Runs.parkForUser", "Runs.writeHealResume", "Runs.finishAsked", "Runs.keepHold",
 	}
 	holdWriters = map[string][]string{
 		"heldHeals":   {"runGate.admitOrHold", "runGate.dropHold", "runGate.refreshLocked"},

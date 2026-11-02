@@ -30,6 +30,10 @@ import type { ConfigStanding } from "./wire/types.gen.js";
 /** Last fetched recipe list, kept so a repaint needs no refetch. */
 let recipes: Recipe[] = [];
 
+/** Whether the latest recipe fetch answered. A schedule is called orphaned only against a current
+ *  list: a failed refetch keeps the old rows on screen, but absence from them proves nothing. */
+let recipesCurrent = false;
+
 /** MODULE state, not a render parameter, and that distinction is load-bearing: this panel repaints
  *  itself on its own schedule (the run poll, the schedules fetch, the settings SSE), and a parameter
  *  threaded only through the render call would be dropped by the next one — so the filter would
@@ -71,6 +75,24 @@ function visibleRecipes(): Recipe[] {
     return recipes;
   }
   return recipes.filter((r) => filterHaystack(r).includes(filterText));
+}
+
+/** Schedules whose recipe is not in the current list: no recipe row carries them, so they get their
+ *  own, or they could never be deleted. */
+function orphanedSchedules(): ScheduleView[] {
+  if (!recipesCurrent) {
+    return [];
+  }
+  const known = new Set(recipes.map((r) => r.source));
+  return [...schedules.values()].filter((v) => !known.has(v.source));
+}
+
+function visibleOrphans(): ScheduleView[] {
+  return orphanedSchedules().filter(
+    (v) =>
+      filterText === "" ||
+      [v.name ?? "", v.source, "orphaned"].join("\n").toLowerCase().includes(filterText),
+  );
 }
 
 /** Render the Workflows tab into its panel. Called by docs.ts on tab switch and on its inventory
@@ -126,6 +148,7 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
   }
   void (async () => {
     const [r] = await Promise.all([loadRecipes.dispatch(undefined), refreshRuns()]);
+    recipesCurrent = r !== null;
     if (r !== null) {
       recipes = r.recipes;
     }
@@ -139,10 +162,11 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
 
 async function refreshRecipes(): Promise<void> {
   const r = await loadRecipes.dispatch(undefined);
+  recipesCurrent = r !== null;
   if (r !== null) {
     recipes = r.recipes;
-    paint();
   }
+  paint();
 }
 
 function counts(): RecipeCounts {
@@ -304,7 +328,8 @@ async function refreshRuns(): Promise<void> {
  *  placed with its row and its typed values survive every repaint. */
 type RecipeEntry =
   | { readonly kind: "row"; readonly recipe: Recipe }
-  | { readonly kind: "detail"; readonly recipe: Recipe };
+  | { readonly kind: "detail"; readonly recipe: Recipe }
+  | { readonly kind: "orphan"; readonly schedule: ScheduleView };
 
 /** The recipe whose input form is open, by source; at most one, like a `<details>` group. */
 let openForm: string | null = null;
@@ -314,10 +339,11 @@ function paint(): void {
     return;
   }
   const rows = visibleRecipes();
+  const orphans = visibleOrphans();
   // Every repaint path reports, not just the fetch: the note describes what is on screen, so
   // whichever caller changed what is on screen owes the update.
   onCounts?.(counts());
-  if (rows.length === 0) {
+  if (rows.length === 0 && orphans.length === 0) {
     // Two different sentences, because they answer different questions. "No workflows available."
     // under an active filter is the same lie docs.ts records for its category text: the workflows
     // exist, they are one keystroke away.
@@ -325,7 +351,9 @@ function paint(): void {
       el(
         "div",
         { className: "list-empty" },
-        recipes.length === 0 ? "No workflows available." : "No workflows match the filter.",
+        recipes.length === 0 && orphanedSchedules().length === 0
+          ? "No workflows available."
+          : "No workflows match the filter.",
       ),
     );
     return;
@@ -342,19 +370,37 @@ function paint(): void {
       entries.push({ kind: "detail", recipe });
     }
   }
+  for (const schedule of orphans) {
+    entries.push({ kind: "orphan", schedule });
+  }
   // Keyed on `source`, which is stable across a filter change — so a keystroke removes and re-adds
   // the rows that left and arrived rather than rebuilding the list.
   reconcile(list, entries, {
-    key: (e: RecipeEntry) => joinKey(e.kind, e.recipe.source),
-    mount: (e: RecipeEntry) => (e.kind === "row" ? recipeRow(e.recipe) : inputForm(e.recipe)),
+    key: (e: RecipeEntry) =>
+      joinKey(e.kind, e.kind === "orphan" ? e.schedule.source : e.recipe.source),
+    mount: (e: RecipeEntry) => {
+      switch (e.kind) {
+        case "row":
+          return recipeRow(e.recipe);
+        case "detail":
+          return inputForm(e.recipe);
+        case "orphan":
+          return orphanRow(e.schedule);
+      }
+    },
     update: (node: HTMLElement, e: RecipeEntry) => {
-      if (e.kind === "row") {
-        syncButton(node, e.recipe);
-        syncSchedule(node, e.recipe);
-        syncStanding(node, e.recipe);
-      } else {
-        // Only Launch is synced: the fields hold what the reader has typed.
-        syncLaunch(node, e.recipe);
+      switch (e.kind) {
+        case "row":
+          syncButton(node, e.recipe);
+          syncSchedule(node, e.recipe);
+          syncStanding(node, e.recipe);
+          break;
+        case "detail":
+          // Only Launch is synced: the fields hold what the reader has typed.
+          syncLaunch(node, e.recipe);
+          break;
+        case "orphan":
+          break;
       }
     },
   });
@@ -418,6 +464,38 @@ function recipeRow(r: Recipe): HTMLElement {
   syncSchedule(row, r);
   syncStanding(row, r);
   return row;
+}
+
+/** A schedule whose recipe file is gone: it cannot run or be edited, so Delete is its one control. */
+function orphanRow(v: ScheduleView): HTMLElement {
+  const title = v.name ?? v.source;
+  const del = el("button", {
+    type: "button",
+    className: "btn-small recipe-sched-delete-btn",
+    "aria-label": `Delete the schedule of ${title}`,
+  }) as HTMLButtonElement;
+  del.textContent = "Delete schedule";
+  del.addEventListener("click", (e: MouseEvent) => {
+    e.stopPropagation();
+    void (async () => {
+      await deleteSchedule.dispatch(v.id);
+      await refreshSchedules();
+    })();
+  });
+  return entryRow({
+    key: v.source,
+    title,
+    badges: [el("span", { className: "docs-badge" }, "orphaned")],
+    sub: {
+      kind: "lines",
+      lines: [
+        { text: v.source, mono: true },
+        { text: "Its workflow file is gone, so this schedule cannot run.", error: true },
+      ],
+    },
+    actions: [del],
+    data: { "data-orphan-schedule": v.id },
+  });
 }
 
 function standingOf(r: Recipe): ConfigStanding | undefined {

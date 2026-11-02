@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -11,8 +12,10 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/sanitize"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // Runs owns the workflow-run surface: launch, cancel, retry, the durable lease, the deadline and turn-cap
@@ -83,14 +86,56 @@ func (rs *Runs) useLog(l *runLog) {
 	rs.log = l
 }
 
-// No schedule or no store is a no-op.
-func (rs *Runs) recordScheduleOutcome(ctx context.Context, scheduleID string, outcome schedule.Outcome) {
-	if rs.schedules == nil || scheduleID == "" {
+// scheduleRun names the schedule row a lease's run reports to; ScheduleID is "" for an unscheduled run.
+func scheduleRun(l *runlease.Lease) schedule.Run {
+	return schedule.Run{ScheduleID: l.ScheduleID, WorkflowID: l.WorkflowID}
+}
+
+// recordScheduleOutcome overwrites run's outcome on its row (schedule.Store.RecordOutcome). No schedule or
+// no store is a no-op.
+func (rs *Runs) recordScheduleOutcome(ctx context.Context, run schedule.Run, outcome schedule.Outcome) {
+	rs.writeSchedule(run, func() error { return rs.schedules.RecordOutcome(ctx, run, outcome) })
+}
+
+// recordScheduleEnding fills run's ending on a row still reading started (schedule.Store.RecordEnding).
+func (rs *Runs) recordScheduleEnding(ctx context.Context, run schedule.Run, status marotte.RunStatus, stopReason string) {
+	outcome := runEnding(status, stopReason)
+	rs.writeSchedule(run, func() error { return rs.schedules.RecordEnding(ctx, run, outcome) })
+}
+
+func (rs *Runs) writeSchedule(run schedule.Run, write func() error) {
+	if rs.schedules == nil || run.ScheduleID == "" {
 		return
 	}
-	if err := rs.schedules.RecordOutcome(ctx, scheduleID, outcome); err != nil {
+	if err := write(); err != nil {
 		slog.Warn("could not record the schedule's outcome",
-			"schedule_id", scheduleID, "error", err)
+			"schedule_id", run.ScheduleID, "workflow_id", run.WorkflowID, "error", err)
+	}
+}
+
+// maxRowTextBytes bounds KAS text quoted on a schedule row, one line persisted at every fire. KAS's pause and stop
+// sentences run under 200 bytes; a step's own failure text can be any length.
+const maxRowTextBytes = 512
+
+// rowText defuses KAS text for the row: one line, no escapes, capped.
+func rowText(s string) string {
+	text, _ := runesafe.SanitizeSingleLineCapped(sanitize.Output(s), maxRowTextBytes, "...")
+	return text
+}
+
+// runEnding is the row's outcome for a terminal status: completed, or failed with KAS's stopReason, else a
+// sentence naming the status.
+func runEnding(status marotte.RunStatus, stopReason string) schedule.Outcome {
+	stopReason = rowText(stopReason)
+	switch status {
+	case marotte.RunStatusCompleted:
+		return schedule.Outcome{Status: schedule.StatusCompleted}
+	case marotte.RunStatusAborted:
+		return schedule.Outcome{Status: schedule.StatusFailed, Reason: cmp.Or(stopReason, "the run was aborted")}
+	case marotte.RunStatusCancelled:
+		return schedule.Outcome{Status: schedule.StatusFailed, Reason: cmp.Or(stopReason, "the run was cancelled")}
+	default:
+		return schedule.Outcome{Status: schedule.StatusFailed, Reason: cmp.Or(stopReason, "the run failed")}
 	}
 }
 

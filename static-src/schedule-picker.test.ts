@@ -283,6 +283,14 @@ describe("the unattended note", () => {
     expect(text).not.toContain("refused");
   });
 
+  it("states that a pause nobody resumes ends the run, whatever the setting", () => {
+    for (const on of [true, false]) {
+      expect(buildUnattendedNote(on, vi.fn()).textContent).toContain(
+        "If the run pauses and nobody resumes it within 3 minutes, it is cancelled.",
+      );
+    }
+  });
+
   it("says the setting is global in both states", () => {
     for (const on of [true, false]) {
       expect(buildUnattendedNote(on, vi.fn()).textContent).toContain(
@@ -354,6 +362,13 @@ describe("describeOutcome", () => {
       view({ last_status: "started", last_run_at: "2026-08-10T02:00:00+02:00" }),
     );
     expect(out).toBe(`last started ${formatStamp("2026-08-10T02:00:00+02:00")}`);
+  });
+
+  it("reports a run that finished on its own terms as completed, with when", () => {
+    const out = describeOutcome(
+      view({ last_status: "completed", last_run_at: "2026-08-10T02:00:00+02:00" }),
+    );
+    expect(out).toBe(`last completed ${formatStamp("2026-08-10T02:00:00+02:00")}`);
   });
 
   // The reason is the actionable half, because it names the fix, so it is kept whole rather than
