@@ -2,6 +2,7 @@ package tabs
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"slices"
 	"time"
@@ -106,6 +107,38 @@ func (s *Store) Settle(ctx context.Context, entryIDs []string) error {
 	if len(next.owed) == before {
 		return nil
 	}
+	if err := s.persist(ctx, &next); err != nil {
+		return err
+	}
+	s.publish(&next)
+	return nil
+}
+
+// SetLaunchChats adds chats to run tab id's LaunchChats, sorted, and sets LaunchResolved when resolved is true; it
+// never removes a holder or unresolves a tab. It bumps no version and the coordinator emits nothing: the client
+// renders neither field. Returns errNotOpen when id is not an open run tab, ErrBadRef for an invalid chat id.
+func (s *Store) SetLaunchChats(ctx context.Context, id string, chats []string, resolved bool) error {
+	for _, c := range chats {
+		if !ids.ValidChatID(c) {
+			return fmt.Errorf("%w: launch chat %q", ErrBadRef, c)
+		}
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	next := s.snapshot()
+	i := indexOfID(next.tabs, id)
+	if i < 0 || next.tabs[i].Kind != marotte.TabKindRun {
+		return fmt.Errorf("%w: run tab %q", errNotOpen, id)
+	}
+	t := &next.tabs[i]
+	union := slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(t.LaunchChats), chats...))))
+	if slices.Equal(union, t.LaunchChats) && (t.LaunchResolved || !resolved) {
+		return nil
+	}
+	if len(union) > 0 {
+		t.LaunchChats = union
+	}
+	t.LaunchResolved = t.LaunchResolved || resolved
 	if err := s.persist(ctx, &next); err != nil {
 		return err
 	}

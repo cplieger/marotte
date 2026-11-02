@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -134,6 +135,10 @@ func (k *keepingStore) Hold(ctx context.Context, id marotte.ChatID, key string, 
 }
 
 func (*keepingStore) SessionInTeardown(string) bool { return false }
+
+func (*keepingStore) ReconcileKeep(context.Context, marotte.ChatID, func(*chat.KeepRecord)) error {
+	return errors.New("keepingStore keeps no keep facts to reconcile")
+}
 
 func (k *keepingStore) Rollback(ctx context.Context, cl *chat.Claim) error {
 	_, err := k.Mutate(ctx, cl.ChatID, func(c *marotte.Chat, exists bool) bool {

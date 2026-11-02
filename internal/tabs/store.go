@@ -40,12 +40,20 @@ func (s *Store) mutate(ctx context.Context, apply func(st *state) (bool, error))
 	return next.version, nil
 }
 
-// snapshot clones the state under stateMu, shallowly: marotte.TabSubject holds no reference
-// type (a slice or map field would require a deep clone; see List).
+// snapshot clones the state under stateMu. Owed entries are never mutated in place, so their clone is shallow.
 func (s *Store) snapshot() state {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	return state{tabs: slices.Clone(s.tabs), owed: slices.Clone(s.owed), version: s.version}
+	return state{tabs: cloneTabs(s.tabs), owed: slices.Clone(s.owed), version: s.version}
+}
+
+// cloneTabs copies tabs deeply: a caller's edit of a returned LaunchChats must not reach the published state.
+func cloneTabs(tabs []marotte.TabSubject) []marotte.TabSubject {
+	out := slices.Clone(tabs)
+	for i := range out {
+		out[i].LaunchChats = slices.Clone(out[i].LaunchChats)
+	}
+	return out
 }
 
 // Called only after the clone is durable, so what a reader sees is always what is on disk.
@@ -211,12 +219,11 @@ func (s *Store) Reparent(ctx context.Context, id, parent string) (uint64, error)
 	})
 }
 
-// List returns the set in order plus the version it reflects, from ONE critical section. The
-// result is a shallow copy, sufficient because TabSubject holds no reference type.
+// List returns a copy of the set in order plus the version it reflects, from ONE critical section.
 func (s *Store) List() (tabs []marotte.TabSubject, version uint64) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	return slices.Clone(s.tabs), s.version
+	return cloneTabs(s.tabs), s.version
 }
 
 // Subtree returns the tab with this id plus every descendant, in order, or nil when id is not
@@ -234,7 +241,7 @@ func (s *Store) Subtree(id string) []marotte.TabSubject {
 			out = append(out, t)
 		}
 	}
-	return out
+	return cloneTabs(out)
 }
 
 // Prune is LOAD-TIME crash recovery, not the live integrity mechanism (the membership

@@ -305,12 +305,12 @@ func (rs *Runs) startLife(ctx context.Context, chatID marotte.ChatID, f *lifecyc
 	}
 }
 
-// startHolders names a run_start's holders by runHolders over one fresh owner scan, plus the lane's chat for an
+// startHolders names a run_start's holders by RunHolders over one fresh owner scan, plus the lane's chat for an
 // agent's run and, on an incomplete scan, every chat the scan could not read: one of them may own the parent
 // session. unattributed is a failed listing of the chats directory, which names no chat at all.
 func (rs *Runs) startHolders(ctx context.Context, chatID marotte.ChatID, parent string) (holders []marotte.ChatID, unattributed bool) {
 	scan := rs.chats.SessionOwners(ctx)
-	holders, _ = runHolders([]string{parent}, nil, scan.Owners)
+	holders, _ = RunHolders([]string{parent}, nil, scan.Owners)
 	if o := runStartLaunch(chatID); o.origin == runlease.OriginAgent {
 		holders = append(holders, chatID)
 	}
@@ -366,7 +366,7 @@ func (rs *Runs) reattribute(ctx context.Context, wf string) {
 	if !scan.Listed {
 		return
 	}
-	holders, _ := runHolders([]string{l.ParentSessionID}, &l, scan.Owners)
+	holders, _ := RunHolders([]string{l.ParentSessionID}, &l, scan.Owners)
 	if !scan.Complete {
 		holders = append(holders, scan.Skipped...)
 	}
@@ -397,7 +397,7 @@ type retryStart struct {
 }
 
 // beginRetryLife starts a retry's new life before anything is sent: it refuses a run whose launching chat is being
-// deleted or is gone, holds run:<workflowID> on every holder runHolders names, then grants the lease or renews the
+// deleted or is gone, holds run:<workflowID> on every holder RunHolders names, then grants the lease or renews the
 // held one under a new life token, so an end the previous life still owes cannot release this one.
 func (rs *Runs) beginRetryLife(ctx context.Context, workflowID string, o *runOrigin) (retryStart, error) {
 	key, ok := marotte.KeyRun(workflowID)
@@ -435,7 +435,7 @@ func (rs *Runs) beginRetryLife(ctx context.Context, workflowID string, o *runOri
 	return start, nil
 }
 
-// retryHolders names a retry's holders by runHolders over one fresh owner scan, refusing a run whose launching
+// retryHolders names a retry's holders by RunHolders over one fresh owner scan, refusing a run whose launching
 // session is in teardown, and one whose scan could not read every chat and found no holder.
 func (rs *Runs) retryHolders(ctx context.Context, workflowID string, o *runOrigin) ([]marotte.ChatID, error) {
 	if rs.chats == nil {
@@ -450,7 +450,7 @@ func (rs *Runs) retryHolders(ctx context.Context, workflowID string, o *runOrigi
 	if l, held := rs.lease(workflowID); held {
 		lp = &l
 	}
-	holders, _ := runHolders([]string{o.parent.session}, lp, scan.Owners)
+	holders, _ := RunHolders([]string{o.parent.session}, lp, scan.Owners)
 	if len(holders) == 0 && !scan.Complete {
 		return nil, command.StatusError(http.StatusServiceUnavailable, errRetryChatUnread)
 	}

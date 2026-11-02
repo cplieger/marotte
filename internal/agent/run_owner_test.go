@@ -40,9 +40,9 @@ func TestRunHolders_NamesEveryChainOwnerAndTheLeasesHolders(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, known := runHolders(tc.parents, tc.lease, owners)
+			got, known := RunHolders(tc.parents, tc.lease, owners)
 			if !slices.Equal(got, tc.want) || known != tc.wantKnown {
-				t.Errorf("runHolders(%v, %+v) = %v, known %v; want %v, known %v", tc.parents, tc.lease, got, known, tc.want, tc.wantKnown)
+				t.Errorf("RunHolders(%v, %+v) = %v, known %v; want %v, known %v", tc.parents, tc.lease, got, known, tc.want, tc.wantKnown)
 			}
 		})
 	}
@@ -149,7 +149,7 @@ func TestRunOwner_AnIncompleteScanWithNoHolderIsAnError(t *testing.T) {
 	}
 }
 
-// The purge teardown deletes exactly the runs whose keep facts runHolders puts on the purged chat.
+// The purge teardown deletes exactly the runs whose keep facts RunHolders puts on the purged chat.
 func TestDeleteForSessions_DeletesExactlyTheRunsRunHoldersAttributesToTheChat(t *testing.T) {
 	rows := purgeRuns(t,
 		purgeRow("wf_own", "paused", "sess_launcher", time.Now()),
@@ -167,7 +167,7 @@ func TestDeleteForSessions_DeletesExactlyTheRunsRunHoldersAttributesToTheChat(t 
 	for _, wf := range []struct{ id, parent string }{
 		{"wf_own", "sess_launcher"}, {"wf_retired", "sess_retired"}, {"wf_other", "sess_other"}, {"wf_none", ""},
 	} {
-		if holders, _ := runHolders([]string{wf.parent}, nil, owners); slices.Contains(holders, "c-purged") {
+		if holders, _ := RunHolders([]string{wf.parent}, nil, owners); slices.Contains(holders, "c-purged") {
 			want = append(want, wf.id)
 		}
 	}

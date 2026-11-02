@@ -1305,7 +1305,7 @@ func (rs *Runs) deleteForSessions(ctx context.Context, chatID marotte.ChatID, se
 	if len(sessionChain) == 0 {
 		return
 	}
-	// The same test runHolders attributes every run keep fact by, so this deletes exactly the runs whose facts
+	// The same test RunHolders attributes every run keep fact by, so this deletes exactly the runs whose facts
 	// would have kept the chat.
 	owners := chat.OwnersOfChain(chatID, sessionChain)
 	runs, err := rs.listRaw(ctx)

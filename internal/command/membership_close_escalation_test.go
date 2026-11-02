@@ -208,6 +208,8 @@ func (*fixedTabs) Settle(context.Context, []string) error { return nil }
 
 func (*fixedTabs) Unread() string { return "" }
 
+func (*fixedTabs) SetLaunchChats(context.Context, string, []string, bool) error { return nil }
+
 func (*fixedTabs) Reorder(context.Context, []string) (uint64, error) { return 0, nil }
 
 func (*fixedTabs) SetPinned(context.Context, string, bool) (uint64, error) { return 0, nil }

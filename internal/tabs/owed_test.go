@@ -167,3 +167,64 @@ func TestSanitize_KeepsOnlyARunTabsValidHolders(t *testing.T) {
 		t.Errorf("sanitize(chat) = %+v, want no launch fields on a chat tab", got[1])
 	}
 }
+
+func TestSetLaunchChats_GrowsTheHoldersAndResolvesWithoutABump(t *testing.T) {
+	s, dir := newTestStore(t)
+	run := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"})
+	if run.LaunchResolved {
+		t.Fatalf("Setup: a run tab opened with no launch is resolved: %+v", run)
+	}
+	_, before := s.List()
+
+	if err := s.SetLaunchChats(t.Context(), run.ID, []string{"c-b", "c-a"}, true); err != nil {
+		t.Fatalf("SetLaunchChats: %v", err)
+	}
+	if err := s.SetLaunchChats(t.Context(), run.ID, []string{"c-a"}, false); err != nil {
+		t.Fatalf("SetLaunchChats with fewer holders: %v", err)
+	}
+
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	open, after := reopened.List()
+	if len(open) != 1 || !slices.Equal(open[0].LaunchChats, []string{"c-a", "c-b"}) || !open[0].LaunchResolved {
+		t.Errorf("run tab after a restart = %+v, want both holders kept and the tab still resolved", open)
+	}
+	if after != before {
+		t.Errorf("SetLaunchChats moved the version %d -> %d, want no bump: the client renders neither field", before, after)
+	}
+}
+
+func TestSetLaunchChats_RefusesAnythingButAnOpenRunTab(t *testing.T) {
+	s, _ := newTestStore(t)
+	chat := mustOpen(t, s, chatSpec("c-a"))
+	run := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"})
+	for name, tc := range map[string]struct {
+		id    string
+		chats []string
+	}{
+		"chat tab":     {id: chat.ID, chats: []string{"c-a"}},
+		"closed tab":   {id: "t-gone", chats: []string{"c-a"}},
+		"invalid chat": {id: run.ID, chats: []string{"../x"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := s.SetLaunchChats(t.Context(), tc.id, tc.chats, true); err == nil {
+				t.Errorf("SetLaunchChats(%q, %v) = nil, want a refusal", tc.id, tc.chats)
+			}
+		})
+	}
+	if open, _ := s.List(); open[indexOfSubject(open, marotte.TabKindRun, "wf_1")].LaunchResolved {
+		t.Error("a refused SetLaunchChats resolved the run tab")
+	}
+}
+
+func TestList_ACallersEditOfLaunchChatsDoesNotReachTheStore(t *testing.T) {
+	s, _ := newTestStore(t)
+	mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1", Launch: &marotte.RunLaunch{Chats: []string{"c-a"}}})
+	open, _ := s.List()
+	open[0].LaunchChats[0] = "c-forged"
+	if again, _ := s.List(); again[0].LaunchChats[0] != "c-a" {
+		t.Errorf("LaunchChats after editing a listed copy = %v, want [c-a]", again[0].LaunchChats)
+	}
+}

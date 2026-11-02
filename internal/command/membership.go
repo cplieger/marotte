@@ -80,6 +80,7 @@ type TabSet interface {
 	Subtree(id string) []marotte.TabSubject
 	Owed() []tabs.OwedRelease
 	Settle(ctx context.Context, entryIDs []string) error
+	SetLaunchChats(ctx context.Context, id string, chats []string, resolved bool) error
 	// Unread names the arrangement the store could not read at boot; empty when it read it.
 	Unread() string
 }
@@ -93,6 +94,7 @@ type membershipChats interface {
 	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
 	// SessionInTeardown names a session of a chat whose retention teardown still runs.
 	SessionInTeardown(sessionID string) bool
+	ReconcileKeep(ctx context.Context, id marotte.ChatID, fn func(r *chat.KeepRecord)) error
 }
 
 var _ membershipChats = (*chat.Store)(nil)
@@ -1140,6 +1142,29 @@ func (m *Membership) SettleOwed(ctx context.Context) archive.PurgeResult {
 	}
 	m.settle(ctx, settled)
 	return archive.PurgeResult{}
+}
+
+// ReconcileTabs runs the keep-state reconcile's fn over chatID's record under mu and the record lock, with the open
+// tabs read under the same mu, so no tab open or close interleaves with the reconcile's tab and run-tab adds.
+func (m *Membership) ReconcileTabs(ctx context.Context, chatID marotte.ChatID, fn func(r *chat.KeepRecord, open []marotte.TabSubject)) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var open []marotte.TabSubject
+	if m.tabs != nil {
+		open, _ = m.tabs.List()
+	}
+	return m.chats.ReconcileKeep(ctx, chatID, func(r *chat.KeepRecord) { fn(r, open) })
+}
+
+// SetLaunchChats grows run tab tabID's holders and resolves it (tabs.Store.SetLaunchChats), under mu like every tab
+// write. It emits nothing: the client renders neither field.
+func (m *Membership) SetLaunchChats(ctx context.Context, tabID string, chats []string, resolved bool) error {
+	if m.tabs == nil {
+		return errTabsUnavailable
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.tabs.SetLaunchChats(ctx, tabID, chats, resolved)
 }
 
 // settleOwedEntry releases e's facts by SettleOwed's rule and reports whether e is settled. Caller holds mu, which

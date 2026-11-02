@@ -68,6 +68,8 @@ type App struct {
 	stopKASHeal func()
 	// stopToolsSteering waits for the boot's environment.md regeneration, which reads the tools engine.
 	stopToolsSteering func()
+	// stopKeepState stops the keep-state reconcile and waits: a round in flight reads KAS over the agent engine.
+	stopKeepState func()
 	// stopApp ends the app's LIFETIME: what every process-bound component is parented on.
 	stopApp func()
 	// waitSignIn waits for the sign-in vault's goroutines, which end with the app's lifetime.
@@ -266,11 +268,13 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// the agent.
 	chat.WithLiveTurn(h.TurnLive)(chatStore)
 	chat.WithOpenTurns(h.OpenTurns)(chatStore)
-	purgeScheduler, err := wireRetention(appCtx, cfg, chatStore, h)
+	purgeScheduler, startKeepState, err := wireRetention(appCtx, cfg, chatStore, h,
+		retentionStores{tabs: tabStore, leases: leaseStore, reaper: sessionReaper})
 	if err != nil {
 		return nil, err
 	}
 	purgeScheduler.Start(appCtx)
+	stopKeepState := startKeepState()
 
 	previewSigner, err := preview.NewSigner()
 	if err != nil {
@@ -331,6 +335,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopForgeKeeper:   stopForgeKeeper,
 		stopKASHeal:       stopKASHeal,
 		stopToolsSteering: stopToolsSteering,
+		stopKeepState:     stopKeepState,
 		stopApp:           stopApp,
 		waitSignIn:        vault.Wait,
 		roots:             roots,
@@ -361,6 +366,7 @@ func (a *App) Shutdown() {
 	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the agent engine the
 	// runtime teardown is about to stop, so the reverse order leaves one mid-inspect.
 	callIfSet(a.stopOrphanSweep)
+	callIfSet(a.stopKeepState)
 	callIfSet(a.stopKiroSeed)
 	callIfSet(a.stopKiro)
 	if a.purgeScheduler != nil {

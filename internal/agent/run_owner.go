@@ -28,11 +28,11 @@ var (
 	errRunLeasesUnread = errors.New("the run lease file could not be read")
 )
 
-// runHolders names the chats a run's keep fact goes to: every chat whose session chain holds one of the run's
+// RunHolders names the chats a run's keep fact goes to: every chat whose session chain holds one of the run's
 // parent sessions (the test the purge teardown deletes runs by), plus the holders its lease already records.
 // known is false when nothing names a launcher and the run could be a chat's: no valid parent session, and a
 // lease that is absent or of OriginAgent with no holder.
-func runHolders(parents []string, l *runlease.Lease, owners chat.SessionOwners) (holders []marotte.ChatID, known bool) {
+func RunHolders(parents []string, l *runlease.Lease, owners chat.SessionOwners) (holders []marotte.ChatID, known bool) {
 	set := map[marotte.ChatID]struct{}{}
 	parented := false
 	for _, p := range parents {
@@ -56,7 +56,7 @@ func runHolders(parents []string, l *runlease.Lease, owners chat.SessionOwners) 
 	return holders, known
 }
 
-// RunOwner answers a run's owners by runHolders (command.runOwner). A leased run answers from its lease and the
+// RunOwner answers a run's owners by RunHolders (command.runOwner). A leased run answers from its lease and the
 // chats; an unleased one from KAS's inventory row, or its inspect reply when the inventory omits it, and the chats.
 // RunUnknown when no lease, row or reply names the run: the list leaves out a run whose state it could not read, so
 // an omission is not parentless. The error is an unreadable inventory, an owner scan that could not read every chat
@@ -86,7 +86,7 @@ func (rs *Runs) RunOwner(ctx context.Context, workflowID string) (command.RunOwn
 // ownersOf is RunOwner's verdict over one fresh owner scan.
 func (rs *Runs) ownersOf(ctx context.Context, parents []string, l *runlease.Lease) (command.RunOwner, error) {
 	scan := rs.chats.SessionOwners(ctx)
-	holders, known := runHolders(parents, l, scan.Owners)
+	holders, known := RunHolders(parents, l, scan.Owners)
 	out := command.RunOwner{Holders: holders, ParentSessions: slices.DeleteFunc(slices.Clone(parents), func(p string) bool {
 		return !ids.ValidSessionID(p)
 	})}
