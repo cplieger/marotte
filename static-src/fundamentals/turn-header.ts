@@ -74,8 +74,6 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   const req = el("div", { className: "turn-req" });
   const text = el("div", { className: "turn-req-text" });
   req.appendChild(text);
-  // Decorative: the toggle's name says the message is cut.
-  req.appendChild(el("span", { className: "turn-req-cut", "aria-hidden": "true" }, "\u2026"));
   // Sibling of `.turn-req-text`, so the clamp cannot hide the attachments.
   req.appendChild(el("ul", { className: "turn-req-attachments attachment-row hidden" }));
   header.appendChild(req);
@@ -367,8 +365,8 @@ function syncFullText(header: HTMLElement, body: string | undefined): void {
   }
   if (full === null) {
     full = el("div", { className: "turn-req-full" });
-    // After the text and its cue and before the attachments, in reading order.
-    req.querySelector(":scope > .turn-req-cut")?.after(full);
+    // After the text and before the attachments, in reading order.
+    req.querySelector(":scope > .turn-req-text")?.after(full);
   }
   if (full.textContent !== body) {
     full.textContent = body;

@@ -1,5 +1,5 @@
 // The turn card's header band. The CLAMP is CSS and fold-conditional, so
-// `disclosure-row-css.test.ts` owns it against real layout; the cut cue is measured here.
+// `disclosure-row-css.test.ts` owns it against real layout; the cut fade is measured here.
 import { describe, it, expect, afterEach } from "vitest";
 import { mountAppCSS } from "../__test-helpers__/css-rules.js";
 import { buildTurnHeader, updateTurnHeader, type TurnHeaderData } from "./turn-header.js";
@@ -240,6 +240,7 @@ describe("a labelled request", () => {
     const h = buildTurnHeader(data({ request: "the whole instruction", label: "Run task 2" }));
     expect(text(h).textContent).toBe("Run task 2");
     expect(full(h).textContent).toBe("the whole instruction");
+    expect(full(h).previousElementSibling).toBe(text(h));
     expect(h.querySelector(".turn-req-more")).toBeNull();
   });
 
@@ -291,34 +292,31 @@ describe("a folded turn whose prompt is cut", () => {
     await settle();
     return h;
   }
-  const cue = (h: HTMLElement): HTMLElement => h.querySelector<HTMLElement>(".turn-req-cut")!;
   const toggleName = (h: HTMLElement): string | null =>
     h.querySelector(".turn-fold-toggle")?.getAttribute("aria-label") ?? null;
 
-  it("fades its last line, ends on a muted ellipsis, and says so in the chevron's name", async () => {
+  it("fades its last line and says so in the chevron's name", async () => {
     const h = await folded("a long line of words ".repeat(60));
     expect(text(h).hasAttribute("data-cut")).toBe(true);
     expect(getComputedStyle(text(h)).maskImage).toContain("linear-gradient");
-    expect(getComputedStyle(cue(h)).display).toBe("block");
-    expect(cue(h).getAttribute("aria-hidden")).toBe("true");
-    expect(cue(h).textContent).toBe("\u2026");
     expect(toggleName(h)).toBe("Expand or collapse this turn, message truncated");
   });
 
-  it("shows neither cue for a prompt that fits", async () => {
+  it("neither fades nor flags a prompt that fits", async () => {
     const h = await folded("short");
     expect(text(h).hasAttribute("data-cut")).toBe(false);
-    expect(getComputedStyle(cue(h)).display).toBe("none");
+    expect(getComputedStyle(text(h)).maskImage).toBe("none");
     expect(toggleName(h)).toBe("Expand or collapse this turn");
   });
 
-  it("drops the cue once the turn opens", async () => {
+  it("drops the fade once the turn opens", async () => {
     const h = await folded("a long line of words ".repeat(60));
     card?.toggleAttribute("data-folded", false);
     await settle();
     await settle();
     expect(text(h).hasAttribute("data-cut")).toBe(false);
-    expect(getComputedStyle(cue(h)).display).toBe("none");
+    expect(getComputedStyle(text(h)).maskImage).toBe("none");
+    expect(toggleName(h)).toBe("Expand or collapse this turn");
   });
 });
 
@@ -517,7 +515,7 @@ describe("a woken turn's header", () => {
       expect(text(h).scrollHeight).toBe(text(h).clientHeight);
     });
 
-    it("cut to a folded prompt's box with its fade and cue on a folded turn, the label left whole", async () => {
+    it("cut to a folded prompt's box with its fade on a folded turn, the label left whole", async () => {
       const woken = mount(wakeData(stepWake("warning", LONG_WAKE)), true);
       const prompted = mount(data({ request: LONG_WAKE }), true);
       await settle();
@@ -525,9 +523,6 @@ describe("a woken turn's header", () => {
       expect(text(woken).clientHeight).toBe(text(prompted).clientHeight);
       expect(getComputedStyle(text(woken)).maskImage).toBe(
         getComputedStyle(text(prompted)).maskImage,
-      );
-      expect(getComputedStyle(woken.querySelector<HTMLElement>(".turn-req-cut")!).display).toBe(
-        "block",
       );
       expect(woken.querySelector(".turn-fold-toggle")?.getAttribute("aria-label")).toBe(
         "Expand or collapse this turn, message truncated",

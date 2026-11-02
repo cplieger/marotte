@@ -215,10 +215,10 @@
  * is not clamped, full text however long (the composer spills a long paste into an
  * attachment); a FOLDED one clamps to four lines, because folded rows are the
  * session's navigation surface and one pasted stack trace would push every
- * neighbouring row off screen. A height cap rather than `-webkit-line-clamp`, whose
- * own ellipsis is in the text's ink: a cut prompt (`data-cut`, measured by
- * `clamp-text.ts` `watchCut`) fades over its last line and ends on the muted cue
- * below. Scoped to the TEXT, so the attachment chips are unclamped. */
+ * neighbouring row off screen. A height cap rather than `-webkit-line-clamp`, which
+ * draws an ellipsis: a cut prompt (`data-cut`, measured by `clamp-text.ts` `watchCut`)
+ * fades over its last line instead. Scoped to the TEXT, so the attachment chips are
+ * unclamped. */
 .turn[data-folded] .turn-req-text {
   max-block-size: 4lh;
   overflow: hidden;
@@ -227,21 +227,6 @@
     mask-image: linear-gradient(to bottom, #000 calc(100% - 1lh), transparent);
     cursor: pointer;
   }
-}
-
-/* The cue sits over the end of the faded last line: one line box tall, pulled up by
- * that line and the column's gap. */
-.turn-req-cut {
-  display: none;
-  align-self: flex-end;
-  margin-block-start: calc(-1lh - var(--sp-1));
-  font-size: var(--fs-md);
-  line-height: 1.5;
-  color: var(--c-text-tertiary);
-}
-
-.turn[data-folded] [data-cut] + .turn-req-cut {
-  display: block;
 }
 
 /* A labelled request's full text is part of the open prompt. */

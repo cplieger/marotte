@@ -132,9 +132,8 @@ export function attachClamp(
 }
 
 /**
- * Report whether `text` is cut, as `data-cut` and through `onCut`, for text whose own fold clamps it in CSS: the
- * fade and the cue follow a real overflow, re-measured on every resize, after which `onMeasure` runs. Released by
- * {@link releaseClamp}.
+ * Report whether `text` is cut, as `data-cut` and through `onCut`, for text whose own fold clamps it in CSS;
+ * re-measured on every resize, after which `onMeasure` runs. Released by {@link releaseClamp}.
  */
 export function watchCut(
   text: HTMLElement,
