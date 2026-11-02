@@ -111,8 +111,8 @@ emit_path_dropin() {
 
 # $1 is the profile.d folder. Through a temp file so a login shell never sources a half-written
 # assignment; the mktemp suffix keeps run-parts from matching it. A failed write still succeeds
-# when the file already holds this boot's text; a different file is removed, since a login shell
-# would source a previous boot's PATH from it.
+# when the file already holds this boot's text; a different file is removed, or named in a warning
+# when it cannot be, since a login shell would source a previous boot's PATH from it.
 install_path_dropin() {
   local dir=$1 target tmp
   target="$dir/10-marotte-path.sh"
@@ -134,7 +134,8 @@ install_path_dropin() {
 # $1 is the effective uid. Only root may write /etc/profile.d, and Debian's /etc/profile resets
 # PATH for every other uid too, so elsewhere a login shell searches no tools folder. Warn only: a
 # login shell without the tools PATH is no reason to stop the boot, and with no tools folder only a
-# failed drop-in is worth a warning. MAROTTE_PATH_DROPIN=1 tells the server (internal/steering's dropInEnv) the drop-in was written at this start.
+# failed drop-in is worth a warning. MAROTTE_PATH_DROPIN=1 tells the server (internal/steering's
+# dropInEnv) the drop-in holds this start's PATH.
 offer_login_path() {
   unset MAROTTE_PATH_DROPIN
   if [ "$1" -ne 0 ]; then
