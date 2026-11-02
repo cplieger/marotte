@@ -23,6 +23,11 @@ const PathsCommand = "paths"
 // imageToolsDir is the tools dir the image's ENV names in PATH, GOPATH and GOBIN (Dockerfile).
 const imageToolsDir = "/config/tools"
 
+// imageSystemPath is the image's PATH after its imageToolsDir entries (Dockerfile).
+var imageSystemPath = []string{
+	"/config/home/.local/bin", "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin",
+}
+
 var errToolsDirUnusable = errors.New("the tools engine is off because its folder cannot be used")
 
 type bootPaths struct {
@@ -38,9 +43,11 @@ type toolsRoot struct {
 	// err is why dir is rejected, wrapping errToolsDirUnusable and worded for the Tools tab.
 	err error
 	dir string
+	// spelled is dir as configured, before absDir cleaned it: PATH, GOPATH and GOBIN may carry a
+	// rejected dir in either form.
+	spelled string
 }
 
-// use returns the tools dir, or "" and the rejection.
 func (r toolsRoot) use() (string, error) {
 	if r.err != nil {
 		return "", r.err
@@ -51,12 +58,12 @@ func (r toolsRoot) use() (string, error) {
 // resolveBootPaths derives both dirs: an empty variable is its default, a relative one is absolute
 // against the cwd, and symlinks stay unresolved.
 func resolveBootPaths(src envx.Source) bootPaths {
-	configDir := absDir("KIRO_CONFIG_DIR", cmp.Or(src.String("KIRO_CONFIG_DIR"), "/config"))
+	configVar := cmp.Or(src.String("KIRO_CONFIG_DIR"), "/config")
 	toolsVar, tools := "MAROTTE_TOOLS_DIR", src.String("MAROTTE_TOOLS_DIR")
 	if tools == "" {
-		toolsVar, tools = "KIRO_CONFIG_DIR", filepath.Join(configDir, "tools")
+		toolsVar, tools = "KIRO_CONFIG_DIR", configVar+"/tools"
 	}
-	return bootPaths{configDir: configDir, tools: checkToolsRoot(toolsVar, absDir(toolsVar, tools))}
+	return bootPaths{configDir: absDir("KIRO_CONFIG_DIR", configVar), tools: checkToolsRoot(toolsVar, tools)}
 }
 
 // dirProblem reports why dir, set by envVar, cannot be one of the server's folders, or nil.
@@ -70,9 +77,11 @@ func dirProblem(envVar, dir string) error {
 	return nil
 }
 
-// checkToolsRoot judges dir, set by envVar, by dirProblem's rule plus the PATH and GOPATH list
-// separator. The reason names envVar but never dir, since the Tools tab shows it.
-func checkToolsRoot(envVar, dir string) toolsRoot {
+// checkToolsRoot judges spelled, set by envVar and made absolute, by dirProblem's rule plus the
+// PATH and GOPATH list separator. The reason names envVar but never the dir, since the Tools tab
+// shows it.
+func checkToolsRoot(envVar, spelled string) toolsRoot {
+	dir := absDir(envVar, spelled)
 	var why string
 	switch {
 	case !filepath.IsAbs(dir):
@@ -85,9 +94,9 @@ func checkToolsRoot(envVar, dir string) toolsRoot {
 		}
 	}
 	if why == "" {
-		return toolsRoot{dir: dir}
+		return toolsRoot{dir: dir, spelled: spelled}
 	}
-	return toolsRoot{dir: dir, err: fmt.Errorf("%w: %s names a folder whose path %s; set it to another folder and restart",
+	return toolsRoot{dir: dir, spelled: spelled, err: fmt.Errorf("%w: %s names a folder whose path %s; set it to another folder and restart",
 		errToolsDirUnusable, envVar, why)}
 }
 
@@ -99,7 +108,8 @@ type envValue struct {
 // toolsEnv returns the PATH, GOPATH and GOBIN for root. For a usable dir the image's imageToolsDir
 // entries become the dir's, a PATH lacking the dir's bin and go/bin gets them in the image's order,
 // and a GOPATH or GOBIN the operator set to another value is kept. For a rejected or absent dir the
-// image's entries and the rejected dir's own are removed, and every other entry and value stays.
+// image's entries and the rejected dir's own, in its configured and its absolute spelling, are
+// removed, and every other entry and value stays.
 func toolsEnv(root toolsRoot, lookup func(string) (string, bool)) (path string, gopath, gobin envValue) {
 	toolsDir, err := root.use()
 	pathValue, _ := lookup("PATH")
@@ -114,12 +124,13 @@ func toolsEnv(root toolsRoot, lookup func(string) (string, bool)) (path string, 
 		entries = append(entries, e)
 	}
 	if err != nil {
-		for _, dir := range []string{root.dir + "/bin", root.dir + "/go/bin"} {
-			entries = dropRun(entries, filepath.SplitList(dir))
+		for _, dir := range []string{root.dir, root.spelled} {
+			entries = dropRun(entries, filepath.SplitList(dir+"/bin"))
+			entries = dropRun(entries, filepath.SplitList(dir+"/go/bin"))
 		}
 		return strings.Join(entries, string(filepath.ListSeparator)),
-			derivedEnv(lookup, "GOPATH", "", imageToolsDir+"/go", root.dir+"/go"),
-			derivedEnv(lookup, "GOBIN", "", imageToolsDir+"/bin", root.dir+"/bin")
+			derivedEnv(lookup, "GOPATH", "", imageToolsDir+"/go", root.dir+"/go", root.spelled+"/go"),
+			derivedEnv(lookup, "GOBIN", "", imageToolsDir+"/bin", root.dir+"/bin", root.spelled+"/bin")
 	}
 	var goPathWant, goBinWant string
 	if toolsDir != "" {
@@ -138,11 +149,17 @@ func toolsEnv(root toolsRoot, lookup func(string) (string, bool)) (path string, 
 }
 
 // dropRun removes every run of consecutive entries equal to run: a dir holding the list separator
-// sits in a PATH as several entries.
+// sits in a PATH as several entries. A run the image's own system PATH holds is kept, since
+// /usr/sbin:/usr names /usr/sbin and /usr/bin as its bin.
 func dropRun(entries, run []string) []string {
+	for i := range imageSystemPath {
+		if runAt(imageSystemPath, run, i) {
+			return entries
+		}
+	}
 	kept := make([]string, 0, len(entries))
 	for i := 0; i < len(entries); {
-		if len(entries)-i >= len(run) && slices.Equal(entries[i:i+len(run)], run) {
+		if runAt(entries, run, i) {
 			i += len(run)
 			continue
 		}
@@ -150,6 +167,10 @@ func dropRun(entries, run []string) []string {
 		i++
 	}
 	return kept
+}
+
+func runAt(entries, run []string, i int) bool {
+	return len(entries)-i >= len(run) && slices.Equal(entries[i:i+len(run)], run)
 }
 
 // derivedEnv keeps name's value unless it is unset, empty or one of ours, which become want, or

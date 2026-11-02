@@ -2,6 +2,7 @@ package composition
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"os"
 	"os/exec"
@@ -16,6 +17,40 @@ import (
 
 func envSource(vars map[string]string) envx.Source {
 	return envx.Source{Get: func(k string) string { return vars[k] }}
+}
+
+// The final stage's ENV PATH, and that PATH after its tools entries.
+const (
+	dockerfilePath       = "/config/tools/bin:/config/tools/go/bin:" + dockerfileSystemPath
+	dockerfileSystemPath = "/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+)
+
+// toolsEnv recognises the image's entries by imageToolsDir and imageSystemPath, so both must spell
+// the Dockerfile's final ENV values.
+func TestImagePathConstants_MatchTheDockerfile(t *testing.T) {
+	data, err := os.ReadFile("../../Dockerfile")
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	env := map[string]string{}
+	for line := range strings.Lines(string(data)) {
+		rest, isEnv := strings.CutPrefix(strings.TrimSpace(line), "ENV ")
+		if k, v, ok := strings.Cut(rest, "="); isEnv && ok {
+			env[k] = strings.Trim(v, `"`)
+		}
+	}
+	for k, want := range map[string]string{
+		"PATH":   dockerfilePath,
+		"GOPATH": imageToolsDir + "/go",
+		"GOBIN":  imageToolsDir + "/bin",
+	} {
+		if env[k] != want {
+			t.Errorf("Dockerfile's last ENV %s = %q, want %q", k, env[k], want)
+		}
+	}
+	if got := strings.Join(imageSystemPath, ":"); got != dockerfileSystemPath {
+		t.Errorf("imageSystemPath = %q, want %q", got, dockerfileSystemPath)
+	}
 }
 
 // The values are ConfigFromEnv's documented ones: an empty variable is unset, a relative one is
@@ -163,6 +198,27 @@ func TestToolsEnv(t *testing.T) {
 			envValue{},
 		},
 		{
+			"a rejected dir is removed in its configured spelling", "a/../t`x",
+			map[string]string{"PATH": "a/../t`x/bin:/usr/bin:a/../t`x/go/bin", "GOPATH": "a/../t`x/go", "GOBIN": "a/../t`x/bin"},
+			"/usr/bin",
+			envValue{},
+			envValue{},
+		},
+		{
+			"a rejected dir splitting into system entries leaves them", "/usr/sbin:/usr",
+			map[string]string{"PATH": dockerfilePath, "GOPATH": "/usr/sbin:/usr/go", "GOBIN": "/config/tools/bin"},
+			dockerfileSystemPath,
+			envValue{},
+			envValue{},
+		},
+		{
+			"a rejected dir ending in the separator leaves the system entries", "/sbin:",
+			map[string]string{"PATH": dockerfilePath + ":/sbin:/go/bin"},
+			dockerfileSystemPath,
+			envValue{},
+			envValue{},
+		},
+		{
 			"a rejected dir keeps an operator's GOPATH and GOBIN", "/srv/t`x",
 			map[string]string{"PATH": "/usr/bin", "GOPATH": "/g", "GOBIN": "/gb"},
 			"/usr/bin",
@@ -293,6 +349,40 @@ func TestRunPaths_KeepsARejectedToolsFolderOffTheEnvironment(t *testing.T) {
 			}
 			if env["KIRO_HOME"] != base+"/home/.kiro" {
 				t.Errorf("exported KIRO_HOME = %q, want the default %q", env["KIRO_HOME"], base+"/home/.kiro")
+			}
+		})
+	}
+}
+
+// An operator may have put a rejected folder on PATH as configured, relative and unclean, so the
+// server removes that spelling as well as the absolute one.
+func TestRunPaths_RemovesARejectedToolsFolderInEitherSpelling(t *testing.T) {
+	for _, tc := range []struct{ name, configDir, toolsDir, spelled, cleaned string }{
+		{"MAROTTE_TOOLS_DIR", "", "a/../t`x", "a/../t`x", "t`x"},
+		{"KIRO_CONFIG_DIR", "c/../a:b", "", "c/../a:b/tools", "a:b/tools"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			t.Chdir(base)
+			cleaned := base + "/" + tc.cleaned
+			t.Setenv("HOME", base+"/home")
+			t.Setenv("KIRO_CONFIG_DIR", cmp.Or(tc.configDir, base+"/c"))
+			t.Setenv("MAROTTE_TOOLS_DIR", tc.toolsDir)
+			t.Setenv("KIRO_HOME", "")
+			t.Setenv("PATH", tc.spelled+"/bin:/usr/bin:"+tc.spelled+"/go/bin:"+cleaned+"/bin")
+			t.Setenv("GOPATH", tc.spelled+"/go")
+			t.Setenv("GOBIN", tc.spelled+"/bin")
+			_, gotTools, env := evalPaths(t, shells(t)[0])
+			if gotTools != "" {
+				t.Errorf("TOOLS = %q, want empty", gotTools)
+			}
+			if env["PATH"] != "/usr/bin" {
+				t.Errorf("exported PATH = %q, want /usr/bin", env["PATH"])
+			}
+			for _, k := range []string{"GOPATH", "GOBIN"} {
+				if v, ok := env[k]; ok {
+					t.Errorf("%s = %q stayed exported, want it unset", k, v)
+				}
 			}
 		})
 	}
