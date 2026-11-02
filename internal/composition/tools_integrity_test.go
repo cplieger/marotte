@@ -179,7 +179,7 @@ func TestWireToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 			slices.Sort(want)
 
 			logs := captureDefaultLogger(t)
-			tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
+			tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
 			if err != nil {
 				t.Fatalf("an unfit root stopped the boot; a dev box whose volume drifted cannot be repaired from inside a container that will not start: %v", err)
 			}
@@ -213,7 +213,7 @@ func TestBootTightensEveryRootTheEngineJudges(t *testing.T) {
 	for _, dir := range documented {
 		mkdirMode(t, dir, 0o775)
 	}
-	cfg := &Config{ConfigDir: configDir, ToolsDir: toolsDir, ToolCatalogPath: filepath.Join(t.TempDir(), "absent.json")}
+	cfg := &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}, ToolCatalogPath: filepath.Join(t.TempDir(), "absent.json")}
 
 	logs := captureDefaultLogger(t)
 	tools, err := wireToolsEngine(t.Context(), cfg, testRuntime(t), nil)
@@ -247,7 +247,7 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	}
 	captureDefaultLogger(t)
 
-	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
+	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
 	if err != nil {
 		t.Fatalf("wireToolsEngine over an unfit root = %v, want the degraded slot", err)
 	}

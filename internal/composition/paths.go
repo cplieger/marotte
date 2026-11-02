@@ -27,10 +27,26 @@ var errToolsDirUnusable = errors.New("the tools engine is off because its folder
 
 // bootPaths is the one derivation of the config and tools dirs, for the server and the entrypoint.
 type bootPaths struct {
-	// toolsErr, when set, keeps the tools engine down; it is worded for the Tools tab.
-	toolsErr  error
 	configDir string
-	toolsDir  string
+	tools     toolsRoot
+}
+
+// toolsRoot is the one verdict on the tools dir. Every consumer reads it through use, so a rejected
+// dir is off everywhere: no engine, no kiro-cli install, no instance lock or mode change, no PATH,
+// GOPATH or GOBIN entry, and no mention in steering. The zero value is no tools dir, as outside the
+// container.
+type toolsRoot struct {
+	// err is why dir is rejected, wrapping errToolsDirUnusable and worded for the Tools tab.
+	err error
+	dir string
+}
+
+// use returns the tools dir, or "" and the rejection.
+func (r toolsRoot) use() (string, error) {
+	if r.err != nil {
+		return "", r.err
+	}
+	return r.dir, nil
 }
 
 // resolveBootPaths derives both dirs: an empty variable is its default, a relative one is absolute
@@ -41,8 +57,7 @@ func resolveBootPaths(src envx.Source) bootPaths {
 	if tools == "" {
 		toolsVar, tools = "KIRO_CONFIG_DIR", filepath.Join(configDir, "tools")
 	}
-	toolsDir := absDir(toolsVar, tools)
-	return bootPaths{configDir: configDir, toolsDir: toolsDir, toolsErr: toolsDirProblem(toolsVar, toolsDir)}
+	return bootPaths{configDir: configDir, tools: checkToolsRoot(toolsVar, absDir(toolsVar, tools))}
 }
 
 // dirProblem reports why dir, set by envVar, cannot be one of the server's folders, or nil.
@@ -56,14 +71,14 @@ func dirProblem(envVar, dir string) error {
 	return nil
 }
 
-// toolsDirProblem is dirProblem for the tools dir, which must also be a PATH and GOPATH entry.
-// The reason names envVar but never dir, since the Tools tab shows it.
-func toolsDirProblem(envVar, dir string) error {
+// checkToolsRoot judges dir, set by envVar, by dirProblem's rule plus the PATH and GOPATH list
+// separator. The reason names envVar but never dir, since the Tools tab shows it.
+func checkToolsRoot(envVar, dir string) toolsRoot {
 	var why string
 	switch {
 	case !filepath.IsAbs(dir):
 		why = "is not absolute"
-	case holdsListSeparator(dir):
+	case strings.ContainsRune(dir, filepath.ListSeparator):
 		why = fmt.Sprintf("holds %q, which PATH and GOPATH cannot carry", filepath.ListSeparator)
 	default:
 		if err := steering.CheckPath(dir); err != nil {
@@ -71,22 +86,10 @@ func toolsDirProblem(envVar, dir string) error {
 		}
 	}
 	if why == "" {
-		return nil
+		return toolsRoot{dir: dir}
 	}
-	return fmt.Errorf("%w: %s names a folder whose path %s; set it to another folder and restart",
-		errToolsDirUnusable, envVar, why)
-}
-
-// holdsListSeparator reports whether dir would split into two entries of a PATH or GOPATH.
-func holdsListSeparator(dir string) bool {
-	return strings.ContainsRune(dir, filepath.ListSeparator)
-}
-
-func engineToolsDir(dir string, problem error) string {
-	if problem != nil {
-		return ""
-	}
-	return dir
+	return toolsRoot{dir: dir, err: fmt.Errorf("%w: %s names a folder whose path %s; set it to another folder and restart",
+		errToolsDirUnusable, envVar, why)}
 }
 
 type envValue struct {
@@ -94,11 +97,12 @@ type envValue struct {
 	set   bool
 }
 
-// toolsEnv returns the PATH, GOPATH and GOBIN for a tools engine rooted at toolsDir, or with none
-// when toolsDir is "". The image's imageToolsDir entries become toolsDir's or are dropped, a PATH
-// lacking toolsDir's bin and go/bin gets them in the image's order, and a GOPATH or GOBIN the
-// operator set to another value is kept.
-func toolsEnv(toolsDir string, lookup func(string) (string, bool)) (path string, gopath, gobin envValue) {
+// toolsEnv returns the PATH, GOPATH and GOBIN for root. For a usable dir the image's imageToolsDir
+// entries become the dir's, a PATH lacking the dir's bin and go/bin gets them in the image's order,
+// and a GOPATH or GOBIN the operator set to another value is kept. For a rejected or absent dir the
+// image's entries and the rejected dir's own are removed, and every other entry and value stays.
+func toolsEnv(root toolsRoot, lookup func(string) (string, bool)) (path string, gopath, gobin envValue) {
+	toolsDir, err := root.use()
 	pathValue, _ := lookup("PATH")
 	entries := make([]string, 0, 8)
 	for _, e := range filepath.SplitList(pathValue) {
@@ -109,6 +113,14 @@ func toolsEnv(toolsDir string, lookup func(string) (string, bool)) (path string,
 			e = toolsDir + strings.TrimPrefix(e, imageToolsDir)
 		}
 		entries = append(entries, e)
+	}
+	if err != nil {
+		for _, dir := range []string{root.dir + "/bin", root.dir + "/go/bin"} {
+			entries = dropRun(entries, filepath.SplitList(dir))
+		}
+		return strings.Join(entries, string(filepath.ListSeparator)),
+			derivedEnv(lookup, "GOPATH", "", imageToolsDir+"/go", root.dir+"/go"),
+			derivedEnv(lookup, "GOBIN", "", imageToolsDir+"/bin", root.dir+"/bin")
 	}
 	var goPathWant, goBinWant string
 	if toolsDir != "" {
@@ -122,39 +134,59 @@ func toolsEnv(toolsDir string, lookup func(string) (string, bool)) (path string,
 		goPathWant, goBinWant = toolsDir+"/go", bin
 	}
 	return strings.Join(entries, string(filepath.ListSeparator)),
-		derivedEnv(lookup, "GOPATH", imageToolsDir+"/go", goPathWant),
-		derivedEnv(lookup, "GOBIN", imageToolsDir+"/bin", goBinWant)
+		derivedEnv(lookup, "GOPATH", goPathWant, imageToolsDir+"/go"),
+		derivedEnv(lookup, "GOBIN", goBinWant, imageToolsDir+"/bin")
 }
 
-// derivedEnv keeps name's value unless it is unset, empty or the image's, which become want, or
+// dropRun removes every run of consecutive entries equal to run: a dir holding the list separator
+// sits in a PATH as several entries.
+func dropRun(entries, run []string) []string {
+	kept := make([]string, 0, len(entries))
+	for i := 0; i < len(entries); {
+		if len(entries)-i >= len(run) && slices.Equal(entries[i:i+len(run)], run) {
+			i += len(run)
+			continue
+		}
+		kept = append(kept, entries[i])
+		i++
+	}
+	return kept
+}
+
+// derivedEnv keeps name's value unless it is unset, empty or one of ours, which become want, or
 // absent when want is "".
-func derivedEnv(lookup func(string) (string, bool), name, image, want string) envValue {
-	if v, _ := lookup(name); v != "" && v != image {
+func derivedEnv(lookup func(string) (string, bool), name, want string, ours ...string) envValue {
+	if v, _ := lookup(name); v != "" && !slices.Contains(ours, v) {
 		return envValue{value: v, set: true}
 	}
 	return envValue{value: want, set: want != ""}
 }
 
 // RunPaths prints, for bash or sh to eval, CONFIG_DIR, TOOLS, KIRO_HOME, PATH, GOPATH and GOBIN as
-// the server derives them, so the boot acts on the server's folders. It returns 1, printing why,
-// when the server would refuse the config dir.
+// the server derives them, so the boot acts on the server's folders. TOOLS is empty when the server
+// rejects the tools dir. It returns 1, printing why, when the server would refuse the config dir.
 func RunPaths(stdout, stderr io.Writer) int {
+	return runPaths(stdout, stderr, os.LookupEnv)
+}
+
+func runPaths(stdout, stderr io.Writer, lookup func(string) (string, bool)) int {
 	log := slog.New(slog.NewTextHandler(stderr, nil))
-	paths := resolveBootPaths(envx.Source{})
+	getenv := func(k string) string { v, _ := lookup(k); return v }
+	paths := resolveBootPaths(envx.Source{Get: getenv})
 	if err := dirProblem("KIRO_CONFIG_DIR", paths.configDir); err != nil {
 		log.Error("marotte cannot use its config folder", "error", logsafe.Field(err.Error()))
 		return 1
 	}
-	home := os.Getenv("HOME")
-	kiroHome, ignored := workspace.ResolveKiroHome(os.Getenv("KIRO_HOME"), home)
+	kiroHome, ignored := workspace.ResolveKiroHome(getenv("KIRO_HOME"), getenv("HOME"))
 	if ignored != "" {
-		log.Warn("ignoring KIRO_HOME, as kiro-cli does", "value", logsafe.Field(os.Getenv("KIRO_HOME")),
+		log.Warn("ignoring KIRO_HOME, as kiro-cli does", "value", logsafe.Field(getenv("KIRO_HOME")),
 			"reason", ignored, "using", kiroHome)
 	}
-	path, gopath, gobin := toolsEnv(engineToolsDir(paths.toolsDir, paths.toolsErr), os.LookupEnv)
+	path, gopath, gobin := toolsEnv(paths.tools, lookup)
+	toolsDir, _ := paths.tools.use()
 	var b strings.Builder
 	b.WriteString("CONFIG_DIR=" + shellQuote(paths.configDir) + "\n")
-	b.WriteString("TOOLS=" + shellQuote(paths.toolsDir) + "\n")
+	b.WriteString("TOOLS=" + shellQuote(toolsDir) + "\n")
 	b.WriteString("export KIRO_HOME=" + shellQuote(kiroHome) + "\n")
 	b.WriteString("export PATH=" + shellQuote(path) + "\n")
 	for _, v := range []struct {

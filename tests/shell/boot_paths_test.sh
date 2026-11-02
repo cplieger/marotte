@@ -166,10 +166,22 @@ case "$got" in
     ;;
   *) no "failed drop-in" "got '$got'" ;;
 esac
+# A rejected tools folder leaves TOOLS empty: no tools bin is named, and only a failed drop-in warns.
+TOOLS=
+got=$(offer 0 1000)
+[ "$got" = "0|unset|" ] \
+  && ok "a non-root boot with no tools folder warns about nothing" \
+  || no "non-root boot, no tools folder" "got '$got', want '0|unset|'"
+got=$(offer 1 0)
+[ "$got" = "1|unset|WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) will not get the boot's PATH" ] \
+  && ok "a failed drop-in with no tools folder warns without naming a tools bin" \
+  || no "failed drop-in, no tools folder" "got '$got'"
+TOOLS="$WORK/t"
 grep -qx 'const dropInEnv = "MAROTTE_PATH_DROPIN"' "$STATIC_GO" \
   && ok "the variable offer_login_path exports is the one the server's steering reads" \
   || no "drop-in hand-off" "internal/steering/static.go no longer reads MAROTTE_PATH_DROPIN"
-# The server refuses a tools folder holding a line break, but TOOLS still names it.
+# The server rejects a tools folder holding a line break, leaving TOOLS empty; the warning does not
+# rely on that.
 TOOLS="$WORK/t"$'\n'"level=error msg=forged"
 safe="$WORK/t?level=error msg=forged/bin"
 for args in "0 1000" "1 0"; do

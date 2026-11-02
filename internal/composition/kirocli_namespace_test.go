@@ -45,8 +45,7 @@ func (e *nsEnv) config() *pinstall.Config {
 		KiroCLIVersion:     nsVersion,
 		KiroCLISHA256:      strings.Repeat("a", 64),
 		KiroCLISHA256ARM64: strings.Repeat("b", 64),
-		ToolsDir:           e.tools,
-	})
+	}, e.tools)
 }
 
 func (e *nsEnv) manager() *pinstall.Manager {

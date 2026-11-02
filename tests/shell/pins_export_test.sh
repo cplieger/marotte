@@ -92,7 +92,7 @@ grep -q 'KIRO_CLI_PATH' "$README" \
 # --- the install root is created here, before the server writes into it -------
 # A SIBLING of the toolbelt engine's opt/ tree: its per-tool prune deletes every non-current
 # version under opt/<tool>, for any manifest name.
-grep -qF 'mkdir -p "$CONFIG_DIR" "$TOOLS/bin" "$TOOLS/kiro-cli-versions"' "$ENTRYPOINT" \
+grep -qF 'mkdir -p "$CONFIG_DIR" ${TOOLS:+"$TOOLS/bin" "$TOOLS/kiro-cli-versions"}' "$ENTRYPOINT" \
   && ok "the boot mkdir creates \$TOOLS/kiro-cli-versions, the version-install root" \
   || no "install root mkdir" "the install root is not created by the boot mkdir, so a fresh volume's first install has to create it inside the server, outside this script's mkdir failure branch"
 

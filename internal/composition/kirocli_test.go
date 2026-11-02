@@ -29,7 +29,7 @@ func TestStartKiroCLIShapes(t *testing.T) {
 		rescan    bool
 	}{
 		"no pins resolves the bare name and installs nothing": {
-			cfg:      Config{ToolsDir: t.TempDir()},
+			cfg:      Config{Tools: toolsRoot{dir: t.TempDir()}},
 			wantPath: "kiro-cli",
 		},
 		"pins present but no tools dir falls back to the bare name": {
@@ -37,15 +37,15 @@ func TestStartKiroCLIShapes(t *testing.T) {
 			wantPath: "kiro-cli",
 		},
 		"unusable pins report unready rather than pretending": {
-			cfg:      Config{KiroCLIVersion: "2.14.2", KiroCLISHA256: "not-a-digest", ToolsDir: t.TempDir()},
+			cfg:      Config{KiroCLIVersion: "2.14.2", KiroCLISHA256: "not-a-digest", Tools: toolsRoot{dir: t.TempDir()}},
 			wantPath: "",
 			wantGate: true,
 			reason:   pinstall.ReasonUnavailable,
 		},
-		"a tools dir holding the PATH separator reports unready": {
+		"a rejected tools dir reports unready": {
 			cfg: Config{
 				KiroCLIVersion: "2.14.2", KiroCLISHA256: goodDigest, KiroCLISHA256ARM64: goodDigest,
-				ToolsDir: filepath.Join(t.TempDir(), "a:b"),
+				Tools: checkToolsRoot("MAROTTE_TOOLS_DIR", filepath.Join(t.TempDir(), "a:b")),
 			},
 			wantPath: "",
 			wantGate: true,
@@ -108,7 +108,7 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 		KiroCLIVersion:     version,
 		KiroCLISHA256:      strings.Repeat("a", 64),
 		KiroCLISHA256ARM64: strings.Repeat("b", 64),
-		ToolsDir:           toolsDir,
+		Tools:              toolsRoot{dir: toolsDir},
 	}
 	// Not t.Context(): the manager must outlive the t.Cleanup(kiro.stop) teardown, and t.Context()
 	// is cancelled before cleanups run.
@@ -163,7 +163,7 @@ func TestStartKiroCLIRejectsASidecarLessVersionDirectory(t *testing.T) {
 		KiroCLIVersion:     version,
 		KiroCLISHA256:      strings.Repeat("a", 64),
 		KiroCLISHA256ARM64: strings.Repeat("b", 64),
-		ToolsDir:           toolsDir,
+		Tools:              toolsRoot{dir: toolsDir},
 	}
 	// Not t.Context(): the manager must outlive the t.Cleanup(kiro.stop) teardown, and t.Context()
 	// is cancelled before cleanups run.
@@ -295,7 +295,7 @@ func TestManagedKiroRuntime_ActivationReachesTheSeed(t *testing.T) {
 		cfg := pinnedKiroConfig(toolsDir, version)
 		mirror := httptest.NewServer(http.NotFoundHandler())
 		t.Cleanup(mirror.Close)
-		installCfg := kiroInstallConfig(&cfg)
+		installCfg := kiroInstallConfig(&cfg, toolsDir)
 		installCfg.URLTemplate = mirror.URL + "/{version}/kiro-cli.zip"
 		installCfg.MaxAttempts = 1
 		mgr, err := pinstall.New(installCfg)
@@ -366,7 +366,7 @@ func pinnedKiroConfig(toolsDir, version string) Config {
 		KiroCLIVersion:     version,
 		KiroCLISHA256:      strings.Repeat("a", 64),
 		KiroCLISHA256ARM64: strings.Repeat("b", 64),
-		ToolsDir:           toolsDir,
+		Tools:              toolsRoot{dir: toolsDir},
 	}
 }
 

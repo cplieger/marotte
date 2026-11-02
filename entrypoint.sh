@@ -16,6 +16,7 @@ logfmt_value() {
 
 # Sets CONFIG_DIR, TOOLS, KIRO_HOME, PATH, GOPATH and GOBIN from `$1 paths`, the server's own
 # derivation (internal/composition/paths.go), so this script acts on the folders the server uses.
+# TOOLS is empty when the server rejects the tools folder, which this script then leaves alone.
 load_boot_paths() {
   local out
   out=$("$1" paths) || return 1
@@ -50,7 +51,7 @@ export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64
 # The config dir is made even when the tools dir lies elsewhere, or flock would create a file.
 # ~/.ssh is born 700, the mode the server holds it at, so a fresh volume logs no change.
 # shellcheck disable=SC2153 # load_boot_paths sets TOOLS and KIRO_HOME through eval
-if ! mkdir -p "$CONFIG_DIR" "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
+if ! mkdir -p "$CONFIG_DIR" ${TOOLS:+"$TOOLS/bin" "$TOOLS/kiro-cli-versions"} \
   "$HOME/.local/share/kiro-cli" \
   "$KIRO_HOME" "$HOME/.cache/go-build" "$HOME/.docker/cli-plugins" \
   || ! { [ -d "$HOME/.ssh" ] || mkdir -m 700 "$HOME/.ssh"; }; then
@@ -82,7 +83,7 @@ refuse_held_roots() {
   return 0
 }
 
-refuse_held_roots "$CONFIG_DIR" "$KIRO_HOME" "$TOOLS" || exit 1
+refuse_held_roots "$CONFIG_DIR" "$KIRO_HOME" ${TOOLS:+"$TOOLS"} || exit 1
 
 # Give login shells (the browser shell runs `bash --login`) the inherited PATH:
 # Debian's /etc/profile assigns uid 0 only the system directories, dropping the
@@ -124,16 +125,18 @@ install_path_dropin() {
 
 # $1 is the effective uid. Only root may write /etc/profile.d, and Debian's /etc/profile resets
 # PATH for every other uid too, so elsewhere a login shell searches no tools folder. Warn only: a
-# login shell without the tools PATH is no reason to stop the boot. MAROTTE_PATH_DROPIN=1 tells the
-# server (internal/steering's dropInEnv) the drop-in was written at this start.
+# login shell without the tools PATH is no reason to stop the boot, and with no tools folder only a
+# failed drop-in is worth a warning. MAROTTE_PATH_DROPIN=1 tells the server (internal/steering's dropInEnv) the drop-in was written at this start.
 offer_login_path() {
   unset MAROTTE_PATH_DROPIN
   if [ "$1" -ne 0 ]; then
-    printf "WARNING: running as uid %s, not root, so /etc/profile.d/10-marotte-path.sh is not written; a login shell (the browser shell runs bash --login) does not search %s, so run an engine-installed tool there by its full path (%s/<tool>)\n" "$1" "$(logfmt_value "$TOOLS/bin" 4096)" "$(logfmt_value "$TOOLS/bin" 4096)" >&2
+    [ -z "$TOOLS" ] || printf "WARNING: running as uid %s, not root, so /etc/profile.d/10-marotte-path.sh is not written; a login shell (the browser shell runs bash --login) does not search %s, so run an engine-installed tool there by its full path (%s/<tool>)\n" "$1" "$(logfmt_value "$TOOLS/bin" 4096)" "$(logfmt_value "$TOOLS/bin" 4096)" >&2
   elif install_path_dropin; then
     export MAROTTE_PATH_DROPIN=1
-  else
+  elif [ -n "$TOOLS" ]; then
     printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) will not see %s, so an engine-installed tool will not resolve by name there\n" "$(logfmt_value "$TOOLS/bin" 4096)" >&2
+  else
+    printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) will not get the boot's PATH\n" >&2
   fi
 }
 

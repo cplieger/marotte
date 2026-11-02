@@ -47,7 +47,7 @@ func TestWireToolsEngineBootsOverAnInvalidManifestAndSaysWhy(t *testing.T) {
 	}
 	logs := captureDefaultLogger(t)
 
-	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
+	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
 	if err != nil {
 		t.Fatalf("a tools.json toolbelt refuses stopped the boot: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestWireToolsEngineBootsOverAnUnreadableManifest(t *testing.T) {
 	}
 	captureDefaultLogger(t)
 
-	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
+	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
 	if err != nil {
 		t.Fatalf("an unreadable tools.json stopped the boot: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestToolsSlot_AnUnusableToolsFolderIsBuiltOncePerAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	captureDefaultLogger(t)
-	problem := toolsDirProblem("MAROTTE_TOOLS_DIR", "/tools:x")
+	problem := checkToolsRoot("MAROTTE_TOOLS_DIR", "/tools:x").err
 	builds := 0
 	tools := newToolsSlot(manifest, func() (*toolbelt.Engine, error) {
 		builds++
@@ -170,7 +170,7 @@ func TestWireToolsEngine_StaysDownOverAnUnusableToolsFolder(t *testing.T) {
 	configDir, toolsDir := fitTree(t)
 	paths := resolveBootPaths(envSource(map[string]string{"KIRO_CONFIG_DIR": configDir, "MAROTTE_TOOLS_DIR": toolsDir + ":x"}))
 	captureDefaultLogger(t)
-	cfg := &Config{ConfigDir: configDir, ToolsDir: paths.toolsDir, ToolsDirErr: paths.toolsErr}
+	cfg := &Config{ConfigDir: configDir, Tools: paths.tools}
 
 	tools, err := wireToolsEngine(t.Context(), cfg, testRuntime(t), nil)
 	if err != nil {
@@ -224,7 +224,7 @@ func TestToolsSlot_InstalledToolsAnswersOnlyWhileTheEngineIsUp(t *testing.T) {
 	captureDefaultLogger(t)
 
 	down := newToolsSlot(manifest, func() (*toolbelt.Engine, error) {
-		return nil, toolsDirProblem("MAROTTE_TOOLS_DIR", "/tools:x")
+		return nil, checkToolsRoot("MAROTTE_TOOLS_DIR", "/tools:x").err
 	})
 	t.Cleanup(down.Close)
 	if err := down.start(); err != nil {

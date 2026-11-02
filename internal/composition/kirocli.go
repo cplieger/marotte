@@ -86,22 +86,20 @@ func unavailableKiroRuntime() kiroRuntime {
 
 // startKiroCLI builds the install manager and starts the install in the background, bind-first:
 // only readiness waits, so a first-boot download is a /api/health reason. Three shapes: no pins,
-// unusable pins or tools dir (unready), and the managed install.
+// unusable pins or a rejected tools dir (unready), and the managed install.
 func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
-	if cfg.KiroCLIVersion == "" || cfg.ToolsDir == "" {
+	toolsDir, rejected := cfg.Tools.use()
+	if cfg.KiroCLIVersion == "" || (toolsDir == "" && rejected == nil) {
 		slog.Warn("no kiro-cli pins in the environment: resolving kiro-cli by bare name and installing nothing",
 			"hint", "expected outside the container (bare `go run`); in the image entrypoint.sh exports KIRO_CLI_VERSION and both digests")
 		return unmanagedKiroRuntime()
 	}
-	if holdsListSeparator(cfg.ToolsDir) {
-		// pinstall leads each kiro-cli child's PATH with a folder under the root, so kiro-cli could
-		// not find kiro-cli-chat by name.
-		slog.Error("kiro-cli is not installed because its tools folder's path holds ':', which PATH cannot carry, so chats stay unavailable",
-			"path", logsafe.Field(cfg.ToolsDir),
-			"hint", "set MAROTTE_TOOLS_DIR, or KIRO_CONFIG_DIR when it places the tools folder, to a path without ':' and restart")
+	if rejected != nil {
+		slog.Error("kiro-cli is not installed because marotte rejects its tools folder, so chats stay unavailable",
+			"error", logsafe.Field(rejected.Error()))
 		return unavailableKiroRuntime()
 	}
-	mgr, err := pinstall.New(kiroInstallConfig(cfg))
+	mgr, err := pinstall.New(kiroInstallConfig(cfg, toolsDir))
 	if err != nil {
 		slog.Error("kiro-cli install manager could not be built from the exported pins; no version can be installed, so chats stay unavailable",
 			"error", err,
@@ -160,7 +158,7 @@ const kiroStopGrace = 5 * time.Second
 // kiroInstallConfig is marotte's whole deployment of the kiro-cli release (pins, tools tree, local
 // policy) over kirocli.Release()'s profile. A function so the namespace test builds a manager from
 // the exact production configuration.
-func kiroInstallConfig(cfg *Config) *pinstall.Config {
+func kiroInstallConfig(cfg *Config, root string) *pinstall.Config {
 	return &pinstall.Config{
 		Release: kirocli.Release(),
 		Version: cfg.KiroCLIVersion,
@@ -168,7 +166,7 @@ func kiroInstallConfig(cfg *Config) *pinstall.Config {
 			"amd64": cfg.KiroCLISHA256,
 			"arm64": cfg.KiroCLISHA256ARM64,
 		},
-		Root:    cfg.ToolsDir,
+		Root:    root,
 		LinkDir: kiroLinkDir,
 		// Require names the chat sidecar because it is the engine (sidecarBeside) and `kiro-cli
 		// settings` re-execs it by a plain PATH search, while `--version` is answered by the main

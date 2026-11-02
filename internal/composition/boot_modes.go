@@ -39,7 +39,8 @@ func claimAndHealRoots(cfg *Config) (*heldRoots, error) {
 		return nil, err
 	}
 	home, _ := os.UserHomeDir()
-	healBootModes(cfg.ConfigDir, cfg.ToolsDir, home, workspace.KiroHome())
+	toolsDir, _ := cfg.Tools.use()
+	healBootModes(cfg.ConfigDir, toolsDir, home, workspace.KiroHome())
 	return roots, nil
 }
 

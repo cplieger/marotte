@@ -49,7 +49,7 @@ func TestBuild_RefusesAKiroHomeAnotherInstanceHolds(t *testing.T) {
 	cfg := &Config{
 		ConfigDir:       mkdir(t, root, "config"),
 		WorkDir:         mkdir(t, root, "work"),
-		ToolsDir:        filepath.Join(root, "tools"),
+		Tools:           toolsRoot{dir: filepath.Join(root, "tools")},
 		ToolCatalogPath: filepath.Join(root, "absent-catalog.json"),
 		ToolCatalogURL:  "http://127.0.0.1:1/",
 	}

@@ -36,7 +36,10 @@ func ownedRoots(cfg *Config) []ownedRoot {
 	} else {
 		roots = append(roots, ownedRoot{roleKiroHome, home})
 	}
-	return append(roots, ownedRoot{roleToolsDir, cfg.ToolsDir})
+	if toolsDir, _ := cfg.Tools.use(); toolsDir != "" {
+		roots = append(roots, ownedRoot{roleToolsDir, toolsDir})
+	}
+	return roots
 }
 
 // heldRoots keeps the claimed folders and lock files open. It must stay reachable for the process lifetime:

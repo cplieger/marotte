@@ -334,7 +334,7 @@ func TestClaimAndHealRoots_SetsModesOnceClaimed(t *testing.T) {
 	t.Setenv("HOME", l.home)
 	captureDefaultLogger(t)
 
-	roots, err := claimAndHealRoots(&Config{ConfigDir: l.config, ToolsDir: l.tools})
+	roots, err := claimAndHealRoots(&Config{ConfigDir: l.config, Tools: toolsRoot{dir: l.tools}})
 	if err != nil {
 		t.Fatalf("claimAndHealRoots = %v", err)
 	}

@@ -107,7 +107,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// than a missing server. Below Install because its early returns log synchronously.
 	kiro := startKiroCLI(ctx, cfg)
 
-	steer := steering.New(cfg.WorkDir, cfg.ConfigDir, engineToolsDir(cfg.ToolsDir, cfg.ToolsDirErr))
+	steer := newSteering(cfg)
 	steer.Generate(ctx)
 
 	legacyCheckpoints := filepath.Join(cfg.ConfigDir, "checkpoints")
@@ -607,8 +607,9 @@ func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	githubToken func(context.Context) (string, error),
 ) (*toolbelt.Engine, error) {
-	if cfg.ToolsDirErr != nil {
-		return nil, cfg.ToolsDirErr
+	toolsDir, err := cfg.Tools.use()
+	if err != nil {
+		return nil, err
 	}
 	catalogRefresh := &toolbelt.CatalogRefresh{
 		URL:      cfg.ToolCatalogURL,
@@ -617,7 +618,7 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	}
 	toolsEngine, err := toolbelt.New(&toolbelt.Config{
 		ConfigDir: cfg.ConfigDir,
-		ToolsDir:  cfg.ToolsDir,
+		ToolsDir:  toolsDir,
 		// The engine EXECUTES what it finds here and this dir is on PATH, over a volume
 		// the operator reshapes by hand. The refusal must NOT be fatal: survivableToolsFailure.
 		VerifyRootIntegrity: true,
@@ -672,6 +673,11 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	// The app's lifetime, not Background — see the OnJobChanged spawn above.
 	go h.EnsureCodeIntelligence(appCtx)
 	return toolsEngine, nil
+}
+
+func newSteering(cfg *Config) *steering.Generator {
+	toolsDir, _ := cfg.Tools.use()
+	return steering.New(cfg.WorkDir, cfg.ConfigDir, toolsDir)
 }
 
 // wireToolsSteering lists the engine's installed tools in environment.md and regenerates it off the

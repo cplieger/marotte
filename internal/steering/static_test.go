@@ -165,7 +165,7 @@ func TestWriteRuntime_NoToolsDirNamesNoToolsFolder(t *testing.T) {
 	out := b.String()
 	for _, want := range []string{
 		"- `PATH=/usr/bin:/bin`: `$HOME/.local/bin` is the per-user bin dir",
-		"- The tools engine is off, so nothing it would install is on any PATH. Pin `HOME=/h`",
+		"- The tools engine is off, so it installs nothing. Pin `HOME=/h`",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeRuntime output missing %q:\n%s", want, out)

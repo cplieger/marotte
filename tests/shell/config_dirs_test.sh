@@ -68,7 +68,30 @@ stray=$(grep -nE 'chmod|mkdir[^#]* -m|--mode|install [^#]*-m' "$ENTRYPOINT" \
   && ok "the boot creates no kiro-cli tree under the toolbelt engine's opt/, so the engine's prune cannot reach the install" \
   || no "install root under opt/" "$ROOT/tools/opt/kiro-cli exists again; the engine's per-tool prune deletes every non-current version directory under opt/<tool>"
 
-# --- 2. a directory it cannot create aborts the boot -----------------------------
+# --- 2. a rejected tools folder (empty TOOLS) gets no folder ---------------------
+ROOT="$WORK/rejected"
+(
+  CONFIG_DIR="$ROOT/config"
+  TOOLS=""
+  HOME="$ROOT/home"
+  KIRO_HOME="$ROOT/home/.kiro"
+  # Records every argument and creates only those under ROOT, so a stray "/bin" stays a record.
+  mkdir() {
+    local a
+    for a; do
+      printf '%s\n' "$a" >>"$WORK/mkdir.args"
+      case $a in "$ROOT"/*) command mkdir -p "$a" || return ;; esac
+    done
+  }
+  . "$BLOCK"
+) >"$WORK/out.log" 2>&1
+rc=$?
+stray=$(grep -E '(^|/)(bin|kiro-cli-versions)$' "$WORK/mkdir.args")
+[ "$rc" -eq 0 ] && [ -z "$stray" ] && [ -d "$ROOT/config" ] && [ -d "$ROOT/home/.kiro" ] \
+  && ok "with no tools folder the boot creates its other folders and no bin/ or kiro-cli-versions/" \
+  || no "rejected tools folder" "rc=$rc, created:$stray"
+
+# --- 3. a directory it cannot create aborts the boot -----------------------------
 # Root cannot be denied a mkdir it owns, so an unwritable /config is provoked by shadowing mkdir in
 # the subshell. `sleep` too: the shipped 10s delay proves nothing the exit status does not.
 ROOT="$WORK/fail"

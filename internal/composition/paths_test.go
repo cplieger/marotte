@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/cplieger/envx/v2"
+	"github.com/cplieger/marotte/internal/workspace"
+	"github.com/cplieger/pinstall/v3"
 )
 
 func envSource(vars map[string]string) envx.Source {
@@ -39,9 +41,10 @@ func TestResolveBootPaths_DerivesBothFolders(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := resolveBootPaths(envSource(tc.vars))
-			if p.configDir != tc.wantConfig || p.toolsDir != tc.wantTD || p.toolsErr != nil {
+			toolsDir, err := p.tools.use()
+			if p.configDir != tc.wantConfig || toolsDir != tc.wantTD || err != nil {
 				t.Errorf("resolveBootPaths(%v) = %q, %q, %v; want %q, %q, nil",
-					tc.vars, p.configDir, p.toolsDir, p.toolsErr, tc.wantConfig, tc.wantTD)
+					tc.vars, p.configDir, toolsDir, err, tc.wantConfig, tc.wantTD)
 			}
 		})
 	}
@@ -63,13 +66,14 @@ func TestResolveBootPaths_RefusesAToolsFolderTheEngineCannotUse(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := resolveBootPaths(envSource(map[string]string{tc.env: tc.value}))
-			if p.toolsDir != tc.wantTools {
-				t.Errorf("toolsDir = %q, want %q unchanged", p.toolsDir, tc.wantTools)
+			if p.tools.dir != tc.wantTools {
+				t.Errorf("tools.dir = %q, want %q unchanged", p.tools.dir, tc.wantTools)
 			}
-			if !errors.Is(p.toolsErr, errToolsDirUnusable) {
-				t.Fatalf("toolsErr = %v, want errToolsDirUnusable", p.toolsErr)
+			toolsDir, err := p.tools.use()
+			if toolsDir != "" || !errors.Is(err, errToolsDirUnusable) {
+				t.Fatalf("tools.use() = %q, %v; want \"\", errToolsDirUnusable", toolsDir, err)
 			}
-			msg := p.toolsErr.Error()
+			msg := err.Error()
 			if !strings.Contains(msg, tc.wantVar+" names a folder whose path") {
 				t.Errorf("toolsErr = %q, want it to name %s", msg, tc.wantVar)
 			}
@@ -145,6 +149,27 @@ func TestToolsEnv(t *testing.T) {
 			envValue{},
 		},
 		{
+			"a rejected dir leaves PATH, GOPATH and GOBIN with the image's and its own entries removed", "/srv/t`x",
+			map[string]string{"PATH": "/srv/t`x/bin:/a:" + image + ":/srv/t`x/go/bin", "GOPATH": "/srv/t`x/go", "GOBIN": "/srv/t`x/bin"},
+			"/a:/config/home/.local/bin:/usr/bin",
+			envValue{},
+			envValue{},
+		},
+		{
+			"a rejected dir holding the separator is removed as the entries it splits into", "/srv/a:b",
+			map[string]string{"PATH": "/srv/a:b/bin:/srv/a:/usr/bin:b/bin:/srv/a:b/go/bin"},
+			"/srv/a:/usr/bin:b/bin",
+			envValue{},
+			envValue{},
+		},
+		{
+			"a rejected dir keeps an operator's GOPATH and GOBIN", "/srv/t`x",
+			map[string]string{"PATH": "/usr/bin", "GOPATH": "/g", "GOBIN": "/gb"},
+			"/usr/bin",
+			envValue{"/g", true},
+			envValue{"/gb", true},
+		},
+		{
 			"no tools dir keeps an operator's GOPATH and GOBIN", "",
 			map[string]string{"PATH": "/usr/bin", "GOPATH": "/g", "GOBIN": "/gb"},
 			"/usr/bin",
@@ -154,7 +179,11 @@ func TestToolsEnv(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lookup := func(k string) (string, bool) { v, ok := tc.env[k]; return v, ok }
-			path, gopath, gobin := toolsEnv(tc.toolsDir, lookup)
+			root := toolsRoot{}
+			if tc.toolsDir != "" {
+				root = checkToolsRoot("MAROTTE_TOOLS_DIR", tc.toolsDir)
+			}
+			path, gopath, gobin := toolsEnv(root, lookup)
 			if path != tc.wantPath {
 				t.Errorf("PATH = %q, want %q", path, tc.wantPath)
 			}
@@ -237,22 +266,22 @@ func TestRunPaths_ShellsReadBackTheServersFolders(t *testing.T) {
 	}
 }
 
-// A tools folder the engine cannot use is still the kiro-cli install's, so TOOLS names it, but
-// nothing of it reaches PATH, GOPATH or GOBIN.
-func TestRunPaths_KeepsAnUnusableToolsFolderOffTheEnvironment(t *testing.T) {
+// A rejected tools folder is no folder of the boot's: TOOLS is empty and nothing of it reaches
+// PATH, GOPATH or GOBIN, even where the environment already held it.
+func TestRunPaths_KeepsARejectedToolsFolderOffTheEnvironment(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("HOME", base+"/home")
 	t.Setenv("KIRO_CONFIG_DIR", base+"/c")
 	t.Setenv("MAROTTE_TOOLS_DIR", base+"/a:b")
 	t.Setenv("KIRO_HOME", "")
-	t.Setenv("PATH", "/config/tools/bin:/config/tools/go/bin:/usr/bin")
-	t.Setenv("GOPATH", "/config/tools/go")
+	t.Setenv("PATH", base+"/a:b/bin:/config/tools/bin:/config/tools/go/bin:/usr/bin")
+	t.Setenv("GOPATH", base+"/a:b/go")
 	t.Setenv("GOBIN", "/config/tools/bin")
 	for _, sh := range shells(t) {
 		t.Run(filepath.Base(sh), func(t *testing.T) {
 			_, gotTools, env := evalPaths(t, sh)
-			if gotTools != base+"/a:b" {
-				t.Errorf("TOOLS = %q, want %q", gotTools, base+"/a:b")
+			if gotTools != "" {
+				t.Errorf("TOOLS = %q, want empty", gotTools)
 			}
 			if env["PATH"] != "/usr/bin" {
 				t.Errorf("exported PATH = %q, want /usr/bin", env["PATH"])
@@ -300,5 +329,102 @@ func TestRunPaths_WarnsOnceAboutAnIgnoredKiroHome(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "export KIRO_HOME="+shellQuote(base+"/.kiro")+"\n") {
 		t.Errorf("stdout = %q, want KIRO_HOME exported as the default", out.String())
+	}
+}
+
+// Every consumer reads the one verdict, so a rejected tools folder is off at each of them, even
+// when the environment already puts it on PATH.
+func TestToolsRoot_ARejectedFolderIsOffAtEveryConsumer(t *testing.T) {
+	const goodDigest = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	for _, tc := range []struct{ name, char string }{
+		{"colon", ":"},
+		{"backtick", "`"},
+		{"NUL", "\x00"},
+		{"carriage return", "\r"},
+		{"line feed", "\n"},
+		{"escape", "\x1b"},
+		{"delete", "\x7f"},
+		{"line separator", "\u2028"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			t.Setenv("HOME", filepath.Join(base, "home"))
+			t.Setenv("KIRO_HOME", "")
+			configDir, rejected := filepath.Join(base, "config"), filepath.Join(t.TempDir(), "t"+tc.char+"x")
+			env := map[string]string{
+				"KIRO_CONFIG_DIR": configDir, "MAROTTE_TOOLS_DIR": rejected, "HOME": filepath.Join(base, "home"),
+				"PATH":   rejected + "/bin:" + rejected + "/go/bin:/config/tools/bin:/usr/bin",
+				"GOPATH": rejected + "/go", "GOBIN": rejected + "/bin",
+			}
+			lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
+			root := resolveBootPaths(envx.Source{Get: func(k string) string { return env[k] }}).tools
+			captureDefaultLogger(t)
+
+			if dir, err := root.use(); dir != "" || !errors.Is(err, errToolsDirUnusable) {
+				t.Fatalf("use() = %q, %v; want \"\", errToolsDirUnusable", dir, err)
+			}
+			path, gopath, gobin := toolsEnv(root, lookup)
+			if path != "/usr/bin" || gopath.set || gobin.set {
+				t.Errorf("toolsEnv = %q, %+v, %+v; want /usr/bin with GOPATH and GOBIN unset", path, gopath, gobin)
+			}
+			var out, errOut bytes.Buffer
+			if rc := runPaths(&out, &errOut, lookup); rc != 0 {
+				t.Fatalf("runPaths = %d; stderr: %s", rc, errOut.String())
+			}
+			for _, want := range []string{"TOOLS=''\n", "export PATH='/usr/bin'\n", "unset GOPATH\n", "unset GOBIN\n"} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("paths output = %q, want it to hold %q", out.String(), want)
+				}
+			}
+			cfg := &Config{
+				WorkDir: filepath.Join(base, "work"), ConfigDir: configDir, Tools: root,
+				KiroCLIVersion: "2.14.2", KiroCLISHA256: goodDigest, KiroCLISHA256ARM64: goodDigest,
+			}
+			kiro := startKiroCLI(t.Context(), cfg)
+			defer kiro.stop()
+			if kiro.ready == nil || kiro.rescan != nil || kiro.cliPath() != "" {
+				t.Fatal("startKiroCLI did not return the unavailable runtime")
+			}
+			if ready, reason := kiro.ready(); ready || reason != pinstall.ReasonUnavailable {
+				t.Errorf("kiro-cli ready() = (%v, %s), want (false, %s)", ready, reason, pinstall.ReasonUnavailable)
+			}
+			if _, err := buildToolsEngine(t.Context(), cfg, testRuntime(t), nil); !errors.Is(err, errToolsDirUnusable) {
+				t.Errorf("buildToolsEngine = %v, want errToolsDirUnusable", err)
+			}
+			for _, r := range ownedRoots(cfg) {
+				if r.role == roleToolsDir {
+					t.Errorf("ownedRoots claims %q as the tools dir", r.dir)
+				}
+			}
+			if tc.char != "\x00" {
+				if err := os.Mkdir(rejected, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(rejected, 0o777); err != nil {
+					t.Fatal(err)
+				}
+			}
+			roots, err := claimAndHealRoots(cfg)
+			if err != nil {
+				t.Fatalf("claimAndHealRoots = %v", err)
+			}
+			roots.release()
+			if tc.char != "\x00" {
+				if got := permOf(t, rejected); got != 0o777 {
+					t.Errorf("the rejected folder's mode = %04o, want 0777 untouched", got)
+				}
+				if entries, err := os.ReadDir(rejected); err != nil || len(entries) != 0 {
+					t.Errorf("the rejected folder holds %v (%v), want nothing", entries, err)
+				}
+			}
+			newSteering(cfg).Generate(t.Context())
+			doc, err := os.ReadFile(workspace.KiroSteeringPath("environment.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(doc), filepath.Dir(rejected)) || !strings.Contains(string(doc), "The tools engine is off") {
+				t.Errorf("environment.md names the rejected folder or does not say the engine is off:\n%s", doc)
+			}
+		})
 	}
 }

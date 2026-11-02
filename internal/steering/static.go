@@ -72,7 +72,7 @@ func writeRuntime(b *strings.Builder, configDir, toolsDir string) {
 		b.WriteString("`go/`, `npm/`, `python/`, `kiro-cli-versions/<version>/`)\n")
 		writeShellHint(b, toolsDir, onPath)
 	} else {
-		b.WriteString("\n- The tools engine is off, so nothing it would install is on any PATH")
+		b.WriteString("\n- The tools engine is off, so it installs nothing")
 	}
 	if home != "" {
 		b.WriteString(". Pin " + home + " on any command a ")
