@@ -242,7 +242,7 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.SetMCPSnapshot(func() MCPSnapshot {
 		return MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}}
 	})
@@ -320,7 +320,7 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 // a fileMatch or manual doc would never load, and a section dropped in the move
 // would reach no session at all.
 func TestChatDocs_CarriesTheChatSections(t *testing.T) {
-	g := New("/ws", "/cfg")
+	g := New("/ws", "/cfg", "/cfg/tools")
 	g.SetForgeSnapshot(func() ForgeSnapshot {
 		return ForgeSnapshot{Providers: []ForgeProvider{{Kind: "github", Host: "github.com", User: "alice"}}}
 	})
@@ -353,7 +353,7 @@ func TestChatDocs_CarriesTheChatSections(t *testing.T) {
 func TestChatDocs_WritesNothing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	New(t.TempDir(), t.TempDir()).ChatDocs(t.Context())
+	New(t.TempDir(), t.TempDir(), t.TempDir()).ChatDocs(t.Context())
 	entries, err := os.ReadDir(filepath.Join(home, ".kiro", "steering"))
 	if err == nil && len(entries) > 0 {
 		t.Errorf("ChatDocs wrote %d steering file(s); want none", len(entries))
@@ -369,7 +369,7 @@ func TestGenerate_NoMCPSnapshotOmitsSection(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	// Deliberately do NOT call SetMCPSnapshot.
 	g.Generate(t.Context())
 
@@ -388,7 +388,7 @@ func TestGenerate_EmptyMCPSnapshotOmitsSection(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.SetMCPSnapshot(func() MCPSnapshot { return MCPSnapshot{} })
 	g.Generate(t.Context())
 
@@ -405,7 +405,7 @@ func TestGenerate_RendersForgeSection(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.SetForgeSnapshot(func() ForgeSnapshot {
 		return ForgeSnapshot{Providers: []ForgeProvider{
 			{Kind: "github", Host: "github.com", User: "alice"},
@@ -438,7 +438,7 @@ func TestChatDocs_GitPanelFollowsTheForgeSnapshot(t *testing.T) {
 		{"no provider", nil, none, connected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			g := New(t.TempDir(), t.TempDir())
+			g := New(t.TempDir(), t.TempDir(), t.TempDir())
 			g.SetForgeSnapshot(func() ForgeSnapshot { return ForgeSnapshot{Providers: tc.providers} })
 			docs := g.ChatDocs(t.Context())
 			if len(docs) != 1 {
@@ -459,7 +459,7 @@ func TestGenerate_IdempotentSkipsRewrite(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.Generate(t.Context())
 
 	steeringPath := filepath.Join(home, ".kiro", "steering", "environment.md")
@@ -490,7 +490,7 @@ func TestGenerate_LogsWroteOnSuccess(t *testing.T) {
 	var buf bytes.Buffer
 	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.Generate(t.Context())
 
 	if _, err := os.Stat(steeringPath); err != nil {
@@ -510,7 +510,7 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.SetMCPSnapshot(func() MCPSnapshot {
 		return MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}}
 	})
@@ -543,7 +543,7 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 func TestCustomPath_UsesHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	g := New("/some/work", "/some/config")
+	g := New("/some/work", "/some/config", "/some/config/tools")
 	got := g.CustomPath()
 	want := filepath.Join(home, ".kiro", "steering", "custom.md")
 	if got != want {
@@ -556,7 +556,7 @@ func TestCustomPath_HomeUnsetFallback(t *testing.T) {
 	t.Setenv("KIRO_HOME", "")
 	os.Unsetenv("HOME")
 	os.Unsetenv("KIRO_HOME")
-	g := New("/some/work", "/some/config")
+	g := New("/some/work", "/some/config", "/some/config/tools")
 	// With KIRO_HOME and HOME unset, KiroHome() falls back to ".kiro", as kiro-cli does.
 	if got := g.CustomPath(); got != ".kiro/steering/custom.md" {
 		t.Errorf("CustomPath() with no HOME = %q, want \".kiro/steering/custom.md\"", got)

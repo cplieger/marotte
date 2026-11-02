@@ -26,7 +26,7 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 		"LANG":      "C.UTF-8",
 	})
 	var b strings.Builder
-	writeRuntime(&b, "/cfg")
+	writeRuntime(&b, "/cfg", "/t")
 	out := b.String()
 
 	for _, want := range []string{
@@ -36,8 +36,10 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 		"`PATH=/a:/b`",
 		"`GOPATH=/g`, `GOBIN=/g/bin`, `LANG=C.UTF-8`",
 		"`/cfg` is the persistent volume",
-		"`/cfg/tools/bin/<tool>`",
-		"`HOME=/cfg/home`",
+		"`/t` is the tools engine's tree",
+		"`/t/bin` is the tools engine's single bin dir",
+		"`/t/bin/<tool>`",
+		"Pin `HOME=/h` on any command",
 		"/etc/profile.d/10-marotte-path.sh",
 	} {
 		if !strings.Contains(out, want) {
@@ -46,6 +48,38 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 	}
 	if strings.Contains(out, "TZ=") {
 		t.Errorf("writeRuntime printed TZ, which was unset:\n%s", out)
+	}
+	if strings.Contains(out, "/cfg/tools") || strings.Contains(out, "/cfg/home") {
+		t.Errorf("writeRuntime derived a path from the config dir instead of the tools dir or HOME:\n%s", out)
+	}
+	if strings.Contains(out, "(= HOME)") {
+		t.Errorf("writeRuntime lists HOME on the config volume, but HOME=/h lies outside /cfg:\n%s", out)
+	}
+}
+
+func TestWriteRuntime_HomeInsideTheConfigDirIsListedOnTheVolume(t *testing.T) {
+	fakeEnv(t, map[string]string{"HOME": "/cfg/home"})
+	var b strings.Builder
+	writeRuntime(&b, "/cfg", "/cfg/tools")
+	out := b.String()
+	if !strings.Contains(out, "`home/` (= HOME)") {
+		t.Errorf("writeRuntime does not list HOME=/cfg/home on the /cfg volume:\n%s", out)
+	}
+	if !strings.Contains(out, "Pin `HOME=/cfg/home` on any command") {
+		t.Errorf("writeRuntime does not pin the live HOME:\n%s", out)
+	}
+}
+
+func TestWriteRuntime_UnsetHomeIsNeitherListedNorPinned(t *testing.T) {
+	fakeEnv(t, map[string]string{})
+	var b strings.Builder
+	writeRuntime(&b, "/cfg", "/cfg/tools")
+	out := b.String()
+	if strings.Contains(out, "HOME") {
+		t.Errorf("writeRuntime names HOME, which was unset:\n%s", out)
+	}
+	if !strings.Contains(out, "path (`/cfg/tools/bin/<tool>`)\n") {
+		t.Errorf("writeRuntime does not end the drop-in hint at the absolute path:\n%s", out)
 	}
 }
 
@@ -59,7 +93,7 @@ func TestWriteRuntime_BacktickInValueDropsTheVariable(t *testing.T) {
 		"LANG":   "C.UTF-8",
 	})
 	var b strings.Builder
-	writeRuntime(&b, "/cfg")
+	writeRuntime(&b, "/cfg", "/cfg/tools")
 	out := b.String()
 	if strings.Contains(out, "GOPATH=") {
 		t.Errorf("a GOPATH value with a backtick reached the doc:\n%s", out)
@@ -74,7 +108,7 @@ func TestWriteRuntime_BacktickInValueDropsTheVariable(t *testing.T) {
 
 func TestWriteToolsEngine(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "/w")
+	writeToolsEngine(&b, "/cfg", "/t", "/w")
 	out := b.String()
 	for _, want := range []string{
 		"localhost:9847/api/tools/search?q=<name>",
@@ -83,7 +117,8 @@ func TestWriteToolsEngine(t *testing.T) {
 		"&unavailable=1",
 		"Settings → Tools",
 		"`/cfg/tools.json`",
-		"`/cfg/tools/opt/<name>/<version>/`",
+		"`/t/opt/<name>/<version>/`",
+		"`/t/bin/`",
 		`"Refresh catalog"`,
 	} {
 		if !strings.Contains(out, want) {
@@ -102,7 +137,7 @@ func TestWriteToolsEngine(t *testing.T) {
 
 func TestWriteToolsEngine_SaysABadManifestLeavesToolsOffRatherThanStoppingMarotte(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "/w")
+	writeToolsEngine(&b, "/cfg", "/cfg/tools", "/w")
 	out := b.String()
 	if !strings.Contains(out, "leaves the tools engine off, with the reason in Settings → Tools") {
 		t.Errorf("writeToolsEngine does not say a refused tools.json leaves the tools engine off:\n%s", out)
@@ -114,7 +149,7 @@ func TestWriteToolsEngine_SaysABadManifestLeavesToolsOffRatherThanStoppingMarott
 
 func TestWriteToolsEngine_ConfigOutsideTheWorkspaceIsNotReachableByFileTools(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "/w")
+	writeToolsEngine(&b, "/cfg", "/cfg/tools", "/w")
 	out := b.String()
 	if !strings.Contains(out, "Your file tools cannot write it, because `/cfg` is outside the workspace") {
 		t.Errorf("writeToolsEngine(/cfg, /w) does not say file tools cannot reach tools.json:\n%s", out)
@@ -126,7 +161,7 @@ func TestWriteToolsEngine_ConfigOutsideTheWorkspaceIsNotReachableByFileTools(t *
 
 func TestWriteToolsEngine_ConfigInsideTheWorkspaceGetsTheEditorCheck(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/w/.cfg", "/w")
+	writeToolsEngine(&b, "/w/.cfg", "/w/.cfg/tools", "/w")
 	out := b.String()
 	if !strings.Contains(out, "A write from your own file tools gets the same check and install") {
 		t.Errorf("writeToolsEngine(/w/.cfg, /w) does not say file-tool writes are checked:\n%s", out)
@@ -209,7 +244,7 @@ func TestStaticGuide_NamesMarottesHelperNotACLILogin(t *testing.T) {
 
 	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/a:/b"})
 	b.Reset()
-	writeRuntime(&b, "/cfg")
+	writeRuntime(&b, "/cfg", "/cfg/tools")
 	if cli := forgeCLIName.FindString(b.String()); cli != "" {
 		t.Errorf("writeRuntime names the forge CLI %q:\n%s", cli, b.String())
 	}

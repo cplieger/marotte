@@ -79,6 +79,21 @@ func TestConfigFromEnv_RelativeDirsBecomeAbsolute(t *testing.T) {
 	}
 }
 
+func TestConfigFromEnv_RelativeToolsDirBecomesAbsolute(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Setup: Getwd: %v", err)
+	}
+	t.Setenv("MAROTTE_TOOLS_DIR", "./tools-elsewhere/")
+
+	cfg := ConfigFromEnv()
+
+	if want := filepath.Join(cwd, "tools-elsewhere"); cfg.ToolsDir != want {
+		t.Errorf("ConfigFromEnv() ToolsDir = %q, want %q", cfg.ToolsDir, want)
+	}
+}
+
 // TestConfigFromEnv_RemovedOverridesAreIgnored pins that the catalog refresh variable is
 // inert: set, it changes nothing.
 func TestConfigFromEnv_RemovedOverridesAreIgnored(t *testing.T) {

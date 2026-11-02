@@ -1,7 +1,31 @@
 #!/bin/bash
 
-CONFIG_DIR="/config"
-TOOLS="$CONFIG_DIR/tools"
+# ConfigFromEnv (internal/composition/config.go) derives the same two roots from the same
+# variables: an empty value is the default, and a relative one is absolute against this cwd.
+CONFIG_DIR=$(realpath -sm -- "${KIRO_CONFIG_DIR:-/config}")
+TOOLS=$(realpath -sm -- "${MAROTTE_TOOLS_DIR:-$CONFIG_DIR/tools}")
+
+# The image's ENV names the default tools tree in PATH, GOPATH and GOBIN; a configured tools
+# dir takes those entries over, so a shell resolves what the engine installs. A GOPATH or GOBIN
+# the operator set elsewhere is kept.
+rebase_tools_env() {
+  local from=$1 to=$2 rest entry out=""
+  rest="$PATH:"
+  while [ -n "$rest" ]; do
+    entry=${rest%%:*}
+    rest=${rest#*:}
+    case "$entry" in
+      "$from/bin") entry="$to/bin" ;;
+      "$from/go/bin") entry="$to/go/bin" ;;
+    esac
+    out="$out:$entry"
+  done
+  PATH=${out#:}
+  [ "${GOPATH-}" != "$from/go" ] || GOPATH="$to/go"
+  [ "${GOBIN-}" != "$from/bin" ] || GOBIN="$to/bin"
+}
+
+rebase_tools_env /config/tools "$TOOLS"
 
 # kiro-cli pins, tracked by Renovate against
 # https://desktop-release.q.us-east-1.amazonaws.com/index.json. The server installs
@@ -67,15 +91,15 @@ effective_kiro_home() {
 KIRO_HOME=$(effective_kiro_home)
 export KIRO_HOME
 
-# The tools engine creates its own subtrees; bin/ is created here so PATH never
-# races it. kiro-cli-versions is the server's kiro-cli install root, created here so
-# this script's /config failure branch covers it. It must stay a sibling of opt/:
-# the engine prunes every non-current directory under opt/<tool>.
-mkdir -p "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
+# bin/ is made here so PATH never races the engine, which makes its other subtrees, and
+# kiro-cli-versions (the server's install root) so this failure branch covers it. That root
+# must stay a sibling of opt/: the engine prunes every non-current directory under opt/<tool>.
+# The config dir is made even when the tools dir lies elsewhere, or flock would create a file.
+mkdir -p "$CONFIG_DIR" "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
   "$HOME/.local/share/kiro-cli" "$HOME/.ssh" \
   "$KIRO_HOME" "$HOME/.cache/go-build" "$HOME/.docker/cli-plugins" \
   || {
-    printf "ERROR: failed to create required directories (is /config mounted and writable?)\n"
+    printf "ERROR: failed to create required directories (is %s mounted and writable?)\n" "$CONFIG_DIR"
     sleep 10
     exit 1
   }

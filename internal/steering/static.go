@@ -32,9 +32,10 @@ func envSpan(name string) string {
 // writeRuntime prints the live process environment rather than a copy of the
 // Dockerfile's ENV lines: the generator runs inside the container, so the value
 // it sees is the one every shell inherits.
-func writeRuntime(b *strings.Builder, configDir string) {
+func writeRuntime(b *strings.Builder, configDir, toolsDir string) {
 	b.WriteString("## Container runtime\n\n")
-	if home := envSpan("HOME"); home != "" {
+	home := envSpan("HOME")
+	if home != "" {
 		b.WriteString("- " + home)
 		if kiroHome := envSpan("KIRO_HOME"); kiroHome != "" {
 			b.WriteString("; " + kiroHome + " holds kiro-cli's own state: `steering/environment.md` ")
@@ -43,9 +44,9 @@ func writeRuntime(b *strings.Builder, configDir string) {
 		b.WriteString("\n")
 	}
 	if p := envSpan("PATH"); p != "" {
-		b.WriteString("- " + p + " as the image exports it: `" + configDir + "/tools/bin` is the tools ")
-		b.WriteString("engine's single bin dir (symlinks into `" + configDir + "/tools/opt/<tool>/<version>/`), ")
-		b.WriteString("`" + configDir + "/tools/go/bin` is `$GOPATH/bin`, and `$HOME/.local/bin` is the ")
+		b.WriteString("- " + p + " as the image exports it: `" + toolsDir + "/bin` is the tools ")
+		b.WriteString("engine's single bin dir (symlinks into `" + toolsDir + "/opt/<tool>/<version>/`), ")
+		b.WriteString("`" + toolsDir + "/go/bin` is `$GOPATH/bin`, and `$HOME/.local/bin` is the ")
 		b.WriteString("per-user bin dir (`uv tool install` lands there)\n")
 	}
 	var rest []string
@@ -59,21 +60,32 @@ func writeRuntime(b *strings.Builder, configDir string) {
 	}
 	b.WriteString("- `" + configDir + "` is the persistent volume: `chats/` (one directory per chat: a `chat.json` header and an `entries.jsonl` turn log), ")
 	b.WriteString("`config.json` (marotte's settings), `tools.json` (tool manifest: what should be installed), ")
-	b.WriteString("`tools-state.json` (what is installed), `tools/` (`bin/`, `opt/<tool>/<version>/`, ")
-	b.WriteString("`go/`, `npm/`, `python/`, `kiro-cli-versions/<version>/`), `home/` (= HOME)\n")
+	b.WriteString("`tools-state.json` (what is installed)")
+	if home != "" {
+		v, _ := lookupEnv("HOME")
+		if rel, inside := strings.CutPrefix(v, configDir+"/"); inside && rel != "" {
+			b.WriteString(", `" + rel + "/` (= HOME)")
+		}
+	}
+	b.WriteString("; `" + toolsDir + "` is the tools engine's tree (`bin/`, `opt/<tool>/<version>/`, ")
+	b.WriteString("`go/`, `npm/`, `python/`, `kiro-cli-versions/<version>/`)\n")
 	b.WriteString("- Every login shell, the browser Shell panel's `bash --login` included, sources ")
 	b.WriteString("`/etc/profile.d/10-marotte-path.sh` (rewritten by the entrypoint each boot), so an ")
 	b.WriteString("installed tool resolves by bare name there too. If a user still gets `command not found`, ")
 	b.WriteString("the boot log carries a WARNING that the drop-in was not written: hand them the absolute ")
-	b.WriteString("path (`" + configDir + "/tools/bin/<tool>`). Pin `HOME=" + configDir + "/home` on any command a ")
-	b.WriteString("user runs that reads or writes per-user state (`git config --global`, a tool's own login): a shell ")
-	b.WriteString("reached another way can carry `HOME=/root`, and a token written there is one no agent ")
-	b.WriteString("session reads\n\n")
+	b.WriteString("path (`" + toolsDir + "/bin/<tool>`)")
+	if home != "" {
+		b.WriteString(". Pin " + home + " on any command a ")
+		b.WriteString("user runs that reads or writes per-user state (`git config --global`, a tool's own login): a shell ")
+		b.WriteString("reached another way can carry `HOME=/root`, and a token written there is one no agent ")
+		b.WriteString("session reads")
+	}
+	b.WriteString("\n\n")
 }
 
 // 9847 mirrors internal/server's unexported port const; steering cannot import
 // server (server imports steering).
-func writeToolsEngine(b *strings.Builder, configDir, workDir string) {
+func writeToolsEngine(b *strings.Builder, configDir, toolsDir, workDir string) {
 	b.WriteString("## Tools engine\n\n")
 	b.WriteString("- marotte's own HTTP server answers on `localhost:9847` inside the container (correct from ")
 	b.WriteString("in here whatever the host published). `curl -s 'localhost:9847/api/tools/search?q=<name>'` ")
@@ -84,8 +96,8 @@ func writeToolsEngine(b *strings.Builder, configDir, workDir string) {
 	b.WriteString("-d '{\"name\":\"<name>\"}'` installs one and answers `202 {\"job\":…}`; an `apt:` hit also needs ")
 	b.WriteString("its `\"source\":\"apt:<name>\"`, or the engine answers `unknown tool`; progress streams to ")
 	b.WriteString("Settings → Tools, and `GET localhost:9847/api/tools/jobs` lists jobs. A catalog install ")
-	b.WriteString("lands under `" + configDir + "/tools/opt/<name>/<version>/` with a symlink in ")
-	b.WriteString("`" + configDir + "/tools/bin/`, is recorded in `" + configDir + "/tools.json`, and survives a ")
+	b.WriteString("lands under `" + toolsDir + "/opt/<name>/<version>/` with a symlink in ")
+	b.WriteString("`" + toolsDir + "/bin/`, is recorded in `" + configDir + "/tools.json`, and survives a ")
 	b.WriteString("container recreate. An `\"apt\":true` hit is recorded too but installs into the container ")
 	b.WriteString("layer, so it is re-applied at the next boot at whatever version Debian then offers. Prefer ")
 	b.WriteString("the engine to a bare `apt-get install` (unrecorded, lost on recreate) for anything you ")

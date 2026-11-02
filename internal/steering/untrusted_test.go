@@ -149,7 +149,7 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 			workDir, configDir := t.TempDir(), t.TempDir()
 			mcp, forge := tc.plant(t, workDir, configDir)
 
-			g := New(workDir, configDir)
+			g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 			if mcp != nil {
 				g.SetMCPSnapshot(mcp)
 			}

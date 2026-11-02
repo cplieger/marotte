@@ -63,12 +63,14 @@ type Generator struct {
 	forgeSnapshot func() ForgeSnapshot
 	workDir       string
 	configDir     string
+	toolsDir      string
 	mu            sync.Mutex
 }
 
-// New returns a Generator that writes steering files for the given workDir and configDir.
-func New(workDir, configDir string) *Generator {
-	return &Generator{workDir: workDir, configDir: configDir}
+// New returns a Generator that writes steering files for the given workDir, configDir and the
+// tools engine's toolsDir.
+func New(workDir, configDir, toolsDir string) *Generator {
+	return &Generator{workDir: workDir, configDir: configDir, toolsDir: toolsDir}
 }
 
 // SetMCPSnapshot wires a snapshot callback (unset omits the MCP section). The callback runs
@@ -140,8 +142,8 @@ func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, fo
 	if data, err := readCappedFile(state, toolsManifestCap); err == nil {
 		writeTools(&b, data)
 	}
-	writeRuntime(&b, g.configDir)
-	writeToolsEngine(&b, g.configDir, g.workDir)
+	writeRuntime(&b, g.configDir, g.toolsDir)
+	writeToolsEngine(&b, g.configDir, g.toolsDir, g.workDir)
 	if hasMCP {
 		writeMCP(&b, mcp)
 	}

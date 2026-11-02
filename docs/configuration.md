@@ -10,15 +10,15 @@ Variables go in the `environment:` block of `compose.yaml` and are read at start
 | --- | --- | --- |
 | `ALLOWED_HOSTS` | Hostnames and IPs you open marotte at, comma-separated. Any other address gets `403`. | _(unset)_ |
 | `TRUSTED_PROXIES` | Address ranges of your reverse proxy, so the logs record the real client address. | _(unset)_ |
-| `TRUSTED_INSTALL_UIDS` | User IDs that may write to `/config/tools` without marotte refusing to install kiro-cli. Only for shared or network volumes. | _(unset)_ |
+| `TRUSTED_INSTALL_UIDS` | User IDs that may write to the tools folder (`MAROTTE_TOOLS_DIR`) without marotte refusing to install kiro-cli. Only for shared or network volumes. | _(unset)_ |
 | `MAROTTE_BROWSE_ROOTS` | Extra folders the file browser shows, colon-separated absolute paths. | _(unset)_ |
 | `MAROTTE_ALLOW_AGENT_ENV` | Program-changing variables, such as `LD_PRELOAD`, the agent may set for its commands. | _(unset)_ |
 | `MAROTTE_ALLOW_BRIDGE_ENV` | Variable names that look like credentials but should still reach kiro-cli, comma-separated. | _(unset)_ |
 | `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` flags for the agent engine. | _(unset)_ |
 | `KIRO_WORK_DIR` | Folder chats and the terminal start in. It must exist, or startup fails. | `/workspace` |
-| `KIRO_CONFIG_DIR` | Folder for chats, the Kiro sign-in, the kiro-cli home, installed tools and settings. It must exist and be writable. Each marotte needs its own: a second one started on the same folder refuses to start. | `/config` |
+| `KIRO_CONFIG_DIR` | Folder for chats, the Kiro sign-in, settings and the tools list, and by default the installed tools. The container creates it when it is missing, and it must be writable. The home folder stays `/config/home` unless you also set `HOME`. Each marotte needs its own: a second one started on the same folder refuses to start. | `/config` |
 | `KIRO_HOME` | Where marotte and kiro-cli keep kiro-cli's own state: steering, settings, permissions and session files. A relative path, `/`, or a path that is `HOME` or holds `HOME` inside it is ignored with a warning at startup, as kiro-cli ignores it. kiro-cli's test for "inside" does not count a `HOME` whose path relative to `KIRO_HOME` starts with `..`, such as a `..home` folder directly below it, and marotte follows it. Each marotte needs its own: a second one started on the same folder refuses to start. | `$HOME/.kiro` |
-| `MAROTTE_TOOLS_DIR` | Where the tools engine installs tools, on the persistent volume. Each marotte needs its own: a second one started on the same folder refuses to start. | `<KIRO_CONFIG_DIR>/tools` |
+| `MAROTTE_TOOLS_DIR` | Where the tools engine installs tools, on the persistent volume. Its `bin/` and `go/bin/` replace `/config/tools/bin` and `/config/tools/go/bin` on `PATH`, and `GOPATH` and `GOBIN` follow it unless you set them to another folder. Each marotte needs its own: a second one started on the same folder refuses to start. | `<KIRO_CONFIG_DIR>/tools` |
 | `MAROTTE_TOOL_CATALOG` | Tool catalog built into the image, used at first start and offline. | `/opt/marotte/tool-catalog.json` |
 | `MAROTTE_TOOL_CATALOG_URL` | Where catalog updates come from. Point it at a fork or a mirror. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest release |
 | `MAROTTE_BUNDLED_TOOLS` | File inside the image naming the tools marotte bundles. A wrong path leaves the suggested language servers unable to install. | `/opt/marotte/bundled-tools.json` |
@@ -40,11 +40,11 @@ marotte reads `X-Forwarded-For` only when the connecting address is inside that 
 
 ## Trusted install accounts (`TRUSTED_INSTALL_UIDS`)
 
-Before it installs kiro-cli, marotte checks who can write to each folder on the way to `/config/tools`. It refuses the install when another account can, because the container later runs what lands there. The log line names the folder and the account that "can be modified by" it.
+Before it installs kiro-cli, marotte checks who can write to each folder on the way to the tools folder. It refuses the install when another account can, because the container later runs what lands there. The log line names the folder and the account that "can be modified by" it.
 
 Leave this unset on almost every server. Set it only when the check refuses a volume you know is safe, usually a shared or network volume whose permissions include an account you control.
 
-The tools engine makes a similar check, without this exception: it does not start while another account can write to `/config`, `/config/tools` or a folder it installs into, and the **Tools** tab in **Settings** then says "Tools are off", with the server log naming each folder. So at every start the container removes group and other write from those folders.
+The tools engine makes a similar check, without this exception: it does not start while another account can write to the config folder, the tools folder or a folder it installs into, and the **Tools** tab in **Settings** then says "Tools are off", with the server log naming each folder. So at every start the container removes group and other write from those folders.
 
 ```yaml
 environment:
@@ -124,7 +124,7 @@ Files you attach to a message, by drag and drop, paste or the composer's **Chat 
 
 ## What `/config` holds
 
-`/config` is the one volume marotte keeps its state in. Back it up as a whole.
+`/config` is the one volume marotte keeps its state in. Back it up as a whole. The paths below are the defaults; `KIRO_CONFIG_DIR`, `MAROTTE_TOOLS_DIR`, `HOME` and `KIRO_HOME` move them.
 
 | Path | Contents |
 | --- | --- |

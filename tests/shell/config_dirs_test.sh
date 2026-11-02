@@ -31,6 +31,7 @@ fi
 # --- 1. the success path creates every required directory ------------------------
 ROOT="$WORK/ok"
 (
+  CONFIG_DIR="$ROOT/config"
   TOOLS="$ROOT/tools"
   HOME="$ROOT/home"
   KIRO_HOME="$ROOT/home/.kiro"
@@ -38,12 +39,12 @@ ROOT="$WORK/ok"
 ) >"$WORK/out.log" 2>&1
 rc=$?
 missing=""
-for d in tools/bin tools/kiro-cli-versions home/.local/share/kiro-cli home/.ssh home/.kiro \
+for d in config tools/bin tools/kiro-cli-versions home/.local/share/kiro-cli home/.ssh home/.kiro \
   home/.cache/go-build home/.docker/cli-plugins; do
   [ -d "$ROOT/$d" ] || missing="$missing $d"
 done
 [ "$rc" -eq 0 ] && [ -z "$missing" ] \
-  && ok "the boot creates all seven required directories and continues" \
+  && ok "the boot creates all eight required directories and continues" \
   || no "required directories" "rc=$rc missing:$missing"
 
 # Its own assertion: the only entry the SERVER writes into, and a missing parent fails the first
@@ -63,6 +64,7 @@ done
 # the subshell. `sleep` too: the shipped 10s delay proves nothing the exit status does not.
 ROOT="$WORK/fail"
 (
+  CONFIG_DIR="$ROOT/config"
   TOOLS="$ROOT/tools"
   HOME="$ROOT/home"
   KIRO_HOME="$ROOT/home/.kiro"
@@ -71,9 +73,9 @@ ROOT="$WORK/fail"
   . "$BLOCK"
 ) >"$WORK/out.log" 2>&1
 rc=$?
-[ "$rc" -ne 0 ] && grep -Fq 'failed to create required directories (is /config mounted and writable?)' "$WORK/out.log" \
-  && ok "a mkdir it cannot complete aborts the boot and says /config may be unmounted" \
-  || no "unwritable /config" "rc=$rc, or the message lost its remediation hint: $(cat "$WORK/out.log")"
+[ "$rc" -ne 0 ] && grep -Fq "failed to create required directories (is $ROOT/config mounted and writable?)" "$WORK/out.log" \
+  && ok "a mkdir it cannot complete aborts the boot and says the config dir may be unmounted" \
+  || no "unwritable config dir" "rc=$rc, or the message lost its remediation hint: $(cat "$WORK/out.log")"
 
 # --- 3. the directories land in the KIRO_HOME the resolver hands every child ---------
 # The image's ENV sets KIRO_HOME, so the export matters only where nothing did: a child must
@@ -82,6 +84,7 @@ rc=$?
 ROOT="$WORK/nokirohome"
 (
   set +u
+  CONFIG_DIR="$ROOT/config"
   TOOLS="$ROOT/tools"
   HOME="$ROOT/home"
   unset KIRO_HOME
@@ -101,6 +104,7 @@ mkdir -p "$ROOT" || exit 1
 (
   set +u
   cd "$ROOT" || exit 1
+  CONFIG_DIR="$ROOT/config"
   TOOLS="$ROOT/tools"
   HOME="$ROOT/home"
   KIRO_HOME="state/kiro"

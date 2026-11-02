@@ -92,7 +92,7 @@ func ConfigFromEnv() Config {
 		KiroCLISHA256:       envx.String("KIRO_CLI_SHA256"),
 		KiroCLISHA256ARM64:  envx.String("KIRO_CLI_SHA256_ARM64"),
 		VapidSub:            cmp.Or(envx.String("VAPID_SUBJECT"), "mailto:marotte@noreply.invalid"),
-		ToolsDir:            cmp.Or(envx.String("MAROTTE_TOOLS_DIR"), filepath.Join(configDir, "tools")),
+		ToolsDir:            absDir("MAROTTE_TOOLS_DIR", cmp.Or(envx.String("MAROTTE_TOOLS_DIR"), filepath.Join(configDir, "tools"))),
 		KASNodePath:         cmp.Or(envx.String("KIRO_KAS_NODE_PATH"), embeddedKASNode(os.Getenv("XDG_DATA_HOME"), os.Getenv("HOME"))),
 		ToolCatalogPath:     cmp.Or(envx.String("MAROTTE_TOOL_CATALOG"), "/opt/marotte/tool-catalog.json"),
 		ToolCatalogURL:      cmp.Or(envx.String("MAROTTE_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
@@ -120,10 +120,10 @@ func embeddedKASNode(dataHome, home string) string {
 	return filepath.Join(dataHome, "kiro-cli", "node")
 }
 
-// absDir makes a configured directory absolute against the startup cwd. The browse roots, the file
-// API's root namespace and the client's config-file doors all treat it as an absolute identity, so a
-// relative value would name one directory to the os calls and another to them. A failed Getwd
-// leaves the value cleaned and relative, and validateConfig reports it.
+// absDir makes a configured directory absolute against the startup cwd: the browse roots, the file
+// API and the config-file doors treat the config dir as an absolute identity, and a relative tools
+// dir would give toolbelt's bin/ symlinks targets resolved against bin/ itself. A failed Getwd
+// leaves the value cleaned and relative, with a warning.
 func absDir(envVar, dir string) string {
 	abs, err := filepath.Abs(dir)
 	if err != nil {

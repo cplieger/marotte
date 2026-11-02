@@ -90,11 +90,12 @@ grep -q 'KIRO_CLI_PATH' "$README" \
   || ok "the README config table does not offer KIRO_CLI_PATH"
 
 # --- the tools tree both halves compute independently -------------------------
-# The tools dir is NOT exported: the entrypoint derives it from CONFIG_DIR, the server from
-# KIRO_CONFIG_DIR, so the two derivations are what this pins.
-grep -q '^TOOLS="\$CONFIG_DIR/tools"$' "$ENTRYPOINT" \
-  && ok "the entrypoint derives \$TOOLS as \$CONFIG_DIR/tools" \
-  || no "entrypoint tools dir" "TOOLS is no longer \$CONFIG_DIR/tools, so it may not be the tree the server installs into"
+# Both halves read the same two variables, so the two derivations are what this pins; their
+# values per input are tools_root_test.sh's.
+grep -q '^CONFIG_DIR=\$(realpath -sm -- "\${KIRO_CONFIG_DIR:-/config}")$' "$ENTRYPOINT" \
+  && grep -q '^TOOLS=\$(realpath -sm -- "\${MAROTTE_TOOLS_DIR:-\$CONFIG_DIR/tools}")$' "$ENTRYPOINT" \
+  && ok "the entrypoint derives \$TOOLS from MAROTTE_TOOLS_DIR, else <KIRO_CONFIG_DIR>/tools" \
+  || no "entrypoint tools dir" "CONFIG_DIR or TOOLS no longer reads KIRO_CONFIG_DIR and MAROTTE_TOOLS_DIR, so it may not be the tree the server installs into"
 
 # envx/v2's String() takes no fallback (composed with cmp.Or); loose about the wrapper, so it pins
 # the <configDir>/tools DERIVATION.
@@ -106,9 +107,9 @@ grep -qF 'envx.String("MAROTTE_TOOLS_DIR")' "$CONFIG_GO" \
 # --- the install root is created here, before the server writes into it -------
 # A SIBLING of the toolbelt engine's opt/ tree: its per-tool prune deletes every non-current
 # version under opt/<tool>, for any manifest name.
-grep -qF 'mkdir -p "$TOOLS/bin" "$TOOLS/kiro-cli-versions"' "$ENTRYPOINT" \
+grep -qF 'mkdir -p "$CONFIG_DIR" "$TOOLS/bin" "$TOOLS/kiro-cli-versions"' "$ENTRYPOINT" \
   && ok "the boot mkdir creates \$TOOLS/kiro-cli-versions, the version-install root" \
-  || no "install root mkdir" "the install root is not created by the boot mkdir, so a fresh volume's first install has to create it inside the server, outside this script's /config failure branch"
+  || no "install root mkdir" "the install root is not created by the boot mkdir, so a fresh volume's first install has to create it inside the server, outside this script's mkdir failure branch"
 
 grep -qE 'mkdir -p [^&|]*"\$TOOLS/(opt|npm|python|bin)/' "$ENTRYPOINT" \
   && no "install root under a toolbelt tree" "the boot creates a directory INSIDE one of the toolbelt engine's own trees (opt/npm/python/bin); the engine's per-tool prune and bin republish own everything under those" \

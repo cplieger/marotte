@@ -107,7 +107,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// than a missing server. Below Install because its early returns log synchronously.
 	kiro := startKiroCLI(ctx, cfg)
 
-	steer := steering.New(cfg.WorkDir, cfg.ConfigDir)
+	steer := steering.New(cfg.WorkDir, cfg.ConfigDir, cfg.ToolsDir)
 	steer.Generate(ctx)
 
 	legacyCheckpoints := filepath.Join(cfg.ConfigDir, "checkpoints")
