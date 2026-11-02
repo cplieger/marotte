@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { KEY_ATTR } from "@cplieger/reactive";
 import type { TurnSummary } from "./rail-merge.js";
 
-vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
+vi.mock("./api-client.js", () => ({
+  apiGet: vi.fn(),
+  apiGetTyped: vi.fn(),
+  apiGetOrError: vi.fn(),
+}));
 vi.mock("./store-load.js", () => ({ loadMessages: vi.fn(), loadList: vi.fn() }));
 
 const outer = document.createElement("div");

@@ -239,10 +239,7 @@ func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
 			// KAS resolved the id and refused: the answer will not change.
 			name: "the engine answered ABOUT the run",
 			arm: func(br *fakeBridge) {
-				br.setCallRPCErr(methodKiroWorkflowInspect, &marotte.RPCError{
-					Code: -32603, Message: "Internal error",
-					Data: json.RawMessage(`{"details":"workflow not found"}`),
-				})
+				br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 			},
 			want: http.StatusNotFound,
 		},
@@ -315,6 +312,7 @@ func TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat(t *testing.T) {
 	h.runs.observeStart(t.Context(), "", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_manual", "workflowName": "nightly",
 	}))
+	awaitCalls(t, br, methodKiroWorkflowInspect, 2, "each run start asks for its run's name")
 	calls := len(br.callLog())
 
 	out := getLiveRuns(t, h.runRoutes)
@@ -763,6 +761,31 @@ func TestHandleResume_AQueuedClaimIsWaitedForNotRefused(t *testing.T) {
 	<-done
 	if rec.Code != http.StatusOK {
 		t.Errorf("a resume KAS queued then ran = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleResume_AQuestionParkWhoseTreeDoesNotDecodeIsUnread pins that a run whose step tree workflow.DecodeInspect
+// refuses is unreadable, never a run nobody waits on: its step may be parked on a question, which a resume re-parks.
+func TestHandleResume_AQuestionParkWhoseTreeDoesNotDecodeIsUnread(t *testing.T) {
+	h, _, br := newTestHub()
+	parked := inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step"))
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowInspect: withAttentionDrift(t, parked),
+		methodKiroWorkflowResume:  json.RawMessage(`{}`),
+	}
+	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/resume", nil)
+	req.SetPathValue("id", "wf_1")
+	rec := httptest.NewRecorder()
+
+	h.runRoutes.handleResume(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("POST resume = %d %s, want %d", rec.Code, rec.Body.String(), http.StatusServiceUnavailable)
+	}
+	if got := stateWrites(br.callLog()); len(got) != 0 {
+		t.Errorf("writes = %v, want none", got)
 	}
 }
 

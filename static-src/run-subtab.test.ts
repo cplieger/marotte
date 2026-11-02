@@ -106,6 +106,7 @@ vi.mock("./actions/runs.js", () => {
     retryRun: stub,
     extendRunRepeat: stub,
     finishRunRepeat: stub,
+    endRunStep: stub,
     messageRunStep: stub,
     removeRunStepSteer: stub,
     clearRunStepSteers: stub,

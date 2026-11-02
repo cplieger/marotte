@@ -48,11 +48,11 @@ func readLiveSettings(ctx context.Context, configDir string, fields func(context
 }
 
 func readLiveFields(ctx context.Context, configDir string) liveSettings {
-	files, ignoreReadable := readAgentIgnoreFiles(ctx, configDir)
+	files, ignoreErr := readAgentIgnoreFiles(ctx, configDir)
 	mcpWait, _ := settings.MCPWaitForReady(ctx, configDir)
 	return liveSettings{
 		ignoreFiles:       files,
-		ignoreReadable:    ignoreReadable,
+		ignoreReadable:    ignoreErr == nil,
 		terminalTimeoutMs: terminalCommandTimeoutMs(ctx, configDir),
 		mcpWaitForReady:   mcpWait,
 		debugLogs:         settings.DebugLogs(ctx, configDir),

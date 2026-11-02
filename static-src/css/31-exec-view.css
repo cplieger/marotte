@@ -669,11 +669,34 @@
   gap: var(--sp-2);
   flex-shrink: 0;
   font-size: var(--fs-sm);
+
+  /* A recorded end's sentence outgrows a narrow head. A zero basis gives it only the room the
+     title and verbs leave, so it wraps first; the title ellipsises once the sentence is at its
+     floor (`.ev-d-state[data-pending-end]`). */
+  &:has(> .ev-d-state[data-pending-end]) {
+    flex: 1 1 0;
+    justify-content: flex-end;
+  }
+}
+
+/* Centred, and into the head's padding, so a step's buttons do not move its baseline or grow
+   the head against a step that has none. */
+.ev-d-head-action {
+  align-self: center;
+  flex-shrink: 0;
+  margin-block: calc(-1 * var(--sp-2));
 }
 
 .ev-d-state {
   text-transform: capitalize;
   color: var(--c-text-secondary);
+
+  /* A recorded end's words are a sentence, already cased. */
+  &[data-pending-end] {
+    min-inline-size: 8em;
+    text-transform: none;
+    text-align: end;
+  }
 }
 
 .ev-detail[data-state="fail"] .ev-d-state {
@@ -690,6 +713,7 @@
 }
 
 .ev-d-dur {
+  flex-shrink: 0;
   color: var(--c-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
@@ -743,6 +767,20 @@
 }
 
 .ev-d-fail[hidden] {
+  display: none;
+}
+
+/* Neutral: an engine end interrupted the step, which is not the step's failure. */
+.ev-d-interrupted {
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--c-text-primary) 8%, transparent);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.ev-d-interrupted[hidden] {
   display: none;
 }
 
@@ -1187,9 +1225,8 @@
   }
 }
 
-/* What wants the reader on a run summary: a question or a pause in the progress's place, a
-   failure on a run-bar row's line of its own under the columns (see 26-dock.css). Where the mark
-   shows (a failure), it sits on the sentence's first line. */
+/* What wants the reader on a run summary, in the progress's place (see 26-dock.css). A failure's
+   mark leads the sentence. */
 .ev-alert-line {
   display: flex;
   align-items: flex-start;
@@ -1203,7 +1240,7 @@
   place-items: center;
   flex-shrink: 0;
   block-size: 1lh;
-  color: var(--ev-alert-mark);
+  color: var(--c-red);
 }
 
 .ev-alert-text,
@@ -1223,8 +1260,8 @@
 
 /* A pause in the dock head has the progress phrase's and the bar's place, up to the clock, on one
    line cut by an ellipsis: a line-clamp wraps at word breaks first and would cut it short. */
-.ev-dock-head[data-alert-in-place] {
-  & :is(.ev-sum-progress, .ev-mini, .ev-alert-icon) {
+.ev-dock-head[data-alert] {
+  & :is(.ev-sum-progress, .ev-mini) {
     display: none;
   }
 
@@ -1646,7 +1683,7 @@
   /* A pause takes the head's second line, where the band it replaces sits, with the clock: beside
      the verbs the one line leaves neither room. `::after` is the line break; the pause starts
      under the state word. */
-  .ev-dock-head[data-alert-in-place] {
+  .ev-dock-head[data-alert] {
     flex-wrap: wrap;
     row-gap: 0;
     padding-block-end: var(--sp-1);

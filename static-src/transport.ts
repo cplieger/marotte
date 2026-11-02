@@ -65,6 +65,7 @@ type TypedCommand =
         file_decisions?: Record<string, boolean>;
         rejection_reason?: string;
         always_resource?: string;
+        always_scope?: "user" | "session";
       };
     }
   | {

@@ -55,6 +55,7 @@ func stepRouteHub(t *testing.T, tc stepRouteCase) (*Runtime, *fakeBridge, *http.
 	return h, br, mux
 }
 
+// postStep posts body as marotte's page does, so the words it sends are the user's.
 func postStep(t *testing.T, mux *http.ServeMux, target string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	var reader *bytes.Reader
@@ -67,8 +68,10 @@ func postStep(t *testing.T, mux *http.ServeMux, target string, body any) *httpte
 		}
 		reader = bytes.NewReader(raw)
 	}
+	req := httptest.NewRequest(http.MethodPost, target, reader)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, target, reader))
+	mux.ServeHTTP(rec, req)
 	return rec
 }
 

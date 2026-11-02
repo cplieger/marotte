@@ -1,18 +1,23 @@
-// TurnHeader: the turn card's top band for the turn's TRIGGER (a user prompt or a typed system
-// line). A meta row (fold toggle, number, outcome dot, timestamp, hit count) over the request. The
-// fold toggle opens the request with the body: a FOLDED turn's request text clamps to four lines in
-// CSS, since folded rows are the session's navigation, and a labelled request's full text shows only
-// while open; attachment chips stay outside the clamp.
+// TurnHeader: the turn card's top band for the turn's TRIGGER (a user prompt, what woke an
+// agent-initiated turn, or a typed system line). A meta row (fold toggle, number, outcome dot,
+// timestamp, hit count) over the request. The fold toggle opens the request with the body: a FOLDED
+// turn's request text clamps to four lines in CSS, since folded rows are the session's navigation,
+// and a labelled request's full text shows only while open; attachment chips stay outside the clamp.
 
+import { join } from "@cplieger/keyenc";
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { watchCut } from "../clamp-text.js";
 import { linkifyPaths } from "../linkify.js";
 import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
+import { splitLeadingQuote } from "../message-quote.js";
 // The dot's words, shared with the turn map — see turn-severity.ts.
 // Colour is never the sole channel (WCAG 1.4.1), and these are that channel.
 import { OUTCOME_LABEL, OUTCOME_TOOLTIP, severityOf } from "../turn-severity.js";
 import type { TurnOutcome } from "../turns.js";
+import { WAKE_FALLBACK_LINE, type WakeLine, type WakeRow, type WakeRun } from "../turn-wake.js";
+import { sentBy } from "../sent-by.js";
+import type { Caller } from "../types.js";
 
 export interface TurnHeaderData {
   /** 1-based turn ordinal as rendered. */
@@ -25,9 +30,17 @@ export interface TurnHeaderData {
   /** The label of a request marotte wrote on the user's behalf, drawn in its place with the
    *  request one click away. Undefined for a typed request. */
   label?: string | undefined;
+  /** The program that sent the request through the API: a "Sent by" line over it, and the header reads as that
+   *  program's request, not the user's. Undefined for the user's own. */
+  caller?: Caller | undefined;
   /** Files the user attached to this request. Drawn as the composer's own pill,
    *  read-only (a sent attachment cannot be un-sent), and OUTSIDE the clamp. */
   attachments: readonly AttachmentRef[];
+  /** What woke a turn with no request: a one-line label over its message, which takes the
+   *  request's place and clamp. Ignored when `request` is set or the wake is a fallback. */
+  wake?: WakeLine | undefined;
+  /** Opens a run the wake names; without it each name is plain text. */
+  onOpenRun?: ((run: WakeRun) => void) | undefined;
 }
 
 export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
@@ -61,14 +74,18 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   const req = el("div", { className: "turn-req" });
   const text = el("div", { className: "turn-req-text" });
   req.appendChild(text);
-  // Decorative: the toggle's name says the message is cut.
-  req.appendChild(el("span", { className: "turn-req-cut", "aria-hidden": "true" }, "\u2026"));
   // Sibling of `.turn-req-text`, so the clamp cannot hide the attachments.
   req.appendChild(el("ul", { className: "turn-req-attachments attachment-row hidden" }));
   header.appendChild(req);
-  watchCut(text, (cut) => {
-    toggle.setAttribute("aria-label", cut ? `${FOLD_LABEL}, message truncated` : FOLD_LABEL);
-  });
+  watchCut(
+    text,
+    (cut) => {
+      toggle.setAttribute("aria-label", cut ? `${FOLD_LABEL}, message truncated` : FOLD_LABEL);
+    },
+    () => {
+      syncWakeRowRuns(header);
+    },
+  );
 
   updateTurnHeader(header, d);
   return header;
@@ -76,16 +93,18 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
 
 const FOLD_LABEL = "Expand or collapse this turn";
 
-/** The request band alone, for a turn drawn without card chrome: a run step's turn that the user's
- *  message resumed. */
-export function buildRequestHeader(request: string): HTMLElement {
+/** The request band alone, for a turn drawn without card chrome: a run step's turn that a message resumed,
+ *  headed by its Sent-by line when `caller` sent it through the API. */
+export function buildRequestHeader(request: string, caller?: Caller): HTMLElement {
   const text = el("div", { className: "turn-req-text" }, request);
   linkifyPaths(text);
-  return el(
+  const header = el(
     "div",
-    { className: "turn-header", "data-trigger": "user" },
+    { className: "turn-header", "data-trigger": caller === undefined ? "user" : "caller" },
     el("div", { className: "turn-req" }, text),
   );
+  syncSentBy(header, caller);
+  return header;
 }
 
 /** Recompute the header from turn data. Idempotent. */
@@ -125,23 +144,211 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     return;
   }
 
-  if (d.request === undefined) {
-    // No user message: naming the trigger is honest, fabricating one is not.
-    header.dataset["trigger"] = "system";
-    text.textContent = "Agent-initiated turn";
+  if (d.request === undefined && d.wake !== undefined && !d.wake.fallback) {
+    header.dataset["trigger"] = "wake";
+    syncQuote(header, undefined);
+    syncSentBy(header, undefined);
+    syncWakeLabel(header, d.wake, d.onOpenRun);
+    if (d.wake.rows === undefined) {
+      setRequestText(text, d.wake.body);
+    } else {
+      setWakeRows(text, d.wake.rows, d.onOpenRun);
+    }
+    text.hidden = d.wake.body === "";
+    syncFullText(header, undefined);
+    syncWakeRowRuns(header);
+    return;
+  }
+  syncWakeLabel(header, undefined, undefined);
+  text.hidden = false;
+
+  if (d.request === undefined && d.caller !== undefined) {
+    // A caller's prompt with no words (attachments only): its Sent-by line and attachment row are the header.
+    header.dataset["trigger"] = "caller";
+    syncSentBy(header, d.caller);
+    setRequestText(text, "");
+    text.hidden = true;
+    syncQuote(header, undefined);
     syncFullText(header, undefined);
     return;
   }
 
-  header.dataset["trigger"] = "user";
+  if (d.request === undefined) {
+    // No user message: naming the trigger is honest, fabricating one is not.
+    header.dataset["trigger"] = "system";
+    syncSentBy(header, undefined);
+    setRequestText(text, WAKE_FALLBACK_LINE);
+    syncQuote(header, undefined);
+    syncFullText(header, undefined);
+    return;
+  }
+
+  header.dataset["trigger"] = d.caller === undefined ? "user" : "caller";
   const body = d.request.trim();
   const label = d.label?.trim() ?? "";
-  const shown = label === "" ? body : label;
-  if (text.textContent !== shown) {
+  const quoted = label === "" ? splitLeadingQuote(body) : null;
+  syncQuote(header, quoted?.quote);
+  syncSentBy(header, d.caller);
+  setRequestText(text, label !== "" ? label : (quoted?.rest ?? body));
+  syncFullText(header, label === "" ? undefined : body);
+}
+
+function setRequestText(text: HTMLElement, shown: string): void {
+  if (text.textContent !== shown || text.dataset["rows"] !== undefined) {
+    delete text.dataset["rows"];
     text.textContent = shown;
     linkifyPaths(text);
   }
-  syncFullText(header, label === "" ? undefined : body);
+}
+
+/** A re-delivery's messages in the request text, one per line as `body` joins them, each opening on its
+ *  run's name; rebuilt only when the words or runs change, as the label is. */
+function setWakeRows(
+  text: HTMLElement,
+  rows: readonly WakeRow[],
+  open: ((run: WakeRun) => void) | undefined,
+): void {
+  const key = join(...rows.map((r) => join(r.run.id, r.run.name, r.rest, r.text)));
+  if (text.dataset["rows"] === key) {
+    return;
+  }
+  text.dataset["rows"] = key;
+  const parts: (Node | string)[] = [];
+  rows.forEach((r, i) => {
+    if (i > 0) {
+      parts.push("\n");
+    }
+    const message = el("span", { className: "turn-wake-row-text" }, r.text);
+    linkifyPaths(message);
+    parts.push(wakeRunEl(r.run, "turn-wake-row-run", open), r.rest, message);
+  });
+  text.replaceChildren(...parts);
+}
+
+/** Who sent a request an API caller posted, one line above the request text and outside its clamp, so a folded turn
+ *  still says the user did not write it; `caller` undefined removes it. */
+function syncSentBy(header: HTMLElement, caller: Caller | undefined): void {
+  const req = header.querySelector<HTMLElement>(":scope > .turn-req");
+  if (req === null) {
+    return;
+  }
+  let line = req.querySelector<HTMLElement>(":scope > .turn-sent-by");
+  if (caller === undefined) {
+    line?.remove();
+    return;
+  }
+  const words = sentBy(caller);
+  line ??= el("div", { className: "turn-sent-by" });
+  // First in the band, above a quote band drawn after it.
+  if (req.firstElementChild !== line) {
+    req.prepend(line);
+  }
+  if (line.textContent !== words) {
+    line.textContent = words;
+  }
+}
+
+/** The wake's label, one line above the request text and outside its clamp, rebuilt only when its
+ *  words or run change so a focused run button survives a repaint; `wake` undefined removes it. */
+function syncWakeLabel(
+  header: HTMLElement,
+  wake: WakeLine | undefined,
+  open: ((run: WakeRun) => void) | undefined,
+): void {
+  const req = header.querySelector<HTMLElement>(":scope > .turn-req");
+  if (req === null) {
+    return;
+  }
+  let line = req.querySelector<HTMLElement>(":scope > .turn-wake");
+  if (wake === undefined) {
+    line?.remove();
+    return;
+  }
+  const run = wake.run?.id ?? "";
+  if (line !== null && line.dataset["label"] === wake.label && line.dataset["run"] === run) {
+    return;
+  }
+  if (line === null) {
+    line = el("div", { className: "turn-wake" });
+    req.prepend(line);
+  }
+  line.dataset["label"] = wake.label;
+  line.dataset["run"] = run;
+  const rest = el("span", { className: "turn-wake-rest" }, wake.rest);
+  if (wake.run === undefined) {
+    line.replaceChildren(rest);
+    return;
+  }
+  line.replaceChildren(wakeRunEl(wake.run, "turn-wake-run", open), rest);
+}
+
+function wakeRunEl(
+  run: WakeRun,
+  className: string,
+  open: ((run: WakeRun) => void) | undefined,
+): HTMLElement {
+  const attrs = { className, "data-run-id": run.id };
+  if (open === undefined) {
+    return el("span", attrs, run.name);
+  }
+  const btn = el(
+    "button",
+    { ...attrs, type: "button", "data-tooltip": "Open the workflow run" },
+    run.name,
+  );
+  btn.addEventListener("click", () => {
+    open(run);
+  });
+  return btn;
+}
+
+/**
+ * Make each re-delivery row's run button inert while the request text's clamp hides any of it, so it takes no focus,
+ * and live while all of it shows. Runs after each header update and each clamp measurement; a fold change calls
+ * it. With no layout to measure, a folded card keeps only the first row's live.
+ */
+export function syncWakeRowRuns(header: HTMLElement): void {
+  const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
+  if (text === null) {
+    return;
+  }
+  const clip = text.getBoundingClientRect();
+  const folded = text.closest(".turn[data-folded]") !== null;
+  const buttons = text.querySelectorAll<HTMLButtonElement>("button.turn-wake-row-run");
+  buttons.forEach((btn, i) => {
+    if (clip.height <= 0) {
+      btn.inert = folded && i > 0;
+      return;
+    }
+    const box = btn.getBoundingClientRect();
+    // `inert`, not `disabled`: a disabled button dims (40-a11y.css), and a shown row stays at full ink.
+    btn.inert = box.top < clip.top - CLIP_EPSILON || box.bottom > clip.bottom + CLIP_EPSILON;
+  });
+}
+
+/** Sub-pixel slack (px) for a button whose box rounds onto the clip edge. */
+const CLIP_EPSILON = 0.5;
+
+/** The reply passage a prompt opened with (`message-quote.ts`), drawn as one band before the text; `quote`
+ *  undefined removes it. */
+function syncQuote(header: HTMLElement, quote: string | undefined): void {
+  const req = header.querySelector<HTMLElement>(":scope > .turn-req");
+  if (req === null) {
+    return;
+  }
+  let band = req.querySelector<HTMLElement>(":scope > .turn-req-quote");
+  if (quote === undefined) {
+    band?.remove();
+    return;
+  }
+  if (band === null) {
+    band = el("blockquote", { className: "turn-req-quote" });
+    req.prepend(band);
+  }
+  if (band.textContent !== quote) {
+    band.textContent = quote;
+    linkifyPaths(band);
+  }
 }
 
 /** A labelled request's full text, a sibling of the text so the folded clamp cannot hide it, shown
@@ -158,8 +365,8 @@ function syncFullText(header: HTMLElement, body: string | undefined): void {
   }
   if (full === null) {
     full = el("div", { className: "turn-req-full" });
-    // After the text and its cue and before the attachments, in reading order.
-    req.querySelector(":scope > .turn-req-cut")?.after(full);
+    // After the text and before the attachments, in reading order.
+    req.querySelector(":scope > .turn-req-text")?.after(full);
   }
   if (full.textContent !== body) {
     full.textContent = body;

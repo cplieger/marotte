@@ -110,7 +110,7 @@ func cmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComman
 		return nil, StatusError(http.StatusServiceUnavailable, err)
 	}
 	defer unlock()
-	switch refuse, sendErr := steerOne(ctx, roles, cmd.ChatID, steerID, text, ""); {
+	switch refuse, sendErr := steerOne(ctx, roles, cmd.ChatID, steerID, text, "", cmd.From); {
 	case refuse == SteerRefuseFull:
 		return nil, StatusErrorReason(http.StatusConflict, reasonFull, errSteerFull)
 	case refuse != "":
@@ -126,8 +126,10 @@ func cmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComman
 
 // The error is the send carrying key. turn is the prompt turn a delivery is aimed at, empty for a
 // new steer.
-func steerOne(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, key, text, turn string) (refuse string, err error) {
-	return SteerInto(ctx, roles.steerTarget(chatID), steerHolder(roles, chatID, turn), key, text)
+func steerOne(
+	ctx context.Context, roles *promptRoles, chatID marotte.ChatID, key, text, turn string, from *marotte.Caller,
+) (refuse string, err error) {
+	return SteerInto(ctx, roles.steerTarget(chatID), steerHolder(roles, chatID, turn), key, text, from)
 }
 
 func steerHolder(roles *promptRoles, chatID marotte.ChatID, turn string) SteerHolder {
@@ -142,10 +144,10 @@ func steerHolder(roles *promptRoles, chatID marotte.ChatID, turn string) SteerHo
 }
 
 // SteerInto routes one steer row into t's buffer under the holder h and sends what the record
-// answers. The caller holds t's steer lock. refuse is the record's refusal class; err is the
-// failed send carrying key.
-func SteerInto(ctx context.Context, t SteerTarget, h SteerHolder, key, text string) (refuse string, err error) {
-	sends, refuse := t.Queue.RouteSteer(t.Key, key, text, h)
+// answers; from is who sent it (SteerQueue.RouteSteer). The caller holds t's steer lock. refuse is
+// the record's refusal class; err is the failed send carrying key.
+func SteerInto(ctx context.Context, t SteerTarget, h SteerHolder, key, text string, from *marotte.Caller) (refuse string, err error) {
+	sends, refuse := t.Queue.RouteSteer(t.Key, key, text, from, h)
 	if refuse != "" {
 		return refuse, nil
 	}

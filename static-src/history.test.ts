@@ -820,6 +820,16 @@ describe("history: an overrun reads differently from a cancel", () => {
     expect(openName(row)).toBe("Open feature-pipeline, aborted");
   });
 
+  it("says a scheduled run was ended for a pause nobody resumed", async () => {
+    await render({
+      sessions: [],
+      runs: [{ ...runRow, status: "aborted", end_reason: "unattended" }],
+    });
+    const row = rowOf("r:wf_1");
+    expect(sub(row)).toContain("stopped: it paused with nobody to resume it");
+    expect(openName(row)).toBe("Open feature-pipeline, aborted");
+  });
+
   it("says nothing extra for a user cancel, which is the same status", async () => {
     // The distinguisher is the absence of a reason: a person's abort has no sentence.
     await render({ sessions: [], runs: [runAt("aborted")] });
@@ -1037,6 +1047,20 @@ describe("history: cross-chat search", () => {
     expect(count.hasAttribute("data-tooltip")).toBe(false);
     // Under the Chats pane, not a third container.
     expect(table.id).toBe("history-table");
+  });
+
+  // Words another program posted through the API say who sent them, so the row does not read as the user's.
+  it("names the API caller whose words matched before the excerpt", async () => {
+    const named = match();
+    const { table } = await search({
+      matches: [{ ...named, best: { ...named.best, caller: { label: "Agent Mail" } } }],
+      scanned: 1,
+      matched: 1,
+      truncated: false,
+    });
+    expect(table.querySelector(".entry-sub")?.textContent).toBe(
+      "Sent by Agent Mail: we moved the cache to redis",
+    );
   });
 
   // A title-only match has no hit, and must not render an empty excerpt.

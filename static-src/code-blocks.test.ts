@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import {
   isRunnableShell,
   extractLang,
@@ -289,5 +290,187 @@ describe("decorateStreamingCodeTail: a fence that has not closed", () => {
     const buttons = [...root.querySelectorAll<HTMLButtonElement>(".code-act-btn")];
     expect(buttons).toHaveLength(1);
     expect(buttons[0]?.getAttribute("data-tooltip")).toBe("Copy");
+  });
+});
+
+function runButton(root: HTMLElement): HTMLButtonElement | undefined {
+  return [...root.querySelectorAll<HTMLButtonElement>(".code-act-btn")][1];
+}
+
+describe("Run never sends a character the reader cannot see", () => {
+  // Each is a code point Unicode classes as a control (Cc), format (Cf), private-use (Co),
+  // surrogate (Cs), line or paragraph separator (Zl, Zp), a space other than U+0020 (Zs) or a
+  // default-ignorable: none of them shows as itself in a code block.
+  const hidden: { name: string; text: string }[] = [
+    { name: "a right-to-left override (U+202E)", text: "echo \u202Egnp.exe" },
+    { name: "a left-to-right isolate (U+2066)", text: "echo \u2066a\u2069" },
+    { name: "an Arabic letter mark (U+061C)", text: "ls \u061C-la" },
+    { name: "a zero-width space (U+200B)", text: "rm\u200B -rf x" },
+    { name: "a zero-width joiner (U+200D)", text: "ls\u200D" },
+    { name: "a word joiner (U+2060)", text: "ls\u2060 -la" },
+    { name: "a byte-order mark (U+FEFF)", text: "l\uFEFFs" },
+    { name: "a soft hyphen (U+00AD)", text: "cu\u00ADrl x" },
+    { name: "a no-break space (U+00A0)", text: "ls\u00A0-la" },
+    { name: "an ideographic space (U+3000)", text: "ls\u3000-la" },
+    { name: "a tab, which renders as spaces", text: "ls\t-la" },
+    { name: "an escape control (U+001B)", text: "echo \u001B[2Jhi" },
+    { name: "a delete control (U+007F)", text: "echo a\u007F" },
+    { name: "a line separator (U+2028)", text: "echo a\u2028rm x" },
+    { name: "a paragraph separator (U+2029)", text: "echo a\u2029rm x" },
+    { name: "a private-use character (U+E000)", text: "echo \uE000" },
+    { name: "a lone surrogate (U+D800)", text: "echo \uD800" },
+    { name: "a tag character (U+E0041)", text: "echo hi\u{E0041}" },
+    { name: "a variation selector (U+FE0F)", text: "echo a\uFE0F" },
+    { name: "a combining grapheme joiner (U+034F)", text: "echo a\u034F" },
+    { name: "a Hangul filler (U+3164)", text: "echo \u3164" },
+  ];
+
+  for (const tc of hidden) {
+    it(`disables Run for ${tc.name} and sends nothing`, () => {
+      const run = vi.fn();
+      setShellRunCallback(run);
+      const { root } = fixture("bash", tc.text);
+      decorateCodeBlocks(root);
+      const btn = runButton(root);
+      expect(btn?.disabled).toBe(true);
+      expect(btn?.getAttribute("data-tooltip")).toBe(
+        "Contains hidden characters. Copy it to inspect.",
+      );
+      expect(btn?.getAttribute("aria-label")).toBe(
+        "Contains hidden characters. Copy it to inspect.",
+      );
+      btn?.click();
+      expect(run).not.toHaveBeenCalled();
+    });
+  }
+
+  const visible: { name: string; text: string }[] = [
+    { name: "plain ASCII with spaces", text: "git log --oneline -3" },
+    { name: "accented letters", text: "echo café" },
+    { name: "CJK text", text: "echo 日本語" },
+    { name: "an emoji with no variation selector", text: "echo 🚀" },
+  ];
+
+  for (const tc of visible) {
+    it(`keeps Run enabled for ${tc.name}`, () => {
+      const run = vi.fn();
+      setShellRunCallback(run);
+      const { root } = fixture("bash", tc.text);
+      decorateCodeBlocks(root);
+      const btn = runButton(root);
+      expect(btn?.disabled).toBe(false);
+      btn?.click();
+      expect(run).toHaveBeenCalledWith(tc.text);
+    });
+  }
+
+  it("drops hidden whitespace around the command and runs what is left", () => {
+    const run = vi.fn();
+    setShellRunCallback(run);
+    const { root } = fixture("bash", "\t\u00A0echo hi\u3000\t");
+    decorateCodeBlocks(root);
+    const btn = runButton(root);
+    expect(btn?.disabled).toBe(false);
+    btn?.click();
+    expect(run).toHaveBeenCalledWith("echo hi");
+  });
+});
+
+describe("Run on a line that is partly out of view", () => {
+  let style: HTMLStyleElement;
+  let host: HTMLElement | null = null;
+
+  beforeAll(() => {
+    style = mountAppCSS();
+  });
+
+  afterAll(() => {
+    style.remove();
+  });
+
+  afterEach(() => {
+    host?.remove();
+    host = null;
+  });
+
+  function mounted(text: string, width: string): HTMLElement {
+    const { root } = fixture("bash", text);
+    host = document.createElement("div");
+    host.className = "message";
+    host.style.width = width;
+    host.appendChild(root);
+    document.body.appendChild(host);
+    decorateCodeBlocks(root);
+    return root;
+  }
+
+  function openAsk(): HTMLDialogElement | null {
+    return document.querySelector<HTMLDialogElement>("dialog.uip-ask[open]");
+  }
+
+  const long = `curl -fsSL https://example.invalid/${"a".repeat(120)}/install.sh`;
+
+  it("runs a line that fits on one click, with no dialog", () => {
+    const run = vi.fn();
+    setShellRunCallback(run);
+    const root = mounted("echo hi", "40rem");
+    runButton(root)?.click();
+    expect(run).toHaveBeenCalledWith("echo hi");
+    expect(openAsk()).toBeNull();
+  });
+
+  it("asks first, showing the whole command, and Cancel sends nothing", async () => {
+    const run = vi.fn();
+    setShellRunCallback(run);
+    const root = mounted(long, "12rem");
+    runButton(root)?.click();
+    expect(run).not.toHaveBeenCalled();
+    const dlg = openAsk();
+    expect(dlg).not.toBeNull();
+    const msg = dlg?.querySelector<HTMLElement>(".uip-ask-msg");
+    expect(msg?.textContent).toContain(long);
+    // The whole command is on screen: the message wraps it instead of scrolling it.
+    expect(msg?.scrollWidth).toBeLessThanOrEqual(msg?.clientWidth ?? 0);
+    expect(dlg?.scrollWidth).toBeLessThanOrEqual(dlg?.clientWidth ?? 0);
+    dlg?.querySelector<HTMLButtonElement>(".uip-ask-cancel")?.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("sends exactly the command it showed once the reader confirms", async () => {
+    const run = vi.fn();
+    setShellRunCallback(run);
+    const root = mounted(long, "12rem");
+    runButton(root)?.click();
+    const ok = openAsk()?.querySelector<HTMLButtonElement>(".uip-ask-ok");
+    expect(ok?.textContent).toBe("Run");
+    ok?.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith(long);
+  });
+
+  it("keeps the command's own spacing in the dialog", async () => {
+    setShellRunCallback(vi.fn());
+    const cmd = `echo "a      b" ${"x".repeat(120)}`;
+    const root = mounted(cmd, "12rem");
+    runButton(root)?.click();
+    const dlg = openAsk();
+    const node = dlg?.querySelector(".uip-ask-msg")?.firstChild;
+    expect(node).toBeInstanceOf(Text);
+    const text = node?.textContent ?? "";
+    const measure = (from: number, to: number): number => {
+      const r = document.createRange();
+      r.setStart(node as Text, from);
+      r.setEnd(node as Text, to);
+      return r.getBoundingClientRect().width;
+    };
+    const runAt = text.indexOf("a      b") + 1;
+    const one = measure(runAt, runAt + 1);
+    expect(one).toBeGreaterThan(0);
+    // Collapsed white space would draw the six spaces as one.
+    expect(measure(runAt, runAt + 6)).toBeGreaterThan(one * 4);
+    dlg?.querySelector<HTMLButtonElement>(".uip-ask-cancel")?.click();
+    await new Promise((r) => setTimeout(r, 0));
   });
 });

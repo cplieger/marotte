@@ -48,7 +48,7 @@ func countingSteering(t *testing.T, w *wiredForges) (*forgeSteering, *atomic.Int
 	generated := &atomic.Int32{}
 	s := &forgeSteering{
 		appCtx: context.WithoutCancel(t.Context()), m: w.m,
-		generate: func(context.Context) { generated.Add(1) },
+		generate: func(context.Context) error { generated.Add(1); return nil },
 	}
 	w.notifier.steer = s
 	return s, generated
@@ -120,7 +120,7 @@ func TestForgeSteering_BootSyncWritesASavedConnectionToTheSteeringFile(t *testin
 	m.Load(t.Context())
 	poller := forges.NewPRStatusPoller(forges.NewManagerPRSource(m, func(context.Context) []forges.RepoOrigin { return nil }),
 		quietNotifier{}, func() forges.Gate { return forges.Gate{} })
-	steer := steering.New(t.TempDir(), t.TempDir())
+	steer := steering.New(t.TempDir(), t.TempDir(), t.TempDir())
 
 	notifier.wire(context.WithoutCancel(t.Context()), poller, m, steer).sync()
 

@@ -6,6 +6,7 @@ import { buildRunCard } from "./run-card.js";
 import type { RunAsks } from "../run-asks.js";
 import { workNodes } from "../exec-view/model.js";
 import { runToExec } from "../run-exec-source.js";
+import { nodePathKey } from "../run-node-key.js";
 import type { RunNode, RunState } from "../run-store.js";
 
 function step(nodeId: string, status: RunNode["status"]): RunNode {
@@ -98,6 +99,41 @@ describe("the head against the foot", () => {
       [...(c.root.querySelector(".run-head")?.children ?? [])].map((e) => e.className),
     ).toEqual(["run-toggle", "run-icon", "run-name", "ev-sum-progress run-count"]);
     expect(ledger(c.root)).toContain("running");
+  });
+
+  it("names the run by the server's display name and never by its recipe", () => {
+    const c = card();
+    const name = (): string => c.root.querySelector(".run-name")?.textContent ?? "";
+    c.render({ ...runOf("running", step("a", "running")), workflowName: "workflow-from-prompt" });
+    expect(name(), "a run the server names with nothing keeps its creation label").toBe(
+      "Workflow run",
+    );
+    c.render({
+      ...runOf("running", step("a", "running")),
+      runLabel: "",
+      workflowName: "workflow-from-prompt",
+      displayName: "Fix the run bar",
+    });
+    expect(name()).toBe("Fix the run bar");
+  });
+
+  it("reads a step an engine end interrupted as resumed, never failed", () => {
+    const c = card();
+    c.render(runOf("running", step("a", "running")), NO_ASKS, {
+      ends: new Map([
+        [
+          nodePathKey(["wf_1", "a"]),
+          {
+            outcome: "interrupted",
+            failure_reason: "The connection to the agent closed before the turn finished.",
+            resumed: true,
+          },
+        ],
+      ]),
+    });
+    const row = c.root.querySelector(".run-step");
+    expect(row?.querySelector(".run-step-meta")?.textContent).toBe("Interrupted, resumed");
+    expect(row?.querySelector(".run-step-head")?.getAttribute("aria-label")).toBe("a, running");
   });
 });
 
@@ -779,7 +815,7 @@ describe("the newest run card is expanded, and being superseded folds it", () =>
     c.render(
       recoveredLoop("failed", { ...step("a", "failed"), failureReason: "the second try broke" }),
     );
-    expect(alertText(c.root)).toBe("a failed: the second try broke");
+    expect(alertText(c.root)).toBe("Failed at a: the second try broke");
   });
 
   // The card and the run tab name one owner (`failureOwner`), so the two never disagree on why a
@@ -791,8 +827,10 @@ describe("the newest run card is expanded, and being superseded folds it", () =>
     });
     const { c } = wired();
     c.render(state);
-    expect(alertText(c.root)).toBe("a failed: the second try broke");
-    expect(runToExec(state, undefined, NO_ASKS).alert?.text).toBe("a failed: the second try broke");
+    expect(alertText(c.root)).toBe("Failed at a: the second try broke");
+    expect(runToExec(state, undefined, NO_ASKS).alert?.text).toBe(
+      "Failed at a: the second try broke",
+    );
   });
 
   it("names no failure the loop recovered from, on the card or the run tab", () => {

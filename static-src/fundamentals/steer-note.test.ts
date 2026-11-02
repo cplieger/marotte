@@ -23,6 +23,21 @@ function controls(root: HTMLElement): HTMLButtonElement[] {
   );
 }
 
+describe("a steer an API caller sent", () => {
+  it("names the program in place of the reader's own label", () => {
+    const n = note({ text: "Agent Mail: 1 new message", caller: { label: "Agent Mail" } });
+    expect(textOf(n, ".steer-note-label")).toBe("Sent by Agent Mail");
+    expect(n.getAttribute("aria-label")).toBe("Sent by Agent Mail: Agent Mail: 1 new message");
+  });
+
+  it("names an unlabelled program as an API caller, and keeps the unread clause", () => {
+    const n = note({ caller: {}, dropped: true, reason: "boundary" });
+    expect(textOf(n, ".steer-note-label")).toBe(
+      "Sent by an API caller \u00b7 Not read \u00b7 the turn ended first",
+    );
+  });
+});
+
 describe("the read state", () => {
   it("names the reader's own mid-turn message and carries the whole of it", () => {
     const n = note();

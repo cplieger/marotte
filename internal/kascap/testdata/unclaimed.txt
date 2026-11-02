@@ -11,9 +11,11 @@
 capability c2sViews
 capability findFiles
 capability helpDocs
+capability sessionScopedMcpStatus
 capability specLinks
 capability telemetry
 capability textSearch
+setting _suggestedPrompts
 setting c2s
 setting sessionRecap
 setting verifyFirstWorkflow

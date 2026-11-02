@@ -1117,7 +1117,8 @@ export function appendEntry(chatID: string, entry: Entry): void {
   if (
     entry.kind === "steer" ||
     entry.kind === "steer_delivered" ||
-    entry.kind === "steer_cleared"
+    entry.kind === "steer_cleared" ||
+    entry.kind === "turn_wake"
   ) {
     settleWorkflowMessages(turnsInOrder(s.turn_order, s.turns));
   }

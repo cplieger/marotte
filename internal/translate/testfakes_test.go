@@ -29,6 +29,14 @@ func (nopChatRecords) UnsettledWorkflowMessages(context.Context, marotte.ChatID)
 	return nil, nil
 }
 
+func (nopChatRecords) WakeCauses(context.Context, marotte.ChatID, string) (marotte.WakeCauses, error) {
+	return marotte.WakeCauses{}, nil
+}
+
+func (nopChatRecords) AwaitsRunName(context.Context, marotte.ChatID, string) (bool, error) {
+	return false, nil
+}
+
 var _ chatRecords = nopChatRecords{}
 
 // recStore is a chatRecords whose every call answers err, counting header writes, so a
@@ -67,7 +75,7 @@ type nopMCPRecorder struct{}
 func (nopMCPRecorder) RecordConnected(context.Context, string, marotte.MCPSource, []string, []marotte.MCPPromptInfo, []marotte.MCPResourceInfo, []marotte.MCPResourceTemplateInfo) {
 }
 
-func (nopMCPRecorder) RecordOAuth(context.Context, string, marotte.MCPSource, string) {}
+func (nopMCPRecorder) RecordOAuth(context.Context, string, marotte.MCPSource) {}
 
 func (nopMCPRecorder) RecordInitFailure(context.Context, string, marotte.MCPSource, string) {}
 

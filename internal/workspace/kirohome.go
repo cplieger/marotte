@@ -66,28 +66,32 @@ func KiroSettingsPath(name string) string {
 
 // ResolveKiroHome returns the config root KAS takes from kiroHome (the KIRO_HOME value) and home:
 // kiroHome when it is absolute, not a filesystem root, and neither equal to home nor holding home
-// inside it, else home/.kiro. Symlinks are resolved, and "inside" is tested as KAS tests it: a home
-// whose relative path from kiroHome starts with ".." (such as "..home" directly below it) is not
-// inside. A mismatch with KAS's own rule (kiro-cli 2.31.0 acp-server.js P8o/O9u) would have
-// marotte read and write a different tree from the agent's.
-func ResolveKiroHome(kiroHome, home string) string {
+// inside it, else home/.kiro, with ignored saying why a set value was not taken. Symlinks are
+// resolved, and "inside" is tested as KAS tests it: a home whose relative path from kiroHome starts
+// with ".." (such as "..home" directly below it) is not inside. A mismatch with KAS's own rule
+// (kiro-cli 2.31.0 acp-server.js P8o/O9u) would have marotte read and write a different tree from
+// the agent's.
+func ResolveKiroHome(kiroHome, home string) (dir, ignored string) {
 	fallback := filepath.Join(home, ".kiro")
 	v := strings.TrimSpace(kiroHome)
-	if v == "" || !filepath.IsAbs(v) {
-		return fallback
+	switch {
+	case v == "":
+		return fallback, ""
+	case !filepath.IsAbs(v):
+		return fallback, "relative"
 	}
 	resolved := realpathPrefix(filepath.Clean(v))
 	if filepath.Dir(resolved) == resolved {
-		return fallback
+		return fallback, "a filesystem root"
 	}
 	rel, err := filepath.Rel(resolved, realpathPrefix(filepath.Clean(home)))
 	// O9u's startsWith("..") is a byte-prefix test, so a home whose relative path from the
 	// candidate starts with ".." (such as "..home" directly below it) is outside it, and KAS
 	// honours the candidate.
 	if err == nil && (rel == "." || !strings.HasPrefix(rel, "..")) {
-		return fallback
+		return fallback, "it equals or contains HOME"
 	}
-	return filepath.Clean(v)
+	return filepath.Clean(v), ""
 }
 
 // realpathPrefix resolves symlinks in the longest existing prefix of p and keeps the rest, as

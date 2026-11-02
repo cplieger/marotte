@@ -126,11 +126,28 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 		payload string
 		handler Handler
 		want    bool
+		// api sends the command as another program does, with no fetch metadata and no Origin.
+		api bool
 	}{
 		{
 			name:    "a steer is the user's own words to this agent",
 			cmdType: marotte.CmdSteer,
 			want:    true,
+		},
+		{
+			name:    "a steer another program sent leaves the question waiting for the user",
+			cmdType: marotte.CmdSteer,
+			api:     true,
+		},
+		{
+			name:    "a queued prompt is the user's own words as well",
+			cmdType: marotte.CmdQueuePrompt,
+			want:    true,
+		},
+		{
+			name:    "a queued prompt another program sent does not",
+			cmdType: marotte.CmdQueuePrompt,
+			api:     true,
 		},
 		{
 			// The prompt path discharges when its turn opens, from the turn's source; a second
@@ -234,6 +251,9 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			}
 			body += `}`
 			req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(body))
+			if !tc.api {
+				req.Header.Set("Sec-Fetch-Site", "same-origin")
+			}
 			w := httptest.NewRecorder()
 			d.ServeHTTP(w, req)
 

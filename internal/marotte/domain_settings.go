@@ -55,7 +55,8 @@ type EffectiveSettings struct {
 	CloudFormationSafetyCheck string `json:"cloudformation_safety_check"`
 	AutoRouting               string `json:"auto_routing"`
 	AutoDelegation            string `json:"auto_delegation"`
-	// OutputStyle is "default" or "concise".
+	// OutputStyle is a KAS output style id (GET /api/config-template output_styles);
+	// "default" is never sent.
 	OutputStyle string `json:"output_style"`
 	// AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
 	// which is what enforces it; marotte runs no matcher of its own. The default is
@@ -123,6 +124,8 @@ type EffectiveSettings struct {
 	ScheduledAutoApprove bool `json:"scheduled_auto_approve"`
 	DebugLogs            bool `json:"debug_logs"`
 	// ModelFallback defaults off, matching kiro-cli: on, KAS may retry a turn its model refused or
-	// could not serve on the next model of its fallback chain, or record why it declined to.
+	// could not serve on the next model of its fallback chain, or record why it declined to, except a
+	// refusal on Auto, which the withheld KIRO_FEATURE_MODEL_FALLBACK_AUTO_REFUSAL_ENABLED row leaves
+	// to kiro-cli's experiment default.
 	ModelFallback bool `json:"model_fallback_enabled"`
 }

@@ -681,9 +681,14 @@ func (r *runLog) stepEnds(ctx context.Context, workflowID string, kas map[string
 	ends := make(map[string]marotte.RunStepEnd)
 	for path, c := range rec.closes {
 		st, known := kas[path]
-		if end, broken := c.graded(st, known).end(); broken {
-			ends[path] = end
+		end, broken := c.graded(st, known).end()
+		if !broken {
+			continue
 		}
+		if end.Outcome == marotte.TurnOutcomeInterrupted {
+			end.Resumed = rec.starts[path].open || (known && st.Completed())
+		}
+		ends[path] = end
 	}
 	return ends, nil
 }

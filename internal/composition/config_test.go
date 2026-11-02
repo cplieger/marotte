@@ -71,11 +71,26 @@ func TestConfigFromEnv_RelativeDirsBecomeAbsolute(t *testing.T) {
 	if cfg.WorkDir != wantWork {
 		t.Errorf("ConfigFromEnv() WorkDir = %q, want %q", cfg.WorkDir, wantWork)
 	}
-	if want := filepath.Join(wantConfig, "tools"); cfg.ToolsDir != want {
-		t.Errorf("ConfigFromEnv() ToolsDir = %q, want %q", cfg.ToolsDir, want)
+	if want := filepath.Join(wantConfig, "tools"); cfg.Tools.dir != want {
+		t.Errorf("ConfigFromEnv() Tools.dir = %q, want %q", cfg.Tools.dir, want)
 	}
 	if !slices.Contains(cfg.BrowseRoots, wantConfig) || !slices.Contains(cfg.BrowseRoots, wantWork) {
 		t.Errorf("ConfigFromEnv() BrowseRoots = %q, want both %q and %q", cfg.BrowseRoots, wantConfig, wantWork)
+	}
+}
+
+func TestConfigFromEnv_RelativeToolsDirBecomesAbsolute(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Setup: Getwd: %v", err)
+	}
+	t.Setenv("MAROTTE_TOOLS_DIR", "./tools-elsewhere/")
+
+	cfg := ConfigFromEnv()
+
+	if want := filepath.Join(cwd, "tools-elsewhere"); cfg.Tools.dir != want {
+		t.Errorf("ConfigFromEnv() Tools.dir = %q, want %q", cfg.Tools.dir, want)
 	}
 }
 

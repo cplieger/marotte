@@ -163,7 +163,7 @@ let shownSlots = 0;
 function setTurns(): void {
   const session = get(chatID);
   const resident = session === undefined ? [] : projectTurns(session);
-  summaries = mergeTurnSets(resident, indexed);
+  summaries = mergeTurnSets(resident, indexed, new Set(session?.turn_order));
   summaryByID = new Map(summaries.map((s) => [s.id, s]));
   residentN = new Map(resident.map((t) => [t.id, t.n]));
   if (selectedID !== undefined && !summaryByID.has(selectedID)) {

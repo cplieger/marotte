@@ -32,6 +32,9 @@ func runMain() int {
 	if len(os.Args) > 1 && os.Args[1] == forges.HelperCommand {
 		return forges.RunCredentialHelper(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
 	}
+	if len(os.Args) > 1 && os.Args[1] == composition.PathsCommand {
+		return composition.RunPaths(os.Stdout, os.Stderr)
+	}
 	cfg := composition.ConfigFromEnv()
 	cfg.ToolCatalogRequire = toolbelt.ParseRequireList(requiredToolsList)
 
@@ -40,7 +43,8 @@ func runMain() int {
 		if err != nil {
 			return ".kiro"
 		}
-		return workspace.ResolveKiroHome(os.Getenv("KIRO_HOME"), home)
+		dir, _ := workspace.ResolveKiroHome(os.Getenv("KIRO_HOME"), home)
+		return dir
 	})
 
 	app, err := composition.Build(context.Background(), &cfg, staticFS)

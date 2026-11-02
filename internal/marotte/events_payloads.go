@@ -1,6 +1,9 @@
 package marotte
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Per-event payload structs for SSE events; the envelope types live in events.go.
 
@@ -471,9 +474,11 @@ type GovernanceRegistryServer struct {
 
 // OpenExternalURLPayload is the payload for type="open_external_url". Browsers popup-block a
 // window.open() not driven by a user gesture, so the client surfaces a banner link rather
-// than auto-opening. Only http/https URLs are broadcast.
+// than auto-opening. Only http/https URLs are broadcast. ExpiresAt is when KAS stops waiting for
+// the callback; a replayed event carries the original time, so the client shows only what is left.
 type OpenExternalURLPayload struct {
-	URL string `json:"url"`
+	ExpiresAt time.Time `json:"expires_at"`
+	URL       string    `json:"url"`
 }
 
 // RPC error code constants for typed dispatch in retry logic.
@@ -654,8 +659,10 @@ type TangentMergedPayload struct {
 // reconstructible from the events alone — for every other device and for the sender after a
 // reconnect.
 type SteerQueuedPayload struct {
-	SteerID string `json:"steer_id"`
-	Text    string `json:"text"`
+	// Caller is set on a row an API caller sent (on a batch, only when no row is the user's: SharedCaller).
+	Caller  *Caller `json:"caller,omitempty"`
+	SteerID string  `json:"steer_id"`
+	Text    string  `json:"text"`
 	// Origin is whose words these are, resolved server-side. NO omitempty: an absent field
 	// lets the client invent a fallback, and the one it would pick is wrong for a
 	// workflow's report.

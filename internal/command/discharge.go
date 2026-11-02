@@ -16,9 +16,10 @@ const (
 	// so an unclassified command is silent rather than wrong; the completeness test is
 	// what catches it.
 	dischargeNo dischargeVerdict = iota
-	// dischargeYes: the dispatcher discharges once the handler has succeeded.
+	// dischargeYes: the dispatcher discharges once the handler has succeeded, for the user's prose only: an API
+	// caller's steer or queued prompt leaves the question waiting for the user.
 	dischargeYes
-	// dischargeBySource: the TURN's source decides (marotte.TurnOpenSource.UserAnswered)
+	// dischargeBySource: the TURN's open decides (TurnOpen.UserAnswered)
 	// when the turn opens, which a drained queued prompt reaches with no command.
 	dischargeBySource
 	// dischargeByAnswer: the command's own PAYLOAD decides, because one command type
@@ -137,7 +138,7 @@ func answersAgent(cmd *marotte.ClientCommand) bool {
 func discharges(cmd *marotte.ClientCommand) bool {
 	switch commandDischarges[cmd.Type] {
 	case dischargeYes:
-		return true
+		return cmd.From == nil
 	case dischargeByAnswer:
 		return answersAgent(cmd)
 	}

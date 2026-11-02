@@ -245,7 +245,7 @@ type kasWorkflowRuns struct {
 
 type kasWorkflowRun struct {
 	WorkflowID string `json:"workflowId"`
-	// Name is the display name, `runLabel ?? workflowName`; never key a recipe on it.
+	// Name is KAS's `runLabel ?? workflowName`, read only through displayName; never key a recipe on it.
 	Name string `json:"name"`
 	// WorkflowName is the recipe, the only field a per-recipe decision may read.
 	WorkflowName string `json:"workflowName"`
@@ -261,6 +261,16 @@ type kasWorkflowRun struct {
 	PauseNodeID string `json:"pauseNodeId"`
 	// PausePending is a pause asked for and not yet landed.
 	PausePending bool `json:"pausePending"`
+}
+
+// displayName is the run's marotte.RunDisplayName. KAS's Name is the workflowName when the run
+// carries no runLabel, so a Name equal to it names no label.
+func (r *kasWorkflowRun) displayName() string {
+	label := r.Name
+	if label == r.WorkflowName {
+		label = ""
+	}
+	return marotte.RunDisplayName(label, r.WorkflowName)
 }
 
 func (rs *Runs) list(ctx context.Context, claimed map[string]marotte.ChatID) ([]marotte.WorkflowRun, error) {
@@ -292,8 +302,8 @@ func (rs *Runs) toWire(claimed map[string]marotte.ChatID, runs []kasWorkflowRun)
 		parentChatID := string(claimed[r.ParentSessionID])
 		out = append(out, marotte.WorkflowRun{
 			WorkflowID:   r.WorkflowID,
-			Name:         r.Name,
-			WorkflowName: r.WorkflowName,
+			Name:         r.displayName(),
+			WorkflowName: marotte.RunDisplayName("", r.WorkflowName),
 			Status:       marotte.RunStatus(r.Status),
 			CreatedAt:    parseKASTime(r.CreatedAt),
 			UpdatedAt:    parseKASTime(r.UpdatedAt),

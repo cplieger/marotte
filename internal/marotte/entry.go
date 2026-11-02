@@ -16,6 +16,8 @@ type EntryKind string
 const (
 	EntryKindTurnOpen         EntryKind = "turn_open"
 	EntryKindTurnBind         EntryKind = "turn_bind"
+	EntryKindTurnWake         EntryKind = "turn_wake"
+	EntryKindRunNamed         EntryKind = "run_named"
 	EntryKindText             EntryKind = "text"
 	EntryKindThinking         EntryKind = "thinking"
 	EntryKindToolCall         EntryKind = "tool_call"
@@ -108,6 +110,8 @@ func (s TurnOpenSource) Name() TurnOpenSourceName {
 // this prompt carries; the record owns it and the projection never synthesises it. Label is
 // the PromptCommand.DisplayText the prompt was sent with, which KAS's replay gives as the text.
 type EntryPrompt struct {
+	// Caller is set on a prompt an API caller sent.
+	Caller      *Caller      `json:"caller,omitempty"`
 	ID          string       `json:"id"`
 	Text        string       `json:"text"`
 	Label       string       `json:"label,omitempty"`
@@ -246,6 +250,8 @@ const (
 // path on both sides' rows, and Chat the launching chat on the step's row. Resends names the steer
 // rows (dock keys) this one re-sends, taken from the steer record at the read.
 type EntrySteer struct {
+	// Caller is set on a user-origin steer an API caller sent.
+	Caller   *Caller     `json:"caller,omitempty"`
 	Text     string      `json:"text"`
 	Origin   SteerOrigin `json:"origin"`
 	State    SteerState  `json:"state,omitempty"`

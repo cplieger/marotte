@@ -19,7 +19,7 @@ import (
 type runActor int
 
 const (
-	// byPerson is the Run tab's pause, resume, and a repeat's extension and finish.
+	// byPerson is the Run tab's pause, resume, a repeat's extension and finish, and a paused step's end.
 	byPerson runActor = iota + 1
 	// byGate is the sign-in gate's closing sweep and its finder of the pauses it persisted (findHolds).
 	byGate
@@ -27,6 +27,8 @@ const (
 	byHeal
 	// byOrphanSweep cancels a run a dead process left paused.
 	byOrphanSweep
+	// byUnattended ends a scheduled run's pause that nobody resumed within its budget (watchUnattendedPause).
+	byUnattended
 )
 
 // runPhase is the state an actor expects its run in; with the actor it names the request.
@@ -37,6 +39,8 @@ const (
 	phasePaused
 	// phaseAtCap is a repeat paused at its cap, which a person's finish ends.
 	phaseAtCap
+	// phaseStepPaused is a paused step, which a person's end finishes whether or not its siblings still run.
+	phaseStepPaused
 )
 
 type runWant struct {
@@ -48,10 +52,12 @@ var (
 	personPause  = runWant{actor: byPerson, from: phaseRunning}
 	personResume = runWant{actor: byPerson, from: phasePaused}
 	personFinish = runWant{actor: byPerson, from: phaseAtCap}
+	personEnd    = runWant{actor: byPerson, from: phaseStepPaused}
 	gatePause    = runWant{actor: byGate, from: phaseRunning}
 	gateFind     = runWant{actor: byGate, from: phasePaused}
 	healResume   = runWant{actor: byHeal, from: phasePaused}
 	orphanCancel = runWant{actor: byOrphanSweep, from: phasePaused}
+	pauseExpiry  = runWant{actor: byUnattended, from: phasePaused}
 )
 
 // runSeen is a run's state as one inspect under its resume lock reads it.
@@ -70,9 +76,12 @@ const (
 	seenPersonPaused
 	// seenRestartPaused is paused because the run's owning process died.
 	seenRestartPaused
+	// seenAskPaused is paused, by nobody marotte names, on steps that each wait on a person (workflow.PausedOnAsks),
+	// which KAS's resume parks again at once.
+	seenAskPaused
 	// seenInvoluntary is paused for another cause marotte resumes unasked (resumablePause).
 	seenInvoluntary
-	// seenOtherPause is any other pause, such as a repeat at its cap or a step's ask.
+	// seenOtherPause is any other pause, such as a repeat at its cap.
 	seenOtherPause
 	// seenEnded is any other status.
 	seenEnded
@@ -96,6 +105,10 @@ const (
 	actFinish
 	// actKeepHold acts on the gate's own pause a finder read (keepHold).
 	actKeepHold
+	// actEndUnattended ends a scheduled run paused with nobody to resume it (endUnattended).
+	actEndUnattended
+	// actEndStep is a person's end of the paused step the read holds at the request's path (endStepAsked).
+	actEndStep
 )
 
 // runTransitions is the one table of the pause and resume verbs marotte writes of a run: a row per request, a cell
@@ -113,12 +126,17 @@ var runTransitions = map[runWant]map[runSeen]runAction{
 	},
 	personFinish: {
 		seenGatePaused: actFinish, seenPersonPaused: actFinish, seenRestartPaused: actFinish,
-		seenInvoluntary: actFinish, seenOtherPause: actFinish,
+		seenAskPaused: actFinish, seenInvoluntary: actFinish, seenOtherPause: actFinish,
+	},
+	personEnd: {
+		seenRunning: actEndStep, seenPausing: actEndStep, seenGatePaused: actEndStep, seenPersonPaused: actEndStep,
+		seenRestartPaused: actEndStep, seenAskPaused: actEndStep, seenInvoluntary: actEndStep, seenOtherPause: actEndStep,
 	},
 	gatePause:    {seenRunning: actHoldPause},
 	gateFind:     {seenGatePaused: actKeepHold},
 	healResume:   {seenGatePaused: actHeal, seenRestartPaused: actHeal, seenInvoluntary: actHeal},
 	orphanCancel: {seenRestartPaused: actCancelOrphan},
+	pauseExpiry:  {seenRestartPaused: actEndUnattended, seenInvoluntary: actEndUnattended, seenOtherPause: actEndUnattended},
 }
 
 // The refusals a person's request gets when the table changes nothing.
@@ -129,7 +147,9 @@ var (
 		errors.New("this run is already paused, so nothing was paused"))
 	errRunStateUnread = command.StatusError(http.StatusServiceUnavailable,
 		errors.New("this run's state could not be read, so nothing was changed. Try again"))
-	errRunGone = command.StatusError(http.StatusNotFound, errors.New("run not found"))
+	errRunGone           = command.StatusError(http.StatusNotFound, errors.New("run not found"))
+	errRunAwaitingAnswer = command.StatusErrorReason(http.StatusConflict, "awaiting_answer",
+		errors.New("this run is waiting for an answer to a step's question; resuming would only park it again, so nothing was resumed"))
 )
 
 // runRequest is one request to the table, with what its action needs.
@@ -140,6 +160,9 @@ type runRequest struct {
 	verb string
 	// node is a finish's repeat node.
 	node string
+	// path is an end's step, one workflow.PathKey, and status the status the end writes.
+	path   string
+	status string
 	// chatID is a heal's launching chat, "" when unknown.
 	chatID marotte.ChatID
 	want   runWant
@@ -173,8 +196,8 @@ type runChange struct {
 // it returns fails the read, as a failed inspect does. A test seam.
 var transitionHook atomic.Pointer[func(rs *Runs, workflowID string, want runWant, seen runSeen) error]
 
-// transition is every pause and resume marotte writes of a run, a repeat's extension and finish, the orphan
-// sweep's cancel, the gate's finding of its own pause, and the drop of a heal's hold: it reads the run under the
+// transition is every pause and resume marotte writes of a run, a repeat's extension and finish, a paused step's
+// end, the orphan sweep's cancel, the gate's finding of its own pause, and the drop of a heal's hold: it reads the run under the
 // run's resume lock, which each of them takes here, and carries out runTransitions' cell for the request and what it
 // read.
 func (rs *Runs) transition(ctx context.Context, workflowID string, req *runRequest) (runChange, error) {
@@ -211,7 +234,7 @@ func (rs *Runs) carryOut(ctx context.Context, workflowID string, req *runRequest
 	case actHoldPause:
 		return rs.holdPause(ctx, workflowID)
 	case actHeal:
-		c.outcome, c.charged = rs.heal(ctx, workflowID, req)
+		c.outcome, c.charged = rs.heal(ctx, workflowID, req, r)
 		return nil
 	case actCancelOrphan:
 		rs.disarmDeadline(ctx, workflowID)
@@ -221,6 +244,10 @@ func (rs *Runs) carryOut(ctx context.Context, workflowID string, req *runRequest
 	case actKeepHold:
 		rs.keepHold(workflowID)
 		return nil
+	case actEndUnattended:
+		return rs.endUnattended(ctx, workflowID, req, r)
+	case actEndStep:
+		return rs.endStepAsked(ctx, workflowID, req, r)
 	}
 	if r.seen != seenUnreadable {
 		c.outcome = resumeSkipped
@@ -248,20 +275,26 @@ func transitionRefusal(workflowID string, req *runRequest, r *pauseRead) error {
 		return command.StatusError(http.StatusConflict, errors.New(verbUnavailableText(req.verb, string(r.res.State.Status))))
 	case seenRunning, seenPausing:
 		return errRunAlreadyRunning
+	case seenAskPaused:
+		if req.want == personResume {
+			return errRunAwaitingAnswer
+		}
+		return errRunAlreadyPaused
 	default:
 		return errRunAlreadyPaused
 	}
 }
 
-// pauseRead is one read of a run, classified.
+// pauseRead is one read of a run, classified, and its tree as workflow.DecodeInspect reads it.
 type pauseRead struct {
 	err  error
 	res  inspectRunState
+	tree workflow.Inspect
 	seen runSeen
 }
 
 func (rs *Runs) readPauseState(ctx context.Context, workflowID string) pauseRead {
-	res, err := rs.readInspect(ctx, workflowID)
+	res, raw, err := rs.readInspect(ctx, workflowID)
 	switch {
 	case workflowNotFound(err):
 		return pauseRead{err: err, seen: seenGone}
@@ -271,10 +304,17 @@ func (rs *Runs) readPauseState(ctx context.Context, workflowID string) pauseRead
 		named := cmp.Or(res.WorkflowID, res.State.WorkflowID)
 		return pauseRead{err: fmt.Errorf("the reply names run %q, not %q", named, workflowID), seen: seenUnreadable}
 	}
-	return pauseRead{res: res, seen: res.seen()}
+	tree, dErr := workflow.DecodeInspect(workflowID, raw)
+	r := pauseRead{tree: tree, res: res, seen: res.seen(asksOf(tree))}
+	if r.seen == seenUnreadable {
+		r.err = dErr
+	}
+	return r
 }
 
-func (r *inspectRunState) seen() runSeen {
+// seen classifies the read; asks is the ask state of the same reply, consulted only for a pause that is not the
+// gate's, a person's or a restart's.
+func (r *inspectRunState) seen(asks askState) runSeen {
 	st := &r.State
 	switch {
 	case st.Status == marotte.RunStatusRunning && st.PausePending != nil:
@@ -289,6 +329,10 @@ func (r *inspectRunState) seen() runSeen {
 		return seenPersonPaused
 	case st.PauseReason == stalePauseReason:
 		return seenRestartPaused
+	case asks == asksUnread:
+		return seenUnreadable
+	case asks == asksAll:
+		return seenAskPaused
 	case resumablePause(st.PauseReason, st.PauseDetail):
 		return seenInvoluntary
 	default:
@@ -337,20 +381,7 @@ func (rs *Runs) finishAsked(ctx context.Context, workflowID, nodeID string) erro
 	if err != nil {
 		return err
 	}
-	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowUpdate, map[string]any{
-		keyWorkflowID: workflowID,
-		"action":      updateStatusAction,
-		"status":      runStepCompleted,
-		"nodeId":      nodeID,
-	})
-	if err != nil {
-		return err
-	}
-	if refusal := stepStatusRefusal(resp); refusal != "" {
-		return fmt.Errorf("%w: %s", errStepStatusRefused, refusal)
-	}
-	rs.armDeadline(ctx, workflowID)
-	return nil
+	return rs.updateNodeStatus(ctx, host, workflowID, nodeID, runStepCompleted)
 }
 
 // holdPause writes the gate's reasoned pause of a running run, whose reason KAS keeps as the run's stopReason;
@@ -370,9 +401,10 @@ func (rs *Runs) holdPause(ctx context.Context, workflowID string) error {
 	return nil
 }
 
-// heal resumes a run under the gate's admission and the run's heal budget, holding it while the gate is closed and
-// parking it for the user once the budget is spent. It reports whether a heal stands after it.
-func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest) (resumeOutcome, bool) {
+// heal resumes a run under the gate's admission and the run's heal budget, holding it while the gate is closed and,
+// once the budget is spent, parking it for the user or ending a scheduled run, which has none. It reports whether a
+// heal stands after it.
+func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest, r *pauseRead) (resumeOutcome, bool) {
 	charged := req.charged
 	a, aErr := rs.admitRunWork(holdClosed, workflowID, req.chatID)
 	if aErr != nil {
@@ -382,14 +414,7 @@ func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest) (r
 	if !charged {
 		attempts, ok := rs.claimHeal(workflowID)
 		if !ok {
-			slog.Warn("a run keeps pausing for a cause nobody chose; leaving it paused for a resume by hand",
-				"workflow_id", workflowID, "chat_id", req.chatID, "attempts", attempts)
-			if err := rs.parkForUser(ctx, workflowID); err != nil {
-				slog.Warn("a run marotte no longer resumes still reads as resuming automatically",
-					"workflow_id", workflowID, "chat_id", req.chatID, "error", err)
-				return resumeFailed, false
-			}
-			return resumeSkipped, false
+			return rs.healSpent(ctx, workflowID, req, attempts, r), false
 		}
 		claimed = true
 	}
@@ -403,6 +428,27 @@ func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest) (r
 		return resumeFailed, charged
 	}
 	return resumeWritten, charged
+}
+
+// healSpent is heal past the run's budget: a scheduled run is ended, since nobody would resume it, and any other is
+// parked for the user.
+func (rs *Runs) healSpent(
+	ctx context.Context, workflowID string, req *runRequest, attempts int, r *pauseRead,
+) resumeOutcome {
+	if l, held := rs.lease(workflowID); held && l.Unattended {
+		if err := rs.endUnattended(ctx, workflowID, req, r); err != nil {
+			return resumeFailed
+		}
+		return resumeSkipped
+	}
+	slog.Warn("a run keeps pausing for a cause nobody chose; leaving it paused for a resume by hand",
+		"workflow_id", workflowID, "chat_id", req.chatID, "attempts", attempts)
+	if err := rs.parkForUser(ctx, workflowID); err != nil {
+		slog.Warn("a run marotte no longer resumes still reads as resuming automatically",
+			"workflow_id", workflowID, "chat_id", req.chatID, "error", err)
+		return resumeFailed
+	}
+	return resumeSkipped
 }
 
 // parkForUser stamps a paused run marotte no longer resumes as the user's to resume: KAS keeps a pause asked of a

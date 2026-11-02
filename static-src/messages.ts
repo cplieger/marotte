@@ -46,6 +46,7 @@ import type { ViewScrollState } from "./scroll-controller.js";
 import {
   buildTurnHeader,
   updateTurnHeader,
+  syncWakeRowRuns,
   type TurnHeaderData,
 } from "./fundamentals/turn-header.js";
 import {
@@ -116,11 +117,14 @@ import {
   dropTail,
   geometrySkipped,
   setRunCardOwners,
+  openNoteRun,
 } from "./messages-blocks.js";
+import { wakeLine } from "./turn-wake.js";
 import { rewindChat } from "./actions/rewind.js";
 import { compactChat } from "./actions/chat.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { confirm as confirmDialog } from "./confirm.js";
+import { setComposerValue } from "./composer-value.js";
 import { registerCleanup } from "./actions/index.js";
 import {
   disposeAllToolEffects,
@@ -1153,15 +1157,16 @@ function rewindConfirmText(target: EntryPrompt, discarded: readonly Turn[]): str
 
   lines.push("");
   lines.push(
-    "Files are rolled back on disk to their state before this turn. " +
-      "The prompt itself is discarded too, so you will need to retype it. " +
-      "This cannot be undone.",
+    "Files are rolled back on disk to their state before this turn. This cannot be undone. " +
+      "If the message box is empty, the prompt's text comes back to it to edit and send again. " +
+      "Attachments are not restored.",
   );
   return lines.join("\n");
 }
 
 /** Refused mid-turn: KAS throws on a session with a live abortController. `mountRewind` disables the
- *  button; this is the second gate. */
+ *  button; this is the second gate. A revert that lands while its chat is still active puts the prompt's
+ *  text (never its attachments) in the composer, unless the composer already holds text. */
 async function handleRewindClick(target: EntryPrompt): Promise<void> {
   const session = getActive();
   if (session === undefined) {
@@ -1184,7 +1189,16 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
   if (!proceed) {
     return;
   }
-  await rewindChat.dispatch({ chatID: session.id, messageID: target.id });
+  const outcome = await rewindChat.dispatch({ chatID: session.id, messageID: target.id }).outcome;
+  if (outcome.status !== "success" || getActiveId() !== session.id) {
+    return;
+  }
+  const input = $.promptInput;
+  if (input.value.trim() !== "") {
+    return;
+  }
+  setComposerValue(target.text);
+  input.focus();
 }
 
 /**
@@ -1569,10 +1583,13 @@ function setCardsFolded(items: readonly { card: HTMLElement; folded: boolean }[]
     const flip = (): void => {
       card.toggleAttribute("data-folded", folded);
       const header = card.querySelector<HTMLElement>(":scope > .turn-header");
-      // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
-      header
-        ?.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
-        ?.setAttribute("aria-expanded", folded ? "false" : "true");
+      if (header !== null) {
+        syncWakeRowRuns(header);
+        // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
+        header
+          .querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
+          ?.setAttribute("aria-expanded", folded ? "false" : "true");
+      }
     };
     const body = card.querySelector<HTMLElement>(":scope > .turn-body");
     if (body === null || card.hasAttribute("data-folded") === folded) {
@@ -2101,11 +2118,16 @@ function headerData(t: Turn): TurnHeaderData {
     n: t.n,
     outcome: t.outcome,
     ts: t.ts,
-    // An empty prompt is not a request; fall through to the system-trigger rendering.
+    // An empty prompt is not a request; updateTurnHeader heads a request-less turn.
     request: request !== undefined && request.trim() !== "" ? request : undefined,
     label: t.trigger?.label,
+    caller: t.trigger?.caller,
     // From the trigger entry: attachments never appear in the prompt text.
     attachments: t.trigger?.attachments ?? [],
+    wake: t.wake === undefined ? undefined : wakeLine(t.wake),
+    onOpenRun: (run) => {
+      openNoteRun(getActiveId(), run.id, run.named ? run.name : undefined);
+    },
   };
 }
 

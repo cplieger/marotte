@@ -245,7 +245,8 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAToolUseStopIsTheModelCallLim
 		if len(steers) != 1 {
 			t.Fatalf("the launching chat got %d notes, want one: %+v", len(steers), steers)
 		}
-		if want := stepModelCallLimitNoteText("nightly", path); steers[0].Text != want {
+		// The run read learned the name from the inspect fixture's workflowName, which outranks the lease.
+		if want := stepModelCallLimitNoteText("one-engine-build", path); steers[0].Text != want {
 			t.Errorf("note text = %q, want %q", steers[0].Text, want)
 		}
 	})

@@ -99,7 +99,7 @@ func wireForges(t *testing.T) *wiredForges {
 // quietSteering is a steering sync over m whose regeneration does nothing.
 func quietSteering(t *testing.T, m *forges.Manager) *forgeSteering {
 	t.Helper()
-	return &forgeSteering{appCtx: context.WithoutCancel(t.Context()), m: m, generate: func(context.Context) {}}
+	return &forgeSteering{appCtx: context.WithoutCancel(t.Context()), m: m, generate: func(context.Context) error { return nil }}
 }
 
 func (w *wiredForges) send(t *testing.T, method, path, body string) *httptest.ResponseRecorder {

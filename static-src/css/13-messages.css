@@ -1272,6 +1272,16 @@
   text-decoration: none;
 }
 
+/* A detail control (banner-stack.ts appends it last) takes its own line under the row, so
+ * the row itself keeps its one-line shape. */
+.banner:has(> .banner-detail) {
+  flex-wrap: wrap;
+}
+
+.banner-detail {
+  flex-basis: 100%;
+}
+
 /* ONE box, and the WRAPPER draws it: the border, the radius and the clip. The
  * prose `pre` carries no radius, and the clip is not a substitute —
  * `overflow: hidden` leaves a child's own corners rounded, so a 6px pre under the

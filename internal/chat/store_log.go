@@ -246,6 +246,26 @@ func (s *Store) UnsettledWorkflowMessages(ctx context.Context, chatID marotte.Ch
 	return out, err
 }
 
+// WakeCauses is the chat log's EntryLog.wakeCauses for session.
+func (s *Store) WakeCauses(ctx context.Context, chatID marotte.ChatID, session string) (marotte.WakeCauses, error) {
+	var out marotte.WakeCauses
+	err := s.readLog(ctx, chatID, func(l *EntryLog) error {
+		out = l.wakeCauses(session)
+		return nil
+	})
+	return out, err
+}
+
+// AwaitsRunName is the chat log's EntryLog.awaitsRunName for run.
+func (s *Store) AwaitsRunName(ctx context.Context, chatID marotte.ChatID, run string) (bool, error) {
+	var out bool
+	err := s.readLog(ctx, chatID, func(l *EntryLog) error {
+		out = l.awaitsRunName(run)
+		return nil
+	})
+	return out, err
+}
+
 // logPage is GET /api/chats/{id}'s answer: the header, one window of whole turns,
 // the open tails of the open turns inside it, the registry's liveness verdict
 // and the stamps, one per list they certify: the `chat` stamp certifies Entries,

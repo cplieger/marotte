@@ -62,6 +62,8 @@ interface ClampState {
   off: boolean;
   /** A cue-only watch's report of whether the text is cut. */
   readonly onCut?: (cut: boolean) => void;
+  /** A cue-only watch's report of every measurement, cut or not. */
+  readonly onMeasure?: (() => void) | undefined;
 }
 
 interface ClampEntry {
@@ -130,10 +132,14 @@ export function attachClamp(
 }
 
 /**
- * Report whether `text` is cut, as `data-cut` and through `onCut`, for text whose own fold clamps it in CSS: the
- * fade and the cue follow a real overflow, re-measured on every resize. Released by {@link releaseClamp}.
+ * Report whether `text` is cut, as `data-cut` and through `onCut`, for text whose own fold clamps it in CSS;
+ * re-measured on every resize, after which `onMeasure` runs. Released by {@link releaseClamp}.
  */
-export function watchCut(text: HTMLElement, onCut: (cut: boolean) => void): void {
+export function watchCut(
+  text: HTMLElement,
+  onCut: (cut: boolean) => void,
+  onMeasure?: () => void,
+): void {
   if (clamps.has(text)) {
     return;
   }
@@ -146,6 +152,7 @@ export function watchCut(text: HTMLElement, onCut: (cut: boolean) => void): void
     setExpanded: () => undefined,
     off: false,
     onCut,
+    onMeasure,
   };
   const review = (): void => {
     reviewClamp(text, state);
@@ -170,6 +177,7 @@ function reviewClamp(text: HTMLElement, s: ClampState): void {
       text.toggleAttribute("data-cut", cut);
       s.onCut?.(cut);
     }
+    s.onMeasure?.();
     return;
   }
   if (s.isExpanded()) {

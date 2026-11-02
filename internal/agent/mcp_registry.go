@@ -7,7 +7,9 @@ package agent
 import (
 	"cmp"
 	"context"
+	"crypto/subtle"
 	"net/http"
+	"net/url"
 	"slices"
 	"sync"
 	"time"
@@ -23,18 +25,45 @@ type mcpServerState = marotte.MCPServerState
 const (
 	mcpStateConnected mcpServerState = "connected"
 	mcpStateOAuth     mcpServerState = "needs_auth"
+	mcpStateSigningIn mcpServerState = "signing_in"
 	mcpStateFailed    mcpServerState = "failed"
 	mcpStateDisabled  mcpServerState = "disabled"
 )
 
+// signInSlotTTL bounds a sign-in slot nobody released: KAS's 600 s connect ceiling plus margin.
+const signInSlotTTL = 630 * time.Second
+
+// lazySignInTTL is KAS's LAZY_AUTH_TIMEOUT_MS: its callback listener for a mid-session re-auth waits this long.
+const lazySignInTTL = 300 * time.Second
+
+// maxLazySignIns bounds the anchors: KAS runs one re-auth per server, and the oldest is evicted past it.
+const maxLazySignIns = 8
+
+// lazySignIn is a consent URL no Sign in claimed, a mid-session re-auth: the URL names no server, so a pasted
+// callback's state picks it. relayed is its single-use latch, as mcpServerRuntime.Relayed is a row's.
+type lazySignIn struct {
+	deadline time.Time
+	authURL  string
+	state    string
+	relayed  bool
+}
+
+// signInSlot is the one sign-in the engine runs at a time. _kiro/openExternalUrl carries only the URL, so a
+// second concurrent sign-in would make its consent page unattributable.
+type signInSlot struct {
+	deadline time.Time
+	server   string
+}
+
 // Origin "user" attaches it to marotte's own row; anything else gives it a read-only row. Shadows
 // marks one occupying a configured name.
 type mcpServerRuntime struct {
-	Name              string
-	State             mcpServerState
-	Origin            marotte.Origin
-	OriginRoot        string
-	OriginPower       string
+	Name        string
+	State       mcpServerState
+	Origin      marotte.Origin
+	OriginRoot  string
+	OriginPower string
+	// OAuthURL is the consent URL KAS opened for a Sign in, set only while signing_in: the relay's anchor.
 	OAuthURL          string
 	Error             string
 	Tools             []string
@@ -52,7 +81,7 @@ type mcpRegistry struct {
 	config mcpNameSets `wiring:"optional"`
 	// engine is the one engine whose MCP pool every session shares; live control is an engine call.
 	engine *engineOwner
-	// bus publishes the four MCP lifecycle events.
+	// bus publishes the MCP lifecycle events.
 	bus *bus
 	// lifetime supplies the done channel the debounce loop exits on.
 	lifetime *lifetime
@@ -64,8 +93,14 @@ type mcpRegistry struct {
 	// pool is the engine's last status snapshot: KAS sends its one pool's _kiro/mcp/status to every session, so any
 	// copy is the engine's. Cleared at the engine's end.
 	pool []poolServerJSON
-	mu   sync.RWMutex
+	// now reads the clock for the sign-in slot's and the lazy anchors' deadlines.
+	now         func() time.Time
+	signIn      signInSlot
+	lazySignIns []*lazySignIn
+	mu          sync.RWMutex
 }
+
+var _ signInURLClaimer = (*mcpRegistry)(nil)
 
 func newMCPRegistry(engine *engineOwner, b *bus, lt *lifetime, cfg mcpNameSets) *mcpRegistry {
 	r := &mcpRegistry{
@@ -75,6 +110,7 @@ func newMCPRegistry(engine *engineOwner, b *bus, lt *lifetime, cfg mcpNameSets) 
 		config:   cfg,
 		servers:  make(map[string]*mcpServerRuntime),
 		notifyCh: make(chan struct{}, 1),
+		now:      time.Now,
 	}
 	return r
 }
@@ -108,6 +144,7 @@ func (reg *mcpRegistry) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mcp/status", reg.handleStatus)
 	mux.HandleFunc("/api/mcp/pool", reg.handlePool)
 	mux.HandleFunc("/api/mcp/reconnect", reg.handleReconnect)
+	mux.HandleFunc("/api/mcp/sign-in", reg.handleSignIn)
 	// Registered here, or the "/api/mcp/" subtree reads "oauth-relay" as a server id and 404s.
 	mux.HandleFunc("/api/mcp/oauth-relay", reg.handleOAuthRelay)
 }
@@ -175,13 +212,12 @@ func (reg *mcpRegistry) handlePool(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, map[string][]poolServerJSON{"servers": out})
 }
 
-// RecordOAuth marks a server as waiting for OAuth and broadcasts the URL.
-func (reg *mcpRegistry) RecordOAuth(ctx context.Context, name string, src marotte.MCPSource, url string) {
-	rec := reg.originFor(ctx, name, src).record(name, mcpStateOAuth)
-	rec.OAuthURL = url
-	reg.install(rec)
+// RecordOAuth marks a server as waiting for sign-in. It keeps no URL: the one a failed status entry carries
+// belongs to an attempt whose listener KAS already closed, so only a Sign in can complete.
+func (reg *mcpRegistry) RecordOAuth(ctx context.Context, name string, src marotte.MCPSource) {
+	reg.install(reg.originFor(ctx, name, src).record(name, mcpStateOAuth))
 
-	reg.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPOAuthNeeded, "", marotte.MCPOAuthPayload{Server: name, URL: url}))
+	reg.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPOAuthNeeded, "", marotte.MCPOAuthPayload{Server: name}))
 	reg.signalChange()
 }
 
@@ -201,42 +237,91 @@ func (reg *mcpRegistry) RecordInitFailure(ctx context.Context, name string, src 
 func (reg *mcpRegistry) RecordDisabled(ctx context.Context, name string, src marotte.MCPSource) {
 	prov := reg.originFor(ctx, name, src)
 	if prov.origin == marotte.OriginUser {
+		reg.releaseSignIn(name)
 		return
 	}
 	reg.install(prov.record(name, mcpStateDisabled))
 	reg.signalChange()
 }
 
-// Every transition installs a fresh one, the pointer identity the relay reservation keys on.
+// Every transition installs a fresh one, the pointer identity the relay reservation keys on. Every status KAS
+// reports for the server the sign-in slot names ends that sign-in, so it frees the slot.
 func (reg *mcpRegistry) install(rec *mcpServerRuntime) {
 	reg.mu.Lock()
 	reg.servers[rec.Name] = rec
+	if reg.signIn.server == rec.Name {
+		reg.signIn = signInSlot{}
+	}
 	reg.mu.Unlock()
 }
 
+// anchorSignInURL records a consent URL no Sign in claimed and returns when KAS stops waiting for its callback. A
+// URL with no state could never match a paste, so it is not kept.
+func (reg *mcpRegistry) anchorSignInURL(authURL string) time.Time {
+	deadline := reg.now().Add(lazySignInTTL)
+	u, err := url.Parse(authURL)
+	if err != nil {
+		return deadline
+	}
+	state := u.Query().Get("state")
+	if state == "" {
+		return deadline
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	reg.pruneLazySignInsLocked()
+	if len(reg.lazySignIns) >= maxLazySignIns {
+		reg.lazySignIns = slices.Delete(reg.lazySignIns, 0, len(reg.lazySignIns)-maxLazySignIns+1)
+	}
+	reg.lazySignIns = append(reg.lazySignIns, &lazySignIn{deadline: deadline, authURL: authURL, state: state})
+	return deadline
+}
+
+func (reg *mcpRegistry) pruneLazySignInsLocked() {
+	now := reg.now()
+	reg.lazySignIns = slices.DeleteFunc(reg.lazySignIns, func(l *lazySignIn) bool { return !now.Before(l.deadline) })
+}
+
 // oauthAttempt is a granted reservation to relay one authorization attempt's callback, the only
-// handle that can give it back. The record pointer is the attempt's identity: every transition
-// installs a fresh record, so a stale token's release is a no-op. authURL is copied in so the
-// handler never reads a later attempt's anchor; rec is only dereferenced under the lock.
+// handle that can give it back. The record pointer (rec, or lazy for a sign-in no Sign in started) is the
+// attempt's identity: every transition installs a fresh record, so a stale token's release is a no-op. authURL is
+// copied in so the handler never reads a later attempt's anchor; rec and lazy are only dereferenced under the lock.
 type oauthAttempt struct {
 	rec     *mcpServerRuntime
+	lazy    *lazySignIn
 	server  string
 	authURL string
 }
 
-// All under one lock: a concurrent paste gets errRelayAlreadyDone, any other state errRelayNoFlow.
-func (reg *mcpRegistry) beginOAuthRelay(name string) (oauthAttempt, error) {
+// beginOAuthRelay reserves the named server's Sign in, or else the unexpired lazy anchor whose state is the
+// pasted callback's. All under one lock: a concurrent paste gets errRelayAlreadyDone, a state no anchor holds
+// errRelayStateDrift, nothing in flight errRelayNoFlow.
+func (reg *mcpRegistry) beginOAuthRelay(name, pastedState string) (oauthAttempt, error) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	s, exists := reg.servers[name]
-	if !exists || s.State != mcpStateOAuth || s.OAuthURL == "" {
+	if s, exists := reg.servers[name]; exists && s.State == mcpStateSigningIn && s.OAuthURL != "" {
+		if s.Relayed {
+			return oauthAttempt{}, errRelayAlreadyDone
+		}
+		s.Relayed = true
+		return oauthAttempt{rec: s, server: name, authURL: s.OAuthURL}, nil
+	}
+	reg.pruneLazySignInsLocked()
+	if len(reg.lazySignIns) == 0 {
 		return oauthAttempt{}, errRelayNoFlow
 	}
-	if s.Relayed {
-		return oauthAttempt{}, errRelayAlreadyDone
+	for _, l := range reg.lazySignIns {
+		// Constant-time, as matchAdvertisedCallback's: the state is secret-equivalent.
+		if subtle.ConstantTimeCompare([]byte(l.state), []byte(pastedState)) != 1 {
+			continue
+		}
+		if l.relayed {
+			return oauthAttempt{}, errRelayAlreadyDone
+		}
+		l.relayed = true
+		return oauthAttempt{lazy: l, server: name, authURL: l.authURL}, nil
 	}
-	s.Relayed = true
-	return oauthAttempt{rec: s, server: name, authURL: s.OAuthURL}, nil
+	return oauthAttempt{}, errRelayStateDrift
 }
 
 // releaseOAuthRelay gives back an undelivered reservation (refused paste, transport failure,
@@ -244,17 +329,22 @@ func (reg *mcpRegistry) beginOAuthRelay(name string) (oauthAttempt, error) {
 func (reg *mcpRegistry) releaseOAuthRelay(a oauthAttempt) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	if a.rec != nil && reg.servers[a.server] == a.rec {
+	switch {
+	case a.rec != nil && reg.servers[a.server] == a.rec:
 		a.rec.Relayed = false
+	case a.lazy != nil && slices.Contains(reg.lazySignIns, a.lazy):
+		a.lazy.relayed = false
 	}
 }
 
-// clearAll wipes the registry and the pool and broadcasts mcp_disconnected per server when the engine ends: MCP
+// clearAll wipes the registry, the pool and the lazy anchors and broadcasts mcp_disconnected per server when the engine ends: MCP
 // subprocesses live inside kiro-cli.
 func (reg *mcpRegistry) clearAll(ctx context.Context) {
 	reg.mu.Lock()
 	prev := reg.servers
 	reg.servers = make(map[string]*mcpServerRuntime)
+	reg.signIn = signInSlot{}
+	reg.lazySignIns = nil
 	hadPool := len(reg.pool) > 0
 	reg.pool = nil
 	reg.mu.Unlock()

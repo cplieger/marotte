@@ -37,6 +37,7 @@ import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { initSteeringEditor, loadSteeringDoc } from "./settings-steering.js";
 import { DEFAULT_AUTO_COMPACT_PCT, compactionPolicy } from "./context-ring.js";
 import { paintSettingLocks, writeSwitch } from "./governance.js";
+import { paintOutputStyle, paintOutputStyleHint } from "./output-style.js";
 
 // The kiro-cli settings endpoint does not go through persist.ts's settings state, so it keeps its own
 // per-key write generation: only a key's newest write reports its outcome.
@@ -726,13 +727,10 @@ const agentCapabilities: readonly {
  *  (settings.ValidSpecPlanning and its siblings). A value outside the list, from a newer build,
  *  leaves the control as it is. */
 const agentChoices: readonly {
-  key: "spec_planning" | "output_style";
+  key: "spec_planning";
   selectID: string;
   values: readonly string[];
-}[] = [
-  { key: "spec_planning", selectID: "spec-planning", values: ["off", "quick", "full"] },
-  { key: "output_style", selectID: "output-style", values: ["default", "concise"] },
-];
+}[] = [{ key: "spec_planning", selectID: "spec-planning", values: ["off", "quick", "full"] }];
 
 /** Unset ("") sends nothing, so kiro-cli's own rollout decides; it renders as off, kiro-cli's
  *  shipped default. A flip always stores "on" or "off", never "". */
@@ -831,6 +829,7 @@ function applyAgentCapabilities(s: EffectiveSettings): void {
   for (const choice of agentChoices) {
     paintAgentChoice(choice, s);
   }
+  paintOutputStyle(s.output_style);
   paintSpecPlanning(s.spec_planning);
   const timeout = shellTimeoutInput();
   // Not while the reader is in the box, for retention's reason.
@@ -917,15 +916,20 @@ function initAgentCapabilityControls(): void {
   for (const choice of agentChoices) {
     const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
     select?.addEventListener("change", () => {
-      if (choice.key === "spec_planning") {
-        paintSpecPlanning(select.value);
-      }
+      paintSpecPlanning(select.value);
       saveControl(select, { [choice.key]: select.value }, (shown) => {
         paintAgentChoice(choice, shown);
         paintSpecPlanning(shown.spec_planning);
       });
     });
   }
+  const style = document.getElementById("output-style") as HTMLSelectElement | null;
+  style?.addEventListener("change", () => {
+    paintOutputStyleHint(style.value);
+    saveControl(style, { output_style: style.value }, (shown) => {
+      paintOutputStyle(shown.output_style);
+    });
+  });
   const timeout = shellTimeoutInput();
   timeout?.addEventListener("change", () => {
     const ms = shellTimeoutMs(timeout.value);

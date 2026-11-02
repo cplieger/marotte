@@ -49,6 +49,9 @@ const (
 	SegmentPlan        SegmentKind = "plan"
 	SegmentAttachment  SegmentKind = "attachment"
 	SegmentTurnFailure SegmentKind = "turn_failure"
+	// SegmentWake is a turn_wake's header text (marotte.WakeSearchTexts): its label and the messages it draws, which
+	// their own rows then leave out.
+	SegmentWake SegmentKind = "wake"
 	// SegmentEntry is the filter-only kind: a filter query with no text yields one hit per matching entry (offset 0,
 	// zero length).
 	SegmentEntry SegmentKind = "entry"
@@ -57,6 +60,8 @@ const (
 // Hit locates one match; the client fetches the turns it needs and highlights locally. Offset indexes runes inside
 // the one segment SegmentKind names on EntryID, never a whole turn.
 type Hit struct {
+	// Caller is set on a hit in a prompt or steer an API caller sent, so a result names who sent the words.
+	Caller *marotte.Caller `json:"caller,omitempty"`
 	// TurnID is the matched entry's turn.
 	TurnID string `json:"turn_id"`
 	// EntryID is the matched entry.
@@ -177,6 +182,7 @@ func searchEntries(entries []marotte.Entry, drawn map[string]struct{}, raw strin
 		return SearchResult{Matches: []Hit{}}, 0
 	}
 	turns := indexSearchTurns(entries, drawn)
+	woken := wakeFactsOf(entries)
 	sc := hitScan{hits: make([]Hit, 0, 16)}
 	scanned := 0
 	for i := range entries {
@@ -186,7 +192,10 @@ func searchEntries(entries []marotte.Entry, drawn map[string]struct{}, raw strin
 			continue
 		}
 		scanned++
-		segs := entrySegments(e, t)
+		if _, ok := woken.drawn[e.ID]; ok && e.Kind == marotte.EntryKindSteer {
+			continue
+		}
+		segs := entrySegments(e, t, woken.names)
 		if !entryMatchesFilters(e, t, &q) {
 			continue
 		}
@@ -367,21 +376,32 @@ func appendSegmentHits(sc *hitScan, e *marotte.Entry, ordinal int, q *searchQuer
 				Offset:      hit.Rune,
 				SegmentLen:  len(runes),
 				Excerpt:     excerptAround(runes, hit.Rune, q.needleRunes),
+				Caller:      seg.caller,
 			}
 		})
 	}
 }
 
 type segment struct {
-	kind SegmentKind
-	text string
+	// caller is the API caller that sent a prompt's or steer's words, nil for the user's and every other span.
+	caller *marotte.Caller
+	kind   SegmentKind
+	text   string
+}
+
+// sentBy stamps c on every span of a message an API caller sent.
+func sentBy(segs []segment, c *marotte.Caller) []segment {
+	for i := range segs {
+		segs[i].caller = c
+	}
+	return segs
 }
 
 // entrySegments lists an entry's searchable spans in rendered order: text; tool_call title and input; tool_result
 // claim, diff, denial and output; steer text; plan entries; compaction_failed or safety_blocked text; model_routed's
-// message; model_fallback's models and codes; turn_close failure reason; turn_open prompt and attachment names. Empty
-// spans add nothing.
-func entrySegments(e *marotte.Entry, t *searchTurn) []segment {
+// message; model_fallback's models and codes; turn_close failure reason; turn_open prompt and attachment names;
+// turn_wake label and messages, its runs named from names. Empty spans add nothing.
+func entrySegments(e *marotte.Entry, t *searchTurn, names map[string]string) []segment {
 	switch e.Kind {
 	case marotte.EntryKindText:
 		var p marotte.EntryText
@@ -395,7 +415,7 @@ func entrySegments(e *marotte.Entry, t *searchTurn) []segment {
 		return toolResultPayloadSegments(e.Payload)
 	case marotte.EntryKindSteer:
 		var p marotte.EntrySteer
-		return oneSegment(SegmentSteer, decodeText(e.Payload, &p, func() string { return p.Text }))
+		return sentBy(oneSegment(SegmentSteer, decodeText(e.Payload, &p, func() string { return p.Text })), p.Caller)
 	case marotte.EntryKindPlan:
 		return planSegments(e.Payload)
 	case marotte.EntryKindCompactionFailed:
@@ -417,9 +437,11 @@ func entrySegments(e *marotte.Entry, t *searchTurn) []segment {
 		return oneSegment(SegmentTurnFailure, decodeText(e.Payload, &p, func() string { return p.FailureReason }))
 	case marotte.EntryKindTurnOpen:
 		return turnOpenSegments(e.Payload)
+	case marotte.EntryKindTurnWake:
+		return turnWakeSegments(e.Payload, names)
 	case marotte.EntryKindTurnBind, marotte.EntryKindSteerAck, marotte.EntryKindCompaction,
 		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched, marotte.EntryKindSteerDelivered,
-		marotte.EntryKindSteerCleared:
+		marotte.EntryKindSteerCleared, marotte.EntryKindRunNamed:
 		// A compaction summary restates history searchable at its source; bind and switch render no text. An ack's words
 		// are the one rendered prose left out of the index.
 		return nil
@@ -463,6 +485,19 @@ func oneSegment(kind SegmentKind, text string) []segment {
 	return []segment{{kind: kind, text: text}}
 }
 
+func turnWakeSegments(payload json.RawMessage, names map[string]string) []segment {
+	var w marotte.EntryTurnWake
+	if json.Unmarshal(payload, &w) != nil {
+		return nil
+	}
+	named := marotte.NamedWake(&w, names)
+	var segs []segment
+	for _, text := range marotte.WakeSearchTexts(&named) {
+		segs = append(segs, oneSegment(SegmentWake, text)...)
+	}
+	return segs
+}
+
 // turnOpenSegments is the prompt's text and each attachment's name, not path: attachment-pill.ts shows the name and
 // puts the path in a `title` attribute the client cannot mark. The directory part is unfindable.
 func turnOpenSegments(payload json.RawMessage) []segment {
@@ -474,7 +509,7 @@ func turnOpenSegments(payload json.RawMessage) []segment {
 	for i := range p.Prompt.Attachments {
 		segs = append(segs, oneSegment(SegmentAttachment, p.Prompt.Attachments[i].Name)...)
 	}
-	return segs
+	return sentBy(segs, p.Prompt.Caller)
 }
 
 // toolCallSegments is a call's create half: title and input, as the card renders them. Claim, diff, denial and

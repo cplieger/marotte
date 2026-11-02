@@ -139,6 +139,35 @@ describe("answering an ask: the four outcomes", () => {
     });
   });
 
+  it("sends always_scope only when the answer carries one", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+    await respondPermission.dispatch({
+      chatID: "c1",
+      requestID: 12,
+      optionID: "always-accept",
+      alwaysResource: "head *",
+      alwaysScope: "session",
+    });
+    await respondPermission.dispatch({ chatID: "c1", requestID: 13, optionID: "accept" });
+    await respondPermission.dispatch({
+      chatID: "c1",
+      requestID: 14,
+      optionID: "always-accept",
+      alwaysResource: "head *",
+    });
+
+    expect(mockSend.mock.calls.map((c) => (c[0] as { payload: unknown }).payload)).toEqual([
+      {
+        request_id: 12,
+        option_id: "always-accept",
+        always_resource: "head *",
+        always_scope: "session",
+      },
+      { request_id: 13, option_id: "accept" },
+      { request_id: 14, option_id: "always-accept", always_resource: "head *" },
+    ]);
+  });
+
   it("carries a refusal's reason as the error code", async () => {
     mockSend.mockResolvedValue({
       ok: false,

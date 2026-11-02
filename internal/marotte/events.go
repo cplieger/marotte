@@ -121,6 +121,7 @@ const (
 	// session's pool was replaced or dropped.
 	EventMCPPoolChanged  EventType = "mcp_pool_changed"
 	EventMCPPrewarm      EventType = "mcp_prewarm"
+	EventMCPSignInOpen   EventType = "mcp_sign_in_open"
 	EventModeChanged     EventType = "mode_changed"
 	EventOpenExternalURL EventType = "open_external_url"
 	// EventPermissionNeeded carries a turn's verdict as well as an individual

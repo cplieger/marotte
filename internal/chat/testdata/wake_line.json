@@ -1,0 +1,493 @@
+{
+  "doc": [
+    "The wake header's words: the one-line label and the message under it for each turn_wake shape.",
+    "internal/marotte WakeLine and WakeSearchTexts are the server readers (the rail's first line, the",
+    "Markdown export and find-in-chat) and static-src/turn-wake.ts wakeLine the client's (the header, the",
+    "rail and Copy as text); both read these cases, so a wording change lands in both or fails one.",
+    "",
+    "Expected values follow the approved wording, not either implementation. A run is named by the wake's",
+    "run_name, else \"A workflow\" until a run_named entry names it.",
+    "run and rest are where the client splits the label for its run button; rows are a re-delivery's",
+    "messages, each a run button then rest then the text. search is what the server indexes, which is",
+    "what the header draws (omitted where a case adds nothing to the other cases)."
+  ],
+  "cases": [
+    {
+      "name": "a step's info message is addressed to you",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "build/check-links",
+            "severity": "info",
+            "text": "Link check done: 412 links, none broken. Nothing needed from you.",
+            "run_name": "publish-docs"
+          }
+        ]
+      },
+      "label": "publish-docs · build/check-links to you",
+      "body": "Link check done: 412 links, none broken. Nothing needed from you.",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " · build/check-links to you",
+      "search": [
+        "publish-docs · build/check-links to you",
+        "Link check done: 412 links, none broken. Nothing needed from you."
+      ]
+    },
+    {
+      "name": "a step message whose run has no name yet reads as a workflow",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "build/check-links",
+            "severity": "warning",
+            "text": "Which branch?"
+          }
+        ]
+      },
+      "label": "A workflow · build/check-links asks you",
+      "body": "Which branch?",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " · build/check-links asks you",
+      "search": [
+        "A workflow · build/check-links asks you",
+        "Which branch?"
+      ]
+    },
+    {
+      "name": "a step's warning asks you",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "build/check-links",
+            "severity": "warning",
+            "text": "Two pages still link to the old domain. Should I rewrite those links now, or leave them for the next release?",
+            "run_name": "publish-docs"
+          }
+        ]
+      },
+      "label": "publish-docs · build/check-links asks you",
+      "body": "Two pages still link to the old domain. Should I rewrite those links now, or leave them for the next release?",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " · build/check-links asks you",
+      "search": [
+        "publish-docs · build/check-links asks you",
+        "Two pages still link to the old domain. Should I rewrite those links now, or leave them for the next release?"
+      ]
+    },
+    {
+      "name": "a step's error reports an error",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "build/check-links",
+            "severity": "error",
+            "text": "The site build failed: docs/guide/install.md has no front matter.",
+            "run_name": "publish-docs"
+          }
+        ]
+      },
+      "label": "publish-docs · build/check-links reports an error",
+      "body": "The site build failed: docs/guide/install.md has no front matter.",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " · build/check-links reports an error",
+      "search": [
+        "publish-docs · build/check-links reports an error",
+        "The site build failed: docs/guide/install.md has no front matter."
+      ]
+    },
+    {
+      "name": "a network note says the step waits for the network",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "build/check-links",
+            "severity": "info",
+            "text": "Step \"check-links\" has had connection errors (ECONNRESET) since 10:02:11. The workflow keeps retrying it about every 120s until 10:32:11 and pauses the run if the last retry fails too. Nothing is needed from you.",
+            "run_name": "publish-docs"
+          }
+        ],
+        "note": "network"
+      },
+      "label": "publish-docs · build/check-links is waiting for the network",
+      "body": "Step \"check-links\" has had connection errors (ECONNRESET) since 10:02:11. The workflow keeps retrying it about every 120s until 10:32:11 and pauses the run if the last retry fails too. Nothing is needed from you.",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " · build/check-links is waiting for the network"
+    },
+    {
+      "name": "a network give-up says the step lost the network",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "build/check-links",
+            "severity": "warning",
+            "text": "Step \"check-links\" had connection errors (ECONNRESET) from 10:02:11 to 10:32:11, so the workflow stopped retrying it and paused the run. When the connection is back, resume the run with update_workflow (action update_status, status \"running\"), or tell the user.",
+            "run_name": "publish-docs"
+          }
+        ],
+        "note": "network_lost"
+      },
+      "label": "publish-docs · build/check-links lost the network",
+      "body": "Step \"check-links\" had connection errors (ECONNRESET) from 10:02:11 to 10:32:11, so the workflow stopped retrying it and paused the run. When the connection is back, resume the run with update_workflow (action update_status, status \"running\"), or tell the user.",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " · build/check-links lost the network",
+      "search": [
+        "publish-docs · build/check-links lost the network",
+        "Step \"check-links\" had connection errors (ECONNRESET) from 10:02:11 to 10:32:11, so the workflow stopped retrying it and paused the run. When the connection is back, resume the run with update_workflow (action update_status, status \"running\"), or tell the user."
+      ]
+    },
+    {
+      "name": "a repeat cap is worded from the typed pause, with no body",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "fix-loop",
+            "severity": "info",
+            "text": "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition.",
+            "run_name": "publish-docs"
+          }
+        ],
+        "note": "repeat_cap",
+        "loop": "fix-loop",
+        "max_iterations": 6
+      },
+      "label": "publish-docs paused: fix-loop reached its round limit (6)",
+      "body": "",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " paused: fix-loop reached its round limit (6)",
+      "search": [
+        "publish-docs paused: fix-loop reached its round limit (6)"
+      ]
+    },
+    {
+      "name": "a repeat cap with no typed pause is worded as the note it is",
+      "wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-3f2a",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "fix-loop",
+            "severity": "info",
+            "text": "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition.",
+            "run_name": "publish-docs"
+          }
+        ],
+        "note": "repeat_cap"
+      },
+      "label": "publish-docs · fix-loop to you",
+      "body": "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition.",
+      "run": "wf_5e1f0c2a9b7d4e36"
+    },
+    {
+      "name": "a completed run",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_5e1f0c2a9b7d4e36",
+        "run_status": "completed",
+        "run_name": "publish-docs"
+      },
+      "label": "publish-docs completed",
+      "body": "",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " completed",
+      "search": [
+        "publish-docs completed"
+      ]
+    },
+    {
+      "name": "a failed run gives its reason",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_5e1f0c2a9b7d4e36",
+        "run_status": "failed",
+        "stop_reason": "step build failed",
+        "run_name": "publish-docs"
+      },
+      "label": "publish-docs failed: step build failed",
+      "body": "",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " failed: step build failed"
+    },
+    {
+      "name": "a run the reader stopped gives the reason given",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_7c3a9e1f0b2d4a58",
+        "run_status": "aborted",
+        "initiator": "user",
+        "stop_reason": "tab closed",
+        "run_name": "nightly-report"
+      },
+      "label": "nightly-report stopped by you: tab closed",
+      "body": "",
+      "run": "wf_7c3a9e1f0b2d4a58",
+      "rest": " stopped by you: tab closed",
+      "search": [
+        "nightly-report stopped by you: tab closed"
+      ]
+    },
+    {
+      "name": "a run the reader marked complete",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_7c3a9e1f0b2d4a58",
+        "run_status": "completed",
+        "initiator": "user",
+        "stop_reason": "good enough",
+        "run_name": "nightly-report"
+      },
+      "label": "nightly-report marked complete by you",
+      "body": "",
+      "run": "wf_7c3a9e1f0b2d4a58",
+      "rest": " marked complete by you"
+    },
+    {
+      "name": "a run aborted by nobody named",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_7c3a9e1f0b2d4a58",
+        "run_status": "aborted",
+        "run_name": "nightly-report"
+      },
+      "label": "nightly-report stopped",
+      "body": "",
+      "run": "wf_7c3a9e1f0b2d4a58",
+      "rest": " stopped"
+    },
+    {
+      "name": "a cancelled run reads as stopped",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_7c3a9e1f0b2d4a58",
+        "run_status": "cancelled",
+        "initiator": "user",
+        "run_name": "nightly-report"
+      },
+      "label": "nightly-report stopped by you",
+      "body": "",
+      "run": "wf_7c3a9e1f0b2d4a58",
+      "rest": " stopped by you"
+    },
+    {
+      "name": "a stop reason's line breaks and space runs read as one space on the one-line label",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_5e1f0c2a9b7d4e36",
+        "run_status": "aborted",
+        "initiator": "user",
+        "stop_reason": "  tab closed\nbefore the\u2028build \t\u0085ended  ",
+        "run_name": "publish-docs"
+      },
+      "label": "publish-docs stopped by you: tab closed before the build ended",
+      "body": "",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " stopped by you: tab closed before the build ended"
+    },
+    {
+      "name": "a byte order mark is no space, so it stays at a stop reason's edge",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_5e1f0c2a9b7d4e36",
+        "run_status": "aborted",
+        "initiator": "user",
+        "stop_reason": "\ufeff tab closed ",
+        "run_name": "publish-docs"
+      },
+      "label": "publish-docs stopped by you: \ufeff tab closed",
+      "body": "",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " stopped by you: \ufeff tab closed"
+    },
+    {
+      "name": "a stop reason of only a byte order mark still reads as a reason",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_5e1f0c2a9b7d4e36",
+        "run_status": "aborted",
+        "initiator": "user",
+        "stop_reason": "\ufeff",
+        "run_name": "publish-docs"
+      },
+      "label": "publish-docs stopped by you: \ufeff",
+      "body": "",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " stopped by you: \ufeff"
+    },
+    {
+      "name": "a finished run with no name yet reads as a workflow",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_5e1f0c2a9b7d4e36",
+        "run_status": "completed"
+      },
+      "label": "A workflow completed",
+      "body": "",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " completed"
+    },
+    {
+      "name": "a re-delivery lists every message it resumes",
+      "wake": {
+        "reason": "rewake",
+        "steers": [
+          {
+            "id": "wfmsg-q",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "draft",
+            "severity": "warning",
+            "text": "Which branch should I base the release notes on?",
+            "run_name": "publish-docs"
+          },
+          {
+            "id": "wfmsg-r",
+            "run": "wf_7c3a9e1f0b2d4a58",
+            "step": "collect",
+            "severity": "success",
+            "text": "Leg 1 is done.",
+            "run_name": "nightly-report"
+          }
+        ]
+      },
+      "label": "Resumed with 2 workflow messages you stopped before they were read",
+      "body": "publish-docs · draft: Which branch should I base the release notes on?\nnightly-report · collect: Leg 1 is done.",
+      "rest": "Resumed with 2 workflow messages you stopped before they were read",
+      "search": [
+        "Resumed with 2 workflow messages you stopped before they were read",
+        "publish-docs · draft: Which branch should I base the release notes on?",
+        "nightly-report · collect: Leg 1 is done."
+      ],
+      "rows": [
+        {
+          "run": "wf_5e1f0c2a9b7d4e36",
+          "rest": " · draft: ",
+          "text": "Which branch should I base the release notes on?"
+        },
+        {
+          "run": "wf_7c3a9e1f0b2d4a58",
+          "rest": " · collect: ",
+          "text": "Leg 1 is done."
+        }
+      ]
+    },
+    {
+      "name": "a re-delivery of one message",
+      "wake": {
+        "reason": "rewake",
+        "steers": [
+          {
+            "id": "wfmsg-q",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "draft",
+            "severity": "warning",
+            "text": "Which branch should I base the release notes on?",
+            "run_name": "publish-docs"
+          }
+        ]
+      },
+      "label": "Resumed with 1 workflow message you stopped before it was read",
+      "body": "publish-docs · draft: Which branch should I base the release notes on?",
+      "rest": "Resumed with 1 workflow message you stopped before it was read",
+      "rows": [
+        {
+          "run": "wf_5e1f0c2a9b7d4e36",
+          "rest": " · draft: ",
+          "text": "Which branch should I base the release notes on?"
+        }
+      ]
+    },
+    {
+      "name": "an unknown reason keeps today's line",
+      "wake": {
+        "reason": "unknown"
+      },
+      "label": "Agent-initiated turn",
+      "body": "",
+      "search": []
+    },
+    {
+      "name": "a step-message wake that names no message keeps today's line",
+      "wake": {
+        "reason": "step_message"
+      },
+      "label": "Agent-initiated turn",
+      "body": "",
+      "search": []
+    },
+    {
+      "name": "a run-finished wake that names no run keeps today's line",
+      "wake": {
+        "reason": "run_finished"
+      },
+      "label": "Agent-initiated turn",
+      "body": "",
+      "search": []
+    },
+    {
+      "name": "a re-delivery that names no message keeps today's line",
+      "wake": {
+        "reason": "rewake"
+      },
+      "label": "Agent-initiated turn",
+      "body": "",
+      "search": []
+    },
+    {
+      "name": "a run still running is no finished run",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_5e1f0c2a9b7d4e36",
+        "run_status": "running",
+        "run_name": "publish-docs"
+      },
+      "label": "Agent-initiated turn",
+      "body": "",
+      "search": []
+    },
+    {
+      "name": "a re-delivered message whose run has no name yet reads as a workflow",
+      "wake": {
+        "reason": "rewake",
+        "steers": [
+          {
+            "id": "wfmsg-q",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "draft",
+            "severity": "warning",
+            "text": "Which branch?"
+          }
+        ]
+      },
+      "label": "Resumed with 1 workflow message you stopped before it was read",
+      "body": "A workflow · draft: Which branch?",
+      "rest": "Resumed with 1 workflow message you stopped before it was read",
+      "rows": [
+        {
+          "run": "wf_5e1f0c2a9b7d4e36",
+          "rest": " · draft: ",
+          "text": "Which branch?"
+        }
+      ]
+    }
+  ]
+}

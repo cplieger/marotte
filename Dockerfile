@@ -211,7 +211,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Only the minimal runtime surface is baked; everything else (Node, Python, Go,
-# Java, Rust, LSPs) is installed on demand by the tools engine into /config/tools/.
+# Java, Rust, LSPs) is installed on demand by the tools engine into its tools
+# folder (/config/tools unless MAROTTE_TOOLS_DIR moves it).
 # git serves gitexec, file history and forges; unzip the kiro-cli installer;
 # xz-utils .tar.xz tool archives; jq entrypoint.sh. kiro-cli is downloaded at first
 # boot because its licence forbids baking it. PKG_REFRESH busts this layer's cache, or `apt-get upgrade` never reruns and the

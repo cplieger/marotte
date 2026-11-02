@@ -203,7 +203,8 @@ type TurnSummary struct {
 	// stays the single source of truth for what "turn 14" means.
 	ID string `json:"id"`
 	// FirstLine is the request's first line, whitespace-collapsed and capped, for
-	// the turn-map preview. Empty for a turn the user did not trigger.
+	// the turn-map preview; an agent-initiated turn's is its turn_wake's line
+	// (WakeLine), and empty when it recorded none.
 	FirstLine string      `json:"first_line,omitempty"`
 	Outcome   TurnOutcome `json:"outcome"`
 	// N is the 1-based, session-absolute turn ordinal.

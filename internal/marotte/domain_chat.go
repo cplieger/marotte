@@ -427,10 +427,19 @@ type ConfigTemplateResponse struct {
 	// retry policy can rely on.
 	Catalog       CatalogState  `json:"catalog"`
 	CatalogReason CatalogReason `json:"catalog_reason,omitempty"`
-	// Both lists are non-null on every path, so a generated decoder requiring an array
+	// Every list is non-null on every path, so a generated decoder requiring an array
 	// cannot fail on a failure body.
-	Modes  []SessionMode  `json:"modes"`
-	Models []SessionModel `json:"models"`
+	Modes        []SessionMode  `json:"modes"`
+	Models       []SessionModel `json:"models"`
+	OutputStyles []OutputStyle  `json:"output_styles"`
+}
+
+// OutputStyle is one choice of the template's outputStyle select; ID is the value
+// EffectiveSettings.OutputStyle stores.
+type OutputStyle struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 // Chat is the persisted chat header, <dir>/<id>/chat.json; the transcript is the
@@ -530,6 +539,8 @@ func CarryCost(text string) int { return len(text) + len(carrySeparator) }
 // never sent automatically. A list holds at most one carried row, and it is held. Label is the
 // row's PromptCommand.DisplayText.
 type QueuedPrompt struct {
+	// Caller is set on a row an API caller queued.
+	Caller      *Caller      `json:"caller,omitempty"`
 	ID          string       `json:"id"`
 	Text        string       `json:"text"`
 	Label       string       `json:"label,omitempty"`
@@ -546,10 +557,11 @@ func CarriedRow(id string, texts, resends []string) QueuedPrompt {
 	return QueuedPrompt{ID: id, Text: strings.Join(texts, carrySeparator), Resends: resends}
 }
 
-// Absorb appends more steers to q, keeping q's id.
+// Absorb appends more steers to q, keeping q's id; q keeps a caller only when neither row is the user's (SharedCaller).
 func (q *QueuedPrompt) Absorb(more *QueuedPrompt) {
 	q.Text += carrySeparator + more.Text
 	q.Resends = append(q.Resends, more.Resends...)
+	q.Caller = SharedCaller([]*Caller{q.Caller, more.Caller})
 }
 
 // SessionChain returns every KAS session id this chat has run on, current one last: the
@@ -769,10 +781,10 @@ type SessionListResponse struct {
 // report idle whatever the run did.
 type WorkflowRun struct {
 	WorkflowID string `json:"workflow_id"`
-	// Name is what to DISPLAY (`runLabel ?? workflowName`), not the recipe.
+	// Name is what to DISPLAY (RunDisplayName), not the recipe; "" when nothing names the run.
 	Name string `json:"name"`
 	// WorkflowName is the RECIPE, the only field a per-recipe decision may read:
-	// labels rewrite Name, so a rule keyed on it fails OPEN.
+	// labels rewrite Name, so a rule keyed on it fails OPEN. "" for a prompt-built run.
 	WorkflowName string `json:"workflow_name,omitempty"`
 	// Status is run-level: paused / completed / failed.
 	Status RunStatus `json:"status,omitempty"`

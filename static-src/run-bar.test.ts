@@ -42,20 +42,20 @@ vi.mock("./api-client.js", async () => ({
     const hit = /^\/api\/runs\/([^/?]+)$/.exec(path);
     if (hit !== null) {
       const id = decodeURIComponent(hit[1] ?? "");
-      const state = inspect.get(id);
+      const fixture = inspect.get(id) as Record<string, unknown> | undefined;
+      if (fixture === undefined) {
+        return Promise.resolve({ ok: false, status: 0, data: null, error: "" });
+      }
       // CLONED per call, because the real read parses fresh JSON: handing the same object back
       // twice makes the run cell's signal dedupe by identity, and the refetch cases below would
-      // then pass with no re-render to protect.
-      return Promise.resolve(
-        state === undefined
-          ? { ok: false, status: 0, data: null, error: "" }
-          : {
-              ok: true,
-              status: 200,
-              data: { workflowId: id, state: structuredClone(state) },
-              error: "",
-            },
-      );
+      // then pass with no re-render to protect. `display_name` is the server's key beside KAS's state.
+      const { display_name: displayName, ...state } = structuredClone(fixture);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        data: { workflowId: id, display_name: displayName, state },
+        error: "",
+      });
     }
     return Promise.resolve({ ok: false, status: 0, data: null, error: "" });
   }),
@@ -88,13 +88,13 @@ function runID(tag: string): string {
   return `wf-${tag}-${String(runSeq)}`;
 }
 
-/** A run state as `GET /api/runs/{id}` answers it. One running leaf, so the counters and the
- *  elapsed clock have something to read. */
+/** A run state as `GET /api/runs/{id}` answers it, with the server's `display_name` beside it. One
+ *  running leaf, so the counters and the elapsed clock have something to read. */
 function state(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     workflowId: "wf",
     status: "running",
-    runLabel: "nightly sweep",
+    display_name: "nightly sweep",
     root: {
       nodeId: "n1",
       type: "step",
@@ -194,9 +194,9 @@ describe("the run bar", () => {
     const theirs = chatID();
     chats.push(mine, theirs);
     const [a, b, orphan] = [runID("mine"), runID("theirs"), runID("orphan")];
-    inspect.set(a, state({ runLabel: "mine" }));
-    inspect.set(b, state({ runLabel: "theirs" }));
-    inspect.set(orphan, state({ runLabel: "orphan" }));
+    inspect.set(a, state({ display_name: "mine" }));
+    inspect.set(b, state({ display_name: "theirs" }));
+    inspect.set(orphan, state({ display_name: "orphan" }));
     live(a, mine);
     live(b, theirs);
     live(orphan, "");
@@ -210,9 +210,9 @@ describe("the run bar", () => {
     const c = chatID();
     chats.push(c);
     const [running, parked, asking] = [runID("run"), runID("park"), runID("ask")];
-    inspect.set(running, state({ runLabel: "a" }));
-    inspect.set(parked, state({ runLabel: "b", status: "paused" }));
-    inspect.set(asking, state({ runLabel: "c", status: "paused" }));
+    inspect.set(running, state({ display_name: "a" }));
+    inspect.set(parked, state({ display_name: "b", status: "paused" }));
+    inspect.set(asking, state({ display_name: "c", status: "paused" }));
     live(running, c);
     live(parked, c);
     live(asking, c);
@@ -235,10 +235,10 @@ describe("the run bar", () => {
     chats.push(c);
     const ids = ["f1", "f2", "f3", "f4"].map((n) => runID(n));
     for (const id of ids) {
-      inspect.set(id, state({ runLabel: id }));
+      inspect.set(id, state({ display_name: id }));
       live(id, c);
     }
-    inspect.set(ids[2]!, state({ runLabel: ids[2], status: "paused" }));
+    inspect.set(ids[2]!, state({ display_name: ids[2], status: "paused" }));
     await activate(c);
     const toggle = fold.querySelector<HTMLButtonElement>(".run-bar-toggle")!;
     expect(fold.hidden).toBe(false);
@@ -265,7 +265,7 @@ describe("the run bar", () => {
     chats.push(c);
     for (const n of ["p1", "p2"]) {
       const id = runID(n);
-      inspect.set(id, state({ runLabel: id }));
+      inspect.set(id, state({ display_name: id }));
       live(id, c);
     }
     await activate(c);
@@ -282,7 +282,7 @@ describe("the run bar", () => {
     const id = runID("alert");
     inspect.set(
       id,
-      state({ runLabel: "nightly", status: "paused", pauseReason: "host unreachable" }),
+      state({ display_name: "nightly", status: "paused", pauseReason: "host unreachable" }),
     );
     live(id, c);
     await activate(c);
@@ -294,7 +294,7 @@ describe("the run bar", () => {
       "Open workflow run nightly: Waiting: host unreachable",
     );
 
-    inspect.set(id, state({ runLabel: "nightly" }));
+    inspect.set(id, state({ display_name: "nightly" }));
     invalidateRun(id);
     await vi.waitFor(() => {
       expect(btn.dataset["alert"]).toBeUndefined();
@@ -308,7 +308,7 @@ describe("the run bar", () => {
     const c = chatID();
     chats.push(c);
     const id = runID("question");
-    inspect.set(id, state({ runLabel: "release", status: "paused" }));
+    inspect.set(id, state({ display_name: "release", status: "paused" }));
     live(id, c);
     pushRunAsk(c, id);
     await activate(c);
@@ -322,19 +322,17 @@ describe("the run bar", () => {
     expect(openRunView).toHaveBeenCalledWith(id, "release", c);
   });
 
-  it("names a run by its label, then the recipe, then a fallback", async () => {
+  it("names a run by the server's display name, else a fallback, never by its recipe", async () => {
     const c = chatID();
     chats.push(c);
-    const [a, b, d] = [runID("a"), runID("b"), runID("c")];
-    inspect.set(a, state({ runLabel: "the label" }));
-    inspect.set(b, state({ runLabel: "", workflowName: "the recipe" }));
-    inspect.set(d, state({ runLabel: "", workflowName: "" }));
+    const [a, b] = [runID("a"), runID("b")];
+    inspect.set(a, state({ display_name: "the label", workflowName: "workflow-from-prompt" }));
+    inspect.set(b, state({ display_name: "", runLabel: "", workflowName: "workflow-from-prompt" }));
     live(a, c);
     live(b, c);
-    live(d, c);
     await activate(c);
 
-    expect(rowText(".ev-sum-label")).toEqual(["the label", "the recipe", "Workflow run"]);
+    expect(rowText(".ev-sum-label")).toEqual(["the label", "Workflow run"]);
   });
 
   it("says nothing about a run it has not fetched yet", async () => {
@@ -360,9 +358,9 @@ describe("the run bar", () => {
     const c = chatID();
     chats.push(c);
     const [running, parked, asking] = [runID("mrun"), runID("mpark"), runID("mask")];
-    inspect.set(running, state({ runLabel: "a" }));
-    inspect.set(parked, state({ runLabel: "b", status: "paused" }));
-    inspect.set(asking, state({ runLabel: "c", status: "paused" }));
+    inspect.set(running, state({ display_name: "a" }));
+    inspect.set(parked, state({ display_name: "b", status: "paused" }));
+    inspect.set(asking, state({ display_name: "c", status: "paused" }));
     live(running, c);
     live(parked, c);
     live(asking, c);
@@ -395,7 +393,7 @@ describe("the run bar", () => {
     const c = chatID();
     chats.push(c);
     const id = runID("click");
-    inspect.set(id, state({ runLabel: "nightly" }));
+    inspect.set(id, state({ display_name: "nightly" }));
     live(id, c);
     await activate(c);
 
@@ -413,7 +411,7 @@ describe("the run bar", () => {
     chats.push(c);
     const id = runID("long");
     const label = "nightly dependency sweep across every repository in the organisation";
-    inspect.set(id, state({ runLabel: label }));
+    inspect.set(id, state({ display_name: label }));
     live(id, c);
     await activate(c);
 
@@ -480,7 +478,7 @@ describe("the run bar", () => {
     const c = chatID();
     chats.push(c);
     const parked = runID("parked");
-    inspect.set(parked, state({ runLabel: "nightly sweep", status: "paused" }));
+    inspect.set(parked, state({ display_name: "nightly sweep", status: "paused" }));
     live(parked, c);
     await activate(c);
     expect(rowText(".ev-sum-label")).toEqual(["nightly sweep"]);
@@ -492,7 +490,7 @@ describe("the run bar", () => {
     // forget itself: the blank is read by the next render, which any other live run of this chat
     // arriving is enough to cause.
     const second = runID("second");
-    inspect.set(second, state({ runLabel: "the other one" }));
+    inspect.set(second, state({ display_name: "the other one" }));
     live(second, c);
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
@@ -688,8 +686,8 @@ describe("a render patches its rows rather than rebuilding them", () => {
     const c = chatID();
     chats.push(c);
     const [first, second] = [runID("first"), runID("second")];
-    inspect.set(first, state({ runLabel: "first" }));
-    inspect.set(second, state({ runLabel: "second" }));
+    inspect.set(first, state({ display_name: "first" }));
+    inspect.set(second, state({ display_name: "second" }));
     live(first, c);
     live(second, c);
     await activate(c);
@@ -697,7 +695,7 @@ describe("a render patches its rows rather than rebuilding them", () => {
     const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open");
     btn?.focus();
 
-    await advance(second, { runLabel: "second", status: "paused" });
+    await advance(second, { display_name: "second", status: "paused" });
 
     expect(rowText(".ev-sum-label")).toEqual(["second", "first"]);
     expect(document.activeElement).toBe(btn);
@@ -737,7 +735,7 @@ describe("a render patches its rows rather than rebuilding them", () => {
     expect(rowText(".ev-sum-label")).toEqual(["Workflow run"]);
     const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open");
 
-    await advance(id, { runLabel: "nightly sweep" });
+    await advance(id, { display_name: "nightly sweep" });
 
     expect(bar.querySelector(".run-bar-open")).toBe(btn);
     btn?.click();

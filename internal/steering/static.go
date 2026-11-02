@@ -3,12 +3,17 @@ package steering
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
-var lookupEnv = os.LookupEnv
+var (
+	lookupEnv = os.LookupEnv
+	geteuid   = os.Geteuid
+)
 
 func writeIntro(b *strings.Builder, workDir string) {
 	b.WriteString("# Environment\n\n")
@@ -32,9 +37,10 @@ func envSpan(name string) string {
 // writeRuntime prints the live process environment rather than a copy of the
 // Dockerfile's ENV lines: the generator runs inside the container, so the value
 // it sees is the one every shell inherits.
-func writeRuntime(b *strings.Builder, configDir string) {
+func writeRuntime(b *strings.Builder, configDir, toolsDir string) {
 	b.WriteString("## Container runtime\n\n")
-	if home := envSpan("HOME"); home != "" {
+	home := envSpan("HOME")
+	if home != "" {
 		b.WriteString("- " + home)
 		if kiroHome := envSpan("KIRO_HOME"); kiroHome != "" {
 			b.WriteString("; " + kiroHome + " holds kiro-cli's own state: `steering/environment.md` ")
@@ -42,12 +48,7 @@ func writeRuntime(b *strings.Builder, configDir string) {
 		}
 		b.WriteString("\n")
 	}
-	if p := envSpan("PATH"); p != "" {
-		b.WriteString("- " + p + " as the image exports it: `" + configDir + "/tools/bin` is the tools ")
-		b.WriteString("engine's single bin dir (symlinks into `" + configDir + "/tools/opt/<tool>/<version>/`), ")
-		b.WriteString("`" + configDir + "/tools/go/bin` is `$GOPATH/bin`, and `$HOME/.local/bin` is the ")
-		b.WriteString("per-user bin dir (`uv tool install` lands there)\n")
-	}
+	onPath := writePath(b, toolsDir)
 	var rest []string
 	for _, name := range []string{"GOPATH", "GOBIN", "LANG", "TZ"} {
 		if s := envSpan(name); s != "" {
@@ -59,22 +60,94 @@ func writeRuntime(b *strings.Builder, configDir string) {
 	}
 	b.WriteString("- `" + configDir + "` is the persistent volume: `chats/` (one directory per chat: a `chat.json` header and an `entries.jsonl` turn log), ")
 	b.WriteString("`config.json` (marotte's settings), `tools.json` (tool manifest: what should be installed), ")
-	b.WriteString("`tools-state.json` (what is installed), `tools/` (`bin/`, `opt/<tool>/<version>/`, ")
-	b.WriteString("`go/`, `npm/`, `python/`, `kiro-cli-versions/<version>/`), `home/` (= HOME)\n")
-	b.WriteString("- Every login shell, the browser Shell panel's `bash --login` included, sources ")
-	b.WriteString("`/etc/profile.d/10-marotte-path.sh` (rewritten by the entrypoint each boot), so an ")
-	b.WriteString("installed tool resolves by bare name there too. If a user still gets `command not found`, ")
-	b.WriteString("the boot log carries a WARNING that the drop-in was not written: hand them the absolute ")
-	b.WriteString("path (`" + configDir + "/tools/bin/<tool>`). Pin `HOME=" + configDir + "/home` on any command a ")
-	b.WriteString("user runs that reads or writes per-user state (`git config --global`, a tool's own login): a shell ")
-	b.WriteString("reached another way can carry `HOME=/root`, and a token written there is one no agent ")
-	b.WriteString("session reads\n\n")
+	b.WriteString("`tools-state.json` (what is installed)")
+	if home != "" {
+		v, _ := lookupEnv("HOME")
+		if rel, inside := strings.CutPrefix(v, configDir+"/"); inside && rel != "" {
+			b.WriteString(", `" + rel + "/` (= HOME)")
+		}
+	}
+	if toolsDir != "" {
+		b.WriteString("; `" + toolsDir + "` is the tools engine's tree (`bin/`, `opt/<tool>/<version>/`, ")
+		b.WriteString("`go/`, `npm/`, `python/`, `kiro-cli-versions/<version>/`)\n")
+		writeShellHint(b, toolsDir, onPath)
+	} else {
+		b.WriteString("\n- The tools engine is off, so it installs nothing")
+	}
+	if home != "" {
+		b.WriteString(". Pin " + home + " on any command a ")
+		b.WriteString("user runs that reads or writes per-user state (`git config --global`, a tool's own login): a shell ")
+		b.WriteString("reached another way can carry `HOME=/root`, and a token written there is one no agent ")
+		b.WriteString("session reads")
+	}
+	b.WriteString("\n\n")
+}
+
+// writePath renders the PATH bullet and reports whether the tools engine's bin dir is on PATH,
+// which a server started without the image's entrypoint may lack.
+func writePath(b *strings.Builder, toolsDir string) bool {
+	pathVal, _ := lookupEnv("PATH")
+	onPath := toolsDir != "" && slices.Contains(filepath.SplitList(pathVal), toolsDir+"/bin")
+	p := envSpan("PATH")
+	if p == "" {
+		return onPath
+	}
+	b.WriteString("- " + p + ": ")
+	if toolsDir != "" {
+		if onPath {
+			b.WriteString("`" + toolsDir + "/bin` is the tools engine's single bin dir")
+		} else {
+			b.WriteString("the tools engine's single bin dir `" + toolsDir + "/bin` is not on it")
+		}
+		b.WriteString(" (symlinks into `" + toolsDir + "/opt/<tool>/<version>/`), ")
+		if gopath, _ := lookupEnv("GOPATH"); gopath == toolsDir+"/go" {
+			b.WriteString("`" + toolsDir + "/go/bin` is `$GOPATH/bin`, ")
+		}
+		b.WriteString("and ")
+	}
+	b.WriteString("`$HOME/.local/bin` is the per-user bin dir (`uv tool install` lands there)\n")
+	return onPath
+}
+
+// dropInEnv is set to "1" by entrypoint.sh's offer_login_path only once the drop-in holds this
+// start's PATH, which it tries only as root; any other value or none promises nothing about a login shell's PATH.
+const dropInEnv = "MAROTTE_PATH_DROPIN"
+
+func writeShellHint(b *strings.Builder, toolsDir string, onPath bool) {
+	const fromProfile = "- A login shell, the browser Shell panel's `bash --login` included, takes its PATH from " +
+		"`/etc/profile`, which leaves out `"
+	dropIn, _ := lookupEnv(dropInEnv)
+	switch uid := geteuid(); {
+	case !onPath:
+		b.WriteString("- `" + toolsDir + "/bin` is on no shell's PATH, a login shell's included, so a user ")
+		b.WriteString("runs an installed tool by its absolute ")
+	case uid != 0:
+		b.WriteString(fromProfile + toolsDir + "/bin`: marotte runs as uid " + strconv.Itoa(uid))
+		b.WriteString(", not root, so the entrypoint writes no drop-in restoring it. There a user runs an ")
+		b.WriteString("installed tool by its absolute ")
+	case dropIn != "1":
+		b.WriteString("- A login shell, the browser Shell panel's `bash --login` included, may not search `" + toolsDir + "/bin`: ")
+		b.WriteString("the entrypoint could not give `/etc/profile.d/10-marotte-path.sh` this start's PATH (the boot log's ")
+		b.WriteString("WARNING says why, or the server started without the entrypoint). There a user runs an installed tool ")
+		b.WriteString("by its absolute ")
+	default:
+		b.WriteString("- Every login shell, the browser Shell panel's `bash --login` included, sources ")
+		b.WriteString("`/etc/profile.d/10-marotte-path.sh`, which holds this start's PATH, so an ")
+		b.WriteString("installed tool resolves by bare name there too; any shell also finds it by its absolute ")
+	}
+	b.WriteString("path (`" + toolsDir + "/bin/<tool>`)")
 }
 
 // 9847 mirrors internal/server's unexported port const; steering cannot import
 // server (server imports steering).
-func writeToolsEngine(b *strings.Builder, configDir, workDir string) {
+func writeToolsEngine(b *strings.Builder, configDir, toolsDir, workDir string) {
 	b.WriteString("## Tools engine\n\n")
+	if toolsDir == "" {
+		b.WriteString("- The tools engine is off because the server cannot use the folder configured for it; ")
+		b.WriteString("Settings → Tools and the boot log say why. Nothing installs through it until the user sets ")
+		b.WriteString("`MAROTTE_TOOLS_DIR` (or `KIRO_CONFIG_DIR`, which holds it by default) to a folder the server accepts\n\n")
+		return
+	}
 	b.WriteString("- marotte's own HTTP server answers on `localhost:9847` inside the container (correct from ")
 	b.WriteString("in here whatever the host published). `curl -s 'localhost:9847/api/tools/search?q=<name>'` ")
 	b.WriteString("searches the tool catalog AND the host's Debian packages in one answer; a hit is ")
@@ -84,8 +157,8 @@ func writeToolsEngine(b *strings.Builder, configDir, workDir string) {
 	b.WriteString("-d '{\"name\":\"<name>\"}'` installs one and answers `202 {\"job\":…}`; an `apt:` hit also needs ")
 	b.WriteString("its `\"source\":\"apt:<name>\"`, or the engine answers `unknown tool`; progress streams to ")
 	b.WriteString("Settings → Tools, and `GET localhost:9847/api/tools/jobs` lists jobs. A catalog install ")
-	b.WriteString("lands under `" + configDir + "/tools/opt/<name>/<version>/` with a symlink in ")
-	b.WriteString("`" + configDir + "/tools/bin/`, is recorded in `" + configDir + "/tools.json`, and survives a ")
+	b.WriteString("lands under `" + toolsDir + "/opt/<name>/<version>/` with a symlink in ")
+	b.WriteString("`" + toolsDir + "/bin/`, is recorded in `" + configDir + "/tools.json`, and survives a ")
 	b.WriteString("container recreate. An `\"apt\":true` hit is recorded too but installs into the container ")
 	b.WriteString("layer, so it is re-applied at the next boot at whatever version Debian then offers. Prefer ")
 	b.WriteString("the engine to a bare `apt-get install` (unrecorded, lost on recreate) for anything you ")
@@ -156,7 +229,7 @@ func writeGitPanel(b *strings.Builder, workDir string, connected bool) {
 
 // Quoted words are exact on-screen labels from static/index.html and the client
 // modules; a paraphrase here sends a user looking for a control that is not there.
-func writeUIGuide(b *strings.Builder) {
+func writeUIGuide(b *strings.Builder, workDir, configDir string) {
 	b.WriteString("## UI guide\n\n")
 	b.WriteString("Where things are, so you can direct a user. Quoted words are the exact labels on screen.\n\n")
 	b.WriteString("- Sidebar: \"New chat\" with a square \"History\" button beside it; the tab list; ")
@@ -212,7 +285,7 @@ func writeUIGuide(b *strings.Builder) {
 	b.WriteString("(review and delete; hidden while the Memory setting is Off, and `/memories` then says so), Powers\n")
 	b.WriteString("- \"History\" (`/history`): previous chats and workflow runs from kiro-cli's own inventory, ")
 	b.WriteString("a \"Search conversations…\" box that searches every chat file, open to resume, \"Delete\"\n")
-	b.WriteString("- \"File browser\" (`/files`, Ctrl+Shift+F): mounts `/workspace`, `/config` and the uploads ")
+	b.WriteString("- \"File browser\" (`/files`, Ctrl+Shift+F): mounts `" + workDir + "`, `" + configDir + "` and the uploads ")
 	b.WriteString("folder; toolbar \"Back\" / \"Forward\" / path, \"Add selection to chat\", \"Upload files\", ")
 	b.WriteString("\"Download\", \"New file\", \"New folder\", \"Rename (F2)\", \"Delete\"; a search mode; a git ")
 	b.WriteString("status letter per row that opens the change; drag files onto it to upload. Opening a file ")
@@ -237,7 +310,9 @@ func writeUIGuide(b *strings.Builder) {
 	b.WriteString("with the run's inputs over \"Steps\" and \"Timeline\") and a composer that messages or answers the ")
 	b.WriteString("selected step. Icon buttons \"Pause\" / \"Resume\" / \"Cancel\" by status, no \"Resume\" while ")
 	b.WriteString("every paused step waits for an answer, \"Add passes\" / \"End this loop\" at a loop's cap, ")
-	b.WriteString("\"Retry failed steps\" for a failed run; its × closes the view, never the run\n")
+	b.WriteString("\"Retry failed steps\" for a failed run, and \"Mark step done\" / \"Mark step failed\" on a ")
+	b.WriteString("paused step's header, which end that step after a confirm without answering it; its × ")
+	b.WriteString("closes the view, never the run\n")
 	b.WriteString("- Sign-in modal: \"Sign in\" (Builder ID, Google, or GitHub) or \"Sign in with SSO\" (Start ")
 	b.WriteString("URL + Region)\n")
 	b.WriteString("- Keyboard: Ctrl/⌘+K or N new chat, Ctrl+/ shell, Ctrl+Shift+F files, Ctrl+Shift+G git, ")
@@ -247,7 +322,7 @@ func writeUIGuide(b *strings.Builder) {
 // command.attachmentBlock (prompt_attachments.go) decides which extensions are
 // inlined, and utils-url.ts + file-extensions.ts decide which paths paint; this
 // section lies if either set moves.
-func writeAttachments(b *strings.Builder, uploadDir, workDir string) {
+func writeAttachments(b *strings.Builder, uploadDir, workDir, configDir string) {
 	b.WriteString("## Images and attachments\n\n")
 	b.WriteString("- How a file reaches you: the \"Attach a file\" row (a picker over the file browser; the ")
 	b.WriteString("file keeps its path), a drag-drop onto the chat, or a paste into the composer. There is no ")
@@ -288,7 +363,7 @@ func writeAttachments(b *strings.Builder, uploadDir, workDir string) {
 	b.WriteString("`![label](" + workDir + "/out/shot.png)`. That renders inline, where a bare absolute path ")
 	b.WriteString("outside backticks becomes a button that opens the file instead. The ")
 	b.WriteString("path must be absolute and under `" + workDir + "/` or `" + uploadDir + "/` (never ")
-	b.WriteString("`/config/`), and png/jpg/jpeg/gif/webp/svg/avif/ico/bmp all paint. Audio ")
+	b.WriteString("`" + configDir + "/`), and png/jpg/jpeg/gif/webp/svg/avif/ico/bmp all paint. Audio ")
 	b.WriteString("(mp3/wav/ogg/m4a/flac/aac/opus) in the same position gets a player, any other file a ")
 	b.WriteString("download link\n")
 	b.WriteString("- To SHOW a diagram, write a fenced block whose language is `mermaid` and whose body is plain ")

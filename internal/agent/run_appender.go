@@ -22,6 +22,7 @@ var _ translate.RunAppender = (*Runs)(nil)
 // RunNodeStart opens the step path's turn and announces its turn_open under the
 // run scope; a path already open appends nothing.
 func (rs *Runs) RunNodeStart(ctx context.Context, step *translate.RunStep, chatID marotte.ChatID) {
+	rs.signals.nodeStarted(step.RunID, step.NodePath)
 	if rs.log == nil {
 		return
 	}
@@ -39,10 +40,11 @@ func (rs *Runs) RunNodeStart(ctx context.Context, step *translate.RunStep, chatI
 // RunNodeComplete closes the step path's turn with KAS's status and announces what
 // the close sealed.
 func (rs *Runs) RunNodeComplete(ctx context.Context, runID string, path []string, status, reason string) {
+	nodePath := workflow.PathKey(path)
+	rs.signals.nodeStopped(runID, nodePath, status)
 	if rs.log == nil {
 		return
 	}
-	nodePath := workflow.PathKey(path)
 	// One gated step with the close, so no message binds the turn between them. Before the close: the
 	// unread steers' notes belong inside the step's turn.
 	unlock := rs.steers.lockEnd(ctx, runID)
@@ -111,10 +113,10 @@ func (rs *Runs) noteGradedStepEnd(ctx context.Context, l *runlease.Lease, path [
 		return
 	}
 	workflowID := l.WorkflowID
-	recipe := cmp.Or(l.Recipe, "Workflow run")
-	text := stepModelCallLimitNoteText(recipe, path)
+	name := cmp.Or(rs.leasedRunName(l), "Workflow run")
+	text := stepModelCallLimitNoteText(name, path)
 	if cause == stepNoteRefused {
-		text = stepRefusalNoteText(recipe, path, c.refusal)
+		text = stepRefusalNoteText(name, path, c.refusal)
 	}
 	rs.coord.recordSteer(ctx, marotte.ChatID(l.ChatID), stepNoteID(workflowID, cause, workflow.PathKey(path)), &marotte.EntrySteer{
 		Text:       text,
@@ -142,15 +144,15 @@ func turnCloseOf(sealed []turnlog.Sealed) (marotte.EntryTurnClose, bool) {
 }
 
 // stepModelCallLimitNoteText names the step by workflow.PathKey, as an included node's id holds a '/'.
-func stepModelCallLimitNoteText(recipe string, path []string) string {
-	return recipe + " step " + workflow.PathKey(path) + " stopped early. " + marotte.ModelCallLimitStepReason
+func stepModelCallLimitNoteText(run string, path []string) string {
+	return run + " step " + workflow.PathKey(path) + " stopped early. " + marotte.ModelCallLimitStepReason
 }
 
 // stepRefusalNoteText names the step and does not invite a re-run: a refusal is deterministic.
 // Category and explanation are optional. The total length is unbounded, accepted as in noteRunEnd.
-func stepRefusalNoteText(recipe string, path []string, r *marotte.RefusalInfo) string {
+func stepRefusalNoteText(run string, path []string, r *marotte.RefusalInfo) string {
 	var b strings.Builder
-	b.WriteString(recipe)
+	b.WriteString(run)
 	b.WriteString(" step ")
 	b.WriteString(workflow.PathKey(path))
 	b.WriteString(" was declined by the model")
@@ -234,7 +236,7 @@ func (rs *Runs) closeRun(ctx context.Context, runID, status string) {
 	for _, path := range slices.Sorted(maps.Keys(staged)) {
 		p := staged[path]
 		rs.RunSteer(ctx, runID, path, p.ID, &marotte.EntrySteer{
-			Text: p.Text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead,
+			Text: p.Text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead, Caller: p.Caller,
 		})
 	}
 }

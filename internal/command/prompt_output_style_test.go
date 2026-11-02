@@ -28,8 +28,11 @@ func TestBuildPromptParams_CarriesAChosenOutputStyleOnly(t *testing.T) {
 		want   string
 	}{
 		{name: "concise rides the prompt", config: `{"output_style":"concise"}`, want: "concise"},
+		{name: "proactive rides the prompt", config: `{"output_style":"proactive"}`, want: "proactive"},
+		{name: "learning rides the prompt", config: `{"output_style":"learning"}`, want: "learning"},
 		{name: "default is never sent", config: `{"output_style":"default"}`},
-		{name: "an unknown style is never sent", config: `{"output_style":"verbose"}`},
+		{name: "a malformed id is never sent", config: `{"output_style":"Not A Style"}`},
+		{name: "a non-string is never sent", config: `{"output_style":3}`},
 		{name: "no setting is never sent", config: `{}`},
 	}
 	for _, tc := range tests {

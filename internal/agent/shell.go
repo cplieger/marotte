@@ -46,9 +46,9 @@ func newShellManager(_ context.Context, workDir string) *shellManager {
 	return sm
 }
 
-// Debian's /etc/profile assigns PATH for uid 0, so a login shell loses the /config entries;
-// entrypoint.sh's /etc/profile.d/10-marotte-path.sh restores them for every login shell. No
-// terminal.WithEnv: that would mask a broken drop-in here only.
+// bash --login sources Debian's /etc/profile, which assigns PATH over any inherited or passed one,
+// so the /config entries reach this shell only through entrypoint.sh's root-only drop-in
+// (offer_login_path).
 func (sm *shellManager) newHandler() *terminal.Handler {
 	return terminal.NewHandler([]string{"bash", "--login"},
 		terminal.WithWorkDir(sm.workDir),

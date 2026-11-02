@@ -76,7 +76,7 @@ func TestMCPRegistry_RecordConnectedPopulatesSnapshot(t *testing.T) {
 func TestMCPRegistry_RecordOAuthOverridesState(t *testing.T) {
 	h := newHubWithMCPConfig(t, nil)
 	h.mcpRegistry.RecordConnected(t.Context(), "linear", marotte.MCPSource{}, nil, nil, nil, nil)
-	h.mcpRegistry.RecordOAuth(t.Context(), "linear", marotte.MCPSource{}, "https://oauth.example/auth")
+	h.mcpRegistry.RecordOAuth(t.Context(), "linear", marotte.MCPSource{})
 
 	snap := h.mcpRegistry.snapshot()
 	if len(snap) != 1 {
@@ -84,9 +84,6 @@ func TestMCPRegistry_RecordOAuthOverridesState(t *testing.T) {
 	}
 	if snap[0].State != mcpStateOAuth {
 		t.Errorf("state = %q, want %q", snap[0].State, mcpStateOAuth)
-	}
-	if snap[0].OAuthURL != "https://oauth.example/auth" {
-		t.Errorf("oauth url = %q", snap[0].OAuthURL)
 	}
 }
 
@@ -302,7 +299,7 @@ func TestMCPRegistry_StampsUserOriginOnConfiguredServers(t *testing.T) {
 	h := newHubWithMCPConfig(t, enabledConfig("github"))
 	ctx := t.Context()
 	h.mcpRegistry.RecordConnected(ctx, "github", marotte.MCPSource{}, nil, nil, nil, nil)
-	h.mcpRegistry.RecordOAuth(ctx, "github", marotte.MCPSource{}, "https://oauth.example/auth")
+	h.mcpRegistry.RecordOAuth(ctx, "github", marotte.MCPSource{})
 	if got := h.mcpRegistry.snapshot()[0].Origin; got != marotte.OriginUser {
 		t.Errorf("origin after recordOAuth = %q, want %q", got, marotte.OriginUser)
 	}
@@ -450,7 +447,7 @@ func TestMCPRegistry_OnChangeFiresOutsideLock(t *testing.T) {
 		done <- struct{}{}
 	})
 	h.mcpRegistry.RecordConnected(t.Context(), "a", marotte.MCPSource{}, nil, nil, nil, nil)
-	h.mcpRegistry.RecordOAuth(t.Context(), "a", marotte.MCPSource{}, "url")
+	h.mcpRegistry.RecordOAuth(t.Context(), "a", marotte.MCPSource{})
 	h.mcpRegistry.RecordInitFailure(t.Context(), "a", marotte.MCPSource{}, "err")
 	h.mcpRegistry.clearAll(t.Context())
 

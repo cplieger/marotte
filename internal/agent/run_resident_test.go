@@ -249,7 +249,7 @@ func TestAnswerInput_AMovedOnStepIsGone(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, br := leasedNonResident(t, reply)
 
-			err := h.runs.answerInput(t.Context(), "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "the main branch")
+			err := h.runs.answerInput(t.Context(), "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "the main branch", nil)
 			if !errors.Is(err, errAskGone) {
 				t.Fatalf("AnswerInput for a moved-on step = %v, want errAskGone", err)
 			}
@@ -267,7 +267,7 @@ func TestAnswerInput_ARunningSiblingRefusesTheAnswer(t *testing.T) {
 		parkedStep("review", "sess_step"), askStepNode{id: "build", status: "running", session: "sess_build"}))
 	askID := markerlessAskID(h, "wf_1", reviewPath, "sess_step")
 
-	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "the main branch"); !errors.Is(err, errAskBranchRunning) {
+	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "the main branch", nil); !errors.Is(err, errAskBranchRunning) {
 		t.Fatalf("AnswerInput beside a running branch = %v, want errAskBranchRunning", err)
 	}
 	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
@@ -284,7 +284,7 @@ func TestAnswerInput_AParkedBranchIsAnsweredAtItsOwnSession(t *testing.T) {
 		parkedStep("branch_a", "sess_a"), parkedStep("branch_b", "sess_b")))
 	askID := markerlessAskID(h, "wf_1", workflow.PathKey([]string{"root", "branch_b"}), "sess_b")
 
-	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "the main branch"); err != nil {
+	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "the main branch", nil); err != nil {
 		t.Fatalf("AnswerInput for the second parked branch = %v, want nil", err)
 	}
 	if got := br.paramsFor(marotte.MethodPrompt)["sessionId"]; got != "sess_b" {
@@ -298,7 +298,7 @@ func TestAnswerInput_AnUnreadableRunRefusesRetryably(t *testing.T) {
 	h, br := leasedNonResident(t, nil)
 	br.setCallErr(methodKiroWorkflowInspect, errors.New("engine ended"))
 
-	err := h.runs.answerInput(t.Context(), "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "the main branch")
+	err := h.runs.answerInput(t.Context(), "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "the main branch", nil)
 	if !errors.Is(err, errAskUnreadable) {
 		t.Fatalf("AnswerInput with an unreadable run = %v, want errAskUnreadable", err)
 	}
@@ -323,7 +323,7 @@ func TestAnswerInput_AnUnleasedRunMakesNoSessionResident(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
 
 	before := br.startCount()
-	if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch"); !errors.Is(err, errAskGone) {
+	if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch", nil); !errors.Is(err, errAskGone) {
 		t.Fatalf("AnswerInput for an unleased run = %v, want errAskGone", err)
 	}
 	if got := br.startCount() - before; got != 0 {
@@ -518,7 +518,7 @@ func TestEnsureResident_ALaunchingSessionNoLoadCanHoldRefusesTheVerb(t *testing.
 			}
 			leaseRun(t, h, tc.lease)
 
-			err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch")
+			err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch", nil)
 			if !errors.Is(err, errLaunchSessionUnavailable) {
 				t.Fatalf("AnswerInput = %v, want errLaunchSessionUnavailable", err)
 			}

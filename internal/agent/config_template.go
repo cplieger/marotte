@@ -1,7 +1,7 @@
 package agent
 
-// GET /api/config-template serves the mode and model catalog from kiro-cli's session-less
-// _kiro/config/template, with an engine call.
+// GET /api/config-template serves the mode, model and output style catalog from kiro-cli's
+// session-less _kiro/config/template, with an engine call.
 
 import (
 	"cmp"
@@ -171,11 +171,13 @@ func unavailableTemplate(reason marotte.CatalogReason) *configTemplateAssembly {
 		CatalogReason: reason,
 		Modes:         []marotte.SessionMode{},
 		Models:        []marotte.SessionModel{},
+		OutputStyles:  []marotte.OutputStyle{},
 	}}
 }
 
-// templateToResponse flattens the template into the client catalog: modes with their source tag
-// and models with the per-session [Deprecated]/[Legacy] filtering.
+// templateToResponse flattens the template into the client catalog: modes with their source tag,
+// models with the per-session [Deprecated]/[Legacy] filtering, and the output styles. No live
+// session reports output styles, so the template is their only source.
 func templateToResponse(tpl *kasConfigTemplate) *configTemplateAssembly {
 	modes := make([]marotte.SessionMode, 0, len(tpl.Modes.AvailableModes))
 	for i := range tpl.Modes.AvailableModes {
@@ -191,16 +193,32 @@ func templateToResponse(tpl *kasConfigTemplate) *configTemplateAssembly {
 		})
 	}
 	out := &configTemplateAssembly{response: marotte.ConfigTemplateResponse{
-		Modes:  modes,
-		Models: []marotte.SessionModel{},
+		Modes:        modes,
+		Models:       []marotte.SessionModel{},
+		OutputStyles: []marotte.OutputStyle{},
 	}}
 	for i := range tpl.ConfigOptions {
 		opt := &tpl.ConfigOptions[i]
-		if opt.ID == marotte.ConfigOptionModel {
+		switch opt.ID {
+		case marotte.ConfigOptionModel:
 			out.modelOptionPresent = true
 			_ = json.Unmarshal(opt.CurrentValue, &out.response.DefaultModel) // string; ignore non-string
 			out.response.Models = flattenTemplateModels(opt.Options)
+		case marotte.ConfigOptionOutputStyle:
+			out.response.OutputStyles = templateOutputStyles(opt.Options)
 		}
+	}
+	return out
+}
+
+func templateOutputStyles(choices []kasConfigChoice) []marotte.OutputStyle {
+	out := make([]marotte.OutputStyle, 0, len(choices))
+	for i := range choices {
+		c := &choices[i]
+		if c.Value == "" {
+			continue
+		}
+		out = append(out, marotte.OutputStyle{ID: c.Value, Name: c.Name, Description: c.Description})
 	}
 	return out
 }

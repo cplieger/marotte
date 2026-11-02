@@ -33,6 +33,7 @@ const registeredEvents = [
   "mcp_disconnected",
   "mcp_failed",
   "mcp_oauth_needed",
+  "mcp_sign_in_open",
   "notification",
   "open_external_url",
   "pending_snapshot",

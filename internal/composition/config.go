@@ -33,9 +33,9 @@ type Config struct {
 	// KASNodePath is the node binary kiro-cli runs KAS on, resolved as kiro-cli resolves it:
 	// KIRO_KAS_NODE_PATH, else the embedded copy in kiro-cli's data dir. It may not exist yet.
 	KASNodePath string
-	// ToolsDir is the tools engine's install tree root (bin/, opt/,
-	// npm/, python/) on the persistent volume.
-	ToolsDir string
+	// Tools is the tools engine's and the kiro-cli install's root (bin/, opt/, npm/, python/,
+	// kiro-cli-versions/) on the persistent volume, with the server's verdict on it.
+	Tools toolsRoot
 	// ToolCatalogPath is the compiled tool catalog baked into the
 	// image (missing = degraded catalog search). With the runtime
 	// refresh below it is only the first-boot/offline fallback.
@@ -83,7 +83,8 @@ type Config struct {
 // ConfigFromEnv reads configuration from environment variables with
 // sensible defaults.
 func ConfigFromEnv() Config {
-	configDir := absDir("KIRO_CONFIG_DIR", cmp.Or(envx.String("KIRO_CONFIG_DIR"), "/config"))
+	paths := resolveBootPaths(envx.Source{})
+	configDir := paths.configDir
 	workDir := absDir("KIRO_WORK_DIR", cmp.Or(envx.String("KIRO_WORK_DIR"), "/workspace"))
 	return Config{
 		WorkDir:             workDir,
@@ -92,7 +93,7 @@ func ConfigFromEnv() Config {
 		KiroCLISHA256:       envx.String("KIRO_CLI_SHA256"),
 		KiroCLISHA256ARM64:  envx.String("KIRO_CLI_SHA256_ARM64"),
 		VapidSub:            cmp.Or(envx.String("VAPID_SUBJECT"), "mailto:marotte@noreply.invalid"),
-		ToolsDir:            cmp.Or(envx.String("MAROTTE_TOOLS_DIR"), filepath.Join(configDir, "tools")),
+		Tools:               paths.tools,
 		KASNodePath:         cmp.Or(envx.String("KIRO_KAS_NODE_PATH"), embeddedKASNode(os.Getenv("XDG_DATA_HOME"), os.Getenv("HOME"))),
 		ToolCatalogPath:     cmp.Or(envx.String("MAROTTE_TOOL_CATALOG"), "/opt/marotte/tool-catalog.json"),
 		ToolCatalogURL:      cmp.Or(envx.String("MAROTTE_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
@@ -120,10 +121,10 @@ func embeddedKASNode(dataHome, home string) string {
 	return filepath.Join(dataHome, "kiro-cli", "node")
 }
 
-// absDir makes a configured directory absolute against the startup cwd. The browse roots, the file
-// API's root namespace and the client's config-file doors all treat it as an absolute identity, so a
-// relative value would name one directory to the os calls and another to them. A failed Getwd
-// leaves the value cleaned and relative, and validateConfig reports it.
+// absDir makes a configured directory absolute against the startup cwd: the browse roots, the file
+// API and the config-file doors treat the config dir as an absolute identity, and a relative tools
+// dir would give toolbelt's bin/ symlinks targets resolved against bin/ itself. A failed Getwd
+// leaves the value cleaned and relative, with a warning.
 func absDir(envVar, dir string) string {
 	abs, err := filepath.Abs(dir)
 	if err != nil {

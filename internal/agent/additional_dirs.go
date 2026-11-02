@@ -26,7 +26,7 @@ func (lt *lifetime) grantedDirs(ctx context.Context) []string {
 // sessionDirs is grantedDirs for a session door, logging each stored entry it does not grant.
 func (lt *lifetime) sessionDirs(ctx context.Context) []string {
 	granted, refused, err := lt.agentDirs().Granted(ctx)
-	if err != nil {
+	if err != nil && !isCtxErr(err) {
 		slog.Warn("additional directories not granted to agents: config unreadable",
 			"key", settings.KeyAdditionalDirectories, "error", logsafe.Field(err.Error()))
 	}

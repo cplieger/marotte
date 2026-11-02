@@ -683,6 +683,10 @@ row already pins it, and a session setting outranks this arm.`,
 	"env.KIRO_FEATURE_CGS_DELEGATION_V2_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 Subagent delegation v2; no marotte surface depends on which version runs.`,
+	"env.KIRO_FEATURE_CONSOLIDATE_DISCLOSURES_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The consolidate_disclosures experiment (default off). On, load_resource replaces
+disclose_context, kiro_powers and tool_load in the tool belt; the tool cards render either belt.`,
 	"env.KIRO_FEATURE_KIRO_INFRA_SAFETY_MONITOR_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 The Infrastructure-Safety monitor arm. The infraSafetyMonitor settings row
@@ -698,6 +702,20 @@ anything is sent is the telemetryEnabled row, which the Data sharing switch driv
 The external memory eligibility arm. marotte used to write it from the memory
 setting; the session-door memory row's explicit mode replaces that, and mode
 "disabled" holds whatever the arm says.`,
+	"env.KIRO_FEATURE_MEMORY_QUALITY_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The memory_quality_enabled experiment (default off): on, KAS scores memories by access and use,
+ranks the session's memory index by that score instead of by date, and applies retention when a
+memory is saved.`,
+	"env.KIRO_FEATURE_MEMORY_SYNC_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The experiment value of the memorySync setting (memory_sync_enabled, default off), which
+syncs a signed-in user's memories to a cloud store when an endpoint is configured.`,
+	"env.KIRO_FEATURE_MODEL_FALLBACK_AUTO_REFUSAL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The model_fallback_auto_refusal flag (default off). A refusal on a turn whose model is Auto
+falls back only with it on, so with "Model fallback" on such a refusal is still declined
+(autoRefusalDisabled) until AWS ramps the flag.`,
 	"env.KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED": `SENT as "true" only when "Model fallback" (model_fallback_enabled, default off as in
 kiro-cli) is on; off writes nothing, so KAS's default and any ramp stay in force rather than an
 explicit off. Lets a turn whose model is unavailable move to the next model of the chain
@@ -746,6 +764,10 @@ decision.`,
 	"env.KIRO_DISABLE_RECAP": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 marotte does not enable sessionRecap, so there is no recap to disable.`,
+	"env.KIRO_DISABLE_SUGGESTED_PROMPTS": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The kill switch of the next-message suggestion call. marotte does not enable
+_suggestedPrompts, so there is no suggestion call to disable.`,
 	"env-json.KIRO_FEATURE_CASCADE_CONFIG": `SENT only when the user has chosen "Auto model routing" (auto_routing); unset withholds it,
 so the cascade_config experiment decides as in kiro-cli's own TUI. Auto routing moves a chat on
 Auto up a model category mid-session. The env JSON outranks the experiment and REPLACES its whole

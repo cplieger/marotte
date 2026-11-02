@@ -39,12 +39,15 @@ import {
 } from "./tabs-sync.js";
 import {
   openTabCommand,
+  openTabQuietCommand,
+  openTabRefusal,
   closeTabCommand,
   pinTabCommand,
   reparentTabCommand,
   reorderTabsCommand,
   REORDER_STALE,
 } from "./actions/tabs.js";
+import { retryNetwork } from "./actions/index.js";
 import { newOpID } from "./transport.js";
 import { join as joinKey } from "@cplieger/keyenc";
 import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
@@ -76,6 +79,7 @@ import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info, error as toastError } from "./toast.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
 import { setPageTitle, clearPageTitle } from "./page-title.js";
+import type { ClosingChat } from "./close-busy.js";
 
 // --- Types ---
 
@@ -141,6 +145,8 @@ export interface OpenTabArgs {
   /** Whether to activate once the tab exists. Default true; a bulk restore passes
    *  false, because the strip is the reader's. */
   activate?: boolean;
+  /** Raise no toast for a 404, for a caller that falls back on `not-found`. Default false. */
+  quietNotFound?: boolean;
 }
 
 // --- Store ---
@@ -651,8 +657,8 @@ export type OpenTabOutcome = "opened" | "not-found" | "failed";
 /** Open a tab for something that already exists, and activate it. Resolves with the row in the
  *  projection, adopted from the RESPONSE, so no frame round trip sits in the gesture's path.
  *
- *  Never rejects: a refused open leaves the strip as it was and the action framework has raised its
- *  toast. A 404 answers `not-found`, any other failure `failed`. */
+ *  Never rejects: a refused open leaves the strip as it was and has raised its toast, except a 404
+ *  under `quietNotFound`. A 404 answers `not-found`, any other failure `failed`. */
 export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
   const ref = args.ref ?? "";
   if (args.name !== undefined && args.name !== "") {
@@ -664,7 +670,8 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
   const opID = newOpID();
   markLocalOp(opID);
   beginAdopt(opID);
-  const outcome = await openTabCommand.dispatch({
+  const quiet = args.quietNotFound === true;
+  const outcome = await (quiet ? openTabQuietCommand : openTabCommand).dispatch({
     kind: args.kind,
     ref,
     parent: args.parent ?? "",
@@ -675,7 +682,28 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
     // The server answered an error (nothing committed) or the dispatch gave up.
     // Nothing was painted, so the failure transition just retires the op.
     opFailed(opID);
-    return outcome.status === "error" && outcome.error.status === 404 ? "not-found" : "failed";
+    if (outcome.status !== "error") {
+      return "failed";
+    }
+    if (outcome.error.status === 404) {
+      return "not-found";
+    }
+    if (quiet) {
+      const err = outcome.error;
+      // `openTabQuietCommand` raises nothing, so this toast is the refusal's only report. Retry is
+      // a plain open: a 404 then toasts, since the caller that wanted it quiet is not waiting.
+      toastError(
+        openTabRefusal(err),
+        retryNetwork(err)
+          ? {
+              onClick: () => {
+                void openTab({ ...args, quietNotFound: false });
+              },
+            }
+          : undefined,
+      );
+    }
+    return "failed";
   }
   const reply = outcome.value;
   adoptSubject(reply.subject);
@@ -763,6 +791,23 @@ function subtreeRows(row: TabRow): TabRow[] {
   };
   take(row);
   return out;
+}
+
+/** Asks whether a person's close may go ahead; `name` and `ref` are the closed tab's, `chats`
+ *  every chat row in its subtree. A plain `true` lets the close run in the same task. INJECTED:
+ *  the answer's sources import this module. */
+type CloseGate = (
+  name: string,
+  ref: string,
+  chats: readonly ClosingChat[],
+) => true | Promise<boolean>;
+
+const openGate: CloseGate = () => true;
+
+let closeGate = openGate;
+
+export function registerCloseGate(fn: CloseGate): void {
+  closeGate = fn;
 }
 
 function captureClose(row: TabRow): CapturedClose {
@@ -942,6 +987,33 @@ export async function closeTab(id: string): Promise<void> {
   // was aborted): the machine verifies rather than guessing in either
   // direction.
   opTimedOut(opID);
+}
+
+/** A person's close (the ×, middle-click, Delete): the gate, then `beforeClose` and `closeTab`
+ *  only if it lets the close go ahead. Remote closes and the singleton toggles call `closeTab`. */
+function requestCloseTab(id: string, beforeClose: () => void = () => undefined): void {
+  const proceed = (): void => {
+    beforeClose();
+    void closeTab(id);
+  };
+  const row = rowOfID(id);
+  const chats = (row === undefined ? [] : subtreeRows(row))
+    .filter((r) => r.subject.kind === "chat")
+    .map((r) => ({ ref: r.subject.ref, name: r.name }));
+  if (row === undefined || chats.length === 0) {
+    proceed();
+    return;
+  }
+  const verdict = closeGate(row.name, row.subject.kind === "chat" ? row.subject.ref : "", chats);
+  if (verdict === true) {
+    proceed();
+    return;
+  }
+  void verdict.then((ok) => {
+    if (ok) {
+      proceed();
+    }
+  });
 }
 
 /** Pin or unpin a top-level tab.
@@ -1781,7 +1853,7 @@ function createTabEl(row: TabRow): HTMLElement {
     if (gestureDragged()) {
       return;
     }
-    void closeTab(id);
+    requestCloseTab(id);
   });
 
   // The dot is decoration; `statusSR` is what a screen reader hears. Both ride
@@ -2080,7 +2152,7 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
   node.addEventListener("auxclick", (e) => {
     if (e.button === 1) {
       e.preventDefault();
-      void closeTab(id);
+      requestCloseTab(id);
     }
   });
 
@@ -2103,20 +2175,21 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
         e.preventDefault();
         // Focus is moved by hand, or Delete drops the keyboard user onto <body>. The APG puts focus on the
         // tab that took the closed one's place: everything after me, then everything before in reverse.
-        // Moved BEFORE the dispatch, because a close is a round trip.
-        const siblings = [...(node.parentElement?.children ?? [])] as HTMLElement[];
-        const self = siblings.indexOf(node);
-        const successors = [...siblings.slice(self + 1), ...siblings.slice(0, self).reverse()];
-        const successor = successors.find((n) => n.dataset["tabId"] !== id);
-        if (successor !== undefined) {
-          successor.focus();
-        } else {
-          // The LAST tab: no row survives for focus to land on, and losing it
-          // to <body> strands the keyboard user. The empty-state surface's one
-          // control is the composer, so focus goes there.
-          $.promptInput.focus();
-        }
-        void closeTab(id);
+        // Moved BEFORE the dispatch, because a close is a round trip, and only once the gate lets it go.
+        requestCloseTab(id, () => {
+          const siblings = [...(node.parentElement?.children ?? [])] as HTMLElement[];
+          const self = siblings.indexOf(node);
+          const successors = [...siblings.slice(self + 1), ...siblings.slice(0, self).reverse()];
+          const successor = successors.find((n) => n.dataset["tabId"] !== id);
+          if (successor !== undefined) {
+            successor.focus();
+          } else {
+            // The LAST tab: no row survives for focus to land on, and losing it
+            // to <body> strands the keyboard user. The empty-state surface's one
+            // control is the composer, so focus goes there.
+            $.promptInput.focus();
+          }
+        });
         break;
       }
       case "ArrowDown":
@@ -2373,6 +2446,7 @@ export function _resetForTest(): void {
   callbacks.onActivate = null;
   callbacks.onEmpty = null;
   chatSettledProbe = null;
+  closeGate = openGate;
   if (internal.emptyTimer !== null) {
     clearTimeout(internal.emptyTimer);
   }

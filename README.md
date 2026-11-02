@@ -77,7 +77,7 @@ Settings in the compose `environment:` block are read at start, so recreate the 
 | --- | --- | --- |
 | `ALLOWED_HOSTS` | Hostnames and IPs you open marotte at, comma-separated. Any other address gets `403`. | _(unset)_ |
 | `TRUSTED_PROXIES` | Address ranges of your reverse proxy, so the logs record the real client address. | _(unset)_ |
-| `TRUSTED_INSTALL_UIDS` | User IDs that may write to `/config/tools` without marotte refusing to install kiro-cli. Only for shared or network volumes. | _(unset)_ |
+| `TRUSTED_INSTALL_UIDS` | User IDs that may write to the tools folder (`MAROTTE_TOOLS_DIR`, by default `/config/tools`) without marotte refusing to install kiro-cli. Only for shared or network volumes. | _(unset)_ |
 | `MAROTTE_BROWSE_ROOTS` | Extra folders the file browser shows, colon-separated absolute paths. | _(unset)_ |
 | `MAROTTE_ALLOW_AGENT_ENV` | Program-changing variables, such as `LD_PRELOAD`, the agent may set for its commands. | _(unset)_ |
 | `MAROTTE_ALLOW_BRIDGE_ENV` | Variable names that look like credentials but should still reach kiro-cli, comma-separated. | _(unset)_ |
@@ -115,6 +115,7 @@ Docker checks `/api/health` every 30 seconds. The container shows healthy once m
 - Health shows `sign-in required`. A chat's last turn failed because marotte is not signed in to Kiro, or Kiro refused the sign-in. Sign in from the account menu. The next turn that succeeds clears it.
 - The page answers `403`. The address you typed is not in `ALLOWED_HOSTS`.
 - The container restarts in a loop with `another marotte instance holds this folder`. Two marotte containers share a volume, a `KIRO_HOME` or a tools folder. The log line names the folder. Give each container its own, or stop the other one.
+- A tool installed from **Settings** answers `command not found` in the **Shell** panel. Either the container runs as a user other than root, as the quick start does, or the log warns that marotte could not write `/etc/profile.d/10-marotte-path.sh`. Then the Shell panel's login shell may not search the tools folder. Run the tool by its full path, `/config/tools/bin/<tool>` (`bin/` under `MAROTTE_TOOLS_DIR` if you moved it), or see [How kiro-cli is installed](docs/how-it-works.md#how-kiro-cli-is-installed).
 
 ## Documentation
 

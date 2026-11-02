@@ -57,6 +57,7 @@ func (rt *Runtime) beginSteerTeardown(ctx context.Context, chatID marotte.ChatID
 		}
 		rt.coord.recordSteer(durable.Context(ctx), chatID, p.SteerID, &marotte.EntrySteer{
 			Text: p.Text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
+			Caller: p.Caller,
 		})
 	}
 }

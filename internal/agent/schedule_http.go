@@ -52,7 +52,7 @@ func (rr *runRoutes) handleScheduleList(w http.ResponseWriter, _ *http.Request) 
 // An uncomputable spec yields none, so the row still renders.
 func scheduleViewOf(e *schedule.Entry) scheduleView {
 	v := scheduleView{
-		Spec: e.Spec, ID: e.ID, Source: e.Source, Name: e.Name,
+		Spec: e.Spec, ID: e.ID(), Source: e.Source, Name: e.Name,
 		LastStatus: string(e.LastStatus), LastReason: e.LastReason, Enabled: e.Enabled,
 		Model: e.Model, Effort: e.Effort,
 	}
@@ -73,7 +73,6 @@ func scheduleViewOf(e *schedule.Entry) scheduleView {
 // recipe list, as in handleLaunch, so no arbitrary file can be scheduled, and the model pick as at launch.
 func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID      string        `json:"id"`
 		Source  string        `json:"source"`
 		Model   string        `json:"model"`
 		Effort  string        `json:"effort"`
@@ -94,12 +93,8 @@ func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	if err := rr.runs.checkRunDefaults(r.Context(), defaults); writeDefaultsErr(w, err) {
 		return
 	}
-	id := req.ID
-	if id == "" {
-		id = recipe.Source // one schedule per recipe, addressable by its source
-	}
 	entry := schedule.Entry{
-		ID: id, Source: recipe.Source, Name: recipe.Name,
+		Source: recipe.Source, Name: recipe.Name,
 		Model: defaults.Model, Effort: defaults.Effort,
 		Spec: req.Spec, Enabled: req.Enabled,
 	}
@@ -107,7 +102,7 @@ func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
-	slog.Info("schedule saved", "id", logsafe.Field(entry.ID), "recipe", logsafe.Field(recipe.Name),
+	slog.Info("schedule saved", "id", entry.ID(), "recipe", logsafe.Field(recipe.Name),
 		"freq", logsafe.Field(string(entry.Spec.Freq)), "enabled", entry.Enabled)
 	webhttp.WriteJSON(w, scheduleViewOf(&entry))
 }

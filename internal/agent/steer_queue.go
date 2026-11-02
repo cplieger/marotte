@@ -77,21 +77,23 @@ func (q steerQueue) do(chatID marotte.ChatID, fn func(rec *steerRecord, fx *stee
 
 // RouteSteer writes the row's state before the caller sends. A step's record takes a steer only while
 // its steering turn is bound: a finished or paused step stays so.
-func (q steerQueue) RouteSteer(chatID marotte.ChatID, key, text string, h command.SteerHolder) (sends []command.SteerSend, refuse string) {
+func (q steerQueue) RouteSteer(chatID marotte.ChatID, key, text string, from *marotte.Caller, h command.SteerHolder) (sends []command.SteerSend, refuse string) {
 	_, step := chatID.StepSession()
 	if !q.recs.step(chatID, !step, func(rec *steerRecord, fx *steerFx) {
 		if rec.noCarry && rec.channel == chanNone {
 			refuse = command.SteerRefuseNoTurn
 			return
 		}
-		sends, refuse = rec.routeSteerLocked(key, text, h, fx)
+		sends, refuse = rec.routeSteerLocked(key, text, from, h, fx)
 	}) {
 		return nil, command.SteerRefuseNoTurn
 	}
 	return sends, refuse
 }
 
-func (rec *steerRecord) routeSteerLocked(key, text string, h command.SteerHolder, fx *steerFx) (sends []command.SteerSend, refuse string) {
+func (rec *steerRecord) routeSteerLocked(
+	key, text string, from *marotte.Caller, h command.SteerHolder, fx *steerFx,
+) (sends []command.SteerSend, refuse string) {
 	w := rec.row(key)
 	if h.Delivering && h.Turn != "" && !rec.names(h.Turn) {
 		// The turn the delivery was aimed at is no longer starting or bound.
@@ -102,7 +104,7 @@ func (rec *steerRecord) routeSteerLocked(key, text string, h command.SteerHolder
 		return nil, command.SteerRefuseNoTurn
 	}
 	if w == nil {
-		if w, refuse = rec.newRow(key, text, h.Held, fx); w == nil {
+		if w, refuse = rec.newRow(key, text, from, h.Held, fx); w == nil {
 			return nil, refuse
 		}
 	}
@@ -121,7 +123,7 @@ func (rec *steerRecord) routeSteerLocked(key, text string, h command.SteerHolder
 	return sends, ""
 }
 
-func (rec *steerRecord) newRow(key, text string, held bool, fx *steerFx) (w *dockRow, refuse string) {
+func (rec *steerRecord) newRow(key, text string, from *marotte.Caller, held bool, fx *steerFx) (w *dockRow, refuse string) {
 	if !held {
 		return nil, command.SteerRefuseNoTurn
 	}
@@ -133,7 +135,7 @@ func (rec *steerRecord) newRow(key, text string, held bool, fx *steerFx) (w *doc
 	if n >= maxSteerRows || bytes > maxSteerBytes {
 		return nil, command.SteerRefuseFull
 	}
-	rec.rows = append(rec.rows, dockRow{key: key, text: text, seq: rec.nextSeq, state: rowParked})
+	rec.rows = append(rec.rows, dockRow{key: key, text: text, caller: from, seq: rec.nextSeq, state: rowParked})
 	rec.nextSeq++
 	w = &rec.rows[len(rec.rows)-1]
 	fx.frames = append(fx.frames, rowFrame(w))
@@ -605,7 +607,7 @@ func (q steerQueue) UnsentRows(chatID marotte.ChatID, deathDrained bool) []comma
 		})
 		sortLeadFirst(rows, rec.lead)
 		for _, w := range rows {
-			out = append(out, command.SteerRow{Key: w.key, Text: w.text})
+			out = append(out, command.SteerRow{Key: w.key, Text: w.text, Caller: w.caller})
 		}
 	})
 	return out

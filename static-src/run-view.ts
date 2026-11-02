@@ -24,7 +24,12 @@ import {
   type FollowScroller,
   type ViewScrollState,
 } from "./scroll-controller.js";
-import { buildRunControlsView, type RunControlsView } from "./run-controls-view.js";
+import {
+  buildRunControlsView,
+  buildStepEndView,
+  type RunControlsView,
+  type StepEndView,
+} from "./run-controls-view.js";
 import { get } from "./store.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight, neverRan, settled } from "./exec-view/status.js";
@@ -183,6 +188,7 @@ let page: ExecPageView | undefined;
 let pageRun = "";
 /** The shown run's verbs, built with its page and disposed with it. */
 let controls: RunControlsView | undefined;
+let stepEnds: StepEndView | undefined;
 
 let follower: FollowScroller | undefined;
 
@@ -375,9 +381,12 @@ function mountPage(
   dropPage();
   const verbs = buildRunControlsView(workflowID);
   controls = verbs;
+  const ends = buildStepEndView(workflowID);
+  stepEnds = ends;
   const built = buildExecPage({
     emptyNote: stepEmptyNote,
     emptyAction: stepEmptyAction,
+    headAction: (node) => ends.current(node),
     dock: dockHost,
     controls: () => verbs.current(),
     notes: () => verbs.refusals(),
@@ -423,6 +432,8 @@ function dropPage(): void {
   pageRun = "";
   controls?.dispose();
   controls = undefined;
+  stepEnds?.dispose();
+  stepEnds = undefined;
 }
 
 /** A `TurnSource` over one run's log, so `turns.ts`'s pure projection reads it unchanged. Built

@@ -28,6 +28,7 @@ vi.mock("../run-store.js", async (importOriginal) => ({
 import { configure, configureApi } from "@cplieger/actions";
 import {
   cancelRun,
+  endRunStep,
   extendRunRepeat,
   finishRunRepeat,
   launchRun,
@@ -99,6 +100,29 @@ describe("the repeat verbs", () => {
     m.err = { status: 409, body: { error: "Node loop-1 is not a repeat." } };
     await finishRunRepeat.dispatch({ workflowID: "wf_1", nodeID: "loop-1" });
     expect(vi.mocked(toastError)).toHaveBeenCalledWith("Node loop-1 is not a repeat.");
+  });
+});
+
+describe("ending a paused step", () => {
+  it("POSTs the status to the step's end route", async () => {
+    await endRunStep.dispatch({ workflowID: "wf 1", nodePath: "root:a/b", status: "failed" });
+    expect(m.requests).toEqual([
+      {
+        url: "/api/runs/wf%201/steps/root%3Aa%2Fb/end",
+        method: "POST",
+        body: { status: "failed" },
+      },
+    ]);
+    expect(m.reread).toEqual(["wf 1"]);
+  });
+
+  it("shows a refusal as the server's sentence alone", async () => {
+    m.err = { status: 409, body: { error: "this step is not paused, so it was not ended" } };
+    await endRunStep.dispatch({ workflowID: "wf_1", nodePath: "root:a", status: "completed" });
+    expect(vi.mocked(toastError)).toHaveBeenCalledWith(
+      "this step is not paused, so it was not ended",
+    );
+    expect(m.reread).toEqual([]);
   });
 });
 

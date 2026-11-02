@@ -304,6 +304,8 @@ vi.mock("./api-client.js", () =>
       apiGetTypedOrError: vi.fn(),
       // Reached through tabs.ts -> files-shared.ts; no case here lists a directory.
       apiGet: vi.fn(),
+      // Reached through notice-subject.ts's run read; no case here opens a run-end toast.
+      apiGetOrError: vi.fn(),
     };
   }),
 );

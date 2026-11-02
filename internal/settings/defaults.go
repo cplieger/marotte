@@ -76,8 +76,8 @@ const (
 	// internal/agent's agentFeatures (values in agent_features.go).
 	// KeyWorkValidation, KeyCloudFormationSafety, KeyAutoRouting and
 	// KeyAutoDelegation are three-state: empty sends nothing, so kiro-cli's own
-	// experiment decides. KeyModelFallback on sends KAS's two model-fallback
-	// flags; off sends nothing, leaving kiro-cli's default (off) in force.
+	// experiment decides. KeyModelFallback on sends KAS's refusal and availability
+	// fallback flags; off sends nothing, leaving kiro-cli's default (off) in force.
 	KeySpecPlanning         = "spec_planning"
 	KeySpecPlanningAskFirst = "spec_planning_ask_first"
 	KeySteeringReminders    = "steering_reminders_enabled"
@@ -88,7 +88,7 @@ const (
 	KeyAutoDelegation       = "auto_delegation"
 	KeyModelFallback        = "model_fallback_enabled"
 
-	// KeyOutputStyle rides each chat prompt as _meta.kiro.outputStyle.
+	// KeyOutputStyle, a KAS output style id, rides each chat prompt as _meta.kiro.outputStyle.
 	// KeyTerminalCommandTimeoutMs is the shell tool's default timeout (0 = KAS's
 	// 120 s), sent at initialize and pushed live to the engine.
 	KeyOutputStyle              = "output_style"

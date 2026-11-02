@@ -21,7 +21,7 @@ var segmentKinds = []SegmentKind{
 	SegmentContent, SegmentReasoning, SegmentToolTitle, SegmentToolDisclosed,
 	SegmentToolDiff, SegmentToolDenial, SegmentToolInput, SegmentToolOutput,
 	SegmentSteer, SegmentPrompt, SegmentPlan, SegmentAttachment, SegmentTurnFailure,
-	SegmentEntry,
+	SegmentWake, SegmentEntry,
 }
 
 func openTurn(id string, n uint64, prompt *marotte.EntryPrompt) *turnFixture {
@@ -1098,6 +1098,32 @@ func TestHit_WireShape(t *testing.T) {
 	for _, key := range []string{"message_id", "block_index", "agent_subtask_id"} {
 		if strings.Contains(string(full), key) {
 			t.Errorf("marshalled hit %s carries the deleted %s", full, key)
+		}
+	}
+}
+
+// A hit in a prompt or steer an API caller sent names that caller; a hit in the user's words or the agent's names none.
+func TestSearch_NamesTheAPICallerWhoseWordsMatched(t *testing.T) {
+	sent := prompt("m-1", "relay: build failed")
+	sent.Caller = &marotte.Caller{Label: "Agent Mail"}
+	entries, drawn := chatOf(
+		openTurn("t-1", 1, sent).
+			add("", "steer-1", marotte.EntryKindSteer, marotte.EntrySteer{
+				Text: "relay: build fixed", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead, Caller: &marotte.Caller{},
+			}).
+			text("a1", "the relay says the build is fine"),
+		openTurn("t-2", 2, prompt("m-2", "what did the relay say")),
+	)
+
+	hits := searchHits(entries, drawn, "relay")
+	if len(hits) != 4 {
+		t.Fatalf("Search = %d hits, want 4: %+v", len(hits), hits)
+	}
+	want := map[string]*marotte.Caller{"t-1": {Label: "Agent Mail"}, "steer-1": {}, "a1": nil, "t-2": nil}
+	for _, h := range hits {
+		w := want[h.EntryID]
+		if (h.Caller == nil) != (w == nil) || (w != nil && h.Caller.Label != w.Label) {
+			t.Errorf("hit on %s caller = %+v, want %+v", h.EntryID, h.Caller, w)
 		}
 	}
 }

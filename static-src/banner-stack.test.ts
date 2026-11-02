@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { signal } from "@cplieger/reactive";
 import { LS_DISMISSED_BANNERS_KEY } from "./ls-keys.js";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type * as BannerStack from "./banner-stack.js";
 
 /** `vi.resetModules()` does not re-evaluate a module in Browser Mode (the map is URL-keyed), so
@@ -147,6 +148,22 @@ describe("banner-stack: composite key (keyenc)", () => {
     expect(JSON.parse(raw ?? "{}")).toEqual({ A: ["rate_limit"] });
     // And nothing was written to the synced arrangement's key.
     expect(localStorage.getItem("marotte.ui-state")).toBeNull();
+  });
+
+  it("forgets a dismissal when its code is cleared, so the condition's next banner shows", async () => {
+    const { container, mod } = await setup();
+
+    activeSig.value = { id: "A" };
+    mod.ensureBound();
+    mod.showBanner(mod.GLOBAL_BANNER, "open_external_url", "sign in", "info", true);
+    container.querySelector<HTMLButtonElement>(".banner-dismiss")?.click();
+    mod.showBanner(mod.GLOBAL_BANNER, "open_external_url", "sign in", "info", true);
+    expect(container.querySelectorAll(".banner")).toHaveLength(0);
+
+    mod.clearBannerCodes(mod.GLOBAL_BANNER, ["open_external_url"]);
+    expect(JSON.parse(localStorage.getItem(LS_DISMISSED_BANNERS_KEY) ?? "{}")).toEqual({});
+    mod.showBanner(mod.GLOBAL_BANNER, "open_external_url", "sign in again", "info", true);
+    expect(container.textContent).toContain("sign in again");
   });
 
   it("does not let one field's content forge the other's boundary", async () => {
@@ -338,5 +355,52 @@ describe("banner-stack: the app-global slot the engine banner uses", () => {
 
     mod.clearBannerCodes(mod.GLOBAL_BANNER, ["engine_restarting"]);
     expect(container.querySelectorAll(".banner")).toHaveLength(0);
+  });
+});
+
+describe("banner-stack: a detail control under the row", () => {
+  it("adds the detail to the banner and replaces it on a repeat call", async () => {
+    const { container, mod } = await setup();
+    activeSig.value = { id: "A" };
+    mod.ensureBound();
+    const first = document.createElement("details");
+    mod.showBanner("A", "sign_in", "sign in", "info", true, undefined, first);
+
+    const banner = container.querySelector(".banner");
+    expect(banner?.querySelector(".banner-detail"), "the detail is in the banner").toBe(first);
+
+    const second = document.createElement("details");
+    mod.showBanner("A", "sign_in", "sign in", "info", true, undefined, second);
+    expect(container.querySelectorAll(".banner")).toHaveLength(1);
+    const details = [...(banner?.querySelectorAll(".banner-detail") ?? [])];
+    expect(details, "the repeat's detail replaced the first").toEqual([second]);
+    expect(details[0]).toBe(second);
+  });
+
+  it("puts the detail on its own line, after the dismiss button", async () => {
+    const { container, mod } = await setup();
+    const styleEl = mountAppCSS();
+    container.style.inlineSize = "40rem";
+    document.body.appendChild(container);
+    try {
+      activeSig.value = { id: "A" };
+      mod.ensureBound();
+      const detail = document.createElement("div");
+      detail.textContent = "paste box";
+      mod.showBanner("A", "sign_in", "sign in", "info", true, undefined, detail);
+
+      const banner = container.querySelector<HTMLElement>(".banner");
+      const dismiss = banner?.querySelector<HTMLElement>(".banner-dismiss");
+      expect(banner && getComputedStyle(banner).flexWrap).toBe("wrap");
+      expect(
+        dismiss !== null &&
+          dismiss !== undefined &&
+          detail.getBoundingClientRect().top >= dismiss.getBoundingClientRect().bottom,
+        "the detail sits below the row",
+      ).toBe(true);
+    } finally {
+      container.remove();
+      styleEl.remove();
+    }
   });
 });

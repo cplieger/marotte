@@ -48,12 +48,13 @@ func TestTranslateMCPStatus(t *testing.T) {
 			wantEvents: []string{"mcp_failed"},
 		},
 		{
-			name:   "FailedWithAuthURLEmitsOAuth",
+			// The status entry's URL belongs to an attempt whose listener KAS closed, so it is no relay anchor.
+			name:   "FailedWithAuthURLWaitsForSignInWithNoURL",
 			params: map[string]any{"servers": []map[string]any{{"name": "linear", "status": "failed", "authorizationUrl": "https://oauth.example/authorize"}}},
 			wantSnap: func(t *testing.T, snap []mcpServerRuntime) {
 				t.Helper()
-				if len(snap) != 1 || snap[0].OAuthURL != "https://oauth.example/authorize" {
-					t.Errorf("snapshot = %+v", snap)
+				if len(snap) != 1 || snap[0].State != mcpStateOAuth || snap[0].OAuthURL != "" {
+					t.Errorf("snapshot = %+v, want needs_auth with no URL", snap)
 				}
 			},
 			wantEvents: []string{"mcp_oauth_needed"},

@@ -26,6 +26,7 @@ import {
   setOnEmpty,
   activeChatRef,
   registerTabNotice,
+  registerCloseGate,
   setChatSettledProbe,
   toggleDocsView,
 } from "./tabs.js";
@@ -54,7 +55,6 @@ import { initFileBrowser } from "./files.js";
 import { initFilePicker, openFilePicker } from "./files-picker.js";
 import { initChatAttach } from "./files-drop.js";
 import { initTaskListPill } from "./task-list.js";
-import { initAwaySummary } from "./away-summary.js";
 import { initAttention } from "./attention.js";
 import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
@@ -81,12 +81,14 @@ import { initModelSwitcher, pickModel } from "./model-switcher.js";
 import { makeExpandable } from "./pill-expand.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initPromptInput, sendComposer } from "./prompt-input.js";
+import { rewindLatest } from "./typed-commands.js";
 import { initComposerState } from "./composer-state.js";
 import { initSlashMenu } from "./slash-menu.js";
 import { stagedAttachment } from "./attachments.js";
 import { initPendingSteers } from "./pending-steers.js";
 import { initRunBar } from "./run-bar.js";
 import { initChatOptions } from "./chat-options.js";
+import { initSelectionQuote } from "./selection-quote.js";
 import { mountDecisionDock } from "./decision-dock.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
 
@@ -109,6 +111,7 @@ import { installDeferredCueSubscriber } from "./agent-finished-cue.js";
 import { installNotifyAskGesture, setOnScreen } from "./notify.js";
 import { targetOnScreen } from "./notify-on-screen.js";
 import { chatSettled } from "./chat-settled.js";
+import { confirmBusyClose } from "./close-busy.js";
 import "./handlers/steer.js";
 import "./handlers/system-notice.js";
 import { initPushMessages } from "./handlers/push-message.js";
@@ -242,6 +245,8 @@ function init(): void {
   // A notification is silent only while its own chat or run is the tab on screen.
   setOnScreen(targetOnScreen);
 
+  registerCloseGate(confirmBusyClose);
+
   // A cue that could not notify arms this; the reader's next click raises the browser
   // prompt, which needs a gesture.
   registerCleanup(installNotifyAskGesture());
@@ -302,7 +307,6 @@ function init(): void {
     void toggleDocsView();
   });
   initSidebarHistory();
-  initAwaySummary();
   initTerminalStream();
   initTooltips();
   guardBackspaceChars();
@@ -463,6 +467,11 @@ function setupInput(): void {
       void cancelTurn.dispatch({ chatID: getActiveId() });
     },
     stagedAttachment,
+    () => {
+      if (getActiveId() !== "") {
+        rewindLatest(getActiveId());
+      }
+    },
   );
 
   const doCreate = guardDuplicateActivation(() => {
@@ -492,6 +501,7 @@ function setupInput(): void {
   // The composer band's live-run rows; a pure projection of the run store.
   initRunBar();
   initChatOptions();
+  initSelectionQuote();
   // The interaction dock takes its host as an argument so a future run tab's bottom bar
   // can host one too.
   mountDecisionDock($.decisionDock);

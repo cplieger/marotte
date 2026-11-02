@@ -91,8 +91,8 @@ async function openMemories(chatID: string): Promise<void> {
   await applyRoute({ kind: "docs", tab: "memories" });
 }
 
-/** `/rewind`: the newest prompt turn, through the footer's own confirm. */
-function rewindLatest(chatID: string): boolean {
+/** `/rewind` and the composer's Ctrl/Cmd+Up: the newest prompt turn, through the footer's own confirm. */
+export function rewindLatest(chatID: string): boolean {
   if (isBusy(chatID)) {
     chatNotice(chatID, "Rewind is unavailable while the agent is working.");
     return true;

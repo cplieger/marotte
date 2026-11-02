@@ -179,7 +179,7 @@ func TestWireToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 			slices.Sort(want)
 
 			logs := captureDefaultLogger(t)
-			tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
+			tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
 			if err != nil {
 				t.Fatalf("an unfit root stopped the boot; a dev box whose volume drifted cannot be repaired from inside a container that will not start: %v", err)
 			}
@@ -197,6 +197,47 @@ func TestWireToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 	}
 }
 
+// TestBootTightensEveryRootTheEngineJudges plants every directory toolbelt documents its
+// root-integrity check judging (docs/configuration.md "Root integrity check", v3.12.0)
+// group-writable: the engine refuses exactly those, and comes up once healBootModes has run.
+func TestBootTightensEveryRootTheEngineJudges(t *testing.T) {
+	configDir, toolsDir := fitTree(t)
+	documented := []string{configDir, toolsDir}
+	for _, rel := range []string{
+		"bin", "opt", "npm", "npm/bin", "npm/lib", "npm/lib/node_modules",
+		"python", "python/bin", "python/tools", "python/interpreters",
+	} {
+		documented = append(documented, filepath.Join(toolsDir, filepath.FromSlash(rel)))
+	}
+	slices.Sort(documented)
+	for _, dir := range documented {
+		mkdirMode(t, dir, 0o775)
+	}
+	cfg := &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}, ToolCatalogPath: filepath.Join(t.TempDir(), "absent.json")}
+
+	logs := captureDefaultLogger(t)
+	tools, err := wireToolsEngine(t.Context(), cfg, testRuntime(t), nil)
+	if err != nil {
+		t.Fatalf("wireToolsEngine over group-writable roots = %v, want the degraded slot", err)
+	}
+	if engine, _ := tools.Engine(); engine != nil {
+		t.Fatal("an engine came up over group-writable roots; the integrity check is off")
+	}
+	if got := loggedUnfitPaths(t, logs); !slices.Equal(got, documented) {
+		t.Errorf("the engine refused %v; toolbelt documents %v", got, documented)
+	}
+
+	healBootModes(configDir, toolsDir, "", "")
+	healed, err := wireToolsEngine(t.Context(), cfg, testRuntime(t), nil)
+	if err != nil {
+		t.Fatalf("wireToolsEngine after the heal = %v", err)
+	}
+	t.Cleanup(healed.Close)
+	if engine, reason := healed.Engine(); engine == nil {
+		t.Errorf("no engine after healBootModes: %v", reason)
+	}
+}
+
 // TestAppShutdownToleratesTheDegradedEngine asserts that no toolbelt method is nil-receiver safe, so Shutdown
 // must skip the nil engine.
 func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
@@ -206,7 +247,7 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	}
 	captureDefaultLogger(t)
 
-	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
+	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
 	if err != nil {
 		t.Fatalf("wireToolsEngine over an unfit root = %v, want the degraded slot", err)
 	}

@@ -146,7 +146,7 @@ func (rt *Runtime) resumeParentless(ctx context.Context, workflowID string) {
 }
 
 // engineBusy is what a restart now would interrupt: the chats with an open turn and the runs the snapshot would
-// hold, by name.
+// hold, by name, each run with its launching chat's name.
 func (rt *Runtime) engineBusy() engineBusy {
 	ctx := rt.lifecycle.shutdownCtx
 	var b engineBusy
@@ -165,7 +165,11 @@ func (rt *Runtime) engineBusy() engineBusy {
 	leases := rt.runs.leaseStore().List()
 	for i := range leases {
 		if l := &leases[i]; l.Bounded() || (rt.runs.log != nil && rt.runs.log.hasOpen(l.WorkflowID)) || slices.Contains(drive, l.WorkflowID) {
-			b.runs = append(b.runs, marotte.EngineBusyRun{WorkflowID: l.WorkflowID, Name: rt.runs.tabLabel(l.WorkflowID)})
+			b.runs = append(b.runs, marotte.EngineBusyRun{
+				WorkflowID: l.WorkflowID,
+				Name:       rt.runs.leasedRunName(l),
+				ChatName:   rt.coord.chatName(ctx, marotte.ChatID(l.ChatID)),
+			})
 		}
 	}
 	b.unsettled = !rt.runs.mutations.empty()

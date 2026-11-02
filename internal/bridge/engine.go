@@ -96,6 +96,10 @@ type ExitInfo struct {
 	// never reaches marotte, so it names no cause.
 	SidecarExit string
 	Uptime      time.Duration
+	// RSSPeakMiB is the node engine's highest sampled resident set high-water mark (VmHWM), 0 when never sampled.
+	RSSPeakMiB int
+	// HeapLimitMiB is the engine's effective JavaScript heap limit, 0 when unknown.
+	HeapLimitMiB int
 	// JSHeapOOM: the engine's stderr carried Node's "JavaScript heap out of memory" line.
 	JSHeapOOM bool
 	// RelayWriteTimeout: the engine's stderr carried the relay's 2-second write timeout line.
@@ -164,14 +168,17 @@ type Engine struct {
 	startTerminalTimeoutMs int
 	nextID                 atomic.Int64
 	heapMiB                int
-	generation             uint64
-	stopOnce               sync.Once
-	exitOnce               sync.Once
-	lanesMu                sync.Mutex
-	writeMu                sync.Mutex
-	pendingMu              sync.Mutex
-	mu                     sync.Mutex
-	contentCollectionMu    sync.Mutex
+	// rssPeakMiB and heapLimitMiB are the memory sampler's record for ExitInfo. Guarded by mu.
+	rssPeakMiB          int
+	heapLimitMiB        int
+	generation          uint64
+	stopOnce            sync.Once
+	exitOnce            sync.Once
+	lanesMu             sync.Mutex
+	writeMu             sync.Mutex
+	pendingMu           sync.Mutex
+	mu                  sync.Mutex
+	contentCollectionMu sync.Mutex
 	// readerExited is the exit path's fence, taking no lock: once set, writeFrame (which loads it under writeMu)
 	// writes nothing.
 	readerExited      atomic.Bool
@@ -182,6 +189,7 @@ type Engine struct {
 	// and again after one fails, since a failed send may or may not have reached KAS. Guarded by mu.
 	contentCollectionApplied bool
 	contentCollectionKnown   bool
+	debugLogs                bool
 }
 
 // Option configures an Engine at construction time.
@@ -247,6 +255,8 @@ func (e *Engine) exitInfoLocked() ExitInfo {
 	info := ExitInfo{
 		Reason:            e.exitReason,
 		SidecarExit:       e.sidecarExit,
+		RSSPeakMiB:        e.rssPeakMiB,
+		HeapLimitMiB:      e.heapLimitMiB,
 		JSHeapOOM:         e.jsHeapOOM.Load(),
 		RelayWriteTimeout: e.relayWriteTimeout.Load(),
 	}
@@ -316,6 +326,7 @@ func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 	e.extraArgs = o.ExtraArgs
 	e.authArgs = o.AuthArgs
 	e.heapMiB = o.HeapMiB
+	e.debugLogs = o.DebugLogs
 	e.spawn = kascap.EngineSpawn{
 		InfraSafetyMonitor:       o.Features.InfraSafetyMonitor,
 		AutoRouting:              o.Features.AutoRouting,
@@ -337,6 +348,7 @@ func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 	if err := e.initialize(hctx); err != nil {
 		return handshakeTimeout(err, "agent engine start", handshakeBudget)
 	}
+	go e.watchMemory()
 	// Between initialize and the first session: KAS scopes the ignore list to the connection and pushes it into every
 	// session, so the first turn already enforces it.
 	ignoreFiles := e.applyIgnoreFiles(hctx, o.IgnoreFiles)

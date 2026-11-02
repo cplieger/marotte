@@ -58,7 +58,8 @@ export function createRunStepStream(hostFor: StepHostFor): RunStepStream {
     if (rec === undefined) {
       const box = el("div", { className: "ev-d-turn" });
       const request = turn.trigger?.text.trim() ?? "";
-      const heading = request === "" ? undefined : buildRequestHeader(request);
+      const heading =
+        request === "" ? undefined : buildRequestHeader(request, turn.trigger?.caller);
       hostFor(nodePath).append(...(heading === undefined ? [box] : [heading, box]));
       rec = { heading, box, shape: [], sealed: false };
       renders.set(turn.id, rec);

@@ -147,6 +147,7 @@ const {
   themeStorage,
   _resetThemeForTest,
 } = await import("./settings.js");
+const { setCatalogOutputStyles } = await import("./output-style.js");
 
 /** Wire the General panel's listeners once, then seed it — the two halves the `settings_updated`
  *  arm keeps apart, in the order boot runs them. */
@@ -978,20 +979,14 @@ describe("the agent-capability selects and the shell timeout", () => {
       <select id="auto-routing"><option value="">Default</option><option value="on">On</option><option value="off">Off</option></select>
       <select id="auto-delegation"><option value="">Default</option><option value="on">On</option><option value="off">Off</option></select>
       <input type="checkbox" id="flag-cloudformation-safety">
-      <select id="output-style"><option value="default">Default</option><option value="concise">Concise</option></select>
       <input type="number" id="shell-command-timeout">`;
   });
 
   it("seeds every select and shows the ask-first row only while spec planning is on", () => {
     applyGeneralPanel(
-      settingsPayload({
-        spec_planning: "quick",
-        output_style: "concise",
-        terminal_command_timeout_ms: 300_000,
-      }),
+      settingsPayload({ spec_planning: "quick", terminal_command_timeout_ms: 300_000 }),
     );
     expect(sel("spec-planning").value).toBe("quick");
-    expect(sel("output-style").value).toBe("concise");
     expect(timeout().value).toBe("300");
     expect(askRow().classList.contains("hidden")).toBe(false);
   });
@@ -1106,6 +1101,113 @@ describe("the agent-capability selects and the shell timeout", () => {
     ["5000", 1_800_000],
   ])("shellTimeoutMs(%j) is %i", (raw, want) => {
     expect(shellTimeoutMs(raw)).toBe(want);
+  });
+});
+
+describe("the output style select", () => {
+  // kiro-cli 2.37.0's outputStyle select, as GET /api/config-template serves it.
+  const STYLES = [
+    { id: "default", name: "Default", description: "Use Kiro's standard response style." },
+    {
+      id: "proactive",
+      name: "Proactive",
+      description:
+        "Start work immediately and make reasonable assumptions about routine decisions.",
+    },
+    {
+      id: "concise",
+      name: "Concise",
+      description: "Keep responses brief and conversational unless the task needs more structure.",
+    },
+    {
+      id: "explanatory",
+      name: "Explanatory",
+      description:
+        "Add brief Insight blocks that explain non-obvious code and implementation choices.",
+    },
+    {
+      id: "learning",
+      name: "Learning",
+      description: "Explain choices and leave small, meaningful pieces of code for you to write.",
+    },
+  ];
+  const LEARNING_HINT =
+    "Explain choices and leave small, meaningful pieces of code for you to write. From your next message on.";
+  const select = (): HTMLSelectElement =>
+    document.getElementById("output-style") as HTMLSelectElement;
+  const hint = (): string => document.getElementById("output-style-hint")?.textContent ?? "";
+
+  beforeEach(() => {
+    // Static/index.html's markup before any catalog lands.
+    document.body.innerHTML = `
+      <select id="output-style"><option value="default" selected>Default</option></select>
+      <p id="output-style-hint">Default uses Kiro's standard response style.</p>`;
+  });
+
+  it("paints the output styles the catalog serves and keeps the stored one, catalog first", () => {
+    setCatalogOutputStyles(STYLES);
+    applyGeneralPanel(settingsPayload({ output_style: "learning" }));
+
+    expect(Array.from(select().options, (o) => o.value)).toEqual([
+      "default",
+      "proactive",
+      "concise",
+      "explanatory",
+      "learning",
+    ]);
+    expect(Array.from(select().options, (o) => o.textContent)).toEqual(STYLES.map((s) => s.name));
+    expect(select().value).toBe("learning");
+    expect(hint()).toBe(LEARNING_HINT);
+  });
+
+  it("paints the output styles the catalog serves and keeps the stored one, settings first", async () => {
+    const { settingsAsShown } = await import("./persist.js");
+    const stored = settingsPayload({ output_style: "learning" });
+    applyGeneralPanel(stored);
+    expect(select().value).toBe("default");
+
+    vi.mocked(settingsAsShown).mockReturnValueOnce(stored);
+    setCatalogOutputStyles(STYLES);
+
+    expect(select().options).toHaveLength(5);
+    expect(select().value).toBe("learning");
+    expect(hint()).toBe(LEARNING_HINT);
+  });
+
+  it("shows Default for a stored style the catalog does not serve, and writes nothing", async () => {
+    const { patchSettings } = await import("./persist.js");
+    setCatalogOutputStyles(STYLES);
+    applyGeneralPanel(settingsPayload({ output_style: "verbose" }));
+
+    expect(select().value).toBe("default");
+    expect(hint()).toBe("Use Kiro's standard response style. From your next message on.");
+    expect(patchSettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps Default selectable when the catalog leaves it out", () => {
+    setCatalogOutputStyles(STYLES.filter((s) => s.id !== "default"));
+    applyGeneralPanel(settingsPayload({ output_style: "learning" }));
+    expect(hint()).toBe(LEARNING_HINT);
+    applyGeneralPanel(settingsPayload({ output_style: "verbose" }));
+
+    expect(select().options[0]?.value).toBe("default");
+    expect(select().value).toBe("default");
+    expect(hint()).toBe("Default uses Kiro's standard response style.");
+  });
+
+  it("a style change writes output_style and shows that style's description", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload());
+    setCatalogOutputStyles(STYLES);
+    vi.mocked(patchSettings).mockClear();
+
+    select().value = "explanatory";
+    select().dispatchEvent(new Event("change"));
+
+    expect(patchSettings).toHaveBeenLastCalledWith({ output_style: "explanatory" });
+    expect(hint()).toBe(
+      "Add brief Insight blocks that explain non-obvious code and implementation choices. From your next message on.",
+    );
   });
 });
 

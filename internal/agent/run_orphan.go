@@ -9,11 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/workflow"
@@ -79,7 +77,14 @@ func (rs *Runs) BootSweep(ctx context.Context) (reached bool) {
 	}
 	defer release()
 	rs.findHoldsAsync()
-	if !rs.sweepOrphaned(ctx) {
+	reached = rs.sweepOrphaned(ctx)
+	// After the sweep, which releases the orphans; a clock needs no answer from KAS.
+	rs.watchParkedSlots()
+	leases := rs.leaseStore().List()
+	for i := range leases {
+		rs.watchUnattendedPause(leases[i].WorkflowID)
+	}
+	if !reached {
 		return false
 	}
 	rs.askBootPass(ctx)
@@ -132,6 +137,9 @@ func (rs *Runs) releaseIfOver(ctx context.Context, workflowID string) {
 	}
 	slog.Info("releasing the lease of a run that stopped without a terminal frame",
 		"workflow_id", workflowID, "status", res.State.Status)
+	if l, held := rs.lease(workflowID); held {
+		rs.recordScheduleEnding(ctx, scheduleRun(&l), res.State.Status, res.State.StopReason)
+	}
 	rs.releaseLease(ctx, workflowID)
 }
 
@@ -146,6 +154,7 @@ func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]ma
 			if st.Terminal() {
 				slog.Info("releasing the lease of a run with terminal status",
 					"workflow_id", l.WorkflowID, "recipe", l.Recipe, "status", st)
+				rs.recordScheduleEnding(ctx, scheduleRun(l), st, "")
 				rs.releaseLease(ctx, l.WorkflowID)
 				continue
 			}
@@ -178,9 +187,18 @@ func (rs *Runs) inspectConfirmsGone(ctx context.Context, workflowID string) bool
 	return res.WorkflowID == workflowID && res.State.Status.Terminal()
 }
 
-// workflowNotFound matches KAS's unknown-workflow refusal by text: it is an untyped throw.
+// workflowNotFound reports KAS's WorkflowNotFoundError from a search that covered every session (kiro-cli 2.37.0
+// acp-server.js): KAS sets searchIncomplete when a relayed session it could not reach may still hold the run.
 func workflowNotFound(err error) bool {
-	return strings.Contains(strings.ToLower(rpcerr.Details(err)), "workflow not found")
+	e, ok := errors.AsType[*marotte.RPCError](err)
+	if !ok {
+		return false
+	}
+	var data struct {
+		ErrorType        string `json:"errorType"`
+		SearchIncomplete bool   `json:"searchIncomplete"`
+	}
+	return json.Unmarshal(e.Data, &data) == nil && data.ErrorType == "WorkflowNotFoundError" && !data.SearchIncomplete
 }
 
 // Only leaseAbsenceBudget of unbroken absence releases, and the row says the outcome is unknown.
@@ -195,7 +213,7 @@ func (rs *Runs) observeAbsentLease(ctx context.Context, l *runlease.Lease, now t
 
 	slog.Warn("run stayed absent past the lease budget; no terminal signal was ever seen",
 		"workflow_id", l.WorkflowID, "recipe", l.Recipe, "first_absent_at", l.FirstAbsentAt)
-	rs.recordScheduleOutcome(ctx, l.ScheduleID, schedule.Outcome{Status: schedule.StatusUnknown, Reason: reasonLeaseAbsent})
+	rs.recordScheduleOutcome(ctx, scheduleRun(l), schedule.Outcome{Status: schedule.StatusUnknown, Reason: reasonLeaseAbsent})
 	rs.releaseLease(ctx, l.WorkflowID)
 }
 
@@ -251,7 +269,7 @@ func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 	slog.Error(logMsgRunOrphaned, "workflow_id", l.WorkflowID, "recipe", l.Recipe,
 		"origin", string(l.Origin), "schedule_id", l.ScheduleID)
 	// The schedule's row too, or every later slot is refused as an overlap.
-	rs.recordScheduleOutcome(ctx, l.ScheduleID, schedule.Outcome{Status: schedule.StatusFailed, Reason: reasonOrphaned})
+	rs.recordScheduleOutcome(ctx, scheduleRun(l), schedule.Outcome{Status: schedule.StatusFailed, Reason: reasonOrphaned})
 	rs.releaseLease(ctx, l.WorkflowID)
 	return true
 }
@@ -303,25 +321,25 @@ func (r *inspectRunState) userParked() bool {
 
 // inspect reads one run's inspect reply, false when it cannot be read or decoded at all.
 func (rs *Runs) inspect(ctx context.Context, workflowID string) (inspectRunState, bool) {
-	res, err := rs.readInspect(ctx, workflowID)
+	res, _, err := rs.readInspect(ctx, workflowID)
 	return res, err == nil
 }
 
 var errInspectUndecoded = errors.New("a run's inspect reply could not be decoded")
 
-// readInspect is inspect with its failure: the RPC's, or errInspectUndecoded.
-func (rs *Runs) readInspect(ctx context.Context, workflowID string) (inspectRunState, error) {
+// readInspect is inspect with the raw reply and its failure: the RPC's, or errInspectUndecoded.
+func (rs *Runs) readInspect(ctx context.Context, workflowID string) (inspectRunState, json.RawMessage, error) {
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
 		slog.Warn("could not read a paused run's state, so it is left alone",
 			"workflow_id", workflowID, "error", err)
-		return inspectRunState{}, err
+		return inspectRunState{}, nil, err
 	}
 	var res inspectRunState
 	if !unmarshalKeepingReadable(raw, &res) {
-		return inspectRunState{}, errInspectUndecoded
+		return inspectRunState{}, nil, errInspectUndecoded
 	}
-	return res, nil
+	return res, raw, nil
 }
 
 // rawInspect issues `_kiro/workflow/inspect` and types its failure, so callers use errors.Is. Every
@@ -335,23 +353,23 @@ func (rs *Runs) rawInspect(ctx context.Context, workflowID string) (json.RawMess
 	if err != nil {
 		return nil, workflow.Classify(err)
 	}
-	rs.translate.RecordRunSteps(raw)
-	rs.seedRouterSteps(workflowID, raw)
+	rs.translate.RecordInspect(context.WithoutCancel(ctx), raw)
+	var res workflow.InspectResult
+	if json.Unmarshal(raw, &res) == nil && res.State != nil {
+		rs.seedRouterSteps(workflowID, res.State)
+		rs.signals.observe(workflowID, res.State)
+	}
 	return raw, nil
 }
 
 // seedRouterSteps teaches the router every step session an inspect names, so a step's frames after a restart reach
 // its run's owner before any node_start is read again.
-func (rs *Runs) seedRouterSteps(workflowID string, raw json.RawMessage) {
+func (rs *Runs) seedRouterSteps(workflowID string, s *workflow.State) {
 	if rs.router == nil {
 		return
 	}
-	var res workflow.InspectResult
-	if json.Unmarshal(raw, &res) != nil {
-		return
-	}
 	var ids []string
-	for _, st := range workflow.Steps(res.State) {
+	for _, st := range workflow.Steps(s) {
 		if st.SessionID != "" {
 			ids = append(ids, st.SessionID)
 		}
@@ -377,6 +395,11 @@ func (rs *Runs) observeInspected(ctx context.Context, workflowID string) error {
 	case marotte.RunStatusRunning:
 		if !rs.bounded(workflowID) {
 			rs.armDeadline(ctx, workflowID)
+		}
+	case marotte.RunStatusPaused:
+		if rs.bounded(workflowID) {
+			rs.parkDeadline(ctx, workflowID)
+			rs.watchUnattendedPause(workflowID)
 		}
 	default:
 		if rs.bounded(workflowID) {

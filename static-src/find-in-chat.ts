@@ -550,8 +550,12 @@ async function navigateToHit(hit: Hit): Promise<void> {
   if (!isOpen() || shell === null) {
     return;
   }
-  // The two turn-level kinds resolve from the turn card ahead of the row lookup: neither renders in the message row.
-  if (hit.segment_kind === "turn_failure" || hit.segment_kind === "attachment") {
+  // The turn-level kinds resolve from the turn card ahead of the row lookup: none renders in the message row.
+  if (
+    hit.segment_kind === "turn_failure" ||
+    hit.segment_kind === "attachment" ||
+    hit.segment_kind === "wake"
+  ) {
     const card = turnCardEl(hit.turn_id);
     if (card === null) {
       // The same sentence the row path answers, for the same reason: the surface
@@ -559,11 +563,8 @@ async function navigateToHit(hit: Hit): Promise<void> {
       showHitNotice("could not be shown");
       return;
     }
-    const region =
-      hit.segment_kind === "turn_failure"
-        ? card.querySelector<HTMLElement>(":scope > .turn-notice")
-        : card.querySelector<HTMLElement>(":scope > .turn-header .turn-req-attachments");
-    // Both regions sit in the card's resting state, so no disclosure chain.
+    const region = card.querySelector<HTMLElement>(TURN_REGION[hit.segment_kind]);
+    // Each region sits in the card's resting state, so no disclosure chain.
     await landOrNotice(region ?? card, hit, region !== null);
     return;
   }
@@ -670,6 +671,13 @@ async function ensureHitResident(chatID: string, hit: Hit): Promise<boolean> {
   }
   return true;
 }
+
+/** Where each turn-level kind renders in its card. A wake's label and messages are the header's request. */
+const TURN_REGION = {
+  turn_failure: ":scope > .turn-notice",
+  attachment: ":scope > .turn-header .turn-req-attachments",
+  wake: ":scope > .turn-header > .turn-req",
+} as const;
 
 /** The rendered TURN CARD for a turn id, which every hit carries and which is the
  *  outer reconcile's own key. Null when that turn is not mounted in the active

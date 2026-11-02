@@ -234,8 +234,110 @@ describe("an always option opens a chooser instead of answering", () => {
 
   it("answers Allow once with no pattern", () => {
     const { card, answers } = mount(ask());
-    button(card, "Allow").click();
+    button(card, "Allow once").click();
     expect(answers).toEqual([{ optionID: "accept" }]);
+  });
+});
+
+describe("Allow for this chat answers the always option with session scope", () => {
+  function names(card: HTMLElement): (string | null)[] {
+    return [...card.querySelectorAll(".approval-actions button")].map((b) => b.textContent);
+  }
+
+  it("sits between the one-time and the always allow, with deny left at two answers", () => {
+    const { card } = mount(ask());
+    expect(names(card)).toEqual([
+      "Allow once",
+      "Allow for this chat",
+      "Always allow",
+      "Deny",
+      "Always deny",
+    ]);
+  });
+
+  it("renames only the one-time answer, keeping kiro-cli's other labels", () => {
+    const { card } = mount(
+      ask({
+        options: [
+          { option_id: "accept", name: "Yes", kind: "allow_once" },
+          { option_id: "always-accept", name: "Trust", kind: "allow_always" },
+          { option_id: "reject", name: "No", kind: "reject_once" },
+        ],
+      }),
+    );
+    expect(names(card)).toEqual(["Allow once", "Allow for this chat", "Trust", "No"]);
+  });
+
+  it("opens the same patterns and answers nothing until one is picked", () => {
+    const { card, answers } = mount(ask());
+    button(card, "Allow for this chat").click();
+
+    expect(answers).toEqual([]);
+    expect(button(card, "Allow for this chat").getAttribute("aria-expanded")).toBe("true");
+    expect(button(card, "Always allow").getAttribute("aria-expanded")).toBe("false");
+    expect(card.querySelector(".always-choice-title")?.textContent).toBe("Allow for this chat:");
+    expect(card.querySelector(".always-choice")?.getAttribute("aria-label")).toBe(
+      "Allow for this chat",
+    );
+    expect(patterns(card)).toEqual(["head -1", "head *", "*"]);
+  });
+
+  it("answers the allow_always option with the picked pattern and session scope", () => {
+    const { card, answers } = mount(ask());
+    button(card, "Allow for this chat").click();
+    [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][1]?.click();
+
+    expect(answers).toEqual([
+      { optionID: "always-accept", alwaysResource: "head *", alwaysScope: "session" },
+    ]);
+  });
+
+  it("says the rule is kept for this chat only and changes no permissions", () => {
+    const { card } = mount(ask());
+    button(card, "Allow for this chat").click();
+    expect(card.querySelector(".always-choice-hint")?.textContent).toBe(
+      "kiro-cli keeps this rule for this chat's session only. Nothing is saved and Permissions stay " +
+        "as they are. It may ask again after the chat closes or reloads.",
+    );
+  });
+
+  it("switches to Always allow's own chooser, which still answers user scope", () => {
+    const { card, answers } = mount(ask());
+    button(card, "Allow for this chat").click();
+    button(card, "Always allow").click();
+
+    expect(button(card, "Allow for this chat").getAttribute("aria-expanded")).toBe("false");
+    expect(card.querySelector(".always-choice-title")?.textContent).toBe("Always allow:");
+    expect(card.querySelector(".always-choice-hint")?.textContent).toMatch(/^Saves the rule/);
+    [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][0]?.click();
+    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: "head -1" }]);
+  });
+
+  it("closes on a second click", () => {
+    const { card } = mount(ask());
+    button(card, "Allow for this chat").click();
+    button(card, "Allow for this chat").click();
+    expect(card.querySelector(".always-choice")).toBeNull();
+    expect(button(card, "Allow for this chat").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("is absent when the ask names nothing to save", () => {
+    const payload = ask();
+    delete payload.consent;
+    expect(names(mount(payload).card)).toEqual(["Allow", "Deny"]);
+  });
+
+  it("is absent when KAS offers no always allow", () => {
+    const { card } = mount(
+      ask({
+        options: [
+          { option_id: "accept", name: "Allow", kind: "allow_once" },
+          { option_id: "reject", name: "Deny", kind: "reject_once" },
+          { option_id: "always-reject", name: "Always deny", kind: "reject_always" },
+        ],
+      }),
+    );
+    expect(names(card)).toEqual(["Allow", "Deny", "Always deny"]);
   });
 });
 

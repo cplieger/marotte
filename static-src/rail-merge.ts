@@ -3,6 +3,7 @@
 // window cannot see the turns paged out. Pure and DOM-free, like `turns.ts` beside it.
 
 import { OUTCOME_LABEL } from "./turn-severity.js";
+import { wakeLine } from "./turn-wake.js";
 import { turnLedger } from "./turns.js";
 import type { Turn, TurnOutcome } from "./turns.js";
 
@@ -124,14 +125,19 @@ function fillBadTimestamps(rows: TurnSummary[], bad: readonly number[]): void {
  *  renders, and the appender assigns it at open and stores it (section 8.10), so both sides name
  *  a turn by the same number and no turn can take two slots. Resident wins per field with no
  *  exemption, because it sees the turn running now and a window never holds part of a turn
- *  (section 6.3). */
+ *  (section 6.3); a `held` turn that is not drawn holds no slot, whatever the index fetched before
+ *  a later wake took its last drawn row. */
 export function mergeTurnSets(
   resident: readonly Turn[],
   indexed: readonly TurnSummary[],
+  held: ReadonlySet<string> = new Set(),
 ): TurnSummary[] {
+  const drawn = new Set(resident.map((t) => t.id));
   const byN = new Map<number, TurnSummary>();
   for (const row of indexed) {
-    byN.set(row.n, row);
+    if (!held.has(row.id) || drawn.has(row.id)) {
+      byN.set(row.n, row);
+    }
   }
   for (const t of resident) {
     byN.set(t.n, residentRow(t));
@@ -147,7 +153,7 @@ function residentRow(t: Turn): TurnSummary {
     outcome: t.outcome,
     agent_initiated: t.trigger === undefined,
   };
-  const line = firstLine(t.trigger?.text ?? "");
+  const line = firstLine(t.trigger?.text ?? wakeRailText(t));
   if (line !== "") {
     out.first_line = line;
   }
@@ -156,6 +162,18 @@ function residentRow(t: Turn): TurnSummary {
     out.elapsed_ms = elapsedMs;
   }
   return out;
+}
+
+/** A wake's rail text as `internal/chat/entrylog.go` railLineOf joins it: label, then message. */
+function wakeRailText(t: Turn): string {
+  if (t.wake === undefined) {
+    return "";
+  }
+  const { label, body, fallback } = wakeLine(t.wake);
+  if (fallback) {
+    return "";
+  }
+  return body === "" ? label : `${label}: ${body}`;
 }
 
 /** A request's first line, whitespace-collapsed and rune-safe. A TWIN of `internal/chat/entrylog.go`

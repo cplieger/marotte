@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -28,7 +29,16 @@ func TestValidateAgentPatch_RefusesValuesTheUICannotProduce(t *testing.T) {
 		{name: "smart helpers unknown", key: KeyAutoDelegation, raw: `"auto"`, wantErr: true},
 		{name: "cfn enforce", key: KeyCloudFormationSafety, raw: `"enforce"`, wantErr: true},
 		{name: "style concise", key: KeyOutputStyle, raw: `"concise"`},
-		{name: "style verbose", key: KeyOutputStyle, raw: `"verbose"`, wantErr: true},
+		{name: "style proactive", key: KeyOutputStyle, raw: `"proactive"`},
+		{name: "style learning", key: KeyOutputStyle, raw: `"learning"`},
+		{name: "style a later id", key: KeyOutputStyle, raw: `"verbose"`},
+		{name: "style with digits dash and underscore", key: KeyOutputStyle, raw: `"terse_v2-beta"`},
+		{name: "style 64 bytes", key: KeyOutputStyle, raw: `"` + strings.Repeat("a", 64) + `"`},
+		{name: "style empty", key: KeyOutputStyle, raw: `""`, wantErr: true},
+		{name: "style upper case", key: KeyOutputStyle, raw: `"Concise"`, wantErr: true},
+		{name: "style spaced", key: KeyOutputStyle, raw: `"not a style"`, wantErr: true},
+		{name: "style 65 bytes", key: KeyOutputStyle, raw: `"` + strings.Repeat("a", 65) + `"`, wantErr: true},
+		{name: "style number", key: KeyOutputStyle, raw: `3`, wantErr: true},
 		{name: "timeout unset", key: KeyTerminalCommandTimeoutMs, raw: `0`},
 		{name: "timeout floor", key: KeyTerminalCommandTimeoutMs, raw: `1000`},
 		{name: "timeout ceiling", key: KeyTerminalCommandTimeoutMs, raw: `1800000`},
@@ -95,7 +105,7 @@ func TestEffective_AgentCapabilityDefaultsAreKiroCLIs(t *testing.T) {
 	if !DefaultWorkflowsEnabled {
 		t.Error("DefaultWorkflowsEnabled = false, want true")
 	}
-	// kiro-cli ships both model-fallback flags off.
+	// kiro-cli ships the refusal and availability fallback flags off.
 	if defaultModelFallback {
 		t.Error("defaultModelFallback = true, want false")
 	}
@@ -118,6 +128,17 @@ func TestEffective_IgnoresAStoredInlineAgentsKey(t *testing.T) {
 	}
 	if err := ValidateAgentPatch(map[string]json.RawMessage{"inline_agents_enabled": json.RawMessage(`"yes"`)}); err != nil {
 		t.Errorf("ValidateAgentPatch(inline_agents_enabled) = %v, want the client's patch tolerated", err)
+	}
+}
+
+func TestEffective_ReadsAStoredLaterStyle(t *testing.T) {
+	got, rejected := EffectiveFrom(map[string]json.RawMessage{KeyOutputStyle: json.RawMessage(`"learning"`)})
+	if len(rejected) != 0 || got.OutputStyle != "learning" {
+		t.Errorf("EffectiveFrom(output_style: learning) = %q, rejected %v; want learning, none", got.OutputStyle, rejected)
+	}
+	got, rejected = EffectiveFrom(map[string]json.RawMessage{KeyOutputStyle: json.RawMessage(`"Not A Style"`)})
+	if !slices.Contains(rejected, KeyOutputStyle) || got.OutputStyle != OutputStyleDefault {
+		t.Errorf("EffectiveFrom(output_style: Not A Style) = %q, rejected %v; want default, output_style rejected", got.OutputStyle, rejected)
 	}
 }
 
@@ -149,7 +170,7 @@ func TestEffective_AStoredValueOutsideTheVocabularyReadsAsTheDefault(t *testing.
 	if got.AutoDelegation != FeatureOn {
 		t.Errorf("AutoDelegation = %q, want the stored on", got.AutoDelegation)
 	}
-	if got.OutputStyle != OutputStyleConcise {
+	if got.OutputStyle != "concise" {
 		t.Errorf("OutputStyle = %q, want the stored concise", got.OutputStyle)
 	}
 	if got.TerminalCommandTimeoutMs != 0 {

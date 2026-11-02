@@ -113,6 +113,50 @@ func TestTemplateToResponse_APresentOptionWhoseEntriesAllFilterOutIsStillReady(t
 	}
 }
 
+// The select as kiro-cli 2.37.0 builds it in the template (acp-server.js, the outputStyle
+// configOption over its style table).
+const outputStyleTemplate = `{"configOptions": [
+  {"id": "outputStyle", "name": "Output Style", "category": "output_style",
+   "_meta": {"kiro": {"promptScoped": true}}, "currentValue": "default", "options": [
+    {"value": "default", "name": "Default", "description": "Use Kiro's standard response style."},
+    {"value": "proactive", "name": "Proactive", "description": "Start work immediately and make reasonable assumptions about routine decisions."},
+    {"value": "concise", "name": "Concise", "description": "Keep responses brief and conversational unless the task needs more structure."},
+    {"value": "explanatory", "name": "Explanatory", "description": "Add brief Insight blocks that explain non-obvious code and implementation choices."},
+    {"value": "learning", "name": "Learning", "description": "Explain choices and leave small, meaningful pieces of code for you to write."},
+    {"value": "", "name": "No id"}
+  ]}
+]}`
+
+func TestTemplateToResponse_ServesTheOutputStyleSelect(t *testing.T) {
+	var tpl kasConfigTemplate
+	if err := json.Unmarshal([]byte(outputStyleTemplate), &tpl); err != nil {
+		t.Fatalf("unmarshal fixture: %v", err)
+	}
+	got := templateToResponse(&tpl).response.OutputStyles
+	want := []marotte.OutputStyle{
+		{ID: "default", Name: "Default", Description: "Use Kiro's standard response style."},
+		{ID: "proactive", Name: "Proactive", Description: "Start work immediately and make reasonable assumptions about routine decisions."},
+		{ID: "concise", Name: "Concise", Description: "Keep responses brief and conversational unless the task needs more structure."},
+		{ID: "explanatory", Name: "Explanatory", Description: "Add brief Insight blocks that explain non-obvious code and implementation choices."},
+		{ID: "learning", Name: "Learning", Description: "Explain choices and leave small, meaningful pieces of code for you to write."},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("output_styles = %+v, want the five styles in the template's order, the empty id dropped", got)
+	}
+}
+
+func TestHandleConfigTemplate_ServesTheTemplatesOutputStylesBesideALiveCatalog(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroConfigTemplate: json.RawMessage(outputStyleTemplate)}
+	h.catalog.SetModels([]marotte.SessionModel{{ID: "m-live", Name: "Live"}})
+
+	got := serveConfigTemplate(t, h)
+
+	if len(got.OutputStyles) != 5 || got.OutputStyles[4].ID != "learning" {
+		t.Errorf("output_styles = %+v, want the template's five styles", got.OutputStyles)
+	}
+}
+
 func TestTemplateToResponseEmpty(t *testing.T) {
 	got := withCatalogVerdict(templateToResponse(&kasConfigTemplate{}))
 	if got.DefaultModel != "" || len(got.Modes) != 0 || len(got.Models) != 0 {
@@ -124,7 +168,7 @@ func TestTemplateToResponseEmpty(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	s := string(b)
-	if s != `{"catalog":"empty","modes":[],"models":[]}` {
+	if s != `{"catalog":"empty","modes":[],"models":[],"output_styles":[]}` {
 		t.Errorf("empty response JSON: %s", s)
 	}
 }
@@ -302,7 +346,7 @@ func TestHandleConfigTemplate_EveryBodyKeepsItsArraysNonNull(t *testing.T) {
 			h.handleConfigTemplate(rec, req)
 
 			body := rec.Body.String()
-			for _, key := range []string{"modes", "models"} {
+			for _, key := range []string{"modes", "models", "output_styles"} {
 				if !strings.Contains(body, `"`+key+`":[]`) {
 					t.Errorf("body has no empty %s array: %s", key, body)
 				}

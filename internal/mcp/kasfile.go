@@ -106,6 +106,8 @@ func renderKASServers(servers []*Server, policy kasRenderPolicy) map[string]kasS
 			entry.OAuthScopes = s.OAuthScopes
 		case TransportRegistry:
 			entry.Type = string(TransportRegistry)
+			entry.Env = pairsRecord(s.Env)
+			entry.Headers = pairsRecord(s.Headers)
 		default:
 			// An unknown transport has neither a command nor a url, so KAS would
 			// reject it as "must specify a command or url". Skip it rather than

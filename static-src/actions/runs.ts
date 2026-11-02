@@ -9,6 +9,7 @@ import { serverSentence } from "./server-sentence.js";
 import { decodeRunRetriedResponse, decodeRunStepMessageResponse } from "../wire/decoders.gen.js";
 import type {
   RunRetriedResponse,
+  RunStepEndRequest,
   RunStepMessageRequest,
   RunStepMessageResponse,
   RunStepSteerRequest,
@@ -183,6 +184,24 @@ export const clearRunStepSteers = apiAction<StepAddress, { ok: boolean }>({
     ({ workflowID }: { workflowID: string }) => onRun(workflowID),
     "Could not discard",
   ),
+});
+
+/** End one paused step as done or failed, whatever its siblings are doing. A refusal (the step moved
+ *  on, a twin execution shares its id, KAS's own decline) shows the server's sentence. */
+export const endRunStep = apiAction<StepAddress & RunStepEndRequest, { ok: boolean }>({
+  name: "runs.end_step",
+  request: ({ workflowID, nodePath, status }) => ({
+    method: "POST",
+    path: `${runStepURL(workflowID, nodePath)}/end`,
+    body: { status },
+  }),
+  error: errorAbout(
+    ({ workflowID }) => onRun(workflowID),
+    (_args, err) => serverSentence(err) ?? "Couldn't end the step",
+  ),
+  onSuccess: (_res, { workflowID }) => {
+    rereadAfterVerb(workflowID);
+  },
 });
 
 export const extendRunRepeat = apiAction<

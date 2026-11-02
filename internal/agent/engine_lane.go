@@ -68,13 +68,18 @@ func (rt *Runtime) answerConnectionRequest(origin acpResponder, msg *marotte.RPC
 		return true
 	}
 	switch msg.Method {
-	case methodKiroSecretGet, methodKiroSecretStore, methodKiroSecretDelete, methodKiroOpenExternalURL:
+	case methodKiroSecretGet, methodKiroSecretStore, methodKiroSecretDelete:
 		rt.answerUnlessDraining(origin, msg, func() {
 			ctx, cancel := rt.lifecycle.derivedContext()
 			defer cancel()
-			if !rt.inbound.handleKiroSecretRequest(ctx, "", origin, msg) {
-				rt.inbound.handleKiroClientRequest(ctx, "", origin, msg)
-			}
+			rt.inbound.handleKiroSecretRequest(ctx, "", origin, msg)
+		})
+		return true
+	case methodKiroOpenExternalURL:
+		rt.answerUnlessDraining(origin, msg, func() {
+			ctx, cancel := rt.lifecycle.derivedContext()
+			defer cancel()
+			rt.inbound.respondKiroOpenExternalURL(ctx, origin, msg)
 		})
 		return true
 	case methodKiroShellType:

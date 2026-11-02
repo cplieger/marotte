@@ -28,6 +28,9 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID marotte.Ch
 	if !ok {
 		return
 	}
+	if chunk.Meta.Kiro.AgentInitiated && !attr.Step {
+		t.recordWake(ctx, chatID, turn, chunk.Meta.Kiro.AgentInitiatedReason)
+	}
 	t.workflowMessageWoke(ctx, chatID, attr, chunk.Meta.Kiro.AgentInitiatedReason)
 	lane := chunk.Meta.Kiro.AgentSubtaskID
 	sayID := cmp.Or(chunk.Meta.Kiro.ReplayID, chunk.Meta.Kiro.MessageID)

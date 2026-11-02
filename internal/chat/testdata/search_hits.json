@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "GET /api/chats/{id}/search replies, produced by a real scan over one two-turn entry log.",
+    "GET /api/chats/{id}/search replies, produced by a real scan over one three-turn entry log.",
     "",
     "chat.SearchResult and chat.Hit are wiregen-registered, so the TypeScript types and",
     "decoders are generated from them; this file is what keeps the ENCODER honest against",
@@ -163,10 +163,19 @@
             "turn": 1,
             "offset": 4,
             "segment_len": 24
+          },
+          {
+            "turn_id": "t-3",
+            "entry_id": "t-3:wake",
+            "excerpt": "Should the retry cap be 3 or 5?",
+            "segment_kind": "wake",
+            "turn": 3,
+            "offset": 11,
+            "segment_len": 31
           }
         ],
-        "scanned": 19,
-        "matched": 16,
+        "scanned": 23,
+        "matched": 17,
         "truncated": false
       }
     },
@@ -213,7 +222,7 @@
             "segment_len": 0
           }
         ],
-        "scanned": 19,
+        "scanned": 23,
         "matched": 4,
         "truncated": false
       }

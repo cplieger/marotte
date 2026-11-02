@@ -59,6 +59,28 @@ func executingLease(t *testing.T, h *Runtime, wf string) {
 	leaseRun(t, h, runlease.Lease{WorkflowID: wf, Deadline: time.Now().Add(time.Hour)})
 }
 
+// KAS reads its log level only from the spawn environment, so a Debug logs move reaches it at the next engine.
+func TestSettings_DebugLogsMoveIsAnEngineRestartReason(t *testing.T) {
+	h, dir, src := restartFixture(t)
+	if off := h.resolveEngine(t.Context(), "/fake/kiro-cli-chat").opts; off.DebugLogs {
+		t.Fatal("EngineOpts.DebugLogs = true with no debug_logs saved, want false")
+	}
+	executingLease(t, h, "wf_1")
+	writeSetting(t, dir, settings.KeyDebugLogs, true)
+	h.ReconcileSessionSettings(t.Context())
+	if st := h.engine.status(); !st.Restart.Pending || !slices.Equal(st.Restart.Reasons, []marotte.EngineReason{"debug_logs"}) {
+		t.Errorf("status = %+v, want a restart pending for debug_logs", st.Restart)
+	}
+	on := h.resolveEngine(t.Context(), "/fake/kiro-cli-chat").opts
+	if !on.DebugLogs {
+		t.Error("EngineOpts.DebugLogs = false after debug_logs was saved true")
+	}
+	if got := engineInterruptCause(&restartCause{Reasons: []marotte.EngineReason{"debug_logs"}}); got != "The agent engine restarted to apply: Debug logs" {
+		t.Errorf("interrupt cause = %q, want it to name the Debug logs row", got)
+	}
+	assertNoRestart(t, src, "a run executes")
+}
+
 func TestEngineRestart_FiresAtQuiescence(t *testing.T) {
 	h, dir, src := restartFixture(t)
 	pendRestart(t, h, dir, 1024)

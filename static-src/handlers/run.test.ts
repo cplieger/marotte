@@ -21,6 +21,7 @@ vi.mock("../run-store.js", () => ({
   noteRunSettled: vi.fn(),
   hasLiveRunForChat: vi.fn(() => false),
   runLabelOf: vi.fn(() => ""),
+  runChatID: vi.fn(() => ""),
   // A run's own LOG: the five operations the six entry events reach. Present here
   // because Browser Mode links a mock for real, so a factory missing one name fails
   // the whole file's collection rather than one case.
@@ -29,13 +30,16 @@ vi.mock("../run-store.js", () => ({
   applyRunDelta: vi.fn(),
   sealRunEntry: vi.fn(),
   appendRunEntry: vi.fn(),
+  runStepEnds: vi.fn(() => new Map()),
 }));
 // The launching chat's own liveness, for the orphan sweep's two gates. Mocked
 // because what this suite pins is WHEN the sweep fires, not how a chat comes to
 // be thinking.
 vi.mock("../store.js", () => ({ isBusy: vi.fn(() => false) }));
 vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
-vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
+vi.mock("../toast.js", () => ({ info: vi.fn(), jumpToast: vi.fn() }));
+// Where an end toast's Open goes is `run-end-open.test.ts`'s, against the real toast.
+vi.mock("../notice-subject.js", () => ({ runEndJump: vi.fn(() => undefined) }));
 // The dock is mocked (`decision-dock.test.ts`); the run-asks store is real.
 vi.mock("../decision-dock.js", () => ({
   dropRunRequests: vi.fn(),
@@ -55,6 +59,7 @@ import {
   applyRunProgress,
   invalidateRun,
   invalidateRunControls,
+  runStepEnds,
   noteRunChat,
   noteRunLabel,
   noteRunResumed,
@@ -68,7 +73,7 @@ import {
 } from "../run-store.js";
 import { isBusy } from "../store.js";
 import { trackRun } from "../run-dots.js";
-import { info, success, error } from "../toast.js";
+import { info, jumpToast } from "../toast.js";
 import { dropRunRequests, dropTurnDecisions } from "../decision-dock.js";
 import { _resetRunAsksForTest, runAskPosition, runAsksOf } from "../run-asks.js";
 import { closeRunAsksExcept, notifyOffScreen } from "../notify.js";
@@ -84,8 +89,7 @@ const noteLive = vi.mocked(noteRunLive);
 const noteSettled = vi.mocked(noteRunSettled);
 const track = vi.mocked(trackRun);
 const toastInfo = vi.mocked(info);
-const toastSuccess = vi.mocked(success);
-const toastError = vi.mocked(error);
+const toastEnd = vi.mocked(jumpToast);
 const dropAsks = vi.mocked(dropRunRequests);
 const sweepOrphans = vi.mocked(dropTurnDecisions);
 const chatThinking = vi.mocked(isBusy);
@@ -101,9 +105,7 @@ const closeStale = vi.mocked(closeRunAsksExcept);
 
 /** Every toast raised, in order, whatever its level. */
 function toasts(): string[] {
-  return [...toastInfo.mock.calls, ...toastSuccess.mock.calls, ...toastError.mock.calls].map(
-    (c) => c[0],
-  );
+  return [...toastInfo.mock.calls, ...toastEnd.mock.calls].map((c) => c[0]);
 }
 
 // The list side goes over the bus, so the test subscribes exactly as the history
@@ -121,8 +123,7 @@ beforeEach(() => {
   noteSettled.mockClear();
   track.mockClear();
   toastInfo.mockClear();
-  toastSuccess.mockClear();
-  toastError.mockClear();
+  toastEnd.mockClear();
   dropAsks.mockClear();
   closeStale.mockClear();
   _resetRunAsksForTest();
@@ -442,9 +443,9 @@ describe("run toasts", () => {
 
     send("run_finished", { workflow_id: "wf_sched", status: "completed", name: "nightly" });
     send("run_finished", { workflow_id: "wf_manual", status: "completed", name: "by-hand" });
-    expect(toastSuccess.mock.calls.map((c) => c[0])).toEqual([
-      "nightly finished",
-      "by-hand finished",
+    expect(toastEnd.mock.calls.map((c) => [c[0], c[1]])).toEqual([
+      ["nightly finished", "success"],
+      ["by-hand finished", "success"],
     ]);
   });
 
@@ -465,11 +466,9 @@ describe("run toasts", () => {
     ];
     for (const c of cases) {
       toastInfo.mockClear();
-      toastSuccess.mockClear();
-      toastError.mockClear();
+      toastEnd.mockClear();
       send("run_finished", { workflow_id: "wf_level", status: c.status, name: "publish" });
-      const mock = { success: toastSuccess, error: toastError, info: toastInfo }[c.level];
-      expect(mock.mock.calls.map((x) => x[0])).toEqual([c.want]);
+      expect(toastEnd.mock.calls.map((x) => [x[0], x[1]])).toEqual([[c.want, c.level]]);
       expect(toasts()).toHaveLength(1);
     }
   });
@@ -495,7 +494,7 @@ describe("run toasts", () => {
   // A generic label beats a bare workflow uuid and beats saying nothing.
   it("falls back to a generic label when the frame carries no name", () => {
     send("run_finished", { workflow_id: "wf_noname", status: "completed" });
-    expect(toastSuccess.mock.calls[0]?.[0]).toBe("Workflow run finished");
+    expect(toastEnd.mock.calls[0]?.[0]).toBe("Workflow run finished");
     send("run_started", { workflow_id: "wf_noname_2", scheduled: true });
     expect(toastInfo.mock.calls[0]?.[0]).toBe("Scheduled run started: Workflow run");
   });
@@ -503,7 +502,7 @@ describe("run toasts", () => {
   // An unrecognised status is still an ending; naming it verbatim beats silence.
   it("passes an unknown status through rather than dropping it", () => {
     send("run_finished", { workflow_id: "wf_odd", status: "exploded", name: "publish" });
-    expect(toastInfo.mock.calls[0]?.[0]).toBe("publish finished: exploded");
+    expect(toastEnd.mock.calls[0]?.slice(0, 2)).toEqual(["publish finished: exploded", "info"]);
   });
 
   // The seven frames between the ends are invalidations, and a busy run emits
@@ -606,6 +605,41 @@ describe("a run's own log", () => {
 
     expect(invalidate).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenLastCalledWith(RUN);
+  });
+
+  it("refetches the run when a step an interruption left unresumed opens a turn", () => {
+    // The run read's `step_ends` says whether the step resumed, and the new turn is the resume.
+    const ends = vi.mocked(runStepEnds);
+    const open = (path: string): void => {
+      send(
+        "turn_opened",
+        {
+          workflow_id: RUN,
+          entry: entry("turn_open", { source: "workflow_step", node_path: path, n: 2 }, 0),
+        },
+        "",
+      );
+    };
+    ends.mockReturnValue(
+      new Map([
+        ["wf_log:done", { outcome: "interrupted", resumed: true }],
+        ["wf_log:capped", { outcome: "failed", failure_kind: "model_call_limit" }],
+        ["wf_log:build", { outcome: "interrupted" }],
+      ]),
+    );
+    try {
+      open("wf_log:done");
+      open("wf_log:capped");
+      open("wf_log:other");
+      expect(invalidate).not.toHaveBeenCalled();
+
+      open("wf_log:build");
+
+      expect(invalidate).toHaveBeenCalledTimes(1);
+      expect(invalidate).toHaveBeenLastCalledWith(RUN);
+    } finally {
+      ends.mockReturnValue(new Map());
+    }
   });
 
   it("refetches the run when a step's turn closes on a tool_use stop the server grades", () => {

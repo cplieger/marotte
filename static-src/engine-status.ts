@@ -37,6 +37,7 @@ const ENGINE_ROWS: ReadonlyMap<string, EngineRow> = new Map([
   ],
   ["telemetry.enabled", { label: "kiro-cli telemetry", controlID: "flag-telemetry" }],
   ["engine_heap_mib", { label: "Agent engine memory limit", controlID: "engine-heap-mib" }],
+  ["debug_logs", { label: "Debug logs", controlID: "flag-debug-logs" }],
 ]);
 
 /** The Settings row a restart reason names, or null for a reason with no row (a kiro-cli version, an account). */
@@ -76,23 +77,56 @@ function count(n: number, one: string, many: string): string {
   return `${String(n)} ${n === 1 ? one : many}`;
 }
 
+/** How many groups a confirmation list names before it counts the rest. */
+const LISTED = 3;
+
+/** `groups` as one list naming the first LISTED, each with its count past one, then "and N more". */
+function listed(groups: readonly { text: string; n: number }[]): string {
+  const shown = groups
+    .slice(0, LISTED)
+    .map((g) => (g.n > 1 ? `${g.text} ×${String(g.n)}` : g.text));
+  const rest = groups.slice(LISTED).reduce((sum, g) => sum + g.n, 0);
+  return LIST.format(rest > 0 ? [...shown, `${String(rest)} more`] : shown);
+}
+
+/** A run the server names with nothing yet. */
+const UNNAMED_RUN = "a workflow";
+
+/** Busy runs grouped by what the confirmation calls them, named runs first. */
+function runGroups(runs: EngineBusy["runs"]): { text: string; n: number }[] {
+  const groups = new Map<string, { text: string; n: number; named: boolean }>();
+  for (const r of runs) {
+    const name = r.name === "" ? UNNAMED_RUN : r.name;
+    const chat = r.chat_name ?? "";
+    const text = chat === "" ? name : `${name} (${chat})`;
+    const g = groups.get(text);
+    if (g === undefined) {
+      groups.set(text, { text, n: 1, named: r.name !== "" });
+    } else {
+      g.n += 1;
+    }
+  }
+  const all = [...groups.values()];
+  return [...all.filter((g) => g.named), ...all.filter((g) => !g.named)];
+}
+
 /** The confirmation's text: what a restart now interrupts, or that marotte could not read it (`busy` null). */
 export function restartConfirmText(busy: EngineBusy | null): string {
   if (busy === null) {
     return "Restart the agent engine? marotte could not read what is running: any running reply stops, and running workflows pause and resume by themselves.";
   }
-  const chats = busy.turns.map((t) => (t.name === "" ? "Untitled chat" : t.name));
-  const runs = busy.runs.map((r) => (r.name === "" ? r.workflow_id : r.name));
-  if (chats.length === 0 && runs.length === 0) {
+  const chats = busy.turns.map((t) => ({ text: t.name === "" ? "Untitled chat" : t.name, n: 1 }));
+  const runs = busy.runs.length;
+  if (chats.length === 0 && runs === 0) {
     return "Restart the agent engine? Nothing is running, so nothing is interrupted.";
   }
   const parts: string[] = [];
   if (chats.length > 0) {
-    parts.push(`stops the reply in ${count(chats.length, "chat", "chats")}: ${chats.join(", ")}`);
+    parts.push(`stops the reply in ${count(chats.length, "chat", "chats")}: ${listed(chats)}`);
   }
-  if (runs.length > 0) {
+  if (runs > 0) {
     parts.push(
-      `pauses ${count(runs.length, "workflow", "workflows")}: ${runs.join(", ")}, which ${runs.length === 1 ? "resumes by itself" : "resume by themselves"}`,
+      `pauses ${count(runs, "workflow run", "workflow runs")}: ${listed(runGroups(busy.runs))}, which ${runs === 1 ? "resumes by itself" : "resume by themselves"}`,
     );
   }
   return `Restarting ${parts.join(", and ")}.`;

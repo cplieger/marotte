@@ -45,8 +45,7 @@ func (e *nsEnv) config() *pinstall.Config {
 		KiroCLIVersion:     nsVersion,
 		KiroCLISHA256:      strings.Repeat("a", 64),
 		KiroCLISHA256ARM64: strings.Repeat("b", 64),
-		ToolsDir:           e.tools,
-	})
+	}, e.tools)
 }
 
 func (e *nsEnv) manager() *pinstall.Manager {
@@ -309,11 +308,4 @@ func TestLegacySweepRunsOncePerVolume(t *testing.T) {
 	if _, err := os.Lstat(marker); err != nil {
 		t.Errorf("the completion marker was removed by a later boot: %v", err)
 	}
-}
-
-// The only inputs are t.TempDir paths, so escaping an embedded quote would be dead code; a path
-// that somehow held one would break the script loudly rather than silently misdirect the witness
-// write.
-func shellQuote(s string) string {
-	return "'" + s + "'"
 }
