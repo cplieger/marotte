@@ -28,8 +28,8 @@ github.com/cplieger/scheduler/v4 v4.3.0 h1:rqMnpHHLQA/hxcQ6dV2X11vxdgPu7Pc2gIBNA
 github.com/cplieger/scheduler/v4 v4.3.0/go.mod h1:ONnKeZ+efBTEk8y+RMWegjFBOyx/pMoQVQE00en1+xk=
 github.com/cplieger/slogx v1.8.0 h1:M3YHELJl9kWUDl+u3jFcCiNA/UXB4Ywq5lMjBK832Ds=
 github.com/cplieger/slogx v1.8.0/go.mod h1:juFN2HIfnzy+39AQ9aIqCyaLyiOQo6qWuZCG1ubIkfA=
-github.com/cplieger/sse v1.3.0 h1:9aQxw2wk5Hwdtp+QxOnogryw3AyDewaTl6agG/qIRnE=
-github.com/cplieger/sse v1.3.0/go.mod h1:bKvNx+pYdshSkHe1BzCuu3FLHiye3MvUEkvkgiytRAE=
+github.com/cplieger/sse v1.4.0-dev.1 h1:thU18gjKsCmadQzSnAsoWvvaJFJBAWWT7I5MMllzSgM=
+github.com/cplieger/sse v1.4.0-dev.1/go.mod h1:U8GM7RYMDDXrAjm3rWRbMU3/xVoPgzyb0S3aLojAK4s=
 github.com/cplieger/ssrf/v4 v4.5.0 h1:pnaK2UER1WKWVPTbz2p2APs0OEicRj/uOcqBlrhW+IM=
 github.com/cplieger/ssrf/v4 v4.5.0/go.mod h1:JbdhAU/ANQBghfS7DJb35Lxzqf9CP9XmzLJUcymV7NI=
 github.com/cplieger/toolbelt/v3 v3.13.0-dev.1 h1:8LMYYFMqqfJzg0VcH6Oqf4baTjcekWi5BqqWPxWaGjU=
