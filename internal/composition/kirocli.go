@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/agent"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/signin"
 	kirosignin "github.com/cplieger/marotte/internal/signin/kiro"
 	"github.com/cplieger/pinstall/v3"
@@ -85,12 +86,20 @@ func unavailableKiroRuntime() kiroRuntime {
 
 // startKiroCLI builds the install manager and starts the install in the background, bind-first:
 // only readiness waits, so a first-boot download is a /api/health reason. Three shapes: no pins,
-// unusable pins (unready), and the managed install.
+// unusable pins or tools dir (unready), and the managed install.
 func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 	if cfg.KiroCLIVersion == "" || cfg.ToolsDir == "" {
 		slog.Warn("no kiro-cli pins in the environment: resolving kiro-cli by bare name and installing nothing",
 			"hint", "expected outside the container (bare `go run`); in the image entrypoint.sh exports KIRO_CLI_VERSION and both digests")
 		return unmanagedKiroRuntime()
+	}
+	if holdsListSeparator(cfg.ToolsDir) {
+		// pinstall leads each kiro-cli child's PATH with a folder under the root, so kiro-cli could
+		// not find kiro-cli-chat by name.
+		slog.Error("kiro-cli is not installed because its tools folder's path holds ':', which PATH cannot carry, so chats stay unavailable",
+			"path", logsafe.Field(cfg.ToolsDir),
+			"hint", "set MAROTTE_TOOLS_DIR, or KIRO_CONFIG_DIR when it places the tools folder, to a path without ':' and restart")
+		return unavailableKiroRuntime()
 	}
 	mgr, err := pinstall.New(kiroInstallConfig(cfg))
 	if err != nil {

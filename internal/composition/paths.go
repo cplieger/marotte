@@ -63,7 +63,7 @@ func toolsDirProblem(envVar, dir string) error {
 	switch {
 	case !filepath.IsAbs(dir):
 		why = "is not absolute"
-	case strings.ContainsRune(dir, filepath.ListSeparator):
+	case holdsListSeparator(dir):
 		why = fmt.Sprintf("holds %q, which PATH and GOPATH cannot carry", filepath.ListSeparator)
 	default:
 		if err := steering.CheckPath(dir); err != nil {
@@ -77,7 +77,11 @@ func toolsDirProblem(envVar, dir string) error {
 		errToolsDirUnusable, envVar, why)
 }
 
-// engineToolsDir is dir, or "" when problem keeps the tools engine off it.
+// holdsListSeparator reports whether dir would split into two entries of a PATH or GOPATH.
+func holdsListSeparator(dir string) bool {
+	return strings.ContainsRune(dir, filepath.ListSeparator)
+}
+
 func engineToolsDir(dir string, problem error) string {
 	if problem != nil {
 		return ""
@@ -85,7 +89,6 @@ func engineToolsDir(dir string, problem error) string {
 	return dir
 }
 
-// envValue is an environment variable's value, or its absence when set is false.
 type envValue struct {
 	value string
 	set   bool

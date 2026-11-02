@@ -37,7 +37,8 @@ type Config struct {
 	// npm/, python/) on the persistent volume.
 	ToolsDir string
 	// ToolsDirErr is why ToolsDir cannot be the tools engine's root, worded for the Tools tab; the
-	// engine then stays down. The folder still holds the kiro-cli install and its lock.
+	// engine then stays down. The folder still holds marotte's instance lock and, unless its path
+	// holds the PATH separator (startKiroCLI), the kiro-cli install.
 	ToolsDirErr error
 	// ToolCatalogPath is the compiled tool catalog baked into the
 	// image (missing = degraded catalog search). With the runtime

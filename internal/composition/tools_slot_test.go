@@ -131,6 +131,34 @@ func TestToolsSlot_StartRetriesARefusalWhoseManifestWasRepairedMeanwhile(t *test
 	}
 }
 
+func TestToolsSlot_AnUnusableToolsFolderIsBuiltOncePerAttempt(t *testing.T) {
+	configDir, _ := fitTree(t)
+	manifest := filepath.Join(configDir, "tools.json")
+	doc := fmt.Sprintf(`{"version":%d,"tools":{}}`, toolbelt.ManifestVersion)
+	if err := os.WriteFile(manifest, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	captureDefaultLogger(t)
+	problem := toolsDirProblem("MAROTTE_TOOLS_DIR", "/tools:x")
+	builds := 0
+	tools := newToolsSlot(manifest, func() (*toolbelt.Engine, error) {
+		builds++
+		return nil, problem
+	})
+	t.Cleanup(tools.Close)
+
+	if err := tools.start(); err != nil {
+		t.Fatalf("start() = %v, want the boot to go on", err)
+	}
+	if builds != 1 {
+		t.Errorf("start() built the engine %d times, want 1", builds)
+	}
+	tools.manifestChanged()
+	if builds != 2 {
+		t.Errorf("start() and one tools.json write built the engine %d times, want 2", builds)
+	}
+}
+
 // A tools folder the engine cannot use is a setting, so the boot goes on with the engine down,
 // the Tools tab says why, and a tools.json save does not start it there.
 func TestWireToolsEngine_StaysDownOverAnUnusableToolsFolder(t *testing.T) {

@@ -50,7 +50,8 @@ func (s *toolsSlot) startLocked() error {
 		return nil
 	}
 	engine, err := s.build()
-	if err != nil && !errors.Is(err, toolbelt.ErrRootIntegrity) && manifestProblem(s.manifest) == nil {
+	if err != nil && !errors.Is(err, toolbelt.ErrRootIntegrity) && !errors.Is(err, errToolsDirUnusable) &&
+		manifestProblem(s.manifest) == nil {
 		// survivableToolsFailure attributes a failure by reading the file again, so a repair landing
 		// between the two reads would turn a manifest refusal fatal: the now-valid file gets one more try.
 		engine, err = s.build()

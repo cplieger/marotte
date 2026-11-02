@@ -42,6 +42,15 @@ func TestStartKiroCLIShapes(t *testing.T) {
 			wantGate: true,
 			reason:   pinstall.ReasonUnavailable,
 		},
+		"a tools dir holding the PATH separator reports unready": {
+			cfg: Config{
+				KiroCLIVersion: "2.14.2", KiroCLISHA256: goodDigest, KiroCLISHA256ARM64: goodDigest,
+				ToolsDir: filepath.Join(t.TempDir(), "a:b"),
+			},
+			wantPath: "",
+			wantGate: true,
+			reason:   pinstall.ReasonUnavailable,
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
