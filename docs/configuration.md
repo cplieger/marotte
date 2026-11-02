@@ -44,14 +44,14 @@ Before it installs kiro-cli, marotte checks who can write to each folder on the 
 
 Leave this unset on almost every server. Set it only when the check refuses a volume you know is safe, usually a shared or network volume whose permissions include an account you control.
 
-The tools engine makes a similar check, without this exception: it does not start while another account can write to the config folder, the tools folder or a folder it installs into, and the **Tools** tab in **Settings** then says "Tools are off", with the server log naming each folder. So at every start the container removes group and other write from those folders.
-
 ```yaml
 environment:
   TRUSTED_INSTALL_UIDS: "1001"
 ```
 
 Each number you list says that account already has at least the power of this server, so its write access gains it nothing. That is true of an administrator who already has root on the host. It is false of an ordinary account, and listing one gives it a way in. A malformed entry is skipped with a warning.
+
+The tools engine makes a similar check, without this exception: it does not start while another account can write to the config folder, the tools folder or a folder it installs into, and the **Tools** tab in **Settings** then says "Tools are off", with the server log naming each folder. So at every start the container removes group and other write from those folders.
 
 ## Extra file-browser folders (`MAROTTE_BROWSE_ROOTS`)
 

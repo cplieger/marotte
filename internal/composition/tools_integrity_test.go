@@ -198,8 +198,6 @@ func TestWireToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 	}
 }
 
-// entrypointEngineRoots returns the directories entrypoint.sh's tighten_engine_roots loops over,
-// with its config and tools parameters resolved to configDir and toolsDir.
 func entrypointEngineRoots(t *testing.T, configDir, toolsDir string) []string {
 	t.Helper()
 	src, err := os.ReadFile(filepath.Join("..", "..", "entrypoint.sh"))
