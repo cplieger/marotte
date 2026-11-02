@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/cplieger/marotte/internal/apicaller"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
@@ -615,7 +616,7 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
-	err := rr.runs.answerInput(r.Context(), id, body.AskID, body.Text)
+	err := rr.runs.answerInput(r.Context(), id, body.AskID, body.Text, apiCaller(r))
 	switch {
 	case err == nil:
 		webhttp.Ok(w)
@@ -658,7 +659,7 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 		if !httpreply.DecodeJSON(w, r, &body) {
 			return
 		}
-		out, err := rr.runs.messageStep(r.Context(), id, nodePath, body.Text, body.MessageID, body.AskID)
+		out, err := rr.runs.messageStep(r.Context(), id, nodePath, body.Text, body.MessageID, body.AskID, apiCaller(r))
 		if err != nil {
 			rr.writeStepErr(w, "message", id, nodePath, err)
 			return
@@ -883,12 +884,18 @@ func isRPCRefusal(err error) bool {
 	return ok
 }
 
-// callerOf is who sent r. A browser sends Sec-Fetch-Site only to a potentially trustworthy URL
-// (https://www.w3.org/TR/fetch-metadata/), so a plain-HTTP LAN origin gets none, but it sends Origin on every non-GET
-// fetch (https://fetch.spec.whatwg.org/#origin-header), and curl sends neither. This is attribution, not access
-// control: a caller that forges either header changes only how the run words its control.
+// apiCaller is the caller a run route records on the words r sends a step: an unnamed API caller for a request
+// apicaller.Is reads as a program's, nil for the user's page. A run route takes no label.
+func apiCaller(r *http.Request) *marotte.Caller {
+	if apicaller.Is(r) {
+		return &marotte.Caller{}
+	}
+	return nil
+}
+
+// callerOf is who sent r, as apicaller.Is reads the request.
 func callerOf(r *http.Request) controlCaller {
-	if r.Header.Get("Sec-Fetch-Site") == "" && r.Header.Get("Origin") == "" {
+	if apicaller.Is(r) {
 		return callerAPI
 	}
 	return callerPage

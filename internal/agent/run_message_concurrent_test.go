@@ -102,7 +102,7 @@ type stepSend struct {
 func sendAsync(ctx context.Context, h *Runtime, text, messageID string) <-chan stepSend {
 	done := make(chan stepSend, 1)
 	go func() {
-		out, err := h.runs.messageStep(ctx, "wf_1", reviewPath, text, messageID, "")
+		out, err := h.runs.messageStep(ctx, "wf_1", reviewPath, text, messageID, "", nil)
 		done <- stepSend{out: out, err: err}
 	}()
 	return done
@@ -253,7 +253,7 @@ func TestMessageStep_AStepThatCompletesBeforeTheSendIsNotSteered(t *testing.T) {
 		h.runs.RunNodeComplete(t.Context(), "wf_1", reviewSegments, "completed", "")
 	}}
 
-	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-e", "")
+	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-e", "", nil)
 
 	if code := refusalCode(t, h, err); code != string(marotte.RunStepBusy) {
 		t.Errorf("MessageStep refusal = %q (%v), want busy", code, err)

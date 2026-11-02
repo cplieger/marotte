@@ -60,8 +60,8 @@ func handoffHub(t *testing.T) (*Runtime, *testChatStore) {
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
 	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
 	for _, k := range []string{"steer-a", "steer-b"} {
-		h.steerQueue.RouteSteer("c1", k, k, command.SteerHolder{Held: true, PromptClass: true})
-		if _, refuse := h.steerQueue.RouteSteer("c1", k, k, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
+		h.steerQueue.RouteSteer("c1", k, k, nil, command.SteerHolder{Held: true, PromptClass: true})
+		if _, refuse := h.steerQueue.RouteSteer("c1", k, k, nil, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
 			t.Fatalf("unsending %s = %q, want no_turn", k, refuse)
 		}
 	}

@@ -1049,6 +1049,20 @@ describe("history: cross-chat search", () => {
     expect(table.id).toBe("history-table");
   });
 
+  // Words another program posted through the API say who sent them, so the row does not read as the user's.
+  it("names the API caller whose words matched before the excerpt", async () => {
+    const named = match();
+    const { table } = await search({
+      matches: [{ ...named, best: { ...named.best, caller: { label: "Agent Mail" } } }],
+      scanned: 1,
+      matched: 1,
+      truncated: false,
+    });
+    expect(table.querySelector(".entry-sub")?.textContent).toBe(
+      "Sent by Agent Mail: we moved the cache to redis",
+    );
+  });
+
   // A title-only match has no hit, and must not render an empty excerpt.
   it("explains a title-only match instead of showing an empty excerpt", async () => {
     const { best: _best, ...titleOnly } = match({ hits: 0 });

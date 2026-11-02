@@ -49,6 +49,7 @@ var wireTypes = []wiregen.WireType{
 	// types it references (EntryTurnClose after FileChange below). No `Payload` suffix.
 	wiregen.TypeRef[marotte.Entry](),
 	wiregen.TypeRef[marotte.OpenEntry](),
+	wiregen.TypeRef[marotte.Caller](),
 	wiregen.TypeRef[marotte.EntryPrompt](),
 	wiregen.TypeRef[marotte.EntryTurnOpen](),
 	wiregen.TypeRef[marotte.EntryTurnBind](),

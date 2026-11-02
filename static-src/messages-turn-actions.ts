@@ -6,6 +6,7 @@
 import type { Turn } from "./turns.js";
 import { payloadOf } from "./turns.js";
 import { wakeText } from "./turn-wake.js";
+import { sentBy } from "./sent-by.js";
 import { entryRenders, turnFolds } from "./block-window.js";
 import { MessageRun } from "./entry-ids.js";
 import { ICON_COPY, ICON_COPY_MD, ICON_LINK } from "./icons.js";
@@ -214,18 +215,32 @@ export function turnLink(chatID: string, n: number): string {
   return location.origin + buildPath({ kind: "chat", id: chatID, turn: n });
 }
 
+/** The turn's trigger as its header words it: the prompt under the "Sent by" line of a program that posted it, or
+ *  what woke the turn. */
+function triggerText(t: Turn): string {
+  const text = t.trigger?.text.trim();
+  if (text === undefined) {
+    return wakeText(t).trim();
+  }
+  const caller = t.trigger?.caller;
+  if (caller === undefined) {
+    return text;
+  }
+  return text === "" ? sentBy(caller) : `${sentBy(caller)}\n${text}`;
+}
+
 /** "Copy as text": the reader's prompt or what woke the turn, then the reply (the reply alone when the
  *  turn names neither). */
 function turnCopyText(card: HTMLElement, t: Turn): string {
   const reply = turnPlainText(card, t);
-  const prompt = (t.trigger?.text ?? wakeText(t)).trim();
+  const prompt = triggerText(t);
   return prompt === "" ? reply : `${prompt}\n\n${reply}`;
 }
 
 /** "Copy as markdown": the prompt or what woke the turn as a blockquote, then the reply's markdown. */
 function turnCopyMarkdown(t: Turn): string {
   const reply = turnMarkdown(t);
-  const prompt = (t.trigger?.text ?? wakeText(t)).trim();
+  const prompt = triggerText(t);
   if (prompt === "") {
     return reply;
   }

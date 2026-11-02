@@ -2118,9 +2118,10 @@ function headerData(t: Turn): TurnHeaderData {
     n: t.n,
     outcome: t.outcome,
     ts: t.ts,
-    // An empty prompt is not a request; fall through to the system-trigger rendering.
+    // An empty prompt is not a request; updateTurnHeader heads a request-less turn.
     request: request !== undefined && request.trim() !== "" ? request : undefined,
     label: t.trigger?.label,
+    caller: t.trigger?.caller,
     // From the trigger entry: attachments never appear in the prompt text.
     attachments: t.trigger?.attachments ?? [],
     wake: t.wake === undefined ? undefined : wakeLine(t.wake),

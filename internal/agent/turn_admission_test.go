@@ -536,7 +536,7 @@ func shutdownMidPrompt(t *testing.T, arm func(h *Runtime)) *testChatStore {
 // TestShutdown_RecordsAKASQueuedSteerAsADroppedRestart pins that the skipped death closer would otherwise lose a queued steer.
 func TestShutdown_RecordsAKASQueuedSteerAsADroppedRestart(t *testing.T) {
 	cs := shutdownMidPrompt(t, func(h *Runtime) {
-		sends, refuse := h.steerQueue.RouteSteer("c1", "s-1", "use tabs",
+		sends, refuse := h.steerQueue.RouteSteer("c1", "s-1", "use tabs", nil,
 			command.SteerHolder{Held: true, PromptClass: true, Live: true})
 		if refuse != "" || len(sends) != 1 {
 			t.Fatalf("RouteSteer = %+v %q, want one send", sends, refuse)
@@ -582,7 +582,7 @@ func TestShutdown_RecordsAKASQueuedSteerAsADroppedRestart(t *testing.T) {
 // TestShutdown_RecordsAParkedSteerWithItsText pins that only this process has its text, so it goes in the dropped row and a Held row.
 func TestShutdown_RecordsAParkedSteerWithItsText(t *testing.T) {
 	cs := shutdownMidPrompt(t, func(h *Runtime) {
-		if _, refuse := h.steerQueue.RouteSteer("c1", "s-park", "use tabs",
+		if _, refuse := h.steerQueue.RouteSteer("c1", "s-park", "use tabs", nil,
 			command.SteerHolder{Held: true, PromptClass: true}); refuse != "" {
 			t.Fatalf("RouteSteer refused %q", refuse)
 		}

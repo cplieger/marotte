@@ -106,10 +106,10 @@ func TestOpenTurn_MarksUnsentRowsAwaitingAPromptBeforeTheAnnounce(t *testing.T) 
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
-	if _, refuse := h.steerQueue.RouteSteer("c1", "steer-a", "words", promptHolder); refuse != "" {
+	if _, refuse := h.steerQueue.RouteSteer("c1", "steer-a", "words", nil, promptHolder); refuse != "" {
 		t.Fatalf("RouteSteer refused %q", refuse)
 	}
-	if _, refuse := h.steerQueue.RouteSteer("c1", "steer-a", "words", command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
+	if _, refuse := h.steerQueue.RouteSteer("c1", "steer-a", "words", nil, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
 		t.Fatalf("RouteSteer with no holder refused %q, want no_turn", refuse)
 	}
 	since := uint64(0)

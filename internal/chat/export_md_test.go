@@ -189,6 +189,42 @@ func TestRenderChatMarkdown_DistinguishesASteerAndItsDeliveryState(t *testing.T)
 	}
 }
 
+// A prompt or steer another program sent through the API is exported as that program's, never as the user's.
+func TestRenderChatMarkdown_NamesAnAPICallersMessages(t *testing.T) {
+	sent := prompt("m-1", "Agent Mail: 1 new message")
+	sent.Caller = &marotte.Caller{Label: "Agent Mail"}
+	unnamed := prompt("m-2", "nightly report")
+	unnamed.Caller = &marotte.Caller{}
+	entries, _ := chatOf(
+		openTurn("t-1", 1, sent).
+			add("", "steer-1", marotte.EntryKindSteer, marotte.EntrySteer{
+				Text: "Agent Mail: 2 new messages", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead,
+				Caller: &marotte.Caller{Label: "Agent Mail"},
+			}).
+			add("", "steer-2", marotte.EntryKindSteer, marotte.EntrySteer{
+				Text: "Agent Mail: 3 new messages", Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped,
+				Caller: &marotte.Caller{Label: "Agent Mail"},
+			}),
+		openTurn("t-2", 2, unnamed),
+	)
+
+	md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Mail"}, entries)
+
+	for _, want := range []string{
+		"**Sent by Agent Mail**\n\nAgent Mail: 1 new message",
+		"**Sent by Agent Mail (mid-turn)**\n\nAgent Mail: 2 new messages",
+		"**Sent by Agent Mail (mid-turn, not delivered)**\n\nAgent Mail: 3 new messages",
+		"**Sent by an API caller**\n\nnightly report",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("markdown missing %q\n---\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "**User") {
+		t.Errorf("markdown names an API caller's message as the user's\n---\n%s", md)
+	}
+}
+
 // A workflow message names the step on its far end in the launching chat's log, and the main agent in the step's own.
 func TestRenderChatMarkdown_NamesAWorkflowMessagesFarEnd(t *testing.T) {
 	entries, _ := chatOf(openTurn("t-1", 1, prompt("m-1", "go")).

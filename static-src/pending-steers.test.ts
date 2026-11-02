@@ -295,6 +295,29 @@ describe("the steer stack", () => {
     expect(row.getAttribute("aria-label")).toBe("Sent, waiting for the agent: use tabs instead");
   });
 
+  // A row another program posted through the API is not the user's message, so it says who sent it.
+  it("says who sent a row an API caller posted", () => {
+    recordSteerQueued("chat-1", {
+      id: "steer-1",
+      text: "Agent Mail: 1 new message",
+      origin: "user",
+      caller: { label: "Agent Mail" },
+    });
+    recordSteerQueued("chat-1", {
+      id: "steer-2",
+      text: "nightly report",
+      origin: "user",
+      caller: {},
+      state: "unsent",
+    });
+
+    expect(labelOf(rowAt(0))).toBe("Sent by Agent Mail");
+    expect(rowAt(0).getAttribute("aria-label")).toBe(
+      "Sent by Agent Mail, waiting for the agent: Agent Mail: 1 new message",
+    );
+    expect(labelOf(rowAt(1))).toBe("Sent by an API caller \u00b7 unread \u00b7 sends next");
+  });
+
   it("says a message is still sending before the server confirms it", () => {
     recordSteerSent("chat-1", "m-1", "use tabs instead");
 
@@ -707,6 +730,24 @@ describe("the steer stack", () => {
 
     expect(rows().map(labelOf)).toEqual(["After this turn", "After 2 turns", "After 3 turns"]);
     expect(rowAt(2).getAttribute("aria-label")).toBe("After 3 turns: third");
+  });
+
+  // A follow-up another program queued through the API is not the user's, so it says who sent it.
+  it("says who sent a follow-up an API caller queued", () => {
+    withQueued([
+      { id: "m-q1", text: "Agent Mail: 1 new message", caller: { label: "Agent Mail" } },
+      { id: "m-q2", text: "nightly report", caller: {} },
+      { id: "m-q3", text: "mine" },
+    ]);
+
+    expect(rows().map(labelOf)).toEqual([
+      "Sent by Agent Mail \u00b7 after this turn",
+      "Sent by an API caller \u00b7 after 2 turns",
+      "After 3 turns",
+    ]);
+    expect(rowAt(0).getAttribute("aria-label")).toBe(
+      "Sent by Agent Mail \u00b7 after this turn: Agent Mail: 1 new message",
+    );
   });
 
   it("moves every remaining follow-up up a turn when the first one posts", () => {

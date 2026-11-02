@@ -36,6 +36,7 @@ import { applyOutcome } from "./tool-card.js";
 import type { ToolRenderInfo } from "./tool-schema.js";
 import { ICON_TAB_RUN, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { sentBy } from "./sent-by.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
@@ -757,8 +758,14 @@ async function openMatch(match: Match, query: string): Promise<void> {
 
 /** The hit count borrows the time slot as text: a count has no absolute form. */
 function buildMatchRow(m: Match, query: string): HTMLElement {
-  // A title-only match has no hit: say why it matched.
-  const detail = m.best?.excerpt ?? "matches the conversation name";
+  // A title-only match has no hit: say why it matched. Words another program sent say so before the excerpt.
+  const best = m.best;
+  const detail =
+    best === undefined
+      ? "matches the conversation name"
+      : best.caller === undefined
+        ? best.excerpt
+        : `${sentBy(best.caller)}: ${best.excerpt}`;
   const more = m.hits > 1 ? `${String(m.hits)} matches` : m.hits === 1 ? "1 match" : "";
   return entryRow({
     key: `m:${m.id}`,

@@ -562,11 +562,12 @@ func (rs *Runs) updateNodeStatus(ctx context.Context, host *drivenHost, workflow
 	return nil
 }
 
-// answerInput answers one parked step with the user's words, as a `session/prompt` to its own
-// session. The ask is checked against a fresh read of the run's host under the run's serializer,
-// after marotte's own pending send was registered; the serializer is released before the prompt,
-// whose refused arm can last a whole ordinary turn.
-func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string) (err error) {
+// answerInput answers one parked step with the words, as a `session/prompt` to its own session;
+// from is the API caller that sent them, nil for the user's own. The ask is checked against a
+// fresh read of the run's host under the run's serializer, after marotte's own pending send was
+// registered; the serializer is released before the prompt, whose refused arm can last a whole
+// ordinary turn.
+func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string, from *marotte.Caller) (err error) {
 	if workflowID == "" || askID == "" {
 		return errors.New("missing workflow id or ask id")
 	}
@@ -624,7 +625,7 @@ func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string)
 	defer unlock()
 	c.sendingPending(p, ask.StepSessionID)
 	release()
-	got, err := rs.sendStepWords(ctx, host, at, text, "answer-"+askID)
+	got, err := rs.sendStepWords(ctx, host, at, text, "answer-"+askID, from)
 	if got == kasRefused {
 		rs.clearPending(ctx, c, p)
 		return err

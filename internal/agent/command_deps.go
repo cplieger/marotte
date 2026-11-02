@@ -75,7 +75,7 @@ func (rt *Runtime) DischargeWaiting(ctx context.Context, chatID marotte.ChatID) 
 // discharges the waiting claim.
 func (rt *Runtime) OpenTurn(ctx context.Context, chatID marotte.ChatID, open command.TurnOpen) (string, error) {
 	id, err := rt.coord.OpenTurn(ctx, chatID, open)
-	if err == nil && open.Source.UserAnswered() {
+	if err == nil && open.UserAnswered() {
 		rt.DischargeWaiting(ctx, chatID)
 	}
 	return id, err

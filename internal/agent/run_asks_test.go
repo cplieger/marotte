@@ -309,7 +309,7 @@ func TestRunAsks_PendingEndsWhenTheStepsTurnStarts(t *testing.T) {
 	t.Run("turn_start after the reply", func(t *testing.T) {
 		h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 		askID := readNow(t, h, "wf_1").asks[0].ID
-		if err := h.runs.answerInput(t.Context(), "wf_1", askID, "teal"); err != nil {
+		if err := h.runs.answerInput(t.Context(), "wf_1", askID, "teal", nil); err != nil {
 			t.Fatalf("answer = %v", err)
 		}
 		c := h.runs.asks.get("wf_1")
@@ -332,7 +332,7 @@ func TestRunAsks_PendingEndsWhenTheStepsTurnStarts(t *testing.T) {
 			return nil, nil, false
 		}
 		br.mu.Unlock()
-		if err := h.runs.answerInput(t.Context(), "wf_1", askID, "teal"); err != nil {
+		if err := h.runs.answerInput(t.Context(), "wf_1", askID, "teal", nil); err != nil {
 			t.Fatalf("answer = %v", err)
 		}
 		if h.runs.asks.get("wf_1").pendingOf() != nil {
@@ -348,7 +348,7 @@ func TestRunAsks_PendingHasACeiling(t *testing.T) {
 	t.Cleanup(func() { askPendingCeiling = old })
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	askID := readNow(t, h, "wf_1").asks[0].ID
-	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "teal"); err != nil {
+	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "teal", nil); err != nil {
 		t.Fatalf("answer = %v", err)
 	}
 	c := h.runs.asks.get("wf_1")
@@ -409,7 +409,7 @@ func TestRunAsks_VerbsOnARunWithNoCell(t *testing.T) {
 	}{
 		{
 			name: "answer", wantErr: errAskGone,
-			do: func(h *Runtime) error { return h.runs.answerInput(context.Background(), "wf_1", "a1", "teal") },
+			do: func(h *Runtime) error { return h.runs.answerInput(context.Background(), "wf_1", "a1", "teal", nil) },
 		},
 		{
 			name: "cancel", method: methodKiroWorkflowCancel,
@@ -489,7 +489,7 @@ func TestRunAsks_AnEndMidVerb(t *testing.T) {
 		br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: held}
 		br.mu.Unlock()
 		done := make(chan error, 1)
-		go func() { done <- h.runs.answerInput(t.Context(), "wf_1", askID, "teal") }()
+		go func() { done <- h.runs.answerInput(t.Context(), "wf_1", askID, "teal", nil) }()
 		waitForCall(t, br, marotte.MethodPrompt)
 
 		h.runs.releaseLease(t.Context(), "wf_1")
@@ -572,7 +572,7 @@ func TestRunAsks_TheParentsSendMessageEndsTheCard(t *testing.T) {
 	h.runs.askTurnEdge(recordedRun, recordedSession, translate.TurnEdgeStart)
 
 	waitFor(t, func() bool { p := lastAsksOf(t, h, recordedRun); return p.Reachable && len(p.Asks) == 0 })
-	if err := h.runs.answerInput(t.Context(), recordedRun, askID, "use main"); !errors.Is(err, errAskGone) {
+	if err := h.runs.answerInput(t.Context(), recordedRun, askID, "use main", nil); !errors.Is(err, errAskGone) {
 		t.Errorf("the deferred answer after the parent's = %v, want final errAskGone", err)
 	}
 	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
@@ -591,7 +591,7 @@ func TestRunAsks_AnAnswerToAnOlderQuestionIsStale(t *testing.T) {
 		t.Fatal("Setup: the re-park kept the older question's id")
 	}
 
-	if err := h.runs.answerInput(t.Context(), "wf_1", older, "teal"); !errors.Is(err, errAskStale) {
+	if err := h.runs.answerInput(t.Context(), "wf_1", older, "teal", nil); !errors.Is(err, errAskStale) {
 		t.Errorf("an answer to the older question = %v, want errAskStale", err)
 	}
 	if slices.Contains(br.callLog(), marotte.MethodPrompt) {

@@ -65,8 +65,12 @@ const (
 // (internal/server/idempotency.go), never a body field. A payload's own
 // request_id means something else: the id of the ask being answered.
 type ClientCommand struct {
-	Type    CommandType     `json:"type"`
-	ChatID  ChatID          `json:"chat_id,omitempty"`
+	// From is set by the dispatcher on a command another program sent; nil on a page's. Server-only.
+	From   *Caller     `json:"-"`
+	Type   CommandType `json:"type"`
+	ChatID ChatID      `json:"chat_id,omitempty"`
+	// Caller is the optional name a program sending a prompt, steer or queued prompt gives itself (From.Label).
+	Caller  string          `json:"caller,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
@@ -78,6 +82,8 @@ type ClientCommand struct {
 // tangent merge): the transcript shows it with the text one click away, and KAS records it as the
 // message's label. A typed message never carries one.
 type PromptCommand struct {
+	// Caller is the dispatcher's ClientCommand.From: an API caller's prompt. Server-only.
+	Caller      *Caller      `json:"-"`
 	Text        string       `json:"text"`
 	MessageID   string       `json:"message_id"`
 	Model       string       `json:"model,omitempty"`
