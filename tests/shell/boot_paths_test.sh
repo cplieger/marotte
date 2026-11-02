@@ -215,7 +215,7 @@ got=$(offer 0 0)
   || no "root boot" "got '$got', want '1|1|'"
 got=$(offer 1 0)
 case "$got" in
-  "1|unset|WARNING: could not write /etc/profile.d/10-marotte-path.sh; "*"will not see $TOOLS/bin, "*)
+  "1|unset|WARNING: could not write /etc/profile.d/10-marotte-path.sh; "*"may not see $TOOLS/bin, so an engine-installed tool may not resolve by name there")
     ok "a root boot whose drop-in fails says so and does not tell the server it was written"
     ;;
   *) no "failed drop-in" "got '$got'" ;;
@@ -227,7 +227,7 @@ got=$(offer 0 1000)
   && ok "a non-root boot with no tools folder warns about nothing" \
   || no "non-root boot, no tools folder" "got '$got', want '0|unset|'"
 got=$(offer 1 0)
-[ "$got" = "1|unset|WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) will not get the boot's PATH" ] \
+[ "$got" = "1|unset|WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) may not get the boot's PATH" ] \
   && ok "a failed drop-in with no tools folder warns without naming a tools bin" \
   || no "failed drop-in, no tools folder" "got '$got'"
 TOOLS="$WORK/t"

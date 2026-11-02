@@ -143,9 +143,9 @@ offer_login_path() {
   elif install_path_dropin /etc/profile.d; then
     export MAROTTE_PATH_DROPIN=1
   elif [ -n "$TOOLS" ]; then
-    printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) will not see %s, so an engine-installed tool will not resolve by name there\n" "$(logfmt_value "$TOOLS/bin" 4096)" >&2
+    printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) may not see %s, so an engine-installed tool may not resolve by name there\n" "$(logfmt_value "$TOOLS/bin" 4096)" >&2
   else
-    printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) will not get the boot's PATH\n" >&2
+    printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) may not get the boot's PATH\n" >&2
   fi
 }
 

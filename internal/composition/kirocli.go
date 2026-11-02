@@ -71,9 +71,9 @@ func unmanagedKiroRuntime() kiroRuntime {
 	}
 }
 
-// unavailableKiroRuntime is the runtime for a container whose pins are unusable, so no
-// version can ever activate. It reports unready rather than letting every chat fail one at a
-// time — degraded, never fatal, so the repair paths stay alive (invariant 6).
+// unavailableKiroRuntime is the runtime for a container where no version can ever activate
+// (unusable pins or a rejected tools dir). It reports unready rather than letting every chat
+// fail one at a time — degraded, never fatal, so the repair paths stay alive (invariant 6).
 func unavailableKiroRuntime() kiroRuntime {
 	return kiroRuntime{
 		cliPath:  func() string { return "" },
