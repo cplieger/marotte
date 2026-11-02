@@ -130,6 +130,7 @@ for sh in /bin/sh /bin/bash; do
 done
 
 # Only root may write /etc/profile.d. Another uid tries nothing and names the full-path fallback.
+load_function logfmt_value
 load_function offer_login_path
 TOOLS="$WORK/t"
 # offer <install rc> <uid>: "<install calls>|<stderr>" from one offer_login_path run.
@@ -161,5 +162,30 @@ case "$got" in
   "1|WARNING: could not write /etc/profile.d/10-marotte-path.sh; "*"will not see $TOOLS/bin, "*) ok "a root boot whose drop-in fails says so" ;;
   *) no "failed drop-in" "got '$got'" ;;
 esac
+# The server refuses a tools folder holding a line break, but TOOLS still names it.
+TOOLS="$WORK/t"$'\n'"level=error msg=forged"
+safe="$WORK/t?level=error msg=forged/bin"
+for args in "0 1000" "1 0"; do
+  # shellcheck disable=SC2086 # two words on purpose: the install rc and the uid
+  got=$(offer $args)
+  [ "$(printf '%s\n' "$got" | wc -l)" -eq 1 ] && case "$got" in *"$safe"*) true ;; *) false ;; esac \
+    && ok "the warning for install rc and uid '$args' names a tools folder with a line break on one line" \
+    || no "line break in the tools folder, '$args'" "got '$got'"
+done
+# The full-path fallback names a long tools folder whole: a truncated path would be a wrong one.
+TOOLS="$WORK/$(printf 'd%.0s' {1..250})"
+got=$(offer 0 1000)
+case "$got" in
+  *"($TOOLS/bin/<tool>)") ok "the fallback names a tools folder longer than 200 bytes in full" ;;
+  *) no "long tools folder" "got '$got'" ;;
+esac
+
+# Every boot line naming a folder from the environment or a store entry goes through logfmt_value,
+# in the top-level blocks no case above runs too.
+raw=$(awk '/\\$/ { printf "%s ", $0; next } { print }' "$ENTRYPOINT" | grep -E '^[[:space:]]*printf ' \
+  | grep -P '(?<!logfmt_value )"\$\{?(HOME|KIRO_HOME|TOOLS|kas_dir|kas_real|name)\b')
+[ -z "$raw" ] \
+  && ok "no boot log line prints a folder or store entry name raw" \
+  || no "raw value in a boot log line" "$raw"
 
 report

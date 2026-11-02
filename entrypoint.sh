@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Make an untrusted value (a name off the /config volume, dpkg output) safe inside
-# a quoted logfmt field, so a crafted name cannot close the field and append keys.
+# Make an untrusted value (a name off the /config volume, a folder from the environment, dpkg
+# output) safe in a log line: it cannot split the line, nor close a quoted logfmt field and append keys.
 # Truncate the raw value first, or the doubling could split a `\\` pair; then
 # double backslashes, replace non-printables, and neutralize the quote. $2 is the
 # input bound (default 200).
@@ -127,9 +127,9 @@ install_path_dropin() {
 # the mkdir above is the one place this script fails the boot.
 offer_login_path() {
   if [ "$1" -ne 0 ]; then
-    printf "WARNING: running as uid %s, not root, so /etc/profile.d/10-marotte-path.sh is not written; a login shell (the browser shell runs bash --login) does not search %s, so run an engine-installed tool there by its full path (%s/<tool>)\n" "$1" "$TOOLS/bin" "$TOOLS/bin" >&2
+    printf "WARNING: running as uid %s, not root, so /etc/profile.d/10-marotte-path.sh is not written; a login shell (the browser shell runs bash --login) does not search %s, so run an engine-installed tool there by its full path (%s/<tool>)\n" "$1" "$(logfmt_value "$TOOLS/bin" 4096)" "$(logfmt_value "$TOOLS/bin" 4096)" >&2
   elif ! install_path_dropin; then
-    printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) will not see %s, so an engine-installed tool will not resolve by name there\n" "$TOOLS/bin" >&2
+    printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) will not see %s, so an engine-installed tool will not resolve by name there\n" "$(logfmt_value "$TOOLS/bin" 4096)" >&2
   fi
 }
 
@@ -138,7 +138,7 @@ offer_login_path "$EUID"
 # One-time migration from the legacy KIRO_HOME (/config/kiro) to the current one;
 # only the settings and custom steering doc carry over.
 if [ -d /config/kiro ] && [ "$KIRO_HOME" != /config/kiro ]; then
-  printf "Migrating legacy kiro state /config/kiro -> %s\n" "$KIRO_HOME"
+  printf "Migrating legacy kiro state /config/kiro -> %s\n" "$(logfmt_value "$KIRO_HOME")"
   mkdir -p "$KIRO_HOME/settings" "$KIRO_HOME/steering" "$KIRO_HOME/agents"
   # Legacy copies are newer than anything at the destination.
   [ -f /config/kiro/settings/cli.json ] \
@@ -172,7 +172,7 @@ prune_superseded_kas_runtimes() {
   # redirect the sweep at an arbitrary tree. Refuse unless the store is a real
   # directory resolving where it is named.
   if [ -L "$data_home/kiro-cli" ] || [ -L "$kas_dir" ]; then
-    printf "WARNING: kiro-cli data dir or its kas store is a symlink; refusing to prune through it (%s)\n" "$kas_dir" >&2
+    printf "WARNING: kiro-cli data dir or its kas store is a symlink; refusing to prune through it (%s)\n" "$(logfmt_value "$kas_dir")" >&2
     return 0
   fi
   kas_real=$(realpath "$kas_dir" 2>/dev/null) || kas_real=""
@@ -180,7 +180,7 @@ prune_superseded_kas_runtimes() {
     "$data_home"/kiro-cli/kas) ;;
     *)
       printf "WARNING: kiro-cli kas store does not resolve inside the data dir; refusing to prune (%s -> %s)\n" \
-        "$kas_dir" "${kas_real:-unknown}" >&2
+        "$(logfmt_value "$kas_dir")" "$(logfmt_value "${kas_real:-unknown}")" >&2
       return 0
       ;;
   esac
@@ -195,13 +195,13 @@ prune_superseded_kas_runtimes() {
     # Only version-keyed entries are superseded runtimes: kas/ is kiro-cli's
     # directory, so anything else is left in place and logged.
     if [[ ! "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+- ]]; then
-      printf "Leaving unrecognized (non version-keyed) entry in the kiro-cli agent runtime store: %s\n" "$name"
+      printf "Leaving unrecognized (non version-keyed) entry in the kiro-cli agent runtime store: %s\n" "$(logfmt_value "$name")"
       continue
     fi
     if rm -rf "$entry"; then
-      printf "Pruned superseded kiro-cli agent runtime: %s (pin %s)\n" "$name" "$KIRO_CLI_VERSION"
+      printf "Pruned superseded kiro-cli agent runtime: %s (pin %s)\n" "$(logfmt_value "$name")" "$KIRO_CLI_VERSION"
     else
-      printf "WARNING: failed to prune superseded kiro-cli agent runtime %s\n" "$name" >&2
+      printf "WARNING: failed to prune superseded kiro-cli agent runtime %s\n" "$(logfmt_value "$name")" >&2
     fi
   done
   return 0
@@ -216,7 +216,7 @@ prune_superseded_kas_runtimes
 # here because it is outside $TOOLS, the server's tree. An unmatched glob returns 0,
 # so a failure is real.
 if ! rm -rf "$HOME/.local/bin"/kiro-cli*; then
-  printf "WARNING: failed to remove legacy kiro-cli residue from %s/.local/bin; an unpinned copy may stay resolvable by bare name\n" "$HOME" >&2
+  printf "WARNING: failed to remove legacy kiro-cli residue from %s/.local/bin; an unpinned copy may stay resolvable by bare name\n" "$(logfmt_value "$HOME")" >&2
 fi
 
 # Repair an interrupted dpkg transaction before the listener binds: apt installs

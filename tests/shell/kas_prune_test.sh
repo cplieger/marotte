@@ -13,6 +13,7 @@ set -u
 . "$(dirname -- "$0")/lib.sh"
 new_workdir >/dev/null
 
+load_function logfmt_value
 load_function prune_superseded_kas_runtimes
 
 KIRO_CLI_VERSION="2.14.2"
@@ -152,6 +153,25 @@ rc=$?
   && guard_said 'failed to prune superseded kiro-cli agent runtime 2.13.0-def' \
   && ok "a failed delete warns, names the entry, and still returns 0" \
   || no "failed delete" "returned $rc, or the warning lost the entry name: $(cat "$WORK/warn.log")"
+
+# A name off the agent-writable store cannot split a boot log line, whichever line names it.
+setup
+nl=$'\n'
+mkdir -p "$KAS/2.14.2-abc" "$KAS/odd${nl}level=error msg=forged" "$KAS/2.13.0-a${nl}level=error msg=forged"
+prune_quietly
+[ "$(wc -l <"$WORK/out.log")" -eq 2 ] && narrated '^Leaving .*odd?level=error msg=forged$' \
+  && narrated '^Pruned superseded kiro-cli agent runtime: 2.13.0-a?level=error msg=forged (pin 2.14.2)$' \
+  && ok "a store entry named with a line break is narrated on one line" \
+  || no "line break in an entry name" "narration: $(cat "$WORK/out.log")"
+setup
+mkdir -p "$KAS/2.13.0-a${nl}level=error msg=forged"
+(
+  rm() { return 1; }
+  prune_superseded_kas_runtimes
+) >"$WORK/out.log" 2>"$WORK/warn.log"
+[ "$(wc -l <"$WORK/warn.log")" -eq 1 ] && guard_said 'runtime 2.13.0-a?level=error msg=forged$' \
+  && ok "a failed delete of an entry named with a line break warns on one line" \
+  || no "line break in a failed delete" "warning: $(cat "$WORK/warn.log")"
 
 # --- 5. degenerate inputs must not fail the boot --------------------------------
 setup
