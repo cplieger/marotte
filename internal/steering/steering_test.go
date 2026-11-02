@@ -657,7 +657,10 @@ func TestGenerate_CancelledDuringItsSnapshotsLogsNoFailedWrite(t *testing.T) {
 	t.Setenv("HOME", home)
 	var buf bytes.Buffer
 	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	g := New(t.TempDir(), t.TempDir(), "")
+	configDir := t.TempDir()
+	// A render would log this file's parse error, so the ERROR check also sees a render that ran.
+	mustWriteFile(t, filepath.Join(configDir, "tools-state.json"), "{")
+	g := New(t.TempDir(), configDir, "")
 	ctx, cancel := context.WithCancel(t.Context())
 	g.SetToolsSnapshot(func() ([]InstalledTool, bool) { cancel(); return nil, true })
 
@@ -667,7 +670,64 @@ func TestGenerate_CancelledDuringItsSnapshotsLogsNoFailedWrite(t *testing.T) {
 		t.Errorf("Generate wrote environment.md after its ctx was cancelled (stat error %v)", err)
 	}
 	if strings.Contains(buf.String(), "level=ERROR") {
-		t.Errorf("Generate logged an error for a write its cancelled ctx stopped:\n%s", buf.String())
+		t.Errorf("Generate rendered or logged a failed write after its ctx was cancelled:\n%s", buf.String())
+	}
+}
+
+// cancelAfterChecks is a context whose first checks pass, then reads as cancelled.
+type cancelAfterChecks struct {
+	context.Context
+	passing atomic.Int32
+	done    chan struct{}
+	once    sync.Once
+}
+
+func newCancelAfterChecks(parent context.Context, passing int32) *cancelAfterChecks {
+	c := &cancelAfterChecks{Context: parent, done: make(chan struct{})}
+	c.passing.Store(passing)
+	return c
+}
+
+func (c *cancelAfterChecks) Err() error {
+	if c.passing.Add(-1) >= 0 {
+		return nil
+	}
+	c.once.Do(func() { close(c.done) })
+	return context.Canceled
+}
+
+func (c *cancelAfterChecks) Done() <-chan struct{} { return c.done }
+
+func TestGenerate_CancelledDuringItsRenderLogsNoFailedWrite(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var buf bytes.Buffer
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	g := New(t.TempDir(), t.TempDir(), "")
+
+	// Generate checks its ctx twice before render, so the cancellation lands during render.
+	g.Generate(newCancelAfterChecks(t.Context(), 2))
+
+	if _, err := os.Stat(filepath.Join(home, ".kiro", "steering", "environment.md")); !os.IsNotExist(err) {
+		t.Errorf("Generate wrote environment.md after its ctx was cancelled (stat error %v)", err)
+	}
+	if strings.Contains(buf.String(), "steering: write") {
+		t.Errorf("Generate logged a failed write its cancelled ctx stopped:\n%s", buf.String())
+	}
+}
+
+func TestGenerate_LogsAFailedWriteWhileItsCtxIsLive(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var buf bytes.Buffer
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	mustWriteFile(t, filepath.Join(home, ".kiro"), "not a folder")
+	g := New(t.TempDir(), t.TempDir(), "")
+
+	g.Generate(t.Context())
+
+	if !strings.Contains(buf.String(), `level=ERROR msg="steering: write"`) {
+		t.Errorf("Generate did not log a failed write while its ctx was live:\n%s", buf.String())
 	}
 }
 

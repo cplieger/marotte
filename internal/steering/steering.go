@@ -111,7 +111,8 @@ func (g *Generator) SetToolsSnapshot(fn func() (tools []InstalledTool, ok bool))
 // event storms regenerate often). Calls serialise: each one's snapshots, render and write finish
 // before the next call takes its snapshots. The snapshot callbacks run under that serialisation
 // alone, so one must never wait on a goroutine that is calling Generate. A cancelled ctx stops a
-// call before its snapshots and again before its write, so a shutdown logs no failed write.
+// call before its snapshots and again before its render, and a write failing once it is cancelled
+// logs nothing, so a shutdown logs no failed write.
 func (g *Generator) Generate(ctx context.Context) {
 	g.genMu.Lock()
 	defer g.genMu.Unlock()
@@ -155,6 +156,9 @@ func (g *Generator) Generate(ctx context.Context) {
 	// parent narrowly (MkdirAll would widen it to 0755).
 	if _, wErr := atomicfile.WriteFile(ctx, steeringFile, content,
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); wErr != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		slog.Error("steering: write", "path", steeringFile, "error", wErr)
 		return
 	}
