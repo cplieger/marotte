@@ -131,8 +131,14 @@ func (s *toolsSlot) Close() {
 
 // survivableToolsFailure returns the reader-facing reason for a toolbelt.New failure marotte
 // runs on without tools, having logged it, or nil when the boot must stop. An unfit root and an
-// unusable tools.json are both volume state the operator repairs from inside the container.
+// unusable tools.json are both volume state the operator repairs from inside the container; an
+// unusable tools dir is a setting the operator changes.
 func survivableToolsFailure(err error, manifest string) error {
+	if errors.Is(err, errToolsDirUnusable) {
+		slog.Error("tools engine disabled: marotte is running without the tools subsystem",
+			"error", logsafe.Field(err.Error()))
+		return err
+	}
 	if errors.Is(err, toolbelt.ErrRootIntegrity) {
 		logRootIntegrityRefusal(err)
 		return errToolsRootUnfit

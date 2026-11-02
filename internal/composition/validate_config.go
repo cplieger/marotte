@@ -16,6 +16,13 @@ import (
 func validateConfig(ctx context.Context, cfg *Config) error {
 	var errs []error
 
+	// Both folders are written into the generated steering documents verbatim.
+	for _, d := range []struct{ env, dir string }{{"KIRO_CONFIG_DIR", cfg.ConfigDir}, {"KIRO_WORK_DIR", cfg.WorkDir}} {
+		if err := dirProblem(d.env, d.dir); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
 	if err := checkDirWritable(ctx, cfg.ConfigDir, "KIRO_CONFIG_DIR"); err != nil {
 		errs = append(errs, err)
 	}

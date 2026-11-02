@@ -310,10 +310,3 @@ func TestLegacySweepRunsOncePerVolume(t *testing.T) {
 		t.Errorf("the completion marker was removed by a later boot: %v", err)
 	}
 }
-
-// The only inputs are t.TempDir paths, so escaping an embedded quote would be dead code; a path
-// that somehow held one would break the script loudly rather than silently misdirect the witness
-// write.
-func shellQuote(s string) string {
-	return "'" + s + "'"
-}

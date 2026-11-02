@@ -107,7 +107,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// than a missing server. Below Install because its early returns log synchronously.
 	kiro := startKiroCLI(ctx, cfg)
 
-	steer := steering.New(cfg.WorkDir, cfg.ConfigDir, cfg.ToolsDir)
+	steer := steering.New(cfg.WorkDir, cfg.ConfigDir, engineToolsDir(cfg.ToolsDir, cfg.ToolsDirErr))
 	steer.Generate(ctx)
 
 	legacyCheckpoints := filepath.Join(cfg.ConfigDir, "checkpoints")
@@ -606,6 +606,9 @@ func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	githubToken func(context.Context) (string, error),
 ) (*toolbelt.Engine, error) {
+	if cfg.ToolsDirErr != nil {
+		return nil, cfg.ToolsDirErr
+	}
 	catalogRefresh := &toolbelt.CatalogRefresh{
 		URL:      cfg.ToolCatalogURL,
 		Require:  cfg.ToolCatalogRequire,
@@ -614,7 +617,7 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	toolsEngine, err := toolbelt.New(&toolbelt.Config{
 		ConfigDir: cfg.ConfigDir,
 		ToolsDir:  cfg.ToolsDir,
-		// The engine EXECUTES what it finds here and this dir leads PATH, over a volume
+		// The engine EXECUTES what it finds here and this dir is on PATH, over a volume
 		// the operator reshapes by hand. The refusal must NOT be fatal: survivableToolsFailure.
 		VerifyRootIntegrity: true,
 		CatalogPath:         cfg.ToolCatalogPath,

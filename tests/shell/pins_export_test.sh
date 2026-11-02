@@ -89,21 +89,6 @@ grep -q 'KIRO_CLI_PATH' "$README" \
   && no "KIRO_CLI_PATH in the README" "the README still documents KIRO_CLI_PATH; an operator setting a variable marotte ignores gets no error and no managed install either" \
   || ok "the README config table does not offer KIRO_CLI_PATH"
 
-# --- the tools tree both halves compute independently -------------------------
-# Both halves read the same two variables, so the two derivations are what this pins; their
-# values per input are tools_root_test.sh's.
-grep -q '^CONFIG_DIR=\$(realpath -sm -- "\${KIRO_CONFIG_DIR:-/config}")$' "$ENTRYPOINT" \
-  && grep -q '^TOOLS=\$(realpath -sm -- "\${MAROTTE_TOOLS_DIR:-\$CONFIG_DIR/tools}")$' "$ENTRYPOINT" \
-  && ok "the entrypoint derives \$TOOLS from MAROTTE_TOOLS_DIR, else <KIRO_CONFIG_DIR>/tools" \
-  || no "entrypoint tools dir" "CONFIG_DIR or TOOLS no longer reads KIRO_CONFIG_DIR and MAROTTE_TOOLS_DIR, so it may not be the tree the server installs into"
-
-# envx/v2's String() takes no fallback (composed with cmp.Or); loose about the wrapper, so it pins
-# the <configDir>/tools DERIVATION.
-grep -qF 'envx.String("MAROTTE_TOOLS_DIR")' "$CONFIG_GO" \
-  && grep -qF 'filepath.Join(configDir, "tools")' "$CONFIG_GO" \
-  && ok "the server derives the same tools dir from its config dir" \
-  || no "server tools dir" "config.go no longer defaults ToolsDir to <configDir>/tools; the server may install outside the tree this script created"
-
 # --- the install root is created here, before the server writes into it -------
 # A SIBLING of the toolbelt engine's opt/ tree: its per-tool prune deletes every non-current
 # version under opt/<tool>, for any manifest name.

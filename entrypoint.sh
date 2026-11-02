@@ -1,10 +1,5 @@
 #!/bin/bash
 
-# ConfigFromEnv (internal/composition/config.go) derives the same two roots from the same
-# variables: an empty value is the default, and a relative one is absolute against this cwd.
-CONFIG_DIR=$(realpath -sm -- "${KIRO_CONFIG_DIR:-/config}")
-TOOLS=$(realpath -sm -- "${MAROTTE_TOOLS_DIR:-$CONFIG_DIR/tools}")
-
 # Make an untrusted value (a name off the /config volume, dpkg output) safe inside
 # a quoted logfmt field, so a crafted name cannot close the field and append keys.
 # Truncate the raw value first, or the doubling could split a `\\` pair; then
@@ -19,60 +14,19 @@ logfmt_value() {
   printf '%s' "$safe"
 }
 
-# The image's ENV names the default tools tree in PATH, GOPATH and GOBIN; a configured tools
-# dir takes those entries over, and is added to a PATH that lacks them, so a shell and the
-# server resolve what the engine installs. A GOPATH or GOBIN the operator set elsewhere is kept.
-# A dir holding ':' cannot be a PATH or GOPATH entry, so it is left out of both with a warning
-# naming $3, the variable that set it.
-rebase_tools_env() {
-  local from=$1 to=$2 src=${3:-KIRO_CONFIG_DIR} listed=1 rest entry out=""
-  case "$to" in
-    *:*)
-      listed=""
-      printf 'level=warn msg="the tools folder holds a colon, which PATH and GOPATH cannot carry, so a shell reaches what the tools engine installs only by its full path" dir="%s" env=%s component=entrypoint\n' "$(logfmt_value "$to")" "$src" >&2
-      ;;
-  esac
-  rest=${PATH:+$PATH:}
-  while [ -n "$rest" ]; do
-    entry=${rest%%:*}
-    rest=${rest#*:}
-    case "$entry" in
-      "$from/bin" | "$from/go/bin")
-        [ -n "$listed" ] || continue
-        entry=$to${entry#"$from"}
-        ;;
-    esac
-    out="$out:$entry"
-  done
-  if [ -n "$listed" ]; then
-    case "$out:" in
-      *":$to/bin:"*) ;;
-      *) out=":$to/bin$out" ;;
-    esac
-    case "$out:" in
-      *":$to/go/bin:"*) ;;
-      *)
-        out="$out:"
-        out=${out/":$to/bin:"/":$to/bin:$to/go/bin:"}
-        out=${out%:}
-        ;;
-    esac
-  fi
-  PATH=${out#:}
-  case "${GOPATH-}" in
-    "" | "$from/go")
-      if [ -n "$listed" ]; then
-        GOPATH="$to/go"
-      else
-        unset GOPATH
-      fi
-      ;;
-  esac
-  case "${GOBIN-}" in "" | "$from/bin") GOBIN="$to/bin" ;; esac
-  export GOPATH GOBIN
+# Sets CONFIG_DIR, TOOLS, KIRO_HOME, PATH, GOPATH and GOBIN from `$1 paths`, the server's own
+# derivation (internal/composition/paths.go), so this script acts on the folders the server uses.
+load_boot_paths() {
+  local out
+  out=$("$1" paths) || return 1
+  eval "$out"
 }
 
-rebase_tools_env /config/tools "$TOOLS" "${MAROTTE_TOOLS_DIR:+MAROTTE_TOOLS_DIR}"
+# An unusable config folder is the one setting the server refuses to start on; paths named it.
+if ! load_boot_paths /app/marotte; then
+  sleep 10
+  exit 1
+fi
 
 # kiro-cli pins, tracked by Renovate against
 # https://desktop-release.q.us-east-1.amazonaws.com/index.json. The server installs
@@ -90,58 +44,11 @@ KIRO_CLI_SHA256_ARM64="e589bd8d8b845bb193b9f36f2ee263fe8aef7dbb19aff03ce44c5076c
 # reporting healthy while installing nothing.
 export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64
 
-# Prints the KIRO_HOME kiro-cli honours (2.31.0 acp-server.js P8o/O9u): the trimmed
-# value when absolute, not a filesystem root, and neither equal to HOME nor holding
-# HOME inside it, else $HOME/.kiro. Symlinks are resolved, and "inside" is tested as
-# kiro-cli tests it: a HOME whose relative path from the value starts with ".." (such
-# as "..home" directly below it) is not inside. Exported back, so this script, the
-# server and every child act on one tree; workspace.ResolveKiroHome is the Go twin.
-effective_kiro_home() {
-  local v why="" resolved home_resolved shown
-  v=${KIRO_HOME:-}
-  v=${v#"${v%%[![:space:]]*}"}
-  v=${v%"${v##*[![:space:]]}"}
-  case "$v" in
-    "")
-      printf '%s\n' "$HOME/.kiro"
-      return 0
-      ;;
-    /*)
-      # -s first: KAS cleans the path lexically, then resolves the longest existing prefix.
-      resolved=$(realpath -m -- "$(realpath -sm -- "$v")")
-      home_resolved=$(realpath -m -- "$(realpath -sm -- "$HOME")")
-      if [ "$resolved" = / ]; then
-        why="a filesystem root"
-      else
-        # O9u's startsWith("..") is a byte-prefix test, so a HOME whose relative path from
-        # the candidate starts with ".." (such as "..home" directly below it) is outside it,
-        # and kiro-cli honours the candidate.
-        case "$home_resolved/" in
-          "$resolved/"..*) ;;
-          "$resolved/"*) why="it equals or contains HOME" ;;
-        esac
-      fi
-      if [ -z "$why" ]; then
-        realpath -sm -- "$v"
-        return 0
-      fi
-      ;;
-    *) why="relative" ;;
-  esac
-  # The value is untrusted: a control character would forge a boot-log line.
-  shown=${v//[[:cntrl:]]/?}
-  [ "${#shown}" -le 256 ] || shown="${shown:0:256}..."
-  printf 'WARNING: ignoring KIRO_HOME=%s (%s), as kiro-cli does; using %s\n' "$shown" "$why" "$HOME/.kiro" >&2
-  printf '%s\n' "$HOME/.kiro"
-}
-
-KIRO_HOME=$(effective_kiro_home)
-export KIRO_HOME
-
 # bin/ is made here so PATH never races the engine, which makes its other subtrees, and
 # kiro-cli-versions (the server's install root) so this failure branch covers it. That root
 # must stay a sibling of opt/: the engine prunes every non-current directory under opt/<tool>.
 # The config dir is made even when the tools dir lies elsewhere, or flock would create a file.
+# shellcheck disable=SC2153 # load_boot_paths sets TOOLS and KIRO_HOME through eval
 mkdir -p "$CONFIG_DIR" "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
   "$HOME/.local/share/kiro-cli" "$HOME/.ssh" \
   "$KIRO_HOME" "$HOME/.cache/go-build" "$HOME/.docker/cli-plugins" \
@@ -260,7 +167,7 @@ normalize_modes "$HOME" "$KIRO_HOME" "$TOOLS"
 # Give login shells (the browser shell runs `bash --login`) the inherited PATH:
 # Debian's /etc/profile assigns uid 0 only the system directories, dropping the
 # /config entries. profile.d is sourced after that assignment. The value is the image's
-# ENV as rebase_tools_env left it.
+# ENV as load_boot_paths set it.
 emit_path_dropin() {
   printf '%s\n' \
     '# Generated by marotte entrypoint.sh on every boot -- edits are overwritten.' \

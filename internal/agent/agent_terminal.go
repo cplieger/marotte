@@ -491,7 +491,7 @@ func (rt *Runtime) handleTerminalRequest(ctx context.Context, chatID marotte.Cha
 }
 
 // agentShell resolves the shell for an agent command line once per process: bash first,
-// POSIX sh as fallback. Through internal/systembin, not exec.LookPath: PATH holds the
+// POSIX sh as fallback. Through internal/systembin, not exec.LookPath: PATH can hold the
 // toolbelt link dir, which an agent can write. Caching is safe only because the
 // candidate set reads no environment.
 var agentShell = sync.OnceValue(func() string {

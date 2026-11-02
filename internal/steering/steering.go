@@ -67,7 +67,8 @@ type Generator struct {
 	mu            sync.Mutex
 }
 
-// New returns a Generator; toolsDir is the tools engine's root, which need not sit under configDir.
+// New returns a Generator. Each directory must pass CheckPath; toolsDir is the tools engine's root,
+// which need not sit under configDir, or "" when the engine has no usable one.
 func New(workDir, configDir, toolsDir string) *Generator {
 	return &Generator{workDir: workDir, configDir: configDir, toolsDir: toolsDir}
 }

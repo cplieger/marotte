@@ -73,15 +73,16 @@ func TestWriteRuntime_GoBinIsGopathBinOnlyWhenGopathIsTheToolsGo(t *testing.T) {
 	}
 }
 
-// The entrypoint leaves a tools dir holding ':' off PATH, so the doc must not promise bare names.
+// A server started without the image's entrypoint can run with the tools bin off PATH, so the doc
+// must not promise bare names.
 func TestWriteRuntime_ToolsBinOffPathSendsUsersToTheAbsolutePath(t *testing.T) {
 	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/usr/bin:/bin"})
 	var b strings.Builder
-	writeRuntime(&b, "/cfg", "/srv/a:b")
+	writeRuntime(&b, "/cfg", "/srv/t")
 	out := b.String()
 	for _, want := range []string{
-		"the tools engine's single bin dir `/srv/a:b/bin` is not on it",
-		"runs an installed tool by its absolute path (`/srv/a:b/bin/<tool>`). Pin `HOME=/h`",
+		"the tools engine's single bin dir `/srv/t/bin` is not on it",
+		"runs an installed tool by its absolute path (`/srv/t/bin/<tool>`). Pin `HOME=/h`",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
@@ -90,6 +91,27 @@ func TestWriteRuntime_ToolsBinOffPathSendsUsersToTheAbsolutePath(t *testing.T) {
 	for _, bad := range []string{"resolves by bare name", "is the tools engine's single bin dir", "as the image exports it"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("writeRuntime says %q with the tools bin off PATH:\n%s", bad, out)
+		}
+	}
+}
+
+// With no usable tools dir the tools engine is off, so the doc names no tools folder.
+func TestWriteRuntime_NoToolsDirNamesNoToolsFolder(t *testing.T) {
+	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/usr/bin:/bin", "GOPATH": "/go"})
+	var b strings.Builder
+	writeRuntime(&b, "/cfg", "")
+	out := b.String()
+	for _, want := range []string{
+		"- `PATH=/usr/bin:/bin`: `$HOME/.local/bin` is the per-user bin dir",
+		"- The tools engine is off, so nothing it would install is on any PATH. Pin `HOME=/h`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"/bin/<tool>", "single bin dir", "tools engine's tree", "`/bin", "`/go/bin"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("writeRuntime says %q with no tools dir:\n%s", bad, out)
 		}
 	}
 }
@@ -169,6 +191,21 @@ func TestWriteToolsEngine(t *testing.T) {
 	// The button text is "Refresh catalog"; the longer string is its aria-label.
 	if strings.Contains(out, `"Refresh the tool catalog"`) {
 		t.Errorf("writeToolsEngine quoted an aria-label as the on-screen label:\n%s", out)
+	}
+}
+
+func TestWriteToolsEngine_NoToolsDirSaysTheEngineIsOff(t *testing.T) {
+	var b strings.Builder
+	writeToolsEngine(&b, "/cfg", "", "/w")
+	out := b.String()
+	if !strings.Contains(out, "The tools engine is off because the server cannot use the folder configured for it") ||
+		!strings.Contains(out, "`MAROTTE_TOOLS_DIR`") {
+		t.Errorf("writeToolsEngine does not say the engine is off and which setting moves it:\n%s", out)
+	}
+	for _, bad := range []string{"/api/tools", "/opt/", "tools.json"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("writeToolsEngine offers %q with the engine off:\n%s", bad, out)
+		}
 	}
 }
 

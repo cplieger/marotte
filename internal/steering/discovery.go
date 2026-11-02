@@ -83,7 +83,7 @@ func writeRepoSteeringInstructions(b *strings.Builder, repos []string, workDir s
 	b.WriteString("### Per-repo .kiro protocol\n\n")
 	b.WriteString("The per-repo `.kiro/` directories above are NOT auto-loaded ")
 	b.WriteString("by kiro-cli (its auto-include only fires for the cwd it booted in, ")
-	b.WriteString("which is `" + defuse(workDir) + "`). Treat the inventory above as a routing table:\n\n")
+	b.WriteString("which is `" + workDir + "`). Treat the inventory above as a routing table:\n\n")
 	b.WriteString("- **When you start working in a repo** (any prompt that mentions it, ")
 	b.WriteString("or as soon as you cd / read / edit a file inside it): immediately ")
 	b.WriteString("read every \"Always-loaded steering\" and \"Always-loaded skills\" file listed for that repo.\n")

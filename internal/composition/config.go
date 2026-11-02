@@ -36,6 +36,9 @@ type Config struct {
 	// ToolsDir is the tools engine's install tree root (bin/, opt/,
 	// npm/, python/) on the persistent volume.
 	ToolsDir string
+	// ToolsDirErr is why ToolsDir cannot be the tools engine's root, worded for the Tools tab; the
+	// engine then stays down. The folder still holds the kiro-cli install and its lock.
+	ToolsDirErr error
 	// ToolCatalogPath is the compiled tool catalog baked into the
 	// image (missing = degraded catalog search). With the runtime
 	// refresh below it is only the first-boot/offline fallback.
@@ -83,7 +86,8 @@ type Config struct {
 // ConfigFromEnv reads configuration from environment variables with
 // sensible defaults.
 func ConfigFromEnv() Config {
-	configDir := absDir("KIRO_CONFIG_DIR", cmp.Or(envx.String("KIRO_CONFIG_DIR"), "/config"))
+	paths := resolveBootPaths(envx.Source{})
+	configDir := paths.configDir
 	workDir := absDir("KIRO_WORK_DIR", cmp.Or(envx.String("KIRO_WORK_DIR"), "/workspace"))
 	return Config{
 		WorkDir:             workDir,
@@ -92,7 +96,8 @@ func ConfigFromEnv() Config {
 		KiroCLISHA256:       envx.String("KIRO_CLI_SHA256"),
 		KiroCLISHA256ARM64:  envx.String("KIRO_CLI_SHA256_ARM64"),
 		VapidSub:            cmp.Or(envx.String("VAPID_SUBJECT"), "mailto:marotte@noreply.invalid"),
-		ToolsDir:            absDir("MAROTTE_TOOLS_DIR", cmp.Or(envx.String("MAROTTE_TOOLS_DIR"), filepath.Join(configDir, "tools"))),
+		ToolsDir:            paths.toolsDir,
+		ToolsDirErr:         paths.toolsErr,
 		KASNodePath:         cmp.Or(envx.String("KIRO_KAS_NODE_PATH"), embeddedKASNode(os.Getenv("XDG_DATA_HOME"), os.Getenv("HOME"))),
 		ToolCatalogPath:     cmp.Or(envx.String("MAROTTE_TOOL_CATALOG"), "/opt/marotte/tool-catalog.json"),
 		ToolCatalogURL:      cmp.Or(envx.String("MAROTTE_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),

@@ -1,6 +1,6 @@
 // Package systembin resolves an image-baked system binary to an absolute path from a fixed
-// directory set, so a server spawn's argv[0] does not come from PATH, which holds the tools
-// engine's bin/ on the persistent volume, a directory an agent shell can write.
+// directory set, so a server spawn's argv[0] does not come from PATH, which can hold the
+// tools engine's bin/ on the persistent volume, a directory an agent shell can write.
 //
 // Only for binaries whose trust argument holds: git and bash are apt packages in /usr/bin,
 // which nothing at runtime writes. NOT a general resolver: a toolbelt-managed binary (npm)

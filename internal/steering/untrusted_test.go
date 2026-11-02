@@ -179,23 +179,21 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 	}
 }
 
-// TestGenerate_DefusesTheConfiguredDirectories names one of KIRO_WORK_DIR, KIRO_CONFIG_DIR and
-// MAROTTE_TOOLS_DIR with the payload and asserts both steering docs quote it inertly.
-func TestGenerate_DefusesTheConfiguredDirectories(t *testing.T) {
+// Every directory New takes passes CheckPath, so both docs carry it byte for byte: a path with
+// spaces, quotes, shell and Markdown punctuation and non-ASCII letters is the one the agent reads,
+// at every mention.
+func TestGenerate_WritesTheConfiguredDirectoriesVerbatim(t *testing.T) {
+	const odd = `odd dir 'q' "d" $(x) \ é #*<[_]>`
+	if err := CheckPath(odd); err != nil {
+		t.Fatalf("Setup: CheckPath(%q) = %v, want it accepted", odd, err)
+	}
 	for _, which := range []string{"work", "config", "tools"} {
 		t.Run(which, func(t *testing.T) {
 			steeringFile := setupKiroHome(t)
-			workDir, configDir := t.TempDir(), t.TempDir()
-			toolsDir := filepath.Join(configDir, "tools")
-			switch which {
-			case "work":
-				workDir = filepath.Join(workDir, injPayload)
-			case "config":
-				configDir = filepath.Join(configDir, injPayload)
-			case "tools":
-				toolsDir = filepath.Join(configDir, injPayload)
-			}
-			// A repo with steering, and Memory on, so every workspace-naming section renders.
+			workDir, configDir, toolsDir := t.TempDir(), t.TempDir(), t.TempDir()
+			dir := map[string]*string{"work": &workDir, "config": &configDir, "tools": &toolsDir}[which]
+			parent := *dir
+			*dir = filepath.Join(parent, odd)
 			repo := seedRepo(t, workDir, "repo", "main")
 			mustWriteFile(t, filepath.Join(repo, ".kiro", "steering", "s.md"), "# S\n")
 			mustWriteFile(t, filepath.Join(configDir, "config.json"), `{"memory_mode":"read_only"}`)
@@ -206,17 +204,16 @@ func TestGenerate_DefusesTheConfiguredDirectories(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read %s: %v", steeringFile, err)
 			}
-			assertDefused(t, string(data))
-
-			chat := g.ChatDocs(t.Context())[0].Content
-			if which != "tools" && !strings.Contains(chat, injMarker) {
-				t.Errorf("the chat doc does not name the %s dir, so this case exercises none of it:\n%s", which, chat)
+			docs := map[string]string{"environment.md": string(data)}
+			if which != "tools" {
+				docs["the chat doc"] = g.ChatDocs(t.Context())[0].Content
 			}
-			if i := strings.Index(chat, injMarker+"`"); i >= 0 {
-				t.Errorf("a backtick survived the marker in the chat doc: %q", lineAt(chat, i))
-			}
-			if strings.Contains(chat, "\n## Capabilities") {
-				t.Errorf("a raw newline in the %s dir forged a heading in the chat doc:\n%s", which, chat)
+			for name, doc := range docs {
+				mentions, verbatim := strings.Count(doc, parent), strings.Count(doc, *dir)
+				if mentions == 0 || verbatim != mentions {
+					t.Errorf("%s names the %s dir's folder %d times, %d of them as %q verbatim:\n%s",
+						name, which, mentions, verbatim, *dir, doc)
+				}
 			}
 		})
 	}

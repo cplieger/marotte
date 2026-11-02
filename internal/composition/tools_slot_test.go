@@ -130,3 +130,32 @@ func TestToolsSlot_StartRetriesARefusalWhoseManifestWasRepairedMeanwhile(t *test
 		t.Errorf("Engine() after the repaired start = (nil, %v), want the engine up on the repaired file", reason)
 	}
 }
+
+// A tools folder the engine cannot use is a setting, so the boot goes on with the engine down,
+// the Tools tab says why, and a tools.json save does not start it there.
+func TestWireToolsEngine_StaysDownOverAnUnusableToolsFolder(t *testing.T) {
+	configDir, toolsDir := fitTree(t)
+	paths := resolveBootPaths(envSource(map[string]string{"KIRO_CONFIG_DIR": configDir, "MAROTTE_TOOLS_DIR": toolsDir + ":x"}))
+	captureDefaultLogger(t)
+	cfg := &Config{ConfigDir: configDir, ToolsDir: paths.toolsDir, ToolsDirErr: paths.toolsErr}
+
+	tools, err := wireToolsEngine(t.Context(), cfg, testRuntime(t), nil)
+	if err != nil {
+		t.Fatalf("an unusable tools folder stopped the boot: %v", err)
+	}
+	t.Cleanup(tools.Close)
+	if engine, reason := tools.Engine(); engine != nil || !errors.Is(reason, errToolsDirUnusable) {
+		t.Fatalf("Engine() = (%v, %v), want down with the folder's reason", engine, reason)
+	}
+	doc := fmt.Sprintf(`{"version":%d,"tools":{}}`, toolbelt.ManifestVersion)
+	if err := os.WriteFile(filepath.Join(configDir, "tools.json"), []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tools.manifestChanged()
+	if engine, reason := tools.Engine(); engine != nil || !errors.Is(reason, errToolsDirUnusable) {
+		t.Errorf("after a tools.json write Engine() = (%v, %v), want still down with the folder's reason", engine, reason)
+	}
+	if _, err := os.Stat(toolsDir + ":x"); err == nil {
+		t.Errorf("the engine created %s, a folder it cannot use", toolsDir+":x")
+	}
+}
