@@ -2,6 +2,7 @@ package steering
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -627,6 +628,46 @@ func TestGenerate_AnOlderGenerationNeverOverwritesANewerOne(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "- new 2\n") || strings.Contains(string(got), "- old 1") {
 		t.Errorf("environment.md holds the older generation's tools, not the newer one's:\n%s", got)
+	}
+}
+
+func TestGenerate_ACancelledContextRunsNoSnapshot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	g := New(t.TempDir(), t.TempDir(), "")
+	var calls atomic.Int32
+	g.SetMCPSnapshot(func() MCPSnapshot { calls.Add(1); return MCPSnapshot{} })
+	g.SetForgeSnapshot(func() ForgeSnapshot { calls.Add(1); return ForgeSnapshot{} })
+	g.SetToolsSnapshot(func() ([]InstalledTool, bool) { calls.Add(1); return nil, true })
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	g.Generate(ctx)
+
+	if n := calls.Load(); n != 0 {
+		t.Errorf("a cancelled Generate ran %d snapshot callbacks, want 0", n)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".kiro", "steering", "environment.md")); !os.IsNotExist(err) {
+		t.Errorf("a cancelled Generate wrote environment.md (stat error %v)", err)
+	}
+}
+
+func TestGenerate_CancelledDuringItsSnapshotsLogsNoFailedWrite(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var buf bytes.Buffer
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	g := New(t.TempDir(), t.TempDir(), "")
+	ctx, cancel := context.WithCancel(t.Context())
+	g.SetToolsSnapshot(func() ([]InstalledTool, bool) { cancel(); return nil, true })
+
+	g.Generate(ctx)
+
+	if _, err := os.Stat(filepath.Join(home, ".kiro", "steering", "environment.md")); !os.IsNotExist(err) {
+		t.Errorf("Generate wrote environment.md after its ctx was cancelled (stat error %v)", err)
+	}
+	if strings.Contains(buf.String(), "level=ERROR") {
+		t.Errorf("Generate logged an error for a write its cancelled ctx stopped:\n%s", buf.String())
 	}
 }
 

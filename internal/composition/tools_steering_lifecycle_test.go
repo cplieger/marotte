@@ -1,50 +1,50 @@
 package composition
 
 import (
-	"context"
+	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/toolbelt/v3"
 )
 
-func TestWireToolsSteering_StopWaitsForTheBootRegeneration(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	down := newToolsSlot(filepath.Join(t.TempDir(), toolsManifestName), func() (*toolbelt.Engine, error) {
-		return nil, errToolsDirUnusable
-	})
-	steer := steering.New(t.TempDir(), t.TempDir(), "")
-	entered, release := make(chan struct{}), make(chan struct{})
-	steer.SetMCPSnapshot(func() steering.MCPSnapshot {
-		close(entered)
-		<-release
-		return steering.MCPSnapshot{}
-	})
+// The regeneration is held past runBackground's grace, which the bubble's clock passes without
+// waiting: stop must still be waiting then, and its cancel must stop the write.
+func TestWireToolsSteering_StopCancelsAndJoinsTheBootRegeneration(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	synctest.Test(t, func(t *testing.T) {
+		down := newToolsSlot(filepath.Join(t.TempDir(), toolsManifestName), func() (*toolbelt.Engine, error) {
+			return nil, errToolsDirUnusable
+		})
+		steer := steering.New(t.TempDir(), t.TempDir(), "")
+		release := make(chan struct{})
+		steer.SetMCPSnapshot(func() steering.MCPSnapshot {
+			<-release
+			return steering.MCPSnapshot{}
+		})
 
-	stop := wireToolsSteering(context.WithoutCancel(t.Context()), down, steer)
-	select {
-	case <-entered:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the boot regeneration did not start within 10s")
-	}
-	stopped := make(chan struct{})
-	go func() {
-		stop()
-		close(stopped)
-	}()
-	select {
-	case <-stopped:
+		stop := wireToolsSteering(t.Context(), down, steer)
+		synctest.Wait()
+		stopped := make(chan struct{})
+		go func() {
+			stop()
+			close(stopped)
+		}()
+		time.Sleep(2 * backgroundStopGrace)
+		select {
+		case <-stopped:
+			t.Error("stop returned while the boot regeneration was still reading its snapshots")
+		default:
+		}
 		close(release)
-		t.Fatal("stop returned while the boot regeneration was still rendering")
-	case <-time.After(200 * time.Millisecond):
-	}
-	close(release)
-	select {
-	case <-stopped:
-	case <-time.After(10 * time.Second):
-		t.Fatal("stop did not return within 10s of the regeneration finishing")
+		<-stopped
+	})
+	if _, err := os.Stat(filepath.Join(home, ".kiro", "steering", "environment.md")); !os.IsNotExist(err) {
+		t.Errorf("the regeneration stop cancelled still wrote environment.md (stat error %v)", err)
 	}
 }
 

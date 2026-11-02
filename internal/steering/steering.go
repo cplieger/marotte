@@ -110,10 +110,14 @@ func (g *Generator) SetToolsSnapshot(fn func() (tools []InstalledTool, ok bool))
 // Generate renders environment.md and writes it atomically, and skips a byte-identical write (MCP
 // event storms regenerate often). Calls serialise: each one's snapshots, render and write finish
 // before the next call takes its snapshots. The snapshot callbacks run under that serialisation
-// alone, so one must never wait on a goroutine that is calling Generate.
+// alone, so one must never wait on a goroutine that is calling Generate. A cancelled ctx stops a
+// call before its snapshots and again before its write, so a shutdown logs no failed write.
 func (g *Generator) Generate(ctx context.Context) {
 	g.genMu.Lock()
 	defer g.genMu.Unlock()
+	if ctx.Err() != nil {
+		return
+	}
 
 	g.mu.Lock()
 	snapshotFn := g.mcpSnapshot
@@ -132,6 +136,9 @@ func (g *Generator) Generate(ctx context.Context) {
 	}
 	if toolsFn != nil {
 		tools, toolsOK = toolsFn()
+	}
+	if ctx.Err() != nil {
+		return
 	}
 
 	content := g.render(ctx, mcp, snapshotFn != nil, forges, forgeFn != nil, tools, toolsOK)

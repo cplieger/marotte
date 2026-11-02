@@ -686,10 +686,21 @@ func newSteering(cfg *Config) *steering.Generator {
 
 // wireToolsSteering lists the engine's installed tools in environment.md and regenerates it off the
 // boot path, since a first inventory runs every tool's probe; without that regeneration the file
-// lists no tools until the next session opens. stop waits for that regeneration.
+// lists no tools until the next session opens. stop cancels that regeneration and waits for it with
+// no grace, unlike runBackground: the engine's Inventory ignores the context, and Shutdown closes
+// the engine right after stop.
 func wireToolsSteering(appCtx context.Context, tools *toolsSlot, steer *steering.Generator) (stop func()) {
 	steer.SetToolsSnapshot(tools.installedTools)
-	return runBackground(appCtx, "tools steering", steer.Generate)
+	ctx, cancel := context.WithCancel(appCtx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		steer.Generate(ctx)
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 // githubTokenFor is the tools engine's GitHub credential: the github.com connection's
