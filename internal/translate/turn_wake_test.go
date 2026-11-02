@@ -331,7 +331,7 @@ func TestTurnWake_AnUnknownReasonIsKeptUnknown(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			resetCensus(t)
 			var logbuf bytes.Buffer
-			defer captureSlog(&logbuf)()
+			captureSlog(t, &logbuf)
 			h := newWakeHarness(t)
 			h.send("notify_info")
 			turnStartOn(t, h.tr, FrameAttribution{})
