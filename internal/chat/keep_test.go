@@ -641,6 +641,26 @@ func TestOpenTurn_AFailedFactWritePendsAndTheOpenProceeds(t *testing.T) {
 	}
 }
 
+func TestOpenTurn_AFailedLogOpenHoldsNoTurnAndStampsNoUse(t *testing.T) {
+	s, _ := newTestStore(t)
+	seedChat(t, s, "c1")
+	ageChat(t, s, "c1", 48*time.Hour)
+	before := readChat(t, s, "c1").UpdatedAt
+	if err := os.Mkdir(filepath.Join(s.dir, "c1", entriesFileName), 0o700); err != nil {
+		t.Fatalf("make the log unreadable: %v", err)
+	}
+	if _, err := s.OpenTurn(t.Context(), "c1", &TurnSpec{Source: marotte.TurnOpenNameWireTurnStart}, nil); err == nil {
+		t.Fatal("OpenTurn over an unreadable log succeeded")
+	}
+	c := readChat(t, s, "c1")
+	if _, ok := c.Keep[marotte.KeyTurn]; ok || s.hasPending("c1") {
+		t.Error("a turn that never opened left a turn fact")
+	}
+	if c.UpdatedAt != before {
+		t.Errorf("UpdatedAt moved from %d to %d for a turn that never opened", before, c.UpdatedAt)
+	}
+}
+
 func TestOpenTurn_AChatInTeardownIsRefusedEvenWithInit(t *testing.T) {
 	for name, tombstoneLive := range map[string]bool{"tombstone live": true, "tombstone expired": false} {
 		t.Run(name, func(t *testing.T) {

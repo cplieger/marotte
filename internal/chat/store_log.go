@@ -131,7 +131,6 @@ func (s *Store) OpenTurn(ctx context.Context, chatID marotte.ChatID, spec *TurnS
 			return nil, err
 		}
 	}
-	s.openTurnFactLocked(ctx, chatID)
 	l, err := s.logFor(ctx, chatID)
 	if err != nil {
 		return nil, err
@@ -140,6 +139,9 @@ func (s *Store) OpenTurn(ctx context.Context, chatID marotte.ChatID, spec *TurnS
 	if err != nil {
 		return nil, err
 	}
+	// After the open, so a failed one leaves no turn fact: a wire turn has no EndTurn to release it. The record lock
+	// spans both, so no purge sees the turn without its fact.
+	s.openTurnFactLocked(ctx, chatID)
 	s.index.extend(chatID, opened)
 	return opened, nil
 }
