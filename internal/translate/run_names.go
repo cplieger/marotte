@@ -66,6 +66,28 @@ func (r *runNames) await(run string, chatID marotte.ChatID) (name string, read b
 	return "", true
 }
 
+// known is run's name, "" when not learned.
+func (r *runNames) known(run string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.names[run]
+}
+
+// startRead is true when run's name is unknown and no read of run is in flight, which the caller
+// then starts and ends through readDone.
+func (r *runNames) startRead(run string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.names[run] != "" {
+		return false
+	}
+	if _, busy := r.reading[run]; busy {
+		return false
+	}
+	r.reading[run] = struct{}{}
+	return true
+}
+
 // readDone ends run's read, named or not, so a later wake of a run still unnamed asks again.
 func (r *runNames) readDone(run string) {
 	r.mu.Lock()
@@ -115,6 +137,19 @@ func (t *Translator) nameWake(chatID marotte.ChatID, w *marotte.EntryTurnWake) {
 	}
 	if len(known) > 0 {
 		*w = marotte.NamedWake(w, known)
+	}
+}
+
+// RunName is the run's display name (marotte.RunDisplayName) this process has learned, "" when
+// none yet; it reads no engine state.
+func (t *Translator) RunName(run string) string {
+	return t.runNames.known(run)
+}
+
+// askRunName starts one read of run's state when its name is unknown and no read is in flight.
+func (t *Translator) askRunName(run string) {
+	if t.runNames.startRead(run) {
+		t.runOrigin.ReadRun(run, func() { t.runNames.readDone(run) })
 	}
 }
 

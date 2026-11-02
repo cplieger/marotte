@@ -1778,7 +1778,7 @@ function bindRunCard(st: TurnRender, workflowID: string, tc: ToolCall): HTMLElem
   return card.root;
 }
 
-/** The recipe a launch names, from its input; a placeholder, since renders prefer `runLabel`. */
+/** The recipe a launch names, from its input; a placeholder, since renders prefer the server's `displayName`. */
 function recipeNameOf(tc: ToolCall): string {
   const input = tc.input;
   if (input !== undefined && input !== null && typeof input === "object") {

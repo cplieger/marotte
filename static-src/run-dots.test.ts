@@ -74,10 +74,7 @@ vi.mock("./run-store.js", () => ({
   }),
   // The label, resolved by the store over the same cell. Untracked in production, which costs
   // nothing here: the status read above is already the subscription.
-  runLabelOf: vi.fn((id: string) => {
-    const st = m.states.get(id);
-    return st?.runLabel ?? st?.workflowName ?? "";
-  }),
+  runLabelOf: vi.fn((id: string) => m.states.get(id)?.displayName ?? ""),
   // The store's seam for "this client now knows about this run", which the live-runs rebuild
   // reports each row to. Recorded rather than inert: whether a consumer registers at all is the
   // half a store-side test cannot see.
@@ -161,7 +158,7 @@ describe("the tab's name is corrected when the run's state arrives", () => {
     // than leaving it.
     expect(m.named).toEqual([]);
 
-    m.states.set("wf_name", { workflowId: "wf_name", runLabel: "nightly sweep" });
+    m.states.set("wf_name", { workflowId: "wf_name", displayName: "nightly sweep" });
     storeChanged();
     expect(m.named).toEqual([{ id: "run:wf_name", name: "nightly sweep" }]);
   });
@@ -170,7 +167,7 @@ describe("the tab's name is corrected when the run's state arrives", () => {
     // The self-write this effect makes is bounded by renameTab returning early on an unchanged
     // label. Without that it would re-enter on its own tab-set bump.
     m.tabs.add("run:wf_once");
-    m.states.set("wf_once", { workflowId: "wf_once", runLabel: "sweep" });
+    m.states.set("wf_once", { workflowId: "wf_once", displayName: "sweep" });
     trackRun("wf_once");
     expect(m.named).toEqual([{ id: "run:wf_once", name: "sweep" }]);
 
@@ -181,19 +178,15 @@ describe("the tab's name is corrected when the run's state arrives", () => {
 
   it("follows a label the server later replaces", () => {
     m.tabs.add("run:wf_relabel");
-    m.states.set("wf_relabel", { workflowId: "wf_relabel", workflowName: "sweep.yaml" });
+    m.states.set("wf_relabel", { workflowId: "wf_relabel", displayName: "sweep.yaml" });
     trackRun("wf_relabel");
-    m.states.set("wf_relabel", {
-      workflowId: "wf_relabel",
-      runLabel: "nightly sweep",
-      workflowName: "sweep.yaml",
-    });
+    m.states.set("wf_relabel", { workflowId: "wf_relabel", displayName: "nightly sweep" });
     storeChanged();
     expect(m.named.map((n) => n.name)).toEqual(["sweep.yaml", "nightly sweep"]);
   });
 
   it("renames nothing for a run whose tab is not open", () => {
-    m.states.set("wf_notab_name", { workflowId: "wf_notab_name", runLabel: "sweep" });
+    m.states.set("wf_notab_name", { workflowId: "wf_notab_name", displayName: "sweep" });
     trackRun("wf_notab_name");
     expect(m.named).toEqual([]);
   });
@@ -346,7 +339,7 @@ describe("the live-runs rebuild reaches the dot, which a boot-restored run needs
     m.states.set("wf_boot", {
       workflowId: "wf_boot",
       status: "paused",
-      runLabel: "nightly sweep",
+      displayName: "nightly sweep",
     });
 
     observer?.("wf_boot");
@@ -377,7 +370,7 @@ describe("an open run tab seeds its own run state, with no activation", () => {
     // population `/api/runs/live` cannot name.
     m.states.set("wf_resumed", {
       workflowId: "wf_resumed",
-      runLabel: "Nightly audit",
+      displayName: "Nightly audit",
       status: "completed",
     });
     storeChanged();

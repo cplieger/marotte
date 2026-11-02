@@ -193,9 +193,18 @@ function rollUp(own: ExecState, kids: readonly ExecNode[]): ExecState {
 }
 
 /** A step KAS graded `completed` reads failed when its newest turn closed broken: the model refused, or kiro-cli
- *  stopped it at its model-call limit with its work unfinished. Any other KAS grade is KAS's own account. */
+ *  stopped it at its model-call limit with its work unfinished. An engine end's interruption is not the step's
+ *  failure (`interruptionText`). Any other KAS grade is KAS's own account. */
 function endedState(own: ExecState, end: RunStepEnd | undefined): ExecState {
-  return own === "ok" && isBroken(end?.outcome) ? "fail" : own;
+  return own === "ok" && end?.outcome !== "interrupted" && isBroken(end?.outcome) ? "fail" : own;
+}
+
+function interruptionText(end: RunStepEnd): string {
+  if (end.resumed === true) {
+    return "Interrupted, resumed";
+  }
+  const reason = (end.failure_reason ?? "").trim();
+  return `Interrupted: ${reason !== "" ? reason : defaultFailureReason(end.outcome)}`;
 }
 
 /** The kind, mapped rather than passed through, so an upstream addition lands on `group` (which
@@ -509,6 +518,9 @@ function toNode(
     const logReason = (end.failure_reason ?? "").trim();
     out.failure = logReason !== "" ? logReason : defaultFailureReason(end.outcome);
   }
+  if (end?.outcome === "interrupted") {
+    out.interruption = interruptionText(end);
+  }
   // An idle-timeout record says only what the subtitle already does, so it shows no Output box.
   if (watch?.kind === "process") {
     out.output = watchTailFence(watch.tail);
@@ -566,7 +578,7 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
       text:
         failed === undefined
           ? "The run failed"
-          : `${failed.label} failed: ${truncate(failed.failure ?? "", 200)}`,
+          : `Failed at ${failed.label}: ${truncate(failed.failure ?? "", 200)}`,
     };
   }
   return undefined;
@@ -673,10 +685,7 @@ export function runToExec(
 
   const runState = stateOf(state.status);
   const out: ExecRun = {
-    // An empty label names nothing, so it falls through like an absent one.
-    label:
-      [state.runLabel, state.workflowName].find((s) => s !== undefined && s !== "") ??
-      "Workflow run",
+    label: state.displayName ?? "Workflow run",
     state: asks.count > 0 ? "input" : runState,
     nodes,
     live: inFlight(runState) || asks.count > 0,

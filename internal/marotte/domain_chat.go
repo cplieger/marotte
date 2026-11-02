@@ -769,10 +769,10 @@ type SessionListResponse struct {
 // report idle whatever the run did.
 type WorkflowRun struct {
 	WorkflowID string `json:"workflow_id"`
-	// Name is what to DISPLAY (`runLabel ?? workflowName`), not the recipe.
+	// Name is what to DISPLAY (RunDisplayName), not the recipe; "" when nothing names the run.
 	Name string `json:"name"`
 	// WorkflowName is the RECIPE, the only field a per-recipe decision may read:
-	// labels rewrite Name, so a rule keyed on it fails OPEN.
+	// labels rewrite Name, so a rule keyed on it fails OPEN. "" for a prompt-built run.
 	WorkflowName string `json:"workflow_name,omitempty"`
 	// Status is run-level: paused / completed / failed.
 	Status RunStatus `json:"status,omitempty"`

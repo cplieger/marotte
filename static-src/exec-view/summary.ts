@@ -1,7 +1,7 @@
 // The run's one-line summary: name, state word, progress, mini bar and clock. One painter for the
-// run dock's head and the chat's run bar rows, so the two never word a run differently. A question
-// or a pause takes the progress's place (`inPlace`); a run bar row puts a failure on a line of its
-// own, and the dock gives every alert it does not show here a region of its own.
+// run dock's head and the chat's run bar rows, so the two never word a run differently. An alert it
+// shows takes the progress's place; the dock gives every alert it does not show here a region of
+// its own.
 
 import { el } from "@cplieger/reactive";
 import { reconcile } from "../reconcile.js";
@@ -15,7 +15,7 @@ import {
   type ProgressPhrase,
 } from "./model.js";
 import { STATE_WORD } from "./status.js";
-import { buildAlertLine, inPlace, wantsReader, type ExecAlert } from "./alert.js";
+import { buildAlertLine, wantsReader, type ExecAlert } from "./alert.js";
 import { kindGlyph } from "./tree.js";
 
 export interface ExecSummaryView {
@@ -30,9 +30,8 @@ export interface ExecSummaryView {
 }
 
 interface SummaryOpts {
-  /** Where the alert shows, taking `data-alert="<kind>"` for its mark's colour and
-   *  `data-alert-in-place` when it takes the progress's place (`inPlace`); absent where the
-   *  consumer shows every alert itself. */
+  /** Where the alert shows, taking `data-alert="<kind>"` for the layout that puts it in the
+   *  progress's place; absent where the consumer shows every alert itself. */
   readonly alertHost?: HTMLElement;
   /** Which alerts the summary shows, every one that wants the reader by default; the consumer
    *  shows the rest. */
@@ -60,18 +59,13 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
     const alert = run !== undefined && shown(run.alert) ? run.alert : undefined;
     if (alert === undefined) {
       delete host.dataset["alert"];
-      host.removeAttribute("data-alert-in-place");
       line.root.remove();
       return;
     }
     host.dataset["alert"] = alert.kind;
-    const placed = inPlace(alert);
-    host.toggleAttribute("data-alert-in-place", placed);
     line.paint(alert);
     // In the progress's place the line is clipped, so the tooltip carries it whole.
-    if (!placed) {
-      line.root.removeAttribute("data-tooltip");
-    } else if (line.root.getAttribute("data-tooltip") !== alert.text) {
+    if (line.root.getAttribute("data-tooltip") !== alert.text) {
       line.root.setAttribute("data-tooltip", alert.text);
     }
     // Before the clock: the dock head lays the summary out in source order.

@@ -94,8 +94,14 @@ function recipe(name: string, inputs?: Record<string, string>): RecipesResponse[
 // `status` is a bare string, not `RunStatus`: one case spells a word an engine ahead of this build
 // would send, which is exactly what the live/terminal read has to survive. The cast is the wire lie
 // being modelled.
-function run(name: string, id: string, status: string): WorkflowRun {
-  return { workflow_id: id, name, status: status as RunStatus, updated_at: 0 };
+function run(recipe: string, id: string, status: string): WorkflowRun {
+  return {
+    workflow_id: id,
+    name: recipe,
+    workflow_name: recipe,
+    status: status as RunStatus,
+    updated_at: 0,
+  };
 }
 
 async function render(filter = ""): Promise<HTMLElement> {
@@ -193,6 +199,13 @@ describe("the Run ⇄ Cancel row", () => {
 
     expect(buttonFor(panel, "bundled://goal")?.textContent).toBe("Run");
     expect(buttonFor(panel, "bundled://investigate")?.textContent).toBe("Cancel");
+  });
+
+  it("keys a live run on its recipe, never on a display name that matches another recipe", async () => {
+    recipesReply = { recipes: [recipe("goal")] };
+    runsReply.runs = [{ workflow_id: "wf_prompt", name: "goal", status: "running", updated_at: 0 }];
+    const panel = await render();
+    expect(buttonFor(panel, "bundled://goal")?.textContent).toBe("Run");
   });
 
   it("treats an unknown status as live and keeps Cancel available", async () => {

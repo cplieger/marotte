@@ -189,6 +189,44 @@ func TestRunName_AfterARestartTheLeaseChatsUnnamedWakeIsNamed(t *testing.T) {
 	}
 }
 
+func TestRunName_ARunStartCarriesTheNameARunReadLearned(t *testing.T) {
+	t.Parallel()
+	var events []marotte.ServerEvent
+	tr := New(rolesOf(capturing(&events)))
+	tr.RecordInspect(t.Context(), inspectReply(t, "wf_1", "Fix the run bar", "workflow-from-prompt"))
+
+	tr.HandleRunStart(t.Context(), testChat,
+		notif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "workflow-from-prompt"}))
+
+	if p, _ := events[0].Payload.(marotte.RunStartedPayload); p.Name != "Fix the run bar" {
+		t.Errorf("run_started name = %q, want the runLabel the read learned", p.Name)
+	}
+	if got := tr.RunName("wf_1"); got != "Fix the run bar" {
+		t.Errorf("RunName = %q, want Fix the run bar", got)
+	}
+}
+
+func TestRunName_ARunStartOfAnUnnamedRunAsksForOneRead(t *testing.T) {
+	t.Parallel()
+	var events []marotte.ServerEvent
+	d := capturing(&events)
+	tr := New(rolesOf(d))
+	start := notif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "workflow-from-prompt"})
+
+	tr.HandleRunStart(t.Context(), testChat, start)
+	tr.HandleRunStart(t.Context(), testChat, start)
+	if !slices.Equal(d.runReads, []string{"wf_1"}) {
+		t.Fatalf("reads asked = %v, want one read of wf_1: the second start finds it in flight", d.runReads)
+	}
+
+	tr.RecordInspect(t.Context(), inspectReply(t, "wf_1", "Fix the run bar", ""))
+	d.readDone[0]()
+	tr.HandleRunStart(t.Context(), testChat, start)
+	if len(d.runReads) != 1 {
+		t.Errorf("reads asked = %v, want still one: the run is named", d.runReads)
+	}
+}
+
 func TestRunName_AfterARestartARunsTerminalFrameNamesItsChatsUnnamedWake(t *testing.T) {
 	h := newWakeHarness(t)
 	h.send("notify_warning")

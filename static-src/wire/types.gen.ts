@@ -867,10 +867,15 @@ export interface EngineBusy {
   runs: EngineBusyRun[];
 }
 
-/** EngineBusyRun is a workflow run a restart would pause and resume. */
+/**
+ * EngineBusyRun is a workflow run a restart would pause and resume. Name is its display name
+ * (RunDisplayName), "" when nothing names it yet; ChatName is its launching chat's, "" for a
+ * parentless run.
+ */
 export interface EngineBusyRun {
   workflow_id: string;
   name: string;
+  chat_name?: string;
 }
 
 /** EngineBusyTurn is a chat whose reply a restart would stop. */
@@ -3009,6 +3014,11 @@ export interface RunStepEnd {
   outcome: TurnOutcome;
   failure_reason?: string;
   failure_kind?: FailureKind;
+  /**
+ * Resumed is set on an `interrupted` end the step moved past: the run's log holds a later turn on the step,
+ * or KAS's record shows it completed.
+ */
+  resumed?: boolean;
 }
 
 /**
@@ -4267,11 +4277,11 @@ export interface WhoamiResponse {
  */
 export interface WorkflowRun {
   workflow_id: string;
-  /** Name is what to DISPLAY (`runLabel ?? workflowName`), not the recipe. */
+  /** Name is what to DISPLAY (RunDisplayName), not the recipe; "" when nothing names the run. */
   name: string;
   /**
  * WorkflowName is the RECIPE, the only field a per-recipe decision may read:
- * labels rewrite Name, so a rule keyed on it fails OPEN.
+ * labels rewrite Name, so a rule keyed on it fails OPEN. "" for a prompt-built run.
  */
   workflow_name?: string;
   /** Status is run-level: paused / completed / failed. */

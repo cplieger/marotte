@@ -599,6 +599,8 @@ export const decodeEngineBusyRun: Decoder<EngineBusyRun> = (v) => {
     workflow_id: reqStr(o, "workflow_id", "$.engine_busy_run"),
     name: reqStr(o, "name", "$.engine_busy_run"),
   };
+  const chatName = o["chat_name"] === null ? undefined : optStr(o, "chat_name", "$.engine_busy_run");
+  if (chatName !== undefined) out.chat_name = chatName;
   return out;
 };
 
@@ -2526,6 +2528,8 @@ export const decodeRunStepEnd: Decoder<RunStepEnd> = (v) => {
   const failureReason = o["failure_reason"] === null ? undefined : optStr(o, "failure_reason", "$.run_step_end");
   if (failureReason !== undefined) out.failure_reason = failureReason;
   if (o["failure_kind"] !== undefined && o["failure_kind"] !== null) out.failure_kind = reqOneOf(o, "failure_kind", FAILURE_KINDS, "$.run_step_end");
+  const resumed = o["resumed"] === null ? undefined : optBool(o, "resumed", "$.run_step_end");
+  if (resumed !== undefined) out.resumed = resumed;
   return out;
 };
 

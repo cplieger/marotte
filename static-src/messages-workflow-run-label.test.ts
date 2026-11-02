@@ -59,7 +59,11 @@ vi.mock("./api-client.js", async (importOriginal) => ({
         : {
             ok: true,
             status: 200,
-            data: { workflowId: id, state: { workflowId: id, status: "running", runLabel: name } },
+            data: {
+              workflowId: id,
+              display_name: name,
+              state: { workflowId: id, status: "running" },
+            },
             error: "",
           };
     if (!gate.holding) {

@@ -132,7 +132,7 @@ export interface RunDisclosure {
   readonly onOpenChange: (open: boolean) => void;
 }
 
-/** Build a run card. `name` is the creation-time label; later renders prefer `runLabel`. `onOpen`
+/** Build a run card. `name` is the creation-time label; later renders prefer `displayName`. `onOpen`
  *  and `disclosure` are injected to avoid importing the run-tab feature module; `onOpen`'s third
  *  argument is a STEP ROW's node (absent = the run). With no `disclosure` the card mounts OPEN. */
 export function buildRunCard(
@@ -335,6 +335,9 @@ export function buildRunCard(
     if (node.failure !== undefined) {
       bits.push(truncate(node.failure, 80));
     }
+    if (node.interruption !== undefined) {
+      bits.push(truncate(node.interruption, 80));
+    }
     row.meta.textContent = bits.join(" \u00b7 ");
 
     const ms = elapsed(node.start, node.end);
@@ -511,7 +514,7 @@ export function buildRunCard(
     const exec =
       state === undefined ? undefined : runToExec(state, detail.plan, asks, "", detail.ends);
     lastNodes = exec?.nodes ?? [];
-    const label = state?.runLabel ?? state?.workflowName ?? "";
+    const label = state?.displayName ?? "";
     if (label !== "") {
       nameEl.textContent = label;
     }

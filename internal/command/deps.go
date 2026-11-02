@@ -729,8 +729,8 @@ type runCutter interface {
 	CancelRun(ctx context.Context, workflowID string) error
 }
 
-// LiveRunRef names one live run to the reader: KAS's workflow id and the recipe
-// name it was launched from. The shape a rewind's 409 carries.
+// LiveRunRef names one live run to the reader: KAS's workflow id and the run's
+// display name, "" when nothing names it yet. The shape a rewind's 409 carries.
 type LiveRunRef struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`

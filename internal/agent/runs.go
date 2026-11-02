@@ -98,6 +98,8 @@ type runTranslator interface {
 	HandleRunStart(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse)
 	HandleRunComplete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse)
 	RecordInspect(ctx context.Context, raw json.RawMessage)
+	// RunName is the run's display name the translator has learned, "" when none yet.
+	RunName(workflowID string) string
 	// ForgetRunSteps drops a run's step-session entries; the gate is the caller's, since `paused` reaches `run_complete` on a live run.
 	ForgetRunSteps(workflowID string)
 	// SessionNotifySignal reads a `_kiro/session/notify` frame naming a run, or false.

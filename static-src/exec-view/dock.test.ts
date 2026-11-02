@@ -397,11 +397,11 @@ describe("what wants the reader", () => {
   it("states a failure as a note on the red wash, in the urgent region", () => {
     page.render({
       ...run([step("build", "fail", 0)], false),
-      alert: { kind: "failed", text: "build failed: exit status 2" },
+      alert: { kind: "failed", text: "Failed at build: exit status 2" },
     });
     const urgent = q('.ev-dock-notes[role="alert"]');
     const note = urgent.querySelector(".ev-dock-note")!;
-    expect(note.textContent).toBe("build failed: exit status 2");
+    expect(note.textContent).toBe("Failed at build: exit status 2");
     expect(note.hasAttribute("data-failed")).toBe(true);
     expect(q(".ev-dock-head").hasAttribute("data-alert")).toBe(false);
   });
@@ -413,7 +413,6 @@ describe("what wants the reader", () => {
     });
     const head = q(".ev-dock-head");
     expect(head.dataset["alert"]).toBe("paused");
-    expect(head.hasAttribute("data-alert-in-place")).toBe(true);
     expect(head.querySelector(".ev-alert-line")?.textContent).toBe("Paused by its chat");
     expect(head.querySelector(".ev-alert-line")?.getAttribute("data-tooltip")).toBe(
       "Paused by its chat",
@@ -433,7 +432,6 @@ describe("what wants the reader", () => {
     page.render(run([step("loop", "running", 0)]));
     const head = q(".ev-dock-head");
     expect(head.hasAttribute("data-alert")).toBe(false);
-    expect(head.hasAttribute("data-alert-in-place")).toBe(false);
     expect(head.querySelector(".ev-alert-line")).toBeNull();
     expect(q(".ev-dock-pause-said").textContent).toBe("");
   });

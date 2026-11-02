@@ -111,10 +111,10 @@ func (rs *Runs) noteGradedStepEnd(ctx context.Context, l *runlease.Lease, path [
 		return
 	}
 	workflowID := l.WorkflowID
-	recipe := cmp.Or(l.Recipe, "Workflow run")
-	text := stepModelCallLimitNoteText(recipe, path)
+	name := cmp.Or(rs.leasedRunName(l), "Workflow run")
+	text := stepModelCallLimitNoteText(name, path)
 	if cause == stepNoteRefused {
-		text = stepRefusalNoteText(recipe, path, c.refusal)
+		text = stepRefusalNoteText(name, path, c.refusal)
 	}
 	rs.coord.recordSteer(ctx, marotte.ChatID(l.ChatID), stepNoteID(workflowID, cause, workflow.PathKey(path)), &marotte.EntrySteer{
 		Text:       text,
@@ -142,15 +142,15 @@ func turnCloseOf(sealed []turnlog.Sealed) (marotte.EntryTurnClose, bool) {
 }
 
 // stepModelCallLimitNoteText names the step by workflow.PathKey, as an included node's id holds a '/'.
-func stepModelCallLimitNoteText(recipe string, path []string) string {
-	return recipe + " step " + workflow.PathKey(path) + " stopped early. " + marotte.ModelCallLimitStepReason
+func stepModelCallLimitNoteText(run string, path []string) string {
+	return run + " step " + workflow.PathKey(path) + " stopped early. " + marotte.ModelCallLimitStepReason
 }
 
 // stepRefusalNoteText names the step and does not invite a re-run: a refusal is deterministic.
 // Category and explanation are optional. The total length is unbounded, accepted as in noteRunEnd.
-func stepRefusalNoteText(recipe string, path []string, r *marotte.RefusalInfo) string {
+func stepRefusalNoteText(run string, path []string, r *marotte.RefusalInfo) string {
 	var b strings.Builder
-	b.WriteString(recipe)
+	b.WriteString(run)
 	b.WriteString(" step ")
 	b.WriteString(workflow.PathKey(path))
 	b.WriteString(" was declined by the model")

@@ -1,5 +1,5 @@
-// The exec view's detail pane: one node's facts, failure, and the transcript host it hands OUT
-// (`bodyFor`). No capture: the page's per-step results region renders that.
+// The exec view's detail pane: one node's facts, failure, interruption, and the transcript host it
+// hands OUT (`bodyFor`). No capture: the page's per-step results region renders that.
 
 import { el } from "@cplieger/reactive";
 import { formatElapsed } from "../strings.js";
@@ -37,6 +37,7 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
   );
   const facts = el("dl", { className: "ev-d-facts" });
   const failure = el("div", { className: "ev-d-fail", role: "status" });
+  const interruption = el("div", { className: "ev-d-interrupted", role: "status" });
   const bodies = el("div", { className: "ev-d-bodies" });
   const empty = el("div", { className: "ev-d-empty" });
   const emptyAct = el("div", { className: "ev-d-empty-action", hidden: true });
@@ -46,6 +47,7 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
     head,
     facts,
     failure,
+    interruption,
     bodies,
     empty,
     emptyAct,
@@ -64,6 +66,7 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
       facts.replaceChildren();
       facts.hidden = true;
       failure.hidden = true;
+      interruption.hidden = true;
       bodies.hidden = true;
       empty.hidden = false;
       empty.textContent = "Pick a step to see what it did.";
@@ -88,6 +91,8 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
 
     failure.hidden = node.failure === undefined;
     failure.textContent = node.failure ?? "";
+    interruption.hidden = node.interruption === undefined;
+    interruption.textContent = node.interruption ?? "";
 
     // Only ONE node's transcript is on screen; the rest stay in the DOM since
     // their live content cannot be replayed.

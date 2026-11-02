@@ -29,6 +29,7 @@ vi.mock("../run-store.js", () => ({
   applyRunDelta: vi.fn(),
   sealRunEntry: vi.fn(),
   appendRunEntry: vi.fn(),
+  runStepEnds: vi.fn(() => new Map()),
 }));
 // The launching chat's own liveness, for the orphan sweep's two gates. Mocked
 // because what this suite pins is WHEN the sweep fires, not how a chat comes to
@@ -55,6 +56,7 @@ import {
   applyRunProgress,
   invalidateRun,
   invalidateRunControls,
+  runStepEnds,
   noteRunChat,
   noteRunLabel,
   noteRunResumed,
@@ -606,6 +608,41 @@ describe("a run's own log", () => {
 
     expect(invalidate).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenLastCalledWith(RUN);
+  });
+
+  it("refetches the run when a step an interruption left unresumed opens a turn", () => {
+    // The run read's `step_ends` says whether the step resumed, and the new turn is the resume.
+    const ends = vi.mocked(runStepEnds);
+    const open = (path: string): void => {
+      send(
+        "turn_opened",
+        {
+          workflow_id: RUN,
+          entry: entry("turn_open", { source: "workflow_step", node_path: path, n: 2 }, 0),
+        },
+        "",
+      );
+    };
+    ends.mockReturnValue(
+      new Map([
+        ["wf_log:done", { outcome: "interrupted", resumed: true }],
+        ["wf_log:capped", { outcome: "failed", failure_kind: "model_call_limit" }],
+        ["wf_log:build", { outcome: "interrupted" }],
+      ]),
+    );
+    try {
+      open("wf_log:done");
+      open("wf_log:capped");
+      open("wf_log:other");
+      expect(invalidate).not.toHaveBeenCalled();
+
+      open("wf_log:build");
+
+      expect(invalidate).toHaveBeenCalledTimes(1);
+      expect(invalidate).toHaveBeenLastCalledWith(RUN);
+    } finally {
+      ends.mockReturnValue(new Map());
+    }
   });
 
   it("refetches the run when a step's turn closes on a tool_use stop the server grades", () => {
