@@ -1069,7 +1069,8 @@ export interface EntryReconciled {
 
 /**
  * EntryRunNamed is the run_named payload: a run's display name, learned after a wake naming the run
- * was recorded without one. It renders nothing; every wake of the chat naming Run reads Name.
+ * was recorded without one. It renders nothing; every wake of the chat that names Run without a name
+ * reads Name.
  */
 export interface EntryRunNamed {
   run: string;
