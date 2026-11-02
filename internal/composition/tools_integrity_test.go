@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -198,36 +197,10 @@ func TestWireToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 	}
 }
 
-func entrypointEngineRoots(t *testing.T, configDir, toolsDir string) []string {
-	t.Helper()
-	src, err := os.ReadFile(filepath.Join("..", "..", "entrypoint.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, body, found := strings.Cut(string(src), "\ntighten_engine_roots() {\n")
-	if !found {
-		t.Fatal("entrypoint.sh defines no tighten_engine_roots")
-	}
-	body, _, _ = strings.Cut(body, "\n}\n")
-	var dirs []string
-	for _, m := range regexp.MustCompile(`"\$(config|tools)(/[^"$]*)?"`).FindAllStringSubmatch(body, -1) {
-		root := configDir
-		if m[1] == "tools" {
-			root = toolsDir
-		}
-		dirs = append(dirs, filepath.Join(root, filepath.FromSlash(m[2])))
-	}
-	if len(dirs) < 3 {
-		t.Fatalf("parsed %v from tighten_engine_roots; its loop list changed shape", dirs)
-	}
-	slices.Sort(dirs)
-	return slices.Compact(dirs)
-}
-
-// TestEntrypointTightensEveryRootTheEngineJudges holds tighten_engine_roots to the directories
-// toolbelt documents its root-integrity check judging (docs/configuration.md "Root integrity
-// check", v3.12.0), then plants each group-writable and expects the engine to refuse exactly those.
-func TestEntrypointTightensEveryRootTheEngineJudges(t *testing.T) {
+// TestBootTightensEveryRootTheEngineJudges plants every directory toolbelt documents its
+// root-integrity check judging (docs/configuration.md "Root integrity check", v3.12.0)
+// group-writable: the engine refuses exactly those, and comes up once healBootModes has run.
+func TestBootTightensEveryRootTheEngineJudges(t *testing.T) {
 	configDir, toolsDir := fitTree(t)
 	documented := []string{configDir, toolsDir}
 	for _, rel := range []string{
@@ -237,24 +210,31 @@ func TestEntrypointTightensEveryRootTheEngineJudges(t *testing.T) {
 		documented = append(documented, filepath.Join(toolsDir, filepath.FromSlash(rel)))
 	}
 	slices.Sort(documented)
-	listed := entrypointEngineRoots(t, configDir, toolsDir)
-	if !slices.Equal(listed, documented) {
-		t.Errorf("tighten_engine_roots lists %v, toolbelt documents %v", listed, documented)
-	}
-	for _, dir := range listed {
+	for _, dir := range documented {
 		mkdirMode(t, dir, 0o775)
 	}
+	cfg := &Config{ConfigDir: configDir, ToolsDir: toolsDir, ToolCatalogPath: filepath.Join(t.TempDir(), "absent.json")}
 
 	logs := captureDefaultLogger(t)
-	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
+	tools, err := wireToolsEngine(t.Context(), cfg, testRuntime(t), nil)
 	if err != nil {
 		t.Fatalf("wireToolsEngine over group-writable roots = %v, want the degraded slot", err)
 	}
 	if engine, _ := tools.Engine(); engine != nil {
 		t.Fatal("an engine came up over group-writable roots; the integrity check is off")
 	}
-	if got := loggedUnfitPaths(t, logs); !slices.Equal(got, listed) {
-		t.Errorf("the engine refused %v; tighten_engine_roots lists %v", got, listed)
+	if got := loggedUnfitPaths(t, logs); !slices.Equal(got, documented) {
+		t.Errorf("the engine refused %v; toolbelt documents %v", got, documented)
+	}
+
+	healBootModes(configDir, toolsDir, "", "")
+	healed, err := wireToolsEngine(t.Context(), cfg, testRuntime(t), nil)
+	if err != nil {
+		t.Fatalf("wireToolsEngine after the heal = %v", err)
+	}
+	t.Cleanup(healed.Close)
+	if engine, reason := healed.Engine(); engine == nil {
+		t.Errorf("no engine after healBootModes: %v", reason)
 	}
 }
 

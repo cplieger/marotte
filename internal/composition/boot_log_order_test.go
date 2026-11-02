@@ -20,7 +20,8 @@ import (
 var syncLoggingCallees = map[string]struct{}{
 	// Only callees whose position above Install is not forced: validateConfig logs too, but Install
 	// reads config.json, so it must run first.
-	"startKiroCLI": {},
+	"startKiroCLI":      {},
+	"claimAndHealRoots": {},
 }
 
 // slogCallsBeforeInstall reports every logging call in Build's own statements (direct slog or a

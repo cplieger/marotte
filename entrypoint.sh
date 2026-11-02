@@ -48,15 +48,16 @@ export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64
 # kiro-cli-versions (the server's install root) so this failure branch covers it. That root
 # must stay a sibling of opt/: the engine prunes every non-current directory under opt/<tool>.
 # The config dir is made even when the tools dir lies elsewhere, or flock would create a file.
+# ~/.ssh is born 700, the mode the server holds it at, so a fresh volume logs no change.
 # shellcheck disable=SC2153 # load_boot_paths sets TOOLS and KIRO_HOME through eval
-mkdir -p "$CONFIG_DIR" "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
-  "$HOME/.local/share/kiro-cli" "$HOME/.ssh" \
+if ! mkdir -p "$CONFIG_DIR" "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
+  "$HOME/.local/share/kiro-cli" \
   "$KIRO_HOME" "$HOME/.cache/go-build" "$HOME/.docker/cli-plugins" \
-  || {
-    printf "ERROR: failed to create required directories (is %s mounted and writable?)\n" "$CONFIG_DIR"
-    sleep 10
-    exit 1
-  }
+  || ! { [ -d "$HOME/.ssh" ] || mkdir -m 700 "$HOME/.ssh"; }; then
+  printf "ERROR: failed to create required directories (is %s mounted and writable?)\n" "$CONFIG_DIR"
+  sleep 10
+  exit 1
+fi
 
 # Returns 1, with marotte's own refusal line, when a running marotte holds one of the
 # folders: this script's deletions below would otherwise run against its live tree
@@ -82,87 +83,6 @@ refuse_held_roots() {
 }
 
 refuse_held_roots "$CONFIG_DIR" "$KIRO_HOME" "$TOOLS" || exit 1
-
-# Prints the physical path of the entry $1 names: its parent resolved, its own name kept,
-# so a symlink there leads somewhere else.
-own_place() {
-  local parent
-  parent=$(realpath -e -- "$(dirname -- "$1")") || return 1
-  printf '%s/%s\n' "${parent%/}" "$(basename -- "$1")"
-}
-
-# Succeeds when the cwd lies at $1. realpath asks getcwd, where bash's pwd -P re-resolves
-# the logical $PWD, which a swap after cd can point back at the expected place.
-at_place() { [ "$(realpath -e -- .)" = "$1" ]; }
-
-# Removes group and other write from directory $1 when it lies at $2, with a warning,
-# since what another account wrote there meanwhile stays. The subshell holds the directory
-# as its cwd, so chmod acts on the inode at_place placed and a later swap cannot redirect it.
-tighten_dir() {
-  local dir=$1 want=$2 mode
-  (
-    if ! cd -- "$dir" 2>/dev/null || ! at_place "$want"; then
-      exit 0
-    fi
-    mode=$(stat -c %a .) || exit 0
-    [ $((8#$mode & 0022)) -ne 0 ] || exit 0
-    printf 'level=warn msg="a folder the tools engine checks let other accounts write; removing that, but anything they wrote there stays" dir="%s" mode=%s component=entrypoint\n' "$(logfmt_value "$dir")" "$mode" >&2
-    chmod go-w . \
-      || printf 'level=warn msg="could not remove group and other write; the tools engine will refuse this folder" dir="%s" component=entrypoint\n' "$(logfmt_value "$dir")" >&2
-  )
-}
-
-# Runs chmod $1 on directory $2 from inside it when it lies at $3, as tighten_dir does.
-chmod_at() {
-  local mode=$1 dir=$2 want=$3
-  (
-    if ! cd -- "$dir" 2>/dev/null || ! at_place "$want"; then
-      exit 0
-    fi
-    chmod "$mode" . 2>/dev/null \
-      || printf 'level=warn msg="could not set the mode of a folder" dir="%s" mode=%s component=entrypoint\n' "$(logfmt_value "$dir")" "$mode" >&2
-  )
-}
-
-# Tightens every directory the tools engine's root-integrity check judges, since one left
-# writable boots marotte with no tools engine. The list is held to toolbelt's documented
-# one by TestEntrypointTightensEveryRootTheEngineJudges. A child counts only at its own
-# place under the tools dir, so a symlink at any depth is left for the engine to name.
-tighten_engine_roots() {
-  local config=$1 tools=$2 real dir
-  real=$(own_place "$config") && tighten_dir "$config" "$real"
-  real=$(own_place "$tools") || return 0
-  tighten_dir "$tools" "$real"
-  for dir in "$tools/bin" "$tools/opt" \
-    "$tools/npm" "$tools/npm/bin" "$tools/npm/lib" "$tools/npm/lib/node_modules" \
-    "$tools/python" "$tools/python/bin" "$tools/python/tools" "$tools/python/interpreters"; do
-    tighten_dir "$dir" "$real/${dir#"$tools"/}"
-  done
-}
-
-# HOME, and a KIRO_HOME outside it, are the operator's values, so each is resolved; the
-# folders below them, and kiro-cli-versions below the tools dir, count only at their own place.
-normalize_modes() {
-  local home=$1 kiro_home=$2 tools=$3 place d
-  if place=$(realpath -e -- "$home" 2>/dev/null); then
-    chmod_at 755 "$home" "$place"
-    for d in .local .local/share .local/share/kiro-cli .cache .cache/go-build .docker .docker/cli-plugins; do
-      chmod_at go-w "$home/$d" "$place/$d"
-    done
-    chmod_at 700 "$home/.ssh" "$place/.ssh"
-  fi
-  case "$kiro_home" in
-    "$home"/*) chmod_at go-w "$kiro_home" "$place/${kiro_home#"$home"/}" ;;
-    *) place=$(realpath -e -- "$kiro_home" 2>/dev/null) && chmod_at go-w "$kiro_home" "$place" ;;
-  esac
-  place=$(own_place "$tools") && chmod_at go-w "$tools/kiro-cli-versions" "$place/kiro-cli-versions"
-}
-
-# Normalize modes on every boot: an inheritable ACL or umask on the host volume
-# can stamp any mode, the tools engine refuses a group- or other-writable root, and
-# ssh refuses a lax ~/.ssh.
-tighten_engine_roots "$CONFIG_DIR" "$TOOLS"
-normalize_modes "$HOME" "$KIRO_HOME" "$TOOLS"
 
 # Give login shells (the browser shell runs `bash --login`) the inherited PATH:
 # Debian's /etc/profile assigns uid 0 only the system directories, dropping the

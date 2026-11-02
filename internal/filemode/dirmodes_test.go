@@ -1,0 +1,307 @@
+package filemode
+
+import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"syscall"
+	"testing"
+
+	"golang.org/x/sys/unix"
+)
+
+// mkdirAt creates dir at exactly mode, past the umask.
+func mkdirAt(t *testing.T, dir string, mode fs.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func modeOf(t *testing.T, path string) fs.FileMode {
+	t.Helper()
+	fi, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi.Mode() & (fs.ModePerm | fs.ModeSetgid)
+}
+
+func symlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func tighten(paths ...string) []DirMode {
+	dirs := make([]DirMode, 0, len(paths))
+	for _, p := range paths {
+		dirs = append(dirs, DirMode{Path: p, Want: NoGroupOrOtherWrite})
+	}
+	return dirs
+}
+
+// failedAt returns the paths of the results carrying an error.
+func failedAt(results []DirModeResult) []string {
+	var out []string
+	for _, r := range results {
+		if r.Err != nil {
+			out = append(out, r.Path)
+		}
+	}
+	return out
+}
+
+func TestSetDirModes_SetsEachFolderAndReportsTheChange(t *testing.T) {
+	root := t.TempDir()
+	top, child, deep := filepath.Join(root, "top"), filepath.Join(root, "top", "child"), filepath.Join(root, "top", "child", "deep")
+	mkdirAt(t, deep, 0o770)
+	mkdirAt(t, child, 0o775)
+	mkdirAt(t, top, 0o777)
+	ssh := filepath.Join(top, ".ssh")
+	mkdirAt(t, ssh, 0o755)
+
+	// The results name each folder by its clean path.
+	dirs := append(tighten(deep, child, top+"/"), DirMode{Path: ssh, Want: Exactly(0o700)})
+	got := SetDirModes(dirs)
+
+	for path, want := range map[string]fs.FileMode{top: 0o755, child: 0o755, deep: 0o750, ssh: 0o700} {
+		if m := modeOf(t, path); m != want {
+			t.Errorf("%s mode = %04o, want %04o", path, m, want)
+		}
+	}
+	want := []DirModeResult{
+		{Path: top, Old: 0o777, New: 0o755},
+		{Path: child, Old: 0o775, New: 0o755},
+		{Path: ssh, Old: 0o755, New: 0o700},
+		{Path: deep, Old: 0o770, New: 0o750},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("results = %+v, want %+v", got, want)
+	}
+	if again := SetDirModes(dirs); len(again) != 0 {
+		t.Errorf("a second pass over set folders reported %+v, want nothing", again)
+	}
+}
+
+func TestSetDirModes_KeepsSpecialBits(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "d")
+	mkdirAt(t, dir, 0o775|fs.ModeSetgid)
+	if modeOf(t, dir)&fs.ModeSetgid == 0 {
+		t.Skip("the filesystem dropped setgid on a directory")
+	}
+	SetDirModes([]DirMode{{Path: dir, Want: Exactly(0o750)}})
+	if m := modeOf(t, dir); m != 0o750|fs.ModeSetgid {
+		t.Errorf("mode = %v, want setgid kept with 0750", m)
+	}
+}
+
+// Every symlink below the named folder is a place the walk stops, at any depth, and an outside
+// folder it points at keeps its mode.
+func TestSetDirModes_NeverFollowsASymlink(t *testing.T) {
+	cases := map[string]struct {
+		// plant builds the tree under root and returns the listed folders, the outside folder a
+		// symlink points at, and the path the walk must report stopping at.
+		plant func(t *testing.T, root, outside string) (listed []string, stop string)
+	}{
+		"the named folder itself": {plant: func(t *testing.T, root, outside string) ([]string, string) {
+			top := filepath.Join(root, "top")
+			symlink(t, outside, top)
+			return []string{top, filepath.Join(top, "sub")}, top
+		}},
+		"a listed folder below it": {plant: func(t *testing.T, root, outside string) ([]string, string) {
+			top := filepath.Join(root, "top")
+			mkdirAt(t, top, 0o755)
+			symlink(t, outside, filepath.Join(top, "npm"))
+			return []string{top, filepath.Join(top, "npm"), filepath.Join(top, "npm", "sub")}, filepath.Join(top, "npm")
+		}},
+		"an unlisted folder on the way": {plant: func(t *testing.T, root, outside string) ([]string, string) {
+			top := filepath.Join(root, "top")
+			mkdirAt(t, top, 0o755)
+			symlink(t, filepath.Dir(outside), filepath.Join(top, "x"))
+			return []string{top, filepath.Join(top, "x", filepath.Base(outside))}, filepath.Join(top, "x")
+		}},
+		"below a trailing slash": {plant: func(t *testing.T, root, outside string) ([]string, string) {
+			top := filepath.Join(root, "top")
+			mkdirAt(t, top, 0o755)
+			symlink(t, outside, filepath.Join(top, ".kiro"))
+			return []string{top + "/", filepath.Join(top, ".kiro")}, filepath.Join(top, ".kiro")
+		}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			base := t.TempDir()
+			outside := filepath.Join(base, "outside")
+			mkdirAt(t, filepath.Join(outside, "sub"), 0o777)
+			mkdirAt(t, outside, 0o777)
+			root := filepath.Join(base, "root")
+			mkdirAt(t, root, 0o755)
+			listed, stop := tc.plant(t, root, outside)
+
+			got := SetDirModes(tighten(listed...))
+
+			if m := modeOf(t, outside); m != 0o777 {
+				t.Errorf("outside folder mode = %04o, want 0777 kept", m)
+			}
+			if m := modeOf(t, filepath.Join(outside, "sub")); m != 0o777 {
+				t.Errorf("outside sub mode = %04o, want 0777 kept", m)
+			}
+			if f := failedAt(got); !slices.Equal(f, []string{stop}) {
+				t.Errorf("failures at %v, want one at %s", f, stop)
+			}
+			for _, r := range got {
+				if r.Err != nil && !errors.Is(r.Err, ErrNotADir) {
+					t.Errorf("failure at %s = %v, want ErrNotADir", r.Path, r.Err)
+				}
+			}
+		})
+	}
+}
+
+func TestSetDirModes_GoesOnPastAStop(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	mkdirAt(t, outside, 0o777)
+	top := filepath.Join(root, "top")
+	mkdirAt(t, filepath.Join(top, "python"), 0o775)
+	mkdirAt(t, top, 0o775)
+	symlink(t, outside, filepath.Join(top, "npm"))
+	if err := os.WriteFile(filepath.Join(top, "opt"), nil, 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	got := SetDirModes(tighten(top, filepath.Join(top, "npm"), filepath.Join(top, "opt"), filepath.Join(top, "python")))
+
+	if m := modeOf(t, filepath.Join(top, "python")); m != 0o755 {
+		t.Errorf("python mode = %04o, want 0755", m)
+	}
+	if m := modeOf(t, top); m != 0o755 {
+		t.Errorf("top mode = %04o, want 0755", m)
+	}
+	if f := failedAt(got); !slices.Equal(f, []string{filepath.Join(top, "npm"), filepath.Join(top, "opt")}) {
+		t.Errorf("failures at %v, want npm and opt", f)
+	}
+}
+
+func TestSetDirModes_SkipsMissingFoldersSilently(t *testing.T) {
+	root := t.TempDir()
+	missing := filepath.Join(root, "absent")
+	got := SetDirModes(tighten(missing, filepath.Join(missing, "bin"), filepath.Join(root, "no", "parent")))
+	if len(got) != 0 {
+		t.Errorf("results = %+v, want none", got)
+	}
+	if _, err := os.Lstat(missing); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("stat of the missing folder = %v, want it still missing", err)
+	}
+}
+
+// The parent of a folder beneath no listed one is the operator's layout, so a symlink there is
+// followed.
+func TestSetDirModes_FollowsTheParentOfANamedFolder(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "mnt")
+	mkdirAt(t, filepath.Join(real, "config"), 0o775)
+	symlink(t, real, filepath.Join(root, "srv"))
+
+	SetDirModes(tighten(filepath.Join(root, "srv", "config")))
+
+	if m := modeOf(t, filepath.Join(real, "config")); m != 0o755 {
+		t.Errorf("config mode = %04o, want 0755 through the symlinked parent", m)
+	}
+}
+
+// A folder named through the kernel's path of a listed one is reached from that folder's
+// descriptor, so a symlink between them is not followed.
+func TestSetDirModes_WalksFromTheKernelPathOfAListedFolder(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "mnt", "config")
+	mkdirAt(t, real, 0o755)
+	symlink(t, filepath.Join(root, "mnt"), filepath.Join(root, "srv"))
+	outside := filepath.Join(root, "outside")
+	mkdirAt(t, filepath.Join(outside, ".kiro"), 0o777)
+	symlink(t, outside, filepath.Join(real, "x"))
+
+	got := SetDirModes(tighten(filepath.Join(root, "srv", "config"), filepath.Join(real, "x", ".kiro")))
+
+	if m := modeOf(t, filepath.Join(outside, ".kiro")); m != 0o777 {
+		t.Errorf("outside .kiro mode = %04o, want 0777 kept", m)
+	}
+	if f := failedAt(got); !slices.Equal(f, []string{filepath.Join(real, "x")}) {
+		t.Errorf("failures at %v, want one at %s", f, filepath.Join(real, "x"))
+	}
+}
+
+// A rename after the open cannot redirect the change: it lands on the folder that was opened.
+func TestSetDirModes_ActsOnTheOpenedFolder(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "kiro-cli-versions")
+	mkdirAt(t, filepath.Join(dir, "sub"), 0o775)
+	mkdirAt(t, dir, 0o775)
+	outside := filepath.Join(root, "outside")
+	mkdirAt(t, filepath.Join(outside, "sub"), 0o777)
+	mkdirAt(t, outside, 0o777)
+	moved := filepath.Join(root, "moved")
+	swap := func(p string) {
+		if p != dir {
+			return
+		}
+		if err := os.Rename(dir, moved); err != nil {
+			t.Fatal(err)
+		}
+		symlink(t, outside, dir)
+	}
+	testHookOpened = swap
+	t.Cleanup(func() { testHookOpened = func(string) {} })
+
+	SetDirModes(tighten(dir, filepath.Join(dir, "sub")))
+
+	for _, p := range []string{outside, filepath.Join(outside, "sub")} {
+		if m := modeOf(t, p); m != 0o777 {
+			t.Errorf("%s mode = %04o, want 0777 kept", p, m)
+		}
+	}
+	for _, p := range []string{moved, filepath.Join(moved, "sub")} {
+		if m := modeOf(t, p); m != 0o755 {
+			t.Errorf("%s mode = %04o, want 0755 on the opened folder", p, m)
+		}
+	}
+}
+
+func TestSetDirModes_ReportsAFailedChmodAndGoesOn(t *testing.T) {
+	root := t.TempDir()
+	a, b := filepath.Join(root, "a"), filepath.Join(root, "b")
+	mkdirAt(t, a, 0o775)
+	mkdirAt(t, b, 0o775)
+	var calls int
+	fchmod = func(fd int, mode uint32) error {
+		calls++
+		if calls == 1 {
+			return syscall.EROFS
+		}
+		return unix.Fchmod(fd, mode)
+	}
+	t.Cleanup(func() { fchmod = unix.Fchmod })
+
+	got := SetDirModes(tighten(a, b))
+
+	want := []DirModeResult{{Path: a, Old: 0o775, Err: syscall.EROFS}, {Path: b, Old: 0o775, New: 0o755}}
+	if len(got) != 2 || got[0].Path != want[0].Path || got[0].Old != want[0].Old || !errors.Is(got[0].Err, syscall.EROFS) || got[1] != want[1] {
+		t.Errorf("results = %+v, want %+v", got, want)
+	}
+	if m := modeOf(t, a); m != 0o775 {
+		t.Errorf("a mode = %04o, want 0775 after the refused chmod", m)
+	}
+}
+
+func TestSetDirModes_RefusesARelativePath(t *testing.T) {
+	got := SetDirModes(tighten("relative/dir"))
+	if f := failedAt(got); !slices.Equal(f, []string{"relative/dir"}) {
+		t.Errorf("failures at %v, want the relative path", f)
+	}
+}

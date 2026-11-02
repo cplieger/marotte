@@ -98,7 +98,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	// Before the first write into any root: every writer below would otherwise run in a second
 	// instance too, rendering its own state over the live one's.
-	roots, claimErr := claimRoots(ownedRoots(cfg))
+	roots, claimErr := claimAndHealRoots(cfg)
 	if claimErr != nil {
 		return nil, fmt.Errorf("refusing to start: %w", claimErr)
 	}

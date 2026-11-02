@@ -15,11 +15,11 @@ set -u
 new_workdir >/dev/null
 
 # Captured as a path, not sourced through a substitution, so a failed extraction stops this file.
-BLOCK=$(extract_range '^mkdir -p "\$CONFIG_DIR"' '^  }$') || exit 1
-# The end anchor `^  }$` is not unique in entrypoint.sh: a lost closing brace would capture the
+BLOCK=$(extract_range '^if ! mkdir -p "\$CONFIG_DIR"' '^fi$') || exit 1
+# The end anchor `^fi$` is not unique in entrypoint.sh: a lost `fi` would capture the
 # legacy-/config/kiro migration below it. Name that fault rather than rely on it failing to parse.
 if grep -q '/config/kiro' "$BLOCK"; then
-  printf 'harness error: extract_range ran past the mkdir block; its closing-brace end anchor is not unique\n' >&2
+  printf 'harness error: extract_range ran past the mkdir block; its fi end anchor is not unique\n' >&2
   exit 1
 fi
 
@@ -41,6 +41,18 @@ done
 [ "$rc" -eq 0 ] && [ -z "$missing" ] \
   && ok "the boot creates all eight required directories and continues" \
   || no "required directories" "rc=$rc missing:$missing"
+
+# The server holds HOME/.ssh at 700 and warns on each change, so one born wider warns on every fresh volume.
+mode=$(stat -c %a "$ROOT/home/.ssh" 2>/dev/null)
+[ "$mode" = 700 ] && [ "$(stat -c %a "$ROOT/home")" = 755 ] \
+  && ok "HOME/.ssh is created 700 and HOME keeps the umask's 755" \
+  || no "HOME/.ssh mode" "HOME/.ssh $mode, HOME $(stat -c %a "$ROOT/home")"
+
+# internal/composition/boot_modes.go is the one owner of folder modes; the drop-in's temp file is a file.
+stray=$(grep -n 'chmod' "$ENTRYPOINT" | grep -v 'chmod 644 "\$tmp"')
+[ -z "$stray" ] \
+  && ok "the boot script changes no folder's mode" \
+  || no "chmod in entrypoint.sh" "$stray"
 
 # Its own assertion: the only entry the SERVER writes into, and a missing parent fails the first
 # install on a fresh volume, inside the server, invisible in the boot log.

@@ -91,7 +91,7 @@ rc=0
   || no "refused boot" "rc=$rc, want 1"
 
 call=$(grep -n '^if ! load_boot_paths /app/marotte; then$' "$ENTRYPOINT" | cut -d: -f1)
-mkdir_at=$(grep -n '^mkdir -p "\$CONFIG_DIR"' "$ENTRYPOINT" | cut -d: -f1)
+mkdir_at=$(grep -n '^if ! mkdir -p "\$CONFIG_DIR"' "$ENTRYPOINT" | cut -d: -f1)
 dropin=$(grep -n '^if ! install_path_dropin; then$' "$ENTRYPOINT" | cut -d: -f1)
 [ -n "$call" ] && [ -n "$mkdir_at" ] && [ -n "$dropin" ] && [ "$call" -lt "$mkdir_at" ] && [ "$mkdir_at" -lt "$dropin" ] \
   && ok "the boot takes the server's folders before its first mkdir and the login-shell drop-in" \

@@ -53,6 +53,10 @@ func TestBuild_RefusesAKiroHomeAnotherInstanceHolds(t *testing.T) {
 		ToolCatalogPath: filepath.Join(root, "absent-catalog.json"),
 		ToolCatalogURL:  "http://127.0.0.1:1/",
 	}
+	// The live instance's folders keep their modes too: a refused boot sets none.
+	if err := os.Chmod(cfg.ConfigDir, 0o775); err != nil {
+		t.Fatal(err)
+	}
 	app, err := Build(t.Context(), cfg, fstest.MapFS{"static/index.html": {Data: []byte("x")}})
 	if app != nil {
 		app.Shutdown()
@@ -65,6 +69,9 @@ func TestBuild_RefusesAKiroHomeAnotherInstanceHolds(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(kiro, "steering", "environment.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("steering/environment.md stat = %v, want it never written", err)
+	}
+	if fi, err := os.Stat(cfg.ConfigDir); err != nil || fi.Mode().Perm() != 0o775 {
+		t.Errorf("config dir stat = %v, %v; want mode 0775 kept", fi, err)
 	}
 }
 
