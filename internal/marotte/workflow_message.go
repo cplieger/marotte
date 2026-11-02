@@ -60,16 +60,16 @@ func WorkflowMessageFactOf(e *Entry) (WorkflowMessageFact, bool, error) {
 	return WorkflowMessageFact{}, false, nil
 }
 
-// Row is the message row f files, false for a settlement or a clear.
-func (f *WorkflowMessageFact) Row() (WorkflowMessage, bool) {
+// row is the message row f files, false for a settlement or a clear.
+func (f *WorkflowMessageFact) row() (WorkflowMessage, bool) {
 	if f.message == nil {
 		return WorkflowMessage{}, false
 	}
 	return *f.message, true
 }
 
-// Clear is the steering clear f files, false for a row or a settlement.
-func (f *WorkflowMessageFact) Clear() (EntrySteerCleared, bool) {
+// clear is the steering clear f files, false for a row or a settlement.
+func (f *WorkflowMessageFact) clear() (EntrySteerCleared, bool) {
 	if f.cleared == nil {
 		return EntrySteerCleared{}, false
 	}

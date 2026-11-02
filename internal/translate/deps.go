@@ -152,10 +152,10 @@ type chatRecords interface {
 	// (marotte.WorkflowMessageFold.Unsettled), oldest first.
 	UnsettledWorkflowMessages(ctx context.Context, id marotte.ChatID) ([]marotte.WorkflowMessage, error)
 	// WakeCauses is what the chat's log holds that can have started its open turn on session
-	// (chat.EntryLog.WakeCauses).
+	// (chat.Store.WakeCauses).
 	WakeCauses(ctx context.Context, id marotte.ChatID, session string) (marotte.WakeCauses, error)
 	// AwaitsRunName reports whether the chat's log holds a wake leaving run unnamed that no run_named
-	// names (chat.EntryLog.AwaitsRunName).
+	// names (chat.Store.AwaitsRunName).
 	AwaitsRunName(ctx context.Context, id marotte.ChatID, run string) (bool, error)
 	// DepartedName is the name a chat had when its record was deleted, for a notice
 	// its bridge raises before teardown; false for a chat that was not deleted.

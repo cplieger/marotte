@@ -11,13 +11,13 @@ import type { EntryTurnWake, WakeSteer } from "./wire/types.gen.js";
 /** The line of a wake that names nothing marotte can show (`marotte.WakeFallbackLine`). */
 export const WAKE_FALLBACK_LINE = "Agent-initiated turn";
 
-/** What a wake calls a run whose name is not known yet (`marotte.WakeRunPlaceholder`). */
+/** What a wake calls a run whose name is not known yet (`marotte.wakeRunPlaceholder`). */
 const WAKE_RUN_PLACEHOLDER = "A workflow";
 
 const SEP = " \u00b7 ";
 
 /** A run a wake names: the label's or a re-delivered row's. `name` is what the wake shows, the
- *  placeholder (`marotte.WakeRunName`) while `named` is false. */
+ *  placeholder (`marotte.wakeRunName`) while `named` is false. */
 export interface WakeRun {
   id: string;
   name: string;

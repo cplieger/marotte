@@ -246,21 +246,21 @@ func (s *Store) UnsettledWorkflowMessages(ctx context.Context, chatID marotte.Ch
 	return out, err
 }
 
-// WakeCauses is the chat log's EntryLog.WakeCauses for session.
+// WakeCauses is the chat log's EntryLog.wakeCauses for session.
 func (s *Store) WakeCauses(ctx context.Context, chatID marotte.ChatID, session string) (marotte.WakeCauses, error) {
 	var out marotte.WakeCauses
 	err := s.readLog(ctx, chatID, func(l *EntryLog) error {
-		out = l.WakeCauses(session)
+		out = l.wakeCauses(session)
 		return nil
 	})
 	return out, err
 }
 
-// AwaitsRunName is the chat log's EntryLog.AwaitsRunName for run.
+// AwaitsRunName is the chat log's EntryLog.awaitsRunName for run.
 func (s *Store) AwaitsRunName(ctx context.Context, chatID marotte.ChatID, run string) (bool, error) {
 	var out bool
 	err := s.readLog(ctx, chatID, func(l *EntryLog) error {
-		out = l.AwaitsRunName(run)
+		out = l.awaitsRunName(run)
 		return nil
 	})
 	return out, err

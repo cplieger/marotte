@@ -123,8 +123,8 @@ func NamedWake(w *EntryTurnWake, names map[string]string) EntryTurnWake {
 	return out
 }
 
-// WakeInitiatorUser is KAS's stopInitiator for a run the reader stopped or marked complete.
-const WakeInitiatorUser = "user"
+// wakeInitiatorUser is KAS's stopInitiator for a run the reader stopped or marked complete.
+const wakeInitiatorUser = "user"
 
 // WakeCauses is what a chat's log holds that can have started its open turn, for a session:
 // Waiting is the unsettled workflow messages sent to it since the previous turn opened and before
@@ -163,7 +163,7 @@ func WakeCausesOf(facts []PositionedFact, session string, opened, prevOpened int
 		if f.At >= opened || f.At < prevOpened {
 			continue
 		}
-		if m, ok := f.Fact.Row(); ok && m.Steer.ToSession == session {
+		if m, ok := f.Fact.row(); ok && m.Steer.ToSession == session {
 			filedAt[m.ID] = i
 		}
 		if rewakingCancel(&f.Fact, session) {
@@ -185,7 +185,7 @@ func WakeCausesOf(facts []PositionedFact, session string, opened, prevOpened int
 
 // rewakingCancel reports a reader's cancel emptying session's buffer of a workflow message.
 func rewakingCancel(f *WorkflowMessageFact, session string) bool {
-	c, ok := f.Clear()
+	c, ok := f.clear()
 	return ok && c.Cause == SteerClearCauseCancel && c.Session == session &&
 		slices.ContainsFunc(c.IDs, IsWorkflowMessageNotifyID)
 }
@@ -201,15 +201,15 @@ func unsettledWhere(w *WorkflowMessageFold, keep func(*WorkflowMessage) bool) []
 	return out
 }
 
-// WakeRunPlaceholder is what a wake calls a run whose name is not known (yet).
-const WakeRunPlaceholder = "A workflow"
+// wakeRunPlaceholder is what a wake calls a run whose name is not known (yet).
+const wakeRunPlaceholder = "A workflow"
 
-// WakeRunName is what a wake calls a run: its name, else WakeRunPlaceholder.
-func WakeRunName(name string) string {
+// wakeRunName is what a wake calls a run: its name, else wakeRunPlaceholder.
+func wakeRunName(name string) string {
 	if name != "" {
 		return name
 	}
-	return WakeRunPlaceholder
+	return wakeRunPlaceholder
 }
 
 // WakeFallbackLine is the line of a wake that names nothing marotte can show.
@@ -280,7 +280,7 @@ func stepWakeLine(w *EntryTurnWake) (label wakeLabel, body string) {
 		return fallbackLabel, ""
 	}
 	s := &w.Steers[0]
-	run := WakeRunName(s.RunName)
+	run := wakeRunName(s.RunName)
 	if w.Note == WakeNoteRepeatCap && w.Loop != "" && w.MaxIterations > 0 {
 		return wakeLabel{run, " paused: " + w.Loop + " reached its round limit (" + strconv.Itoa(w.MaxIterations) + ")"}, ""
 	}
@@ -302,8 +302,8 @@ func runFinishedLine(w *EntryTurnWake) wakeLabel {
 	if w.Run == "" {
 		return fallbackLabel
 	}
-	run := WakeRunName(w.RunName)
-	byUser := w.Initiator == WakeInitiatorUser
+	run := wakeRunName(w.RunName)
+	byUser := w.Initiator == wakeInitiatorUser
 	var rest string
 	switch w.RunStatus {
 	case RunStatusCompleted:
@@ -342,7 +342,7 @@ func rewakeLine(steers []WakeSteer) (label wakeLabel, body string) {
 	lines := make([]string, 0, len(steers))
 	for i := range steers {
 		s := &steers[i]
-		lines = append(lines, WakeRunName(s.RunName)+" \u00b7 "+s.Step+": "+s.Text)
+		lines = append(lines, wakeRunName(s.RunName)+" \u00b7 "+s.Step+": "+s.Text)
 	}
 	return wakeLabel{rest: rest}, strings.Join(lines, "\n")
 }

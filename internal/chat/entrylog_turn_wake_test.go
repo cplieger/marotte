@@ -53,14 +53,14 @@ func TestEntryLog_WakeCausesAreTheRowsWaitingWhenTheWakeTurnOpened(t *testing.T)
 		marotte.EntrySteerDelivered{SteerID: "wfmsg-read", ReadTs: 2})
 	f.closeTurn(prev, marotte.TurnOutcomeCompleted)
 	f.append(prev, "", "wfmsg-b", marotte.EntryKindSteer, wakeRow("Link check done: 412 links, none broken.", "info"))
-	if got := f.log.WakeCauses(wakeSession); len(got.Waiting)+len(got.Cleared) != 0 {
+	if got := f.log.wakeCauses(wakeSession); len(got.Waiting)+len(got.Cleared) != 0 {
 		t.Errorf("with no turn open WakeCauses = %+v, want nothing: no wake to pair", got)
 	}
 
 	wake := f.wakeTurn()
 	f.append(wake, "", "wfmsg-c", marotte.EntryKindSteer, wakeRow("buffered behind the wake", "warning"))
 
-	got := f.log.WakeCauses(wakeSession)
+	got := f.log.wakeCauses(wakeSession)
 	var waiting []string
 	for _, m := range got.Waiting {
 		waiting = append(waiting, m.ID)
@@ -80,7 +80,7 @@ func TestEntryLog_WakeCausesNameWhatTheStoppedTurnsCancelCleared(t *testing.T) {
 	f.closeTurn(stopped, marotte.TurnOutcomeCancelled)
 	f.wakeTurn()
 
-	got := f.log.WakeCauses(wakeSession)
+	got := f.log.wakeCauses(wakeSession)
 	if len(got.Cleared) != 1 || got.Cleared[0].ID != "wfmsg-q" || got.Cleared[0].Steer.Text != "Which branch should I base on?" {
 		t.Errorf("Cleared = %+v, want the question the cancel cleared", got.Cleared)
 	}
@@ -148,7 +148,7 @@ func TestEntryLog_RewindingTheTurnARunNamedWasFiledInUnnamesTheWakeEverywhere(t 
 	next := f.prompt("thanks")
 	f.append(next, "", "named-1", marotte.EntryKindRunNamed, marotte.EntryRunNamed{Run: wakeRunID, Name: "publish-docs"})
 	f.closeTurn(next, marotte.TurnOutcomeCompleted)
-	if f.log.AwaitsRunName(wakeRunID) {
+	if f.log.awaitsRunName(wakeRunID) {
 		t.Errorf("before the rewind: AwaitsRunName = true, want false: the run_named names the wake")
 	}
 	revertRecord(f, wake, next, next, 2)
@@ -163,7 +163,7 @@ func TestEntryLog_RewindingTheTurnARunNamedWasFiledInUnnamesTheWakeEverywhere(t 
 				t.Errorf("%s: All() holds %s, want the rewound run_named gone", phase, e.ID)
 			}
 		}
-		if !f.log.AwaitsRunName(wakeRunID) {
+		if !f.log.awaitsRunName(wakeRunID) {
 			t.Errorf("%s: AwaitsRunName = false, want true: the wake is unnamed again", phase)
 		}
 	})

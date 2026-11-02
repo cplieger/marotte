@@ -1390,8 +1390,8 @@ func factsOf(facts []messageFact) []marotte.WorkflowMessageFact {
 	return out
 }
 
-// AwaitsRunName reports whether a surviving turn's wake leaves run unnamed and no surviving run_named names it.
-func (l *EntryLog) AwaitsRunName(run string) bool {
+// awaitsRunName reports whether a surviving turn's wake leaves run unnamed and no surviving run_named names it.
+func (l *EntryLog) awaitsRunName(run string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	order := l.survivingOrderLocked()
@@ -1406,9 +1406,9 @@ func (l *EntryLog) AwaitsRunName(run string) bool {
 	return false
 }
 
-// WakeCauses answers marotte.WakeCausesOf for session over the surviving history: nothing when the newest surviving
+// wakeCauses answers marotte.WakeCausesOf for session over the surviving history: nothing when the newest surviving
 // turn is closed.
-func (l *EntryLog) WakeCauses(session string) marotte.WakeCauses {
+func (l *EntryLog) wakeCauses(session string) marotte.WakeCauses {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	order := l.survivingOrderLocked()
