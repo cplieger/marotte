@@ -16,8 +16,8 @@ github.com/cplieger/jsoncap/v2 v2.1.0 h1:/NRuaqFNKdjhLegBrgDBunX73Lo5r2iYh8Gyy6o
 github.com/cplieger/jsoncap/v2 v2.1.0/go.mod h1:pE5I9GzWjOiqW7ngbJfQcEG2KdMb6yLFKCj+uxuO3Ug=
 github.com/cplieger/keyenc v1.1.0 h1:rlBEmqEBUS378lkJJfrRWlWKBqpgX2ahquivHfdMgxw=
 github.com/cplieger/keyenc v1.1.0/go.mod h1:41HJ59GzUd2gNdRpmdgiOP3VW4CdETY+ecQ8/lzOySQ=
-github.com/cplieger/keylock v1.0.1 h1:W2qhgq22a8dVhAz++PJIquOxDXznWbEC6wTV/NPJxXg=
-github.com/cplieger/keylock v1.0.1/go.mod h1:e39neSBvUIELQRFr/DXlPZvDyZNqMvkvGL5QufU6Dxk=
+github.com/cplieger/keylock v1.1.0-dev.1 h1:nDqacXo9OzmmZbn7V080ZTVkEtfnPAUa8LD986B/IsA=
+github.com/cplieger/keylock v1.1.0-dev.1/go.mod h1:e39neSBvUIELQRFr/DXlPZvDyZNqMvkvGL5QufU6Dxk=
 github.com/cplieger/pathinside/v2 v2.1.0 h1:yBnm859aLMKALi8bTIaYBy7t1osIqCSMIJo8PFqQohM=
 github.com/cplieger/pathinside/v2 v2.1.0/go.mod h1:sMHw6mQSFsGWsirWPQyQZ1+kqrAsXf9VcMUTUJsqm0w=
 github.com/cplieger/pinstall/v3 v3.1.0 h1:p8K/vR50i4Ty4B8ufzt991VdDOp0385BSYI01WfABQI=
@@ -28,8 +28,8 @@ github.com/cplieger/scheduler/v4 v4.3.0 h1:rqMnpHHLQA/hxcQ6dV2X11vxdgPu7Pc2gIBNA
 github.com/cplieger/scheduler/v4 v4.3.0/go.mod h1:ONnKeZ+efBTEk8y+RMWegjFBOyx/pMoQVQE00en1+xk=
 github.com/cplieger/slogx v1.8.0 h1:M3YHELJl9kWUDl+u3jFcCiNA/UXB4Ywq5lMjBK832Ds=
 github.com/cplieger/slogx v1.8.0/go.mod h1:juFN2HIfnzy+39AQ9aIqCyaLyiOQo6qWuZCG1ubIkfA=
-github.com/cplieger/sse v1.4.0 h1:2Br2Nkjy19fDJRTnsT/nFZilwsGMbcvcjKm5k5zU69Y=
-github.com/cplieger/sse v1.4.0/go.mod h1:U8GM7RYMDDXrAjm3rWRbMU3/xVoPgzyb0S3aLojAK4s=
+github.com/cplieger/sse v1.5.0-dev.2 h1:zIP1w8hYbg9aFl30+ZRaUY+WMxJEhTwlJULiCuvyD/8=
+github.com/cplieger/sse v1.5.0-dev.2/go.mod h1:PnnHEOQIl+Pql3ZpVTonTWoTmZlHqa709Tw9JnSMe7Y=
 github.com/cplieger/ssrf/v4 v4.5.0 h1:pnaK2UER1WKWVPTbz2p2APs0OEicRj/uOcqBlrhW+IM=
 github.com/cplieger/ssrf/v4 v4.5.0/go.mod h1:JbdhAU/ANQBghfS7DJb35Lxzqf9CP9XmzLJUcymV7NI=
 github.com/cplieger/toolbelt/v3 v3.13.0 h1:wXGD0kw8N/OIS+24d+6TET220N3tcbbTrfKSYnqJFEo=
