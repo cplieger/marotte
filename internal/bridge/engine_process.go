@@ -245,6 +245,20 @@ func toolkitTelemetryEnv(disable bool) []string {
 	return []string{toolkitTelemetryEnvVar + "=1"}
 }
 
+// kasLogLevelEnvVar is read by KAS at each log call (unknown values mean info) and by kiro-cli's Rust binary. Bridge
+// spawn state, not a kascap row: the environment census admits only KIRO_FEATURE_* and KIRO_DISABLE_* names.
+const kasLogLevelEnvVar = "KIRO_LOG_LEVEL"
+
+func isKASLogLevelEnv(kv string) bool { return strings.HasPrefix(kv, kasLogLevelEnvVar+"=") }
+
+// kasLogLevelEnv follows the Debug logs setting: on spawns KAS at debug, off leaves kiro-cli's default, info.
+func kasLogLevelEnv(debug bool) []string {
+	if !debug {
+		return nil
+	}
+	return []string{kasLogLevelEnvVar + "=debug"}
+}
+
 const nodeOptionsVar = "NODE_OPTIONS"
 
 // withHeapLimit rewrites env's NODE_OPTIONS to carry mib (nodeopts.WithHeapLimit). A malformed inherited value is
@@ -254,13 +268,7 @@ func withHeapLimit(env []string, mib int, generation uint64) []string {
 	if mib == 0 {
 		return env
 	}
-	inherited := ""
-	for _, kv := range env {
-		if v, ok := strings.CutPrefix(kv, nodeOptionsVar+"="); ok {
-			inherited = v
-		}
-	}
-	composed, err := nodeopts.WithHeapLimit(inherited, mib)
+	composed, err := nodeopts.WithHeapLimit(nodeOptionsOf(env), mib)
 	if err != nil {
 		slog.Error("engine: the memory limit was not applied because NODE_OPTIONS is malformed",
 			"generation", generation, "reason", err)
@@ -339,9 +347,12 @@ func (e *Engine) startProcess() error {
 func (e *Engine) processEnv() []string {
 	env, dropped := screenBridgeEnv(os.Environ(), e.extraEnv, e.envAllow)
 	// A setting decides these even when it withholds them (kascap.OwnsEnv), so no inherited value survives.
-	env = slices.DeleteFunc(env, func(kv string) bool { return kascap.OwnsEnv(kv) || isToolkitTelemetryEnv(kv) })
+	env = slices.DeleteFunc(env, func(kv string) bool {
+		return kascap.OwnsEnv(kv) || isToolkitTelemetryEnv(kv) || isKASLogLevelEnv(kv)
+	})
 	env = append(env, kascap.ChildEnv(&e.spawn)...)
 	env = append(env, toolkitTelemetryEnv(e.spawn.DisableTelemetry)...)
+	env = append(env, kasLogLevelEnv(e.debugLogs)...)
 	// After the screen and the door: os/exec keeps a key's last value.
 	env = append(env, localeEnv()...)
 	env = withHeapLimit(env, e.heapMiB, e.generation)

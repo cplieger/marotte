@@ -414,6 +414,8 @@ func (o *engineOwner) logExit(info *bridge.ExitInfo, gen uint64, cause string, b
 		"sidecar_exit", info.SidecarExit,
 		"js_heap_oom", info.JSHeapOOM,
 		"relay_write_timeout", info.RelayWriteTimeout,
+		"rss_peak_mib", info.RSSPeakMiB,
+		"heap_limit_mib", info.HeapLimitMiB,
 	}
 	if now, ok := o.oomKill(); ok && base.known && now >= base.count {
 		attrs = append(attrs, "container_oom_kills", now-base.count)

@@ -302,6 +302,7 @@ describe("restart reasons", () => {
     expect(reasonRow("knowledge_enabled")?.controlID).toBe("flag-knowledge");
     expect(reasonRow("telemetry.enabled")?.controlID).toBe("flag-telemetry");
     expect(reasonRow("engine_heap_mib")?.controlID).toBe("engine-heap-mib");
+    expect(reasonRow("debug_logs")?.controlID).toBe("flag-debug-logs");
     expect(reasonRow("account_switch"), "the account has no Settings row").toBeNull();
     expect(reasonRow("kiro_cli_version")).toBeNull();
     // An inherited name must not read as a row.

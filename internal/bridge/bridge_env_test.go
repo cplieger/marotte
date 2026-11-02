@@ -466,6 +466,32 @@ func TestStart_TelemetrySwitchDrivesTheToolkitClient(t *testing.T) {
 	}
 }
 
+// Debug logs on spawns KAS at debug, the lowest level that writes workflow.step.close_skipped_session_busy and
+// close_session_disposed; off leaves no inherited level behind. Not parallel: it sets an environment variable.
+func TestStart_DebugLogsDriveTheKASLogLevel(t *testing.T) {
+	t.Setenv("KIRO_LOG_LEVEL", "trace")
+	for _, tc := range []struct {
+		name  string
+		want  []string
+		debug bool
+	}{
+		{name: "debug logs on", debug: true, want: []string{"KIRO_LOG_LEVEL=debug"}},
+		{name: "debug logs off", debug: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var carried []string
+			for _, line := range spawnEnvDump(t, &marotte.EngineOpts{DebugLogs: tc.debug}) {
+				if strings.HasPrefix(line, "KIRO_LOG_LEVEL=") {
+					carried = append(carried, line)
+				}
+			}
+			if !slices.Equal(carried, tc.want) {
+				t.Errorf("DebugLogs %v: child environment carries %q, want %q", tc.debug, carried, tc.want)
+			}
+		})
+	}
+}
+
 // The parent pins the child locale over the inherited value. The screen passes LANG through, and os/exec keeps the
 // last assignment, so a locale appended before it is a no-op; the ambient value is set for that reason.
 func TestStart_ChildEnvironmentPinsTheLocale(t *testing.T) {
