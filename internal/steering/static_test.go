@@ -16,6 +16,13 @@ func fakeEnv(t *testing.T, env map[string]string) {
 	t.Cleanup(func() { lookupEnv = prev })
 }
 
+func fakeUID(t *testing.T, uid int) {
+	t.Helper()
+	prev := geteuid
+	geteuid = func() int { return uid }
+	t.Cleanup(func() { geteuid = prev })
+}
+
 func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 	fakeEnv(t, map[string]string{
 		"HOME":      "/h",
@@ -25,6 +32,7 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 		"GOBIN":     "/g/bin",
 		"LANG":      "C.UTF-8",
 	})
+	fakeUID(t, 0)
 	var b strings.Builder
 	writeRuntime(&b, "/cfg", "/t")
 	out := b.String()
@@ -77,6 +85,7 @@ func TestWriteRuntime_GoBinIsGopathBinOnlyWhenGopathIsTheToolsGo(t *testing.T) {
 // must not promise bare names.
 func TestWriteRuntime_ToolsBinOffPathSendsUsersToTheAbsolutePath(t *testing.T) {
 	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/usr/bin:/bin"})
+	fakeUID(t, 1000)
 	var b strings.Builder
 	writeRuntime(&b, "/cfg", "/srv/t")
 	out := b.String()
@@ -88,9 +97,33 @@ func TestWriteRuntime_ToolsBinOffPathSendsUsersToTheAbsolutePath(t *testing.T) {
 			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
 		}
 	}
-	for _, bad := range []string{"resolves by bare name", "is the tools engine's single bin dir", "as the image exports it"} {
+	for _, bad := range []string{"resolves by bare name", "is the tools engine's single bin dir", "as the image exports it", "/etc/profile"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("writeRuntime says %q with the tools bin off PATH:\n%s", bad, out)
+		}
+	}
+}
+
+// Only root may write /etc/profile.d, so under another uid a login shell's PATH comes from
+// /etc/profile alone and the doc must not promise bare names there.
+func TestWriteRuntime_NonRootLoginShellsGetTheAbsolutePath(t *testing.T) {
+	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/t/bin:/usr/bin:/bin"})
+	fakeUID(t, 1000)
+	var b strings.Builder
+	writeRuntime(&b, "/cfg", "/t")
+	out := b.String()
+	for _, want := range []string{
+		"`/t/bin` is the tools engine's single bin dir",
+		"takes its PATH from `/etc/profile`, which leaves out `/t/bin`: marotte runs as uid 1000, not root",
+		"runs an installed tool by its absolute path (`/t/bin/<tool>`). Pin `HOME=/h`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"resolves by bare name", "10-marotte-path.sh"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("writeRuntime says %q for a non-root server:\n%s", bad, out)
 		}
 	}
 }

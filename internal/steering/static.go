@@ -4,12 +4,16 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
-var lookupEnv = os.LookupEnv
+var (
+	lookupEnv = os.LookupEnv
+	geteuid   = os.Geteuid
+)
 
 func writeIntro(b *strings.Builder, workDir string) {
 	b.WriteString("# Environment\n\n")
@@ -105,15 +109,22 @@ func writePath(b *strings.Builder, toolsDir string) bool {
 	return onPath
 }
 
+// entrypoint.sh's offer_login_path writes the drop-in only when the server runs as root.
 func writeShellHint(b *strings.Builder, toolsDir string, onPath bool) {
-	if onPath {
+	switch uid := geteuid(); {
+	case !onPath:
+		b.WriteString("- `" + toolsDir + "/bin` is on no shell's PATH, a login shell's included, so a user ")
+		b.WriteString("runs an installed tool by its absolute ")
+	case uid != 0:
+		b.WriteString("- A login shell, the browser Shell panel's `bash --login` included, takes its PATH from ")
+		b.WriteString("`/etc/profile`, which leaves out `" + toolsDir + "/bin`: marotte runs as uid " + strconv.Itoa(uid))
+		b.WriteString(", not root, so the entrypoint writes no drop-in restoring it. There a user runs an ")
+		b.WriteString("installed tool by its absolute ")
+	default:
 		b.WriteString("- Every login shell, the browser Shell panel's `bash --login` included, sources ")
 		b.WriteString("`/etc/profile.d/10-marotte-path.sh` (rewritten by the entrypoint each boot), so an ")
 		b.WriteString("installed tool resolves by bare name there too. If a user still gets `command not found`, ")
 		b.WriteString("the boot log carries a WARNING that the drop-in was not written: hand them the absolute ")
-	} else {
-		b.WriteString("- `" + toolsDir + "/bin` is on no shell's PATH, a login shell's included, so a user ")
-		b.WriteString("runs an installed tool by its absolute ")
 	}
 	b.WriteString("path (`" + toolsDir + "/bin/<tool>`)")
 }

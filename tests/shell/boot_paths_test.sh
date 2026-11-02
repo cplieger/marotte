@@ -92,7 +92,7 @@ rc=0
 
 call=$(grep -n '^if ! load_boot_paths /app/marotte; then$' "$ENTRYPOINT" | cut -d: -f1)
 mkdir_at=$(grep -n '^if ! mkdir -p "\$CONFIG_DIR"' "$ENTRYPOINT" | cut -d: -f1)
-dropin=$(grep -n '^if ! install_path_dropin; then$' "$ENTRYPOINT" | cut -d: -f1)
+dropin=$(grep -n '^offer_login_path "\$EUID"$' "$ENTRYPOINT" | cut -d: -f1)
 [ -n "$call" ] && [ -n "$mkdir_at" ] && [ -n "$dropin" ] && [ "$call" -lt "$mkdir_at" ] && [ "$mkdir_at" -lt "$dropin" ] \
   && ok "the boot takes the server's folders before its first mkdir and the login-shell drop-in" \
   || no "hand-off call site" "call at '${call}', mkdir at '${mkdir_at}', drop-in at '${dropin}'"
@@ -128,5 +128,38 @@ for sh in /bin/sh /bin/bash; do
     && ok "$sh sources the login-shell drop-in to the boot's PATH" \
     || no "$sh drop-in" "PATH '$got', want '$want'; stderr: $(cat "$err")"
 done
+
+# Only root may write /etc/profile.d. Another uid tries nothing and names the full-path fallback.
+load_function offer_login_path
+TOOLS="$WORK/t"
+# offer <install rc> <uid>: "<install calls>|<stderr>" from one offer_login_path run.
+offer() {
+  (
+    calls=0
+    rc=$1
+    install_path_dropin() {
+      calls=$((calls + 1))
+      return "$rc"
+    }
+    offer_login_path "$2" 2>"$WORK/offer.err"
+    printf '%s|%s' "$calls" "$(cat "$WORK/offer.err")"
+  )
+}
+got=$(offer 0 1000)
+case "$got" in
+  "0|WARNING: running as uid 1000, not root, "*"does not search $TOOLS/bin, so run an engine-installed tool there by its full path ($TOOLS/bin/<tool>)")
+    ok "a non-root boot writes no drop-in and names the full-path fallback"
+    ;;
+  *) no "non-root boot" "got '$got'" ;;
+esac
+got=$(offer 0 0)
+[ "$got" = "1|" ] \
+  && ok "a root boot writes the drop-in and warns about nothing" \
+  || no "root boot" "got '$got', want '1|'"
+got=$(offer 1 0)
+case "$got" in
+  "1|WARNING: could not write /etc/profile.d/10-marotte-path.sh; "*"will not see $TOOLS/bin, "*) ok "a root boot whose drop-in fails says so" ;;
+  *) no "failed drop-in" "got '$got'" ;;
+esac
 
 report
