@@ -22,7 +22,6 @@ ROOTS=$(extract_range '^CONFIG_DIR=' '^TOOLS=') || exit 1
   exit 1
 }
 
-# roots <cwd> [NAME=value...] prints "CONFIG_DIR|TOOLS" as the boot resolves them.
 roots() {
   local dir=$1 kv
   shift
@@ -59,7 +58,7 @@ check_roots "/srv/n|/srv/n/tools" KIRO_CONFIG_DIR=/srv/m/../n/
 check_roots "$CWD/data|$CWD/t" KIRO_CONFIG_DIR=data/ MAROTTE_TOOLS_DIR=./t
 check_roots "$CWD/link|$CWD/link/tools" KIRO_CONFIG_DIR=link
 
-# A custom root, as the finding that motivated the derivation saw it: npm/lib stamped 0770.
+# A custom root whose host stamped every folder 0770.
 load_function tighten_engine_roots
 mkdir -p "$WORK/custom/config" "$WORK/custom/tools/npm/lib" || exit 1
 chmod 0770 "$WORK/custom/config" "$WORK/custom/tools" "$WORK/custom/tools/npm" "$WORK/custom/tools/npm/lib" || exit 1
@@ -75,8 +74,7 @@ modes=$(stat -c %a "$WORK/custom/config" "$WORK/custom/tools" "$WORK/custom/tool
 
 load_function rebase_tools_env
 
-# rebase <from> <to> <PATH> <GOPATH> <GOBIN> prints what a child of the boot then sees; printenv,
-# because a bash child would source BASH_ENV first.
+# printenv, because a bash child would source BASH_ENV first.
 rebase() {
   (
     PATH=$3
@@ -103,9 +101,57 @@ got=$(rebase /config/tools /srv/t "$IMAGE_PATH" /home/go /home/go/bin)
   || no "operator GOPATH" "child saw $got"
 
 got=$(rebase /config/tools /srv/t ":/config/tools/bin2:/config/tools/bin::/config/tools/opt/x/bin:" /g /g/bin)
-[ "$got" = ":/config/tools/bin2:/srv/t/bin::/config/tools/opt/x/bin:|/g|/g/bin" ] \
+[ "$got" = ":/config/tools/bin2:/srv/t/bin:/srv/t/go/bin::/config/tools/opt/x/bin:|/g|/g/bin" ] \
   && ok "only whole matching entries move, and empty PATH entries survive" \
   || no "entry matching" "child saw $got"
+
+got=$(rebase /config/tools /srv/t "/srv/t/bin2:/usr/local/bin:/usr/bin:/bin" "" "")
+[ "$got" = "/srv/t/bin:/srv/t/go/bin:/srv/t/bin2:/usr/local/bin:/usr/bin:/bin|/srv/t/go|/srv/t/bin" ] \
+  && ok "a PATH without the tools entries gains them in front, and an empty GOPATH and GOBIN follow the tools dir" \
+  || no "PATH without the tools entries" "child saw $got"
+
+got=$(rebase /config/tools /config/tools "/usr/bin:/config/tools/bin2:/config/tools/bin:/bin" /config/tools/go /config/tools/bin)
+[ "$got" = "/usr/bin:/config/tools/bin2:/config/tools/bin:/config/tools/go/bin:/bin|/config/tools/go|/config/tools/bin" ] \
+  && ok "a missing go/bin is added right after the tools bin, which keeps its place" \
+  || no "missing go/bin" "child saw $got"
+
+got=$(rebase /config/tools /srv/t "" /g /g/bin)
+[ "$got" = "/srv/t/bin:/srv/t/go/bin|/g|/g/bin" ] \
+  && ok "an empty PATH becomes the two tools entries, with no empty entry" \
+  || no "empty PATH" "child saw $got"
+
+got=$(
+  PATH=/usr/bin:/bin
+  unset GOPATH GOBIN
+  rebase_tools_env /config/tools /srv/t
+  /usr/bin/printenv GOPATH GOBIN | /usr/bin/paste -sd'|'
+)
+[ "$got" = "/srv/t/go|/srv/t/bin" ] \
+  && ok "an unset GOPATH and GOBIN are set to the tools dir and exported" \
+  || no "unset GOPATH and GOBIN" "child saw '$got'"
+
+# A tools dir with a space and a single quote must survive /etc/profile.d in sh and bash. stdin is
+# /dev/null because bash sources ~/.bashrc when stdin is a socket.
+load_function emit_path_dropin
+odd="$WORK/my tools'x"
+dropin="$WORK/dropin.sh"
+want=$(
+  PATH="$IMAGE_PATH"
+  rebase_tools_env /config/tools "$odd"
+  emit_path_dropin >"$dropin" || exit 1
+  printf '%s' "$PATH"
+) || exit 1
+[ -s "$dropin" ] || {
+  printf 'harness error: emit_path_dropin wrote nothing\n' >&2
+  exit 1
+}
+for sh in /bin/sh /bin/bash; do
+  err="$WORK/dropin.err"
+  got=$(/usr/bin/env -i "$sh" -c 'PATH=/usr/bin:/bin; . "$1"; printf %s "$PATH"' dropin "$dropin" </dev/null 2>"$err")
+  [ "$got" = "$want" ] && [ ! -s "$err" ] \
+    && ok "$sh sources the login-shell drop-in to the rebased PATH" \
+    || no "$sh drop-in" "PATH '$got', want '$want'; stderr: $(cat "$err")"
+done
 
 # The image's ENV is what the call rebases from.
 grep -q '^ENV PATH="/config/tools/bin:/config/tools/go/bin:' "$DOCKERFILE" \
