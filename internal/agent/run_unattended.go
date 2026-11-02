@@ -1,8 +1,9 @@
 package agent
 
 // The unattended floor: a scheduled run's permission request has nobody to answer, so it is refused on a
-// short budget rather than parking the run (and, through the single-run rule, its whole schedule).
-// Scheduled runs only. Deny by default; `scheduled_auto_approve` opts in.
+// short budget rather than parking the run (and, through the single-run rule, its whole schedule), and a
+// pause nobody resumes ends the run on the same budget. Scheduled runs only. Deny by default;
+// `scheduled_auto_approve` opts in.
 
 import (
 	"cmp"
@@ -10,6 +11,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,6 +63,46 @@ const logMsgRunOverran = "scheduled run still going when its next slot came due;
 const reasonOverran = "still running when its next slot came due, so it was cancelled. " +
 	"Give the schedule a longer interval, or make the workflow finish inside it"
 
+// reasonStalled and reasonBackstop are the row's text for the other two bounds (cancelExpired).
+var (
+	reasonStalled = "made no progress and had no live shell for " +
+		strconv.Itoa(int(runIdleWindow.Minutes())) + " minutes, so it was cancelled. " +
+		"Open the run to see the step it stopped in"
+	reasonBackstop = "ran for " + strconv.Itoa(int(runBackstop.Hours())) +
+		" hours in total, the most one run may, so it was cancelled. Make the workflow finish sooner"
+)
+
+// reasonCancelRefused is the row's text once retryTermination gives up on a stop marotte decided.
+var reasonCancelRefused = "reached a limit that stops it, but kiro-cli refused the cancel " +
+	strconv.Itoa(1+maxCancelRetries) + " times, so it may still be running. Cancel it from its run page"
+
+// unattendedPauseBudget is how long a scheduled run may sit paused with no resume before it is ended
+// (endUnattended): an unattended ask's budget, which also outlasts the three heals' backoff. A var for tests.
+var unattendedPauseBudget = unattendedApprovalBudget
+
+// logMsgRunPausedUnattended is a constant an alert rule matches. Change both together.
+const logMsgRunPausedUnattended = "scheduled run paused with nobody to resume it; cancelling"
+
+// The row's text for endUnattended, by the pause it found and what it waited out.
+var (
+	pauseBudgetText   = strconv.Itoa(int(unattendedApprovalBudget.Minutes())) + " minutes"
+	reasonPausedFault = "paused on a fault that marotte's automatic resumes did not clear within " + pauseBudgetText +
+		", so it was cancelled. Open the run to see the step it paused in"
+	reasonHealsSpent = "paused on a fault again after each of marotte's " + strconv.Itoa(maxAutoHeals) +
+		" automatic resumes, so it was cancelled. Open the run to see the step it paused in"
+)
+
+// reasonPausedOther is the row's text for any other pause (seenOtherPause), quoting KAS's pause reason: only it says
+// which pause this was, a step's question, a repeat's limit or a fault KAS does not class as transient.
+func reasonPausedOther(pauseReason string) string {
+	quoted := ""
+	if r := rowText(pauseReason); r != "" {
+		quoted = " (" + r + ")"
+	}
+	return "paused with nobody watching" + quoted + ", so it was cancelled after " + pauseBudgetText +
+		". Open the run to see the step it paused in"
+}
+
 // permissionWithUnattendedFloor wraps the permission handler: the request reaches the client unchanged, plus
 // a deadline after which marotte answers.
 func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
@@ -72,19 +114,19 @@ func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
 		if !held || !l.Unattended || msg.ID == nil {
 			return
 		}
-		scheduleID := l.ScheduleID
+		run := scheduleRun(&l)
 		acpID := *msg.ID
 		name := permissionAskName(msg.Params)
 		// A timer parks no goroutine and is a no-op once answered: both paths claim from the tracker.
 		params := msg.Params
 		rs.lifecycle.afterUnlessDraining(unattendedApprovalBudget, func() {
-			rs.answerUnattended(chatID, origin, acpID, scheduleID, name, params)
+			rs.answerUnattended(chatID, origin, acpID, run, name, params)
 		})
 	}
 }
 
 // answerUnattended settles a still-pending request for an absent user: refuse, or approve when opted in.
-func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acpID int64, scheduleID string, name askName, msgParams json.RawMessage) {
+func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acpID int64, run schedule.Run, name askName, msgParams json.RawMessage) {
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 
@@ -131,7 +173,7 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acp
 	// A fixed message with the outcome as a field, so alert rules can match it.
 	slog.Warn(logMsgUnattendedPermission,
 		"outcome", verb, "chat_id", chatID, "tool", name.tool, "subject", name.subject,
-		"budget", unattendedApprovalBudget, "schedule_id", scheduleID)
+		"budget", unattendedApprovalBudget, "schedule_id", run.ScheduleID)
 	if verb == outcomeApproved {
 		// An approval is not a failure.
 		return
@@ -150,7 +192,69 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acp
 			reason = "your organization requires a person to approve this, and nobody was watching"
 		}
 	}
-	rs.recordScheduleOutcome(ctx, scheduleID, schedule.Outcome{Status: schedule.StatusFailed, Reason: reason})
+	rs.recordScheduleOutcome(ctx, run, schedule.Outcome{Status: schedule.StatusFailed, Reason: reason})
+}
+
+// watchUnattendedPause ends a scheduled run unattendedPauseBudget after this pause, unless an arm since resumed it.
+func (rs *Runs) watchUnattendedPause(workflowID string) {
+	l, held := rs.lease(workflowID)
+	if !held || !l.Unattended {
+		return
+	}
+	seq := rs.lastArmSeq(workflowID)
+	rs.lifecycle.afterUnlessDraining(unattendedPauseBudget, func() {
+		if rs.lastArmSeq(workflowID) != seq {
+			return
+		}
+		ctx, cancel := rs.lifecycle.derivedContext()
+		defer cancel()
+		if _, err := rs.transition(ctx, workflowID, &runRequest{want: pauseExpiry}); err != nil {
+			slog.Error("could not end a scheduled run paused with nobody to resume it; retrying, and its next slot ends it if every retry fails",
+				"workflow_id", workflowID, "error", err)
+		}
+	})
+}
+
+// endUnattended ends a scheduled run whose pause r found nobody resuming, under the run's resume lock. req is what
+// found it, the pause budget's expiry or a heal past its budget, and a refused cancel's retry sends it again unless
+// the run was armed since. A fault's pause is left while the gate is closed, since the gate's release resumes the
+// heal it held.
+func (rs *Runs) endUnattended(ctx context.Context, workflowID string, req *runRequest, r *pauseRead) error {
+	seq := rs.lastArmSeq(workflowID)
+	l, held := rs.lease(workflowID)
+	if !held || !l.Unattended {
+		return nil
+	}
+	fault := r.seen != seenOtherPause
+	if fault && !rs.gateOpen() {
+		return nil
+	}
+	if !rs.claimTermination(workflowID) {
+		return nil
+	}
+	reason, waitedKey, waited := reasonPausedFault, "budget", any(unattendedPauseBudget)
+	switch {
+	case req.want == healResume:
+		reason, waitedKey, waited = reasonHealsSpent, "heals", maxAutoHeals
+	case !fault:
+		reason = reasonPausedOther(r.res.State.PauseReason)
+	}
+	slog.Error(logMsgRunPausedUnattended, "workflow_id", workflowID, "schedule_id", l.ScheduleID,
+		"recipe", l.Recipe, "fault", fault, "pause_reason", scrubLog(r.res.State.PauseReason), waitedKey, waited)
+	// The retry is this pause's alone: a pause after an arm (a resume) has its own watch or heal.
+	again := func(ctx context.Context) error {
+		if rs.lastArmSeq(workflowID) != seq {
+			return nil
+		}
+		_, err := rs.transition(ctx, workflowID, &runRequest{want: req.want, chatID: req.chatID})
+		return err
+	}
+	if err := rs.finishTermination(ctx, workflowID, runEndUnattended, runStop{}, again); err != nil {
+		return err
+	}
+	// Overwrites the cancel's own ending, which may land first and names no pause.
+	rs.recordScheduleOutcome(ctx, scheduleRun(&l), schedule.Outcome{Status: schedule.StatusFailed, Reason: reason})
+	return nil
 }
 
 // consentCapabilityShell is the consent capability whose resource is the command line.

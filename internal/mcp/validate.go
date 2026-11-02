@@ -398,8 +398,9 @@ func validateArgs(args []string) error {
 	return errs.join()
 }
 
-// validateRegistry refuses every field the catalog supplies: a registry entry
-// names a catalog server and KAS resolves the rest.
+// validateRegistry refuses the command and url the catalog supplies and the
+// oauth overrides this store does not offer; env and headers are the user's
+// overrides, held to the stdio env and remote header rules.
 func validateRegistry(s *Server) error {
 	var errs fieldErrs
 	for _, f := range []struct {
@@ -408,18 +409,27 @@ func validateRegistry(s *Server) error {
 	}{
 		{fieldCommand, s.Command != ""},
 		{fieldArgs, len(s.Args) > 0},
-		{fieldEnvPairs, len(s.Env) > 0},
 		{fieldURL, s.URL != ""},
-		{fieldHeaderPairs, len(s.Headers) > 0},
+	} {
+		if f.set {
+			errs.addf(f.field, "a registry server cannot have %s: the organization's catalog supplies it", f.field)
+		}
+	}
+	for _, f := range []struct {
+		field string
+		set   bool
+	}{
 		{fieldOAuthClientID, s.OAuthClientID != ""},
 		{fieldOAuthClientMetadataURL, s.OAuthClientMetadataURL != ""},
 		{fieldOAuthRedirectURI, s.OAuthRedirectURI != ""},
 		{fieldOAuthScopes, len(s.OAuthScopes) > 0},
 	} {
 		if f.set {
-			errs.addf(f.field, "a registry server cannot have %s: the organization's catalog supplies it", f.field)
+			errs.addf(f.field, "a registry server cannot have %s: sign-in overrides are not offered for registry servers", f.field)
 		}
 	}
+	errs.merge(validateKeyPairs(fieldEnvPairs, s.Env, maxEnvEntries, envValueMax, false))
+	errs.merge(validateKeyPairs(fieldHeaderPairs, s.Headers, maxHeaderEntries, headerValueMax, true))
 	return errs.join()
 }
 

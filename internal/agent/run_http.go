@@ -15,11 +15,13 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/cplieger/marotte/internal/apicaller"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/workflow"
 	"github.com/cplieger/webhttp/v4"
@@ -67,8 +69,9 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		pending = read.in.Pending
 	}
 	plan := rr.runs.servedPlan(id, pending)
-	out, err := withRunExtras(raw, runExtras{
+	out, err := withRunExtras(raw, &runExtras{
 		asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan, readPosition: position,
+		displayName: rr.runs.runName(id),
 	})
 	if err != nil {
 		slog.Warn("workflow inspect: the reply could not carry the run's open asks, step ends, step starts and plan update",
@@ -99,7 +102,7 @@ func writeInspectErr(w http.ResponseWriter, id string, err error) {
 	}
 	slog.Warn("workflow inspect failed", "workflow_id", logsafe.Field(id),
 		"error", err, "detail", rpcerr.Details(err))
-	httpreply.NotFound(w, "workflow run not found")
+	httpreply.NotFound(w, "run not found")
 }
 
 // runRead is GET /api/runs/{id}'s reads: the run's state as KAS sent it and as decoded (inErr says
@@ -149,6 +152,7 @@ type runExtras struct {
 	ends          map[string]marotte.RunStepEnd
 	starts        map[string]marotte.RunStepStart
 	plan          *marotte.RunPlanUpdate
+	displayName   string
 	asks          []marotte.RunAsk
 	readPosition  uint64
 	asksReachable bool
@@ -204,9 +208,9 @@ func (rs *Runs) RunReadBound(ctx context.Context, workflowID string) (uint64, er
 // withRunExtras splices marotte's top-level keys into KAS's reply, decoding to raw values so future
 // keys survive and nested values stay byte-identical: `open_asks`, `step_ends` and `step_starts`, never
 // null because an agent could not tell "none" from "unsupported", `asks_reachable`, false when
-// `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), and
-// `plan_update` when servedPlan answers one.
-func withRunExtras(raw json.RawMessage, x runExtras) (json.RawMessage, error) {
+// `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), `display_name`
+// (Runs.runName, "" when nothing names the run), and `plan_update` when servedPlan answers one.
+func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, err
@@ -243,6 +247,9 @@ func withRunExtras(raw json.RawMessage, x runExtras) (json.RawMessage, error) {
 	obj["step_ends"] = encodedEnds
 	obj["step_starts"] = encodedStarts
 	if obj["read_position"], err = json.Marshal(x.readPosition); err != nil {
+		return nil, err
+	}
+	if obj["display_name"], err = json.Marshal(x.displayName); err != nil {
 		return nil, err
 	}
 	if plan != nil {
@@ -396,7 +403,7 @@ func (rr *runRoutes) status(ctx context.Context, workflowID string) (string, err
 	raw, err := rr.runs.rawInspect(ctx, workflowID)
 	if err != nil {
 		// Both mean no status to gate on.
-		if errors.Is(err, workflow.ErrUnknownMethod) {
+		if errors.Is(err, workflow.ErrUnknownMethod) || workflowNotFound(err) {
 			return "", nil
 		}
 		return "", err
@@ -446,8 +453,8 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		if writeStatusErr(w, err) {
 			return
 		}
-		if errors.Is(err, errRecipeBusy) {
-			httpreply.Conflict(w, errRecipeBusy.Error())
+		if busy, ok := errors.AsType[*schedule.BusyError](err); ok {
+			httpreply.Conflict(w, busy.Error())
 			return
 		}
 		slog.Warn("run launch failed", "source", logsafe.Field(req.Source), "error", err, "detail", rpcerr.Details(err))
@@ -609,7 +616,7 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
-	err := rr.runs.answerInput(r.Context(), id, body.AskID, body.Text)
+	err := rr.runs.answerInput(r.Context(), id, body.AskID, body.Text, apiCaller(r))
 	switch {
 	case err == nil:
 		webhttp.Ok(w)
@@ -636,7 +643,7 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleStepPost serves POST /api/runs/{id}/steps/{path}/{message,steer-remove,steer-clear}, {path}
+// handleStepPost serves POST /api/runs/{id}/steps/{path}/{message,steer-remove,steer-clear,end}, {path}
 // one percent-encoded workflow.PathKey. The workflow id and the node path are independent: the run's
 // own inspect, read by each verb, decides whether the path is one of its steps.
 func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
@@ -652,7 +659,7 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 		if !httpreply.DecodeJSON(w, r, &body) {
 			return
 		}
-		out, err := rr.runs.messageStep(r.Context(), id, nodePath, body.Text, body.MessageID, body.AskID)
+		out, err := rr.runs.messageStep(r.Context(), id, nodePath, body.Text, body.MessageID, body.AskID, apiCaller(r))
 		if err != nil {
 			rr.writeStepErr(w, "message", id, nodePath, err)
 			return
@@ -674,10 +681,28 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		webhttp.Ok(w)
+	case "end":
+		rr.handleStepEnd(w, r, id, nodePath)
 	default:
 		// The step itself, which only GET reads.
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 	}
+}
+
+func (rr *runRoutes) handleStepEnd(w http.ResponseWriter, r *http.Request, id, nodePath string) {
+	var body marotte.RunStepEndRequest
+	if !httpreply.DecodeJSON(w, r, &body) {
+		return
+	}
+	if body.Status != marotte.RunStepEndCompleted && body.Status != marotte.RunStepEndFailed {
+		httpreply.BadRequest(w, "status must be completed or failed")
+		return
+	}
+	if err := rr.runs.endStep(r.Context(), id, nodePath, string(body.Status)); err != nil {
+		rr.writeStepErr(w, verbEndStep, id, nodePath, err)
+		return
+	}
+	webhttp.Ok(w)
 }
 
 // writeStatusErr answers an error that names its own status, with its machine reason as `code`,
@@ -711,6 +736,8 @@ func (rr *runRoutes) writeStepErr(w http.ResponseWriter, verb, id, nodePath stri
 		httpreply.ServerError(w, errStepUnrecorded.Error(), nil)
 	case errors.Is(err, errStepUnconfirmed):
 		httpreply.ServerError(w, errStepUnconfirmed.Error(), nil)
+	case errors.Is(err, errStepStatusRefused):
+		httpreply.Conflict(w, rpcerr.Text(err))
 	default:
 		slog.Info("run step "+verb+" failed", "workflow_id", logsafe.Field(id), "node_path", logsafe.Field(nodePath))
 		rr.writeControlErr(w, verb, id, err)
@@ -811,6 +838,8 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		httpreply.InternalError(w, errors.New(verb+" failed"))
 	case errors.Is(err, errRunNotListed):
 		httpreply.NotFound(w, errRunNotListed.Error())
+	case workflowNotFound(err):
+		httpreply.NotFound(w, "run not found")
 	case errors.Is(err, errLaunchSessionUnavailable):
 		// A state of the run.
 		slog.Info("run control unavailable: the run's launching session cannot be opened here",
@@ -855,12 +884,18 @@ func isRPCRefusal(err error) bool {
 	return ok
 }
 
-// callerOf is who sent r. A browser sends Sec-Fetch-Site only to a potentially trustworthy URL
-// (https://www.w3.org/TR/fetch-metadata/), so a plain-HTTP LAN origin gets none, but it sends Origin on every non-GET
-// fetch (https://fetch.spec.whatwg.org/#origin-header), and curl sends neither. This is attribution, not access
-// control: a caller that forges either header changes only how the run words its control.
+// apiCaller is the caller a run route records on the words r sends a step: an unnamed API caller for a request
+// apicaller.Is reads as a program's, nil for the user's page. A run route takes no label.
+func apiCaller(r *http.Request) *marotte.Caller {
+	if apicaller.Is(r) {
+		return &marotte.Caller{}
+	}
+	return nil
+}
+
+// callerOf is who sent r, as apicaller.Is reads the request.
 func callerOf(r *http.Request) controlCaller {
-	if r.Header.Get("Sec-Fetch-Site") == "" && r.Header.Get("Origin") == "" {
+	if apicaller.Is(r) {
 		return callerAPI
 	}
 	return callerPage

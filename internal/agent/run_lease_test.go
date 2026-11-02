@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -103,7 +105,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	spec := schedule.Spec{Freq: schedule.FreqMinutely, Interval: 5}
 	anchor := time.Now().Add(-time.Hour)
 	entry := schedule.Entry{
-		ID: "sched-1", Source: "bundled://publish", Enabled: true, Spec: spec, Anchor: anchor,
+		Source: "bundled://publish", Enabled: true, Spec: spec, Anchor: anchor,
 	}
 	if pErr := st.Put(t.Context(), &entry); pErr != nil {
 		t.Fatalf("Put schedule: %v", pErr)
@@ -162,11 +164,11 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 	for name, entry := range map[string]schedule.Entry{
 		"a DISABLED schedule for this very recipe": {
-			ID: "s1", Source: "bundled://publish", Enabled: false,
+			Source: "bundled://publish", Enabled: false,
 			Spec: schedule.Spec{Freq: schedule.FreqMinutely, Interval: 5},
 		},
 		"an enabled schedule for another recipe": {
-			ID: "s2", Source: "bundled://other", Enabled: true,
+			Source: "bundled://other", Enabled: true,
 			Spec: schedule.Spec{Freq: schedule.FreqMinutely, Interval: 5},
 		},
 	} {
@@ -211,7 +213,7 @@ func TestLaunchRun_ReleasesTheLeaseWhenInvokeFails(t *testing.T) {
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_1")
 	delete(br.callResults, methodKiroWorkflowInvoke)
-	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errRecipeBusy}
+	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errHoldFault}
 
 	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err == nil {
 		t.Fatal("a failed invoke reported success")
@@ -335,8 +337,8 @@ func TestCancelRun_ACancelledContextEndsTheWait(t *testing.T) {
 	}
 }
 
-// LiveRuns answers leased runs by recipe; released or unknown ids are not live.
-func TestLiveRuns_NamesTheHeldLeasesByRecipe(t *testing.T) {
+// LiveRuns answers leased runs; released or unknown ids are not live.
+func TestLiveRuns_NamesTheHeldLeasesAndNoOthers(t *testing.T) {
 	h, _ := heldRun(t, "wf_held", "code-review")
 	h.runs.grantLease(t.Context(), "wf_released", "publish", manualLaunch(), hostSec())
 	h.runs.releaseLease(t.Context(), "wf_released")
@@ -423,4 +425,29 @@ func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
 			t.Errorf("a release that worked was reported as failed: %s", out)
 		}
 	})
+}
+
+// A schedule whose next slot cannot be computed bounds a manual run of its recipe by the idle window alone, and the
+// warning names that schedule's id so the row can be found.
+func TestManualSlot_NamesAScheduleWithNoNextSlot(t *testing.T) {
+	dir := t.TempDir()
+	stored := `[{"source":"bundled://publish","enabled":true,"spec":{"freq":"yearly"}}]`
+	if err := os.WriteFile(filepath.Join(dir, "schedules.json"), []byte(stored), 0o600); err != nil {
+		t.Fatalf("write schedules.json: %v", err)
+	}
+	st, err := schedule.NewStore(dir)
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	h, _, _ := newTestHub()
+	h.runs.schedules = st
+	logs := captureLogs(t)
+
+	if slot := h.runs.manualSlot("bundled://publish"); !slot.IsZero() {
+		t.Errorf("manualSlot = %v, want no slot", slot)
+	}
+	want := `"schedule_id":"` + st.List()[0].ID() + `"`
+	if got := logs.String(); !strings.Contains(got, want) {
+		t.Errorf("logs = %s, want the warning to carry %s", got, want)
+	}
 }

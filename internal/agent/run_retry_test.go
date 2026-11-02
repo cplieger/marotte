@@ -449,3 +449,36 @@ func TestHandleRetry_RejectsNonPOSTAndAMissingID(t *testing.T) {
 		t.Errorf("no id = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
+
+// A retried run starts with its own heal and backstop budgets even when marotte missed its last run's terminal
+// frame and kept that run's lease: the retry is a new run, and the budgets are a run's.
+func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowRetry: json.RawMessage(`{}`),
+		methodKiroWorkflowList: json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish",` +
+			`"status":"failed","parentSessionId":"` + testLaunchSession + `"}]}`),
+	}
+	leased(t, h.runs, "wf_1")
+	h.runs.armDeadline(t.Context(), "wf_1")
+	for range maxAutoHeals {
+		h.runs.claimHeal("wf_1")
+	}
+	h.runs.mu.Lock()
+	if h.runs.bounds.executed == nil {
+		h.runs.bounds.executed = map[string]time.Duration{}
+	}
+	h.runs.bounds.executed["wf_1"] = runBackstop
+	h.runs.mu.Unlock()
+
+	if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "failed")); err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+
+	if attempt, ok := h.runs.claimHeal("wf_1"); !ok || attempt != 1 {
+		t.Errorf("the retried run's first heal = (%d, %v), want (1, true): it inherited its last run's spent heals", attempt, ok)
+	}
+	if h.runs.backstopSpent("wf_1") {
+		t.Error("the retried run's backstop reads spent: it inherited its last run's executing time")
+	}
+}

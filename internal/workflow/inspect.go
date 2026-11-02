@@ -56,12 +56,12 @@ func pendingCount(raw json.RawMessage) int {
 }
 
 const (
-	statusRunning   = "running"
-	statusPaused    = "paused"
-	statusCompleted = "completed"
-	// needInput is KAS's completionSignal for a step waiting on a person.
-	needInput     = "need_input"
-	signalSuccess = "success"
+	statusRunning     = "running"
+	statusPaused      = "paused"
+	statusCompleted   = "completed"
+	signalSuccess     = "success"
+	signalError       = "error"
+	attentionQuestion = "question"
 )
 
 // visit is one node of a state tree with its wire path.
@@ -124,18 +124,19 @@ func StepRecords(s *State) map[string]StepRecord {
 	return out
 }
 
-// waits reports whether a node satisfies W1, the one wait predicate: paused with a session, and
-// either signalled need_input or, with no signal, awaiting user input. A running node with the
-// signal is a turn still in progress, and an aborted one a cancelled run.
+// waits is the one wait predicate: KAS admits an answer to a paused step with a session, and its park
+// record is the question entry with no toolCallId. An entry with one is a request decision the step's
+// session holds, which the chat's pending tracker already shows.
 func (n *node) waits() bool {
-	if n.Status != statusPaused || n.SessionID == "" {
-		return false
+	return n.Status == statusPaused && n.SessionID != "" && n.parkWait() != nil
+}
+
+// parkWait is the node's park record, nil when it has none.
+func (n *node) parkWait() *attentionEntry {
+	for i := range n.Attention {
+		if a := &n.Attention[i]; a.Kind == attentionQuestion && a.ToolCallID == "" {
+			return a
+		}
 	}
-	switch n.CompletionSignal {
-	case needInput:
-		return true
-	case "":
-		return n.AwaitingUserInput != nil && *n.AwaitingUserInput
-	}
-	return false
+	return nil
 }

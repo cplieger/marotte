@@ -282,6 +282,21 @@ export const reconnectServer = apiAction<{ server: string }, void>({
   error: "Could not reconnect integration",
 });
 
+// Starts kiro-cli's explicit sign-in, which discards the server's stored credentials: 202 once queued, 409 when the
+// server is not waiting for sign-in or another sign-in is in progress. The consent page arrives as mcp_sign_in_open.
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no result
+export const signInServer = apiAction<{ server: string }, void>({
+  name: "mcp.sign_in",
+  // NO retry: a second sign-in discards the credentials the first one is creating.
+  scope: (args) => "mcp-sign-in:" + args.server,
+  request: ({ server }) => ({
+    method: "POST",
+    path: `${MCP_API}/sign-in`,
+    body: { server },
+  }),
+  error: "Could not start the sign-in",
+});
+
 // Rescues a sign-in whose redirect landed on the wrong machine: KAS binds its OAuth listener on
 // the CONTAINER's localhost, so a remote browser is sent to its own. The user pastes the dead
 // address and the server replays it inward (`internal/agent/mcp_oauth_relay.go`).

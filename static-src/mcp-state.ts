@@ -273,7 +273,8 @@ export interface ServerDiscovery {
   resource_templates: MCPResourceTemplateInfo[];
 }
 
-export type RuntimeState = "connected" | "needs_auth" | "idle" | "failed" | "disabled";
+export type RuntimeState =
+  "connected" | "needs_auth" | "signing_in" | "idle" | "failed" | "disabled";
 
 /**
  * `origin` picks the row a live status belongs to, never editability. `shadows`: marotte's config holds the name, so
@@ -289,8 +290,10 @@ interface Provenance {
 export type RuntimeStatus = Provenance &
   (
     | { name: string; state: "connected" }
-    /** `relayed` rides the status wire, so a reload or second device does not offer the paste box for a spent code. */
-    | { name: string; state: "needs_auth"; oauth_url: string; relayed: boolean }
+    | { name: string; state: "needs_auth" }
+    /** `oauth_url` is the consent page of the sign-in the user started. `relayed` rides the status wire, so a reload
+     *  or second device does not offer the paste box for a spent code. */
+    | { name: string; state: "signing_in"; oauth_url: string; relayed: boolean }
     | { name: string; state: "idle" }
     | { name: string; state: "failed"; error: string }
     | { name: string; state: "disabled" }
@@ -348,10 +351,12 @@ export function adaptStatus(w: WireRuntimeStatus): RuntimeStatus {
   const prov = adaptProvenance(w);
   switch (w.state) {
     case "needs_auth":
+      return { name: w.name, ...prov, state: "needs_auth" };
+    case "signing_in":
       return {
         name: w.name,
         ...prov,
-        state: "needs_auth",
+        state: "signing_in",
         oauth_url: w.oauth_url ?? "",
         relayed: w.relayed ?? false,
       };

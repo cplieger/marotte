@@ -358,6 +358,16 @@ describe("the prompt in the copies", () => {
     );
   });
 
+  it("offers no quote action, which belongs to a selection inside the reply", () => {
+    const f = fixture(prose("**bold**"), "bold");
+    mountTurnFooterActions(f.footer, f.card, withPrompt(f, "why?"));
+    expect(buttons(f.footer).map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Copy as text",
+      "Copy as markdown",
+      "Copy link to this turn",
+    ]);
+  });
+
   it("copies the reply alone on an agent-initiated turn", () => {
     const f = fixture(prose("**bold**"), "bold");
     mountTurnFooterActions(f.footer, f.card, f.turn);

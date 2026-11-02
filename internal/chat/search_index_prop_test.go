@@ -31,7 +31,7 @@ func TestChatFilter_NeverRejectsAChatTheScanMatches(t *testing.T) {
 		spans := []string{name}
 		index := indexSearchTurns(entries, drawn)
 		for i := range entries {
-			for _, seg := range entrySegments(&entries[i], index[entries[i].Turn]) {
+			for _, seg := range entrySegments(&entries[i], index[entries[i].Turn], nil) {
 				spans = append(spans, seg.text)
 			}
 		}

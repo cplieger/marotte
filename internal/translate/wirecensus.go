@@ -216,3 +216,23 @@ func censusMeteringUnit(unit string) {
 	slog.Warn("wire census: UNKNOWN metering unit, not counted as spend — "+
 		"KAS may have added a billing dimension", "unit", safe)
 }
+
+// censusWakeReason reports an agentInitiatedReason value outside KAS's known set, which the turn
+// header words as an unknown wake: a value, like a metering unit, because the field itself is read.
+func censusWakeReason(reason string) {
+	if reason == "" || census.disabled() {
+		return
+	}
+	safe := runesafe.SanitizeSingleLineBounded(reason, maxCensusNameBytes)
+	novel, full := census.claim("agentInitiatedReason=" + safe)
+	if full {
+		slog.Warn("wire census: field budget spent, probe disabled for this process",
+			"limit", maxCensusKeys)
+		return
+	}
+	if !novel {
+		return
+	}
+	slog.Warn("wire census: UNKNOWN agentInitiatedReason, the turn is shown as agent-initiated — "+
+		"KAS may have added a wake", "reason", safe)
+}

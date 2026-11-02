@@ -558,6 +558,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.inbound = &inbound{
 		lifetime: lc, coord: h.coord,
 		bus: sseP, specs: h.specs,
+		signIns: h.mcpRegistry,
 	}
 	h.shellMgr = newShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
@@ -777,6 +778,7 @@ func (rt *Runtime) holdUnreadSteers(ctx context.Context, chatID marotte.ChatID) 
 		}
 		steer := &marotte.EntrySteer{
 			Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonRestart,
+			Caller: r.Caller,
 		}
 		switch {
 		case r.Agent:

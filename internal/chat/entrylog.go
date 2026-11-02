@@ -82,7 +82,11 @@ type revertWindow struct {
 // turnState is the offset index's row for one turn: its byte ranges and the facts window reads, rail rows, the
 // reconcile predicate and a synthesized closer need without reopening a payload.
 type turnState struct {
-	results   map[string]struct{}
+	results map[string]struct{}
+	// wake is the turn's turn_wake, whose rail line RailRows names from the surviving turns' runNamed.
+	wake *marotte.EntryTurnWake
+	// runNamed are the turn's run_named entries in file order, so a rewind of the turn takes its names back.
+	runNamed  []marotte.EntryRunNamed
 	firstLine string
 	source    marotte.TurnOpenSourceName
 	outcome   marotte.TurnOutcome
@@ -91,16 +95,21 @@ type turnState struct {
 	// between-turns entries behind later turns, so a turn is not one span.
 	ranges []byteRange
 	// messages are the turn's workflow-message rows and take-ups, so a rewind of the turn takes them out of the fold.
-	messages  []messageFact
+	messages []messageFact
+	// steers are the lane-"" steer ids among drawing, each counted once per entry, and claims the workflow messages
+	// this turn's turn_wake draws as its trigger: a claimed steer draws nothing where it was filed.
+	steers    []string
+	claims    []string
 	elapsedMs float64
 	openTs    int64
 	lastTs    int64
 	n         uint64
 	nextSeq   uint64
 	plans     int
-	drawn     bool
-	closed    bool
-	carrier   bool
+	// drawing counts what draws the turn: its source and every entry drawnBy accepts.
+	drawing int
+	closed  bool
+	carrier bool
 	// reverted means a turn_revert took this turn, so every read surface skips it. The lines stay on disk.
 	reverted bool
 	// hasRevert is whether the turn holds its own turn_revert record, which tells a complete carrier from the crash state
@@ -600,6 +609,10 @@ func (l *EntryLog) observeLocked(e *marotte.Entry, start, end int64) error {
 		return fmt.Errorf("entry log: %s names turn %q, which this log does not hold", e.Kind, e.Turn)
 	}
 	st.extend(e, start, end)
+	return l.foldKindLocked(st, e, start)
+}
+
+func (l *EntryLog) foldKindLocked(st *turnState, e *marotte.Entry, start int64) error {
 	switch e.Kind {
 	case marotte.EntryKindToolCall:
 		st.calls = append(st.calls, entryCall{id: e.ID, lane: e.Lane})
@@ -618,6 +631,10 @@ func (l *EntryLog) observeLocked(e *marotte.Entry, start, end int64) error {
 		return st.observeMessage(e, start)
 	case marotte.EntryKindTurnBind:
 		return l.foldTurnBindLocked(e)
+	case marotte.EntryKindTurnWake:
+		return foldTurnWake(st, e)
+	case marotte.EntryKindRunNamed:
+		return foldRunNamed(st, e)
 	case marotte.EntryKindReconciled:
 		return l.foldReconciledLocked(e)
 	case marotte.EntryKindTurnRevert:
@@ -638,9 +655,23 @@ func (st *turnState) extend(e *marotte.Entry, start, end int64) {
 	if e.Seq >= st.nextSeq {
 		st.nextSeq = e.Seq + 1
 	}
-	if !st.drawn && drawnBy(e, st.plans) {
-		st.drawn = true
+	if drawnBy(e, st.plans) {
+		st.drawing++
+		if e.Kind == marotte.EntryKindSteer {
+			st.steers = append(st.steers, e.ID)
+		}
 	}
+}
+
+// drawn reports whether anything still draws the turn once the steers a wake claimed are taken out.
+func (st *turnState) drawn(claimed map[string]struct{}) bool {
+	n := st.drawing
+	for _, id := range st.steers {
+		if _, ok := claimed[id]; ok {
+			n--
+		}
+	}
+	return n > 0
 }
 
 func decodeEntry[T any](e *marotte.Entry) (T, error) {
@@ -670,6 +701,55 @@ func (st *turnState) observeMessage(e *marotte.Entry, at int64) error {
 		st.messages = append(st.messages, messageFact{fact: fact, at: at})
 	}
 	return err
+}
+
+func foldTurnWake(st *turnState, e *marotte.Entry) error {
+	payload, err := decodeEntry[marotte.EntryTurnWake](e)
+	if err != nil {
+		return err
+	}
+	st.claims = marotte.WakeDrawnSteers(&payload)
+	st.wake = &payload
+	return nil
+}
+
+func foldRunNamed(st *turnState, e *marotte.Entry) error {
+	payload, err := decodeEntry[marotte.EntryRunNamed](e)
+	if err != nil {
+		return err
+	}
+	if payload.Run != "" && payload.Name != "" {
+		st.runNamed = append(st.runNamed, payload)
+	}
+	return nil
+}
+
+// runNamesOf is each run's newest name among order's turns, the names export and search read off All().
+func (l *EntryLog) runNamesOf(order []string) map[string]string {
+	names := map[string]string{}
+	for _, id := range order {
+		for _, n := range l.turns[id].runNamed {
+			names[n.Run] = n.Name
+		}
+	}
+	return names
+}
+
+// railLineOf is a turn's rail line: its prompt's first line, or its wake's line where a prompt turn has its
+// prompt's; a wake that names nothing leaves the line empty, as a turn with no wake has.
+func railLineOf(st *turnState, names map[string]string) string {
+	if st.wake == nil {
+		return st.firstLine
+	}
+	w := marotte.NamedWake(st.wake, names)
+	label, body := marotte.WakeLine(&w)
+	if label == marotte.WakeFallbackLine {
+		return ""
+	}
+	if body != "" {
+		label += ": " + body
+	}
+	return firstLineOf(label)
 }
 
 func foldSteer(st *turnState, e *marotte.Entry) error {
@@ -777,7 +857,9 @@ func newTurnState(e *marotte.Entry, start, end int64) (*turnState, error) {
 		lastTs:  e.Ts,
 		n:       payload.N,
 		nextSeq: e.Seq + 1,
-		drawn:   drawnSource(payload.Source),
+	}
+	if drawnSource(payload.Source) {
+		st.drawing = 1
 	}
 	if payload.Prompt != nil {
 		st.firstLine = firstLineOf(payload.Prompt.Text)
@@ -804,9 +886,9 @@ func drawnBy(e *marotte.Entry, plans int) bool {
 		return false
 	}
 	switch e.Kind {
-	case marotte.EntryKindTurnOpen, marotte.EntryKindTurnBind,
+	case marotte.EntryKindTurnOpen, marotte.EntryKindTurnBind, marotte.EntryKindTurnWake, marotte.EntryKindRunNamed,
 		marotte.EntryKindToolResult, marotte.EntryKindTurnClose,
-		marotte.EntryKindReconciled, marotte.EntryKindSteerCleared:
+		marotte.EntryKindReconciled, marotte.EntryKindSteerCleared, marotte.EntryKindSteerDelivered:
 		return false
 	case marotte.EntryKindPlan:
 		return plans == 0
@@ -1150,15 +1232,22 @@ func (l *EntryLog) newestSeq(turn string) (uint64, bool) {
 }
 
 // RailRows is the rail index: one marotte.TurnSummary per drawn turn, oldest first. A turn's row appears at the first
-// drawing append and never moves.
+// drawing append and never moves, except that a turn whose only drawing rows a later wake draws loses it.
 func (l *EntryLog) RailRows() []marotte.TurnSummary {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	order := l.survivingOrderLocked()
+	names := l.runNamesOf(order)
+	claimed := map[string]struct{}{}
+	for _, id := range order {
+		for _, c := range l.turns[id].claims {
+			claimed[c] = struct{}{}
+		}
+	}
 	rows := make([]marotte.TurnSummary, 0, len(order))
 	for _, id := range order {
 		st := l.turns[id]
-		if !st.drawn {
+		if !st.drawn(claimed) {
 			continue
 		}
 		outcome := marotte.TurnOutcomeRunning
@@ -1167,7 +1256,7 @@ func (l *EntryLog) RailRows() []marotte.TurnSummary {
 		}
 		rows = append(rows, marotte.TurnSummary{
 			ID:             id,
-			FirstLine:      st.firstLine,
+			FirstLine:      railLineOf(st, names),
 			Outcome:        outcome,
 			N:              ordinalAsInt(st.n),
 			Ts:             st.openTs,
@@ -1280,16 +1369,66 @@ func (l *EntryLog) UnsettledWorkflowMessages() []marotte.WorkflowMessage {
 // messagesLocked folds the surviving turns' workflow-message lines in file order, so a rewind is the one owner of
 // which rows wait and which take-ups settle.
 func (l *EntryLog) messagesLocked() marotte.WorkflowMessageFold {
+	return marotte.FoldWorkflowMessages(factsOf(l.messageFactsLocked()))
+}
+
+// messageFactsLocked is the surviving turns' workflow-message lines in file order, with their offsets.
+func (l *EntryLog) messageFactsLocked() []messageFact {
 	var facts []messageFact
 	for _, id := range l.survivingOrderLocked() {
 		facts = append(facts, l.turns[id].messages...)
 	}
 	slices.SortFunc(facts, func(a, b messageFact) int { return cmp.Compare(a.at, b.at) })
-	ordered := make([]marotte.WorkflowMessageFact, len(facts))
+	return facts
+}
+
+func factsOf(facts []messageFact) []marotte.WorkflowMessageFact {
+	out := make([]marotte.WorkflowMessageFact, len(facts))
 	for i := range facts {
-		ordered[i] = facts[i].fact
+		out[i] = facts[i].fact
 	}
-	return marotte.FoldWorkflowMessages(ordered)
+	return out
+}
+
+// awaitsRunName reports whether a surviving turn's wake leaves run unnamed and no surviving run_named names it.
+func (l *EntryLog) awaitsRunName(run string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	order := l.survivingOrderLocked()
+	if _, named := l.runNamesOf(order)[run]; named {
+		return false
+	}
+	for _, id := range order {
+		if w := l.turns[id].wake; w != nil && slices.Contains(marotte.WakeRunsUnnamed(w), run) {
+			return true
+		}
+	}
+	return false
+}
+
+// wakeCauses answers marotte.WakeCausesOf for session over the surviving history: nothing when the newest surviving
+// turn is closed.
+func (l *EntryLog) wakeCauses(session string) marotte.WakeCauses {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	order := l.survivingOrderLocked()
+	if len(order) == 0 {
+		return marotte.WakeCauses{}
+	}
+	cur := l.turns[order[len(order)-1]]
+	if cur.closed {
+		return marotte.WakeCauses{}
+	}
+	var prevOpened int64 = -1
+	if len(order) > 1 {
+		prevOpened = l.turns[order[len(order)-2]].ranges[0].from
+	}
+	facts := l.messageFactsLocked()
+	positioned := make([]marotte.PositionedFact, len(facts))
+	for i := range facts {
+		positioned[i] = marotte.PositionedFact{Fact: facts[i].fact, At: facts[i].at}
+	}
+	return marotte.WakeCausesOf(positioned, session, cur.ranges[0].from, prevOpened)
 }
 
 // NeedsReconcile reports whether this record shows the session's own log has something it lacks, which is what runs

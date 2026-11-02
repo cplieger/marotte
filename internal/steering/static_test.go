@@ -451,6 +451,15 @@ func TestWriteUIGuide_NamesEveryTab(t *testing.T) {
 	}
 }
 
+func TestWriteUIGuide_RunTabNamesTheStepEndButtons(t *testing.T) {
+	var b strings.Builder
+	writeUIGuide(&b, "/w", "/cfg")
+	out := b.String()
+	if !strings.Contains(out, `"Mark step done" / "Mark step failed" on a paused step`) {
+		t.Errorf("writeUIGuide run-tab paragraph does not name the step end buttons:\n%s", out)
+	}
+}
+
 func TestWriteAttachments_UsesTheUploadDirConstant(t *testing.T) {
 	var b strings.Builder
 	writeAttachments(&b, "/u", "/w", "/cfg")

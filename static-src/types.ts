@@ -19,6 +19,8 @@ export type {
   ToolKind,
   ToolStatus,
   TurnRevertCause,
+  // A message an API caller sent
+  Caller,
   // The entry log: one envelope type plus one payload type per kind
   Entry,
   OpenEntry,
@@ -136,6 +138,7 @@ export type {
 export type { PermissionNeededPayload as PermissionNeeded } from "./wire/types.gen.js";
 
 import type {
+  Caller,
   Entry,
   EntryCompaction,
   EntryCompactionFailed,
@@ -156,6 +159,8 @@ import type {
   EntryToolCall,
   EntryToolResult,
   EntryTurnBind,
+  EntryTurnWake,
+  EntryRunNamed,
   EntryTurnClose,
   EntryTurnOpen,
   EntryTurnRevert,
@@ -177,6 +182,8 @@ import type {
 export interface EntryPayload {
   turn_open: EntryTurnOpen;
   turn_bind: EntryTurnBind;
+  turn_wake: EntryTurnWake;
+  run_named: EntryRunNamed;
   text: EntryText;
   thinking: EntryThinking;
   tool_call: EntryToolCall;
@@ -299,6 +306,8 @@ export interface PendingSteer {
   /** An `unsent` row that no clean turn close sends as a prompt of its own
    *  (`SteerQueuedPayload.awaits_prompt`): a prompt's start carries it, so it costs the follow-ups no turn. */
   awaitsPrompt?: true;
+  /** The program that sent the row through the API; absent on the user's own. */
+  caller?: Caller;
 }
 
 // --- Local session state (client-only projection of server chat) ---

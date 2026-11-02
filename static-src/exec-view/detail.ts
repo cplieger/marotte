@@ -1,5 +1,5 @@
-// The exec view's detail pane: one node's facts, failure, and the transcript host it hands OUT
-// (`bodyFor`). No capture: the page's per-step results region renders that.
+// The exec view's detail pane: one node's facts, failure, interruption, and the transcript host it
+// hands OUT (`bodyFor`). No capture: the page's per-step results region renders that.
 
 import { el } from "@cplieger/reactive";
 import { formatElapsed } from "../strings.js";
@@ -25,18 +25,29 @@ export type EmptyNote = (node: ExecNode) => string;
  *  to open it; a delegate's page has nowhere new to send anyone. */
 export type EmptyAction = (node: ExecNode) => HTMLElement | null;
 
-export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction): ExecDetailView {
+/** The consumer's verbs on the shown node, drawn in its header, or null; returning the SAME element
+ *  as last time leaves it seated, since re-seating blurs it. */
+export type HeadAction = (node: ExecNode) => HTMLElement | null;
+
+export function buildExecDetail(
+  emptyNote: EmptyNote,
+  emptyAction?: EmptyAction,
+  headAction?: HeadAction,
+): ExecDetailView {
   const title = el("span", { className: "ev-d-title" });
   const state = el("span", { className: "ev-d-state" });
   const dur = el("span", { className: "ev-d-dur" });
+  const headAct = el("span", { className: "ev-d-head-action", hidden: true });
   const head = el(
     "div",
     { className: "ev-d-head" },
     title,
     el("span", { className: "ev-d-meta" }, state, dur),
+    headAct,
   );
   const facts = el("dl", { className: "ev-d-facts" });
   const failure = el("div", { className: "ev-d-fail", role: "status" });
+  const interruption = el("div", { className: "ev-d-interrupted", role: "status" });
   const bodies = el("div", { className: "ev-d-bodies" });
   const empty = el("div", { className: "ev-d-empty" });
   const emptyAct = el("div", { className: "ev-d-empty-action", hidden: true });
@@ -46,6 +57,7 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
     head,
     facts,
     failure,
+    interruption,
     bodies,
     empty,
     emptyAct,
@@ -60,22 +72,32 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
       root.dataset["state"] = "pending";
       paintLabel(title, { label: "No step selected" });
       state.textContent = "";
+      state.removeAttribute("data-pending-end");
       dur.textContent = "";
       facts.replaceChildren();
       facts.hidden = true;
       failure.hidden = true;
+      interruption.hidden = true;
       bodies.hidden = true;
       empty.hidden = false;
       empty.textContent = "Pick a step to see what it did.";
       emptyAct.replaceChildren();
       emptyAct.hidden = true;
+      headAct.replaceChildren();
+      headAct.hidden = true;
       return;
     }
     root.dataset["state"] = node.state;
     paintLabel(title, node);
-    state.textContent = STATE_WORD[node.state];
+    state.textContent = node.pendingEnd?.text ?? STATE_WORD[node.state];
+    state.toggleAttribute("data-pending-end", node.pendingEnd !== undefined);
     const ms = elapsed(node.start, node.end);
     dur.textContent = ms > 0 ? formatElapsed(ms) : "";
+    const verbs = headAction?.(node) ?? null;
+    if (verbs !== headAct.firstElementChild) {
+      headAct.replaceChildren(...(verbs === null ? [] : [verbs]));
+    }
+    headAct.hidden = verbs === null;
 
     const list = node.facts ?? [];
     facts.hidden = list.length === 0;
@@ -88,6 +110,8 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
 
     failure.hidden = node.failure === undefined;
     failure.textContent = node.failure ?? "";
+    interruption.hidden = node.interruption === undefined;
+    interruption.textContent = node.interruption ?? "";
 
     // Only ONE node's transcript is on screen; the rest stay in the DOM since
     // their live content cannot be replayed.

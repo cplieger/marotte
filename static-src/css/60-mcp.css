@@ -767,8 +767,20 @@
   }
 }
 
+.mcp-sign-in-btn {
+  justify-self: start;
+  margin-block-start: 0.125rem;
+}
+
+.mcp-sign-in-hint {
+  margin-block-start: var(--sp-1);
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+}
+
 /* The OAuth loopback relay: the rescue box for a sign-in whose redirect landed
-   on the wrong machine. Sits under the sign-in pill on a needs_auth row, and is
+   on the wrong machine. Sits under the sign-in pill on a signing_in row, and is
    collapsed by default so a local-browser sign-in sees one line, not a form. */
 .mcp-relay {
   margin-block-start: var(--sp-1);

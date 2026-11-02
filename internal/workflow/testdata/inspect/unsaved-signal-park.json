@@ -21,7 +21,13 @@
      "effortLevel": "high",
      "startedAt": "2026-10-13T21:28:24.093Z",
      "sessionId": "sess_2336f73e-7b71-4acd-bbdf-7ff92c0ac98f",
-     "awaitingUserInput": true
+     "awaitingUserInput": true,
+     "attention": [
+      {
+       "kind": "question",
+       "since": "2026-10-13T21:28:31.004Z"
+      }
+     ]
     }
    ],
    "startedAt": "2026-10-13T21:28:24.091Z"
@@ -39,7 +45,19 @@
   "backgroundExecution": false,
   "parentModelId": "claude-sonnet-5.5",
   "parentEffortLevel": "high",
-  "pauseReason": "Step 'ask' sent a send_message success signal that could not be saved, so it is paused awaiting user input instead of finishing."
+  "pauseReason": "Step 'ask' sent a send_message success signal that could not be saved, so it is paused awaiting user input instead of finishing.",
+  "attention": [
+   {
+    "kind": "question",
+    "since": "2026-10-13T21:28:31.004Z",
+    "nodeId": "ask",
+    "nodePath": [
+     "wf_7e891a7469b82ed3",
+     "ask"
+    ],
+    "sessionId": "sess_2336f73e-7b71-4acd-bbdf-7ff92c0ac98f"
+   }
+  ]
  },
  "nodePlan": [
   {

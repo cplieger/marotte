@@ -25,7 +25,7 @@ type searchQueryCase struct {
 }
 
 var searchFixtureComment = []string{
-	"GET /api/chats/{id}/search replies, produced by a real scan over one two-turn entry log.",
+	"GET /api/chats/{id}/search replies, produced by a real scan over one three-turn entry log.",
 	"",
 	"chat.SearchResult and chat.Hit are wiregen-registered, so the TypeScript types and",
 	"decoders are generated from them; this file is what keeps the ENCODER honest against",
@@ -40,8 +40,8 @@ var searchFixtureComment = []string{
 
 // searchContractEntries is the fixture's log: turn 1 covers every free-text segment kind (the prompt twice, the second
 // after a multibyte word, its attachment name, thinking, text, a delegate lane, one tool pair per settled kind, steer,
-// plan, failed close); turn 2 is `turn:2`'s target, with entry hits and no prose behind one. Every declared kind must
-// occur here.
+// plan, failed close); turn 2 is `turn:2`'s target, with entry hits and no prose behind one, and the workflow message
+// turn 3's wake draws in its header, which only the wake's hit names. Every declared kind must occur here.
 func searchContractEntries() ([]marotte.Entry, map[string]struct{}) {
 	return chatOf(
 		openTurn("t-1", 1, &marotte.EntryPrompt{
@@ -87,7 +87,12 @@ func searchContractEntries() ([]marotte.Entry, map[string]struct{}) {
 		openTurn("t-2", 2, prompt("m-2", "Anything left?")).
 			tool(marotte.EntryToolCall{ID: "tc2", Title: "List files", Kind: marotte.ToolKindRead},
 				&marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "a.go b.go"}).
-			close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted}),
+			close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted}).
+			add("", "wfmsg-1", marotte.EntryKindSteer, wakeRow("Should the retry cap be 3 or 5?", "warning")),
+		wakeTurnFixture("t-3", 3, marotte.EntryTurnWake{
+			Reason: marotte.WakeReasonStepMessage,
+			Steers: []marotte.WakeSteer{{ID: "wfmsg-1", Run: wakeRunID, Step: "tune", Severity: "warning", Text: "Should the retry cap be 3 or 5?"}},
+		}),
 	)
 }
 

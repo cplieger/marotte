@@ -185,6 +185,8 @@ const LEVEL_GLYPH: Readonly<Record<BannerLevel, string>> = {
   info: "\u2139",
 };
 
+/** `detail` is a control on its own line under the row (the sign-in banner's paste box); a repeat call that
+ *  passes one replaces the last. */
 export function showBanner(
   chatID: string,
   code: string,
@@ -192,6 +194,7 @@ export function showBanner(
   level: BannerLevel,
   dismissible: boolean,
   link?: BannerLink,
+  detail?: HTMLElement,
 ): void {
   if (isDismissed(chatID, code)) {
     return;
@@ -207,6 +210,10 @@ export function showBanner(
     }
     if (link !== undefined) {
       updateBannerLink(existing.el, link);
+    }
+    if (detail !== undefined) {
+      existing.el.querySelector(".banner-detail")?.remove();
+      existing.el.appendChild(withDetailClass(detail));
     }
     return;
   }
@@ -249,20 +256,30 @@ export function showBanner(
     });
     node.appendChild(btn);
   }
+  if (detail !== undefined) {
+    node.appendChild(withDetailClass(detail));
+  }
   const entry: BannerEntry = { code, chatID, el: node };
   ensureBound();
   banners.upsert(entry);
 }
 
+function withDetailClass(detail: HTMLElement): HTMLElement {
+  detail.classList.add("banner-detail");
+  return detail;
+}
+
 function removeBanner(chatID: string, code: string): void {
-  if (!banners.has(bannerKey(chatID, code))) {
-    return;
+  const key = bannerKey(chatID, code);
+  if (banners.has(key)) {
+    banners.remove(key);
   }
-  banners.remove(bannerKey(chatID, code));
+  // A dismissed banner is no longer in `banners`, and its condition clearing must still forget the dismissal.
   clearDismiss(chatID, code);
 }
 
-/** Remove all banners matching any of the given codes for a chat. */
+/** Remove all banners matching any of the given codes for a chat and forget their dismissals, so the
+ *  condition's next showBanner shows again. */
 export function clearBannerCodes(chatID: string, codes: string[]): void {
   for (const code of codes) {
     removeBanner(chatID, code);

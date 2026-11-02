@@ -38,7 +38,7 @@ func TestMessageStep_AReaderLeavingAfterTheWriteKeepsTheWordsKASTook(t *testing.
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan error, 1)
 			go func() {
-				_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "carry on", "m-20", "")
+				_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "carry on", "m-20", "", nil)
 				done <- err
 			}()
 			waitForCall(t, br, marotte.MethodPrompt)
@@ -69,11 +69,11 @@ func TestMessageStep_AnEngineExitBeforeItsReplyRecordsTheWordsOnceAndARetrySends
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
 
-	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-21", "")
+	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-21", "", nil)
 	if err == nil {
 		t.Fatal("MessageStep whose host session died before replying = nil, want an error the composer keeps the id for")
 	}
-	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-21", "")
+	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-21", "", nil)
 	if err != nil || out.Verb != marotte.RunStepMessagePrompt {
 		t.Fatalf("retried MessageStep = (%+v, %v), want verb prompt from the first send", out, err)
 	}
@@ -120,7 +120,7 @@ func TestDelete_AfterAnUnconfirmedSendClearsItsRetryRecord(t *testing.T) {
 		<-deleted
 		s.set("deleted")
 
-		out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-30", "")
+		out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-30", "", nil)
 		if err == nil {
 			t.Errorf("retried MessageStep after Delete = (%+v, nil), want an error: the run is gone", out)
 		}
@@ -136,7 +136,7 @@ func TestMessageStep_ARetryAfterDeleteIsNotAnsweredFromTheDeletedRun(t *testing.
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	s := newStepScript(t, br, "paused")
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-31", ""); !errors.Is(err, errStepUnconfirmed) {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-31", "", nil); !errors.Is(err, errStepUnconfirmed) {
 		t.Fatalf("Setup: MessageStep whose host session died before replying = %v, want errStepUnconfirmed", err)
 	}
 
@@ -145,7 +145,7 @@ func TestMessageStep_ARetryAfterDeleteIsNotAnsweredFromTheDeletedRun(t *testing.
 	}
 	s.set("deleted")
 
-	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-31", "")
+	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-31", "", nil)
 	if err == nil {
 		t.Errorf("retried MessageStep after Delete = (%+v, nil), want an error: the run is gone", out)
 	}
@@ -161,10 +161,10 @@ func TestAnswerInput_AnEngineExitBeforeItsReplyHoldsTheAsk(t *testing.T) {
 	askID := readNow(t, h, "wf_1").asks[0].ID
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
 
-	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "teal"); !errors.Is(err, errStepUnconfirmed) {
+	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "teal", nil); !errors.Is(err, errStepUnconfirmed) {
 		t.Fatalf("AnswerInput whose host session died before replying = %v, want the unconfirmed error", err)
 	}
-	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "teal"); !errors.Is(err, errAskPending) {
+	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "teal", nil); !errors.Is(err, errAskPending) {
 		t.Errorf("second AnswerInput = %v, want errAskPending", err)
 	}
 	if n := promptCount(br); n != 1 {
@@ -184,7 +184,7 @@ func callIndex(br *fakeBridge, method string) int {
 func TestMessageStep_ARetryDuringADeleteIsNotAnsweredFromTheRecord(t *testing.T) {
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-42", ""); !errors.Is(err, errStepUnconfirmed) {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-42", "", nil); !errors.Is(err, errStepUnconfirmed) {
 		t.Fatalf("Setup: MessageStep whose host session died before replying = %v, want errStepUnconfirmed", err)
 	}
 	held := make(chan struct{})
@@ -195,7 +195,7 @@ func TestMessageStep_ARetryDuringADeleteIsNotAnsweredFromTheRecord(t *testing.T)
 	go func() { deleted <- h.runs.delete(t.Context(), "wf_1") }()
 	waitForCall(t, br, methodKiroWorkflowDelete)
 
-	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-42", "")
+	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-42", "", nil)
 	close(held)
 	if dErr := <-deleted; dErr != nil {
 		t.Fatalf("Delete = %v, want nil", dErr)

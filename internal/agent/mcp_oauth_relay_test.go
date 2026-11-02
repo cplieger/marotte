@@ -19,7 +19,7 @@ import (
 	"github.com/cplieger/ssrf/v4"
 )
 
-// authURLFor builds the authorization URL KAS would store, the relay's trust anchor, the way KAS builds it.
+// authURLFor builds the consent URL KAS opens for a sign-in, the relay's trust anchor, the way KAS builds it.
 func authURLFor(t *testing.T, listenerURL, state string) string {
 	t.Helper()
 	lu, err := url.Parse(listenerURL)
@@ -78,17 +78,24 @@ func newCallbackListener(t *testing.T, status int) *callbackListener {
 	return l
 }
 
-// stageFlow puts a server into waiting-for-authorization with KAS's advertised URL.
+// stageFlow runs one sign-in attempt up to its consent page: the server waits for sign-in, the user presses Sign
+// in, and KAS opens the consent URL.
 func stageFlow(t *testing.T, h *Runtime, server, listenerURL, state string) {
 	t.Helper()
-	h.mcpRegistry.RecordOAuth(t.Context(), server, marotte.MCPSource{}, authURLFor(t, listenerURL, state))
+	h.mcpRegistry.RecordOAuth(t.Context(), server, marotte.MCPSource{})
+	if err := h.mcpRegistry.claimSignIn(server); err != nil {
+		t.Fatalf("claimSignIn(%s) = %v", server, err)
+	}
+	if got, ok := h.mcpRegistry.claimSignInURL(t.Context(), authURLFor(t, listenerURL, state)); !ok || got != server {
+		t.Fatalf("claimSignInURL = (%q, %v), want (%q, true)", got, ok, server)
+	}
 }
 
 func relayState(t *testing.T, h *Runtime, server string) (relayed, pending bool) {
 	t.Helper()
 	for _, s := range h.mcpRegistry.snapshot() {
 		if s.Name == server {
-			return s.Relayed, s.State == mcpStateOAuth
+			return s.Relayed, s.State == mcpStateSigningIn
 		}
 	}
 	t.Fatalf("server %q is not in the registry snapshot", server)
@@ -227,7 +234,7 @@ func TestOAuthRelay_AnOldRelayCannotLatchANewAttempt(t *testing.T) {
 		t.Fatalf("listener saw code %q, want the first attempt's %q", code, "c1")
 	}
 
-	// The user restarted: KAS advertises a new URL and recordOAuth replaces the record.
+	// The attempt ended and the user signed in again: a new consent URL replaces the record.
 	stageFlow(t, h, "linear", l.srv.URL, "st-two")
 	l.releaseAll()
 	if code := <-firstStatus; code != http.StatusOK {
@@ -248,7 +255,7 @@ func TestOAuthRelay_AnOldRelayCannotLatchANewAttempt(t *testing.T) {
 	}
 }
 
-// A fresh attempt clears the latch through recordOAuth's whole-record rewrite.
+// A fresh attempt clears the latch through the claim's whole-record rewrite.
 func TestOAuthRelay_ANewAttemptClearsTheLatch(t *testing.T) {
 	l := newCallbackListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(t, nil)
@@ -265,6 +272,25 @@ func TestOAuthRelay_ANewAttemptClearsTheLatch(t *testing.T) {
 	}
 	if l.gotCode != "c2" {
 		t.Errorf("listener saw code %q, want the second attempt's %q", l.gotCode, "c2")
+	}
+}
+
+// A server waiting for sign-in with no Sign in pressed has no live listener, so a paste is refused unsent.
+func TestOAuthRelay_RefusesThePassiveURL(t *testing.T) {
+	l := newCallbackListener(t, http.StatusOK)
+	h := newHubWithMCPConfig(t, nil)
+	msg := &marotte.RPCResponse{Method: "_kiro/mcp/status", Params: mustJSON(t, map[string]any{"servers": []map[string]any{{
+		"name": "linear", "status": "failed", "failedAuthorization": true, "authorizationUrl": authURLFor(t, l.srv.URL, "st-abc"),
+	}}})}
+	h.translateACPEvent("", h.originOf(""), msg)
+
+	rec := postRelay(t, h, "linear", pastedFor(t, l.srv.URL, "the-code", "st-abc"))
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "press Sign in first") {
+		t.Fatalf("status = %d %s, want 409 asking for a Sign in", rec.Code, rec.Body.String())
+	}
+	if l.gotHits != 0 {
+		t.Errorf("listener hits = %d, want 0: the status entry's URL is no anchor", l.gotHits)
 	}
 }
 
@@ -289,6 +315,143 @@ func TestOAuthRelay_RefusesWithNoFlowInFlight(t *testing.T) {
 				t.Errorf("listener hits = %d, want 0", l.gotHits)
 			}
 		})
+	}
+}
+
+// A mid-session re-auth's consent URL names no server, so its pasted callback is relayed on the anchor its state
+// picks, single use, whatever server the paste names.
+func TestOAuthRelay_ALazySignInIsRelayedByItsState(t *testing.T) {
+	for name, server := range map[string]string{
+		"no server named":                       "",
+		"a connected server, the re-auth's row": "linear",
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := newCallbackListener(t, http.StatusOK)
+			h := newHubWithMCPConfig(t, nil)
+			h.mcpRegistry.RecordConnected(t.Context(), "linear", marotte.MCPSource{}, nil, nil, nil, nil)
+			h.mcpRegistry.anchorSignInURL(authURLFor(t, l.srv.URL, "st-lazy"))
+			pasted := pastedFor(t, l.srv.URL, "the-code", "st-lazy")
+
+			if rec := postRelay(t, h, server, pasted); rec.Code != http.StatusOK {
+				t.Fatalf("relay status = %d, want 200; body %s", rec.Code, rec.Body.String())
+			}
+			if l.gotHits != 1 || l.gotCode != "the-code" {
+				t.Errorf("listener hits %d code %q, want the code delivered once", l.gotHits, l.gotCode)
+			}
+			rec := postRelay(t, h, server, pasted)
+			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), errRelayAlreadyDone.Error()) {
+				t.Errorf("second paste = %d %s, want 409 already delivered", rec.Code, rec.Body.String())
+			}
+			if l.gotHits != 1 {
+				t.Errorf("listener hits = %d after the second paste, want 1", l.gotHits)
+			}
+		})
+	}
+}
+
+func TestOAuthRelay_ALazySignInRefusesAnotherState(t *testing.T) {
+	l := newCallbackListener(t, http.StatusOK)
+	h := newHubWithMCPConfig(t, nil)
+	h.mcpRegistry.anchorSignInURL(authURLFor(t, l.srv.URL, "st-lazy"))
+
+	rec := postRelay(t, h, "", pastedFor(t, l.srv.URL, "the-code", "st-other"))
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), errRelayStateDrift.Error()) {
+		t.Errorf("status = %d %s, want 409 naming a different sign-in", rec.Code, rec.Body.String())
+	}
+	if l.gotHits != 0 {
+		t.Errorf("listener hits = %d, want 0", l.gotHits)
+	}
+}
+
+// The paste is checked before any anchor is chosen, so a malformed one is named as such.
+func TestOAuthRelay_ALazySignInRefusesAMalformedPaste(t *testing.T) {
+	l := newCallbackListener(t, http.StatusOK)
+	h := newHubWithMCPConfig(t, nil)
+	h.mcpRegistry.anchorSignInURL(authURLFor(t, l.srv.URL, "st-lazy"))
+
+	rec := postRelay(t, h, "", "https://evil.example/oauth/callback?code=c&state=st-lazy")
+
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), errRelayNotHTTP.Error()) {
+		t.Errorf("status = %d %s, want 400 naming the scheme", rec.Code, rec.Body.String())
+	}
+	if rec := postRelay(t, h, "", pastedFor(t, l.srv.URL, "c", "st-lazy")); rec.Code != http.StatusOK {
+		t.Errorf("the corrected paste = %d %s, want 200: a refused paste spends nothing", rec.Code, rec.Body.String())
+	}
+}
+
+// KAS's lazy listener closes after LAZY_AUTH_TIMEOUT_MS, the engine's end drops every anchor, and the oldest goes
+// past the cap.
+func TestOAuthRelay_ALazySignInEnds(t *testing.T) {
+	cases := map[string]func(t *testing.T, h *Runtime, clock *fakeClock, listenerURL string){
+		"at KAS's timeout": func(_ *testing.T, _ *Runtime, clock *fakeClock, _ string) {
+			clock.advance(lazySignInTTL)
+		},
+		"at the engine's end": func(t *testing.T, h *Runtime, _ *fakeClock, _ string) {
+			h.mcpRegistry.clearAll(t.Context())
+		},
+		"past the cap": func(t *testing.T, h *Runtime, _ *fakeClock, listenerURL string) {
+			for i := range maxLazySignIns {
+				h.mcpRegistry.anchorSignInURL(authURLFor(t, listenerURL, "st-later-"+strconv.Itoa(i)))
+			}
+		},
+	}
+	for name, end := range cases {
+		t.Run(name, func(t *testing.T) {
+			l := newCallbackListener(t, http.StatusOK)
+			h := newHubWithMCPConfig(t, nil)
+			clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+			h.mcpRegistry.mu.Lock()
+			h.mcpRegistry.now = clock.now
+			h.mcpRegistry.mu.Unlock()
+			h.mcpRegistry.anchorSignInURL(authURLFor(t, l.srv.URL, "st-lazy"))
+			clock.advance(lazySignInTTL - time.Second)
+
+			end(t, h, clock, l.srv.URL)
+
+			rec := postRelay(t, h, "", pastedFor(t, l.srv.URL, "c", "st-lazy"))
+			if rec.Code != http.StatusConflict {
+				t.Errorf("status = %d %s, want 409", rec.Code, rec.Body.String())
+			}
+			if l.gotHits != 0 {
+				t.Errorf("listener hits = %d, want 0", l.gotHits)
+			}
+		})
+	}
+}
+
+// A listener's refusal gives the anchor back, as it does a row's reservation.
+func TestOAuthRelay_ALazySignInStaysRetryableAfterARefusal(t *testing.T) {
+	l := newCallbackListener(t, http.StatusBadRequest)
+	h := newHubWithMCPConfig(t, nil)
+	h.mcpRegistry.anchorSignInURL(authURLFor(t, l.srv.URL, "st-lazy"))
+	pasted := pastedFor(t, l.srv.URL, "c", "st-lazy")
+
+	if rec := postRelay(t, h, "", pasted); rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d %s, want 502", rec.Code, rec.Body.String())
+	}
+	l.status = http.StatusOK
+	if rec := postRelay(t, h, "", pasted); rec.Code != http.StatusOK {
+		t.Errorf("retry = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+}
+
+// A URL with no state could never match a paste, so it anchors nothing; KAS still waits its 300 s for it.
+func TestAnchorSignInURL_KeepsNoURLWithoutAState(t *testing.T) {
+	h := newHubWithMCPConfig(t, nil)
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	h.mcpRegistry.mu.Lock()
+	h.mcpRegistry.now = clock.now
+	h.mcpRegistry.mu.Unlock()
+	expires := h.mcpRegistry.anchorSignInURL("https://provider.example/authorize?client_id=x")
+	h.mcpRegistry.mu.RLock()
+	n := len(h.mcpRegistry.lazySignIns)
+	h.mcpRegistry.mu.RUnlock()
+	if n != 0 {
+		t.Errorf("anchors = %d, want 0", n)
+	}
+	if want := clock.now().Add(lazySignInTTL); !expires.Equal(want) {
+		t.Errorf("expires = %v, want %v", expires, want)
 	}
 }
 

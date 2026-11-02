@@ -20,6 +20,7 @@ const (
 	reasonAutoRouting       = marotte.EngineReason(settings.KeyAutoRouting)
 	reasonAutoDelegation    = marotte.EngineReason(settings.KeyAutoDelegation)
 	reasonHeap              = marotte.EngineReason(settings.KeyEngineHeapMiB)
+	reasonDebugLogs         = marotte.EngineReason(settings.KeyDebugLogs)
 	reasonTelemetry         = marotte.EngineReason(kiroTelemetryKey)
 )
 
@@ -40,6 +41,8 @@ func engineReasonLabel(r marotte.EngineReason) string {
 		return "Auto delegation"
 	case reasonHeap:
 		return "Agent engine memory limit"
+	case reasonDebugLogs:
+		return "Debug logs"
 	case reasonTelemetry:
 		return "Usage telemetry"
 	case marotte.EngineReasonKiroCLIVersion:
@@ -69,6 +72,7 @@ func (rt *Runtime) resolveEngine(ctx context.Context, path string) engineSpec {
 	knowledge := knowledgeEnabled(ctx, dir)
 	telemetryOff := rt.lifecycle.telemetryDisabled(rt.config.GovernanceLocks)
 	heap := engineHeapMiB(ctx, dir)
+	debug := settings.DebugLogs(ctx, dir)
 	opts := &marotte.EngineOpts{
 		Lifetime:          rt.lifecycle.shutdownCtx,
 		Background:        rt.lifecycle.goUnlessDraining,
@@ -83,6 +87,7 @@ func (rt *Runtime) resolveEngine(ctx context.Context, path string) engineSpec {
 		SecretStorage:     rt.secrets != nil,
 		Knowledge:         knowledge,
 		DisableTelemetry:  telemetryOff,
+		DebugLogs:         debug,
 	}
 	fp := map[marotte.EngineReason]string{
 		reasonKnowledge:                    strconv.FormatBool(knowledge),
@@ -92,6 +97,7 @@ func (rt *Runtime) resolveEngine(ctx context.Context, path string) engineSpec {
 		reasonAutoRouting:                  features.AutoRouting,
 		reasonAutoDelegation:               features.AutoDelegation,
 		reasonHeap:                         strconv.Itoa(heap),
+		reasonDebugLogs:                    strconv.FormatBool(debug),
 		reasonTelemetry:                    strconv.FormatBool(telemetryOff),
 		marotte.EngineReasonKiroCLIVersion: path,
 		marotte.EngineReasonAccountSwitch:  strconv.FormatBool(rt.signin.accountPending()),

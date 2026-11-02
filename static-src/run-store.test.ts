@@ -21,6 +21,8 @@ let responses: (
       stepEnds?: Record<string, { outcome: string; failure_reason?: string }>;
       /** The reply's top-level `step_starts`, likewise. */
       stepStarts?: Record<string, { started_at: string; ended: boolean }>;
+      /** The reply's top-level `display_name`, likewise. */
+      displayName?: string;
     }
   | undefined
 )[] = [];
@@ -50,7 +52,7 @@ vi.mock("./api-client.js", () => ({
     }
     const extra = replyExtra;
     replyExtra = {};
-    const { stepEnds, stepStarts, ...kasState } = state;
+    const { stepEnds, stepStarts, displayName, ...kasState } = state;
     return {
       ok: true,
       status: 200,
@@ -58,6 +60,7 @@ vi.mock("./api-client.js", () => ({
         workflowId: state.workflowId,
         state: kasState,
         ...(stepEnds === undefined ? {} : { step_ends: stepEnds }),
+        ...(displayName === undefined ? {} : { display_name: displayName }),
         ...(stepStarts === undefined ? {} : { step_starts: stepStarts }),
         ...extra,
       },
@@ -625,18 +628,25 @@ describe("noteRunChat refuses the two spellings of 'no launching chat'", () => {
 // live chat costs correctness.
 
 describe("runLabelOf", () => {
-  it("prefers the launcher's label for THIS execution over the recipe's name", async () => {
-    responses = [{ workflowId: "r1", runLabel: "nightly sweep", workflowName: "sweep.yaml" }];
+  it("names a run by the server's display name, not the state's label or recipe", async () => {
+    responses = [
+      {
+        workflowId: "r1",
+        runLabel: "nightly sweep",
+        workflowName: "sweep.yaml",
+        displayName: "the server's name",
+      },
+    ];
     store.invalidateRun("r1");
     await settle();
-    expect(store.runLabelOf("r1")).toBe("nightly sweep");
+    expect(store.runLabelOf("r1")).toBe("the server's name");
   });
 
-  it("falls back to the recipe's name when the launcher gave none", async () => {
-    responses = [{ workflowId: "r2", workflowName: "sweep.yaml" }];
+  it("never names a run by its recipe when the server names it with nothing", async () => {
+    responses = [{ workflowId: "r2", workflowName: "workflow-from-prompt", displayName: "" }];
     store.invalidateRun("r2");
     await settle();
-    expect(store.runLabelOf("r2")).toBe("sweep.yaml");
+    expect(store.runLabelOf("r2")).toBe("");
   });
 
   // The state at the instant the server's own tab offer arrives: the tab exists and nothing has
@@ -656,7 +666,7 @@ describe("runLabelOf", () => {
   // run_started carries the label and its notice can land before the inspect read.
   it("names a run by its lifecycle frame while the state read is still held", async () => {
     store.noteRunLabel("r1", "nightly sweep");
-    responses = [{ workflowId: "r1", runLabel: "nightly sweep · resumed" }];
+    responses = [{ workflowId: "r1", displayName: "nightly sweep · resumed" }];
     store.invalidateRun("r1");
     expect(fetches).toHaveLength(1);
     expect(store.runLabelOf("r1")).toBe("nightly sweep");
@@ -837,8 +847,8 @@ describe("the live-runs inventory", () => {
       ],
     };
     responses = [
-      { workflowId: "r1", runLabel: "nightly sweep" },
-      { workflowId: "r2", workflowName: "sweep.yaml" },
+      { workflowId: "r1", displayName: "nightly sweep" },
+      { workflowId: "r2", displayName: "sweep.yaml" },
     ];
 
     await store.rebuildLiveRuns();

@@ -88,6 +88,12 @@ The agent engine's memory limit is a setting, not a variable: **Agent engine mem
 
 marotte applies the limit through `NODE_OPTIONS`. A heap-size flag you set there gives way to the setting, and every other option in the variable is kept as written. A `NODE_OPTIONS` it cannot read, such as one with an unterminated quote, makes **Settings** refuse a limit until you fix the variable.
 
+marotte checks the engine's memory use once a minute. The first time it reaches 80% of the limit in an engine start, marotte's log shows `engine memory high` with the figures. When the engine stops, its `engine exited` line shows `rss_peak_mib`, the most memory the engine used, and `heap_limit_mib`, the limit it ran with. With the setting empty, that is kiro-cli's default. If marotte cannot read that default, `heap_limit_mib` is 0, marotte's log says the default is unknown, and it does not log `engine memory high`.
+
+## Debug logs
+
+**Debug logs** under **Experimental features** on the **General** tab in **Settings** writes more detailed logs for troubleshooting. marotte's own log, which `docker logs marotte` shows, switches at once. The agent engine's log, `kiro.log` in a folder per engine start under `/config/home/.kiro/logs/`, switches after the agent engine restarts. So does kiro-cli's own log, `/tmp/kiro-log/kiro-chat.log`, which then grows by about 11 KB at each engine start and about 1.4 MB a day while the engine is idle. The engine restarts by itself once no reply and no workflow is running.
+
 ## Variables the agent sets (`MAROTTE_ALLOW_AGENT_ENV`)
 
 When the agent runs a command, it can ask for environment variables to be set for it. Most are ordinary, such as `CGO_ENABLED`, `GOFLAGS` or `TERM`. A few change which program runs instead: `LD_PRELOAD`, `GIT_SSH_COMMAND` and `BASH_ENV` each redirect execution. marotte refuses those, because approving a command must approve that exact command, and the agent's variables take precedence over marotte's own. A harmless value is still accepted, so `GIT_PAGER=cat` keeps working. The refusal names the variable, so the agent can retry without it.

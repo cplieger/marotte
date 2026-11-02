@@ -105,46 +105,40 @@ describe("adaptStatus", () => {
       expected: { name: "github", origin: "user", state: "connected" },
     },
     {
-      name: "needs_auth with oauth_url preserves url",
+      // A waiting server carries no link: no consent page a passive status names can complete.
+      name: "needs_auth drops any oauth_url",
       input: { name: "linear", state: "needs_auth", oauth_url: "https://auth.example.com" },
+      expected: { name: "linear", origin: "user", state: "needs_auth" },
+    },
+    {
+      name: "signing_in with oauth_url preserves url",
+      input: { name: "linear", state: "signing_in", oauth_url: "https://auth.example.com" },
       expected: {
         name: "linear",
         origin: "user",
-        state: "needs_auth",
+        state: "signing_in",
         oauth_url: "https://auth.example.com",
         relayed: false,
       },
     },
     {
-      name: "needs_auth without oauth_url defaults to empty string",
-      input: { name: "sentry", state: "needs_auth" },
+      name: "signing_in without oauth_url defaults to empty string",
+      input: { name: "sentry", state: "signing_in" },
       expected: {
         name: "sentry",
         origin: "user",
-        state: "needs_auth",
+        state: "signing_in",
         oauth_url: "",
         relayed: false,
       },
     },
     {
-      // An absent `relayed` reads false: true would hide the only recovery path for an undelivered callback.
-      name: "needs_auth without relayed defaults to not-yet-relayed",
-      input: { name: "sentry", state: "needs_auth", oauth_url: "https://a.example" },
+      name: "signing_in carries a delivered relay through",
+      input: { name: "sentry", state: "signing_in", oauth_url: "https://a.example", relayed: true },
       expected: {
         name: "sentry",
         origin: "user",
-        state: "needs_auth",
-        oauth_url: "https://a.example",
-        relayed: false,
-      },
-    },
-    {
-      name: "needs_auth carries a delivered relay through",
-      input: { name: "sentry", state: "needs_auth", oauth_url: "https://a.example", relayed: true },
-      expected: {
-        name: "sentry",
-        origin: "user",
-        state: "needs_auth",
+        state: "signing_in",
         oauth_url: "https://a.example",
         relayed: true,
       },

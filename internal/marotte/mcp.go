@@ -67,11 +67,15 @@ type MCPPrewarmPayload struct {
 	State   string `json:"state"` // "installing", "done", "failed"
 }
 
-// MCPOAuthPayload is the payload for type="mcp_oauth_needed", emitted
-// when kiro-cli reports _kiro.dev/mcp/oauth_request. URL is the
-// provider's authorisation endpoint; the user completes the flow in a
-// new tab.
+// MCPOAuthPayload is the payload for type="mcp_oauth_needed", emitted when kiro-cli reports a server failed for
+// want of sign-in. It carries no URL: the user starts a sign-in from the server's row.
 type MCPOAuthPayload struct {
+	Server string `json:"server"`
+}
+
+// MCPSignInOpenPayload is the payload for type="mcp_sign_in_open": kiro-cli opened URL, the consent page of the
+// sign-in the user started on Server's row.
+type MCPSignInOpenPayload struct {
 	Server string `json:"server"`
 	URL    string `json:"url"`
 }
@@ -128,7 +132,7 @@ type MCPResourceTemplateInfo struct {
 }
 
 // MCPServerState is the lifecycle status of one MCP server KAS reported: "idle", "connected",
-// "needs_auth", "failed" or "disabled", declared where produced (the runtime's mcpRegistry).
+// "needs_auth", "signing_in", "failed" or "disabled", declared where produced (the runtime's mcpRegistry).
 // "disabled" is recorded only for a server marotte did NOT configure; a configured one's off state
 // is its config row's `enabled: false`.
 type MCPServerState string

@@ -82,11 +82,12 @@ const (
 //     held running with the gate's pause pending, persisted running with the gate's pause pending, ends running after 1
 //     resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the restart,
 //     persisted paused for the restart, ends running after 1 resume.
-//   - Budget spent while held. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's gate
-//     pause: held paused with the gate's reason, persisted paused with the gate's reason, ends paused for a person to
-//     resume after 0 resumes. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for
-//     the restart and its heal held, persisted paused for the restart, ends paused for a person to resume after 0
-//     resumes.
+//   - Budget spent while held. A chat-parented run's gate pause, a manual run's gate pause: held paused with the gate's
+//     reason, persisted paused with the gate's reason, ends paused for a person to resume after 0 resumes. A scheduled
+//     run's gate pause: held paused with the gate's reason, persisted paused with the gate's reason, ends cancelled
+//     after 0 resumes. A chat-parented run's heal, a manual run's heal: held paused for the restart and its heal held,
+//     persisted paused for the restart, ends paused for a person to resume after 0 resumes. A scheduled run's heal:
+//     held paused for the restart and its heal held, persisted paused for the restart, ends cancelled after 0 resumes.
 //   - Cancelled while held. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's gate pause:
 //     held cancelled, persisted cancelled, ends cancelled after 0 resumes. A chat-parented run's heal, a manual run's
 //     heal, a scheduled run's heal: held cancelled and its heal held, persisted cancelled, ends cancelled after 0

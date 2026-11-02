@@ -528,21 +528,35 @@ describe("the run bar's box", () => {
         i === 0 ? { ...n, start: new Date(Date.now() - 46 * 3_600_000).toISOString() } : n,
       ),
     });
-    const answered = started(runOf("needs-an-answer", 1, 3));
+    const FAILURE = `Failed at broke-on-step-two-1: ${"exit status 2 after the linker ran out of memory. ".repeat(6)}`;
     const plain = started(RUNS[0]!);
-    // A question and a pause take the progress's place alike (`summary.ts` `inPlace`).
+    // Every alert a row shows takes the progress's place; only a failure keeps its own mark, since
+    // the row's glyph marks a question or a pause and nothing marks a failed run.
     const IN_PLACE = [
-      ["question", started({ ...waiting, alert: { kind: "input", text: QUESTION } })],
-      ["pause", started({ ...waiting, state: "waiting", alert: { kind: "paused", text: PAUSE } })],
+      ["question", started({ ...waiting, alert: { kind: "input", text: QUESTION } }), false],
+      [
+        "pause",
+        started({ ...waiting, state: "waiting", alert: { kind: "paused", text: PAUSE } }),
+        false,
+      ],
+      [
+        "failure",
+        started({
+          ...runOf("broke-on-step-two", 1, 3),
+          state: "fail",
+          live: false,
+          alert: { kind: "failed", text: FAILURE },
+        }),
+        true,
+      ],
     ] as const;
-    const asking = IN_PLACE[0][1];
 
     const rect = (btn: HTMLElement, sel: string): DOMRect =>
       btn.querySelector<HTMLElement>(sel)!.getBoundingClientRect();
     const shown = (btn: HTMLElement, sel: string): boolean =>
       getComputedStyle(btn.querySelector<HTMLElement>(sel)!).display !== "none";
 
-    for (const [what, row] of IN_PLACE) {
+    for (const [what, row, marked] of IN_PLACE) {
       it(`puts the ${what} in the progress and bar's place on the title's one line`, () => {
         const bar = mountRows([row, plain], false);
         const [btn, other] = [...bar.querySelectorAll<HTMLElement>(".run-bar-open")] as [
@@ -551,7 +565,9 @@ describe("the run bar's box", () => {
         ];
         expect(shown(btn, ".ev-sum-progress")).toBe(false);
         expect(shown(btn, ".ev-mini")).toBe(false);
-        expect(shown(btn, ".ev-alert-icon")).toBe(false);
+        expect(btn.querySelector(".ev-alert-icon") !== null && shown(btn, ".ev-alert-icon")).toBe(
+          marked,
+        );
         expect(shown(other, ".ev-sum-progress")).toBe(true);
         expect(shown(other, ".ev-mini")).toBe(true);
 
@@ -592,7 +608,8 @@ describe("the run bar's box", () => {
             return [Math.round(r.left), Math.round(r.right), Math.round(r.top)];
           });
         const before = cols();
-        summaries[0]!.paint(answered);
+        const { alert: _gone, ...moving } = row;
+        summaries[0]!.paint({ ...moving, state: "running", live: true });
         expect(btn.dataset["alert"]).toBeUndefined();
         expect(shown(btn, ".ev-sum-progress")).toBe(true);
         expect(shown(btn, ".ev-mini")).toBe(true);
@@ -605,19 +622,6 @@ describe("the run bar's box", () => {
       });
     }
 
-    it("leaves a failure as a second line under the columns", () => {
-      const failed: ExecRun = { ...asking, alert: { kind: "failed", text: "Step two failed" } };
-      const bar = mountRows([failed], false);
-      const btn = bar.querySelector<HTMLElement>(".run-bar-open")!;
-      expect(shown(btn, ".ev-sum-progress")).toBe(true);
-      expect(shown(btn, ".ev-mini")).toBe(true);
-      expect(shown(btn, ".ev-alert-icon")).toBe(true);
-      expect(rect(btn, ".ev-alert-line").top).toBeGreaterThanOrEqual(
-        rect(btn, ".ev-sum-label").bottom - 1,
-      );
-      host.remove();
-    });
-
     describe("on a phone", () => {
       afterAll(async () => {
         await browser.viewport(1280, 720);
@@ -627,6 +631,7 @@ describe("the run bar's box", () => {
         [390, 844, ...IN_PLACE[0]],
         [360, 740, ...IN_PLACE[0]],
         [390, 844, ...IN_PLACE[1]],
+        [390, 844, ...IN_PLACE[2]],
       ] as const) {
         it(`${String(w)}px: the ${what} takes the phrase's place and the row stays two lines`, async () => {
           await browser.viewport(w, h);

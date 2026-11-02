@@ -12,6 +12,7 @@ import { confirm } from "./confirm.js";
 import { chatNotice, subjectName } from "./notice-subject.js";
 import { ICON_ARROW_UP, ICON_HOURGLASS, ICON_EDIT, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { sentBy } from "./sent-by.js";
 import { wireSignature } from "./paint-sig.js";
 import { sessionDrain, turnsPhrase, type QueuedSlot } from "./queue-slots.js";
 import type { PendingSteer, QueuedPrompt } from "./types.js";
@@ -77,6 +78,7 @@ function steerSig(e: PendingSteer): string {
     compacted: e.compacted === true ? "1" : "",
     unsent: e.unsent === true ? "1" : "",
     awaitsPrompt: e.awaitsPrompt === true ? "1" : "",
+    caller: e.caller === undefined ? "" : sentBy(e.caller),
     kas: "",
   };
   return join(...Object.values(parts));
@@ -481,9 +483,22 @@ const chatSource: SteerStackSource = {
   waitingFor: "the agent",
 };
 
-/** A queued row's state in words, and the ONE spelling of it. A held row, carried or not, is one
- *  no turn end sends: after a restart nothing is sent automatically. */
+/** A queued row's state in words, and the ONE spelling of it, led by who sent the row when an API
+ *  caller did, as stateWord leads a steer's. */
 function queuedWord(slot: QueuedSlot): string {
+  const word = queuedState(slot);
+  const { caller } = slot.row;
+  if (caller === undefined) {
+    return word;
+  }
+  return slot.wait.kind === "sent"
+    ? sentBy(caller)
+    : `${sentBy(caller)} \u00b7 ${word.charAt(0).toLowerCase()}${word.slice(1)}`;
+}
+
+/** A held row, carried or not, is one no turn end sends: after a restart nothing is sent
+ *  automatically. */
+function queuedState(slot: QueuedSlot): string {
   const { wait } = slot;
   switch (wait.kind) {
     case "sent":
@@ -634,10 +649,13 @@ function stateWord(steer: PendingSteer): string {
   if (steer.pending === true) {
     return "Sending";
   }
+  const sent = steer.caller === undefined ? "Sent" : sentBy(steer.caller);
   if (steer.unsent === true) {
-    return "Unread \u00b7 sends next";
+    return steer.caller === undefined
+      ? "Unread \u00b7 sends next"
+      : `${sent} \u00b7 unread \u00b7 sends next`;
   }
-  return steer.compacted === true ? "Sent, context compacted since" : "Sent";
+  return steer.compacted === true ? `${sent}, context compacted since` : sent;
 }
 
 // oneLine collapses whitespace without shortening. A steer is one message however the user typed

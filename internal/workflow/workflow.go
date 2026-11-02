@@ -21,16 +21,23 @@ import (
 // session. Other fields stay on the wire, passed through by the read endpoint.
 type node struct {
 	// Iteration is the pass of an enclosing `repeat`; a pointer because pass 0 is the first.
-	Iteration *int `json:"iteration"`
-	// AwaitingUserInput is a pointer because absent and false are different answers to W1.
-	AwaitingUserInput *bool  `json:"awaitingUserInput"`
-	NodeID            string `json:"nodeId"`
-	Type              string `json:"type"`
-	SessionID         string `json:"sessionId"`
-	Status            string `json:"status"`
-	AgentName         string `json:"agentName"`
-	CompletionSignal  string `json:"completionSignal"`
-	Children          []node `json:"children"`
+	Iteration        *int             `json:"iteration"`
+	NodeID           string           `json:"nodeId"`
+	Type             string           `json:"type"`
+	SessionID        string           `json:"sessionId"`
+	Status           string           `json:"status"`
+	AgentName        string           `json:"agentName"`
+	CompletionSignal string           `json:"completionSignal"`
+	Children         []node           `json:"children"`
+	Attention        []attentionEntry `json:"attention"`
+}
+
+// attentionEntry is one of KAS's open waits on a node: a step's park (markWaitingForUser) carries no
+// toolCallId, and a permission or input request its session holds carries the request's.
+type attentionEntry struct {
+	Kind       string `json:"kind"`
+	Since      string `json:"since"`
+	ToolCallID string `json:"toolCallId"`
 }
 
 // State is the run state `inspect` returns, decoded only as far as step identification
@@ -40,6 +47,8 @@ type State struct {
 	WorkflowID      string `json:"workflowId"`
 	Status          string `json:"status"`
 	ParentSessionID string `json:"parentSessionId"`
+	RunLabel        string `json:"runLabel"`
+	WorkflowName    string `json:"workflowName"`
 	// PauseReason is KAS's sentence for the run's latest park, whichever step parked.
 	PauseReason string `json:"pauseReason"`
 }
@@ -62,8 +71,15 @@ type StepSession struct {
 	SessionID string
 	// Status is KAS's node status word, verbatim.
 	Status string
+	// CompletionSignal is the signal KAS recorded on the node, verbatim; "" for none.
+	CompletionSignal string
 	// Path is the node path from the root to this step in KAS's WIRE spelling (see pathSegment).
 	Path []string
+}
+
+// EndSignalled reports whether KAS recorded a success or an error signal on the step.
+func (s *StepSession) EndSignalled() bool {
+	return s.CompletionSignal == signalSuccess || s.CompletionSignal == signalError
 }
 
 // PathKey is a node path's one string identity: the run log's turn key, the step-transcript
@@ -93,7 +109,9 @@ func Steps(s *State) []StepSession {
 	var out []StepSession
 	for _, v := range nodes(s) {
 		if v.n.Type == "step" {
-			out = append(out, StepSession{NodeID: v.n.NodeID, SessionID: v.n.SessionID, Status: v.n.Status, Path: v.path})
+			out = append(out, StepSession{
+				NodeID: v.n.NodeID, SessionID: v.n.SessionID, Status: v.n.Status, CompletionSignal: v.n.CompletionSignal, Path: v.path,
+			})
 		}
 	}
 	return out

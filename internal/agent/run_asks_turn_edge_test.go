@@ -64,7 +64,7 @@ func TestRunAsks_TurnBracketsArriveThroughEitherDoor(t *testing.T) {
 				t.Errorf("ask text = %q (%s), want the warning the turn ended on", a.Text, a.TextSource)
 			}
 
-			if err := h.runs.answerInput(t.Context(), wf, a.ID, "teal"); err != nil {
+			if err := h.runs.answerInput(t.Context(), wf, a.ID, "teal", nil); err != nil {
 				t.Fatalf("answer = %v", err)
 			}
 			if c.pendingOf() == nil {

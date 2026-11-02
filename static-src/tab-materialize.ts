@@ -92,8 +92,8 @@ export function _resetTabOpenersForTest(): void {
  *  INJECTED side of this seam and importing it would close the cycle. */
 const FALLBACK_CHAT_NAME = "New conversation";
 
-/** The name a run this client has fetched nothing for reads as. Matches
- *  handlers/run.ts's `runLabel` fallback. */
+/** The name a run nothing names yet reads as. Matches handlers/run.ts's
+ *  `runLabel` fallback. */
 const FALLBACK_RUN_NAME = "Workflow run";
 
 /** A chat's label from the chat store (`store.get` is an untracked peek); empty name = fallback. */
@@ -102,9 +102,6 @@ function chatName(chatID: string): string {
   return name === "" ? FALLBACK_CHAT_NAME : name;
 }
 
-/** A run's label. `runLabel` is what the launcher called this EXECUTION and
- *  `workflowName` the recipe's own name, in that order, which is the preference
- *  the transcript's run card already applies. */
 function runName(workflowID: string): string {
   const label = runLabelOf(workflowID);
   return label === "" ? FALLBACK_RUN_NAME : label;

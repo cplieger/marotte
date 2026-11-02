@@ -161,29 +161,26 @@ describe("the run summary", () => {
     expect(view.describe()).toBe("nightly, running");
   });
 
-  it("gives a run-bar row's failure a line of its own and its kind to the row", () => {
-    const view = build(true);
-    view.paint(run([step("a", "fail")], { alert: { kind: "failed", text: "about failed" } }));
-    expect(host.dataset["alert"]).toBe("failed");
-    expect(host.hasAttribute("data-alert-in-place")).toBe(false);
-    expect(view.root.querySelector(".ev-alert-line")?.textContent).toBe("about failed");
-    expect(part(view, "ev-sum-label")).toBe("nightly");
-    expect(view.describe()).toBe("nightly: about failed");
-  });
-
-  for (const kind of ["input", "paused"] as const) {
+  // The row's glyph marks a question or a pause; nothing else marks a failed run.
+  for (const [kind, marked] of [
+    ["input", false],
+    ["paused", false],
+    ["failed", true],
+  ] as const) {
     it(`puts a run-bar row's ${kind} alert in the progress's place, its kind to the row`, () => {
       const view = build(true);
       view.paint(run([step("a", "waiting")], { alert: { kind, text: `about ${kind}` } }));
       expect(host.dataset["alert"]).toBe(kind);
-      expect(host.hasAttribute("data-alert-in-place")).toBe(true);
-      expect(view.root.querySelector(".ev-alert-line")?.textContent).toBe(`about ${kind}`);
+      const line = view.root.querySelector(".ev-alert-line");
+      expect(line?.textContent).toBe(`about ${kind}`);
+      expect(line?.getAttribute("data-tooltip")).toBe(`about ${kind}`);
+      expect(line?.querySelector(".ev-alert-icon svg") !== null).toBe(marked);
       expect(part(view, "ev-sum-label")).toBe("nightly");
       expect(view.describe()).toBe(`nightly: about ${kind}`);
     });
   }
 
-  it("puts an in-place alert whole in the tooltip of its line, and no failure", () => {
+  it("puts an alert whole in the tooltip of its line as it changes", () => {
     const view = build(true);
     const tip = (): string | null =>
       view.root.querySelector(".ev-alert-line")?.getAttribute("data-tooltip") ?? null;
@@ -199,8 +196,8 @@ describe("the run summary", () => {
       run([step("a", "waiting")], { alert: { kind: "paused", text: "Paused by its chat" } }),
     );
     expect(tip()).toBe("Paused by its chat");
-    view.paint(run([step("a", "fail")], { alert: { kind: "failed", text: "a failed" } }));
-    expect(tip()).toBeNull();
+    view.paint(run([step("a", "fail")], { alert: { kind: "failed", text: "Failed at a: boom" } }));
+    expect(tip()).toBe("Failed at a: boom");
   });
 
   it("uses no live role on a row that already announces elsewhere", () => {
@@ -221,7 +218,6 @@ describe("the run summary", () => {
     view.paint(run([step("a", "waiting")], { alert: { kind: "paused", text: "Waiting" } }));
     view.paint(run([step("a", "running")]));
     expect(host.dataset["alert"]).toBeUndefined();
-    expect(host.hasAttribute("data-alert-in-place")).toBe(false);
     expect(view.root.querySelector(".ev-alert-line")).toBeNull();
   });
 

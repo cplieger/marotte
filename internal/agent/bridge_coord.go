@@ -94,7 +94,7 @@ type bridgeCoordinator struct {
 	chatHasLiveRun func(marotte.ChatID) bool `wiring:"optional"`
 	// chatHasTab reports an open tab on the chat; it answers true when no tab set is wired, so nothing is released.
 	chatHasTab func(marotte.ChatID) bool
-	// runLabel is the name a run's tab shows, for a notification titled by it. Nil names none.
+	// runLabel is a run's display name, for a notification titled by it. Nil names none.
 	runLabel func(workflowID string) string `wiring:"optional"`
 	// unknownStops records stop reasons already warned about: one line per unmapped value.
 	unknownStops sync.Map
@@ -137,7 +137,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 				return t.Kind == marotte.TabKindChat && marotte.ChatID(t.Ref) == chatID
 			})
 		},
-		runLabel: func(workflowID string) string { return h.runs.tabLabel(workflowID) },
+		runLabel: h.runs.runName,
 		onSessionRehydrated: func(chatID marotte.ChatID) {
 			ctx, cancel := h.lifecycle.derivedContext()
 			defer cancel()

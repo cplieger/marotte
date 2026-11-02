@@ -99,6 +99,12 @@ describe("the row's meta line", () => {
     expect(renderMeta(server(), status({ state: "needs_auth" } as Partial<RuntimeStatus>))).toBe(
       "Waiting for sign-in · no credentials · https://ex/mcp",
     );
+    expect(
+      renderMeta(
+        server(),
+        status({ state: "signing_in", oauth_url: "", relayed: false } as Partial<RuntimeStatus>),
+      ),
+    ).toBe("Signing in · no credentials · https://ex/mcp");
   });
 
   it("names the failure without a dangling separator when KAS gave no reason", () => {

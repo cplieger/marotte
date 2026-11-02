@@ -89,7 +89,7 @@ function liveRun(): RunState {
   }
   return {
     workflowId: "wf_1",
-    runLabel: LONG_LABEL,
+    displayName: LONG_LABEL,
     status: "running",
     root: { nodeId: "wf_1", type: "sequence", status: "running", children },
   };
@@ -98,7 +98,7 @@ function liveRun(): RunState {
 function longSteps(): RunState {
   return {
     workflowId: "wf_1",
-    runLabel: LONG_LABEL,
+    displayName: LONG_LABEL,
     status: "running",
     root: {
       nodeId: "wf_1",

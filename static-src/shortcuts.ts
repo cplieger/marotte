@@ -29,6 +29,13 @@ const GROUPED_ROWS: readonly { readonly group: string; readonly row: SheetRow }[
     group: "Composer",
     row: { description: "New line, continuing a list item", chords: [["Shift", "Enter"]] },
   },
+  {
+    group: "Composer",
+    row: {
+      description: "Rewind to your last prompt and edit it, from an empty message box",
+      chords: [["Ctrl", "↑"]],
+    },
+  },
 ];
 
 /** Bindings no `register()` call owns, so they cannot be generated. */

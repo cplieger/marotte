@@ -17,6 +17,17 @@ vi.mock(import("./api-client.js"), async (importOriginal) => {
           : null,
   };
 });
+// vi.hoisted: a vi.mock factory is hoisted above top-level consts.
+const { signInDispatch } = vi.hoisted(() => ({
+  signInDispatch: vi.fn(() => Promise.resolve(null)),
+}));
+vi.mock(import("./actions/mcp.js"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    signInServer: { dispatch: signInDispatch } as unknown as typeof actual.signInServer,
+  };
+});
 // Only the two members mcp-ui.ts calls at module scope are replaced.
 vi.mock(import("./actions/index.js"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -32,9 +43,12 @@ vi.mock(import("./actions/index.js"), async (importOriginal) => {
 });
 
 import type { Decoder } from "./api-client.js";
+import { dispatch } from "./bus.js";
+import type { ServerEvent } from "./types.js";
 import {
   applyOriginChip,
   carriesLiveReport,
+  initMCP,
   mountForeignRow,
   mountRow,
   renderForeignMeta,
@@ -278,7 +292,9 @@ describe("sign-in follows the live report onto either row", () => {
   });
 
   const signIn = (row: HTMLElement) => ({
+    button: row.querySelector<HTMLButtonElement>(".mcp-sign-in-btn"),
     pill: row.querySelector<HTMLAnchorElement>(".mcp-oauth-pill"),
+    hint: row.querySelector(".mcp-sign-in-hint"),
     relay: row.querySelector("details"),
   });
 
@@ -288,7 +304,7 @@ describe("sign-in follows the live report onto either row", () => {
     statusResponse.servers = [
       {
         name: "mine",
-        state: "needs_auth",
+        state: "signing_in",
         origin: "workspace",
         origin_root: "/workspace/app",
         shadows: true,
@@ -307,26 +323,37 @@ describe("sign-in follows the live report onto either row", () => {
     expect(theirs.relay).not.toBeNull();
   });
 
-  it("offers sign-in on an unowned server waiting for it, and drops the relay once spent", async () => {
+  it("offers Sign in on an unowned server waiting for it, then its consent page, and drops the relay once spent", async () => {
+    statusResponse.servers = [{ name: "theirs", state: "needs_auth", origin: "power" }];
+    mcpState.refetchStatus();
+    await settle();
+
+    const row = mountForeignRow("theirs");
+    expect(signIn(row).button?.textContent).toBe("Sign in");
+    // No consent page a passive status names can complete, so a waiting row shows no link and no paste box.
+    expect(signIn(row).pill).toBeNull();
+    expect(signIn(row).relay).toBeNull();
+
     statusResponse.servers = [
       {
         name: "theirs",
-        state: "needs_auth",
+        state: "signing_in",
         origin: "power",
         oauth_url: "https://auth.example.com/authorize",
       },
     ];
     mcpState.refetchStatus();
     await settle();
-
-    const row = mountForeignRow("theirs");
-    expect(signIn(row).pill).not.toBeNull();
+    expect(signIn(row).button).toBeNull();
+    expect(signIn(row).pill?.textContent).toBe("Open sign-in page");
+    expect(signIn(row).pill?.getAttribute("href")).toBe("https://auth.example.com/authorize");
+    expect(signIn(row).hint?.textContent).toContain("60 seconds");
     expect(signIn(row).relay).not.toBeNull();
 
     statusResponse.servers = [
       {
         name: "theirs",
-        state: "needs_auth",
+        state: "signing_in",
         origin: "power",
         oauth_url: "https://auth.example.com/authorize",
         relayed: true,
@@ -341,6 +368,53 @@ describe("sign-in follows the live report onto either row", () => {
     mcpState.refetchStatus();
     await settle();
     expect(signIn(row).pill).toBeNull();
+    expect(signIn(row).hint).toBeNull();
+    expect(signIn(row).button).toBeNull();
+  });
+
+  it("offers Sign in on marotte's own row waiting for it", async () => {
+    const s = configured("mine");
+    servers.setAll([s]);
+    statusResponse.servers = [{ name: "mine", state: "needs_auth", origin: "user" }];
+    mcpState.refetchStatus();
+    await settle();
+
+    const own = signIn(mountRow(s, s.id));
+    expect(own.button).not.toBeNull();
+    expect(own.pill).toBeNull();
+
+    signInDispatch.mockClear();
+    own.button?.click();
+    expect(signInDispatch).toHaveBeenCalledTimes(1);
+    expect(signInDispatch.mock.calls[0]).toEqual([{ server: "mine" }]);
+  });
+});
+
+describe("the sign-in frames", () => {
+  it("a consent page moves the row to signing in with its URL, and a new wait drops it", () => {
+    const section = document.createElement("div");
+    section.id = "mcp-section";
+    const modal = document.createElement("div");
+    modal.id = "mcp-modal";
+    document.body.replaceChildren(section, modal);
+    initMCP();
+
+    dispatch({
+      type: "mcp_sign_in_open",
+      payload: { server: "frames", url: "https://auth.example.com/authorize?state=s" },
+    } as ServerEvent);
+    expect(statusSignalFor("frames").value).toMatchObject({
+      state: "signing_in",
+      oauth_url: "https://auth.example.com/authorize?state=s",
+      relayed: false,
+    });
+
+    dispatch({ type: "mcp_oauth_needed", payload: { server: "frames" } } as ServerEvent);
+    expect(statusSignalFor("frames").value).toEqual({
+      name: "frames",
+      origin: "user",
+      state: "needs_auth",
+    });
   });
 });
 
@@ -349,6 +423,7 @@ describe("renderForeignMeta", () => {
   const cases: { state: RuntimeStatus["state"]; want: string }[] = [
     { state: "connected", want: "available to the agent" },
     { state: "needs_auth", want: "Waiting for sign-in" },
+    { state: "signing_in", want: "Signing in" },
     { state: "disabled", want: "not using it" },
     { state: "idle", want: "Not connected" },
   ];

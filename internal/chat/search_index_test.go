@@ -154,6 +154,39 @@ func TestSearchIndex_AnAppendExtendsTheFilterAndTheNextQueryFindsTheNewText(t *t
 	}
 }
 
+func TestSearchIndex_ARunNamedFindsTheEarlierWakeByItsName(t *testing.T) {
+	s, _ := newTestStore(t)
+	const id = "c-aaaaaaaa"
+	turn, err := s.OpenTurn(t.Context(), id, &TurnSpec{Source: marotte.TurnOpenNameWireTurnStart},
+		func(c *marotte.Chat) { c.Name = string(id) })
+	if err != nil {
+		t.Fatalf("OpenTurn: %v", err)
+	}
+	wake := marotte.EntryTurnWake{Reason: marotte.WakeReasonRunFinished, Run: wakeRunID, RunStatus: marotte.RunStatusCompleted}
+	for _, e := range []*marotte.Entry{
+		entryOf(turn.Turn, "", "w1", marotte.EntryKindTurnWake, wake),
+		entryOf(turn.Turn, "", "a1", marotte.EntryKindText, marotte.EntryText{Text: "Reading the results."}),
+	} {
+		if err := s.Append(t.Context(), id, e); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	closeTurn(t, s, id, turn.Turn, marotte.TurnOutcomeCompleted)
+	if got := s.searchAll(t.Context(), "publish-docs"); got.Matched != 0 {
+		t.Fatalf("Setup: SearchAll(publish-docs) before the name: Matched = %d, want 0", got.Matched)
+	}
+
+	if _, err := s.AppendBetweenTurns(t.Context(), id, entryOf("", "", "", marotte.EntryKindRunNamed,
+		marotte.EntryRunNamed{Run: wakeRunID, Name: "publish-docs"})); err != nil {
+		t.Fatalf("AppendBetweenTurns: %v", err)
+	}
+	for _, pass := range []string{"rebuilding", "rebuilt"} {
+		if got := s.searchAll(t.Context(), "publish-docs"); got.Matched != 1 {
+			t.Errorf("SearchAll(publish-docs) after the run_named, filter %s: Matched = %d, want the chat whose wake it names", pass, got.Matched)
+		}
+	}
+}
+
 // A revert drops the filter; the rebuild finds the kept turn's word but not the reverted one's.
 func TestSearchIndex_ARevertDropsTheFilter(t *testing.T) {
 	s, _ := newTestStore(t)

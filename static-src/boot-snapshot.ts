@@ -16,6 +16,7 @@ import {
 } from "./store.js";
 import { openTabSubjects, paintProvisionalTabs, tabSetVersion } from "./tabs.js";
 import { TURN_OUTCOME_VALUES } from "./turn-severity.js";
+import { markWakingRows } from "./turn-wake.js";
 import type { Session, TabSubject, TurnState, Usage } from "./types.js";
 import { asObject, decodeArray, reqNum, reqStr } from "./validators.js";
 import { decodeEntry, decodeTabSubject, decodeUsage } from "./wire/decoders.gen.js";
@@ -324,6 +325,8 @@ function turnsFromEntries(entries: readonly Entry[]): {
       held.closeAt = e.seq;
     }
   }
+  // The server bakes each row's settlement into the window, but no row says a wake drew it.
+  markWakingRows(order.flatMap((id) => turns.get(id) ?? []));
   return { turns, order };
 }
 

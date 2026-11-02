@@ -1547,6 +1547,51 @@ describe("server-hit navigation", () => {
     expect(document.querySelector("mark.find-hit-current")?.textContent).toBe("retry");
   });
 
+  for (const [where, needle] of [
+    ["message", "retry"],
+    ["label", "asks you"],
+  ] as const) {
+    it(`lands a wake hit on its ${where} in the header of the turn it woke`, async () => {
+      const message = "Which branch should I base the retry fix on?";
+      const rest = " \u00b7 check-links asks you";
+      stageChat(["u1", "u2"]);
+      stageHits([
+        serverHit({
+          turn_id: "u2",
+          entry_id: "u2-wake",
+          excerpt: needle,
+          segment_kind: "wake",
+          offset: where === "message" ? message.indexOf(needle) : rest.indexOf(needle) - 1,
+          segment_len: where === "message" ? message.length : rest.length - 1,
+        }),
+      ]);
+      // Mounted once the hit's turn is revealed, so the hit is the server's alone, as for a paged-out turn.
+      vi.mocked(chatSearch.revealHitTurn).mockImplementation(() => {
+        if (document.querySelector('[data-reconcile-key="u2"]') === null) {
+          mountTurnCard("u1", `<div data-reconcile-key="a1" class="msg-row"></div>`);
+          // The reply repeats the words, so only the header's own region lands on the header.
+          mountTurnCard(
+            "u2",
+            `<div data-reconcile-key="b2" class="msg-row">${needle} ${needle} ${needle}</div>`,
+          )
+            .querySelector<HTMLElement>(".turn-header")
+            ?.insertAdjacentHTML(
+              "beforeend",
+              `<div class="turn-req"><div class="turn-wake"><span class="turn-wake-run">publish-docs</span><span class="turn-wake-rest">${rest}</span></div><div class="turn-req-text">${message}</div></div>`,
+            );
+        }
+        return Promise.resolve();
+      });
+
+      await openAndSearch(needle);
+      typeAndEnter(needle);
+
+      await vi.waitFor(() => {
+        expect(document.querySelector(".turn-req mark.find-hit-current")?.textContent).toBe(needle);
+      });
+    });
+  }
+
   it("lands an attachment hit on a pill in the turn header", async () => {
     stageTurnLevelChat();
     const name = "retry-notes.md";

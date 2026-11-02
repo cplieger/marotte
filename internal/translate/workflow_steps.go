@@ -8,7 +8,6 @@ package translate
 // durable copy, so nothing is persisted here.
 
 import (
-	"encoding/json"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -177,6 +176,7 @@ func (s *stepRegistry) forgetRun(workflowID string) {
 // `record` doors refuse an empty id, so no guard is needed.
 func (t *Translator) ForgetRunSteps(workflowID string) {
 	t.steps.forgetRun(workflowID)
+	t.wakeMem.forgetRun(workflowID)
 }
 
 // RecordStepSession notes a step session learned from an `inspect` read: the recovery path
@@ -186,19 +186,6 @@ func (t *Translator) RecordStepSession(sessionID, workflowID, nodeID, nodePath s
 		return
 	}
 	t.steps.record(sessionID, workflowID, nodeID, nodePath)
-}
-
-// RecordRunSteps seeds the registry from a raw `_kiro/workflow/inspect` reply on every run
-// read, so a restart does not leave a resumed run's frames classified as a subagent's.
-// Best-effort: a decode failure must not fail the read.
-func (t *Translator) RecordRunSteps(raw json.RawMessage) {
-	var res workflow.InspectResult
-	if json.Unmarshal(raw, &res) != nil || res.State == nil {
-		return
-	}
-	for _, st := range workflow.StepSessions(res.State) {
-		t.RecordStepSession(st.SessionID, res.State.WorkflowID, st.NodeID, workflow.PathKey(st.Path))
-	}
 }
 
 // classifyFrame decides who a frame belongs to from its chat and session id; the single

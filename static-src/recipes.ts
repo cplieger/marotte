@@ -26,9 +26,16 @@ import { entryDetail, entryList, entryRow } from "./entry-row.js";
 import { classifyRunStatus, runStatusTerminal } from "./run-status.js";
 import { configStanding, standingBadge, standingLabel } from "./config-standing.js";
 import type { ConfigStanding } from "./wire/types.gen.js";
+import { planToExec } from "./run-exec-source.js";
+import { buildExecTree, type ExecTreeView } from "./exec-view/tree.js";
+import { workNodes } from "./exec-view/model.js";
 
 /** Last fetched recipe list, kept so a repaint needs no refetch. */
 let recipes: Recipe[] = [];
+
+/** Whether the latest recipe fetch answered. A schedule is called orphaned only against a current
+ *  list: a failed refetch keeps the old rows on screen, but absence from them proves nothing. */
+let recipesCurrent = false;
 
 /** MODULE state, not a render parameter, and that distinction is load-bearing: this panel repaints
  *  itself on its own schedule (the run poll, the schedules fetch, the settings SSE), and a parameter
@@ -37,9 +44,8 @@ let recipes: Recipe[] = [];
 let filterText = "";
 
 /** Live (non-terminal) run per RECIPE; the single-run rule makes the recipe a sufficient key.
- *  Keyed on `workflow_name`, never `name` — `name` is the DISPLAY label (`runLabel ??
- *  workflowName` upstream), so a labelled run filed itself under a key no recipe row looks up
- *  and its row offered Run over a live run. */
+ *  Keyed on `workflow_name`, never `name`: `name` is the DISPLAY label, so a labelled run would
+ *  file itself under a key no recipe row looks up and its row would offer Run over a live run. */
 let liveRuns = new Map<string, WorkflowRun>();
 
 let container: HTMLElement | null = null;
@@ -72,6 +78,24 @@ function visibleRecipes(): Recipe[] {
     return recipes;
   }
   return recipes.filter((r) => filterHaystack(r).includes(filterText));
+}
+
+/** Schedules whose recipe is not in the current list: no recipe row carries them, so they get their
+ *  own, or they could never be deleted. */
+function orphanedSchedules(): ScheduleView[] {
+  if (!recipesCurrent) {
+    return [];
+  }
+  const known = new Set(recipes.map((r) => r.source));
+  return [...schedules.values()].filter((v) => !known.has(v.source));
+}
+
+function visibleOrphans(): ScheduleView[] {
+  return orphanedSchedules().filter(
+    (v) =>
+      filterText === "" ||
+      [v.name ?? "", v.source, "orphaned"].join("\n").toLowerCase().includes(filterText),
+  );
 }
 
 /** Render the Workflows tab into its panel. Called by docs.ts on tab switch and on its inventory
@@ -127,6 +151,7 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
   }
   void (async () => {
     const [r] = await Promise.all([loadRecipes.dispatch(undefined), refreshRuns()]);
+    recipesCurrent = r !== null;
     if (r !== null) {
       recipes = r.recipes;
     }
@@ -140,10 +165,11 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
 
 async function refreshRecipes(): Promise<void> {
   const r = await loadRecipes.dispatch(undefined);
+  recipesCurrent = r !== null;
   if (r !== null) {
     recipes = r.recipes;
-    paint();
   }
+  paint();
 }
 
 function counts(): RecipeCounts {
@@ -289,9 +315,7 @@ async function refreshRuns(): Promise<void> {
   }
   const next = new Map<string, WorkflowRun>();
   for (const run of d.runs) {
-    // An older server sends no workflow_name; fall back to the display name so the row keeps its
-    // pre-2.21.1 behaviour rather than losing every key.
-    const recipe = run.workflow_name ?? run.name;
+    const recipe = run.workflow_name ?? "";
     const status = classifyRunStatus(run.status);
     if (recipe !== "" && (status === undefined || !runStatusTerminal(status))) {
       next.set(recipe, run);
@@ -307,7 +331,8 @@ async function refreshRuns(): Promise<void> {
  *  placed with its row and its typed values survive every repaint. */
 type RecipeEntry =
   | { readonly kind: "row"; readonly recipe: Recipe }
-  | { readonly kind: "detail"; readonly recipe: Recipe };
+  | { readonly kind: "detail"; readonly recipe: Recipe }
+  | { readonly kind: "orphan"; readonly schedule: ScheduleView };
 
 /** The recipe whose input form is open, by source; at most one, like a `<details>` group. */
 let openForm: string | null = null;
@@ -317,10 +342,11 @@ function paint(): void {
     return;
   }
   const rows = visibleRecipes();
+  const orphans = visibleOrphans();
   // Every repaint path reports, not just the fetch: the note describes what is on screen, so
   // whichever caller changed what is on screen owes the update.
   onCounts?.(counts());
-  if (rows.length === 0) {
+  if (rows.length === 0 && orphans.length === 0) {
     // Two different sentences, because they answer different questions. "No workflows available."
     // under an active filter is the same lie docs.ts records for its category text: the workflows
     // exist, they are one keystroke away.
@@ -328,7 +354,9 @@ function paint(): void {
       el(
         "div",
         { className: "list-empty" },
-        recipes.length === 0 ? "No workflows available." : "No workflows match the filter.",
+        recipes.length === 0 && orphanedSchedules().length === 0
+          ? "No workflows available."
+          : "No workflows match the filter.",
       ),
     );
     return;
@@ -345,19 +373,38 @@ function paint(): void {
       entries.push({ kind: "detail", recipe });
     }
   }
+  for (const schedule of orphans) {
+    entries.push({ kind: "orphan", schedule });
+  }
   // Keyed on `source`, which is stable across a filter change — so a keystroke removes and re-adds
   // the rows that left and arrived rather than rebuilding the list.
   reconcile(list, entries, {
-    key: (e: RecipeEntry) => joinKey(e.kind, e.recipe.source),
-    mount: (e: RecipeEntry) => (e.kind === "row" ? recipeRow(e.recipe) : inputForm(e.recipe)),
+    key: (e: RecipeEntry) =>
+      joinKey(e.kind, e.kind === "orphan" ? e.schedule.source : e.recipe.source),
+    mount: (e: RecipeEntry) => {
+      switch (e.kind) {
+        case "row":
+          return recipeRow(e.recipe);
+        case "detail":
+          return inputForm(e.recipe);
+        case "orphan":
+          return orphanRow(e.schedule);
+      }
+    },
     update: (node: HTMLElement, e: RecipeEntry) => {
-      if (e.kind === "row") {
-        syncButton(node, e.recipe);
-        syncSchedule(node, e.recipe);
-        syncStanding(node, e.recipe);
-      } else {
-        // Only Launch is synced: the fields hold what the reader has typed.
-        syncLaunch(node, e.recipe);
+      switch (e.kind) {
+        case "row":
+          syncButton(node, e.recipe);
+          syncSchedule(node, e.recipe);
+          syncStanding(node, e.recipe);
+          break;
+        case "detail":
+          // Only Launch and the plan are synced: the fields hold what the reader has typed.
+          syncLaunch(node, e.recipe);
+          syncPlan(node, e.recipe);
+          break;
+        case "orphan":
+          break;
       }
     },
   });
@@ -421,6 +468,38 @@ function recipeRow(r: Recipe): HTMLElement {
   syncSchedule(row, r);
   syncStanding(row, r);
   return row;
+}
+
+/** A schedule whose recipe file is gone: it cannot run or be edited, so Delete is its one control. */
+function orphanRow(v: ScheduleView): HTMLElement {
+  const title = v.name ?? v.source;
+  const del = el("button", {
+    type: "button",
+    className: "btn-small recipe-sched-delete-btn",
+    "aria-label": `Delete the schedule of ${title}`,
+  }) as HTMLButtonElement;
+  del.textContent = "Delete schedule";
+  del.addEventListener("click", (e: MouseEvent) => {
+    e.stopPropagation();
+    void (async () => {
+      await deleteSchedule.dispatch(v.id);
+      await refreshSchedules();
+    })();
+  });
+  return entryRow({
+    key: v.source,
+    title,
+    badges: [el("span", { className: "docs-badge" }, "orphaned")],
+    sub: {
+      kind: "lines",
+      lines: [
+        { text: v.source, mono: true },
+        { text: "Its workflow file is gone, so this schedule cannot run.", error: true },
+      ],
+    },
+    actions: [del],
+    data: { "data-orphan-schedule": v.id },
+  });
 }
 
 function standingOf(r: Recipe): ConfigStanding | undefined {
@@ -552,9 +631,12 @@ function inputForm(r: Recipe): HTMLElement {
   }
   const picks = buildRunDefaultsPicker({ models: getCachedModels(), initial: {} });
   form.appendChild(picks.el);
-  form.appendChild(
-    el("button", { type: "submit", className: "btn-small recipe-launch-btn" }, "Launch"),
-  );
+  const launchBtn = el(
+    "button",
+    { type: "submit", className: "btn-small recipe-launch-btn" },
+    "Launch",
+  ) as HTMLButtonElement;
+  form.appendChild(launchBtn);
   form.addEventListener("submit", (e: Event) => {
     e.preventDefault();
     // Resolved at submit time, like the row's Run: a refetch can invalidate the recipe under a
@@ -575,8 +657,52 @@ function inputForm(r: Recipe): HTMLElement {
   });
   const detail = entryDetail(form);
   formPicks.set(detail, picks);
+  formPlans.set(detail, buildPlanPreview(launchBtn));
   syncLaunch(detail, r);
+  syncPlan(detail, r);
   return detail;
+}
+
+/** An open form's read-only plan, drawn by the run tab's own tree so the preview matches the run it
+ *  launches. `launch` is the form's Launch, which the region sits in front of. */
+interface PlanPreview {
+  region: HTMLElement;
+  head: HTMLElement;
+  tree: ExecTreeView;
+  launch: HTMLElement;
+}
+
+/** Each open form's plan preview, for its repaint to redraw from a refetched recipe. */
+const formPlans = new WeakMap<HTMLElement, PlanPreview>();
+
+function buildPlanPreview(launch: HTMLElement): PlanPreview {
+  const head = el("div", { className: "recipe-plan-head" });
+  // Selection means nothing before the run exists, so a row's click does nothing.
+  const tree = buildExecTree(() => undefined);
+  tree.root.setAttribute("aria-label", "Planned steps");
+  // A tab stop, because no row is one and the box scrolls (WCAG 2.1.1).
+  const steps = el("div", { className: "recipe-plan-steps", tabindex: "0" }, tree.root);
+  return { region: el("div", { className: "recipe-plan" }, head, steps), head, tree, launch };
+}
+
+/** The open form's plan follows the recipe: a recipe whose plan folds to no node shows no region. */
+function syncPlan(detail: HTMLElement, r: Recipe): void {
+  const p = formPlans.get(detail);
+  if (p === undefined) {
+    return;
+  }
+  const nodes = planToExec(r.plan);
+  if (nodes.length === 0) {
+    p.region.remove();
+    p.tree.render([], "");
+    return;
+  }
+  const steps = workNodes(nodes).length;
+  p.head.textContent = `Plan \u00b7 ${steps === 1 ? "1 step" : `${String(steps)} steps`}`;
+  p.tree.render(nodes, "");
+  if (p.region.nextElementSibling !== p.launch) {
+    p.launch.before(p.region);
+  }
 }
 
 /** The open form's Launch follows the row's Run: off, with KAS's reason, for an invalid recipe. */

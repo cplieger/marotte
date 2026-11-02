@@ -157,6 +157,9 @@ const AgentEngineV3 = "v3"
 const (
 	ConfigOptionModel  = "model"
 	ConfigOptionEffort = "effortLevel"
+	// ConfigOptionOutputStyle is read from _kiro/config/template only; a prompt sends the
+	// chosen id as _meta.kiro.outputStyle, never through set_config_option.
+	ConfigOptionOutputStyle = "outputStyle"
 	// ConfigOptionAutopilot is supervised mode on v3: `false` makes KAS request a TURN APPROVAL
 	// before applying a file-touching turn's writes; `true` (the default) applies them as they
 	// happen. KAS persists it across session/load, so marotte sets it once at session/new.

@@ -88,7 +88,6 @@ func newFixture(t *testing.T, now time.Time) (*Store, *fakeLauncher, *Runner) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	e := Entry{
-		ID:      "s1",
 		Source:  "bundled://demo",
 		Spec:    Spec{Freq: FreqDaily, Hour: 2, Minute: 0},
 		Enabled: true,
@@ -121,7 +120,7 @@ func TestSweep_FiresADueSlot(t *testing.T) {
 	}
 	// The schedule's id must travel with the launch, or an unattended denial has
 	// no row to report itself on.
-	if _, schedules, _ := l.snap(); len(schedules) != 1 || schedules[0] != "s1" {
+	if _, schedules, _ := l.snap(); len(schedules) != 1 || schedules[0] != idOf("bundled://demo") {
 		t.Errorf("launch must carry the schedule id, got %v", schedules)
 	}
 }
@@ -254,6 +253,108 @@ func TestSweep_AdvancesPastAFailedLaunch(t *testing.T) {
 	}
 }
 
+// A slot refused by a run holding this schedule's lease, bounded by this slot, leaves that run on the row: the run is
+// cancelled at this slot, and its outcome, landing before or after the refusal, is the slot's story. A refusal by any
+// other run, the row's own workflow id retried under a manual lease included, is the row's outcome and detaches it.
+func TestSweep_ABusyRefusalByTheRowsOwnRunKeepsItsOutcome(t *testing.T) {
+	due := at(2026, time.August, 4, 2, 0)
+	overran := Outcome{Status: StatusFailed, Reason: "the run was still going at its next slot, so it was cancelled"}
+	setup := func(t *testing.T) (*Store, *fakeLauncher, *Runner, Run) {
+		t.Helper()
+		st, l, r := newFixture(t, due.Add(30*time.Second))
+		run := Run{ScheduleID: st.List()[0].ID(), WorkflowID: "wf-old"}
+		if err := st.RecordStart(t.Context(), run); err != nil {
+			t.Fatalf("RecordStart: %v", err)
+		}
+		return st, l, r, run
+	}
+
+	t.Run("its outcome lands after the refusal", func(t *testing.T) {
+		st, l, r, run := setup(t)
+		l.failWith(&BusyError{WorkflowID: run.WorkflowID, ScheduleID: run.ScheduleID, SlotAt: due})
+		r.sweep(t.Context())
+		got := st.List()[0]
+		if !got.Anchor.Equal(due) || got.LastRunID != run.WorkflowID || got.LastStatus != statusStarted {
+			t.Fatalf("after the refusal the row = %+v, want the anchor at the slot and wf-old still started", got)
+		}
+		if err := st.RecordOutcome(t.Context(), run, overran); err != nil {
+			t.Fatalf("RecordOutcome: %v", err)
+		}
+		if got := st.List()[0]; got.LastStatus != overran.Status || got.LastReason != overran.Reason {
+			t.Errorf("the row reads (%q, %q), want the live run's overran outcome", got.LastStatus, got.LastReason)
+		}
+	})
+
+	t.Run("its outcome landed before the refusal", func(t *testing.T) {
+		st, l, r, run := setup(t)
+		if err := st.RecordOutcome(t.Context(), run, overran); err != nil {
+			t.Fatalf("RecordOutcome: %v", err)
+		}
+		l.failWith(&BusyError{WorkflowID: run.WorkflowID, ScheduleID: run.ScheduleID, SlotAt: due})
+		r.sweep(t.Context())
+		if got := st.List()[0]; !got.Anchor.Equal(due) || got.LastReason != overran.Reason {
+			t.Errorf("the row = %+v, want the anchor at the slot and the overran outcome kept", got)
+		}
+	})
+
+	// The launch granted wf-old (RecordStart) and then failed to start it: no run is live, the failure is the slot's.
+	t.Run("the granted run never started", func(t *testing.T) {
+		st, l, r, _ := setup(t)
+		l.failWith(errors.New("workflow invoke: engine gone"))
+		r.sweep(t.Context())
+		if got := st.List()[0]; got.LastStatus != StatusFailed || got.LastReason != "workflow invoke: engine gone" ||
+			got.LastRunID != "" {
+			t.Errorf("the row = %+v, want the launch failure recorded and no run tracked", got)
+		}
+	})
+
+	t.Run("another run holds the recipe", func(t *testing.T) {
+		st, l, r, run := setup(t)
+		if err := st.RecordEnding(t.Context(), run, Outcome{Status: StatusCompleted}); err != nil {
+			t.Fatalf("RecordEnding: %v", err)
+		}
+		l.failWith(&BusyError{WorkflowID: "wf-manual"})
+		r.sweep(t.Context())
+		got := st.List()[0]
+		if got.LastStatus != StatusFailed || got.LastReason != "this recipe already has a live run" || got.LastRunID != "" {
+			t.Fatalf("the row = %+v, want the refusal recorded and no run tracked", got)
+		}
+		if err := st.RecordOutcome(t.Context(), run, overran); err != nil {
+			t.Fatalf("RecordOutcome: %v", err)
+		}
+		if got := st.List()[0]; got.LastReason != "this recipe already has a live run" {
+			t.Errorf("a late outcome of the ended wf-old replaced the slot's refusal: %+v", got)
+		}
+	})
+
+	// No bound of this schedule ends these runs at this slot, so the refusal is the only outcome the slot gets.
+	for name, busy := range map[string]func(Run) *BusyError{
+		"a person's retry of the row's run holds the recipe": func(run Run) *BusyError {
+			return &BusyError{WorkflowID: run.WorkflowID}
+		},
+		"the row's run is bounded by a later slot": func(run Run) *BusyError {
+			return &BusyError{WorkflowID: run.WorkflowID, ScheduleID: run.ScheduleID, SlotAt: due.Add(24 * time.Hour)}
+		},
+		"another schedule's run holds the recipe": func(run Run) *BusyError {
+			return &BusyError{WorkflowID: run.WorkflowID, ScheduleID: "other-schedule", SlotAt: due}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			st, l, r, run := setup(t)
+			if err := st.RecordEnding(t.Context(), run, Outcome{Status: StatusFailed, Reason: "step build failed"}); err != nil {
+				t.Fatalf("RecordEnding: %v", err)
+			}
+			l.failWith(busy(run))
+			r.sweep(t.Context())
+			got := st.List()[0]
+			if !got.Anchor.Equal(due) || got.LastStatus != StatusFailed ||
+				got.LastReason != "this recipe already has a live run" || got.LastRunID != "" {
+				t.Errorf("the row = %+v, want the anchor at the slot, the refusal recorded and no run tracked", got)
+			}
+		})
+	}
+}
+
 // A launch refused with ErrNoRunCanStart is held, not recorded: the slot fires on a later tick inside its grace,
 // a hold that outlasts the grace is logged as that, not as an offline miss, and any other launch error is recorded.
 func TestSweep_HoldsASlotWhileNoRunCanStart(t *testing.T) {
@@ -338,7 +439,7 @@ func TestSweep_HoldsASlotWhileNoRunCanStart(t *testing.T) {
 		st, l, r := newFixture(t, due.Add(30*time.Second))
 		l.failWith(refused)
 		r.sweep(t.Context())
-		if err := st.Delete(t.Context(), "s1"); err != nil {
+		if err := st.Delete(t.Context(), idOf("bundled://demo")); err != nil {
 			t.Fatalf("Delete: %v", err)
 		}
 		r.sweep(t.Context())
@@ -429,15 +530,15 @@ func TestStore_RoundTripsAndRejects(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	ctx := t.Context()
-	if err := st.Put(ctx, &Entry{ID: "a", Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 1}, Enabled: true}); err != nil {
+	if err := st.Put(ctx, &Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 1}, Enabled: true}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	// An invalid spec must never reach disk.
-	if err := st.Put(ctx, &Entry{ID: "b", Source: "bundled://y", Spec: Spec{Freq: "weekly"}}); err == nil {
+	if err := st.Put(ctx, &Entry{Source: "bundled://y", Spec: Spec{Freq: "weekly"}}); err == nil {
 		t.Errorf("a weekly spec with no weekdays must be rejected")
 	}
-	if err := st.Put(ctx, &Entry{ID: "", Source: "bundled://y", Spec: Spec{Freq: FreqDaily}}); err == nil {
-		t.Errorf("an empty id must be rejected")
+	if err := st.Put(ctx, &Entry{Spec: Spec{Freq: FreqDaily}}); err == nil {
+		t.Errorf("an empty source must be rejected")
 	}
 
 	reopened, err := NewStore(dir)
@@ -445,14 +546,14 @@ func TestStore_RoundTripsAndRejects(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	got := reopened.List()
-	if len(got) != 1 || got[0].ID != "a" {
+	if len(got) != 1 || got[0].ID() != idOf("bundled://x") {
 		t.Fatalf("round trip lost the entry: %+v", got)
 	}
 	if got[0].Anchor.IsZero() {
 		t.Errorf("Put must stamp an anchor so a new schedule does not fire for every past slot")
 	}
 
-	if err := reopened.Delete(ctx, "a"); err != nil {
+	if err := reopened.Delete(ctx, idOf("bundled://x")); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if len(reopened.List()) != 0 {
@@ -471,16 +572,16 @@ func TestStore_PutPreservesHistory(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	ctx := t.Context()
-	e := Entry{ID: "a", Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 1}, Enabled: true}
+	e := Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 1}, Enabled: true}
 	if err := st.Put(ctx, &e); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	due := at(2026, time.August, 4, 1, 0)
-	if err := st.recordFire(ctx, "a", due, Outcome{Status: statusStarted}); err != nil {
+	if err := st.recordFire(ctx, e.ID(), due, "wf-1", Outcome{Status: statusStarted}); err != nil {
 		t.Fatalf("recordFire: %v", err)
 	}
 
-	edited := Entry{ID: "a", Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 5}, Enabled: true}
+	edited := Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 5}, Enabled: true}
 	if err := st.Put(ctx, &edited); err != nil {
 		t.Fatalf("Put edit: %v", err)
 	}
@@ -505,6 +606,11 @@ func TestNewStore_RefusesAMalformedFile(t *testing.T) {
 	}
 }
 
+func idOf(source string) string {
+	e := Entry{Source: source}
+	return e.ID()
+}
+
 func writeFile(dir, body string) error {
 	return os.WriteFile(filepath.Join(dir, fileName), []byte(body), 0o600)
 }
@@ -514,17 +620,17 @@ func writeFile(dir, body string) error {
 func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 	st := mustStore(t)
 	ctx := t.Context()
-	e := Entry{ID: "s1", Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true}
+	e := Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true}
 	if err := st.Put(ctx, &e); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	due := at(2026, time.August, 4, 2, 0)
-	if err := st.recordFire(ctx, "s1", due, Outcome{Status: statusStarted}); err != nil {
+	if err := st.recordFire(ctx, e.ID(), due, "wf-1", Outcome{Status: statusStarted}); err != nil {
 		t.Fatalf("recordFire: %v", err)
 	}
 
 	denial := Outcome{Status: StatusFailed, Reason: "needed approval for Write with nobody watching"}
-	if err := st.RecordOutcome(ctx, "s1", denial); err != nil {
+	if err := st.RecordOutcome(ctx, Run{ScheduleID: e.ID(), WorkflowID: "wf-1"}, denial); err != nil {
 		t.Fatalf("RecordOutcome: %v", err)
 	}
 	got := st.List()[0]
@@ -538,7 +644,7 @@ func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 
 func TestRecordOutcome_UnknownSchedule(t *testing.T) {
 	st := mustStore(t)
-	if err := st.RecordOutcome(t.Context(), "gone", Outcome{Status: StatusFailed}); !errors.Is(err, errNotFound) {
+	if err := st.RecordOutcome(t.Context(), Run{ScheduleID: "gone", WorkflowID: "wf-1"}, Outcome{Status: StatusFailed}); !errors.Is(err, errNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
 }

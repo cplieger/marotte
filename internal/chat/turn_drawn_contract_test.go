@@ -105,8 +105,14 @@ func drawnPayload(t *testing.T, turn string, kind marotte.EntryKind, subtask str
 		return marotte.EntryReconciled{Turn: turn}
 	case marotte.EntryKindSteerCleared:
 		return marotte.EntrySteerCleared{Cause: marotte.SteerClearCauseBoundary, Session: "sess-a", IDs: []string{"notify-a"}}
+	case marotte.EntryKindSteerDelivered:
+		return marotte.EntrySteerDelivered{SteerID: "wfmsg-a", ReadTs: 1}
 	case marotte.EntryKindTurnBind:
 		return marotte.EntryTurnBind{KASMessageID: "k"}
+	case marotte.EntryKindTurnWake:
+		return marotte.EntryTurnWake{Reason: marotte.WakeReasonRunFinished, Run: "wf_0123456789abcdef", RunStatus: marotte.RunStatusCompleted}
+	case marotte.EntryKindRunNamed:
+		return marotte.EntryRunNamed{Run: "wf_0123456789abcdef", Name: "publish-docs"}
 	case marotte.EntryKindText:
 		return marotte.EntryText{Text: "delegate"}
 	case marotte.EntryKindToolCall:

@@ -18,6 +18,7 @@ import {
   openRunEntry,
   openRunTurn,
   runLabelOf,
+  runStepEnds,
   sealRunEntry,
 } from "../run-store.js";
 import { isBroken } from "../turn-severity.js";
@@ -127,6 +128,12 @@ onSSE("turn_opened", (_chatID, p) => {
   const runID = forRun(p);
   if (runID !== "") {
     openRunTurn(runID, p.entry);
+    // A step's turn after an interruption is its resume, which only a run read's `step_ends` names.
+    const path = payloadOf(p.entry, "turn_open")?.node_path ?? "";
+    const end = path === "" ? undefined : runStepEnds(runID).get(path);
+    if (end?.outcome === "interrupted" && end.resumed !== true) {
+      invalidateRun(runID);
+    }
   }
 });
 

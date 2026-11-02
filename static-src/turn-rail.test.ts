@@ -107,7 +107,11 @@ vi.mock("./scroll.js", () => ({
 // The session-wide index is the rail's own fetch; the lifecycle cases below decide
 // what it does with the answer, not how it asks. `apiGetTyped` is the in-chat
 // search's fetch, linked through the rail's hit-turn reader and never asked here.
-vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
+vi.mock("./api-client.js", () => ({
+  apiGet: vi.fn(),
+  apiGetTyped: vi.fn(),
+  apiGetOrError: vi.fn(),
+}));
 
 // The pagination door `navigateToTurn` walks when its target is off the resident
 // window. Mocked because the real one is a network fetch, and what these cases

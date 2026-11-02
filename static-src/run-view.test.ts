@@ -202,6 +202,7 @@ vi.mock("./actions/runs.js", () => {
     retryRun: stub("retry"),
     extendRunRepeat: stub("extend"),
     finishRunRepeat: stub("finish_loop"),
+    endRunStep: stub("end_step"),
     // Linked by the run composer and the step's pending-message stack.
     messageRunStep: stub("message"),
     removeRunStepSteer: stub("steer_remove"),
@@ -930,7 +931,7 @@ describe("the run dock", () => {
           ],
         },
       });
-      expect(alertText()).toBe("build failed: exit status 2");
+      expect(alertText()).toBe("Failed at build: exit status 2");
       expect(alertRole()).toBe("alert");
       verb("Retry failed steps").click();
       expect(m.dispatched).toEqual(["retry:wf_1"]);
@@ -974,7 +975,7 @@ describe("the run dock", () => {
           ],
         },
       });
-      expect(alertText()).toBe("plan failed: input 'branch' is required");
+      expect(alertText()).toBe("Failed at plan: input 'branch' is required");
       expect(alertRole()).toBe("alert");
       expect(names("#run-exec-dock")).toEqual(["Retry failed steps"]);
     });

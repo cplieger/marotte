@@ -123,7 +123,7 @@ func TestRunAsks_AWedgedRunBlocksNoOtherRun(t *testing.T) {
 	}
 	wedged.mu.Unlock()
 	answered := make(chan error, 1)
-	go func() { answered <- h.runs.answerInput(context.Background(), "wf_1", askID, "teal") }()
+	go func() { answered <- h.runs.answerInput(context.Background(), "wf_1", askID, "teal", nil) }()
 	t.Cleanup(func() { close(stuck); <-answered })
 	waitFor(t, func() bool {
 		return len(slices.DeleteFunc(wedged.callLog(), func(m string) bool { return m != methodKiroWorkflowInspect })) >= 2

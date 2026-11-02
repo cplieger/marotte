@@ -58,7 +58,7 @@ export function markerLabel(s: MarkerSubject, state: MarkerState): TurnLabel {
   }
   head.push(...stateParts(state));
   const ask = promptLine(s);
-  // An agent-initiated turn has no request: the server sets `first_line` only for a user trigger.
+  // An agent-initiated turn has a `first_line` only when its wake named what woke it.
   const second = ask !== "" ? ask : s.agent_initiated === true ? "Agent-initiated turn" : "";
   const preview = second === "" ? head.join(SEP) : `${head.join(SEP)}\n${second}`;
 

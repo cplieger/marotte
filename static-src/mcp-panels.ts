@@ -1,4 +1,4 @@
-// Add/edit modal forms (registry search, npm, remote, raw JSON), submit helpers and pair editors.
+// Add/edit modal forms (registry search, npm, remote, raw JSON, registry overrides), submit helpers and pair editors.
 
 import { $, byId } from "./dom.js";
 import { el } from "@cplieger/reactive";
@@ -35,7 +35,8 @@ import {
   cleanupSearch,
 } from "./mcp-panels-search.js";
 
-type AddMode = "search" | "remote" | "npm" | "raw";
+// "registry" has no tab: it is reached only by editing an organization-catalog row.
+type AddMode = "search" | "remote" | "npm" | "raw" | "registry";
 
 interface EditingContext {
   id: string;
@@ -112,6 +113,10 @@ export function initModal(args: InitArgs): void {
   }
 
   initToolListSection(SECTION_DISABLED, args.server);
+  // Seeded all the same, so the save sends the stored list back unchanged.
+  if (args.mode === "registry") {
+    byId<HTMLDivElement>(SECTION_DISABLED.sectionID).classList.add("hidden");
+  }
   setMode(args.mode, args.server);
 }
 
@@ -129,6 +134,11 @@ const PANEL_MODES: Readonly<Record<AddMode, (existing: Server | null) => void>> 
   raw: (s) => {
     initRawPanel(s);
   },
+  registry: (s) => {
+    if (s !== null) {
+      initRegistryPanel(s);
+    }
+  },
 };
 
 // `data-mcp-mode` marks a panel and a tab button per mode, so the selector must say which.
@@ -139,6 +149,9 @@ function setMode(mode: AddMode, existing: Server | null): void {
   for (const panel of document.querySelectorAll<HTMLElement>(PANEL_SELECTOR)) {
     const panelMode = panel.dataset["mcpMode"] ?? "";
     panel.classList.toggle("hidden", panelMode !== mode);
+    if (!MODE_TABS.some((t) => t.id === panelMode)) {
+      continue;
+    }
     // The panel half of the pairing the controller's `aria-controls` writes.
     panel.setAttribute("role", "tabpanel");
     panel.id = `mcp-panel-${panelMode}`;
@@ -158,8 +171,8 @@ const FIELD_INPUT_IDS: Readonly<Record<string, readonly string[]>> = {
   command: ["mcp-npm-pkg"],
   args: ["mcp-npm-pkg"],
   transport: ["mcp-remote-transport"],
-  headers: ["mcp-remote-headers"],
-  env: ["mcp-npm-env"],
+  headers: ["mcp-remote-headers", "mcp-registry-headers"],
+  env: ["mcp-npm-env", "mcp-registry-env"],
   oauth_client_id: ["mcp-remote-oauth-client-id"],
 };
 
@@ -468,6 +481,9 @@ export function extractNpxPackage(s: Server): string {
  * express `npx -y <pkg>`.
  */
 export function editModeFor(s: Server): AddMode {
+  if (s.transport === "registry") {
+    return "registry";
+  }
   if (s.transport !== "stdio") {
     return "remote";
   }
@@ -560,6 +576,51 @@ function fillRemoteForm(
   byId<HTMLInputElement>("mcp-remote-url").value = url;
   byId<HTMLSelectElement>("mcp-remote-transport").value = remoteTransport(transportHint);
   renderKeyPairList(byId<HTMLDivElement>("mcp-remote-headers"), declaredRows(fields), "header");
+}
+
+// Registry panel: the catalog supplies the command or url, so only the env and header overrides are editable.
+
+function initRegistryPanel(existing: Server): void {
+  const env = byId<HTMLDivElement>("mcp-registry-env");
+  const headers = byId<HTMLDivElement>("mcp-registry-headers");
+  const errEl = byId<HTMLParagraphElement>("mcp-registry-error");
+  errEl.classList.add("hidden");
+  errEl.textContent = "";
+  renderKeyPairList(env, existing.env ?? [], "env");
+  renderKeyPairList(headers, existing.headers ?? [], "header");
+
+  byId<HTMLButtonElement>("mcp-registry-add-env").onclick = (): void => {
+    appendKeyPair(env, { name: "", value: "" }, "env");
+  };
+  byId<HTMLButtonElement>("mcp-registry-add-header").onclick = (): void => {
+    appendKeyPair(headers, { name: "", value: "" }, "header");
+  };
+
+  registryPanel().onsubmit = (ev: SubmitEvent): void => {
+    ev.preventDefault();
+    void submitServer(
+      {
+        ...formCarry(existing),
+        transport: "registry",
+        name: existing.name,
+        env: collectKeyPairs(env),
+        headers: collectKeyPairs(headers),
+        enabled: existing.enabled,
+      },
+      errEl,
+      byId<HTMLButtonElement>("mcp-registry-save"),
+    );
+  };
+}
+
+function registryPanel(): HTMLFormElement {
+  const form = document.querySelector<HTMLFormElement>(
+    'form.mcp-mode-panel[data-mcp-mode="registry"]',
+  );
+  if (form === null) {
+    throw new Error("mcp: registry panel form missing");
+  }
+  return form;
 }
 
 // Paste a README's JSON block. The server translates it (internal/mcp/paste.go); this parses only enough to catch

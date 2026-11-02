@@ -777,9 +777,8 @@
                   </div>
                   <select id="output-style" class="rf-select" aria-describedby="output-style-hint">
                     <option value="default" selected>Default</option>
-                    <option value="concise">Concise</option>
                   </select>
-                  <p class="section-hint" id="output-style-hint">Concise asks the agent for shorter replies, from your next message on. Default keeps its usual length.</p>
+                  <p class="section-hint" id="output-style-hint">Default uses Kiro's standard response style.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -886,7 +885,7 @@
                     <span class="section-option-label">Debug logs</span>
                     <span class="settings-save-status hidden" data-save-status="debug_logs" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Writes more detailed server logs for troubleshooting. Read them with <code>docker logs marotte</code>.</p>
+                  <p class="section-hint">Writes more detailed logs for troubleshooting. marotte's own log, read with <code>docker logs marotte</code>, switches at once. The agent engine's log under <code>/config/home/.kiro/logs</code> switches when the engine restarts.</p>
                 </div>
               </div>
             </div>
@@ -1731,7 +1730,37 @@
       </button>
     </div>
 
-    <!-- Disabled tools: shared across all modes, only visible on edit -->
+    <!-- Registry panel: edit-only, the env and header overrides of an organization-catalog server.
+         A FORM for the same password-field reason as the remote panel. -->
+    <form class="mcp-mode-panel hidden" data-mcp-mode="registry" autocomplete="off" novalidate>
+      <p class="mcp-mode-hint">Fill in what your organization's catalog asks this server for, such as an API key. A variable fills a value the catalog leaves empty; a header replaces the catalog's header of the same name.</p>
+      <div class="mcp-form-section">
+        <div class="mcp-form-section-head">
+          <span class="tool-form-label-text">Environment variables</span>
+          <button type="button" id="mcp-registry-add-env" class="action-pill" data-tooltip="Add variable" aria-label="Add variable">
+            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <div id="mcp-registry-env" class="mcp-pair-list"></div>
+      </div>
+      <div class="mcp-form-section">
+        <div class="mcp-form-section-head">
+          <span class="tool-form-label-text">Headers</span>
+          <button type="button" id="mcp-registry-add-header" class="action-pill" data-tooltip="Add header" aria-label="Add header">
+            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <div id="mcp-registry-headers" class="mcp-pair-list"></div>
+        <p class="tool-form-hint">Values are stored locally with 0600 permissions and are never sent back to the browser after they are saved.</p>
+      </div>
+      <p id="mcp-registry-error" class="section-hint mcp-form-error hidden"></p>
+      <button type="submit" id="mcp-registry-save" class="btn-save">
+        <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        Save
+      </button>
+    </form>
+
+    <!-- Disabled tools: shared across every mode but registry, only visible on edit -->
     <div id="mcp-disabled-tools" class="mcp-form-section hidden">
       <div class="mcp-form-section-head">
         <span class="tool-form-label-text">Disabled tools</span>

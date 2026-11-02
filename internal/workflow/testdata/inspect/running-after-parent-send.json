@@ -1,14 +1,14 @@
 {
- "workflowId": "wf_66658d5c69b1f284",
+ "workflowId": "wf_a9239a70a27fce6e",
  "state": {
-  "workflowId": "wf_66658d5c69b1f284",
+  "workflowId": "wf_a9239a70a27fce6e",
   "workflowName": "askloop",
   "status": "running",
   "inputs": {},
   "artifacts": {},
   "capturedOutputs": {},
   "root": {
-   "nodeId": "wf_66658d5c69b1f284",
+   "nodeId": "wf_a9239a70a27fce6e",
    "type": "sequence",
    "status": "running",
    "children": [
@@ -19,21 +19,21 @@
      "agentName": "asker",
      "modelId": "claude-sonnet-5.5",
      "effortLevel": "high",
-     "startedAt": "2026-10-12T00:26:23.542Z",
-     "sessionId": "sess_c8ebb89e-a1ac-41da-aeaa-1aaa24762563",
+     "startedAt": "2026-11-01T09:58:42.815Z",
+     "sessionId": "sess_4cd99833-1963-491f-a2b0-a3b26b5b6e85",
      "awaitingUserInput": true
     }
    ],
-   "startedAt": "2026-10-12T00:26:23.536Z"
+   "startedAt": "2026-11-01T09:58:42.813Z"
   },
-  "createdAt": "2026-10-12T00:23:14.312Z",
+  "createdAt": "2026-11-01T09:58:26.445Z",
   "planRevision": 0,
-  "parentSessionId": "sess_b24e223e-fff1-4136-b048-ebf1cfcfcad7",
-  "rootConversationId": "sess_b24e223e-fff1-4136-b048-ebf1cfcfcad7",
+  "parentSessionId": "sess_1da19162-bdcb-4912-8946-50d3b02a067d",
+  "rootConversationId": "sess_1da19162-bdcb-4912-8946-50d3b02a067d",
   "workspacePath": "/work",
   "memoryConfig": {
-   "mode": "read_write",
-   "reflection": true
+   "mode": "disabled",
+   "reflection": false
   },
   "memoryConfigSource": "legacy",
   "backgroundExecution": false,

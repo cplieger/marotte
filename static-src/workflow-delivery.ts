@@ -4,6 +4,7 @@ import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_TAB_RUN } from "./icons.js";
+import { markWakingRows } from "./turn-wake.js";
 import { payloadOf } from "./turns.js";
 import type { EntrySteer, EntrySteerDelivered, TurnState } from "./types.js";
 
@@ -124,11 +125,12 @@ function settlementsOf(turns: Iterable<TurnState>): Map<string, EntrySteerDelive
 }
 
 /** Fold every settlement and clear the turns hold onto the row it names, both resident, so a
- *  remount reads the settled row. `turns` come in file order (`turnsInOrder`), since a clear settles
- *  only the rows before it. Idempotent, so any arrival may run it: an appended row, take-up or
- *  clear, an installed page. */
+ *  remount reads the settled row, and mark the rows a held wake draws (`markWakingRows`). `turns`
+ *  come in file order (`turnsInOrder`), since a clear settles only the rows before it. Idempotent,
+ *  so any arrival may run it: an appended row, take-up, clear or wake, an installed page. */
 export function settleWorkflowMessages(turns: Iterable<TurnState>): void {
   const held = [...turns];
+  markWakingRows(held);
   const takeUps = settlementsOf(held);
   if (takeUps.size === 0) {
     return;

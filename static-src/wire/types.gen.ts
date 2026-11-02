@@ -12,7 +12,7 @@ export type DecisionKind = "permission" | "elicitation" | "user_input";
 
 export type EngineState = "starting" | "ready" | "restarting" | "down";
 
-export type EntryKind = "turn_open" | "turn_bind" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
+export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed";
 
@@ -64,7 +64,11 @@ export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "
 
 export type RunStatus = "running" | "paused" | "completed" | "failed" | "aborted" | "cancelled";
 
-export type RunStepMessageRefusal = "not_started" | "finished" | "run_paused" | "busy" | "full";
+export type RunStepEndRefusal = "step_not_paused" | "step_unnamed";
+
+export type RunStepEndStatus = "completed" | "failed";
+
+export type RunStepMessageRefusal = "not_started" | "finished" | "run_paused" | "busy" | "waits_on_run" | "full";
 
 export type RunStepMessageVerb = "steer" | "answer" | "prompt";
 
@@ -72,7 +76,7 @@ export type RunStepTranscriptState = "ready" | "gone" | "unavailable";
 
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
-export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_disclosed" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "entry";
+export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_disclosed" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "wake" | "entry";
 
 export type SettledBy = "user" | "unattended" | "moot" | "ended";
 
@@ -107,6 +111,10 @@ export type TurnOutcome = "running" | "completed" | "cancelled" | "interrupted" 
 export type TurnRevertCause = "rewind";
 
 export type TurnSeverity = "running" | "clean" | "stopped" | "broken";
+
+export type WakeNote = "network" | "network_lost" | "repeat_cap";
+
+export type WakeReason = "step_message" | "run_finished" | "rewake" | "unknown";
 
 export type WhoamiState = "signed_in" | "signed_out" | "unavailable";
 
@@ -238,6 +246,14 @@ export interface AptPackage {
 export interface Attachment {
   path: string;
   name: string;
+}
+
+/**
+ * Caller marks a message a program sent through marotte's API rather than one the user typed in its page; a message
+ * with no Caller is the user's own. Label is the name the program gave itself, "" when it gave none.
+ */
+export interface Caller {
+  label?: string;
 }
 
 /**
@@ -452,11 +468,12 @@ export interface ConfigTemplateResponse {
   catalog: CatalogState;
   catalog_reason?: CatalogReason;
   /**
- * Both lists are non-null on every path, so a generated decoder requiring an array
+ * Every list is non-null on every path, so a generated decoder requiring an array
  * cannot fail on a failure body.
  */
   modes: SessionMode[];
   models: SessionModel[];
+  output_styles: OutputStyle[];
 }
 
 /**
@@ -703,7 +720,10 @@ export interface EffectiveSettings {
   cloudformation_safety_check: string;
   auto_routing: string;
   auto_delegation: string;
-  /** OutputStyle is "default" or "concise". */
+  /**
+ * OutputStyle is a KAS output style id (GET /api/config-template output_styles);
+ * "default" is never sent.
+ */
   output_style: string;
   /**
  * AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
@@ -863,10 +883,15 @@ export interface EngineBusy {
   runs: EngineBusyRun[];
 }
 
-/** EngineBusyRun is a workflow run a restart would pause and resume. */
+/**
+ * EngineBusyRun is a workflow run a restart would pause and resume. Name is its display name
+ * (RunDisplayName), "" when nothing names it yet; ChatName is its launching chat's, "" for a
+ * parentless run.
+ */
 export interface EngineBusyRun {
   workflow_id: string;
   name: string;
+  chat_name?: string;
 }
 
 /** EngineBusyTurn is a chat whose reply a restart would stop. */
@@ -1046,6 +1071,8 @@ export interface EntryPlan {
  * the PromptCommand.DisplayText the prompt was sent with, which KAS's replay gives as the text.
  */
 export interface EntryPrompt {
+  /** Caller is set on a prompt an API caller sent. */
+  caller?: Caller;
   id: string;
   text: string;
   label?: string;
@@ -1061,6 +1088,16 @@ export interface EntryPrompt {
 export interface EntryReconciled {
   turn?: string;
   session?: string;
+}
+
+/**
+ * EntryRunNamed is the run_named payload: a run's display name, learned after a wake naming the run
+ * was recorded without one. It renders nothing; every wake of the chat that names Run without a name
+ * reads Name.
+ */
+export interface EntryRunNamed {
+  run: string;
+  name: string;
 }
 
 /**
@@ -1099,6 +1136,8 @@ export interface EntrySealedPayload {
  * rows (dock keys) this one re-sends, taken from the steer record at the read.
  */
 export interface EntrySteer {
+  /** Caller is set on a user-origin steer an API caller sent. */
+  caller?: Caller;
   text: string;
   origin: SteerOrigin;
   state?: SteerState;
@@ -1311,6 +1350,26 @@ export interface EntryTurnRevert {
   kas_message_id: string;
   cause: TurnRevertCause;
   from_n: number;
+}
+
+/**
+ * EntryTurnWake is the turn_wake payload: what started an agent-initiated turn, filed once at
+ * its first agentInitiated frame. It renders nothing at its position; the turn header folds it.
+ * Steers is the waking message for a step message and the re-delivered rows for a rewake; Run,
+ * RunName (as WakeSteer's), RunStatus, Initiator and StopReason describe a finished run; Note,
+ * Loop and MaxIterations qualify a step message.
+ */
+export interface EntryTurnWake {
+  reason: WakeReason;
+  note?: WakeNote;
+  run?: string;
+  run_name?: string;
+  run_status?: RunStatus;
+  initiator?: string;
+  stop_reason?: string;
+  loop?: string;
+  steers?: WakeSteer[];
+  max_iterations?: number;
 }
 
 /** ErrorPayload is the payload for type="error"; Code lets clients react per-class. */
@@ -1600,6 +1659,8 @@ export interface GovernanceStatePayload {
  * the one segment SegmentKind names on EntryID, never a whole turn.
  */
 export interface Hit {
+  /** Caller is set on a hit in a prompt or steer an API caller sent, so a result names who sent the words. */
+  caller?: Caller;
   /** TurnID is the matched entry's turn. */
   turn_id: string;
   /** EntryID is the matched entry. */
@@ -1966,12 +2027,18 @@ export interface MCPFailedPayload {
 }
 
 /**
- * MCPOAuthPayload is the payload for type="mcp_oauth_needed", emitted
- * when kiro-cli reports _kiro.dev/mcp/oauth_request. URL is the
- * provider's authorisation endpoint; the user completes the flow in a
- * new tab.
+ * MCPOAuthPayload is the payload for type="mcp_oauth_needed", emitted when kiro-cli reports a server failed for
+ * want of sign-in. It carries no URL: the user starts a sign-in from the server's row.
  */
 export interface MCPOAuthPayload {
+  server: string;
+}
+
+/**
+ * MCPSignInOpenPayload is the payload for type="mcp_sign_in_open": kiro-cli opened URL, the consent page of the
+ * sign-in the user started on Server's row.
+ */
+export interface MCPSignInOpenPayload {
   server: string;
   url: string;
 }
@@ -2072,10 +2139,22 @@ export interface OpenEntry {
 /**
  * OpenExternalURLPayload is the payload for type="open_external_url". Browsers popup-block a
  * window.open() not driven by a user gesture, so the client surfaces a banner link rather
- * than auto-opening. Only http/https URLs are broadcast.
+ * than auto-opening. Only http/https URLs are broadcast. ExpiresAt is when KAS stops waiting for
+ * the callback; a replayed event carries the original time, so the client shows only what is left.
  */
 export interface OpenExternalURLPayload {
+  expires_at: string;
   url: string;
+}
+
+/**
+ * OutputStyle is one choice of the template's outputStyle select; ID is the value
+ * EffectiveSettings.OutputStyle stores.
+ */
+export interface OutputStyle {
+  id: string;
+  name: string;
+  description: string;
 }
 
 /**
@@ -2472,6 +2551,8 @@ export interface ProbeResult {
  * row's PromptCommand.DisplayText.
  */
 export interface QueuedPrompt {
+  /** Caller is set on a row an API caller queued. */
+  caller?: Caller;
   id: string;
   text: string;
   label?: string;
@@ -2975,6 +3056,16 @@ export interface RunStepEnd {
   outcome: TurnOutcome;
   failure_reason?: string;
   failure_kind?: FailureKind;
+  /**
+ * Resumed is set on an `interrupted` end the step moved past: the run's log holds a later turn on the step,
+ * or KAS's record shows it completed.
+ */
+  resumed?: boolean;
+}
+
+/** RunStepEndRequest is POST /api/runs/{id}/steps/{path}/end's body: end the paused step at that node path. */
+export interface RunStepEndRequest {
+  status: RunStepEndStatus;
 }
 
 /**
@@ -3531,6 +3622,8 @@ export interface StatusSnapshotPayload {
  * reconnect.
  */
 export interface SteerQueuedPayload {
+  /** Caller is set on a row an API caller sent (on a batch, only when no row is the user's: SharedCaller). */
+  caller?: Caller;
   steer_id: string;
   text: string;
   /**
@@ -4190,6 +4283,20 @@ export interface UserInputSubOption {
 }
 
 /**
+ * WakeSteer is a workflow message a wake names, copied from its row (ID) when the wake was
+ * recorded, so the header and the rail read the wake alone. RunName is the run's display name
+ * (RunDisplayName) as known then, "" when not yet; a later run_named entry names it.
+ */
+export interface WakeSteer {
+  id: string;
+  run?: string;
+  run_name?: string;
+  step?: string;
+  severity?: string;
+  text: string;
+}
+
+/**
  * WhoamiResponse is /api/whoami's typed wire shape. State is the discriminator and each other field belongs to one
  * arm. The Login* fields report the latest sign-in attempt on every arm: a poll waits for its own attempt to leave
  * pending, since a switch keeps the old account signed in until the new one commits.
@@ -4219,11 +4326,11 @@ export interface WhoamiResponse {
  */
 export interface WorkflowRun {
   workflow_id: string;
-  /** Name is what to DISPLAY (`runLabel ?? workflowName`), not the recipe. */
+  /** Name is what to DISPLAY (RunDisplayName), not the recipe; "" when nothing names the run. */
   name: string;
   /**
  * WorkflowName is the RECIPE, the only field a per-recipe decision may read:
- * labels rewrite Name, so a rule keyed on it fails OPEN.
+ * labels rewrite Name, so a rule keyed on it fails OPEN. "" for a prompt-built run.
  */
   workflow_name?: string;
   /** Status is run-level: paused / completed / failed. */

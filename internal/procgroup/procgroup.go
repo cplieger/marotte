@@ -125,6 +125,13 @@ func (g Group) Stale() bool {
 	return ok && st.start != g.leader
 }
 
+// LedBy reports whether g's leader is still the live process GroupsBelow stamped and a child of parent, so its pid
+// names that child and no later process.
+func (g Group) LedBy(parent int) bool {
+	st, ok := readStat(g.ID)
+	return ok && st.start == g.leader && st.state != 'Z' && st.ppid == parent
+}
+
 func stampGroup(pgid int) Group {
 	st, _ := readStat(pgid)
 	return Group{ID: pgid, leader: st.start}

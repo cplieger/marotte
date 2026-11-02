@@ -55,6 +55,13 @@ func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOr
 	rs.recordParentSession(ctx, workflowID, o.parent.session)
 }
 
+// settleMissedEnd ends a scheduled run whose terminal frame marotte missed, as observeComplete would have, before a
+// person retries it: a scheduled lease is that one run's, and the retry is the person's (manual, attended, no row).
+func (rs *Runs) settleMissedEnd(ctx context.Context, l *runlease.Lease, status marotte.RunStatus) {
+	rs.recordScheduleEnding(ctx, scheduleRun(l), status, "")
+	rs.forgetBounds(ctx, l.WorkflowID)
+}
+
 // scheduledLaunch carries the schedule row for outcomes and the slot the run may not outlive.
 func scheduledLaunch(scheduleID string, slotAt time.Time) launchOrigin {
 	return launchOrigin{origin: runlease.OriginScheduled, scheduleID: scheduleID, slotAt: slotAt}
@@ -113,7 +120,7 @@ func (rs *Runs) manualSlot(source string) time.Time {
 		if err != nil {
 			// No slot, not a failure: the window and backstop still bound it.
 			slog.Warn("schedule cannot name its next slot, so a manual run of its recipe "+
-				"is bounded by its idle window alone", "schedule_id", e.ID, "error", err)
+				"is bounded by its idle window alone", "schedule_id", e.ID(), "error", err)
 			continue
 		}
 		if earliest.IsZero() || next.Before(earliest) {
@@ -157,6 +164,9 @@ func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o lau
 		slog.Error("run lease not persisted; this run's envelope will not survive a restart",
 			"workflow_id", workflowID, "recipe", recipe, "origin", o.origin, "error", err)
 	}
+	rs.beginLife(workflowID)
+	run := scheduleRun(&l)
+	rs.writeSchedule(run, func() error { return rs.schedules.RecordStart(ctx, run) })
 	// Named from the grant on, so every pending_snapshot names every run marotte answers for.
 	rs.cellFor(workflowID)
 }
@@ -171,6 +181,7 @@ func (rs *Runs) releaseLease(ctx context.Context, workflowID string) {
 	if err := rs.leaseStore().Release(ctx, workflowID); err != nil {
 		slog.Warn("run lease not released on disk", "workflow_id", workflowID, "error", err)
 	}
+	rs.endLife(workflowID)
 	rs.endAsks(ctx, workflowID)
 	rs.quietEdge()
 	if held && rs.coord != nil {
@@ -218,12 +229,12 @@ var rewindCancelWait = 20 * time.Second
 
 const rewindCancelPoll = 50 * time.Millisecond
 
-// LiveRuns filters workflowIDs to those still leased, labelled by recipe, satisfying command.runCutter.
+// LiveRuns filters workflowIDs to those still leased, labelled by display name, satisfying command.runCutter.
 func (rs *Runs) LiveRuns(workflowIDs []string) []command.LiveRunRef {
 	var live []command.LiveRunRef
 	for _, id := range workflowIDs {
 		if l, ok := rs.lease(id); ok {
-			live = append(live, command.LiveRunRef{ID: id, Label: l.Recipe})
+			live = append(live, command.LiveRunRef{ID: id, Label: rs.leasedRunName(&l)})
 		}
 	}
 	return live

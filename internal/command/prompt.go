@@ -275,7 +275,9 @@ func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 // client's id, the text and the attachments, which for an image or document are
 // the only record of what was attached, since the path never reaches the text.
 func promptEntry(p *marotte.PromptCommand, resends []string) *marotte.EntryPrompt {
-	return &marotte.EntryPrompt{ID: p.MessageID, Text: p.Text, Label: p.DisplayText, Attachments: p.Attachments, Resends: resends}
+	return &marotte.EntryPrompt{
+		ID: p.MessageID, Text: p.Text, Label: p.DisplayText, Attachments: p.Attachments, Resends: resends, Caller: p.Caller,
+	}
 }
 
 // The header fallback names, models and supervises a chat with no record; an existing record is
@@ -294,7 +296,8 @@ func openPromptTurn(ctx context.Context, roles *promptRoles, chatID marotte.Chat
 
 // settleComposerOnPrompt is the header write a sent prompt owes: the draft is cleared (so a lost
 // set_draft POST cannot restore the sent text on reload) and a still-default name takes the
-// prompt's first 80 runes.
+// prompt's first 80 runes. An API caller's words were never the composer's, so its prompt leaves
+// the user's draft and staged files on every device.
 func settleComposerOnPrompt(ctx context.Context, chats chatStore, bus broadcaster, chatID marotte.ChatID, p *marotte.PromptCommand) {
 	var (
 		hadComposer bool
@@ -305,7 +308,7 @@ func settleComposerOnPrompt(ctx context.Context, chats chatStore, bus broadcaste
 			return false
 		}
 		changed := false
-		hadComposer = c.Draft != "" || len(c.Attachments) > 0
+		hadComposer = p.Caller == nil && (c.Draft != "" || len(c.Attachments) > 0)
 		if hadComposer {
 			c.Draft = ""
 			c.Attachments = nil
@@ -365,6 +368,7 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	if vErr != nil {
 		return nil, StatusError(code, vErr)
 	}
+	p.Caller = cmd.From
 
 	// Admission FIRST: a refused admission writes nothing, so the log never holds a turn no process
 	// owns. It also dedupes a re-send of a running prompt, which meets Busy and becomes a steer.
@@ -576,7 +580,7 @@ func deliverUnread(ctx context.Context, roles *promptRoles, chatID marotte.ChatI
 			return
 		}
 		seen[key] = true
-		if refuse, _ := steerOne(ctx, roles, chatID, key, text, turnID); refuse != "" {
+		if refuse, _ := steerOne(ctx, roles, chatID, key, text, turnID, nil); refuse != "" {
 			slog.Warn("steer: a parked steer could not be delivered", "chat_id", chatID, "steer_id", key, "reason", refuse)
 			return
 		}
@@ -671,8 +675,9 @@ func buildPromptParams(ctx context.Context, ws Workspace, sb SessionCaller, p *m
 	return params, inlineImageBlockCount(blocks) > 0
 }
 
-// promptFacts withholds the output style when it is the default, unset or unknown, and from a
-// prompt an agent reads (p.ForAgent).
+// promptFacts withholds the output style when it is the default, unset or not shaped like an id,
+// and from a prompt an agent reads (p.ForAgent). An id KAS does not serve rides; KAS reads it as
+// default.
 func promptFacts(ctx context.Context, configDir string, p *marotte.PromptCommand) *kascap.Prompt {
 	var style string
 	read := !p.ForAgent && configDir != "" && settings.FieldInto(ctx, configDir, settings.KeyOutputStyle, &style)

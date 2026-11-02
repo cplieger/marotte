@@ -1359,6 +1359,7 @@ a.subagent-header {
 
 .approval-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--sp-2);
   margin-block-start: var(--sp-3);
 }

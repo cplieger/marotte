@@ -351,6 +351,68 @@ func TestRunLog_StepEndsGradesEachPathsNewestCloseUnderKAS(t *testing.T) {
 	})
 }
 
+// TestRunLog_StepEndsReadsAnEngineEndAsInterruptedAndItsResume pins the grade of a step turn an engine end closed:
+// interrupted, never failed, and resumed once the run's log holds a later turn on the step or KAS finished it.
+func TestRunLog_StepEndsReadsAnEngineEndAsInterruptedAndItsResume(t *testing.T) {
+	step := workflow.PathKey([]string{"wf1", "build"})
+	lost := marotte.DefaultFailureReason(marotte.TurnOutcomeInterrupted)
+	interrupt := func(t *testing.T, r *runLog) {
+		t.Helper()
+		openStepTurn(t, r, step)
+		c := marotte.ConcludeStopReason(marotte.StopReasonInterrupted)
+		c.Reason = lost
+		if _, err := r.closeHost(t.Context(), "c-1", c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ends := func(t *testing.T, r *runLog, kas map[string]workflow.StepRecord) map[string]marotte.RunStepEnd {
+		t.Helper()
+		got, err := r.stepEnds(t.Context(), "wf1", kas)
+		if err != nil {
+			t.Fatalf("StepEnds: %v", err)
+		}
+		return got
+	}
+	cases := []struct {
+		desc    string
+		resume  bool
+		kas     map[string]workflow.StepRecord
+		resumed bool
+	}{
+		{"nothing resumed the step", false, map[string]workflow.StepRecord{step: {Status: "paused"}}, false},
+		{"KAS's record unread", false, nil, false},
+		{"a later turn opened on the step", true, map[string]workflow.StepRecord{step: {Status: "running"}}, true},
+		{"KAS completed the step after it", false, map[string]workflow.StepRecord{step: {Status: "completed"}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			r := newRunLog(t.TempDir())
+			interrupt(t, r)
+			if tc.resume {
+				openStepTurn(t, r, step)
+			}
+			want := map[string]marotte.RunStepEnd{
+				step: {Outcome: marotte.TurnOutcomeInterrupted, FailureReason: lost, Resumed: tc.resumed},
+			}
+			if got := ends(t, r, tc.kas); !maps.Equal(got, want) {
+				t.Errorf("StepEnds = %+v, want %+v", got, want)
+			}
+		})
+	}
+	t.Run("a fresh registry reads the resume off the log on disk", func(t *testing.T) {
+		dir := t.TempDir()
+		w := newRunLog(dir)
+		interrupt(t, w)
+		openStepTurn(t, w, step)
+		if _, _, err := w.closeNode(t.Context(), "wf1", step, "completed", ""); err != nil {
+			t.Fatal(err)
+		}
+		if got := ends(t, newRunLog(dir), map[string]workflow.StepRecord{step: {Status: "completed"}}); len(got) != 0 {
+			t.Errorf("StepEnds after the resumed turn completed = %+v, want none", got)
+		}
+	})
+}
+
 // openStepTurn opens the step's turn and answers its turn_open, which must be a new one.
 func openStepTurn(t *testing.T, r *runLog, path string) *marotte.Entry {
 	t.Helper()

@@ -242,3 +242,28 @@ func TestSteeringInjected_ARunNoticeCarriesItsRunsProvenance(t *testing.T) {
 		t.Errorf("a notice with no recorded run carries (%q, %d), want none rather than a guess", rows[3].OriginRun, rows[3].ProducedTs)
 	}
 }
+
+// The read entry of an API caller's steer carries the caller the steer record held for its row.
+func TestSteeringInjected_PersistsAnAPICallersAttribution(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	deps.userSteers = map[string]bool{"steer-1": true}
+	deps.waiting = map[marotte.ChatID][]marotte.SteerQueuedPayload{"c1": {{
+		SteerID: "steer-1", Text: "Agent Mail: 1 new message", Origin: marotte.SteerOriginUser,
+		Caller: &marotte.Caller{Label: "Agent Mail"},
+	}}}
+	tr := New(rolesOf(deps))
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_injected", map[string]any{
+			"messageId": "steer-1",
+			"content":   "Agent Mail: 1 new message",
+		}), FrameAttribution{})
+
+	rows := steerRows(t, deps, "c1")
+	if len(rows) != 1 {
+		t.Fatalf("persisted %d steer entries, want 1", len(rows))
+	}
+	if got := rows[0].Caller; got == nil || got.Label != "Agent Mail" {
+		t.Errorf("read entry caller = %+v, want Agent Mail", got)
+	}
+}

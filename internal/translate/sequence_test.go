@@ -375,7 +375,7 @@ func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, src
 	}
 }
 
-func (r *captureMCPRecorder) RecordOAuth(_ context.Context, name string, src marotte.MCPSource, _ string) {
+func (r *captureMCPRecorder) RecordOAuth(_ context.Context, name string, src marotte.MCPSource) {
 	r.source(name, src)
 	if r.oauth != nil {
 		*r.oauth = append(*r.oauth, name)

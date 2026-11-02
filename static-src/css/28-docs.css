@@ -167,9 +167,10 @@
 
 /* --- Workflows tab -------------------------------------------------------- */
 
-/* Cancel is a stop: it reads as destructive, same as every other danger
-   control. */
-.recipe-run-btn.danger {
+/* Cancel is a stop and an orphaned schedule's Delete removes it: both read as
+   destructive, same as every other danger control. */
+.recipe-run-btn.danger,
+.recipe-sched-delete-btn {
   color: var(--c-red);
   border-color: color-mix(in oklch, var(--c-red) 40%, transparent);
 
@@ -180,7 +181,8 @@
 }
 
 /* The inline input form: the `.entry-detail` region under its row, deliberately
-   not a modal. One labelled field per declared input, then Launch. The region is
+   not a modal. One labelled field per declared input, the run's picks, its
+   plan, then Launch. The region is
    the box, so the form carries only its inset, on the row's own inline inset so
    the fields align with the title above them. */
 .recipe-input-form {
@@ -189,6 +191,27 @@
   gap: var(--sp-2);
   align-items: end;
   padding: var(--sp-3) var(--sp-4);
+}
+
+/* The read-only plan, on a line of its own in front of Launch. Capped at about
+   eight tree rows and scrolled past that, so a long recipe cannot push Launch
+   off-screen. */
+.recipe-plan {
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-inline-size: 0;
+}
+
+.recipe-plan-head {
+  font-size: var(--fs-form-label);
+  color: var(--c-text-secondary);
+}
+
+.recipe-plan-steps {
+  max-block-size: calc(8 * var(--btn-h));
+  overflow-y: auto;
 }
 
 .recipe-input-label {

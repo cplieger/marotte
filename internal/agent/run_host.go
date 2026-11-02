@@ -51,9 +51,6 @@ func workflowIDOf(chatID marotte.ChatID) string {
 // launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`.
 const launchTimeout = 120 * time.Second
 
-// errRecipeBusy is the single-run rule: one live run per recipe, globally.
-var errRecipeBusy = errors.New("this recipe already has a live run")
-
 // launch starts one parentless attended run of the recipe and returns its workflow id and name.
 func (rs *Runs) launch(
 	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults,
@@ -218,7 +215,13 @@ func (rs *Runs) cancelAs(ctx context.Context, workflowID string, stop runStop) e
 	if !rs.claimTermination(workflowID) {
 		return nil
 	}
-	return rs.finishTermination(ctx, workflowID, "", stop)
+	return rs.finishTermination(ctx, workflowID, "", stop, func(ctx context.Context) error {
+		// Parked or released: marotte no longer bounds this run.
+		if !rs.bounded(workflowID) {
+			return nil
+		}
+		return rs.cancelAs(ctx, workflowID, stop)
+	})
 }
 
 // cancelRPC issues the cancel verb only. The host session stays resident: the run certifies the cancel at its node
@@ -417,8 +420,14 @@ func (rs *Runs) retry(
 	recipe := aff.origin.recipe
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
+	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
+		rs.settleMissedEnd(cctx, &l, aff.status)
+	}
 	minted := false
-	if _, held := rs.lease(workflowID); !held {
+	if _, held := rs.lease(workflowID); held {
+		// A manual or agent lease is the one the gate's origin would grant; the run under it is a new one all the same.
+		rs.restartLife(cctx, workflowID)
+	} else {
 		rs.grantRetryLease(cctx, workflowID, &aff.origin)
 		minted = true
 	}
@@ -528,14 +537,37 @@ func stepStatusRefusal(resp *marotte.RPCResponse) string {
 	return reply.Message
 }
 
-// runStepCompleted is the step status finishRepeat writes on a repeat paused at its cap.
-const runStepCompleted = "completed"
+// The node statuses marotte writes: a finished repeat, and a person's end of a paused step.
+const (
+	runStepCompleted = string(marotte.RunStepEndCompleted)
+	runStepFailed    = string(marotte.RunStepEndFailed)
+)
 
-// answerInput answers one parked step with the user's words, as a `session/prompt` to its own
-// session. The ask is checked against a fresh read of the run's host under the run's serializer,
-// after marotte's own pending send was registered; the serializer is released before the prompt,
-// whose refused arm can last a whole ordinary turn.
-func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string) (err error) {
+// updateNodeStatus writes status on the node nodeID names, a repeat paused at its cap or a paused step, and arms the
+// run's deadline; KAS's decline is errStepStatusRefused with its reason.
+func (rs *Runs) updateNodeStatus(ctx context.Context, host *drivenHost, workflowID, nodeID, status string) error {
+	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowUpdate, map[string]any{
+		keyWorkflowID: workflowID,
+		"action":      updateStatusAction,
+		"status":      status,
+		"nodeId":      nodeID,
+	})
+	if err != nil {
+		return err
+	}
+	if refusal := stepStatusRefusal(resp); refusal != "" {
+		return fmt.Errorf("%w: %s", errStepStatusRefused, refusal)
+	}
+	rs.armDeadline(ctx, workflowID)
+	return nil
+}
+
+// answerInput answers one parked step with the words, as a `session/prompt` to its own session;
+// from is the API caller that sent them, nil for the user's own. The ask is checked against a
+// fresh read of the run's host under the run's serializer, after marotte's own pending send was
+// registered; the serializer is released before the prompt, whose refused arm can last a whole
+// ordinary turn.
+func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string, from *marotte.Caller) (err error) {
 	if workflowID == "" || askID == "" {
 		return errors.New("missing workflow id or ask id")
 	}
@@ -593,7 +625,7 @@ func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string)
 	defer unlock()
 	c.sendingPending(p, ask.StepSessionID)
 	release()
-	got, err := rs.sendStepWords(ctx, host, at, text, "answer-"+askID)
+	got, err := rs.sendStepWords(ctx, host, at, text, "answer-"+askID, from)
 	if got == kasRefused {
 		rs.clearPending(ctx, c, p)
 		return err
@@ -773,7 +805,7 @@ func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Reci
 	return marotte.Recipe{}, fmt.Errorf("unknown recipe source %q", source)
 }
 
-// recipeIdle enforces the single-run rule against KAS's run list, the only source that sees runs
+// recipeIdle enforces the single-run rule (one live run per recipe, globally) against KAS's run list, the only source that sees runs
 // marotte did not launch. The leases explain a blocking row as marotte's own orphan.
 func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 	runs, err := rs.list(ctx, nil)
@@ -797,7 +829,11 @@ func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 				"workflow_id", runs[i].WorkflowID, "recipe", name)
 			continue
 		}
-		return errRecipeBusy
+		busy := &schedule.BusyError{WorkflowID: runs[i].WorkflowID}
+		if l, held := rs.lease(busy.WorkflowID); held {
+			busy.ScheduleID, busy.SlotAt = l.ScheduleID, l.SlotAt
+		}
+		return busy
 	}
 	return nil
 }
@@ -1039,6 +1075,9 @@ func (rs *Runs) healPaused(
 			return
 		}
 		if chatID == "" {
+			chatID = rs.parentlessRunChat(f.WorkflowID)
+		}
+		if chatID == "" {
 			return
 		}
 		if !resumablePause(f.PauseReason, f.PauseDetail) {
@@ -1072,6 +1111,15 @@ func (rs *Runs) healPaused(
 			rs.resumeIfInterrupted(hctx, chatID, f.WorkflowID)
 		})
 	}
+}
+
+// parentlessRunChat is the chat id a parentless run's heal is addressed by, as resumeParentless addresses it; "" for
+// an agent's run, whose frames name its chat, and for a run marotte holds no lease for.
+func (rs *Runs) parentlessRunChat(workflowID string) marotte.ChatID {
+	if l, held := rs.lease(workflowID); held && l.Origin != runlease.OriginAgent {
+		return runChatID(workflowID)
+	}
+	return ""
 }
 
 // pauseFrame is the fields the heal reads off `_kiro/workflow/paused`, decoded separately
@@ -1157,7 +1205,7 @@ type resumeOutcome int
 const (
 	resumeWritten resumeOutcome = iota + 1
 	// resumeSkipped: not a pause marotte resumes unasked, or the run's heal budget is spent and the run parked for
-	// the user.
+	// the user, or ended when scheduled.
 	resumeSkipped
 	resumeHeld
 	// resumeFailed: the run could not be read, its session made resident, its resume written or, past its heal budget,

@@ -453,6 +453,8 @@ type holdSim struct {
 	edgeStep int
 	// fired records whether each armed fault, crossing and race order acted.
 	readFired, writeFired, crossFired, orderFired bool
+	// endedUnattended: a scheduled run's heal found its budget spent and ended the run (endUnattended).
+	endedUnattended bool
 }
 
 // holdModel is the reference model of the hold matrix: the steps a cell drives, each with the state the cell must
@@ -473,6 +475,9 @@ func holdModel(c holdCombo) (steps []holdStep, impossible string) {
 			"and a heal entry's own read comes only at a chat's rehydrate (resumeChainRuns' list), which an engine's " +
 			"end brings only for a run still leased (resumeInterrupted), or for a parentless run only while KAS lists " +
 			"it running for an ended engine (resumeParentless)"
+	case c.write != writeNone && !s.writeFired && s.endedUnattended:
+		return nil, "no release write comes while its fault is armed: a scheduled run whose heal finds its budget " +
+			"spent is cancelled (endUnattended), a write no release fault covers, where another run is parked"
 	case c.write != writeNone && !s.writeFired:
 		return nil, "no release write comes while its fault is armed: a heal writes only once its read finds a pause " +
 			"it resumes (runTransitions' healResume row)"
@@ -1090,6 +1095,13 @@ func (s *holdSim) release(r releasers, finderHeals, healerHeals bool) []string {
 		return nil
 	case writeLostEvery:
 		s.writeFired, s.cur.settleWrite, s.write = true, true, writeNone
+		if sweeps && s.c.kind == kindScheduled && loops == 0 {
+			// The sweep's tries spend the budget, and the next one ends the run, a cancel no fault loses.
+			s.claims, s.kas, s.entry, s.endedUnattended = maxAutoHeals, kasCancelled, false, true
+			s.cur.text += "; every resume write is lost, the sweep's tries spend the heal budget, and its next try " +
+				"ends the run, which has nobody to resume it"
+			return nil
+		}
 		if sweeps {
 			// A sweep's tries outnumber the heals left, so they spend the budget, and their parks are lost too.
 			s.claims = maxAutoHeals
@@ -1160,10 +1172,15 @@ func (s *holdSim) inFlightWrite(rehydrates bool) {
 	}
 }
 
-// park is a release that finds the heal budget spent and parks the run for the user (parkForUser): held is whether
-// resumeHeld writes the park, swept whether a sweep does.
+// park is a release that finds the heal budget spent and parks the run for the user (parkForUser), or ends a
+// scheduled run (endUnattended): held is whether resumeHeld writes the park, swept whether a sweep does.
 func (s *holdSim) park(held, swept bool) []string {
 	s.cur.text += "; its heal finds the budget spent"
+	if s.c.kind == kindScheduled {
+		s.kas, s.entry, s.endedUnattended = kasCancelled, false, true
+		s.cur.text += "; it ends the run, which has nobody to resume it"
+		return nil
+	}
 	switch s.write {
 	case writeLostOnce:
 		s.write, s.writeFired = writeNone, true
@@ -1503,8 +1520,13 @@ func (k *kasRun) detach() {
 	}
 }
 
+// workflowNotFoundErr is KAS's answer for a run it does not know, as kiro-cli 2.37.0 sends it on the wire.
 func workflowNotFoundErr() *marotte.RPCError {
-	return &marotte.RPCError{Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`)}
+	const text = "Workflow 'wf_1' is not registered and has no persisted state in any known workspace."
+	return &marotte.RPCError{
+		Code: -32603, Message: text,
+		Data: json.RawMessage(`{"details":"` + text + `","errorType":"WorkflowNotFoundError"}`),
+	}
 }
 
 // armWrite fails the release writes as w says, from the next one on; writeNone ends the fault.
@@ -2454,7 +2476,7 @@ func (c *holdCell) boot(t *testing.T, signedIn bool) {
 		}
 		l := runlease.Lease{
 			WorkflowID: c.id, Recipe: "publish", Origin: origin, ParentSessionID: testLaunchSession,
-			Host: &runlease.HostSecurity{Presets: []string{}},
+			Unattended: origin == runlease.OriginScheduled, Host: &runlease.HostSecurity{Presets: []string{}},
 		}
 		if !c.c.gate() {
 			// Bounded, so an engine end counts the run as interrupted and the next engine resumes it.
