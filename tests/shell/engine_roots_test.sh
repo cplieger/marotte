@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# tighten_engine_roots(): a host ACL or umask can stamp the tools engine's roots group- or
-# other-writable, and the engine then refuses to start. The boot drops those bits from every real
-# directory it judges, leaves a symlink for the engine to name and creates nothing. Lint:
+# Lint:
 #   SC2015 - `[ cond ] && ok || no` cannot mis-fire: lib.sh's ok/no always return 0.
 #   SC2016 - the call-site pattern matches the entrypoint's literal "$VAR" text.
 # shellcheck disable=SC2015,SC2016
@@ -55,6 +53,69 @@ done
 [ "$(stat -c %a "$TOOLS/kiro-cli-versions")" = 777 ] \
   && ok "a directory the engine does not judge is left alone" \
   || no "unjudged dir" "kiro-cli-versions became $(stat -c %a "$TOOLS/kiro-cli-versions")"
+
+# A symlinked npm: chmod "$tools/npm/lib" would resolve through it to the outside tree.
+C2="$WORK/c2"
+T2="$C2/tools"
+O2="$WORK/outside-npm"
+mkdir -p "$T2/bin" "$T2/python" "$O2/bin" "$O2/lib/node_modules" || exit 1
+ln -s "$O2" "$T2/npm" || exit 1
+chmod 0775 "$T2/bin" "$T2/python" "$O2" "$O2/bin" "$O2/lib" "$O2/lib/node_modules" || exit 1
+rc=0
+tighten_engine_roots "$C2" "$T2" 2>"$WORK/err.log" || rc=$?
+modes="$(stat -c %a "$O2" "$O2/bin" "$O2/lib" "$O2/lib/node_modules" | tr '\n' ' ')"
+[ "$rc" -eq 0 ] && [ "$modes" = "775 775 775 775 " ] \
+  && ok "nothing beneath a symlinked npm is chmodded through it" \
+  || no "symlinked parent" "rc=$rc, outside modes: $modes"
+[ "$(stat -c %a "$T2/bin")" = 755 ] && [ "$(stat -c %a "$T2/python")" = 755 ] \
+  && ok "the real siblings of a symlinked npm are still tightened" \
+  || no "siblings" "bin $(stat -c %a "$T2/bin"), python $(stat -c %a "$T2/python")"
+
+# A symlinked tools dir: the engine refuses it, and every child would resolve outside.
+C3="$WORK/c3"
+O3="$WORK/outside-tools"
+mkdir -p "$C3" "$O3/bin" "$O3/npm/lib" || exit 1
+ln -s "$O3" "$C3/tools" || exit 1
+chmod 0775 "$C3" "$O3" "$O3/bin" "$O3/npm" "$O3/npm/lib" || exit 1
+rc=0
+tighten_engine_roots "$C3" "$C3/tools" 2>"$WORK/err.log" || rc=$?
+modes="$(stat -c %a "$O3" "$O3/bin" "$O3/npm" "$O3/npm/lib" | tr '\n' ' ')"
+[ "$rc" -eq 0 ] && [ "$modes" = "775 775 775 775 " ] && [ "$(stat -c %a "$C3")" = 755 ] \
+  && ok "a symlinked tools dir is not followed, and the config dir is still tightened" \
+  || no "symlinked tools" "rc=$rc, config $(stat -c %a "$C3"), outside modes: $modes"
+
+C5="$WORK/c5"
+mkdir -p "$C5/tools" || exit 1
+: >"$C5/tools/opt" || exit 1
+chmod 0666 "$C5/tools/opt" || exit 1
+tighten_engine_roots "$C5" "$C5/tools" 2>"$WORK/err.log"
+[ "$(stat -c %a "$C5/tools/opt")" = 666 ] \
+  && ok "a regular file where a judged directory belongs is left for the engine to name" \
+  || no "file in a judged slot" "opt became $(stat -c %a "$C5/tools/opt")"
+
+C6="$WORK/c6"
+O6="$WORK/outside-config"
+mkdir -p "$O6" || exit 1
+ln -s "$O6" "$C6" || exit 1
+chmod 0775 "$O6" || exit 1
+tighten_engine_roots "$C6" "$C6/tools" 2>"$WORK/err.log"
+[ "$(stat -c %a "$O6")" = 775 ] \
+  && ok "a symlinked config dir is not followed" \
+  || no "symlinked config" "its target became $(stat -c %a "$O6")"
+
+# An empty tools path would otherwise turn "$tools/bin" into /bin. The stub records argv
+# instead of touching the host's root directories.
+C4="$WORK/c4"
+mkdir -p "$C4" || exit 1
+: >"$WORK/chmod.log"
+# shellcheck disable=SC2329 # called by the loaded tighten_engine_roots
+chmod() { printf '%s\n' "$*" >>"$WORK/chmod.log"; }
+rc=0
+tighten_engine_roots "$C4" "" 2>"$WORK/err.log" || rc=$?
+unset -f chmod
+[ "$rc" -eq 0 ] && [ "$(cat "$WORK/chmod.log")" = "go-w -- $C4" ] \
+  && ok "an empty tools path touches only the config dir" \
+  || no "empty tools path" "rc=$rc, chmod calls: $(tr '\n' '|' <"$WORK/chmod.log")"
 
 EMPTY="$WORK/empty"
 mkdir -p "$EMPTY" || exit 1

@@ -223,7 +223,7 @@ func entrypointEngineRoots(t *testing.T, configDir, toolsDir string) []string {
 		t.Fatalf("parsed %v from tighten_engine_roots; its loop list changed shape", dirs)
 	}
 	slices.Sort(dirs)
-	return dirs
+	return slices.Compact(dirs)
 }
 
 // TestEntrypointTightensEveryRootTheEngineJudges holds tighten_engine_roots to the directories
