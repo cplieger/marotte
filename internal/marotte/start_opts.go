@@ -67,6 +67,8 @@ type EngineOpts struct {
 	// DisableTelemetry turns KAS's agent telemetry off at initialize and the Rust binary's toolkit
 	// client off in the environment; the zero value leaves both at kiro-cli's default, on.
 	DisableTelemetry bool
+	// DebugLogs spawns KAS at its debug log level; the zero value leaves kiro-cli's default, info.
+	DebugLogs bool
 }
 
 // EngineFeatures are the Agent-capabilities settings KAS reads per engine. InfraSafetyMonitor,

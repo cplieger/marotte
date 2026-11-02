@@ -333,6 +333,13 @@ func TestEngineExit_ContainerOOMKillsIsTheGenerationsDelta(t *testing.T) {
 	}
 }
 
+func TestEngineExit_CarriesTheMemoryPeakAndHeapLimit(t *testing.T) {
+	line := exitFixture(t, &bridge.ExitInfo{Reason: bridge.ExitEnded, RSSPeakMiB: 3364, HeapLimitMiB: 4144}, nil)
+	if line["rss_peak_mib"] != float64(3364) || line["heap_limit_mib"] != float64(4144) {
+		t.Errorf("exit line = %v, want rss_peak_mib=3364 heap_limit_mib=4144", line)
+	}
+}
+
 func TestEngineExit_RelayWriteTimeoutLineIsFlagged(t *testing.T) {
 	line := exitFixture(t, &bridge.ExitInfo{Reason: bridge.ExitEnded, RelayWriteTimeout: true}, nil)
 	if line["relay_write_timeout"] != true {

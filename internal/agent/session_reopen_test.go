@@ -247,7 +247,7 @@ var configWrites = []struct {
 	{key: settings.KeyNotifyAgentFinished, value: false, reach: reachNoChat},
 	{key: settings.KeyNotifyPRStatus, value: false, reach: reachNoChat},
 	{key: settings.KeyNotifyRunOutcome, value: false, reach: reachNoChat},
-	{key: settings.KeyDebugLogs, value: true, reach: reachNoChat},
+	{key: settings.KeyDebugLogs, value: true, reach: reachEngine},
 	{key: settings.KeyChatRetentionDays, value: 30, reach: reachNoChat},
 	{key: settings.KeyTheme, value: "light", reach: reachNoChat},
 	{key: settings.KeyFBPath, value: "/workspace", reach: reachNoChat},

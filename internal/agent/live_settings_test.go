@@ -164,7 +164,6 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 			want: livePushesSeen{contentCollection: []string{marotte.ConfigValueContentCollectionEnabled}},
 		},
 		{name: "mcp_wait", body: `{"mcp_wait_for_ready":true}`, want: livePushesSeen{mcpWaits: []bool{true}}},
-		{name: "debug_logs", body: `{"debug_logs":true}`, want: livePushesSeen{debug: []bool{true}}},
 		{
 			name: "notification_toggle", body: `{"notify_pr_status":true}`,
 			want: livePushesSeen{prefs: []map[marotte.PushKind]bool{{
@@ -201,6 +200,28 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 				t.Errorf("after a hand edit to %s the next open pushed %+v, want %+v", tc.body, got, tc.want)
 			}
 		})
+	}
+}
+
+// A hand edit of debug_logs switches marotte's log level at the next open. It is also an engine restart reason
+// (KAS reads its level at spawn), so whether that open finds the same chat depends on the restart's timing and is not
+// asserted here.
+func TestOpenBridge_AHandEditOfDebugLogsSwitchesTheLogLevel(t *testing.T) {
+	rec := newLiveRecorder(t)
+	h, configDir := reopenFixture(t, rec.options()...)
+	rec.openWithStore(t, configDir)
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	rewriteConfigByHand(t, configDir, `{"debug_logs":true}`)
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("OpenBridge after the hand edit: %v", err)
+	}
+	rec.mu.Lock()
+	debug := slices.Clone(rec.debug)
+	rec.mu.Unlock()
+	if !slices.Equal(debug, []bool{true}) {
+		t.Errorf("after a hand edit of debug_logs the log level was set %v, want [true]", debug)
 	}
 }
 

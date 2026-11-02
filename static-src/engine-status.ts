@@ -37,6 +37,7 @@ const ENGINE_ROWS: ReadonlyMap<string, EngineRow> = new Map([
   ],
   ["telemetry.enabled", { label: "kiro-cli telemetry", controlID: "flag-telemetry" }],
   ["engine_heap_mib", { label: "Agent engine memory limit", controlID: "engine-heap-mib" }],
+  ["debug_logs", { label: "Debug logs", controlID: "flag-debug-logs" }],
 ]);
 
 /** The Settings row a restart reason names, or null for a reason with no row (a kiro-cli version, an account). */
