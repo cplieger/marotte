@@ -37,7 +37,7 @@ func renderChatMarkdown(c *marotte.Chat, entries []marotte.Entry) string {
 
 // wakeFacts is what a chat's wakes say across its turns: the workflow messages a turn_wake draws in its header
 // (marotte.WakeDrawnSteers), so the row where each was filed renders nothing (static-src's twin skips the same
-// card), and each run's name from its run_named entries, which name the wakes filed before them.
+// card), and each run's name from its run_named entries.
 type wakeFacts struct {
 	drawn map[string]struct{}
 	names map[string]string
@@ -64,7 +64,6 @@ func wakeFactsOf(entries []marotte.Entry) wakeFacts {
 	return out
 }
 
-// named is the wake an entry's payload holds with its runs named, false when it does not decode.
 func (f *wakeFacts) named(e *marotte.Entry) (marotte.EntryTurnWake, bool) {
 	var w marotte.EntryTurnWake
 	if !decodePayload(e, &w) {

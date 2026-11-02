@@ -39,6 +39,16 @@ func (*InMemoryChatStore) UnsettledWorkflowMessages(context.Context, marotte.Cha
 	return nil, nil
 }
 
+// AwaitsRunName answers false.
+func (*RecordingChatStore) AwaitsRunName(context.Context, marotte.ChatID, string) (bool, error) {
+	return false, nil
+}
+
+// AwaitsRunName answers false.
+func (*InMemoryChatStore) AwaitsRunName(context.Context, marotte.ChatID, string) (bool, error) {
+	return false, nil
+}
+
 // WakeCauses answers none.
 func (*RecordingChatStore) WakeCauses(context.Context, marotte.ChatID, string) (marotte.WakeCauses, error) {
 	return marotte.WakeCauses{}, nil

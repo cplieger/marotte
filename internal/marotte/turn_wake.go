@@ -69,14 +69,15 @@ type EntryTurnWake struct {
 }
 
 // EntryRunNamed is the run_named payload: a run's display name, learned after a wake naming the run
-// was recorded without one. It renders nothing; every wake of the chat naming Run reads Name.
+// was recorded without one. It renders nothing; every wake of the chat that names Run without a name
+// reads Name.
 type EntryRunNamed struct {
 	Run  string `json:"run"`
 	Name string `json:"name"`
 }
 
 // genericWorkflowName is the workflowName KAS gives every run built from a prompt rather than a
-// recipe (kiro-cli 2.37.0 acp-server.js, `Zer="workflow-from-prompt"`), which names no run.
+// recipe, which names no run.
 const genericWorkflowName = "workflow-from-prompt"
 
 // RunDisplayName is the name a wake shows for a run: KAS's runLabel, else its recipe's name, ""
@@ -252,9 +253,7 @@ func WakeSearchTexts(w *EntryTurnWake) []string {
 	out := []string{l.name + l.rest}
 	switch {
 	case w.Reason == WakeReasonRewake:
-		for i := range w.Steers {
-			out = append(out, w.Steers[i].Text)
-		}
+		out = append(out, strings.Split(body, "\n")...)
 	case body != "":
 		out = append(out, body)
 	}
@@ -324,8 +323,10 @@ func runFinishedLine(w *EntryTurnWake) wakeLabel {
 	default:
 		return fallbackLabel
 	}
-	if w.StopReason != "" {
-		rest += ": " + w.StopReason
+	// The label is one line: a reason's line breaks and space runs read as one space (unicode.IsSpace, as
+	// static-src/turn-wake.ts's LABEL_SPACE).
+	if reason := strings.Join(strings.Fields(w.StopReason), " "); reason != "" {
+		rest += ": " + reason
 	}
 	return wakeLabel{run, rest}
 }

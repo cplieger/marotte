@@ -131,9 +131,12 @@ function runFinishedLine(w: EntryTurnWake): WakeLine {
     default:
       return FALLBACK;
   }
-  const reason = w.stop_reason ?? "";
+  const reason = (w.stop_reason ?? "").replace(LABEL_SPACE, " ").trim();
   return named(run, reason === "" ? rest : `${rest}: ${reason}`, "");
 }
+
+/** Go's unicode.IsSpace set, the twin's strings.Fields: JS `\s` adds U+FEFF and lacks U+0085. */
+const LABEL_SPACE = /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/gu;
 
 function rewakeLine(steers: readonly WakeSteer[]): WakeLine {
   if (steers.length === 0) {

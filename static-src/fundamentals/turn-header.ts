@@ -73,9 +73,15 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   // Sibling of `.turn-req-text`, so the clamp cannot hide the attachments.
   req.appendChild(el("ul", { className: "turn-req-attachments attachment-row hidden" }));
   header.appendChild(req);
-  watchCut(text, (cut) => {
-    toggle.setAttribute("aria-label", cut ? `${FOLD_LABEL}, message truncated` : FOLD_LABEL);
-  });
+  watchCut(
+    text,
+    (cut) => {
+      toggle.setAttribute("aria-label", cut ? `${FOLD_LABEL}, message truncated` : FOLD_LABEL);
+    },
+    () => {
+      syncWakeRowRuns(header);
+    },
+  );
 
   updateTurnHeader(header, d);
   return header;
@@ -228,7 +234,6 @@ function syncWakeLabel(
   line.replaceChildren(wakeRunEl(wake.run, "turn-wake-run", open), rest);
 }
 
-/** The run's name, a button when the caller can open the run. */
 function wakeRunEl(
   run: WakeRun,
   className: string,
@@ -249,8 +254,32 @@ function wakeRunEl(
   return btn;
 }
 
-/** The run buttons inside a re-delivery's request text, which a folded card's clamp can hide. */
-export const WAKE_ROW_RUN_SELECTOR = ":scope > .turn-req > .turn-req-text button.turn-wake-row-run";
+/**
+ * Make each re-delivery row's run button inert while the request text's clamp hides any of it, so it takes no focus,
+ * and live while all of it shows. The caller runs it after a fold change or a row rebuild; the clamp's own
+ * measurement runs it after a resize. With no layout to measure, a folded card keeps only the first row's live.
+ */
+export function syncWakeRowRuns(header: HTMLElement): void {
+  const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
+  if (text === null) {
+    return;
+  }
+  const clip = text.getBoundingClientRect();
+  const folded = text.closest(".turn[data-folded]") !== null;
+  const buttons = text.querySelectorAll<HTMLButtonElement>("button.turn-wake-row-run");
+  buttons.forEach((btn, i) => {
+    if (clip.height <= 0) {
+      btn.inert = folded && i > 0;
+      return;
+    }
+    const box = btn.getBoundingClientRect();
+    // `inert`, not `disabled`: a disabled button dims (40-a11y.css), and a shown row stays at full ink.
+    btn.inert = box.top < clip.top - CLIP_EPSILON || box.bottom > clip.bottom + CLIP_EPSILON;
+  });
+}
+
+/** Sub-pixel slack (px) for a button whose box rounds onto the clip edge. */
+const CLIP_EPSILON = 0.5;
 
 /** A labelled request's full text, a sibling of the text so the folded clamp cannot hide it, shown
  *  while the turn is open (29-turns.css); `body` undefined removes it. */

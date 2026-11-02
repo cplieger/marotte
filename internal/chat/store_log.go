@@ -256,6 +256,16 @@ func (s *Store) WakeCauses(ctx context.Context, chatID marotte.ChatID, session s
 	return out, err
 }
 
+// AwaitsRunName is the chat log's EntryLog.AwaitsRunName for run.
+func (s *Store) AwaitsRunName(ctx context.Context, chatID marotte.ChatID, run string) (bool, error) {
+	var out bool
+	err := s.readLog(ctx, chatID, func(l *EntryLog) error {
+		out = l.AwaitsRunName(run)
+		return nil
+	})
+	return out, err
+}
+
 // logPage is GET /api/chats/{id}'s answer: the header, one window of whole turns,
 // the open tails of the open turns inside it, the registry's liveness verdict
 // and the stamps, one per list they certify: the `chat` stamp certifies Entries,

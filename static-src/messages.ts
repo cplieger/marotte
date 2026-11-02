@@ -46,7 +46,7 @@ import type { ViewScrollState } from "./scroll-controller.js";
 import {
   buildTurnHeader,
   updateTurnHeader,
-  WAKE_ROW_RUN_SELECTOR,
+  syncWakeRowRuns,
   type TurnHeaderData,
 } from "./fundamentals/turn-header.js";
 import {
@@ -1562,15 +1562,10 @@ function setHitCount(card: HTMLElement, n: number): void {
   badge.textContent = n > 0 ? String(n) : "";
 }
 
-/** A folded card's clamp can hide a re-delivery's later rows, so its row run buttons take no focus until the card
- *  opens; the label's run button sits outside the clamp and stays. */
-function syncWakeRowRuns(card: HTMLElement): void {
-  const folded = card.hasAttribute("data-folded");
-  for (const btn of card
-    .querySelector(":scope > .turn-header")
-    ?.querySelectorAll<HTMLButtonElement>(WAKE_ROW_RUN_SELECTOR) ?? []) {
-    // `inert`, not `disabled`: a disabled button dims (40-a11y.css), and the first row stays readable.
-    btn.inert = folded;
+function syncWakeRows(card: HTMLElement): void {
+  const header = card.querySelector<HTMLElement>(":scope > .turn-header");
+  if (header !== null) {
+    syncWakeRowRuns(header);
   }
 }
 
@@ -1583,7 +1578,7 @@ function setCardsFolded(items: readonly { card: HTMLElement; folded: boolean }[]
   for (const { card, folded } of items) {
     const flip = (): void => {
       card.toggleAttribute("data-folded", folded);
-      syncWakeRowRuns(card);
+      syncWakeRows(card);
       const header = card.querySelector<HTMLElement>(":scope > .turn-header");
       // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
       header
@@ -1783,7 +1778,7 @@ function buildTurn(t: Turn): HTMLElement {
   const header = buildTurnHeader(headerData(t));
   mountFoldToggle(header, card, t);
   card.appendChild(header);
-  syncWakeRowRuns(card);
+  syncWakeRowRuns(header);
   card.toggleAttribute("data-running", t.outcome === "running");
 
   const plan = foldPlan.get(t.id);
@@ -1820,7 +1815,7 @@ function updateTurn(card: HTMLElement, t: Turn): void {
   const header = card.querySelector<HTMLElement>(":scope > .turn-header");
   if (header !== null) {
     updateTurnHeader(header, headerData(t));
-    syncWakeRowRuns(card);
+    syncWakeRowRuns(header);
   }
   card.toggleAttribute("data-running", t.outcome === "running");
   // Hands off three bodies: a stub has none, a body still owed a build is the builder's, and a dropped range is the

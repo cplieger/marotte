@@ -158,7 +158,6 @@ export function namedWake(w: EntryTurnWake, names: ReadonlyMap<string, string>):
   };
 }
 
-/** The turn's raw wake, the first lane-`""` `turn_wake` of a turn with no prompt. */
 function rawWakeOf(state: TurnState, open: EntryTurnOpen): EntryTurnWake | undefined {
   if (open.prompt !== undefined) {
     return undefined;
@@ -287,7 +286,6 @@ export function projectTurn(src: TurnSource, turnID: string): Turn | undefined {
   return turnOf(turnID, state, open, nextTrigger(src, at), lazyRunNames(src));
 }
 
-/** `runNamesOf(src)`, read once on first call: only a wake turn reads it. */
 function lazyRunNames(src: TurnSource): () => ReadonlyMap<string, string> {
   let names: ReadonlyMap<string, string> | undefined;
   return () => (names ??= runNamesOf(src));

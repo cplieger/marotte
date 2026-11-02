@@ -8,7 +8,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// inspectReply is a `_kiro/workflow/inspect` reply for run carrying KAS's runLabel and workflowName.
 func inspectReply(t *testing.T, run, runLabel, workflowName string) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
@@ -24,7 +23,6 @@ func inspectReply(t *testing.T, run, runLabel, workflowName string) json.RawMess
 	return raw
 }
 
-// runNamed is every run_named in the chat's log with the turn it was filed in, in file order.
 func (h *wakeHarness) runNamed() (names []marotte.EntryRunNamed, turns []string) {
 	h.t.Helper()
 	for _, e := range h.deps.turns.chatLog[testChat] {
@@ -134,5 +132,59 @@ func TestRunName_ASecondWakeOnAnUnnamedRunAsksNoSecondRead(t *testing.T) {
 
 	if !slices.Equal(h.deps.runReads, []string{wakeRun}) {
 		t.Errorf("reads asked = %v, want one: the first read names both wakes", h.deps.runReads)
+	}
+}
+
+func TestRunName_AWakeAfterAReadThatNamedNothingAsksAgain(t *testing.T) {
+	h := newWakeHarness(t)
+	h.send("notify_warning")
+	h.wake("chunk_send_message_wake")
+	h.deps.readDone[0]()
+	closeChatTurn(t, h.deps, testChat)
+	h.send("notify_info")
+	h.wake("chunk_send_message_wake")
+
+	if !slices.Equal(h.deps.runReads, []string{wakeRun, wakeRun}) {
+		t.Errorf("reads asked = %v, want a second: the first read ended with no name", h.deps.runReads)
+	}
+	h.tr.RecordInspect(t.Context(), inspectReply(t, wakeRun, "publish-docs", ""))
+	if names, _ := h.runNamed(); len(names) != 1 {
+		t.Errorf("run_named entries = %+v, want one: the chat awaited the name through both reads", names)
+	}
+}
+
+func TestRunName_AfterARestartTheLeaseChatsUnnamedWakeIsNamed(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		lease   bool
+		named   bool
+		wantNew int
+	}{
+		{name: "the lease chat's log holds the unnamed wake", lease: true, wantNew: 1},
+		{name: "no lease names the run's chat", wantNew: 0},
+		{name: "a run_named already names the wake", lease: true, named: true, wantNew: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newWakeHarness(t)
+			h.send("notify_warning")
+			h.wake("chunk_send_message_wake")
+			closeChatTurn(t, h.deps, testChat)
+			if tc.named {
+				h.tr.RecordInspect(t.Context(), inspectReply(t, wakeRun, "publish-docs", ""))
+			}
+			before, _ := h.runNamed()
+			h.tr.runNames = newRunNames()
+			if tc.lease {
+				h.deps.leaseChats = map[string]marotte.ChatID{wakeRun: testChat}
+			}
+
+			h.tr.RecordInspect(t.Context(), inspectReply(t, wakeRun, "publish-docs", ""))
+			h.tr.RecordInspect(t.Context(), inspectReply(t, wakeRun, "publish-docs", ""))
+
+			after, _ := h.runNamed()
+			if got := len(after) - len(before); got != tc.wantNew {
+				t.Errorf("run_named entries filed = %d, want %d (%+v)", got, tc.wantNew, after)
+			}
+		})
 	}
 }

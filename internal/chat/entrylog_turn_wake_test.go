@@ -137,6 +137,38 @@ func TestEntryLog_ARunNamedInALaterTurnNamesTheEarlierWake(t *testing.T) {
 	})
 }
 
+func TestEntryLog_RewindingTheTurnARunNamedWasFiledInUnnamesTheWakeEverywhere(t *testing.T) {
+	f := newLogFixture(t)
+	wake := f.wakeTurn()
+	f.append(wake, "", "wake-1", marotte.EntryKindTurnWake, marotte.EntryTurnWake{
+		Reason: marotte.WakeReasonRunFinished, Run: wakeRunID, RunStatus: marotte.RunStatusCompleted,
+	})
+	f.append(wake, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "Reading the results."})
+	f.closeTurn(wake, marotte.TurnOutcomeCompleted)
+	next := f.prompt("thanks")
+	f.append(next, "", "named-1", marotte.EntryKindRunNamed, marotte.EntryRunNamed{Run: wakeRunID, Name: "publish-docs"})
+	f.closeTurn(next, marotte.TurnOutcomeCompleted)
+	if f.log.AwaitsRunName(wakeRunID) {
+		t.Errorf("before the rewind: AwaitsRunName = true, want false: the run_named names the wake")
+	}
+	revertRecord(f, wake, next, next, 2)
+
+	f.phases(func(phase string) {
+		rows := f.log.RailRows()
+		if len(rows) != 1 || rows[0].FirstLine != "A workflow completed" {
+			t.Errorf("%s: RailRows() = %+v, want the wake's placeholder line: its name was rewound", phase, rows)
+		}
+		for _, e := range mustAll(t, f.log) {
+			if e.Kind == marotte.EntryKindRunNamed {
+				t.Errorf("%s: All() holds %s, want the rewound run_named gone", phase, e.ID)
+			}
+		}
+		if !f.log.AwaitsRunName(wakeRunID) {
+			t.Errorf("%s: AwaitsRunName = false, want true: the wake is unnamed again", phase)
+		}
+	})
+}
+
 func TestEntryLog_AWakeThatNamesNothingLeavesTheRailLineEmpty(t *testing.T) {
 	f := newLogFixture(t)
 	wake := f.wakeTurn()

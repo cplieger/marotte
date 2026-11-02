@@ -33,6 +33,10 @@ func (nopChatRecords) WakeCauses(context.Context, marotte.ChatID, string) (marot
 	return marotte.WakeCauses{}, nil
 }
 
+func (nopChatRecords) AwaitsRunName(context.Context, marotte.ChatID, string) (bool, error) {
+	return false, nil
+}
+
 var _ chatRecords = nopChatRecords{}
 
 // recStore is a chatRecords whose every call answers err, counting header writes, so a

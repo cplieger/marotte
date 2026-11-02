@@ -39,8 +39,11 @@ type baseDeps struct {
 	scheduledRuns map[string]bool
 	// runLabels are the labels RunLabel answers, keyed by workflow id.
 	runLabels map[string]string
-	// runReads are the runs ReadRun was asked to read, in call order.
-	runReads    []string
+	// runReads are the runs ReadRun was asked to read, in call order, and readDone each read's done.
+	runReads []string
+	readDone []func()
+	// leaseChats are the chats LeaseChat answers, keyed by workflow id.
+	leaseChats  map[string]marotte.ChatID
 	planUpdates []marotte.RunPlanUpdate
 	// runNotices is the per-chat queue RunNotice consumes, oldest first, so a test
 	// can stage a finished run behind a notify-wf- notice without a run registry.
@@ -210,6 +213,27 @@ func (d *baseDeps) DepartedName(id marotte.ChatID) (string, bool) {
 // those filed after a close, as the store's log would.
 func (d *baseDeps) UnsettledWorkflowMessages(_ context.Context, chatID marotte.ChatID) ([]marotte.WorkflowMessage, error) {
 	return waitingIn(d.turns.chatLog[chatID])
+}
+
+// AwaitsRunName reads the double's chat log as the store reads its own, with no rewind.
+func (d *baseDeps) AwaitsRunName(_ context.Context, chatID marotte.ChatID, run string) (bool, error) {
+	awaits := false
+	for i := range d.turns.chatLog[chatID] {
+		e := &d.turns.chatLog[chatID][i]
+		switch e.Kind {
+		case marotte.EntryKindRunNamed:
+			var n marotte.EntryRunNamed
+			if json.Unmarshal(e.Payload, &n) == nil && n.Run == run && n.Name != "" {
+				return false, nil
+			}
+		case marotte.EntryKindTurnWake:
+			var w marotte.EntryTurnWake
+			if json.Unmarshal(e.Payload, &w) == nil && slices.Contains(marotte.WakeRunsUnnamed(&w), run) {
+				awaits = true
+			}
+		}
+	}
+	return awaits, nil
 }
 
 // WakeCauses reads the double's chat log as the store reads its own, an entry's index standing for its offset.
@@ -638,7 +662,15 @@ func (d *baseDeps) IsScheduled(workflowID string) bool {
 	return d.scheduledRuns[workflowID]
 }
 func (d *baseDeps) RunLabel(workflowID string) string { return d.runLabels[workflowID] }
-func (d *baseDeps) ReadRun(workflowID string)         { d.runReads = append(d.runReads, workflowID) }
+func (d *baseDeps) ReadRun(workflowID string, done func()) {
+	d.runReads = append(d.runReads, workflowID)
+	d.readDone = append(d.readDone, done)
+}
+
+func (d *baseDeps) LeaseChat(workflowID string) (marotte.ChatID, bool) {
+	c, ok := d.leaseChats[workflowID]
+	return c, ok
+}
 
 type stagedRunNotice struct {
 	workflowID string

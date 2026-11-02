@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"slices"
 	"sync"
 
@@ -13,21 +14,28 @@ import (
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
-// maxRunNames bounds the names held, oldest learned dropped first.
+// maxRunNames bounds the names held and the runs awaited, oldest first dropped from each.
 const maxRunNames = 256
 
 // runNames is each run's display name (marotte.RunDisplayName) learned from KAS's frames and reads,
-// and the chats whose wake named a run before its name was known, which a run_named entry tells.
-// Process memory: a restart between a wake and its run's name leaves that wake on the placeholder.
+// the chats whose wake named a run before its name was known, which a run_named entry tells, and the
+// runs with a read in flight. Process memory: after a restart the run's lease chat is asked from its
+// log instead (learnRunName).
 type runNames struct {
-	names    map[string]string
-	awaiting map[string][]marotte.ChatID
-	order    []string
-	mu       sync.Mutex
+	names     map[string]string
+	awaiting  map[string][]marotte.ChatID
+	reading   map[string]struct{}
+	order     []string
+	waitOrder []string
+	mu        sync.Mutex
 }
 
 func newRunNames() *runNames {
-	return &runNames{names: map[string]string{}, awaiting: map[string][]marotte.ChatID{}}
+	return &runNames{
+		names:    map[string]string{},
+		awaiting: map[string][]marotte.ChatID{},
+		reading:  map[string]struct{}{},
+	}
 }
 
 func (r *runNames) of(run string) string {
@@ -36,27 +44,46 @@ func (r *runNames) of(run string) string {
 	return r.names[run]
 }
 
-// await records that chatID's wake names run with no name; true when the chat did not await it yet,
-// so the caller asks for one read.
+// await records that chatID's wake names run with no name; true when no read of run is in flight, so
+// the caller asks for one and reports its end through readDone.
 func (r *runNames) await(run string, chatID marotte.ChatID) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	chats := r.awaiting[run]
-	if slices.Contains(chats, chatID) {
+	chats, held := r.awaiting[run]
+	if !held {
+		r.waitOrder = append(r.waitOrder, run)
+		if len(r.waitOrder) > maxRunNames {
+			delete(r.awaiting, r.waitOrder[0])
+			r.waitOrder = r.waitOrder[1:]
+		}
+	}
+	if !slices.Contains(chats, chatID) {
+		r.awaiting[run] = append(chats, chatID)
+	}
+	if _, busy := r.reading[run]; busy {
 		return false
 	}
-	r.awaiting[run] = append(chats, chatID)
+	r.reading[run] = struct{}{}
 	return true
 }
 
-// learn stores run's name and hands back the chats awaiting it, once.
-func (r *runNames) learn(run, name string) []marotte.ChatID {
+// readDone ends run's read, named or not, so a later wake of a run still unnamed asks again.
+func (r *runNames) readDone(run string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.reading, run)
+}
+
+// learn stores run's name and hands back the chats awaiting it, once, and whether this is the
+// first name this process learned for run.
+func (r *runNames) learn(run, name string) (chats []marotte.ChatID, first bool) {
 	if run == "" || name == "" {
-		return nil
+		return nil, false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.names[run]; !ok {
+		first = true
 		r.order = append(r.order, run)
 		if len(r.order) > maxRunNames {
 			delete(r.names, r.order[0])
@@ -64,13 +91,16 @@ func (r *runNames) learn(run, name string) []marotte.ChatID {
 		}
 	}
 	r.names[run] = name
-	chats := r.awaiting[run]
-	delete(r.awaiting, run)
-	return chats
+	chats = r.awaiting[run]
+	if chats != nil {
+		delete(r.awaiting, run)
+		r.waitOrder = slices.DeleteFunc(r.waitOrder, func(id string) bool { return id == run })
+	}
+	return chats, first
 }
 
 // nameWake fills w's runs from the names known now, and for each run still unnamed records chatID as
-// awaiting it and asks for the run's state once, whose reply names it (RecordInspect).
+// awaiting it and asks for the run's state, whose reply names it (RecordInspect).
 func (t *Translator) nameWake(chatID marotte.ChatID, w *marotte.EntryTurnWake) {
 	if w.Run != "" && w.RunName == "" {
 		w.RunName = t.runNames.of(w.Run)
@@ -81,15 +111,34 @@ func (t *Translator) nameWake(chatID marotte.ChatID, w *marotte.EntryTurnWake) {
 		}
 	}
 	for _, run := range marotte.WakeRunsUnnamed(w) {
-		if t.runNames.await(run, chatID) && t.runOrigin != nil {
-			t.runOrigin.ReadRun(run)
+		if t.runNames.await(run, chatID) {
+			if t.runOrigin == nil {
+				t.runNames.readDone(run)
+				continue
+			}
+			t.runOrigin.ReadRun(run, func() { t.runNames.readDone(run) })
 		}
 	}
 }
 
-// learnRunName records run's name and files a run_named entry to each chat whose wake awaits it.
+// learnRunName files a run_named entry to each chat awaiting run's name. A name this process learns
+// first with no chat awaiting it, as after a restart, goes to the run's lease chat when that chat's
+// log still holds a wake leaving the run unnamed.
 func (t *Translator) learnRunName(ctx context.Context, run, name string) {
-	for _, chatID := range t.runNames.learn(run, name) {
+	chats, first := t.runNames.learn(run, name)
+	if first && len(chats) == 0 && t.runOrigin != nil {
+		if chatID, ok := t.runOrigin.LeaseChat(run); ok {
+			awaits, err := t.chats.AwaitsRunName(ctx, chatID, run)
+			if err != nil {
+				slog.Warn("run name: the chat's log is unreadable, so its wakes keep the placeholder",
+					"chat_id", chatID, "workflow_id", run, "error", err)
+			}
+			if awaits {
+				chats = []marotte.ChatID{chatID}
+			}
+		}
+	}
+	for _, chatID := range chats {
 		t.fileRunNamed(ctx, chatID, &marotte.EntryRunNamed{Run: run, Name: name})
 	}
 }

@@ -102,7 +102,7 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID marotte.ChatID, 
 	logAgentRun("agent-launched workflow run started", chatID, p.WorkflowID, p.WorkflowName)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunStarted, chatID, marotte.RunStartedPayload{
 		WorkflowID:      p.WorkflowID,
-		Name:            cmp.Or(t.runOrigin.RunLabel(p.WorkflowID), p.WorkflowName),
+		Name:            cmp.Or(t.runOrigin.RunLabel(p.WorkflowID), marotte.RunDisplayName("", p.WorkflowName)),
 		Initiator:       p.Initiator,
 		InitiatorReason: p.InitiatorReason,
 		// Keyed on the workflow id: this frame's chat id is empty for exactly these runs.

@@ -83,8 +83,10 @@ type revertWindow struct {
 // reconcile predicate and a synthesized closer need without reopening a payload.
 type turnState struct {
 	results map[string]struct{}
-	// wake is the turn's turn_wake, whose rail line RailRows names from the log's run_named entries.
-	wake      *marotte.EntryTurnWake
+	// wake is the turn's turn_wake, whose rail line RailRows names from the surviving turns' runNamed.
+	wake *marotte.EntryTurnWake
+	// runNamed are the turn's run_named entries in file order, so a rewind of the turn takes its names back.
+	runNamed  []marotte.EntryRunNamed
 	firstLine string
 	source    marotte.TurnOpenSourceName
 	outcome   marotte.TurnOutcome
@@ -174,8 +176,6 @@ type EntryLog struct {
 	reconciledSessions map[string]struct{}
 	// boundSessions are the sessions this log's turn_bind entries name, telling a self-minted session from a resumed one.
 	boundSessions map[string]struct{}
-	// runNames are this log's run_named entries, run id to name, which name the wakes filed before them.
-	runNames map[string]string
 	// newestRevert is the id of the last turn_revert met in file order: the provenance the merge's discard gate reads.
 	newestRevert string
 	// unappliedReverts are windows met but not resolved, drained once their order is complete: after the scan, and after
@@ -612,7 +612,6 @@ func (l *EntryLog) observeLocked(e *marotte.Entry, start, end int64) error {
 	return l.foldKindLocked(st, e, start)
 }
 
-// foldKindLocked folds the facts one entry's kind adds to its turn's row and the log's indexes.
 func (l *EntryLog) foldKindLocked(st *turnState, e *marotte.Entry, start int64) error {
 	switch e.Kind {
 	case marotte.EntryKindToolCall:
@@ -635,7 +634,7 @@ func (l *EntryLog) foldKindLocked(st *turnState, e *marotte.Entry, start int64) 
 	case marotte.EntryKindTurnWake:
 		return foldTurnWake(st, e)
 	case marotte.EntryKindRunNamed:
-		return l.foldRunNamedLocked(e)
+		return foldRunNamed(st, e)
 	case marotte.EntryKindReconciled:
 		return l.foldReconciledLocked(e)
 	case marotte.EntryKindTurnRevert:
@@ -704,7 +703,6 @@ func (st *turnState) observeMessage(e *marotte.Entry, at int64) error {
 	return err
 }
 
-// foldTurnWake keeps a wake turn's wake for its rail line and records the rows it draws.
 func foldTurnWake(st *turnState, e *marotte.Entry) error {
 	payload, err := decodeEntry[marotte.EntryTurnWake](e)
 	if err != nil {
@@ -715,24 +713,35 @@ func foldTurnWake(st *turnState, e *marotte.Entry) error {
 	return nil
 }
 
-func (l *EntryLog) foldRunNamedLocked(e *marotte.Entry) error {
+func foldRunNamed(st *turnState, e *marotte.Entry) error {
 	payload, err := decodeEntry[marotte.EntryRunNamed](e)
 	if err != nil {
 		return err
 	}
 	if payload.Run != "" && payload.Name != "" {
-		l.runNames[payload.Run] = payload.Name
+		st.runNamed = append(st.runNamed, payload)
 	}
 	return nil
 }
 
-// railLine is a turn's rail line: its prompt's first line, or its wake's line where a prompt turn has its
+// runNamesOf is each run's newest name among order's turns, the names export and search read off All().
+func (l *EntryLog) runNamesOf(order []string) map[string]string {
+	names := map[string]string{}
+	for _, id := range order {
+		for _, n := range l.turns[id].runNamed {
+			names[n.Run] = n.Name
+		}
+	}
+	return names
+}
+
+// railLineOf is a turn's rail line: its prompt's first line, or its wake's line where a prompt turn has its
 // prompt's; a wake that names nothing leaves the line empty, as a turn with no wake has.
-func (l *EntryLog) railLineLocked(st *turnState) string {
+func railLineOf(st *turnState, names map[string]string) string {
 	if st.wake == nil {
 		return st.firstLine
 	}
-	w := marotte.NamedWake(st.wake, l.runNames)
+	w := marotte.NamedWake(st.wake, names)
 	label, body := marotte.WakeLine(&w)
 	if label == marotte.WakeFallbackLine {
 		return ""
@@ -908,7 +917,6 @@ func (l *EntryLog) rescanLocked() error {
 	l.reconciledTurns = make(map[string]struct{})
 	l.reconciledSessions = make(map[string]struct{})
 	l.boundSessions = make(map[string]struct{})
-	l.runNames = make(map[string]string)
 	l.order = nil
 	l.newestRevert = ""
 	l.unappliedReverts = nil
@@ -1229,6 +1237,7 @@ func (l *EntryLog) RailRows() []marotte.TurnSummary {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	order := l.survivingOrderLocked()
+	names := l.runNamesOf(order)
 	claimed := map[string]struct{}{}
 	for _, id := range order {
 		for _, c := range l.turns[id].claims {
@@ -1247,7 +1256,7 @@ func (l *EntryLog) RailRows() []marotte.TurnSummary {
 		}
 		rows = append(rows, marotte.TurnSummary{
 			ID:             id,
-			FirstLine:      l.railLineLocked(st),
+			FirstLine:      railLineOf(st, names),
 			Outcome:        outcome,
 			N:              ordinalAsInt(st.n),
 			Ts:             st.openTs,
@@ -1379,6 +1388,22 @@ func factsOf(facts []messageFact) []marotte.WorkflowMessageFact {
 		out[i] = facts[i].fact
 	}
 	return out
+}
+
+// AwaitsRunName reports whether a surviving turn's wake leaves run unnamed and no surviving run_named names it.
+func (l *EntryLog) AwaitsRunName(run string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	order := l.survivingOrderLocked()
+	if _, named := l.runNamesOf(order)[run]; named {
+		return false
+	}
+	for _, id := range order {
+		if w := l.turns[id].wake; w != nil && slices.Contains(marotte.WakeRunsUnnamed(w), run) {
+			return true
+		}
+	}
+	return false
 }
 
 // WakeCauses answers marotte.WakeCausesOf for session over the surviving history: nothing when the newest surviving

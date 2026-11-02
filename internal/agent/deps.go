@@ -78,6 +78,7 @@ type chatRecords interface {
 	EmptyCompactions(ctx context.Context, id marotte.ChatID) (int, error)
 	UnsettledWorkflowMessages(ctx context.Context, id marotte.ChatID) ([]marotte.WorkflowMessage, error)
 	WakeCauses(ctx context.Context, id marotte.ChatID, session string) (marotte.WakeCauses, error)
+	AwaitsRunName(ctx context.Context, id marotte.ChatID, run string) (bool, error)
 	DepartedName(id marotte.ChatID) (string, bool)
 	TurnCount(ctx context.Context, chatID marotte.ChatID) (uint64, bool)
 	ReadBound(ctx context.Context, chatID marotte.ChatID) (uint64, error)

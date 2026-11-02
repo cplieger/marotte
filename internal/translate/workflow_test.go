@@ -170,6 +170,17 @@ func TestRunStart_CarriesTheName(t *testing.T) {
 	}
 }
 
+func TestRunStart_APromptBuiltRunCarriesNoGenericName(t *testing.T) {
+	t.Parallel()
+	var events []marotte.ServerEvent
+	tr := New(rolesOf(capturing(&events)))
+	tr.HandleRunStart(t.Context(), testChat,
+		notif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "workflow-from-prompt"}))
+	if p, _ := events[0].Payload.(marotte.RunStartedPayload); p.Name != "" {
+		t.Errorf("name = %q, want none: every prompt-built run has that recipe name", p.Name)
+	}
+}
+
 func TestRunStart_AResumeCarriesKASsAttributionVerbatim(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent

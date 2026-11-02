@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, onTestFinished } from "vitest";
+import { userEvent } from "vitest/browser";
 import type { Session } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -8,19 +9,19 @@ import type * as ActionsMessages from "./actions/messages.js";
 import type * as ApiClientModule from "./api-client.js";
 import type * as RunViewModule from "./run-view.js";
 
-for (const id of [
-  "messages",
-  "messages-wrap",
-  "messages-wrap-outer",
-  "chat-view",
-  "scroll-bottom",
-  "send-btn",
-  "prompt-input",
-]) {
-  const d = document.createElement(id === "prompt-input" ? "textarea" : "div");
+// Nested as index.html nests them: `#messages-wrap` is absolutely placed, so as a sibling it would cover the
+// transcript and take every real click.
+const host = (id: string, parent: HTMLElement, tag = "div"): HTMLElement => {
+  const d = document.createElement(tag);
   d.id = id;
-  document.body.appendChild(d);
+  parent.appendChild(d);
+  return d;
+};
+host("messages", host("messages-wrap", host("messages-wrap-outer", document.body)));
+for (const id of ["chat-view", "scroll-bottom", "send-btn"]) {
+  host(id, document.body);
 }
+host("prompt-input", document.body, "textarea");
 
 vi.mock("./scroll.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Scroll>()),
@@ -44,7 +45,6 @@ vi.mock("./run-view.js", async (importOriginal) => ({
   openRunView,
 }));
 
-/** The run names `GET /api/runs/{id}` answers, which the run tab reads; a run absent here answers a failed read. */
 const runNames = vi.hoisted(() => new Map<string, string>());
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClientModule>()),
@@ -403,45 +403,80 @@ describe("a re-delivery after a stop", () => {
     });
   });
 
-  it("takes no focus on a run name its folded clamp hides, and gives it back when the turn opens", async () => {
-    const later = [
-      promptOpen("t3", 3, "next"),
-      sealed("t3", 1, "text", { text: "ok" }, "t3-say"),
-      sealed("t3", 2, "turn_close", { outcome: "completed" }),
-    ];
-    load("wake-rewake-fold", [stopped(), withThought(woken(rewake)), later]);
-    const second = (): HTMLButtonElement | undefined =>
-      [
-        ...card("t2").querySelectorAll<HTMLButtonElement>(
-          ".turn-req-text button.turn-wake-row-run",
-        ),
-      ][1];
+  const later = (): Entry[] => [
+    promptOpen("t3", 3, "next"),
+    sealed("t3", 1, "text", { text: "ok" }, "t3-say"),
+    sealed("t3", 2, "turn_close", { outcome: "completed" }),
+  ];
+  const rowRuns = (): HTMLButtonElement[] => [
+    ...card("t2").querySelectorAll<HTMLButtonElement>(".turn-req-text button.turn-wake-row-run"),
+  ];
+  const clipOf = (): DOMRect =>
+    card("t2").querySelector<HTMLElement>(".turn-req-text")!.getBoundingClientRect();
+
+  it("opens a run its folded clamp shows, takes no focus on one it hides, and both work when the turn opens", async () => {
+    const outer = document.getElementById("messages-wrap-outer")!;
+    outer.style.cssText = "position:relative;block-size:800px";
+    onTestFinished(() => {
+      outer.style.cssText = "";
+    });
+    load("wake-rewake-fold", [stopped(), withThought(woken(rewake)), later()]);
     await vi.waitFor(() => {
       expect(card("t2").hasAttribute("data-folded")).toBe(true);
-      expect(second()).toBeDefined();
+      expect(rowRuns()).toHaveLength(2);
     });
-    const clamp = card("t2").querySelector<HTMLElement>(".turn-req-text")!.getBoundingClientRect();
-    expect(second()!.getBoundingClientRect().top).toBeGreaterThanOrEqual(clamp.bottom);
-    second()!.focus();
-    expect(document.activeElement).not.toBe(second());
-    const label = card("t2").querySelector<HTMLButtonElement>(".turn-wake button.turn-wake-run");
-    expect(label).toBeNull();
+    const [first, second] = rowRuns();
+    expect(first!.getBoundingClientRect().bottom).toBeLessThanOrEqual(clipOf().bottom);
+    expect(second!.getBoundingClientRect().top).toBeGreaterThanOrEqual(clipOf().bottom);
+    expect(card("t2").querySelector(".turn-wake button.turn-wake-run")).toBeNull();
 
-    const toggle = (): void => {
-      card("t2").querySelector<HTMLButtonElement>(".turn-fold-toggle")!.click();
-    };
-    toggle();
+    await userEvent.click(first!);
+    expect(openRunView).toHaveBeenCalledWith(RUN, "publish-docs", "wake-rewake-fold");
+    expect(card("t2").hasAttribute("data-folded")).toBe(true);
+    second!.focus();
+    expect(document.activeElement).not.toBe(second);
+
+    card("t2").querySelector<HTMLButtonElement>(".turn-fold-toggle")!.click();
     await vi.waitFor(() => {
       expect(card("t2").hasAttribute("data-folded")).toBe(false);
     });
-    second()!.focus();
-    expect(document.activeElement).toBe(second());
+    second!.focus();
+    expect(document.activeElement).toBe(second);
+    await userEvent.click(second!);
+    expect(openRunView).toHaveBeenLastCalledWith(OTHER, "nightly-report", "wake-rewake-fold");
+    await userEvent.click(first!);
+    expect(openRunView).toHaveBeenLastCalledWith(RUN, "publish-docs", "wake-rewake-fold");
+  });
 
-    toggle();
-    expect(card("t2").hasAttribute("data-folded")).toBe(true);
-    expect(second()!.inert).toBe(true);
-    toggle();
-    expect(second()!.inert).toBe(false);
+  it("re-decides a folded row's run when a resize moves it under or out of the clamp", async () => {
+    const short: EntryTurnWake = {
+      ...rewake,
+      steers: (rewake.steers ?? []).map((st, i) =>
+        i === 0 ? { ...st, text: "The link check failed." } : st,
+      ),
+    };
+    const wrap = document.getElementById("messages-wrap")!;
+    onTestFinished(() => {
+      wrap.style.removeProperty("width");
+    });
+    wrap.style.width = "900px";
+    load("wake-rewake-resize", [stopped(), withThought(woken(short)), later()]);
+    await vi.waitFor(() => {
+      expect(card("t2").hasAttribute("data-folded")).toBe(true);
+      expect(rowRuns()[1]?.inert).toBe(false);
+    });
+
+    wrap.style.width = "160px";
+    await vi.waitFor(() => {
+      expect(rowRuns()[1]!.getBoundingClientRect().top).toBeGreaterThanOrEqual(clipOf().bottom);
+      expect(rowRuns()[1]!.inert).toBe(true);
+    });
+    expect(rowRuns()[0]!.inert).toBe(false);
+
+    wrap.style.width = "900px";
+    await vi.waitFor(() => {
+      expect(rowRuns()[1]!.inert).toBe(false);
+    });
   });
 });
 

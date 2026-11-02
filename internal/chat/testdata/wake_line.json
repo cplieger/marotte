@@ -290,6 +290,21 @@
       "rest": " stopped by you"
     },
     {
+      "name": "a stop reason's line breaks and space runs read as one space on the one-line label",
+      "wake": {
+        "reason": "run_finished",
+        "run": "wf_5e1f0c2a9b7d4e36",
+        "run_status": "aborted",
+        "initiator": "user",
+        "stop_reason": "  tab closed\nbefore the\u2028build \t\u0085ended  ",
+        "run_name": "publish-docs"
+      },
+      "label": "publish-docs stopped by you: tab closed before the build ended",
+      "body": "",
+      "run": "wf_5e1f0c2a9b7d4e36",
+      "rest": " stopped by you: tab closed before the build ended"
+    },
+    {
       "name": "a finished run with no name yet reads as a workflow",
       "wake": {
         "reason": "run_finished",
@@ -329,8 +344,8 @@
       "rest": "Resumed with 2 workflow messages you stopped before they were read",
       "search": [
         "Resumed with 2 workflow messages you stopped before they were read",
-        "Which branch should I base the release notes on?",
-        "Leg 1 is done."
+        "publish-docs · draft: Which branch should I base the release notes on?",
+        "nightly-report · collect: Leg 1 is done."
       ],
       "rows": [
         {
