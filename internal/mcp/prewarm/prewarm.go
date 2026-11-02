@@ -108,8 +108,8 @@ func (p *Runner) Run(ctx context.Context) {
 	// discarded and the bare name re-resolved per package: one pass resolves once,
 	// and the file that was probed is the file that runs.
 	//
-	// It does NOT confine. npm is installed by the toolbelt engine into
-	// /config/tools/bin, which IS PATH[0], so an absolute pin names the same
+	// It does NOT confine. npm is installed by the toolbelt engine into its
+	// bin/ directory, which IS PATH[0], so an absolute pin names the same
 	// agent-writable file a PATH lookup finds. Confining it is custody on the
 	// toolbelt bin tree — toolbelt's question, not this file's.
 	npmBin, err := exec.LookPath("npm")
