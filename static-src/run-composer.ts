@@ -74,6 +74,8 @@ const REFUSAL_TEXT: Record<RunStepMessageRefusal, string> = {
   finished: "That step has finished, so it cannot take a message.",
   run_paused: "The run is paused. Resume it to message this step.",
   busy: "That step cannot take a message right now. Try again in a moment.",
+  waits_on_run:
+    "This step waits until the run's other steps finish. Use Mark step done to end it now.",
   full: "Too many unread messages are waiting for that step.",
 };
 

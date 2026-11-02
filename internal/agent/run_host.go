@@ -537,8 +537,30 @@ func stepStatusRefusal(resp *marotte.RPCResponse) string {
 	return reply.Message
 }
 
-// runStepCompleted is the step status finishRepeat writes on a repeat paused at its cap.
-const runStepCompleted = "completed"
+// The node statuses marotte writes: a finished repeat, and a person's end of a paused step.
+const (
+	runStepCompleted = string(marotte.RunStepEndCompleted)
+	runStepFailed    = string(marotte.RunStepEndFailed)
+)
+
+// updateNodeStatus writes status on the node nodeID names, a repeat paused at its cap or a paused step, and arms the
+// run's deadline; KAS's decline is errStepStatusRefused with its reason.
+func (rs *Runs) updateNodeStatus(ctx context.Context, host *drivenHost, workflowID, nodeID, status string) error {
+	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowUpdate, map[string]any{
+		keyWorkflowID: workflowID,
+		"action":      updateStatusAction,
+		"status":      status,
+		"nodeId":      nodeID,
+	})
+	if err != nil {
+		return err
+	}
+	if refusal := stepStatusRefusal(resp); refusal != "" {
+		return fmt.Errorf("%w: %s", errStepStatusRefused, refusal)
+	}
+	rs.armDeadline(ctx, workflowID)
+	return nil
+}
 
 // answerInput answers one parked step with the user's words, as a `session/prompt` to its own
 // session. The ask is checked against a fresh read of the run's host under the run's serializer,

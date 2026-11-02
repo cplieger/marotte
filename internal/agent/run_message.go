@@ -32,6 +32,8 @@ type stepNow struct {
 	position string
 	status   marotte.RunNodeStatus
 	run      marotte.RunStatus
+	// siblingsRunning is whether another step execution of the run reads running.
+	siblingsRunning bool
 }
 
 type runNow struct {
@@ -58,16 +60,26 @@ func (rs *Runs) readRun(ctx context.Context, workflowID string) (runNow, error) 
 // stepsAt is every execution at nodePath: fan-out sessions can share one path.
 func (n runNow) stepsAt(nodePath string) []stepNow {
 	var out []stepNow
-	for _, st := range n.steps {
+	for i, st := range n.steps {
 		at := stepAddr{workflowID: n.workflowID, nodePath: workflow.PathKey(st.Path), session: st.SessionID}
 		if at.nodePath == nodePath {
 			out = append(out, stepNow{
-				at: at, position: workflow.AskPosition(n.workflowID, st),
+				at: at, position: workflow.AskPosition(n.workflowID, &n.steps[i]),
 				status: marotte.RunNodeStatus(st.Status), run: n.run,
+				siblingsRunning: n.otherRunning(i),
 			})
 		}
 	}
 	return out
+}
+
+func (n runNow) otherRunning(self int) bool {
+	for i, st := range n.steps {
+		if i != self && marotte.RunNodeStatus(st.Status) == marotte.RunNodeStatusRunning {
+			return true
+		}
+	}
+	return false
 }
 
 // pickStep is the execution at nodePath the words go to, and the ask it holds. askID names the
@@ -129,8 +141,9 @@ func askedPosition(asks []workflow.Ask, askID string) string {
 	return ""
 }
 
-// A paused step on a run whose loop still runs (a parallel sibling) is busy: KAS's reroute declines then and the prompt would run as a
-// turn no run owns.
+// A paused step on a run whose loop still runs is refused: KAS's reroute declines then and the prompt
+// would run as a turn no run owns. With a running sibling that lasts until every sibling stops
+// (kirodotdev/Kiro#11733), so it is waits_on_run, not a retryable busy.
 func stepMessageVerb(s *stepNow, asked bool) (marotte.RunStepMessageVerb, marotte.RunStepMessageRefusal) {
 	switch {
 	case s.run.Terminal():
@@ -149,6 +162,8 @@ func stepMessageVerb(s *stepNow, asked bool) (marotte.RunStepMessageVerb, marott
 		return marotte.RunStepMessageAnswer, ""
 	case s.status == marotte.RunNodeStatusPaused && s.run == marotte.RunStatusPaused:
 		return marotte.RunStepMessagePrompt, ""
+	case s.status == marotte.RunNodeStatusPaused && s.siblingsRunning:
+		return "", marotte.RunStepWaitsOnRun
 	}
 	return "", marotte.RunStepBusy
 }
@@ -158,6 +173,7 @@ var stepRefusalText = map[marotte.RunStepMessageRefusal]string{
 	marotte.RunStepFinished:   "this step has finished, so it cannot take a message",
 	marotte.RunStepRunPaused:  "the run is paused; resume it to message this step",
 	marotte.RunStepBusy:       "this step cannot take a message right now; try again in a moment",
+	marotte.RunStepWaitsOnRun: "this step waits until the run's other steps finish; use Mark step done to end it now",
 	marotte.RunStepFull:       "too many unread messages are waiting for this step",
 }
 
@@ -166,8 +182,8 @@ func stepRefusal(r marotte.RunStepMessageRefusal) error {
 }
 
 type stepDecision struct {
-	now  stepNow
 	verb marotte.RunStepMessageVerb
+	now  stepNow
 }
 
 // preRefuse answers, before a host session is resident, the refusals no ask can change: those

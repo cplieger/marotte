@@ -55,7 +55,8 @@ type EffectiveSettings struct {
 	CloudFormationSafetyCheck string `json:"cloudformation_safety_check"`
 	AutoRouting               string `json:"auto_routing"`
 	AutoDelegation            string `json:"auto_delegation"`
-	// OutputStyle is "default" or "concise".
+	// OutputStyle is a KAS output style id (GET /api/config-template output_styles);
+	// "default" is never sent.
 	OutputStyle string `json:"output_style"`
 	// AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
 	// which is what enforces it; marotte runs no matcher of its own. The default is

@@ -558,6 +558,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.inbound = &inbound{
 		lifetime: lc, coord: h.coord,
 		bus: sseP, specs: h.specs,
+		signIns: h.mcpRegistry,
 	}
 	h.shellMgr = newShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()

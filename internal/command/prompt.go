@@ -671,8 +671,9 @@ func buildPromptParams(ctx context.Context, ws Workspace, sb SessionCaller, p *m
 	return params, inlineImageBlockCount(blocks) > 0
 }
 
-// promptFacts withholds the output style when it is the default, unset or unknown, and from a
-// prompt an agent reads (p.ForAgent).
+// promptFacts withholds the output style when it is the default, unset or not shaped like an id,
+// and from a prompt an agent reads (p.ForAgent). An id KAS does not serve rides; KAS reads it as
+// default.
 func promptFacts(ctx context.Context, configDir string, p *marotte.PromptCommand) *kascap.Prompt {
 	var style string
 	read := !p.ForAgent && configDir != "" && settings.FieldInto(ctx, configDir, settings.KeyOutputStyle, &style)

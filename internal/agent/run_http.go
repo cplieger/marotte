@@ -642,7 +642,7 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleStepPost serves POST /api/runs/{id}/steps/{path}/{message,steer-remove,steer-clear}, {path}
+// handleStepPost serves POST /api/runs/{id}/steps/{path}/{message,steer-remove,steer-clear,end}, {path}
 // one percent-encoded workflow.PathKey. The workflow id and the node path are independent: the run's
 // own inspect, read by each verb, decides whether the path is one of its steps.
 func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
@@ -680,10 +680,28 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		webhttp.Ok(w)
+	case "end":
+		rr.handleStepEnd(w, r, id, nodePath)
 	default:
 		// The step itself, which only GET reads.
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 	}
+}
+
+func (rr *runRoutes) handleStepEnd(w http.ResponseWriter, r *http.Request, id, nodePath string) {
+	var body marotte.RunStepEndRequest
+	if !httpreply.DecodeJSON(w, r, &body) {
+		return
+	}
+	if body.Status != marotte.RunStepEndCompleted && body.Status != marotte.RunStepEndFailed {
+		httpreply.BadRequest(w, "status must be completed or failed")
+		return
+	}
+	if err := rr.runs.endStep(r.Context(), id, nodePath, string(body.Status)); err != nil {
+		rr.writeStepErr(w, verbEndStep, id, nodePath, err)
+		return
+	}
+	webhttp.Ok(w)
 }
 
 // writeStatusErr answers an error that names its own status, with its machine reason as `code`,
@@ -717,6 +735,8 @@ func (rr *runRoutes) writeStepErr(w http.ResponseWriter, verb, id, nodePath stri
 		httpreply.ServerError(w, errStepUnrecorded.Error(), nil)
 	case errors.Is(err, errStepUnconfirmed):
 		httpreply.ServerError(w, errStepUnconfirmed.Error(), nil)
+	case errors.Is(err, errStepStatusRefused):
+		httpreply.Conflict(w, rpcerr.Text(err))
 	default:
 		slog.Info("run step "+verb+" failed", "workflow_id", logsafe.Field(id), "node_path", logsafe.Field(nodePath))
 		rr.writeControlErr(w, verb, id, err)

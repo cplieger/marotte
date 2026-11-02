@@ -64,7 +64,11 @@ export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "
 
 export type RunStatus = "running" | "paused" | "completed" | "failed" | "aborted" | "cancelled";
 
-export type RunStepMessageRefusal = "not_started" | "finished" | "run_paused" | "busy" | "full";
+export type RunStepEndRefusal = "step_not_paused" | "step_unnamed";
+
+export type RunStepEndStatus = "completed" | "failed";
+
+export type RunStepMessageRefusal = "not_started" | "finished" | "run_paused" | "busy" | "waits_on_run" | "full";
 
 export type RunStepMessageVerb = "steer" | "answer" | "prompt";
 
@@ -456,11 +460,12 @@ export interface ConfigTemplateResponse {
   catalog: CatalogState;
   catalog_reason?: CatalogReason;
   /**
- * Both lists are non-null on every path, so a generated decoder requiring an array
+ * Every list is non-null on every path, so a generated decoder requiring an array
  * cannot fail on a failure body.
  */
   modes: SessionMode[];
   models: SessionModel[];
+  output_styles: OutputStyle[];
 }
 
 /**
@@ -707,7 +712,10 @@ export interface EffectiveSettings {
   cloudformation_safety_check: string;
   auto_routing: string;
   auto_delegation: string;
-  /** OutputStyle is "default" or "concise". */
+  /**
+ * OutputStyle is a KAS output style id (GET /api/config-template output_styles);
+ * "default" is never sent.
+ */
   output_style: string;
   /**
  * AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
@@ -2005,12 +2013,18 @@ export interface MCPFailedPayload {
 }
 
 /**
- * MCPOAuthPayload is the payload for type="mcp_oauth_needed", emitted
- * when kiro-cli reports _kiro.dev/mcp/oauth_request. URL is the
- * provider's authorisation endpoint; the user completes the flow in a
- * new tab.
+ * MCPOAuthPayload is the payload for type="mcp_oauth_needed", emitted when kiro-cli reports a server failed for
+ * want of sign-in. It carries no URL: the user starts a sign-in from the server's row.
  */
 export interface MCPOAuthPayload {
+  server: string;
+}
+
+/**
+ * MCPSignInOpenPayload is the payload for type="mcp_sign_in_open": kiro-cli opened URL, the consent page of the
+ * sign-in the user started on Server's row.
+ */
+export interface MCPSignInOpenPayload {
   server: string;
   url: string;
 }
@@ -2111,10 +2125,22 @@ export interface OpenEntry {
 /**
  * OpenExternalURLPayload is the payload for type="open_external_url". Browsers popup-block a
  * window.open() not driven by a user gesture, so the client surfaces a banner link rather
- * than auto-opening. Only http/https URLs are broadcast.
+ * than auto-opening. Only http/https URLs are broadcast. ExpiresAt is when KAS stops waiting for
+ * the callback; a replayed event carries the original time, so the client shows only what is left.
  */
 export interface OpenExternalURLPayload {
+  expires_at: string;
   url: string;
+}
+
+/**
+ * OutputStyle is one choice of the template's outputStyle select; ID is the value
+ * EffectiveSettings.OutputStyle stores.
+ */
+export interface OutputStyle {
+  id: string;
+  name: string;
+  description: string;
 }
 
 /**
@@ -3019,6 +3045,11 @@ export interface RunStepEnd {
  * or KAS's record shows it completed.
  */
   resumed?: boolean;
+}
+
+/** RunStepEndRequest is POST /api/runs/{id}/steps/{path}/end's body: end the paused step at that node path. */
+export interface RunStepEndRequest {
+  status: RunStepEndStatus;
 }
 
 /**

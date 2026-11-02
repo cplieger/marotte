@@ -61,8 +61,14 @@ type PermissionConsentAnswer struct {
 	Resource   string `json:"resource"`
 }
 
-// ConsentScopeUser saves a rule to the user permissions file, which every session reads.
-const ConsentScopeUser = "user"
+// Consent scopes an always answer saves its rule at.
+const (
+	// ConsentScopeUser saves a rule to the user permissions file, which every session reads.
+	ConsentScopeUser = "user"
+	// ConsentScopeSession has KAS keep the rule in the live session's memory only: nothing is
+	// written, and the rule ends when that session closes.
+	ConsentScopeSession = "session"
+)
 
 // permissionOutcomeMeta is the `_meta` envelope on a permission reply.
 type permissionOutcomeMeta struct {

@@ -1,11 +1,14 @@
 // The run's verbs as one row of buttons, drawn from the server's `GET /api/runs/{id}/controls`
 // answer (`run-store.ts` `runControls`) and rebuilt only when that answer moves. The run dock is
-// its one surface.
+// its one surface. A paused step's own end verbs sit in its header (`buildStepEndView`).
 
 import { createRoot, el } from "@cplieger/reactive";
+import { join } from "@cplieger/keyenc";
 import { bindLoadingState } from "./actions/index.js";
+import { confirm } from "./confirm.js";
 import {
   cancelRun,
+  endRunStep,
   extendRunRepeat,
   finishRunRepeat,
   pauseRun,
@@ -19,11 +22,13 @@ import {
   ICON_PLAY,
   ICON_PLUS_UI,
   ICON_REFRESH,
+  ICON_SAVE_FAIL,
   ICON_SAVE_OK,
 } from "./icons.js";
+import type { ExecNode } from "./exec-view/model.js";
 import { CONTROL_LABEL, offeredVerbs, refusalSentences, type RunVerb } from "./run-controls.js";
 import { runControls } from "./run-store.js";
-import type { RunControlsResponse } from "./wire/types.gen.js";
+import type { RunControlsResponse, RunStepEndStatus } from "./wire/types.gen.js";
 
 export interface RunControlsView {
   /** The row for the current answer, or null with no verb to draw; the SAME element while the
@@ -183,4 +188,98 @@ function button(verb: RunVerb, onclick: () => void): HTMLButtonElement {
     },
     iconEl(ICON[verb]),
   ) as HTMLButtonElement;
+}
+
+export interface StepEndView {
+  /** The end buttons for `node`, or null where it is not endable; the SAME element while the shown
+   *  step and its endability hold, since the header re-seats a new one and that blurs it. */
+  current(node: ExecNode): HTMLElement | null;
+  /** Release the buttons' bindings and forget them. */
+  dispose(): void;
+}
+
+const STEP_END: Record<
+  RunStepEndStatus,
+  { label: string; icon: string; confirm: string; variant: "normal" | "destructive" }
+> = {
+  completed: {
+    label: "Mark step done",
+    icon: ICON_SAVE_OK,
+    confirm: "Its session closes, and the run goes on as if the step had finished.",
+    variant: "normal",
+  },
+  failed: {
+    label: "Mark step failed",
+    icon: ICON_SAVE_FAIL,
+    confirm: "Its session closes, and the run handles it as a failed step.",
+    variant: "destructive",
+  },
+};
+
+/** The end KAS already recorded goes first. */
+function endOrder(node: ExecNode): readonly RunStepEndStatus[] {
+  return node.pendingEnd?.status === "failed" ? ["failed", "completed"] : ["completed", "failed"];
+}
+
+export function buildStepEndView(workflowID: string): StepEndView {
+  let shown = "";
+  let row: HTMLElement | null = null;
+  let bindings: (() => void)[] = [];
+  const drop = (): void => {
+    for (const dispose of bindings) {
+      dispose();
+    }
+    bindings = [];
+    row = null;
+    shown = "";
+  };
+  return {
+    current(node) {
+      if (node.endable !== true) {
+        drop();
+        return null;
+      }
+      const order = endOrder(node);
+      const key = join(node.path, ...order);
+      if (row !== null && shown === key) {
+        return row;
+      }
+      drop();
+      shown = key;
+      row = el("span", { className: "run-controls run-step-end" });
+      for (const status of order) {
+        const end = STEP_END[status];
+        const label = node.label;
+        const btn = el(
+          "button",
+          {
+            type: "button",
+            className:
+              status === "failed" ? "icon-btn run-icon-btn is-danger" : "icon-btn run-icon-btn",
+            "aria-label": end.label,
+            "data-tooltip": end.label,
+            onclick: () =>
+              void (async () => {
+                const verb = status === "completed" ? "done" : "failed";
+                const ok = await confirm(
+                  `Mark ${label} ${verb}? ${end.confirm}`,
+                  end.label,
+                  end.variant,
+                );
+                if (ok) {
+                  void endRunStep.dispatch({ workflowID, nodePath: node.path, status });
+                }
+              })(),
+          },
+          iconEl(end.icon),
+        ) as HTMLButtonElement;
+        bindings.push(bindLoadingState(endRunStep.name, btn));
+        row.append(btn);
+      }
+      return row;
+    },
+    dispose() {
+      drop();
+    },
+  };
 }

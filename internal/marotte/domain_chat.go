@@ -427,10 +427,19 @@ type ConfigTemplateResponse struct {
 	// retry policy can rely on.
 	Catalog       CatalogState  `json:"catalog"`
 	CatalogReason CatalogReason `json:"catalog_reason,omitempty"`
-	// Both lists are non-null on every path, so a generated decoder requiring an array
+	// Every list is non-null on every path, so a generated decoder requiring an array
 	// cannot fail on a failure body.
-	Modes  []SessionMode  `json:"modes"`
-	Models []SessionModel `json:"models"`
+	Modes        []SessionMode  `json:"modes"`
+	Models       []SessionModel `json:"models"`
+	OutputStyles []OutputStyle  `json:"output_styles"`
+}
+
+// OutputStyle is one choice of the template's outputStyle select; ID is the value
+// EffectiveSettings.OutputStyle stores.
+type OutputStyle struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 // Chat is the persisted chat header, <dir>/<id>/chat.json; the transcript is the

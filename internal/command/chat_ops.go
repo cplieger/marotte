@@ -180,9 +180,10 @@ func teardownCancel(ctx context.Context, bridges bridgeAccess, perms permissionC
 	}
 }
 
-// cmdPermission forwards the user's permission dialog choice to kiro-cli. An always answer
-// saves its rule at user scope: the profile is switched to Custom first (Customize), and only
-// once that write landed does kiro-cli get the answer, whose rule it writes into the same file.
+// cmdPermission forwards the user's permission dialog choice to kiro-cli. A user-scope always
+// answer switches the profile to Custom first (Customize), and only once that write landed does
+// kiro-cli get the answer, whose rule it writes into the same file. A session-scope one writes no
+// file, so the profile stays as it is.
 func cmdPermission(ctx context.Context, perms pendingPermAccess, profiles profileSwitcher, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.PermissionResponseCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
@@ -198,7 +199,7 @@ func cmdPermission(ctx context.Context, perms pendingPermAccess, profiles profil
 	if err != nil {
 		return nil, err
 	}
-	if always != nil {
+	if always != nil && always.Scope == marotte.ConsentScopeUser {
 		if err := profiles.EnsureCustomProfile(ctx); err != nil {
 			return nil, customizeRefusal(err)
 		}
@@ -247,9 +248,9 @@ func answerResponse(ctx context.Context, kind string, chatID marotte.ChatID, rep
 	}
 }
 
-// alwaysConsent is the user-scope rule an always answer saves, nil for any other answer. A
-// chosen pattern other than the ask's own subject is checked against the rule format before
-// anything is claimed or written; an unknown request or option is left to the claim.
+// alwaysConsent is the rule an always answer saves, nil for any other answer. The chosen scope
+// and a chosen pattern other than the ask's own subject are checked before anything is claimed
+// or written; an unknown request or option is left to the claim.
 func alwaysConsent(perms pendingPermAccess, chatID marotte.ChatID, p *marotte.PermissionResponseCommand) (*marotte.PermissionConsentAnswer, error) {
 	ask, ok := perms.PendingPermission(chatID, p.RequestID)
 	if !ok {
@@ -261,7 +262,10 @@ func alwaysConsent(perms pendingPermAccess, chatID marotte.ChatID, p *marotte.Pe
 	}
 	effect, isAlways := alwaysEffects[ask.Options[i].Kind]
 	resource := strings.TrimSpace(p.AlwaysResource)
+	scope, scopeOK := consentScope(p.AlwaysScope, effect)
 	switch {
+	case !isAlways && p.AlwaysScope != "", isAlways && !scopeOK:
+		return nil, StatusError(http.StatusBadRequest, errAlwaysScopeInvalid)
 	case !isAlways && resource == "":
 		return nil, nil
 	case !isAlways, ask.Consent == nil, len(p.FileDecisions) > 0, strings.TrimSpace(p.RejectionReason) != "":
@@ -280,8 +284,20 @@ func alwaysConsent(perms pendingPermAccess, chatID marotte.ChatID, p *marotte.Pe
 		raw = clean.Match[0]
 	}
 	return &marotte.PermissionConsentAnswer{
-		Scope: marotte.ConsentScopeUser, Capability: clean.Capability, Resource: raw,
+		Scope: scope, Capability: clean.Capability, Resource: raw,
 	}, nil
+}
+
+// consentScope maps a requested always_scope onto the KAS scope it saves at. The card offers
+// a session scope only beside Allow, so a session-scope deny is refused.
+func consentScope(requested, effect string) (string, bool) {
+	switch requested {
+	case "", marotte.ConsentScopeUser:
+		return marotte.ConsentScopeUser, true
+	case marotte.ConsentScopeSession:
+		return marotte.ConsentScopeSession, effect == policyfile.EffectAllow
+	}
+	return "", false
 }
 
 // subjectResource maps a pattern the card offered from the ask itself (its subject, or the

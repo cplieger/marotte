@@ -1,14 +1,14 @@
 {
- "workflowId": "wf_66658d5c69b1f284",
+ "workflowId": "wf_a9239a70a27fce6e",
  "state": {
-  "workflowId": "wf_66658d5c69b1f284",
+  "workflowId": "wf_a9239a70a27fce6e",
   "workflowName": "askloop",
   "status": "running",
   "inputs": {},
   "artifacts": {},
   "capturedOutputs": {},
   "root": {
-   "nodeId": "wf_66658d5c69b1f284",
+   "nodeId": "wf_a9239a70a27fce6e",
    "type": "sequence",
    "status": "pending",
    "children": [
@@ -22,14 +22,14 @@
     }
    ]
   },
-  "createdAt": "2026-10-12T00:23:14.312Z",
+  "createdAt": "2026-11-01T09:58:26.445Z",
   "planRevision": 0,
-  "parentSessionId": "sess_b24e223e-fff1-4136-b048-ebf1cfcfcad7",
-  "rootConversationId": "sess_b24e223e-fff1-4136-b048-ebf1cfcfcad7",
+  "parentSessionId": "sess_1da19162-bdcb-4912-8946-50d3b02a067d",
+  "rootConversationId": "sess_1da19162-bdcb-4912-8946-50d3b02a067d",
   "workspacePath": "/work",
   "memoryConfig": {
-   "mode": "read_write",
-   "reflection": true
+   "mode": "disabled",
+   "reflection": false
   },
   "memoryConfigSource": "legacy",
   "backgroundExecution": false,

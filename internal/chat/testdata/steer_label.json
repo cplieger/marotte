@@ -52,7 +52,7 @@
       "sites": [
         "internal/agent/bridge_coord.go:1519",
         "internal/agent/entry_merge.go:606",
-        "internal/agent/runtime.go:783"
+        "internal/agent/runtime.go:784"
       ]
     },
     {
@@ -61,7 +61,7 @@
       "reason": "",
       "label": "Workflow result",
       "sites": [
-        "internal/agent/run_appender.go:119",
+        "internal/agent/run_appender.go:121",
         "internal/agent/run_bounds.go:485",
         "internal/agent/run_plan.go:116",
         "internal/translate/steering.go:130",
@@ -172,7 +172,7 @@
       "label": "Not read · the session restarted",
       "sites": [
         "internal/agent/entry_merge.go:606",
-        "internal/agent/runtime.go:778"
+        "internal/agent/runtime.go:779"
       ]
     },
     {
@@ -181,8 +181,8 @@
       "reason": "",
       "label": "Mid-turn message",
       "sites": [
-        "internal/agent/run_appender.go:236",
-        "internal/agent/run_message.go:498",
+        "internal/agent/run_appender.go:238",
+        "internal/agent/run_message.go:514",
         "internal/translate/steering.go:130",
         "internal/translate/steering.go:270"
       ]
@@ -221,14 +221,14 @@
       "reason": "restart"
     },
     {
-      "site": "internal/agent/run_appender.go:119",
+      "site": "internal/agent/run_appender.go:121",
       "form": "literal",
       "origin": "agent",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/agent/run_appender.go:236",
+      "site": "internal/agent/run_appender.go:238",
       "form": "literal",
       "origin": "user",
       "state": "read",
@@ -242,7 +242,7 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/run_message.go:498",
+      "site": "internal/agent/run_message.go:514",
       "form": "literal",
       "origin": "user",
       "state": "read",
@@ -256,14 +256,14 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:778",
+      "site": "internal/agent/runtime.go:779",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/runtime.go:783",
+      "site": "internal/agent/runtime.go:784",
       "form": "mutation",
       "origin": "agent",
       "state": "dropped",

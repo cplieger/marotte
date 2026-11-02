@@ -1,4 +1,4 @@
-// The workspace's mode, model and effort catalog: ONE reader of `GET /api/config-template`, because
+// The workspace's mode, model, effort and output style catalog: ONE reader of `GET /api/config-template`, because
 // the endpoint is an agent engine call and a second reader seeding the same surfaces costs another
 // engine round trip per boot and per gap.
 
@@ -12,6 +12,7 @@ import { CATALOG_REQUEST_TIMEOUT_MS, refreshCatalog } from "./model-catalog.js";
 import { setCatalogModes } from "./roles.js";
 import { refreshPickerIfVisible, setCatalogPhase, setPickerModels } from "./picker.js";
 import { refreshContextUI } from "./context-ui.js";
+import { setCatalogOutputStyles } from "./output-style.js";
 import { MODEL_CONTEXT_SIZES, contextSizeFor, getActive, parseContextSize } from "./store.js";
 
 /** One catalog entry, mapped from the wire `SessionModel` to the picker's `ModelInfo`. */
@@ -61,6 +62,9 @@ export function fetchCatalog(
         if (d.models.length > 0) {
           // The active chat's model moves the picker's highlight; "" leaves it where it is.
           populatePickerModels(d.models.map(toModelInfo), getActive()?.model ?? "");
+        }
+        if (d.output_styles.length > 0) {
+          setCatalogOutputStyles(d.output_styles);
         }
         // Re-read the session: the highlight above may have repainted the picker, and a stale
         // reference is how the pill and the picker desynced before.

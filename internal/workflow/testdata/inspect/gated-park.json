@@ -1,0 +1,73 @@
+{
+ "workflowId": "wf_af70a38d2a7862f0",
+ "state": {
+  "workflowId": "wf_af70a38d2a7862f0",
+  "workflowName": "gatedpark",
+  "status": "paused",
+  "inputs": {},
+  "artifacts": {},
+  "capturedOutputs": {
+   "gated": "Probe reply."
+  },
+  "root": {
+   "nodeId": "wf_af70a38d2a7862f0",
+   "type": "sequence",
+   "status": "paused",
+   "children": [
+    {
+     "nodeId": "gated",
+     "type": "step",
+     "status": "paused",
+     "agentName": "replier",
+     "modelId": "claude-sonnet-5.5",
+     "effortLevel": "high",
+     "startedAt": "2026-11-01T09:58:55.539Z",
+     "sessionId": "sess_746a39f5-fb36-487e-a2a3-5335af805af4",
+     "capturedOutput": "Probe reply.",
+     "attention": [
+      {
+       "kind": "question",
+       "since": "2026-11-01T09:58:56.926Z"
+      }
+     ]
+    }
+   ],
+   "startedAt": "2026-11-01T09:58:55.537Z"
+  },
+  "createdAt": "2026-11-01T09:58:55.521Z",
+  "planRevision": 0,
+  "parentSessionId": "sess_1da19162-bdcb-4912-8946-50d3b02a067d",
+  "rootConversationId": "sess_1da19162-bdcb-4912-8946-50d3b02a067d",
+  "workspacePath": "/work",
+  "memoryConfig": {
+   "mode": "disabled",
+   "reflection": false
+  },
+  "memoryConfigSource": "legacy",
+  "backgroundExecution": false,
+  "parentModelId": "claude-sonnet-5.5",
+  "parentEffortLevel": "high",
+  "pauseReason": "Step 'gated' is waiting for the next user message.",
+  "attention": [
+   {
+    "kind": "question",
+    "since": "2026-11-01T09:58:56.926Z",
+    "nodeId": "gated",
+    "nodePath": [
+     "wf_af70a38d2a7862f0",
+     "gated"
+    ],
+    "sessionId": "sess_746a39f5-fb36-487e-a2a3-5335af805af4"
+   }
+  ]
+ },
+ "nodePlan": [
+  {
+   "nodeId": "gated",
+   "type": "step",
+   "agentName": "replier",
+   "modelId": "claude-sonnet-5.5",
+   "effortLevel": "high"
+  }
+ ]
+}

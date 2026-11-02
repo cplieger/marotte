@@ -321,25 +321,25 @@ func (r *inspectRunState) userParked() bool {
 
 // inspect reads one run's inspect reply, false when it cannot be read or decoded at all.
 func (rs *Runs) inspect(ctx context.Context, workflowID string) (inspectRunState, bool) {
-	res, err := rs.readInspect(ctx, workflowID)
+	res, _, err := rs.readInspect(ctx, workflowID)
 	return res, err == nil
 }
 
 var errInspectUndecoded = errors.New("a run's inspect reply could not be decoded")
 
-// readInspect is inspect with its failure: the RPC's, or errInspectUndecoded.
-func (rs *Runs) readInspect(ctx context.Context, workflowID string) (inspectRunState, error) {
+// readInspect is inspect with the raw reply and its failure: the RPC's, or errInspectUndecoded.
+func (rs *Runs) readInspect(ctx context.Context, workflowID string) (inspectRunState, json.RawMessage, error) {
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
 		slog.Warn("could not read a paused run's state, so it is left alone",
 			"workflow_id", workflowID, "error", err)
-		return inspectRunState{}, err
+		return inspectRunState{}, nil, err
 	}
 	var res inspectRunState
 	if !unmarshalKeepingReadable(raw, &res) {
-		return inspectRunState{}, errInspectUndecoded
+		return inspectRunState{}, nil, errInspectUndecoded
 	}
-	return res, nil
+	return res, raw, nil
 }
 
 // rawInspect issues `_kiro/workflow/inspect` and types its failure, so callers use errors.Is. Every
@@ -354,22 +354,22 @@ func (rs *Runs) rawInspect(ctx context.Context, workflowID string) (json.RawMess
 		return nil, workflow.Classify(err)
 	}
 	rs.translate.RecordInspect(context.WithoutCancel(ctx), raw)
-	rs.seedRouterSteps(workflowID, raw)
+	var res workflow.InspectResult
+	if json.Unmarshal(raw, &res) == nil && res.State != nil {
+		rs.seedRouterSteps(workflowID, res.State)
+		rs.signals.observe(workflowID, res.State)
+	}
 	return raw, nil
 }
 
 // seedRouterSteps teaches the router every step session an inspect names, so a step's frames after a restart reach
 // its run's owner before any node_start is read again.
-func (rs *Runs) seedRouterSteps(workflowID string, raw json.RawMessage) {
+func (rs *Runs) seedRouterSteps(workflowID string, s *workflow.State) {
 	if rs.router == nil {
 		return
 	}
-	var res workflow.InspectResult
-	if json.Unmarshal(raw, &res) != nil {
-		return
-	}
 	var ids []string
-	for _, st := range workflow.Steps(res.State) {
+	for _, st := range workflow.Steps(s) {
 		if st.SessionID != "" {
 			ids = append(ids, st.SessionID)
 		}

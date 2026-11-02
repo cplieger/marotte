@@ -10,6 +10,7 @@ import { chevronEl } from "../chevron.js";
 import { watchCut } from "../clamp-text.js";
 import { linkifyPaths } from "../linkify.js";
 import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
+import { splitLeadingQuote } from "../message-quote.js";
 // The dot's words, shared with the turn map — see turn-severity.ts.
 // Colour is never the sole channel (WCAG 1.4.1), and these are that channel.
 import { OUTCOME_LABEL, OUTCOME_TOOLTIP, severityOf } from "../turn-severity.js";
@@ -140,6 +141,7 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
 
   if (d.request === undefined && d.wake !== undefined && !d.wake.fallback) {
     header.dataset["trigger"] = "wake";
+    syncQuote(header, undefined);
     syncWakeLabel(header, d.wake, d.onOpenRun);
     if (d.wake.rows === undefined) {
       setRequestText(text, d.wake.body);
@@ -158,6 +160,7 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     // No user message: naming the trigger is honest, fabricating one is not.
     header.dataset["trigger"] = "system";
     setRequestText(text, WAKE_FALLBACK_LINE);
+    syncQuote(header, undefined);
     syncFullText(header, undefined);
     return;
   }
@@ -165,7 +168,9 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   header.dataset["trigger"] = "user";
   const body = d.request.trim();
   const label = d.label?.trim() ?? "";
-  setRequestText(text, label === "" ? body : label);
+  const quoted = label === "" ? splitLeadingQuote(body) : null;
+  syncQuote(header, quoted?.quote);
+  setRequestText(text, label !== "" ? label : (quoted?.rest ?? body));
   syncFullText(header, label === "" ? undefined : body);
 }
 
@@ -281,6 +286,28 @@ export function syncWakeRowRuns(header: HTMLElement): void {
 
 /** Sub-pixel slack (px) for a button whose box rounds onto the clip edge. */
 const CLIP_EPSILON = 0.5;
+
+/** The reply passage a prompt opened with (`message-quote.ts`), drawn as one band before the text; `quote`
+ *  undefined removes it. */
+function syncQuote(header: HTMLElement, quote: string | undefined): void {
+  const req = header.querySelector<HTMLElement>(":scope > .turn-req");
+  if (req === null) {
+    return;
+  }
+  let band = req.querySelector<HTMLElement>(":scope > .turn-req-quote");
+  if (quote === undefined) {
+    band?.remove();
+    return;
+  }
+  if (band === null) {
+    band = el("blockquote", { className: "turn-req-quote" });
+    req.prepend(band);
+  }
+  if (band.textContent !== quote) {
+    band.textContent = quote;
+    linkifyPaths(band);
+  }
+}
 
 /** A labelled request's full text, a sibling of the text so the folded clamp cannot hide it, shown
  *  while the turn is open (29-turns.css); `body` undefined removes it. */

@@ -76,6 +76,7 @@ import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info, error as toastError } from "./toast.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
 import { setPageTitle, clearPageTitle } from "./page-title.js";
+import type { ClosingChat } from "./close-busy.js";
 
 // --- Types ---
 
@@ -765,6 +766,23 @@ function subtreeRows(row: TabRow): TabRow[] {
   return out;
 }
 
+/** Asks whether a person's close may go ahead; `name` and `ref` are the closed tab's, `chats`
+ *  every chat row in its subtree. A plain `true` lets the close run in the same task. INJECTED:
+ *  the answer's sources import this module. */
+type CloseGate = (
+  name: string,
+  ref: string,
+  chats: readonly ClosingChat[],
+) => true | Promise<boolean>;
+
+const openGate: CloseGate = () => true;
+
+let closeGate = openGate;
+
+export function registerCloseGate(fn: CloseGate): void {
+  closeGate = fn;
+}
+
 function captureClose(row: TabRow): CapturedClose {
   const rows = subtreeRows(row);
   const ids = new Set(rows.map((r) => r.subject.id));
@@ -942,6 +960,33 @@ export async function closeTab(id: string): Promise<void> {
   // was aborted): the machine verifies rather than guessing in either
   // direction.
   opTimedOut(opID);
+}
+
+/** A person's close (the ×, middle-click, Delete): the gate, then `beforeClose` and `closeTab`
+ *  only if it lets the close go ahead. Remote closes and the singleton toggles call `closeTab`. */
+function requestCloseTab(id: string, beforeClose: () => void = () => undefined): void {
+  const proceed = (): void => {
+    beforeClose();
+    void closeTab(id);
+  };
+  const row = rowOfID(id);
+  const chats = (row === undefined ? [] : subtreeRows(row))
+    .filter((r) => r.subject.kind === "chat")
+    .map((r) => ({ ref: r.subject.ref, name: r.name }));
+  if (row === undefined || chats.length === 0) {
+    proceed();
+    return;
+  }
+  const verdict = closeGate(row.name, row.subject.kind === "chat" ? row.subject.ref : "", chats);
+  if (verdict === true) {
+    proceed();
+    return;
+  }
+  void verdict.then((ok) => {
+    if (ok) {
+      proceed();
+    }
+  });
 }
 
 /** Pin or unpin a top-level tab.
@@ -1781,7 +1826,7 @@ function createTabEl(row: TabRow): HTMLElement {
     if (gestureDragged()) {
       return;
     }
-    void closeTab(id);
+    requestCloseTab(id);
   });
 
   // The dot is decoration; `statusSR` is what a screen reader hears. Both ride
@@ -2080,7 +2125,7 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
   node.addEventListener("auxclick", (e) => {
     if (e.button === 1) {
       e.preventDefault();
-      void closeTab(id);
+      requestCloseTab(id);
     }
   });
 
@@ -2103,20 +2148,21 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
         e.preventDefault();
         // Focus is moved by hand, or Delete drops the keyboard user onto <body>. The APG puts focus on the
         // tab that took the closed one's place: everything after me, then everything before in reverse.
-        // Moved BEFORE the dispatch, because a close is a round trip.
-        const siblings = [...(node.parentElement?.children ?? [])] as HTMLElement[];
-        const self = siblings.indexOf(node);
-        const successors = [...siblings.slice(self + 1), ...siblings.slice(0, self).reverse()];
-        const successor = successors.find((n) => n.dataset["tabId"] !== id);
-        if (successor !== undefined) {
-          successor.focus();
-        } else {
-          // The LAST tab: no row survives for focus to land on, and losing it
-          // to <body> strands the keyboard user. The empty-state surface's one
-          // control is the composer, so focus goes there.
-          $.promptInput.focus();
-        }
-        void closeTab(id);
+        // Moved BEFORE the dispatch, because a close is a round trip, and only once the gate lets it go.
+        requestCloseTab(id, () => {
+          const siblings = [...(node.parentElement?.children ?? [])] as HTMLElement[];
+          const self = siblings.indexOf(node);
+          const successors = [...siblings.slice(self + 1), ...siblings.slice(0, self).reverse()];
+          const successor = successors.find((n) => n.dataset["tabId"] !== id);
+          if (successor !== undefined) {
+            successor.focus();
+          } else {
+            // The LAST tab: no row survives for focus to land on, and losing it
+            // to <body> strands the keyboard user. The empty-state surface's one
+            // control is the composer, so focus goes there.
+            $.promptInput.focus();
+          }
+        });
         break;
       }
       case "ArrowDown":
@@ -2373,6 +2419,7 @@ export function _resetForTest(): void {
   callbacks.onActivate = null;
   callbacks.onEmpty = null;
   chatSettledProbe = null;
+  closeGate = openGate;
   if (internal.emptyTimer !== null) {
     clearTimeout(internal.emptyTimer);
   }

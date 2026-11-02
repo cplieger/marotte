@@ -150,7 +150,7 @@ type v3MCPResourceTemplate struct {
 }
 
 // HandleMCPStatus maps _kiro/mcp/status onto the MCP-registry state: connected servers
-// record their tools, failed ones an init failure, or an OAuth prompt when a URL is present.
+// record their tools, failed ones an init failure, or a wait for sign-in when a URL is present.
 func (t *Translator) HandleMCPStatus(ctx context.Context, _ marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[v3MCPStatus](msg, "mcp/status")
 	if !ok {
@@ -168,9 +168,10 @@ func (t *Translator) HandleMCPStatus(ctx context.Context, _ marotte.ChatID, msg 
 			t.mcp.RecordConnected(ctx, s.Name, src, mcpToolNames(s.Tools), mcpPrompts(s.Prompts),
 				mcpResources(s.Resources), mcpResourceTemplates(s.ResourceTemplates))
 		case "failed":
-			// The URL outranks failedAuthorization: an OAuth server needing sign-in carries both.
+			// The URL outranks failedAuthorization: an OAuth server needing sign-in carries both. The URL itself
+			// is dropped: KAS closed that attempt's redirect listener, so no callback for it can be delivered.
 			if s.AuthorizationURL != "" {
-				t.mcp.RecordOAuth(ctx, s.Name, src, s.AuthorizationURL)
+				t.mcp.RecordOAuth(ctx, s.Name, src)
 				continue
 			}
 			t.mcp.RecordInitFailure(ctx, s.Name, src, s.failureReason())

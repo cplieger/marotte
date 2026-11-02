@@ -87,6 +87,7 @@ vi.mock("./actions/runs.js", async () => {
     // Linked by run-view's repeat controls; no case here offers them.
     extendRunRepeat: verb("extend"),
     finishRunRepeat: verb("finish_loop"),
+    endRunStep: verb("end_step"),
     // Linked by the run composer and the step's pending-message stack; no case here sends.
     messageRunStep: verb("message"),
     removeRunStepSteer: verb("steer_remove"),

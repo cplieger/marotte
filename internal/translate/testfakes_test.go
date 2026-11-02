@@ -75,7 +75,7 @@ type nopMCPRecorder struct{}
 func (nopMCPRecorder) RecordConnected(context.Context, string, marotte.MCPSource, []string, []marotte.MCPPromptInfo, []marotte.MCPResourceInfo, []marotte.MCPResourceTemplateInfo) {
 }
 
-func (nopMCPRecorder) RecordOAuth(context.Context, string, marotte.MCPSource, string) {}
+func (nopMCPRecorder) RecordOAuth(context.Context, string, marotte.MCPSource) {}
 
 func (nopMCPRecorder) RecordInitFailure(context.Context, string, marotte.MCPSource, string) {}
 

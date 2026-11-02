@@ -345,9 +345,12 @@
   font-weight: var(--fw-semibold);
 }
 
+/* A message can quote a command: keep its spacing and wrap a long token, so all of it is on screen. */
 .uip-ask-msg {
   margin-block-end: var(--sp-3);
   font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .uip-ask-actions {

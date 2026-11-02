@@ -9,6 +9,7 @@ import { wakeText } from "./turn-wake.js";
 import { entryRenders, turnFolds } from "./block-window.js";
 import { MessageRun } from "./entry-ids.js";
 import { ICON_COPY, ICON_COPY_MD, ICON_LINK } from "./icons.js";
+import { blockquote } from "./message-quote.js";
 import { getActiveId } from "./store.js";
 import { copyClipboard } from "./actions/messages.js";
 import { buildPath } from "./route-path.js";
@@ -228,11 +229,7 @@ function turnCopyMarkdown(t: Turn): string {
   if (prompt === "") {
     return reply;
   }
-  const quoted = prompt
-    .split("\n")
-    .map((line) => (line === "" ? ">" : `> ${line}`))
-    .join("\n");
-  return `${quoted}\n\n${reply}`;
+  return `${blockquote(prompt)}\n\n${reply}`;
 }
 
 /**

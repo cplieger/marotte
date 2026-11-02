@@ -282,7 +282,8 @@ type mcpRecorder interface {
 	// RecordConnected marks a server connected and replaces what it advertises
 	// (tools, prompts, resources, resource templates) wholesale; any may be nil.
 	RecordConnected(ctx context.Context, serverName string, src marotte.MCPSource, tools []string, prompts []marotte.MCPPromptInfo, resources []marotte.MCPResourceInfo, templates []marotte.MCPResourceTemplateInfo)
-	RecordOAuth(ctx context.Context, serverName string, src marotte.MCPSource, oauthURL string)
+	// RecordOAuth marks a server waiting for sign-in.
+	RecordOAuth(ctx context.Context, serverName string, src marotte.MCPSource)
 	RecordInitFailure(ctx context.Context, serverName string, src marotte.MCPSource, errMsg string)
 	// RecordDisabled reports a server KAS says is off. Never recorded for the
 	// entry marotte owns, so it cannot resurrect one the user switched off.

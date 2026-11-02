@@ -341,8 +341,12 @@ const (
 	RunStepFinished RunStepMessageRefusal = "finished"
 	// RunStepRunPaused means the run is paused while this step is not, so Resume is the way on.
 	RunStepRunPaused RunStepMessageRefusal = "run_paused"
-	// RunStepBusy means the step is between states (a resume in flight); retry.
+	// RunStepBusy means the step is briefly between states (a resume, a park or a steer racing the
+	// read, or a run being deleted); a retry decides again.
 	RunStepBusy RunStepMessageRefusal = "busy"
+	// RunStepWaitsOnRun means the step is paused while another step of its run runs: KAS takes no
+	// message for it until every running step stops, which can take minutes.
+	RunStepWaitsOnRun RunStepMessageRefusal = "waits_on_run"
 	// RunStepFull means too many unread messages are waiting for the step.
 	RunStepFull RunStepMessageRefusal = "full"
 )
@@ -467,6 +471,30 @@ type RunExtendRequest struct {
 type RunFinishLoopRequest struct {
 	NodeID string `json:"node_id"`
 }
+
+// RunStepEndStatus is the status a person's end of a paused step writes, the two KAS accepts for one.
+type RunStepEndStatus string
+
+// The step end statuses.
+const (
+	RunStepEndCompleted RunStepEndStatus = "completed"
+	RunStepEndFailed    RunStepEndStatus = "failed"
+)
+
+// RunStepEndRequest is POST /api/runs/{id}/steps/{path}/end's body: end the paused step at that node path.
+type RunStepEndRequest struct {
+	Status RunStepEndStatus `json:"status"`
+}
+
+// RunStepEndRefusal is the machine `code` of a 409 from the end route about the step itself.
+type RunStepEndRefusal string
+
+const (
+	// RunStepEndNotPaused means no execution at the path is paused.
+	RunStepEndNotPaused RunStepEndRefusal = "step_not_paused"
+	// RunStepEndUnnamed means another paused execution shares the step's node id, and KAS ends the first one by id.
+	RunStepEndUnnamed RunStepEndRefusal = "step_unnamed"
+)
 
 // RunRetriedResponse is POST /api/runs/{id}/retry's reply: KAS's own outcome
 // report, forwarded rather than collapsed to `{"ok":true}`. RetriedNodeIDs is why

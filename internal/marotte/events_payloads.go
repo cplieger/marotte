@@ -1,6 +1,9 @@
 package marotte
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Per-event payload structs for SSE events; the envelope types live in events.go.
 
@@ -471,9 +474,11 @@ type GovernanceRegistryServer struct {
 
 // OpenExternalURLPayload is the payload for type="open_external_url". Browsers popup-block a
 // window.open() not driven by a user gesture, so the client surfaces a banner link rather
-// than auto-opening. Only http/https URLs are broadcast.
+// than auto-opening. Only http/https URLs are broadcast. ExpiresAt is when KAS stops waiting for
+// the callback; a replayed event carries the original time, so the client shows only what is left.
 type OpenExternalURLPayload struct {
-	URL string `json:"url"`
+	ExpiresAt time.Time `json:"expires_at"`
+	URL       string    `json:"url"`
 }
 
 // RPC error code constants for typed dispatch in retry logic.

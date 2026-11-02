@@ -885,3 +885,118 @@ describe("a schedule whose recipe is gone", () => {
     expect(orphans(panel)).toHaveLength(1);
   });
 });
+
+describe("the Run form's plan", () => {
+  const PLAN = [
+    { nodeId: "a", type: "step", agentName: "x", modelId: "m" },
+    { nodeId: "r", type: "repeat", maxIterations: 3, steps: [{ nodeId: "b", type: "step" }] },
+    {
+      nodeId: "fan",
+      type: "parallel",
+      branches: [
+        { nodeId: "c", type: "step" },
+        { nodeId: "d", type: "step" },
+      ],
+    },
+  ];
+  const LABELS = ["a", "r", "pass 1", "b", "fan", "c", "d"];
+
+  function planned(name: string, plan: unknown): RecipesResponse["recipes"][0] {
+    return { ...recipe(name), plan };
+  }
+
+  async function openForm(r: RecipesResponse["recipes"][0]): Promise<{
+    panel: HTMLElement;
+    form: HTMLFormElement;
+  }> {
+    recipesReply = { recipes: [r] };
+    const panel = await render();
+    buttonFor(panel, r.source)?.click();
+    const form = panel.querySelector<HTMLFormElement>(".recipe-input-form");
+    if (form === null) {
+      throw new Error("the input form did not open");
+    }
+    return { panel, form };
+  }
+
+  function rowLabels(form: HTMLElement): string[] {
+    return [...form.querySelectorAll(".recipe-plan .ev-row > .ev-row-main .ev-label")].map(
+      (l) => l.textContent ?? "",
+    );
+  }
+
+  async function catalogChanges(next: RecipesResponse): Promise<void> {
+    recipesReply = next;
+    dispatch({ type: "recipes_changed", chat_id: "" });
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  it("shows the recipe's steps, all pending, in front of Launch", async () => {
+    const { form } = await openForm(planned("planned", PLAN));
+    const region = form.querySelector<HTMLElement>(".recipe-plan");
+
+    expect(region?.nextElementSibling).toBe(form.querySelector(".recipe-launch-btn"));
+    expect(region?.querySelector(".recipe-plan-head")?.textContent).toBe("Plan \u00b7 4 steps");
+    expect(rowLabels(form)).toEqual(LABELS);
+    const states = [...form.querySelectorAll<HTMLElement>(".recipe-plan .ev-row")].map(
+      (r) => r.dataset["state"],
+    );
+    expect(new Set(states)).toEqual(new Set(["pending"]));
+    expect(form.querySelector('.recipe-plan [role="tree"]')?.getAttribute("aria-label")).toBe(
+      "Planned steps",
+    );
+  });
+
+  it("shows no plan region for a recipe whose plan names no node", async () => {
+    for (const [name, plan] of [
+      ["unplanned", undefined],
+      ["nameless", [{ type: "step" }]],
+    ] as const) {
+      const { form } = await openForm(planned(name, plan));
+      expect(form.querySelector(".recipe-plan"), name).toBeNull();
+      expect(form.textContent, name).not.toContain("Plan");
+    }
+  });
+
+  it("follows a recipes_changed refetch under the kept form", async () => {
+    const { panel, form } = await openForm(planned("replanned", PLAN));
+
+    await catalogChanges({ recipes: [planned("replanned", [{ nodeId: "z", type: "step" }])] });
+    expect(panel.querySelector(".recipe-input-form")).toBe(form);
+    expect(rowLabels(form)).toEqual(["z"]);
+    expect(form.querySelector(".recipe-plan-head")?.textContent).toBe("Plan \u00b7 1 step");
+
+    await catalogChanges({ recipes: [planned("replanned", undefined)] });
+    expect(form.querySelector(".recipe-plan")).toBeNull();
+
+    await catalogChanges({ recipes: [planned("replanned", PLAN)] });
+    expect(form.querySelector(".recipe-plan")?.nextElementSibling).toBe(
+      form.querySelector(".recipe-launch-btn"),
+    );
+    expect(rowLabels(form)).toEqual(LABELS);
+  });
+
+  it("scrolls a long plan in a box about eight rows tall, keyboard-reachable", async () => {
+    const style = document.createElement("style");
+    style.textContent = `:root { --btn-h: 36px; }\n${loadCSS("28-docs.css")}\n${loadCSS("31-exec-view.css")}`;
+    document.head.appendChild(style);
+    try {
+      const steps = Array.from({ length: 50 }, (_, i) => ({
+        nodeId: `s${String(i)}`,
+        type: "step",
+      }));
+      const { form } = await openForm(planned("long", steps));
+      const box = form.querySelector<HTMLElement>(".recipe-plan-steps");
+      if (box === null) {
+        throw new Error("no plan scroll box");
+      }
+      expect(box.clientHeight).toBeLessThanOrEqual(8 * 36);
+      expect(box.clientHeight).toBeGreaterThan(4 * 36);
+      expect(box.scrollHeight).toBeGreaterThan(box.clientHeight);
+      expect(box.tabIndex).toBe(0);
+    } finally {
+      style.remove();
+    }
+  });
+});

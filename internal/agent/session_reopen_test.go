@@ -237,7 +237,7 @@ var configWrites = []struct {
 	{key: settings.KeyContentCollectionEnabled, value: true, reach: reachLive},
 	{key: settings.KeyAgentIgnoreFiles, value: []string{".gitignore"}, reach: reachLive},
 	{key: settings.KeyMCPWaitForReady, value: true, reach: reachLive},
-	{key: settings.KeyOutputStyle, value: settings.OutputStyleConcise, reach: reachLive},
+	{key: settings.KeyOutputStyle, value: "proactive", reach: reachLive},
 	{key: settings.KeySupervisedDefault, value: true, reach: reachNewChat},
 	{key: settings.KeyLastModel, value: "claude-sonnet-4", reach: reachNewChat},
 	{key: settings.KeyLastEffortByModel, value: map[string]string{"claude-sonnet-4": "high"}, reach: reachNewChat},

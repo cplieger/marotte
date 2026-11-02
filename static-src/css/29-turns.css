@@ -196,6 +196,21 @@
   overflow-wrap: anywhere;
 }
 
+/* The reply passage a prompt quoted: subordinate to the question, so muted, set off
+ * by a neutral rule and held to one line, open or folded. */
+.turn-req-quote {
+  max-inline-size: 100%;
+  margin: 0;
+  padding-inline-start: var(--sp-2);
+  border-inline-start: 1px solid var(--c-border);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--c-text-secondary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* FOLD-CONDITIONAL: the fold chevron opens the prompt with the body. An OPEN prompt
  * is not clamped, full text however long (the composer spills a long paste into an
  * attachment); a FOLDED one clamps to four lines, because folded rows are the
@@ -1357,4 +1372,49 @@ button.turn-wake-row-run:focus-visible {
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
+}
+
+/* "Quote in reply" beside a selection inside a reply (selection-quote.ts). A gesture-summoned
+ * overlay, so it takes the context menu's panel and shadow (12-tabs.css `.tab-context-menu`);
+ * `.uip-popover` supplies the fixed position and the z-index. */
+.selection-quote {
+  padding: var(--sp-1);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  background: var(--c-bg-secondary);
+  box-shadow:
+    var(--shadow-ambient),
+    0 4px 12px oklch(0% 0 none / 25%);
+}
+
+.selection-quote-btn {
+  min-block-size: var(--ctl-h-dense);
+  padding: 0 var(--sp-3);
+  border: none;
+  border-radius: calc(var(--r-lg) - 1px - var(--sp-1));
+  background: none;
+  color: var(--c-text-primary);
+  font-size: var(--fs-sm);
+
+  /* The popover measures the panel at its last left offset, which a narrowed window leaves past
+     the right edge; shrink-to-fit would wrap the label there before the clamp pulls it back. */
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard);
+
+  /* The button cancels its pointerdown to keep the selection, and Firefox then gives it
+     no `:active`, so the JS-held class carries 03-base.css's press. */
+  &.is-pressed {
+    box-shadow: inset 0 0 0 100vmax var(--c-press);
+  }
+}
+
+@media (any-hover: hover) {
+  .selection-quote-btn:hover {
+    background: var(--c-hover);
+  }
 }

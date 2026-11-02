@@ -185,18 +185,20 @@ func TestChatForSession_ResolvesARunsParentFromTheStoreAlone(t *testing.T) {
 	})
 }
 
-// TestAffordance_AskingWithholdsResume pins the paused row while every paused step asks: KAS's
-// resume re-parks such a step at once, so Cancel alone is offered, with no sentence for Resume.
+// TestAffordance_AskingWithholdsResume pins the paused row while every paused step asks, or while that is unknown:
+// a known ask re-parks on resume and an unreadable tree cannot prove otherwise, so Cancel alone is offered.
 func TestAffordance_AskingWithholdsResume(t *testing.T) {
 	for name, tc := range map[string]struct {
 		facts runFacts
 		want  []string
 	}{
-		"asking":                    {runFacts{status: "paused", asking: true}, []string{verbCancel}},
+		"asking":                    {runFacts{status: "paused", asks: asksAll}, []string{verbCancel}},
+		"the asks are unread":       {runFacts{status: "paused", asks: asksUnread}, []string{verbCancel}},
 		"an ordinary pause":         {runFacts{status: "paused"}, []string{verbResume, verbCancel}},
-		"running while a step asks": {runFacts{status: "running", asking: true}, []string{verbPause, verbCancel}},
+		"running while a step asks": {runFacts{status: "running", asks: asksAll}, []string{verbPause, verbCancel}},
+		"running, the asks unread":  {runFacts{status: "running", asks: asksUnread}, []string{verbPause, verbCancel}},
 		"a loop at its cap": {
-			runFacts{status: "paused", asking: true, pauseKind: pauseKindMaxIterations, pauseNodeID: "loop"},
+			runFacts{status: "paused", asks: asksAll, pauseKind: pauseKindMaxIterations, pauseNodeID: "loop"},
 			maxIterationsVerbs,
 		},
 	} {
@@ -233,6 +235,13 @@ func TestHandleControls_ReadsTheAskCell(t *testing.T) {
 			t.Errorf("verbs = %v, want Cancel alone", got.Verbs)
 		}
 	})
+	t.Run("a step parked by its completion gate asks", func(t *testing.T) {
+		h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, gatedPark("review", "sess_step")))
+		readNow(t, h, "wf_1")
+		if got := controls(t, h); !slices.Equal(got.Verbs, []string{verbCancel}) {
+			t.Errorf("verbs = %v, want Cancel alone", got.Verbs)
+		}
+	})
 	t.Run("an ordinary paused step beside the ask", func(t *testing.T) {
 		plain := askStepNode{id: "build", status: "paused", session: "sess_build"}
 		h, _, _ := askCoreHub(t, "wf_1",
@@ -240,6 +249,28 @@ func TestHandleControls_ReadsTheAskCell(t *testing.T) {
 		readNow(t, h, "wf_1")
 		if got := controls(t, h); !slices.Contains(got.Verbs, verbResume) {
 			t.Errorf("verbs = %v, want Resume offered", got.Verbs)
+		}
+	})
+	// The cell keeps its last readable reply, which no longer describes the run.
+	t.Run("a read whose tree does not decode withholds Resume until a read decodes", func(t *testing.T) {
+		plain := askStepNode{id: "build", status: "paused", session: "sess_build"}
+		h, br, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, plain))
+		readNow(t, h, "wf_1")
+		if got := controls(t, h); !slices.Contains(got.Verbs, verbResume) {
+			t.Fatalf("Setup: verbs after a readable ordinary pause = %v, want Resume offered", got.Verbs)
+		}
+		parked := inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step"))
+		br.setCallResult(methodKiroWorkflowInspect, withAttentionDrift(t, parked))
+		if _, err := h.runs.readAsks(t.Context(), h.runs.cellFor("wf_1")); err == nil {
+			t.Fatal("Setup: a read of a tree whose attention is a string decoded")
+		}
+		if got := controls(t, h); !slices.Equal(got.Verbs, []string{verbCancel}) {
+			t.Errorf("verbs after an undecodable read = %v, want Cancel alone", got.Verbs)
+		}
+		br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, plain))
+		readNow(t, h, "wf_1")
+		if got := controls(t, h); !slices.Contains(got.Verbs, verbResume) {
+			t.Errorf("verbs after a readable read = %v, want Resume offered again", got.Verbs)
 		}
 	})
 }

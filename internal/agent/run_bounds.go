@@ -863,7 +863,11 @@ func (rs *Runs) observeStart(ctx context.Context, chatID marotte.ChatID, msg *ma
 // observeComplete drops a terminal run's bounds and step registry, closing open step turns, then
 // translates. A non-terminal run_complete (an onMaxIterations pause) keeps the arm.
 func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
-	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" && f.Status.Terminal() {
+	f := decodeLifecycleFrame(msg)
+	if f.WorkflowID != "" && (f.Status.Terminal() || f.Status == marotte.RunStatusPaused) {
+		rs.signals.runStopped(f.WorkflowID)
+	}
+	if f.WorkflowID != "" && f.Status.Terminal() {
 		// Before HandleRunComplete: the client repaints on its `run_finished` invalidation.
 		rs.closeRun(ctx, f.WorkflowID, string(f.Status))
 		rs.recordRunNotice(chatID, f.WorkflowID, cmp.Or(f.FinalState.RunLabel, f.FinalState.WorkflowName, f.WorkflowID))

@@ -14,6 +14,8 @@ type inbound struct {
 	// specs is the workspace-global spec_changed coalescer every spec-directory write marks.
 	specs   *spec.Notifier
 	secrets *secretstore.Store `wiring:"optional"`
+	// signIns is the MCP registry, which owns every consent URL KAS opens.
+	signIns signInURLClaimer
 
 	writeHooks   map[string]WriteHook
 	writeHooksMu sync.Mutex

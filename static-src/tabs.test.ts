@@ -183,6 +183,7 @@ import {
   refreshActiveView,
   subscribeTabCues,
   registerTabNotice,
+  registerCloseGate,
   _resetForTest,
 } from "./tabs.js";
 // The REAL freshness leaf: `viewStale` is what the dispatcher spends, so a case
@@ -1375,6 +1376,156 @@ describe("keyboard navigation (real tabs.ts handler via rendered tab nodes)", ()
     tabServer.setMode("event-first");
     tabServer.flushFrames();
     await settleTabs();
+  });
+});
+
+// A person's close asks the registered gate with the tab's chat subtree; only its yes closes.
+describe("a person's close goes through the close gate", () => {
+  type Gate = Parameters<typeof registerCloseGate>[0];
+
+  function deferred(): { promise: Promise<boolean>; resolve: (ok: boolean) => void } {
+    let resolve: (ok: boolean) => void = () => undefined;
+    const promise = new Promise<boolean>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  function tapClose(id: string): void {
+    const x = document.querySelector<HTMLElement>(`[data-tab-id="${id}"] .tab-close`);
+    if (x === null) {
+      throw new Error("no close control");
+    }
+    for (const type of ["pointerdown", "pointerup"] as const) {
+      x.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          bubbles: true,
+        }),
+      );
+    }
+  }
+
+  function rowEl(id: string): HTMLElement {
+    const node = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
+    if (node === null) {
+      throw new Error("row missing");
+    }
+    return node;
+  }
+
+  it("asks with the closed tab and every chat under it; a no keeps the row and sends nothing", async () => {
+    expect.assertions(5);
+    await openChat("a");
+    await openChat("t", { parent: chatID("a") });
+    await openRunTab("wf_1", "A run", { parent: chatID("a"), owns: false });
+    await paint();
+    const gate = vi.fn<Gate>(() => Promise.resolve(false));
+    registerCloseGate(gate);
+
+    tapClose(chatID("a"));
+    await settleTabs();
+
+    expect(gate).toHaveBeenCalledTimes(1);
+    const [, ref, chats] = gate.mock.calls[0] ?? [];
+    expect(ref).toBe("a");
+    expect(chats?.map((c) => c.ref)).toEqual(["a", "t"]);
+    expect(hasTab("chat", "a")).toBe(true);
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(0);
+  });
+
+  it("closes once the gate says yes", async () => {
+    expect.assertions(2);
+    await openChats("a", "b");
+    await paint();
+    registerCloseGate(() => Promise.resolve(true));
+
+    tapClose(chatID("a"));
+    await until(() => tabServer.sentOfType("close_tab").length === 1, "the close dispatched");
+    await settleTabs();
+
+    expect(hasTab("chat", "a")).toBe(false);
+    expect(hasTab("chat", "b")).toBe(true);
+  });
+
+  it("gates a middle-click too", async () => {
+    expect.assertions(2);
+    await openChats("a", "b");
+    await paint();
+    const gate = vi.fn<Gate>(() => Promise.resolve(false));
+    registerCloseGate(gate);
+
+    rowEl(chatID("a")).dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true }));
+    await settleTabs();
+
+    expect(gate).toHaveBeenCalledTimes(1);
+    expect(hasTab("chat", "a")).toBe(true);
+  });
+
+  it("Delete leaves focus on the tab while the gate is open and after a no", async () => {
+    expect.assertions(3);
+    await openChats("a", "b", "c");
+    await paint();
+    const answer = deferred();
+    registerCloseGate(() => answer.promise);
+    const node = rowEl(chatID("b"));
+    node.focus();
+
+    node.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    expect(document.activeElement).toBe(node);
+    answer.resolve(false);
+    await settleTabs();
+
+    expect(document.activeElement).toBe(node);
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(0);
+  });
+
+  it("Delete moves focus to the successor once the gate says yes", async () => {
+    expect.assertions(2);
+    await openChats("a", "b", "c");
+    await paint();
+    const answer = deferred();
+    registerCloseGate(() => answer.promise);
+    const node = rowEl(chatID("b"));
+    const successor = rowEl(chatID("c"));
+    node.focus();
+
+    node.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    answer.resolve(true);
+    await until(() => tabServer.sentOfType("close_tab").length === 1, "the close dispatched");
+
+    expect(document.activeElement).toBe(successor);
+    await settleTabs();
+    expect(hasTab("chat", "b")).toBe(false);
+  });
+
+  it("a plain yes closes in the same task", async () => {
+    expect.assertions(2);
+    await openChats("a", "b");
+    await paint();
+    registerCloseGate(() => true);
+
+    tapClose(chatID("a"));
+
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(1);
+    await settleTabs();
+    expect(hasTab("chat", "a")).toBe(false);
+  });
+
+  it("never asks for a tab with no chat under it", async () => {
+    expect.assertions(2);
+    await openEditorView("/a.ts");
+    await paint();
+    const gate = vi.fn<Gate>(() => Promise.resolve(false));
+    registerCloseGate(gate);
+
+    tapClose(tabIdFor("editor", "/a.ts"));
+    await settleTabs();
+
+    expect(gate).not.toHaveBeenCalled();
+    expect(hasTab("editor", "/a.ts")).toBe(false);
   });
 });
 

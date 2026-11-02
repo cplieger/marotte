@@ -22,6 +22,7 @@ var _ translate.RunAppender = (*Runs)(nil)
 // RunNodeStart opens the step path's turn and announces its turn_open under the
 // run scope; a path already open appends nothing.
 func (rs *Runs) RunNodeStart(ctx context.Context, step *translate.RunStep, chatID marotte.ChatID) {
+	rs.signals.nodeStarted(step.RunID, step.NodePath)
 	if rs.log == nil {
 		return
 	}
@@ -39,10 +40,11 @@ func (rs *Runs) RunNodeStart(ctx context.Context, step *translate.RunStep, chatI
 // RunNodeComplete closes the step path's turn with KAS's status and announces what
 // the close sealed.
 func (rs *Runs) RunNodeComplete(ctx context.Context, runID string, path []string, status, reason string) {
+	nodePath := workflow.PathKey(path)
+	rs.signals.nodeStopped(runID, nodePath, status)
 	if rs.log == nil {
 		return
 	}
-	nodePath := workflow.PathKey(path)
 	// One gated step with the close, so no message binds the turn between them. Before the close: the
 	// unread steers' notes belong inside the step's turn.
 	unlock := rs.steers.lockEnd(ctx, runID)

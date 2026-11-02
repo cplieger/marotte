@@ -1,10 +1,11 @@
 // The workflow adapter: KAS's `inspect` reply folded into the exec view's model.
 
 import { describe, it, expect } from "vitest";
-import { runToExec, indexPlan } from "./run-exec-source.js";
+import { runToExec, indexPlan, planToExec } from "./run-exec-source.js";
 import { nodePathKey } from "./run-node-key.js";
 import { flatten, workNodes, counters, type ExecNode } from "./exec-view/model.js";
 import extendedLoopRaw from "./testdata/run-extended-loop.json?raw";
+import stepEndCasesRaw from "../internal/agent/testdata/step_end_cases.json?raw";
 import { makeRunState } from "./__test-helpers__/model.js";
 import type { RunNode, RunState } from "./run-store.js";
 import type { RunAsks } from "./run-asks.js";
@@ -922,6 +923,49 @@ describe("a step's detail line", () => {
   });
 });
 
+describe("a paused step whose end KAS recorded but has not applied", () => {
+  const pendingOf = (signal: string | undefined, run = "running", status = "paused") => {
+    const extra = signal === undefined ? {} : { completionSignal: signal };
+    const out = runToExec(
+      {
+        ...stateWith(step("gate", status, { pauseReason: "Waiting for input.", ...extra })),
+        status: run,
+      } as RunState,
+      undefined,
+      NO_ASKS,
+    );
+    return out.nodes[0];
+  };
+
+  it.each([
+    ["success", "completed", "Done, applies when the run's other steps finish"],
+    ["error", "failed", "Failed, applies when the run's other steps finish"],
+  ])("labels a recorded %s as an end pending on the run's other steps", (signal, status, text) => {
+    const n = pendingOf(signal);
+    expect(n?.pendingEnd).toEqual({ status, text });
+    expect(n?.subtitle).toBe(text);
+    expect(n?.state).toBe("waiting");
+  });
+
+  it("says a paused run applies it on resume", () => {
+    expect(pendingOf("success", "paused")?.pendingEnd?.text).toBe(
+      "Done, applies when the run resumes",
+    );
+  });
+
+  it.each([
+    ["no signal", undefined, "running", "paused"],
+    ["a question's signal", "need_input", "running", "paused"],
+    ["a finished run", "success", "cancelled", "paused"],
+    ["a run status marotte does not know", "success", "unknown", "paused"],
+    ["a running step", "success", "running", "running"],
+  ])("labels nothing for %s", (_name, signal, run, status) => {
+    const n = pendingOf(signal, run, status);
+    expect(n?.pendingEnd).toBeUndefined();
+    expect(n?.subtitle ?? "").not.toContain("applies when");
+  });
+});
+
 describe("the plan revision notice", () => {
   it.each([
     [
@@ -1523,5 +1567,136 @@ describe("the alert of a run paused at a loop's cap", () => {
         plan,
       ),
     ).toBe("outer reached its pass limit (2/2)");
+  });
+});
+
+/** One row of `internal/agent/testdata/step_end_cases.json`, the table the server's end route is
+ *  held to. */
+interface StepEndCase {
+  id: string;
+  run: string;
+  node: string;
+  type: string;
+  sibling?: string;
+  twin?: string;
+  asked?: boolean;
+  endable: boolean;
+}
+
+describe("endable against the server's end table", () => {
+  const cases = JSON.parse(stepEndCasesRaw) as StepEndCase[];
+
+  // The tree the Go side builds for the same row: the target under a parallel root, a sibling
+  // beside it, and its twin in a branch of its own.
+  it.each(cases)("$id", (c) => {
+    const target = {
+      nodeId: "target",
+      type: c.type,
+      status: c.node,
+      ...(c.node === "pending" ? {} : { sessionId: "sess_target" }),
+      ...(c.asked === true ? { completionSignal: "need_input" } : {}),
+    };
+    const kids: unknown[] = [target];
+    if (c.sibling !== undefined) {
+      kids.push({ nodeId: "sibling", type: "step", status: c.sibling, sessionId: "sess_sibling" });
+    }
+    if (c.twin !== undefined) {
+      kids.push({
+        nodeId: "branch",
+        type: "sequence",
+        status: c.twin,
+        children: [{ nodeId: "target", type: "step", status: c.twin, sessionId: "sess_twin" }],
+      });
+    }
+    const state: RunState = {
+      ...makeRunState({ status: c.run as NonNullable<RunState["status"]> }),
+      root: {
+        nodeId: "root",
+        type: "parallel",
+        status: c.run,
+        children: kids,
+      } as unknown as RunNode,
+    };
+    const asks: RunAsks =
+      c.asked === true
+        ? {
+            count: 1,
+            asked: [{ nodeID: "target", sessionID: "sess_target", answer: true }],
+            label: "",
+          }
+        : NO_ASKS;
+    const path = nodePathKey(["root", "target"]);
+    const node = flatten(runToExec(state, undefined, asks).nodes).find((n) => n.path === path);
+    expect(node).toBeDefined();
+    expect(node?.endable === true).toBe(c.endable);
+  });
+});
+
+describe("planToExec, the Run form's preview", () => {
+  const PLAN = [
+    { nodeId: "a", type: "step", agentName: "x", modelId: "m", effortLevel: "high" },
+    {
+      nodeId: "r",
+      type: "repeat",
+      maxIterations: 3,
+      stopCondition: "done",
+      steps: [{ nodeId: "b", type: "step" }],
+    },
+    {
+      nodeId: "fan",
+      type: "parallel",
+      branches: [
+        { nodeId: "c", type: "step" },
+        { nodeId: "d", type: "step" },
+      ],
+    },
+  ];
+
+  const shape = (nodes: readonly ExecNode[]): string[] =>
+    flatten(nodes).map((n) => `${n.kind}:${n.label}:${n.state}`);
+
+  it("folds a repeat's first pass and a parallel's branches, every node pending", () => {
+    const nodes = planToExec(PLAN);
+    expect(shape(nodes)).toEqual([
+      "step:a:pending",
+      "repeat:r:pending",
+      "sequence:pass 1:pending",
+      "step:b:pending",
+      "parallel:fan:pending",
+      "step:c:pending",
+      "step:d:pending",
+    ]);
+    expect(nodes[1]?.subtitle).toBe("up to 3 passes \u00b7 until done");
+    const facts = new Map((nodes[0]?.facts ?? []).map((f) => [f.label, f.value]));
+    expect([facts.get("Agent"), facts.get("Model"), facts.get("Effort")]).toEqual([
+      "x",
+      "m",
+      "high",
+    ]);
+  });
+
+  it("draws what the run tab draws for the same plan before the run starts", () => {
+    const unstarted = { nodeId: "wf_1", type: "sequence", status: "pending" };
+    const live = runToExec(stateWith(unstarted), PLAN, NO_ASKS).nodes;
+    expect(shape(planToExec(PLAN))).toEqual(shape(live));
+  });
+
+  it("offers no verb, ask or end on a node nothing has started", () => {
+    for (const n of flatten(planToExec(PLAN))) {
+      expect([n.verb, n.ask, n.endable], n.label).toEqual([undefined, undefined, undefined]);
+    }
+  });
+
+  it("folds an absent plan, or one naming no node, to nothing", () => {
+    for (const plan of [
+      undefined,
+      null,
+      [],
+      [{ type: "step" }],
+      [{ nodeId: "" }],
+      { nodeId: "a" },
+    ]) {
+      expect(planToExec(plan), JSON.stringify(plan)).toEqual([]);
+    }
   });
 });
