@@ -21,6 +21,7 @@ vi.mock("../run-store.js", () => ({
   noteRunSettled: vi.fn(),
   hasLiveRunForChat: vi.fn(() => false),
   runLabelOf: vi.fn(() => ""),
+  runChatID: vi.fn(() => ""),
   // A run's own LOG: the five operations the six entry events reach. Present here
   // because Browser Mode links a mock for real, so a factory missing one name fails
   // the whole file's collection rather than one case.
@@ -36,7 +37,9 @@ vi.mock("../run-store.js", () => ({
 // be thinking.
 vi.mock("../store.js", () => ({ isBusy: vi.fn(() => false) }));
 vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
-vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
+vi.mock("../toast.js", () => ({ info: vi.fn(), jumpToast: vi.fn() }));
+// Where an end toast's Open goes is `run-end-open.test.ts`'s, against the real toast.
+vi.mock("../notice-subject.js", () => ({ runEndJump: vi.fn(() => undefined) }));
 // The dock is mocked (`decision-dock.test.ts`); the run-asks store is real.
 vi.mock("../decision-dock.js", () => ({
   dropRunRequests: vi.fn(),
@@ -70,7 +73,7 @@ import {
 } from "../run-store.js";
 import { isBusy } from "../store.js";
 import { trackRun } from "../run-dots.js";
-import { info, success, error } from "../toast.js";
+import { info, jumpToast } from "../toast.js";
 import { dropRunRequests, dropTurnDecisions } from "../decision-dock.js";
 import { _resetRunAsksForTest, runAskPosition, runAsksOf } from "../run-asks.js";
 import { closeRunAsksExcept, notifyOffScreen } from "../notify.js";
@@ -86,8 +89,7 @@ const noteLive = vi.mocked(noteRunLive);
 const noteSettled = vi.mocked(noteRunSettled);
 const track = vi.mocked(trackRun);
 const toastInfo = vi.mocked(info);
-const toastSuccess = vi.mocked(success);
-const toastError = vi.mocked(error);
+const toastEnd = vi.mocked(jumpToast);
 const dropAsks = vi.mocked(dropRunRequests);
 const sweepOrphans = vi.mocked(dropTurnDecisions);
 const chatThinking = vi.mocked(isBusy);
@@ -103,9 +105,7 @@ const closeStale = vi.mocked(closeRunAsksExcept);
 
 /** Every toast raised, in order, whatever its level. */
 function toasts(): string[] {
-  return [...toastInfo.mock.calls, ...toastSuccess.mock.calls, ...toastError.mock.calls].map(
-    (c) => c[0],
-  );
+  return [...toastInfo.mock.calls, ...toastEnd.mock.calls].map((c) => c[0]);
 }
 
 // The list side goes over the bus, so the test subscribes exactly as the history
@@ -123,8 +123,7 @@ beforeEach(() => {
   noteSettled.mockClear();
   track.mockClear();
   toastInfo.mockClear();
-  toastSuccess.mockClear();
-  toastError.mockClear();
+  toastEnd.mockClear();
   dropAsks.mockClear();
   closeStale.mockClear();
   _resetRunAsksForTest();
@@ -444,9 +443,9 @@ describe("run toasts", () => {
 
     send("run_finished", { workflow_id: "wf_sched", status: "completed", name: "nightly" });
     send("run_finished", { workflow_id: "wf_manual", status: "completed", name: "by-hand" });
-    expect(toastSuccess.mock.calls.map((c) => c[0])).toEqual([
-      "nightly finished",
-      "by-hand finished",
+    expect(toastEnd.mock.calls.map((c) => [c[0], c[1]])).toEqual([
+      ["nightly finished", "success"],
+      ["by-hand finished", "success"],
     ]);
   });
 
@@ -467,11 +466,9 @@ describe("run toasts", () => {
     ];
     for (const c of cases) {
       toastInfo.mockClear();
-      toastSuccess.mockClear();
-      toastError.mockClear();
+      toastEnd.mockClear();
       send("run_finished", { workflow_id: "wf_level", status: c.status, name: "publish" });
-      const mock = { success: toastSuccess, error: toastError, info: toastInfo }[c.level];
-      expect(mock.mock.calls.map((x) => x[0])).toEqual([c.want]);
+      expect(toastEnd.mock.calls.map((x) => [x[0], x[1]])).toEqual([[c.want, c.level]]);
       expect(toasts()).toHaveLength(1);
     }
   });
@@ -497,7 +494,7 @@ describe("run toasts", () => {
   // A generic label beats a bare workflow uuid and beats saying nothing.
   it("falls back to a generic label when the frame carries no name", () => {
     send("run_finished", { workflow_id: "wf_noname", status: "completed" });
-    expect(toastSuccess.mock.calls[0]?.[0]).toBe("Workflow run finished");
+    expect(toastEnd.mock.calls[0]?.[0]).toBe("Workflow run finished");
     send("run_started", { workflow_id: "wf_noname_2", scheduled: true });
     expect(toastInfo.mock.calls[0]?.[0]).toBe("Scheduled run started: Workflow run");
   });
@@ -505,7 +502,7 @@ describe("run toasts", () => {
   // An unrecognised status is still an ending; naming it verbatim beats silence.
   it("passes an unknown status through rather than dropping it", () => {
     send("run_finished", { workflow_id: "wf_odd", status: "exploded", name: "publish" });
-    expect(toastInfo.mock.calls[0]?.[0]).toBe("publish finished: exploded");
+    expect(toastEnd.mock.calls[0]?.slice(0, 2)).toEqual(["publish finished: exploded", "info"]);
   });
 
   // The seven frames between the ends are invalidations, and a busy run emits
