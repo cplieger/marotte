@@ -70,6 +70,7 @@ export function tabsMock(): Record<string, unknown> {
     setOnEmpty: vi.fn(),
     EMPTY_RESPAWN_MS: 0,
     registerTabNotice: vi.fn(),
+    registerCloseGate: vi.fn(),
     // Unregistered is the never-suppress answer, so no test has a cue silently blanked.
     setChatSettledProbe: vi.fn(),
 

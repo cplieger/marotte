@@ -295,11 +295,33 @@ function stepFacts(
   return facts;
 }
 
+/** KAS records a paused step's success or error at once but applies it only when its run loop
+ *  settles (kirodotdev/Kiro#11733): once every running step stops, or on the next resume. Only a
+ *  running or paused run says which, so any other status labels nothing. */
+function pendingEndOf(node: RunNode, run: ClassifiedRunStatus): ExecNode["pendingEnd"] {
+  if (node.status !== "paused" || (run !== "running" && run !== "paused")) {
+    return undefined;
+  }
+  const status =
+    node.completionSignal === "success"
+      ? "completed"
+      : node.completionSignal === "error"
+        ? "failed"
+        : undefined;
+  if (status === undefined) {
+    return undefined;
+  }
+  const word = status === "completed" ? "Done" : "Failed";
+  const when = run === "paused" ? "the run resumes" : "the run's other steps finish";
+  return { status, text: `${word}, applies when ${when}` };
+}
+
 function subtitleOf(
   node: RunNode,
   kind: ExecKind,
   plan: PlanEntry | undefined,
   watch: WatchResult | undefined,
+  pendingEnd: ExecNode["pendingEnd"],
 ): string {
   const bits: string[] = [];
   if (kind === "repeat") {
@@ -334,8 +356,10 @@ function subtitleOf(
       bits.push(`${String(n)} ${n === 1 ? "retry" : "retries"}`);
     }
   }
-  // Kiro's step detail: a pause's reason, else a retry wait's, verbatim.
-  if (node.status === "paused" && node.pauseReason !== undefined) {
+  // Kiro's step detail: a recorded end, else a pause's reason, else a retry wait's, verbatim.
+  if (pendingEnd !== undefined) {
+    bits.push(pendingEnd.text);
+  } else if (node.status === "paused" && node.pauseReason !== undefined) {
     bits.push(`Paused: ${truncate(node.pauseReason, 80)}`);
   } else if (node.status === "running" && node.retryReason !== undefined) {
     bits.push(`Retrying: ${truncate(node.retryReason, 80)}`);
@@ -369,6 +393,8 @@ interface FoldContext {
   asked: AskedSteps;
   run: ClassifiedRunStatus;
   ends: StepEnds;
+  /** How many paused steps of the whole tree carry each node id. */
+  pausedIDs: ReadonlyMap<string, number>;
 }
 
 /** The server's `stepMessageVerb` (internal/agent/run_message.go), read off the raw statuses. */
@@ -386,6 +412,33 @@ function messageVerb(node: RunNode, ctx: FoldContext): RunStepMessageVerb | unde
     return "answer";
   }
   return ctx.run === "paused" ? "prompt" : undefined;
+}
+
+/** The server's `endableStep` (internal/agent/run_step_end.go) on a running or paused run, the
+ *  only statuses it does not read as ended: KAS ends the first paused step a node id names, so an
+ *  id two paused executions share ends neither. Pinned with it by
+ *  internal/agent/testdata/step_end_cases.json. */
+function endable(node: RunNode, ctx: FoldContext): boolean {
+  return (
+    (ctx.run === "running" || ctx.run === "paused") &&
+    node.type === "step" &&
+    node.status === "paused" &&
+    ctx.pausedIDs.get(node.nodeId) === 1
+  );
+}
+
+function countPausedSteps(root: RunNode | undefined): Map<string, number> {
+  const out = new Map<string, number>();
+  const walk = (n: RunNode): void => {
+    if (n.type === "step" && n.status === "paused") {
+      out.set(n.nodeId, (out.get(n.nodeId) ?? 0) + 1);
+    }
+    (n.children ?? []).forEach(walk);
+  };
+  if (root !== undefined) {
+    walk(root);
+  }
+  return out;
 }
 
 /** A raw plan child as a not-yet-started state node, or nothing when it names no node. Any type is
@@ -477,6 +530,13 @@ function toNode(
   if (ask !== undefined && ask !== "") {
     out.ask = ask;
   }
+  if (work && endable(node, ctx)) {
+    out.endable = true;
+  }
+  const pendingEnd = work ? pendingEndOf(node, ctx.run) : undefined;
+  if (pendingEnd !== undefined) {
+    out.pendingEnd = pendingEnd;
+  }
   if (pass !== undefined) {
     out.pass = pass;
   }
@@ -503,7 +563,7 @@ function toNode(
     kind === "watch" && node.capturedOutput !== undefined
       ? watchResult(node.capturedOutput)
       : undefined;
-  const sub = subtitleOf(node, kind, plan, watch);
+  const sub = subtitleOf(node, kind, plan, watch, pendingEnd);
   if (sub !== "") {
     out.subtitle = sub;
   }
@@ -672,6 +732,7 @@ export function runToExec(
     asked: askedSteps(root, asks),
     run: state.status ?? "unknown",
     ends,
+    pausedIDs: countPausedSteps(root),
   };
   let nodes: ExecNode[] = [];
   if (root?.type === "sequence") {
@@ -708,4 +769,14 @@ export function runToExec(
     out.focus = focus;
   }
   return out;
+}
+
+/** A recipe's plan (`Recipe.plan`) drawn as its run tab draws it before the first step starts:
+ *  every node pending. */
+export function planToExec(plan: unknown): ExecNode[] {
+  return runToExec(
+    { workflowId: "", root: { nodeId: "", type: "sequence", status: "pending" } },
+    plan,
+    { count: 0, asked: [], label: "" },
+  ).nodes;
 }

@@ -7,6 +7,7 @@ import { initAttachmentPillCallbacks } from "../attachment-pill.js";
 import { wakeLine } from "../turn-wake.js";
 import { namedWake } from "../turns.js";
 import type { EntryTurnWake } from "../wire/types.gen.js";
+import { appendQuote, quoteSelection } from "../message-quote.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
   return {
@@ -533,5 +534,70 @@ describe("a woken turn's header", () => {
       );
       expect(label(woken)?.getBoundingClientRect().height).toBeGreaterThan(0);
     });
+  });
+});
+
+describe("a request that opens with a quoted reply passage", () => {
+  const quoted = `${appendQuote("", quoteSelection("the passage\nover two lines"))}why that?`;
+  const band = (h: HTMLElement): HTMLElement | null =>
+    h.querySelector(".turn-req > .turn-req-quote");
+
+  it("draws the passage as a band before the question, without the attribution", () => {
+    const h = buildTurnHeader(data({ request: quoted }));
+    expect(band(h)?.textContent).toBe("the passage\nover two lines");
+    expect(band(h)?.nextElementSibling).toBe(text(h));
+    expect(text(h).textContent).toBe("why that?");
+  });
+
+  it("leaves a hand-typed blockquote as the prompt's own text", () => {
+    const h = buildTurnHeader(data({ request: "> something I typed\n\nmy question" }));
+    expect(band(h)).toBeNull();
+    expect(text(h).textContent).toBe("> something I typed\n\nmy question");
+  });
+
+  it("never restyles a labelled request", () => {
+    const h = buildTurnHeader(data({ request: quoted, label: "Run task 2" }));
+    expect(band(h)).toBeNull();
+    expect(text(h).textContent).toBe("Run task 2");
+  });
+
+  it("keeps the band across a repaint and removes it when the request no longer quotes", () => {
+    const h = buildTurnHeader(data({ request: quoted }));
+    const first = band(h);
+    updateTurnHeader(h, data({ request: quoted }));
+    expect(band(h)).toBe(first);
+    updateTurnHeader(h, data({ request: "plain" }));
+    expect(band(h)).toBeNull();
+    expect(text(h).textContent).toBe("plain");
+    updateTurnHeader(h, data({ request: quoted }));
+    updateTurnHeader(h, data({ request: undefined }));
+    expect(band(h)).toBeNull();
+  });
+
+  it("holds the band to one line, open or folded", () => {
+    const style = mountAppCSS();
+    const card = document.createElement("div");
+    card.className = "turn";
+    card.style.inlineSize = "160px";
+    try {
+      const passage = `${"word ".repeat(40)}\n  second line`;
+      const h = buildTurnHeader(
+        data({ request: `${appendQuote("", quoteSelection(passage))}why?` }),
+      );
+      card.append(h);
+      document.body.append(card);
+      const b = band(h)!;
+      const line = parseFloat(getComputedStyle(b).lineHeight);
+      for (const folded of [false, true]) {
+        card.toggleAttribute("data-folded", folded);
+        expect(b.getBoundingClientRect().height).toBeCloseTo(line, 0);
+        expect(b.scrollWidth).toBeGreaterThan(b.clientWidth);
+        expect(card.scrollWidth).toBeLessThanOrEqual(card.clientWidth);
+        expect(getComputedStyle(b).textOverflow).toBe("ellipsis");
+      }
+    } finally {
+      card.remove();
+      style.remove();
+    }
   });
 });

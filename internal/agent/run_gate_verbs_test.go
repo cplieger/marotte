@@ -146,6 +146,13 @@ var closedGateVerbs = []closedGateVerb{
 		},
 	},
 	{
+		name: "a paused step's end", route: "POST /api/runs/{id}/steps/{path}/{verb}", want: gateRefuses,
+		hub: pausedStepHub,
+		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
+			return h.runs.endStep(ctx, "wf_1", reviewPath, runStepCompleted)
+		},
+	},
+	{
 		name: "an answer", route: "POST /api/runs/{id}/answer", want: gateRefuses, hub: askHub,
 		call: func(ctx context.Context, t *testing.T, h *Runtime) error {
 			return h.runs.answerInput(ctx, "wf_1", readNow(t, h, "wf_1").asks[0].ID, "the main branch")

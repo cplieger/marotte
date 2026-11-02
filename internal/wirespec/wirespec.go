@@ -77,6 +77,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.Usage](),
 	wiregen.TypeRef[marotte.SessionMode](),
 	wiregen.TypeRef[marotte.SessionModel](),
+	wiregen.TypeRef[marotte.OutputStyle](),
 	wiregen.TypeRef[marotte.SessionEffortLevel](),
 	// Registered so the pre-session catalog fetch reads a generated decoder, not a cast.
 	wiregen.TypeRef[marotte.ConfigTemplateResponse](),
@@ -134,6 +135,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.ErrorPayload](),
 	wiregen.TypeRef[marotte.MCPConnectedPayload](),
 	wiregen.TypeRef[marotte.MCPOAuthPayload](),
+	wiregen.TypeRef[marotte.MCPSignInOpenPayload](),
 	wiregen.TypeRef[marotte.MCPFailedPayload](),
 	wiregen.TypeRef[marotte.MCPDisconnectedPayload](),
 	wiregen.TypeRef[marotte.ChatDeletedPayload](),
@@ -205,6 +207,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.RunStepSteerRequest](),
 	wiregen.TypeRef[marotte.RunExtendRequest](),
 	wiregen.TypeRef[marotte.RunFinishLoopRequest](),
+	wiregen.TypeRef[marotte.RunStepEndRequest](),
 	wiregen.TypeRef[marotte.RunStartedPayload](),
 	wiregen.TypeRef[marotte.RunProgressPayload](),
 	wiregen.TypeRef[marotte.RunFinishedPayload](),
@@ -367,6 +370,9 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// The run composer words the delivery and each refusal, so both folds must be total.
 	"RunStepMessageVerb":    {},
 	"RunStepMessageRefusal": {},
+	// The run tab sends one of these, so the client cannot spell a status KAS refuses.
+	"RunStepEndStatus":  {},
+	"RunStepEndRefusal": {},
 	// A card labels its text and words its blocker from these, and the answer's refusal from the code.
 	"RunAskText":    {},
 	"RunAskBlocker": {},
@@ -444,6 +450,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "mcp_disconnected", TypeName: "MCPDisconnectedPayload"},
 	{EventType: "mcp_failed", TypeName: "MCPFailedPayload"},
 	{EventType: "mcp_oauth_needed", TypeName: "MCPOAuthPayload"},
+	{EventType: "mcp_sign_in_open", TypeName: "MCPSignInOpenPayload"},
 	{EventType: "open_external_url", TypeName: "OpenExternalURLPayload"},
 	{EventType: "notification", TypeName: "NotificationPayload"},
 	{EventType: "permission_needed", TypeName: "PermissionNeededPayload"},

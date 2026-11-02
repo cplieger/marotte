@@ -29,6 +29,8 @@ type stepVerbCase struct {
 	Refusal marotte.RunStepMessageRefusal `json:"refusal"`
 	Session bool                          `json:"session"`
 	Asked   bool                          `json:"asked"`
+	// Siblings is whether another step of the run is running.
+	Siblings bool `json:"siblings"`
 }
 
 func TestStepMessageVerb_PicksTheVerbFromTheLiveState(t *testing.T) {
@@ -42,7 +44,7 @@ func TestStepMessageVerb_PicksTheVerbFromTheLiveState(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.ID, func(t *testing.T) {
-			now := stepNow{status: tc.Node, run: tc.Run}
+			now := stepNow{status: tc.Node, run: tc.Run, siblingsRunning: tc.Siblings}
 			if tc.Session {
 				now.at.session = "s"
 			}
@@ -352,6 +354,51 @@ func TestMessageStep_AFinishedSiblingLeavesTheLiveExecutionAddressable(t *testin
 	}
 	if got := br.paramsFor(marotte.MethodSessionSteer)["sessionId"]; got != marotte.SessionID("sess_step") {
 		t.Errorf("_session/steer went to %v, want the live execution's session", got)
+	}
+}
+
+func TestStepsAt_SiblingsRunningCountsOnlyOtherExecutions(t *testing.T) {
+	steps := []workflow.StepSession{
+		{NodeID: "review", SessionID: "sess_a", Status: "running", Path: reviewSegments},
+		{NodeID: "review", SessionID: "sess_b", Status: "paused", Path: reviewSegments},
+		{NodeID: "build", SessionID: "sess_c", Status: "completed", Path: []string{"root", "build"}},
+	}
+	n := runNow{workflowID: "wf_1", run: marotte.RunStatusRunning, steps: steps}
+	got := map[string]bool{}
+	for _, s := range n.stepsAt(reviewPath) {
+		got[s.at.session] = s.siblingsRunning
+	}
+	if want := map[string]bool{"sess_a": false, "sess_b": true}; !reflect.DeepEqual(got, want) {
+		t.Errorf("siblingsRunning by session = %v, want %v: a step's own status never counts", got, want)
+	}
+}
+
+// The refusal is read from the run's tree, not handed in: the paused step's sibling is what makes it
+// waits_on_run, and the same step with that sibling finished is busy.
+func TestMessageStep_APausedStepBesideARunningSiblingWaitsOnTheRun(t *testing.T) {
+	for _, tc := range []struct {
+		sibling, want string
+	}{
+		{sibling: "running", want: string(marotte.RunStepWaitsOnRun)},
+		{sibling: "completed", want: string(marotte.RunStepBusy)},
+	} {
+		t.Run(tc.sibling, func(t *testing.T) {
+			h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusPaused)
+			br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusRunning,
+				askStepNode{id: "review", status: "paused", session: "sess_step", signal: "success"},
+				askStepNode{id: "build", status: tc.sibling, session: "sess_build"}))
+
+			_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "are you done?", "m-wait-"+tc.sibling, "")
+
+			rec := httptest.NewRecorder()
+			h.runRoutes.writeStepErr(rec, "message", "wf_1", reviewPath, err)
+			if rec.Code != http.StatusConflict || reasonOf(t, rec.Body.Bytes()) != tc.want {
+				t.Errorf("reply = %d %s, want 409 with reason %s", rec.Code, rec.Body.String(), tc.want)
+			}
+			if calls := br.callLog(); slices.Contains(calls, marotte.MethodPrompt) || slices.Contains(calls, marotte.MethodSessionSteer) {
+				t.Errorf("calls = %v, want nothing sent to a step KAS would not admit", calls)
+			}
+		})
 	}
 }
 

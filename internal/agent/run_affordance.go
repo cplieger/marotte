@@ -27,9 +27,32 @@ const pauseKindMaxIterations = "maxIterations"
 // maxIterationsVerbs is the paused row for a repeat at its cap, where resume re-parks.
 var maxIterationsVerbs = []string{verbExtend, verbFinishLoop, verbCancel}
 
-// askingVerbs is the paused row while every paused step asks: KAS's resume leaves each step's
-// need_input signal and re-parks it at once, so only an answer moves the run on.
+// askingVerbs is the paused row while every paused step asks, or while that is unknown: a known ask
+// re-parks on resume, and an unreadable tree cannot prove that resume will not re-park.
 var askingVerbs = []string{verbCancel}
+
+// askState is whether a run's read has every paused step waiting on a person (workflow.PausedOnAsks).
+type askState int
+
+const (
+	// asksNone is a read where some paused leaf waits on nobody, or where none is paused.
+	asksNone askState = iota
+	asksAll
+	// asksUnread is a read whose tree did not decode, so whether anyone asks is unknown.
+	asksUnread
+)
+
+// asksOf is the ask state of one decoded reply; a not-OK reply is one whose tree did not decode.
+func asksOf(tree workflow.Inspect) askState {
+	switch {
+	case !tree.OK:
+		return asksUnread
+	case workflow.PausedOnAsks(tree):
+		return asksAll
+	default:
+		return asksNone
+	}
+}
 
 // runStatusVerbs maps KAS's WorkflowStatusSchema to accepted verbs, mirroring KAS. An unknown
 // status is absent, so a future status degrades to read-only.
@@ -77,8 +100,8 @@ type runFacts struct {
 	pauseNodeID string
 	// pausePending is a pause already asked for, which a second Pause cannot add to.
 	pausePending bool
-	// asking is workflow.PausedOnAsks of the run's newest read.
-	asking bool
+	// asks is the ask state of the run's newest read.
+	asks askState
 }
 
 // Pure, so the table tests over the status and the pause.
@@ -93,7 +116,7 @@ func affordanceOf(f *runFacts) runAffordance {
 	case paused && f.pauseKind == pauseKindMaxIterations && f.pauseNodeID != "":
 		out.PauseNodeID = f.pauseNodeID
 		byStatus = maxIterationsVerbs
-	case paused && f.asking:
+	case paused && f.asks != asksNone:
 		byStatus = askingVerbs
 	}
 	for _, verb := range byStatus {
@@ -127,22 +150,30 @@ func (rs *Runs) affordance(ctx context.Context, workflowID, status string) *runA
 	f := runFacts{
 		status: status, pauseKind: o.pauseKind, pauseNodeID: o.pauseNodeID, pausePending: o.pausePending,
 	}
-	f.asking = rs.pausedOnAsks(workflowID)
+	f.asks = rs.cellAsks(workflowID)
 	aff := affordanceOf(&f)
 	aff.origin = o
 	aff.status = marotte.RunStatus(status)
 	return &aff
 }
 
-// pausedOnAsks reads the run's ask cell: false with no cell, or before its first read.
-func (rs *Runs) pausedOnAsks(workflowID string) bool {
+// cellAsks is the ask state of the run's ask cell: asksNone with no cell or before its first read, and
+// asksUnread while its newest read failed.
+func (rs *Runs) cellAsks(workflowID string) askState {
 	c := rs.asks.get(workflowID)
 	if c == nil {
-		return false
+		return asksNone
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return workflow.PausedOnAsks(c.reply)
+	switch {
+	case c.readFailed:
+		return asksUnread
+	case workflow.PausedOnAsks(c.reply):
+		return asksAll
+	default:
+		return asksNone
+	}
 }
 
 // chatForSession resolves a run's parent session to its chat from the store alone, reporting

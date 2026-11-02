@@ -1,6 +1,6 @@
 // The OAuth loopback relay's row affordance: KAS's redirect listener is on the container's localhost, so a remote
 // browser's sign-in dies; the user pastes the dead address and the server replays it inward. This pins the client's
-// half; validation is the server's (internal/hub/mcp_oauth_relay_test.go).
+// half; validation is the server's (internal/agent/mcp_oauth_relay_test.go).
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import type * as ApiClient from "./api-client.js";

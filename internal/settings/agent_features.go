@@ -23,11 +23,11 @@ const (
 	FeatureOff        = "off"
 )
 
-// The values of KeyOutputStyle, KAS's outputStyle option ids.
-const (
-	OutputStyleDefault = "default"
-	OutputStyleConcise = "concise"
-)
+// OutputStyleDefault is KAS's default output style id, the one prompts never send.
+const OutputStyleDefault = "default"
+
+// maxOutputStyleLen bounds a stored output style id; KAS's ids are short lower-case words.
+const maxOutputStyleLen = 64
 
 // minTerminalCommandTimeoutMs and MaxTerminalCommandTimeoutMs are KAS's own
 // bounds for settings.terminal.commandTimeoutMs; 0 means unset (KAS's 120 s).
@@ -78,9 +78,20 @@ func ThreeStateChoice(e *marotte.EffectiveSettings, key string) (string, bool) {
 	return "", false
 }
 
-// ValidOutputStyle reports whether v is an output style id.
+// ValidOutputStyle reports whether v has the shape of an output style id: 1 to 64 bytes of
+// [a-z0-9_-]. The vocabulary is KAS's (GET /api/config-template output_styles), so membership is
+// not checked: KAS reads an id it does not serve as default.
 func ValidOutputStyle(v string) bool {
-	return v == OutputStyleDefault || v == OutputStyleConcise
+	if v == "" || len(v) > maxOutputStyleLen {
+		return false
+	}
+	for i := range len(v) {
+		c := v[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' && c != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidTerminalCommandTimeoutMs reports whether ms is unset (0) or inside KAS's

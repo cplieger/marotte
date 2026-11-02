@@ -326,7 +326,9 @@ func (rs *Runs) RunUnsettledWorkflowMessages(ctx context.Context, runID string) 
 
 // RunNodePaused ends the paused step's steering turn: the execution that read its buffer has stopped.
 func (rs *Runs) RunNodePaused(ctx context.Context, runID string, path []string) {
-	rs.steers.end(ctx, runID, workflow.PathKey(path), false)
+	nodePath := workflow.PathKey(path)
+	rs.signals.nodeStopped(runID, nodePath, string(marotte.RunNodeStatusPaused))
+	rs.steers.end(ctx, runID, nodePath, false)
 }
 
 func (s *stepSteers) runsHostedBy(host marotte.ChatID) []string {

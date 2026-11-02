@@ -202,6 +202,7 @@ vi.mock("./actions/runs.js", () => {
     retryRun: stub("retry"),
     extendRunRepeat: stub("extend"),
     finishRunRepeat: stub("finish_loop"),
+    endRunStep: stub("end_step"),
     // Linked by the run composer and the step's pending-message stack.
     messageRunStep: stub("message"),
     removeRunStepSteer: stub("steer_remove"),

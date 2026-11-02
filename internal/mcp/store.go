@@ -36,7 +36,7 @@ const (
 	TransportSSE   Transport = "sse"
 	// TransportRegistry enables a server from the organization's MCP registry by
 	// name; KAS resolves its command or url from the catalog, so the entry carries
-	// neither.
+	// neither, and env and headers are its only transport-specific overrides.
 	TransportRegistry Transport = "registry"
 )
 

@@ -906,6 +906,8 @@ export const respondPermission = defineAction<
     rejectionReason?: string;
     /** The pattern an always answer saves as a rule, on an always answer only. */
     alwaysResource?: string;
+    /** "session" keeps that rule for the chat's session only; absent saves it for the user. */
+    alwaysScope?: "session";
   },
   DecisionAnswer
 >({
@@ -915,7 +917,7 @@ export const respondPermission = defineAction<
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   run: (
-    { chatID, requestID, optionID, fileDecisions, rejectionReason, alwaysResource },
+    { chatID, requestID, optionID, fileDecisions, rejectionReason, alwaysResource, alwaysScope },
     signal,
     ctx,
   ) =>
@@ -929,6 +931,7 @@ export const respondPermission = defineAction<
           ...(fileDecisions !== undefined ? { file_decisions: fileDecisions } : {}),
           ...(rejectionReason !== undefined ? { rejection_reason: rejectionReason } : {}),
           ...(alwaysResource !== undefined ? { always_resource: alwaysResource } : {}),
+          ...(alwaysScope !== undefined ? { always_scope: alwaysScope } : {}),
         },
       },
       signal,

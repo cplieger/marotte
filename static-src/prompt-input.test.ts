@@ -13,6 +13,7 @@ const CHAT = "c1";
 
 const submitted: string[] = [];
 const cancelled = vi.fn();
+const editLast = vi.fn();
 
 function makeSession(prompts: string[]): Session {
   return {
@@ -99,6 +100,7 @@ beforeAll(() => {
     },
     cancelled,
     staged,
+    editLast,
   );
 });
 
@@ -125,6 +127,7 @@ function press(key: string, mods: KeyboardEventInit = {}): KeyboardEvent {
 beforeEach(() => {
   setSendState({ kind: "idle" });
   cancelled.mockClear();
+  editLast.mockClear();
   // Newest prompt first is what userPrompts() produces, so ArrowUp reaches "newest" on the first
   // press and "oldest" on the second.
   setSessions([makeSession(["oldest", "newest"])]);
@@ -199,8 +202,9 @@ describe("a modified arrow", () => {
     expect(input().value).toBe("half-written thought");
   });
 
+  // Ctrl and Cmd in an empty composer are the rewind chord, below.
   it("recalls nothing in an empty composer, and a bare ArrowUp still recalls the newest", () => {
-    for (const mods of MODS) {
+    for (const mods of [{ shiftKey: true }, { altKey: true }]) {
       const e = press("ArrowUp", mods);
       expect(e.defaultPrevented, JSON.stringify(mods)).toBe(false);
       expect(input().value, JSON.stringify(mods)).toBe("");
@@ -219,6 +223,57 @@ describe("a modified arrow", () => {
       expect(input().value, JSON.stringify(mods)).toBe("oldest");
     }
     press("ArrowDown");
+    expect(input().value).toBe("newest");
+  });
+});
+
+// Ctrl/Cmd+Up in an empty composer opens the rewind of the last prompt; with text it stays the caret move.
+describe("Ctrl/Cmd+Up", () => {
+  it("in an empty composer asks for the rewind instead of recalling history", () => {
+    for (const mods of [{ ctrlKey: true }, { metaKey: true }]) {
+      editLast.mockClear();
+      const e = press("ArrowUp", mods);
+      expect(e.defaultPrevented, JSON.stringify(mods)).toBe(true);
+      expect(editLast, JSON.stringify(mods)).toHaveBeenCalledTimes(1);
+      expect(input().value, JSON.stringify(mods)).toBe("");
+    }
+  });
+
+  it("with text in the composer keeps the text and asks for nothing", () => {
+    type("half-written thought");
+    const e = press("ArrowUp", { ctrlKey: true });
+    expect(e.defaultPrevented).toBe(false);
+    expect(editLast).not.toHaveBeenCalled();
+    expect(input().value).toBe("half-written thought");
+  });
+
+  it("with Shift or Alt added is not the chord", () => {
+    for (const mods of [
+      { ctrlKey: true, shiftKey: true },
+      { metaKey: true, altKey: true },
+    ]) {
+      press("ArrowUp", mods);
+      expect(editLast, JSON.stringify(mods)).not.toHaveBeenCalled();
+    }
+  });
+
+  it("leaves the key to an open slash menu", () => {
+    const menu = document.createElement("div");
+    menu.id = "chord-menu";
+    document.body.appendChild(menu);
+    input().setAttribute("aria-controls", "chord-menu");
+    try {
+      press("ArrowUp", { ctrlKey: true });
+      expect(editLast).not.toHaveBeenCalled();
+    } finally {
+      input().removeAttribute("aria-controls");
+      menu.remove();
+    }
+  });
+
+  it("leaves a bare ArrowUp recalling the newest prompt", () => {
+    press("ArrowUp");
+    expect(editLast).not.toHaveBeenCalled();
     expect(input().value).toBe("newest");
   });
 });

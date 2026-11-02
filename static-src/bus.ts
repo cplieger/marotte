@@ -5,6 +5,7 @@ import { createBus } from "@cplieger/reactive";
 
 import type {
   EngineStatus,
+  MCPSignInOpenPayload,
   NotificationPayload,
   RunAsksPayload,
   SettingsUpdatedPayload,
@@ -116,6 +117,7 @@ export interface SSEPayloads {
   readonly mcp_pool_changed: undefined;
   readonly mcp_connected: MCPConnectedPayload;
   readonly mcp_oauth_needed: MCPOAuthPayload;
+  readonly mcp_sign_in_open: MCPSignInOpenPayload;
   readonly mcp_failed: MCPFailedPayload;
   readonly mcp_disconnected: MCPDisconnectedPayload;
   readonly mcp_prewarm: { readonly package: string; readonly state: string };

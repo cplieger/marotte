@@ -14,12 +14,19 @@ const stepNodeType = "step"
 // askStepNode is one step node of a test inspect reply.
 type askStepNode struct {
 	id, status, session, signal string
-	awaiting                    bool
+	// parked writes the attention KAS's park records (markWaitingForUser).
+	parked bool
 }
 
 // parkedStep is a step waiting on a person, as KAS reports one after send_message warning.
 func parkedStep(id, session string) askStepNode {
-	return askStepNode{id: id, status: "paused", session: session, signal: "need_input", awaiting: true}
+	return askStepNode{id: id, status: "paused", session: session, signal: "need_input", parked: true}
+}
+
+// gatedPark is a step with a `completion` gate that ended its turn with no signal, which KAS parks
+// waiting for the next user message.
+func gatedPark(id, session string) askStepNode {
+	return askStepNode{id: id, status: "paused", session: session, parked: true}
 }
 
 // inspectAsk is an inspect reply of workflowID: one step under a sequence root, several under a
@@ -36,8 +43,8 @@ func inspectAsk(t *testing.T, workflowID string, run marotte.RunStatus, steps ..
 		if s.signal != "" {
 			n["completionSignal"] = s.signal
 		}
-		if s.awaiting {
-			n["awaitingUserInput"] = true
+		if s.parked {
+			n["attention"] = []any{map[string]any{"kind": "question", "since": "2026-11-01T09:58:33.463Z"}}
 		}
 		kids = append(kids, n)
 	}

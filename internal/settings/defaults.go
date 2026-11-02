@@ -88,7 +88,7 @@ const (
 	KeyAutoDelegation       = "auto_delegation"
 	KeyModelFallback        = "model_fallback_enabled"
 
-	// KeyOutputStyle rides each chat prompt as _meta.kiro.outputStyle.
+	// KeyOutputStyle, a KAS output style id, rides each chat prompt as _meta.kiro.outputStyle.
 	// KeyTerminalCommandTimeoutMs is the shell tool's default timeout (0 = KAS's
 	// 120 s), sent at initialize and pushed live to the engine.
 	KeyOutputStyle              = "output_style"

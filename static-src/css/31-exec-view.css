@@ -669,11 +669,34 @@
   gap: var(--sp-2);
   flex-shrink: 0;
   font-size: var(--fs-sm);
+
+  /* A recorded end's sentence outgrows a narrow head. A zero basis gives it only the room the
+     title and verbs leave, so it wraps first; the title ellipsises once the sentence is at its
+     floor (`.ev-d-state[data-pending-end]`). */
+  &:has(> .ev-d-state[data-pending-end]) {
+    flex: 1 1 0;
+    justify-content: flex-end;
+  }
+}
+
+/* Centred, and into the head's padding, so a step's buttons do not move its baseline or grow
+   the head against a step that has none. */
+.ev-d-head-action {
+  align-self: center;
+  flex-shrink: 0;
+  margin-block: calc(-1 * var(--sp-2));
 }
 
 .ev-d-state {
   text-transform: capitalize;
   color: var(--c-text-secondary);
+
+  /* A recorded end's words are a sentence, already cased. */
+  &[data-pending-end] {
+    min-inline-size: 8em;
+    text-transform: none;
+    text-align: end;
+  }
 }
 
 .ev-detail[data-state="fail"] .ev-d-state {
@@ -690,6 +713,7 @@
 }
 
 .ev-d-dur {
+  flex-shrink: 0;
   color: var(--c-text-tertiary);
   font-variant-numeric: tabular-nums;
 }

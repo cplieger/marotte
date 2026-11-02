@@ -764,6 +764,31 @@ func TestHandleResume_AQueuedClaimIsWaitedForNotRefused(t *testing.T) {
 	}
 }
 
+// TestHandleResume_AQuestionParkWhoseTreeDoesNotDecodeIsUnread pins that a run whose step tree workflow.DecodeInspect
+// refuses is unreadable, never a run nobody waits on: its step may be parked on a question, which a resume re-parks.
+func TestHandleResume_AQuestionParkWhoseTreeDoesNotDecodeIsUnread(t *testing.T) {
+	h, _, br := newTestHub()
+	parked := inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step"))
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowInspect: withAttentionDrift(t, parked),
+		methodKiroWorkflowResume:  json.RawMessage(`{}`),
+	}
+	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/resume", nil)
+	req.SetPathValue("id", "wf_1")
+	rec := httptest.NewRecorder()
+
+	h.runRoutes.handleResume(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("POST resume = %d %s, want %d", rec.Code, rec.Body.String(), http.StatusServiceUnavailable)
+	}
+	if got := stateWrites(br.callLog()); len(got) != 0 {
+		t.Errorf("writes = %v, want none", got)
+	}
+}
+
 // Every node carries `type`: KAS's resolver considers `step` only.
 func stepTargetInspect(t *testing.T, workflowID, nodeID string) json.RawMessage {
 	t.Helper()

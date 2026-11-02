@@ -21,6 +21,7 @@ const mockSetPickerModels = vi.fn();
 const mockRefreshPickerIfVisible = vi.fn();
 const mockSetCatalogPhase = vi.fn();
 const mockRefreshContextUI = vi.fn();
+const mockSetCatalogOutputStyles = vi.fn();
 vi.mock("./roles.js", () => ({ setCatalogModes: mockSetCatalogModes }));
 vi.mock("./picker.js", () => ({
   setPickerModels: mockSetPickerModels,
@@ -28,6 +29,7 @@ vi.mock("./picker.js", () => ({
   setCatalogPhase: mockSetCatalogPhase,
 }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: mockRefreshContextUI }));
+vi.mock("./output-style.js", () => ({ setCatalogOutputStyles: mockSetCatalogOutputStyles }));
 
 // The store's context-size table is REAL: the seed's whole mechanism is that the table is filled
 // from the model descriptions this same answer carried, so a mock of it would pin the wiring and
@@ -39,9 +41,9 @@ const { MODEL_CONTEXT_SIZES } = store;
 const { fetchCatalog } = await import("./session-catalog.js");
 const { BUS_CATALOG_MODELS, onBus } = await import("./bus.js");
 
-/** A catalog answer with the two lists the wire declares non-null. */
+/** A catalog answer with the lists the wire declares non-null. */
 function catalog(over: Partial<ConfigTemplateResponse> = {}): ConfigTemplateResponse {
-  return { catalog: "ready", modes: [], models: [], ...over };
+  return { catalog: "ready", modes: [], models: [], output_styles: [], ...over };
 }
 
 /** One model whose description states its window, which is the only place a context size is
@@ -170,6 +172,18 @@ describe("the one catalog reader", () => {
 
     expect(mockSetCatalogModes).not.toHaveBeenCalled();
     expect(mockSetPickerModels).not.toHaveBeenCalled();
+  });
+
+  it("hands the served output styles to the Settings select, and never an empty list", async () => {
+    const styles = [{ id: "learning", name: "Learning", description: "Leaves code for you." }];
+    reply = catalog({ output_styles: styles });
+    await fetchCatalog();
+    expect(mockSetCatalogOutputStyles).toHaveBeenCalledExactlyOnceWith(styles);
+
+    mockSetCatalogOutputStyles.mockClear();
+    reply = catalog();
+    await fetchCatalog();
+    expect(mockSetCatalogOutputStyles).not.toHaveBeenCalled();
   });
 
   it("carries the model's default effort tier, which a control silently loses", async () => {

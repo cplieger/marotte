@@ -20,6 +20,8 @@ function modalMarkup(): HTMLElement {
 }
 
 const MODES = ["search", "remote", "npm", "raw"] as const;
+// Reached only by editing a row of that transport, so it has a panel and no tab.
+const EDIT_ONLY_MODES = ["registry"] as const;
 
 describe("MCP add-integration tab bar (static/index.html)", () => {
   it("declares one tab per panel mode", () => {
@@ -34,9 +36,9 @@ describe("MCP add-integration tab bar (static/index.html)", () => {
       (p) => p.dataset["mcpMode"],
     );
 
-    // A mode with a panel and no tab is unreachable; a tab with no panel shows an empty modal.
+    // An add mode with a panel and no tab is unreachable; a tab with no panel shows an empty modal.
     expect([...tabbed].sort()).toEqual([...MODES].sort());
-    expect([...panelled].sort()).toEqual([...MODES].sort());
+    expect([...panelled].sort()).toEqual([...MODES, ...EDIT_ONLY_MODES].sort());
   });
 
   it("marks exactly one tab selected, and it is the mode the modal opens on", () => {
@@ -101,6 +103,13 @@ describe("switching mode hides panels only", () => {
       expect(panel?.getAttribute("aria-labelledby"), mode).toBe(tab?.id);
       expect(tab?.getAttribute("aria-selected"), mode).toBe(String(mode === "remote"));
       expect(tab?.getAttribute("tabindex"), mode).toBe(mode === "remote" ? "0" : "-1");
+    }
+    // No tab names an edit-only panel, so a tabpanel role would point aria-labelledby at nothing.
+    for (const mode of EDIT_ONLY_MODES) {
+      const panel = document.querySelector<HTMLElement>(`.mcp-mode-panel[data-mcp-mode="${mode}"]`);
+      expect(panel, mode).not.toBeNull();
+      expect(panel?.hasAttribute("role"), mode).toBe(false);
+      expect(panel?.hasAttribute("aria-labelledby"), mode).toBe(false);
     }
   });
 });

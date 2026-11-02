@@ -42,6 +42,7 @@ import {
   saveServer,
   reconnectServer,
   relayOAuthCallback,
+  signInServer,
 } from "./actions/mcp.js";
 import { bindLoadingState, isPending, registerCleanup } from "./actions/index.js";
 
@@ -459,6 +460,8 @@ export function renderForeignMeta(st: RuntimeStatus): string {
       return "Connected. Its tools are available to the agent";
     case "needs_auth":
       return "Waiting for sign-in";
+    case "signing_in":
+      return "Signing in";
     case "disabled":
       return "Disabled. The agent is not using it";
     default:
@@ -566,7 +569,7 @@ export function mountRow(s: Server, id: string): HTMLElement {
       } else {
         toggle.dataset["tooltip"] = lockReason;
       }
-      editBtn.classList.toggle("hidden", cur.transport === "registry" || lockReason !== undefined);
+      editBtn.classList.toggle("hidden", lockReason !== undefined);
       deleteBtn.classList.toggle("hidden", lockReason !== undefined);
       row.classList.toggle("mcp-row-readonly", lockReason !== undefined);
       nameEl.textContent = cur.name;
@@ -608,19 +611,32 @@ export function carriesLiveReport(st: RuntimeStatus, ownRow: boolean): boolean {
   return st.state !== "idle" && st.state !== "disabled";
 }
 
-/** Shared by both row kinds: a server awaiting sign-in may be on either. */
+/**
+ * Shared by both row kinds: a server awaiting sign-in may be on either. Waiting for sign-in offers Sign in; a sign-in
+ * in progress offers its consent page and the paste box.
+ */
 function oauthControls(
   body: HTMLElement,
   nameOf: () => string,
 ): (st: RuntimeStatus, live: boolean) => void {
+  let signIn: HTMLButtonElement | null = null;
   let pill: HTMLAnchorElement | null = null;
   let pillUrl: string | null = null;
+  let hint: HTMLParagraphElement | null = null;
   let relay: HTMLDetailsElement | null = null;
   return (st, live) => {
-    if (!live || st.state !== "needs_auth") {
+    if (live && st.state === "needs_auth") {
+      signIn ??= body.appendChild(renderSignInBtn(nameOf));
+    } else {
+      signIn?.remove();
+      signIn = null;
+    }
+    if (!live || st.state !== "signing_in") {
       pill?.remove();
       pill = null;
       pillUrl = null;
+      hint?.remove();
+      hint = null;
       relay?.remove();
       relay = null;
       return;
@@ -631,6 +647,9 @@ function oauthControls(
       pillUrl = st.oauth_url;
       body.appendChild(pill);
     }
+    hint ??= body.appendChild(
+      el("p", { className: "mcp-sign-in-hint" }, SIGN_IN_TIME_LIMIT) as HTMLParagraphElement,
+    );
     // A relayed code is spent, so a second paste can only fail.
     if (st.relayed) {
       relay?.remove();
@@ -642,9 +661,14 @@ function oauthControls(
   };
 }
 
+/** KAS waits for the consent at most the server's connect timeout: 60 s by default, 600 s at most. */
+const SIGN_IN_TIME_LIMIT =
+  "Finish signing in within the server's connection timeout: 60 seconds unless its timeout is set higher, up to 10 minutes.";
+
 const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>> = {
   connected: { css: "connected", title: "Connected" },
   needs_auth: { css: "oauth", title: "Needs authentication" },
+  signing_in: { css: "oauth", title: "Signing in" },
   idle: { css: "idle", title: "Not connected because no chat is running" },
   failed: { css: "failed", title: "Failed to initialise" },
   disabled: { css: "disabled", title: "Disabled" },
@@ -788,6 +812,9 @@ function statePhrase(st: RuntimeStatus): string {
   if (st.state === "needs_auth") {
     return "Waiting for sign-in";
   }
+  if (st.state === "signing_in") {
+    return "Signing in";
+  }
   return "";
 }
 
@@ -829,6 +856,7 @@ function applyPrewarm(
   return b;
 }
 
+/** A link, never window.open: the consent URL arrives over SSE, which is no user gesture. */
 function renderOAuthPill(url: string): HTMLAnchorElement {
   const safe = isSafeURL(url);
   return el(
@@ -842,8 +870,30 @@ function renderOAuthPill(url: string): HTMLAnchorElement {
         ? "Open the server's authorisation page in a new tab."
         : "The server sent an unsafe URL that is not http or https.",
     },
-    safe ? "Finish sign-in" : "Invalid OAuth URL",
+    safe ? "Open sign-in page" : "Invalid OAuth URL",
   ) as HTMLAnchorElement;
+}
+
+function renderSignInBtn(serverName: () => string): HTMLButtonElement {
+  const btn = el(
+    "button",
+    {
+      type: "button",
+      className: "btn-small mcp-sign-in-btn",
+      "data-tooltip": "Start a new sign-in. It replaces the credentials this server has stored.",
+    },
+    "Sign in",
+  ) as HTMLButtonElement;
+  btn.addEventListener("click", () => {
+    if (btn.disabled) {
+      return;
+    }
+    setControlBusy(btn, true);
+    void signInServer.dispatch({ server: serverName() }).finally(() => {
+      setControlBusy(btn, false);
+    });
+  });
+  return btn;
 }
 
 /**
@@ -926,7 +976,7 @@ function renderEditBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement {
     "aria-label": `Edit ${s.name}`,
   }) as HTMLButtonElement;
   btn.innerHTML = ICON_EDIT_UI;
-  // Visibility is the row effect's: a registry entry has no form, and a locked row has no edit.
+  // Visibility is the row effect's: a locked row has no edit.
   btn.addEventListener("click", () => {
     void openEditModal(s.id);
   });
@@ -1102,9 +1152,12 @@ export function initMCP(): void {
     mcpState.refetchStatus();
   });
   onSSE("mcp_oauth_needed", (_chat, p) => {
+    mcpState.setStatusFromEvent(p.server, { name: p.server, state: "needs_auth" });
+  });
+  onSSE("mcp_sign_in_open", (_chat, p) => {
     mcpState.setStatusFromEvent(p.server, {
       name: p.server,
-      state: "needs_auth",
+      state: "signing_in",
       oauth_url: p.url,
       // A fresh attempt clears the relay latch: a stale `true` hides the paste box for an undelivered code.
       relayed: false,

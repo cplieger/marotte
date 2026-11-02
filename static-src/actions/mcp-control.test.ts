@@ -5,7 +5,7 @@ vi.mock("../toast.js", () =>
 );
 
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import { reconnectServer, relayOAuthCallback } from "./mcp.js";
+import { reconnectServer, relayOAuthCallback, signInServer } from "./mcp.js";
 
 const mockFetch = vi.fn();
 
@@ -61,6 +61,52 @@ describe("reconnectServer", () => {
     expect(toast.error).toHaveBeenCalledWith(
       `Could not reconnect integration: ${sentence}`,
       expect.anything(),
+    );
+  });
+});
+
+describe("signInServer", () => {
+  it("POSTs the server name to /api/mcp/sign-in and takes a 202 as started", async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 202 }));
+    const done = vi.fn();
+
+    await signInServer.dispatch({ server: "linear" }, { onSuccess: done });
+
+    const { url, init } = lastCall();
+    expect(new URL(url, location.href).pathname).toBe("/api/mcp/sign-in");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ server: "linear" });
+    expect(done).toHaveBeenCalledTimes(1);
+  });
+
+  // A second sign-in discards the credentials the first is creating, so nothing resends it.
+  it.each([
+    ["a network failure", () => Promise.reject(new TypeError("Failed to fetch"))],
+    [
+      "an engine that is down",
+      () => Promise.resolve(new Response(JSON.stringify({ error: "down" }), { status: 503 })),
+    ],
+  ])("never retries %s", async (_name, answer) => {
+    mockFetch.mockImplementation(answer);
+
+    await signInServer.dispatch({ server: "linear" }).catch(() => undefined);
+    await vi.runAllTimersAsync();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the server's refusal", async () => {
+    const toast = await import("../toast.js");
+    vi.mocked(toast.error).mockClear();
+    const sentence =
+      "another server's sign-in is in progress; finish it or let it time out, then try again";
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: sentence }), { status: 409 }));
+
+    await signInServer.dispatch({ server: "linear" }).catch(() => undefined);
+    await vi.runAllTimersAsync();
+
+    expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toBe(
+      `Could not start the sign-in: ${sentence}`,
     );
   });
 });

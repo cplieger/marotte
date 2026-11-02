@@ -1,4 +1,4 @@
-// Prompt input: form submit, keydown (Enter, ↑/↓ history), send button, iOS viewport fix.
+// Prompt input: form submit, keydown (Enter, ↑/↓ history, Ctrl/Cmd+↑ rewind), send button, iOS viewport fix.
 // send-state.ts drives three button faces: idle sends, streaming cancels, error retries; the error
 // face means there is nothing to send TO, so every other failure reports through a toast and the
 // turn's own divider. While a turn streams and the composer holds a send (text or a staged file), a
@@ -53,6 +53,7 @@ const RETRY_HINT = "Send again to retry.";
 
 type Submit = (text: string) => void;
 type Cancel = () => void;
+type EditLast = () => void;
 type Staged = ReadonlySignal<boolean>;
 
 export type SendState =
@@ -105,6 +106,7 @@ class PromptInputController {
   private state: SendState = { kind: "idle" };
   private onCancel: Cancel = () => undefined;
   private onSubmit: Submit = () => undefined;
+  private onEditLast: EditLast = () => undefined;
   private staged: Staged = signal(false);
   private midTurn: HTMLButtonElement | null = null;
   private midTurnName = "";
@@ -268,7 +270,7 @@ class PromptInputController {
     this.applyButtonState();
   }
 
-  init(onSubmit: Submit, onCancel: Cancel, staged: Staged): void {
+  init(onSubmit: Submit, onCancel: Cancel, staged: Staged, onEditLast: EditLast): void {
     if (initialized) {
       return;
     }
@@ -279,6 +281,7 @@ class PromptInputController {
 
     this.onCancel = onCancel;
     this.onSubmit = onSubmit;
+    this.onEditLast = onEditLast;
     this.staged = staged;
     $.sendBtn.addEventListener("click", (e: MouseEvent) => {
       if (this.state.kind === "streaming") {
@@ -372,6 +375,20 @@ class PromptInputController {
         return;
       }
 
+      // Only from an empty box: with text, the chord is the browser's caret move.
+      if (
+        e.key === "ArrowUp" &&
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        !menuOpen(input) &&
+        input.value.trim() === ""
+      ) {
+        e.preventDefault();
+        this.onEditLast();
+        return;
+      }
+
       const bareArrow = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
 
       if (e.key === "ArrowUp" && bareArrow && this.cursorOnFirstLine(input)) {
@@ -456,13 +473,15 @@ export function setSendState(next: SendState): void {
 }
 
 /** `staged` tracks the pill row for `isSendable`. It is injected because importing
- *  attachments.ts here would close an import cycle. */
+ *  attachments.ts here would close an import cycle. `onEditLast` answers Ctrl/Cmd+Up in an empty
+ *  composer. */
 export function initPromptInput(
   onSubmit: Submit,
   onCancel: Cancel,
   staged: Staged = signal(false),
+  onEditLast: EditLast = () => undefined,
 ): void {
-  instance.init(onSubmit, onCancel, staged);
+  instance.init(onSubmit, onCancel, staged, onEditLast);
 }
 
 /** Send the composer's contents: the keyboard shortcut's entry point, and the same path Enter

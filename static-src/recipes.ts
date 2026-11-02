@@ -26,6 +26,9 @@ import { entryDetail, entryList, entryRow } from "./entry-row.js";
 import { classifyRunStatus, runStatusTerminal } from "./run-status.js";
 import { configStanding, standingBadge, standingLabel } from "./config-standing.js";
 import type { ConfigStanding } from "./wire/types.gen.js";
+import { planToExec } from "./run-exec-source.js";
+import { buildExecTree, type ExecTreeView } from "./exec-view/tree.js";
+import { workNodes } from "./exec-view/model.js";
 
 /** Last fetched recipe list, kept so a repaint needs no refetch. */
 let recipes: Recipe[] = [];
@@ -396,8 +399,9 @@ function paint(): void {
           syncStanding(node, e.recipe);
           break;
         case "detail":
-          // Only Launch is synced: the fields hold what the reader has typed.
+          // Only Launch and the plan are synced: the fields hold what the reader has typed.
           syncLaunch(node, e.recipe);
+          syncPlan(node, e.recipe);
           break;
         case "orphan":
           break;
@@ -627,9 +631,12 @@ function inputForm(r: Recipe): HTMLElement {
   }
   const picks = buildRunDefaultsPicker({ models: getCachedModels(), initial: {} });
   form.appendChild(picks.el);
-  form.appendChild(
-    el("button", { type: "submit", className: "btn-small recipe-launch-btn" }, "Launch"),
-  );
+  const launchBtn = el(
+    "button",
+    { type: "submit", className: "btn-small recipe-launch-btn" },
+    "Launch",
+  ) as HTMLButtonElement;
+  form.appendChild(launchBtn);
   form.addEventListener("submit", (e: Event) => {
     e.preventDefault();
     // Resolved at submit time, like the row's Run: a refetch can invalidate the recipe under a
@@ -650,8 +657,52 @@ function inputForm(r: Recipe): HTMLElement {
   });
   const detail = entryDetail(form);
   formPicks.set(detail, picks);
+  formPlans.set(detail, buildPlanPreview(launchBtn));
   syncLaunch(detail, r);
+  syncPlan(detail, r);
   return detail;
+}
+
+/** An open form's read-only plan, drawn by the run tab's own tree so the preview matches the run it
+ *  launches. `launch` is the form's Launch, which the region sits in front of. */
+interface PlanPreview {
+  region: HTMLElement;
+  head: HTMLElement;
+  tree: ExecTreeView;
+  launch: HTMLElement;
+}
+
+/** Each open form's plan preview, for its repaint to redraw from a refetched recipe. */
+const formPlans = new WeakMap<HTMLElement, PlanPreview>();
+
+function buildPlanPreview(launch: HTMLElement): PlanPreview {
+  const head = el("div", { className: "recipe-plan-head" });
+  // Selection means nothing before the run exists, so a row's click does nothing.
+  const tree = buildExecTree(() => undefined);
+  tree.root.setAttribute("aria-label", "Planned steps");
+  // A tab stop, because no row is one and the box scrolls (WCAG 2.1.1).
+  const steps = el("div", { className: "recipe-plan-steps", tabindex: "0" }, tree.root);
+  return { region: el("div", { className: "recipe-plan" }, head, steps), head, tree, launch };
+}
+
+/** The open form's plan follows the recipe: a recipe whose plan folds to no node shows no region. */
+function syncPlan(detail: HTMLElement, r: Recipe): void {
+  const p = formPlans.get(detail);
+  if (p === undefined) {
+    return;
+  }
+  const nodes = planToExec(r.plan);
+  if (nodes.length === 0) {
+    p.region.remove();
+    p.tree.render([], "");
+    return;
+  }
+  const steps = workNodes(nodes).length;
+  p.head.textContent = `Plan \u00b7 ${steps === 1 ? "1 step" : `${String(steps)} steps`}`;
+  p.tree.render(nodes, "");
+  if (p.region.nextElementSibling !== p.launch) {
+    p.launch.before(p.region);
+  }
 }
 
 /** The open form's Launch follows the row's Run: off, with KAS's reason, for an invalid recipe. */

@@ -59,6 +59,9 @@ var (
 	// errAlwaysResourceInvalid refuses an always answer with no pattern, a pattern the rule
 	// format cannot hold, or a pattern on an answer that saves no rule.
 	errAlwaysResourceInvalid = errors.New("always_resource_invalid")
+	// errAlwaysScopeInvalid refuses a scope marotte does not offer, a session scope on a deny,
+	// or a scope on an answer that saves no rule.
+	errAlwaysScopeInvalid = errors.New("always_scope_invalid")
 	// errChatNotCreated is the 409 for a chat absent after a Mutate that
 	// reported no error — a client-supplied id naming a tombstoned chat.
 	errChatNotCreated = errors.New("chat could not be created")
