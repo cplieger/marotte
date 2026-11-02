@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/wiregen/v3"
+	"github.com/cplieger/wiregen/v4"
 )
 
 // An SSE payload type missing from the registry gets no decoder, so the client hand-declares
