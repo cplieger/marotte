@@ -51,6 +51,12 @@ func TestStartKiroCLIShapes(t *testing.T) {
 			wantGate: true,
 			reason:   pinstall.ReasonUnavailable,
 		},
+		"no pins and a rejected tools dir report unready": {
+			cfg:      Config{Tools: checkToolsRoot("MAROTTE_TOOLS_DIR", filepath.Join(t.TempDir(), "a:b"))},
+			wantPath: "",
+			wantGate: true,
+			reason:   pinstall.ReasonUnavailable,
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

@@ -85,19 +85,21 @@ func unavailableKiroRuntime() kiroRuntime {
 }
 
 // startKiroCLI builds the install manager and starts the install in the background, bind-first:
-// only readiness waits, so a first-boot download is a /api/health reason. Three shapes: no pins,
-// unusable pins or a rejected tools dir (unready), and the managed install.
+// only readiness waits, so a first-boot download is a /api/health reason. Three shapes: a
+// rejected tools dir or unusable pins (unready), no pins or no tools dir (unmanaged), and the
+// managed install. The rejection is checked first, so no pins never makes a bare-name search
+// that could reach the rejected folder.
 func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 	toolsDir, rejected := cfg.Tools.use()
-	if cfg.KiroCLIVersion == "" || (toolsDir == "" && rejected == nil) {
-		slog.Warn("no kiro-cli pins in the environment: resolving kiro-cli by bare name and installing nothing",
-			"hint", "expected outside the container (bare `go run`); in the image entrypoint.sh exports KIRO_CLI_VERSION and both digests")
-		return unmanagedKiroRuntime()
-	}
 	if rejected != nil {
 		slog.Error("kiro-cli is not installed because marotte rejects its tools folder, so chats stay unavailable",
 			"error", logsafe.Field(rejected.Error()))
 		return unavailableKiroRuntime()
+	}
+	if cfg.KiroCLIVersion == "" || toolsDir == "" {
+		slog.Warn("no kiro-cli pins or tools folder in the environment: resolving kiro-cli by bare name and installing nothing",
+			"hint", "expected outside the container (bare `go run`); in the image entrypoint.sh exports KIRO_CLI_VERSION and both digests")
+		return unmanagedKiroRuntime()
 	}
 	mgr, err := pinstall.New(kiroInstallConfig(cfg, toolsDir))
 	if err != nil {
