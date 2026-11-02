@@ -39,12 +39,15 @@ import {
 } from "./tabs-sync.js";
 import {
   openTabCommand,
+  openTabQuietCommand,
+  openTabRefusal,
   closeTabCommand,
   pinTabCommand,
   reparentTabCommand,
   reorderTabsCommand,
   REORDER_STALE,
 } from "./actions/tabs.js";
+import { retryNetwork } from "./actions/index.js";
 import { newOpID } from "./transport.js";
 import { join as joinKey } from "@cplieger/keyenc";
 import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
@@ -142,6 +145,8 @@ export interface OpenTabArgs {
   /** Whether to activate once the tab exists. Default true; a bulk restore passes
    *  false, because the strip is the reader's. */
   activate?: boolean;
+  /** Raise no toast for a 404, for a caller that falls back on `not-found`. Default false. */
+  quietNotFound?: boolean;
 }
 
 // --- Store ---
@@ -652,8 +657,8 @@ export type OpenTabOutcome = "opened" | "not-found" | "failed";
 /** Open a tab for something that already exists, and activate it. Resolves with the row in the
  *  projection, adopted from the RESPONSE, so no frame round trip sits in the gesture's path.
  *
- *  Never rejects: a refused open leaves the strip as it was and the action framework has raised its
- *  toast. A 404 answers `not-found`, any other failure `failed`. */
+ *  Never rejects: a refused open leaves the strip as it was and has raised its toast, except a 404
+ *  under `quietNotFound`. A 404 answers `not-found`, any other failure `failed`. */
 export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
   const ref = args.ref ?? "";
   if (args.name !== undefined && args.name !== "") {
@@ -665,7 +670,8 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
   const opID = newOpID();
   markLocalOp(opID);
   beginAdopt(opID);
-  const outcome = await openTabCommand.dispatch({
+  const quiet = args.quietNotFound === true;
+  const outcome = await (quiet ? openTabQuietCommand : openTabCommand).dispatch({
     kind: args.kind,
     ref,
     parent: args.parent ?? "",
@@ -676,7 +682,28 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
     // The server answered an error (nothing committed) or the dispatch gave up.
     // Nothing was painted, so the failure transition just retires the op.
     opFailed(opID);
-    return outcome.status === "error" && outcome.error.status === 404 ? "not-found" : "failed";
+    if (outcome.status !== "error") {
+      return "failed";
+    }
+    if (outcome.error.status === 404) {
+      return "not-found";
+    }
+    if (quiet) {
+      const err = outcome.error;
+      // `openTabQuietCommand` raises nothing, so this toast is the refusal's only report. Retry is
+      // a plain open: a 404 then toasts, since the caller that wanted it quiet is not waiting.
+      toastError(
+        openTabRefusal(err),
+        retryNetwork(err)
+          ? {
+              onClick: () => {
+                void openTab({ ...args, quietNotFound: false });
+              },
+            }
+          : undefined,
+      );
+    }
+    return "failed";
   }
   const reply = outcome.value;
   adoptSubject(reply.subject);

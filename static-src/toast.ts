@@ -6,7 +6,7 @@ import { toast, _resetForTest as uipResetToast } from "@cplieger/ui-primitives/t
 import type { ToastLevel, ToastRetry } from "@cplieger/ui-primitives/toast";
 import type { NoticeLevel } from "./wire/types.gen.js";
 
-export type { ToastRetry };
+export type { ToastLevel, ToastRetry };
 
 /** Show an info-level toast. Auto-dismisses after 4s (paused on hover/focus). */
 export function info(message: string): () => void {
@@ -46,6 +46,8 @@ const MAX_QUEUE = 20;
 
 interface Owed {
   readonly cls: string | null;
+  /** The action button's accessible name, when its one-word label alone does not name its target. */
+  readonly actionName: string | null;
   mounted: boolean;
 }
 
@@ -71,12 +73,19 @@ function tagMounted(): void {
       if (entry.cls !== null) {
         node.classList.add(entry.cls);
       }
+      if (entry.actionName !== null) {
+        node.querySelector(".uip-toast-retry")?.setAttribute("aria-label", entry.actionName);
+      }
     }
   }
 }
 
-function track(cls: string | null, show: () => () => void): () => void {
-  const entry: Owed = { cls, mounted: false };
+function track(
+  cls: string | null,
+  show: () => () => void,
+  actionName: string | null = null,
+): () => void {
+  const entry: Owed = { cls, actionName, mounted: false };
   owed.push(entry);
   const dismiss = show();
   tagMounted();
@@ -143,6 +152,25 @@ export function notice(
       ...(long ? { duration: ERROR_DURATION_MS } : {}),
       ...(action !== undefined ? { retry: action } : {}),
     }),
+  );
+}
+
+/** An action that takes the reader to what a toast reports. `name` is the button's accessible
+ *  name, which must contain the visible `label` (WCAG 2.5.3). */
+export interface ToastJump extends ToastRetry {
+  readonly name: string;
+}
+
+/** Show a toast at `level` offering `jump`, kept up as long as an error like `notice`'s action;
+ *  with no jump it is `showToast` at that level. */
+export function jumpToast(message: string, level: ToastLevel, jump?: ToastJump): () => void {
+  if (jump === undefined) {
+    return showToast(message, level);
+  }
+  return track(
+    null,
+    () => toast.show(message, { level, duration: ERROR_DURATION_MS, retry: jump }),
+    jump.name,
   );
 }
 

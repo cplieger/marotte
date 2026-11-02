@@ -1,12 +1,13 @@
 // What a toast is about: a chat-scoped toast names its chat and offers Open when
 // that tab is not on screen, `run:<id>` names its run, and "" names nothing.
 
-import { error, notice, success, type ToastRetry } from "./toast.js";
+import { error, notice, success, type ToastJump, type ToastRetry } from "./toast.js";
 import type { NoticeLevel } from "./wire/types.gen.js";
 import { get } from "./store.js";
 import { activateTab, getActiveTabId, openTab, tabIdFor } from "./tabs.js";
 import { truncate } from "./strings.js";
 import { runLabelOf } from "./run-store.js";
+import { apiGetOrError } from "./api-client.js";
 
 /** A chat is named from its first prompt (an 80-char cut server-side), which is a
  *  paragraph opener rather than a title, so the prefix keeps its leading words. */
@@ -81,6 +82,65 @@ export function noticeSubject(chatID: string, chatName = ""): NoticeSubject {
       },
     },
   };
+}
+
+/** The jump a run's end toast offers: onto `parentChatID`, the chat that launched the run, or onto
+ *  the run's own tab when that id is "" or the store no longer holds the chat. Undefined when the
+ *  target is the tab on screen. The click reads the store again. */
+export function runEndJump(
+  workflowID: string,
+  parentChatID: string,
+  runName: string,
+): ToastJump | undefined {
+  const chat = parentChatID === "" ? undefined : get(parentChatID);
+  const tabID = chat === undefined ? tabIdFor("run", workflowID) : tabIdFor("chat", parentChatID);
+  if (tabID !== "" && tabID === getActiveTabId()) {
+    return undefined;
+  }
+  const target = chat === undefined ? runName : chat.name;
+  return {
+    label: OPEN_LABEL,
+    name: target === "" ? OPEN_LABEL : `${OPEN_LABEL} ${truncate(target, MAX_NAME_CHARS)}`,
+    onClick: () => openRunEnd(workflowID, parentChatID, runName),
+  };
+}
+
+async function openRunEnd(
+  workflowID: string,
+  parentChatID: string,
+  runName: string,
+): Promise<void> {
+  const chat = parentChatID === "" ? undefined : get(parentChatID);
+  if (chat !== undefined) {
+    const tabID = tabIdFor("chat", parentChatID);
+    if (tabID !== "") {
+      activateTab(tabID);
+      return;
+    }
+    // A 404 falls back to the run tab; any other refusal has raised its own toast and ends here.
+    const opened = await openTab({
+      kind: "chat",
+      ref: parentChatID,
+      name: chat.name,
+      quietNotFound: true,
+    });
+    if (opened !== "not-found") {
+      return;
+    }
+  }
+  // A launched run can be deleted with its chat, and no frame tells this client it was.
+  if (parentChatID !== "" && (await runIsGone(workflowID))) {
+    return;
+  }
+  // Lazy: run-view.ts is the run page, which this module's many importers must not pull in.
+  const { openRunView } = await import("./run-view.js");
+  await openRunView(workflowID, runName);
+}
+
+/** True only when the server answers 404 for the run: any other failure is left for the open to report. */
+async function runIsGone(workflowID: string): Promise<boolean> {
+  const r = await apiGetOrError<unknown>(`/api/runs/${encodeURIComponent(workflowID)}`);
+  return r.status === 404;
 }
 
 export function named(subject: NoticeSubject, message: string): string {

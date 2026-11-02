@@ -9,7 +9,14 @@
 
 import { join as joinKey } from "@cplieger/keyenc";
 
-import { defineAction, retryNetwork, RETRY_STANDARD, IDEMPOTENCY_COMMAND_FIELD } from "./index.js";
+import {
+  defineAction,
+  retryNetwork,
+  RETRY_STANDARD,
+  IDEMPOTENCY_COMMAND_FIELD,
+  type ActionErrorLike,
+} from "./index.js";
+import type { ActionDefinition } from "@cplieger/actions";
 import { send as transportSend, type SendResult } from "../transport.js";
 import type { TabKind, TabSubject } from "../types.js";
 import { decodeTabSubject } from "../wire/decoders.gen.js";
@@ -35,7 +42,14 @@ interface OpenTabReply {
   version: number;
 }
 
-export const openTabCommand = defineAction<OpenTabArgs, OpenTabReply | null>({
+/** The sentence a refused open reads as. At the product limit the refusal has a remedy. */
+export function openTabRefusal(err: ActionErrorLike): string {
+  return err.status === 409
+    ? "Close a tab first, because this workspace has too many open."
+    : "Could not open that tab";
+}
+
+const openTabDefinition: ActionDefinition<OpenTabArgs, OpenTabReply | null> = {
   name: "tabs.open",
   networkMode: "always",
   idempotencyKey: true,
@@ -73,11 +87,17 @@ export const openTabCommand = defineAction<OpenTabArgs, OpenTabReply | null>({
       version: numberField(body, "version"),
     };
   },
-  // At the product limit the refusal has a remedy.
-  error: (_args, err) =>
-    err.status === 409
-      ? "Close a tab first, because this workspace has too many open."
-      : "Could not open that tab",
+  error: (_args, err) => openTabRefusal(err),
+};
+
+export const openTabCommand = defineAction(openTabDefinition);
+
+/** `openTabCommand` without the framework's toast, for a caller that handles a 404 itself and
+ *  reports any other refusal with `openTabRefusal`. */
+export const openTabQuietCommand = defineAction({
+  ...openTabDefinition,
+  name: "tabs.open.quiet",
+  error: false,
 });
 
 interface CloseTabArgs {
