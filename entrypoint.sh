@@ -164,20 +164,36 @@ own_place() {
   printf '%s/%s\n' "${parent%/}" "$(basename -- "$1")"
 }
 
+# Succeeds when the cwd lies at $1. realpath asks getcwd, where bash's pwd -P re-resolves
+# the logical $PWD, which a swap after cd can point back at the expected place.
+at_place() { [ "$(realpath -e -- .)" = "$1" ]; }
+
 # Removes group and other write from directory $1 when it lies at $2, with a warning,
 # since what another account wrote there meanwhile stays. The subshell holds the directory
-# as its cwd, so chmod acts on the inode pwd -P placed and a later swap cannot redirect it.
+# as its cwd, so chmod acts on the inode at_place placed and a later swap cannot redirect it.
 tighten_dir() {
   local dir=$1 want=$2 mode
   (
-    if ! cd -- "$dir" 2>/dev/null || [ "$(pwd -P)" != "$want" ]; then
+    if ! cd -- "$dir" 2>/dev/null || ! at_place "$want"; then
       exit 0
     fi
     mode=$(stat -c %a .) || exit 0
     [ $((8#$mode & 0022)) -ne 0 ] || exit 0
-    printf 'level=warn msg="a folder the tools engine checks let other accounts write; removing that, but anything they wrote there stays" dir="%s" mode=%s component=entrypoint\n' "$dir" "$mode" >&2
+    printf 'level=warn msg="a folder the tools engine checks let other accounts write; removing that, but anything they wrote there stays" dir="%s" mode=%s component=entrypoint\n' "$(logfmt_value "$dir")" "$mode" >&2
     chmod go-w . \
-      || printf 'level=warn msg="could not remove group and other write; the tools engine will refuse this folder" dir="%s" component=entrypoint\n' "$dir" >&2
+      || printf 'level=warn msg="could not remove group and other write; the tools engine will refuse this folder" dir="%s" component=entrypoint\n' "$(logfmt_value "$dir")" >&2
+  )
+}
+
+# Runs chmod $1 on directory $2 from inside it when it lies at $3, as tighten_dir does.
+chmod_at() {
+  local mode=$1 dir=$2 want=$3
+  (
+    if ! cd -- "$dir" 2>/dev/null || ! at_place "$want"; then
+      exit 0
+    fi
+    chmod "$mode" . 2>/dev/null \
+      || printf 'level=warn msg="could not set the mode of a folder" dir="%s" mode=%s component=entrypoint\n' "$(logfmt_value "$dir")" "$mode" >&2
   )
 }
 
@@ -197,16 +213,29 @@ tighten_engine_roots() {
   done
 }
 
+# HOME, and a KIRO_HOME outside it, are the operator's values, so each is resolved; the
+# folders below them, and kiro-cli-versions below the tools dir, count only at their own place.
+normalize_modes() {
+  local home=$1 kiro_home=$2 tools=$3 place d
+  if place=$(realpath -e -- "$home" 2>/dev/null); then
+    chmod_at 755 "$home" "$place"
+    for d in .local .local/share .local/share/kiro-cli .cache .cache/go-build .docker .docker/cli-plugins; do
+      chmod_at go-w "$home/$d" "$place/$d"
+    done
+    chmod_at 700 "$home/.ssh" "$place/.ssh"
+  fi
+  case "$kiro_home" in
+    "$home"/*) chmod_at go-w "$kiro_home" "$place/${kiro_home#"$home"/}" ;;
+    *) place=$(realpath -e -- "$kiro_home" 2>/dev/null) && chmod_at go-w "$kiro_home" "$place" ;;
+  esac
+  place=$(own_place "$tools") && chmod_at go-w "$tools/kiro-cli-versions" "$place/kiro-cli-versions"
+}
+
 # Normalize modes on every boot: an inheritable ACL or umask on the host volume
 # can stamp any mode, the tools engine refuses a group- or other-writable root, and
 # ssh refuses a lax ~/.ssh.
-chmod 755 "$HOME" || true
 tighten_engine_roots "$CONFIG_DIR" "$TOOLS"
-chmod go-w "$TOOLS/kiro-cli-versions" \
-  "$HOME/.local" "$HOME/.local/share" "$HOME/.local/share/kiro-cli" \
-  "$KIRO_HOME" "$HOME/.cache" "$HOME/.cache/go-build" \
-  "$HOME/.docker" "$HOME/.docker/cli-plugins" || true
-chmod 700 "$HOME/.ssh" || true
+normalize_modes "$HOME" "$KIRO_HOME" "$TOOLS"
 
 # Give login shells (the browser shell runs `bash --login`) the inherited PATH:
 # Debian's /etc/profile assigns uid 0 only the system directories, dropping the

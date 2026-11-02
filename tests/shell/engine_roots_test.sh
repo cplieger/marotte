@@ -9,7 +9,9 @@ set -u
 . "$(dirname -- "$0")/lib.sh"
 new_workdir >/dev/null
 
+load_function logfmt_value
 load_function own_place
+load_function at_place
 load_function tighten_dir
 load_function tighten_engine_roots
 
@@ -148,6 +150,33 @@ unset -f chmod
 [ -L "$C7" ] && [ "$(stat -c %a "$O7")" = 775 ] && [ "$(stat -c %a "$C7.moved")" = 755 ] \
   && ok "a swap after the place check cannot redirect chmod; the checked directory is tightened" \
   || no "swap race" "swapped $([ -L "$C7" ] && echo yes || echo no), outside $(stat -c %a "$O7"), checked dir $(stat -c %a "$C7.moved" 2>&1)"
+
+# The config dir is a symlink when cd follows it and a real directory by the place check.
+C9="$WORK/c9"
+O9="$WORK/outside-cd"
+mkdir -p "$O9" || exit 1
+ln -s -- "$O9" "$C9" || exit 1
+chmod 0775 "$O9" || exit 1
+# shellcheck disable=SC2329 # called by the loaded tighten_dir
+cd() {
+  builtin cd "$@" || return
+  if [ -L "$C9" ]; then
+    rm -f -- "$C9" && mkdir -- "$C9" && chmod 0775 "$C9"
+  fi
+}
+tighten_engine_roots "$C9" "$C9/tools" 2>"$WORK/err.log"
+unset -f cd
+[ ! -L "$C9" ] && [ "$(stat -c %a "$O9")" = 775 ] && [ ! -s "$WORK/err.log" ] \
+  && ok "a swap between cd and the place check leaves the outside tree alone" \
+  || no "cd swap" "swapped $([ -L "$C9" ] && echo no || echo yes), outside $(stat -c %a "$O9"), err: $(cat "$WORK/err.log")"
+
+C10="$WORK/c\"10"
+mkdir -p "$C10" || exit 1
+chmod 0775 "$C10" || exit 1
+tighten_engine_roots "$C10" "$C10/tools" 2>"$WORK/err.log"
+grep -qF "dir=\"$WORK/c'10\" mode=775" "$WORK/err.log" \
+  && ok "a quote in a folder name cannot close the warning's dir field" \
+  || no "logfmt dir" "$(cat "$WORK/err.log")"
 
 C8="$WORK/c8"
 mkdir -p "$C8" || exit 1

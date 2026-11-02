@@ -59,7 +59,9 @@ check_roots "$CWD/data|$CWD/t" KIRO_CONFIG_DIR=data/ MAROTTE_TOOLS_DIR=./t
 check_roots "$CWD/link|$CWD/link/tools" KIRO_CONFIG_DIR=link
 
 # A custom root whose host stamped every folder 0770.
+load_function logfmt_value
 load_function own_place
+load_function at_place
 load_function tighten_dir
 load_function tighten_engine_roots
 mkdir -p "$WORK/custom/config" "$WORK/custom/tools/npm/lib" || exit 1
