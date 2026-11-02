@@ -43,11 +43,11 @@
       "page_word": "stopped",
       "terminal": true,
       "sites": [
-        "internal/chat/entrylog.go:978",
+        "internal/chat/entrylog.go:1060",
         "internal/translate/projection_entries.go:669",
-        "internal/translate/streaming_tools.go:389",
+        "internal/translate/streaming_tools.go:392",
         "internal/translate/wire_enums.go:35",
-        "internal/turnlog/turnlog.go:618"
+        "internal/turnlog/turnlog.go:650"
       ]
     },
     {
@@ -122,7 +122,7 @@
       "status": "completed"
     },
     {
-      "site": "internal/chat/entrylog.go:978",
+      "site": "internal/chat/entrylog.go:1060",
       "form": "status_field",
       "status": "aborted"
     },
@@ -142,42 +142,42 @@
       "status": "aborted"
     },
     {
-      "site": "internal/translate/streaming_tools.go:364",
+      "site": "internal/translate/streaming_tools.go:367",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:388",
+      "site": "internal/translate/streaming_tools.go:391",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:389",
+      "site": "internal/translate/streaming_tools.go:392",
       "form": "status_assign",
       "status": "aborted"
     },
     {
-      "site": "internal/translate/streaming_tools.go:410",
+      "site": "internal/translate/streaming_tools.go:413",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:426",
+      "site": "internal/translate/streaming_tools.go:429",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:426",
+      "site": "internal/translate/streaming_tools.go:429",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:448",
+      "site": "internal/translate/streaming_tools.go:451",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:59",
+      "site": "internal/translate/streaming_tools.go:62",
       "form": "compare",
       "status": "pending"
     },
@@ -217,7 +217,7 @@
       "status": "pending"
     },
     {
-      "site": "internal/turnlog/turnlog.go:618",
+      "site": "internal/turnlog/turnlog.go:650",
       "form": "status_field",
       "status": "aborted"
     }

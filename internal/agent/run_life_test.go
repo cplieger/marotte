@@ -226,9 +226,7 @@ func TestRunLife_AReleaseOfAnOlderLifeKeepsTheNewerLife(t *testing.T) {
 		"user_delete_read_back": {
 			arm: func(_ *testing.T, r *lifeRaceRig) {
 				r.br.failAfterCall = map[string]error{methodKiroWorkflowDelete: marotte.ErrBridgeExited}
-				r.br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowInspect: {
-					Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`),
-				}}
+				r.br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowInspect: workflowNotFoundErr()}
 				r.hookOn(methodKiroWorkflowDelete)
 			},
 			release: func(t *testing.T, r *lifeRaceRig) {
@@ -246,7 +244,7 @@ func TestRunLife_AReleaseOfAnOlderLifeKeepsTheNewerLife(t *testing.T) {
 						return nil, nil, false, nil
 					}
 					r.next()
-					return nil, nil, false, errRecipeBusy
+					return nil, nil, false, errors.New("invoke refused")
 				}
 			},
 			release: func(t *testing.T, r *lifeRaceRig) {
@@ -354,9 +352,7 @@ func TestAbandonRetry_RollsBackOnlyOnceNoLeaseHolds(t *testing.T) {
 }
 
 func TestDeleteAs_NotFoundIsTakenOnlyForTheUsersDelete(t *testing.T) {
-	notFound := map[string]*marotte.RPCError{methodKiroWorkflowDelete: {
-		Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`),
-	}}
+	notFound := map[string]*marotte.RPCError{methodKiroWorkflowDelete: workflowNotFoundErr()}
 	for _, tc := range []struct {
 		name      string
 		answer    notFoundAnswer
@@ -385,9 +381,7 @@ func TestDeleteAs_NotFoundIsTakenOnlyForTheUsersDelete(t *testing.T) {
 
 // A rewind past a run kiro-cli lost lands, and the run's lease and fact stay.
 func TestCancelRun_NotFoundHasNothingToStop(t *testing.T) {
-	h, cs := newLifeRig(t, map[string]*marotte.RPCError{methodKiroWorkflowCancel: {
-		Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`),
-	}})
+	h, cs := newLifeRig(t, map[string]*marotte.RPCError{methodKiroWorkflowCancel: workflowNotFoundErr()})
 	startRun(t, h, "", "wf_1", "sess_launcher")
 	if err := h.runs.CancelRun(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("CancelRun of a run kiro-cli lost = %v, want nil", err)

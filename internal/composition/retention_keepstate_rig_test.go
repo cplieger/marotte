@@ -89,7 +89,7 @@ func newSeamEngine(t *testing.T) *seamEngine {
 		t.Fatalf("Setup: write the engine fake: %v", err)
 	}
 	e.list(t)
-	e.fail(t, kasInspect, "", "Workflow not found")
+	e.notFound(t, kasInspect, "")
 	return e
 }
 
@@ -133,6 +133,16 @@ func (e *seamEngine) fail(t *testing.T, method, wf, details string) {
 	t.Helper()
 	raw, _ := json.Marshal(map[string]any{
 		"code": -32603, "message": "Internal error", "data": map[string]string{"details": details},
+	})
+	e.write(t, "err_"+kasKey(method, wf), raw)
+}
+
+// notFound makes method (for wf, when set) refuse as KAS does for a run it has no state for (kiro-cli 2.37.0).
+func (e *seamEngine) notFound(t *testing.T, method, wf string) {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]any{
+		"code": -32603, "message": "Workflow not found",
+		"data": map[string]string{"details": "Workflow not found", "errorType": "WorkflowNotFoundError"},
 	})
 	e.write(t, "err_"+kasKey(method, wf), raw)
 }

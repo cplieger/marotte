@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -276,10 +277,15 @@ func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop, n
 		got, err = rs.deleteCall(sctx, workflowID, stop)
 		return got != kasRefused
 	})
+	var unknown error
 	if got == kasRefused && notFound == notFoundTaken && workflowNotFound(err) {
 		slog.Info("a deleted run was unknown to the engine; dropping what marotte keeps about it",
 			"workflow_id", workflowID)
 		got = kasTook
+		if !rs.keepsRecordOf(workflowID) {
+			// Torn down all the same, for a keep fact whose lease and record are gone; the caller hears not found.
+			unknown = err
+		}
 	}
 	switch got {
 	case kasRefused:
@@ -293,7 +299,23 @@ func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop, n
 	}
 	rs.teardownDeleted(ctx, workflowID, d.ending)
 	d.settle()
-	return nil
+	return unknown
+}
+
+// keepsRecordOf reports whether marotte holds a lease or a run record for workflowID; an unreadable record counts.
+func (rs *Runs) keepsRecordOf(workflowID string) bool {
+	if _, held := rs.lease(workflowID); held {
+		return true
+	}
+	if rs.log == nil {
+		return false
+	}
+	dir, err := rs.log.dir(workflowID)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(dir)
+	return !errors.Is(err, os.ErrNotExist)
 }
 
 // deleteCall sends the delete once the engine is ready, then waits for its answer detached from ctx: a delete KAS

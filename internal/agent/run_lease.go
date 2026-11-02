@@ -70,7 +70,7 @@ func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOr
 // person retries it: a scheduled lease is that one run's, and the retry is the person's (manual, attended, no row).
 func (rs *Runs) settleMissedEnd(ctx context.Context, l *runlease.Lease, status marotte.RunStatus) {
 	rs.recordScheduleEnding(ctx, scheduleRun(l), status, "")
-	rs.forgetBounds(ctx, l.WorkflowID)
+	rs.forgetBounds(ctx, l.WorkflowID, endTerminal, lifeOfLease(l))
 }
 
 // scheduledLaunch carries the schedule row for outcomes and the slot the run may not outlive.
@@ -188,7 +188,6 @@ func (rs *Runs) grantKeeping(
 		slog.Error("run lease not persisted; this run's envelope will not survive a restart",
 			"workflow_id", workflowID, "recipe", recipe, "origin", o.origin, "error", err)
 	}
-	rs.beginLife(workflowID)
 	run := scheduleRun(&l)
 	rs.writeSchedule(run, func() error { return rs.schedules.RecordStart(ctx, run) })
 	// Named from the grant on, so every pending_snapshot names every run marotte answers for.

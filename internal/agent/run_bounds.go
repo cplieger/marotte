@@ -92,15 +92,11 @@ type runBoundsState struct {
 	executed map[string]time.Duration
 	// arms is each run's latest armDeadline: a park decided before it must not undo it.
 	arms map[string]runArm
-	// lives numbers each run marotte leases or retries under a workflow id, which Retry reuses; dropped on release.
-	lives map[string]uint64
 	// reasons maps a workflow id to why it stopped; order is its FIFO eviction queue.
 	reasons map[string]string
 	order   []string
 	// armSeq numbers every armDeadline call; runArm.seq takes the next.
 	armSeq uint64
-	// lifeSeq numbers every beginLife call.
-	lifeSeq uint64
 }
 
 // runArm is one armDeadline call, numbered.
@@ -182,31 +178,6 @@ func (rs *Runs) numberArmLocked(workflowID string) {
 	}
 	rs.bounds.armSeq++
 	rs.bounds.arms[workflowID] = runArm{seq: rs.bounds.armSeq}
-}
-
-// beginLife numbers a new run of workflowID (a lease grant, a retry), so a cancel re-attempt decided for an earlier
-// run of that id never reaches it.
-func (rs *Runs) beginLife(workflowID string) {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	if rs.bounds.lives == nil {
-		rs.bounds.lives = map[string]uint64{}
-	}
-	rs.bounds.lifeSeq++
-	rs.bounds.lives[workflowID] = rs.bounds.lifeSeq
-}
-
-// lifeOf is the number beginLife gave the run's current life, zero for a lease loaded at boot or released.
-func (rs *Runs) lifeOf(workflowID string) uint64 {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	return rs.bounds.lives[workflowID]
-}
-
-func (rs *Runs) endLife(workflowID string) {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	delete(rs.bounds.lives, workflowID)
 }
 
 // lastArmSeq is the sequence number of the run's latest arm, zero for none.
@@ -523,12 +494,12 @@ func (rs *Runs) clearCancelRetries(workflowID string) {
 
 // retryTermination schedules one retry of a cancel KAS refused: the timer that fired the stop is spent,
 // so nothing else retries it. again re-reads before acting; a refusal lands back here. The retry is the refused
-// run's alone: once that run ended (a retry of the id is a new one, beginLife) it is dropped.
+// run's alone: once that run ended (a retry of the id is a new life, lifeOf) it is dropped.
 func (rs *Runs) retryTermination(ctx context.Context, workflowID, reason string, again func(context.Context) error) {
 	if workflowID == "" {
 		return
 	}
-	life := rs.lifeOf(workflowID)
+	life := rs.lifeOf(workflowID).token
 	attempt, ok := rs.claimCancelRetry(workflowID)
 	if !ok {
 		slog.Error(logMsgCancelUnretried, "workflow_id", workflowID,
@@ -544,7 +515,7 @@ func (rs *Runs) retryTermination(ctx context.Context, workflowID, reason string,
 	slog.Warn("a run's cancel was refused; re-attempting it",
 		"workflow_id", workflowID, "attempt", attempt, "delay", delay)
 	rs.lifecycle.afterUnlessDraining(delay, func() {
-		if rs.lifeOf(workflowID) != life {
+		if rs.lifeOf(workflowID).token != life {
 			slog.Info("a refused cancel's re-attempt was dropped: the run it was for has ended",
 				"workflow_id", workflowID, "reason", reason)
 			return
@@ -638,13 +609,12 @@ func (rs *Runs) clearEnd(workflowID string) {
 		func(id string) bool { return id == workflowID })
 }
 
-// restartLife readies a kept lease for the new run a retry starts under it: numbered anew, with none of its last run's
+// clearLastRunBounds readies a kept lease for the new life a retry starts under it, with none of its last run's
 // clock or budgets, as forgetBounds leaves a seen end.
-func (rs *Runs) restartLife(ctx context.Context, workflowID string) {
+func (rs *Runs) clearLastRunBounds(ctx context.Context, workflowID string) {
 	rs.disarmDeadline(ctx, workflowID)
 	rs.clearHeals(workflowID)
 	rs.clearExecuted(workflowID)
-	rs.beginLife(workflowID)
 }
 
 // An already-hosted retry may still carry its old deadline; one after a terminal frame needs a new

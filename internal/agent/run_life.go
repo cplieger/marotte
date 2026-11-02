@@ -418,6 +418,7 @@ func (rs *Runs) beginRetryLife(ctx context.Context, workflowID string, o *runOri
 		if err := rs.leaseStore().Renew(ctx, workflowID, start.life.token, chatIDs(holders)); err != nil {
 			slog.Warn("retry: the run lease's new life was not recorded on disk", "workflow_id", workflowID, "error", err)
 		}
+		rs.clearLastRunBounds(ctx, workflowID)
 		return start, nil
 	}
 	start.life = rs.grantRetryLease(ctx, workflowID, o, holders)
