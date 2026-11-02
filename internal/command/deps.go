@@ -491,6 +491,12 @@ type TurnOpen struct {
 	Awaited bool
 }
 
+// UserAnswered reports whether this open is the user answering a question the agent left standing: a source that
+// answers (marotte.TurnOpenSource.UserAnswered) whose prompt no API caller sent.
+func (o *TurnOpen) UserAnswered() bool {
+	return o.Source.UserAnswered() && (o.Prompt == nil || o.Prompt.Caller == nil)
+}
+
 // ErrTurnSuperseded is OpenTurn's refusal of a fenced open after a newer turn
 // opened, or after the chat's lifecycle was torn down.
 var ErrTurnSuperseded = errors.New("a newer turn opened since the closed one")
@@ -639,9 +645,11 @@ type SteerOpResult struct {
 
 // SteerRow is one row a pending end holds, or one unread row the drain sends.
 type SteerRow struct {
-	Key   string
-	Text  string
-	InKAS bool
+	// Caller is the API caller that sent the row, nil for the user's.
+	Caller *marotte.Caller
+	Key    string
+	Text   string
+	InKAS  bool
 }
 
 // SteerQueue is the server's record of the user's mid-turn steers and of what
@@ -655,8 +663,9 @@ type SteerQueue interface {
 	// AwaitReadLoop parks until the bridge's read loop has folded every frame that
 	// preceded a response at seq, reporting whether it got there.
 	AwaitReadLoop(ctx context.Context, chatID marotte.ChatID, seq uint64) bool
-	// RouteSteer answers the sends to issue, in order, or the refusal class.
-	RouteSteer(chatID marotte.ChatID, key, text string, h SteerHolder) (sends []SteerSend, refuse string)
+	// RouteSteer answers the sends to issue, in order, or the refusal class. from is who sent a new row; a row the
+	// record already holds under key keeps its own.
+	RouteSteer(chatID marotte.ChatID, key, text string, from *marotte.Caller, h SteerHolder) (sends []SteerSend, refuse string)
 	SteerSent(chatID marotte.ChatID, s SteerSend, queued bool, err error)
 	// BeginRemove decides a delete. A row KAS does not hold is deleted at once and
 	// needsClear is false; otherwise the op owns its rows until EndOp.

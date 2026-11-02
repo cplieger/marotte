@@ -388,7 +388,7 @@ func TestSteerRead_ACombinedResendReadAfterTheLedgerForgotItNamesItsRows(t *test
 func TestSteerRecords_ABridgeDeathCollectsOutstandingAndWaitingRows(t *testing.T) {
 	s := newSteerHarness(t)
 	probeSent(s)
-	s.q.RouteSteer(s.chat, "steer-c", "c", promptHolder)
+	s.q.RouteSteer(s.chat, "steer-c", "c", nil, promptHolder)
 	s.mustState("steer-c", rowWaiting)
 
 	s.recs.turnEnded(s.chat, command.SteerTurnEnd{TurnID: s.turnID(), BridgeDeath: true, Source: marotte.TurnSourcePrompt})
@@ -503,7 +503,7 @@ func TestCmdSteerRemove_ATurnStartingUnderADeleteWaitsForIt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s, _, br := steerOpsHub(t)
 		for _, key := range []string{"steer-a", "steer-b"} {
-			sends, _ := s.q.RouteSteer("c1", key, key, promptHolder)
+			sends, _ := s.q.RouteSteer("c1", key, key, nil, promptHolder)
 			s.kas(sends)
 		}
 		gate := make(chan struct{})
@@ -605,7 +605,7 @@ func TestCmdSteerRemove_AFailedResubmitKeepsEveryKeptRowInCustody(t *testing.T) 
 func TestCmdSteerRemove_ASteerOfAStarterKASHasNotReportedIsDeleted(t *testing.T) {
 	s, _, br := steerOpsHub(t)
 	s.h.stagePromptTurn(t, "c1")
-	sends, _ := s.q.RouteSteer("c1", "steer-late", "?", promptHolder)
+	sends, _ := s.q.RouteSteer("c1", "steer-late", "?", nil, promptHolder)
 	s.kas(sends)
 	br.mu.Lock()
 	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
@@ -637,7 +637,7 @@ func TestCmdSteerRemove_ASteerOfAStarterKASHasNotReportedIsDeleted(t *testing.T)
 func TestQueuedReport_AQueuedStarterShowsItsWaitAndLeavesTheSteerSent(t *testing.T) {
 	s, _, _ := steerOpsHub(t)
 	s.h.stagePromptTurn(t, "c1")
-	sends, _ := s.q.RouteSteer("c1", "steer-late", "?", promptHolder)
+	sends, _ := s.q.RouteSteer("c1", "steer-late", "?", nil, promptHolder)
 	s.kas(sends)
 
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newSessionInfoMsg(map[string]any{

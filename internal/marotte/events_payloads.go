@@ -659,8 +659,10 @@ type TangentMergedPayload struct {
 // reconstructible from the events alone — for every other device and for the sender after a
 // reconnect.
 type SteerQueuedPayload struct {
-	SteerID string `json:"steer_id"`
-	Text    string `json:"text"`
+	// Caller is set on a row an API caller sent (on a batch, only when no row is the user's: SharedCaller).
+	Caller  *Caller `json:"caller,omitempty"`
+	SteerID string  `json:"steer_id"`
+	Text    string  `json:"text"`
 	// Origin is whose words these are, resolved server-side. NO omitempty: an absent field
 	// lets the client invent a fallback, and the one it would pick is wrong for a
 	// workflow's report.

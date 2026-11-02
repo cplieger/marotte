@@ -8,12 +8,15 @@ import { attachClamp } from "../clamp-text.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_SEND, ICON_TAB_CHAT, ICON_TAB_RUN } from "../icons.js";
 import { absoluteTime } from "../relative-time.js";
-import type { SteerOrigin, SteerReason } from "../types.js";
+import { sentBy } from "../sent-by.js";
+import type { Caller, SteerOrigin, SteerReason } from "../types.js";
 
 export interface SteerNoteData {
   text: string;
   /** Whose words these are. Decides the label and the glyph. */
   origin: SteerOrigin;
+  /** The program that sent a user-origin steer through the API, which the label names in place of the user's. */
+  caller?: Caller;
   /** The agent never read it. */
   dropped: boolean;
   /** Why it was never read, verbatim from the entry. A wire ENUM, so the wording table
@@ -245,6 +248,10 @@ function stamp(ms: number): HTMLElement {
 function baseLabels(d: SteerNoteData): { read: string; dropped: string } {
   if ((d.origin === "parent" || d.origin === "step") && d.step !== undefined && d.step !== "") {
     return STEP_LABELS[d.origin](d.step);
+  }
+  if (d.origin === "user" && d.caller !== undefined) {
+    const by = sentBy(d.caller);
+    return { read: by, dropped: `${by} \u00b7 ${LABELS.user.dropped}` };
   }
   return LABELS[d.origin];
 }

@@ -539,6 +539,8 @@ func CarryCost(text string) int { return len(text) + len(carrySeparator) }
 // never sent automatically. A list holds at most one carried row, and it is held. Label is the
 // row's PromptCommand.DisplayText.
 type QueuedPrompt struct {
+	// Caller is set on a row an API caller queued.
+	Caller      *Caller      `json:"caller,omitempty"`
 	ID          string       `json:"id"`
 	Text        string       `json:"text"`
 	Label       string       `json:"label,omitempty"`
@@ -555,10 +557,11 @@ func CarriedRow(id string, texts, resends []string) QueuedPrompt {
 	return QueuedPrompt{ID: id, Text: strings.Join(texts, carrySeparator), Resends: resends}
 }
 
-// Absorb appends more steers to q, keeping q's id.
+// Absorb appends more steers to q, keeping q's id; q keeps a caller only when neither row is the user's (SharedCaller).
 func (q *QueuedPrompt) Absorb(more *QueuedPrompt) {
 	q.Text += carrySeparator + more.Text
 	q.Resends = append(q.Resends, more.Resends...)
+	q.Caller = SharedCaller([]*Caller{q.Caller, more.Caller})
 }
 
 // SessionChain returns every KAS session id this chat has run on, current one last: the

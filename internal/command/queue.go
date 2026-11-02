@@ -123,7 +123,9 @@ func queuedRow(cmd *marotte.ClientCommand) (marotte.QueuedPrompt, error) {
 			return marotte.QueuedPrompt{}, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 		}
 	}
-	return marotte.QueuedPrompt{ID: p.MessageID, Text: p.Text, Label: displayLabel(p.DisplayText), Attachments: p.Attachments}, nil
+	return marotte.QueuedPrompt{
+		ID: p.MessageID, Text: p.Text, Label: displayLabel(p.DisplayText), Attachments: p.Attachments, Caller: cmd.From,
+	}, nil
 }
 
 // cmdUnqueuePrompt removes one queued row. An unknown id is success (two devices can discard one
@@ -212,7 +214,9 @@ func sendNextUserRow(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 		roles.admission.ReleaseTurnReservation(chatID)
 		return
 	}
-	p := &marotte.PromptCommand{Text: row.Text, MessageID: row.ID, DisplayText: row.Label, Attachments: row.Attachments}
+	p := &marotte.PromptCommand{
+		Text: row.Text, MessageID: row.ID, DisplayText: row.Label, Attachments: row.Attachments, Caller: row.Caller,
+	}
 	if err := launchPrompt(ctx, roles, chatID, p, launch{dequeue: row.ID, fence: fence}); err != nil {
 		logDrainRefused(chatID, row.ID, err)
 		return
@@ -222,16 +226,21 @@ func sendNextUserRow(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 
 // sendUnread opens one prompt carrying the unread rows, joined by a blank line, and
 // retires them once its turn_open is appended. A refused open leaves them unsent.
-// The words are the user's own, so the prompt carries no DisplayText: a label would
-// replace them in the transcript and in KAS's replay.
+// The words are the rows' own, so the prompt carries no DisplayText: a label would
+// replace them in the transcript and in KAS's replay. It is an API caller's only when
+// no row is the user's (SharedCaller).
 func sendUnread(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, rows []SteerRow, fence TurnFence) {
 	keys := make([]string, 0, len(rows))
 	texts := make([]string, 0, len(rows))
+	callers := make([]*marotte.Caller, 0, len(rows))
 	for _, r := range rows {
 		keys = append(keys, r.Key)
 		texts = append(texts, r.Text)
+		callers = append(callers, r.Caller)
 	}
-	p := &marotte.PromptCommand{Text: strings.Join(texts, "\n\n"), MessageID: ids.NewMessageID()}
+	p := &marotte.PromptCommand{
+		Text: strings.Join(texts, "\n\n"), MessageID: ids.NewMessageID(), Caller: marotte.SharedCaller(callers),
+	}
 	if err := launchPrompt(ctx, roles, chatID, p, launch{resends: keys, fence: fence}); err != nil {
 		logDrainRefused(chatID, p.MessageID, err)
 		return

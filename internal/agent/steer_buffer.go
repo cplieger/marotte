@@ -82,12 +82,14 @@ type pendingEnd struct {
 }
 
 type dockRow struct {
-	key   string
-	kasID string
-	text  string
-	owner string
-	seq   uint64
-	state rowState
+	// caller is the API caller that sent the row, nil for the user's.
+	caller *marotte.Caller
+	key    string
+	kasID  string
+	text   string
+	owner  string
+	seq    uint64
+	state  rowState
 	// sent: the KEY has reached KAS, so it is never sent under the key again.
 	sent bool
 	// noted: a steer entry exists under the key, so it never gets a second one.
@@ -313,19 +315,21 @@ func rowFrame(w *dockRow) marotte.SteerQueuedPayload {
 		state = marotte.SteerRowUnsent
 	case rowParked, rowQueued, rowOutstanding, rowWaiting, rowCleared, rowRead, nRowStates:
 	}
-	return marotte.SteerQueuedPayload{SteerID: w.key, Text: w.text, Origin: marotte.SteerOriginUser, State: state}
+	return marotte.SteerQueuedPayload{SteerID: w.key, Text: w.text, Origin: marotte.SteerOriginUser, State: state, Caller: w.caller}
 }
 
 func batchFrame(id string, members []*dockRow) marotte.SteerQueuedPayload {
 	keys := make([]string, 0, len(members))
 	texts := make([]string, 0, len(members))
+	callers := make([]*marotte.Caller, 0, len(members))
 	for _, w := range members {
 		keys = append(keys, w.key)
 		texts = append(texts, w.text)
+		callers = append(callers, w.caller)
 	}
 	return marotte.SteerQueuedPayload{
 		SteerID: id, Text: joinSteers(texts), Origin: marotte.SteerOriginUser,
-		Replaces: keys, State: marotte.SteerRowQueued,
+		Replaces: keys, State: marotte.SteerRowQueued, Caller: marotte.SharedCaller(callers),
 	}
 }
 
@@ -360,6 +364,7 @@ func retire(w *dockRow, steer *marotte.EntrySteer, fx *steerFx) {
 func boundarySteer(w *dockRow) *marotte.EntrySteer {
 	return &marotte.EntrySteer{
 		Text: w.text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
+		Caller: w.caller,
 	}
 }
 
@@ -400,14 +405,13 @@ func (r *steerRecords) SteerWaiting(chatID marotte.ChatID, in *marotte.SteerQueu
 	return p, other
 }
 
-// SteerRead folds steering_injected and answers the row keys steerID carries when
-// it is not a row's own key (nil otherwise), for the read entry's Resends.
-func (r *steerRecords) SteerRead(chatID marotte.ChatID, steerID string) (resends []string) {
+// SteerRead folds steering_injected and answers what the read entry takes from the rows: in Replaces the row keys
+// steerID carries when it is not a row's own key (nil otherwise), for its Resends, and the rows' Caller.
+func (r *steerRecords) SteerRead(chatID marotte.ChatID, steerID string) (read marotte.SteerQueuedPayload) {
 	r.step(chatID, false, func(rec *steerRecord, fx *steerFx) {
-		p, _ := rec.readLocked(steerID, false, fx)
-		resends = p.Replaces
+		read, _ = rec.readLocked(steerID, false, fx)
 	})
-	return resends
+	return read
 }
 
 // SteerForgotten folds an acknowledgement-evidenced read and answers what it read,
@@ -463,7 +467,7 @@ func (rec *steerRecord) readLocked(id string, byAck bool, fx *steerFx) (marotte.
 	if rec.channel == chanProbing && id == rec.probe {
 		rec.probeReadLocked(ev, fx)
 	}
-	out := marotte.SteerQueuedPayload{SteerID: id, Text: read.Text, Origin: marotte.SteerOriginUser}
+	out := marotte.SteerQueuedPayload{SteerID: id, Text: read.Text, Origin: marotte.SteerOriginUser, Caller: read.Caller}
 	if len(members) > 1 || members[0].key != id {
 		out.Replaces = read.Replaces
 	}
@@ -774,7 +778,7 @@ func (r *steerRecords) beginTeardown(chatID marotte.ChatID, exit <-chan struct{}
 	var unread []marotte.SteerQueuedPayload
 	rec.live(func(w *dockRow) {
 		if !w.noted && rowRuleFor(w.state, evTeardown) == rDrop {
-			unread = append(unread, marotte.SteerQueuedPayload{SteerID: w.key, Text: w.text, Origin: marotte.SteerOriginUser})
+			unread = append(unread, marotte.SteerQueuedPayload{SteerID: w.key, Text: w.text, Origin: marotte.SteerOriginUser, Caller: w.caller})
 		}
 	})
 	rec.rows, rec.ends = nil, nil
@@ -789,6 +793,7 @@ func (r *steerRecords) beginTeardown(chatID marotte.ChatID, exit <-chan struct{}
 // shutdownRow is one row a shutdown takes: KASHeld when KAS may hold its words (textless entry, decided at next
 // boot), Agent for a workflow's row.
 type shutdownRow struct {
+	Caller  *marotte.Caller
 	Key     string
 	Text    string
 	KASHeld bool
@@ -814,7 +819,7 @@ func (r *steerRecords) shutdownTake(chatID marotte.ChatID) []shutdownRow {
 	out := make([]shutdownRow, 0, len(live)+len(rec.others))
 	for _, w := range live {
 		held := w.state.inKAS() || (w.state == rowUnsent && rec.reinject && w.sent)
-		out = append(out, shutdownRow{Key: w.key, Text: w.text, KASHeld: held})
+		out = append(out, shutdownRow{Key: w.key, Text: w.text, KASHeld: held, Caller: w.caller})
 	}
 	for i := range rec.others {
 		out = append(out, shutdownRow{Key: rec.others[i].SteerID, Agent: true})
@@ -981,7 +986,7 @@ func (b *bus) SteerWaiting(chatID marotte.ChatID, p *marotte.SteerQueuedPayload)
 	return b.steers.SteerWaiting(chatID, p)
 }
 
-func (b *bus) SteerRead(chatID marotte.ChatID, steerID string) []string {
+func (b *bus) SteerRead(chatID marotte.ChatID, steerID string) marotte.SteerQueuedPayload {
 	return b.steers.SteerRead(chatID, steerID)
 }
 

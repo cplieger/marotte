@@ -496,7 +496,11 @@ func writeTurnOpenMarkdown(b *strings.Builder, e *marotte.Entry) {
 		}
 		return
 	}
-	b.WriteString("**User**\n\n")
+	who := "User"
+	if c := open.Prompt.Caller; c != nil {
+		who = oneLine(c.SentBy())
+	}
+	fmt.Fprintf(b, "**%s**\n\n", who)
 	writeParagraph(b, open.Prompt.Text)
 	if len(open.Prompt.Attachments) > 0 {
 		b.WriteString("Attachments:\n\n")
@@ -540,6 +544,9 @@ func steerHeading(p *marotte.EntrySteer) string {
 		}
 		return "**Message to the main agent**\n\n"
 	case marotte.SteerOriginUser:
+		if p.Caller != nil {
+			who = oneLine(p.Caller.SentBy())
+		}
 	}
 	if p.State == marotte.SteerStateDropped {
 		return "**" + who + " (mid-turn, not delivered)**\n\n"

@@ -119,11 +119,14 @@ func (bc *bridgeCoordinator) holdUnread(ctx context.Context, chatID marotte.Chat
 	}
 	texts := make([]string, 0, len(rows))
 	keys := make([]string, 0, len(rows))
+	callers := make([]*marotte.Caller, 0, len(rows))
 	for _, r := range rows {
 		texts = append(texts, r.Text)
 		keys = append(keys, r.Key)
+		callers = append(callers, r.Caller)
 	}
 	row := marotte.CarriedRow("m-"+newMessageID(), texts, keys)
+	row.Caller = marotte.SharedCaller(callers)
 	row.Held = true
 	if _, err := bc.chatStore.Mutate(durable.Context(ctx), chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {

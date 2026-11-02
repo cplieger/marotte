@@ -249,6 +249,14 @@ export interface Attachment {
 }
 
 /**
+ * Caller marks a message a program sent through marotte's API rather than one the user typed in its page; a message
+ * with no Caller is the user's own. Label is the name the program gave itself, "" when it gave none.
+ */
+export interface Caller {
+  label?: string;
+}
+
+/**
  * Capabilities is what a connection's instance and its credential can do, by
  * capability. Each scope carries every capability forgeapi names for it, so a
  * verdict nothing answered arrives as "unknown" rather than as an absent key.
@@ -1063,6 +1071,8 @@ export interface EntryPlan {
  * the PromptCommand.DisplayText the prompt was sent with, which KAS's replay gives as the text.
  */
 export interface EntryPrompt {
+  /** Caller is set on a prompt an API caller sent. */
+  caller?: Caller;
   id: string;
   text: string;
   label?: string;
@@ -1126,6 +1136,8 @@ export interface EntrySealedPayload {
  * rows (dock keys) this one re-sends, taken from the steer record at the read.
  */
 export interface EntrySteer {
+  /** Caller is set on a user-origin steer an API caller sent. */
+  caller?: Caller;
   text: string;
   origin: SteerOrigin;
   state?: SteerState;
@@ -1647,6 +1659,8 @@ export interface GovernanceStatePayload {
  * the one segment SegmentKind names on EntryID, never a whole turn.
  */
 export interface Hit {
+  /** Caller is set on a hit in a prompt or steer an API caller sent, so a result names who sent the words. */
+  caller?: Caller;
   /** TurnID is the matched entry's turn. */
   turn_id: string;
   /** EntryID is the matched entry. */
@@ -2537,6 +2551,8 @@ export interface ProbeResult {
  * row's PromptCommand.DisplayText.
  */
 export interface QueuedPrompt {
+  /** Caller is set on a row an API caller queued. */
+  caller?: Caller;
   id: string;
   text: string;
   label?: string;
@@ -3606,6 +3622,8 @@ export interface StatusSnapshotPayload {
  * reconnect.
  */
 export interface SteerQueuedPayload {
+  /** Caller is set on a row an API caller sent (on a batch, only when no row is the user's: SharedCaller). */
+  caller?: Caller;
   steer_id: string;
   text: string;
   /**

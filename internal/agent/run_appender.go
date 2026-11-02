@@ -236,7 +236,7 @@ func (rs *Runs) closeRun(ctx context.Context, runID, status string) {
 	for _, path := range slices.Sorted(maps.Keys(staged)) {
 		p := staged[path]
 		rs.RunSteer(ctx, runID, path, p.ID, &marotte.EntrySteer{
-			Text: p.Text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead,
+			Text: p.Text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead, Caller: p.Caller,
 		})
 	}
 }

@@ -113,7 +113,7 @@ func (s *steerHarness) kas(sends []command.SteerSend) {
 }
 
 func (s *steerHarness) steer(key, text string) {
-	sends, refuse := s.q.RouteSteer(s.chat, key, text, promptHolder)
+	sends, refuse := s.q.RouteSteer(s.chat, key, text, nil, promptHolder)
 	if refuse != "" {
 		s.fatalf("RouteSteer(%s) refused %q", key, refuse)
 	}
@@ -299,7 +299,7 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		channel channelState
 	}{
 		{name: "E0 NONE binds OPEN", key: "steer-a", row: rowQueued, channel: chanOpen, run: func(s *steerHarness) {
-			s.q.RouteSteer(s.chat, "steer-a", "a", promptHolder)
+			s.q.RouteSteer(s.chat, "steer-a", "a", nil, promptHolder)
 			s.bind()
 		}},
 		{name: "E0 in OPEN ends the old turn first", key: "steer-a", row: rowQueued, channel: chanOpen, run: func(s *steerHarness) {
@@ -331,13 +331,13 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		}},
 		{name: "E1 PROBING waits", key: "steer-c", row: rowWaiting, channel: chanProbing, run: func(s *steerHarness) {
 			probeSent(s)
-			s.q.RouteSteer(s.chat, "steer-c", "c", promptHolder)
+			s.q.RouteSteer(s.chat, "steer-c", "c", nil, promptHolder)
 		}},
 		{name: "E1 routes a cleared row again", key: "steer-a", row: rowOutstanding, channel: chanProbing, run: func(s *steerHarness) {
 			s.bind()
 			s.steer("steer-a", "a")
 			s.recs.SteerCleared(s.chat, []string{"steer-a"})
-			s.q.RouteSteer(s.chat, "steer-a", "a", promptHolder)
+			s.q.RouteSteer(s.chat, "steer-a", "a", nil, promptHolder)
 		}},
 		{name: "E2 OPEN resubmits the kept row", key: "steer-b", row: rowOutstanding, channel: chanProbing, run: func(s *steerHarness) {
 			probeSent(s)
@@ -356,14 +356,14 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		}},
 		{name: "E3 deletes the last owed waiter", key: "steer-c", row: rowDone, channel: chanUnconfirmed, run: func(s *steerHarness) {
 			res := probeSent(s)
-			s.q.RouteSteer(s.chat, "steer-c", "c", promptHolder)
+			s.q.RouteSteer(s.chat, "steer-c", "c", nil, promptHolder)
 			s.recs.SteerForgotten(s.chat, []string{res.Resend.ID})
 			s.spy.takeJobs()
 			s.remove("steer-c")
 		}},
 		{name: "E4 resubmits waiting rows as a new probe", key: "steer-c", row: rowOutstanding, channel: chanProbing, run: func(s *steerHarness) {
 			old := probeSent(s)
-			s.q.RouteSteer(s.chat, "steer-c", "c", promptHolder)
+			s.q.RouteSteer(s.chat, "steer-c", "c", nil, promptHolder)
 			res, _, _ := s.remove("steer-b")
 			s.resubmit("steer-b", res)
 			if res.Resend == nil || res.Resend.ID == old.Resend.ID {
@@ -371,8 +371,8 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 			}
 		}},
 		{name: "E5 deletes an unsent row", key: "steer-a", row: rowDone, channel: chanNone, run: func(s *steerHarness) {
-			s.q.RouteSteer(s.chat, "steer-a", "a", command.SteerHolder{Held: true, PromptClass: true})
-			s.q.RouteSteer(s.chat, "steer-a", "a", command.SteerHolder{})
+			s.q.RouteSteer(s.chat, "steer-a", "a", nil, command.SteerHolder{Held: true, PromptClass: true})
+			s.q.RouteSteer(s.chat, "steer-a", "a", nil, command.SteerHolder{})
 			s.remove("steer-a")
 		}},
 		{name: "E6 discards and leaves UNCONFIRMED", key: "steer-a", row: rowDone, channel: chanUnconfirmed, run: func(s *steerHarness) {
@@ -388,7 +388,7 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		}},
 		{name: "E7 leaves a waiter for the flush", key: "steer-c", row: rowWaiting, channel: chanOpen, run: func(s *steerHarness) {
 			res := probeSent(s)
-			s.q.RouteSteer(s.chat, "steer-c", "c", promptHolder)
+			s.q.RouteSteer(s.chat, "steer-c", "c", nil, promptHolder)
 			s.recs.SteerRead(s.chat, res.Resend.ID)
 		}},
 		{name: "E8 reads a queued row", key: "steer-a", row: rowDone, channel: chanOpen, run: func(s *steerHarness) {
@@ -403,7 +403,7 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		}},
 		{name: "E9 owes the waiters a probe", key: "steer-c", row: rowWaiting, channel: chanProbing, run: func(s *steerHarness) {
 			res := probeSent(s)
-			s.q.RouteSteer(s.chat, "steer-c", "c", promptHolder)
+			s.q.RouteSteer(s.chat, "steer-c", "c", nil, promptHolder)
 			s.recs.SteerForgotten(s.chat, []string{res.Resend.ID})
 			if s.probe() != "" || len(s.spy.takeJobs()) != 1 {
 				s.fatalf("probe = %q, want an owed probe and its job", s.probe())
@@ -436,7 +436,7 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		}},
 		{name: "E11 PROBING owes the waiters a probe", key: "steer-c", row: rowWaiting, channel: chanProbing, run: func(s *steerHarness) {
 			res := probeSent(s)
-			s.q.RouteSteer(s.chat, "steer-c", "c", promptHolder)
+			s.q.RouteSteer(s.chat, "steer-c", "c", nil, promptHolder)
 			s.recs.SteerCleared(s.chat, []string{res.Resend.ID})
 			if s.probe() != "" {
 				s.fatalf("probe = %q, want owed", s.probe())
@@ -453,17 +453,17 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		}},
 		{name: "E15 OPEN clears the refused row", key: "steer-a", row: rowCleared, channel: chanUnconfirmed, run: func(s *steerHarness) {
 			s.bind()
-			sends, _ := s.q.RouteSteer(s.chat, "steer-a", "a", promptHolder)
+			sends, _ := s.q.RouteSteer(s.chat, "steer-a", "a", nil, promptHolder)
 			s.q.SteerSent(s.chat, sends[0], false, nil)
 		}},
 		{name: "E15 PROBING clears the probe and its waiters", key: "steer-c", row: rowCleared, channel: chanUnconfirmed, run: func(s *steerHarness) {
 			res := probeSent(s)
-			s.q.RouteSteer(s.chat, "steer-c", "c", promptHolder)
+			s.q.RouteSteer(s.chat, "steer-c", "c", nil, promptHolder)
 			s.q.SteerSent(s.chat, *res.Resend, false, nil)
 		}},
 		{name: "E16 leaves the row where KAS may hold it", key: "steer-a", row: rowQueued, channel: chanOpen, run: func(s *steerHarness) {
 			s.bind()
-			sends, _ := s.q.RouteSteer(s.chat, "steer-a", "a", promptHolder)
+			sends, _ := s.q.RouteSteer(s.chat, "steer-a", "a", nil, promptHolder)
 			s.q.SteerSent(s.chat, sends[0], false, errors.New("pipe closed"))
 		}},
 		{name: "E17 parks a row sent during the wait", key: "steer-b", row: rowParked, channel: chanNone, run: func(s *steerHarness) {
@@ -474,13 +474,13 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 		}},
 		{name: "E18 OPEN flushes a waiter as itself", key: "steer-c", row: rowQueued, channel: chanOpen, run: func(s *steerHarness) {
 			res := probeSent(s)
-			s.q.RouteSteer(s.chat, "steer-c", "c", promptHolder)
+			s.q.RouteSteer(s.chat, "steer-c", "c", nil, promptHolder)
 			s.recs.SteerRead(s.chat, res.Resend.ID)
 			s.kas(s.q.PlanFlush(s.chat))
 		}},
 		{name: "E18 PROBING sends the owed probe", key: "steer-c", row: rowOutstanding, channel: chanProbing, run: func(s *steerHarness) {
 			res := probeSent(s)
-			s.q.RouteSteer(s.chat, "steer-c", "c", promptHolder)
+			s.q.RouteSteer(s.chat, "steer-c", "c", nil, promptHolder)
 			s.recs.SteerForgotten(s.chat, []string{res.Resend.ID})
 			s.kas(s.q.PlanFlush(s.chat))
 		}},
@@ -534,7 +534,7 @@ func TestSteerRecords_AfterAClearTheFirstSendIsOneProbe(t *testing.T) {
 		t.Fatalf("channel = %v probe %q, want PROBING on %q", s.channel(), s.probe(), probe)
 	}
 
-	sends, _ := s.q.RouteSteer(s.chat, "steer-c", "third", promptHolder)
+	sends, _ := s.q.RouteSteer(s.chat, "steer-c", "third", nil, promptHolder)
 	if len(sends) != 0 {
 		t.Errorf("a steer behind an outstanding probe went out: %+v", sends)
 	}
@@ -698,7 +698,7 @@ func TestSteerRecords_ADeletedRowLeavesNoEntry(t *testing.T) {
 	})
 	t.Run("at once, for a row KAS does not hold", func(t *testing.T) {
 		s := newSteerHarness(t)
-		s.q.RouteSteer(s.chat, "steer-a", "first", command.SteerHolder{Held: true, PromptClass: true})
+		s.q.RouteSteer(s.chat, "steer-a", "first", nil, command.SteerHolder{Held: true, PromptClass: true})
 		if _, needs, refuse := s.remove("steer-a"); needs || refuse != "" {
 			t.Fatalf("remove = %v %q, want an immediate delete", needs, refuse)
 		}
@@ -719,7 +719,7 @@ func TestSteerRecords_ADeletedRowLeavesNoEntry(t *testing.T) {
 	})
 	t.Run("by Discard all with nothing in KAS", func(t *testing.T) {
 		s := newSteerHarness(t)
-		s.q.RouteSteer(s.chat, "steer-a", "first", command.SteerHolder{Held: true, PromptClass: true})
+		s.q.RouteSteer(s.chat, "steer-a", "first", nil, command.SteerHolder{Held: true, PromptClass: true})
 		if needs := s.q.BeginDiscard(s.chat, "op-d"); needs {
 			t.Fatal("BeginDiscard = true, want an immediate discard")
 		}
@@ -730,7 +730,7 @@ func TestSteerRecords_ADeletedRowLeavesNoEntry(t *testing.T) {
 // A row KAS does not hold goes at once with no clear: parked, cleared, unsent.
 func TestSteerRecords_ARowKASDoesNotHoldIsDeletedWithoutAClear(t *testing.T) {
 	s := newSteerHarness(t)
-	s.q.RouteSteer(s.chat, "steer-a", "first", command.SteerHolder{Held: true, PromptClass: true})
+	s.q.RouteSteer(s.chat, "steer-a", "first", nil, command.SteerHolder{Held: true, PromptClass: true})
 	s.mustState("steer-a", rowParked)
 
 	_, needsClear, refuse := s.remove("steer-a")
@@ -745,7 +745,7 @@ func TestSteerRecords_ARowKASDoesNotHoldIsDeletedWithoutAClear(t *testing.T) {
 func TestSteerRecords_ADeleteInNoneWithNoStartedTurnGoesAhead(t *testing.T) {
 	s := newSteerHarness(t)
 	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
-	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", promptHolder)
+	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", nil, promptHolder)
 	s.kas(sends)
 	s.mustState("steer-a", rowQueued)
 
@@ -848,7 +848,7 @@ func TestSteerRecords_ATurnEndingUnderADeleteHandsItTheParkedRowsToo(t *testing.
 	s := newSteerHarness(t)
 	s.steer("steer-a", "a")
 	s.steer("steer-b", "b")
-	if _, refuse := s.q.RouteSteer(s.chat, "steer-c", "c",
+	if _, refuse := s.q.RouteSteer(s.chat, "steer-c", "c", nil,
 		command.SteerHolder{Held: true, PromptClass: true}); refuse != "" {
 		t.Fatalf("RouteSteer(steer-c) refused %q", refuse)
 	}
@@ -884,7 +884,7 @@ func TestSteerRecords_ATurnEndingUnderADiscardLeavesALaterRowToItsEnd(t *testing
 	if needs := s.q.BeginDiscard(s.chat, op); !needs {
 		t.Fatal("BeginDiscard = false, want a clear")
 	}
-	if _, refuse := s.q.RouteSteer(s.chat, "steer-b", "b",
+	if _, refuse := s.q.RouteSteer(s.chat, "steer-b", "b", nil,
 		command.SteerHolder{Held: true, PromptClass: true}); refuse != "" {
 		t.Fatalf("RouteSteer(steer-b) refused %q", refuse)
 	}
@@ -928,7 +928,7 @@ func TestSteerRecords_ABridgeDeathCollectsTheRowsAndArmsThePostLoadClear(t *test
 func TestSteerRecords_ABridgeGoneWithNoTurnLeavesTheRowsUnsent(t *testing.T) {
 	s := newSteerHarness(t)
 	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
-	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", promptHolder)
+	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", nil, promptHolder)
 	s.kas(sends)
 
 	s.recs.bridgeGone(s.chat)
@@ -1006,7 +1006,7 @@ func TestSteerRecords_UndeliveredRowsGoToTheNextPrompt(t *testing.T) {
 	if !ok || key != "steer-a" {
 		t.Fatalf("NextParked = %q %v, want steer-a for the next prompt", key, ok)
 	}
-	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first",
+	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", nil,
 		command.SteerHolder{Held: true, PromptClass: true, Live: true, Delivering: true, Turn: "t-next"})
 	if len(sends) != 1 || sends[0].ID == "steer-a" || !slices.Equal(sends[0].Keys, []string{"steer-a"}) {
 		t.Errorf("sends = %+v, want one under a fresh id carrying steer-a", sends)
@@ -1018,9 +1018,9 @@ func TestSteerRecords_UndeliveredRowsGoToTheNextPrompt(t *testing.T) {
 func TestSteerRecords_ADeliveryToAnUnnamedTurnIsRefused(t *testing.T) {
 	s := newSteerHarness(t)
 	s.recs.turnStarted(s.chat, "t-next")
-	s.q.RouteSteer(s.chat, "steer-a", "first", command.SteerHolder{Held: true, PromptClass: true})
+	s.q.RouteSteer(s.chat, "steer-a", "first", nil, command.SteerHolder{Held: true, PromptClass: true})
 
-	_, refuse := s.q.RouteSteer(s.chat, "steer-a", "first",
+	_, refuse := s.q.RouteSteer(s.chat, "steer-a", "first", nil,
 		command.SteerHolder{Held: true, PromptClass: true, Live: true, Delivering: true, Turn: "t-gone"})
 
 	if refuse != command.SteerRefuseNoTurn {
@@ -1033,8 +1033,8 @@ func TestSteerRecords_ADeliveryToAnUnnamedTurnIsRefused(t *testing.T) {
 // prompt's drain parks every unsent row so that prompt carries it.
 func TestSteerRecords_UnsentRowsAreParkedForTheNextPrompt(t *testing.T) {
 	s := newSteerHarness(t)
-	s.q.RouteSteer(s.chat, "steer-a", "first", command.SteerHolder{Held: true, PromptClass: true})
-	if _, refuse := s.q.RouteSteer(s.chat, "steer-a", "first", command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
+	s.q.RouteSteer(s.chat, "steer-a", "first", nil, command.SteerHolder{Held: true, PromptClass: true})
+	if _, refuse := s.q.RouteSteer(s.chat, "steer-a", "first", nil, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
 		t.Fatalf("re-route with no holder = %q, want no_turn", refuse)
 	}
 	s.mustState("steer-a", rowUnsent)
@@ -1060,7 +1060,7 @@ func TestSteerRecords_ThePostLoadClearParksARowSentDuringTheWait(t *testing.T) {
 	if !s.recs.needsPostLoadClear(s.chat) {
 		t.Fatal("a dead buffer's row does not arm the post-load clear")
 	}
-	sends, _ := s.q.RouteSteer(s.chat, "steer-b", "second", promptHolder)
+	sends, _ := s.q.RouteSteer(s.chat, "steer-b", "second", nil, promptHolder)
 	s.kas(sends)
 
 	s.q.PostLoadCleared(s.chat, []string{s.kasID("steer-b")}, true)
@@ -1133,7 +1133,7 @@ func TestSteerRecords_ATornDownChatTakesNoNewRow(t *testing.T) {
 	s.bind()
 	s.recs.beginTeardown(s.chat, nil)
 
-	sends, refuse := s.q.RouteSteer(s.chat, "steer-a", "late", promptHolder)
+	sends, refuse := s.q.RouteSteer(s.chat, "steer-a", "late", nil, promptHolder)
 
 	if refuse != command.SteerRefuseNoTurn || len(sends) != 0 {
 		t.Errorf("RouteSteer after teardown = %+v %q, want refused no_turn, nothing sent", sends, refuse)
@@ -1303,7 +1303,7 @@ func TestSteerRecords_AnUnsettledPostLoadClearHoldsTheReloadedRows(t *testing.T)
 func TestSteerRecords_StepsPublishInTheOrderTheyRan(t *testing.T) {
 	s := newSteerHarness(t)
 	parked := command.SteerHolder{Held: true, PromptClass: true}
-	s.q.RouteSteer(s.chat, "steer-a", "a", parked)
+	s.q.RouteSteer(s.chat, "steer-a", "a", nil, parked)
 	var mu sync.Mutex
 	var order []string
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -1321,7 +1321,7 @@ func TestSteerRecords_StepsPublishInTheOrderTheyRan(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() { s.q.BeginRemove(s.chat, "steer-a", "op-a") })
 	<-entered
-	wg.Go(func() { s.q.RouteSteer(s.chat, "steer-b", "b", parked) })
+	wg.Go(func() { s.q.RouteSteer(s.chat, "steer-b", "b", nil, parked) })
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if _, ok := s.state("steer-b"); ok {
@@ -1411,7 +1411,7 @@ func TestSteerRecords_AReadAnswersTheRowsItsIDCarries(t *testing.T) {
 			s.bind()
 			s.steer("steer-a", "a")
 			s.recs.SteerCleared(s.chat, []string{"steer-a"})
-			sends, _ := s.q.RouteSteer(s.chat, "steer-a", "a", promptHolder)
+			sends, _ := s.q.RouteSteer(s.chat, "steer-a", "a", nil, promptHolder)
 			s.kas(sends)
 			return s.kasID("steer-a")
 		}, read: readInjected, taken: "steer-a", want: []string{"steer-a"}},
@@ -1437,7 +1437,7 @@ func TestSteerRecords_AReadAnswersTheRowsItsIDCarries(t *testing.T) {
 	}
 }
 
-func readInjected(s *steerHarness, id string) []string { return s.recs.SteerRead(s.chat, id) }
+func readInjected(s *steerHarness, id string) []string { return s.recs.SteerRead(s.chat, id).Replaces }
 
 func readByAck(s *steerHarness, id string) []string {
 	read := s.recs.SteerForgotten(s.chat, []string{id})
@@ -1509,7 +1509,7 @@ func TestCleanupChatState_ForgetsTheSteerRecord(t *testing.T) {
 	if n := len(h.bus.steers.list("c2")); n != 1 {
 		t.Errorf("c2 lists %d rows, want its own", n)
 	}
-	if _, refuse := h.steerQueue.RouteSteer("c1", "steer-3", "three", promptHolder); refuse != "" {
+	if _, refuse := h.steerQueue.RouteSteer("c1", "steer-3", "three", nil, promptHolder); refuse != "" {
 		t.Errorf("a reopened chat refused a steer: %q", refuse)
 	}
 }
@@ -1523,11 +1523,11 @@ func TestSteerRecords_TheJoinedRowsFitOnePrompt(t *testing.T) {
 	a := strings.Repeat("a", command.MaxPromptBytes/2)
 	b := strings.Repeat("b", command.MaxPromptBytes/2-2)
 	for key, text := range map[string]string{"steer-a": a, "steer-b": b} {
-		if _, refuse := s.q.RouteSteer(s.chat, key, text, command.SteerHolder{Held: true, PromptClass: true}); refuse != "" {
+		if _, refuse := s.q.RouteSteer(s.chat, key, text, nil, command.SteerHolder{Held: true, PromptClass: true}); refuse != "" {
 			t.Fatalf("RouteSteer(%s) refused %q within the budget", key, refuse)
 		}
 	}
-	if _, refuse := s.q.RouteSteer(s.chat, "steer-c", "c", command.SteerHolder{Held: true, PromptClass: true}); refuse != command.SteerRefuseFull {
+	if _, refuse := s.q.RouteSteer(s.chat, "steer-c", "c", nil, command.SteerHolder{Held: true, PromptClass: true}); refuse != command.SteerRefuseFull {
 		t.Errorf("one byte past the budget = %q, want full", refuse)
 	}
 	if joined := len(a) + len("\n\n") + len(b); joined > command.MaxPromptBytes {
@@ -1541,7 +1541,7 @@ func TestSteerRecords_ShutdownTakeLeavesNothingToFold(t *testing.T) {
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "in kas")
-	s.q.RouteSteer(s.chat, "steer-b", "parked", command.SteerHolder{Held: true, PromptClass: true})
+	s.q.RouteSteer(s.chat, "steer-b", "parked", nil, command.SteerHolder{Held: true, PromptClass: true})
 
 	rows := s.recs.shutdownTake(s.chat)
 
@@ -1549,7 +1549,7 @@ func TestSteerRecords_ShutdownTakeLeavesNothingToFold(t *testing.T) {
 		t.Fatalf("taken = %+v, want steer-a KAS-held then steer-b record-only", rows)
 	}
 	s.recs.SteerRead(s.chat, s.kasID("steer-a"))
-	if _, refuse := s.q.RouteSteer(s.chat, "steer-c", "late", promptHolder); refuse != command.SteerRefuseNoTurn {
+	if _, refuse := s.q.RouteSteer(s.chat, "steer-c", "late", nil, promptHolder); refuse != command.SteerRefuseNoTurn {
 		t.Errorf("a steer after the take = %q, want no_turn", refuse)
 	}
 	if again := s.recs.shutdownTake(s.chat); len(again) != 0 {
@@ -1563,7 +1563,7 @@ func TestSteerRecords_ShutdownTakeLeavesNothingToFold(t *testing.T) {
 // idleUnsent leaves key as a row the server holds with no turn to deliver it to.
 func (s *steerHarness) idleUnsent(key string) {
 	s.steer(key, "words")
-	if _, refuse := s.q.RouteSteer(s.chat, key, "words", command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
+	if _, refuse := s.q.RouteSteer(s.chat, key, "words", nil, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
 		s.fatalf("RouteSteer(%s) with no holder refused %q, want no_turn", key, refuse)
 	}
 	s.mustState(key, rowUnsent)
@@ -1615,7 +1615,7 @@ func TestSteerRecords_AnOpenedPromptMarksTheUnsentRowsAsAwaitingIt(t *testing.T)
 	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowQueued {
 		t.Errorf("frame after the delivery = %+v, want queued", f)
 	}
-	if _, refuse := s.q.RouteSteer(s.chat, "steer-a", "words", command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
+	if _, refuse := s.q.RouteSteer(s.chat, "steer-a", "words", nil, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
 		t.Fatalf("RouteSteer with no holder refused %q, want no_turn", refuse)
 	}
 	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowUnsent || f.AwaitsPrompt {
@@ -1641,7 +1641,7 @@ func TestSteerRecords_APromptClosedBeforeItsDeliveryReleasesTheAwait(t *testing.
 func TestSteerRecords_ReinjectedRowsAwaitAPromptUntilThePostLoadClear(t *testing.T) {
 	s := newSteerHarness(t)
 	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
-	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", promptHolder)
+	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", nil, promptHolder)
 	s.kas(sends)
 	s.recs.bridgeGone(s.chat)
 
@@ -1668,7 +1668,7 @@ func TestSteerRecords_ADeleteBeforeTheStartingTurnReportsGoesToTheClear(t *testi
 	s := newSteerHarness(t)
 	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
 	s.h.stagePromptTurn(t, s.chat)
-	sends, _ := s.q.RouteSteer(s.chat, "steer-late", "?", promptHolder)
+	sends, _ := s.q.RouteSteer(s.chat, "steer-late", "?", nil, promptHolder)
 	s.kas(sends)
 
 	needsClear, refuse := s.q.BeginRemove(s.chat, "steer-late", "op-1")

@@ -2362,6 +2362,9 @@ function steerNoteData(st: TurnRender, e: Entry, steer: EntrySteer): SteerNoteDa
   if (steer.reason !== undefined) {
     data.reason = steer.reason;
   }
+  if (steer.caller !== undefined) {
+    data.caller = steer.caller;
+  }
   if (steer.step !== undefined) {
     data.step = steer.step;
   }

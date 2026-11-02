@@ -124,9 +124,9 @@ type steerBuffer interface {
 	// read, with its text, which no frame carries here, and in Replaces the row keys
 	// an id that is not a row's own carries.
 	SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload
-	// SteerRead folds steering_injected for the one id it names and answers the row
-	// keys that id carries when it is not a row's own (nil otherwise).
-	SteerRead(chatID marotte.ChatID, steerID string) []string
+	// SteerRead folds steering_injected for the one id it names and answers, in Replaces, the row
+	// keys that id carries when it is not a row's own (nil otherwise), and the rows' Caller.
+	SteerRead(chatID marotte.ChatID, steerID string) marotte.SteerQueuedPayload
 	// SteerCleared folds steering_cleared and answers the AGENT rows it named. A
 	// user row gets no entry at a clear: the host writes one at the row's own
 	// terminal transition, so a row resent after the clear is never noted unread.

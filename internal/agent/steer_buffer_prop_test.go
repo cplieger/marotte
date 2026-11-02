@@ -38,7 +38,7 @@ func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
 					Held: rapid.Bool().Draw(rt, "held"), PromptClass: true,
 					Live: rapid.Bool().Draw(rt, "live"), Delivering: rapid.Bool().Draw(rt, "delivering"),
 				}
-				sends, _ := s.q.RouteSteer(chat, key, key, h)
+				sends, _ := s.q.RouteSteer(chat, key, key, nil, h)
 				kasAnswers(rt, s, sends)
 			},
 			"agent": func(rt *rapid.T) {

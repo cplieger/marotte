@@ -210,13 +210,14 @@ func (rs *Runs) preRefuse(ctx context.Context, workflowID, nodePath string) erro
 	return stepRefusal(first)
 }
 
-// messageStep delivers the user's words to the step at nodePath by the verb its live state calls for.
+// messageStep delivers the words to the step at nodePath by the verb its live state calls for; from is the API
+// caller that sent them, nil for the user's own (recorded on the step's prompt or steer entry and its dock row).
 // A refusal is a StatusErrorReason carrying a RunStepMessageRefusal or a RunAskRefusal.
 //
 // The verb is decided from a fresh read of the run's host under the run's serializer, so two sends
 // to one paused step cannot both prompt it, and on a leased run a stop cannot overtake either.
 // askID, when set, is the ask the words answer, and names which execution at nodePath gets them.
-func (rs *Runs) messageStep(ctx context.Context, workflowID, nodePath, raw, messageID, askID string) (out marotte.RunStepMessageResponse, err error) {
+func (rs *Runs) messageStep(ctx context.Context, workflowID, nodePath, raw, messageID, askID string, from *marotte.Caller) (out marotte.RunStepMessageResponse, err error) {
 	text, steerID, err := command.ValidSteerText(raw, messageID)
 	if err != nil {
 		return out, err
@@ -237,7 +238,7 @@ func (rs *Runs) messageStep(ctx context.Context, workflowID, nodePath, raw, mess
 		return out, stepRefusal(marotte.RunStepBusy)
 	}
 	defer lease.end()
-	d, err := rs.deliverStepMessage(ctx, host, workflowID, nodePath, text, steerID, askID)
+	d, err := rs.deliverStepMessage(ctx, host, workflowID, nodePath, text, steerID, askID, from)
 	if err != nil {
 		return out, err
 	}
@@ -246,13 +247,13 @@ func (rs *Runs) messageStep(ctx context.Context, workflowID, nodePath, raw, mess
 		return out, nil
 	}
 	out.SteerID = steerID
-	return out, rs.steerStep(ctx, lease, d.now.at, steerID, text)
+	return out, rs.steerStep(ctx, lease, d.now.at, steerID, text, from)
 }
 
 // deliverStepMessage decides the verb under the serializer and sends an answer or a prompt; a steer
 // is left to the caller, whose send takes the steer op lock, which comes before the gate. The
 // serializer is released before the send: a refused prompt runs a whole ordinary turn.
-func (rs *Runs) deliverStepMessage(ctx context.Context, host *drivenHost, workflowID, nodePath, text, steerID, askID string) (stepDecision, error) {
+func (rs *Runs) deliverStepMessage(ctx context.Context, host *drivenHost, workflowID, nodePath, text, steerID, askID string, from *marotte.Caller) (stepDecision, error) {
 	c, done := rs.verbCell(workflowID)
 	defer done()
 	defer rs.kickCell(c)
@@ -291,7 +292,7 @@ func (rs *Runs) deliverStepMessage(ctx context.Context, host *drivenHost, workfl
 	defer unlock()
 	c.sendingPending(p, d.now.at.session)
 	release()
-	got, err := rs.sendStepWords(ctx, host, d.now.at, text, steerID)
+	got, err := rs.sendStepWords(ctx, host, d.now.at, text, steerID, from)
 	if got == kasRefused {
 		rs.clearPending(ctx, c, p)
 		return stepDecision{}, err
@@ -346,7 +347,7 @@ func (rs *Runs) replayedVerb(workflowID, steerID string) (marotte.RunStepMessage
 
 // steerStep admits the steer before its row is routed: a send that fails leaves the row where KAS may hold it, so a
 // refusal after routing could not roll it back.
-func (rs *Runs) steerStep(ctx context.Context, lease runLease, at stepAddr, steerID, text string) error {
+func (rs *Runs) steerStep(ctx context.Context, lease runLease, at stepAddr, steerID, text string, from *marotte.Caller) error {
 	a, err := rs.admitRunWork(refuseClosed, at.workflowID, "")
 	if err != nil {
 		return err
@@ -359,7 +360,7 @@ func (rs *Runs) steerStep(ctx context.Context, lease runLease, at stepAddr, stee
 	}
 	defer unlock()
 	t := rs.steers.steerTarget(lease, a, at.session)
-	refuse, sendErr := command.SteerInto(ctx, t, command.SteerHolder{Held: true, Live: true}, steerID, text)
+	refuse, sendErr := command.SteerInto(ctx, t, command.SteerHolder{Held: true, Live: true}, steerID, text, from)
 	switch {
 	case refuse == command.SteerRefuseFull:
 		return stepRefusal(marotte.RunStepFull)
@@ -392,8 +393,8 @@ var errStepUnconfirmed = errors.New("the run's agent stopped before confirming t
 
 // sendStepWords places the words, then sends and settles them detached from the request: a reader
 // leaving after the write must not withdraw words KAS may hold.
-func (rs *Runs) sendStepWords(ctx context.Context, host *drivenHost, at stepAddr, text, entryID string) (kasVerdict, error) {
-	place, err := rs.placeStepMessage(ctx, at, entryID, text)
+func (rs *Runs) sendStepWords(ctx context.Context, host *drivenHost, at stepAddr, text, entryID string, from *marotte.Caller) (kasVerdict, error) {
+	place, err := rs.placeStepMessage(ctx, at, entryID, text, from)
 	if err != nil {
 		return kasRefused, err
 	}
@@ -471,6 +472,7 @@ func stepPromptParams(session, text string) map[string]any {
 // when it pauses) reopens on KAS's next node_start, which takes them as its prompt. Staged before the
 // send: that node_start can arrive before the send returns.
 type stepPlacement struct {
+	from   *marotte.Caller
 	at     stepAddr
 	id     string
 	text   string
@@ -481,8 +483,8 @@ type stepPlacement struct {
 // transcript would not show.
 var errStepUnrecorded = errors.New("the run's record could not be written, so the message was not sent")
 
-func (rs *Runs) placeStepMessage(ctx context.Context, at stepAddr, entryID, text string) (stepPlacement, error) {
-	p := stepPlacement{at: at, id: entryID, text: text}
+func (rs *Runs) placeStepMessage(ctx context.Context, at stepAddr, entryID, text string, from *marotte.Caller) (stepPlacement, error) {
+	p := stepPlacement{at: at, id: entryID, text: text, from: from}
 	if rs.log == nil {
 		return p, nil
 	}
@@ -491,7 +493,7 @@ func (rs *Runs) placeStepMessage(ctx context.Context, at stepAddr, entryID, text
 			"run", at.workflowID, "session", scrubLog(at.session))
 		return p, errStepUnrecorded
 	}
-	staged, err := rs.log.stagePrompt(ctx, at.workflowID, at.nodePath, &marotte.EntryPrompt{ID: entryID, Text: text})
+	staged, err := rs.log.stagePrompt(ctx, at.workflowID, at.nodePath, &marotte.EntryPrompt{ID: entryID, Text: text, Caller: from})
 	if err != nil {
 		slog.Error("run log: the words for a step could not be placed in its record, so they were not sent",
 			"run", at.workflowID, "node_path", scrubLog(at.nodePath), "error", err)
@@ -512,7 +514,7 @@ func (p *stepPlacement) landed(ctx context.Context, rs *Runs, host marotte.ChatI
 		return
 	}
 	rs.RunSteer(ctx, p.at.workflowID, p.at.nodePath, p.id, &marotte.EntrySteer{
-		Text: p.text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead,
+		Text: p.text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead, Caller: p.from,
 	})
 	rs.bindStepSteers(p.at, host)
 }

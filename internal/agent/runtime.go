@@ -778,6 +778,7 @@ func (rt *Runtime) holdUnreadSteers(ctx context.Context, chatID marotte.ChatID) 
 		}
 		steer := &marotte.EntrySteer{
 			Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonRestart,
+			Caller: r.Caller,
 		}
 		switch {
 		case r.Agent:

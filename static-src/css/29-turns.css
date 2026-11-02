@@ -278,6 +278,23 @@
   color: var(--c-text-secondary);
 }
 
+/* Who sent a request another program posted, over its words and outside their clamp as the wake's label is, so a
+ * folded turn still says the user did not write it. Its words take the secondary ink, never the user's own. */
+.turn-sent-by {
+  align-self: stretch;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--c-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-header[data-trigger="caller"] :is(.turn-req-text, .turn-req-full) {
+  color: var(--c-text-secondary);
+}
+
 .turn-wake-run,
 .turn-wake-rest {
   min-width: 0;

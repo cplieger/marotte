@@ -601,3 +601,54 @@ describe("a request that opens with a quoted reply passage", () => {
     }
   });
 });
+
+describe("a request an API caller sent", () => {
+  const sentByLine = (h: HTMLElement): HTMLElement | null => h.querySelector(".turn-sent-by");
+
+  it("says who sent it over the words, and reads as that program's request", () => {
+    const h = buildTurnHeader(
+      data({ request: "Agent Mail: 1 new message", caller: { label: "Agent Mail" } }),
+    );
+    expect(h.dataset["trigger"]).toBe("caller");
+    expect(sentByLine(h)?.textContent).toBe("Sent by Agent Mail");
+    expect(text(h).textContent).toBe("Agent Mail: 1 new message");
+    // Outside the clamped text, so a folded turn still names the sender.
+    expect(text(h).contains(sentByLine(h))).toBe(false);
+  });
+
+  it("names a program that gave no label as an API caller", () => {
+    const h = buildTurnHeader(data({ caller: {} }));
+    expect(sentByLine(h)?.textContent).toBe("Sent by an API caller");
+  });
+
+  it("drops the line when the request turns out to be the user's", () => {
+    const h = buildTurnHeader(data({ caller: { label: "Agent Mail" } }));
+    updateTurnHeader(h, data());
+    expect(h.dataset["trigger"]).toBe("user");
+    expect(sentByLine(h)).toBeNull();
+  });
+
+  it("draws the words in another ink than the user's own prompt", () => {
+    const style = mountAppCSS();
+    try {
+      const mine = buildTurnHeader(data());
+      const theirs = buildTurnHeader(data({ caller: { label: "Agent Mail" } }));
+      document.body.append(mine, theirs);
+      expect(getComputedStyle(text(theirs)).color).not.toBe(getComputedStyle(text(mine)).color);
+      expect(getComputedStyle(sentByLine(theirs)!).whiteSpace).toBe("nowrap");
+      mine.remove();
+      theirs.remove();
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("puts the Sent-by line above a quoted reply passage", () => {
+    const quoted = `${appendQuote("", quoteSelection("the passage"))}why that?`;
+    const h = buildTurnHeader(data({ request: quoted, caller: { label: "Agent Mail" } }));
+    const req = h.querySelector(".turn-req")!;
+    expect(req.firstElementChild).toBe(sentByLine(h));
+    expect(sentByLine(h)?.nextElementSibling?.className).toBe("turn-req-quote");
+    expect(text(h).textContent).toBe("why that?");
+  });
+});

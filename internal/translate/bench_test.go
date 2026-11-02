@@ -138,11 +138,11 @@ func (d *baseDeps) SteerCleared(chatID marotte.ChatID, steerIDs []string) []maro
 	})
 }
 
-func (d *baseDeps) SteerRead(chatID marotte.ChatID, steerID string) []string {
+func (d *baseDeps) SteerRead(chatID marotte.ChatID, steerID string) marotte.SteerQueuedPayload {
 	if held := d.forget(chatID, []string{steerID}); len(held) > 0 {
-		return held[0].Replaces
+		return held[0]
 	}
-	return nil
+	return marotte.SteerQueuedPayload{}
 }
 
 func (d *baseDeps) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {

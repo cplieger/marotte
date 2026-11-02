@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -72,7 +73,7 @@ func (t *Translator) HandleRateLimit(ctx context.Context, chatID marotte.ChatID,
 }
 
 // HandleSystemNotify handles _kiro/system/notify ({level, message}). The frame carries
-// no sessionId, so chatID is the chat whose session received it. The message is forwarded
+// no sessionId, so chatID is the key of the lane that received it (noticeChatName). The message is forwarded
 // verbatim and never parsed: KAS sends several unrelated texts on this one method.
 func (t *Translator) HandleSystemNotify(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[struct {
@@ -86,12 +87,21 @@ func (t *Translator) HandleSystemNotify(ctx context.Context, chatID marotte.Chat
 		Level:   noticeLevel(p.Level),
 		Message: displayText(p.Message),
 	}
-	if c, ok := t.chats.Get(ctx, chatID); ok {
-		payload.ChatName = c.Name
-	} else if name, ok := t.chats.DepartedName(chatID); ok {
-		payload.ChatName = name
-	}
+	payload.ChatName = t.noticeChatName(ctx, chatID)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSystemNotice, chatID, payload))
+}
+
+// noticeChatName is the name of the chat a notice arrived on, "" for a lane that is no chat: the engine lane and an
+// observer pass dispatch with "", a run host lane with its run key, and neither is a record the store can read.
+func (t *Translator) noticeChatName(ctx context.Context, chatID marotte.ChatID) string {
+	if !ids.ValidChatID(string(chatID)) {
+		return ""
+	}
+	if c, ok := t.chats.Get(ctx, chatID); ok {
+		return c.Name
+	}
+	name, _ := t.chats.DepartedName(chatID)
+	return name
 }
 
 // noticeLevel folds a wire level onto the closed vocabulary; an unknown one is info.
