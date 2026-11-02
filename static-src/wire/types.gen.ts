@@ -4051,11 +4051,13 @@ export interface ToolInfo {
   checksum?: string;
   requires?: string[];
   /**
- * Dependents names the ENABLED entries that require this tool,
- * directly or as the implied backend of their source kind: what a
- * consumer needs BEFORE sending a disable/remove, instead of
- * learning it from a 409. Advisory only — the engine re-derives the
- * set under the manifest lock, so a stale inventory is still refused.
+ * Dependents names the ENABLED entries that need this tool, directly
+ * (Requires or the implied backend of their source kind) or through
+ * another entry, disabled or not, or a catalog tool their install would
+ * add: the set a 409 names and a forced disable or remove takes, for a
+ * consumer to show BEFORE sending one. Advisory
+ * only: the engine re-derives the set under the manifest lock, so a
+ * stale inventory is still refused.
  */
   dependents?: string[];
   pin?: boolean;

@@ -22,14 +22,14 @@ require (
 	github.com/cplieger/forgeapi v1.4.0
 	github.com/cplieger/jsoncap/v2 v2.1.0
 	github.com/cplieger/keyenc v1.1.0
-	github.com/cplieger/keylock v1.1.0-dev.1
+	github.com/cplieger/keylock v1.0.1
 	github.com/cplieger/pathinside/v2 v2.1.0
 	github.com/cplieger/pinstall/v3 v3.1.0
 	github.com/cplieger/runesafe/v3 v3.2.0
 	github.com/cplieger/slogx v1.8.0
-	github.com/cplieger/sse v1.5.0-dev.1
+	github.com/cplieger/sse v1.4.0
 	github.com/cplieger/ssrf/v4 v4.5.0
-	github.com/cplieger/toolbelt/v3 v3.13.0-dev.1
+	github.com/cplieger/toolbelt/v3 v3.13.0
 	github.com/cplieger/web-terminal-engine/v6 v6.4.0
 	github.com/cplieger/webhttp/v4 v4.1.0
 	github.com/cplieger/wiregen/v3 v3.3.1
