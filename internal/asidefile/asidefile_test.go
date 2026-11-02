@@ -1,6 +1,7 @@
 package asidefile
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,5 +41,37 @@ func TestFind_AnAbsentDirectoryHoldsNone(t *testing.T) {
 				t.Errorf("Find = %q, %v; want none and no error", got, err)
 			}
 		})
+	}
+}
+
+func TestCopy_KeepsTheFileAndWritesAnAsideFindSees(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "entries.jsonl")
+	want := []byte("one\ntwo\n")
+	if err := os.WriteFile(path, want, 0o600); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	aside, err := Copy(path, 0o600)
+	if err != nil {
+		t.Fatalf("Copy: %v", err)
+	}
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, want) {
+		t.Errorf("the original holds %q, want it unchanged %q", got, want)
+	}
+	if got, _ := os.ReadFile(aside); !bytes.Equal(got, want) {
+		t.Errorf("the aside holds %q, want %q", got, want)
+	}
+	if got, err := Find(dir, "entries.jsonl"); err != nil || got != aside {
+		t.Errorf("Find = %q, %v; want %q", got, err, aside)
+	}
+}
+
+func TestCopy_AMissingFileLeavesNoAside(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Copy(filepath.Join(dir, "entries.jsonl"), 0o600); !os.IsNotExist(err) {
+		t.Errorf("Copy of a missing file = %v, want not-exist", err)
+	}
+	if got, _ := Find(dir, "entries.jsonl"); got != "" {
+		t.Errorf("a failed Copy left the aside %q", got)
 	}
 }

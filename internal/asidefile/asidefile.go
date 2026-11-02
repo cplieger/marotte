@@ -5,6 +5,7 @@ package asidefile
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,33 @@ const infix = ".unreadable-"
 func Move(path string) (string, error) {
 	aside := fmt.Sprintf("%s%s%d", path, infix, time.Now().UTC().UnixNano())
 	if err := os.Rename(path, aside); err != nil {
+		return "", err
+	}
+	return aside, nil
+}
+
+// Copy writes path's bytes to <path>.unreadable-<UTC ns> with perm and returns the new path, for a store that
+// keeps the file in place and repairs it. A failed copy leaves no aside.
+func Copy(path string, perm os.FileMode) (aside string, err error) {
+	src, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = src.Close() }()
+	aside = fmt.Sprintf("%s%s%d", path, infix, time.Now().UTC().UnixNano())
+	dst, err := os.OpenFile(aside, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return "", err
+	}
+	_, err = io.Copy(dst, src)
+	if err == nil {
+		err = dst.Sync()
+	}
+	if cerr := dst.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(aside)
 		return "", err
 	}
 	return aside, nil
