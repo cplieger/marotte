@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -194,6 +195,68 @@ func TestWireToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 				t.Errorf("findings named %v, want %v; logs:\n%s", got, want, logs.String())
 			}
 		})
+	}
+}
+
+// entrypointEngineRoots returns the directories entrypoint.sh's tighten_engine_roots loops over,
+// with its config and tools parameters resolved to configDir and toolsDir.
+func entrypointEngineRoots(t *testing.T, configDir, toolsDir string) []string {
+	t.Helper()
+	src, err := os.ReadFile(filepath.Join("..", "..", "entrypoint.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, body, found := strings.Cut(string(src), "\ntighten_engine_roots() {\n")
+	if !found {
+		t.Fatal("entrypoint.sh defines no tighten_engine_roots")
+	}
+	body, _, _ = strings.Cut(body, "\n}\n")
+	var dirs []string
+	for _, m := range regexp.MustCompile(`"\$(config|tools)(/[^"$]*)?"`).FindAllStringSubmatch(body, -1) {
+		root := configDir
+		if m[1] == "tools" {
+			root = toolsDir
+		}
+		dirs = append(dirs, filepath.Join(root, filepath.FromSlash(m[2])))
+	}
+	if len(dirs) < 3 {
+		t.Fatalf("parsed %v from tighten_engine_roots; its loop list changed shape", dirs)
+	}
+	slices.Sort(dirs)
+	return dirs
+}
+
+// TestEntrypointTightensEveryRootTheEngineJudges holds tighten_engine_roots to the directories
+// toolbelt documents its root-integrity check judging (docs/configuration.md "Root integrity
+// check", v3.12.0), then plants each group-writable and expects the engine to refuse exactly those.
+func TestEntrypointTightensEveryRootTheEngineJudges(t *testing.T) {
+	configDir, toolsDir := fitTree(t)
+	documented := []string{configDir, toolsDir}
+	for _, rel := range []string{
+		"bin", "opt", "npm", "npm/bin", "npm/lib", "npm/lib/node_modules",
+		"python", "python/bin", "python/tools", "python/interpreters",
+	} {
+		documented = append(documented, filepath.Join(toolsDir, filepath.FromSlash(rel)))
+	}
+	slices.Sort(documented)
+	listed := entrypointEngineRoots(t, configDir, toolsDir)
+	if !slices.Equal(listed, documented) {
+		t.Errorf("tighten_engine_roots lists %v, toolbelt documents %v", listed, documented)
+	}
+	for _, dir := range listed {
+		mkdirMode(t, dir, 0o775)
+	}
+
+	logs := captureDefaultLogger(t)
+	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
+	if err != nil {
+		t.Fatalf("wireToolsEngine over group-writable roots = %v, want the degraded slot", err)
+	}
+	if engine, _ := tools.Engine(); engine != nil {
+		t.Fatal("an engine came up over group-writable roots; the integrity check is off")
+	}
+	if got := loggedUnfitPaths(t, logs); !slices.Equal(got, listed) {
+		t.Errorf("the engine refused %v; tighten_engine_roots lists %v", got, listed)
 	}
 }
 

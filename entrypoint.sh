@@ -119,11 +119,29 @@ refuse_held_roots() {
 
 refuse_held_roots "$CONFIG_DIR" "$KIRO_HOME" "$TOOLS" || exit 1
 
+# Drops group and other write from every directory the tools engine's root-integrity
+# check judges (its config dir, tools dir and toolbelt's managed layout), since one
+# left writable boots marotte with no tools engine. The list must match toolbelt's:
+# TestEntrypointTightensEveryRootTheEngineJudges pins it. A symlink is left for the
+# engine to name, as chmod would follow it out of the tree; a missing directory is
+# left for the engine to create.
+tighten_engine_roots() {
+  local config=$1 tools=$2 dir
+  for dir in "$config" "$tools" "$tools/bin" "$tools/opt" \
+    "$tools/npm" "$tools/npm/bin" "$tools/npm/lib" "$tools/npm/lib/node_modules" \
+    "$tools/python" "$tools/python/bin" "$tools/python/tools" "$tools/python/interpreters"; do
+    if [ -d "$dir" ] && [ ! -L "$dir" ]; then
+      chmod go-w "$dir" || true
+    fi
+  done
+}
+
 # Normalize modes on every boot: an inheritable ACL or umask on the host volume
 # can stamp any mode, the tools engine refuses a group- or other-writable root, and
 # ssh refuses a lax ~/.ssh.
 chmod 755 "$HOME" || true
-chmod go-w "$TOOLS" "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
+tighten_engine_roots "$CONFIG_DIR" "$TOOLS"
+chmod go-w "$TOOLS/kiro-cli-versions" \
   "$HOME/.local" "$HOME/.local/share" "$HOME/.local/share/kiro-cli" \
   "$KIRO_HOME" "$HOME/.cache" "$HOME/.cache/go-build" \
   "$HOME/.docker" "$HOME/.docker/cli-plugins" || true
