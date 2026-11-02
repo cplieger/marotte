@@ -89,26 +89,12 @@ grep -q 'KIRO_CLI_PATH' "$README" \
   && no "KIRO_CLI_PATH in the README" "the README still documents KIRO_CLI_PATH; an operator setting a variable marotte ignores gets no error and no managed install either" \
   || ok "the README config table does not offer KIRO_CLI_PATH"
 
-# --- the tools tree both halves compute independently -------------------------
-# The tools dir is NOT exported: the entrypoint derives it from CONFIG_DIR, the server from
-# KIRO_CONFIG_DIR, so the two derivations are what this pins.
-grep -q '^TOOLS="\$CONFIG_DIR/tools"$' "$ENTRYPOINT" \
-  && ok "the entrypoint derives \$TOOLS as \$CONFIG_DIR/tools" \
-  || no "entrypoint tools dir" "TOOLS is no longer \$CONFIG_DIR/tools, so it may not be the tree the server installs into"
-
-# envx/v2's String() takes no fallback (composed with cmp.Or); loose about the wrapper, so it pins
-# the <configDir>/tools DERIVATION.
-grep -qF 'envx.String("MAROTTE_TOOLS_DIR")' "$CONFIG_GO" \
-  && grep -qF 'filepath.Join(configDir, "tools")' "$CONFIG_GO" \
-  && ok "the server derives the same tools dir from its config dir" \
-  || no "server tools dir" "config.go no longer defaults ToolsDir to <configDir>/tools; the server may install outside the tree this script created"
-
 # --- the install root is created here, before the server writes into it -------
 # A SIBLING of the toolbelt engine's opt/ tree: its per-tool prune deletes every non-current
 # version under opt/<tool>, for any manifest name.
-grep -qF 'mkdir -p "$TOOLS/bin" "$TOOLS/kiro-cli-versions"' "$ENTRYPOINT" \
+grep -qF 'mkdir -p "$CONFIG_DIR" ${TOOLS:+"$TOOLS/bin" "$TOOLS/kiro-cli-versions"}' "$ENTRYPOINT" \
   && ok "the boot mkdir creates \$TOOLS/kiro-cli-versions, the version-install root" \
-  || no "install root mkdir" "the install root is not created by the boot mkdir, so a fresh volume's first install has to create it inside the server, outside this script's /config failure branch"
+  || no "install root mkdir" "the install root is not created by the boot mkdir, so a fresh volume's first install has to create it inside the server, outside this script's mkdir failure branch"
 
 grep -qE 'mkdir -p [^&|]*"\$TOOLS/(opt|npm|python|bin)/' "$ENTRYPOINT" \
   && no "install root under a toolbelt tree" "the boot creates a directory INSIDE one of the toolbelt engine's own trees (opt/npm/python/bin); the engine's per-tool prune and bin republish own everything under those" \
@@ -130,26 +116,22 @@ grep -q '^prune_superseded_kas_runtimes()' "$ENTRYPOINT" \
   && ok "prune_superseded_kas_runtimes() stayed: it prunes the data dir, not the install" \
   || no "kas pruner" "the agent-runtime pruner is gone; nothing reclaims the ~240 MB tree each superseded version leaves on the volume"
 
-# --- the taint flag: absent on BOTH sides, deliberately ----------------------
-# KIRO_CLI_TOOLS_TAINTED: web-terminal-kiro exports it when hardening finds the tools tree
-# writable by others. marotte has no hardening pass, so it neither exports nor reads it; either half
-# alone is worse (a no-op guard, or every boot reported clean). Grow hardening, wire both ends.
+# --- pinstall.Config.Untrusted stays unset -------------------------------------
+# kirocli.go's Config literal says why. Untrusted is pinstall v2's name for v1's Tainted, so
+# grepping Tainted would pass vacuously.
+grep -q 'Untrusted:' "$KIROCLI_GO" \
+  && no "Untrusted set" "internal/composition/kirocli.go now sets pinstall.Config.Untrusted, which reinstalls kiro-cli (about 530 MB) at every start; change the reason beside the Config literal first" \
+  || ok "the Go side leaves pinstall.Config.Untrusted unset"
+
+# KIRO_CLI_TOOLS_TAINTED is web-terminal-kiro's shell-to-Go hand-off for that field. A half-wired
+# copy is silent: an export nothing reads looks like a guard, and a read nothing exports is always
+# clean.
 if grep -q 'KIRO_CLI_TOOLS_TAINTED' "$ENTRYPOINT" || grep -q 'KIRO_CLI_TOOLS_TAINTED' "$CONFIG_GO"; then
   grep -q 'KIRO_CLI_TOOLS_TAINTED' "$ENTRYPOINT" && grep -q 'KIRO_CLI_TOOLS_TAINTED' "$CONFIG_GO" \
     && ok "the taint flag is exported by the entrypoint AND read by config.go" \
     || no "taint flag half-wired" "only one side mentions KIRO_CLI_TOOLS_TAINTED: an export nothing reads is a no-op that looks like a guard, and a read with no producer reports every boot as clean"
 else
-  ok "neither side claims a taint observation marotte cannot make (no hardening pass here)"
-fi
-
-# --- the LIBRARY half of the same non-claim: pinstall.Untrusted --------------
-# The pinstall.Config field the env var would feed (Untrusted since pinstall v2; grepping the v1
-# spelling Tainted would pass vacuously). Setting it without a hardening pass is a guard with no producer.
-# kirocli.go CITES this assertion.
-if grep -q 'Untrusted:' "$KIROCLI_GO"; then
-  no "Untrusted claimed" "internal/composition/kirocli.go now sets pinstall.Untrusted, but marotte has no hardening pass to make that observation: the field then reports every boot as clean while looking like a check"
-else
-  ok "the Go side sets no pinstall.Untrusted (the observation has no producer here)"
+  ok "neither side carries a taint flag"
 fi
 
 report

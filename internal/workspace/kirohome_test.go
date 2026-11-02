@@ -101,23 +101,27 @@ func TestResolveKiroHome_MatchesTheAgentsRule(t *testing.T) {
 	}
 	fallback := filepath.Join(home, ".kiro")
 	for _, tc := range []struct {
-		name, kiroHome, want string
+		name, kiroHome, want, ignored string
 	}{
-		{"unset", "", fallback},
-		{"blank", "  ", fallback},
-		{"relative", "state/kiro", fallback},
-		{"filesystem root", "/", fallback},
-		{"equals home", home, fallback},
-		{"contains home", filepath.Dir(home), fallback},
-		{"symlink to home", link, fallback},
-		{"the default spelled out", fallback, fallback},
-		{"inside home", filepath.Join(home, "kiro-state"), filepath.Join(home, "kiro-state")},
-		{"outside home, not yet created", filepath.Join(outside, "kiro", "x"), filepath.Join(outside, "kiro", "x")},
-		{"uncleaned", outside + "/kiro/../kiro2/", filepath.Join(outside, "kiro2")},
+		{"unset", "", fallback, ""},
+		{"blank", "  ", fallback, ""},
+		{"relative", "state/kiro", fallback, "relative"},
+		{"filesystem root", "/", fallback, "a filesystem root"},
+		{"equals home", home, fallback, "it equals or contains HOME"},
+		{"contains home", filepath.Dir(home), fallback, "it equals or contains HOME"},
+		{"symlink to home", link, fallback, "it equals or contains HOME"},
+		{"the default spelled out", fallback, fallback, ""},
+		{"inside home", filepath.Join(home, "kiro-state"), filepath.Join(home, "kiro-state"), ""},
+		{"outside home, not yet created", filepath.Join(outside, "kiro", "x"), filepath.Join(outside, "kiro", "x"), ""},
+		{"uncleaned", outside + "/kiro/../kiro2/", filepath.Join(outside, "kiro2"), ""},
+		{"surrounding blanks trimmed", " " + outside + "/kiro\n", filepath.Join(outside, "kiro"), ""},
+		{"only the ends trimmed", " " + outside + "/a \n b ", outside + "/a \n b", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ResolveKiroHome(tc.kiroHome, home); got != tc.want {
-				t.Errorf("ResolveKiroHome(%q, %q) = %q, want %q", tc.kiroHome, home, got, tc.want)
+			got, ignored := ResolveKiroHome(tc.kiroHome, home)
+			if got != tc.want || ignored != tc.ignored {
+				t.Errorf("ResolveKiroHome(%q, %q) = %q, %q; want %q, %q",
+					tc.kiroHome, home, got, ignored, tc.want, tc.ignored)
 			}
 		})
 	}
@@ -134,7 +138,7 @@ func TestResolveKiroHome_DotDotNamedComponentIsOutside(t *testing.T) {
 		{"deeper component", filepath.Join(base, "..home", "..user")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ResolveKiroHome(base, tc.home); got != base {
+			if got, _ := ResolveKiroHome(base, tc.home); got != base {
 				t.Errorf("ResolveKiroHome(%q, %q) = %q, want %q", base, tc.home, got, base)
 			}
 		})
@@ -155,7 +159,7 @@ func TestResolveKiroHome_KeepsTheMissingTailInOrder(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 	candidate := filepath.Join(link, "kiro", "x")
-	if got := ResolveKiroHome(candidate, home); got != candidate {
+	if got, _ := ResolveKiroHome(candidate, home); got != candidate {
 		t.Errorf("ResolveKiroHome(%q, %q) = %q, want %q", candidate, home, got, candidate)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/agent"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/signin"
 	kirosignin "github.com/cplieger/marotte/internal/signin/kiro"
 	"github.com/cplieger/pinstall/v3"
@@ -70,9 +71,9 @@ func unmanagedKiroRuntime() kiroRuntime {
 	}
 }
 
-// unavailableKiroRuntime is the runtime for a container whose pins are unusable, so no
-// version can ever activate. It reports unready rather than letting every chat fail one at a
-// time — degraded, never fatal, so the repair paths stay alive (invariant 6).
+// unavailableKiroRuntime is the runtime for a container where no version can ever activate
+// (unusable pins or a rejected tools dir). It reports unready rather than letting every chat
+// fail one at a time — degraded, never fatal, so the repair paths stay alive (invariant 6).
 func unavailableKiroRuntime() kiroRuntime {
 	return kiroRuntime{
 		cliPath:  func() string { return "" },
@@ -84,15 +85,23 @@ func unavailableKiroRuntime() kiroRuntime {
 }
 
 // startKiroCLI builds the install manager and starts the install in the background, bind-first:
-// only readiness waits, so a first-boot download is a /api/health reason. Three shapes: no pins,
-// unusable pins (unready), and the managed install.
+// only readiness waits, so a first-boot download is a /api/health reason. Three shapes: a
+// rejected tools dir or unusable pins (unready), no pins or no tools dir (unmanaged), and the
+// managed install. The rejection is checked first, so no pins never makes a bare-name search
+// that could reach the rejected folder.
 func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
-	if cfg.KiroCLIVersion == "" || cfg.ToolsDir == "" {
-		slog.Warn("no kiro-cli pins in the environment: resolving kiro-cli by bare name and installing nothing",
+	toolsDir, rejected := cfg.Tools.use()
+	if rejected != nil {
+		slog.Error("kiro-cli is not installed because marotte rejects its tools folder, so chats stay unavailable",
+			"error", logsafe.Field(rejected.Error()))
+		return unavailableKiroRuntime()
+	}
+	if cfg.KiroCLIVersion == "" || toolsDir == "" {
+		slog.Warn("no kiro-cli pins or tools folder in the environment: resolving kiro-cli by bare name and installing nothing",
 			"hint", "expected outside the container (bare `go run`); in the image entrypoint.sh exports KIRO_CLI_VERSION and both digests")
 		return unmanagedKiroRuntime()
 	}
-	mgr, err := pinstall.New(kiroInstallConfig(cfg))
+	mgr, err := pinstall.New(kiroInstallConfig(cfg, toolsDir))
 	if err != nil {
 		slog.Error("kiro-cli install manager could not be built from the exported pins; no version can be installed, so chats stay unavailable",
 			"error", err,
@@ -151,7 +160,7 @@ const kiroStopGrace = 5 * time.Second
 // kiroInstallConfig is marotte's whole deployment of the kiro-cli release (pins, tools tree, local
 // policy) over kirocli.Release()'s profile. A function so the namespace test builds a manager from
 // the exact production configuration.
-func kiroInstallConfig(cfg *Config) *pinstall.Config {
+func kiroInstallConfig(cfg *Config, root string) *pinstall.Config {
 	return &pinstall.Config{
 		Release: kirocli.Release(),
 		Version: cfg.KiroCLIVersion,
@@ -159,7 +168,7 @@ func kiroInstallConfig(cfg *Config) *pinstall.Config {
 			"amd64": cfg.KiroCLISHA256,
 			"arm64": cfg.KiroCLISHA256ARM64,
 		},
-		Root:    cfg.ToolsDir,
+		Root:    root,
 		LinkDir: kiroLinkDir,
 		// Require names the chat sidecar because it is the engine (sidecarBeside) and `kiro-cli
 		// settings` re-execs it by a plain PATH search, while `--version` is answered by the main
@@ -168,8 +177,10 @@ func kiroInstallConfig(cfg *Config) *pinstall.Config {
 		Optional: []string{kirocli.Name + "-term"},
 		Assert:   kiroSettings(),
 		Purge:    kiroLegacyPurge(),
-		// Untrusted stays unset: marotte makes no observation of the install root being writable by
-		// others. TrustedUIDs is a fact about the volume's ACL, empty by default.
+		// Untrusted stays unset: healBootModes has removed group and other write from this root before
+		// this runs, and pinstall's custody check judges the writers left, so Untrusted would only add
+		// a digest-verified reinstall at every start. TrustedUIDs is a fact about the volume's ACL,
+		// empty by default.
 		TrustedUIDs: cfg.TrustedInstallUIDs,
 	}
 }

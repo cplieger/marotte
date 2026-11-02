@@ -108,3 +108,30 @@ func TestValidateConfig_PropagatesAnUnusableConfigDir(t *testing.T) {
 		}
 	})
 }
+
+// Both folders are written verbatim into the generated steering documents, so a path they cannot
+// carry, or a relative one, refuses the boot naming its variable, though the folder exists.
+func TestValidateConfig_RefusesAFolderTheSteeringDocsCannotCarry(t *testing.T) {
+	t.Chdir(t.TempDir())
+	good := t.TempDir()
+	for _, tc := range []struct {
+		name, env, config, work string
+	}{
+		{"config dir with a newline", "KIRO_CONFIG_DIR", good + "/c\n## forged", good},
+		{"config dir with a backtick", "KIRO_CONFIG_DIR", good + "/c`x", good},
+		{"relative config dir", "KIRO_CONFIG_DIR", "config", good},
+		{"work dir with a line separator", "KIRO_WORK_DIR", good, good + "/w\u2028x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, d := range []string{tc.config, tc.work} {
+				if err := os.MkdirAll(d, 0o750); err != nil {
+					t.Fatalf("Setup: %v", err)
+				}
+			}
+			err := validateConfig(t.Context(), &Config{ConfigDir: tc.config, WorkDir: tc.work})
+			if err == nil || !strings.Contains(err.Error(), tc.env+"=") {
+				t.Errorf("validateConfig = %v, want an error naming %s", err, tc.env)
+			}
+		})
+	}
+}

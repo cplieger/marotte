@@ -66,6 +66,8 @@ type App struct {
 	stopForgeKeeper func()
 	// stopKASHeal stops the KAS MCP file heal loop and waits for its goroutine.
 	stopKASHeal func()
+	// stopToolsSteering waits for the boot's environment.md regeneration, which reads the tools engine.
+	stopToolsSteering func()
 	// stopApp ends the app's LIFETIME: what every process-bound component is parented on.
 	stopApp func()
 	// waitSignIn waits for the sign-in vault's goroutines, which end with the app's lifetime.
@@ -98,7 +100,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	// Before the first write into any root: every writer below would otherwise run in a second
 	// instance too, rendering its own state over the live one's.
-	roots, claimErr := claimRoots(ownedRoots(cfg))
+	roots, claimErr := claimAndHealRoots(cfg)
 	if claimErr != nil {
 		return nil, fmt.Errorf("refusing to start: %w", claimErr)
 	}
@@ -107,8 +109,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// than a missing server. Below Install because its early returns log synchronously.
 	kiro := startKiroCLI(ctx, cfg)
 
-	steer := steering.New(cfg.WorkDir, cfg.ConfigDir)
-	steer.Generate(ctx)
+	steer := newSteering(cfg)
+	regenerateSteering(ctx, steer.Generate)
 
 	legacyCheckpoints := filepath.Join(cfg.ConfigDir, "checkpoints")
 	if err := os.RemoveAll(legacyCheckpoints); err != nil {
@@ -207,10 +209,10 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	steer.SetMCPSnapshot(func() steering.MCPSnapshot {
 		return steering.MCPSnapshot{Servers: h.MCPSnapshot()}
 	})
-	h.SetMCPOnChange(func() { steer.Generate(appCtx) })
+	h.SetMCPOnChange(func() { regenerateSteering(appCtx, steer.Generate) })
 	healer := &kasHealer{heal: mcpStore.HealKASConfig, afterHeal: h.SyncPowers, every: kasHealInterval}
 	h.SetPreSessionOpen(func(ctx context.Context) {
-		steer.Generate(ctx)
+		regenerateSteering(ctx, steer.Generate)
 		healer.healOnce(ctx, "session_open")
 	})
 	stopKASHeal := runBackground(appCtx, "kas mcp config heal", healer.run)
@@ -226,6 +228,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	stopToolsSteering := wireToolsSteering(appCtx, tools, steer)
 
 	gitHandler := git.NewHandler(cfg.WorkDir, git.WithShowMax(filebrowse.WholeFileMax))
 	ensureUploadDir()
@@ -333,20 +336,21 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	built = true
 	return &App{
-		Runtime:         h,
-		Server:          srv,
-		purgeScheduler:  purgeScheduler,
-		mcpPrewarm:      mcpPrewarm,
-		tools:           tools,
-		stopKiro:        kiro.stop,
-		stopOrphanSweep: stopOrphanSweep,
-		stopKiroSeed:    stopKiroSeed,
-		stopPRPoller:    stopPRPoller,
-		stopForgeKeeper: stopForgeKeeper,
-		stopKASHeal:     stopKASHeal,
-		stopApp:         stopApp,
-		waitSignIn:      vault.Wait,
-		roots:           roots,
+		Runtime:           h,
+		Server:            srv,
+		purgeScheduler:    purgeScheduler,
+		mcpPrewarm:        mcpPrewarm,
+		tools:             tools,
+		stopKiro:          kiro.stop,
+		stopOrphanSweep:   stopOrphanSweep,
+		stopKiroSeed:      stopKiroSeed,
+		stopPRPoller:      stopPRPoller,
+		stopForgeKeeper:   stopForgeKeeper,
+		stopKASHeal:       stopKASHeal,
+		stopToolsSteering: stopToolsSteering,
+		stopApp:           stopApp,
+		waitSignIn:        vault.Wait,
+		roots:             roots,
 	}, nil
 }
 
@@ -364,8 +368,9 @@ func (a *App) Run() error {
 	return err
 }
 
-// Shutdown stops background services in reverse order. Every member is treated as optional: a
-// panic on a service never started would abort the teardown of the rest.
+// Shutdown stops background services, mostly in reverse order; a comment marks each step whose
+// position is load-bearing. Every member is treated as optional: a panic on a service never
+// started would abort the teardown of the rest.
 func (a *App) Shutdown() {
 	callIfSet(a.stopPRPoller)
 	callIfSet(a.stopForgeKeeper)
@@ -381,15 +386,19 @@ func (a *App) Shutdown() {
 	if a.mcpPrewarm != nil {
 		a.mcpPrewarm.Stop()
 	}
-	if a.tools != nil {
-		a.tools.Close()
-	}
 	// Immediately BEFORE the runtime's teardown and no earlier: sooner would signal the
 	// push service's Done while the poller that consults it is still running.
 	callIfSet(a.stopApp)
 	a.shutdownHub()
 	// After the runtime's teardown, which may still call the vault: a renewal's save lands before exit.
 	callIfSet(a.waitSignIn)
+	// Last: the boot regeneration may wait in Inventory, which takes no ctx (each probe keeps
+	// toolbelt's own 10s timeout), so the wait can outlast a stop and must not hold back the two
+	// above. A job event after the hub's teardown is dropped.
+	callIfSet(a.stopToolsSteering)
+	if a.tools != nil {
+		a.tools.Close()
+	}
 	runtime.KeepAlive(a.roots)
 }
 
@@ -433,9 +442,11 @@ func cancelUnless(built *bool, cancel context.CancelFunc) {
 func chatRetention(ctx context.Context, configDir string) time.Duration {
 	days, ok, err := settings.FieldStrict[int](ctx, configDir, settings.KeyChatRetentionDays)
 	if err != nil {
-		slog.Error("chat retention: config.json is present but unreadable; purged nothing this pass rather than applying the default window",
-			"key", settings.KeyChatRetentionDays,
-			"default_days", settings.DefaultChatRetentionDays, "error", err)
+		if !isCtxErr(err) {
+			slog.Error("chat retention: config.json is present but unreadable; purged nothing this pass rather than applying the default window",
+				"key", settings.KeyChatRetentionDays,
+				"default_days", settings.DefaultChatRetentionDays, "error", err)
+		}
 		return 0
 	}
 	if !ok {
@@ -546,7 +557,7 @@ type forgeSteering struct {
 	// must not outlive the process.
 	appCtx   context.Context
 	m        *forges.Manager
-	generate func(context.Context)
+	generate func(context.Context) error
 	last     steering.ForgeSnapshot
 	mu       sync.Mutex
 }
@@ -564,7 +575,7 @@ func (s *forgeSteering) sync() {
 	s.mu.Unlock()
 	// Generate scans the workspace, so an unmoved snapshot skips it.
 	if changed {
-		s.generate(s.appCtx)
+		regenerateSteering(s.appCtx, s.generate)
 	}
 }
 
@@ -606,6 +617,10 @@ func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	githubToken func(context.Context) (string, error),
 ) (*toolbelt.Engine, error) {
+	toolsDir, err := cfg.Tools.use()
+	if err != nil {
+		return nil, err
+	}
 	catalogRefresh := &toolbelt.CatalogRefresh{
 		URL:      cfg.ToolCatalogURL,
 		Require:  cfg.ToolCatalogRequire,
@@ -613,8 +628,8 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	}
 	toolsEngine, err := toolbelt.New(&toolbelt.Config{
 		ConfigDir: cfg.ConfigDir,
-		ToolsDir:  cfg.ToolsDir,
-		// The engine EXECUTES what it finds here and this dir leads PATH, over a volume
+		ToolsDir:  toolsDir,
+		// The engine EXECUTES what it finds here and this dir is on PATH, over a volume
 		// the operator reshapes by hand. The refusal must NOT be fatal: survivableToolsFailure.
 		VerifyRootIntegrity: true,
 		CatalogPath:         cfg.ToolCatalogPath,
@@ -668,6 +683,45 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	// The app's lifetime, not Background — see the OnJobChanged spawn above.
 	go h.EnsureCodeIntelligence(appCtx)
 	return toolsEngine, nil
+}
+
+func newSteering(cfg *Config) *steering.Generator {
+	toolsDir, _ := cfg.Tools.use()
+	return steering.New(cfg.WorkDir, cfg.ConfigDir, toolsDir)
+}
+
+// regenerateSteering runs generate and logs its failure at ERROR, except the ctx's own error, which
+// is a quiet stop. It judges the error alone, so a write failing while a cancel is pending logs.
+func regenerateSteering(ctx context.Context, generate func(context.Context) error) {
+	err := generate(ctx)
+	if err == nil || isCtxErr(err) {
+		return
+	}
+	slog.Error("steering: environment.md not written", "error", err)
+}
+
+// isCtxErr reports a cancellation or deadline at any depth.
+func isCtxErr(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// wireToolsSteering lists the engine's installed tools in environment.md and regenerates it off the
+// boot path, since a first inventory runs every tool's probe; without that regeneration the file
+// lists no tools until the next session opens. stop cancels that regeneration and waits for it with
+// no grace, unlike runBackground: the engine's Inventory ignores the context, and Shutdown closes
+// the engine right after stop.
+func wireToolsSteering(appCtx context.Context, tools *toolsSlot, steer *steering.Generator) (stop func()) {
+	steer.SetToolsSnapshot(tools.installedTools)
+	ctx, cancel := context.WithCancel(appCtx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		regenerateSteering(ctx, steer.Generate)
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 // githubTokenFor is the tools engine's GitHub credential: the github.com connection's

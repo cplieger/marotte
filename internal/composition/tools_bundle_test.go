@@ -82,7 +82,7 @@ func TestBundledTools_NamesNoForgeCLI(t *testing.T) {
 // buildToolsEngine passes is the one under test.
 func TestToolsSeed_IsTheFourLanguageServerTemplates(t *testing.T) {
 	configDir, toolsDir := fitTree(t)
-	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir, WorkDir: t.TempDir()}, testRuntime(t), nil)
+	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}, WorkDir: t.TempDir()}, testRuntime(t), nil)
 	if err != nil || engine == nil {
 		t.Fatalf("buildToolsEngine over a fit root = (%v, %v), want an engine", engine, err)
 	}

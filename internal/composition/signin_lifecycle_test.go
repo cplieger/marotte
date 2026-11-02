@@ -33,10 +33,10 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
-// TestApp_ShutdownWaitsForTheSignInVaultLast drives App.Shutdown: the vault's goroutines end with the app's
-// lifetime and the runtime teardown may still ask the vault for a credential, so the wait comes after both and
-// Shutdown returns only once it does.
-func TestApp_ShutdownWaitsForTheSignInVaultLast(t *testing.T) {
+// TestApp_ShutdownWaitsForTheSignInVaultAfterTheRuntime drives App.Shutdown: the vault's goroutines end with
+// the app's lifetime and the runtime teardown may still ask the vault for a credential, so the wait comes after
+// both and Shutdown returns only once it does.
+func TestApp_ShutdownWaitsForTheSignInVaultAfterTheRuntime(t *testing.T) {
 	logs := &lockedBuffer{}
 	capture.SwapDefault(t, slog.New(slog.NewTextHandler(logs, nil)))
 

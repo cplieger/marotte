@@ -23,13 +23,13 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
 	isRoot := git.IsRepo(ctx, workDir)
 	b.WriteString("## Workspace\n\n")
 	if isRoot {
-		b.WriteString("The workspace root (`/workspace`) is itself a git repository.\n\n")
+		b.WriteString("The workspace root (`" + workDir + "`) is itself a git repository.\n\n")
 	}
 	if len(repos) > 0 {
 		b.WriteString("### Git repositories\n\n")
-		b.WriteString("Multiple repos coexist under `/workspace`. ")
+		b.WriteString("Multiple repos coexist under `" + workDir + "`. ")
 		b.WriteString("Use the `cwd` parameter in shell commands to target a specific repo ")
-		b.WriteString("(e.g. `cwd: \"myrepo\"` runs in `/workspace/myrepo/`). ")
+		b.WriteString("(e.g. `cwd: \"myrepo\"` runs in `" + workDir + "/myrepo/`). ")
 		b.WriteString("File paths like `myrepo/src/main.go` work with the file tools ")
 		b.WriteString("(read_file, read_code, grep_search).\n\n")
 		for _, r := range repos {

@@ -15,21 +15,21 @@ import (
 // bridge.Notify carries no deadline.
 const ignorePushTimeout = 10 * time.Second
 
-// readAgentIgnoreFiles resolves the list sent to KAS and reports whether the settings
-// document could be read. An absent key is a successful read meaning the floor.
-func readAgentIgnoreFiles(ctx context.Context, configDir string) (files []string, ok bool) {
+// readAgentIgnoreFiles resolves the list sent to KAS and returns the settings read's error, with
+// the floor alone beside it. An absent key is a successful read meaning the floor.
+func readAgentIgnoreFiles(ctx context.Context, configDir string) ([]string, error) {
 	list, _, err := settings.FieldStrict[[]string](ctx, configDir, settings.KeyAgentIgnoreFiles)
 	if err != nil {
-		return []string{settings.AgentIgnoreFloor}, false
+		return []string{settings.AgentIgnoreFloor}, err
 	}
-	return settings.AgentIgnoreList(list), true
+	return settings.AgentIgnoreList(list), nil
 }
 
 // spawnIgnoreFiles resolves EngineOpts.IgnoreFiles for the engine spawn. An unreadable
 // document yields the FLOOR: sending nothing would leave `.kiroignore` unenforced for the session.
 func spawnIgnoreFiles(ctx context.Context, configDir string) []string {
-	files, ok := readAgentIgnoreFiles(ctx, configDir)
-	if !ok {
+	files, err := readAgentIgnoreFiles(ctx, configDir)
+	if err != nil && !isCtxErr(err) {
 		slog.Warn("agent ignore files: settings unreadable; this spawn enforces only the floor",
 			"key", settings.KeyAgentIgnoreFiles)
 	}

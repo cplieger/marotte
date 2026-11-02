@@ -31,8 +31,11 @@ func (rt *Runtime) SetCodeIntelligence(lspConfigPath string, gate func() bool) {
 }
 
 // EnsureCodeIntelligence initializes code intelligence when needed. Safe from any goroutine;
-// concurrent callers coalesce, and the guard re-arms on failure.
+// concurrent callers coalesce, and the guard re-arms on failure. A cancelled ctx is a no-op.
 func (rt *Runtime) EnsureCodeIntelligence(ctx context.Context) {
+	if ctx.Err() != nil {
+		return // shutting down: the gate's probes would run for an init that can only fail
+	}
 	ci := rt.codeIntel.Load()
 	if ci == nil || ci.path == "" || ci.gate == nil {
 		return // not wired (tests, or activation disabled)

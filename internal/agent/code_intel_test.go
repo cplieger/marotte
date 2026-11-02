@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -42,6 +43,18 @@ func TestEnsureCodeIntelligence_Guards(t *testing.T) {
 		h.EnsureCodeIntelligence(t.Context())
 		if h.ciBusy.Load() {
 			t.Error("in-flight guard left set on the closed-gate path")
+		}
+	})
+
+	t.Run("cancelled ctx is a no-op", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		gateCalled := false
+		h.SetCodeIntelligence(cfgPath, func() bool { gateCalled = true; return true })
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		h.EnsureCodeIntelligence(ctx)
+		if gateCalled {
+			t.Error("gate consulted, running every tool's probe, for an init a cancelled ctx can only fail")
 		}
 	})
 }

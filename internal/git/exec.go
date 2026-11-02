@@ -228,7 +228,7 @@ func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 		// controls), so no parser may drop its quote handling.
 		"-c", "core.quotePath=false",
 	}, args...)
-	// argv[0] is an absolute systembin path, not the bare name: PATH[0] is the toolbelt engine's
+	// argv[0] is an absolute systembin path, not the bare name: PATH can hold the toolbelt engine's
 	// link directory on the persistent volume, so a planted `git` would run as the server outside
 	// Cedar. A miss refuses: one site's fallback voids the pin everywhere.
 	gitBin, ok := resolveGitBinary()

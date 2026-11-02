@@ -8,7 +8,6 @@ require (
 	github.com/cplieger/httpx/v5 v5.2.0 // indirect
 	github.com/cplieger/scheduler/v4 v4.3.0 // indirect
 	github.com/cplieger/urlform v1.5.0 // indirect
-	github.com/cplieger/webhttp/v3 v3.0.3 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect

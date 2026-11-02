@@ -12,7 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// Every chat runs from /workspace, so KAS injects only Global-scope memories; this section
+// Every chat runs from workDir, so KAS injects only Global-scope memories; this section
 // gives the agent each clone's tag and when to ask.
 
 // writeMemory writes the Memory section, or nothing when the Memory setting is
@@ -27,7 +27,7 @@ func writeMemory(ctx context.Context, b *strings.Builder, workDir, configDir str
 		return
 	}
 	b.WriteString("## Memory\n\n")
-	b.WriteString("Your memory index at session start shows only the Global scope, because every chat starts in `/workspace`. ")
+	b.WriteString("Your memory index at session start shows only the Global scope, because every chat starts in `" + workDir + "`. ")
 	b.WriteString("Each repository below has its own scope tag. ")
 	b.WriteString("When you start working in one of them, run `memory list` with `filter` set to its tag to read what is stored for it. ")
 	b.WriteString("To save a fact about a repository, run `memory add` with a `path` inside that repository, so it is filed under the repository's tag rather than Global.\n\n")
@@ -46,7 +46,7 @@ func writeMemory(ctx context.Context, b *strings.Builder, workDir, configDir str
 		tagged++
 	}
 	if tagged == 0 {
-		b.WriteString("No repository under `/workspace` has an `origin` remote KAS can tag, so repository facts will be filed under Global.\n")
+		b.WriteString("No repository under `" + workDir + "` has an `origin` remote KAS can tag, so repository facts will be filed under Global.\n")
 	}
 	b.WriteString("\n")
 }

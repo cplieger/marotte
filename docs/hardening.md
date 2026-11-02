@@ -41,7 +41,7 @@ kiro-cli's own telemetry is on by default, as in kiro-cli. The **kiro-cli teleme
 
 kiro-cli is downloaded on first start, not built into the image, because the AWS Customer Agreement governs passing it on. You accept that agreement by starting the container. A newer kiro-cli arrives with a newer image tag. kiro-cli's own self-update is switched off.
 
-The download is checked against a SHA-256 checksum pinned for your architecture before anything is installed. Each version goes into its own folder under `/config/tools/kiro-cli-versions/<version>/`, and it is checked again on every start. A replaced or half-restored install is refused rather than run. Before installing, marotte checks who can write to the folders on the way. It refuses when any account other than the container's own or root can, because the container runs what lands there. `TRUSTED_INSTALL_UIDS` in [Configuration](configuration.md) is for a volume where that is expected.
+The download is checked against a SHA-256 checksum pinned for your architecture before anything is installed. Each version goes into its own folder under `kiro-cli-versions/<version>/` in the tools folder (by default `/config/tools`, moved by `MAROTTE_TOOLS_DIR`), and it is checked again on every start. A replaced or half-restored install is refused rather than run. Before installing, marotte checks who can write to the folders on the way. It refuses when any account other than the container's own or root can, because the container runs what lands there. `TRUSTED_INSTALL_UIDS` in [Configuration](configuration.md) is for a volume where that is expected.
 
 ## The image
 
