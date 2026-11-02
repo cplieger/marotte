@@ -5,95 +5,74 @@ package archive
 
 import (
 	"context"
-	"sync"
+	"errors"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// A directory without one is not a chat.
-const headerFileName = "chat.json"
+// ErrMissingHook refuses a scheduler built without a hook it cannot run without.
+var ErrMissingHook = errors.New("chat purge: a required hook is missing")
 
-// RetentionHeader is the projection of a chat a retention decision reads. Nothing
-// else: a chat's messages, blocks, tool calls and diffs decide nothing here and
-// cost megabytes to decode. The store implements the read.
-type RetentionHeader struct {
-	// SessionChain is every KAS session the chat has run on, current one last.
+// PurgeOutcome is what PurgeIdle did with one chat.
+type PurgeOutcome int
+
+const (
+	// PurgeAbsent means the record did not exist.
+	PurgeAbsent PurgeOutcome = iota
+	// PurgeKept means the record stays.
+	PurgeKept
+	// PurgePurged means the record was removed.
+	PurgePurged
+)
+
+// The reasons a chat past retention is kept, one field each on the pass's count line. The fact kinds match
+// marotte.KeepKind's answers.
+const (
+	KeptByTab          = marotte.KeepKindTab
+	KeptByRun          = marotte.KeepKindRun
+	KeptByRunTab       = marotte.KeepKindRunTab
+	KeptByTurn         = marotte.KeepKindTurn
+	KeptByUnknown      = "unknown"
+	KeptByPending      = "pending"
+	KeptByUnreconciled = "unreconciled"
+	KeptByUnattributed = "unattributed"
+	KeptByWords        = "words"
+)
+
+var keptByKinds = []string{
+	KeptByTab, KeptByRun, KeptByRunTab, KeptByTurn, KeptByUnknown,
+	KeptByPending, KeptByUnreconciled, KeptByUnattributed, KeptByWords,
+}
+
+// PurgeVerdict is PurgeIdle's answer for one chat.
+type PurgeVerdict struct {
+	// Deadline is set only for a chat kept by age: the instant it becomes purgeable.
+	Deadline time.Time
+	// KeptBy is set only for a chat kept past the cutoff: the first reason found, one of the KeptBy constants.
+	KeptBy string
+	// SessionChain is set only for Purged, read from the record the call removed.
 	SessionChain []string
-	// UpdatedAt is last activity in Unix milliseconds; zero or negative means the
-	// chat records none and purgeOne falls back to the file mtime.
-	UpdatedAt int64
-	// Drafting reports words written and not sent: composer text, which
-	// Store.SetDraft writes WITHOUT stamping UpdatedAt, or a queued follow-up.
-	Drafting bool
+	Outcome      PurgeOutcome
 }
 
 // StoreAccess is what retention needs from the chat store.
 type StoreAccess interface {
-	// Lock returns the per-chat mutex.
-	Lock(chatID marotte.ChatID) *sync.Mutex
-	// Remove deletes the chat and records its tombstone, returning the `chats`
-	// version the removal minted. The caller must hold Lock for chatID across
-	// this call.
-	Remove(chatID marotte.ChatID) (string, error)
 	// Dir returns the store's base directory.
 	Dir() string
-	// LoadRetentionHeader reads a chat's retention projection without
-	// materializing its messages.
-	LoadRetentionHeader(chatID marotte.ChatID) (RetentionHeader, error)
+	// PurgeIdle removes chatID when its own record, read under the record lock, says it may go; see
+	// chat.Store.PurgeIdle.
+	PurgeIdle(ctx context.Context, chatID marotte.ChatID, cutoff time.Time) (PurgeVerdict, error)
 }
 
-// Service implements the archive lifecycle operations.
+// Service runs purge passes over a store.
 type Service struct {
 	store   StoreAccess
 	onPurge func(chatID marotte.ChatID, sessionChain []string)
-	// broadcast carries the chat_deleted frame a purge produces to every client;
-	// nil drops it.
-	broadcast func(ctx context.Context, evt marotte.ServerEvent)
-	// isLive reports a running bridge; such a chat is never purged, however old.
-	isLive func(chatID marotte.ChatID) bool
-	// hasOpenTab reports an open TAB, a different fact from isLive: a reader can
-	// have a chat open with no bridge running.
-	hasOpenTab func(chatID marotte.ChatID) bool
 }
 
-// New creates an archive Service backed by the given StoreAccess.
-func New(store StoreAccess, opts ...Option) *Service {
-	s := &Service{store: store}
-	for _, opt := range opts {
-		opt(s)
-	}
-	return s
-}
-
-// Option configures the archive Service.
-type Option func(*Service)
-
-// WithLiveChats registers the predicate reporting active use. A live chat is
-// exempt from purging regardless of age; retention is about abandoned work.
-// Injected because this package cannot see the runtime that owns bridges.
-func WithLiveChats(fn func(chatID marotte.ChatID) bool) Option {
-	return func(s *Service) { s.isLive = fn }
-}
-
-// WithOpenTabs registers the predicate reporting an OPEN TAB, which exempts a chat from purging
-// regardless of age: reading a chat stamps nothing the age test can see. Injected because this
-// package cannot see the tab store.
-func WithOpenTabs(fn func(chatID marotte.ChatID) bool) Option {
-	return func(s *Service) { s.hasOpenTab = fn }
-}
-
-// WithBroadcaster registers the SSE fan-out a purge announces its deletions
-// through. A purge is a delete like any other, so a client holding the row must
-// learn of it the same way: through chat_deleted, stamped with the `chats`
-// version Remove minted.
-func WithBroadcaster(fn func(ctx context.Context, evt marotte.ServerEvent)) Option {
-	return func(s *Service) { s.broadcast = fn }
-}
-
-// WithOnPurge registers a callback fired after a chat is purged, carrying every
-// KAS session it ran on, read before the file was removed. The purge reaps its OWN
-// session directories through this rather than leaning on the orphan sweep, whose
-// keep-list is derived by reading every chat file.
-func WithOnPurge(fn func(chatID marotte.ChatID, sessionChain []string)) Option {
-	return func(s *Service) { s.onPurge = fn }
+// New creates a Service. onPurge receives every chat a pass removed with its session chain, after the record lock
+// is released; it must not be nil.
+func New(store StoreAccess, onPurge func(chatID marotte.ChatID, sessionChain []string)) *Service {
+	return &Service{store: store, onPurge: onPurge}
 }

@@ -886,11 +886,6 @@ func (bc *bridgeCoordinator) bridgeFor(chatID marotte.ChatID) *sharedBridge {
 	return bc.bridge.mgr.get(chatID)
 }
 
-// HasResidentSession reports whether a chat has a resident session; retention never purges such a chat (archive.WithLiveChats).
-func (rt *Runtime) HasResidentSession(chatID marotte.ChatID) bool {
-	return rt.bridge.mgr.get(chatID) != nil
-}
-
 // TurnLive reports whether the reader must treat the chat as running: its own turn, an
 // admitted prompt awaiting its bracket, or a held slot (chat.WithLiveTurn).
 func (rt *Runtime) TurnLive(chatID marotte.ChatID) bool {

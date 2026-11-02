@@ -23,9 +23,6 @@ func (s *Store) lock(chatID marotte.ChatID) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
-// Lock returns the per-chat mutex for the archive package.
-func (s *Store) Lock(chatID marotte.ChatID) *sync.Mutex { return s.lock(chatID) }
-
 // Dir returns the store's base directory.
 func (s *Store) Dir() string { return s.dir }
 

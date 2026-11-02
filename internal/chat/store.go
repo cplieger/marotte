@@ -64,28 +64,23 @@ type OpenTurnTail struct {
 // without it, an append arriving after a concurrent Delete would re-create the chat
 // directory as a ghost row.
 type Store struct {
-	broadcast  broadcaster
-	versions   *subject.Versions
-	epoch      func() string
-	listScans  listFlight
-	onPurge    func(chatID marotte.ChatID, sessionChain []string)
-	isLive     func(chatID marotte.ChatID) bool
-	hasOpenTab func(chatID marotte.ChatID) bool
-	live       func(chatID marotte.ChatID) bool
-	openTurns  func(chatID marotte.ChatID) []OpenTurnTail
-	tombstone  map[marotte.ChatID]tombstone
-	archive    *archive.Service
-	dequeued   dequeues
-	locks      sync.Map
-	logs       sync.Map
-	dir        string
-	index      searchIndex
-	fileCap    chatFileCap
+	broadcast broadcaster
+	tombstone map[marotte.ChatID]tombstone
+	versions  *subject.Versions
+	epoch     func() string
+	live      func(chatID marotte.ChatID) bool
+	openTurns func(chatID marotte.ChatID) []OpenTurnTail
+	locks     sync.Map
+	logs      sync.Map
+	keep      keepSets
+	dequeued  dequeues
+	listScans listFlight
+	dir       string
+	index     searchIndex
 	// boot is minted once per process; a process-scope keep fact under another boot id is dead.
-	boot        string
-	keep        keepSets
-	archiveOnce sync.Once
-	tombMu      sync.Mutex
+	boot    string
+	fileCap chatFileCap
+	tombMu  sync.Mutex
 }
 
 // tombstoneTTL is how long a deleted chat id blocks re-creation via Mutate: longer
@@ -159,18 +154,6 @@ func WithEpoch(fn func() string) StoreOption {
 	return func(s *Store) { s.epoch = fn }
 }
 
-// WithLive registers the live-chat predicate purging exempts. See
-// archive.WithLiveChats.
-func WithLive(fn func(chatID marotte.ChatID) bool) StoreOption {
-	return func(s *Store) { s.isLive = fn }
-}
-
-// WithOpenTab registers retention's second exemption: a chat with an open TAB is
-// never purged, however old. See archive.WithOpenTabs for what that costs.
-func WithOpenTab(fn func(chatID marotte.ChatID) bool) StoreOption {
-	return func(s *Store) { s.hasOpenTab = fn }
-}
-
 // WithLiveTurn registers the runtime's turn-in-flight predicate, so this package's
 // HTTP surface can STATE whether the chat's own turn is live rather than infer it
 // from the log. Injected post-construction because the agent runtime needs the
@@ -195,13 +178,6 @@ func (s *Store) isLiveChat(chatID marotte.ChatID) bool {
 		return false
 	}
 	return s.live(chatID)
-}
-
-// WithOnPurge registers a callback fired after a retention purge removes a chat.
-// sessionChain carries every KAS session the chat ran on, captured before the chat
-// directory was removed, so the purge can reap its own session directories.
-func WithOnPurge(fn func(chatID marotte.ChatID, sessionChain []string)) StoreOption {
-	return func(s *Store) { s.onPurge = fn }
 }
 
 func chatIDPattern(id marotte.ChatID) bool {
@@ -525,11 +501,7 @@ func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) (sessionChain
 	if rmErr != nil && !missing {
 		return nil, rmErr
 	}
-	if s.broadcast != nil {
-		frame := marotte.NewEvent(marotte.EventChatDeleted, chatID, marotte.ChatDeletedPayload{ID: string(chatID)})
-		frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
-		s.broadcast.Broadcast(ctx, frame)
-	}
+	s.broadcastDeleted(ctx, chatID, chatsVersion)
 	if missing {
 		slog.Info("chat delete: no-op on missing chat", "chat_id", chatID)
 	} else {
@@ -540,4 +512,15 @@ func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) (sessionChain
 		slog.Debug("chat delete", "chat_id", chatID, "tombstones", tombCount)
 	}
 	return sessionChain, nil
+}
+
+// broadcastDeleted announces a removal stamped with the `chats` version Remove minted. It reads s.broadcast at call
+// time, so a broadcaster wired after construction still reaches every delete.
+func (s *Store) broadcastDeleted(ctx context.Context, chatID marotte.ChatID, chatsVersion string) {
+	if s.broadcast == nil {
+		return
+	}
+	frame := marotte.NewEvent(marotte.EventChatDeleted, chatID, marotte.ChatDeletedPayload{ID: string(chatID)})
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
+	s.broadcast.Broadcast(ctx, frame)
 }

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat/archive"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -655,6 +656,92 @@ func (s *Store) ReconcileKeep(ctx context.Context, chatID marotte.ChatID, fn fun
 	s.settlePending(chatID, flushed)
 	s.markReconciled(chatID)
 	return nil
+}
+
+// PurgeIdle removes chatID when its record, read under the record lock, holds no live keep fact, no unsent words,
+// and a last use before cutoff, and the reconcile has passed over it this boot. A record that cannot be read is never
+// removed: the error is returned and the record stays. A removal marks the chat and its chain in teardown until the
+// caller's EndTeardown, and broadcasts chat_deleted.
+func (s *Store) PurgeIdle(ctx context.Context, chatID marotte.ChatID, cutoff time.Time) (archive.PurgeVerdict, error) {
+	if err := ctx.Err(); err != nil {
+		return archive.PurgeVerdict{}, err
+	}
+	m := s.lock(chatID)
+	m.Lock()
+	v, chatsVersion, err := s.purgeIdleLocked(ctx, chatID, cutoff)
+	m.Unlock()
+	if err != nil || v.Outcome != archive.PurgePurged {
+		return v, err
+	}
+	s.broadcastDeleted(ctx, chatID, chatsVersion)
+	return v, nil
+}
+
+func (s *Store) purgeIdleLocked(ctx context.Context, chatID marotte.ChatID, cutoff time.Time) (archive.PurgeVerdict, string, error) {
+	kept := archive.PurgeVerdict{Outcome: archive.PurgeKept}
+	c, err := s.load(ctx, chatID)
+	if errors.Is(err, os.ErrNotExist) {
+		return archive.PurgeVerdict{Outcome: archive.PurgeAbsent}, "", nil
+	}
+	if err != nil {
+		return kept, "", err
+	}
+	if c.ID != string(chatID) {
+		return kept, "", errChatIDMismatch(chatID, c.ID)
+	}
+	use := lastUse(c)
+	if by := s.keptBy(ctx, chatID, c); by != "" {
+		if use > 0 && time.UnixMilli(use).Before(cutoff) {
+			kept.KeptBy = by
+		}
+		return kept, "", nil
+	}
+	if use <= 0 {
+		slog.Warn("chat purge: a chat records no last use; kept", "chat_id", chatID)
+		return kept, "", nil
+	}
+	if !time.UnixMilli(use).Before(cutoff) {
+		kept.Deadline = time.UnixMilli(use).Add(time.Since(cutoff))
+		return kept, "", nil
+	}
+	chain := c.SessionChain()
+	s.beginTeardown(chatID, chain)
+	chatsVersion, err := s.Remove(chatID)
+	if err != nil {
+		s.EndTeardown(chatID, chain)
+		return kept, "", err
+	}
+	return archive.PurgeVerdict{Outcome: archive.PurgePurged, SessionChain: chain}, chatsVersion, nil
+}
+
+// keptBy answers the first reason c must stay whatever its age, "" when there is none. Pending holds are flushed onto
+// the record on the way; a failed flush leaves them pending, which keeps the chat either way.
+func (s *Store) keptBy(ctx context.Context, chatID marotte.ChatID, c *marotte.Chat) string {
+	if flushed := s.flushPendingLocked(chatID, c); len(flushed) > 0 {
+		if err := s.writeHeader(ctx, chatID, c); err == nil {
+			s.settlePending(chatID, flushed)
+		}
+		return archive.KeptByPending
+	}
+	if !s.reconciled(chatID) {
+		return archive.KeptByUnreconciled
+	}
+	if s.anyUnattributed() {
+		return archive.KeptByUnattributed
+	}
+	for _, key := range slices.Sorted(maps.Keys(c.Keep)) {
+		if !s.factLive(key, c.Keep[key]) {
+			continue
+		}
+		if kind, _ := marotte.KeepKind(key); kind != "" {
+			return kind
+		}
+		return archive.KeptByUnknown
+	}
+	if c.Draft != "" || len(c.QueuedPrompts) > 0 {
+		return archive.KeptByWords
+	}
+	return ""
 }
 
 // lastUse is the instant the purge ages a chat from: the later of its last use and its keep fill-in.

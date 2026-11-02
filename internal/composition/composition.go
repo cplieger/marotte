@@ -262,31 +262,14 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, err
 	}
 
-	retention := func() time.Duration { return chatRetention(ctx, cfg.ConfigDir) }
-	purgeScheduler := chat.NewPurgeScheduler(chatStore, retention, func(pctx context.Context) archive.PurgeResult {
-		window, purge := runRetention(pctx, cfg.ConfigDir)
-		if !purge {
-			return archive.PurgeResult{}
-		}
-		r := h.PurgeParentlessRuns(pctx, window)
-		return archive.PurgeResult{NextDeadline: r.NextDeadline, Purged: r.Purged, Kept: r.Kept, Errors: r.Errors}
-	})
-	// The purge scans the directory live chats live in, so this predicate keeps an old-but-open
-	// conversation out of it.
-	chat.WithLive(h.HasResidentSession)(chatStore)
-	chat.WithOpenTab(h.Membership().HasOpenTab)(chatStore)
-	// Not retention predicates: the transcript GET reads both. Injected post-construction because
-	// the store cannot import the agent.
+	// The transcript GET reads both. Injected post-construction because the store cannot import
+	// the agent.
 	chat.WithLiveTurn(h.TurnLive)(chatStore)
 	chat.WithOpenTurns(h.OpenTurns)(chatStore)
-	chat.WithOnPurge(heldUnlessDraining(h.HoldUnlessDraining, func(id marotte.ChatID, sessionChain []string) {
-		// After the per-chat record lock is released, keeping the lock order acyclic.
-		// RetentionClose reaps the chain itself, so no second reap here.
-		h.Membership().RetentionClose(appCtx, id, sessionChain)
-	}))(chatStore)
-	// An exempt chat contributes no wake-up deadline, so closing its tab must trigger
-	// a pass; without this the purge noticed up to an hour later.
-	h.Membership().SetRetentionWake(purgeScheduler.Trigger)
+	purgeScheduler, err := wireRetention(appCtx, cfg, chatStore, h)
+	if err != nil {
+		return nil, err
+	}
 	purgeScheduler.Start(appCtx)
 
 	previewSigner, err := preview.NewSigner()
@@ -834,7 +817,7 @@ func openSpecApprovalStore(dir string) *specapproval.Store {
 	return st
 }
 
-// heldUnlessDraining wraps the store's purge callback so closeChain runs held on the runtime's in-flight wait
+// heldUnlessDraining wraps the purge's OnPurge so closeChain runs held on the runtime's in-flight wait
 // (hold): the purge scheduler outlives the runtime's Shutdown. Skipped once Shutdown began; the next boot's
 // orphan-session sweep, parentless-run purge and tab prune reap what the chain left.
 func heldUnlessDraining(hold func() (release func(), ok bool),
