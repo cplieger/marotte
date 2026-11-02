@@ -80,6 +80,10 @@ func (s *Store) Open(ctx context.Context, spec marotte.OpenTab) (subject marotte
 			Parent: spec.Parent,
 			Owns:   spec.Owns,
 		}
+		if spec.Kind == marotte.TabKindRun && spec.Launch != nil {
+			subject.LaunchChats = slices.Clone(spec.Launch.Chats)
+			subject.LaunchResolved = true
+		}
 		st.tabs = insert(st.tabs, &subject)
 		created = true
 		return true, nil
@@ -145,7 +149,7 @@ func (s *Store) Reorder(ctx context.Context, ids []string) (uint64, error) {
 			seen[id] = struct{}{}
 			next = append(next, t)
 		}
-		if slices.Equal(st.tabs, next) {
+		if slices.EqualFunc(st.tabs, next, func(a, b marotte.TabSubject) bool { return a.ID == b.ID }) {
 			return false, nil
 		}
 		st.tabs = next

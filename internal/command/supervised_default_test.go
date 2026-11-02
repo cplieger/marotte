@@ -35,6 +35,7 @@ func newSupervisedMembership(t *testing.T, chats chatStore, configDir string) *M
 	return newMembership(&membershipDeps{
 		Chats:             withKeep(chats),
 		Sessions:          claimsOf(chats),
+		Runs:              &fakeRunOwner{},
 		SupervisedDefault: func(ctx context.Context) bool { return supervisedDefaultSetting(ctx, configDir) },
 	})
 }

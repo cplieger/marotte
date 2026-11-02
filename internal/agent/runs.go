@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cplieger/keylock"
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
@@ -58,6 +59,8 @@ type Runs struct {
 	unconfirmed unconfirmedSends
 	// life admits every step-session mutation against a Delete (run_lifecycle.go).
 	life runLifecycle
+	// recorded is the keep-state reconcile's runs/ attribution, which RunsParentedBy reads (run_owner.go).
+	recorded recordedRuns
 	// sweep pauses the running runs while the gate is closed (run_gate.go).
 	sweep gateSweep
 	// hosts serializes, per run, making its launching session resident (ensureResident). hosts, resumes and
@@ -79,8 +82,8 @@ type Runs struct {
 // runChatReader is the chat store as the run surface uses it: session chains and the chat owning a run's parent session.
 type runChatReader interface {
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
-	// ListComplete also reports whether every chat was read, needed to prove a launch session parentless.
-	ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool)
+	// SessionOwners is one fresh owner scan, the attribution every run keep fact and the purge teardown share.
+	SessionOwners(ctx context.Context) chat.OwnerScan
 }
 
 // useLog installs the run record.

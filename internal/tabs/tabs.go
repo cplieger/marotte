@@ -24,11 +24,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"syscall"
 
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/filemode"
+	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -164,7 +166,7 @@ func sanitize(in []marotte.TabSubject) []marotte.TabSubject {
 		return nil
 	}
 	out := make([]marotte.TabSubject, 0, min(len(in), MaxTabs))
-	ids := make(map[string]struct{}, min(len(in), MaxTabs))
+	seenIDs := make(map[string]struct{}, min(len(in), MaxTabs))
 	subjects := make(map[subjectKey]struct{}, min(len(in), MaxTabs))
 	for _, t := range in {
 		if t.ID == "" || len(t.ID) > maxIDBytes {
@@ -173,7 +175,7 @@ func sanitize(in []marotte.TabSubject) []marotte.TabSubject {
 		if checkSubject(t.Kind, t.Ref) != nil {
 			continue
 		}
-		if _, dup := ids[t.ID]; dup {
+		if _, dup := seenIDs[t.ID]; dup {
 			continue
 		}
 		// A duplicate (Kind, Ref) is possible only in a hand-edited file; Open's idempotence needs one.
@@ -181,8 +183,9 @@ func sanitize(in []marotte.TabSubject) []marotte.TabSubject {
 		if _, dup := subjects[key]; dup {
 			continue
 		}
-		ids[t.ID] = struct{}{}
+		seenIDs[t.ID] = struct{}{}
 		subjects[key] = struct{}{}
+		sanitizeLaunch(&t)
 		out = append(out, t)
 		if len(out) == MaxTabs {
 			break
@@ -192,6 +195,19 @@ func sanitize(in []marotte.TabSubject) []marotte.TabSubject {
 		return nil
 	}
 	return out
+}
+
+// sanitizeLaunch keeps a run tab's valid holder ids and clears the launch fields on every other kind. A dropped holder
+// keeps its run-tab fact, since no close can name it.
+func sanitizeLaunch(t *marotte.TabSubject) {
+	if t.Kind != marotte.TabKindRun {
+		t.LaunchChats, t.LaunchResolved = nil, false
+		return
+	}
+	t.LaunchChats = slices.DeleteFunc(slices.Clone(t.LaunchChats), func(h string) bool { return !ids.ValidChatID(h) })
+	if len(t.LaunchChats) == 0 {
+		t.LaunchChats = nil
+	}
 }
 
 // persist writes the whole document atomically. atomicfile verifies the 0600 on the temp

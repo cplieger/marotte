@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -126,7 +127,7 @@ func TestStore_RoundTripsAcrossProcesses(t *testing.T) {
 	if gotVersion != wantVersion {
 		t.Errorf("NewStore(...).List() version = %d, want %d", gotVersion, wantVersion)
 	}
-	if !slices.Equal(gotTabs, wantTabs) {
+	if !reflect.DeepEqual(gotTabs, wantTabs) {
 		t.Errorf("NewStore(...).List() tabs = %+v, want %+v", gotTabs, wantTabs)
 	}
 	if len(gotTabs) == 2 && (gotTabs[0].ID != a.ID || !gotTabs[1].Pinned) {

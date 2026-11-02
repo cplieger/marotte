@@ -3,32 +3,58 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"maps"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
-func newPurgeRig(t *testing.T, runs json.RawMessage, refs map[string]struct{}, complete bool) (*Runtime, *deleteRig) {
+// newPurgeRig seeds one chat per claimed session; complete false makes every owner scan report an unread chat.
+func newPurgeRig(t *testing.T, runs json.RawMessage, claimed []string, complete bool) (*Runtime, *deleteRig) {
 	t.Helper()
-	return newPurgeRigRefs(t, runs, func(context.Context) (map[string]struct{}, bool) { return refs, complete })
+	var scan func(context.Context, chat.OwnerScan) chat.OwnerScan
+	if !complete {
+		scan = func(_ context.Context, s chat.OwnerScan) chat.OwnerScan {
+			s.Complete, s.Skipped = false, append(s.Skipped, "c-unreadable")
+			return s
+		}
+	}
+	h, rig := newPurgeRigScan(t, runs, scan)
+	for i, sess := range claimed {
+		h.chatStore.(*testChatStore).seed(t, marotte.ChatID(fmt.Sprintf("c-claim-%d", i)), func(c *marotte.Chat) {
+			c.RecordSession(sess)
+		})
+	}
+	return h, rig
 }
 
-func newPurgeRigRefs(t *testing.T, runs json.RawMessage, refs func(context.Context) (map[string]struct{}, bool)) (*Runtime, *deleteRig) {
+func newPurgeRigScan(t *testing.T, runs json.RawMessage, scan func(context.Context, chat.OwnerScan) chat.OwnerScan) (*Runtime, *deleteRig) {
 	t.Helper()
-	rig := &deleteRig{results: map[string]json.RawMessage{
-		methodKiroWorkflowList:   runs,
-		methodKiroWorkflowDelete: json.RawMessage(`{}`),
-	}}
+	return newEngineRig(t, map[string]json.RawMessage{methodKiroWorkflowList: runs}, nil, scan)
+}
+
+// newEngineRig is a runtime over a real chat store and a tab store whose engine answers results and rpcErrs, with
+// every delete taken.
+func newEngineRig(
+	t *testing.T, results map[string]json.RawMessage, rpcErrs map[string]*marotte.RPCError,
+	scan func(context.Context, chat.OwnerScan) chat.OwnerScan,
+) (*Runtime, *deleteRig) {
+	t.Helper()
+	rig := &deleteRig{results: map[string]json.RawMessage{methodKiroWorkflowDelete: json.RawMessage(`{}`)}, rpcErrs: rpcErrs}
+	maps.Copy(rig.results, results)
 	st, err := tabs.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("Setup: tabs.NewStore: %v", err)
 	}
 	cs := newTestChatStore()
-	h := newRuntimeOn(t.Context(), testReaperWorkDir, rig.engine(), cs, WithTabs(st), WithSessionReaper(nil, refs))
+	cs.ownerScan = scan
+	h := newRuntimeOn(t.Context(), testReaperWorkDir, rig.engine(), cs, WithTabs(st))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	return h, rig
@@ -70,7 +96,7 @@ func TestPurgeParentlessRuns_DeletesOnlyFinishedUnclaimedRunsPastTheWindow(t *te
 		purgeRow("wf_paused", "paused", "sess_runhost5", old),
 		purgeRow("wf_chat_run", "completed", "sess_chat", old),
 	)
-	h, rig := newPurgeRig(t, runs, map[string]struct{}{"sess_chat": {}}, true)
+	h, rig := newPurgeRig(t, runs, []string{"sess_chat"}, true)
 
 	res := h.PurgeParentlessRuns(t.Context(), 7*24*time.Hour)
 
@@ -109,7 +135,7 @@ func TestPurgeParentlessRuns_ZeroWindowSparesARunATabShows(t *testing.T) {
 		purgeRow("wf_open", "completed", "sess_a", recent),
 		purgeRow("wf_closed", "aborted", "sess_b", recent),
 	)
-	h, rig := newPurgeRig(t, runs, map[string]struct{}{}, true)
+	h, rig := newPurgeRig(t, runs, nil, true)
 	if _, err := h.Membership().OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_open"}, "op-open"); err != nil {
 		t.Fatalf("Setup: OpenTab: %v", err)
 	}
@@ -127,7 +153,7 @@ func TestPurgeParentlessRuns_ZeroWindowSparesARunATabShows(t *testing.T) {
 // A run tab opening during the delete must not point at a run being removed; the open runs inside the RPC.
 func TestPurgeParentlessRuns_ARunTabCannotOpenWhileItsDeleteIsInFlight(t *testing.T) {
 	recent := time.Now().Add(-time.Minute)
-	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_1", "completed", "sess_a", recent)), map[string]struct{}{}, true)
+	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_1", "completed", "sess_a", recent)), nil, true)
 	var openErr error
 	opened := false
 	rig.onCall = func(method string, _ map[string]any) {
@@ -160,10 +186,15 @@ func TestPurgeParentlessRuns_AClaimAfterTheSnapshotSparesTheRun(t *testing.T) {
 	recent := time.Now().Add(-time.Minute)
 	var h *Runtime
 	var claimErr error
-	h, rig := newPurgeRigRefs(t, purgeRuns(t, purgeRow("wf_1", "completed", "sess_run", recent)),
-		func(ctx context.Context) (map[string]struct{}, bool) {
+	claimed := false
+	h, rig := newPurgeRigScan(t, purgeRuns(t, purgeRow("wf_1", "completed", "sess_run", recent)),
+		func(ctx context.Context, before chat.OwnerScan) chat.OwnerScan {
+			if claimed {
+				return before
+			}
+			claimed = true
 			_, claimErr = h.Membership().CreateChatAndOpen(ctx, resumeSession("op-resume", "sess_run"))
-			return map[string]struct{}{}, true
+			return before
 		})
 
 	res := h.PurgeParentlessRuns(t.Context(), 0)
@@ -182,7 +213,7 @@ func TestPurgeParentlessRuns_AClaimAfterTheSnapshotSparesTheRun(t *testing.T) {
 // A claim during the delete is refused, then lands after it.
 func TestPurgeParentlessRuns_AClaimDuringTheDeleteIsRefusedThenLands(t *testing.T) {
 	recent := time.Now().Add(-time.Minute)
-	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_1", "completed", "sess_run", recent)), map[string]struct{}{}, true)
+	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_1", "completed", "sess_run", recent)), nil, true)
 	var claimErr error
 	claimed := false
 	rig.onCall = func(method string, _ map[string]any) {
@@ -215,7 +246,7 @@ func TestPurgeParentlessRuns_AClaimDuringTheDeleteIsRefusedThenLands(t *testing.
 
 func TestPurgeParentlessRuns_AnIncompleteChatScanPurgesNothing(t *testing.T) {
 	old := time.Now().Add(-30 * 24 * time.Hour)
-	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_old", "completed", "sess_x", old)), map[string]struct{}{}, false)
+	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_old", "completed", "sess_x", old)), nil, false)
 
 	h.PurgeParentlessRuns(t.Context(), 0)
 
@@ -226,7 +257,7 @@ func TestPurgeParentlessRuns_AnIncompleteChatScanPurgesNothing(t *testing.T) {
 
 func TestPurgeParentlessRuns_ARunWithNoReadableAgeIsKept(t *testing.T) {
 	runs := purgeRuns(t, map[string]string{"workflowId": "wf_noage", "status": "completed", "parentSessionId": "sess_x"})
-	h, rig := newPurgeRig(t, runs, map[string]struct{}{}, true)
+	h, rig := newPurgeRig(t, runs, nil, true)
 
 	h.PurgeParentlessRuns(t.Context(), 0)
 

@@ -19,9 +19,6 @@ type RunPurgeResult struct {
 // PurgeParentlessRuns deletes finished runs no chat claims once older than window (from last update); zero
 // deletes them all. Shown, live or paused runs and unreadable ages are kept; a chat-launched run goes with its chat.
 func (rt *Runtime) PurgeParentlessRuns(ctx context.Context, window time.Duration) RunPurgeResult {
-	if rt.sessionRefs == nil {
-		return RunPurgeResult{}
-	}
 	// The purge scheduler outlives Shutdown; once draining, the next boot's pass purges.
 	release, ok := rt.lifecycle.enterUnlessDraining()
 	if !ok {
@@ -34,8 +31,8 @@ func (rt *Runtime) PurgeParentlessRuns(ctx context.Context, window time.Duration
 		return RunPurgeResult{}
 	}
 	// After the run list, so a chat created between the reads still claims its run.
-	claimed, complete := rt.sessionRefs(ctx)
-	if !complete {
+	scan := rt.chatStore.SessionOwners(ctx)
+	if !scan.Complete {
 		slog.Warn("run purge: a chat file could not be read, purging nothing this pass")
 		return RunPurgeResult{}
 	}
@@ -47,7 +44,7 @@ func (rt *Runtime) PurgeParentlessRuns(ctx context.Context, window time.Duration
 			continue
 		}
 		// A candidate filter only: admission re-reads under the membership lock.
-		if _, owned := claimed[r.ParentSessionID]; owned {
+		if len(scan.Owners.Of(r.ParentSessionID)) > 0 {
 			continue
 		}
 		rt.purgeCandidate(ctx, r, window, now, &res)

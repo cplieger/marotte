@@ -120,24 +120,28 @@ func TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat(t *testing.T) {
 
 // TestAcceptance_AnEndedRunOpensAsAChildOfItsChat drives the `open_tab` a run's outcome notification
 // sends when clicked, which carries only the workflow id and arrives after the run ended and its lease
-// was released: the run inventory still names the session that launched it.
+// was released: the run inventory still names the session that launched it. A run no source names, or
+// one that names no launching session, could be any chat's, so its new tab is refused.
 func TestAcceptance_AnEndedRunOpensAsAChildOfItsChat(t *testing.T) {
 	for name, tc := range map[string]struct {
-		row        map[string]any
-		wantNested bool
+		row         map[string]any
+		wantNested  bool
+		wantRefused bool
 	}{
 		"launched by the chat's session": {
 			row:        map[string]any{"workflowId": "wf_ended", "name": "publish-pr", "status": "completed", "parentSessionId": "sess_launcher"},
 			wantNested: true,
 		},
-		"launched by no session (scheduled, or from the Workflows page)": {
-			row: map[string]any{"workflowId": "wf_ended", "name": "nightly", "status": "completed"},
+		"listed with no launching session": {
+			row:         map[string]any{"workflowId": "wf_ended", "name": "nightly", "status": "completed"},
+			wantRefused: true,
 		},
 		"launched by a session no chat holds": {
 			row: map[string]any{"workflowId": "wf_ended", "name": "publish-pr", "status": "failed", "parentSessionId": "sess_stranger"},
 		},
 		"listed nowhere": {
-			row: map[string]any{"workflowId": "wf_other", "name": "publish-pr", "status": "completed", "parentSessionId": "sess_launcher"},
+			row:         map[string]any{"workflowId": "wf_other", "name": "publish-pr", "status": "completed", "parentSessionId": "sess_launcher"},
+			wantRefused: true,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -158,6 +162,15 @@ func TestAcceptance_AnEndedRunOpensAsAChildOfItsChat(t *testing.T) {
 				Type:    marotte.CmdOpenTab,
 				Payload: json.RawMessage(`{"kind":"run","ref":"wf_ended","owns":false,"op_id":"opended"}`),
 			})
+			if tc.wantRefused {
+				if rec.Code != http.StatusServiceUnavailable {
+					t.Errorf("open_tab = %d, want 503: %s", rec.Code, rec.Body.String())
+				}
+				if _, ok := subjectFor(readTabsFile(t, r.dir), marotte.TabKindRun, "wf_ended"); ok {
+					t.Error("the refused click opened a run tab")
+				}
+				return
+			}
 			if rec.Code != 200 {
 				t.Fatalf("open_tab = %d, want 200: %s", rec.Code, rec.Body.String())
 			}

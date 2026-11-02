@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/chat/archive"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/tabs"
 )
@@ -58,7 +62,7 @@ func newKeepFixture(t *testing.T) *keepFixture {
 		t.Fatalf("Setup: tabs.NewStore: %v", err)
 	}
 	f := &keepFixture{store: store, chats: &faultyReleases{Store: store}, tabs: &failingOpens{Store: st}}
-	f.mem = newMembership(&membershipDeps{Chats: f.chats, Tabs: f.tabs, Bus: &tabBus{}, Sessions: store})
+	f.mem = newMembership(&membershipDeps{Chats: f.chats, Tabs: f.tabs, Bus: &tabBus{}, Sessions: store, Runs: &fakeRunOwner{}})
 	return f
 }
 
@@ -339,6 +343,233 @@ func TestCreateChatAndOpen_ClaimSessionRefusesASessionItCannotOwn(t *testing.T) 
 			}
 			if _, found, _ := f.store.Lookup(t.Context(), "c-self"); found {
 				t.Error("a refused claim still wrote the record")
+			}
+		})
+	}
+}
+
+// seedTabless writes a record with no tab and no keep fact, bound to session when it is not empty.
+func (f *keepFixture) seedTabless(t *testing.T, id marotte.ChatID, session string) {
+	t.Helper()
+	if _, err := f.store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
+		c.Name = marotte.DefaultChatName
+		if session != "" {
+			c.RecordSession(session)
+		}
+		return true
+	}); err != nil {
+		t.Fatalf("Setup: seed %s: %v", id, err)
+	}
+}
+
+// purgeParked removes id by the retention purge and leaves its teardown running, as OnPurge does until it returns.
+func (f *keepFixture) purgeParked(t *testing.T, id marotte.ChatID) {
+	t.Helper()
+	v, err := f.store.PurgeIdle(t.Context(), id, time.Now().Add(time.Hour))
+	if err != nil || v.Outcome != archive.PurgePurged {
+		t.Fatalf("Setup: PurgeIdle(%s) = %+v, %v; want purged", id, v, err)
+	}
+}
+
+func (f *keepFixture) runTab(t *testing.T, workflowID string) (marotte.TabSubject, bool) {
+	t.Helper()
+	open, _ := f.tabs.List()
+	for _, tab := range open {
+		if tab.Kind == marotte.TabKindRun && tab.Ref == workflowID {
+			return tab, true
+		}
+	}
+	return marotte.TabSubject{}, false
+}
+
+func TestOpenTab_ANewRunTabHoldsItsRunTabFactOnEveryHolder(t *testing.T) {
+	f := newKeepFixture(t)
+	f.seedTabless(t, "c-a", "sess_shared")
+	f.seedTabless(t, "c-b", "sess_shared")
+	f.mem.runs = &fakeRunOwner{holders: map[string][]marotte.ChatID{"wf_1": {"c-a", "c-b"}}}
+	key, _ := marotte.KeyRunTab("wf_1")
+
+	if _, err := f.mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}, "op-run"); err != nil {
+		t.Fatalf("OpenTab(run): %v", err)
+	}
+	for _, id := range []marotte.ChatID{"c-a", "c-b"} {
+		if _, held := f.fact(t, id, key); !held {
+			t.Errorf("%s holds no %s while the run's tab is open", id, key)
+		}
+	}
+	tab, ok := f.runTab(t, "wf_1")
+	if !ok {
+		t.Fatal("no run tab opened")
+	}
+	if !slices.Equal(tab.LaunchChats, []string{"c-a", "c-b"}) || !tab.LaunchResolved {
+		t.Errorf("run tab launch = %v resolved %v, want [c-a c-b] resolved", tab.LaunchChats, tab.LaunchResolved)
+	}
+	if tab.Parent == "" || tab.Parent != f.mem.tabForChat("c-a") {
+		t.Errorf("run tab parent = %q, want the first holder's reopened tab", tab.Parent)
+	}
+
+	if _, _, err := f.mem.closeTab(t.Context(), tab.ID, "op-close"); err != nil {
+		t.Fatalf("closeTab(run): %v", err)
+	}
+	for _, id := range []marotte.ChatID{"c-a", "c-b"} {
+		if _, held := f.fact(t, id, key); held {
+			t.Errorf("%s still holds %s after the user closed the run's tab", id, key)
+		}
+	}
+	if owed := f.tabs.Owed(); len(owed) != 0 {
+		t.Errorf("owed = %+v, want the run tab's releases settled", owed)
+	}
+}
+
+func TestOpenTab_ANewRunTabIsRefusedWhenItsOwnersCannotBeHeld(t *testing.T) {
+	key, _ := marotte.KeyRunTab("wf_1")
+	cases := []struct {
+		name   string
+		setup  func(t *testing.T, f *keepFixture) (runs *fakeRunOwner, spec marotte.OpenTab)
+		status int
+		want   error
+	}{
+		{
+			name: "no source names the run",
+			setup: func(*testing.T, *keepFixture) (*fakeRunOwner, marotte.OpenTab) {
+				return &fakeRunOwner{unknown: map[string]bool{"wf_1": true}}, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}
+			},
+			status: http.StatusServiceUnavailable, want: errRunUnknown,
+		},
+		{
+			name: "the owners could not be read and the caller named an open parent",
+			setup: func(t *testing.T, f *keepFixture) (*fakeRunOwner, marotte.OpenTab) {
+				parent := createChat(t, f.mem, "op-parent")
+				return &fakeRunOwner{chatErr: errors.New("engine draining")},
+					marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1", Parent: parent.Subject.ID}
+			},
+			status: http.StatusServiceUnavailable, want: errRunLauncherUnread,
+		},
+		{
+			name: "the launcher's teardown still runs",
+			setup: func(t *testing.T, f *keepFixture) (*fakeRunOwner, marotte.OpenTab) {
+				f.seedTabless(t, "c-gone", "sess_launch")
+				f.seedTabless(t, "c-a", "")
+				f.purgeParked(t, "c-gone")
+				return &fakeRunOwner{
+					holders: map[string][]marotte.ChatID{"wf_1": {"c-a"}}, parents: map[string]string{"wf_1": "sess_launch"},
+				}, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}
+			},
+			status: http.StatusConflict, want: errRunPurging,
+		},
+		{
+			name: "a holder was purged after its owners were read",
+			setup: func(t *testing.T, f *keepFixture) (*fakeRunOwner, marotte.OpenTab) {
+				f.seedTabless(t, "c-a", "")
+				f.seedTabless(t, "c-gone", "")
+				f.purgeParked(t, "c-gone")
+				return &fakeRunOwner{holders: map[string][]marotte.ChatID{"wf_1": {"c-a", "c-gone"}}},
+					marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}
+			},
+			status: http.StatusConflict, want: errRunPurging,
+		},
+		{
+			name: "a holder's record cannot be read",
+			setup: func(t *testing.T, f *keepFixture) (*fakeRunOwner, marotte.OpenTab) {
+				f.seedTabless(t, "c-a", "")
+				f.seedTabless(t, "c-torn", "")
+				if err := os.WriteFile(filepath.Join(f.store.Dir(), "c-torn", "chat.json"), []byte("{"), 0o600); err != nil {
+					t.Fatalf("Setup: tear c-torn: %v", err)
+				}
+				return &fakeRunOwner{holders: map[string][]marotte.ChatID{"wf_1": {"c-a", "c-torn"}}},
+					marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}
+			},
+			status: http.StatusServiceUnavailable, want: errRunLauncherUnread,
+		},
+		{
+			name: "no run owner is wired",
+			setup: func(*testing.T, *keepFixture) (*fakeRunOwner, marotte.OpenTab) {
+				return nil, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}
+			},
+			status: http.StatusServiceUnavailable, want: errRunLauncherUnread,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newKeepFixture(t)
+			runs, spec := tc.setup(t, f)
+			f.mem.runs = nil
+			if runs != nil {
+				f.mem.runs = runs
+			}
+
+			_, err := f.mem.OpenTab(t.Context(), spec, "op-run")
+
+			if code, _, _ := StatusOf(err); code != tc.status || !errors.Is(err, tc.want) {
+				t.Errorf("OpenTab(run) = %v (status %d), want %v (status %d)", err, code, tc.want, tc.status)
+			}
+			if _, ok := f.runTab(t, "wf_1"); ok {
+				t.Error("a refused open wrote a run tab")
+			}
+			if _, found, _ := f.store.Lookup(t.Context(), "c-a"); found {
+				if _, held := f.fact(t, "c-a", key); held {
+					t.Errorf("c-a holds %s after a refused open: the claims taken before the refusal were not rolled back", key)
+				}
+			}
+		})
+	}
+}
+
+func TestOpenTab_AFailedRunTabWriteRollsBackItsRunTabFacts(t *testing.T) {
+	f := newKeepFixture(t)
+	launcher := marotte.ChatID(createChat(t, f.mem, "op-a").Chat.ID)
+	f.mem.runs = &fakeRunOwner{chats: map[string]marotte.ChatID{"wf_1": launcher}}
+	key, _ := marotte.KeyRunTab("wf_1")
+	f.tabs.fail.Store(true)
+
+	if _, err := f.mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}, "op-run"); err == nil {
+		t.Fatal("OpenTab(run) over a tab store refusing writes = nil, want its failure")
+	}
+	if _, held := f.fact(t, launcher, key); held {
+		t.Errorf("the launcher holds %s for a run tab that never opened", key)
+	}
+	if _, held := f.fact(t, launcher, marotte.KeyTab); !held {
+		t.Error("the failed run tab rolled back the launcher's own tab fact, which its open chat tab still needs")
+	}
+}
+
+func TestCreateChatAndOpen_RefusesASessionThatLaunchedALiveOrShownRun(t *testing.T) {
+	cases := []struct {
+		name    string
+		runs    *fakeRunOwner
+		showRun bool
+		status  int
+		want    error
+	}{
+		{name: "a live run", runs: &fakeRunOwner{parented: map[string][]string{"sess_1": {"wf_live"}}}, status: http.StatusConflict, want: errSessionParentsRun},
+		{name: "a finished run a tab shows", runs: &fakeRunOwner{parentedAll: map[string][]string{"sess_1": {"wf_1"}}}, showRun: true, status: http.StatusConflict, want: errSessionParentsRun},
+		{name: "the session's runs could not be read", runs: &fakeRunOwner{parentedErr: errors.New("runs/ not read yet")}, status: http.StatusServiceUnavailable, want: errChatUnread},
+		{name: "a finished run no tab shows", runs: &fakeRunOwner{parentedAll: map[string][]string{"sess_1": {"wf_1"}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newKeepFixture(t)
+			f.mem.runs = tc.runs
+			if tc.showRun {
+				if _, err := f.mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}, "op-run"); err != nil {
+					t.Fatalf("Setup: open the run's tab: %v", err)
+				}
+			}
+			_, err := f.mem.CreateChatAndOpen(t.Context(), &ChatCreate{
+				OpID: "op-resume", ChatID: "c-self", ClaimSession: "sess_1",
+				Init: func(c *marotte.Chat) { c.RecordSession("sess_1") },
+			})
+			if tc.want == nil {
+				if err != nil {
+					t.Errorf("CreateChatAndOpen = %v, want it created", err)
+				}
+				return
+			}
+			if code, _, _ := StatusOf(err); code != tc.status || !errors.Is(err, tc.want) {
+				t.Errorf("CreateChatAndOpen = %v (status %d), want %v (status %d)", err, code, tc.want, tc.status)
+			}
+			if _, found, _ := f.store.Lookup(t.Context(), "c-self"); found {
+				t.Error("a refused resume still wrote the record")
 			}
 		})
 	}

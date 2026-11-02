@@ -758,8 +758,18 @@ func (b *fakeBridge) NotifCh() <-chan marotte.Notification {
 
 type testChatStore struct {
 	*chat.Store
+	// ownerScan, when set, rewrites every SessionOwners answer, for a test about a scan's timing or completeness.
+	ownerScan func(ctx context.Context, scan chat.OwnerScan) chat.OwnerScan
 	// Gets counts Get calls, for a test about how often the store is read.
 	Gets atomic.Int64
+}
+
+func (s *testChatStore) SessionOwners(ctx context.Context) chat.OwnerScan {
+	scan := s.Store.SessionOwners(ctx)
+	if s.ownerScan != nil {
+		return s.ownerScan(ctx, scan)
+	}
+	return scan
 }
 
 // testChatRoot holds every test hub's chat directory, created and removed by TestMain.

@@ -30,10 +30,17 @@ func owedFor(closed, remaining []marotte.TabSubject) []OwedRelease {
 	var out []OwedRelease
 	now := time.Now().UnixMilli()
 	for _, t := range closed {
-		if t.Kind != marotte.TabKindChat || !ids.ValidChatID(t.Ref) || indexOfSubject(remaining, t.Kind, t.Ref) >= 0 {
+		if !ids.ValidChatID(t.Ref) || indexOfSubject(remaining, t.Kind, t.Ref) >= 0 {
 			continue
 		}
-		out = append(out, OwedRelease{ID: newID(), Kind: t.Kind, Ref: t.Ref, ClosedAt: now})
+		switch {
+		case t.Kind == marotte.TabKindChat:
+			out = append(out, OwedRelease{ID: newID(), Kind: t.Kind, Ref: t.Ref, ClosedAt: now})
+		case t.Kind == marotte.TabKindRun && len(t.LaunchChats) > 0:
+			out = append(out, OwedRelease{
+				ID: newID(), Kind: t.Kind, Ref: t.Ref, Holders: slices.Clone(t.LaunchChats), ClosedAt: now,
+			})
+		}
 	}
 	return out
 }

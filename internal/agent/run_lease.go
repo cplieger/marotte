@@ -5,7 +5,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -262,20 +261,4 @@ func (rs *Runs) CancelRun(ctx context.Context, workflowID string) error {
 		case <-tick.C:
 		}
 	}
-}
-
-// RunChat answers which chat launched a run (command.runOwner). A live run answers from its lease; an
-// ended one, whose lease is released, from KAS's run inventory through the chats' session chains, an
-// engine read. "" with a nil error is verified: the inventory lists no such run, it names no
-// launching session, or no chat holds that session. An unreadable inventory or an incomplete chat
-// scan (originOf's errRunHostStart) is the error, so the caller can refuse rather than guess.
-func (rs *Runs) RunChat(ctx context.Context, workflowID string) (marotte.ChatID, error) {
-	if l, held := rs.lease(workflowID); held {
-		return marotte.ChatID(l.ChatID), nil
-	}
-	o := rs.originOf(ctx, workflowID)
-	if errors.Is(o.err, errRunHostStart) {
-		return "", o.err
-	}
-	return o.parent.chat, nil
 }

@@ -3,6 +3,7 @@ package tabs
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -79,7 +80,7 @@ func TestOpen_RefusesASpecItCannotHold(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Errorf("Open(%+v) error = %v, want %v", tc.spec, err, tc.want)
 			}
-			if created || version != 0 || sub != (marotte.TabSubject{}) {
+			if created || version != 0 || !reflect.DeepEqual(sub, marotte.TabSubject{}) {
 				t.Errorf("Open(%+v) = (%+v, created %v, v%d) on a refusal, want the zero subject, created false and version 0",
 					tc.spec, sub, created, version)
 			}
@@ -268,7 +269,7 @@ func TestReorder_RefusesWithItsSentinelAndNamesTheOffender(t *testing.T) {
 				t.Errorf("Reorder(%s) = version %d on a refusal, want 0", tc.desc, version)
 			}
 			tabs, v := s.List()
-			if !slices.Equal(tabs, wantOrder) || v != wantVersion {
+			if !reflect.DeepEqual(tabs, wantOrder) || v != wantVersion {
 				t.Errorf("Reorder(%s) applied something: order %v at version %d, want %v at %d",
 					tc.desc, idsOf(tabs), v, idsOf(wantOrder), wantVersion)
 			}
@@ -536,7 +537,7 @@ func TestPrune_ChangesNothingWhenEverythingResolves(t *testing.T) {
 		t.Errorf("Prune over a clean set = (%d dropped, v%d), want nothing at version %d", len(dropped), version, beforeVersion)
 	}
 	after, _ := s.List()
-	if !slices.Equal(after, before) {
+	if !reflect.DeepEqual(after, before) {
 		t.Errorf("Prune over a clean set changed the set: %v -> %v", idsOf(before), idsOf(after))
 	}
 }
@@ -559,7 +560,7 @@ func TestPrune_ANilPredicateResolvesEverything(t *testing.T) {
 		t.Errorf("Prune(nil) = (%d dropped, v%d), want nothing at version %d", len(dropped), version, beforeVersion)
 	}
 	after, _ := s.List()
-	if !slices.Equal(after, before) {
+	if !reflect.DeepEqual(after, before) {
 		t.Errorf("Prune(nil) changed the set: %v -> %v", idsOf(before), idsOf(after))
 	}
 	if after[1].Parent != parent.ID {

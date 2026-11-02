@@ -505,7 +505,7 @@ func TestCloseTab_ARunTabCloseWakesRetention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
-	mem := newMembership(&membershipDeps{Chats: withKeep(testsupport.NewInMemoryChatStore()), Tabs: st, Bus: &tabBus{}})
+	mem := newMembership(&membershipDeps{Chats: withKeep(testsupport.NewInMemoryChatStore()), Tabs: st, Bus: &tabBus{}, Runs: &fakeRunOwner{}})
 	wakes := 0
 	mem.SetRetentionWake(func() { wakes++ })
 	opened, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}, "op-run")
@@ -536,7 +536,7 @@ func TestOpenTab_ARunBeingPurgedIsRefusedUntilThePurgeIsDone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
-	mem := newMembership(&membershipDeps{Chats: withKeep(testsupport.NewInMemoryChatStore()), Tabs: st, Bus: &tabBus{}})
+	mem := newMembership(&membershipDeps{Chats: withKeep(testsupport.NewInMemoryChatStore()), Tabs: st, Bus: &tabBus{}, Runs: &fakeRunOwner{}})
 	spec := marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}
 	done, ok := mem.AdmitRunPurge(t.Context(), "wf_1", "")
 	if !ok {

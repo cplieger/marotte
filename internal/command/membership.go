@@ -47,6 +47,10 @@ var (
 	// errRunLauncherUnread is the 503 for a new run tab whose launching chat
 	// could not be read: Parent is immutable, so guessing top level is permanent.
 	errRunLauncherUnread = errors.New("could not tell which chat launched that workflow run. Try again")
+	// errRunUnknown is the 503 for a new run tab of a run no source names, so its launcher is unknown.
+	errRunUnknown = errors.New("this run could not be found, so the chat that launched it is unknown")
+	// errSessionParentsRun is the 409 for a resume of a session that launched a live or shown run.
+	errSessionParentsRun = errors.New("this session launched a run that is still live or open; open that run's chat instead")
 	// errSuppliedParentClosed is OpenTab's retry signal, never answered: the
 	// caller's parent tab closed before mu, so the run owner is asked after all.
 	errSuppliedParentClosed = errors.New("the supplied parent tab is not open")
@@ -85,20 +89,45 @@ type membershipChats interface {
 	Hold(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
 	Rollback(ctx context.Context, claim *chat.Claim) error
 	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
+	// SessionInTeardown names a session of a chat whose retention teardown still runs.
+	SessionInTeardown(sessionID string) bool
 }
 
 var _ membershipChats = (*chat.Store)(nil)
 
-// runOwner is the run surface as the coordinator uses it: which chat's agent
-// launched a run, and its read bound. Declared here, at the consumer;
+// runOwner is the run surface as the coordinator uses it: who owns a run, which runs a
+// session parents, and a run's read bound. Declared here, at the consumer;
 // *agent.Runs satisfies it.
 type runOwner interface {
-	// RunChat answers for a live run and a finished one alike, so it may read
-	// the engine's run inventory: never call it under mu. "" with a nil error
-	// names no launching chat; an error means the launcher could not be read.
-	RunChat(ctx context.Context, workflowID string) (marotte.ChatID, error)
+	// RunOwner may read the engine's run inventory: never call it under mu. An error means
+	// the owners could not be read.
+	RunOwner(ctx context.Context, workflowID string) (RunOwner, error)
+	// RunsParentedBy answers the runs whose parent is sessionID: live is every leased or
+	// non-terminal one, all adds the terminal ones. An error means some source could not be read.
+	RunsParentedBy(ctx context.Context, sessionID string) (live, all []string, err error)
 	// RunReadBound is the run's read position now, the clamp for an ack_tab.
 	RunReadBound(ctx context.Context, workflowID string) (uint64, error)
+}
+
+// RunVerdict is what RunOwner could establish about a run.
+type RunVerdict int
+
+const (
+	// RunOwned names at least one holder.
+	RunOwned RunVerdict = iota + 1
+	// RunParentless is a run the engine answered for whose parent session no chat owns.
+	RunParentless
+	// RunUnknown is a run no lease, inventory row or inspect reply names, so its
+	// launcher is unknown. Never read as parentless.
+	RunUnknown
+)
+
+// RunOwner is the one attribution answer for a run: the chats whose session chain holds its
+// parent session, plus the holders its lease records.
+type RunOwner struct {
+	Holders        []marotte.ChatID
+	ParentSessions []string
+	Verdict        RunVerdict
 }
 
 // chatCloser is the tab-close teardown for a chat tab: cancel the turn, cancel
@@ -131,8 +160,8 @@ type Membership struct {
 	closeChat  chatCloser
 	deleteChat chatDeleter
 	retention  retentionRead
-	// runs resolves a run's launching chat when a client sends no parent. May
-	// be nil, in which case no parent is filled and a run tab opens top level.
+	// runs answers a run's owners and a session's runs. Nil refuses every new run tab
+	// and every create that claims a session, since neither can then be checked.
 	runs runOwner
 	// retentionWake asks the purge scheduler for a pass now; nil leaves its timer.
 	retentionWake func()
@@ -253,8 +282,9 @@ type TabOpened struct {
 
 // CreateChatAndOpen writes a chat record, holds its tab fact and opens its tab as one operation, so
 // the final slot cannot be consumed between mint and open and no delete lands between the writes.
-// Returns errOpenChatUnknown (404) when a required chat is absent, errChatUnread (503) when it or the
-// session owners could not be read, errSessionClaimed (409) when another chat holds ClaimSession,
+// Returns errOpenChatUnknown (404) when a required chat is absent, errChatUnread (503) when it, the
+// session owners or the session's runs could not be read, errSessionClaimed (409) when another chat
+// holds ClaimSession, errSessionParentsRun (409) when ClaimSession launched a live or shown run,
 // errTabsFull (409) at MaxOpenTabs, and errChatNotCreated (409) when the record is absent after a
 // Mutate that reported no error. A failed tab write leaves the chat created with its hold rolled
 // back; a retry with the same op_id finishes it.
@@ -262,6 +292,8 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req *ChatCreate) (Ch
 	// Hoisted above every lock because the read is file I/O; resolved unconditionally (it is
 	// cached) so no conditional resolve has to run inside the lock.
 	supervisedDefault := m.supervisedDefaultValue(ctx)
+	// Before mu: the answer is an engine read.
+	runs := m.sessionRuns(ctx, req.ClaimSession)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -283,7 +315,7 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req *ChatCreate) (Ch
 	if chatID == "" {
 		chatID, _ = m.ops.resolve(req.OpID, marotte.NewChatID)
 	}
-	if err := m.refuseClaimedSession(ctx, req.ClaimSession, chatID); err != nil {
+	if err := m.refuseClaim(ctx, req.ClaimSession, chatID, &runs); err != nil {
 		return ChatOpened{}, err
 	}
 
@@ -347,9 +379,8 @@ func (m *Membership) resolvedChat(opID string) (marotte.ChatID, bool) {
 
 // OpenTab opens a tab for something that already exists; it never mints a chat.
 // For a chat tab it holds the record's tab fact first, which refuses a record that
-// is gone, unreadable or in teardown, with the hold and the open in one critical section. A new run tab
-// whose caller named no open parent nests under its launching chat (launcherTab),
-// and is refused with a 503 when that chat could not be read.
+// is gone, unreadable or in teardown, with the hold and the open in one critical section.
+// A new run tab holds the run-tab fact on each of its run's owners (openRunTabLocked).
 func (m *Membership) OpenTab(ctx context.Context, spec marotte.OpenTab, opID string) (TabOpened, error) {
 	if m.tabs == nil {
 		return TabOpened{}, StatusError(http.StatusServiceUnavailable, errTabsUnavailable)
@@ -364,15 +395,16 @@ func (m *Membership) OpenTab(ctx context.Context, spec marotte.OpenTab, opID str
 
 // launcherAnswer is the run owner's answer for a run tab, read before mu.
 type launcherAnswer struct {
-	err  error
-	chat marotte.ChatID
+	err   error
+	owner RunOwner
 }
 
 // openTabLocked is OpenTab's critical section.
 func (m *Membership) openTabLocked(ctx context.Context, spec marotte.OpenTab, opID string, launcher launcherAnswer) (TabOpened, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if spec.Kind == marotte.TabKindChat {
+	switch spec.Kind {
+	case marotte.TabKindChat:
 		claim, err := m.chats.Hold(ctx, marotte.ChatID(spec.Ref), marotte.KeyTab, chat.KeepDurable)
 		if err != nil {
 			return TabOpened{}, holdTabErr(err)
@@ -382,55 +414,124 @@ func (m *Membership) openTabLocked(ctx context.Context, spec marotte.OpenTab, op
 			m.rollback(ctx, &claim)
 		}
 		return opened, err
+	case marotte.TabKindRun:
+		return m.openRunTabLocked(ctx, spec, opID, launcher)
 	}
-	if spec.Kind == marotte.TabKindRun {
-		parent, err := m.runTabParent(ctx, spec, launcher)
+	spec.Launch = nil
+	return m.openTab(ctx, spec, opID)
+}
+
+// openRunTabLocked opens a run tab. An open one only gains focus. A new one is refused unless its owners were
+// read and named (refuseRunTab), then holds the run-tab fact on every holder before it opens; any later failure
+// rolls those holds back. Parent is immutable, so a run whose launcher could not be read never opens top level.
+// Caller holds mu.
+func (m *Membership) openRunTabLocked(ctx context.Context, spec marotte.OpenTab, opID string, launcher launcherAnswer) (TabOpened, error) {
+	if m.runTabOpen(spec.Ref) {
+		return m.openTab(ctx, spec, opID)
+	}
+	if err := m.refuseRunTab(spec, &launcher); err != nil {
+		return TabOpened{}, err
+	}
+	claims, holders, err := m.holdRunTab(ctx, spec.Ref, launcher.owner.Holders)
+	if err != nil {
+		return TabOpened{}, err
+	}
+	opened, err := m.openHeldRunTab(ctx, spec, opID, holders)
+	if err != nil {
+		for i := range claims {
+			m.rollback(ctx, &claims[i])
+		}
+	}
+	return opened, err
+}
+
+// openHeldRunTab settles the run tab's Parent (a supplied open parent, else the first holder's tab) and opens it with
+// its holders recorded. Caller holds mu.
+func (m *Membership) openHeldRunTab(ctx context.Context, spec marotte.OpenTab, opID string, holders []marotte.ChatID) (TabOpened, error) {
+	if spec.Parent == "" && len(holders) > 0 {
+		parent, err := m.launcherTab(ctx, holders[0])
 		if err != nil {
 			return TabOpened{}, err
 		}
 		spec.Parent = parent
 	}
+	spec.Launch = &marotte.RunLaunch{Chats: make([]string, 0, len(holders))}
+	for _, h := range holders {
+		spec.Launch.Chats = append(spec.Launch.Chats, string(h))
+	}
 	return m.openTab(ctx, spec, opID)
 }
 
-// runTabParent settles the Parent a run tab opens with, the value tabs.json
-// keeps: a supplied parent still open, else launcherTab. An open run tab only
-// gains focus, so the purge and lookup refusals apply to a new one alone.
-// Caller holds mu.
-func (m *Membership) runTabParent(ctx context.Context, spec marotte.OpenTab, launcher launcherAnswer) (string, error) {
-	if m.runTabOpen(spec.Ref) {
-		return spec.Parent, nil
-	}
+// refuseRunTab is a new run tab's refusals, in order: the parentless purge is deleting the run; its owners could not
+// be read, or no source names it; the caller's parent closed; a launcher's teardown still runs, which only the
+// run's parent session still names once the launcher's record is gone. Caller holds mu.
+func (m *Membership) refuseRunTab(spec marotte.OpenTab, launcher *launcherAnswer) error {
 	if _, purging := m.purgingRuns[spec.Ref]; purging {
-		return "", StatusError(http.StatusConflict, errRunPurging)
-	}
-	if spec.Parent != "" {
-		// The store would promote a run under a closed parent, and Parent is immutable.
-		if !m.tabOpen(spec.Parent) {
-			return "", errSuppliedParentClosed
-		}
-		return spec.Parent, nil
+		return StatusError(http.StatusConflict, errRunPurging)
 	}
 	if launcher.err != nil {
-		return "", StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errRunLauncherUnread, launcher.err))
+		return StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errRunLauncherUnread, launcher.err))
 	}
-	if launcher.chat == "" {
-		return "", nil
+	if launcher.owner.Verdict == RunUnknown {
+		return StatusError(http.StatusServiceUnavailable, errRunUnknown)
 	}
-	return m.launcherTab(ctx, launcher.chat)
+	// The store would promote a run under a closed parent, and Parent is immutable.
+	if spec.Parent != "" && !m.tabOpen(spec.Parent) {
+		return errSuppliedParentClosed
+	}
+	if slices.ContainsFunc(launcher.owner.ParentSessions, m.chats.SessionInTeardown) {
+		return StatusError(http.StatusConflict, errRunPurging)
+	}
+	return nil
 }
 
-// runLauncher asks the run owner which chat launched a run tab whose caller
-// named no parent: one rule for every door (a notification, a deep link, a run
-// card), so no door has to hold the run's launch history. A zero answer with a
-// nil error is a verified top-level run. Called before mu, because a finished
-// run's answer is an engine read.
+// holdRunTab holds workflowID's run-tab fact on each owner and answers the claims with the owners still present. A
+// record deleted since the owners were read drops out; one tombstoned or in teardown refuses with 409, an unreadable
+// one with 503, and either refusal rolls back the claims already taken. Caller holds mu.
+func (m *Membership) holdRunTab(ctx context.Context, workflowID string, owners []marotte.ChatID) ([]chat.Claim, []marotte.ChatID, error) {
+	if len(owners) == 0 {
+		return nil, nil, nil
+	}
+	key, ok := marotte.KeyRunTab(workflowID)
+	if !ok {
+		return nil, nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	claims := make([]chat.Claim, 0, len(owners))
+	held := make([]marotte.ChatID, 0, len(owners))
+	for _, h := range owners {
+		claim, err := m.chats.Hold(ctx, h, key, chat.KeepDurable)
+		switch {
+		case err == nil:
+			claims = append(claims, claim)
+			held = append(held, h)
+			continue
+		case errors.Is(err, chat.ErrChatNotFound):
+			continue
+		case errors.Is(err, chat.ErrTombstoned):
+			err = StatusError(http.StatusConflict, errRunPurging)
+		default:
+			err = StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errRunLauncherUnread, err))
+		}
+		for i := range claims {
+			m.rollback(ctx, &claims[i])
+		}
+		return nil, nil, err
+	}
+	return claims, held, nil
+}
+
+// runLauncher asks the run owner who owns a run tab's run: one rule for every door (a
+// notification, a deep link, a run card), so no door has to hold the run's launch history.
+// Called before mu, because the answer may be an engine read.
 func (m *Membership) runLauncher(ctx context.Context, spec marotte.OpenTab) launcherAnswer {
-	if spec.Kind != marotte.TabKindRun || spec.Parent != "" || m.runs == nil {
+	if spec.Kind != marotte.TabKindRun {
 		return launcherAnswer{}
 	}
-	launcher, err := m.runs.RunChat(ctx, spec.Ref)
-	return launcherAnswer{chat: launcher, err: err}
+	if m.runs == nil {
+		return launcherAnswer{err: errRunsUnavailable}
+	}
+	owner, err := m.runs.RunOwner(ctx, spec.Ref)
+	return launcherAnswer{owner: owner, err: err}
 }
 
 // launcherTab is the tab a new run tab nests under: the launching chat's open
@@ -880,6 +981,15 @@ func (m *Membership) rollback(ctx context.Context, claim *chat.Claim) {
 	}
 }
 
+// refuseClaim is a claimed session's two refusals: another chat owns it, or it launched a live or shown run.
+// Caller holds mu.
+func (m *Membership) refuseClaim(ctx context.Context, sessionID string, chatID marotte.ChatID, runs *parentedRuns) error {
+	if err := m.refuseClaimedSession(ctx, sessionID, chatID); err != nil {
+		return err
+	}
+	return m.refuseRunParent(sessionID, runs)
+}
+
 // refuseClaimedSession refuses binding sessionID when another chat's chain holds it, or when no owner
 // was found on an owner scan that could not read every record. Caller holds mu, so two resumes of
 // one session serialise.
@@ -899,6 +1009,40 @@ func (m *Membership) refuseClaimedSession(ctx context.Context, sessionID string,
 	if len(owners) == 0 && !scan.Complete {
 		slog.Warn("could not read every chat, so a session was not bound", "acp_session", sessionID, "chat_id", chatID)
 		return StatusError(http.StatusServiceUnavailable, errChatUnread)
+	}
+	return nil
+}
+
+// parentedRuns is the run owner's answer for a claimed session, read before mu.
+type parentedRuns struct {
+	err       error
+	live, all []string
+}
+
+func (m *Membership) sessionRuns(ctx context.Context, sessionID string) parentedRuns {
+	if sessionID == "" {
+		return parentedRuns{}
+	}
+	if m.runs == nil {
+		return parentedRuns{err: errRunsUnavailable}
+	}
+	live, all, err := m.runs.RunsParentedBy(ctx, sessionID)
+	return parentedRuns{live: live, all: all, err: err}
+}
+
+// refuseRunParent refuses binding a session that launched a live run or one an open run tab shows: the new chat
+// would own that run, and its purge would delete it. Caller holds mu.
+func (m *Membership) refuseRunParent(sessionID string, runs *parentedRuns) error {
+	if sessionID == "" {
+		return nil
+	}
+	if runs.err != nil {
+		slog.Warn("could not read the runs a session launched, so it was not bound", "acp_session", sessionID, keyError, runs.err)
+		return StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errChatUnread, runs.err))
+	}
+	if len(runs.live) > 0 || slices.ContainsFunc(runs.all, m.runTabOpen) {
+		slog.Info("refused binding a session that launched a live or shown run", "acp_session", sessionID)
+		return StatusError(http.StatusConflict, errSessionParentsRun)
 	}
 	return nil
 }

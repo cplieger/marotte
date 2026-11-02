@@ -59,6 +59,7 @@ func newEscalationHostOver(store chatStore, tabSet TabSet, retention retentionRe
 		Chats:    withKeep(store),
 		Tabs:     tabSet,
 		Bus:      bus,
+		Runs:     &fakeRunOwner{},
 		Teardown: h.teardown,
 		CloseChat: func(ctx context.Context, chatID marotte.ChatID) {
 			h.teardown.CloseChatState(ctx, chatID)

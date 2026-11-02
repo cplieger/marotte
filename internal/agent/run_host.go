@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -1016,13 +1017,13 @@ type chainSweep struct {
 
 // resumeChainRuns is one resume sweep of chatID's session chain.
 func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID) (s chainSweep) {
-	chat, ok := rs.chats.Get(ctx, chatID)
+	rec, ok := rs.chats.Get(ctx, chatID)
 	if !ok {
 		return s
 	}
-	chain := make(map[string]bool, len(chat.PriorACPSessionIDs)+1)
-	chain[chat.ACPSessionID] = true
-	for _, id := range chat.PriorACPSessionIDs {
+	chain := make(map[string]bool, len(rec.PriorACPSessionIDs)+1)
+	chain[rec.ACPSessionID] = true
+	for _, id := range rec.PriorACPSessionIDs {
 		chain[id] = true
 	}
 
@@ -1254,11 +1255,11 @@ func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 // cancelForChat cancels every live run this chat's sessions launched: closing the chat's session leaves them
 // running. Starts with a record read, so a deleted chat no-ops.
 func (rs *Runs) cancelForChat(ctx context.Context, chatID marotte.ChatID, stop runStop) {
-	chat, ok := rs.chats.Get(ctx, chatID)
+	rec, ok := rs.chats.Get(ctx, chatID)
 	if !ok {
 		return
 	}
-	rs.cancelForSessions(ctx, chatID, chat.SessionChain(), stop)
+	rs.cancelForSessions(ctx, chatID, rec.SessionChain(), stop)
 }
 
 // cancelForSessions cancels every live run these sessions launched, from a captured chain with no record
@@ -1295,10 +1296,9 @@ func (rs *Runs) deleteForSessions(ctx context.Context, chatID marotte.ChatID, se
 	if len(sessionChain) == 0 {
 		return
 	}
-	chain := make(map[string]bool, len(sessionChain))
-	for _, id := range sessionChain {
-		chain[id] = true
-	}
+	// The same test runHolders attributes every run keep fact by, so this deletes exactly the runs whose facts
+	// would have kept the chat.
+	owners := chat.OwnersOfChain(chatID, sessionChain)
 	runs, err := rs.listRaw(ctx)
 	if err != nil {
 		slog.Warn("delete: run list unavailable, skipping run delete", "chat_id", chatID, "error", err)
@@ -1306,7 +1306,7 @@ func (rs *Runs) deleteForSessions(ctx context.Context, chatID marotte.ChatID, se
 	}
 	for i := range runs {
 		r := &runs[i]
-		if !chain[r.ParentSessionID] {
+		if len(owners.Of(r.ParentSessionID)) == 0 {
 			continue
 		}
 		if dErr := rs.deleteAs(ctx, r.WorkflowID, stop); dErr != nil {

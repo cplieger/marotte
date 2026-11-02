@@ -61,6 +61,8 @@ type Lease struct {
 	Origin Origin `json:"origin"`
 	// ScheduleID names the row that asked for the run. Set iff Origin is scheduled.
 	ScheduleID string `json:"schedule_id,omitempty"`
+	// KeepChats is every chat holding this run's keep fact; the run's end releases it on each. It only grows.
+	KeepChats []string `json:"keep_chats,omitempty"`
 	// Unattended marks a run with nobody to answer a permission request, which arms
 	// the deny-fast floor. Distinct from the origin: who launched it vs who watches.
 	Unattended bool `json:"unattended"`
@@ -88,6 +90,7 @@ func (l *Lease) HostPresets() ([]string, error) {
 // clone copies l, its host security included, so no caller shares the store's slice.
 func (l *Lease) clone() Lease {
 	out := *l
+	out.KeepChats = slices.Clone(l.KeepChats)
 	if out.Host != nil {
 		h := HostSecurity{Presets: slices.Clone(out.Host.Presets)}
 		out.Host = &h

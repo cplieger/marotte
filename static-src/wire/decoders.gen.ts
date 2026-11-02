@@ -3062,8 +3062,11 @@ export const decodeTabSubject: Decoder<TabSubject> = (v) => {
     pinned: reqBool(o, "pinned", "$.tab_subject"),
     owns: reqBool(o, "owns", "$.tab_subject"),
   };
+  if (o["launch_chats"] !== undefined && o["launch_chats"] !== null) out.launch_chats = decodeArray(o["launch_chats"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tab_subject.launch_chats");
   const seen = o["seen"] === null ? undefined : optNum(o, "seen", "$.tab_subject");
   if (seen !== undefined) out.seen = seen;
+  const launchResolved = o["launch_resolved"] === null ? undefined : optBool(o, "launch_resolved", "$.tab_subject");
+  if (launchResolved !== undefined) out.launch_resolved = launchResolved;
   return out;
 };
 

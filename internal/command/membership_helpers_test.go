@@ -15,7 +15,7 @@ import (
 // for tests of the chat half.
 func newTestMembership(t *testing.T, chats chatStore) *Membership {
 	t.Helper()
-	return newMembership(&membershipDeps{Chats: withKeep(chats), Sessions: claimsOf(chats)})
+	return newMembership(&membershipDeps{Chats: withKeep(chats), Sessions: claimsOf(chats), Runs: &fakeRunOwner{}})
 }
 
 // newTabbedMembership builds a coordinator over a chat store, a REAL tab store in a temp dir and a
@@ -27,7 +27,7 @@ func newTabbedMembership(t *testing.T, chats chatStore) (*Membership, *tabs.Stor
 		t.Fatalf("open tab store: %v", err)
 	}
 	bus := &tabBus{}
-	return newMembership(&membershipDeps{Chats: withKeep(chats), Tabs: st, Bus: bus}), st, bus
+	return newMembership(&membershipDeps{Chats: withKeep(chats), Tabs: st, Bus: bus, Runs: &fakeRunOwner{}}), st, bus
 }
 
 // A separate constructor rather than a wider signature on the helper above, which has 27 call sites
@@ -132,6 +132,8 @@ func (k *keepingStore) Hold(ctx context.Context, id marotte.ChatID, key string, 
 	})
 	return claim, err
 }
+
+func (*keepingStore) SessionInTeardown(string) bool { return false }
 
 func (k *keepingStore) Rollback(ctx context.Context, cl *chat.Claim) error {
 	_, err := k.Mutate(ctx, cl.ChatID, func(c *marotte.Chat, exists bool) bool {

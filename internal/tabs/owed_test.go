@@ -120,3 +120,50 @@ func TestNewStore_DropsInvalidOwedEntriesAndCapsTheList(t *testing.T) {
 		}
 	})
 }
+
+func TestClose_OwesARunTabsReleaseOnEachOfItsHolders(t *testing.T) {
+	s, dir := newTestStore(t)
+	parent := mustOpen(t, s, chatSpec("c-launcher"))
+	mustOpen(t, s, marotte.OpenTab{
+		Kind: marotte.TabKindRun, Ref: "wf_1", Parent: parent.ID,
+		Launch: &marotte.RunLaunch{Chats: []string{"c-launcher", "c-shared"}},
+	})
+	mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_parentless", Parent: parent.ID, Launch: &marotte.RunLaunch{}})
+
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	open, _ := reopened.List()
+	if i := indexOfSubject(open, marotte.TabKindRun, "wf_1"); i < 0 ||
+		!slices.Equal(open[i].LaunchChats, []string{"c-launcher", "c-shared"}) || !open[i].LaunchResolved {
+		t.Fatalf("run tab after a restart = %+v, want its holders and LaunchResolved persisted", open)
+	}
+
+	_, owed, _, err := reopened.Close(t.Context(), parent.ID)
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	var run []OwedRelease
+	for _, e := range owed {
+		if e.Kind == marotte.TabKindRun {
+			run = append(run, e)
+		}
+	}
+	if len(run) != 1 || run[0].Ref != "wf_1" || !slices.Equal(run[0].Holders, []string{"c-launcher", "c-shared"}) {
+		t.Errorf("Close owed run entries %+v, want one for wf_1 naming both holders and none for the parentless run", run)
+	}
+}
+
+func TestSanitize_KeepsOnlyARunTabsValidHolders(t *testing.T) {
+	got := sanitize([]marotte.TabSubject{
+		{ID: "a", Kind: marotte.TabKindRun, Ref: "wf_1", LaunchChats: []string{"c-ok", "../etc", ""}, LaunchResolved: true},
+		{ID: "b", Kind: marotte.TabKindChat, Ref: "c-1", LaunchChats: []string{"c-ok"}, LaunchResolved: true},
+	})
+	if len(got) != 2 || !slices.Equal(got[0].LaunchChats, []string{"c-ok"}) || !got[0].LaunchResolved {
+		t.Errorf("sanitize(run) = %+v, want only c-ok kept", got)
+	}
+	if len(got) == 2 && (got[1].LaunchChats != nil || got[1].LaunchResolved) {
+		t.Errorf("sanitize(chat) = %+v, want no launch fields on a chat tab", got[1])
+	}
+}
