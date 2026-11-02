@@ -1,9 +1,10 @@
-// TurnHeader: the turn card's top band for the turn's TRIGGER (a user prompt or a typed system
-// line). A meta row (fold toggle, number, outcome dot, timestamp, hit count) over the request. The
-// fold toggle opens the request with the body: a FOLDED turn's request text clamps to four lines in
-// CSS, since folded rows are the session's navigation, and a labelled request's full text shows only
-// while open; attachment chips stay outside the clamp.
+// TurnHeader: the turn card's top band for the turn's TRIGGER (a user prompt, what woke an
+// agent-initiated turn, or a typed system line). A meta row (fold toggle, number, outcome dot,
+// timestamp, hit count) over the request. The fold toggle opens the request with the body: a FOLDED
+// turn's request text clamps to four lines in CSS, since folded rows are the session's navigation,
+// and a labelled request's full text shows only while open; attachment chips stay outside the clamp.
 
+import { join } from "@cplieger/keyenc";
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { watchCut } from "../clamp-text.js";
@@ -13,6 +14,7 @@ import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
 // Colour is never the sole channel (WCAG 1.4.1), and these are that channel.
 import { OUTCOME_LABEL, OUTCOME_TOOLTIP, severityOf } from "../turn-severity.js";
 import type { TurnOutcome } from "../turns.js";
+import { WAKE_FALLBACK_LINE, type WakeLine, type WakeRow, type WakeRun } from "../turn-wake.js";
 
 export interface TurnHeaderData {
   /** 1-based turn ordinal as rendered. */
@@ -28,6 +30,11 @@ export interface TurnHeaderData {
   /** Files the user attached to this request. Drawn as the composer's own pill,
    *  read-only (a sent attachment cannot be un-sent), and OUTSIDE the clamp. */
   attachments: readonly AttachmentRef[];
+  /** What woke a turn with no request: a one-line label over its message, which takes the
+   *  request's place and clamp. Ignored when `request` is set or the wake is a fallback. */
+  wake?: WakeLine | undefined;
+  /** Opens a run the wake names; without it each name is plain text. */
+  onOpenRun?: ((run: WakeRun) => void) | undefined;
 }
 
 export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
@@ -66,9 +73,15 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   // Sibling of `.turn-req-text`, so the clamp cannot hide the attachments.
   req.appendChild(el("ul", { className: "turn-req-attachments attachment-row hidden" }));
   header.appendChild(req);
-  watchCut(text, (cut) => {
-    toggle.setAttribute("aria-label", cut ? `${FOLD_LABEL}, message truncated` : FOLD_LABEL);
-  });
+  watchCut(
+    text,
+    (cut) => {
+      toggle.setAttribute("aria-label", cut ? `${FOLD_LABEL}, message truncated` : FOLD_LABEL);
+    },
+    () => {
+      syncWakeRowRuns(header);
+    },
+  );
 
   updateTurnHeader(header, d);
   return header;
@@ -125,10 +138,26 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     return;
   }
 
+  if (d.request === undefined && d.wake !== undefined && !d.wake.fallback) {
+    header.dataset["trigger"] = "wake";
+    syncWakeLabel(header, d.wake, d.onOpenRun);
+    if (d.wake.rows === undefined) {
+      setRequestText(text, d.wake.body);
+    } else {
+      setWakeRows(text, d.wake.rows, d.onOpenRun);
+    }
+    text.hidden = d.wake.body === "";
+    syncFullText(header, undefined);
+    syncWakeRowRuns(header);
+    return;
+  }
+  syncWakeLabel(header, undefined, undefined);
+  text.hidden = false;
+
   if (d.request === undefined) {
     // No user message: naming the trigger is honest, fabricating one is not.
     header.dataset["trigger"] = "system";
-    text.textContent = "Agent-initiated turn";
+    setRequestText(text, WAKE_FALLBACK_LINE);
     syncFullText(header, undefined);
     return;
   }
@@ -136,13 +165,122 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   header.dataset["trigger"] = "user";
   const body = d.request.trim();
   const label = d.label?.trim() ?? "";
-  const shown = label === "" ? body : label;
-  if (text.textContent !== shown) {
+  setRequestText(text, label === "" ? body : label);
+  syncFullText(header, label === "" ? undefined : body);
+}
+
+function setRequestText(text: HTMLElement, shown: string): void {
+  if (text.textContent !== shown || text.dataset["rows"] !== undefined) {
+    delete text.dataset["rows"];
     text.textContent = shown;
     linkifyPaths(text);
   }
-  syncFullText(header, label === "" ? undefined : body);
 }
+
+/** A re-delivery's messages in the request text, one per line as `body` joins them, each opening on its
+ *  run's name; rebuilt only when the words or runs change, as the label is. */
+function setWakeRows(
+  text: HTMLElement,
+  rows: readonly WakeRow[],
+  open: ((run: WakeRun) => void) | undefined,
+): void {
+  const key = join(...rows.map((r) => join(r.run.id, r.run.name, r.rest, r.text)));
+  if (text.dataset["rows"] === key) {
+    return;
+  }
+  text.dataset["rows"] = key;
+  const parts: (Node | string)[] = [];
+  rows.forEach((r, i) => {
+    if (i > 0) {
+      parts.push("\n");
+    }
+    const message = el("span", { className: "turn-wake-row-text" }, r.text);
+    linkifyPaths(message);
+    parts.push(wakeRunEl(r.run, "turn-wake-row-run", open), r.rest, message);
+  });
+  text.replaceChildren(...parts);
+}
+
+/** The wake's label, one line above the request text and outside its clamp, rebuilt only when its
+ *  words or run change so a focused run button survives a repaint; `wake` undefined removes it. */
+function syncWakeLabel(
+  header: HTMLElement,
+  wake: WakeLine | undefined,
+  open: ((run: WakeRun) => void) | undefined,
+): void {
+  const req = header.querySelector<HTMLElement>(":scope > .turn-req");
+  if (req === null) {
+    return;
+  }
+  let line = req.querySelector<HTMLElement>(":scope > .turn-wake");
+  if (wake === undefined) {
+    line?.remove();
+    return;
+  }
+  const run = wake.run?.id ?? "";
+  if (line !== null && line.dataset["label"] === wake.label && line.dataset["run"] === run) {
+    return;
+  }
+  if (line === null) {
+    line = el("div", { className: "turn-wake" });
+    req.prepend(line);
+  }
+  line.dataset["label"] = wake.label;
+  line.dataset["run"] = run;
+  const rest = el("span", { className: "turn-wake-rest" }, wake.rest);
+  if (wake.run === undefined) {
+    line.replaceChildren(rest);
+    return;
+  }
+  line.replaceChildren(wakeRunEl(wake.run, "turn-wake-run", open), rest);
+}
+
+function wakeRunEl(
+  run: WakeRun,
+  className: string,
+  open: ((run: WakeRun) => void) | undefined,
+): HTMLElement {
+  const attrs = { className, "data-run-id": run.id };
+  if (open === undefined) {
+    return el("span", attrs, run.name);
+  }
+  const btn = el(
+    "button",
+    { ...attrs, type: "button", "data-tooltip": "Open the workflow run" },
+    run.name,
+  );
+  btn.addEventListener("click", () => {
+    open(run);
+  });
+  return btn;
+}
+
+/**
+ * Make each re-delivery row's run button inert while the request text's clamp hides any of it, so it takes no focus,
+ * and live while all of it shows. Runs after each header update and each clamp measurement; a fold change calls
+ * it. With no layout to measure, a folded card keeps only the first row's live.
+ */
+export function syncWakeRowRuns(header: HTMLElement): void {
+  const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
+  if (text === null) {
+    return;
+  }
+  const clip = text.getBoundingClientRect();
+  const folded = text.closest(".turn[data-folded]") !== null;
+  const buttons = text.querySelectorAll<HTMLButtonElement>("button.turn-wake-row-run");
+  buttons.forEach((btn, i) => {
+    if (clip.height <= 0) {
+      btn.inert = folded && i > 0;
+      return;
+    }
+    const box = btn.getBoundingClientRect();
+    // `inert`, not `disabled`: a disabled button dims (40-a11y.css), and a shown row stays at full ink.
+    btn.inert = box.top < clip.top - CLIP_EPSILON || box.bottom > clip.bottom + CLIP_EPSILON;
+  });
+}
+
+/** Sub-pixel slack (px) for a button whose box rounds onto the clip edge. */
+const CLIP_EPSILON = 0.5;
 
 /** A labelled request's full text, a sibling of the text so the folded clamp cannot hide it, shown
  *  while the turn is open (29-turns.css); `body` undefined removes it. */

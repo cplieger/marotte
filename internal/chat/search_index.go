@@ -12,7 +12,7 @@ import (
 // The cross-chat candidate index: one Bloom filter per chat over the rune trigrams of what the scan searches
 // (entrySegments spans plus the title, via textsearch.Fold). It prunes, never decides: no false negatives, and a
 // saturated filter admits all. In memory: the first reading query builds it, appends extend it under the chat lock,
-// and a rewind, rewrite, header write or Remove drops it.
+// and a rewind, rewrite, run_named, header write or Remove drops it.
 
 const (
 	// filterBytes is one chat's filter, and so the index's cost per chat.
@@ -37,8 +37,9 @@ func buildChatFilter(name string, entries []marotte.Entry) *chatFilter {
 	f := new(chatFilter)
 	f.addText(name)
 	turns := indexSearchTurns(entries, nil)
+	names := wakeFactsOf(entries).names
 	for i := range entries {
-		for _, seg := range entrySegments(&entries[i], turns[entries[i].Turn]) {
+		for _, seg := range entrySegments(&entries[i], turns[entries[i].Turn], names) {
 			f.addText(seg.text)
 		}
 	}
@@ -50,7 +51,7 @@ func buildChatFilter(name string, entries []marotte.Entry) *chatFilter {
 func (f *chatFilter) addEntry(e *marotte.Entry) {
 	t := newSearchTurn(false)
 	t.observe(e)
-	for _, seg := range entrySegments(e, t) {
+	for _, seg := range entrySegments(e, t, nil) {
 		f.addText(seg.text)
 	}
 }
@@ -157,6 +158,11 @@ func (x *searchIndex) drop(id marotte.ChatID) {
 // Only a full read builds a filter. The caller holds the chat's lock, ordering this against the
 // query-side build and other appends.
 func (x *searchIndex) extend(id marotte.ChatID, e *marotte.Entry) {
+	if e.Kind == marotte.EntryKindRunNamed {
+		// A name changes the text of wakes filed before it, which only a rebuild indexes.
+		x.drop(id)
+		return
+	}
 	if f, ok := x.lookup(id); ok {
 		f.addEntry(e)
 	}

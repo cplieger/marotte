@@ -175,6 +175,21 @@ func TestObserveComplete_LabelFallsBackToTheLeasesRecipe(t *testing.T) {
 	}
 }
 
+// KAS gives every prompt-built run one recipe name, so it names none of them: the notice falls back to the run's id.
+func TestObserveComplete_APromptBuiltRunIsNotTitledByTheGenericRecipe(t *testing.T) {
+	h, fp := newRunPushHub(t)
+	ctx := t.Context()
+	h.runs.grantLease(ctx, "wf_1", "workflow-from-prompt", manualLaunch(), hostSec())
+
+	h.runs.observeComplete(ctx, "", runNotif(methodWFRunComplete, map[string]any{
+		"workflowId": "wf_1", "status": "completed", "finalState": map[string]any{"workflowName": "workflow-from-prompt"},
+	}))
+
+	if got := awaitRunPush(t, fp); got.title != "wf_1" {
+		t.Errorf("push title = %q, want the run's id %q", got.title, "wf_1")
+	}
+}
+
 // A step's question is notified under its run, naming the step, tagged by its wait's position so a
 // re-park replaces the banner and two parked branches hold two.
 func TestRunAsks_NotifiesTheStepsQuestion(t *testing.T) {

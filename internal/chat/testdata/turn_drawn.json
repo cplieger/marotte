@@ -59,6 +59,27 @@
       "body": [{ "kind": "turn_close", "lane": "" }]
     },
     {
+      "name": "an agent-initiated turn whose body is only its turn_wake draws nothing",
+      "owner": "both",
+      "drawn": false,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "turn_wake", "lane": "" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
+      "name": "an agent-initiated turn whose body is a run_named filed after its close draws nothing",
+      "owner": "both",
+      "drawn": false,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "turn_wake", "lane": "" },
+        { "kind": "turn_close", "lane": "" },
+        { "kind": "run_named", "lane": "" }
+      ]
+    },
+    {
       "name": "a bind renders at no position of its own",
       "owner": "both",
       "drawn": false,
@@ -145,6 +166,16 @@
       "open": { "source": "wire_turn_start" },
       "body": [
         { "kind": "steer_cleared", "lane": "" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
+      "name": "a settlement renders at no position of its own: it folds into the row it settles",
+      "owner": "both",
+      "drawn": false,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "steer_delivered", "lane": "" },
         { "kind": "turn_close", "lane": "" }
       ]
     },

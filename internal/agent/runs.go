@@ -97,7 +97,7 @@ func (rs *Runs) recordScheduleOutcome(ctx context.Context, scheduleID string, ou
 type runTranslator interface {
 	HandleRunStart(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse)
 	HandleRunComplete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse)
-	RecordRunSteps(raw json.RawMessage)
+	RecordInspect(ctx context.Context, raw json.RawMessage)
 	// ForgetRunSteps drops a run's step-session entries; the gate is the caller's, since `paused` reaches `run_complete` on a live run.
 	ForgetRunSteps(workflowID string)
 	// SessionNotifySignal reads a `_kiro/session/notify` frame naming a run, or false.

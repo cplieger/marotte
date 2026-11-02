@@ -9,6 +9,17 @@ import (
 // WorkflowMessageIDPrefix marks a workflow message's row, minted at its `_kiro/session/notify`.
 const WorkflowMessageIDPrefix = "wfmsg-"
 
+// RunNoticeIDPrefix is the id shape KAS mints for a finished run's completion notice
+// (`notify-wf-<uuid>`; autoWakeParentOnComplete, parent_busy_queued). The uuid is random, so
+// the run it reports is not in the id: the notice's words name it.
+const RunNoticeIDPrefix = "notify-wf-"
+
+// IsWorkflowMessageNotifyID reports a steering id of the shape KAS mints for a `_kiro/session/notify`
+// message (`notify-<uuid>`); a run notice's is not one.
+func IsWorkflowMessageNotifyID(id string) bool {
+	return strings.HasPrefix(id, "notify-") && !strings.HasPrefix(id, RunNoticeIDPrefix)
+}
+
 // WorkflowMessage is a workflow message's row as its log holds it.
 type WorkflowMessage struct {
 	ID    string
@@ -47,6 +58,22 @@ func WorkflowMessageFactOf(e *Entry) (WorkflowMessageFact, bool, error) {
 		return WorkflowMessageFact{cleared: &c, clearTs: e.Ts}, true, nil
 	}
 	return WorkflowMessageFact{}, false, nil
+}
+
+// row is the message row f files, false for a settlement or a clear.
+func (f *WorkflowMessageFact) row() (WorkflowMessage, bool) {
+	if f.message == nil {
+		return WorkflowMessage{}, false
+	}
+	return *f.message, true
+}
+
+// clear is the steering clear f files, false for a row or a settlement.
+func (f *WorkflowMessageFact) clear() (EntrySteerCleared, bool) {
+	if f.cleared == nil {
+		return EntrySteerCleared{}, false
+	}
+	return *f.cleared, true
 }
 
 // WorkflowMessageFold is a history's workflow-message rows joined with their settlements and clears.

@@ -3,6 +3,7 @@ package agent
 import (
 	"reflect"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/translate"
 )
@@ -21,6 +22,33 @@ func (rs *Runs) RunLabel(workflowID string) string {
 		return ""
 	}
 	return launchOrigin{origin: l.Origin}.runLabel(l.Recipe)
+}
+
+// ReadRun reads workflowID's state once in the background; rawInspect hands the reply to the translator,
+// and done runs after the read, or at once when no read starts.
+func (rs *Runs) ReadRun(workflowID string, done func()) {
+	if rs.lifecycle == nil {
+		done()
+		return
+	}
+	started := rs.lifecycle.goUnlessDraining(func() {
+		defer done()
+		ctx, cancel := rs.lifecycle.derivedContext()
+		defer cancel()
+		_, _ = rs.rawInspect(ctx, workflowID)
+	})
+	if !started {
+		done()
+	}
+}
+
+// LeaseChat is the chat workflowID's lease names, false when no lease is held.
+func (rs *Runs) LeaseChat(workflowID string) (marotte.ChatID, bool) {
+	l, ok := rs.lease(workflowID)
+	if !ok || l.ChatID == "" {
+		return "", false
+	}
+	return marotte.ChatID(l.ChatID), true
 }
 
 // translateRoles is the translate wiring, named so it can be asserted. Every field is read at construction,

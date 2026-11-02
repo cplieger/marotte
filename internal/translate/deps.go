@@ -151,6 +151,12 @@ type chatRecords interface {
 	// UnsettledWorkflowMessages is the chat log's workflow messages nothing has settled
 	// (marotte.WorkflowMessageFold.Unsettled), oldest first.
 	UnsettledWorkflowMessages(ctx context.Context, id marotte.ChatID) ([]marotte.WorkflowMessage, error)
+	// WakeCauses is what the chat's log holds that can have started its open turn on session
+	// (chat.Store.WakeCauses).
+	WakeCauses(ctx context.Context, id marotte.ChatID, session string) (marotte.WakeCauses, error)
+	// AwaitsRunName reports whether the chat's log holds a wake leaving run unnamed that no run_named
+	// names (chat.Store.AwaitsRunName).
+	AwaitsRunName(ctx context.Context, id marotte.ChatID, run string) (bool, error)
 	// DepartedName is the name a chat had when its record was deleted, for a notice
 	// its bridge raises before teardown; false for a chat that was not deleted.
 	DepartedName(id marotte.ChatID) (string, bool)
@@ -312,6 +318,8 @@ type Translator struct {
 	steps     *stepRegistry
 	read      *readSteers
 	wakes     *wakeLedger
+	wakeMem   *wakeMemory
+	runNames  *runNames
 	slotWaits *slotWaits
 	workDir   string // last for fieldalignment, as in Roles
 }
@@ -345,6 +353,8 @@ func New(r *Roles, opts ...Option) *Translator {
 		steps:          newStepRegistry(),
 		read:           newReadSteers(),
 		wakes:          newWakeLedger(),
+		wakeMem:        newWakeMemory(),
+		runNames:       newRunNames(),
 		slotWaits:      &slotWaits{},
 	}
 	for _, o := range opts {
@@ -364,6 +374,11 @@ type runOriginAccess interface {
 	IsScheduled(workflowID string) bool
 	// RunLabel is the label marotte gave a run at launch, "" when it gave none.
 	RunLabel(workflowID string) string
+	// ReadRun asks for one read of a run's state in the background; its reply reaches RecordInspect,
+	// and done runs once the read ends, answered or not.
+	ReadRun(workflowID string, done func())
+	// LeaseChat is the chat a live run's lease names, false with no lease; it reads no engine state.
+	LeaseChat(workflowID string) (marotte.ChatID, bool)
 	// RunNotice CONSUMES the finished run whose completion notice KAS queued into
 	// chatID's steering buffer and whose label the notice's text quotes, answering its
 	// id and the instant it finished (Unix ms). False when no recorded run matches, in

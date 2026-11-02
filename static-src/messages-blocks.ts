@@ -96,6 +96,7 @@ import {
   forgetRun,
   registerRunStateDemand,
 } from "./run-store.js";
+import { isWakingRow } from "./waking-rows.js";
 import { runLabelText, unwatchStepRunLabel, watchStepRunLabel } from "./workflow-run-label.js";
 import { runPendingAsks } from "./decision-dock.js";
 import { buildPath } from "./route-path.js";
@@ -994,6 +995,11 @@ function groupRange(st: TurnRender, from: number, to: number): Placement[] {
       }
       continue;
     }
+    if (e?.kind === "turn_wake") {
+      // Draws nothing here: the header draws it, and the row that woke the turn leaves its own turn.
+      withdrawWakingRows();
+      continue;
+    }
     if (e?.kind === "turn_revert") {
       // The store returned the rows whose take-up the rewind took to waiting (`releaseWorkflowTakeUps`).
       redrawSettledRows((_id, steer) => steer.origin === "parent" || steer.origin === "step");
@@ -1884,6 +1890,8 @@ function placeEntry(st: TurnRender, e: Entry, live: boolean, idx: GroupIndex): v
     case "turn_open":
     case "turn_close":
     case "turn_bind":
+    case "turn_wake":
+    case "run_named":
     case "tool_result":
     case "reconciled":
     case "steer_delivered":
@@ -2333,10 +2341,10 @@ function watchNoteRun(st: TurnRender, seq: number, note: HTMLElement, steer: Ent
 }
 
 /** Open a workflow update's run, as the run bar's row does. */
-function openNoteRun(chatID: string, workflowID: string): void {
+export function openNoteRun(chatID: string, workflowID: string, name?: string): void {
   void import("./run-view.js")
     .then(({ openRunView }) => {
-      void openRunView(workflowID, runLabelText(workflowID), chatID);
+      void openRunView(workflowID, name ?? runLabelText(workflowID), chatID);
     })
     .catch(() => {
       /* noop: the label stays a button for the next click */
@@ -2376,6 +2384,28 @@ function steerNoteData(st: TurnRender, e: Entry, steer: EntrySteer): SteerNoteDa
     }
   }
   return data;
+}
+
+/** Unmount every mounted row a wake now draws as its turn's trigger (`isWakingRow`): the row was
+ *  filed, and drawn, before the turn it woke recorded its wake. */
+function withdrawWakingRows(): void {
+  for (const st of renders.values()) {
+    const gone: number[] = [];
+    for (const seq of st.entryEls.keys()) {
+      const e = entryAt(st.turn, seq);
+      if (e?.kind === "steer" && isWakingRow(e)) {
+        gone.push(seq);
+      }
+    }
+    if (gone.length === 0) {
+      continue;
+    }
+    for (const seq of gone) {
+      dropEntry(st, seq);
+    }
+    cbs.disposeEntryEffects(st.turnID, gone);
+    regroupWorkflowUpdates(st);
+  }
 }
 
 /** Redraw every mounted workflow-message row `pick` names from its entry, which the store settled

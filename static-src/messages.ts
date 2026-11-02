@@ -46,6 +46,7 @@ import type { ViewScrollState } from "./scroll-controller.js";
 import {
   buildTurnHeader,
   updateTurnHeader,
+  syncWakeRowRuns,
   type TurnHeaderData,
 } from "./fundamentals/turn-header.js";
 import {
@@ -116,7 +117,9 @@ import {
   dropTail,
   geometrySkipped,
   setRunCardOwners,
+  openNoteRun,
 } from "./messages-blocks.js";
+import { wakeLine } from "./turn-wake.js";
 import { rewindChat } from "./actions/rewind.js";
 import { compactChat } from "./actions/chat.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
@@ -1569,10 +1572,13 @@ function setCardsFolded(items: readonly { card: HTMLElement; folded: boolean }[]
     const flip = (): void => {
       card.toggleAttribute("data-folded", folded);
       const header = card.querySelector<HTMLElement>(":scope > .turn-header");
-      // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
-      header
-        ?.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
-        ?.setAttribute("aria-expanded", folded ? "false" : "true");
+      if (header !== null) {
+        syncWakeRowRuns(header);
+        // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
+        header
+          .querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
+          ?.setAttribute("aria-expanded", folded ? "false" : "true");
+      }
     };
     const body = card.querySelector<HTMLElement>(":scope > .turn-body");
     if (body === null || card.hasAttribute("data-folded") === folded) {
@@ -2106,6 +2112,10 @@ function headerData(t: Turn): TurnHeaderData {
     label: t.trigger?.label,
     // From the trigger entry: attachments never appear in the prompt text.
     attachments: t.trigger?.attachments ?? [],
+    wake: t.wake === undefined ? undefined : wakeLine(t.wake),
+    onOpenRun: (run) => {
+      openNoteRun(getActiveId(), run.id, run.named ? run.name : undefined);
+    },
   };
 }
 

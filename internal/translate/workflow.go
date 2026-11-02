@@ -56,14 +56,22 @@ const retryWaitKind = "retry-wait"
 
 func (p *kasRunNode) retryWait() bool { return p.Kind == retryWaitKind }
 
-// `finalState` is read only for `workflowName`, the one lifecycle frame with no top-level name; the
-// client refetches.
+// `finalState` is read for the run's name, the one lifecycle frame with no top-level name, and for
+// what a wake turn it starts says (autoWakeParentOnComplete reads the same fields); the client
+// refetches the rest.
 type kasRunComplete struct {
 	WorkflowID string `json:"workflowId"`
 	Status     string `json:"status"`
 	FinalState struct {
-		WorkflowName string `json:"workflowName"`
-		RunLabel     string `json:"runLabel"`
+		WorkflowName  string `json:"workflowName"`
+		RunLabel      string `json:"runLabel"`
+		StopInitiator string `json:"stopInitiator"`
+		StopReason    string `json:"stopReason"`
+		Pause         struct {
+			Kind          string `json:"kind"`
+			NodeID        string `json:"nodeId"`
+			MaxIterations int    `json:"maxIterations"`
+		} `json:"pause"`
 	} `json:"finalState"`
 }
 
@@ -94,7 +102,7 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID marotte.ChatID, 
 	logAgentRun("agent-launched workflow run started", chatID, p.WorkflowID, p.WorkflowName)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunStarted, chatID, marotte.RunStartedPayload{
 		WorkflowID:      p.WorkflowID,
-		Name:            cmp.Or(t.runOrigin.RunLabel(p.WorkflowID), p.WorkflowName),
+		Name:            cmp.Or(t.runOrigin.RunLabel(p.WorkflowID), marotte.RunDisplayName("", p.WorkflowName)),
 		Initiator:       p.Initiator,
 		InitiatorReason: p.InitiatorReason,
 		// Keyed on the workflow id: this frame's chat id is empty for exactly these runs.
@@ -112,10 +120,13 @@ func (t *Translator) HandleRunComplete(ctx context.Context, chatID marotte.ChatI
 	}
 	logAgentRun("agent-launched workflow run finished", chatID, p.WorkflowID,
 		p.FinalState.WorkflowName, "status", p.Status)
+	t.observeRunEnd(chatID, &p)
+	name := marotte.RunDisplayName(p.FinalState.RunLabel, p.FinalState.WorkflowName)
+	t.learnRunName(ctx, p.WorkflowID, name, chatID)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunFinished, chatID, marotte.RunFinishedPayload{
 		WorkflowID: p.WorkflowID,
 		Status:     p.Status,
-		Name:       cmp.Or(p.FinalState.RunLabel, p.FinalState.WorkflowName),
+		Name:       name,
 	}))
 }
 
@@ -130,6 +141,7 @@ func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(conte
 		node := cmp.Or(p.NodeID, p.LoopID)
 		switch kind {
 		case marotte.RunProgressNodeStart:
+			t.wakeMem.nodeRunning(p.WorkflowID, node)
 			path := nodeKey(p.NodePath, node)
 			// The ONE frame announcing a step's session id; recorded before the broadcast so a racing
 			// permission ask still classifies.
@@ -139,9 +151,13 @@ func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(conte
 			// The run turn's opening bracket; a path already open is a no-op on the log.
 			t.runs.RunNodeStart(ctx, &RunStep{RunID: p.WorkflowID, NodePath: path, SessionID: p.SessionID, Path: nodePathOf(p.NodePath, node)}, chatID)
 		case marotte.RunProgressNodeComplete:
+			t.wakeMem.nodeRunning(p.WorkflowID, node)
 			t.runs.RunNodeComplete(ctx, p.WorkflowID, nodePathOf(p.NodePath, node), p.Status, p.Reason)
 		case marotte.RunProgressNodePaused:
-			if !p.retryWait() {
+			if p.retryWait() {
+				t.wakeMem.retryWaited(p.WorkflowID, node)
+			} else {
+				t.wakeMem.nodePaused(p.WorkflowID, node)
 				t.runs.RunNodePaused(ctx, p.WorkflowID, nodePathOf(p.NodePath, node))
 			}
 		case marotte.RunProgressStepsQueued:

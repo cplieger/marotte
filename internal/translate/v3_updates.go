@@ -141,6 +141,14 @@ type promptTurnSummary struct {
 // The census reports every OTHER unit, so the two must agree or counting stops silently.
 const meteringUnitCredit = "credit"
 
+// turnStarted marks a turn_start in both wake pairings: the workflow-message waker's and the chat's run completions.
+func (t *Translator) turnStarted(sc steerScope) {
+	t.wakes.turnStarted(t.bufferSession(sc))
+	if sc.run == "" {
+		t.wakeMem.turnStarted(sc.key)
+	}
+}
+
 // HandleSessionInfoUpdate folds v3 context-usage into the chat's usage and routes v3
 // compaction status. Parent-only, except a workflow step's turn_completion, let through
 // for its metering (persistTurnSummary).
@@ -153,7 +161,7 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	// execution is running. A step session's buffer is the step's own, so its frames go to its run.
 	sc := frameSteerScope(chatID, attr)
 	if u.Meta.Kiro.TurnStart != nil {
-		t.wakes.turnStarted(t.bufferSession(sc))
+		t.turnStarted(sc)
 	}
 	if t.handleSteeringUpdate(ctx, sc, &u) {
 		return

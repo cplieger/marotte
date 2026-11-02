@@ -38,7 +38,12 @@ type baseDeps struct {
 	// test can stage a scheduled run without a runtime or a scheduler.
 	scheduledRuns map[string]bool
 	// runLabels are the labels RunLabel answers, keyed by workflow id.
-	runLabels   map[string]string
+	runLabels map[string]string
+	// runReads are the runs ReadRun was asked to read, in call order, and readDone each read's done.
+	runReads []string
+	readDone []func()
+	// leaseChats are the chats LeaseChat answers, keyed by workflow id.
+	leaseChats  map[string]marotte.ChatID
 	planUpdates []marotte.RunPlanUpdate
 	// runNotices is the per-chat queue RunNotice consumes, oldest first, so a test
 	// can stage a finished run behind a notify-wf- notice without a run registry.
@@ -208,6 +213,50 @@ func (d *baseDeps) DepartedName(id marotte.ChatID) (string, bool) {
 // those filed after a close, as the store's log would.
 func (d *baseDeps) UnsettledWorkflowMessages(_ context.Context, chatID marotte.ChatID) ([]marotte.WorkflowMessage, error) {
 	return waitingIn(d.turns.chatLog[chatID])
+}
+
+// AwaitsRunName reads the double's chat log as the store reads its own, with no rewind.
+func (d *baseDeps) AwaitsRunName(_ context.Context, chatID marotte.ChatID, run string) (bool, error) {
+	awaits := false
+	for i := range d.turns.chatLog[chatID] {
+		e := &d.turns.chatLog[chatID][i]
+		switch e.Kind {
+		case marotte.EntryKindRunNamed:
+			var n marotte.EntryRunNamed
+			if json.Unmarshal(e.Payload, &n) == nil && n.Run == run && n.Name != "" {
+				return false, nil
+			}
+		case marotte.EntryKindTurnWake:
+			var w marotte.EntryTurnWake
+			if json.Unmarshal(e.Payload, &w) == nil && slices.Contains(marotte.WakeRunsUnnamed(&w), run) {
+				awaits = true
+			}
+		}
+	}
+	return awaits, nil
+}
+
+// WakeCauses reads the double's chat log as the store reads its own, an entry's index standing for its offset.
+func (d *baseDeps) WakeCauses(_ context.Context, chatID marotte.ChatID, session string) (marotte.WakeCauses, error) {
+	turn, opens := d.turns.chats[chatID], d.turns.opens[chatID]
+	if turn == nil || d.turns.closed(turn) || len(opens) == 0 {
+		return marotte.WakeCauses{}, nil
+	}
+	prev := int64(-1)
+	if len(opens) > 1 {
+		prev = int64(opens[len(opens)-2])
+	}
+	var facts []marotte.PositionedFact
+	for i, e := range d.turns.chatLog[chatID] {
+		fact, ok, err := marotte.WorkflowMessageFactOf(&e)
+		if err != nil {
+			return marotte.WakeCauses{}, err
+		}
+		if ok {
+			facts = append(facts, marotte.PositionedFact{Fact: fact, At: int64(i)})
+		}
+	}
+	return marotte.WakeCausesOf(facts, session, int64(opens[len(opens)-1]), prev), nil
 }
 
 func waitingIn(logs ...[]marotte.Entry) ([]marotte.WorkflowMessage, error) {
@@ -498,6 +547,8 @@ type turnLogs struct {
 	// chatLog is each chat's log in file order across its turns, and chatOf the chat a turn id is the chat's.
 	chatLog map[marotte.ChatID][]marotte.Entry
 	chatOf  map[string]marotte.ChatID
+	// opens is where each chat turn opened in chatLog, oldest first: the store's turn_open offsets.
+	opens map[marotte.ChatID][]int
 	// appendErr, when set, is what every sink append and every between-turns
 	// append answers, recording nothing: the store refusing a write.
 	appendErr error
@@ -526,6 +577,7 @@ func newTurnLogs() *turnLogs {
 		sealed:  map[string][]marotte.Entry{},
 		chatLog: map[marotte.ChatID][]marotte.Entry{},
 		chatOf:  map[string]marotte.ChatID{},
+		opens:   map[marotte.ChatID][]int{},
 	}
 }
 
@@ -538,6 +590,7 @@ func (tl *turnLogs) chatTurn(chatID marotte.ChatID) *turnlog.Turn {
 	t := tl.open()
 	tl.chats[chatID] = t
 	tl.chatOf[t.ID()] = chatID
+	tl.opens[chatID] = append(tl.opens[chatID], len(tl.chatLog[chatID]))
 	return t
 }
 
@@ -609,6 +662,15 @@ func (d *baseDeps) IsScheduled(workflowID string) bool {
 	return d.scheduledRuns[workflowID]
 }
 func (d *baseDeps) RunLabel(workflowID string) string { return d.runLabels[workflowID] }
+func (d *baseDeps) ReadRun(workflowID string, done func()) {
+	d.runReads = append(d.runReads, workflowID)
+	d.readDone = append(d.readDone, done)
+}
+
+func (d *baseDeps) LeaseChat(workflowID string) (marotte.ChatID, bool) {
+	c, ok := d.leaseChats[workflowID]
+	return c, ok
+}
 
 type stagedRunNotice struct {
 	workflowID string

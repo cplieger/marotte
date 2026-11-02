@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"slices"
@@ -61,6 +62,9 @@ func (t *Translator) HandleWorkflowMessage(ctx context.Context, chatID marotte.C
 	}
 	received := m.row(m.to)
 	received.ToSession = m.toSession
+	if m.origin == marotte.SteerOriginStep {
+		t.wakeMem.classify(m.run, cmp.Or(p.NodeID, m.step), m.id, m.path == "")
+	}
 	t.appendSteer(ctx, m.to, m.id, received)
 	t.wakes.filed(m.toSession, m.id)
 	if m.from.key != "" {

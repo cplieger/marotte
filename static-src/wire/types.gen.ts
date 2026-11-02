@@ -12,7 +12,7 @@ export type DecisionKind = "permission" | "elicitation" | "user_input";
 
 export type EngineState = "starting" | "ready" | "restarting" | "down";
 
-export type EntryKind = "turn_open" | "turn_bind" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
+export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed";
 
@@ -72,7 +72,7 @@ export type RunStepTranscriptState = "ready" | "gone" | "unavailable";
 
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
-export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_disclosed" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "entry";
+export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_disclosed" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "wake" | "entry";
 
 export type SettledBy = "user" | "unattended" | "moot" | "ended";
 
@@ -107,6 +107,10 @@ export type TurnOutcome = "running" | "completed" | "cancelled" | "interrupted" 
 export type TurnRevertCause = "rewind";
 
 export type TurnSeverity = "running" | "clean" | "stopped" | "broken";
+
+export type WakeNote = "network" | "network_lost" | "repeat_cap";
+
+export type WakeReason = "step_message" | "run_finished" | "rewake" | "unknown";
 
 export type WhoamiState = "signed_in" | "signed_out" | "unavailable";
 
@@ -1064,6 +1068,16 @@ export interface EntryReconciled {
 }
 
 /**
+ * EntryRunNamed is the run_named payload: a run's display name, learned after a wake naming the run
+ * was recorded without one. It renders nothing; every wake of the chat that names Run without a name
+ * reads Name.
+ */
+export interface EntryRunNamed {
+  run: string;
+  name: string;
+}
+
+/**
  * EntrySafetyBlocked is the safety_blocked payload: the safety properties an
  * enforce-mode block violated.
  */
@@ -1311,6 +1325,26 @@ export interface EntryTurnRevert {
   kas_message_id: string;
   cause: TurnRevertCause;
   from_n: number;
+}
+
+/**
+ * EntryTurnWake is the turn_wake payload: what started an agent-initiated turn, filed once at
+ * its first agentInitiated frame. It renders nothing at its position; the turn header folds it.
+ * Steers is the waking message for a step message and the re-delivered rows for a rewake; Run,
+ * RunName (as WakeSteer's), RunStatus, Initiator and StopReason describe a finished run; Note,
+ * Loop and MaxIterations qualify a step message.
+ */
+export interface EntryTurnWake {
+  reason: WakeReason;
+  note?: WakeNote;
+  run?: string;
+  run_name?: string;
+  run_status?: RunStatus;
+  initiator?: string;
+  stop_reason?: string;
+  loop?: string;
+  steers?: WakeSteer[];
+  max_iterations?: number;
 }
 
 /** ErrorPayload is the payload for type="error"; Code lets clients react per-class. */
@@ -4187,6 +4221,20 @@ export interface UserInputOption {
 export interface UserInputSubOption {
   title: string;
   description?: string;
+}
+
+/**
+ * WakeSteer is a workflow message a wake names, copied from its row (ID) when the wake was
+ * recorded, so the header and the rail read the wake alone. RunName is the run's display name
+ * (RunDisplayName) as known then, "" when not yet; a later run_named entry names it.
+ */
+export interface WakeSteer {
+  id: string;
+  run?: string;
+  run_name?: string;
+  step?: string;
+  severity?: string;
+  text: string;
 }
 
 /**

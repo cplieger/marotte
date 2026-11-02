@@ -189,7 +189,7 @@ func normalizeFoldEntries(entries []marotte.Entry) []marotte.Entry {
 // foldRows derives one turn's rows from the export path: writeEntry per entry with one turnRender per turn, so the
 // plan-once fold is the writer's own.
 func foldRows(turn []marotte.Entry) []entryFoldRow {
-	r := newTurnRender(turn)
+	r := newTurnRender(turn, nil)
 	rows := make([]entryFoldRow, 0, len(turn))
 	for i := range turn {
 		var b strings.Builder

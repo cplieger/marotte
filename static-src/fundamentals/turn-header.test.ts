@@ -4,6 +4,9 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mountAppCSS } from "../__test-helpers__/css-rules.js";
 import { buildTurnHeader, updateTurnHeader, type TurnHeaderData } from "./turn-header.js";
 import { initAttachmentPillCallbacks } from "../attachment-pill.js";
+import { wakeLine } from "../turn-wake.js";
+import { namedWake } from "../turns.js";
+import type { EntryTurnWake } from "../wire/types.gen.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
   return {
@@ -315,5 +318,220 @@ describe("a folded turn whose prompt is cut", () => {
     await settle();
     expect(text(h).hasAttribute("data-cut")).toBe(false);
     expect(getComputedStyle(cue(h)).display).toBe("none");
+  });
+});
+
+// The words per kind are wake_line.json's (turn-wake.node.test.ts); this pins where they land.
+describe("a woken turn's header", () => {
+  const RUN = "wf_5e1f0c2a9b7d4e36";
+  const OTHER = "wf_7c3a9e1f0b2d4a58";
+  const ERROR =
+    "The site build failed before any edit: the install guide has no front matter, so the " +
+    "link check cannot run on the built pages.";
+  const stepWake = (severity: string, text = ERROR): EntryTurnWake => ({
+    reason: "step_message",
+    steers: [{ id: "wfmsg-1", run: RUN, step: "check-links", severity, text }],
+  });
+  const names = new Map([
+    [RUN, "publish-docs"],
+    [OTHER, "nightly-report"],
+  ]);
+  const wakeData = (w: EntryTurnWake, open?: (id: string) => void): TurnHeaderData =>
+    data({
+      request: undefined,
+      wake: wakeLine(namedWake(w, names)),
+      onOpenRun: open === undefined ? undefined : (run) => open(run.id),
+    });
+  const label = (h: HTMLElement): HTMLElement | null => h.querySelector(".turn-req > .turn-wake");
+
+  it("puts the label on its own line above the message, the message where a prompt goes", () => {
+    const h = buildTurnHeader(wakeData(stepWake("error")));
+    expect(h.dataset["trigger"]).toBe("wake");
+    expect(label(h)?.textContent).toBe("publish-docs \u00b7 check-links reports an error");
+    expect(h.querySelector(".turn-req")?.firstElementChild).toBe(label(h));
+    expect(text(h).textContent).toBe(ERROR);
+    expect(text(h).hidden).toBe(false);
+    expect(text(h).contains(label(h))).toBe(false);
+  });
+
+  it("opens the run from its name, and the name is plain text with no opener", () => {
+    const opened: string[] = [];
+    const h = buildTurnHeader(wakeData(stepWake("warning"), (id) => opened.push(id)));
+    const btn = h.querySelector<HTMLButtonElement>(".turn-wake > button.turn-wake-run");
+    expect(btn?.textContent).toBe("publish-docs");
+    expect(btn?.dataset["runId"]).toBe(RUN);
+    btn?.click();
+    expect(opened).toEqual([RUN]);
+
+    const plain = buildTurnHeader(wakeData(stepWake("warning")));
+    expect(plain.querySelector(".turn-wake-run")?.tagName).toBe("SPAN");
+  });
+
+  it("draws a finished run's label alone, with no empty message under it", () => {
+    const h = buildTurnHeader(
+      wakeData({
+        reason: "run_finished",
+        run: "wf_unknown01234",
+        run_name: "publish-docs-held",
+        run_status: "completed",
+      }),
+    );
+    expect(label(h)?.textContent).toBe("publish-docs-held completed");
+    expect(text(h).hidden).toBe(true);
+  });
+
+  it("renames the run on a repaint once its name arrives", () => {
+    const unnamed = (): TurnHeaderData =>
+      data({ request: undefined, wake: wakeLine(stepWake("warning")), onOpenRun: () => undefined });
+    const h = buildTurnHeader(unnamed());
+    expect(label(h)?.querySelector(".turn-wake-run")?.textContent).toBe("A workflow");
+    updateTurnHeader(
+      h,
+      wakeData(stepWake("warning"), () => undefined),
+    );
+    expect(label(h)?.querySelector(".turn-wake-run")?.textContent).toBe("publish-docs");
+    expect(label(h)?.textContent).toBe("publish-docs \u00b7 check-links asks you");
+  });
+
+  it("repaints rows whose joined words read alike but split differently", () => {
+    const twoRows: EntryTurnWake = {
+      reason: "rewake",
+      steers: [
+        { id: "q", run: RUN, step: "draft", text: "a" },
+        { id: "r", run: OTHER, step: "collect", text: "b" },
+      ],
+    };
+    const oneRow: EntryTurnWake = {
+      reason: "rewake",
+      steers: [
+        {
+          id: "q",
+          run: RUN,
+          step: "draft",
+          text: `a\n${OTHER}nightly-report \u00b7 collect: b`,
+        },
+      ],
+    };
+    const h = buildTurnHeader(wakeData(oneRow));
+    updateTurnHeader(h, wakeData(twoRows));
+    expect(text(h).querySelectorAll(".turn-wake-row-run").length).toBe(2);
+  });
+
+  it("lists a re-delivery's messages as its message, each opening its own run from its name", () => {
+    const opened: string[] = [];
+    const h = buildTurnHeader(
+      wakeData(
+        {
+          reason: "rewake",
+          steers: [
+            { id: "q", run: RUN, step: "draft", text: "Which branch?" },
+            { id: "r", run: OTHER, step: "collect", text: "Leg 1 is done." },
+          ],
+        },
+        (id) => opened.push(id),
+      ),
+    );
+    expect(label(h)?.textContent).toBe(
+      "Resumed with 2 workflow messages you stopped before they were read",
+    );
+    expect(label(h)?.querySelector(".turn-wake-run")).toBeNull();
+    expect(text(h).textContent).toBe(
+      "publish-docs \u00b7 draft: Which branch?\nnightly-report \u00b7 collect: Leg 1 is done.",
+    );
+    const buttons = [...text(h).querySelectorAll<HTMLButtonElement>("button.turn-wake-row-run")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["publish-docs", "nightly-report"]);
+    for (const b of buttons) {
+      b.click();
+    }
+    expect(opened).toEqual([RUN, OTHER]);
+  });
+
+  it("gives a re-delivery's text back to a step message on a repaint", () => {
+    const h = buildTurnHeader(
+      wakeData({
+        reason: "rewake",
+        steers: [{ id: "q", run: RUN, step: "draft", text: "Which branch?" }],
+      }),
+    );
+    updateTurnHeader(h, wakeData(stepWake("error")));
+    expect(text(h).textContent).toBe(ERROR);
+    expect(text(h).querySelector(".turn-wake-row-run")).toBeNull();
+  });
+
+  it("keeps the typed system line for a wake that names nothing", () => {
+    const h = buildTurnHeader(wakeData({ reason: "unknown" }));
+    expect(h.dataset["trigger"]).toBe("system");
+    expect(text(h).textContent).toBe("Agent-initiated turn");
+    expect(label(h)).toBeNull();
+  });
+
+  it("drops the label when a repaint has no wake, and keeps a focused run button across one that does", () => {
+    const h = buildTurnHeader(wakeData(stepWake("info"), () => undefined));
+    const btn = h.querySelector(".turn-wake-run");
+    updateTurnHeader(
+      h,
+      wakeData(stepWake("info"), () => undefined),
+    );
+    expect(h.querySelector(".turn-wake-run")).toBe(btn);
+    updateTurnHeader(h, data({ request: undefined }));
+    expect(label(h)).toBeNull();
+    expect(text(h).hidden).toBe(false);
+    expect(text(h).textContent).toBe("Agent-initiated turn");
+  });
+
+  describe("clamps its message exactly as a prompt's", () => {
+    let style: HTMLStyleElement | undefined;
+    let cards: HTMLElement[] = [];
+    afterEach(() => {
+      for (const c of cards) {
+        c.remove();
+      }
+      cards = [];
+      style?.remove();
+      style = undefined;
+    });
+    const settle = (): Promise<void> =>
+      new Promise((r) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+      );
+    function mount(d: TurnHeaderData, folded: boolean): HTMLElement {
+      style ??= mountAppCSS();
+      const card = document.createElement("div");
+      card.className = "turn";
+      card.toggleAttribute("data-folded", folded);
+      card.style.inlineSize = "30rem";
+      const h = buildTurnHeader(d);
+      card.append(h);
+      document.body.append(card);
+      cards.push(card);
+      return h;
+    }
+    const LONG_WAKE = "a long line of words ".repeat(60);
+
+    it("in full on an open turn", async () => {
+      const h = mount(wakeData(stepWake("warning", LONG_WAKE)), false);
+      await settle();
+      expect(getComputedStyle(text(h)).maxBlockSize).toBe("none");
+      expect(text(h).hasAttribute("data-cut")).toBe(false);
+      expect(text(h).scrollHeight).toBe(text(h).clientHeight);
+    });
+
+    it("cut to a folded prompt's box with its fade and cue on a folded turn, the label left whole", async () => {
+      const woken = mount(wakeData(stepWake("warning", LONG_WAKE)), true);
+      const prompted = mount(data({ request: LONG_WAKE }), true);
+      await settle();
+      expect(text(woken).hasAttribute("data-cut")).toBe(true);
+      expect(text(woken).clientHeight).toBe(text(prompted).clientHeight);
+      expect(getComputedStyle(text(woken)).maskImage).toBe(
+        getComputedStyle(text(prompted)).maskImage,
+      );
+      expect(getComputedStyle(woken.querySelector<HTMLElement>(".turn-req-cut")!).display).toBe(
+        "block",
+      );
+      expect(woken.querySelector(".turn-fold-toggle")?.getAttribute("aria-label")).toBe(
+        "Expand or collapse this turn, message truncated",
+      );
+      expect(label(woken)?.getBoundingClientRect().height).toBeGreaterThan(0);
+    });
   });
 });

@@ -201,6 +201,11 @@ var abandonableWriteSites = []durableSite{{
 	fn:      "HandleAgentNotFound",
 	calls:   []string{"Mutate"},
 	because: "the fallback mode, re-derived",
+}, {
+	file:    "internal/translate/run_names.go",
+	fn:      "fileRunNamed",
+	calls:   []string{"appendBetweenTurns"},
+	because: "a run's display name for wakes recorded before it: lost, those wakes keep the placeholder, never a wrong name",
 }}
 
 // Sites that take the caller's context and must not wrap it: the decision is not theirs.

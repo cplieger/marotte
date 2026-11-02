@@ -1,0 +1,262 @@
+{
+  "_doc": [
+    "Frames of a chat's wakes in the shapes kiro-cli 2.32.0 builds them (_kiro/session/notify, the",
+    "workflow lifecycle frames with run_complete's finalState, and the _meta of a wake's content). The",
+    "scenario is synthetic: one chat session, a docs-publishing run with one step, and two other runs."
+  ],
+  "node_start": {
+    "method": "_kiro/workflow/node_start",
+    "params": {
+      "workflowId": "wf_5e1f0c2a9b7d4e36",
+      "nodeId": "build/check-links",
+      "nodePath": [
+        "wf_5e1f0c2a9b7d4e36",
+        "build",
+        "build/check-links"
+      ],
+      "type": "step",
+      "agentName": "site-builder",
+      "sessionId": "sess_5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f"
+    }
+  },
+  "notify_info": {
+    "method": "_kiro/session/notify",
+    "params": {
+      "sessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      "callerSessionId": "sess_5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+      "message": "Link check done: 412 links, none broken. Nothing needed from you.",
+      "severity": "info",
+      "sender": "step",
+      "workflowId": "wf_5e1f0c2a9b7d4e36",
+      "nodeId": "build/check-links",
+      "agentName": "site-builder"
+    }
+  },
+  "notify_warning": {
+    "method": "_kiro/session/notify",
+    "params": {
+      "sessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      "callerSessionId": "sess_5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+      "message": "Two pages still link to the old domain. Should I rewrite those links now, or leave them for the next release?",
+      "severity": "warning",
+      "sender": "step",
+      "workflowId": "wf_5e1f0c2a9b7d4e36",
+      "nodeId": "build/check-links",
+      "agentName": "site-builder"
+    }
+  },
+  "notify_error": {
+    "method": "_kiro/session/notify",
+    "params": {
+      "sessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      "callerSessionId": "sess_5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+      "message": "The site build failed before any edit: docs/guide/install.md has no front matter.",
+      "severity": "error",
+      "sender": "step",
+      "workflowId": "wf_5e1f0c2a9b7d4e36",
+      "nodeId": "build/check-links",
+      "agentName": "site-builder"
+    }
+  },
+  "notify_success": {
+    "method": "_kiro/session/notify",
+    "params": {
+      "sessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      "callerSessionId": "sess_5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+      "message": "The link report is written to build/links.txt.",
+      "severity": "success",
+      "sender": "step",
+      "workflowId": "wf_5e1f0c2a9b7d4e36",
+      "nodeId": "build/check-links",
+      "agentName": "site-builder"
+    }
+  },
+  "node_paused_retry_wait": {
+    "method": "_kiro/workflow/node_paused",
+    "params": {
+      "workflowId": "wf_5e1f0c2a9b7d4e36",
+      "nodeId": "build/check-links",
+      "nodePath": [
+        "wf_5e1f0c2a9b7d4e36",
+        "build",
+        "build/check-links"
+      ],
+      "reason": "Retrying in 120s after a connection error (ECONNRESET).",
+      "kind": "retry-wait"
+    }
+  },
+  "notify_network_waiting": {
+    "method": "_kiro/session/notify",
+    "params": {
+      "sessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      "callerSessionId": "sess_5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+      "message": "Step \"build/check-links\" has had connection errors (ECONNRESET) since 2026-10-17T10:02:11Z. The workflow keeps retrying it about every 120s until 2026-10-17T10:32:11Z and pauses the run if the last retry fails too. Nothing is needed from you.",
+      "severity": "info",
+      "sender": "step",
+      "workflowId": "wf_5e1f0c2a9b7d4e36",
+      "nodeId": "build/check-links",
+      "agentName": "site-builder"
+    }
+  },
+  "node_paused_gave_up": {
+    "method": "_kiro/workflow/node_paused",
+    "params": {
+      "workflowId": "wf_5e1f0c2a9b7d4e36",
+      "nodeId": "build/check-links",
+      "nodePath": [
+        "wf_5e1f0c2a9b7d4e36",
+        "build",
+        "build/check-links"
+      ],
+      "reason": "Step paused after connection errors (ECONNRESET)."
+    }
+  },
+  "run_complete_paused_transient": {
+    "method": "_kiro/workflow/run_complete",
+    "params": {
+      "workflowId": "wf_5e1f0c2a9b7d4e36",
+      "status": "paused",
+      "parentSessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      "finalState": {
+        "workflowName": "publish-docs",
+        "status": "paused",
+        "parentSessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+        "pauseReason": "Step paused after connection errors (ECONNRESET).",
+        "pauseDetail": {
+          "class": "transient-error",
+          "code": "ECONNRESET"
+        }
+      }
+    }
+  },
+  "notify_network_lost": {
+    "method": "_kiro/session/notify",
+    "params": {
+      "sessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      "callerSessionId": "sess_5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+      "message": "Step \"build/check-links\" had connection errors (ECONNRESET) from 2026-10-17T10:02:11Z to 2026-10-17T10:32:11Z, so the workflow stopped retrying it and paused the run. When the connection is back, resume the run with update_workflow (action update_status, status \"running\"), or tell the user.",
+      "severity": "info",
+      "sender": "step",
+      "workflowId": "wf_5e1f0c2a9b7d4e36",
+      "nodeId": "build/check-links",
+      "agentName": "site-builder"
+    }
+  },
+  "run_complete_repeat_cap": {
+    "method": "_kiro/workflow/run_complete",
+    "params": {
+      "workflowId": "wf_3b8d2f6a1c9e4b07",
+      "status": "paused",
+      "parentSessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      "finalState": {
+        "workflowName": "publish-docs",
+        "runLabel": "publish-docs",
+        "status": "paused",
+        "parentSessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+        "pause": {
+          "kind": "maxIterations",
+          "nodeId": "fix-loop",
+          "maxIterations": 6,
+          "iterationsRun": 6
+        },
+        "pauseReason": "Repeat 'fix-loop' reached maxIterations."
+      }
+    }
+  },
+  "notify_repeat_cap": {
+    "method": "_kiro/session/notify",
+    "params": {
+      "sessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      "message": "A workflow you launched (\"publish-docs\") paused: repeat \"fix-loop\" reached its iteration limit (6) without meeting its stop condition. Read the last step's result, explain what remains unresolved, and ask the user whether to grant more iterations or end this repeat and continue.",
+      "severity": "info",
+      "sender": "step",
+      "workflowId": "wf_3b8d2f6a1c9e4b07",
+      "nodeId": "fix-loop"
+    }
+  },
+  "run_complete_completed": {
+    "method": "_kiro/workflow/run_complete",
+    "params": {
+      "workflowId": "wf_7c3a9e1f0b2d4a58",
+      "status": "completed",
+      "parentSessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      "finalState": {
+        "workflowName": "nightly-report",
+        "status": "completed",
+        "parentSessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+      }
+    }
+  },
+  "run_complete_stopped_by_user": {
+    "method": "_kiro/workflow/run_complete",
+    "params": {
+      "workflowId": "wf_2e4f6a8c0b1d3f57",
+      "status": "aborted",
+      "parentSessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      "initiator": "user",
+      "initiatorReason": "tab closed",
+      "finalState": {
+        "workflowName": "nightly-report",
+        "runLabel": "nightly-report-held",
+        "status": "aborted",
+        "stopInitiator": "user",
+        "stopReason": "tab closed",
+        "parentSessionId": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+      }
+    }
+  },
+  "chunk_send_message_wake": {
+    "content": {
+      "type": "text",
+      "text": "The link check is back; reading its report."
+    },
+    "_meta": {
+      "kiro": {
+        "agentInitiated": true,
+        "agentInitiatedReason": "send-message-wake",
+        "agentMode": "vibe"
+      }
+    }
+  },
+  "chunk_workflow_complete_wake": {
+    "content": {
+      "type": "text",
+      "text": "The nightly report run finished; reading its results."
+    },
+    "_meta": {
+      "kiro": {
+        "agentInitiated": true,
+        "agentInitiatedReason": "workflow-complete-wake",
+        "agentMode": "vibe"
+      }
+    }
+  },
+  "chunk_notification_rewake": {
+    "content": {
+      "type": "text",
+      "text": "Picking the question back up."
+    },
+    "_meta": {
+      "kiro": {
+        "agentInitiated": true,
+        "agentInitiatedReason": "notification-rewake",
+        "agentMode": "vibe"
+      }
+    }
+  },
+  "tool_call_send_message_wake": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "tooluse_0001",
+    "title": "Reading the step's report",
+    "kind": "read",
+    "status": "pending",
+    "_meta": {
+      "kiro": {
+        "agentInitiated": true,
+        "agentInitiatedReason": "send-message-wake",
+        "agentMode": "vibe",
+        "toolId": "fs_read"
+      }
+    }
+  }
+}

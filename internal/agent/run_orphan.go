@@ -335,7 +335,7 @@ func (rs *Runs) rawInspect(ctx context.Context, workflowID string) (json.RawMess
 	if err != nil {
 		return nil, workflow.Classify(err)
 	}
-	rs.translate.RecordRunSteps(raw)
+	rs.translate.RecordInspect(context.WithoutCancel(ctx), raw)
 	rs.seedRouterSteps(workflowID, raw)
 	return raw, nil
 }

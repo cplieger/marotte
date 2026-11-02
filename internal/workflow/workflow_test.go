@@ -253,7 +253,7 @@ func TestSteps_IncludesAStepThatHasNotRun(t *testing.T) {
 	if !slices.Equal(pending.Path, []string{"wf_4bdc8cd5", "replaced"}) {
 		t.Errorf("pending step path = %v, want [wf_4bdc8cd5 replaced]", pending.Path)
 	}
-	// It must stay out of the SESSION list, or RecordRunSteps addresses nothing.
+	// It must stay out of the SESSION list, or RecordInspect addresses nothing.
 	for _, s := range ran {
 		if s.NodeID == "replaced" {
 			t.Error("a step with no session reached StepSessions")

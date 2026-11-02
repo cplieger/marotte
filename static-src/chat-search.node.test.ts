@@ -59,8 +59,8 @@ describe("the in-chat search reply shared with the Go implementation", () => {
 
   it("carries the tally beside the hits: every entry read, every occurrence counted", () => {
     for (const r of decodeAll()) {
-      // The fixture's log is nineteen entries, all read whatever matched.
-      expect(r.scanned).toBe(19);
+      // The fixture's log is twenty-three entries, all read whatever matched.
+      expect(r.scanned).toBe(23);
       // Nothing in the fixture reaches the cap, so the count IS the list.
       expect(r.matched).toBe(r.matches.length);
       expect(r.truncated).toBe(false);

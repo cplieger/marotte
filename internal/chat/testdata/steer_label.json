@@ -65,7 +65,7 @@
         "internal/agent/run_bounds.go:412",
         "internal/agent/run_plan.go:116",
         "internal/translate/steering.go:130",
-        "internal/translate/steering.go:283"
+        "internal/translate/steering.go:270"
       ]
     },
     {
@@ -75,7 +75,7 @@
       "label": "Workflow result",
       "sites": [
         "internal/translate/projection_entries.go:218",
-        "internal/translate/workflow_message.go:40"
+        "internal/translate/workflow_message.go:41"
       ]
     },
     {
@@ -103,7 +103,7 @@
       "label": "Message from the main agent",
       "sites": [
         "internal/translate/steering.go:130",
-        "internal/translate/steering.go:283"
+        "internal/translate/steering.go:270"
       ]
     },
     {
@@ -113,7 +113,7 @@
       "label": "Message from the main agent",
       "sites": [
         "internal/translate/projection_entries.go:218",
-        "internal/translate/workflow_message.go:40"
+        "internal/translate/workflow_message.go:41"
       ]
     },
     {
@@ -141,7 +141,7 @@
       "label": "Message to the main agent",
       "sites": [
         "internal/translate/steering.go:130",
-        "internal/translate/steering.go:283"
+        "internal/translate/steering.go:270"
       ]
     },
     {
@@ -151,7 +151,7 @@
       "label": "Message to the main agent",
       "sites": [
         "internal/translate/projection_entries.go:218",
-        "internal/translate/workflow_message.go:40"
+        "internal/translate/workflow_message.go:41"
       ]
     },
     {
@@ -184,7 +184,7 @@
         "internal/agent/run_appender.go:236",
         "internal/agent/run_message.go:498",
         "internal/translate/steering.go:130",
-        "internal/translate/steering.go:283"
+        "internal/translate/steering.go:270"
       ]
     },
     {
@@ -194,7 +194,7 @@
       "label": "Mid-turn message",
       "sites": [
         "internal/translate/projection_entries.go:218",
-        "internal/translate/workflow_message.go:40"
+        "internal/translate/workflow_message.go:41"
       ]
     }
   ],
@@ -305,14 +305,14 @@
       "reason": "boundary"
     },
     {
-      "site": "internal/translate/steering.go:283",
+      "site": "internal/translate/steering.go:270",
       "form": "literal",
       "origin": "",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/translate/workflow_message.go:40",
+      "site": "internal/translate/workflow_message.go:41",
       "form": "literal",
       "origin": "",
       "state": "",

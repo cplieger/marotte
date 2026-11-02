@@ -107,9 +107,32 @@ type acpKiroBlock struct {
 // sent and matches no constant.
 type agentInitiatedReason string
 
-// reasonSendMessageWake is a turn KAS started to deliver a send_message or runtime note to an idle
-// session, or to re-deliver an info note after a reader's cancel (rewakeWithInfo).
-const reasonSendMessageWake agentInitiatedReason = "send-message-wake"
+const (
+	// reasonSendMessageWake is a turn KAS started to deliver a send_message or runtime note to an
+	// idle session, or to re-deliver an info note after a reader's cancel (rewakeWithInfo).
+	reasonSendMessageWake agentInitiatedReason = "send-message-wake"
+	// reasonWorkflowCompleteWake is a launched run's terminal run_complete reaching an idle parent
+	// (autoWakeParentOnComplete).
+	reasonWorkflowCompleteWake agentInitiatedReason = "workflow-complete-wake"
+	// reasonNotificationRewake re-delivers the notifications a reader's cancel cleared
+	// (rewakeClearedNotifications).
+	reasonNotificationRewake agentInitiatedReason = "notification-rewake"
+)
+
+// wakeReason maps KAS's cause onto the turn_wake's; any other value, an empty one included, is
+// unknown, and a non-empty one is reported once by the census.
+func (r agentInitiatedReason) wakeReason() marotte.WakeReason {
+	switch r {
+	case reasonSendMessageWake:
+		return marotte.WakeReasonStepMessage
+	case reasonWorkflowCompleteWake:
+		return marotte.WakeReasonRunFinished
+	case reasonNotificationRewake:
+		return marotte.WakeReasonRewake
+	}
+	censusWakeReason(string(r))
+	return marotte.WakeReasonUnknown
+}
 
 // acpKiroBlockShadow strips the UnmarshalJSON method so the real decode does not recurse.
 type acpKiroBlockShadow acpKiroBlock
