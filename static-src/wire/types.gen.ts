@@ -90,7 +90,7 @@ export type SteerOrigin = "user" | "agent" | "parent" | "step";
 
 export type SteerReason = "restart" | "boundary";
 
-export type SteerRowState = "queued" | "unsent" | "removed";
+export type SteerRowState = "queued" | "delivering" | "unsent" | "removed";
 
 export type SteerState = "read" | "dropped";
 

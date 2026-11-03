@@ -487,6 +487,69 @@ describe("the steer stack", () => {
     );
   });
 
+  // The turn ended while KAS held the row: KAS's continuation reads it or its boundary drops it,
+  // and a delete would empty the buffer under that read, so the row is drawn like a sending one,
+  // with no controls.
+  it("offers no controls on a message the agent is reading at a turn's end", () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    recordSteerQueued("chat-1", {
+      id: "steer-1",
+      text: "one",
+      origin: "user",
+      state: "delivering",
+    });
+
+    const row = firstRow();
+    expect(row.dataset["state"]).toBe("delivering");
+    expect(labelOf(row)).toBe("Delivering");
+    expect(row.getAttribute("aria-label")).toBe(
+      "Delivering, the agent is reading or dropping it: one",
+    );
+    expect(actions(row)).toEqual([]);
+  });
+
+  // Discard all and Edit beside a workflow result are one clear of the whole buffer, which the
+  // server refuses while the agent reads a row: offering either would only produce a refusal.
+  it("offers no whole-buffer clear beside a message the agent is reading", () => {
+    recordSteerQueued("chat-1", {
+      id: "steer-1",
+      text: "mine",
+      origin: "user",
+      state: "delivering",
+    });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "later", origin: "user" });
+    recordSteerQueued("chat-1", { id: "notify-1", text: "workflow done", origin: "agent" });
+    expect(actions(rowAt(0))).toEqual([]);
+    expect(actions(rowAt(1))).toEqual(["Send this message now"]);
+    expect(actions(rowAt(2))).toEqual([]);
+
+    recordSteerQueued("chat-1", { id: "steer-1", text: "mine", origin: "user" });
+    expect(actions(rowAt(2))).toEqual(["Discard all 3 unread messages"]);
+  });
+
+  // While the agent reads one row, any delete of a row in its buffer would clear that read, so the
+  // server refuses it. Only a row the server holds itself (unsent) can still be edited or deleted.
+  it("offers no Edit or Delete beside a message the agent is reading, except on an unsent one", () => {
+    recordSteerQueued("chat-1", {
+      id: "steer-1",
+      text: "mine",
+      origin: "user",
+      state: "delivering",
+    });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "later", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-3", text: "held", origin: "user", state: "unsent" });
+    expect(actions(rowAt(0))).toEqual([]);
+    expect(actions(rowAt(1))).toEqual(["Send this message now"]);
+    expect(actions(rowAt(2))).toEqual(["Edit this message", 'Delete "held"']);
+
+    recordSteerQueued("chat-1", { id: "steer-1", text: "mine", origin: "user" });
+    expect(actions(rowAt(1))).toEqual([
+      "Send this message now",
+      "Edit this message",
+      'Delete "later"',
+    ]);
+  });
+
   it("offers no controls on a message that is still sending", () => {
     recordSteerSent("chat-1", "m-1", "one");
     expect(actions(firstRow())).toEqual([]);

@@ -21,6 +21,7 @@ type stubSteerQueue struct {
 	unsentRows []SteerRow
 	run        func(SteerJob)
 	removeRef  string
+	discardRef string
 	routeRef   string
 	flush      []SteerSend
 	jobRows    []SteerRow
@@ -123,9 +124,9 @@ func (q *stubSteerQueue) RemoveCleared(_ marotte.ChatID, _ string, cleared []str
 	return q.removeRes
 }
 
-func (q *stubSteerQueue) BeginDiscard(_ marotte.ChatID, _ string) bool {
+func (q *stubSteerQueue) BeginDiscard(_ marotte.ChatID, _ string) (needsClear bool, refuse string) {
 	q.log("begin-discard")
-	return q.needsClear
+	return q.needsClear, q.discardRef
 }
 
 func (q *stubSteerQueue) DiscardCleared(_ marotte.ChatID, _ string, landed bool) SteerOpResult {

@@ -72,10 +72,11 @@ type bridgeCoordinator struct {
 	applyPendingModel func(context.Context, marotte.ChatID) `wiring:"optional"`
 	// autoCompact is the compaction policy's turn-end and pre-send triggers.
 	autoCompact *autoCompactor `wiring:"optional"`
-	// resolveEnds and drainAfterClose are first and last in afterTurnClose; the drain is last
-	// because a prompt mid-compaction aborts it upstream.
+	// resolveEnds and drainAfterClose are afterTurnClose's; it owns their order.
 	resolveEnds     func(context.Context, marotte.ChatID, command.TurnFence) command.EndFacts   `wiring:"optional"`
 	drainAfterClose func(context.Context, marotte.ChatID, command.CloseFacts, command.EndFacts) `wiring:"optional"`
+	// settleNotices clears a run notice KAS's boundary left queued, once KAS is idle. Nil in tests.
+	settleNotices func(context.Context, marotte.ChatID) `wiring:"optional"`
 	// runs lets the death closer close every open step turn of the runs this bridge hosted.
 	runs *runLog `wiring:"optional"`
 	// Before closeHostedRuns closes the run turns, so the not-read notes land inside them.
@@ -90,6 +91,7 @@ type bridgeCoordinator struct {
 	steerTurnBound   func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerTurnRevised func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerBridgeGone  func(marotte.ChatID)                       `wiring:"optional"`
+	steerKASSettled  func(marotte.ChatID)                       `wiring:"optional"`
 	// chatHasLiveRun keeps pushTurnOutcome from claiming the work is over while a launched run continues. Nil means none.
 	chatHasLiveRun func(marotte.ChatID) bool `wiring:"optional"`
 	// chatHasTab reports an open tab on the chat; it answers true when no tab set is wired, so nothing is released.
@@ -143,17 +145,8 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 			defer cancel()
 			h.runs.resumeInterruptedRuns(ctx, chatID)
 		},
-		reapSession: func(sessionID string) { h.reapSessions([]string{sessionID}) },
-		onTurnClosed: func(chatID marotte.ChatID, turnID string) {
-			h.agentTerms.closeTurn(chatID, turnID)
-			// Its own goroutine: a bridge Call has no deadline and a closer must not wait on one. Gated, since a
-			// closer need not run on inflight; Shutdown stops every bridge, so a refused clear has nothing to clear.
-			h.lifecycle.goUnlessDraining(func() {
-				ctx, cancel := h.lifecycle.derivedContext()
-				defer cancel()
-				h.runs.clearStaleNotices(ctx, chatID)
-			})
-		},
+		reapSession:      func(sessionID string) { h.reapSessions([]string{sessionID}) },
+		onTurnClosed:     func(chatID marotte.ChatID, turnID string) { h.agentTerms.closeTurn(chatID, turnID) },
 		dischargeWaiting: h.DischargeWaiting,
 		endAsks:          h.bus.endAsksOf,
 		observeLaneFrame: func(origin acpResponder, seq uint64, msg *marotte.RPCResponse) {
@@ -167,6 +160,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		drainAfterClose: func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
 			h.dispatcher.DrainAfterClose(ctx, chatID, cl, ends)
 		},
+		settleNotices:    h.runs.clearStaleNotices,
 		runs:             h.runs.log,
 		endHostedSteers:  h.runs.endHostedSteers,
 		takeAgentSteers:  h.bus.steers.takeAgentRows,
@@ -176,6 +170,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		steerTurnBound:   h.bus.steers.turnBound,
 		steerTurnRevised: h.bus.steers.turnRevised,
 		steerBridgeGone:  h.bus.steers.bridgeGone,
+		steerKASSettled:  h.bus.steers.kasSettled,
 	}
 }
 

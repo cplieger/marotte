@@ -193,21 +193,28 @@ type closeFacts struct {
 	unattended bool
 }
 
-// afterTurnClose runs the between-turns follow-ups in order: steer ends, the wait for KAS to go idle (every later
-// step is a session call), a model switch (it changes the compaction's window), the compaction (a queued prompt
-// would abort it upstream), then the drain graded by the close's outcome. Nothing once shutdown began.
+// afterTurnClose runs the between-turns follow-ups in order: the wait for KAS to go idle (every later step is a
+// session call), the steer ends and stale run notices, a model switch (it changes the compaction's window), the
+// compaction (a queued prompt would abort it upstream), then the drain graded by the close's outcome. Nothing once
+// shutdown began. A turn_end is not KAS's boundary: KAS 2.37.1 continues the session/prompt while unread steering
+// remains, and a clear before its idle report empties the buffer under that continuation. So the steer settle
+// waits for idle and is skipped when a turn opens first, whose close resolves the end; a death settles at once.
 func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, chatID marotte.ChatID, cf closeFacts) {
 	var ends command.EndFacts
-	if bc.resolveEnds != nil && !bc.draining() {
-		// A death drains its forwarder here, lock-free.
-		if cf.exit != nil {
-			waitForwarder(cf.exit)
-		}
-		// So a holder the resolve sees is another turn, not this close's prompt.
-		bc.settleAfterClose(bc.lifecycle.shutdownCtx, chatID, command.AdmissionWait)
-		ends = bc.resolveEnds(ctx, chatID, cf.fence)
+	if cf.exit != nil {
+		ends = bc.resolveCloseEnds(ctx, chatID, cf)
 	}
-	afterStop, ok := bc.betweenTurns(ctx, chatID, cf)
+	afterStop, ok := bc.betweenTurns(ctx, chatID, cf, func() {
+		if bc.steerKASSettled != nil {
+			bc.steerKASSettled(chatID)
+		}
+		if cf.exit == nil {
+			ends = bc.resolveCloseEnds(ctx, chatID, cf)
+		}
+		if bc.settleNotices != nil && !bc.draining() {
+			bc.settleNotices(ctx, chatID)
+		}
+	})
 	if !ok || bc.drainAfterClose == nil || bc.draining() ||
 		!bc.settleAfterClose(bc.lifecycle.shutdownCtx, chatID, command.AdmissionWait) {
 		return
@@ -217,15 +224,34 @@ func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, chatID marotte.
 	}, ends)
 }
 
-// betweenTurns waits for KAS to go idle, applies a parked model and runs the turn-end compaction, then releases the
-// close's KAS hold if it started one (claimTurn), so a waiting prompt cannot reach the session before them; a release
-// refused because KAS reported a run meanwhile repeats the wait. It answers the rows queued under the hold, false when
-// the wait stood down (a turn opened, a teardown, shutdown), which ends the hold with no drain.
-func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, chatID marotte.ChatID, cf closeFacts) ([]string, bool) {
+// resolveCloseEnds settles the steer ends of the closed turn and older ones. Nothing once shutdown began.
+func (bc *bridgeCoordinator) resolveCloseEnds(ctx context.Context, chatID marotte.ChatID, cf closeFacts) command.EndFacts {
+	if bc.resolveEnds == nil || bc.draining() {
+		return command.EndFacts{}
+	}
+	// A death drains its forwarder here, lock-free.
+	if cf.exit != nil {
+		waitForwarder(cf.exit)
+	}
+	// So a holder the resolve sees is another turn, not this close's prompt.
+	bc.settleAfterClose(bc.lifecycle.shutdownCtx, chatID, command.AdmissionWait)
+	return bc.resolveEnds(ctx, chatID, cf.fence)
+}
+
+// betweenTurns waits for KAS to go idle, runs atIdle once, applies a parked model and runs the turn-end compaction,
+// then releases the close's KAS hold if it started one (claimTurn), so a waiting prompt cannot reach the session
+// before them; a release refused because KAS reported a run meanwhile repeats the wait. It answers the rows queued
+// under the hold, false when the wait stood down (a turn opened, a teardown, shutdown), which ends the hold with no
+// drain and skips atIdle.
+func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, chatID marotte.ChatID, cf closeFacts, atIdle func()) ([]string, bool) {
 	for {
 		if !bc.turns.awaitKASIdle(bc.lifecycle.shutdownCtx, chatID, cf.fence) {
 			bc.turns.kasStep(chatID, kasStandDownOwn, cf.fence.Seq)
 			return nil, false
+		}
+		if atIdle != nil {
+			atIdle()
+			atIdle = nil
 		}
 		if bc.applyPendingModel != nil {
 			bc.applyPendingModel(ctx, chatID)

@@ -709,7 +709,7 @@ func TestSteerRecords_ADeletedRowLeavesNoEntry(t *testing.T) {
 		s.bind()
 		s.steer("steer-a", "first")
 		s.steer("steer-b", "second")
-		if needs := s.q.BeginDiscard(s.chat, "op-d"); !needs {
+		if needs, _ := s.q.BeginDiscard(s.chat, "op-d"); !needs {
 			t.Fatal("discard of rows KAS holds needs no clear")
 		}
 		s.clearKAS()
@@ -720,7 +720,7 @@ func TestSteerRecords_ADeletedRowLeavesNoEntry(t *testing.T) {
 	t.Run("by Discard all with nothing in KAS", func(t *testing.T) {
 		s := newSteerHarness(t)
 		s.q.RouteSteer(s.chat, "steer-a", "first", nil, command.SteerHolder{Held: true, PromptClass: true})
-		if needs := s.q.BeginDiscard(s.chat, "op-d"); needs {
+		if needs, _ := s.q.BeginDiscard(s.chat, "op-d"); needs {
 			t.Fatal("BeginDiscard = true, want an immediate discard")
 		}
 		wantGoneUnnoted(t, s, "steer-a")
@@ -881,7 +881,7 @@ func TestSteerRecords_ATurnEndingUnderADiscardLeavesALaterRowToItsEnd(t *testing
 	s := newSteerHarness(t)
 	s.steer("steer-a", "a")
 	const op = "op-discard"
-	if needs := s.q.BeginDiscard(s.chat, op); !needs {
+	if needs, _ := s.q.BeginDiscard(s.chat, op); !needs {
 		t.Fatal("BeginDiscard = false, want a clear")
 	}
 	if _, refuse := s.q.RouteSteer(s.chat, "steer-b", "b", nil,
@@ -1078,7 +1078,7 @@ func TestSteerRecords_DiscardLeavesARowReadBeforeTheClearRead(t *testing.T) {
 	s.bind()
 	s.steer("steer-a", "first")
 	s.steer("steer-b", "second")
-	if !s.q.BeginDiscard(s.chat, "op-d") {
+	if needs, _ := s.q.BeginDiscard(s.chat, "op-d"); !needs {
 		t.Fatal("discard of rows KAS holds needs no clear")
 	}
 	s.recs.SteerRead(s.chat, s.kasID("steer-a"))

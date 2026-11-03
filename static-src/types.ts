@@ -303,6 +303,9 @@ export interface PendingSteer {
   /** The server holds the row and could not deliver it to any turn (`steer_queued`
    *  state `unsent`); it goes with the chat's next prompt unless deleted first. */
   unsent?: true;
+  /** KAS holds the row while its turn end is unsettled (`steer_queued` state `delivering`): the
+   *  continuation reads it or the boundary drops it, and the server refuses a delete, so it has no controls. */
+  delivering?: true;
   /** An `unsent` row that no clean turn close sends as a prompt of its own
    *  (`SteerQueuedPayload.awaits_prompt`): a prompt's start carries it, so it costs the follow-ups no turn. */
   awaitsPrompt?: true;
