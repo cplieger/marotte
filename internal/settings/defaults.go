@@ -98,6 +98,10 @@ const (
 	// kiro-cli's own, otherwise ValidEngineHeapMiB's range. It applies when the engine restarts.
 	KeyEngineHeapMiB = "engine_heap_mib"
 
+	// KeyHighThroughput starts the agent server on kiro-cli's bundled Node.js with internal/kasnode's flags, default
+	// ON (defaultHighThroughput); off is kiro-cli's stock engine. It applies when the engine restarts.
+	KeyHighThroughput = "high_throughput_optimizations"
+
 	// KeyTheme is "dark" | "light" | "system" ("system" is a stored choice; absent resolves to
 	// system at the client). The browser's localStorage copy is a pre-paint hint this value
 	// overwrites. KeyFBPath is the file browser's last directory, per workspace.
@@ -144,6 +148,7 @@ var KnownKeys = map[string]struct{}{
 	KeyCloudFormationSafety:     {},
 	KeyDebugLogs:                {},
 	KeyEngineHeapMiB:            {},
+	KeyHighThroughput:           {},
 	KeyOutputStyle:              {},
 	KeySpecPlanning:             {},
 	KeySpecPlanningAskFirst:     {},

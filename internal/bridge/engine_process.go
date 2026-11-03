@@ -356,6 +356,7 @@ func (e *Engine) processEnv() []string {
 	// After the screen and the door: os/exec keeps a key's last value.
 	env = append(env, localeEnv()...)
 	env = withHeapLimit(env, e.heapMiB, e.generation)
+	env, e.nodeArgs = e.withKASNodeLauncher(env)
 	if len(dropped) > 0 {
 		// Names only: the values are the credentials.
 		slog.Warn("dropped credential-shaped variables from the kiro-cli process; agent shell commands still inherit them",

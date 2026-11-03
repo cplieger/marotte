@@ -159,6 +159,8 @@ type Engine struct {
 	// extraEnv is appended to the engine's environment so the active install directory leads PATH. Empty leaves the
 	// screened inherited env.
 	extraEnv []string
+	// nodeArgs are the node flags the launcher put on the agent server's argv (withKASNodeLauncher), nil without it.
+	nodeArgs []string
 	// startIgnoreFiles and startTerminalTimeoutMs are what Start left KAS holding (StartLive). Guarded by mu.
 	startIgnoreFiles []string
 	// engineGroups are the process groups below kiro-cli's own (noteEngineGroups). Guarded by mu.
@@ -190,6 +192,7 @@ type Engine struct {
 	contentCollectionApplied bool
 	contentCollectionKnown   bool
 	debugLogs                bool
+	highThroughput           bool
 }
 
 // Option configures an Engine at construction time.
@@ -327,6 +330,7 @@ func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 	e.authArgs = o.AuthArgs
 	e.heapMiB = o.HeapMiB
 	e.debugLogs = o.DebugLogs
+	e.highThroughput = o.HighThroughput
 	e.spawn = kascap.EngineSpawn{
 		InfraSafetyMonitor:       o.Features.InfraSafetyMonitor,
 		AutoRouting:              o.Features.AutoRouting,

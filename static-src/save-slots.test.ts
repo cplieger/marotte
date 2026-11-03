@@ -40,10 +40,11 @@ const EXPECTED_KEYS = [
   // Data sharing: marotte's content-collection switch and kiro-cli's telemetry
   "content_collection_enabled",
   "telemetry.enabled",
-  // Experimental features: two kiro-cli keys plus marotte's own debug_logs
+  // Experimental features: two kiro-cli keys plus marotte's own debug_logs and high_throughput_optimizations
   "hooks.showStatus",
   "chat.disableInheritingDefaultResources",
   "debug_logs",
+  "high_throughput_optimizations",
   // Agent engine (settings.ts): the memory limit
   "engine_heap_mib",
   // Permissions

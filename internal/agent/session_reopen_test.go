@@ -256,6 +256,7 @@ var configWrites = []struct {
 	{key: settings.KeySettingsEpoch, value: "e", reach: reachNoChat},
 	{key: settings.KeySettingsRevision, value: 42, reach: reachNoChat},
 	{key: settings.KeyEngineHeapMiB, value: 1024, reach: reachEngine},
+	{key: settings.KeyHighThroughput, value: false, reach: reachEngine},
 	{key: settings.KeyAdditionalDirectories, value: grantableDirList, reach: reachReopen},
 }
 

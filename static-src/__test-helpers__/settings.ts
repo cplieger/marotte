@@ -41,6 +41,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     supervised_default: false,
     scheduled_auto_approve: false,
     debug_logs: false,
+    high_throughput_optimizations: true,
     settings_epoch: 0,
     settings_revision: 0,
     ...overrides,

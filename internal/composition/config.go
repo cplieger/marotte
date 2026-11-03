@@ -12,6 +12,7 @@ import (
 	"github.com/cplieger/envx/v2"
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/filebrowse"
+	"github.com/cplieger/marotte/internal/kasnode"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/toolbelt/v3"
@@ -94,7 +95,7 @@ func ConfigFromEnv() Config {
 		KiroCLISHA256ARM64:  envx.String("KIRO_CLI_SHA256_ARM64"),
 		VapidSub:            cmp.Or(envx.String("VAPID_SUBJECT"), "mailto:marotte@noreply.invalid"),
 		Tools:               paths.tools,
-		KASNodePath:         cmp.Or(envx.String("KIRO_KAS_NODE_PATH"), embeddedKASNode(os.Getenv("XDG_DATA_HOME"), os.Getenv("HOME"))),
+		KASNodePath:         cmp.Or(envx.String("KIRO_KAS_NODE_PATH"), kasnode.EmbeddedNodePath(os.Getenv("XDG_DATA_HOME"), os.Getenv("HOME"))),
 		ToolCatalogPath:     cmp.Or(envx.String("MAROTTE_TOOL_CATALOG"), "/opt/marotte/tool-catalog.json"),
 		ToolCatalogURL:      cmp.Or(envx.String("MAROTTE_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
 		ToolCatalogRefresh:  toolbelt.DefaultCatalogRefresh,
@@ -107,18 +108,6 @@ func ConfigFromEnv() Config {
 		BridgeEnvAllow:      bridge.ParseEnvAllowlist(os.Getenv(bridge.EnvAllowVar)),
 		KiroAPIKeySet:       os.Getenv(bridge.KiroAPIKeyVar) != "",
 	}
-}
-
-// embeddedKASNode is where kiro-cli extracts the node it runs KAS on: its data dir is
-// $XDG_DATA_HOME/kiro-cli, else $HOME/.local/share/kiro-cli. "" when neither is set.
-func embeddedKASNode(dataHome, home string) string {
-	if dataHome == "" {
-		if home == "" {
-			return ""
-		}
-		dataHome = filepath.Join(home, ".local", "share")
-	}
-	return filepath.Join(dataHome, "kiro-cli", "node")
 }
 
 // absDir makes a configured directory absolute against the startup cwd: the browse roots, the file
