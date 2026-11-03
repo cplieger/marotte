@@ -158,7 +158,7 @@ func TestBridgeEnd_RetiresTheAsksItCarriedAsEnded(t *testing.T) {
 // card is told it went because its session ended, exactly once.
 func TestChatTeardown_RetiresTheBridgesAsksAsEnded(t *testing.T) {
 	teardowns := map[string]func(h *Runtime){
-		"close":  func(h *Runtime) { h.CloseChatState(t.Context(), "c1") },
+		"close":  func(h *Runtime) { h.CloseChatState(t.Context(), "c1", false) },
 		"delete": func(h *Runtime) { h.DeleteChatStateByChain(t.Context(), "c1", nil, command.RunStopTabClosed) },
 	}
 	for name, teardown := range teardowns {

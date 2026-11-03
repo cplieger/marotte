@@ -1261,44 +1261,6 @@ func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 	return list.Runs, nil
 }
 
-// cancelForChat cancels every live run this chat's sessions launched: closing the chat's session leaves them
-// running. Starts with a record read, so a deleted chat no-ops.
-func (rs *Runs) cancelForChat(ctx context.Context, chatID marotte.ChatID, stop runStop) {
-	rec, ok := rs.chats.Get(ctx, chatID)
-	if !ok {
-		return
-	}
-	rs.cancelForSessions(ctx, chatID, rec.SessionChain(), stop)
-}
-
-// cancelForSessions cancels every live run these sessions launched, from a captured chain with no record
-// read, best-effort so a tab close never waits. One inventory read.
-func (rs *Runs) cancelForSessions(ctx context.Context, chatID marotte.ChatID, sessionChain []string, stop runStop) {
-	if len(sessionChain) == 0 {
-		return
-	}
-	chain := make(map[string]bool, len(sessionChain))
-	for _, id := range sessionChain {
-		chain[id] = true
-	}
-	runs, err := rs.listRaw(ctx)
-	if err != nil {
-		slog.Warn("close: run list unavailable, skipping run cancel", "chat_id", chatID, "error", err)
-		return
-	}
-	for i := range runs {
-		r := &runs[i]
-		if marotte.RunStatus(r.Status).Terminal() || !chain[r.ParentSessionID] {
-			continue
-		}
-		if cErr := rs.cancelAs(ctx, r.WorkflowID, stop); cErr != nil {
-			slog.Warn("close: run cancel failed", "workflow_id", r.WorkflowID, "chat_id", chatID, "error", cErr)
-			continue
-		}
-		slog.Info("close: cancelled chat's run", "workflow_id", r.WorkflowID, "chat_id", chatID)
-	}
-}
-
 // deleteForSessions deletes every run these sessions launched, whatever its status: KAS refuses a session
 // delete while the session owns a live run.
 func (rs *Runs) deleteForSessions(ctx context.Context, chatID marotte.ChatID, sessionChain []string, stop runStop) {

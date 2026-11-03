@@ -1055,7 +1055,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 	}{
 		{
 			name:        "close keeps the session on disk",
-			teardown:    func(h *Runtime, ctx context.Context, id marotte.ChatID) { h.CloseChatState(ctx, id) },
+			teardown:    func(h *Runtime, ctx context.Context, id marotte.ChatID) { h.CloseChatState(ctx, id, false) },
 			wantSurvive: true,
 		},
 		{

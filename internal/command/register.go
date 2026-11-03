@@ -17,8 +17,8 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		Tabs:     r.Tabs,
 		Bus:      r.Bus,
 		Teardown: r.Teardown,
-		CloseChat: func(ctx context.Context, chatID marotte.ChatID) {
-			closeChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID)
+		CloseChat: func(ctx context.Context, chatID marotte.ChatID, byPerson bool) {
+			closeChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID, byPerson)
 		},
 		// The delete grade, for a chat the close already erased: everything
 		// travels on the captured chain, since the record is gone by now.

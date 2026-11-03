@@ -811,9 +811,9 @@ func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
 	}
 }
 
-// TestCancelForSessions_CancelsARunWhoseRecordIsGone pins cancels from captured chains (a retired session
-// included); CancelForChat on the deleted chat is the control.
-func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
+// TestStopChatRuns_CancelsARunOnAnySessionOfTheChain: a run launched from a retired session of the chain, or from a
+// tangent's only session, is the chat's too.
+func TestStopChatRuns_CancelsARunOnAnySessionOfTheChain(t *testing.T) {
 	cases := []struct {
 		name   string
 		chain  []string
@@ -824,7 +824,8 @@ func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h, _, br := newTestHub()
+			setStopTiming(t, time.Hour, time.Hour)
+			h, cs, br := newTestHub()
 			const id = "wf_1"
 			br.callResults = map[string]json.RawMessage{
 				methodKiroWorkflowList: kasRuns(t, map[string]any{
@@ -833,60 +834,47 @@ func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
 				methodKiroWorkflowCancel: json.RawMessage(`{}`),
 			}
 			h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-			h.runs.grantLease(t.Context(), id, "publish", manualLaunch(), hostSec())
-			// No chat record exists.
+			cs.seed(t, "c1", func(c *marotte.Chat) {
+				for _, s := range tc.chain {
+					c.RecordSession(s)
+				}
+			})
 
-			h.runs.cancelForChat(t.Context(), "c-doomed", userStop(stopWhyTabClosed))
-			if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
-				t.Fatal("the record-reading CancelForChat cancelled a run for a chat with no record; the control is broken")
-			}
+			h.runs.StopChatRuns(t.Context(), "c1")
 
-			h.runs.cancelForSessions(t.Context(), "c-doomed", tc.chain, userStop(stopWhyTabClosed))
 			if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
-				t.Errorf("the captured-chain cancel never went out; calls were %v", br.callLog())
+				t.Errorf("the run launched from %s was not cancelled; calls were %v", tc.parent, br.callLog())
 			}
 		})
 	}
 }
 
-// TestCancelForChat_ReportsARunListItCouldNotRead pins that the close proceeds regardless, so the line is the only record.
-func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
+// TestStopChatRuns_ReportsARunListItCouldNotRead pins that the close proceeds regardless, so the line is the only
+// record.
+func TestStopChatRuns_ReportsARunListItCouldNotRead(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
-	seed := func(t *testing.T, cs *testChatStore) {
-		t.Helper()
-		if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
-			c.Name = "A"
-			c.RecordSession("sess_owned")
-			return true
-		}); err != nil {
-			t.Fatalf("seed the chat: %v", err)
-		}
-	}
-	const wantLine = "close: run list unavailable, skipping run cancel"
+	const wantLine = "close: the run list could not be read; stopping only the runs marotte leases"
 
 	t.Run("an unreadable run list is reported", func(t *testing.T) {
 		logs := captureLogs(t)
 		h, cs, br := newTestHub()
-		seed(t, cs)
+		cs.seed(t, chatID, func(c *marotte.Chat) { c.RecordSession("sess_owned") })
 		br.callErrs = map[string]error{methodKiroWorkflowList: errors.New("kas gone")}
 
-		h.runs.cancelForChat(t.Context(), chatID, userStop(stopWhyTabClosed))
+		h.runs.StopChatRuns(t.Context(), chatID)
 
 		if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
-			t.Errorf("a close that could not read the run list said nothing; want a line reading "+
-				"%q. Got: %s", wantLine, out)
+			t.Errorf("a close that could not read the run list said nothing; want a line reading %q. Got: %s", wantLine, out)
 		}
 	})
 
 	t.Run("an ordinary close is quiet about it", func(t *testing.T) {
 		logs := captureLogs(t)
 		h, cs, br := newTestHub()
-		seed(t, cs)
-		br.callResults = map[string]json.RawMessage{
-			methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
-		}
+		cs.seed(t, chatID, func(c *marotte.Chat) { c.RecordSession("sess_owned") })
+		br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`)}
 
-		h.runs.cancelForChat(t.Context(), chatID, userStop(stopWhyTabClosed))
+		h.runs.StopChatRuns(t.Context(), chatID)
 
 		if out := logs.String(); strings.Contains(out, `"msg":"`+wantLine+`"`) {
 			t.Errorf("a close that read the run list fine reported it as unavailable: %s", out)

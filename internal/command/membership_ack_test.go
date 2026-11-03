@@ -323,7 +323,7 @@ func TestAckTab_ATabClosedDuringTheBoundReadIsANoOp(t *testing.T) {
 		done <- answer{version: v, stored: stored, err: err}
 	}()
 	<-r.chats.entered
-	if _, _, err := r.mem.closeTab(t.Context(), id, "op-close"); err != nil {
+	if _, _, err := r.mem.closeTab(t.Context(), id, "op-close", true); err != nil {
 		t.Fatalf("Setup: closeTab during the bound read: %v", err)
 	}
 	_, version := r.st.List()

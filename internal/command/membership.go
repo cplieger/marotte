@@ -134,10 +134,10 @@ type RunOwner struct {
 	Verdict        RunVerdict
 }
 
-// chatCloser is the tab-close teardown for a chat tab: cancel the turn, cancel
-// the chat's runs, tear the bridge down, keep the record. Bound in
-// RegisterDefaults.
-type chatCloser func(ctx context.Context, chatID marotte.ChatID)
+// chatCloser is the tab-close teardown for a chat tab: cancel the turn, stop the
+// chat's runs when byPerson (the page's own close), tear the bridge down, keep the
+// record. Bound in RegisterDefaults.
+type chatCloser func(ctx context.Context, chatID marotte.ChatID, byPerson bool)
 
 // chatDeleter is the delete grade of the same teardown, for a chat the close
 // escalation has already erased; the captured session chain travels in.
@@ -590,7 +590,7 @@ func (m *Membership) launcherTab(ctx context.Context, launcher marotte.ChatID) (
 // tabs.Close, the COMMIT POINT; then chats.Delete each doomed record, which answers
 // the session chain the teardown runs from. Past the commit there is no rollback,
 // only roll-forward on a detached context.
-func (m *Membership) closeTab(ctx context.Context, id, opID string) (closed []marotte.TabSubject, version uint64, err error) {
+func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson bool) (closed []marotte.TabSubject, version uint64, err error) {
 	if m.tabs == nil {
 		return nil, 0, StatusError(http.StatusServiceUnavailable, errTabsUnavailable)
 	}
@@ -623,7 +623,7 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string) (closed []ma
 	// process would block every tab mutation. One grade per chat: delete grade for a record this
 	// close took (from the chain its delete answered), close grade for every other chat tab, including a
 	// doomed chat whose delete failed.
-	if m.tearDownClosed(rollCtx, closed, deleted) {
+	if m.tearDownClosed(rollCtx, closed, deleted, byPerson) {
 		// The closed tab may have been what held an expired chat or finished run outside the age
 		// test, so wake the purge now rather than after an idle back-off of up to an hour. After
 		// the lock, because the wake reads a field it guards.
@@ -635,7 +635,7 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string) (closed []ma
 // tearDownClosed runs one teardown grade per chat the close took and reports whether
 // a chat or run tab went, which is what owes retention a wake. Called after mu is
 // released.
-func (m *Membership) tearDownClosed(ctx context.Context, closed []marotte.TabSubject, deleted map[marotte.ChatID][]string) (retentionTabClosed bool) {
+func (m *Membership) tearDownClosed(ctx context.Context, closed []marotte.TabSubject, deleted map[marotte.ChatID][]string, byPerson bool) (retentionTabClosed bool) {
 	dispatched := make(map[marotte.ChatID]bool, len(deleted))
 	for _, t := range closed {
 		if t.Kind == marotte.TabKindRun {
@@ -654,7 +654,7 @@ func (m *Membership) tearDownClosed(ctx context.Context, closed []marotte.TabSub
 			continue
 		}
 		if m.closeChat != nil {
-			m.closeChat(ctx, chatID)
+			m.closeChat(ctx, chatID, byPerson)
 		}
 	}
 	return retentionTabClosed

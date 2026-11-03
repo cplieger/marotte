@@ -192,10 +192,10 @@ type chatTeardown interface {
 	// first, so a bridge opened once this runs answers ErrChatGone; the run and session
 	// deletes are driven from the session chain the removed record held.
 	DeleteChatStateByChain(ctx context.Context, chatID marotte.ChatID, sessionChain []string, cause RunStopCause)
-	// CloseChatState is the close path: cancel the chat's runs and drop the
-	// in-memory state, but leave the runs and the durable KAS session on disk
-	// so the chat can be reopened and so History can still list it.
-	CloseChatState(ctx context.Context, chatID marotte.ChatID)
+	// CloseChatState is the close path: drop the in-memory state, but leave the
+	// durable KAS session on disk so the chat can be reopened and so History can
+	// still list it. stopRuns, for a person's close, also stops the chat's runs.
+	CloseChatState(ctx context.Context, chatID marotte.ChatID, stopRuns bool)
 	// BeginChatTeardown marks the chat as going away BEFORE the teardown's cancel,
 	// so the turn end that cancel causes resends nothing. keep is a close, whose
 	// record survives and keeps a note per unread steer. Idempotent.

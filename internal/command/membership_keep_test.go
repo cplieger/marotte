@@ -82,7 +82,7 @@ func (f *keepFixture) closeTabOf(t *testing.T, id marotte.ChatID) {
 	if tabID == "" {
 		t.Fatalf("no tab shows %s", id)
 	}
-	if _, _, err := f.mem.closeTab(t.Context(), tabID, "op-close"); err != nil {
+	if _, _, err := f.mem.closeTab(t.Context(), tabID, "op-close", true); err != nil {
 		t.Fatalf("closeTab(%s): %v", id, err)
 	}
 }
@@ -408,7 +408,7 @@ func TestOpenTab_ANewRunTabHoldsItsRunTabFactOnEveryHolder(t *testing.T) {
 		t.Errorf("run tab parent = %q, want the first holder's reopened tab", tab.Parent)
 	}
 
-	if _, _, err := f.mem.closeTab(t.Context(), tab.ID, "op-close"); err != nil {
+	if _, _, err := f.mem.closeTab(t.Context(), tab.ID, "op-close", true); err != nil {
 		t.Fatalf("closeTab(run): %v", err)
 	}
 	for _, id := range []marotte.ChatID{"c-a", "c-b"} {

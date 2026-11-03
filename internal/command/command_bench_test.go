@@ -131,8 +131,8 @@ func (*benchDeps) InflightDone()   {}
 func (*benchDeps) Draining() bool  { return false }
 func (*benchDeps) DeleteChatStateByChain(context.Context, marotte.ChatID, []string, RunStopCause) {
 }
-func (*benchDeps) CloseChatState(context.Context, marotte.ChatID) {}
-func (*benchDeps) BeginChatTeardown(marotte.ChatID, bool)         {}
+func (*benchDeps) CloseChatState(context.Context, marotte.ChatID, bool) {}
+func (*benchDeps) BeginChatTeardown(marotte.ChatID, bool)               {}
 func (d *benchDeps) KillForTurn(turn TurnRef) {
 	d.stopSteps = append(d.stopSteps, "kill "+turn.Turn)
 }

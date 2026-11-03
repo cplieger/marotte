@@ -174,7 +174,7 @@ func TestCloseChatState_NamesTheTabClose(t *testing.T) {
 	}
 	insertChatSession(t, h, rig, "c1", "sess_cur")
 
-	h.CloseChatState(t.Context(), "c1")
+	h.CloseChatState(t.Context(), "c1", true)
 
 	cancels := rig.of(methodKiroWorkflowCancel)
 	if len(cancels) != 1 {

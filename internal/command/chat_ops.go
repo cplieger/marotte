@@ -147,17 +147,17 @@ func cmdCancel(
 	return responseOK, nil
 }
 
-// closeChatTeardown is the tab-close teardown: the turn, the runs and the session go; the chat
-// RECORD stays. Ordering is the contract: the turn is cancelled first (graceful stop), then the
-// runs (durable state a closed session would only pause), then the session teardown, which flushes
-// the in-flight buffer and kills the chat's agent terminals. Input asks are left for that session's
-// end to retire as ended: a clear here would drop the cards without saying why.
-func closeChatTeardown(ctx context.Context, bridges bridgeAccess, perms permissionCanceller, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID) {
+// closeChatTeardown is the tab-close teardown: the turn and the session go, and the runs too when
+// stopRuns says a person closed the tab; the chat RECORD stays. Ordering is the contract: the turn
+// is cancelled first (graceful stop), then the runs, then the session teardown, which flushes the
+// in-flight buffer and kills the chat's agent terminals. Input asks are left for that session's end
+// to retire as ended: a clear here would drop the cards without saying why.
+func closeChatTeardown(ctx context.Context, bridges bridgeAccess, perms permissionCanceller, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID, stopRuns bool) {
 	slog.Info("chat tab closed; tearing down its session", "chat_id", chatID)
 	defer stops.ReleaseStop(stops.RequestStop(chatID, marotte.TurnStopTeardown))
 	teardown.BeginChatTeardown(chatID, true)
 	teardownCancel(ctx, bridges, perms, chatID)
-	teardown.CloseChatState(ctx, chatID)
+	teardown.CloseChatState(ctx, chatID, stopRuns)
 }
 
 // deleteChatTeardown is closeChatTeardown's delete grade, for a chat the
