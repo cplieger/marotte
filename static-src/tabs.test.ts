@@ -880,8 +880,8 @@ describe("MRU activation history", () => {
     await openChats("first", "y", "x", "act"); // history [act, x, y, first]
     const doomedTab = chatID("x");
 
-    // No answer at all: the response is held and the dispatch canceled, which is
-    // the branch a real 5s timeout takes. Manual mode keeps the echo frame back,
+    // No answer at all: the response is held and the dispatch canceled, which reaches
+    // opTimedOut as a real 5s timeout does. Manual mode keeps the echo frame back,
     // or a matching op_id would confirm the op instead.
     tabServer.setMode("manual");
     tabServer.holdResponses();
@@ -2911,8 +2911,8 @@ describe("optimistic close: the reversible gesture", () => {
 });
 
 describe("optimistic close: timeout, verifying, and authoritative settlement", () => {
-  // The 5s deadline (CLOSE_CONFIRM_MS) uses AbortSignal.timeout, which fake timers cannot advance, so
-  // a cancellation takes the identical opTimedOut branch.
+  // The 5s deadline (CLOSE_CONFIRM_MS) is an AbortSignal.timeout, which fake timers do not advance, so a
+  // cancellation stands in for it and lands on opTimedOut too; the next block covers the timeout itself.
 
   /** A close whose dispatch ends with NO answer: response held, then the
    *  in-flight dispatch canceled. The op lands in `verifying`. */
@@ -2958,6 +2958,158 @@ describe("optimistic close: timeout, verifying, and authoritative settlement", (
     // Restored with a notice — this arm is the machine's, not a server error's,
     // so the ordinary failure toast stays silent.
     expect(vi.mocked(toastInfo)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+});
+
+describe("optimistic close: a committed close whose answer is late or an error", () => {
+  it("a close the transport timed out on shows no error and stays closed", async () => {
+    await openChats("a", "keep");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      tabServer.commitThenAnswerNext("close_tab", {
+        ok: false,
+        status: 0,
+        error: "Request timed out",
+        code: "timeout",
+      });
+    }
+
+    await closeTab(chatID("a"));
+
+    expect(hasTab("chat", "a")).toBe(false);
+    expect(openers.chatClose).toHaveBeenCalledWith("a");
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("a close the server answers only after 30 s shows no error and stays closed", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    // The action's deadline is an AbortSignal.timeout: put it on the faked clock.
+    const deadline = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const ac = new AbortController();
+      setTimeout(() => {
+        ac.abort(new DOMException("signal timed out", "TimeoutError"));
+      }, ms);
+      return ac.signal;
+    });
+    try {
+      await openChats("a", "keep");
+      tabServer.answerAfterNext("close_tab", 30_000, {
+        ok: true,
+        status: 200,
+        body: { closed: [chatID("a")], version: tabServer.version() + 1 },
+      });
+
+      let settled = false;
+      const closing = closeTab(chatID("a")).then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(settled).toBe(true);
+      await closing;
+      await vi.advanceTimersByTimeAsync(25_000);
+
+      expect(tabServer.sentOfType("close_tab")).toHaveLength(1);
+      expect(hasTab("chat", "a")).toBe(false);
+      expect(openers.chatClose).toHaveBeenCalledWith("a");
+      expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+    } finally {
+      deadline.mockRestore();
+    }
+  });
+
+  it("a close cut off by the network before its frame verifies instead of refusing", async () => {
+    await openChats("a", "keep");
+    tabServer.setMode("manual");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      tabServer.commitThenAnswerNext("close_tab", {
+        ok: false,
+        status: 0,
+        error: "Network error",
+        code: "network",
+      });
+    }
+
+    await closeTab(chatID("a"));
+    expect(hasTab("chat", "a")).toBe(false);
+    tabServer.flushFrames();
+
+    expect(hasTab("chat", "a")).toBe(false);
+    expect(openers.chatClose).toHaveBeenCalledWith("a");
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("a retry the server answers 'already in progress' before the frame verifies instead of refusing", async () => {
+    await openChats("a", "keep");
+    tabServer.setMode("manual");
+    tabServer.commitThenAnswerNext("close_tab", {
+      ok: false,
+      status: 0,
+      error: "Network error",
+      code: "network",
+    });
+    tabServer.commitThenAnswerNext("close_tab", {
+      ok: false,
+      status: 409,
+      error: "request already in progress",
+    });
+
+    await closeTab(chatID("a"));
+    expect({
+      sent: tabServer.sentOfType("close_tab").length,
+      restored: hasTab("chat", "a"),
+      toasts: vi.mocked(toastErrorFn).mock.calls.length,
+    }).toEqual({ sent: 2, restored: false, toasts: 0 });
+    tabServer.flushFrames();
+
+    expect(hasTab("chat", "a")).toBe(false);
+    expect(openers.chatClose).toHaveBeenCalledWith("a");
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("an 'already in progress' retry for a tab this projection lacks shows nothing", async () => {
+    await openChats("keep");
+    tabServer.commitThenAnswerNext("close_tab", {
+      ok: false,
+      status: 0,
+      error: "Network error",
+      code: "network",
+    });
+    tabServer.commitThenAnswerNext("close_tab", {
+      ok: false,
+      status: 409,
+      error: "request already in progress",
+    });
+
+    await closeTab("t-elsewhere");
+
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(2);
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("a network non-answer for a tab this projection lacks shows nothing", async () => {
+    await openChats("keep");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      tabServer.commitThenAnswerNext("close_tab", {
+        ok: false,
+        status: 0,
+        error: "Network error",
+        code: "network",
+      });
+    }
+
+    await closeTab("t-elsewhere");
+
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("an error answered after the close's frame confirmed it shows nothing", async () => {
+    await openChats("a", "keep");
+    tabServer.commitThenAnswerNext("close_tab", { ok: false, status: 500, error: "nope" });
+
+    await closeTab(chatID("a"));
+
+    expect(hasTab("chat", "a")).toBe(false);
+    expect(openers.chatClose).toHaveBeenCalledWith("a");
     expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
   });
 });

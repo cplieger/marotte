@@ -260,8 +260,8 @@ func TestOpenTab_RefusesWhenTheLauncherAndRunNeedTwoSlots(t *testing.T) {
 
 	_, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}, "op-run")
 
-	if code, _, _ := StatusOf(err); code != http.StatusConflict || !errors.Is(err, errTabsFull) {
-		t.Errorf("OpenTab(run) = %v (status %d), want the 409 tab limit", err, code)
+	if code, reason, _ := StatusOf(err); code != http.StatusConflict || reason != "tabs_full" || !errors.Is(err, errTabsFull) {
+		t.Errorf("OpenTab(run) = %v (status %d, reason %q), want the 409 tab limit with reason tabs_full", err, code, reason)
 	}
 	if open, _ := st.List(); len(open) != tabs.MaxOpenTabs-1 {
 		t.Errorf("the set holds %d tabs, want %d: a refusal opens neither tab", len(open), tabs.MaxOpenTabs-1)

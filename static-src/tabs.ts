@@ -950,9 +950,9 @@ export async function closeTab(id: string): Promise<void> {
   markLocalOp(opID);
   if (row === undefined) {
     // Not in this projection: no pending op, just the dispatch. An unknown id is SUCCESS server-side,
-    // so a definitive error here is a real refusal.
+    // so a refusal here is a real one.
     const lone = await closeTabCommand.dispatch({ id, opID }).outcome;
-    if (lone.status === "error" && lone.error.code !== "timeout") {
+    if (lone.status === "error" && serverRefused(lone.error)) {
       notifyAboutRow(undefined, "Could not close that tab", "error");
     }
     return;
@@ -974,19 +974,26 @@ export async function closeTab(id: string): Promise<void> {
     removeCommitted(opID, outcome.value.closed, outcome.value.version);
     return;
   }
-  if (outcome.status === "error" && outcome.error.code !== "timeout") {
-    // The server ANSWERED an error: nothing committed, so the restore is
-    // honest — and the toast is this branch's, because the action itself stays
-    // quiet (its other failure shape is inconclusive and must not claim one).
+  if (outcome.status === "error" && serverRefused(outcome.error)) {
+    // The server refused: the restore is honest only while the op is pending, because a frame naming it
+    // proves the close committed. The toast is this branch's: the action itself stays quiet.
     captured.refused = true;
-    notifyAboutRow(captured.rows[0], "Could not close that tab", "error");
-    opFailed(opID);
+    if (opFailed(opID)) {
+      notifyAboutRow(captured.rows[0], "Could not close that tab", "error");
+    }
     return;
   }
-  // No answer — the definition-level CLOSE_CONFIRM_MS elapsed (or the dispatch
-  // was aborted): the machine verifies rather than guessing in either
-  // direction.
+  // No verdict: CLOSE_CONFIRM_MS elapsed, the request was lost, the dispatch was aborted or a retry found the
+  // first attempt still running. The machine verifies rather than guessing in either direction.
   opTimedOut(opID);
+}
+
+/** Whether an error is the server refusing the close. The transport's timeout, network and cancelled outcomes carry
+ *  status 0, and a close they cut off may have committed. close_tab itself never answers 409: a 409 is the idempotency
+ *  layer's "request already in progress" for a retry whose first attempt is still running, so the close verifies. */
+function serverRefused(error: { readonly status?: number }): boolean {
+  const status = error.status ?? 0;
+  return status > 0 && status !== 409;
 }
 
 /** A person's close (the ×, middle-click, Delete): the gate, then `beforeClose` and `closeTab`

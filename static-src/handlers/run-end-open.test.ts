@@ -333,7 +333,7 @@ describe("a run-end toast whose parent chat is gone opens the run's tab while th
     mockOpenTab.mockImplementation(async (args) =>
       (realOpenTab as typeof Tabs.openTab)(args as Parameters<typeof Tabs.openTab>[0]),
     );
-    tabServer.failNext("open_tab", 409, "too many tabs");
+    tabServer.failNext("open_tab", 409, "too many tabs", "tabs_full");
     const asked = runOnServer("wf_409", true);
     finish("wf_409", "completed", "c-parent");
     openButton().click();

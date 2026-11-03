@@ -10,6 +10,7 @@
 import { join as joinKey } from "@cplieger/keyenc";
 
 import {
+  ActionError,
   defineAction,
   retryNetwork,
   RETRY_STANDARD,
@@ -42,9 +43,10 @@ interface OpenTabReply {
   version: number;
 }
 
-/** The sentence a refused open reads as. At the product limit the refusal has a remedy. */
+/** The sentence a refused open reads as. At the product limit the refusal has a remedy. Keyed on the server's
+ *  reason, never on 409 alone: a run being purged and an idempotent retry still in progress answer 409 too. */
 export function openTabRefusal(err: ActionErrorLike): string {
-  return err.status === 409
+  return err.code === "tabs_full"
     ? "Close a tab first, because this workspace has too many open."
     : "Could not open that tab";
 }
@@ -312,9 +314,13 @@ function numberField(body: Record<string, unknown>, key: string): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-/** A transport failure as the framework's error surface reads it (a thrown Error with `status`). */
-function sendFailure(r: SendResult, what: string): Error & { status?: number } {
-  const err: Error & { status?: number } = new Error(r.error ?? `Could not ${what}`);
-  err.status = r.status;
-  return err;
+/** A failed send as the framework's error surface reads it: its status, and as its code either the transport's
+ *  failure class (`timeout`, `network`, `cancelled`) or the server's machine reason, so a caller tells a timeout
+ *  from a refusal and one refusal from another. */
+function sendFailure(r: SendResult, what: string): ActionError {
+  const code = r.code ?? r.reason;
+  return new ActionError(r.error ?? `Could not ${what}`, {
+    status: r.status,
+    ...(code !== undefined ? { code } : {}),
+  });
 }

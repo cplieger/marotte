@@ -736,7 +736,7 @@ describe("a failed mutation leaves the strip unchanged", () => {
   // a control that looks broken and one that is bounded.
   it("a 409 open is refused the same way, with no row and no throw", async () => {
     expect.assertions(2);
-    tabServer.failNext("open_tab", 409, "too many open");
+    tabServer.failNext("open_tab", 409, "too many open", "tabs_full");
     await expect(openTab({ kind: "chat", ref: "c" })).resolves.toBe("failed");
     expect(hasTab("chat", "c")).toBe(false);
   });
