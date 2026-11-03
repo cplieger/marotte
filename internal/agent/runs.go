@@ -35,6 +35,8 @@ type Runs struct {
 	notices map[marotte.ChatID][]runNotice
 	// plans holds each run's newest plan revision (run_plan.go), under mu.
 	plans runPlans
+	// recipes is the held recipe catalog launches and schedule saves resolve a source against.
+	recipes recipeCatalog
 	// engine is the one agent engine every read and stop is an engine call on; router routes the run's frames.
 	engine *engineOwner
 	router *engineRouter

@@ -428,6 +428,9 @@ func (rr *runRoutes) handleRecipes(w http.ResponseWriter, r *http.Request) {
 	recipes, err := rr.runs.listRecipes(r.Context())
 	if err != nil {
 		slog.Warn("recipe list failed", "error", err, "detail", rpcerr.Details(err))
+		if writeRecipeListSlow(w, err) {
+			return
+		}
 		httpreply.InternalError(w, errors.New("recipe list unavailable"))
 		return
 	}
@@ -458,6 +461,9 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Warn("run launch failed", "source", logsafe.Field(req.Source), "error", err, "detail", rpcerr.Details(err))
+		if writeRecipeListSlow(w, err) {
+			return
+		}
 		// KAS's launch validation names the problem, and the fix is the user's.
 		httpreply.BadRequest(w, rpcerr.Text(err))
 		return

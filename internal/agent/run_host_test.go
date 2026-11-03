@@ -234,7 +234,7 @@ func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 	}
 }
 
-// TestLaunchRun_RefusesAnUnknownSource pins that the source is re-checked against a fresh listRecipes, so no arbitrary file can be launched.
+// TestLaunchRun_RefusesAnUnknownSource pins that the source is re-checked against listRecipes, so no arbitrary file can be launched.
 func TestLaunchRun_RefusesAnUnknownSource(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{

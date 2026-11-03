@@ -791,7 +791,7 @@ func (rs *Runs) launchRecipe(ctx context.Context, source string, inputs map[stri
 
 func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Recipe, error) {
 	if source == "" {
-		return marotte.Recipe{}, errors.New("missing recipe source")
+		return marotte.Recipe{}, errMissingRecipeSource
 	}
 	recipes, err := rs.listRecipes(ctx)
 	if err != nil {
@@ -802,7 +802,7 @@ func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Reci
 			return r, nil
 		}
 	}
-	return marotte.Recipe{}, fmt.Errorf("unknown recipe source %q", source)
+	return marotte.Recipe{}, fmt.Errorf("%w %q", errUnknownRecipe, source)
 }
 
 // recipeIdle enforces the single-run rule (one live run per recipe, globally) against KAS's run list, the only source that sees runs
@@ -849,10 +849,14 @@ type kasRecipe struct {
 	BuiltIn         bool              `json:"builtIn"`
 }
 
+// listRecipes answers the held catalog (recipeCatalog), listing only when none is held.
 func (rs *Runs) listRecipes(ctx context.Context) ([]marotte.Recipe, error) {
-	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
-	defer cancel()
-	raw, err := rs.engine.rawCall(cctx, "workflow listRecipes call", methodKiroWorkflowListRecipes,
+	return rs.recipes.get(ctx, rs.lifecycle, rs.fetchRecipes)
+}
+
+// fetchRecipes walks KAS's whole catalog; KAS admits every recipe file on each call.
+func (rs *Runs) fetchRecipes(ctx context.Context) ([]marotte.Recipe, error) {
+	raw, err := rs.engine.rawCall(ctx, "workflow listRecipes call", methodKiroWorkflowListRecipes,
 		map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}})
 	if err != nil {
 		return nil, err
