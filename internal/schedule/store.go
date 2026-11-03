@@ -224,6 +224,27 @@ func (s *Store) skipTo(ctx context.Context, id string, to time.Time) error {
 	return s.persistLocked(ctx)
 }
 
+// missedSlot is a due slot every launch refused until its grace ran out, and the last refusal's text.
+type missedSlot struct {
+	due time.Time
+	why string
+}
+
+// skipFailed advances the anchor like skipTo and records the missed slot as failed. It detaches the
+// row's run, so a late outcome of the previous slot's run cannot replace this slot's failure.
+func (s *Store) skipFailed(ctx context.Context, id string, to time.Time, m missedSlot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[id]
+	if !ok {
+		return errNotFound
+	}
+	e.Anchor, e.LastRunAt = to, m.due
+	e.LastStatus, e.LastReason, e.LastRunID = StatusFailed, m.why, ""
+	s.entries[id] = e
+	return s.persistLocked(ctx)
+}
+
 // RecordStart marks run as the row's live run, before the run can execute, so its ending has a
 // row to land on whenever it comes.
 func (s *Store) RecordStart(ctx context.Context, run Run) error {

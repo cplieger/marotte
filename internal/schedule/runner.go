@@ -20,7 +20,7 @@ const tickInterval = time.Minute
 const missGrace = 3 * time.Minute
 
 // ErrNoRunCanStart marks a LaunchScheduled error that refused the launch because no run can start now; the
-// runner holds that slot for a later tick inside its grace instead of recording it failed.
+// runner holds that slot for a later tick inside its grace and records it failed only once the grace runs out.
 var ErrNoRunCanStart = errors.New("no run can start now")
 
 // BusyError is a LaunchScheduled refusal under the one-live-run-per-recipe rule. WorkflowID is the live run;
@@ -54,8 +54,8 @@ type Runner struct {
 	store    *Store
 	launcher Launcher
 	now      func() time.Time
-	// held is each schedule's due slot a launch refused with ErrNoRunCanStart, so its miss is logged as that.
-	held  map[string]time.Time
+	// held is each schedule's due slot a launch refused with ErrNoRunCanStart, so its miss is recorded as that.
+	held  map[string]missedSlot
 	tick  time.Duration
 	grace time.Duration
 }
@@ -88,7 +88,7 @@ func (r *Runner) sweep(ctx context.Context) {
 	for i := range list {
 		enabled[list[i].ID()] = list[i].Enabled
 	}
-	maps.DeleteFunc(r.held, func(id string, _ time.Time) bool { return !enabled[id] })
+	maps.DeleteFunc(r.held, func(id string, _ missedSlot) bool { return !enabled[id] })
 	for i := range list {
 		e := &list[i]
 		if !e.Enabled {
@@ -117,21 +117,24 @@ func (r *Runner) sweep(ctx context.Context) {
 func (r *Runner) hold(id string, due time.Time, why error) {
 	slog.Warn("schedule slot held until a run can start", "id", id, "due", due, "reason", why)
 	if r.held == nil {
-		r.held = make(map[string]time.Time)
+		r.held = make(map[string]missedSlot)
 	}
-	r.held[id] = due
+	r.held[id] = missedSlot{due: due, why: why.Error()}
 }
 
-// miss skips a slot past its grace.
+// miss skips a slot past its grace. A held slot is recorded failed with its last refusal; an offline miss records nothing.
 func (r *Runner) miss(ctx context.Context, id string, due, now time.Time) {
 	lateBy := now.Sub(due).Round(time.Second)
-	if held, ok := r.held[id]; ok && held.Equal(due) {
+	var err error
+	if held, ok := r.held[id]; ok && held.due.Equal(due) {
 		delete(r.held, id)
 		slog.Info("schedule slot missed while no run could start, skipping", "id", id, "due", due, "late_by", lateBy)
+		err = r.store.skipFailed(ctx, id, now, held)
 	} else {
 		slog.Info("schedule slot missed while offline, skipping", "id", id, "due", due, "late_by", lateBy)
+		err = r.store.skipTo(ctx, id, now)
 	}
-	if err := r.store.skipTo(ctx, id, now); err != nil {
+	if err != nil {
 		slog.Error("schedule skip failed", "id", id, "error", err)
 	}
 }
