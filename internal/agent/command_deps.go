@@ -62,7 +62,7 @@ func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID marotte.Ch
 func (rt *Runtime) CloseChatState(ctx context.Context, chatID marotte.ChatID, stop *chat.Claim) {
 	rt.beginSteerTeardown(ctx, chatID, true)
 	if stop != nil {
-		rt.runs.StopChatRuns(ctx, chatID, *stop)
+		rt.runs.StopChatRuns(ctx, chatID, stop)
 	}
 	rt.cleanupChatState(ctx, chatID)
 }

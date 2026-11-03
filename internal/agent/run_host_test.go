@@ -841,7 +841,7 @@ func TestStopChatRuns_CancelsARunOnAnySessionOfTheChain(t *testing.T) {
 				}
 			})
 
-			h.runs.StopChatRuns(t.Context(), "c1", chat.Claim{})
+			h.runs.StopChatRuns(t.Context(), "c1", &chat.Claim{})
 
 			if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 				t.Errorf("the run launched from %s was not cancelled; calls were %v", tc.parent, br.callLog())
@@ -862,7 +862,7 @@ func TestStopChatRuns_ReportsARunListItCouldNotRead(t *testing.T) {
 		cs.seed(t, chatID, func(c *marotte.Chat) { c.RecordSession("sess_owned") })
 		br.callErrs = map[string]error{methodKiroWorkflowList: errors.New("kas gone")}
 
-		h.runs.StopChatRuns(t.Context(), chatID, chat.Claim{})
+		h.runs.StopChatRuns(t.Context(), chatID, &chat.Claim{})
 
 		if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
 			t.Errorf("a close that could not read the run list said nothing; want a line reading %q. Got: %s", wantLine, out)
@@ -875,7 +875,7 @@ func TestStopChatRuns_ReportsARunListItCouldNotRead(t *testing.T) {
 		cs.seed(t, chatID, func(c *marotte.Chat) { c.RecordSession("sess_owned") })
 		br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`)}
 
-		h.runs.StopChatRuns(t.Context(), chatID, chat.Claim{})
+		h.runs.StopChatRuns(t.Context(), chatID, &chat.Claim{})
 
 		if out := logs.String(); strings.Contains(out, `"msg":"`+wantLine+`"`) {
 			t.Errorf("a close that read the run list fine reported it as unavailable: %s", out)

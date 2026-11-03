@@ -44,10 +44,10 @@ type stopHold struct {
 // close's stop hold, keeps the chat until every stop has ended. Each run's first cancel is sent before it returns,
 // while the chat's session is still resident; the read-backs, retries and the delete fallback run later on the
 // runtime's lifetime.
-func (rs *Runs) StopChatRuns(ctx context.Context, chatID marotte.ChatID, hold chat.Claim) {
+func (rs *Runs) StopChatRuns(ctx context.Context, chatID marotte.ChatID, hold *chat.Claim) {
 	rec, found, err := rs.chats.Lookup(ctx, chatID)
 	if err == nil && !found {
-		rs.chats.EndStop(ctx, &hold)
+		rs.chats.EndStop(ctx, hold)
 		return
 	}
 	var chain []string
@@ -59,10 +59,10 @@ func (rs *Runs) StopChatRuns(ctx context.Context, chatID marotte.ChatID, hold ch
 	}
 	candidates := rs.stopCandidates(ctx, chatID, chain, rs.leasesOfChat(chatID, chain))
 	if len(candidates) == 0 {
-		rs.chats.EndStop(ctx, &hold)
+		rs.chats.EndStop(ctx, hold)
 		return
 	}
-	h := &stopHold{claim: hold, left: len(candidates)}
+	h := &stopHold{claim: *hold, left: len(candidates)}
 	deadline := time.Now().Add(runStopWindow)
 	for wf, holders := range candidates {
 		slog.Info("close: stopping a run the closed chat launched", "workflow_id", wf, "chat_id", chatID)
