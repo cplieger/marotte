@@ -423,8 +423,8 @@ func (rs *Runs) retry(
 	if err != nil {
 		return out, err
 	}
-	if err := rs.refuseClosedLauncher(workflowID, holders); err != nil {
-		return out, err
+	if refused := rs.refuseClosedLauncher(workflowID, holders); refused != nil {
+		return out, refused
 	}
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
