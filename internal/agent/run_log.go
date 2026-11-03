@@ -192,7 +192,7 @@ func (r *runLog) stepTurns(ctx context.Context, workflowID, nodePath string) (en
 		if t := rec.open[nodePath]; t != nil {
 			open = t.turn.OpenEntries()
 			id := t.turn.ID()
-			stamps = append(stamps, *marotte.NewSubjectStamp(string(subject.KindRunTurn), workflowID+"/"+id, turnVersion(id, newest[id])))
+			stamps = append(stamps, marotte.SubjectStamp{Kind: string(subject.KindRunTurn), Ref: workflowID + "/" + id, Version: turnVersion(id, newest[id])})
 		}
 	}
 	return entries, open, stamps, true, nil
@@ -224,8 +224,9 @@ func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from ui
 			continue
 		}
 		open = t.turn.OpenEntries()
-		stamps = append(stamps, *marotte.NewSubjectStamp(string(subject.KindRunTurn),
-			workflowID+"/"+turn, turnVersion(turn, newestSeq)))
+		stamps = append(stamps, marotte.SubjectStamp{
+			Kind: string(subject.KindRunTurn), Ref: workflowID + "/" + turn, Version: turnVersion(turn, newestSeq),
+		})
 	}
 	return entries, open, stamps, true, nil
 }

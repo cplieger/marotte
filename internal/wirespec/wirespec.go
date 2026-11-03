@@ -20,12 +20,10 @@ import (
 )
 
 // wireTypes is every Go type the generator emits a TypeScript declaration for.
-// ORDER IS SIGNIFICANT: a type must be declared before any type referencing it.
 var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.ToolLocation](),
 	wiregen.TypeRef[marotte.ToolDiff](),
 	wiregen.TypeRef[marotte.ToolCheckpoint](),
-	// Before ToolCall, which references both.
 	wiregen.TypeRef[marotte.ToolDisclosed](),
 	wiregen.TypeRef[marotte.ToolDenialRule](),
 	wiregen.TypeRef[marotte.ToolDenial](),
@@ -34,15 +32,13 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.TextSpan](),
 	wiregen.TypeRef[marotte.ToolTruncation](),
 	wiregen.TypeRef[marotte.ToolCall](),
-	// A REST response, after ToolDiff and TextSpan. No `Payload` suffix, so the SSE-binding
-	// test exempts it.
+	// A REST response. No `Payload` suffix, so the SSE-binding test exempts it.
 	wiregen.TypeRef[marotte.ToolCallBulk](),
 	wiregen.TypeRef[marotte.PlanEntry](),
 	wiregen.TypeRef[marotte.CodeReference](),
 	wiregen.TypeRef[marotte.RefusalInfo](),
 	wiregen.TypeRef[marotte.Attachment](),
-	// The turn entry log: the envelope, the open-entry shape and the payloads, each after the
-	// types it references (EntryTurnClose after FileChange below). No `Payload` suffix.
+	// The turn entry log: the envelope, the open-entry shape and the payloads. No `Payload` suffix.
 	wiregen.TypeRef[marotte.Entry](),
 	wiregen.TypeRef[marotte.OpenEntry](),
 	wiregen.TypeRef[marotte.Caller](),
@@ -78,7 +74,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.SessionEffortLevel](),
 	// Registered so the pre-session catalog fetch reads a generated decoder, not a cast.
 	wiregen.TypeRef[marotte.ConfigTemplateResponse](),
-	// Before ChatHeader, which holds it.
 	wiregen.TypeRef[marotte.QueuedPrompt](),
 	wiregen.TypeRef[marotte.ChatHeader](),
 	wiregen.TypeRef[marotte.PermissionOption](),
@@ -109,7 +104,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.SettingsUpdatedPayload](),
 	wiregen.TypeRef[marotte.AgentNoticePayload](),
 	wiregen.TypeRef[marotte.SystemNoticePayload](),
-	// Before the two types that reference it.
 	wiregen.TypeRef[marotte.TabSubject](),
 	wiregen.TypeRef[marotte.TabsChangedPayload](),
 	wiregen.TypeRef[marotte.TabList](),
@@ -117,7 +111,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.PreviewHint](),
 	wiregen.TypeRef[marotte.PreviewGrant](),
 	wiregen.TypeRef[marotte.PreviewStamp](),
-	// Leaves before the documents that hold them; SpecTaskNode references itself.
 	wiregen.TypeRef[marotte.SpecProgress](),
 	wiregen.TypeRef[marotte.SpecTruncated](),
 	wiregen.TypeRef[marotte.SpecTaskNode](),
@@ -189,7 +182,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.ResumableSession](),
 	wiregen.TypeRef[marotte.WorkflowRun](),
 	wiregen.TypeRef[marotte.SessionListResponse](),
-	// Before LiveRunsResponse, which references it.
 	wiregen.TypeRef[marotte.LiveRun](),
 	wiregen.TypeRef[marotte.LiveRunsResponse](),
 	// REST replies; no `Payload` suffix, so the SSE-binding test exempts them.
@@ -209,8 +201,8 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.RunProgressPayload](),
 	wiregen.TypeRef[marotte.RunFinishedPayload](),
 	wiregen.TypeRef[marotte.NotificationPayload](),
-	// One step waiting on a person: run_asks's element and GET /api/runs/{id}'s `open_asks`, before
-	// the payload that holds it. No `Payload` suffix, so the SSE-binding test exempts it.
+	// One step waiting on a person: run_asks's element and GET /api/runs/{id}'s `open_asks`. No
+	// `Payload` suffix, so the SSE-binding test exempts it.
 	wiregen.TypeRef[marotte.RunAsk](),
 	wiregen.TypeRef[marotte.RunAsksPayload](),
 	// GET /api/runs/{id}'s `plan_update`, a read reply too.
@@ -225,7 +217,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.TerminalCreatedPayload](),
 	wiregen.TypeRef[marotte.TerminalOutputPayload](),
 	wiregen.TypeRef[marotte.TerminalExitedPayload](),
-	// GET /api/engine and the engine_status event, after the parts it holds.
+	// GET /api/engine and the engine_status event.
 	wiregen.TypeRef[marotte.EngineRestart](),
 	wiregen.TypeRef[marotte.EngineBusyTurn](),
 	wiregen.TypeRef[marotte.EngineBusyRun](),
@@ -233,7 +225,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.EngineExit](),
 	wiregen.TypeRef[marotte.EngineStatusVersion](),
 	wiregen.TypeRef[marotte.EngineStatus](),
-	// GET /api/config/standing, after the parts it holds.
+	// GET /api/config/standing.
 	wiregen.TypeRef[marotte.ConfigStanding](),
 	wiregen.TypeRef[marotte.AgentLoadError](),
 	wiregen.TypeRef[marotte.ConfigStandingResponse](),
@@ -242,7 +234,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.EffectiveSettings](),
 	wiregen.TypeRef[forges.ForgeError](),
 	wiregen.TypeRef[forges.ConfiguredForge](),
-	// The list envelopes after the rows and parts they hold.
 	wiregen.TypeRef[forges.PartialResult](),
 	wiregen.TypeRef[forges.RepoSuccessor](),
 	wiregen.TypeRef[forges.Affordance](),
@@ -304,7 +295,7 @@ var wireTypes = []wiregen.WireType{
 	// GET /api/git/show, the diff view's base side, and its refusal.
 	wiregen.TypeRef[git.ShowResponse](),
 	wiregen.TypeRef[git.ShowRefusal](),
-	// GET /api/mcp/registry/search, the entry family before the reply that holds it.
+	// GET /api/mcp/registry/search and its entry family.
 	wiregen.TypeRef[mcp.RegistryEnvVar](),
 	wiregen.TypeRef[mcp.RegistryHeader](),
 	wiregen.TypeRef[mcp.RegistryPackage](),

@@ -8,6 +8,7 @@ import {
   BUS_EDITOR_VIEW_CHANGED,
   BUS_RECONCILE,
   decodeEnvelope,
+  lookupSSEDecoder,
 } from "./bus.js";
 import type { ServerEvent } from "./types.js";
 
@@ -339,7 +340,9 @@ describe("decodeEnvelope", () => {
   });
 
   it("finds no decoder under an inherited property name", () => {
-    const evt = decodeEnvelope({ type: "constructor", payload: { anything: true } });
+    expect(lookupSSEDecoder("constructor")).toBeUndefined();
+    expect(lookupSSEDecoder("toString")).toBeUndefined();
+    const evt = decodeEnvelope({ type: "toString", payload: { anything: true } });
     expect(evt.payload).toEqual({ anything: true });
   });
 

@@ -187,7 +187,7 @@ func (p *PRStatusPoller) inventoryFor(hs []readHandle) InventoryList {
 			missing = true
 		}
 		list.Entries = append(list.Entries, held[i].entry)
-		list.Subject = append(list.Subject, *p.restStamp(ids[i], held[i].version))
+		list.Subject = append(list.Subject, p.restStamp(ids[i], held[i].version))
 	}
 	if missing {
 		p.cycles.ask()
@@ -196,8 +196,8 @@ func (p *PRStatusPoller) inventoryFor(hs []readHandle) InventoryList {
 	return list
 }
 
-func (p *PRStatusPoller) restStamp(id, version string) *marotte.SubjectStamp {
-	stamp := marotte.NewSubjectStamp(string(subject.KindForgeInventory), id, version)
+func (p *PRStatusPoller) restStamp(id, version string) marotte.SubjectStamp {
+	stamp := marotte.SubjectStamp{Kind: string(subject.KindForgeInventory), Ref: id, Version: version}
 	if p.announce != nil {
 		stamp.Epoch = p.announce.Epoch()
 	}

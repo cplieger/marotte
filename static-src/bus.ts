@@ -304,8 +304,9 @@ export const onBus = bus.on;
 /** Emit a typed bus event. */
 export const emitBus = bus.emit;
 
-// SSE payload decoders: transport.ts runs an event's generated decoder on its payload,
-// dropping the event when it throws. An event with no decoder passes untyped.
+// SSE payload decoders: decodeEnvelope (sse-adapter.ts and the pending_snapshot handler) runs
+// an event's generated decoder, and its caller drops the event when it throws. An event with
+// no decoder passes untyped.
 
 import { type Decoder, asObject, reqStr } from "./wire/validators.gen.js";
 import { decodeSubjectStamp } from "./wire/decoders.gen.js";

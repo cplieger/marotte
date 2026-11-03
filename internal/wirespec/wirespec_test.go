@@ -132,7 +132,6 @@ func TestRegistry_EveryDeclaredPayloadIsRegisteredOrExempt(t *testing.T) {
 	}
 }
 
-// boundTypeNames is the Go name of every event's data type.
 func boundTypeNames() []string {
 	events := Registry().Events
 	out := make([]string, 0, len(events))
@@ -143,7 +142,7 @@ func boundTypeNames() []string {
 }
 
 // TestRegistry_EveryRegisteredPayloadHasAnSSEBinding walks the other direction: a payload
-// in wireTypes with no wireEvents entry is a type generated for no decoder.
+// in wireTypes with no wireEvents entry has no events.gen.ts binding.
 func TestRegistry_EveryRegisteredPayloadHasAnSSEBinding(t *testing.T) {
 	bound := boundTypeNames()
 
