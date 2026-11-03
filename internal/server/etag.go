@@ -11,21 +11,22 @@ import (
 func entityTags(h http.Header, name string) []string {
 	field := strings.Join(h.Values(name), ",")
 	var tags []string
-	start, inQuote := 0, false
-	for i := 0; i <= len(field); i++ {
-		if i < len(field) {
-			if field[i] == '"' {
-				inQuote = !inQuote
-			}
-			if field[i] != ',' || inQuote {
-				continue
-			}
-		}
-		if tag := strings.Trim(field[start:i], " \t"); tag != "" {
+	add := func(member string) {
+		if tag := strings.Trim(member, " \t"); tag != "" {
 			tags = append(tags, tag)
 		}
-		start = i + 1
 	}
+	start, inQuote := 0, false
+	for i := range len(field) {
+		switch {
+		case field[i] == '"':
+			inQuote = !inQuote
+		case field[i] == ',' && !inQuote:
+			add(field[start:i])
+			start = i + 1
+		}
+	}
+	add(field[start:])
 	return tags
 }
 
