@@ -274,13 +274,15 @@ export function removeCommitted(
   op.state = "confirmed-awaiting-frame";
 }
 
-/** Transition 5: the server answered an error, so the removal is undone; a retired op ignores it. */
-export function opFailed(opID: string): void {
+/** Transition 5: the server answered an error, so the removal is undone; a retired op ignores it. Reports whether
+ *  it undid a pending op, false when a frame had already settled it. */
+export function opFailed(opID: string): boolean {
   const op = pendingOps.get(opID);
   if (op === undefined) {
-    return;
+    return false;
   }
   failOp(op);
+  return true;
 }
 
 /** Transition 6: no answer, so NO restore and NO retire; the op verifies by re-listing. Remove-only. */

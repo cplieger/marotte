@@ -140,9 +140,8 @@ export interface SendResult {
   status: number;
   /** Server error message, if any. */
   error?: string;
-  /** Machine-readable failure class from the error envelope's `reason` (internal/command writeErr),
-   *  so callers branch on a VALUE. Today only "starting": a 409 whose admission holder cannot take a
-   *  steer. */
+  /** Machine-readable failure class from the error envelope's `reason` (internal/command writeError),
+   *  so callers branch on a VALUE. */
   reason?: string;
   /** Structured error code for non-HTTP failures. */
   code?: string;
