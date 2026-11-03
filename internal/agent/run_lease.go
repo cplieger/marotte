@@ -67,6 +67,19 @@ func scheduledLaunch(scheduleID string, slotAt time.Time) launchOrigin {
 	return launchOrigin{origin: runlease.OriginScheduled, scheduleID: scheduleID, slotAt: slotAt}
 }
 
+// unanswered wraps a scheduled launch's err with schedule.ErrEngineBusy when the engine ran out of time or was not
+// ready. Only for an error returned before workflow/new is sent: after it, a run may exist and a retry could double it.
+// ctx is the caller's, so a launch its caller abandoned is not the engine's fault.
+func (o launchOrigin) unanswered(ctx context.Context, err error) error {
+	if o.origin != runlease.OriginScheduled || ctx.Err() != nil {
+		return err
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, marotte.ErrBridgeExited) {
+		return fmt.Errorf("%w: %w", schedule.ErrEngineBusy, err)
+	}
+	return err
+}
+
 // runLabel is the label sent for a run, set only for a scheduled one so History shows which runs nobody started.
 func (o launchOrigin) runLabel(recipe string) string {
 	if o.origin != runlease.OriginScheduled {

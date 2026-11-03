@@ -59,7 +59,8 @@ func (rs *Runs) launch(
 }
 
 // LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window and backstop.
-// The sign-in gate's refusal wraps schedule.ErrNoRunCanStart.
+// The sign-in gate's refusal wraps schedule.ErrNoRunCanStart; an engine that did not answer before the run was
+// created wraps schedule.ErrEngineBusy.
 func (rs *Runs) LaunchScheduled(
 	ctx context.Context, source, scheduleID string, defaults marotte.RunDefaults, slotAt time.Time,
 ) (id, name string, err error) {
@@ -90,14 +91,14 @@ func (rs *Runs) launchAs(
 
 	recipe, err := rs.launchRecipe(cctx, source, inputs)
 	if err != nil {
-		return "", "", err
+		return "", "", o.unanswered(ctx, err)
 	}
 	if o.origin == runlease.OriginManual && !isAgentSource(source) {
 		// A manual run yields to its recipe's next slot.
 		o.slotAt = rs.manualSlot(recipe.Source)
 	}
 	if bErr := rs.recipeIdle(cctx, recipe.Name); bErr != nil {
-		return "", "", bErr
+		return "", "", o.unanswered(ctx, bErr)
 	}
 
 	// The host session's presets are resolved once and recorded on the lease: a reload after a restart applies
@@ -113,7 +114,7 @@ func (rs *Runs) launchAs(
 			relay = newHostRelay(s, func(msg *marotte.RPCResponse) { rs.answerEarly(s, msg) })
 			sb.attach(relay)
 		}); oErr != nil {
-		return "", "", fmt.Errorf("%w: %w", errRunHostStart, oErr)
+		return "", "", o.unanswered(ctx, fmt.Errorf("%w: %w", errRunHostStart, oErr))
 	}
 	host := sb.current()
 	parent := host.SessionID()

@@ -21,6 +21,7 @@ import (
 type scheduleView struct {
 	NextRunAt  *time.Time    `json:"next_run_at,omitempty"`
 	LastRunAt  *time.Time    `json:"last_run_at,omitempty"`
+	WaitingFor *time.Time    `json:"waiting_for,omitempty"`
 	ID         string        `json:"id"`
 	Source     string        `json:"source"`
 	Name       string        `json:"name,omitempty"`
@@ -61,6 +62,10 @@ func scheduleViewOf(e *schedule.Entry) scheduleView {
 	if !e.LastRunAt.IsZero() {
 		t := e.LastRunAt
 		v.LastRunAt = &t
+	}
+	if !e.WaitingFor.IsZero() {
+		t := e.WaitingFor
+		v.WaitingFor = &t
 	}
 	if e.Enabled {
 		// schedule.NextRunFrom as the runner uses it, floored at now.

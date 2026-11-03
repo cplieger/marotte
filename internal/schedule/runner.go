@@ -23,6 +23,14 @@ const missGrace = 3 * time.Minute
 // runner holds that slot for a later tick inside its grace and records it failed only once the grace runs out.
 var ErrNoRunCanStart = errors.New("no run can start now")
 
+// ErrEngineBusy marks a LaunchScheduled error that started nothing because the agent engine did not answer in time;
+// the runner retries that slot until the schedule's next slot, then records it skipped.
+var ErrEngineBusy = errors.New("the agent engine did not answer")
+
+// busyRetryMax caps the backoff between launches of a slot waiting on the engine: each attempt can hold the sweep,
+// and every other schedule's slot behind it, for the launch's own timeout.
+const busyRetryMax = 8 * time.Minute
+
 // BusyError is a LaunchScheduled refusal under the one-live-run-per-recipe rule. WorkflowID is the live run;
 // ScheduleID and SlotAt are its run lease's, empty when marotte holds no scheduled lease for it.
 type BusyError struct {
@@ -41,7 +49,7 @@ func (b *BusyError) boundBy(scheduleID string, due time.Time) bool {
 
 // Launcher starts one workflow run on behalf of a schedule. scheduleID lets the host
 // attribute the run's outcome to the row. slotAt is an input to the run's bound; zero means
-// no slot. An error wrapping ErrNoRunCanStart started nothing.
+// no slot. An error wrapping ErrNoRunCanStart or ErrEngineBusy started nothing.
 type Launcher interface {
 	LaunchScheduled(
 		ctx context.Context, source, scheduleID string, defaults marotte.RunDefaults, slotAt time.Time,
@@ -55,9 +63,18 @@ type Runner struct {
 	launcher Launcher
 	now      func() time.Time
 	// held is each schedule's due slot a launch refused with ErrNoRunCanStart, so its miss is recorded as that.
-	held  map[string]missedSlot
+	held map[string]missedSlot
+	// retry is each waiting slot's backoff (Entry.WaitingFor holds the wait itself), so a restart retries at once.
+	retry map[string]engineRetry
 	tick  time.Duration
 	grace time.Duration
+}
+
+// engineRetry is when the slot due a launch left waiting on the engine is tried next, and the step that set it.
+type engineRetry struct {
+	due  time.Time
+	at   time.Time
+	step time.Duration
 }
 
 // NewRunner wires a runner over the store and launcher.
@@ -89,6 +106,7 @@ func (r *Runner) sweep(ctx context.Context) {
 		enabled[list[i].ID()] = list[i].Enabled
 	}
 	maps.DeleteFunc(r.held, func(id string, _ missedSlot) bool { return !enabled[id] })
+	maps.DeleteFunc(r.retry, func(id string, _ engineRetry) bool { return !enabled[id] })
 	for i := range list {
 		e := &list[i]
 		if !e.Enabled {
@@ -105,11 +123,53 @@ func (r *Runner) sweep(ctx context.Context) {
 		if now.Before(due) {
 			continue
 		}
+		if e.WaitingFor.Equal(due) {
+			r.wait(ctx, e, due, now)
+			continue
+		}
 		if now.Sub(due) > r.grace {
 			r.miss(ctx, e.ID(), due, now)
 			continue
 		}
-		r.fire(ctx, e, due)
+		r.fire(ctx, e, due, now)
+	}
+}
+
+// wait tries a slot waiting on the engine again once its backoff lapses, bounded by the schedule's next slot (by the
+// grace when it has none), which records it skipped instead.
+func (r *Runner) wait(ctx context.Context, e *Entry, due, now time.Time) {
+	bound, err := nextRun(e.Spec, due)
+	if err != nil {
+		bound = due.Add(r.grace)
+	}
+	if !now.Before(bound) {
+		delete(r.retry, e.ID())
+		slog.Warn("schedule slot skipped: the agent engine did not answer before the next slot",
+			"id", e.ID(), "due", due, "next", bound)
+		if sErr := r.store.skipBusy(ctx, e.ID(), due); sErr != nil {
+			slog.Error("schedule skip failed", "id", e.ID(), "error", sErr)
+		}
+		return
+	}
+	if b, ok := r.retry[e.ID()]; ok && b.due.Equal(due) && now.Before(b.at) {
+		return
+	}
+	r.fire(ctx, e, due, now)
+}
+
+// waitOn records the slot due as waiting on the engine and backs its next try off, doubling from one tick.
+func (r *Runner) waitOn(ctx context.Context, id string, due, now time.Time, why error) {
+	step := r.tick
+	if b, ok := r.retry[id]; ok && b.due.Equal(due) {
+		step = min(2*b.step, busyRetryMax)
+	}
+	if r.retry == nil {
+		r.retry = make(map[string]engineRetry)
+	}
+	r.retry[id] = engineRetry{due: due, at: now.Add(step), step: step}
+	slog.Warn("schedule slot waiting on the agent engine", "id", id, "due", due, "retry_in", step, "reason", why)
+	if err := r.store.setWaiting(ctx, id, due); err != nil {
+		slog.Error("schedule record failed", "id", id, "error", err)
 	}
 }
 
@@ -140,8 +200,8 @@ func (r *Runner) miss(ctx context.Context, id string, due, now time.Time) {
 }
 
 // The anchor advances either way so a schedule whose launch keeps failing does not retry every
-// tick, except for a launch refused with ErrNoRunCanStart: that slot is held for a later tick.
-func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
+// tick, except for a launch refused with ErrNoRunCanStart (held for a later tick) or ErrEngineBusy (waiting).
+func (r *Runner) fire(ctx context.Context, e *Entry, due, now time.Time) {
 	// Bound the run by the next slot after `due` (not now), so a late fire cannot extend the
 	// budget into it. An uncomputable slot degrades to the idle window, never to unbounded.
 	slotAt, dErr := nextRun(e.Spec, due)
@@ -152,7 +212,19 @@ func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
 	}
 	runID, name, err := r.launcher.LaunchScheduled(ctx, e.Source, e.ID(),
 		marotte.RunDefaults{Model: e.Model, Effort: e.Effort}, slotAt)
+	if errors.Is(err, ErrEngineBusy) {
+		delete(r.held, e.ID())
+		r.waitOn(ctx, e.ID(), due, now, err)
+		return
+	}
+	delete(r.retry, e.ID())
 	if errors.Is(err, ErrNoRunCanStart) {
+		// The engine answered, so the slot is the sign-in gate's hold now, bounded by its grace.
+		if !e.WaitingFor.IsZero() {
+			if sErr := r.store.setWaiting(ctx, e.ID(), time.Time{}); sErr != nil {
+				slog.Error("schedule record failed", "id", e.ID(), "error", sErr)
+			}
+		}
 		r.hold(e.ID(), due, err)
 		return
 	}

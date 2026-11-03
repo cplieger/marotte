@@ -47,9 +47,11 @@ export interface ScheduleView {
   next_run_at?: string;
   last_run_at?: string;
   /** How the last slot ended; mirrors internal/schedule.status. */
-  last_status?: "started" | "completed" | "failed" | "unknown";
+  last_status?: "started" | "completed" | "failed" | "unknown" | "skipped";
   /** Why, as plain text for a person to read. */
   last_reason?: string;
+  /** RFC3339 due time of a slot whose launch is retried until the agent engine answers. */
+  waiting_for?: string;
   /** The run's model and effort pick, sent at each fire; absent is Default. */
   model?: string;
   effort?: string;

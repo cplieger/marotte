@@ -36,7 +36,12 @@ const (
 	StatusFailed status = "failed"
 	// StatusUnknown means the run went away without a terminal signal.
 	StatusUnknown status = "unknown"
+	// StatusSkipped means the slot never started and no failure caused it; the reason says why.
+	StatusSkipped status = "skipped"
 )
+
+// reasonEngineBusy is the reason of a slot the agent engine never answered before the schedule's next slot.
+const reasonEngineBusy = "engine busy"
 
 // Outcome is one slot's ending. Reason is plain text a person reads, never a
 // prefix-coded value: status alone carries the classification.
@@ -60,6 +65,9 @@ type Entry struct {
 	Name       string    `json:"name,omitempty"`
 	LastStatus status    `json:"last_status,omitempty"`
 	LastReason string    `json:"last_reason,omitempty"`
+	// WaitingFor is the due slot whose launch is retried until the agent engine answers (Runner.wait); zero when none.
+	// It is persisted so a restart resumes the wait instead of skipping the slot as missed while offline.
+	WaitingFor time.Time `json:"waiting_for,omitzero"`
 	// LastRunID is the workflow the last fire launched: the only run whose outcome may land on the row.
 	LastRunID string `json:"last_run_id,omitempty"`
 	// Model and Effort are sent at each fire as the run's marotte.RunDefaults; empty sends none.
@@ -164,12 +172,17 @@ func (s *Store) Put(ctx context.Context, e *Entry) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	e.WaitingFor = time.Time{}
 	if prev, ok := s.entries[e.ID()]; ok {
 		// Preserve run history across an edit; the client does not send it.
 		e.LastRunAt, e.LastStatus, e.LastReason = prev.LastRunAt, prev.LastStatus, prev.LastReason
 		e.LastRunID = prev.LastRunID
 		if e.Anchor.IsZero() {
 			e.Anchor = prev.Anchor
+		}
+		// The wait survives an edit only while it still waits for this schedule's due slot.
+		if due, err := NextRunFrom(e.Spec, e.Anchor, time.Time{}); e.Enabled && err == nil && due.Equal(prev.WaitingFor) {
+			e.WaitingFor = prev.WaitingFor
 		}
 	}
 	if e.Anchor.IsZero() {
@@ -203,6 +216,7 @@ func (s *Store) recordFire(ctx context.Context, id string, due time.Time, runID 
 	}
 	e.Anchor = due
 	e.LastRunAt = due
+	e.WaitingFor = time.Time{}
 	if runID == "" || e.LastRunID != runID {
 		e.LastStatus, e.LastReason, e.LastRunID = o.Status, o.Reason, runID
 	}
@@ -219,7 +233,7 @@ func (s *Store) skipTo(ctx context.Context, id string, to time.Time) error {
 	if !ok {
 		return errNotFound
 	}
-	e.Anchor = to
+	e.Anchor, e.WaitingFor = to, time.Time{}
 	s.entries[id] = e
 	return s.persistLocked(ctx)
 }
@@ -233,14 +247,42 @@ type missedSlot struct {
 // skipFailed advances the anchor like skipTo and records the missed slot as failed. It detaches the
 // row's run, so a late outcome of the previous slot's run cannot replace this slot's failure.
 func (s *Store) skipFailed(ctx context.Context, id string, to time.Time, m missedSlot) error {
+	return s.skipRecorded(ctx, id, to, m.due, Outcome{Status: StatusFailed, Reason: m.why})
+}
+
+// skipBusy records the slot due as skipped because the engine never answered, anchored at due so the
+// schedule's next slot, the one that ended the wait, still fires.
+func (s *Store) skipBusy(ctx context.Context, id string, due time.Time) error {
+	return s.skipRecorded(ctx, id, due, due, Outcome{Status: StatusSkipped, Reason: reasonEngineBusy})
+}
+
+// skipRecorded advances the anchor to `to` and records o as the slot due's outcome, detaching the row's run.
+func (s *Store) skipRecorded(ctx context.Context, id string, to, due time.Time, o Outcome) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.entries[id]
 	if !ok {
 		return errNotFound
 	}
-	e.Anchor, e.LastRunAt = to, m.due
-	e.LastStatus, e.LastReason, e.LastRunID = StatusFailed, m.why, ""
+	e.Anchor, e.LastRunAt, e.WaitingFor = to, due, time.Time{}
+	e.LastStatus, e.LastReason, e.LastRunID = o.Status, o.Reason, ""
+	s.entries[id] = e
+	return s.persistLocked(ctx)
+}
+
+// setWaiting marks (a non-zero due) or clears (zero) the slot the row waits on the engine for, leaving the anchor
+// and the last outcome, which stay the previous slot's until this one ends.
+func (s *Store) setWaiting(ctx context.Context, id string, due time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[id]
+	if !ok {
+		return errNotFound
+	}
+	if e.WaitingFor.Equal(due) {
+		return nil
+	}
+	e.WaitingFor = due
 	s.entries[id] = e
 	return s.persistLocked(ctx)
 }
