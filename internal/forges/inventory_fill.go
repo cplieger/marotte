@@ -49,9 +49,9 @@ var (
 	}}
 )
 
-// familyFill is what a family's ListMyPRs rows lack: the fields a read fills, and
-// the ones not even a read supplies (forgeapi's ListMyPRs and ReadPR
-// departures). GitHub's rows lack nothing a read would add.
+// familyFill is what a family's ListMyPRs rows lack under listScope's options:
+// the fields a read fills, and the ones not even a read supplies (forgeapi's
+// ListMyPRs and ReadPR departures).
 type familyFill struct {
 	read   []rowField
 	absent []string
@@ -64,7 +64,24 @@ func (ff *familyFill) reads(field rowField) bool {
 	return slices.ContainsFunc(ff.read, func(f rowField) bool { return f.name == field.name })
 }
 
+// feedsNotice reports whether the notice reads this fill: notify's checks or
+// watches' source repository.
+func (ff *familyFill) feedsNotice() bool {
+	return ff.reads(readChecks) || ff.sourceFromRead
+}
+
+// mergeComputing reports whether a merge-state field ff reads answered unknown,
+// as GitHub answers mergeability while it computes it in the background. A field
+// ff never reads is unknown on every read, so it is not asked.
+func (ff *familyFill) mergeComputing(read *PR) bool {
+	return ff.reads(readMergeable) && read.Action.Mergeable == forgeapi.SupportUnknown.String() ||
+		ff.reads(readMergeBlocked) && read.Action.MergeBlocked == forgeapi.MergeBlockUnknown.String()
+}
+
 var familyFills = map[forgeapi.Family]familyFill{
+	forgeapi.FamilyGitHub: {
+		read: []rowField{readMergeable, readMergeBlocked},
+	},
 	forgeapi.FamilyGitLab: {
 		read:   []rowField{readChecks, readMergeable, readMergeBlocked},
 		absent: []string{"check_counts"},
@@ -91,34 +108,34 @@ type rowFill struct {
 	ok        bool
 }
 
-// due reports whether a row is read again, and its rank: a fill whose checks
-// were pending, then a row with no fill or a failed one, then a row updated
-// since its fill, then a row the notice watches, whose verdict a re-run moves
-// without moving updated_at. A settled fill of any other unchanged row does not
-// change.
-func (f *rowFill) due(held, watched bool, row *PR) (rank int, ok bool) {
+// due ranks a row's next read, f the zero fill when none is held: a fill whose
+// checks were pending or, viewed, whose merge state was still computing, then a
+// row with no fill or a failed one, then a row updated since its fill, then a
+// settled row, which a re-run (checks) or a moved base branch (mergeability)
+// changes without moving updated_at.
+func (f *rowFill) due(ff *familyFill, viewing bool, row *PR) int {
 	switch {
-	case held && f.ok && f.read.Action.Checks == checkPending:
-		return 0, true
-	case !held || !f.ok:
-		return 1, true
+	case f.ok && (f.read.Action.Checks == checkPending || viewing && ff.mergeComputing(&f.read)):
+		return 0
+	case !f.ok:
+		return 1
 	case row.UpdatedAt != f.updatedAt:
-		return 2, true
-	case watched:
-		return rankReread, true
+		return 2
 	}
-	return 0, false
+	return rankReread
 }
 
 func (f *rowFill) source() (string, bool) {
 	return f.read.SourceRepoID, f.asOf != 0
 }
 
-// watched are the rows among them the notice compares. It is the one per-row reader: the view's
-// fill and the notice both read through it, under one bound a cycle.
-func (p *PRStatusPoller) readRows(ctx context.Context, r *ConnectionRead, rows, watched []PR) {
-	if _, ok := familyFills[r.Family]; ok && r.ReadPR != nil && len(rows) > 0 {
-		p.readDue(ctx, r, rows, watched)
+// readRows is the one per-row reader: the view's fill and the notice both read through it, under
+// one bound a cycle. Every row passed is due, so a caller passes only the rows its cycle reads.
+// Unviewed, it reads only a family whose fill the notice reads.
+func (p *PRStatusPoller) readRows(ctx context.Context, r *ConnectionRead, rows []PR, viewing bool) {
+	ff, ok := familyFills[r.Family]
+	if ok && (viewing || ff.feedsNotice()) && r.ReadPR != nil && len(rows) > 0 {
+		p.readDue(ctx, r, &ff, rows, viewing)
 	}
 }
 
@@ -155,8 +172,9 @@ func fillKeyOf(conn string, row *PR) fillKey {
 	return fillKey{conn: conn, subject: marotte.PRSubject(conn, row.RepoID, row.Number).Key}
 }
 
-// refill has the next fill read conn's pull request number in repoID again,
-// whatever its updated_at says: a re-run restarts its checks without moving it.
+// refill has the next fill read conn's pull request number in repoID with the
+// unfilled rows, ahead of the settled ones: a re-run restarts its checks
+// without moving updated_at.
 func (p *PRStatusPoller) refill(conn, repoID string, number int) {
 	p.refillMu.Lock()
 	defer p.refillMu.Unlock()
@@ -233,8 +251,8 @@ func capDue(due []dueRow) (kept []dueRow, unfilled int) {
 
 // readDue reads the due rows by rank, each rank by wait, under capDue, and logs
 // the cycle's failed reads once.
-func (p *PRStatusPoller) readDue(ctx context.Context, r *ConnectionRead, rows, watched []PR) {
-	due := p.dueRows(r.Conn.ID, rows, watched)
+func (p *PRStatusPoller) readDue(ctx context.Context, r *ConnectionRead, ff *familyFill, rows []PR, viewing bool) {
+	due := p.dueRows(r.Conn.ID, ff, rows, viewing)
 	slices.SortFunc(due, func(a, b dueRow) int { return cmp.Or(cmp.Compare(a.rank, b.rank), byWait(a, b)) })
 	due, left := capDue(due)
 	if left > 0 {
@@ -263,32 +281,23 @@ func (p *PRStatusPoller) readDue(ctx context.Context, r *ConnectionRead, rows, w
 	}
 }
 
-// dueRows are the rows of conn due a read, each with the cycle it has waited
-// since: its last read, or the cycle it fell due unread. A row no longer due
-// stops waiting.
-func (p *PRStatusPoller) dueRows(conn string, rows, watched []PR) []dueRow {
-	notice := make(map[fillKey]struct{}, len(watched))
-	for i := range watched {
-		notice[fillKeyOf(conn, &watched[i])] = struct{}{}
-	}
+// dueRows ranks the rows of conn, each with the cycle it has waited since: its
+// last read, or the cycle it fell due unread. A row not among them stops
+// waiting.
+func (p *PRStatusPoller) dueRows(conn string, ff *familyFill, rows []PR, viewing bool) []dueRow {
 	p.takeRefills(conn)
-	var due []dueRow
+	due := make([]dueRow, 0, len(rows))
 	waiting := make(map[fillKey]struct{}, len(rows))
 	for i := range rows {
 		k := fillKeyOf(conn, &rows[i])
-		f, held := p.fills[k]
-		_, w := notice[k]
-		rank, ok := f.due(held, w, &rows[i])
-		if !ok {
-			continue
-		}
+		f := p.fills[k]
 		since, queued := p.waits[k]
 		if !queued {
 			since = p.cycle
 			p.waits[k] = since
 		}
 		waiting[k] = struct{}{}
-		due = append(due, dueRow{row: &rows[i], key: k, since: since, rank: rank})
+		due = append(due, dueRow{row: &rows[i], key: k, since: since, rank: f.due(ff, viewing, &rows[i])})
 	}
 	maps.DeleteFunc(p.waits, func(k fillKey, _ uint64) bool {
 		_, ok := waiting[k]
