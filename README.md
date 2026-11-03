@@ -61,7 +61,7 @@ services:
 4. Open `http://<server>:9847`, where `<server>` is the address of the server on your network, for example `http://192.0.2.10:9847`.
 5. Sign in with your Kiro account when the page asks. Chats use that account's plan and credits, which the sidebar shows. The sign-in is marotte's own, so a `kiro-cli` you start in the terminal keeps a separate one.
 
-The first start downloads kiro-cli, about 530 MB, which can take a few minutes. The page, files, git and the terminal work in the meantime, and chats say kiro-cli is still installing. Amazon publishes kiro-cli under the AWS Customer Agreement. marotte downloads it instead of shipping it in the image, so starting the container means you accept that agreement.
+The first start downloads kiro-cli, about 140 MB, which can take a few minutes. The page, files, git and the terminal work in the meantime, and chats say kiro-cli is still installing. Amazon publishes kiro-cli under the AWS Customer Agreement. marotte downloads it instead of shipping it in the image, so starting the container means you accept that agreement.
 
 Run `docker logs marotte`. After the download you should see `msg=installed package=kiro-cli`. If you see `failed to create required directories`, step 2 was skipped.
 

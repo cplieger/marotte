@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// marotteClientName is the clientInfo.name marotte sends on initialize (internal/bridge/engine.go).
-const marotteClientName = "marotte"
-
 // The literals kiro-cli's acp engine resolver carries: the header of its embedded telemetry snapshot of ACP clients
 // kept on v2 when no --agent-engine is passed, and the resolver's own tracing message.
 var (
@@ -90,16 +87,16 @@ func TestACPEngineFlagStillNeeded(t *testing.T) {
 		t.Run(arch, func(t *testing.T) {
 			fb := fetchedArchive(t, active, arch).acp
 			if !fb.present {
-				t.Fatalf("kiro-cli %s (%s): kiro-cli acp now starts v3 for every client; remove --agent-engine v3 from buildACPArgs (internal/bridge/engine_process.go) and this test.",
-					active, arch)
+				t.Fatalf("kiro-cli %s (%s): the binary lacks %q or %q, so its v2 fallback for listed ACP clients may be gone. Confirm that an unflagged `kiro-cli acp` with clientInfo kirocrew now starts v3; if it does, remove --agent-engine v3 from buildACPArgs (internal/bridge/engine_process.go) and this test, otherwise re-read the fallback's literals.",
+					active, arch, acpSnapshotHeader, acpResolverMessage)
 			}
 			if len(fb.clients) == 0 {
 				t.Fatalf("kiro-cli %s (%s): the ACP client snapshot after %q lists no client; re-read its layout in the binary before trusting this check",
 					active, arch, acpSnapshotHeader)
 			}
-			if listsClient(fb.clients, marotteClientName) {
+			if listsClient(fb.clients, ClientName) {
 				t.Errorf("kiro-cli %s (%s): %s is listed for the v2 fallback; --agent-engine v3 is now load-bearing, keep it.",
-					active, arch, marotteClientName)
+					active, arch, ClientName)
 			}
 		})
 	}
@@ -132,7 +129,7 @@ func TestReadACPFallback(t *testing.T) {
 			if fb.present != tc.present {
 				t.Errorf("present = %v, want %v", fb.present, tc.present)
 			}
-			if got := listsClient(fb.clients, marotteClientName); got != tc.listed {
+			if got := listsClient(fb.clients, ClientName); got != tc.listed {
 				t.Errorf("listsClient(%q, marotte) = %v, want %v", fb.clients, got, tc.listed)
 			}
 		})

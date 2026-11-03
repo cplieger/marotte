@@ -46,14 +46,12 @@ type cliRunner interface {
 // construction.
 type execCLIRunner struct {
 	cliPath func() string
-	// env is the spawn's environment overlay (pinstall's Manager.PathEnv), which puts the
-	// active version directory first on PATH. nil inherits the parent environment.
+	// env returns assignments that override the inherited environment; nil inherits it unchanged.
 	env func() []string
 }
 
 func (r *execCLIRunner) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.cliPath(), args...) //nolint:gosec // G204: binary path from the install manager, never user input
-	// A child kiro-cli forks would otherwise hold the pipes past a deadline.
 	procgroup.OwnGroup(cmd, cliWaitDelay)
 	if r.env != nil {
 		// The overlay lands LAST: os/exec keeps the last value for a repeated key.

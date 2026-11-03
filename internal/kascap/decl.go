@@ -9,8 +9,7 @@
 //   - whether an ABSENT key resolves TRUE (semanticReview);
 //   - that a key is deliberately WITHHELD.
 //
-// table.go is the record; Capabilities, SessionMeta, ChildEnv and PromptMeta are its projections
-// and the whole exported surface.
+// table.go is the record; Capabilities, SessionMeta, ChildEnv and PromptMeta are its projections.
 package kascap
 
 // KAS decides it: the connection and environment doors are read once per engine, the session door once per

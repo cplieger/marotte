@@ -32,7 +32,7 @@ import (
 // archive whose pin moved instead, and a moved contract turns the PR red rather than skipping.
 const (
 	// The 3.0.0 x86_64 zip is about 137 MB, its kiro-cli binary about 219 MB, the embedded runtime
-	// tar about 183 MB and the agent server about 13 MB.
+	// tar about 183 MB and the agent server about 15 MB.
 	maxKiroArchive = 1 << 30
 	maxCLIBinary   = 1 << 30
 	maxRuntimeTar  = 1 << 30

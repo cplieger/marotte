@@ -307,34 +307,3 @@ func TestLegacySweepRunsOncePerVolume(t *testing.T) {
 		t.Errorf("the completion marker was removed by a later boot: %v", err)
 	}
 }
-
-// TestSidecarLinksRetractedOnSingleBinaryVersion pins the upgrade from a 2.x version, which published bin/ links for
-// its kiro-cli-chat and kiro-cli-term, to a version holding only kiro-cli: the old links are retracted, not left
-// running the previous version or dangling once it is pruned.
-func TestSidecarLinksRetractedOnSingleBinaryVersion(t *testing.T) {
-	env := newNSEnv(t)
-	own := env.plantOwnVersion()
-	if err := os.WriteFile(filepath.Join(env.tools, legacyPurgeMarker), nil, 0o600); err != nil {
-		t.Fatalf("write %s: %v", legacyPurgeMarker, err)
-	}
-	binDir := filepath.Join(env.tools, kiroLinkDir)
-	if err := os.MkdirAll(binDir, 0o750); err != nil {
-		t.Fatalf("MkdirAll(%s): %v", binDir, err)
-	}
-	stale := []string{nsTool + "-chat", nsTool + "-term"}
-	for _, name := range stale {
-		env.symlink(filepath.Join(env.tools, nsTool+"-versions", "2.37.1", name), filepath.Join(binDir, name))
-	}
-
-	if err := env.manager().Ensure(t.Context()); err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
-	for _, name := range stale {
-		if _, err := os.Lstat(filepath.Join(binDir, name)); err == nil {
-			t.Errorf("bin/%s survived the move to a version without it", name)
-		}
-	}
-	if got, err := os.Readlink(filepath.Join(binDir, nsTool)); err != nil || got != filepath.Join(own, nsTool) {
-		t.Errorf("bin/%s -> %q, %v; want %q", nsTool, got, err, filepath.Join(own, nsTool))
-	}
-}

@@ -433,7 +433,7 @@ func (e *Engine) initialize(ctx context.Context) error {
 			"_meta":       map[string]any{metaKeyKiro: kiroMeta},
 		},
 		"clientInfo": map[string]any{
-			"name": "marotte", "title": "Marotte for Kiro", "version": version.Build,
+			"name": kascap.ClientName, "title": "Marotte for Kiro", "version": version.Build,
 		},
 	})
 	if err != nil {

@@ -18,7 +18,7 @@ If the engine stops on its own, every running reply in every chat stops at once 
 
 ## How kiro-cli is installed
 
-kiro-cli is not built into the image. On first start the server downloads the version the image pins, about 530 MB, and checks it against the SHA-256 checksum for your architecture. It installs it under `kiro-cli-versions/<version>/` in the tools folder, which is `/config/tools` unless `MAROTTE_TOOLS_DIR` in [Configuration](configuration.md) moves it. The server starts listening before the download, so the page works while it runs and chats wait.
+kiro-cli is not built into the image. On first start the server downloads the version the image pins, about 140 MB, and checks it against the SHA-256 checksum for your architecture. It installs it under `kiro-cli-versions/<version>/` in the tools folder, which is `/config/tools` unless `MAROTTE_TOOLS_DIR` in [Configuration](configuration.md) moves it. The server starts listening before the download, so the page works while it runs and chats wait.
 
 On every start, marotte runs the installed kiro-cli to confirm it is the expected version, and switches off kiro-cli's own self-update. A replaced or half-restored install is refused rather than run. The previous version stays on the volume as the fallback for a broken new one, and older versions are removed.
 

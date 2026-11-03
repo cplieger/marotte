@@ -164,11 +164,8 @@ func kiroInstallConfig(cfg *Config, root string) *pinstall.Config {
 		},
 		Root:    root,
 		LinkDir: kiroLinkDir,
-		// 3.x ships only kiro-cli. The 2.x sidecars stay Optional because pinstall retracts a convenience link only
-		// under a name it lists: dropped, the bin/ links a 2.x version published would outlive it.
-		Optional: []string{kirocli.Name + "-chat", kirocli.Name + "-term"},
-		Assert:   kiroSettings(),
-		Purge:    kiroLegacyPurge(),
+		Assert:  kiroSettings(),
+		Purge:   kiroLegacyPurge(),
 		// Untrusted stays unset: healBootModes has removed group and other write from this root before
 		// this runs, and pinstall's custody check judges the writers left, so Untrusted would only add
 		// a digest-verified reinstall at every start. TrustedUIDs is a fact about the volume's ACL,
