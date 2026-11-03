@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 )
 
@@ -29,14 +30,9 @@ func entityTags(h http.Header, name string) []string {
 }
 
 // ifMatchHolds reports whether r's If-Match lists etag, compared strongly as RFC 9110 section
-// 13.1.1 requires: a weak member never matches.
+// 13.1.1 requires. etag must be strong, so a weak member never matches it.
 func ifMatchHolds(r *http.Request, etag string) bool {
-	for _, tag := range entityTags(r.Header, headerIfMatch) {
-		if tag == etag && !strings.HasPrefix(tag, "W/") {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(entityTags(r.Header, headerIfMatch), etag)
 }
 
 // ifNoneMatchHolds reports whether r's If-None-Match is "*" or lists etag, compared weakly as

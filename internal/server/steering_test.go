@@ -156,26 +156,34 @@ func TestHandleSteeringPut_StoresTheDocument0600(t *testing.T) {
 }
 
 // TestHandleSteeringPut_RequiresAValidatorToken is the 428 arm: a save offering no
-// If-Match cannot be told from one that would overwrite a newer document, so it is
-// refused before anything is written.
+// If-Match tag cannot be told from one that would overwrite a newer document, so it is
+// refused before anything is written. An If-Match whose list is empty (RFC 9110 section
+// 5.6.1 drops empty elements) offers no tag either.
 func TestHandleSteeringPut_RequiresAValidatorToken(t *testing.T) {
-	s, path := steeringServer(t)
-	const stored = "# mine\n"
-	if err := os.WriteFile(path, []byte(stored), 0o600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	for _, c := range []struct{ name, ifMatch string }{
+		{"no field", ""},
+		{"an empty list", " , "},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, path := steeringServer(t)
+			const stored = "# mine\n"
+			if err := os.WriteFile(path, []byte(stored), 0o600); err != nil {
+				t.Fatalf("write %s: %v", path, err)
+			}
 
-	rec := putSteering(t, s, "", "# theirs\n")
+			rec := putSteering(t, s, c.ifMatch, "# theirs\n")
 
-	if rec.Code != http.StatusPreconditionRequired {
-		t.Fatalf("PUT with no If-Match = %d, want 428", rec.Code)
-	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read back %s: %v", path, err)
-	}
-	if string(after) != stored {
-		t.Errorf("custom.md after a refused save = %q, want it untouched (%q)", after, stored)
+			if rec.Code != http.StatusPreconditionRequired {
+				t.Errorf("PUT with If-Match %q = %d, want 428", c.ifMatch, rec.Code)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read back %s: %v", path, err)
+			}
+			if string(after) != stored {
+				t.Errorf("custom.md after a refused save = %q, want it untouched (%q)", after, stored)
+			}
+		})
 	}
 }
 

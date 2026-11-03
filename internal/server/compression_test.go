@@ -98,9 +98,9 @@ func TestCompressJSON_OnlyJSONIsCompressed(t *testing.T) {
 	}
 }
 
-// TestCompressJSON_StreamRoutesAreNeverWrapped pins the skip list by its effect: a large JSON
+// TestCompressJSON_SkippedRoutesAreNeverWrapped pins the skip list by its effect: a large JSON
 // body there goes out as written, with no Vary, while a lookalike path is compressed.
-func TestCompressJSON_StreamRoutesAreNeverWrapped(t *testing.T) {
+func TestCompressJSON_SkippedRoutesAreNeverWrapped(t *testing.T) {
 	cases := []struct {
 		path       string
 		compressed bool
@@ -109,8 +109,11 @@ func TestCompressJSON_StreamRoutesAreNeverWrapped(t *testing.T) {
 		{"/api/shell/ws", false},
 		{"/api/shell/ws/anything", false},
 		{"/preview/token/data.json", false},
+		// A .json download is application/json, and a resumed download needs its byte ranges.
+		{"/api/file/download", false},
 		{"/api/eventsource", true},
 		{"/api/shell", true},
+		{"/api/file", true},
 	}
 	mux := http.NewServeMux()
 	for _, c := range cases {
@@ -161,6 +164,70 @@ func TestCompressJSON_AStreamedNDJSONAnswerIsNotBuffered(t *testing.T) {
 	}
 	if got := rec.Header().Get("Content-Encoding"); got != "" {
 		t.Errorf("Content-Encoding = %q, want none on a stream", got)
+	}
+}
+
+// TestCompressJSON_AFlushedJSONAnswerIsNotHeldBack: a JSON answer under the 1 KiB floor that the
+// handler flushes is on the wire at the Flush, identity-coded, rather than held for its size.
+func TestCompressJSON_AFlushedJSONAnswerIsNotHeldBack(t *testing.T) {
+	const first = `{"status":"started"}`
+	rec := httptest.NewRecorder()
+	atFlush := "<never flushed>"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/anything", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, first)
+		f, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("the stack hands the handler a writer that is not an http.Flusher")
+			return
+		}
+		f.Flush()
+		atFlush = rec.Body.String()
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/anything", http.NoBody)
+	req.Header.Set("Accept-Encoding", "gzip")
+	apiStack(t, &Server{}, mux).ServeHTTP(rec, req)
+
+	if atFlush != first {
+		t.Errorf("body on the wire at Flush = %q, want %q", atFlush, first)
+	}
+	if got := rec.Header().Get("Content-Encoding"); got != "" {
+		t.Errorf("Content-Encoding = %q, want none on a flushed answer under the floor", got)
+	}
+	if !rec.Flushed {
+		t.Error("the handler's Flush never reached the client's writer")
+	}
+}
+
+// TestCompressJSON_AReplayedMutationRenegotiatesItsCoding: a retried keyed mutation replays the
+// first answer coded for the retry's own Accept-Encoding, since a cached gzip body sent to a
+// client that did not offer gzip, or sent with no Content-Encoding, cannot be read.
+func TestCompressJSON_AReplayedMutationRenegotiatesItsCoding(t *testing.T) {
+	handler, calls := idemHandler(http.StatusOK, "application/json", bigJSON())
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/command", handler)
+	h := apiStack(t, &Server{}, mux)
+	post := func(hdr ...string) *httptest.ResponseRecorder {
+		return serveStack(h, http.MethodPost, "/api/command", `{}`,
+			append([]string{idempotencyHeader, "r-gzip", "Content-Type", "application/json"}, hdr...)...)
+	}
+
+	if got := string(gunzipped(t, post("Accept-Encoding", "gzip"))); got != bigJSON() {
+		t.Errorf("first answer decompressed = %d bytes, want the %d written", len(got), len(bigJSON()))
+	}
+	if got := string(gunzipped(t, post("Accept-Encoding", "gzip"))); got != bigJSON() {
+		t.Errorf("gzip replay decompressed = %d bytes, want the %d written", len(got), len(bigJSON()))
+	}
+	identity := post()
+	if got := identity.Header().Get("Content-Encoding"); got != "" {
+		t.Errorf("replay to a client offering no gzip: Content-Encoding = %q, want none", got)
+	}
+	if got := identity.Body.String(); got != bigJSON() {
+		t.Errorf("identity replay = %d bytes, want the %d written", len(got), len(bigJSON()))
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("handler calls = %d, want 1 (both retries replayed)", got)
 	}
 }
 

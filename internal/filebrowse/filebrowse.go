@@ -110,11 +110,14 @@ func New(sensitive Sensitive, rootDirs []string, opts ...Option) (*Handler, erro
 	return h, nil
 }
 
+// DownloadPath is the file download route, answered by http.ServeContent with byte ranges.
+const DownloadPath = "/api/file/download"
+
 // RegisterRoutes wires all /api/file* and /api/files* routes onto mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/file", h.scoped((*Handler).handleFile))
 	mux.HandleFunc("/api/file/stat", h.scoped((*Handler).handleStat))
-	mux.HandleFunc("/api/file/download", h.scoped((*Handler).handleDownload))
+	mux.HandleFunc(DownloadPath, h.scoped((*Handler).handleDownload))
 	mux.HandleFunc("/api/file/upload", h.scoped((*Handler).handleUpload))
 	mux.HandleFunc("/api/files", h.scoped((*Handler).handleFiles))
 	mux.HandleFunc("/api/files/action", h.scoped((*Handler).handleFilesAction))

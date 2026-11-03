@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/webhttp/v4"
 )
@@ -13,9 +14,10 @@ import (
 var streamPaths = []string{"/api/events", "/api/shell/ws"}
 
 func isCompressSkipped(r *http.Request) bool {
-	// A preview file is served by http.ServeContent with Range support, which a compressed 200
-	// gives up (it drops Accept-Ranges).
-	if strings.HasPrefix(r.URL.Path, preview.PathPrefix) {
+	// A preview file and a download (a .json one is application/json) are served by
+	// http.ServeContent with byte ranges and a strong ETag for If-Range, which a compressed 200
+	// gives up: it drops Accept-Ranges and weakens the tag.
+	if strings.HasPrefix(r.URL.Path, preview.PathPrefix) || r.URL.Path == filebrowse.DownloadPath {
 		return true
 	}
 	for _, p := range streamPaths {

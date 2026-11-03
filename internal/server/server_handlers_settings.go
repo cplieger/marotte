@@ -129,8 +129,7 @@ func handleSteeringGet(w http.ResponseWriter, r *http.Request, path string) {
 // concurrency control: another device or an agent may edit custom.md. The token is compared
 // strongly against the stored document's, whatever coding the caller's GET was answered in.
 func steeringWriteAllowed(w http.ResponseWriter, r *http.Request, path string) bool {
-	offered := strings.TrimSpace(r.Header.Get(headerIfMatch))
-	if offered == "" {
+	if len(entityTags(r.Header, headerIfMatch)) == 0 {
 		webhttp.WriteJSONStatus(w, http.StatusPreconditionRequired,
 			webhttp.ErrorResponse{Error: msgSteeringIfMatchRequired})
 		return false
