@@ -22,6 +22,12 @@ When an automatic compaction fails, the reply can stay open with nothing more ar
 
 Reported in the Kiro Crew tracker as [kirodotdev/KiroCrew#3583](https://github.com/kirodotdev/KiroCrew/issues/3583), closed after Kiro Crew added a time limit in its own client. kiro-cli itself still leaves the reply open. After a failed compaction, marotte ends a reply that shows no new activity for 60 seconds and marks it interrupted.
 
+### Replies slow down when many chats and workflow steps run at once
+
+kiro-cli's agent engine runs every chat, workflow step and subagent on one JavaScript thread. On Node.js 22, which kiro-cli ships, garbage collection and the tracking of asynchronous code fill that thread when many of them run at once. Replies and workflow steps then slow down, starting a chat or a step can time out, and the engine can fall far behind. The engine's own log, `kiro.log`, falls behind under the same load.
+
+Reported as [kirodotdev/Kiro#12261](https://github.com/kirodotdev/Kiro/issues/12261), open, and the log delay as [kirodotdev/Kiro#12260](https://github.com/kirodotdev/Kiro/issues/12260), open. **High throughput optimizations**, under **Experimental features** in **Settings**, is on by default. It starts the engine's Node.js with `--experimental-async-context-frame` and `--max-semi-space-size=64`, which cut the time the thread spends on that work. [Configuration](configuration.md#high-throughput-optimizations) gives the measured effect.
+
 ## Chats
 
 ### A chat is named with a sentence that is not a title
@@ -40,7 +46,7 @@ Reported as [kirodotdev/Kiro#11449](https://github.com/kirodotdev/Kiro/issues/11
 
 When a reply ends while a message you sent is still unread, kiro-cli continues the reply so the agent reads it. If you delete or edit a waiting message within a fraction of a second of the reply ending, kiro-cli can empty its queue after it has decided to continue. The agent then starts a reply with none of your messages in it.
 
-Not yet reported upstream. Only kiro-cli can close this: it needs to check for unread messages again before it continues, or to offer a way to withdraw one message without emptying the queue. Once marotte sees a reply end, it shows each message kiro-cli still holds as "Delivering", with no Edit or Delete, until the agent reads it or kiro-cli drops it, and refuses a delete sent during that time. A delete or edit that marotte sent just before it saw the reply end is not covered.
+Reported as [kirodotdev/Kiro#12262](https://github.com/kirodotdev/Kiro/issues/12262), open. A fix needs kiro-cli to check for unread messages again before it continues, or to offer a way to withdraw one message without emptying the queue. Once marotte sees a reply end, it shows each message kiro-cli still holds as "Delivering", with no Edit or Delete. That lasts until the agent reads the message or kiro-cli drops it, and marotte refuses a delete sent during that time. A delete or edit that marotte sent just before it saw the reply end is not covered.
 
 ### A message sent just after a stop can run out of view
 
