@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -515,6 +516,106 @@ func TestRetention_KeepState(t *testing.T) {
 			b3.ageMark(t, "c-1", runKey("wf_1"), seamIdle)
 			b3.pass(t)
 			b3.purged(t, "c-1", sess("c-1"))
+		}},
+		// A person's close stops every run the chat launched, a paused one included: a refused cancel is retried, and
+		// a stop read back terminal releases the run's mark.
+		"close_by_person_stops_runs": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			b := bootSeam(t, root, eng, logs, seamOpts{})
+			b.create(t, "c-1", sess("c-1"))
+			eng.list(t, seamRow("wf_run", "running", sess("c-1")), seamRow("wf_park", "paused", sess("c-1")))
+			b.runStart(t, "wf_run", sess("c-1"))
+			b.waitKey(t, "c-1", runKey("wf_run"), true)
+			eng.inspected(t, "wf_run", "cancelled", sess("c-1"))
+			eng.fail(t, kasCancel, "wf_park", "owner pid 979344 is live")
+
+			b.personClose(t, "c-1")
+
+			if !eng.called(t, kasCancel, "wf_run") || !eng.called(t, kasCancel, "wf_park") {
+				t.Fatal("a person's close did not cancel both the running and the paused run")
+			}
+			eng.answer(t, kasCancel, "wf_park", map[string]any{})
+			waitFor(t, "the paused run's refused cancel retried", func() bool { return eng.countFor(t, kasCancel, "wf_park") >= 2 })
+			eng.inspected(t, "wf_park", "cancelled", sess("c-1"))
+			b.waitKey(t, "c-1", runKey("wf_run"), false)
+			b.waitKey(t, "c-1", runKey("wf_park"), false)
+			if eng.called(t, kasDelete, "") {
+				t.Error("a run whose cancel was confirmed was deleted")
+			}
+		}},
+		// Closes no person made stop nothing: an API caller's close, the purge's RetentionClose, the boot's pruneTabs
+		// and a restart.
+		"close_not_by_person_stops_nothing": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			b1 := bootSeam(t, root, eng, logs, seamOpts{})
+			b1.create(t, "c-api", sess("c-api"))
+			b1.create(t, "c-purged", sess("c-purged"))
+			b1.create(t, "c-pruned", sess("c-pruned"))
+			b1.create(t, "c-restart", sess("c-restart"))
+			eng.list(t, seamRow("wf_api", "running", sess("c-api")), seamRow("wf_purged", "running", sess("c-purged")),
+				seamRow("wf_pruned", "running", sess("c-pruned")), seamRow("wf_restart", "running", sess("c-restart")))
+			b1.runStart(t, "wf_api", sess("c-api"))
+			b1.waitKey(t, "c-api", runKey("wf_api"), true)
+			b1.closeTab(t, "c-api")
+			b1.closeTab(t, "c-purged")
+			b1.age(t, "c-purged", seamIdle)
+			b1.pass(t)
+			b1.purged(t, "c-purged", sess("c-purged"))
+			b1.shutdown(t)
+			if err := os.RemoveAll(filepath.Join(root, "chats", "c-pruned")); err != nil {
+				t.Fatalf("Setup: %v", err)
+			}
+
+			b := bootSeam(t, root, eng, logs, seamOpts{})
+			b.quiet(t)
+			if eng.count(t, kasCancel) != 0 {
+				t.Errorf("a close no person made cancelled %d runs, want 0", eng.count(t, kasCancel))
+			}
+			if _, ok := b.keys(t, "c-api")[runKey("wf_api")]; !ok {
+				t.Error("an API caller's close released the run's mark")
+			}
+		}},
+		// A run whose launching chat has no open tab is not retried; with the tab open, the closed-chat refusal does
+		// not apply.
+		"retry_closed_launcher_refused": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			b := bootSeam(t, root, eng, logs, seamOpts{})
+			b.create(t, "c-1", sess("c-1"))
+			eng.list(t, seamRow("wf_1", "failed", sess("c-1")))
+			eng.inspected(t, "wf_1", "failed", sess("c-1"))
+			if _, body := b.serve(t, http.MethodPost, "/api/runs/wf_1/retry", nil); fmt.Sprint(body) != "" &&
+				strings.Contains(fmt.Sprint(body), "is closed") {
+				t.Errorf("a retry with the launching chat's tab open was refused as closed: %v", body)
+			}
+			b.closeTab(t, "c-1")
+			code, body := b.serve(t, http.MethodPost, "/api/runs/wf_1/retry", nil)
+			if code != http.StatusConflict || !strings.Contains(fmt.Sprint(body), "is closed") {
+				t.Errorf("retry with no tab on the launching chat = %d %v, want 409 naming the closed chat", code, body)
+			}
+		}},
+		// The stop rewrites the run's mark before its first cancel, so a chat whose run went quiet is kept while the
+		// stop is in flight, and purged once the stop is confirmed and the chat is idle.
+		"stop_keeps_chat_until_confirmed": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			b := bootSeam(t, root, eng, logs, seamOpts{})
+			b.create(t, "c-1", sess("c-1"))
+			eng.list(t, seamRow("wf_1", "paused", sess("c-1")))
+			b.runStart(t, "wf_1", sess("c-1"))
+			b.waitKey(t, "c-1", runKey("wf_1"), true)
+			b.age(t, "c-1", seamIdle)
+			b.ageMark(t, "c-1", runKey("wf_1"), seamIdle)
+			entered, release := eng.block(t, kasCancel)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				b.personClose(t, "c-1")
+			}()
+			entered()
+			b.pass(t)
+			b.kept(t, "c-1", sess("c-1"))
+			eng.inspected(t, "wf_1", "cancelled", sess("c-1"))
+			release()
+			<-done
+			b.waitKey(t, "c-1", runKey("wf_1"), false)
+			b.age(t, "c-1", seamIdle)
+			b.pass(t)
+			b.purged(t, "c-1", sess("c-1"))
 		}},
 		// A record from before keep facts existed ages one window from the fill-in.
 		"fill_in_floor": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {

@@ -71,6 +71,7 @@ const (
 	kasInspect = "_kiro/workflow/inspect"
 	kasDelete  = "_kiro/workflow/delete"
 	kasRetry   = "_kiro/workflow/retry"
+	kasCancel  = "_kiro/workflow/cancel"
 	kasSessDel = "session/delete"
 )
 
@@ -215,6 +216,30 @@ func (e *seamEngine) count(t *testing.T, method string) int {
 	n := 0
 	for line := range strings.SplitSeq(string(raw), "\n") {
 		if m, _, _ := strings.Cut(line, " "); m == method {
+			n++
+		}
+	}
+	return n
+}
+
+// inspected makes inspect answer wf with status.
+func (e *seamEngine) inspected(t *testing.T, wf, status, parent string) {
+	t.Helper()
+	e.answer(t, kasInspect, wf, map[string]any{
+		"workflowId": wf, "state": map[string]any{"workflowId": wf, "status": status, "parentSessionId": parent},
+	})
+}
+
+// countFor is how many requests for method naming wf the engine received.
+func (e *seamEngine) countFor(t *testing.T, method, wf string) int {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(e.dir, "calls.log"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read the engine log: %v", err)
+	}
+	n := 0
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		if line == method+" "+wf {
 			n++
 		}
 	}
@@ -523,8 +548,17 @@ func (b *seamBoot) cmd(t *testing.T, typ marotte.CommandType, chatID string, pay
 
 func (b *seamBoot) serve(t *testing.T, method, path string, body []byte) (int, map[string]any) {
 	t.Helper()
+	return b.serveAs(t, method, path, body, "")
+}
+
+// serveAs is serve from origin, as marotte's own page sends it; "" is an API caller's request.
+func (b *seamBoot) serveAs(t *testing.T, method, path string, body []byte, origin string) (int, map[string]any) {
+	t.Helper()
 	req := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
 	rec := httptest.NewRecorder()
 	b.mux.ServeHTTP(rec, req)
 	var out map[string]any
@@ -595,6 +629,22 @@ func (b *seamBoot) closeTab(t *testing.T, id string) {
 		t.Fatalf("Setup: %s has no open tab", id)
 	}
 	b.closeTabID(t, tab)
+}
+
+// personClose closes chat id's tab from the page, a person's close.
+func (b *seamBoot) personClose(t *testing.T, id string) {
+	t.Helper()
+	tab := b.tabOf(t, id)
+	if tab == "" {
+		t.Fatalf("Setup: %s has no open tab", id)
+	}
+	raw, err := json.Marshal(map[string]any{"type": marotte.CmdCloseTab, "payload": map[string]any{"id": tab}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, body := b.serveAs(t, http.MethodPost, "/api/command", raw, "http://marotte.test"); code != http.StatusOK {
+		t.Errorf("a person's close_tab %s = %d %v", tab, code, body)
+	}
 }
 
 func (b *seamBoot) closeTabID(t *testing.T, tab string) {
