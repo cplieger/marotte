@@ -58,8 +58,10 @@ var fetched struct {
 }
 
 type fetchResult struct {
-	src, url string
 	err      error
+	nodeErr  error
+	src, url string
+	node     bundledNode
 }
 
 // changedArchesOnThisPR returns the architectures whose kiro-cli archive this GitHub pull request
@@ -161,12 +163,19 @@ func TestPinPatternsMatchTheEntrypoint(t *testing.T) {
 // use.
 func fetchedBundle(t *testing.T, active, arch string) bundle {
 	t.Helper()
+	res := fetchedArchive(t, active, arch)
+	return bundle{name: arch, src: res.src, path: res.url + "!/" + chatMember + "!/" + filepath.ToSlash(bundleRel)}
+}
+
+// fetchedArchive returns what the pinned release's arch archive holds, fetching it on first use.
+func fetchedArchive(t *testing.T, active, arch string) fetchResult {
+	t.Helper()
 	// Read before locking: a Fatalf under the lock would leave it held.
 	digest := pinnedDigest(t, arch)
 	fetched.mu.Lock()
 	res, ok := fetched.byArch[arch]
 	if !ok {
-		res.src, res.url, res.err = fetchKAS(t.Context(), active, arch, digest)
+		res = fetchKAS(t.Context(), active, arch, digest)
 		if fetched.byArch == nil {
 			fetched.byArch = make(map[string]fetchResult)
 		}
@@ -177,7 +186,7 @@ func fetchedBundle(t *testing.T, active, arch string) bundle {
 		t.Fatalf("this pull request changes the kiro-cli %s pin (now %s), so the bundle-backed checks fetch it, and the fetch failed: %v",
 			arch, active, res.err)
 	}
-	return bundle{name: arch, src: res.src, path: res.url + "!/" + chatMember + "!/" + filepath.ToSlash(bundleRel)}
+	return res
 }
 
 func pinnedDigest(t *testing.T, arch string) string {
@@ -198,34 +207,43 @@ func pinnedDigest(t *testing.T, arch string) string {
 }
 
 // fetchKAS downloads the pinned arch archive through the URL marotte installs from, verifies it
-// against the pinned digest, and reads the agent server out of its chat sidecar. It returns the
-// agent server's source and the archive URL.
-func fetchKAS(ctx context.Context, version, arch, digest string) (src, url string, err error) {
+// against the pinned digest, and reads the agent server and the node out of its chat sidecar. err is
+// the agent server's failure, nodeErr the node's.
+func fetchKAS(ctx context.Context, version, arch, digest string) (res fetchResult) {
 	rel := kirocli.Release()
 	token, ok := rel.ArchTokens[arch]
 	if !ok {
-		return "", "", fmt.Errorf("kiro-cli publishes no build for %s", arch)
+		res.err = fmt.Errorf("kiro-cli publishes no build for %s", arch)
+		return res
 	}
-	url = strings.NewReplacer("{version}", version, "{arch}", token).Replace(rel.URLTemplate)
+	res.url = strings.NewReplacer("{version}", version, "{arch}", token).Replace(rel.URLTemplate)
 
 	dir, err := os.MkdirTemp("", "kascap-kas-*")
 	if err != nil {
-		return "", url, err
+		res.err = err
+		return res
 	}
-	defer func() { err = errors.Join(err, os.RemoveAll(dir)) }()
+	defer func() { res.err = errors.Join(res.err, os.RemoveAll(dir)) }()
 	archive := filepath.Join(dir, "kirocli.zip")
-	if err := downloadVerified(ctx, url, digest, archive); err != nil {
-		return "", url, err
+	if err := downloadVerified(ctx, res.url, digest, archive); err != nil {
+		res.err = err
+		return res
 	}
 	chat, err := readMember(archive, chatMember)
 	if err != nil {
-		return "", url, err
+		res.err = err
+		return res
+	}
+	if res.node, res.nodeErr = embeddedNode(chat); res.nodeErr != nil {
+		res.nodeErr = fmt.Errorf("%s in %s: %w", chatMember, res.url, res.nodeErr)
 	}
 	server, err := embeddedAgentServer(chat)
 	if err != nil {
-		return "", url, fmt.Errorf("%s in %s: %w", chatMember, url, err)
+		res.err = fmt.Errorf("%s in %s: %w", chatMember, res.url, err)
+		return res
 	}
-	return string(server), url, nil
+	res.src = string(server)
+	return res
 }
 
 func downloadVerified(ctx context.Context, url, digest, dst string) error {

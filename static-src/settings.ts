@@ -1017,13 +1017,15 @@ function initAutoCompactionControls(): void {
 }
 
 // Each writes one /api/settings boolean, never the kiro-cli settings endpoint. The MCP wait switch
-// lives on Settings > Tools; the other two on General.
+// lives on Settings > Tools; the others on General.
 const panelSwitches: readonly {
-  key: "debug_logs" | "guard_payload_links" | "mcp_wait_for_ready";
+  key:
+    "debug_logs" | "guard_payload_links" | "high_throughput_optimizations" | "mcp_wait_for_ready";
   inputID: string;
 }[] = [
   { key: "guard_payload_links", inputID: "flag-guard-payload-links" },
   { key: "debug_logs", inputID: "flag-debug-logs" },
+  { key: "high_throughput_optimizations", inputID: "flag-high-throughput" },
   { key: "mcp_wait_for_ready", inputID: "mcp-wait-for-ready" },
 ];
 

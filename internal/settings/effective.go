@@ -49,6 +49,16 @@ const (
 	DefaultNotifyRunOutcome    = true
 )
 
+// DefaultHighThroughput is ON by the user's choice: the flags carry 3 to 4 times the prompt load on one engine.
+const DefaultHighThroughput = true
+
+// HighThroughput reports whether the next engine starts with the high throughput launcher. An absent or unreadable
+// value is the default.
+func HighThroughput(ctx context.Context, configDir string) bool {
+	on, _ := FieldOr(ctx, configDir, KeyHighThroughput, DefaultHighThroughput)
+	return on
+}
+
 // EffectiveDefaults is the ONE statement of every client-rendered preference's value when
 // config.json is SILENT. It is not a consumer's answer for an UNREADABLE file, which differs
 // per consumer (composition's chatRetention purges nothing then), so the two must not merge.
@@ -60,6 +70,7 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		AutoCompactPct:        DefaultAutoCompactPct,
 		ChatRetentionDays:     DefaultChatRetentionDays,
 		GuardPayloadLinks:     defaultGuardPayloadLinks,
+		HighThroughput:        DefaultHighThroughput,
 		KnowledgeEnabled:      defaultKnowledgeEnabled,
 		ContentCollection:     DefaultContentCollectionEnabled,
 		MemoryMode:            DefaultMemoryMode,
@@ -191,6 +202,7 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 			return decodeChecked(&out.TerminalCommandTimeoutMs, r, KeyTerminalCommandTimeoutMs, ValidTerminalCommandTimeoutMs)
 		},
 		KeyEngineHeapMiB:    func(r json.RawMessage) error { return decodeInto(&out.EngineHeapMiB, r) },
+		KeyHighThroughput:   func(r json.RawMessage) error { return decodeInto(&out.HighThroughput, r) },
 		KeySettingsEpoch:    func(r json.RawMessage) error { return decodeStampField(&out.SettingsEpoch, r) },
 		KeySettingsRevision: func(r json.RawMessage) error { return decodeStampField(&out.SettingsRevision, r) },
 	}

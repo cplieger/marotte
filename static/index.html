@@ -888,6 +888,19 @@
                   <p class="section-hint">Writes more detailed logs for troubleshooting. marotte's own log, read with <code>docker logs marotte</code>, switches at once. The agent engine's log under <code>/config/home/.kiro/logs</code> switches when the engine restarts.</p>
                 </div>
               </div>
+              <div class="section-option">
+                <label class="toggle">
+                  <input type="checkbox" id="flag-high-throughput" aria-label="High throughput optimizations" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">High throughput optimizations</span>
+                    <span class="settings-save-status hidden" data-save-status="high_throughput_optimizations" aria-live="polite"></span>
+                  </div>
+                  <p class="section-hint">Starts the agent engine with Node.js memory and async-context settings that let it carry many chats and workflow steps at once. Turn it off for kiro-cli's stock engine.</p>
+                </div>
+              </div>
             </div>
 
             <div class="page-section" id="general-advanced-section">

@@ -21,6 +21,7 @@ const (
 	reasonAutoDelegation    = marotte.EngineReason(settings.KeyAutoDelegation)
 	reasonHeap              = marotte.EngineReason(settings.KeyEngineHeapMiB)
 	reasonDebugLogs         = marotte.EngineReason(settings.KeyDebugLogs)
+	reasonHighThroughput    = marotte.EngineReason(settings.KeyHighThroughput)
 	reasonTelemetry         = marotte.EngineReason(kiroTelemetryKey)
 )
 
@@ -43,6 +44,8 @@ func engineReasonLabel(r marotte.EngineReason) string {
 		return "Agent engine memory limit"
 	case reasonDebugLogs:
 		return "Debug logs"
+	case reasonHighThroughput:
+		return "High throughput optimizations"
 	case reasonTelemetry:
 		return "Usage telemetry"
 	case marotte.EngineReasonKiroCLIVersion:
@@ -73,6 +76,7 @@ func (rt *Runtime) resolveEngine(ctx context.Context, path string) engineSpec {
 	telemetryOff := rt.lifecycle.telemetryDisabled(rt.config.GovernanceLocks)
 	heap := engineHeapMiB(ctx, dir)
 	debug := settings.DebugLogs(ctx, dir)
+	throughput := settings.HighThroughput(ctx, dir)
 	opts := &marotte.EngineOpts{
 		Lifetime:          rt.lifecycle.shutdownCtx,
 		Background:        rt.lifecycle.goUnlessDraining,
@@ -88,6 +92,7 @@ func (rt *Runtime) resolveEngine(ctx context.Context, path string) engineSpec {
 		Knowledge:         knowledge,
 		DisableTelemetry:  telemetryOff,
 		DebugLogs:         debug,
+		HighThroughput:    throughput,
 	}
 	fp := map[marotte.EngineReason]string{
 		reasonKnowledge:                    strconv.FormatBool(knowledge),
@@ -98,6 +103,7 @@ func (rt *Runtime) resolveEngine(ctx context.Context, path string) engineSpec {
 		reasonAutoDelegation:               features.AutoDelegation,
 		reasonHeap:                         strconv.Itoa(heap),
 		reasonDebugLogs:                    strconv.FormatBool(debug),
+		reasonHighThroughput:               strconv.FormatBool(throughput),
 		reasonTelemetry:                    strconv.FormatBool(telemetryOff),
 		marotte.EngineReasonKiroCLIVersion: path,
 		marotte.EngineReasonAccountSwitch:  strconv.FormatBool(rt.signin.accountPending()),

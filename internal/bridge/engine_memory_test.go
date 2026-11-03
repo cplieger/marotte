@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/kasnode"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -173,11 +174,16 @@ func TestProbeHeapLimitMiB_ReadsTheNodeUnderTheComposedOptions(t *testing.T) {
 	if node == "" {
 		t.Skip("the KAS node binary is not installed here")
 	}
-	got, err := probeHeapLimitMiB(t.Context(), node, []string{nodeOptionsVar + "=--max-old-space-size=2048"})
+	got, err := probeHeapLimitMiB(t.Context(), node, nil, []string{nodeOptionsVar + "=--max-old-space-size=2048"})
 	if err != nil || got != 2048+48 {
 		t.Errorf("probeHeapLimitMiB = %d, %v; want %d", got, err, 2048+48)
 	}
-	if _, err := probeHeapLimitMiB(t.Context(), "/bin/true", nil); err == nil {
+	// The young generation's allowance is three semi-spaces, so the launcher's 64 MiB one makes it 192.
+	got, err = probeHeapLimitMiB(t.Context(), node, kasnode.Flags, []string{nodeOptionsVar + "=--max-old-space-size=2048"})
+	if err != nil || got != 2048+3*64 {
+		t.Errorf("probeHeapLimitMiB(the launcher's flags) = %d, %v; want %d", got, err, 2048+3*64)
+	}
+	if _, err := probeHeapLimitMiB(t.Context(), "/bin/true", nil, nil); err == nil {
 		t.Error("probeHeapLimitMiB(a binary printing nothing) = nil error, want a refusal")
 	}
 }
