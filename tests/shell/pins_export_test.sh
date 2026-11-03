@@ -120,7 +120,7 @@ grep -q '^prune_superseded_kas_runtimes()' "$ENTRYPOINT" \
 # kirocli.go's Config literal says why. Untrusted is pinstall v2's name for v1's Tainted, so
 # grepping Tainted would pass vacuously.
 grep -q 'Untrusted:' "$KIROCLI_GO" \
-  && no "Untrusted set" "internal/composition/kirocli.go now sets pinstall.Config.Untrusted, which reinstalls kiro-cli (about 530 MB) at every start; change the reason beside the Config literal first" \
+  && no "Untrusted set" "internal/composition/kirocli.go now sets pinstall.Config.Untrusted, which reinstalls kiro-cli (about 140 MB) at every start; change the reason beside the Config literal first" \
   || ok "the Go side leaves pinstall.Config.Untrusted unset"
 
 # KIRO_CLI_TOOLS_TAINTED is web-terminal-kiro's shell-to-Go hand-off for that field. A half-wired

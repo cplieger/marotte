@@ -129,7 +129,7 @@ func exitedUnreaped(pid int) bool {
 
 // noteEngineGroups adds the groups below the kiro-cli process to engineGroups. kiro-cli's node engine leads its own
 // group, which its stdio MCP servers join, so the kiro-cli process's group kill misses them. It runs after initialize
-// and again at reap: once the relay dies they are init's, and no walk finds them.
+// and again at reap: once the kiro-cli process dies they are init's, and no walk finds them.
 func (e *Engine) noteEngineGroups() {
 	if e.cmd == nil || e.cmd.Process == nil {
 		return
