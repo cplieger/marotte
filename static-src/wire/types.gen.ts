@@ -262,8 +262,8 @@ export interface Caller {
  * verdict nothing answered arrives as "unknown" rather than as an absent key.
  */
 export interface Capabilities {
-  connection: Record<string, Affordance>;
-  grant: Record<string, Affordance>;
+  connection: { [key: string]: Affordance };
+  grant: { [key: string]: Affordance };
   /** Account is the sign-in the answer was read through. */
   account: string;
 }
@@ -278,7 +278,7 @@ export interface CatalogInfo {
  * from; Generated its compile timestamp (RFC 3339 UTC). Both are
  * informational pass-throughs of the catalog document.
  */
-  refs?: Record<string, string>;
+  refs?: { [key: string]: string };
   generated?: string;
   /**
  * Source is where the live catalog came from: baked (the image
@@ -445,7 +445,7 @@ export interface ConfigStanding {
  * shown whether or not the row also has a standing.
  */
 export interface ConfigStandingResponse {
-  load_errors: Record<string, AgentLoadError>;
+  load_errors: { [key: string]: AgentLoadError };
   standing: ConfigStanding[];
 }
 
@@ -670,19 +670,19 @@ export interface EffectiveSettings {
  * One level for the whole app cannot express that: a pick on any chat retracts
  * every other model's remembered level (settings.KeyLastEffortByModel).
  */
-  last_effort_by_model: Record<string, string>;
+  last_effort_by_model: { [key: string]: string };
   /**
  * KiroDefaults is what an UNSET three-state setting resolves to in kiro-cli, keyed by the
  * marotte setting key; a key is absent while that is unknown, and never present for a key the
  * user has set.
  */
-  kiro_defaults: Record<string, KiroDefault>;
+  kiro_defaults: { [key: string]: KiroDefault };
   /**
  * AdditionalDirectoriesRefused maps each AdditionalDirectories entry that
  * settings.AgentDirs.Assess refuses at this GET to its reason; it is never stored, and an
  * entry absent from it is granted.
  */
-  additional_directories_refused: Record<string, string>;
+  additional_directories_refused: { [key: string]: string };
   /**
  * Theme is "", "dark", "light" or "system". The empty string is a REAL value
  * meaning nothing has been chosen, which the client resolves to the OS
@@ -873,7 +873,7 @@ export interface ElicitationRequestSchema {
   type?: string;
   title?: string;
   description?: string;
-  properties?: Record<string, ElicitationPropertySchema>;
+  properties?: { [key: string]: ElicitationPropertySchema };
   required?: string[];
 }
 
@@ -1285,7 +1285,7 @@ export interface EntryTurnBind {
  * and a closed enum would make such a chat undecodable; Outcome is derived, so closed.
  */
 export interface EntryTurnClose {
-  changed_files?: Record<string, FileChange>;
+  changed_files?: { [key: string]: FileChange };
   refusal?: RefusalInfo;
   /** ContextBreakdown is KAS's measure of the turn's last model request. */
   context_breakdown?: ContextBreakdown;
@@ -1629,7 +1629,7 @@ export interface GovernanceStatePayload {
  * locked control renders read-only with the lock's value, and the server sends that
  * value whatever the stored setting says. Absent means nothing is locked.
  */
-  locks?: Record<string, GovernanceLock>;
+  locks?: { [key: string]: GovernanceLock };
   /** MCPRegistry is present only while the organization restricts MCP to its registry. */
   mcp_registry?: GovernanceMCPRegistry;
   /**
@@ -1850,7 +1850,7 @@ export interface JobResponse {
  */
 export interface JobsResponse {
   active?: Job;
-  recent: Job[];
+  recent: (Job | null)[];
 }
 
 /**
@@ -2567,7 +2567,7 @@ export interface QueuedPrompt {
  */
 export interface Recipe {
   /** Inputs maps input name → declared type (`string`, `prompt`, `file`). */
-  inputs?: Record<string, string>;
+  inputs?: { [key: string]: string };
   name: string;
   description?: string;
   /**
@@ -2871,7 +2871,7 @@ export interface RunControlsResponse {
  * Refused maps a verb this run does not offer to the one sentence a reader
  * needs, and carries only a verb whose absence would otherwise be unexplained.
  */
-  refused?: Record<string, string>;
+  refused?: { [key: string]: string };
   /**
  * ParentChatID names the chat whose agent launched the run, empty for a
  * parentless one. Read from the chat store here rather than from an event-fed
@@ -2932,7 +2932,7 @@ export interface RunFinishedPayload {
  * a path.
  */
 export interface RunLaunchRequest {
-  inputs?: Record<string, string>;
+  inputs?: { [key: string]: string };
   source: string;
   /** Model and Effort are the run's step defaults (RunDefaults); empty sends none. */
   model?: string;
@@ -3457,7 +3457,7 @@ export interface Spec {
  * a key and every reader looks one up by it — the ETag digests the entries
  * in a fixed order and the client indexes by the segment's role.
  */
-  approvals?: Record<string, SpecApproval>;
+  approvals?: { [key: string]: SpecApproval };
   /**
  * Dir is the workspace-relative directory, ".kiro/specs/<name>" or
  * "<repo>/.kiro/specs/<name>", and is the spec tab's Ref.
@@ -3667,7 +3667,7 @@ export interface SteeringIssue {
  * document's path in KiroDoc.Path's spelling (absolute, leading "/" dropped).
  */
 export interface SteeringIssuesResponse {
-  issues: Record<string, SteeringIssue[]>;
+  issues: { [key: string]: SteeringIssue[] };
 }
 
 /**

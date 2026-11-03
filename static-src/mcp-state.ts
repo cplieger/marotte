@@ -22,7 +22,7 @@ import {
   reqNum,
   reqStr,
   type Decoder,
-} from "./validators.js";
+} from "./wire/validators.gen.js";
 
 const decodePromptInfo: Decoder<MCPPromptInfo> = (v) => {
   const o = asObject(v, "$.mcp.prompt");

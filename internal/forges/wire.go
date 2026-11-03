@@ -335,8 +335,8 @@ type InventoryEntry struct {
 // InventoryList is every connected connection's entry, ordered by connection
 // id, and one forge_inventory stamp per entry in the same order.
 type InventoryList struct {
-	Entries []InventoryEntry        `json:"entries"`
-	Subject []*marotte.SubjectStamp `json:"subject"`
+	Entries []InventoryEntry       `json:"entries"`
+	Subject []marotte.SubjectStamp `json:"subject"`
 	// Viewing is a client showing the pull-request view, which holds the cycle
 	// at prPollInterval.
 	Viewing bool `json:"viewing"`

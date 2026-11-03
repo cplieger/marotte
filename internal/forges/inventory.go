@@ -175,7 +175,7 @@ func (p *PRStatusPoller) inventoryFor(hs []readHandle) InventoryList {
 	for i := range hs {
 		ids[i] = hs[i].id
 	}
-	list := InventoryList{Entries: make([]InventoryEntry, 0, len(ids)), Subject: make([]*marotte.SubjectStamp, 0, len(ids))}
+	list := InventoryList{Entries: make([]InventoryEntry, 0, len(ids)), Subject: make([]marotte.SubjectStamp, 0, len(ids))}
 	missing := false
 	held := p.inv.lookup(ids)
 	for i := range held {
@@ -187,7 +187,7 @@ func (p *PRStatusPoller) inventoryFor(hs []readHandle) InventoryList {
 			missing = true
 		}
 		list.Entries = append(list.Entries, held[i].entry)
-		list.Subject = append(list.Subject, p.restStamp(ids[i], held[i].version))
+		list.Subject = append(list.Subject, *p.restStamp(ids[i], held[i].version))
 	}
 	if missing {
 		p.cycles.ask()

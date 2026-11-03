@@ -173,7 +173,7 @@ func (r *runLog) turnHighWater(ctx context.Context, workflowID string) (uint64, 
 // stepTurns is one step path's transcript: its turns in file order, open tails, and one run_turn stamp per
 // open turn. The stamp's seq comes from the served entries, never the record's counter, which advances
 // outside the lock. found is false with no such turn.
-func (r *runLog) stepTurns(ctx context.Context, workflowID, nodePath string) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []*marotte.SubjectStamp, found bool, err error) {
+func (r *runLog) stepTurns(ctx context.Context, workflowID, nodePath string) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []marotte.SubjectStamp, found bool, err error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, nil, nil, false, err
@@ -192,7 +192,7 @@ func (r *runLog) stepTurns(ctx context.Context, workflowID, nodePath string) (en
 		if t := rec.open[nodePath]; t != nil {
 			open = t.turn.OpenEntries()
 			id := t.turn.ID()
-			stamps = append(stamps, marotte.NewSubjectStamp(string(subject.KindRunTurn), workflowID+"/"+id, turnVersion(id, newest[id])))
+			stamps = append(stamps, *marotte.NewSubjectStamp(string(subject.KindRunTurn), workflowID+"/"+id, turnVersion(id, newest[id])))
 		}
 	}
 	return entries, open, stamps, true, nil
@@ -200,7 +200,7 @@ func (r *runLog) stepTurns(ctx context.Context, workflowID, nodePath string) (en
 
 // turnRange is one step turn's tail from seq `from` inclusive (0 the whole turn), its open tails and its
 // stamp, over EntryLog.TurnPage like the chat's. found is false for no log or no such turn; err is an unreadable log (500).
-func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from uint64) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []*marotte.SubjectStamp, found bool, err error) {
+func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from uint64) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []marotte.SubjectStamp, found bool, err error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, nil, nil, false, err
@@ -224,7 +224,7 @@ func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from ui
 			continue
 		}
 		open = t.turn.OpenEntries()
-		stamps = append(stamps, marotte.NewSubjectStamp(string(subject.KindRunTurn),
+		stamps = append(stamps, *marotte.NewSubjectStamp(string(subject.KindRunTurn),
 			workflowID+"/"+turn, turnVersion(turn, newestSeq)))
 	}
 	return entries, open, stamps, true, nil

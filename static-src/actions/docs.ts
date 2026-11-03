@@ -2,7 +2,7 @@
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import { join as joinKey } from "@cplieger/keyenc";
-import { asObject, reqStr } from "../validators.js";
+import { asObject, reqStr } from "../wire/validators.gen.js";
 
 /** The file browser's own delete endpoint: one place for the mount-root and protected-directory
  *  refusals. */

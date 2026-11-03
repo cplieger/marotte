@@ -359,9 +359,9 @@ func nonNilOpenEntries(o []marotte.OpenEntry) []marotte.OpenEntry {
 	return o
 }
 
-func nonNilStamps(s []*marotte.SubjectStamp) []*marotte.SubjectStamp {
+func nonNilStamps(s []marotte.SubjectStamp) []marotte.SubjectStamp {
 	if s == nil {
-		return []*marotte.SubjectStamp{}
+		return []marotte.SubjectStamp{}
 	}
 	return s
 }
