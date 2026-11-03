@@ -1,12 +1,42 @@
 // A hit test is the only reader of hit order: boxes and declarations are identical whichever
 // element wins a point. The fixture is the production `#app` markup with the rows script would add
-// planted by hand.
+// planted by hand, except the editor's own surfaces, which its painter draws.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";
 
 import indexHtml from "../static/index.html?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { makeExpandable } from "./pill-expand.js";
+import { parseConflicts } from "./conflict.js";
+import { initGoto } from "./editor-goto.js";
+import { restoreUI } from "./editor-modes.js";
+import { bufferDiffSource, fileStates, freshState, setActiveFilePath } from "./editor-types.js";
+import type { FileMode } from "./editor-types.js";
+import type * as EditorFind from "./editor-find.js";
+import wtuiManifest from "./node_modules/@cplieger/web-terminal-ui/css/MANIFEST.touch?raw";
+
+const wtuiSheets = import.meta.glob<string>("./node_modules/@cplieger/web-terminal-ui/css/*.css", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+
+/** web-terminal-ui's sheets, which `cmd/bundle` ships ahead of the app's: the terminal's box is
+ *  theirs. */
+function terminalCSS(): string {
+  return wtuiManifest
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !l.startsWith("#"))
+    .map((name) => {
+      const sheet = wtuiSheets[`./node_modules/@cplieger/web-terminal-ui/css/${name}`];
+      if (sheet === undefined) {
+        throw new Error(`no web-terminal-ui sheet ${name}`);
+      }
+      return sheet;
+    })
+    .join("\n");
+}
 
 const INTERACTIVE =
   'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"]), [role="button"]';
@@ -15,10 +45,14 @@ const FLOOR = { fine: 24, coarse: 44 } as const;
 type Tier = keyof typeof FLOOR;
 
 let style: HTMLStyleElement;
+let wtuiStyle: HTMLStyleElement;
 let entry: { readonly width: number; readonly height: number };
 
 beforeAll(async () => {
   entry = { width: window.innerWidth, height: window.innerHeight };
+  wtuiStyle = document.createElement("style");
+  wtuiStyle.textContent = terminalCSS();
+  document.head.appendChild(wtuiStyle);
   style = mountAppCSS();
   document.body.style.margin = "0";
   await page.viewport(1440, 900);
@@ -26,10 +60,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   style.remove();
+  wtuiStyle.remove();
   await page.viewport(entry.width, entry.height);
 });
 
 afterEach(() => {
+  // Before the DOM goes: the go-to form's effect closes it on a path change.
+  setActiveFilePath("");
+  fileStates.clear();
   document.body.replaceChildren();
   const root = document.documentElement;
   root.style.removeProperty("--sidebar-w-pref");
@@ -108,20 +146,27 @@ function mountApp(tier: Tier, widened: boolean): Shell {
   body.className = "turn-body";
   body.textContent = "A reply long enough to run across the whole measure of the column.";
   turn.append(head, body);
-  q("#messages").appendChild(turn);
+  const transcript = document.createElement("div");
+  transcript.className = "transcript-view";
+  transcript.appendChild(turn);
+  q("#messages").appendChild(transcript);
 
   const shell = q("#shell-panel");
   shell.classList.remove("shell-closed");
   const bar = q("#shell-resize");
   bar.setAttribute("role", "separator");
   bar.tabIndex = 0;
-  const root = document.createElement("div");
-  root.className = "wt-root wt-container";
+  // What `createTerminal($.shellTerminal, { layout: "container" })` builds: the panel element is
+  // the root itself and `.term` its child.
+  const root = q("#shell-terminal");
+  root.classList.add("wt-root", "wt-container");
   const term = document.createElement("div");
   term.className = "term";
-  term.textContent = "$ ls -la";
+  const row = document.createElement("div");
+  row.className = "term-row";
+  row.textContent = "root@marotte:/workspace/_scratch$ ls -la";
+  term.appendChild(row);
   root.appendChild(term);
-  q("#shell-terminal").appendChild(root);
 
   return { sidebar: q("#sidebar"), handle, tabList, chat: q("#chat-area") };
 }
@@ -130,6 +175,30 @@ function mountApp(tier: Tier, widened: boolean): Shell {
 function edge(s: Shell): number {
   const r = s.sidebar.getBoundingClientRect();
   return r.right - parseFloat(getComputedStyle(s.sidebar).borderInlineEndWidth);
+}
+
+/** The box of the first visible selectable glyph under `el`: where a selection drag starts. A
+ *  frame's document is out of reach, so a frame stands for its own first column. */
+function firstGlyph(el: Element): DOMRect {
+  if (el instanceof HTMLIFrameElement) {
+    return el.getBoundingClientRect();
+  }
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n !== null; n = walker.nextNode()) {
+    const at = (n.textContent ?? "").search(/\S/);
+    const owner = n.parentElement;
+    if (at < 0 || owner === null || getComputedStyle(owner).userSelect === "none") {
+      continue;
+    }
+    const range = document.createRange();
+    range.setStart(n, at);
+    range.setEnd(n, at + 1);
+    const r = range.getBoundingClientRect();
+    if (r.width > 0) {
+      return r;
+    }
+  }
+  throw new Error("fixture: no visible text");
 }
 
 /** What a press at (x, y) reaches once the handle is set aside. */
@@ -142,6 +211,118 @@ function show(id: string): void {
     v.classList.toggle("hidden", v.id !== id);
   }
 }
+
+function plant(parent: Element, tag: string, className: string, text = ""): HTMLElement {
+  const child = document.createElement(tag);
+  child.className = className;
+  child.textContent = text;
+  parent.appendChild(child);
+  return child;
+}
+
+function showEditorPane(id: string): HTMLElement {
+  show("editor-view");
+  const pane = q(`#${id}`);
+  pane.classList.remove("hidden");
+  return pane;
+}
+
+/** Every surface whose text can sit against the sidebar's edge, each with the markup its renderer
+ *  writes planted by hand. `text` is where the first selectable glyph is looked for. */
+const SURFACES: readonly (readonly [string, () => { surface: Element; text: Element }])[] = [
+  [
+    "the shell terminal",
+    () => ({ surface: q("#shell-terminal"), text: q("#shell-terminal .term") }),
+  ],
+  [
+    "the file viewer",
+    () => {
+      const viewer = showEditorPane("editor-viewer");
+      plant(viewer, "div", "viewer-spacer");
+      const row = plant(plant(viewer, "div", "viewer-rows"), "div", "viewer-row");
+      plant(row, "span", "viewer-ln", "1");
+      plant(row, "span", "viewer-text", "package main");
+      return { surface: viewer, text: viewer };
+    },
+  ],
+  [
+    "the markdown preview",
+    () => {
+      const md = showEditorPane("editor-markdown");
+      plant(plant(md, "div", "message assistant"), "p", "", "A paragraph of rendered Markdown.");
+      return { surface: md, text: md };
+    },
+  ],
+  [
+    "the file notice",
+    () => {
+      const notice = showEditorPane("editor-notice");
+      plant(notice, "p", "editor-notice-text", "This file is too large to show.");
+      return { surface: notice, text: notice };
+    },
+  ],
+  [
+    "the web preview",
+    () => {
+      show("web-view");
+      const frame = plant(q("#web-stage"), "div", "web-frame");
+      frame.dataset["mode"] = "fill";
+      return { surface: frame, text: frame.appendChild(document.createElement("iframe")) };
+    },
+  ],
+  [
+    "a run tab",
+    () => {
+      show("run-view");
+      const page = plant(q("#run-body"), "div", "ev-page");
+      const pane = plant(page, "div", "ev-pane ev-pane-detail");
+      plant(pane, "p", "", "A step's output.");
+      return { surface: page, text: page };
+    },
+  ],
+  [
+    "a delegate's page",
+    () => {
+      show("subagent-view");
+      const body = q("#subagent-body");
+      plant(body, "p", "", "A delegate's reply.");
+      return { surface: body, text: body };
+    },
+  ],
+  [
+    "the spec page",
+    () => {
+      show("spec-view");
+      const body = q("#spec-body");
+      plant(body, "p", "", "A spec's requirements.");
+      return { surface: body, text: body };
+    },
+  ],
+  [
+    "the transcript",
+    () => {
+      show("chat-view");
+      // The planted banner overlays the transcript's first line.
+      q("#banner-stack").replaceChildren();
+      return { surface: q("#messages"), text: q("#messages .turn-body") };
+    },
+  ],
+  [
+    "the settings page",
+    () => {
+      show("settings-view");
+      const shell = q("#settings-view .page-shell");
+      return { surface: shell, text: q("#settings-view .section-hint") };
+    },
+  ],
+  [
+    "the title bar's heading",
+    () => {
+      const title = q("#titlebar-title");
+      return { surface: title, text: title };
+    },
+  ],
+];
 
 const CASES = [
   ["fine", false],
@@ -236,16 +417,243 @@ describe.each(CASES)("at the %s tier, widened %s", (tier, widened) => {
     expect(document.elementFromPoint(b + 1, y)).toBe(s.handle);
     expect(document.elementFromPoint(b + FLOOR[tier] + 1, y)).toBe(q("#shell-resize"));
   });
+});
 
-  it("gives the terminal's first glyph columns to the handle, and nothing more", () => {
+describe.each(CASES)("at the %s tier, widened %s, every text surface", (tier, widened) => {
+  it.each(SURFACES)("starts %s's text past the reach", (_name, mount) => {
     const s = mountApp(tier, widened);
-    const b = edge(s);
-    const terminal = q("#shell-terminal");
-    const t = terminal.getBoundingClientRect();
-    const y = t.top + t.height / 2;
-    expect(terminal.contains(beneath(s, b + 2, y) ?? null), "premise: under the reach").toBe(true);
-    expect(document.elementFromPoint(b + 2, y)).toBe(s.handle);
-    expect(terminal.contains(document.elementFromPoint(b + FLOOR[tier] + 1, y))).toBe(true);
+    const { surface, text } = mount();
+    const g = firstGlyph(text);
+    expect(g.left).toBeGreaterThanOrEqual(edge(s) + FLOOR[tier]);
+    const hit = document.elementFromPoint(g.left + 1, g.top + Math.min(g.height / 2, 8));
+    const at = hit === null ? "nothing" : `${hit.tagName}#${hit.id}.${hit.className}`;
+    expect(surface.contains(hit), `a press on the first column reaches ${at}`).toBe(true);
+  });
+});
+
+const FILE = "/workspace/a.go";
+
+/** `text` on the pane in `mode`, drawn by the editor's one painter. */
+function paintFile(mode: FileMode, text: string, original = text, error = ""): void {
+  show("editor-view");
+  const state = freshState(FILE);
+  state.loaded = true;
+  state.facts.value = {
+    kind: "small",
+    binary: false,
+    utf8: true,
+    conflict: mode.kind === "conflict",
+    readOnly: false,
+    size: text.length,
+  };
+  state.original.value = original;
+  state.current.value = text;
+  state.mode.value = mode;
+  state.error.value = error;
+  fileStates.set(FILE, state);
+  setActiveFilePath(FILE);
+  restoreUI(state);
+}
+
+/** Where a field's typed text starts, past its border and padding. */
+function fieldText(input: HTMLInputElement): DOMRect {
+  const r = input.getBoundingClientRect();
+  const left = r.left + input.clientLeft + parseFloat(getComputedStyle(input).paddingLeft);
+  return new DOMRect(left, r.top, r.right - left, r.height);
+}
+
+let findSeq = 0;
+
+const CONFLICTED = ["<<<<<<< HEAD", "ours", "=======", "theirs", ">>>>>>> incoming", ""].join("\n");
+
+/** Each case returns where its first selectable text starts. */
+const EDITOR_SURFACES: readonly (readonly [
+  string,
+  () => Promise<{ surface: Element; glyph: DOMRect }>,
+])[] = [
+  [
+    "the error banner",
+    () => {
+      paintFile({ kind: "text", editing: false }, "", "", "The file could not be read.");
+      const banner = q("#editor-error");
+      return Promise.resolve({ surface: banner, glyph: firstGlyph(banner) });
+    },
+  ],
+  [
+    "the conflict overlay",
+    () => {
+      paintFile(
+        { kind: "conflict", conflict: parseConflicts(CONFLICTED), editing: true },
+        CONFLICTED,
+      );
+      const overlay = q("#editor-conflict-overlay");
+      return Promise.resolve({ surface: overlay, glyph: firstGlyph(overlay) });
+    },
+  ],
+  [
+    "the diff's caption",
+    () => {
+      paintFile(
+        { kind: "diff", diffSource: bufferDiffSource() },
+        "package mine\n",
+        "package main\n",
+      );
+      const pane = q("#editor-diff-pane");
+      return Promise.resolve({ surface: pane, glyph: firstGlyph(q(".diff-pane-label-old")) });
+    },
+  ],
+  [
+    "the diff's old column",
+    () => {
+      paintFile(
+        { kind: "diff", diffSource: bufferDiffSource() },
+        "package mine\n",
+        "package main\n",
+      );
+      const pane = q("#editor-diff-pane");
+      return Promise.resolve({ surface: pane, glyph: firstGlyph(q(".diff-col-old")) });
+    },
+  ],
+  [
+    "the go-to-line field",
+    () => {
+      paintFile({ kind: "text", editing: false }, "package main\n");
+      initGoto();
+      q("#editor-goto-btn").click();
+      const input = q<HTMLInputElement>("#editor-goto-input");
+      return Promise.resolve({ surface: input, glyph: fieldText(input) });
+    },
+  ],
+  [
+    "the find bar's field",
+    async () => {
+      paintFile({ kind: "text", editing: false }, "package main\n");
+      // A fresh module per mount: the bar it built for an earlier fixture is detached.
+      findSeq++;
+      const find = (await import(
+        /* @vite-ignore */ `./editor-find.ts?reach=${String(findSeq)}`
+      )) as typeof EditorFind;
+      expect(find.openEditorFind(), "premise: the bar opens over source").toBe(true);
+      const input = q<HTMLInputElement>("#editor-find .editor-find-input");
+      return { surface: input, glyph: fieldText(input) };
+    },
+  ],
+];
+
+describe.each(CASES)("at the %s tier, widened %s, the editor's own surfaces", (tier, widened) => {
+  it.each(EDITOR_SURFACES)("start %s's text past the reach", async (_name, mount) => {
+    const s = mountApp(tier, widened);
+    const { surface, glyph } = await mount();
+    expect(glyph.left).toBeGreaterThanOrEqual(edge(s) + FLOOR[tier]);
+    const hit = document.elementFromPoint(
+      glyph.left + 1,
+      glyph.top + Math.min(glyph.height / 2, 8),
+    );
+    const at = hit === null ? "nothing" : `${hit.tagName}#${hit.id}.${hit.className}`;
+    expect(surface.contains(hit), `a press on the first column reaches ${at}`).toBe(true);
+  });
+});
+
+describe.each(CASES)("at the %s tier, widened %s, the shell's grid", (tier, widened) => {
+  // web-terminal-engine's computeSize: cols = floor((termWrap.clientWidth - padding) / cell width).
+  it("fills the panel past the reach: no horizontal scroll, no clipped column", () => {
+    const s = mountApp(tier, widened);
+    const panel = q("#shell-terminal").getBoundingClientRect();
+    const term = q("#shell-terminal .term");
+    const t = term.getBoundingClientRect();
+    expect(t.left).toBeGreaterThanOrEqual(edge(s) + FLOOR[tier]);
+    expect(t.left - panel.left, "the grid gives up the reach and nothing more").toBeLessThanOrEqual(
+      FLOOR[tier],
+    );
+    expect(t.right, "the grid reaches the panel's trailing edge").toBe(panel.right);
+
+    const cs = getComputedStyle(term);
+    const padL = parseFloat(cs.paddingLeft);
+    const content = term.clientWidth - padL - parseFloat(cs.paddingRight);
+    const row = q("#shell-terminal .term-row");
+    row.textContent = "M";
+    const cell = firstGlyph(row).width;
+    const cols = Math.floor(content / cell);
+    row.textContent = "M".repeat(cols);
+    const range = document.createRange();
+    range.selectNodeContents(row);
+    const text = range.getBoundingClientRect();
+    expect(text.left, "the first column is not clipped").toBeGreaterThanOrEqual(t.left + padL);
+    expect(text.right, "the last column fits").toBeLessThanOrEqual(t.left + padL + content + 0.5);
+    expect(content - text.width, "one more column would not fit").toBeLessThan(cell + 0.5);
+    expect(term.scrollWidth).toBeLessThanOrEqual(term.clientWidth);
+  });
+});
+
+describe("with the handle hidden", () => {
+  afterEach(async () => {
+    await page.viewport(1440, 900);
+  });
+
+  /** How far the grid starts in from the panel's leading edge. */
+  function terminalInset(): number {
+    const panel = q("#shell-terminal").getBoundingClientRect();
+    return q("#shell-terminal .term").getBoundingClientRect().left - panel.left;
+  }
+
+  // 1181px is the handle's own breakpoint (`73.75rem + 1px`); 390px is the phone drawer.
+  it.each([1181, 390])("at %ipx no surface pays for a reach", async (width) => {
+    await page.viewport(width, 900);
+    mountApp("coarse", false);
+    expect(getComputedStyle(q("#sidebar-resize")).display).toBe("none");
+    expect(terminalInset(), "the terminal").toBe(0);
+    const md = showEditorPane("editor-markdown");
+    plant(plant(md, "div", "message assistant"), "p", "", "A paragraph of rendered Markdown.");
+    // Its own padding on both sides, nothing more on the leading one.
+    expect(firstGlyph(md).left - md.getBoundingClientRect().left, "the markdown preview").toBe(
+      parseFloat(getComputedStyle(md).paddingInlineEnd),
+    );
+    show("web-view");
+    const stage = q("#web-stage");
+    expect(stage.getBoundingClientRect().left, "the web preview").toBe(
+      q("#web-view").getBoundingClientRect().left,
+    );
+  });
+
+  it("in the shell's full screen, which covers the sidebar", () => {
+    mountApp("coarse", false);
+    q("#shell-panel").classList.add("shell-fullscreen");
+    expect(terminalInset()).toBe(0);
+  });
+});
+
+describe("the pointer toggle", () => {
+  // web-terminal-ui recounts columns when the root's content box resizes; the toggle moves the
+  // reach and nothing else, so the reach must reach that box.
+  it("resizes the box the terminal observes by the change in reach", async () => {
+    mountApp("fine", false);
+    const root = q("#shell-terminal");
+    const widths: number[] = [];
+    let seen = (): void => undefined;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        widths.push(e.contentRect.width);
+      }
+      seen();
+    });
+    const next = (): Promise<void> =>
+      new Promise((resolve) => {
+        seen = resolve;
+      });
+    let observed = next();
+    ro.observe(root);
+    await observed;
+    // Out of the delivery: a style write from its microtask is a ResizeObserver loop.
+    await new Promise((r) => setTimeout(r, 0));
+    observed = next();
+    document.documentElement.dataset["pointer"] = "coarse";
+    // Observations are delivered within a frame; a box that did not resize delivers none.
+    await Promise.race([observed, new Promise((r) => setTimeout(r, 500))]);
+    ro.disconnect();
+    const [fine, coarse] = widths;
+    expect(fine).toBeDefined();
+    expect(coarse, "a resize was observed").toBeDefined();
+    expect((fine ?? 0) - (coarse ?? 0)).toBeCloseTo(FLOOR.coarse - FLOOR.fine, 1);
   });
 });
 

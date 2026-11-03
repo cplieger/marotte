@@ -107,10 +107,11 @@ describe("the diff pane's grid placement", () => {
     const [autoTrack] = getComputedStyle(body).gridTemplateColumns.split(" ");
     expect(autoTrack, "the max-content track carries nothing").toBe("0px");
 
-    // Everything but the pane's own margin.
-    const margin = parseFloat(getComputedStyle(pane).marginInlineStart);
-    expect(margin, "the pane declares an inline margin").toBeGreaterThan(0);
-    expect(paneWidth()).toBeCloseTo(body.clientWidth - 2 * margin, 0);
+    // Everything but the pane's own margins.
+    const cs = getComputedStyle(pane);
+    const margins = parseFloat(cs.marginInlineStart) + parseFloat(cs.marginInlineEnd);
+    expect(margins, "the pane declares an inline margin").toBeGreaterThan(0);
+    expect(paneWidth()).toBeCloseTo(body.clientWidth - margins, 0);
   });
 
   it("does not widen when the measured span is fed back as the row minimum", () => {

@@ -413,6 +413,11 @@
     --hit-floor: 1.5rem;
     --btn-h: var(--ctl-h);
 
+    /* How far the sidebar's resize target reaches over the main area, 0px while
+     * 10-shell-app.css hides the handle. A surface flush to the sidebar starts its
+     * first glyph past it. */
+    --sidebar-reach: var(--hit-floor);
+
     /* The page switcher (`.page-header > .seg-bar`): a rung over a control on the
      * fine pointer, the control's own height once the tier is coarse. */
     --bar-h: max(2.5rem, var(--ctl-h));
