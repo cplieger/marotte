@@ -126,9 +126,10 @@
      this bar reaches both screen edges and holds the row of icon buttons a notch
      would otherwise sit on. Inline is the axis that MATTERS in landscape, where the
      notch inset lands on a side rather than on top. Inert wherever the device
-     reports no inset, so the house `--sp-3` is unchanged on a desktop. */
+     reports no inset. The leading inset also clears the sidebar's reach, so the
+     heading stays selectable beside the handle. */
   padding: env(safe-area-inset-top, 0) max(var(--sp-3), env(safe-area-inset-right, 0)) 0
-    max(var(--sp-3), env(safe-area-inset-left, 0));
+    max(var(--sp-3), env(safe-area-inset-left, 0), var(--sidebar-reach));
   background: var(--c-bg-primary);
   border-block-end: 1px solid var(--c-border);
 

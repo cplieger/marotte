@@ -15,6 +15,9 @@
   overflow: hidden;
   scrollbar-gutter: stable;
 
+  /* A margin, not padding: web-view.ts sizes the frame from `clientWidth`. */
+  margin-inline-start: var(--sidebar-reach);
+
   &[data-overflow] {
     overflow: auto;
   }

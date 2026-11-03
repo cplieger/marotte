@@ -410,6 +410,7 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   margin: var(--sp-1);
+  margin-inline-start: max(var(--sp-1), var(--sidebar-reach));
   overflow: hidden;
 }
 
@@ -429,6 +430,7 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   margin: var(--sp-1);
+  margin-inline-start: max(var(--sp-1), var(--sidebar-reach));
   padding: var(--sp-1) var(--sp-2);
   background: color-mix(in oklch, var(--c-red) 10%, var(--c-bg-secondary));
   display: flex;

@@ -210,6 +210,12 @@
 .shell-terminal {
   flex: 1;
   min-height: 0;
+
+  /* Inert for `.term` (see below), but it shrinks the content box web-terminal-ui's
+     ResizeObserver watches, so the columns recount when only the reach changes
+     (the pointer toggle). */
+  padding-inline-start: var(--sidebar-reach);
+  background: var(--c-term-bg);
   /* createTerminal(root, { layout: "container" }) makes this element the
      terminal's own styling + positioning boundary: the ui package's
      .wt-root.wt-container carries position: relative + overflow: clip, and
@@ -217,6 +223,17 @@
      key toolbar) positions absolute against it. No containment workarounds
      needed here. The engine's `.term` is the scroll container, not this
      element. */
+}
+
+/* `.term` is absolute against this root, so its inset, not the root's padding,
+   moves the grid; the engine counts columns from `.term`'s width. */
+.shell-terminal > .term {
+  inset-inline-start: var(--sidebar-reach);
+}
+
+/* Full screen covers the sidebar, handle included. */
+.shell-panel.shell-fullscreen {
+  --sidebar-reach: 0px;
 }
 
 /* "earlier output trimmed" marker (vterm renderer inserts .term-trim-marker
