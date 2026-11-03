@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"slices"
 	"time"
@@ -29,22 +28,26 @@ type runStopJob struct {
 	attempt    int
 }
 
-// StopChatRuns stops every run chatID launched that is still running or paused: a person closed the chat's last tab.
-// Before it returns, every such run's keep mark is rewritten, so the chat stays kept while the stop is in flight, and
-// its first cancel is sent while the chat's session is still resident; the read-backs, retries and the delete
-// fallback run later on the runtime's lifetime.
+// StopChatRuns stops every run chatID launched that KAS lists as running or paused, and every run whose lease names
+// chatID as its launcher that the list omits or could not show: a person closed the chat's last tab. A chat holding
+// a run's mark only because an owner scan could not rule it out is not the run's launcher. An unreadable record stops
+// only the runs whose leases name chatID. Before it returns, every such run's keep mark is rewritten, so the chat
+// stays kept while the stop is in flight, and its first cancel is sent while the chat's session is still resident;
+// the read-backs, retries and the delete fallback run later on the runtime's lifetime.
 func (rs *Runs) StopChatRuns(ctx context.Context, chatID marotte.ChatID) {
-	rec, ok := rs.chats.Get(ctx, chatID)
-	if !ok {
+	rec, found, err := rs.chats.Lookup(ctx, chatID)
+	if err == nil && !found {
 		return
 	}
-	chain := rec.SessionChain()
-	leased := rs.leasesOfChat(chatID, chain)
-	for wf, holders := range leased {
-		rs.markRunAlive(ctx, wf, holders)
+	var chain []string
+	if err != nil {
+		slog.Warn("close: the chat could not be read; stopping only the runs its leases name",
+			"chat_id", chatID, "error", err)
+	} else {
+		chain = rec.SessionChain()
 	}
 	deadline := time.Now().Add(runStopWindow)
-	for wf, holders := range rs.stopCandidates(ctx, chatID, chain, leased) {
+	for wf, holders := range rs.stopCandidates(ctx, chatID, chain, rs.leasesOfChat(chatID, chain)) {
 		slog.Info("close: stopping a run the closed chat launched", "workflow_id", wf, "chat_id", chatID)
 		j := &runStopJob{deadline: deadline, chatID: chatID, workflowID: wf, holders: holders, delay: runStopFirstRetry}
 		rs.attemptCancel(ctx, j)
@@ -52,45 +55,67 @@ func (rs *Runs) StopChatRuns(ctx context.Context, chatID marotte.ChatID) {
 	}
 }
 
-// leasesOfChat names the held leases whose run chatID launched, each with the chats its keep mark is on.
+// leasesOfChat names the held leases whose run chatID launched (the lease's ChatID, or its parent session in chain,
+// the test deleteForSessions uses), each with the chats its keep mark is on.
 func (rs *Runs) leasesOfChat(chatID marotte.ChatID, chain []string) map[string][]marotte.ChatID {
 	out := map[string][]marotte.ChatID{}
 	leases := rs.leaseStore().List()
 	for i := range leases {
 		l := &leases[i]
-		holders := leaseHolders(l)
-		if slices.Contains(holders, chatID) || (l.ParentSessionID != "" && slices.Contains(chain, l.ParentSessionID)) {
-			out[l.WorkflowID] = withHolder(holders, chatID)
+		if l.ChatID == string(chatID) || (l.ParentSessionID != "" && slices.Contains(chain, l.ParentSessionID)) {
+			out[l.WorkflowID] = withHolder(leaseHolders(l), chatID)
 		}
 	}
 	return out
 }
 
-// stopCandidates adds to leased the runs KAS lists as running or paused whose parent session chatID's chain owns, the
-// test the purge teardown deletes by. A list that fails leaves the leased runs alone to stop.
+// stopCandidates is leased less the runs KAS lists as finished, plus the runs it lists as running or paused whose
+// parent session chatID's chain owns, the test the purge teardown deletes by. A list that fails leaves the leased
+// runs to stop. A leased run KAS lists as finished gets no stop attempt, so its mark is not refreshed and ages out.
 func (rs *Runs) stopCandidates(
 	ctx context.Context, chatID marotte.ChatID, chain []string, leased map[string][]marotte.ChatID,
 ) map[string][]marotte.ChatID {
-	out := leased
 	runs, err := rs.listRaw(ctx)
 	if err != nil {
 		slog.Warn("close: the run list could not be read; stopping only the runs marotte leases",
 			"chat_id", chatID, "error", err)
-		return out
+		return leased
 	}
+	out := map[string][]marotte.ChatID{}
 	owners := chat.OwnersOfChain(chatID, chain)
+	listed := map[string]bool{}
 	for i := range runs {
 		r := &runs[i]
-		if _, known := out[r.WorkflowID]; known || r.WorkflowID == "" || len(owners.Of(r.ParentSessionID)) == 0 {
+		if r.WorkflowID == "" {
+			continue
+		}
+		listed[r.WorkflowID] = true
+		holders, isLeased := leased[r.WorkflowID]
+		if !isLeased && len(owners.Of(r.ParentSessionID)) == 0 {
 			continue
 		}
 		switch marotte.RunStatus(r.Status) {
 		case marotte.RunStatusRunning, marotte.RunStatusPaused:
-			out[r.WorkflowID] = []marotte.ChatID{chatID}
-			rs.markRunAlive(ctx, r.WorkflowID, out[r.WorkflowID])
+			if !isLeased {
+				holders = rs.runMarkHolders(r.WorkflowID, chatID)
+			}
+			out[r.WorkflowID] = holders
+		}
+	}
+	for wf, holders := range leased {
+		if !listed[wf] {
+			out[wf] = holders
 		}
 	}
 	return out
+}
+
+// runMarkHolders names the chats a listed run's keep mark is on: its lease's holders when it has a lease, and chatID.
+func (rs *Runs) runMarkHolders(workflowID string, chatID marotte.ChatID) []marotte.ChatID {
+	if l, held := rs.lease(workflowID); held {
+		return withHolder(leaseHolders(&l), chatID)
+	}
+	return []marotte.ChatID{chatID}
 }
 
 func withHolder(holders []marotte.ChatID, chatID marotte.ChatID) []marotte.ChatID {
@@ -118,8 +143,13 @@ func (rs *Runs) scheduleStop(j *runStopJob) {
 }
 
 // stepStop reads the run back: terminal is the stop confirmed; otherwise another cancel, or the delete once the
-// window is spent.
+// window is spent. A chat reopened in the window drops the stop, so the reopened chat drives the run again.
 func (rs *Runs) stepStop(j *runStopJob) {
+	if rs.coord != nil && rs.coord.chatHasTab != nil && rs.coord.chatHasTab(j.chatID) {
+		slog.Info("close: the chat was reopened; its run's stop is dropped", "workflow_id", j.workflowID,
+			"chat_id", j.chatID)
+		return
+	}
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 	if rs.runReadTerminal(ctx, j.workflowID) {
@@ -159,7 +189,7 @@ func (rs *Runs) runReadTerminal(ctx context.Context, workflowID string) bool {
 		return false
 	}
 	var res inspectRunState
-	return json.Unmarshal(raw, &res) == nil && res.names(workflowID) && res.State.Status.Terminal()
+	return unmarshalKeepingReadable(raw, &res) && res.names(workflowID) && res.State.Status.Terminal()
 }
 
 // releaseStoppedRun releases the stopped run's keep mark on every holder; a failed release keeps that chat until the

@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,10 +25,13 @@ func setStopTiming(t *testing.T, window, first time.Duration) {
 }
 
 // newStopRig is a hub whose chat c1 holds sess_owner and launched wf_1, running, with its keep mark written by its
-// run_start. Inspect answers wf_1 running until the test changes it.
+// run_start. Inspect answers wf_1 running until the test changes it. No chat has a tab. The hub shuts down before
+// setStopTiming's restore, so no stop step reads the timing vars as they are put back.
 func newStopRig(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
 	t.Helper()
 	h, cs, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	h.coord.chatHasTab = func(marotte.ChatID) bool { return false }
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
 			"workflowId": "wf_1", "name": "r", "status": "running", "parentSessionId": "sess_owner",
@@ -187,5 +193,130 @@ func TestRefuseClosedLauncher_RefusesARunWhoseLaunchingChatIsClosed(t *testing.T
 				}
 			}
 		})
+	}
+}
+
+// A chat that holds a run's mark only because the run's owner scan could not read it did not launch the run, so its
+// close stops nothing.
+func TestStopChatRuns_ADoubtHoldersCloseStopsNothing(t *testing.T) {
+	setStopTiming(t, 50*time.Millisecond, 10*time.Millisecond)
+	h, cs, br := newTestHub()
+	h.coord.chatHasTab = func(marotte.ChatID) bool { return false }
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList: kasRuns(t, map[string]any{
+			"workflowId": "wf_1", "name": "r", "status": "running", "parentSessionId": "sess_launcher",
+		}),
+		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
+		methodKiroWorkflowInspect: inspectReply(t, "wf_1", marotte.RunStatusRunning, ""),
+	}
+	cs.seed(t, "c-launcher", func(c *marotte.Chat) { c.RecordSession("sess_launcher") })
+	cs.seed(t, "c-bystander", func(c *marotte.Chat) { c.RecordSession("sess_bystander") })
+	leaseRun(t, h, runlease.Lease{
+		WorkflowID: "wf_1", ChatID: "c-launcher", ParentSessionID: "sess_launcher", Origin: runlease.OriginAgent,
+		KeepChats: []string{"c-launcher", "c-bystander"},
+	})
+
+	h.runs.StopChatRuns(t.Context(), "c-bystander")
+	time.Sleep(100 * time.Millisecond)
+
+	if n := callsOf(br, methodKiroWorkflowCancel) + callsOf(br, methodKiroWorkflowDelete); n != 0 {
+		t.Errorf("closing a chat that only held the run's mark in doubt sent %d stops for a run c-launcher launched", n)
+	}
+}
+
+// A leased run KAS already lists as finished is not stopped: no cancel, no delete, and its mark ages out. A list
+// that cannot be read still stops the leased runs.
+func TestStopChatRuns_ALeasedRunListedFinishedIsNotStopped(t *testing.T) {
+	cases := []struct {
+		name    string
+		list    func(t *testing.T, br *fakeBridge)
+		stopped bool
+	}{
+		{name: "listed_completed", list: func(t *testing.T, br *fakeBridge) {
+			br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{
+				"workflowId": "wf_1", "name": "r", "status": "completed", "parentSessionId": "sess_owner",
+			}))
+		}},
+		{name: "list_unreadable", stopped: true, list: func(t *testing.T, br *fakeBridge) {
+			br.setCallErr(methodKiroWorkflowList, errors.New("kas gone"))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const window = 80 * time.Millisecond
+			setStopTiming(t, window, 10*time.Millisecond)
+			h, cs, br := newStopRig(t)
+			leaseRun(t, h, runlease.Lease{
+				WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_owner", Origin: runlease.OriginAgent,
+				KeepChats: []string{"c1"},
+			})
+			tc.list(t, br)
+
+			h.runs.StopChatRuns(t.Context(), "c1")
+
+			if tc.stopped {
+				waitUntil(t, "the leased run's delete fallback", func() bool { return callsOf(br, methodKiroWorkflowDelete) > 0 })
+				return
+			}
+			time.Sleep(2 * window)
+			if n := callsOf(br, methodKiroWorkflowCancel) + callsOf(br, methodKiroWorkflowDelete); n != 0 {
+				t.Errorf("a leased run KAS lists as completed got %d stops, want 0", n)
+			}
+			if !holdsKey(t, cs, "c1", runKey) {
+				t.Error("a finished run's mark was released; it ages out on its own")
+			}
+		})
+	}
+}
+
+// A close whose chat record cannot be read stops the runs whose leases name the chat: here the ctx of a nested
+// close whose budget is spent, so the first cancel fails and the lifetime's retry sends it.
+func TestStopChatRuns_AnUnreadableRecordStopsTheLeasedRuns(t *testing.T) {
+	setStopTiming(t, time.Hour, 10*time.Millisecond)
+	logs := captureLogs(t)
+	h, _, br := newStopRig(t)
+	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", Origin: runlease.OriginAgent})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	h.runs.StopChatRuns(ctx, "c1")
+
+	waitUntil(t, "the leased run's cancel", func() bool { return callsOf(br, methodKiroWorkflowCancel) > 0 })
+	if want := "close: the chat could not be read; stopping only the runs its leases name"; !strings.Contains(logs.String(), want) {
+		t.Errorf("the unreadable record was not reported; want %q in %s", want, logs.String())
+	}
+}
+
+// A chat reopened inside the stop window drops the stop: no further cancel and no delete.
+func TestStopChatRuns_AReopenedChatDropsTheStop(t *testing.T) {
+	const window = 150 * time.Millisecond
+	setStopTiming(t, window, 40*time.Millisecond)
+	logs := captureLogs(t)
+	h, _, br := newStopRig(t)
+	var reopened atomic.Bool
+	h.coord.chatHasTab = func(marotte.ChatID) bool { return reopened.Load() }
+	br.setCallErr(methodKiroWorkflowCancel, errors.New("owner pid 979344 is live"))
+
+	h.runs.StopChatRuns(t.Context(), "c1")
+	reopened.Store(true)
+	waitUntil(t, "the dropped stop", func() bool { return strings.Contains(logs.String(), "its run's stop is dropped") })
+	time.Sleep(2 * window)
+
+	if n := callsOf(br, methodKiroWorkflowDelete); n != 0 {
+		t.Errorf("a reopened chat's run was deleted %d times", n)
+	}
+	if n := callsOf(br, methodKiroWorkflowCancel); n != 1 {
+		t.Errorf("the cancel went out %d times after the chat was reopened, want only the close's first", n)
+	}
+}
+
+// An inspect whose pauseDetail drifted in type still reads a terminal status as the stop confirmed.
+func TestRunReadTerminal_KeepsTheStatusWhenAFieldDrifts(t *testing.T) {
+	h, _, br := newTestHub()
+	br.setCallResult(methodKiroWorkflowInspect, json.RawMessage(
+		`{"workflowId":"wf_1","state":{"workflowId":"wf_1","pauseDetail":"transient-error","status":"cancelled"}}`))
+
+	if !h.runs.runReadTerminal(t.Context(), "wf_1") {
+		t.Error("a cancelled run whose pauseDetail is a string was read as not terminal")
 	}
 }

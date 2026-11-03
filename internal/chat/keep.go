@@ -642,10 +642,10 @@ func (s *Store) ReconcileKeep(ctx context.Context, chatID marotte.ChatID, fn fun
 	return nil
 }
 
-// PurgeIdle removes chatID when its record, read under the record lock, holds no live keep fact, no unsent words,
-// and a last use and run marks (runMarkUntil) before cutoff, and the reconcile has passed over it this boot. A record that cannot be read is never
-// removed: the error is returned and the record stays. A removal marks the chat and its chain in teardown until the
-// caller's EndTeardown, and broadcasts chat_deleted.
+// PurgeIdle removes chatID when its record, read under the record lock, holds no keep fact but run marks, no unsent
+// words, and a last use and freshest run mark (runMarkUntil) before cutoff, and the reconcile has passed over it this
+// boot. A record that cannot be read is never removed: the error is returned and the record stays. A removal marks
+// the chat and its chain in teardown until the caller's EndTeardown, and broadcasts chat_deleted.
 func (s *Store) PurgeIdle(ctx context.Context, chatID marotte.ChatID, cutoff time.Time) (archive.PurgeVerdict, error) {
 	if err := ctx.Err(); err != nil {
 		return archive.PurgeVerdict{}, err

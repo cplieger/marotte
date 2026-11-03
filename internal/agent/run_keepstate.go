@@ -322,8 +322,8 @@ func (rs *Runs) retryHolders(ctx context.Context, workflowID string, o *runOrigi
 	return holders, nil
 }
 
-// refuseClosedLauncher refuses the retry of a chat-launched run none of whose launching chats has an open tab: a
-// person's close stopped it (StopChatRuns), and a retry from its run tab or History must not revive it.
+// refuseClosedLauncher refuses the retry of a chat-launched run none of whose launching chats has an open tab, so a
+// run a person's close stopped cannot be revived from its run tab or History.
 func (rs *Runs) refuseClosedLauncher(workflowID string, holders []marotte.ChatID) error {
 	if len(holders) == 0 || rs.coord == nil || rs.coord.chatHasTab == nil {
 		return nil

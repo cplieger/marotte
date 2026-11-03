@@ -85,6 +85,7 @@ type Runs struct {
 // and the run keep facts.
 type runChatReader interface {
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
+	Lookup(ctx context.Context, id marotte.ChatID) (c *marotte.Chat, found bool, err error)
 	// SessionOwners is one fresh owner scan, the attribution every run keep fact and the purge teardown share.
 	SessionOwners(ctx context.Context) chat.OwnerScan
 	Hold(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)

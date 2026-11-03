@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
 // seamCell is one scenario over one or more boots of the composed stores. Each cell names the chats it builds;
@@ -616,6 +618,56 @@ func TestRetention_KeepState(t *testing.T) {
 			b.age(t, "c-1", seamIdle)
 			b.pass(t)
 			b.purged(t, "c-1", sess("c-1"))
+		}},
+		// A person's close of a chat whose record cannot be read still stops the run its lease names it as launching.
+		"close_unreadable_record_stops_leased_runs": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			b := bootSeam(t, root, eng, logs, seamOpts{})
+			b.create(t, "c-1", sess("c-1"))
+			eng.list(t, seamRow("wf_1", "running", sess("c-1")))
+			eng.inspected(t, "wf_1", "cancelled", sess("c-1"))
+			// The lease marotte's own launch from c-1 grants.
+			if err := b.leases.Put(t.Context(), &runlease.Lease{
+				WorkflowID: "wf_1", ChatID: "c-1", ParentSessionID: sess("c-1"), Origin: runlease.OriginAgent,
+				StartedAt: time.Now(),
+			}); err != nil {
+				t.Fatalf("Setup: lease: %v", err)
+			}
+			writeFixture(t, filepath.Join(root, "chats", "c-1", "chat.json"), "{not json")
+
+			b.personClose(t, "c-1")
+
+			if !eng.called(t, kasCancel, "wf_1") {
+				t.Error("a person's close of an unreadable chat did not cancel the run its lease names")
+			}
+			if !logs.has("close: the chat could not be read; stopping only the runs its leases name") {
+				t.Error("the unreadable record was not reported on the close path")
+			}
+		}},
+		// A chat that holds a run's mark only because the run's owner scan could not read it is not the run's
+		// launcher: its close cancels and deletes nothing.
+		"close_of_doubt_holder_stops_nothing": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			b := bootSeam(t, root, eng, logs, seamOpts{})
+			b.create(t, "c-launch", sess("c-launch"))
+			b.create(t, "c-by", sess("c-by"))
+			eng.list(t, seamRow("wf_1", "running", sess("c-launch")))
+			header := filepath.Join(root, "chats", "c-by", "chat.json")
+			saved, err := os.ReadFile(header)
+			if err != nil {
+				t.Fatalf("Setup: %v", err)
+			}
+			writeFixture(t, header, "{not json")
+			b.runStart(t, "wf_1", sess("c-launch"))
+			b.waitKey(t, "c-launch", runKey("wf_1"), true)
+			writeFixture(t, header, string(saved))
+			if l, held := b.leases.Get("wf_1"); !held || !slices.Contains(l.KeepChats, "c-by") {
+				t.Fatalf("Setup: the run's lease does not hold c-by in doubt: %+v", l)
+			}
+
+			b.personClose(t, "c-by")
+
+			if eng.called(t, kasCancel, "wf_1") || eng.called(t, kasDelete, "wf_1") {
+				t.Error("closing a chat that held the run's mark only in doubt stopped a run c-launch launched")
+			}
 		}},
 		// A record from before keep facts existed ages one window from the fill-in.
 		"fill_in_floor": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
