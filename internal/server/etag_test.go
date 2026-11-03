@@ -28,6 +28,7 @@ func TestIfMatchHolds(t *testing.T) {
 		{"a weak spelling of the tag", []string{`W/"1-2"`}, false},
 		{"another tag", []string{`"1-3"`}, false},
 		{"a comma inside a tag is not a separator", []string{`"1-2,x"`}, false},
+		{"the wildcard is not honoured", []string{"*"}, false},
 		{"no field", nil, false},
 	}
 	for _, c := range cases {

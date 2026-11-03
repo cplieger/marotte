@@ -30,7 +30,8 @@ func entityTags(h http.Header, name string) []string {
 }
 
 // ifMatchHolds reports whether r's If-Match lists etag, compared strongly as RFC 9110 section
-// 13.1.1 requires. etag must be strong, so a weak member never matches it.
+// 13.1.1 requires. etag must be strong, so a weak member never matches it. A "*" member is not
+// honoured, since it would let a save overwrite a document it never read.
 func ifMatchHolds(r *http.Request, etag string) bool {
 	return slices.Contains(entityTags(r.Header, headerIfMatch), etag)
 }
