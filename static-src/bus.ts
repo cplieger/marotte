@@ -130,6 +130,7 @@ export interface SSEPayloads {
   readonly compaction_started: undefined;
   readonly working_label: { readonly label: string };
   // The generated wire types, so no payload shape is declared twice.
+  // deadset:ignore DS1004 -- no handler subscribes, but sseDecoders' mapped type indexes it
   readonly terminal_created: TerminalCreatedPayload;
   readonly terminal_output: TerminalOutputPayload;
   readonly terminal_exited: TerminalExitedPayload;

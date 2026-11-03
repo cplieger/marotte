@@ -27,11 +27,11 @@ func TestRefusal_SurvivesARestartAndGitDeclines(t *testing.T) {
 	legs := []refusalLeg{
 		{
 			name: "a bare 401", kind: KindGitHub, user: "/user", repos: "/user/repos", userBody: `{"login":"alice"}`,
-			status: ForgeReconnect, refuse: func(s *stubForge) { s.answer("/user", http.StatusUnauthorized, "") },
+			status: forgeReconnect, refuse: func(s *stubForge) { s.answer("/user", http.StatusUnauthorized, "") },
 		},
 		{
 			name: "a scope refusal", kind: KindGitLab, user: "/api/v4/user", repos: "/api/v4/projects",
-			userBody: `{"id":1,"username":"alice"}`, status: ForgeRefused,
+			userBody: `{"id":1,"username":"alice"}`, status: forgeRefused,
 			refuse: func(s *stubForge) {
 				s.answer("/api/v4/user", http.StatusForbidden,
 					`{"error":"insufficient_scope","error_description":"The request requires higher privileges."}`)
@@ -39,7 +39,7 @@ func TestRefusal_SurvivesARestartAndGitDeclines(t *testing.T) {
 		},
 		{
 			name: "a 404", kind: KindGitHub, user: "/user", repos: "/user/repos", userBody: `{"login":"alice"}`,
-			status: ForgeRefused, refuse: func(s *stubForge) { s.answer("/user", http.StatusNotFound, `{"message":"Not Found"}`) },
+			status: forgeRefused, refuse: func(s *stubForge) { s.answer("/user", http.StatusNotFound, `{"message":"Not Found"}`) },
 		},
 	}
 	for _, leg := range legs {
@@ -97,7 +97,7 @@ func refusalSurvives(t *testing.T, leg *refusalLeg) {
 	stub.answer(leg.user, http.StatusOK, leg.userBody)
 	probe := httptest.NewRecorder()
 	mux.ServeHTTP(probe, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/forges/"+id+"/probe", nil))
-	if leg.status == ForgeReconnect {
+	if leg.status == forgeReconnect {
 		if probe.Code != http.StatusConflict || decodeBody(t, probe)["code"] != codeReconnectRequired {
 			t.Errorf("Check of a reconnect row = %d %s, want 409 reconnect_required", probe.Code, probe.Body)
 		}
@@ -110,7 +110,7 @@ func refusalSurvives(t *testing.T, leg *refusalLeg) {
 	} else if probe.Code != http.StatusOK {
 		t.Errorf("Check with the forge fixed = %d %s, want 200", probe.Code, probe.Body)
 	}
-	if got := viewFor(t, again, id); got.Status != ForgeConnected {
+	if got := viewFor(t, again, id); got.Status != forgeConnected {
 		t.Errorf("row after its remedy = %+v, want connected", got)
 	}
 	sent = len(stub.requests())
@@ -127,7 +127,7 @@ func TestRefused_NoReaderSendsARequest(t *testing.T) {
 	if _, err := m.check(t.Context(), ghID, checkBudget); err != nil {
 		t.Fatalf("check() = %v", err)
 	}
-	if got := viewFor(t, m, ghID); got.Status != ForgeReconnect {
+	if got := viewFor(t, m, ghID); got.Status != forgeReconnect {
 		t.Fatalf("Setup: row after a 401 = %+v, want reconnect", got)
 	}
 	src := NewManagerPRSource(m, fixedOrigins(RepoOrigin{Dir: "app", WebBase: "https://github.com", Slug: "bob/app"}))
@@ -166,7 +166,7 @@ func TestCheck_AFailedStandingWriteKeepsTheDurableView(t *testing.T) {
 
 		NewKeeper(m).pass(t.Context())
 		got := viewFor(t, m, ghID)
-		if got.Status != ForgeRetrying || got.Error == nil || !strings.Contains(got.Error.Message, "refused") ||
+		if got.Status != forgeRetrying || got.Error == nil || !strings.Contains(got.Error.Message, "refused") ||
 			!strings.Contains(got.Error.Message, "disk refused the write") {
 			t.Fatalf("row after an unsavable refusal = %+v, want retrying naming the refusal and the write failure", got)
 		}
@@ -179,13 +179,13 @@ func TestCheck_AFailedStandingWriteKeepsTheDurableView(t *testing.T) {
 		if out := helperAnswer(t, m.configDir, "github.com"); !strings.Contains(out, "password=test-token") {
 			t.Errorf("the git helper answered %q, want the credential the files still hold", out)
 		}
-		if row := viewFor(t, restarted(t, m), ghID); row.Status != ForgeConnected {
+		if row := viewFor(t, restarted(t, m), ghID); row.Status != forgeConnected {
 			t.Errorf("a restart loads %+v, want connected as the files say", row)
 		}
 
 		restore()
 		NewKeeper(m).pass(t.Context())
-		if got := viewFor(t, m, ghID); got.Status != ForgeReconnect {
+		if got := viewFor(t, m, ghID); got.Status != forgeReconnect {
 			t.Errorf("row after the next pass with the file writable = %+v, want reconnect", got)
 		}
 		if recs := readRecords(t, m.configDir); len(recs) != 1 || recs[0].Standing != standingReconnect {
@@ -194,7 +194,7 @@ func TestCheck_AFailedStandingWriteKeepsTheDurableView(t *testing.T) {
 		if out := helperAnswer(t, m.configDir, "github.com"); out != "" {
 			t.Errorf("the git helper answered %q, want nothing", out)
 		}
-		if row := viewFor(t, restarted(t, m), ghID); row.Status != ForgeReconnect {
+		if row := viewFor(t, restarted(t, m), ghID); row.Status != forgeReconnect {
 			t.Errorf("a restart loads %+v, want reconnect", row)
 		}
 	})
@@ -212,7 +212,7 @@ func TestCheck_AFailedStandingWriteKeepsTheDurableView(t *testing.T) {
 			t.Fatalf("Check() = %v", err)
 		}
 		got := viewFor(t, m, ghID)
-		if got.Status != ForgeRefused || got.Error == nil || !strings.Contains(got.Error.Message, "disk refused the write") ||
+		if got.Status != forgeRefused || got.Error == nil || !strings.Contains(got.Error.Message, "disk refused the write") ||
 			!strings.Contains(got.Error.Message, "the forge accepted this account") {
 			t.Fatalf("row after an unsavable revival = %+v, want still refused naming the acceptance and the write failure", got)
 		}
@@ -226,7 +226,7 @@ func TestCheck_AFailedStandingWriteKeepsTheDurableView(t *testing.T) {
 		if _, err := m.check(t.Context(), ghID, checkBudget); err != nil {
 			t.Fatalf("Check() = %v", err)
 		}
-		if got := viewFor(t, m, ghID); got.Status != ForgeConnected {
+		if got := viewFor(t, m, ghID); got.Status != forgeConnected {
 			t.Errorf("row after a Check with the file writable = %+v, want connected", got)
 		}
 	})
@@ -245,7 +245,7 @@ func TestCheck_AFailedStandingWriteKeepsTheDurableView(t *testing.T) {
 			t.Fatalf("Check() = %v", err)
 		}
 		got := viewFor(t, m, ghID)
-		if got.Status != ForgeRefused || got.Error == nil {
+		if got.Status != forgeRefused || got.Error == nil {
 			t.Fatalf("row after an unsavable check the forge did not answer = %+v, want still refused", got)
 		}
 		if msg := got.Error.Message; strings.Contains(msg, "accepted") || !strings.Contains(msg, "did not answer the check (") ||

@@ -201,8 +201,8 @@ func TestRegistryProxy_Search_unparseable200Is502AndUncached(t *testing.T) {
 				t.Fatalf("first request status = %d body=%q, want 502: a body that is not a reply is not an empty result",
 					rec.Code, rec.Body.String())
 			}
-			if f := decodeSearchFailure(t, rec); f.Error != registryUnavailable || f.Reason != ReasonUnavailable {
-				t.Errorf("failure body = %+v, want the sentinel with reason %q", f, ReasonUnavailable)
+			if f := decodeSearchFailure(t, rec); f.Error != registryUnavailable || f.Reason != reasonUnavailable {
+				t.Errorf("failure body = %+v, want the sentinel with reason %q", f, reasonUnavailable)
 			}
 
 			rec = httptest.NewRecorder()
@@ -230,19 +230,19 @@ func TestRegistryProxy_Search_classifiesUpstreamStatus(t *testing.T) {
 	}{
 		{
 			name: "429_is_rate_limited", upstreamStatus: http.StatusTooManyRequests, retryAfter: "37",
-			wantReason: ReasonRateLimited, wantRetryAfter: 37,
+			wantReason: reasonRateLimited, wantRetryAfter: 37,
 		},
 		{
 			name: "429_without_header", upstreamStatus: http.StatusTooManyRequests,
-			wantReason: ReasonRateLimited,
+			wantReason: reasonRateLimited,
 		},
-		{name: "400_is_rejected", upstreamStatus: http.StatusBadRequest, wantReason: ReasonRejected},
-		{name: "404_is_rejected", upstreamStatus: http.StatusNotFound, wantReason: ReasonRejected},
+		{name: "400_is_rejected", upstreamStatus: http.StatusBadRequest, wantReason: reasonRejected},
+		{name: "404_is_rejected", upstreamStatus: http.StatusNotFound, wantReason: reasonRejected},
 		{
 			name: "503_is_unavailable", upstreamStatus: http.StatusServiceUnavailable, retryAfter: "120",
-			wantReason: ReasonUnavailable, wantRetryAfter: 120,
+			wantReason: reasonUnavailable, wantRetryAfter: 120,
 		},
-		{name: "500_is_unavailable", upstreamStatus: http.StatusInternalServerError, wantReason: ReasonUnavailable},
+		{name: "500_is_unavailable", upstreamStatus: http.StatusInternalServerError, wantReason: reasonUnavailable},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

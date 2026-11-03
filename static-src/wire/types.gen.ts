@@ -1453,7 +1453,7 @@ export interface FileRead {
 
 /** FileRefusal is the error body of the viewer routes that a client branches on. */
 export interface FileRefusal {
-  /** Content is the disk text behind a refused save, present only for ContentText. */
+  /** Content is the disk text behind a refused save, present only for contentText. */
   content?: string;
   size?: number;
   error: string;

@@ -2268,7 +2268,7 @@ func TestWriteFile_StaleWriteGuard(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 			t.Fatalf("decode conflict: %v", err)
 		}
-		if out.Content == nil || *out.Content != "mine\n" || out.ContentKind != ContentText {
+		if out.Content == nil || *out.Content != "mine\n" || out.ContentKind != contentText {
 			t.Errorf("conflict = %+v, want content_kind text with the on-disk bytes", out)
 		}
 		if out.FileID == "" || out.FileID == read.FileID {

@@ -23,9 +23,9 @@ func TestHandleShow_RefusesWhatTheDiffCannotShow(t *testing.T) {
 		wantCode int
 		wantKind ShowRefusalCode
 	}{
-		"over the cap": {content: strings.Repeat("x", 3<<20), wantCode: http.StatusRequestEntityTooLarge, wantKind: ShowTooLarge},
-		"binary":       {content: "PNG\x00\x01\x02", wantCode: http.StatusUnsupportedMediaType, wantKind: ShowBinary},
-		"not utf-8":    {content: "caf\xe9\n", wantCode: http.StatusUnsupportedMediaType, wantKind: ShowNotUTF8},
+		"over the cap": {content: strings.Repeat("x", 3<<20), wantCode: http.StatusRequestEntityTooLarge, wantKind: showTooLarge},
+		"binary":       {content: "PNG\x00\x01\x02", wantCode: http.StatusUnsupportedMediaType, wantKind: showBinary},
+		"not utf-8":    {content: "caf\xe9\n", wantCode: http.StatusUnsupportedMediaType, wantKind: showNotUTF8},
 	}
 	for name, tc := range cases {
 		t.Run(strings.ReplaceAll(name, " ", "_"), func(t *testing.T) {

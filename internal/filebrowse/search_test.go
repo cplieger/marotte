@@ -635,11 +635,11 @@ func TestSearch_DirectoryNameMatches(t *testing.T) {
 	if got := matchPaths(res); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("matches = %v, want the directory ahead of its child: %v", got, want)
 	}
-	if res.Matches[0].Kind != MatchKindDir {
-		t.Errorf("directory kind = %q, want %q", res.Matches[0].Kind, MatchKindDir)
+	if res.Matches[0].Kind != matchKindDir {
+		t.Errorf("directory kind = %q, want %q", res.Matches[0].Kind, matchKindDir)
 	}
-	if res.Matches[1].Kind != MatchKindName {
-		t.Errorf("child kind = %q, want %q", res.Matches[1].Kind, MatchKindName)
+	if res.Matches[1].Kind != matchKindName {
+		t.Errorf("child kind = %q, want %q", res.Matches[1].Kind, matchKindName)
 	}
 }
 
@@ -728,8 +728,8 @@ func TestSearch_SensitivePathNeverMatchesByName(t *testing.T) {
 	if len(got) != 1 || got[0] != "/config/visible.json" {
 		t.Fatalf("matches = %v, want only /config/visible.json", got)
 	}
-	if res.Matches[0].Kind != MatchKindName {
-		t.Errorf("kind = %q, want %q", res.Matches[0].Kind, MatchKindName)
+	if res.Matches[0].Kind != matchKindName {
+		t.Errorf("kind = %q, want %q", res.Matches[0].Kind, matchKindName)
 	}
 }
 
@@ -1203,7 +1203,7 @@ func TestContentSearch_ReturnsNoNameRows(t *testing.T) {
 	if len(res.Matches) != 1 {
 		t.Fatalf("matches = %+v, want only the one content row", res.Matches)
 	}
-	if m := res.Matches[0]; m.Kind != MatchKindContent || m.Path != filepath.Join(dir, "prose.txt") || m.Line != 1 {
+	if m := res.Matches[0]; m.Kind != matchKindContent || m.Path != filepath.Join(dir, "prose.txt") || m.Line != 1 {
 		t.Errorf("row = %+v, want prose.txt line 1 as a content row", m)
 	}
 }
@@ -1401,7 +1401,7 @@ func TestFileSearchWireContract(t *testing.T) {
 	fx.Contents.Result = decodeSearch(t, searchReq(t, h, map[string]string{"mode": "contents", "path": "workspace", "q": "needle"}))
 
 	names := fx.Names.Result
-	if len(names.Matches) != 3 || names.Matches[0].Kind != MatchKindDir || names.Scanned != 6 {
+	if len(names.Matches) != 3 || names.Matches[0].Kind != matchKindDir || names.Scanned != 6 {
 		t.Fatalf("names reply = %+v, want the dir row first of three over 6 entries", names)
 	}
 	contents := fx.Contents.Result

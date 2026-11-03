@@ -203,7 +203,7 @@ func TestNameSearch_EmptyQueryWithFilterListsFilesOnly(t *testing.T) {
 		t.Errorf("rows = %v, want %v: files only, by depth then path", got, want)
 	}
 	for _, m := range res.Matches {
-		if m.Kind != MatchKindName || len(m.Ranges) != 0 {
+		if m.Kind != matchKindName || len(m.Ranges) != 0 {
 			t.Errorf("%s: kind %q ranges %v, want a plain name row", m.Path, m.Kind, m.Ranges)
 		}
 	}
@@ -365,7 +365,7 @@ func TestNameSearch_FindsABinaryFileByName(t *testing.T) {
 		t.Fatalf("matches = %+v, want exactly one name hit", res.Matches)
 	}
 	m := res.Matches[0]
-	if m.Path != filepath.Join(dir, "cover-book.png") || m.Kind != MatchKindName || m.Line != 0 || m.Excerpt != "" {
+	if m.Path != filepath.Join(dir, "cover-book.png") || m.Kind != matchKindName || m.Line != 0 || m.Excerpt != "" {
 		t.Errorf("hit = %+v, want a name row for cover-book.png with no line and no excerpt", m)
 	}
 }
@@ -380,7 +380,7 @@ func TestNameSearch_SymlinkIsARowAndItsTargetIsNotRead(t *testing.T) {
 	}
 
 	names := namesSearch(t, h, map[string]string{"path": prefix, "q": "needle"})
-	if len(names.Matches) != 1 || names.Matches[0].Path != link || names.Matches[0].Kind != MatchKindName {
+	if len(names.Matches) != 1 || names.Matches[0].Path != link || names.Matches[0].Kind != matchKindName {
 		t.Errorf("names matches = %+v, want one name row for the link", names.Matches)
 	}
 	contents := decodeSearch(t, searchReq(t, h, map[string]string{"mode": "contents", "path": prefix, "q": "needle"}))

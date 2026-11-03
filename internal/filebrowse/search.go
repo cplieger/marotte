@@ -70,12 +70,12 @@ var errSearchDeadline = errors.New("filebrowse: search deadline reached")
 type FileMatchKind string
 
 const (
-	// MatchKindContent is a matching LINE: Line >= 1 and Excerpt is that line.
-	MatchKindContent FileMatchKind = "content"
-	// MatchKindName is a matching FILE name. Line is 0 and Excerpt is empty.
-	MatchKindName FileMatchKind = "name"
-	// MatchKindDir is a matching DIRECTORY name. Line 0, Excerpt empty.
-	MatchKindDir FileMatchKind = "dir"
+	// matchKindContent is a matching LINE: Line >= 1 and Excerpt is that line.
+	matchKindContent FileMatchKind = "content"
+	// matchKindName is a matching FILE name. Line is 0 and Excerpt is empty.
+	matchKindName FileMatchKind = "name"
+	// matchKindDir is a matching DIRECTORY name. Line 0, Excerpt empty.
+	matchKindDir FileMatchKind = "dir"
 )
 
 // MatchRange is one highlighted span, in UTF-16 code units: the client slices a JS string with it.

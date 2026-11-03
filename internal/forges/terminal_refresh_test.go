@@ -94,7 +94,7 @@ func TestCheck_ATerminalRefreshIsDurableBeforeItShows(t *testing.T) {
 		NewKeeper(m).pass(t.Context())
 		narrow()
 		got := viewFor(t, m, spec.ID)
-		if got.Status != ForgeRetrying || got.Error == nil || !strings.Contains(got.Error.Message, "disk refused the write") {
+		if got.Status != forgeRetrying || got.Error == nil || !strings.Contains(got.Error.Message, "disk refused the write") {
 			t.Fatalf("row after a terminal refresh neither file took = %+v, want retrying naming the write failure", got)
 		}
 		if u := storedUsability(t, m.configDir, &spec); u != creds.UsabilityUnmarked {
@@ -106,7 +106,7 @@ func TestCheck_ATerminalRefreshIsDurableBeforeItShows(t *testing.T) {
 		if n := ts.refreshes.Load(); n != 1 {
 			t.Errorf("the forge saw %d token requests, want 1: the next pass settles the owed verdict without asking again", n)
 		}
-		if got := viewFor(t, m, spec.ID); got.Status != ForgeReconnect {
+		if got := viewFor(t, m, spec.ID); got.Status != forgeReconnect {
 			t.Errorf("row after the next pass = %+v, want reconnect", got)
 		}
 		if recs := readRecords(t, m.configDir); len(recs) != 1 || recs[0].Standing != standingReconnect {
@@ -118,7 +118,7 @@ func TestCheck_ATerminalRefreshIsDurableBeforeItShows(t *testing.T) {
 		if out := helperAnswer(t, m.configDir, strings.TrimPrefix(ts.srv.URL, "https://")); out != "" {
 			t.Errorf("the git helper answered %q, want nothing", out)
 		}
-		if row := viewFor(t, restarted(t, m), spec.ID); row.Status != ForgeReconnect {
+		if row := viewFor(t, restarted(t, m), spec.ID); row.Status != forgeReconnect {
 			t.Errorf("a restart loads %+v, want reconnect", row)
 		}
 	})
@@ -132,14 +132,14 @@ func TestCheck_ATerminalRefreshIsDurableBeforeItShows(t *testing.T) {
 
 		NewKeeper(m).pass(t.Context())
 		narrow()
-		if got := viewFor(t, m, spec.ID); got.Status != ForgeReconnect {
+		if got := viewFor(t, m, spec.ID); got.Status != forgeReconnect {
 			t.Fatalf("row after a terminal refresh = %+v, want reconnect", got)
 		}
 		if out := helperAnswer(t, m.configDir, strings.TrimPrefix(ts.srv.URL, "https://")); out != "" {
 			t.Errorf("the git helper answered %q, want nothing although the credential file holds no mark", out)
 		}
 		again := restarted(t, m)
-		if row := viewFor(t, again, spec.ID); row.Status != ForgeReconnect {
+		if row := viewFor(t, again, spec.ID); row.Status != forgeReconnect {
 			t.Errorf("a restart loads %+v, want reconnect from the records file", row)
 		}
 	})
@@ -156,7 +156,7 @@ func TestCheck_ATerminalRefreshIsDurableBeforeItShows(t *testing.T) {
 		if _, err := m.check(t.Context(), spec.ID, checkBudget); err != nil {
 			t.Fatalf("Check() = %v", err)
 		}
-		if got := viewFor(t, m, spec.ID); got.Status != ForgeRefused {
+		if got := viewFor(t, m, spec.ID); got.Status != forgeRefused {
 			t.Errorf("row after a Check whose verdict the file refused = %+v, want still refused, as the file says", got)
 		}
 		if out := helperAnswer(t, m.configDir, strings.TrimPrefix(ts.srv.URL, "https://")); out != "" {
@@ -166,11 +166,11 @@ func TestCheck_ATerminalRefreshIsDurableBeforeItShows(t *testing.T) {
 		if _, err := m.check(t.Context(), spec.ID, checkBudget); err != nil {
 			t.Fatalf("Check() = %v", err)
 		}
-		if got := viewFor(t, m, spec.ID); got.Status != ForgeReconnect || ts.refreshes.Load() != 1 {
+		if got := viewFor(t, m, spec.ID); got.Status != forgeReconnect || ts.refreshes.Load() != 1 {
 			t.Errorf("row after a Check with the file writable = %+v after %d token requests, want reconnect after 1",
 				got, ts.refreshes.Load())
 		}
-		if row := viewFor(t, restarted(t, m), spec.ID); row.Status != ForgeReconnect {
+		if row := viewFor(t, restarted(t, m), spec.ID); row.Status != forgeReconnect {
 			t.Errorf("a restart loads %+v, want reconnect", row)
 		}
 	})
