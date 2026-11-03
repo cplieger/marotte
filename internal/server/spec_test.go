@@ -121,8 +121,8 @@ func TestHandleSpec_ServesTheOrderedDocs(t *testing.T) {
 		t.Fatalf("GET status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
 	}
 	etag := rec.Header().Get(headerETag)
-	if !strings.HasPrefix(etag, `"`) || !strings.HasSuffix(etag, `"`) || len(etag) != 66 {
-		t.Errorf("ETag = %q, want a quoted hex sha256", etag)
+	if !strings.HasPrefix(etag, `W/"`) || !strings.HasSuffix(etag, `"`) || len(etag) != 68 {
+		t.Errorf("ETag = %q, want a weak tag over a quoted hex sha256", etag)
 	}
 	var sp marotte.Spec
 	if err := json.Unmarshal(rec.Body.Bytes(), &sp); err != nil {
@@ -207,6 +207,52 @@ func TestHandleSpec_ETagRoundTripAnswers304(t *testing.T) {
 	}
 	if got := stale.Header().Get(headerETag); got != etag {
 		t.Errorf("fresh ETag = %q, want %q (unchanged docs)", got, etag)
+	}
+}
+
+// TestHandleSpec_RevalidatesThroughGzip is the spec view's poll as a browser sends it: the 200
+// over 1 KiB comes back gzip-coded, and sending its ETag back answers 304 while nothing changed.
+func TestHandleSpec_RevalidatesThroughGzip(t *testing.T) {
+	dir := specWorkspace(t)
+	writeFile(t, dir, ".kiro/specs/feat/design.md", strings.Repeat("# D\n\nA design line.\n", 100))
+	s := &Server{workDir: dir}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/specs/{dir}", s.handleSpec)
+	h := apiStack(t, s, mux)
+	target := "/api/specs/" + url.PathEscape(".kiro/specs/feat")
+
+	first := serveStack(h, http.MethodGet, target, "", "Accept-Encoding", "gzip")
+	if first.Code != http.StatusOK {
+		t.Fatalf("first GET = %d, want 200", first.Code)
+	}
+	gunzipped(t, first)
+	etag := first.Header().Get(headerETag)
+	if etag == "" {
+		t.Fatal("first GET carries no ETag")
+	}
+
+	// One validator names the spec's content in either coding, so an identity cache and a gzip one
+	// revalidate alike (RFC 9110 section 8.8.1).
+	if got := serveStack(h, http.MethodGet, target, "").Header().Get(headerETag); got != etag {
+		t.Errorf("identity GET ETag = %q, want the gzip GET's %q", got, etag)
+	}
+
+	again := serveStack(h, http.MethodGet, target, "", "Accept-Encoding", "gzip", headerIfNoneMatch, etag)
+	if again.Code != http.StatusNotModified {
+		t.Fatalf("GET with If-None-Match %s = %d, want 304", etag, again.Code)
+	}
+	// RFC 9110 section 15.4.5: a 304 carries the ETag and Vary its 200 would.
+	if got := again.Header().Get(headerETag); got != etag {
+		t.Errorf("304 ETag = %q, want the 200's %q", got, etag)
+	}
+	if got := again.Header().Get("Vary"); !strings.Contains(got, "Accept-Encoding") {
+		t.Errorf("304 Vary = %q, want it to name Accept-Encoding as the 200's does", got)
+	}
+
+	writeFile(t, dir, ".kiro/specs/feat/design.md", "# D, rewritten\n")
+	moved := serveStack(h, http.MethodGet, target, "", "Accept-Encoding", "gzip", headerIfNoneMatch, etag)
+	if moved.Code != http.StatusOK {
+		t.Errorf("GET with the old ETag after a rewrite = %d, want 200", moved.Code)
 	}
 }
 

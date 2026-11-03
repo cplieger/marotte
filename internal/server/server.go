@@ -396,8 +396,8 @@ func registerAPIFallback(mux *http.ServeMux) {
 }
 
 // middlewareStack returns the middleware wrapping the route mux, OUTERMOST FIRST: access log,
-// recovery, security (CSP + ALLOWED_HOSTS + CSRF), Fetch Metadata, canonical path, dedup,
-// compression. A method so the ORDER, a security property, is assertable without a port.
+// recovery, security (CSP + ALLOWED_HOSTS + CSRF), Fetch Metadata, canonical path, compression,
+// dedup. A method so the ORDER, a security property, is assertable without a port.
 func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []webhttp.Middleware {
 	return []webhttp.Middleware{
 		webhttp.Logging(
@@ -418,9 +418,10 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 		// INSIDE the host and CSRF gates (their 403 is not shadowed), OUTSIDE the mux (ServeMux
 		// canonicalizes before routing) and the dedup cache (a refusal mints no replay entry).
 		canonicalAPIPath,
+		// OUTSIDE the dedup cache: the cache stores identity bytes, and a replay is coded for the
+		// retry's own Accept-Encoding.
+		compressJSON(),
 		idem.middleware,
-		// INNERMOST: the cache stores identity bytes and a replay re-negotiates encoding.
-		compressJSON,
 	}
 }
 

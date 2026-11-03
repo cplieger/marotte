@@ -16,7 +16,7 @@ const H = vi.hoisted(() => ({
   onSave: null as ((inst: ActionInstance) => void) | null,
 }));
 
-vi.mock("./api-client.js", () => ({ apiGetWithHeaders: H.get }));
+vi.mock("./api-client.js", () => ({ apiGet: H.get }));
 vi.mock("./toast.js", () => ({ showToast: H.toast }));
 vi.mock("./save-indicator.js", () => ({
   showSaving: vi.fn(),
@@ -49,17 +49,17 @@ function mount(): HTMLTextAreaElement {
   return ta;
 }
 
-/** What the GET answers: a body plus whatever validator the server sent. */
-function answers(content: string, tag = 'W/"12-34"'): void {
-  H.get.mockResolvedValue({ data: { content }, headers: new Headers({ ETag: tag }) });
+/** What the GET answers: the document and the save token its body carries. */
+function answers(content: string, tag = '"12-34"'): void {
+  H.get.mockResolvedValue({ content, etag: tag });
 }
 
 function openRead(): (d: { content: string } | null) => void {
   let land: (d: { content: string } | null) => void = () => undefined;
   H.get.mockReturnValue(
-    new Promise<{ data: { content: string } | null; headers: Headers }>((resolve) => {
+    new Promise<{ content: string; etag: string } | null>((resolve) => {
       land = (d) => {
-        resolve({ data: d, headers: new Headers({ ETag: 'W/"12-34"' }) });
+        resolve(d === null ? null : { ...d, etag: '"12-34"' });
       };
     }),
   );
@@ -138,7 +138,7 @@ describe("the steering document's read, and the box it unlocks", () => {
   });
 
   it("saves what the reader types, carrying the validator the read answered", async () => {
-    answers("# on the server", 'W/"7-9"');
+    answers("# on the server", '"7-9"');
     loadSteeringDoc();
     await vi.waitFor(() => {
       expect(ta.readOnly).toBe(false);
@@ -148,14 +148,14 @@ describe("the steering document's read, and the box it unlocks", () => {
     await userEvent.keyboard("!");
 
     expect(ta.value).toBe("# on the server!");
-    expect(H.save).toHaveBeenLastCalledWith({ content: "# on the server!", etag: 'W/"7-9"' });
+    expect(H.save).toHaveBeenLastCalledWith({ content: "# on the server!", etag: '"7-9"' });
   });
 
   it("sends no validator when the server answered none", async () => {
-    // The honest answer for a server with no ETag, and the reason the action omits the header
+    // The honest answer for a body with no token, and the reason the action omits the header
     // rather than inventing one: `If-Match` on such a server is a permanent 428 against a save that
     // would otherwise work.
-    H.get.mockResolvedValue({ data: { content: "x" }, headers: new Headers() });
+    H.get.mockResolvedValue({ content: "x" });
     loadSteeringDoc();
     await vi.waitFor(() => {
       expect(ta.readOnly).toBe(false);
@@ -170,7 +170,7 @@ describe("the steering document's read, and the box it unlocks", () => {
   it("keeps the box locked when the read fails, and retries on focus", async () => {
     // The read collapses every failure to a null body. An empty box is not an empty document, so
     // opening it here would let the first keystroke delete the file.
-    H.get.mockResolvedValueOnce({ data: null, headers: null });
+    H.get.mockResolvedValueOnce(null);
     loadSteeringDoc();
     await settle();
 
@@ -208,7 +208,7 @@ describe("the steering document's read, and the box it unlocks", () => {
   });
 
   it("leaves unsaved text alone, and keeps the validator it was typed against", async () => {
-    answers("# first", 'W/"1-1"');
+    answers("# first", '"1-1"');
     loadSteeringDoc();
     await vi.waitFor(() => {
       expect(ta.readOnly).toBe(false);
@@ -218,17 +218,17 @@ describe("the steering document's read, and the box it unlocks", () => {
 
     // The file moved while the reader was typing. Adopting either half would decide the conflict
     // silently; the stale validator is what makes the save take the 409 instead.
-    answers("# somebody else", 'W/"2-2"');
+    answers("# somebody else", '"2-2"');
     loadSteeringDoc();
     await settle();
 
     expect(ta.value).toBe("# first!");
     await userEvent.keyboard("?");
-    expect(H.save).toHaveBeenLastCalledWith({ content: "# first!?", etag: 'W/"1-1"' });
+    expect(H.save).toHaveBeenLastCalledWith({ content: "# first!?", etag: '"1-1"' });
   });
 
   it("adopts the validator the save answered with, and reads nothing", async () => {
-    answers("# first", 'W/"1-1"');
+    answers("# first", '"1-1"');
     loadSteeringDoc();
     await vi.waitFor(() => {
       expect(ta.readOnly).toBe(false);
@@ -237,18 +237,18 @@ describe("the steering document's read, and the box it unlocks", () => {
     await userEvent.keyboard("!");
 
     H.get.mockClear();
-    settleSave("success", { result: 'W/"2-2"' });
+    settleSave("success", { result: '"2-2"' });
     await settle();
 
     // The write's own 200 carried the replacement, so a debounced run of saves needs no read
     // between keystrokes.
     expect(H.get).not.toHaveBeenCalled();
     await userEvent.keyboard("?");
-    expect(H.save).toHaveBeenLastCalledWith({ content: "# first!?", etag: 'W/"2-2"' });
+    expect(H.save).toHaveBeenLastCalledWith({ content: "# first!?", etag: '"2-2"' });
   });
 
   it("keeps the validator it had when the save could not read one back", async () => {
-    answers("# first", 'W/"1-1"');
+    answers("# first", '"1-1"');
     loadSteeringDoc();
     await vi.waitFor(() => {
       expect(ta.readOnly).toBe(false);
@@ -263,11 +263,11 @@ describe("the steering document's read, and the box it unlocks", () => {
     await settle();
 
     await userEvent.keyboard("?");
-    expect(H.save).toHaveBeenLastCalledWith({ content: "# first!?", etag: 'W/"1-1"' });
+    expect(H.save).toHaveBeenLastCalledWith({ content: "# first!?", etag: '"1-1"' });
   });
 
   it("records what the WRITE carried, not the box, so a keystroke under it is not lost", async () => {
-    answers("# first", 'W/"1-1"');
+    answers("# first", '"1-1"');
     loadSteeringDoc();
     await vi.waitFor(() => {
       expect(ta.readOnly).toBe(false);
@@ -280,10 +280,10 @@ describe("the steering document's read, and the box it unlocks", () => {
     await userEvent.keyboard("?");
 
     // The server answers the text the FIRST keystroke's save landed.
-    settleSave("success", { args: { content: "# first!", etag: 'W/"1-1"' }, result: 'W/"2-2"' });
+    settleSave("success", { args: { content: "# first!", etag: '"1-1"' }, result: '"2-2"' });
     await settle();
 
-    answers("# first!", 'W/"2-2"');
+    answers("# first!", '"2-2"');
     loadSteeringDoc();
     await settle();
 
@@ -291,7 +291,7 @@ describe("the steering document's read, and the box it unlocks", () => {
   });
 
   it("tells the reader and re-seeds when the file moved under the box", async () => {
-    answers("# first", 'W/"1-1"');
+    answers("# first", '"1-1"');
     loadSteeringDoc();
     await vi.waitFor(() => {
       expect(ta.readOnly).toBe(false);
@@ -299,7 +299,7 @@ describe("the steering document's read, and the box it unlocks", () => {
     ta.focus();
     await userEvent.keyboard("!");
 
-    answers("# somebody else", 'W/"2-2"');
+    answers("# somebody else", '"2-2"');
     settleSave("error", { httpStatus: 409 });
     await vi.waitFor(() => {
       expect(ta.value).toBe("# somebody else");

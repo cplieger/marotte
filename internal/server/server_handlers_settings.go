@@ -60,6 +60,15 @@ const (
 // is stored as an absent file), so a fresh volume's first save has a token to send.
 const steeringAbsentETag = `"absent"`
 
+// steeringDocBody is the GET's payload. ETag is the save token, the identity representation's
+// strong tag, which If-Match matches as a current representation's (RFC 9110 section 13.1.1).
+// The ETag header is no carrier for it: a gzip-coded answer gets a distinct, weak tag there
+// (section 8.8.3.3), and a weak tag never passes If-Match.
+type steeringDocBody struct {
+	Content string `json:"content"`
+	ETag    string `json:"etag"`
+}
+
 // steeringConflictBody is the 409 payload: marotte's error envelope plus the two
 // values the client needs to recover without a second round trip.
 type steeringConflictBody struct {
@@ -68,9 +77,9 @@ type steeringConflictBody struct {
 	Content string `json:"content"`
 }
 
-// steeringSaveBody is a PUT's 200 payload: the ack plus the validator for what the write left
-// on disk (also in the ETag header; the action framework reads only the body). "" means no
-// token could be read, and the caller keeps what it had.
+// steeringSaveBody is a PUT's 200 payload: the ack plus the token for what the write left on
+// disk. "" means no token could be read, and the caller keeps what it had. No ETag header: the
+// stored document is not the request content (RFC 9110 section 9.3.4).
 type steeringSaveBody struct {
 	ETag string `json:"etag"`
 	OK   bool   `json:"ok"`
@@ -113,14 +122,14 @@ func handleSteeringGet(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 	w.Header().Set(headerETag, etag)
-	webhttp.WriteJSON(w, map[string]string{"content": content})
+	webhttp.WriteJSON(w, steeringDocBody{Content: content, ETag: etag})
 }
 
 // steeringWriteAllowed gates a save on the caller's If-Match token, the document's whole
-// concurrency control: another device or an agent may edit custom.md.
+// concurrency control: another device or an agent may edit custom.md. The token is compared
+// strongly against the stored document's, whatever coding the caller's GET was answered in.
 func steeringWriteAllowed(w http.ResponseWriter, r *http.Request, path string) bool {
-	offered := strings.TrimSpace(r.Header.Get(headerIfMatch))
-	if offered == "" {
+	if len(entityTags(r.Header, headerIfMatch)) == 0 {
 		webhttp.WriteJSONStatus(w, http.StatusPreconditionRequired,
 			webhttp.ErrorResponse{Error: msgSteeringIfMatchRequired})
 		return false
@@ -130,10 +139,9 @@ func steeringWriteAllowed(w http.ResponseWriter, r *http.Request, path string) b
 		httpreply.ServerError(w, msgSteeringUnreadable, err)
 		return false
 	}
-	if offered == etag {
+	if ifMatchHolds(r, etag) {
 		return true
 	}
-	w.Header().Set(headerETag, etag)
 	webhttp.WriteJSONStatus(w, http.StatusConflict, steeringConflictBody{
 		Error:   msgSteeringConflict,
 		ETag:    etag,
@@ -142,16 +150,14 @@ func steeringWriteAllowed(w http.ResponseWriter, r *http.Request, path string) b
 	return false
 }
 
-// publishSteeringETag sets the ETag for what the write left on disk and RETURNS it for the
-// body. An unreadable token leaves the header unset and answers "".
-func publishSteeringETag(w http.ResponseWriter, r *http.Request, path string) string {
+// savedSteeringETag is the token for what the write left on disk, "" when it cannot be read.
+func savedSteeringETag(r *http.Request, path string) string {
 	_, etag, err := steeringDoc(r.Context(), path)
 	if err != nil {
 		slog.Warn("steering: saved, but the validator token could not be read back",
 			"path", path, "error", logsafe.Field(err.Error()))
 		return ""
 	}
-	w.Header().Set(headerETag, etag)
 	return etag
 }
 
@@ -173,7 +179,6 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 			httpreply.InternalError(w, err)
 			return
 		}
-		w.Header().Set(headerETag, steeringAbsentETag)
 		webhttp.WriteJSON(w, steeringSaveBody{OK: true, ETag: steeringAbsentETag})
 		return
 	}
@@ -192,9 +197,7 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 		slog.Warn("steering: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
 			"path", path)
 	}
-	// Before WriteJSON commits the status: publishSteeringETag sets a header.
-	etag := publishSteeringETag(w, r, path)
-	webhttp.WriteJSON(w, steeringSaveBody{OK: true, ETag: etag})
+	webhttp.WriteJSON(w, steeringSaveBody{OK: true, ETag: savedSteeringETag(r, path)})
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
