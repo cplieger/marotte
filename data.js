@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
   "lastUpdate": 1793746866258,
-  "repoUrl": "https://github.com/cplieger/ci",
+  "repoUrl": "https://github.com/cplieger/marotte",
   "entries": {
     "Benchmark": [
       {
@@ -11509,10 +11509,10 @@ window.BENCHMARK_DATA = {
             "username": "web-flow",
             "email": "noreply@github.com"
           },
-          "id": "9ead40e51a68dd7202d29b68a7ab6cbcb6e5d0cb",
-          "message": "chore(audit): expect AGPL-3.0 for grelot (#915)",
-          "timestamp": "2026-11-03T19:17:26Z",
-          "url": "https://github.com/cplieger/ci/commit/9ead40e51a68dd7202d29b68a7ab6cbcb6e5d0cb"
+          "id": "84a4cda197b26a7f7e21413013131aaf9c0d2c3a",
+          "message": "fix(chat): stop an edit at a reply's end from starting an empty reply (#1894)\n\n## Release note\n\nEditing or deleting a waiting message right as a reply ends no longer starts an empty reply. A message the agent is about to read now shows \"Delivering\" with no Edit or Delete until the agent reads it.",
+          "timestamp": "2026-11-03T21:35:17Z",
+          "url": "https://github.com/cplieger/marotte/commit/84a4cda197b26a7f7e21413013131aaf9c0d2c3a"
         },
         "date": 1793746865976,
         "tool": "customSmallerIsBetter",
