@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -116,16 +117,31 @@ func TestRetention_KeepState(t *testing.T) {
 				t.Error("the live run was deleted")
 			}
 		}},
+		// A run's end releases nothing: its mark keeps the chat until one retention period after its last sign of
+		// life, then stops keeping.
 		"run_unset": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			b.seed(t, "c-1", sess("c-1"))
 			b.runStart(t, "wf_1", sess("c-1"))
 			b.waitKey(t, "c-1", runKey("wf_1"), true)
 			b.runComplete(t, "wf_1")
-			b.waitKey(t, "c-1", runKey("wf_1"), false)
 			b.age(t, "c-1", seamIdle)
 			b.pass(t)
+			b.kept(t, "c-1", sess("c-1"))
+			b.ageMark(t, "c-1", runKey("wf_1"), seamIdle)
+			b.pass(t)
 			b.purged(t, "c-1", sess("c-1"))
+		}},
+		// A mark one retention period old is still inside the hour a throttled progress refresh may lag.
+		"run_mark_inside_refresh_slack": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			b := bootSeam(t, root, eng, logs, seamOpts{})
+			b.seed(t, "c-1", sess("c-1"))
+			b.runStart(t, "wf_1", sess("c-1"))
+			b.waitKey(t, "c-1", runKey("wf_1"), true)
+			b.age(t, "c-1", seamIdle)
+			b.ageMark(t, "c-1", runKey("wf_1"), seamRetentionDays*24*time.Hour+chat.RunMarkRefresh/2)
+			b.pass(t)
+			b.kept(t, "c-1", sess("c-1"))
 		}},
 		"runtab_set": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
@@ -475,7 +491,8 @@ func TestRetention_KeepState(t *testing.T) {
 			b.kept(t, "c-open", sess("c-open"))
 			b.purged(t, "c-closed", sess("c-closed"))
 		}},
-		// A run whose lease the previous boot held keeps its launcher until its terminal row is seen.
+		// A run whose lease the previous boot held keeps its launcher across boots by its mark's time, and a terminal
+		// row seen at a later boot releases nothing.
 		"reconcile_run_across_boots": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
 			b1 := bootSeam(t, root, eng, logs, seamOpts{})
 			b1.seed(t, "c-1", sess("c-1"))
@@ -492,8 +509,10 @@ func TestRetention_KeepState(t *testing.T) {
 
 			eng.list(t, seamRow("wf_1", "completed", sess("c-1")))
 			b3 := bootSeam(t, root, eng, logs, seamOpts{})
-			b3.waitKey(t, "c-1", runKey("wf_1"), false)
 			b3.age(t, "c-1", seamIdle)
+			b3.pass(t)
+			b3.kept(t, "c-1", sess("c-1"))
+			b3.ageMark(t, "c-1", runKey("wf_1"), seamIdle)
 			b3.pass(t)
 			b3.purged(t, "c-1", sess("c-1"))
 		}},

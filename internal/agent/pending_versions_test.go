@@ -94,8 +94,8 @@ func TestRunAsks_EveryPublishMovesTheSharedCounter(t *testing.T) {
 	}
 	mustMove(t, v, "a changed snapshot", publish)
 	mustHold(t, v, "an unchanged snapshot", publish)
-	mustMove(t, v, "the lease's release", func() { rs.releaseLease(t.Context(), "wf-1", endTerminal, rs.lifeOf("wf-1")) })
-	mustHold(t, v, "a second release", func() { rs.releaseLease(t.Context(), "wf-1", endTerminal, rs.lifeOf("wf-1")) })
+	mustMove(t, v, "the lease's release", func() { rs.releaseLease(t.Context(), "wf-1") })
+	mustHold(t, v, "a second release", func() { rs.releaseLease(t.Context(), "wf-1") })
 	mustHold(t, v, "a trigger after the release", func() { rs.cellFor("wf-1") })
 }
 

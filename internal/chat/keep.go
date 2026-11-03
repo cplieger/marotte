@@ -68,11 +68,9 @@ const (
 	evidenceNone Evidence = iota
 	// EvidenceTabClosed is a tab close the tab store committed, owed releases included.
 	EvidenceTabClosed
-	// EvidenceRunTerminal is a terminal run status from a frame, a list row or an inspect reply.
-	EvidenceRunTerminal
-	// EvidenceRunCancelled is a cancel the engine took.
+	// EvidenceRunCancelled is a stopped run's cancel, read back terminal.
 	EvidenceRunCancelled
-	// EvidenceRunDeleted is the user's delete of a run, taken or read back gone.
+	// EvidenceRunDeleted is a stopped run's delete, which the engine took.
 	EvidenceRunDeleted
 	// EvidenceTurnEnded is the turn lifecycle's idle transition.
 	EvidenceTurnEnded
@@ -84,8 +82,6 @@ func (e Evidence) String() string {
 	switch e {
 	case EvidenceTabClosed:
 		return "tab_closed"
-	case EvidenceRunTerminal:
-		return "run_terminal"
 	case EvidenceRunCancelled:
 		return "run_cancelled"
 	case EvidenceRunDeleted:
@@ -98,6 +94,11 @@ func (e Evidence) String() string {
 	}
 	return "none"
 }
+
+// RunMarkRefresh is how often a run's progress rewrites its keep mark. PurgeIdle counts a run mark as keeping until
+// one retention period after its Since plus this, so the throttle never lets a mark expire before its last sign of
+// life is a retention period old.
+const RunMarkRefresh = time.Hour
 
 func (e Evidence) valid() bool { return e > evidenceNone && e <= EvidenceProcessGone }
 
@@ -431,77 +432,6 @@ func startKeep(c *marotte.Chat) {
 	c.KeepFilledAt = time.Now().UnixMilli()
 }
 
-// ReleaseIfHeldAs is Release for a releaser that read the fact outside the record lock: it removes key only while the
-// record, pending holds flushed, still carries exactly want, so a fact a newer writer took since survives. released
-// reports whether it removed the fact; a missing record answers false and nil.
-func (s *Store) ReleaseIfHeldAs(ctx context.Context, chatID marotte.ChatID, key string, want marotte.KeepFact, ev Evidence) (released bool, err error) {
-	if !ev.valid() {
-		return false, errNoEvidence
-	}
-	m := s.lock(chatID)
-	m.Lock()
-	defer m.Unlock()
-	c, err := s.loadKeepLocked(ctx, chatID)
-	if isAbsence(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	flushed := s.flushPendingLocked(chatID, c)
-	if f, had := c.Keep[key]; !had || f != want {
-		return false, nil
-	}
-	deleteKeep(c, key)
-	if err := s.writeHeader(ctx, chatID, c); err != nil {
-		return false, err
-	}
-	s.settlePending(chatID, flushed)
-	slog.Debug("keep fact released", "chat_id", chatID, "key", key, "evidence", ev.String())
-	return true, nil
-}
-
-// ReleaseAll is Release over every record holding key, for an evidence end with no lease naming the holders. One
-// fresh scan names them, and only those records are locked. A record the scan could not read keeps its fact, with a
-// WARN, until a later boot's reconcile reads the end; the error then reports it.
-func (s *Store) ReleaseAll(ctx context.Context, key string, ev Evidence) error {
-	if !ev.valid() {
-		return errNoEvidence
-	}
-	s.keep.mu.Lock()
-	for id, p := range s.keep.pending {
-		delete(p, key)
-		if len(p) == 0 {
-			delete(s.keep.pending, id)
-		}
-	}
-	s.keep.mu.Unlock()
-	scan := s.scanOnce(ctx)
-	var errs []error
-	for i := range scan.rows {
-		if !slices.Contains(scan.rows[i].keep, key) {
-			continue
-		}
-		if err := s.Release(ctx, scan.rows[i].id, key, ev); err != nil {
-			logReleaseFailed(scan.rows[i].id, key, err)
-			errs = append(errs, err)
-		}
-	}
-	for _, id := range scan.skipped {
-		logReleaseFailed(id, key, errors.New("the record could not be read"))
-	}
-	if !scan.listed {
-		errs = append(errs, errors.New("chat: the chats directory could not be listed"))
-	} else if len(scan.skipped) > 0 {
-		errs = append(errs, fmt.Errorf("chat: %d records could not be read", len(scan.skipped)))
-	}
-	return errors.Join(errs...)
-}
-
-func logReleaseFailed(chatID marotte.ChatID, key string, err error) {
-	slog.Warn("keep fact not released; the chat is kept until it is", "chat_id", chatID, "key", key, "error", err)
-}
-
 // EndTurn releases the turn fact at the lifecycle's idle transition and stamps UpdatedAt, since a turn ending is use.
 // A pended turn hold is dropped first. announce is true when the header changed, for AnnounceHeader after the caller's
 // lifecycle lock. A failure keeps the fact until this process exits.
@@ -713,7 +643,7 @@ func (s *Store) ReconcileKeep(ctx context.Context, chatID marotte.ChatID, fn fun
 }
 
 // PurgeIdle removes chatID when its record, read under the record lock, holds no live keep fact, no unsent words,
-// and a last use before cutoff, and the reconcile has passed over it this boot. A record that cannot be read is never
+// and a last use and run marks (runMarkUntil) before cutoff, and the reconcile has passed over it this boot. A record that cannot be read is never
 // removed: the error is returned and the record stays. A removal marks the chat and its chain in teardown until the
 // caller's EndTeardown, and broadcasts chat_deleted.
 func (s *Store) PurgeIdle(ctx context.Context, chatID marotte.ChatID, cutoff time.Time) (archive.PurgeVerdict, error) {
@@ -754,8 +684,11 @@ func (s *Store) purgeIdleLocked(ctx context.Context, chatID marotte.ChatID, cuto
 		slog.Warn("chat purge: a chat records no last use; kept", "chat_id", chatID)
 		return kept, "", nil
 	}
-	if !time.UnixMilli(use).Before(cutoff) {
-		kept.Deadline = time.UnixMilli(use).Add(time.Since(cutoff))
+	if until := max(use, runMarkUntil(c)); !time.UnixMilli(until).Before(cutoff) {
+		kept.Deadline = time.UnixMilli(until).Add(time.Since(cutoff))
+		if time.UnixMilli(use).Before(cutoff) {
+			kept.KeptBy = marotte.KeepKindRun
+		}
 		return kept, "", nil
 	}
 	chain := c.SessionChain()
@@ -784,18 +717,36 @@ func (s *Store) keptBy(ctx context.Context, chatID marotte.ChatID, c *marotte.Ch
 		return archive.KeptByUnattributed
 	}
 	for _, key := range slices.Sorted(maps.Keys(c.Keep)) {
-		if !s.factLive(key, c.Keep[key]) {
+		f := c.Keep[key]
+		if !s.factLive(key, f) {
 			continue
 		}
-		if kind, _ := marotte.KeepKind(key); kind != "" {
-			return kind
+		kind, _ := marotte.KeepKind(key)
+		switch {
+		case kind == "":
+			return archive.KeptByUnknown
+		case kind == marotte.KeepKindRun && f.Since > 0:
+			// Kept by time, not by presence (runMarkUntil).
+			continue
 		}
-		return archive.KeptByUnknown
+		return kind
 	}
 	if c.Draft != "" || len(c.QueuedPrompts) > 0 {
 		return archive.KeptByWords
 	}
 	return ""
+}
+
+// runMarkUntil is the Unix ms a run mark keeps c's purge clock at, from its freshest run mark: that mark's Since
+// plus RunMarkRefresh. Zero when c holds none.
+func runMarkUntil(c *marotte.Chat) int64 {
+	var until int64
+	for key, f := range c.Keep {
+		if kind, _ := marotte.KeepKind(key); kind == marotte.KeepKindRun {
+			until = max(until, f.Since+RunMarkRefresh.Milliseconds())
+		}
+	}
+	return until
 }
 
 // lastUse is the instant the purge ages a chat from: the later of its last use and its keep fill-in.

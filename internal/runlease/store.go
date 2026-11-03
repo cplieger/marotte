@@ -144,51 +144,34 @@ func (s *Store) Put(ctx context.Context, l *Lease) error {
 	return s.persistLocked(ctx)
 }
 
-// ReleaseOutcome is what Release did.
-type ReleaseOutcome int
-
-const (
-	// ReleaseAbsent means no lease held the run.
-	ReleaseAbsent ReleaseOutcome = iota
-	// Released means the lease was the life named and is gone.
-	Released
-	// ReleaseSuperseded means a later grant holds the run, so its lease stays.
-	ReleaseSuperseded
-)
-
-// Release forgets a run's lease when it is still the life named, in one compare-and-delete: a release reads the
-// life it ends, and a grant that replaced it since is another life's. Releasing a gone lease is not an error.
-func (s *Store) Release(ctx context.Context, workflowID, life string) (ReleaseOutcome, error) {
+// Release forgets a run's lease; releasing a gone one is not an error (both the terminal
+// frame and the cancel path release).
+func (s *Store) Release(ctx context.Context, workflowID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	l, ok := s.leases[workflowID]
-	switch {
-	case !ok:
-		return ReleaseAbsent, nil
-	case l.Life != life:
-		return ReleaseSuperseded, nil
+	if _, ok := s.leases[workflowID]; !ok {
+		return nil
 	}
 	delete(s.leases, workflowID)
 	s.version++
-	return Released, s.persistLocked(ctx)
+	return s.persistLocked(ctx)
+}
+
+// SetFirstAbsentAt starts or clears a lease's continuous-absence clock.
+func (s *Store) SetFirstAbsentAt(ctx context.Context, workflowID string, at time.Time) error {
+	return s.update(ctx, workflowID, func(l *Lease) bool {
+		if l.FirstAbsentAt.Equal(at) {
+			return false
+		}
+		l.FirstAbsentAt = at
+		return true
+	})
 }
 
 // SetKeepChats adds chats to a lease's KeepChats, sorted; it never removes one. ErrNotFound when no lease holds the
 // run.
 func (s *Store) SetKeepChats(ctx context.Context, workflowID string, add []string) error {
 	return s.update(ctx, workflowID, func(l *Lease) bool { return l.addKeepChats(add) })
-}
-
-// Renew starts a new life on a held lease, adding chats to its KeepChats; ErrNotFound when no lease holds the run.
-func (s *Store) Renew(ctx context.Context, workflowID, life string, add []string) error {
-	return s.update(ctx, workflowID, func(l *Lease) bool {
-		grew := l.addKeepChats(add)
-		if l.Life == life {
-			return grew
-		}
-		l.Life = life
-		return true
-	})
 }
 
 // SetUnattributed sets or clears a lease's Unattributed mark; ErrNotFound when no lease holds the run.

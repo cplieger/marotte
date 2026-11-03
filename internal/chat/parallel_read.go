@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"maps"
 	"os"
-	"slices"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/parallel"
@@ -17,10 +15,9 @@ type chatEntry struct {
 	path string
 }
 
-// scannedRow is one header a scan read, with the holder keys of its keep facts, which ChatHeader does not carry.
+// scannedRow is one header a scan read, with the id it was read under.
 type scannedRow struct {
 	id     marotte.ChatID
-	keep   []string
 	header marotte.ChatHeader
 }
 
@@ -54,7 +51,7 @@ func readHeadersParallel(ctx context.Context, valid []chatEntry) (rows []scanned
 			}
 			return
 		}
-		results[idx].row = scannedRow{id: marotte.ChatID(ce.id), header: c.Header(), keep: slices.Sorted(maps.Keys(c.Keep))}
+		results[idx].row = scannedRow{id: marotte.ChatID(ce.id), header: c.Header()}
 		results[idx].ok = true
 	})
 

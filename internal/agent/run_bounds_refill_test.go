@@ -301,7 +301,7 @@ func TestRunBackstop_MeasuresExecutingTimeNotWallTime(t *testing.T) {
 		h.bounds.executed = map[string]time.Duration{id: runBackstop}
 		h.mu.Unlock()
 
-		h.forgetBounds(t.Context(), id, endTerminal, h.lifeOf(id))
+		h.forgetBounds(t.Context(), id)
 
 		h.mu.Lock()
 		banked, open := h.bounds.executed[id], len(h.bounds.armedAt)

@@ -652,6 +652,19 @@ func ageRecord(t *testing.T, root, id string, ago time.Duration) {
 	})
 }
 
+// ageMark backdates the Since of the chat's keep fact key by ago, as a run with no sign of life since would leave it.
+func (b *seamBoot) ageMark(t *testing.T, id, key string, ago time.Duration) {
+	t.Helper()
+	editRecord(t, b.root, id, func(doc map[string]any) {
+		keep, _ := doc["keep"].(map[string]any)
+		f, ok := keep[key].(map[string]any)
+		if !ok {
+			t.Fatalf("Setup: %s holds no %s to age: %v", id, key, keep)
+		}
+		f["since"] = time.Now().Add(-ago).UnixMilli()
+	})
+}
+
 func (b *seamBoot) present(t *testing.T, id string) bool {
 	t.Helper()
 	_, found, err := b.chats.Lookup(t.Context(), marotte.ChatID(id))

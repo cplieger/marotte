@@ -20,7 +20,7 @@ import (
 const (
 	keepStateRetry     = 5 * time.Minute
 	keepStateListRetry = time.Minute
-	// keepStateRemedy is the operator's way out of a run fact or a stall whose end never shows.
+	// keepStateRemedy is the operator's way out of a stall on a run record KAS cannot read.
 	keepStateRemedy = "DELETE /api/runs/<workflow_id>, or remove runs/<workflow_id>/ once KAS cannot read the run"
 )
 
@@ -28,7 +28,6 @@ type keepChats interface {
 	SessionOwners(ctx context.Context) chat.OwnerScan
 	Reconciled(id marotte.ChatID) bool
 	Boot() string
-	ReleaseIfHeldAs(ctx context.Context, id marotte.ChatID, key string, want marotte.KeepFact, ev chat.Evidence) (bool, error)
 }
 
 type keepMembership interface {
@@ -54,7 +53,6 @@ type keepRuns interface {
 	InspectRunRow(ctx context.Context, workflowID string) (agent.RunRow, error)
 	RecordedRuns(ctx context.Context) ([]string, error)
 	RunOwner(ctx context.Context, workflowID string) (command.RunOwner, error)
-	EndedThisBoot(workflowID string) bool
 	RecordLeaseHolders(ctx context.Context, workflowID string, holders []marotte.ChatID)
 	SetRecordedRuns(parents map[string]string)
 }
@@ -82,7 +80,7 @@ type keepStateDeps struct {
 }
 
 // reconcileKeepState is the per-boot keep-state reconcile: it adds the keep facts every record read this boot is
-// missing, releases a previous boot's facts on evidence of their end, and marks each record it reconciled, which is
+// missing, releases a previous boot's tab and turn facts on evidence of their end, and marks each record it reconciled, which is
 // what lets the purge consider it. A round that cannot read a source reconciles nothing and is retried; the pass
 // ends once every record is reconciled.
 func reconcileKeepState(ctx context.Context, d *keepStateDeps) {
@@ -139,7 +137,6 @@ type keepCandidate struct {
 type keepFact struct {
 	chatID marotte.ChatID
 	key    string
-	wf     string
 	fact   marotte.KeepFact
 }
 
@@ -151,12 +148,10 @@ type keepRoundState struct {
 	tabHolders map[string][]string
 	owed       map[keepFactRef]struct{}
 	added      map[string]int
-	released   map[string]int
 	boot       string
-	unlisted   []keepFact
 	stuckTabs  []keepFact
+	released   int
 	stateless  int
-	stuckRuns  int
 	tabsUnread bool
 }
 
@@ -178,7 +173,7 @@ func keepRound(ctx context.Context, d *keepStateDeps, retry, listRetry time.Dura
 	}
 	st := &keepRoundState{
 		listed: map[string]agent.RunRow{}, candidates: map[string]*keepCandidate{}, tabHolders: map[string][]string{},
-		owed: map[keepFactRef]struct{}{}, boot: d.chats.Boot(), added: map[string]int{}, released: map[string]int{},
+		owed: map[keepFactRef]struct{}{}, boot: d.chats.Boot(), added: map[string]int{},
 		tabsUnread: d.tabs.Unread() != "",
 	}
 	for _, r := range rows {
@@ -200,7 +195,10 @@ func keepRound(ctx context.Context, d *keepStateDeps, retry, listRetry time.Dura
 		keepOwed(st, &e)
 	}
 	left := keepReconcileRead(ctx, d, st, &scan)
-	keepSettleUnlisted(ctx, d, st)
+	for _, f := range st.stuckTabs {
+		slog.Warn("keep fact stuck: no open tab shows it and no close recorded its release; the chat stays kept",
+			"chat_id", f.chatID, "key", f.key, "age", keepAge(f.fact.Since))
+	}
 	keepReport(st, left)
 	return retry, left == 0
 }
@@ -369,7 +367,7 @@ func keepOwed(st *keepRoundState, e *tabs.OwedRelease) {
 func keepReconcileRecord(d *keepStateDeps, st *keepRoundState, id marotte.ChatID, r *chat.KeepRecord, open []marotte.TabSubject) {
 	facts := r.Facts()
 	for _, key := range slices.Sorted(maps.Keys(facts)) {
-		keepPreviousBootFact(d, st, id, r, key, facts[key], open)
+		keepPreviousBootFact(st, id, r, key, facts[key], open)
 	}
 	for _, key := range keepAdds(d, st, id, r, open) {
 		if _, held := r.Facts()[key]; !held {
@@ -381,7 +379,7 @@ func keepReconcileRecord(d *keepStateDeps, st *keepRoundState, id marotte.ChatID
 }
 
 // keepAdds names the facts id's record must hold: a tab showing it (or, with the arrangement lost, any pre-upgrade
-// record), a run tab it holds, and a live run it holds that no end overtook.
+// record), a run tab it holds, and a live run it holds.
 func keepAdds(d *keepStateDeps, st *keepRoundState, id marotte.ChatID, r *chat.KeepRecord, open []marotte.TabSubject) []string {
 	var keys []string
 	if keepShown(open, marotte.KeepKindTab, string(id), "") || (st.tabsUnread && r.FilledAt() == 0) {
@@ -405,10 +403,10 @@ func keepAdds(d *keepStateDeps, st *keepRoundState, id marotte.ChatID, r *chat.K
 	return keys
 }
 
-// keepRunLive re-checks, under the record lock, that the run still needs id's fact: every evidence end marks the run
-// ended before it releases the lease and then the fact, so an end that overtook the round's reads is seen here.
+// keepRunLive re-checks, under the record lock, that the run still needs id's fact: a leased candidate whose lease
+// was released since the round read it ended meanwhile.
 func keepRunLive(d *keepStateDeps, c *keepCandidate, wf string, id marotte.ChatID) bool {
-	if !slices.Contains(c.holders, id) || d.runs.EndedThisBoot(wf) {
+	if !slices.Contains(c.holders, id) {
 		return false
 	}
 	if c.lease == nil {
@@ -418,9 +416,9 @@ func keepRunLive(d *keepStateDeps, c *keepCandidate, wf string, id marotte.ChatI
 	return held
 }
 
-// keepPreviousBootFact releases a fact an earlier boot wrote when a source shows its end, and records the ones no
-// source can settle. This boot's facts belong to this boot's writers.
-func keepPreviousBootFact(d *keepStateDeps, st *keepRoundState, id marotte.ChatID, r *chat.KeepRecord, key string, f marotte.KeepFact, open []marotte.TabSubject) {
+// keepPreviousBootFact releases a turn fact an earlier boot wrote, and records the tab facts no source can settle.
+// This boot's facts belong to this boot's writers; a run mark keeps by time (chat.Store.PurgeIdle).
+func keepPreviousBootFact(st *keepRoundState, id marotte.ChatID, r *chat.KeepRecord, key string, f marotte.KeepFact, open []marotte.TabSubject) {
 	if f.Boot == st.boot {
 		return
 	}
@@ -429,19 +427,7 @@ func keepPreviousBootFact(d *keepStateDeps, st *keepRoundState, id marotte.ChatI
 	case marotte.KeepKindTurn:
 		if f.Process {
 			r.Release(key, chat.EvidenceProcessGone)
-			st.released[kind]++
-		}
-	case marotte.KeepKindRun:
-		if _, held := d.leases.Get(wf); held {
-			return
-		}
-		row, listed := st.listed[wf]
-		switch {
-		case !listed:
-			st.unlisted = append(st.unlisted, keepFact{chatID: id, key: key, wf: wf, fact: f})
-		case row.Terminal:
-			r.Release(key, chat.EvidenceRunTerminal)
-			st.released[kind]++
+			st.released++
 		}
 	case marotte.KeepKindTab, marotte.KeepKindRunTab:
 		if st.tabsUnread || keepShown(open, kind, string(id), wf) {
@@ -462,49 +448,6 @@ func keepShown(open []marotte.TabSubject, kind, chatID, wf string) bool {
 	})
 }
 
-// keepSettleUnlisted settles the run facts no listed row decided: one inspect per unlisted run a previous boot's fact names. A terminal reply
-// releases the fact; anything short of a status leaves it, reported as stuck.
-func keepSettleUnlisted(ctx context.Context, d *keepStateDeps, st *keepRoundState) {
-	byRun := map[string][]keepFact{}
-	for _, f := range st.unlisted {
-		byRun[f.wf] = append(byRun[f.wf], f)
-	}
-	for _, wf := range slices.Sorted(maps.Keys(byRun)) {
-		row, err := d.runs.InspectRunRow(ctx, wf)
-		for _, f := range byRun[wf] {
-			keepSettleUnlistedFact(ctx, d, st, &f, row.Terminal, err)
-		}
-	}
-	for _, f := range st.stuckTabs {
-		slog.Warn("keep fact stuck: no open tab shows it and no close recorded its release; the chat stays kept",
-			"chat_id", f.chatID, "key", f.key, "age", keepAge(f.fact.Since))
-	}
-}
-
-func keepSettleUnlistedFact(ctx context.Context, d *keepStateDeps, st *keepRoundState, f *keepFact, terminal bool, inspectErr error) {
-	if inspectErr != nil {
-		slog.Warn("keep fact stuck: no source shows the run ended; the chat stays kept",
-			"chat_id", f.chatID, "workflow_id", f.wf, "age", keepAge(f.fact.Since), "remedy", keepStateRemedy)
-		st.stuckRuns++
-		return
-	}
-	if !terminal {
-		return
-	}
-	if _, held := d.leases.Get(f.wf); held {
-		return
-	}
-	// The inspect ran outside the record lock: a life that started since wrote its own value, which stays.
-	released, err := d.chats.ReleaseIfHeldAs(ctx, f.chatID, f.key, f.fact, chat.EvidenceRunTerminal)
-	if err != nil {
-		slog.Warn("keep fact not released; the chat is kept until it is", "chat_id", f.chatID, "key", f.key, "error", err)
-		return
-	}
-	if released {
-		st.released[marotte.KeepKindRun]++
-	}
-}
-
 func keepAge(since int64) time.Duration {
 	return time.Since(time.UnixMilli(since)).Round(time.Second)
 }
@@ -513,7 +456,6 @@ func keepReport(st *keepRoundState, left int) {
 	slog.Info("keep-state reconcile finished",
 		"added_tab", st.added[marotte.KeepKindTab], "added_runtab", st.added[marotte.KeepKindRunTab],
 		"added_run", st.added[marotte.KeepKindRun],
-		"released_turn", st.released[marotte.KeepKindTurn], "released_run", st.released[marotte.KeepKindRun],
-		"stuck_run_facts", st.stuckRuns, "stuck_tab_facts", len(st.stuckTabs),
+		"released_turn", st.released, "stuck_tab_facts", len(st.stuckTabs),
 		"runs_without_engine_state", st.stateless, "unreconciled", left)
 }

@@ -150,7 +150,7 @@ func TestEngineRestart_AutoNeverFiresWhileAnyQuiescenceTermHolds(t *testing.T) {
 		}},
 		{name: "a released run", hold: func(t *testing.T, h *Runtime) func() {
 			executingLease(t, h, "wf_1")
-			return func() { h.runs.releaseLease(t.Context(), "wf_1", endTerminal, h.runs.lifeOf("wf_1")) }
+			return func() { h.runs.releaseLease(t.Context(), "wf_1") }
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

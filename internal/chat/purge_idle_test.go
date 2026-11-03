@@ -176,6 +176,23 @@ func TestPurgeIdle_DecidesFromTheRecordAlone(t *testing.T) {
 			wantOutcome: archive.PurgeKept,
 		},
 		{
+			name:        "run_mark_older_than_the_window",
+			setup:       func(t *testing.T, s *Store) { holdRunMarkSince(t, s, time.Now().Add(-3*purgeWindow)) },
+			wantOutcome: archive.PurgePurged,
+		},
+		{
+			name: "run_mark_inside_the_refresh_slack",
+			setup: func(t *testing.T, s *Store) {
+				holdRunMarkSince(t, s, time.Now().Add(-purgeWindow-RunMarkRefresh/2))
+			},
+			wantOutcome: archive.PurgeKept, wantKeptBy: archive.KeptByRun,
+		},
+		{
+			name:        "run_mark_with_no_since",
+			setup:       func(t *testing.T, s *Store) { holdRunMarkSince(t, s, time.UnixMilli(0)) },
+			wantOutcome: archive.PurgeKept, wantKeptBy: archive.KeptByRun,
+		},
+		{
 			name:        "unreadable",
 			setup:       func(t *testing.T, s *Store) { corruptHeader(t, s, "c1") },
 			wantOutcome: archive.PurgeKept, wantErr: true,
@@ -261,7 +278,7 @@ func TestPurgeIdle_AReleaseWhileUnreadableDropsThePendingHold(t *testing.T) {
 	}
 	repair()
 	restore := corruptHeader(t, s, "c1")
-	if err := s.Release(t.Context(), "c1", key, EvidenceRunTerminal); err == nil {
+	if err := s.Release(t.Context(), "c1", key, EvidenceRunCancelled); err == nil {
 		t.Fatal("Setup: Release over an unreadable record answered nil")
 	}
 	restore()
@@ -287,6 +304,38 @@ func TestPurgeIdle_AChatInsideTheWindowAnswersItsDeadline(t *testing.T) {
 		t.Fatalf("PurgeIdle = %+v, %v; want kept", v, err)
 	}
 	want := time.UnixMilli(last).Add(purgeWindow)
+	if d := v.Deadline.Sub(want); d < -time.Second || d > time.Second {
+		t.Errorf("Deadline = %v, want about %v", v.Deadline, want)
+	}
+}
+
+// holdRunMarkSince holds a run mark on c1 whose last sign of life was at.
+func holdRunMarkSince(t *testing.T, s *Store, at time.Time) {
+	t.Helper()
+	key := runKey(t, marotte.KeyRun)
+	holdKey(t, s, "c1", key, KeepDurable)
+	rewriteChat(t, s, "c1", func(c *marotte.Chat) {
+		f := c.Keep[key]
+		f.Since = at.UnixMilli()
+		c.Keep[key] = f
+	})
+}
+
+// TestPurgeIdle_ARunMarkAnswersItsDeadline: a chat kept only by a run mark becomes purgeable one window after the
+// mark's last sign of life plus the refresh slack, so the scheduler wakes then.
+func TestPurgeIdle_ARunMarkAnswersItsDeadline(t *testing.T) {
+	s, _ := newTestStore(t)
+	seedChat(t, s, "c1")
+	ageChat(t, s, "c1", 3*purgeWindow)
+	since := time.Now().Add(-2 * time.Hour)
+	holdRunMarkSince(t, s, since)
+
+	v, err := s.PurgeIdle(t.Context(), "c1", time.Now().Add(-purgeWindow))
+
+	if err != nil || v.Outcome != archive.PurgeKept || v.KeptBy != archive.KeptByRun {
+		t.Fatalf("PurgeIdle = %+v, %v; want kept by the run mark", v, err)
+	}
+	want := since.Add(RunMarkRefresh + purgeWindow)
 	if d := v.Deadline.Sub(want); d < -time.Second || d > time.Second {
 		t.Errorf("Deadline = %v, want about %v", v.Deadline, want)
 	}

@@ -471,7 +471,7 @@ func TestHandleSSE_ThePendingSnapshotNamesEveryLeasedRunAndNoEndedOne(t *testing
 		t.Errorf("a legacy connect carried run_asks, which a v2 bundle cannot decode: %q", legacy)
 	}
 
-	h.runs.releaseLease(t.Context(), "wf_1", endTerminal, h.runs.lifeOf("wf_1"))
+	h.runs.releaseLease(t.Context(), "wf_1")
 	if after := coldConnectAs(t, h, false).Body.String(); strings.Contains(after, "which branch?") || strings.Contains(after, `"type":"run_asks"`) {
 		t.Errorf("a run whose lease ended rode a later pending_snapshot: %q", after)
 	}

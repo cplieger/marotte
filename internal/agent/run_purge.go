@@ -98,7 +98,7 @@ func (rt *Runtime) purgeCandidate(ctx context.Context, r *kasWorkflowRun, window
 		res.Kept++
 		return refused
 	}
-	err := rt.runs.deleteAs(ctx, r.WorkflowID, runStop{}, notFoundRefused)
+	err := rt.runs.deleteAs(ctx, r.WorkflowID, runStop{})
 	done()
 	if err != nil {
 		res.Errors++

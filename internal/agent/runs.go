@@ -61,10 +61,8 @@ type Runs struct {
 	life runLifecycle
 	// recorded is the keep-state reconcile's runs/ attribution, which RunsParentedBy reads (run_owner.go).
 	recorded recordedRuns
-	// lives serializes each run's lease grants and releases with its keep facts (run_life.go).
-	lives runLives
-	// absence is each held lease's absence clock, in memory only (run_orphan.go).
-	absence runAbsence
+	// marks throttles the run keep marks' progress refresh and keeps ended unattributed runs (run_keepstate.go).
+	marks runMarks
 	// sweep pauses the running runs while the gate is closed (run_gate.go).
 	sweep gateSweep
 	// hosts serializes, per run, making its launching session resident (ensureResident). hosts, resumes and
@@ -93,7 +91,6 @@ type runChatReader interface {
 	HoldOrPend(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
 	Rollback(ctx context.Context, claim *chat.Claim) error
 	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
-	ReleaseAll(ctx context.Context, key string, ev chat.Evidence) error
 	HoldUnattributed(workflowID string)
 	ClearUnattributed(workflowID string)
 	SessionInTeardown(sessionID string) bool

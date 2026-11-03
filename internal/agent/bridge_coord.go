@@ -92,8 +92,6 @@ type bridgeCoordinator struct {
 	steerBridgeGone  func(marotte.ChatID)                       `wiring:"optional"`
 	// chatHasLiveRun keeps pushTurnOutcome from claiming the work is over while a launched run continues. Nil means none.
 	chatHasLiveRun func(marotte.ChatID) bool `wiring:"optional"`
-	// chatHasPresentRun is chatHasLiveRun for releaseIfUnheld, which a run absent past the lease budget no longer pins.
-	chatHasPresentRun func(marotte.ChatID) bool `wiring:"optional"`
 	// chatHasTab reports an open tab on the chat; it answers true when no tab set is wired, so nothing is released.
 	chatHasTab func(marotte.ChatID) bool
 	// runLabel is a run's display name, for a notification titled by it. Nil names none.
@@ -129,9 +127,6 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		replayProjection: h.replay,
 		chatHasLiveRun: func(chatID marotte.ChatID) bool {
 			return chatHoldsLiveRun(h.runs.leaseStore().List(), chatID)
-		},
-		chatHasPresentRun: func(chatID marotte.ChatID) bool {
-			return chatHoldsPresentRun(h.runs.leaseStore().List(), chatID, h.runs.absence.past)
 		},
 		chatHasTab: func(chatID marotte.ChatID) bool {
 			if h.tabs == nil {
@@ -274,7 +269,7 @@ func (bc *bridgeCoordinator) reloadIfMarked(ctx context.Context, chatID marotte.
 // hold the caller's goroutine.
 func (bc *bridgeCoordinator) releaseIfUnheld(chatID marotte.ChatID) {
 	if chatID == "" || isRunChat(chatID) || bc.chatHasTab == nil || bc.chatHasTab(chatID) ||
-		(bc.chatHasPresentRun != nil && bc.chatHasPresentRun(chatID)) {
+		(bc.chatHasLiveRun != nil && bc.chatHasLiveRun(chatID)) {
 		return
 	}
 	sb, session, ok := bc.bridge.mgr.claimRelease(chatID)

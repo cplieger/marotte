@@ -455,7 +455,7 @@ func TestCancelExpiredRun_ASupersededTimerDoesNothing(t *testing.T) {
 		t.Error("the deadline was claimed twice")
 	}
 	// A released lease: a pending timer must not resurrect a cancel.
-	h.releaseLease(t.Context(), id, endTerminal, h.lifeOf(id))
+	h.releaseLease(t.Context(), id)
 	if h.claimExpiredDeadline(id, live.Deadline) {
 		t.Error("a released run was claimed by its pending timer")
 	}
@@ -670,7 +670,7 @@ func TestForgetRunBounds_ClearsTheClaimOnATerminalRun(t *testing.T) {
 	h.armDeadline(t.Context(), id)
 	h.claimTermination(id)
 
-	h.forgetBounds(t.Context(), id, endTerminal, h.lifeOf(id))
+	h.forgetBounds(t.Context(), id)
 
 	h.mu.Lock()
 	claims := len(h.bounds.terminating)
@@ -719,7 +719,7 @@ func TestForgetRunBounds_ARefillInsideTheTeardownLeavesNoTimer(t *testing.T) {
 		t.Fatal("the leased run has no ask cell, so nothing in the teardown broadcasts")
 	}
 
-	h.forgetBounds(t.Context(), id, endTerminal, h.lifeOf(id))
+	h.forgetBounds(t.Context(), id)
 
 	if bus.refills == 0 {
 		t.Fatal("the teardown broadcast nothing, so no refill was driven inside it")
@@ -792,7 +792,7 @@ func TestRearmRetriedRun_GivesAFreshClock(t *testing.T) {
 	h.armDeadline(t.Context(), id)
 	before, _ := h.lease(id)
 
-	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "publish"})
+	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "publish"}, nil)
 
 	after, held := h.lease(id)
 	if !held || !after.Bounded() {
@@ -811,7 +811,7 @@ func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testi
 	h := hub.runs
 	const id = "wf_1"
 
-	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "nightly"})
+	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "nightly"}, nil)
 
 	l, held := h.lease(id)
 	if !held {

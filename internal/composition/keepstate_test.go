@@ -27,7 +27,6 @@ type fakeKASRuns struct {
 	inspect     map[string]agent.RunRow
 	owners      map[string]command.RunOwner
 	ownerErr    map[string]error
-	ended       map[string]bool
 	attributed  map[string]string
 	rows        []agent.RunRow
 	recorded    []string
@@ -66,8 +65,6 @@ func (f *fakeKASRuns) RunOwner(_ context.Context, wf string) (command.RunOwner, 
 	return command.RunOwner{Verdict: command.RunUnknown}, nil
 }
 
-func (f *fakeKASRuns) EndedThisBoot(wf string) bool { return f.ended[wf] }
-
 func (f *fakeKASRuns) RecordLeaseHolders(ctx context.Context, wf string, holders []marotte.ChatID) {
 	add := make([]string, 0, len(holders))
 	for _, h := range holders {
@@ -102,7 +99,7 @@ func newKeepRig(t *testing.T, root string) *keepRig {
 	h := agent.New(t.Context(), t.TempDir(), nil, chats, agent.WithTabs(tabStore), agent.WithRunLeases(leases))
 	runs := &fakeKASRuns{
 		leases: leases, inspect: map[string]agent.RunRow{}, owners: map[string]command.RunOwner{},
-		ownerErr: map[string]error{}, ended: map[string]bool{},
+		ownerErr: map[string]error{},
 	}
 	r := &keepRig{chats: chats, tabs: tabStore, leases: leases, runs: runs, chatDir: chatDir, states: map[string]struct{}{}}
 	ready := make(chan struct{})
@@ -260,7 +257,6 @@ func TestKeepRound_AddsTheFactsItsSourcesShow(t *testing.T) {
 		{"c-listed", "sess_listed"},
 		{"c-recorded", "sess_rec"},
 		{"c-runtab", "sess_runtab"},
-		{"c-ended", "sess_ended"},
 		{"c-stateless", "sess_stateless"},
 	} {
 		seedChat(t, first.chats, c.id, c.session)
@@ -279,10 +275,8 @@ func TestKeepRound_AddsTheFactsItsSourcesShow(t *testing.T) {
 	}
 	r.runs.rows = []agent.RunRow{
 		{WorkflowID: "wf_listed", ParentSessionID: "sess_listed"},
-		{WorkflowID: "wf_ended", ParentSessionID: "sess_ended"},
 		{WorkflowID: "wf_shown", ParentSessionID: "sess_runtab", Terminal: true},
 	}
-	r.runs.ended["wf_ended"] = true
 	r.runs.recorded = []string{"wf_recorded", "wf_stateless", "wf_listed"}
 	r.states["wf_recorded"] = struct{}{}
 	r.runs.inspect["wf_recorded"] = agent.RunRow{WorkflowID: "wf_recorded", ParentSessionID: "sess_rec"}
@@ -296,7 +290,6 @@ func TestKeepRound_AddsTheFactsItsSourcesShow(t *testing.T) {
 		"c-listed":    {runKey("wf_listed")},
 		"c-recorded":  {runKey("wf_recorded")},
 		"c-runtab":    {runTabKey("wf_shown")},
-		"c-ended":     nil,
 		"c-stateless": nil,
 	} {
 		if got := keepKeys(t, r.chats, id); !slices.Equal(got, want) {
@@ -345,7 +338,9 @@ func TestKeepRound_ATabArrangementItCouldNotReadHoldsEveryPreUpgradeRecord(t *te
 	}
 }
 
-func TestKeepRound_ReleasesAPreviousBootsFactOnlyOnEvidence(t *testing.T) {
+// A previous boot's turn fact and an owed tab release are settled; its run marks stay, since they keep by time and
+// no reconcile read ends one.
+func TestKeepRound_SettlesAPreviousBootsTurnAndTabFactsAndKeepsItsRunMarks(t *testing.T) {
 	root := t.TempDir()
 	first := newKeepRig(t, root)
 	for _, id := range []string{"c-turn", "c-terminal", "c-live", "c-inspected", "c-lost", "c-leased", "c-tab", "c-owed", "c-mine"} {
@@ -388,9 +383,9 @@ func TestKeepRound_ReleasesAPreviousBootsFactOnlyOnEvidence(t *testing.T) {
 	}
 	for id, want := range map[string][]string{
 		"c-turn":      nil,
-		"c-terminal":  nil,
+		"c-terminal":  {runKey("wf_terminal")},
 		"c-live":      {runKey("wf_live")},
-		"c-inspected": nil,
+		"c-inspected": {runKey("wf_inspected")},
 		"c-lost":      {runKey("wf_lost")},
 		"c-leased":    {runKey("wf_leased")},
 		"c-tab":       {marotte.KeyTab},
@@ -405,30 +400,7 @@ func TestKeepRound_ReleasesAPreviousBootsFactOnlyOnEvidence(t *testing.T) {
 		t.Errorf("Owed() = %v, want the close's entry settled", r.tabs.Owed())
 	}
 	if c, _, _ := r.chats.Lookup(t.Context(), "c-leased"); c.Keep[runKey("wf_leased")].Boot != first.chats.Boot() {
-		t.Errorf("c-leased fact = %+v, want the earlier boot's fact untouched: a held lease's end releases it", c.Keep)
-	}
-}
-
-// A run's newer life writes its fact before its lease, so a terminal inspect of the previous boot's run can land
-// in between: the release takes only the value the round read, and the newer life's fact stays.
-func TestKeepRound_ATerminalInspectLeavesANewerLifesFact(t *testing.T) {
-	root := t.TempDir()
-	first := newKeepRig(t, root)
-	seedChat(t, first.chats, "c-1", "sess_1")
-	hold(t, first.chats, "c-1", runKey("wf_1"))
-	r := newKeepRig(t, root)
-	r.runs.inspect["wf_1"] = agent.RunRow{WorkflowID: "wf_1", Terminal: true}
-	r.runs.onInspect = func(string) { hold(t, r.chats, "c-1", runKey("wf_1")) }
-
-	if !r.round(t) {
-		t.Fatal("keepRound did not finish")
-	}
-	c, _, err := r.chats.Lookup(t.Context(), "c-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f, ok := c.Keep[runKey("wf_1")]; !ok || f.Boot != r.chats.Boot() {
-		t.Errorf("c-1 Keep = %v, want the newer life's fact of this boot kept", c.Keep)
+		t.Errorf("c-leased fact = %+v, want the earlier boot's fact untouched: a fill-in is not a sign of life", c.Keep)
 	}
 }
 

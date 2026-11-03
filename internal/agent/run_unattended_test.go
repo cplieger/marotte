@@ -48,7 +48,7 @@ func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
 		t.Error("the origin leaked to another run")
 	}
 	// Released with the terminal frame, and the flag with it.
-	h.releaseLease(t.Context(), "wf_1", endTerminal, h.lifeOf("wf_1"))
+	h.releaseLease(t.Context(), "wf_1")
 	if h.IsScheduled("wf_1") {
 		t.Error("a released run still reported scheduled")
 	}
