@@ -31,9 +31,7 @@ func TestNew_GeneratesKeys(t *testing.T) {
 	}
 }
 
-// TestNew_ClientTimeout pins the 15-second HTTP client timeout New
-// configures: at 13 s or under, a push on a silent connection gives up before
-// ssrf's HTTP/2 PING window closes it, and the next push reuses it.
+// TestNew_ClientTimeout pins New's client timeout; pushClientTimeout owns why it is 15 s.
 func TestNew_ClientTimeout(t *testing.T) {
 	s := New(t.Context(), t.TempDir(), testSubject)
 	defer s.Close()
