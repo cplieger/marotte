@@ -1,7 +1,7 @@
 package forges
 
 // The view-gated fill: while a client shows the pull-request view, a present
-// cycle reads at most ten GitLab or Gitea family rows of a connection one by one,
+// cycle reads at most ten rows of a connection one by one,
 // pending first, then never filled, then moved, and every such row says per field
 // why it holds the value it does.
 
@@ -468,24 +468,91 @@ func TestFill_GiteaBlockReasonIsNotSupplied(t *testing.T) {
 	}
 }
 
-func TestFill_GitHubRowsAreNeverRead(t *testing.T) {
+// githubListed is a GitHub ListMyPRs row under WithMergeState(false): its checks
+// and head, and merge state unknown.
+func githubListed(selector string, number int) forgeapi.PullRequest {
+	pr := listed(forgeapi.FamilyGitHub, selector, number, 0)
+	pr.Action.Checks = forgeapi.CheckPending
+	pr.HeadSHA = "abc123"
+	return pr
+}
+
+// githubRead is GitHub's ReadPR of pr: the merge state its list leaves out.
+func githubRead(pr forgeapi.PullRequest) forgeapi.PullRequest {
+	pr.Action.Checks = forgeapi.CheckPassing
+	pr.Action.Mergeable = forgeapi.SupportYes
+	pr.Action.MergeBlocked = forgeapi.MergeBlockNone
+	return pr
+}
+
+func githubFills(reason string, asOf int64) map[string]FieldFill {
+	return map[string]FieldFill{
+		"mergeable":     {Field: "mergeable", Reason: reason, AsOf: asOf},
+		"merge_blocked": {Field: "merge_blocked", Reason: reason, AsOf: asOf},
+	}
+}
+
+func TestFill_GitHubMergeStateComesFromTheRead(t *testing.T) {
 	core := newFillCore()
-	core.pages["bob"] = page(prIn(forgeapi.FamilyGitHub, "bob/app", 1, forgeapi.CheckPending))
-	core.pages[""] = page(prIn(forgeapi.FamilyGitHub, "carol/lib", 2, forgeapi.CheckPending))
+	pr := githubListed("bob/app", 1)
+	core.pages["bob"] = page(pr)
+	core.reads[readKey("bob/app", 1)] = githubRead(pr)
 	rec := githubRecord()
 	p, _, _ := fillPoller(t, map[string]forgeapi.Core{rec.ID: core}, nil, rec)
-	p.viewers.watch(viewerTag, "", true)
 
 	p.sweep(t.Context())
 
-	if len(core.asked) != 0 {
-		t.Errorf("a viewed cycle read GitHub rows %q, want none: their list rows carry the state", core.asked)
-	}
 	e := entryFor(t, p, rec.ID)
-	for _, n := range []int{1, 2} {
-		if row := rowIn(t, &e, n); row.Fill != nil || row.Action.Checks != "pending" {
-			t.Errorf("GitHub row #%d fill %+v, checks %q; want no fill and the list's pending", n, row.Fill, row.Action.Checks)
-		}
+	row := rowIn(t, &e, 1)
+	if got, want := fillsOf(&row), githubFills("not_on_list", 0); !maps.Equal(got, want) {
+		t.Errorf("unviewed GitHub row fill = %+v, want %+v", got, want)
+	}
+	if row.Action.Mergeable != "unknown" || row.Action.MergeBlocked != "unknown" {
+		t.Errorf("unviewed GitHub row mergeable %q, blocked %q; want the list's unknown for both",
+			row.Action.Mergeable, row.Action.MergeBlocked)
+	}
+
+	p.viewers.watch(viewerTag, "", true)
+	p.sweep(t.Context())
+
+	if want := []string{readKey("bob/app", 1)}; !slices.Equal(core.asked, want) {
+		t.Errorf("a viewed cycle read GitHub rows %q, want %q", core.asked, want)
+	}
+	e = entryFor(t, p, rec.ID)
+	row = rowIn(t, &e, 1)
+	if got, want := fillsOf(&row), githubFills("filled", fillsOf(&row)["mergeable"].AsOf); !maps.Equal(got, want) ||
+		want["mergeable"].AsOf <= 0 {
+		t.Errorf("viewed GitHub row fill = %+v, want %+v with a read time", got, want)
+	}
+	if row.Action.Mergeable != "yes" || row.Action.MergeBlocked != "none" {
+		t.Errorf("viewed GitHub row mergeable %q, blocked %q; want the read's yes and none",
+			row.Action.Mergeable, row.Action.MergeBlocked)
+	}
+	if row.Action.Checks != "pending" || row.HeadSHA != "abc123" {
+		t.Errorf("viewed GitHub row checks %q, head %q; want the list's pending and abc123", row.Action.Checks, row.HeadSHA)
+	}
+}
+
+// GitHub's list carries the checks the notice compares, so only a viewer's
+// cycle reads a GitHub row.
+func TestFill_GitHubIsNotReadForTheNotice(t *testing.T) {
+	core := newFillCore()
+	pr := githubListed("bob/app", 1)
+	core.pages[""] = page(pr)
+	core.reads[readKey("bob/app", 1)] = githubRead(pr)
+	rec := githubRecord()
+	clone := RepoOrigin{Dir: "app", WebBase: "https://github.com", Slug: "bob/app"}
+	p, g, _ := fillPoller(t, map[string]forgeapi.Core{rec.ID: core}, []RepoOrigin{clone}, rec)
+
+	p.sweep(t.Context())
+	g.present, g.push = false, true
+	p.sweep(t.Context())
+
+	if len(core.asked) != 0 {
+		t.Errorf("an unviewed present cycle and a push-only cycle read %q, want no read", core.asked)
+	}
+	if got := slices.Sorted(maps.Keys(p.seen)); !slices.Equal(got, []string{subjectKey(rec.ID, "bob/app", 1)}) {
+		t.Errorf("tracked subjects = %q, want the watched row: the setup must make the notice watch it", got)
 	}
 }
 

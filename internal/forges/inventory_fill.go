@@ -49,9 +49,9 @@ var (
 	}}
 )
 
-// familyFill is what a family's ListMyPRs rows lack: the fields a read fills, and
-// the ones not even a read supplies (forgeapi's ListMyPRs and ReadPR
-// departures). GitHub's rows lack nothing a read would add.
+// familyFill is what a family's ListMyPRs rows lack under listScope's options:
+// the fields a read fills, and the ones not even a read supplies (forgeapi's
+// ListMyPRs and ReadPR departures).
 type familyFill struct {
 	read   []rowField
 	absent []string
@@ -64,7 +64,16 @@ func (ff *familyFill) reads(field rowField) bool {
 	return slices.ContainsFunc(ff.read, func(f rowField) bool { return f.name == field.name })
 }
 
+// feedsNotice reports whether the notice reads this fill: notify's checks or
+// watches' source repository.
+func (ff *familyFill) feedsNotice() bool {
+	return ff.reads(readChecks) || ff.sourceFromRead
+}
+
 var familyFills = map[forgeapi.Family]familyFill{
+	forgeapi.FamilyGitHub: {
+		read: []rowField{readMergeable, readMergeBlocked},
+	},
 	forgeapi.FamilyGitLab: {
 		read:   []rowField{readChecks, readMergeable, readMergeBlocked},
 		absent: []string{"check_counts"},
@@ -115,9 +124,11 @@ func (f *rowFill) source() (string, bool) {
 }
 
 // watched are the rows among them the notice compares. It is the one per-row reader: the view's
-// fill and the notice both read through it, under one bound a cycle.
-func (p *PRStatusPoller) readRows(ctx context.Context, r *ConnectionRead, rows, watched []PR) {
-	if _, ok := familyFills[r.Family]; ok && r.ReadPR != nil && len(rows) > 0 {
+// fill and the notice both read through it, under one bound a cycle. Unviewed, it reads only a
+// family whose fill the notice reads.
+func (p *PRStatusPoller) readRows(ctx context.Context, r *ConnectionRead, rows, watched []PR, viewing bool) {
+	ff, ok := familyFills[r.Family]
+	if ok && (viewing || ff.feedsNotice()) && r.ReadPR != nil && len(rows) > 0 {
 		p.readDue(ctx, r, rows, watched)
 	}
 }

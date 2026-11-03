@@ -416,7 +416,7 @@ func (p *PRStatusPoller) fold(ctx context.Context, r *ConnectionRead, present, v
 	}
 	toRead := slices.Concat(watched, unsorted)
 	if !present {
-		p.readRows(ctx, r, toRead, watched)
+		p.readRows(ctx, r, toRead, watched, false)
 		p.notify(ctx, r, watched)
 		return
 	}
@@ -431,7 +431,7 @@ func (p *PRStatusPoller) fold(ctx context.Context, r *ConnectionRead, present, v
 	if viewing {
 		toRead = distinctRows(&e)
 	}
-	p.readRows(ctx, r, toRead, watched)
+	p.readRows(ctx, r, toRead, watched, viewing)
 	p.notify(ctx, r, watched)
 	p.layFills(r, &e)
 	p.publish(ctx, &e)
