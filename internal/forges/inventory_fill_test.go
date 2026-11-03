@@ -1,9 +1,9 @@
 package forges
 
 // The view-gated fill: while a client shows the pull-request view, a present
-// cycle reads at most ten rows of a connection one by one,
-// pending first, then never filled, then moved, and every such row says per field
-// why it holds the value it does.
+// cycle reads at most ten rows of a connection one by one, pending first, then
+// never filled, then moved, then settled rows longest unread first, and every
+// such row says per field why it holds the value it does.
 
 import (
 	"context"
@@ -226,18 +226,38 @@ func TestFill_BoundIsTenPerConnectionPerCycle(t *testing.T) {
 		t.Errorf("unfilled counts per connection = %v, want %v and none for a connection the bound covers", got, want)
 	}
 
+	// The second cycle reads the rows the first left, then settled rows up to
+	// the bound; the third starts with the settled rows the second left.
 	p.sweep(t.Context())
-	if len(gl.asked) != 13 || len(gt.asked) != 12 || len(cb.asked) != 10 {
-		t.Errorf("after a second viewed cycle %d GitLab, %d Gitea and %d Codeberg reads, want 13, 12 and 10: "+
-			"the rest, and no settled row again", len(gl.asked), len(gt.asked), len(cb.asked))
+	if len(gl.asked) < 10 || len(gt.asked) < 10 || len(cb.asked) < 10 {
+		t.Fatalf("Setup: the first viewed cycle read %d GitLab, %d Gitea and %d Codeberg rows, want ten each",
+			len(gl.asked), len(gt.asked), len(cb.asked))
 	}
-	for _, asked := range [][]string{gl.asked, gt.asked, cb.asked} {
-		if distinct := slices.Compact(slices.Sorted(slices.Values(asked))); len(distinct) != len(asked) {
-			t.Errorf("reads %q repeat a row", asked)
+	second := map[string][]string{
+		"GitLab":   gl.asked[10:],
+		"Gitea":    gt.asked[10:],
+		"Codeberg": cb.asked[10:],
+	}
+	wantSecond := map[string][]string{
+		"GitLab":   slices.Concat(newest("group/app", 3)[:3], newest("group/app", 13)[:7]),
+		"Gitea":    slices.Concat(newest("bob/app", 2)[:2], newest("bob/app", 12)[:8]),
+		"Codeberg": newest("carol/site", 10),
+	}
+	for name, want := range wantSecond {
+		if !slices.Equal(second[name], want) {
+			t.Errorf("second viewed cycle read %s rows %q, want the unfilled rest, then settled rows newest first %q",
+				name, second[name], want)
 		}
 	}
+	p.sweep(t.Context())
+	if len(gl.asked) != 30 {
+		t.Fatalf("three viewed cycles read %d GitLab rows, want 30: the bound each cycle", len(gl.asked))
+	}
+	if got, want := gl.asked[20:23], newest("group/app", 6)[:3]; !slices.Equal(got, want) {
+		t.Errorf("third viewed cycle began with GitLab rows %q, want %q, the settled rows unread since the first cycle", got, want)
+	}
 	if n := logs.CountExact(msg); n != 2 {
-		t.Errorf("%d unfilled lines after a cycle that left none, want the first cycle's 2", n)
+		t.Errorf("%d unfilled lines after cycles that left only settled rows, want the first cycle's 2", n)
 	}
 }
 
@@ -268,19 +288,22 @@ func TestFill_OrderIsPendingThenUnfilledThenMoved(t *testing.T) {
 	core.asked = nil
 	p.sweep(t.Context())
 
-	if want := []string{readKey(sel, 1), readKey(sel, 5), readKey(sel, 4), readKey(sel, 2)}; !slices.Equal(core.asked, want) {
+	want := []string{readKey(sel, 1), readKey(sel, 5), readKey(sel, 4), readKey(sel, 2), readKey(sel, 3)}
+	if !slices.Equal(core.asked, want) {
 		t.Errorf("second cycle reads = %q, want pending #1, then unfilled #5 and #4 newest first, then moved #2, "+
-			"and not settled #3: %q", core.asked, want)
+			"then settled #3: %q", core.asked, want)
 	}
 }
 
 // A re-run restarts the checks without moving updated_at, so the cycle after a
-// refill reads the row again rather than laying its settled fill.
-func TestFill_ARefilledRowIsReadAgain(t *testing.T) {
+// refill reads the row with the unfilled ones, before the settled rows.
+func TestFill_ARefilledRowIsReadFirst(t *testing.T) {
+	const sel = "group/app"
 	core := newFillCore()
-	pr := listed(forgeapi.FamilyGitLab, "group/app", 1, 0)
-	core.pages[""] = page(pr)
-	core.reads[readKey("group/app", 1)] = gitlabRead(pr, forgeapi.CheckFailing)
+	older, newer := listed(forgeapi.FamilyGitLab, sel, 1, 0), listed(forgeapi.FamilyGitLab, sel, 2, 1)
+	core.pages[""] = page(newer, older)
+	core.reads[readKey(sel, 1)] = gitlabRead(older, forgeapi.CheckFailing)
+	core.reads[readKey(sel, 2)] = gitlabRead(newer, forgeapi.CheckPassing)
 	rec := gitlabRecord()
 	p, _, _ := fillPoller(t, map[string]forgeapi.Core{rec.ID: core}, nil, rec)
 	p.viewers.watch(viewerTag, "", true)
@@ -288,12 +311,13 @@ func TestFill_ARefilledRowIsReadAgain(t *testing.T) {
 	e := entryFor(t, p, rec.ID)
 	first := rowIn(t, &e, 1)
 
-	core.reads[readKey("group/app", 1)] = gitlabRead(pr, forgeapi.CheckPending)
+	core.reads[readKey(sel, 1)] = gitlabRead(older, forgeapi.CheckPending)
+	core.asked = nil
 	p.refill(rec.ID, first.RepoID, first.Number)
 	p.sweep(t.Context())
 
-	if len(core.asked) != 2 {
-		t.Errorf("reads across a refill = %q, want the row read again", core.asked)
+	if want := []string{readKey(sel, 1), readKey(sel, 2)}; !slices.Equal(core.asked, want) {
+		t.Errorf("reads after a refill = %q, want the refilled #1 before the newer settled #2: %q", core.asked, want)
 	}
 	e = entryFor(t, p, rec.ID)
 	if row := rowIn(t, &e, 1); row.Action.Checks != "pending" {
@@ -301,56 +325,174 @@ func TestFill_ARefilledRowIsReadAgain(t *testing.T) {
 	}
 }
 
-func TestFill_SettledRowIsNotReread(t *testing.T) {
-	core := newFillCore()
-	pr := listed(forgeapi.FamilyGitLab, "group/app", 1, 0)
-	core.pages[""] = page(pr)
-	core.reads[readKey("group/app", 1)] = gitlabRead(pr, forgeapi.CheckPassing)
-	rec := gitlabRecord()
-	p, _, _ := fillPoller(t, map[string]forgeapi.Core{rec.ID: core}, nil, rec)
-	p.viewers.watch(viewerTag, "", true)
-	before := time.Now().UnixMilli()
-	p.sweep(t.Context())
-	after := time.Now().UnixMilli()
-	e := entryFor(t, p, rec.ID)
-	first := rowIn(t, &e, 1)
-	asOf := asOfOf(&first)
-	if asOf < before || asOf > after {
-		t.Fatalf("Setup: the fill's as_of %d, want the read's time, within the cycle's [%d, %d]", asOf, before, after)
+// A moved base branch changes mergeability without moving updated_at, so a
+// viewed cycle reads a settled row again. An unviewed cycle does not, and lays
+// the last read.
+func TestFill_AViewedSettledRowIsReadAgain(t *testing.T) {
+	cases := []struct {
+		read   func(forgeapi.PullRequest) forgeapi.PullRequest
+		rec    connectionSpec
+		name   string
+		sel    string
+		family forgeapi.Family
+	}{
+		{name: "GitHub", family: forgeapi.FamilyGitHub, rec: githubRecord(), sel: "bob/app", read: githubRead},
+		{
+			name: "GitLab", family: forgeapi.FamilyGitLab, rec: gitlabRecord(), sel: "group/app",
+			read: func(pr forgeapi.PullRequest) forgeapi.PullRequest { return gitlabRead(pr, forgeapi.CheckPassing) },
+		},
+		{
+			name: "Gitea", family: forgeapi.FamilyGitea, rec: localGiteaRecord(), sel: "bob/app",
+			read: func(pr forgeapi.PullRequest) forgeapi.PullRequest { return giteaRead(pr, forgeapi.CheckPassing, "abc") },
+		},
 	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			core := newFillCore()
+			pr := listed(c.family, c.sel, 1, 0)
+			key := readKey(c.sel, 1)
+			core.pages[""] = page(pr)
+			core.reads[key] = c.read(pr)
+			p, _, _ := fillPoller(t, map[string]forgeapi.Core{c.rec.ID: core}, nil, c.rec)
+			p.viewers.watch(viewerTag, "", true)
+			p.sweep(t.Context())
 
-	p.sweep(t.Context())
+			conflicted := c.read(pr)
+			conflicted.Action.Mergeable = forgeapi.SupportNo
+			core.reads[key] = conflicted
+			before := time.Now().UnixMilli()
+			p.sweep(t.Context())
 
-	if len(core.asked) != 1 {
-		t.Errorf("reads after two cycles over a settled, unchanged row = %q, want one", core.asked)
-	}
-	e = entryFor(t, p, rec.ID)
-	row := rowIn(t, &e, 1)
-	if got, want := fillsOf(&row), gitlabFills("filled", asOf); !maps.Equal(got, want) {
-		t.Errorf("settled row fill on the next cycle = %+v, want the first read's %+v", got, want)
-	}
-	if row.Action.Checks != "passing" || row.Action.Mergeable != "yes" || row.Action.MergeBlocked != "none" {
-		t.Errorf("settled row checks %q, mergeable %q, blocked %q; want the read's passing, yes, none",
-			row.Action.Checks, row.Action.Mergeable, row.Action.MergeBlocked)
+			if want := []string{key, key}; !slices.Equal(core.asked, want) {
+				t.Errorf("reads over two viewed cycles of an unchanged row = %q, want %q", core.asked, want)
+			}
+			e := entryFor(t, p, c.rec.ID)
+			row := rowIn(t, &e, 1)
+			asOf := fillsOf(&row)["mergeable"].AsOf
+			if row.Action.Mergeable != "no" || asOf < before {
+				t.Errorf("after the second viewed cycle: mergeable %q, as_of %d; want the new read's no, at or after %d",
+					row.Action.Mergeable, asOf, before)
+			}
+
+			p.viewers.watch(viewerTag, "", false)
+			p.sweep(t.Context())
+
+			if len(core.asked) != 2 {
+				t.Errorf("reads after an unviewed cycle = %q, want the two viewed reads only", core.asked)
+			}
+			e = entryFor(t, p, c.rec.ID)
+			row = rowIn(t, &e, 1)
+			if got := fillsOf(&row)["mergeable"]; got.Reason != "filled" || got.AsOf != asOf || row.Action.Mergeable != "no" {
+				t.Errorf("unviewed cycle: mergeable %q, fill %+v; want the last read's no, filled as of %d",
+					row.Action.Mergeable, got, asOf)
+			}
+		})
 	}
 }
 
-func TestFill_AReadNewerThanItsListIsNotReadAgain(t *testing.T) {
+// GitHub and GitLab answer merge state unknown while they compute it, so a
+// viewed cycle reads such a row before the settled rows. A field the family's
+// read never supplies is unknown on every read and does not count, and an
+// unviewed cycle, whose notice reads no merge state, does not rank by it.
+func TestFill_AComputingMergeStateIsReadFirstWhileViewed(t *testing.T) {
+	gitlabClone := RepoOrigin{Dir: "app", WebBase: "https://gitlab.com", Slug: "group/app"}
+	cases := []struct {
+		read        func(forgeapi.PullRequest) forgeapi.PullRequest
+		computing   func(*forgeapi.ActionState)
+		rec         connectionSpec
+		name        string
+		sel         string
+		wantBlocked string
+		origins     []RepoOrigin
+		family      forgeapi.Family
+		viewed      bool
+	}{
+		{
+			name: "GitHubMergeable", family: forgeapi.FamilyGitHub, rec: githubRecord(), sel: "bob/app", viewed: true,
+			read:        githubRead,
+			computing:   func(a *forgeapi.ActionState) { a.Mergeable = forgeapi.SupportUnknown },
+			wantBlocked: "none",
+		},
+		{
+			name: "GitLabBlockReason", family: forgeapi.FamilyGitLab, rec: gitlabRecord(), sel: "group/app", viewed: true,
+			read:        func(pr forgeapi.PullRequest) forgeapi.PullRequest { return gitlabRead(pr, forgeapi.CheckPassing) },
+			computing:   func(a *forgeapi.ActionState) { a.MergeBlocked = forgeapi.MergeBlockUnknown },
+			wantBlocked: "none",
+		},
+		{
+			name: "GiteaMergeable", family: forgeapi.FamilyGitea, rec: localGiteaRecord(), sel: "bob/app", viewed: true,
+			read:        func(pr forgeapi.PullRequest) forgeapi.PullRequest { return giteaRead(pr, forgeapi.CheckPassing, "abc") },
+			computing:   func(a *forgeapi.ActionState) { a.Mergeable = forgeapi.SupportUnknown },
+			wantBlocked: "unknown",
+		},
+		{
+			name: "GitLabUnviewed", family: forgeapi.FamilyGitLab, rec: gitlabRecord(), sel: "group/app",
+			origins:     []RepoOrigin{gitlabClone},
+			read:        func(pr forgeapi.PullRequest) forgeapi.PullRequest { return gitlabRead(pr, forgeapi.CheckPassing) },
+			computing:   func(a *forgeapi.ActionState) { a.MergeBlocked = forgeapi.MergeBlockUnknown },
+			wantBlocked: "none",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			core := newFillCore()
+			older, newer := listed(c.family, c.sel, 1, 0), listed(c.family, c.sel, 2, 1)
+			olderKey, newerKey := readKey(c.sel, 1), readKey(c.sel, 2)
+			core.pages[""] = page(newer, older)
+			computing := c.read(older)
+			c.computing(&computing.Action)
+			core.reads[olderKey], core.reads[newerKey] = computing, c.read(newer)
+			p, _, _ := fillPoller(t, map[string]forgeapi.Core{c.rec.ID: core}, c.origins, c.rec)
+			if c.viewed {
+				p.viewers.watch(viewerTag, "", true)
+			}
+			p.sweep(t.Context())
+			if want := []string{newerKey, olderKey}; !slices.Equal(core.asked, want) {
+				t.Fatalf("Setup: the first cycle read %q, want both rows newest first %q", core.asked, want)
+			}
+
+			core.reads[olderKey] = c.read(older)
+			core.asked = nil
+			p.sweep(t.Context())
+
+			want := []string{newerKey, olderKey}
+			if c.viewed {
+				want = []string{olderKey, newerKey}
+			}
+			if !slices.Equal(core.asked, want) {
+				t.Errorf("second cycle reads = %q, want %q", core.asked, want)
+			}
+			e := entryFor(t, p, c.rec.ID)
+			if row := rowIn(t, &e, 1); row.Action.Mergeable != "yes" || row.Action.MergeBlocked != c.wantBlocked {
+				t.Errorf("row #1 after its second read: mergeable %q, blocked %q; want yes and %q",
+					row.Action.Mergeable, row.Action.MergeBlocked, c.wantBlocked)
+			}
+		})
+	}
+}
+
+// A read newer than its list already saw the update the next list shows, so
+// the next cycle ranks that row settled, after a row that did move.
+func TestFill_AReadNewerThanItsListIsNotMoved(t *testing.T) {
 	const sel = "group/app"
 	core := newFillCore()
-	stale, current := listed(forgeapi.FamilyGitLab, sel, 1, 0), listed(forgeapi.FamilyGitLab, sel, 1, 2)
-	core.pages[""] = page(stale)
+	stale, current := listed(forgeapi.FamilyGitLab, sel, 1, 0), listed(forgeapi.FamilyGitLab, sel, 1, 5)
+	before, moved := listed(forgeapi.FamilyGitLab, sel, 2, 1), listed(forgeapi.FamilyGitLab, sel, 2, 3)
+	core.pages[""] = page(before, stale)
 	core.reads[readKey(sel, 1)] = gitlabRead(current, forgeapi.CheckPassing)
+	core.reads[readKey(sel, 2)] = gitlabRead(before, forgeapi.CheckPassing)
 	rec := gitlabRecord()
 	p, _, _ := fillPoller(t, map[string]forgeapi.Core{rec.ID: core}, nil, rec)
 	p.viewers.watch(viewerTag, "", true)
 	p.sweep(t.Context())
 
-	core.pages[""] = page(current)
+	core.pages[""] = page(current, moved)
+	core.reads[readKey(sel, 2)] = gitlabRead(moved, forgeapi.CheckPassing)
+	core.asked = nil
 	p.sweep(t.Context())
 
-	if len(core.asked) != 1 {
-		t.Errorf("reads = %q, want one: the first read already saw the update the next list shows", core.asked)
+	if want := []string{readKey(sel, 2), readKey(sel, 1)}; !slices.Equal(core.asked, want) {
+		t.Errorf("reads = %q, want moved #2 before #1, whose first read already saw its update: %q", core.asked, want)
 	}
 }
 
@@ -580,7 +722,9 @@ func TestFill_ARowInTwoScopesIsReadOnce(t *testing.T) {
 	}
 }
 
-func TestFill_AForgottenFillIsReadAgain(t *testing.T) {
+// A fill forgotten with its row, its gate or its connection is not laid again:
+// the row says its list holds the fields until a read answers.
+func TestFill_AForgottenFillIsNotLaid(t *testing.T) {
 	setup := func(t *testing.T) (*PRStatusPoller, *fakeGate, *Manager, *fillCore, connectionSpec) {
 		t.Helper()
 		core := newFillCore()
@@ -596,35 +740,36 @@ func TestFill_AForgottenFillIsReadAgain(t *testing.T) {
 		}
 		return p, g, m, core, rec
 	}
+	notLaid := func(t *testing.T, p *PRStatusPoller, rec connectionSpec) {
+		t.Helper()
+		p.viewers.watch(viewerTag, "", false)
+		p.sweep(t.Context())
+		e := entryFor(t, p, rec.ID)
+		row := rowIn(t, &e, 1)
+		if got, want := fillsOf(&row), gitlabFills("not_on_list", 0); !maps.Equal(got, want) {
+			t.Errorf("unviewed cycle after the fill was forgotten: fill = %+v, want %+v", got, want)
+		}
+	}
 	t.Run("RowLeft", func(t *testing.T) {
-		p, _, _, core, _ := setup(t)
+		p, _, _, core, rec := setup(t)
 		listedRows := core.pages[""]
 		core.pages[""] = page()
 		p.sweep(t.Context())
 		core.pages[""] = listedRows
-		p.sweep(t.Context())
-		if len(core.asked) != 2 {
-			t.Errorf("reads of a settled row that left a walk and came back = %q, want it read again", core.asked)
-		}
+		notLaid(t, p, rec)
 	})
 	t.Run("GateClosed", func(t *testing.T) {
-		p, g, _, core, _ := setup(t)
+		p, g, _, _, rec := setup(t)
 		g.present = false
 		p.sweep(t.Context())
 		g.present = true
-		p.sweep(t.Context())
-		if len(core.asked) != 2 {
-			t.Errorf("reads of a settled row across a closed gate = %q, want it read again", core.asked)
-		}
+		notLaid(t, p, rec)
 	})
 	t.Run("Disconnected", func(t *testing.T) {
-		p, _, m, core, rec := setup(t)
+		p, _, m, _, rec := setup(t)
 		dropCredential(t, m, rec.ID)
 		p.sweep(t.Context())
 		addConnections(t, m, "bob", rec)
-		p.sweep(t.Context())
-		if len(core.asked) != 2 {
-			t.Errorf("reads of a settled row across a disconnect = %q, want it read again", core.asked)
-		}
+		notLaid(t, p, rec)
 	})
 }
