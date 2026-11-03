@@ -1857,6 +1857,7 @@ const arbModel = fc.letrec<{
       attachments: fc.array(tie("Attachment"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       resends: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       held: fc.boolean(),
+      next: fc.boolean(),
     },
     { requiredKeys: ["id", "text"] },
   ),

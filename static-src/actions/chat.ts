@@ -533,6 +533,25 @@ export const unqueuePrompt = transportAction<{ chatID: string; messageID: string
   error: errorAbout(onChat, "Could not remove the follow-up"),
 });
 
+/** Sends one queued follow-up next: the server stops a running turn, whose close sends the row,
+ *  or sends it at once. No scope: like cancel, it must not queue behind an in-flight send.
+ *  `idempotencyKey`: a retry must not stop the turn the first attempt opened for this row.
+ *  `error: false`: the dock reports a refusal in the server's words. */
+export const sendQueuedNow = transportAction<{ chatID: string; messageID: string }>({
+  name: "chat.send_queued_now",
+  networkMode: "always",
+  idempotencyKey: true,
+  dedupe: (args) => joinKey("chat.send_queued_now", args.chatID, args.messageID),
+  command: ({ chatID, messageID }) => ({
+    type: "send_queued_now",
+    chat_id: chatID,
+    payload: { message_id: messageID },
+  }),
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: false,
+});
+
 /** Drops every steer KAS still holds (`_session/steer/clear`) without cancelling the turn.
  *  Optimistic. Only CONFIRMED entries go: a `pending` one has no server id to address. */
 export const clearSteers = transportAction<

@@ -2550,7 +2550,8 @@ export interface ProbeResult {
  * QueuedPrompt is one follow-up waiting for a turn to end. A row with Resends is CARRIED,
  * written at shutdown from unread steers. Held marks a row a previous process queued; it is
  * never sent automatically. A list holds at most one carried row, and it is held. Label is the
- * row's PromptCommand.DisplayText.
+ * row's PromptCommand.DisplayText. Next marks the row send_queued_now chose: the next drain sends
+ * it first, even after a stop.
  */
 export interface QueuedPrompt {
   /** Caller is set on a row an API caller queued. */
@@ -2561,6 +2562,7 @@ export interface QueuedPrompt {
   attachments?: Attachment[];
   resends?: string[];
   held?: boolean;
+  next?: boolean;
 }
 
 /**
