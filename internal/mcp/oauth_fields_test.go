@@ -10,7 +10,7 @@ import (
 
 func remoteWith(metadataURL, redirect string) *Server {
 	return &Server{
-		Transport: TransportHTTP, Name: "s", URL: "https://mcp.example/mcp",
+		Transport: transportHTTP, Name: "s", URL: "https://mcp.example/mcp",
 		OAuthClientMetadataURL: metadataURL, OAuthRedirectURI: redirect,
 	}
 }
@@ -183,7 +183,7 @@ func TestValidate_OAuthScopes(t *testing.T) {
 func TestValidate_OAuthScopesRefusedOffRemote(t *testing.T) {
 	for name, sv := range map[string]*Server{
 		"stdio":    {Transport: TransportStdio, Name: "s", Command: "npx", OAuthScopes: []string{"read"}},
-		"registry": {Transport: TransportRegistry, Name: "s", OAuthScopes: []string{"read"}},
+		"registry": {Transport: transportRegistry, Name: "s", OAuthScopes: []string{"read"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fields := fieldErrors(validate(sv))

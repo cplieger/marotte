@@ -8,7 +8,7 @@ import {
   BUS_EDITOR_VIEW_CHANGED,
   BUS_RECONCILE,
   decodeEnvelope,
-  registerSSEDecoder,
+  lookupSSEDecoder,
 } from "./bus.js";
 import type { ServerEvent } from "./types.js";
 
@@ -320,33 +320,33 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
 describe("decodeEnvelope", () => {
   it("decodes the type, the chat id and a subject stamp", () => {
     const evt = decodeEnvelope({
-      type: "entry_appended",
+      type: "working_label",
       chat_id: "c1",
-      payload: { entry: { id: "e1" } },
+      payload: { label: "x" },
       subject: { kind: "chat", ref: "c1", version: "3" },
     });
-    expect(evt.type).toBe("entry_appended");
+    expect(evt.type).toBe("working_label");
     expect(evt.chat_id).toBe("c1");
     expect(evt.subject).toEqual({ kind: "chat", ref: "c1", version: "3" });
   });
 
-  it("runs the registered payload decoder and lets its throw out", () => {
-    registerSSEDecoder("working_label", (v) => {
-      const o = v as { label?: unknown };
-      if (typeof o.label !== "string") {
-        throw new TypeError("label must be a string");
-      }
-      return { label: o.label };
+  it("runs the event's generated payload decoder and lets its throw out", () => {
+    expect(decodeEnvelope({ type: "chat_deleted", payload: { id: "c1" } }).payload).toEqual({
+      id: "c1",
     });
-    expect(decodeEnvelope({ type: "working_label", payload: { label: "x" } }).payload).toEqual({
-      label: "x",
-    });
-    expect(() => decodeEnvelope({ type: "working_label", payload: { label: 1 } })).toThrow(
-      /label must be a string/,
+    expect(() => decodeEnvelope({ type: "chat_deleted", payload: { id: 1 } })).toThrow(
+      /expected string, got number/,
     );
   });
 
-  it("passes a payload with no registered decoder through untyped", () => {
+  it("finds no decoder under an inherited property name", () => {
+    expect(lookupSSEDecoder("constructor")).toBeUndefined();
+    expect(lookupSSEDecoder("toString")).toBeUndefined();
+    const evt = decodeEnvelope({ type: "toString", payload: { anything: true } });
+    expect(evt.payload).toEqual({ anything: true });
+  });
+
+  it("passes a payload with no generated decoder through untyped", () => {
     const evt = decodeEnvelope({ type: "mcp_prewarm", payload: { anything: true } });
     expect(evt.payload).toEqual({ anything: true });
   });

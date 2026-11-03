@@ -29,22 +29,22 @@ import (
 // ACP `type`.
 type Transport string
 
-// TransportStdio, TransportHTTP, TransportSSE and TransportRegistry are the four valid Transport values.
+// TransportStdio, transportHTTP, transportSSE and transportRegistry are the four valid Transport values.
 const (
 	TransportStdio Transport = "stdio"
-	TransportHTTP  Transport = "http"
-	TransportSSE   Transport = "sse"
-	// TransportRegistry enables a server from the organization's MCP registry by
+	transportHTTP  Transport = "http"
+	transportSSE   Transport = "sse"
+	// transportRegistry enables a server from the organization's MCP registry by
 	// name; KAS resolves its command or url from the catalog, so the entry carries
 	// neither, and env and headers are its only transport-specific overrides.
-	TransportRegistry Transport = "registry"
+	transportRegistry Transport = "registry"
 )
 
-// parseTransport validates a raw string as one of the four known transports. "sse" stays TransportSSE, not
+// parseTransport validates a raw string as one of the four known transports. "sse" stays transportSSE, not
 // folded into "http" (see the Transport doc).
 func parseTransport(s string) (Transport, error) {
 	switch Transport(s) {
-	case TransportStdio, TransportHTTP, TransportSSE, TransportRegistry:
+	case TransportStdio, transportHTTP, transportSSE, transportRegistry:
 		return Transport(s), nil
 	default:
 		return "", fmt.Errorf("unknown transport: %q", s)
@@ -54,7 +54,7 @@ func parseTransport(s string) (Transport, error) {
 // valid reports whether t is one of the known transport values.
 func (t Transport) valid() bool {
 	switch t {
-	case TransportStdio, TransportHTTP, TransportSSE, TransportRegistry:
+	case TransportStdio, transportHTTP, transportSSE, transportRegistry:
 		return true
 	default:
 		return false

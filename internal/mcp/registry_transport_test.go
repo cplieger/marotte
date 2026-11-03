@@ -10,7 +10,7 @@ import (
 // A registry entry names a catalog server, so KAS needs `{"type":"registry"}`
 // and nothing it would take for a command or url.
 func TestRenderKASServers_RegistryEntry(t *testing.T) {
-	out := renderKASServers([]*Server{{Name: "github", Transport: TransportRegistry, Enabled: true}}, kasRenderPolicy{})
+	out := renderKASServers([]*Server{{Name: "github", Transport: transportRegistry, Enabled: true}}, kasRenderPolicy{})
 	raw, err := json.Marshal(out["github"])
 	if err != nil {
 		t.Fatal(err)
@@ -18,7 +18,7 @@ func TestRenderKASServers_RegistryEntry(t *testing.T) {
 	if string(raw) != `{"type":"registry"}` {
 		t.Errorf("rendered registry entry = %s, want {\"type\":\"registry\"}", raw)
 	}
-	off := renderKASServers([]*Server{{Name: "github", Transport: TransportRegistry}}, kasRenderPolicy{})
+	off := renderKASServers([]*Server{{Name: "github", Transport: transportRegistry}}, kasRenderPolicy{})
 	if raw, _ := json.Marshal(off["github"]); string(raw) != `{"type":"registry","disabled":true}` {
 		t.Errorf("rendered disabled registry entry = %s", raw)
 	}
@@ -33,11 +33,11 @@ func fieldSet(err error) map[string]string {
 }
 
 func TestValidate_RegistryTakesEnvAndHeaders(t *testing.T) {
-	if err := validate(&Server{Name: "github", Transport: TransportRegistry}); err != nil {
+	if err := validate(&Server{Name: "github", Transport: transportRegistry}); err != nil {
 		t.Errorf("validate(bare registry entry) = %v, want nil", err)
 	}
 	sv := &Server{
-		Name: "github", Transport: TransportRegistry,
+		Name: "github", Transport: transportRegistry,
 		Env:     []keyPair{{Name: "GITHUB_TOKEN", Value: "test-key"}},
 		Headers: []keyPair{{Name: "Authorization", Value: "Bearer test-key"}},
 	}
@@ -49,7 +49,7 @@ func TestValidate_RegistryTakesEnvAndHeaders(t *testing.T) {
 // The overrides go through the same pair rules as stdio env and remote headers.
 func TestValidate_RegistryHoldsOverridesToThePairRules(t *testing.T) {
 	err := validate(&Server{
-		Name: "github", Transport: TransportRegistry,
+		Name: "github", Transport: transportRegistry,
 		Env:     []keyPair{{Name: "1BAD", Value: "x"}},
 		Headers: []keyPair{{Name: "X-Key", Value: "a"}, {Name: "x-key", Value: "b"}},
 	})
@@ -64,7 +64,7 @@ func TestValidate_RegistryHoldsOverridesToThePairRules(t *testing.T) {
 
 func TestValidate_RegistryStillRefusesCommandURLAndOAuth(t *testing.T) {
 	err := validate(&Server{
-		Name: "github", Transport: TransportRegistry,
+		Name: "github", Transport: transportRegistry,
 		Command: "npx", Args: []string{"-y", "pkg"}, URL: "https://x.example/mcp",
 		OAuthClientID: "client", OAuthClientMetadataURL: "https://x.example/c.json",
 		OAuthRedirectURI: "localhost:7778", OAuthScopes: []string{"read"},
@@ -88,7 +88,7 @@ func TestValidate_RegistryStillRefusesCommandURLAndOAuth(t *testing.T) {
 func TestWriteKASConfig_RegistryCarriesEnvAndHeaders(t *testing.T) {
 	s, kas := newIsolatedStore(t)
 	if _, err := s.Create(t.Context(), &Server{
-		Transport: TransportRegistry, Name: "catalog", Enabled: true,
+		Transport: transportRegistry, Name: "catalog", Enabled: true,
 		Env:     []keyPair{{Name: "API_KEY", Value: "env-test-value"}},
 		Headers: []keyPair{{Name: "X-Api-Key", Value: "header-test-value"}},
 	}); err != nil {
@@ -111,7 +111,7 @@ func TestWriteKASConfig_RegistryCarriesEnvAndHeaders(t *testing.T) {
 func TestUpdate_RegistryKeepsAMaskedSecret(t *testing.T) {
 	s, kas := newIsolatedStore(t)
 	orig, err := s.Create(t.Context(), &Server{
-		Transport: TransportRegistry, Name: "catalog", Enabled: true,
+		Transport: transportRegistry, Name: "catalog", Enabled: true,
 		Env:     []keyPair{{Name: "API_KEY", Value: "env-test-value"}},
 		Headers: []keyPair{{Name: "X-Api-Key", Value: "header-test-value"}},
 	})
@@ -122,7 +122,7 @@ func TestUpdate_RegistryKeepsAMaskedSecret(t *testing.T) {
 		t.Fatalf("Create returned env %v headers %v, want both masked", orig.Env, orig.Headers)
 	}
 	out, err := s.update(t.Context(), orig.ID, &Server{
-		Transport: TransportRegistry, Name: "catalog", Enabled: true,
+		Transport: transportRegistry, Name: "catalog", Enabled: true,
 		Env:     []keyPair{{Name: "API_KEY", Value: secretMask}, {Name: "REGION", Value: "eu"}},
 		Headers: []keyPair{{Name: "X-Api-Key", Value: secretMask}},
 	})

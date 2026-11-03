@@ -275,7 +275,7 @@ func (v *contentVisitor) matchLines(abs, data string) (hits []FileMatch, matched
 		if len(hits) < maxFileMatches {
 			excerpt, ranges := excerptLine(v.needle, seg, hit.Rune)
 			hits = append(hits, FileMatch{
-				Path: abs, Excerpt: excerpt, Kind: MatchKindContent, Line: line, Ranges: ranges,
+				Path: abs, Excerpt: excerpt, Kind: matchKindContent, Line: line, Ranges: ranges,
 			})
 		}
 	}

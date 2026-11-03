@@ -188,24 +188,24 @@ func (m *Manager) usable(c *connection) bool {
 func viewOf(c *connection, health string) ConfiguredForge {
 	v := ConfiguredForge{
 		ID: c.spec.ID, Kind: c.spec.Kind, Host: c.spec.Host, Username: c.login, Email: c.email,
-		Account: c.spec.SignIn, OwnerScopes: c.spec.OwnerScopes, Status: ForgeConnected,
+		Account: c.spec.SignIn, OwnerScopes: c.spec.OwnerScopes, Status: forgeConnected,
 	}
 	if !c.status.checkedAt.IsZero() {
 		v.CheckedAt = c.status.checkedAt.UnixMilli()
 	}
 	if health != "" {
-		v.Status, v.Error = ForgeUnusable, &ForgeError{Message: health, Code: codeConnectionUnusable}
+		v.Status, v.Error = forgeUnusable, &ForgeError{Message: health, Code: codeConnectionUnusable}
 		return v
 	}
 	switch c.status.kind {
 	case statusOK:
 		return v
 	case statusRetrying:
-		v.Status = ForgeRetrying
+		v.Status = forgeRetrying
 	case statusRefused:
-		v.Status = ForgeRefused
+		v.Status = forgeRefused
 	case statusReconnect:
-		v.Status = ForgeReconnect
+		v.Status = forgeReconnect
 	}
 	f := c.status.fault
 	v.Error = &ForgeError{Message: logsafe.Field(f.message), Code: f.code, Kind: f.kind}

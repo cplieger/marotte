@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/wiregen/v3"
+	"github.com/cplieger/wiregen/v4"
 )
 
 // An SSE payload type missing from the registry gets no decoder, so the client hand-declares
@@ -125,21 +125,26 @@ func TestRegistry_EveryDeclaredPayloadIsRegisteredOrExempt(t *testing.T) {
 		case slices.Contains(unboundDataPayloads, name):
 		default:
 			t.Errorf("marotte.%s is declared but has no wire registration.\n"+
-				"Add wiregen.TypeRef[marotte.%s]() to wireTypes plus its {EventType, TypeName} entry in sseEvents,\n"+
+				"Add wiregen.TypeRef[marotte.%s]() to wireTypes plus its {Name, Data} entry in wireEvents,\n"+
 				"or — if it is an empty invalidation signal with no field to decode — add it to emptySignalPayloads with that reason.",
 				name, name)
 		}
 	}
 }
 
-// TestRegistry_EveryRegisteredPayloadHasAnSSEBinding walks the other direction: a payload
-// in wireTypes with no sseEvents entry is a type generated for no decoder.
-func TestRegistry_EveryRegisteredPayloadHasAnSSEBinding(t *testing.T) {
-	r := Registry()
-	bound := make([]string, 0, len(r.SSEEvents))
-	for _, e := range r.SSEEvents {
-		bound = append(bound, e.TypeName)
+func boundTypeNames() []string {
+	events := Registry().Events
+	out := make([]string, 0, len(events))
+	for _, e := range events {
+		out = append(out, e.Data.Name)
 	}
+	return out
+}
+
+// TestRegistry_EveryRegisteredPayloadHasAnSSEBinding walks the other direction: a payload
+// in wireTypes with no wireEvents entry has no events.gen.ts binding.
+func TestRegistry_EveryRegisteredPayloadHasAnSSEBinding(t *testing.T) {
+	bound := boundTypeNames()
 
 	for _, name := range registeredMarottePayloads(t) {
 		if slices.Contains(pendingClientBindings, name) {
@@ -147,7 +152,7 @@ func TestRegistry_EveryRegisteredPayloadHasAnSSEBinding(t *testing.T) {
 		}
 		if !slices.Contains(bound, name) {
 			t.Errorf("marotte.%s is registered in wireTypes but bound to no SSE event.\n"+
-				"Add its {EventType: \"…\", TypeName: %q} entry to sseEvents, or drop the registration.",
+				"Add its {Name: \"…\", Data: wiregen.TypeRef[marotte.%s]()} entry to wireEvents, or drop the registration.",
 				name, name)
 		}
 	}
@@ -157,10 +162,7 @@ func TestRegistry_EveryRegisteredPayloadHasAnSSEBinding(t *testing.T) {
 // unregistered entry belongs in unboundDataPayloads, a bound one has spent its exemption.
 func TestPendingClientBindings_AreRegisteredAndUnbound(t *testing.T) {
 	registered := registeredMarottePayloads(t)
-	bound := make([]string, 0, len(Registry().SSEEvents))
-	for _, e := range Registry().SSEEvents {
-		bound = append(bound, e.TypeName)
-	}
+	bound := boundTypeNames()
 	for _, name := range pendingClientBindings {
 		if !slices.Contains(registered, name) {
 			t.Errorf("pendingClientBindings names marotte.%s, which is not registered in wireTypes.\n"+
@@ -170,35 +172,6 @@ func TestPendingClientBindings_AreRegisteredAndUnbound(t *testing.T) {
 		if slices.Contains(bound, name) {
 			t.Errorf("pendingClientBindings names marotte.%s, but it IS bound now; drop the entry (the exemption is spent)", name)
 		}
-	}
-}
-
-// TestRegistry_EverySSEBindingNamesARegisteredType guards the typo: TypeName is a string.
-func TestRegistry_EverySSEBindingNamesARegisteredType(t *testing.T) {
-	r := Registry()
-	names := make([]string, 0, len(r.Types))
-	for _, wt := range r.Types {
-		names = append(names, wt.Name)
-	}
-
-	for _, e := range r.SSEEvents {
-		if !slices.Contains(names, e.TypeName) {
-			t.Errorf("SSE event %q binds TypeName %q, which is not a registered type (typo, or the registration was removed)",
-				e.EventType, e.TypeName)
-		}
-	}
-}
-
-// TestRegistry_NoDuplicateSSEEventTypes pins one decoder per event; a duplicate is a
-// silent last-wins.
-func TestRegistry_NoDuplicateSSEEventTypes(t *testing.T) {
-	seen := map[string]string{}
-	for _, e := range Registry().SSEEvents {
-		if prev, dup := seen[e.EventType]; dup {
-			t.Errorf("SSE event %q is bound twice: %q then %q (the generated registry keeps one)",
-				e.EventType, prev, e.TypeName)
-		}
-		seen[e.EventType] = e.TypeName
 	}
 }
 
@@ -242,22 +215,5 @@ func TestPayloadExemptions_AreNotStale(t *testing.T) {
 					list.name, name)
 			}
 		}
-	}
-}
-
-// TestRegistry_DeclaresNoTypeOrDecoderMappings guards a symptomless defect: wiregen's
-// TypeMappings and DecoderMappings key on the alias-resolved type, and from Go 1.27
-// json.RawMessage is an ALIAS of jsontext.Value, so a "encoding/json.RawMessage" key
-// silently stops matching. marotte registers no mapping, a property of the registry value.
-// If a mapping is ever needed, register BOTH spellings.
-func TestRegistry_DeclaresNoTypeOrDecoderMappings(t *testing.T) {
-	r := Registry()
-	if len(r.TypeMappings) != 0 {
-		t.Errorf("Registry().TypeMappings has %d entries, want 0; a key naming a stdlib type "+
-			"must carry both the alias spelling and the resolved one: %v", len(r.TypeMappings), r.TypeMappings)
-	}
-	if len(r.DecoderMappings) != 0 {
-		t.Errorf("Registry().DecoderMappings has %d entries, want 0; same rule: %v",
-			len(r.DecoderMappings), r.DecoderMappings)
 	}
 }

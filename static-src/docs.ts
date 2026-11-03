@@ -6,7 +6,7 @@ import { decodeKiroDocsResponse, decodeSteeringIssuesResponse } from "./wire/dec
 import type { KiroDoc as WireKiroDoc, KiroDocsResponse, SteeringIssue } from "./wire/types.gen.js";
 import { defineAction, ActionError, retryNetwork, registerCleanup } from "./actions/index.js";
 import { setHookEnabled } from "./actions/hooks.js";
-import { asObject, decodeArray, optStr, reqBool, reqStr } from "./validators.js";
+import { asObject, decodeArray, optStr, reqBool, reqStr } from "./wire/validators.gen.js";
 import { onSSE } from "./bus.js";
 import { $, byId } from "./dom.js";
 import { swapViews } from "./view-swap.js";

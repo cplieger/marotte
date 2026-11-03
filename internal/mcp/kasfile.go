@@ -91,7 +91,7 @@ func renderKASServers(servers []*Server, policy kasRenderPolicy) map[string]kasS
 			entry.Command = s.Command
 			entry.Args = s.Args
 			entry.Env = pairsRecord(s.Env)
-		case TransportHTTP, TransportSSE:
+		case transportHTTP, transportSSE:
 			// One branch for both: KAS negotiates HTTP vs SSE itself.
 			entry.URL = s.URL
 			entry.Headers = pairsRecord(s.Headers)
@@ -104,8 +104,8 @@ func renderKASServers(servers []*Server, policy kasRenderPolicy) map[string]kasS
 				entry.OAuth = &oauth
 			}
 			entry.OAuthScopes = s.OAuthScopes
-		case TransportRegistry:
-			entry.Type = string(TransportRegistry)
+		case transportRegistry:
+			entry.Type = string(transportRegistry)
 			entry.Env = pairsRecord(s.Env)
 			entry.Headers = pairsRecord(s.Headers)
 		default:

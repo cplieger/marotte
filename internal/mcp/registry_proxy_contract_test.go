@@ -47,7 +47,7 @@ func TestRegistrySearchWireContract(t *testing.T) {
 		Search:  search,
 		Failure: classifyRegistryFailure(&upstreamStatusError{status: 429, retryAfter: 30}),
 	}
-	if fx.Failure.Reason != ReasonRateLimited || fx.Failure.RetryAfter != 30 {
+	if fx.Failure.Reason != reasonRateLimited || fx.Failure.RetryAfter != 30 {
 		t.Fatalf("failure = %+v, want rate_limited with retry_after 30", fx.Failure)
 	}
 

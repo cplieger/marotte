@@ -179,7 +179,7 @@ type RunStepTranscript struct {
 	// Subject is one run_turn stamp per open turn of the requested path, read under
 	// the run store's lock with the entries it certifies; empty on a settled path and
 	// on the replay source, which no subject versions.
-	Subject []*SubjectStamp `json:"subject"`
+	Subject []SubjectStamp `json:"subject"`
 }
 
 // RunAsksPayload is the payload for type="run_asks": every step of one run waiting on a person, as

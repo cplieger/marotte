@@ -337,8 +337,8 @@ func TestParseTransport(t *testing.T) {
 		want Transport
 	}{
 		{"stdio", TransportStdio},
-		{"http", TransportHTTP},
-		{"sse", TransportSSE},
+		{"http", transportHTTP},
+		{"sse", transportSSE},
 	}
 	for _, tc := range ok {
 		got, err := parseTransport(tc.in)
@@ -357,7 +357,7 @@ func TestParseTransport(t *testing.T) {
 }
 
 // TestCreate_SSERoundTripsFromDisk verifies an SSE server survives a save +
-// reload as TransportSSE (no migration to http) and still validates — the
+// reload as transportSSE (no migration to http) and still validates — the
 // backward-compat guarantee that adding sse doesn't rewrite stored entries.
 func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 	dir := t.TempDir()
@@ -366,7 +366,7 @@ func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	if _, err := s.Create(t.Context(), &Server{
-		Transport: TransportSSE, Name: "legacy", URL: "https://mcp.example/sse",
+		Transport: transportSSE, Name: "legacy", URL: "https://mcp.example/sse",
 		Enabled: true,
 	}); err != nil {
 		t.Fatalf("Create sse: %v", err)
@@ -380,9 +380,9 @@ func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("reloaded list len = %d, want 1", len(list))
 	}
-	if list[0].Transport != TransportSSE {
+	if list[0].Transport != transportSSE {
 		t.Errorf("reloaded transport = %q, want %q (sse must not migrate to http)",
-			list[0].Transport, TransportSSE)
+			list[0].Transport, transportSSE)
 	}
 }
 
@@ -393,7 +393,7 @@ func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 func TestSSE_SecretRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	orig, err := s.Create(t.Context(), &Server{
-		Transport: TransportSSE,
+		Transport: transportSSE,
 		Name:      "sse-secret",
 		URL:       "https://mcp.example/sse",
 		Headers:   []keyPair{{Name: "Authorization", Value: "Bearer real-token"}},
@@ -414,7 +414,7 @@ func TestSSE_SecretRoundTrip(t *testing.T) {
 
 	// Update resubmitting the mask preserves the stored secret.
 	if _, err := s.update(t.Context(), orig.ID, &Server{
-		Transport: TransportSSE,
+		Transport: transportSSE,
 		Name:      "sse-secret",
 		URL:       "https://mcp.example/sse",
 		Headers:   []keyPair{{Name: "Authorization", Value: secretMask}},
@@ -620,7 +620,7 @@ func TestUpdate_RejectsInvalidShape(t *testing.T) {
 	}
 	// Change to HTTP without URL — must fail validate.
 	if _, err := s.update(t.Context(), orig.ID, &Server{
-		Transport: TransportHTTP, Name: "ok", URL: "",
+		Transport: transportHTTP, Name: "ok", URL: "",
 	}); err == nil {
 		t.Errorf("Update(invalid) = nil, want validation error")
 	}
@@ -1005,7 +1005,7 @@ func TestLoad_CorruptFileRenameFailureDoesNotError(t *testing.T) {
 func TestUpdate_PreservesOAuthClientID(t *testing.T) {
 	s := newTestStore(t)
 	created, err := s.Create(t.Context(), &Server{
-		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
+		Transport: transportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "abc123", Enabled: true,
 	})
 	if err != nil {
@@ -1014,7 +1014,7 @@ func TestUpdate_PreservesOAuthClientID(t *testing.T) {
 	// Update keeps the OAuthClientID — it's a non-secret config value
 	// that round-trips verbatim (no secretMask treatment).
 	updated, err := s.update(t.Context(), created.ID, &Server{
-		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
+		Transport: transportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "abc123", Enabled: true,
 	})
 	if err != nil {
@@ -1028,11 +1028,11 @@ func TestUpdate_PreservesOAuthClientID(t *testing.T) {
 func TestUpdate_ChangesOAuthClientID(t *testing.T) {
 	s := newTestStore(t)
 	created, _ := s.Create(t.Context(), &Server{
-		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
+		Transport: transportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "old-id", Enabled: true,
 	})
 	updated, err := s.update(t.Context(), created.ID, &Server{
-		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
+		Transport: transportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "new-id", Enabled: true,
 	})
 	if err != nil {
@@ -1061,7 +1061,7 @@ func TestCreate_RejectsOAuthClientIDOnStdio(t *testing.T) {
 func TestCreate_RejectsOversizedOAuthClientID(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.Create(t.Context(), &Server{
-		Transport:     TransportHTTP,
+		Transport:     transportHTTP,
 		Name:          "x",
 		URL:           "https://example.com/mcp",
 		OAuthClientID: strings.Repeat("a", 1024),
@@ -1078,7 +1078,7 @@ func TestCreate_RejectsOversizedOAuthClientID(t *testing.T) {
 func TestCreate_RejectsControlCharsInOAuthClientID(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.Create(t.Context(), &Server{
-		Transport:     TransportHTTP,
+		Transport:     transportHTTP,
 		Name:          "x",
 		URL:           "https://example.com/mcp",
 		OAuthClientID: "abc\x00def",

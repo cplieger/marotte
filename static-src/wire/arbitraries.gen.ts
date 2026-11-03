@@ -3,12 +3,6 @@
 import fc from "fast-check";
 import type { AccountUsage, AccountUsageBreakdown, Affordance, AgentLoadError, AgentNoticePayload, AlwaysAllowBlock, ApprovalFile, AptPackage, Attachment, Caller, Capabilities, CatalogInfo, CatalogReason, CatalogState, ChatDeletedPayload, ChatHeader, Check, CloneRepo, CodeReference, CodeReferencesPayload, CommitChecks, ConfigStanding, ConfigStandingResponse, ConfigTemplateResponse, ConfiguredForge, ConnectedPayload, ContentKind, ContextBreakdown, ContextCategory, ContextItem, ContextMedia, ContextPart, DecisionKind, DecisionSettledPayload, Detection, DeviceFlowResponse, DraftChangedPayload, EffectiveSettings, ElicitationNeededPayload, ElicitationPropertySchema, ElicitationRequestSchema, EngineBusy, EngineBusyRun, EngineBusyTurn, EngineExit, EngineRestart, EngineState, EngineStatus, EngineStatusVersion, Entry, EntryAppendedPayload, EntryCompaction, EntryCompactionFailed, EntryDeltaPayload, EntryKind, EntryModeSwitched, EntryModelFallback, EntryModelRouted, EntryModelSwitched, EntryOpenedPayload, EntryPlan, EntryPrompt, EntryReconciled, EntryRunNamed, EntrySafetyBlocked, EntrySealedPayload, EntrySteer, EntrySteerAck, EntrySteerCleared, EntrySteerDelivered, EntryText, EntryThinking, EntryToolCall, EntryToolResult, EntryTurnBind, EntryTurnClose, EntryTurnOpen, EntryTurnRevert, EntryTurnWake, ErrorCode, ErrorPayload, FailureKind, FieldFill, FileChange, FileMatch, FileMatchKind, FileRead, FileRefusal, FileSearchResult, FileStat, FileWriteResult, ForgeError, ForgeKind, ForgeStatus, GitHubRateLimit, GovernanceFeatures, GovernanceLock, GovernanceMCPRegistry, GovernanceRegistryServer, GovernanceStatePayload, Hit, InterruptMode, Inventory, InventoryChangedPayload, InventoryEntry, InventoryError, InventoryList, InventoryRefresh, InventoryScope, Issue, IssueList, Job, JobResponse, JobsResponse, KiroDefault, KiroDoc, KiroDocsResponse, KnowledgeIndexingPayload, KnowledgeIndexingPhase, KnowledgeIndexingStatus, Label, LabelList, LiveRun, LiveRunsResponse, LoginOptions, LoginResponse, LoginResult, MCPConnectedPayload, MCPDisconnectedPayload, MCPFailedPayload, MCPOAuthPayload, MCPOrigin, MCPSignInOpenPayload, MCPToolIdentity, Match, MatchRange, MergeOutcome, MergeResult, MergeStatus, MeteringItem, ModeSwitchSource, ModelSwitchReason, NoticeLevel, NotificationPayload, OpenEntry, OpenExternalURLPayload, OutputStyle, OwnerScopes, PR, PRAction, PRChanged, PRDetail, PRList, PartialResult, PendingSnapshotPayload, PermissionConsent, PermissionNeededPayload, PermissionOption, PermissionWatch, PermissionsChangedPayload, PlanEntry, PlanStatus, PolicyErrorItem, PolicyErrorPayload, PolicyExplainResult, PolicyRule, PolicyRuleCore, PolicyView, PollResult, PreviewGrant, PreviewGrantRequest, PreviewHint, PreviewHintSource, PreviewPreset, PreviewStamp, ProbeResult, PushKind, QueuedPrompt, ReadState, Recipe, RecipesResponse, RefusalCode, RefusalInfo, RegistryEntry, RegistryEnvVar, RegistryFailureReason, RegistryHeader, RegistryPackage, RegistryRemote, RegistrySearchFailure, RegistrySearchResult, Release, ReleaseList, RemoveResponse, Repo, RepoAffordances, RepoList, RepoSuccessor, ResumableSession, RunAnswerRequest, RunAsk, RunAskBlocker, RunAskRefusal, RunAskText, RunAsksPayload, RunControlsResponse, RunExtendRequest, RunFinishLoopRequest, RunFinishedPayload, RunLaunchRequest, RunLaunchedResponse, RunNodeStatus, RunPlanUpdate, RunProgressKind, RunProgressPayload, RunRetriedResponse, RunStartedPayload, RunStatus, RunStepEnd, RunStepEndRefusal, RunStepEndRequest, RunStepEndStatus, RunStepMessageRefusal, RunStepMessageRequest, RunStepMessageResponse, RunStepMessageVerb, RunStepStart, RunStepSteerRequest, RunStepTranscript, RunStepTranscriptState, SafetyPropertiesPayload, SafetyProperty, SafetyStatus, SafetyStatusPayload, SearchAllResult, SearchHit, SearchResponse, SearchResult, SecurityProfile, SegmentKind, SessionEffortLevel, SessionListResponse, SessionMode, SessionModel, SettingsUpdatedPayload, SettledBy, ShowRefusal, ShowRefusalCode, ShowResponse, SlashArgument, SlashCommand, SlashCommandKind, SlashCommandsResponse, Spec, SpecApproval, SpecApprovedPayload, SpecChangedPayload, SpecDoc, SpecDocRole, SpecProgress, SpecTaskNode, SpecTruncated, StatusRow, StatusSnapshotPayload, SteerOrigin, SteerQueuedPayload, SteerReason, SteerRowState, SteerState, SteeringIssue, SteeringIssuesResponse, StopReason, SubjectStamp, SystemNoticePayload, SystemTool, TabKind, TabList, TabSubject, TabsChangedPayload, TangentMergedPayload, TerminalCreatedPayload, TerminalExitedPayload, TerminalOutputPayload, TextSpan, ToolCall, ToolCallBulk, ToolCheckpoint, ToolDenial, ToolDenialRule, ToolDiff, ToolDisclosed, ToolInfo, ToolInteraction, ToolJobChangedPayload, ToolJobOutputPayload, ToolKind, ToolLocation, ToolOffload, ToolProgressPayload, ToolStatus, ToolTruncation, Transport, TurnClosedPayload, TurnOpenSourceName, TurnOpenedPayload, TurnOutcome, TurnRevertCause, TurnSeverity, TurnThroughput, Usage, UserInputNeededPayload, UserInputOption, UserInputSubOption, WakeNote, WakeReason, WakeSteer, WhoamiResponse, WhoamiState, WorkflowRun } from "./types.gen.js";
 
-// A map key is never the string "__proto__". JSON.parse materializes such a key
-// as an own property, while the generated decodeRecord assigns out[k], and
-// out["__proto__"] sets the prototype instead of adding a key — so the entry
-// would vanish from the decoded value and no round trip could hold.
-const arbMapKey: fc.Arbitrary<string> = fc.string().filter((k) => k !== "__proto__");
-
 export const arbAlwaysAllowBlock: fc.Arbitrary<AlwaysAllowBlock> = fc.constantFrom("unparseable");
 export const arbCatalogReason: fc.Arbitrary<CatalogReason> = fc.constantFrom("rpc", "decode");
 export const arbCatalogState: fc.Arbitrary<CatalogState> = fc.constantFrom("ready", "empty", "unavailable");
@@ -411,15 +405,15 @@ const arbModel = fc.letrec<{
   ),
   Capabilities: fc.record(
     {
-      connection: fc.dictionary(arbMapKey, tie("Affordance"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
-      grant: fc.dictionary(arbMapKey, tie("Affordance"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      connection: fc.dictionary(fc.string(), tie("Affordance"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      grant: fc.dictionary(fc.string(), tie("Affordance"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       account: fc.string(),
     },
     { requiredKeys: ["connection", "grant", "account"] },
   ),
   CatalogInfo: fc.record(
     {
-      refs: fc.dictionary(arbMapKey, fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      refs: fc.dictionary(fc.string(), fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       generated: fc.string(),
       source: fc.string(),
       url: fc.string(),
@@ -527,7 +521,7 @@ const arbModel = fc.letrec<{
   ),
   ConfigStandingResponse: fc.record(
     {
-      load_errors: fc.dictionary(arbMapKey, tie("AgentLoadError"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      load_errors: fc.dictionary(fc.string(), tie("AgentLoadError"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       standing: fc.array(tie("ConfigStanding"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
     },
     { requiredKeys: ["load_errors", "standing"] },
@@ -654,9 +648,9 @@ const arbModel = fc.letrec<{
   ),
   EffectiveSettings: fc.record(
     {
-      last_effort_by_model: fc.dictionary(arbMapKey, fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
-      kiro_defaults: fc.dictionary(arbMapKey, tie("KiroDefault"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
-      additional_directories_refused: fc.dictionary(arbMapKey, fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      last_effort_by_model: fc.dictionary(fc.string(), fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      kiro_defaults: fc.dictionary(fc.string(), tie("KiroDefault"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      additional_directories_refused: fc.dictionary(fc.string(), fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       theme: fc.string(),
       fb_path: fc.string(),
       last_model: fc.string(),
@@ -727,7 +721,7 @@ const arbModel = fc.letrec<{
       type: fc.string(),
       title: fc.string(),
       description: fc.string(),
-      properties: fc.dictionary(arbMapKey, tie("ElicitationPropertySchema"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      properties: fc.dictionary(fc.string(), tie("ElicitationPropertySchema"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       required: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
     },
     { requiredKeys: [] },
@@ -1037,7 +1031,7 @@ const arbModel = fc.letrec<{
   ),
   EntryTurnClose: fc.record(
     {
-      changed_files: fc.dictionary(arbMapKey, tie("FileChange"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      changed_files: fc.dictionary(fc.string(), tie("FileChange"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       refusal: tie("RefusalInfo"),
       context_breakdown: tie("ContextBreakdown"),
       outcome: arbTurnOutcome,
@@ -1240,7 +1234,7 @@ const arbModel = fc.letrec<{
   ),
   GovernanceStatePayload: fc.record(
     {
-      locks: fc.dictionary(arbMapKey, tie("GovernanceLock"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      locks: fc.dictionary(fc.string(), tie("GovernanceLock"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       mcp_registry: tie("GovernanceMCPRegistry"),
       disabled_reason: fc.string(),
       features: tie("GovernanceFeatures"),
@@ -1375,7 +1369,7 @@ const arbModel = fc.letrec<{
   JobsResponse: fc.record(
     {
       active: tie("Job"),
-      recent: fc.array(tie("Job"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
+      recent: fc.array(fc.option(tie("Job"), { nil: null }), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
     },
     { requiredKeys: ["recent"] },
   ),
@@ -1867,7 +1861,7 @@ const arbModel = fc.letrec<{
   ),
   Recipe: fc.record(
     {
-      inputs: fc.dictionary(arbMapKey, fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      inputs: fc.dictionary(fc.string(), fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       name: fc.string(),
       description: fc.string(),
       validation_error: fc.string(),
@@ -2084,7 +2078,7 @@ const arbModel = fc.letrec<{
   ),
   RunControlsResponse: fc.record(
     {
-      refused: fc.dictionary(arbMapKey, fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      refused: fc.dictionary(fc.string(), fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       parent_chat_id: fc.string(),
       pause_node_id: fc.string(),
       verbs: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
@@ -2114,7 +2108,7 @@ const arbModel = fc.letrec<{
   ),
   RunLaunchRequest: fc.record(
     {
-      inputs: fc.dictionary(arbMapKey, fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      inputs: fc.dictionary(fc.string(), fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       source: fc.string(),
       model: fc.string(),
       effort: fc.string(),
@@ -2389,7 +2383,7 @@ const arbModel = fc.letrec<{
   Spec: fc.record(
     {
       updated_at: fc.string(),
-      approvals: fc.dictionary(arbMapKey, tie("SpecApproval"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      approvals: fc.dictionary(fc.string(), tie("SpecApproval"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       dir: fc.string(),
       name: fc.string(),
       docs: fc.array(tie("SpecDoc"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
@@ -2527,7 +2521,7 @@ const arbModel = fc.letrec<{
   ),
   SteeringIssuesResponse: fc.record(
     {
-      issues: fc.dictionary(arbMapKey, fc.array(tie("SteeringIssue"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
+      issues: fc.dictionary(fc.string(), fc.array(tie("SteeringIssue"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
     },
     { requiredKeys: ["issues"] },
   ),
@@ -3165,7 +3159,7 @@ export const arbWakeSteer: fc.Arbitrary<WakeSteer> = arbModel.WakeSteer;
 export const arbWhoamiResponse: fc.Arbitrary<WhoamiResponse> = arbModel.WhoamiResponse;
 export const arbWorkflowRun: fc.Arbitrary<WorkflowRun> = arbModel.WorkflowRun;
 
-export const ARBITRARY_BY_TYPE: Record<string, fc.Arbitrary<unknown>> = {
+export const ARBITRARY_BY_TYPE: globalThis.Record<string, fc.Arbitrary<unknown>> = {
   AccountUsage: arbAccountUsage,
   AccountUsageBreakdown: arbAccountUsageBreakdown,
   Affordance: arbAffordance,

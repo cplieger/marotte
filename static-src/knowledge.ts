@@ -19,7 +19,7 @@ import {
   removeKnowledge,
 } from "./actions/knowledge.js";
 import { ICON_CLOSE_UI, ICON_PLUS_UI, ICON_REFRESH, ICON_TRASH_UI } from "./icons.js";
-import { asObject, decodeArray, optBool, optStr, reqNum, reqStr } from "./validators.js";
+import { asObject, decodeArray, optBool, optStr, reqNum, reqStr } from "./wire/validators.gen.js";
 
 // Wire type and decoder, matching internal/hub/knowledge.go knowledgeContext.
 

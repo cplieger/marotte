@@ -1,17 +1,13 @@
 // Package wirespec is the single source of truth for marotte's wire contract: the
 // registered wire types, the enums, the TS-name and path-name overrides, and the SSE
-// event-to-decoder table cmd/wire-codegen feeds into wiregen to emit
-// static-src/wire/{types,decoders,registry}.gen.ts.
+// events cmd/wire-codegen feeds into wiregen to emit static-src/wire/*.gen.ts.
 //
 // Build-time only: imported by cmd/wire-codegen and tests, never the server, or
-// go/packages would enter the binary. No endpoint table: nothing generates a typed client
-// or path constants, so one would be an unverified copy of the routing.
+// go/packages would enter the binary. No endpoint table: the server's routes are not built
+// from one, so a table here would be an unverified copy of the routing.
 package wirespec
 
 import (
-	"maps"
-	"slices"
-
 	"github.com/cplieger/marotte/internal/auth"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/filebrowse"
@@ -20,16 +16,14 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp"
 	"github.com/cplieger/marotte/internal/server"
-	"github.com/cplieger/wiregen/v3"
+	"github.com/cplieger/wiregen/v4"
 )
 
 // wireTypes is every Go type the generator emits a TypeScript declaration for.
-// ORDER IS SIGNIFICANT: a type must be declared before any type referencing it.
 var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.ToolLocation](),
 	wiregen.TypeRef[marotte.ToolDiff](),
 	wiregen.TypeRef[marotte.ToolCheckpoint](),
-	// Before ToolCall, which references both.
 	wiregen.TypeRef[marotte.ToolDisclosed](),
 	wiregen.TypeRef[marotte.ToolDenialRule](),
 	wiregen.TypeRef[marotte.ToolDenial](),
@@ -38,15 +32,13 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.TextSpan](),
 	wiregen.TypeRef[marotte.ToolTruncation](),
 	wiregen.TypeRef[marotte.ToolCall](),
-	// A REST response, after ToolDiff and TextSpan. No `Payload` suffix, so the SSE-binding
-	// test exempts it.
+	// A REST response. No `Payload` suffix, so the SSE-binding test exempts it.
 	wiregen.TypeRef[marotte.ToolCallBulk](),
 	wiregen.TypeRef[marotte.PlanEntry](),
 	wiregen.TypeRef[marotte.CodeReference](),
 	wiregen.TypeRef[marotte.RefusalInfo](),
 	wiregen.TypeRef[marotte.Attachment](),
-	// The turn entry log: the envelope, the open-entry shape and the payloads, each after the
-	// types it references (EntryTurnClose after FileChange below). No `Payload` suffix.
+	// The turn entry log: the envelope, the open-entry shape and the payloads. No `Payload` suffix.
 	wiregen.TypeRef[marotte.Entry](),
 	wiregen.TypeRef[marotte.OpenEntry](),
 	wiregen.TypeRef[marotte.Caller](),
@@ -82,7 +74,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.SessionEffortLevel](),
 	// Registered so the pre-session catalog fetch reads a generated decoder, not a cast.
 	wiregen.TypeRef[marotte.ConfigTemplateResponse](),
-	// Before ChatHeader, which holds it.
 	wiregen.TypeRef[marotte.QueuedPrompt](),
 	wiregen.TypeRef[marotte.ChatHeader](),
 	wiregen.TypeRef[marotte.PermissionOption](),
@@ -113,7 +104,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.SettingsUpdatedPayload](),
 	wiregen.TypeRef[marotte.AgentNoticePayload](),
 	wiregen.TypeRef[marotte.SystemNoticePayload](),
-	// Before the two types that reference it.
 	wiregen.TypeRef[marotte.TabSubject](),
 	wiregen.TypeRef[marotte.TabsChangedPayload](),
 	wiregen.TypeRef[marotte.TabList](),
@@ -121,7 +111,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.PreviewHint](),
 	wiregen.TypeRef[marotte.PreviewGrant](),
 	wiregen.TypeRef[marotte.PreviewStamp](),
-	// Leaves before the documents that hold them; SpecTaskNode references itself.
 	wiregen.TypeRef[marotte.SpecProgress](),
 	wiregen.TypeRef[marotte.SpecTruncated](),
 	wiregen.TypeRef[marotte.SpecTaskNode](),
@@ -193,7 +182,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.ResumableSession](),
 	wiregen.TypeRef[marotte.WorkflowRun](),
 	wiregen.TypeRef[marotte.SessionListResponse](),
-	// Before LiveRunsResponse, which references it.
 	wiregen.TypeRef[marotte.LiveRun](),
 	wiregen.TypeRef[marotte.LiveRunsResponse](),
 	// REST replies; no `Payload` suffix, so the SSE-binding test exempts them.
@@ -213,8 +201,8 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.RunProgressPayload](),
 	wiregen.TypeRef[marotte.RunFinishedPayload](),
 	wiregen.TypeRef[marotte.NotificationPayload](),
-	// One step waiting on a person: run_asks's element and GET /api/runs/{id}'s `open_asks`, before
-	// the payload that holds it. No `Payload` suffix, so the SSE-binding test exempts it.
+	// One step waiting on a person: run_asks's element and GET /api/runs/{id}'s `open_asks`. No
+	// `Payload` suffix, so the SSE-binding test exempts it.
 	wiregen.TypeRef[marotte.RunAsk](),
 	wiregen.TypeRef[marotte.RunAsksPayload](),
 	// GET /api/runs/{id}'s `plan_update`, a read reply too.
@@ -229,7 +217,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.TerminalCreatedPayload](),
 	wiregen.TypeRef[marotte.TerminalOutputPayload](),
 	wiregen.TypeRef[marotte.TerminalExitedPayload](),
-	// GET /api/engine and the engine_status event, after the parts it holds.
+	// GET /api/engine and the engine_status event.
 	wiregen.TypeRef[marotte.EngineRestart](),
 	wiregen.TypeRef[marotte.EngineBusyTurn](),
 	wiregen.TypeRef[marotte.EngineBusyRun](),
@@ -237,7 +225,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.EngineExit](),
 	wiregen.TypeRef[marotte.EngineStatusVersion](),
 	wiregen.TypeRef[marotte.EngineStatus](),
-	// GET /api/config/standing, after the parts it holds.
+	// GET /api/config/standing.
 	wiregen.TypeRef[marotte.ConfigStanding](),
 	wiregen.TypeRef[marotte.AgentLoadError](),
 	wiregen.TypeRef[marotte.ConfigStandingResponse](),
@@ -246,7 +234,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.EffectiveSettings](),
 	wiregen.TypeRef[forges.ForgeError](),
 	wiregen.TypeRef[forges.ConfiguredForge](),
-	// The list envelopes after the rows and parts they hold.
 	wiregen.TypeRef[forges.PartialResult](),
 	wiregen.TypeRef[forges.RepoSuccessor](),
 	wiregen.TypeRef[forges.Affordance](),
@@ -308,7 +295,7 @@ var wireTypes = []wiregen.WireType{
 	// GET /api/git/show, the diff view's base side, and its refusal.
 	wiregen.TypeRef[git.ShowResponse](),
 	wiregen.TypeRef[git.ShowRefusal](),
-	// GET /api/mcp/registry/search, the entry family before the reply that holds it.
+	// GET /api/mcp/registry/search and its entry family.
 	wiregen.TypeRef[mcp.RegistryEnvVar](),
 	wiregen.TypeRef[mcp.RegistryHeader](),
 	wiregen.TypeRef[mcp.RegistryPackage](),
@@ -321,102 +308,105 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[server.KiroDocsResponse](),
 }
 
-// Values are auto-discovered from each type's const block. Each is a vocabulary a client branch or
+// Members are the type's constants in its own package. Each is a vocabulary a client branch or
 // wording table must cover TOTALLY, so one generated union makes a missing arm a compile error in
 // both languages.
-var wireEnums = map[string]wiregen.EnumDef{
-	"ToolKind": {}, "ToolStatus": {},
-	"PlanStatus": {},
-	"StopReason": {}, "ErrorCode": {}, "Kind": {}, // forges.Kind → ForgeKind
+var wireEnums = []wiregen.EnumRef{
+	wiregen.StringEnum[marotte.ToolKind](),
+	wiregen.StringEnum[marotte.ToolStatus](),
+	wiregen.StringEnum[marotte.PlanStatus](),
+	wiregen.StringEnum[marotte.StopReason](),
+	wiregen.StringEnum[marotte.ErrorCode](),
+	wiregen.StringEnum[forges.Kind](),
 	// Sources, the PR tab and the merge dialog each switch over it.
-	"ForgeStatus": {},
+	wiregen.StringEnum[forges.ForgeStatus](),
 	// The rule producing it is implemented in BOTH languages.
-	"TurnOutcome": {},
+	wiregen.StringEnum[marotte.TurnOutcome](),
 	// turn_close.failure_kind; the turn notice's remedy button branches on it.
-	"FailureKind": {},
+	wiregen.StringEnum[marotte.FailureKind](),
 	// Five client surfaces branch on it.
-	"TurnSeverity": {},
+	wiregen.StringEnum[marotte.TurnSeverity](),
 	// The entry dispatcher's switch; the decoder rejects a kind with no arm.
-	"EntryKind": {},
+	wiregen.StringEnum[marotte.EntryKind](),
 	// The revert's cause, keying the client's wording record.
-	"TurnRevertCause": {},
+	wiregen.StringEnum[marotte.TurnRevertCause](),
 	// The turn header words each wake reason and note, so both tables must be total.
-	"WakeReason": {},
-	"WakeNote":   {},
+	wiregen.StringEnum[marotte.WakeReason](),
+	wiregen.StringEnum[marotte.WakeNote](),
 	// The banner says who switched the mode.
-	"ModeSwitchSource": {},
+	wiregen.StringEnum[marotte.ModeSwitchSource](),
 	// The client words a KAS repin's reason, so its wording table must be total.
-	"ModelSwitchReason": {},
+	wiregen.StringEnum[marotte.ModelSwitchReason](),
 	// turn_open.source, spelled once for both languages.
-	"TurnOpenSourceName":      {},
-	"SafetyStatus":            {},
-	"KnowledgeIndexingPhase":  {},
-	"KnowledgeIndexingStatus": {},
+	wiregen.StringEnum[marotte.TurnOpenSourceName](),
+	wiregen.StringEnum[marotte.SafetyStatus](),
+	wiregen.StringEnum[marotte.KnowledgeIndexingPhase](),
+	wiregen.StringEnum[marotte.KnowledgeIndexingStatus](),
 	// The client's label switch over it must be TOTAL.
-	"SteerOrigin": {},
+	wiregen.StringEnum[marotte.SteerOrigin](),
 	// The renderer branches on it, and absence is a third answer.
-	"SteerState": {},
+	wiregen.StringEnum[marotte.SteerState](),
 	// Worded, not branched on: `Record<SteerReason, string>` fails on an unworded reason.
-	"SteerReason": {},
+	wiregen.StringEnum[marotte.SteerReason](),
 	// The dock's row controls branch on it, so the branch must be total.
-	"SteerRowState": {},
+	wiregen.StringEnum[marotte.SteerRowState](),
 	// The toast colour is chosen by it, so the client fold must be total.
-	"NoticeLevel": {},
+	wiregen.StringEnum[marotte.NoticeLevel](),
 	// A notification's kind picks its Settings switch on the page.
-	"PushKind":        {},
-	"RunProgressKind": {},
+	wiregen.StringEnum[marotte.PushKind](),
+	wiregen.StringEnum[marotte.RunProgressKind](),
 	// The client folds over both status vocabularies.
-	"RunStatus":     {},
-	"RunNodeStatus": {},
+	wiregen.StringEnum[marotte.RunStatus](),
+	wiregen.StringEnum[marotte.RunNodeStatus](),
 	// The run composer words the delivery and each refusal, so both folds must be total.
-	"RunStepMessageVerb":    {},
-	"RunStepMessageRefusal": {},
+	wiregen.StringEnum[marotte.RunStepMessageVerb](),
+	wiregen.StringEnum[marotte.RunStepMessageRefusal](),
 	// The run tab sends one of these, so the client cannot spell a status KAS refuses.
-	"RunStepEndStatus":  {},
-	"RunStepEndRefusal": {},
+	wiregen.StringEnum[marotte.RunStepEndStatus](),
+	wiregen.StringEnum[marotte.RunStepEndRefusal](),
 	// A card labels its text and words its blocker from these, and the answer's refusal from the code.
-	"RunAskText":    {},
-	"RunAskBlocker": {},
-	"RunAskRefusal": {},
+	wiregen.StringEnum[marotte.RunAskText](),
+	wiregen.StringEnum[marotte.RunAskBlocker](),
+	wiregen.StringEnum[marotte.RunAskRefusal](),
 	// Registered for CatalogState's reason below.
-	"RunStepTranscriptState": {},
-	"DecisionKind":           {},
-	"SettledBy":              {},
-	"AlwaysAllowBlock":       {},
+	wiregen.StringEnum[marotte.RunStepTranscriptState](),
+	wiregen.StringEnum[marotte.DecisionKind](),
+	wiregen.StringEnum[marotte.SettledBy](),
+	wiregen.StringEnum[marotte.AlwaysAllowBlock](),
 	// One definition of the tab kinds; TabSubject.kind fails the decoder on an unknown one.
-	"TabKind": {},
+	wiregen.StringEnum[marotte.TabKind](),
 	// The composer's placeholder and the chat-options menu's radio branch on it.
-	"InterruptMode": {},
+	wiregen.StringEnum[marotte.InterruptMode](),
 	// The spec page labels a segment by its role.
-	"SpecDocRole": {},
+	wiregen.StringEnum[marotte.SpecDocRole](),
 	// The client branches on the verdict to decide whether to retry and what to say.
-	"CatalogState":  {},
-	"CatalogReason": {},
+	wiregen.StringEnum[marotte.CatalogState](),
+	wiregen.StringEnum[marotte.CatalogReason](),
 	// Registered for CatalogState's reason: the History picker branches on it.
-	"ReadState": {},
+	wiregen.StringEnum[marotte.ReadState](),
 	// "marotte could not ask" must render a retry, not a sign-in prompt.
-	"WhoamiState": {},
-	"Transport":   {},
+	wiregen.StringEnum[auth.WhoamiState](),
+	wiregen.StringEnum[mcp.Transport](),
 	// The engine banner and the Settings restart control branch on it.
-	"EngineState": {},
+	wiregen.StringEnum[marotte.EngineState](),
 	// Each kind resolves to a different rendered surface; the decoder is strict.
-	"SegmentKind": {},
+	wiregen.StringEnum[chat.SegmentKind](),
 	// The client branches on it to say "wait" or "narrow the query".
-	"RegistryFailureReason": {},
+	wiregen.StringEnum[mcp.RegistryFailureReason](),
 	// Directory, name and content rows open differently; the decoder is strict.
-	"FileMatchKind": {},
+	wiregen.StringEnum[filebrowse.FileMatchKind](),
 	// The MCP panel treats "user" as marotte's own row and words every other origin.
-	"Origin": {}, // marotte.Origin → MCPOrigin
+	wiregen.StringEnum[marotte.Origin](),
 	// The preview toolbar maps a hint onto its width radios, so the map is total.
-	"PreviewPreset":     {},
-	"PreviewHintSource": {},
+	wiregen.StringEnum[marotte.PreviewPreset](),
+	wiregen.StringEnum[marotte.PreviewHintSource](),
 	// The slash menu disables prompt and steering rows mid-turn.
-	"SlashCommandKind": {},
+	wiregen.StringEnum[marotte.SlashCommandKind](),
 	// The viewer's refusal arms and the stale-save surface branch on these.
-	"RefusalCode": {},
-	"ContentKind": {},
+	wiregen.StringEnum[filebrowse.RefusalCode](),
+	wiregen.StringEnum[filebrowse.ContentKind](),
 	// The diff view names the view a refused base gets from it.
-	"ShowRefusalCode": {},
+	wiregen.StringEnum[git.ShowRefusalCode](),
 }
 
 var enumTSNames = map[string]string{
@@ -433,79 +423,71 @@ var pathNameOverrides = map[string]string{
 }
 
 // Both directions are asserted by TestRegistry_EveryRegisteredPayloadHasAnSSEBinding.
-var sseEvents = []wiregen.SSERegEntry{
-	{EventType: "chat_created", TypeName: "ChatHeader"},
-	{EventType: "chat_deleted", TypeName: "ChatDeletedPayload"},
-	{EventType: "chat_updated", TypeName: "ChatHeader"},
-	{EventType: "code_references", TypeName: "CodeReferencesPayload"},
-	{EventType: "connected", TypeName: "ConnectedPayload"},
-	{EventType: "decision_settled", TypeName: "DecisionSettledPayload"},
-	{EventType: "draft_changed", TypeName: "DraftChangedPayload"},
-	{EventType: "pending_snapshot", TypeName: "PendingSnapshotPayload"},
-	{EventType: "status_snapshot", TypeName: "StatusSnapshotPayload"},
-	{EventType: "elicitation_needed", TypeName: "ElicitationNeededPayload"},
-	{EventType: "user_input_needed", TypeName: "UserInputNeededPayload"},
-	{EventType: "error", TypeName: "ErrorPayload"},
-	{EventType: "governance_state", TypeName: "GovernanceStatePayload"},
-	{EventType: "mcp_connected", TypeName: "MCPConnectedPayload"},
-	{EventType: "mcp_disconnected", TypeName: "MCPDisconnectedPayload"},
-	{EventType: "mcp_failed", TypeName: "MCPFailedPayload"},
-	{EventType: "mcp_oauth_needed", TypeName: "MCPOAuthPayload"},
-	{EventType: "mcp_sign_in_open", TypeName: "MCPSignInOpenPayload"},
-	{EventType: "open_external_url", TypeName: "OpenExternalURLPayload"},
-	{EventType: "notification", TypeName: "NotificationPayload"},
-	{EventType: "permission_needed", TypeName: "PermissionNeededPayload"},
-	{EventType: "permissions_changed", TypeName: "PermissionsChangedPayload"},
-	{EventType: "policy_error", TypeName: "PolicyErrorPayload"},
-	{EventType: "run_started", TypeName: "RunStartedPayload"},
-	{EventType: "run_progress", TypeName: "RunProgressPayload"},
-	{EventType: "run_finished", TypeName: "RunFinishedPayload"},
-	{EventType: "run_asks", TypeName: "RunAsksPayload"},
-	{EventType: "safety_properties", TypeName: "SafetyPropertiesPayload"},
-	{EventType: "safety_status", TypeName: "SafetyStatusPayload"},
-	{EventType: "knowledge_indexing", TypeName: "KnowledgeIndexingPayload"},
-	{EventType: "tool_job_changed", TypeName: "ToolJobChangedPayload"},
-	{EventType: "tool_job_output", TypeName: "ToolJobOutputPayload"},
-	{EventType: "steer_queued", TypeName: "SteerQueuedPayload"},
-	{EventType: "tangent_merged", TypeName: "TangentMergedPayload"},
-	{EventType: "settings_updated", TypeName: "SettingsUpdatedPayload"},
-	{EventType: "agent_notice", TypeName: "AgentNoticePayload"},
-	{EventType: "system_notice", TypeName: "SystemNoticePayload"},
+var wireEvents = []wiregen.Event{
+	{Name: "chat_created", Data: wiregen.TypeRef[marotte.ChatHeader]()},
+	{Name: "chat_deleted", Data: wiregen.TypeRef[marotte.ChatDeletedPayload]()},
+	{Name: "chat_updated", Data: wiregen.TypeRef[marotte.ChatHeader]()},
+	{Name: "code_references", Data: wiregen.TypeRef[marotte.CodeReferencesPayload]()},
+	{Name: "connected", Data: wiregen.TypeRef[marotte.ConnectedPayload]()},
+	{Name: "decision_settled", Data: wiregen.TypeRef[marotte.DecisionSettledPayload]()},
+	{Name: "draft_changed", Data: wiregen.TypeRef[marotte.DraftChangedPayload]()},
+	{Name: "pending_snapshot", Data: wiregen.TypeRef[marotte.PendingSnapshotPayload]()},
+	{Name: "status_snapshot", Data: wiregen.TypeRef[marotte.StatusSnapshotPayload]()},
+	{Name: "elicitation_needed", Data: wiregen.TypeRef[marotte.ElicitationNeededPayload]()},
+	{Name: "user_input_needed", Data: wiregen.TypeRef[marotte.UserInputNeededPayload]()},
+	{Name: "error", Data: wiregen.TypeRef[marotte.ErrorPayload]()},
+	{Name: "governance_state", Data: wiregen.TypeRef[marotte.GovernanceStatePayload]()},
+	{Name: "mcp_connected", Data: wiregen.TypeRef[marotte.MCPConnectedPayload]()},
+	{Name: "mcp_disconnected", Data: wiregen.TypeRef[marotte.MCPDisconnectedPayload]()},
+	{Name: "mcp_failed", Data: wiregen.TypeRef[marotte.MCPFailedPayload]()},
+	{Name: "mcp_oauth_needed", Data: wiregen.TypeRef[marotte.MCPOAuthPayload]()},
+	{Name: "mcp_sign_in_open", Data: wiregen.TypeRef[marotte.MCPSignInOpenPayload]()},
+	{Name: "open_external_url", Data: wiregen.TypeRef[marotte.OpenExternalURLPayload]()},
+	{Name: "notification", Data: wiregen.TypeRef[marotte.NotificationPayload]()},
+	{Name: "permission_needed", Data: wiregen.TypeRef[marotte.PermissionNeededPayload]()},
+	{Name: "permissions_changed", Data: wiregen.TypeRef[marotte.PermissionsChangedPayload]()},
+	{Name: "policy_error", Data: wiregen.TypeRef[marotte.PolicyErrorPayload]()},
+	{Name: "run_started", Data: wiregen.TypeRef[marotte.RunStartedPayload]()},
+	{Name: "run_progress", Data: wiregen.TypeRef[marotte.RunProgressPayload]()},
+	{Name: "run_finished", Data: wiregen.TypeRef[marotte.RunFinishedPayload]()},
+	{Name: "run_asks", Data: wiregen.TypeRef[marotte.RunAsksPayload]()},
+	{Name: "safety_properties", Data: wiregen.TypeRef[marotte.SafetyPropertiesPayload]()},
+	{Name: "safety_status", Data: wiregen.TypeRef[marotte.SafetyStatusPayload]()},
+	{Name: "knowledge_indexing", Data: wiregen.TypeRef[marotte.KnowledgeIndexingPayload]()},
+	{Name: "tool_job_changed", Data: wiregen.TypeRef[marotte.ToolJobChangedPayload]()},
+	{Name: "tool_job_output", Data: wiregen.TypeRef[marotte.ToolJobOutputPayload]()},
+	{Name: "steer_queued", Data: wiregen.TypeRef[marotte.SteerQueuedPayload]()},
+	{Name: "tangent_merged", Data: wiregen.TypeRef[marotte.TangentMergedPayload]()},
+	{Name: "settings_updated", Data: wiregen.TypeRef[marotte.SettingsUpdatedPayload]()},
+	{Name: "agent_notice", Data: wiregen.TypeRef[marotte.AgentNoticePayload]()},
+	{Name: "system_notice", Data: wiregen.TypeRef[marotte.SystemNoticePayload]()},
 	// The agent-terminal trio.
-	{EventType: "terminal_created", TypeName: "TerminalCreatedPayload"},
-	{EventType: "terminal_output", TypeName: "TerminalOutputPayload"},
-	{EventType: "terminal_exited", TypeName: "TerminalExitedPayload"},
+	{Name: "terminal_created", Data: wiregen.TypeRef[marotte.TerminalCreatedPayload]()},
+	{Name: "terminal_output", Data: wiregen.TypeRef[marotte.TerminalOutputPayload]()},
+	{Name: "terminal_exited", Data: wiregen.TypeRef[marotte.TerminalExitedPayload]()},
 	// The entry-log set: one turn, its lanes' entries, and the turn_close.
-	{EventType: "turn_opened", TypeName: "TurnOpenedPayload"},
-	{EventType: "entry_opened", TypeName: "EntryOpenedPayload"},
-	{EventType: "entry_delta", TypeName: "EntryDeltaPayload"},
-	{EventType: "entry_sealed", TypeName: "EntrySealedPayload"},
-	{EventType: "entry_appended", TypeName: "EntryAppendedPayload"},
-	{EventType: "tool_progress", TypeName: "ToolProgressPayload"},
-	{EventType: "turn_closed", TypeName: "TurnClosedPayload"},
-	{EventType: "tabs_changed", TypeName: "TabsChangedPayload"},
-	{EventType: "spec_changed", TypeName: "SpecChangedPayload"},
-	{EventType: "spec_approved", TypeName: "SpecApprovedPayload"},
-	{EventType: "forge_inventory", TypeName: "InventoryChangedPayload"},
-	{EventType: "engine_status", TypeName: "EngineStatus"},
+	{Name: "turn_opened", Data: wiregen.TypeRef[marotte.TurnOpenedPayload]()},
+	{Name: "entry_opened", Data: wiregen.TypeRef[marotte.EntryOpenedPayload]()},
+	{Name: "entry_delta", Data: wiregen.TypeRef[marotte.EntryDeltaPayload]()},
+	{Name: "entry_sealed", Data: wiregen.TypeRef[marotte.EntrySealedPayload]()},
+	{Name: "entry_appended", Data: wiregen.TypeRef[marotte.EntryAppendedPayload]()},
+	{Name: "tool_progress", Data: wiregen.TypeRef[marotte.ToolProgressPayload]()},
+	{Name: "turn_closed", Data: wiregen.TypeRef[marotte.TurnClosedPayload]()},
+	{Name: "tabs_changed", Data: wiregen.TypeRef[marotte.TabsChangedPayload]()},
+	{Name: "spec_changed", Data: wiregen.TypeRef[marotte.SpecChangedPayload]()},
+	{Name: "spec_approved", Data: wiregen.TypeRef[marotte.SpecApprovedPayload]()},
+	{Name: "forge_inventory", Data: wiregen.TypeRef[forges.InventoryChangedPayload]()},
+	{Name: "engine_status", Data: wiregen.TypeRef[marotte.EngineStatus]()},
 }
 
-// Registry returns the fully-populated wiregen registry: the generator options plus the
-// tables above, CLONED because the generator may reorder or extend what it is given.
+// Registry returns marotte's wire contract. It holds no output layout: cmd/wire-codegen
+// owns where the files go.
 func Registry() *wiregen.Registry {
-	r := wiregen.NewRegistry(
-		wiregen.WithValidatorsImport("../validators.js"),
-		// Library-owned generated output, rewritten on every run. Never hand-edit it.
-		wiregen.WithValidatorsFile("../validators.ts"),
-		wiregen.WithBusImport("../bus.js"),
-		// The property test iterates ARBITRARY_BY_TYPE, so a new wire type needs an arbitrary.
-		wiregen.WithArbitrariesFile("arbitraries.gen.ts"),
-		wiregen.WithHeaderComment("// Code generated by cmd/wire-codegen. DO NOT EDIT.\n\n"),
-	)
-	r.Types = slices.Clone(wireTypes)
-	r.Enums = maps.Clone(wireEnums)
-	r.EnumTSName = maps.Clone(enumTSNames)
-	r.PathNameOverride = maps.Clone(pathNameOverrides)
-	r.SSEEvents = slices.Clone(sseEvents)
-	return r
+	return &wiregen.Registry{
+		Types:            wireTypes,
+		Enums:            wireEnums,
+		EnumTSName:       enumTSNames,
+		PathNameOverride: pathNameOverrides,
+		Events:           wireEvents,
+	}
 }

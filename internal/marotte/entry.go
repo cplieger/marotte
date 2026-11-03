@@ -444,8 +444,8 @@ type EntryReconciled struct {
 // turn's footer. StopReasonRaw is a plain string because KAS adds stop reasons (`tool_use`)
 // and a closed enum would make such a chat undecodable; Outcome is derived, so closed.
 type EntryTurnClose struct {
-	ChangedFiles map[string]*FileChange `json:"changed_files,omitempty"`
-	Refusal      *RefusalInfo           `json:"refusal,omitempty"`
+	ChangedFiles map[string]FileChange `json:"changed_files,omitempty"`
+	Refusal      *RefusalInfo          `json:"refusal,omitempty"`
 	// ContextBreakdown is KAS's measure of the turn's last model request.
 	ContextBreakdown *ContextBreakdown `json:"context_breakdown,omitempty"`
 	Outcome          TurnOutcome       `json:"outcome"`

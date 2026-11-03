@@ -222,7 +222,7 @@ func translateServer(rawName string, obj map[string]json.RawMessage, raw json.Ra
 		}
 		sv.Prewarm = prewarmFor(&spec, sv.Command)
 		noteStdioOAuthKeys(where, obj, req)
-	case TransportHTTP, TransportSSE:
+	case transportHTTP, transportSSE:
 		sv.URL = strings.TrimSpace(*spec.URL)
 		if sv.Headers, err = decodeOrderedPairs(where+"headers", obj["headers"]); err != nil {
 			return nil, err
@@ -262,7 +262,7 @@ func transportFor(spec *pasteServer) (Transport, error) {
 		if t, ok := supportedRemoteTypes[strings.ToLower(deref(spec.Type))]; ok {
 			return t, nil
 		}
-		return TransportHTTP, nil
+		return transportHTTP, nil
 	default:
 		return "", errors.New(`needs either "command" (a local server) or "url" (a hosted one)`)
 	}

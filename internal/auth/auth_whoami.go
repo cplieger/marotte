@@ -15,12 +15,12 @@ type WhoamiState string
 
 // Every response carries exactly one arm.
 const (
-	// WhoamiSignedIn carries the account's labels, and Email when the backend learned it.
-	WhoamiSignedIn WhoamiState = "signed_in"
-	// WhoamiSignedOut carries nothing but the sign-in attempt.
-	WhoamiSignedOut WhoamiState = "signed_out"
-	// WhoamiUnavailable is marotte not knowing, and carries Reason.
-	WhoamiUnavailable WhoamiState = "unavailable"
+	// whoamiSignedIn carries the account's labels, and Email when the backend learned it.
+	whoamiSignedIn WhoamiState = "signed_in"
+	// whoamiSignedOut carries nothing but the sign-in attempt.
+	whoamiSignedOut WhoamiState = "signed_out"
+	// whoamiUnavailable is marotte not knowing, and carries Reason.
+	whoamiUnavailable WhoamiState = "unavailable"
 )
 
 // WhoamiResponse is /api/whoami's typed wire shape. State is the discriminator and each other field belongs to one
@@ -54,7 +54,7 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.apiKey {
-		webhttp.WriteJSON(w, WhoamiResponse{State: WhoamiSignedIn, Auth: textAPIKeyAuth, APIKey: true})
+		webhttp.WriteJSON(w, WhoamiResponse{State: whoamiSignedIn, Auth: textAPIKeyAuth, APIKey: true})
 		return
 	}
 	st := h.vault.Status(h.backend)
@@ -69,16 +69,16 @@ func whoamiFrom(st *signin.Status) WhoamiResponse {
 	}
 	switch st.Kind {
 	case signin.StatusSignedIn:
-		out.State = WhoamiSignedIn
+		out.State = whoamiSignedIn
 		out.Email = identityText(st.Label.Email)
 		out.Auth = identityText(st.Label.Method)
 		out.AccountType = identityText(st.Label.AccountType)
 		out.StartURL = identityText(st.Label.StartURL)
 		out.Region = identityText(st.Label.Region)
 	case signin.StatusSignedOut:
-		out.State = WhoamiSignedOut
+		out.State = whoamiSignedOut
 	default:
-		out.State = WhoamiUnavailable
+		out.State = whoamiUnavailable
 		out.Reason = identityText(st.Reason)
 	}
 	return out

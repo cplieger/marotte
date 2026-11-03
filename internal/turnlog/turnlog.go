@@ -90,7 +90,7 @@ type sayRef struct {
 }
 
 type aggregate struct {
-	changed map[string]*marotte.FileChange
+	changed map[string]marotte.FileChange
 	refusal *marotte.RefusalInfo
 	engine  *marotte.EngineError
 	model   string
@@ -338,15 +338,15 @@ func (t *Turn) ChangedFile(path string, added, removed int, isNew bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.agg.changed == nil {
-		t.agg.changed = make(map[string]*marotte.FileChange)
+		t.agg.changed = make(map[string]marotte.FileChange)
 	}
 	fc, ok := t.agg.changed[path]
 	if !ok {
-		fc = &marotte.FileChange{IsNewFile: isNew}
-		t.agg.changed[path] = fc
+		fc.IsNewFile = isNew
 	}
 	fc.LinesAdded += added
 	fc.LinesRemoved += removed
+	t.agg.changed[path] = fc
 }
 
 // AddCodeReferences merges licensed-code attributions, deduped whole, because the

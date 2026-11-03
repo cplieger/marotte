@@ -118,7 +118,7 @@ func TestWriteKASConfig_StdioShape(t *testing.T) {
 func TestWriteKASConfig_RemoteCarriesOAuth(t *testing.T) {
 	s, kas := newIsolatedStore(t)
 	srv := &Server{
-		Transport: TransportHTTP, Name: "slack", Enabled: true,
+		Transport: transportHTTP, Name: "slack", Enabled: true,
 		URL: "https://slack.example/mcp", OAuthClientID: "cid-123",
 	}
 	if _, err := s.Create(t.Context(), srv); err != nil {
@@ -143,7 +143,7 @@ func TestWriteKASConfig_RemoteCarriesOAuth(t *testing.T) {
 func TestWriteKASConfig_RemoteCarriesClientMetadataAndRedirect(t *testing.T) {
 	s, kas := newIsolatedStore(t)
 	srv := &Server{
-		Transport: TransportHTTP, Name: "cimd", Enabled: true,
+		Transport: transportHTTP, Name: "cimd", Enabled: true,
 		URL:                    "https://mcp.example/mcp",
 		OAuthClientMetadataURL: "https://example.com/c.json",
 		OAuthRedirectURI:       "localhost:7778",
@@ -164,9 +164,9 @@ func TestWriteKASConfig_RemoteCarriesClientMetadataAndRedirect(t *testing.T) {
 func TestWriteKASConfig_RemoteCarriesOAuthScopes(t *testing.T) {
 	s, kas := newIsolatedStore(t)
 	for _, srv := range []*Server{
-		{Transport: TransportHTTP, Name: "graph", Enabled: true, URL: "https://mcp.example/mcp", OAuthScopes: []string{"read", "write"}},
+		{Transport: transportHTTP, Name: "graph", Enabled: true, URL: "https://mcp.example/mcp", OAuthScopes: []string{"read", "write"}},
 		{Transport: TransportStdio, Name: "local", Enabled: true, Command: "npx"},
-		{Transport: TransportRegistry, Name: "catalog", Enabled: true},
+		{Transport: transportRegistry, Name: "catalog", Enabled: true},
 	} {
 		if _, err := s.Create(t.Context(), srv); err != nil {
 			t.Fatalf("Create %s: %v", srv.Name, err)
@@ -211,7 +211,7 @@ func TestNew_BootRenderKeepsClientMetadataURL(t *testing.T) {
 // behaviour that is not there.
 func TestWriteKASConfig_NoTypeHint(t *testing.T) {
 	s, kas := newIsolatedStore(t)
-	for _, tr := range []Transport{TransportHTTP, TransportSSE} {
+	for _, tr := range []Transport{transportHTTP, transportSSE} {
 		srv := &Server{
 			Transport: tr, Name: "srv-" + string(tr), Enabled: true,
 			URL: "https://x.example/mcp",
@@ -346,7 +346,7 @@ func TestPairsRecord_LastDuplicateWins(t *testing.T) {
 func TestWriteKASConfig_RemoteWithoutOAuthCarriesNoBlock(t *testing.T) {
 	s, kas := newIsolatedStore(t)
 	srv := &Server{
-		Transport: TransportHTTP, Name: "plain", Enabled: true,
+		Transport: transportHTTP, Name: "plain", Enabled: true,
 		URL: "https://plain.example/mcp",
 	}
 	if _, err := s.Create(t.Context(), srv); err != nil {

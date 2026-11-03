@@ -9,8 +9,8 @@ import {
   type RequestOptions,
 } from "@cplieger/fetch";
 
-export type { Decoder } from "./validators.js";
-import type { Decoder } from "./validators.js";
+export type { Decoder } from "./wire/validators.gen.js";
+import type { Decoder } from "./wire/validators.gen.js";
 
 // No baseUrl or prepareHeaders: paths are same-origin and the server checks Origin instead
 // of a CSRF token (internal/server/security.go). An ISOLATED instance, so nothing else can
