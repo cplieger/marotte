@@ -31,6 +31,14 @@ func (f *faultyReleases) Release(ctx context.Context, id marotte.ChatID, key str
 	return f.Store.Release(ctx, id, key, ev)
 }
 
+// SwapTabForStop fails like Release while fail is set: the record keeps its tab fact and the close stays owed.
+func (f *faultyReleases) SwapTabForStop(ctx context.Context, id marotte.ChatID) (chat.Claim, bool) {
+	if f.fail.Load() {
+		return chat.Claim{ChatID: id, Key: marotte.KeyStop}, false
+	}
+	return f.Store.SwapTabForStop(ctx, id)
+}
+
 // failingOpens is the real tab store whose Open fails while fail is set: a tabs.json that refuses every write.
 type failingOpens struct {
 	*tabs.Store

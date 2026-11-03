@@ -33,6 +33,7 @@ const (
 	KeptByRun          = marotte.KeepKindRun
 	KeptByRunTab       = marotte.KeepKindRunTab
 	KeptByTurn         = marotte.KeepKindTurn
+	KeptByStop         = marotte.KeepKindStop
 	KeptByUnknown      = "unknown"
 	KeptByPending      = "pending"
 	KeptByUnreconciled = "unreconciled"
@@ -41,7 +42,7 @@ const (
 )
 
 var keptByKinds = []string{
-	KeptByTab, KeptByRun, KeptByRunTab, KeptByTurn, KeptByUnknown,
+	KeptByTab, KeptByRun, KeptByRunTab, KeptByTurn, KeptByStop, KeptByUnknown,
 	KeptByPending, KeptByUnreconciled, KeptByUnattributed, KeptByWords,
 }
 

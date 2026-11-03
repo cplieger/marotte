@@ -134,6 +134,27 @@ func (k *keepingStore) Hold(ctx context.Context, id marotte.ChatID, key string, 
 	return claim, err
 }
 
+// SwapTabForStop drops the tab fact and holds the stop key in one record write, as chat.Store does.
+func (k *keepingStore) SwapTabForStop(ctx context.Context, id marotte.ChatID) (chat.Claim, bool) {
+	k.mu.Lock()
+	k.tokens++
+	token := fmt.Sprint(k.tokens)
+	k.mu.Unlock()
+	claim := chat.Claim{ChatID: id, Key: marotte.KeyStop, Token: token}
+	_, err := k.Mutate(ctx, id, func(c *marotte.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		delete(c.Keep, marotte.KeyTab)
+		if c.Keep == nil {
+			c.Keep = map[string]marotte.KeepFact{}
+		}
+		c.Keep[marotte.KeyStop] = marotte.KeepFact{Token: token}
+		return true
+	})
+	return claim, err == nil
+}
+
 func (*keepingStore) SessionInTeardown(string) bool { return false }
 
 func (*keepingStore) ReconcileKeep(context.Context, marotte.ChatID, func(*chat.KeepRecord)) error {

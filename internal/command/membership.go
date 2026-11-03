@@ -92,6 +92,7 @@ type membershipChats interface {
 	Hold(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
 	Rollback(ctx context.Context, claim *chat.Claim) error
 	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
+	SwapTabForStop(ctx context.Context, id marotte.ChatID) (chat.Claim, bool)
 	// SessionInTeardown names a session of a chat whose retention teardown still runs.
 	SessionInTeardown(sessionID string) bool
 	ReconcileKeep(ctx context.Context, id marotte.ChatID, fn func(r *chat.KeepRecord)) error
@@ -135,9 +136,9 @@ type RunOwner struct {
 }
 
 // chatCloser is the tab-close teardown for a chat tab: cancel the turn, stop the
-// chat's runs when byPerson (the page's own close), tear the bridge down, keep the
-// record. Bound in RegisterDefaults.
-type chatCloser func(ctx context.Context, chatID marotte.ChatID, byPerson bool)
+// chat's runs when stop is set (a person's close, carrying the close's stop hold),
+// tear the bridge down, keep the record. Bound in RegisterDefaults.
+type chatCloser func(ctx context.Context, chatID marotte.ChatID, stop *chat.Claim)
 
 // chatDeleter is the delete grade of the same teardown, for a chat the close
 // escalation has already erased; the captured session chain travels in.
@@ -615,7 +616,7 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson boo
 		Version:    version,
 		OpID:       opID,
 	})
-	m.releaseForClosed(rollCtx, owed, "")
+	holds := m.releaseForClosed(rollCtx, owed, "", byPerson && m.closeChat != nil)
 	deleted := m.deleteDoomedRecords(rollCtx, doomed)
 	m.mu.Unlock()
 
@@ -623,7 +624,7 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson boo
 	// process would block every tab mutation. One grade per chat: delete grade for a record this
 	// close took (from the chain its delete answered), close grade for every other chat tab, including a
 	// doomed chat whose delete failed.
-	if m.tearDownClosed(rollCtx, closed, deleted, byPerson) {
+	if m.tearDownClosed(rollCtx, closed, deleted, holds, byPerson) {
 		// The closed tab may have been what held an expired chat or finished run outside the age
 		// test, so wake the purge now rather than after an idle back-off of up to an hour. After
 		// the lock, because the wake reads a field it guards.
@@ -633,9 +634,12 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson boo
 }
 
 // tearDownClosed runs one teardown grade per chat the close took and reports whether
-// a chat or run tab went, which is what owes retention a wake. Called after mu is
-// released.
-func (m *Membership) tearDownClosed(ctx context.Context, closed []marotte.TabSubject, deleted map[marotte.ChatID][]string, byPerson bool) (retentionTabClosed bool) {
+// a chat or run tab went, which is what owes retention a wake. A person's close hands
+// each chat's stop hold (holds) to its close grade. Called after mu is released.
+func (m *Membership) tearDownClosed(
+	ctx context.Context, closed []marotte.TabSubject, deleted map[marotte.ChatID][]string,
+	holds map[marotte.ChatID]chat.Claim, byPerson bool,
+) (retentionTabClosed bool) {
 	dispatched := make(map[marotte.ChatID]bool, len(deleted))
 	for _, t := range closed {
 		if t.Kind == marotte.TabKindRun {
@@ -653,9 +657,15 @@ func (m *Membership) tearDownClosed(ctx context.Context, closed []marotte.TabSub
 			}
 			continue
 		}
-		if m.closeChat != nil {
-			m.closeChat(ctx, chatID, byPerson)
+		if m.closeChat == nil {
+			continue
 		}
+		var stop *chat.Claim
+		if byPerson {
+			hold := holds[chatID]
+			stop = &hold
+		}
+		m.closeChat(ctx, chatID, stop)
 	}
 	return retentionTabClosed
 }
@@ -1084,16 +1094,34 @@ func (m *Membership) refuseRunParent(sessionID string, runs *parentedRuns) error
 }
 
 // releaseForClosed releases the keep facts a committed close owes, skipping except (a record
-// already gone), and settles each entry whose releases all returned nil. An entry left owed is
-// retried by SettleOwed. Caller holds mu.
-func (m *Membership) releaseForClosed(ctx context.Context, owed []tabs.OwedRelease, except marotte.ChatID) {
+// already gone), and settles each entry whose releases all returned nil. With stopping (a
+// person's close whose teardown stops runs) each chat's tab fact is swapped for its stop hold
+// instead (chat.Store.SwapTabForStop), and the holds are answered by chat for the teardown,
+// whose stop ends them. An entry left owed is retried by SettleOwed. Caller holds mu.
+func (m *Membership) releaseForClosed(
+	ctx context.Context, owed []tabs.OwedRelease, except marotte.ChatID, stopping bool,
+) map[marotte.ChatID]chat.Claim {
 	var settled []string
+	var holds map[marotte.ChatID]chat.Claim
 	for i := range owed {
-		if m.releaseOwed(ctx, &owed[i], except) {
-			settled = append(settled, owed[i].ID)
+		e := &owed[i]
+		if stopping && e.Kind == marotte.TabKindChat {
+			if holds == nil {
+				holds = make(map[marotte.ChatID]chat.Claim)
+			}
+			hold, swapped := m.chats.SwapTabForStop(ctx, marotte.ChatID(e.Ref))
+			holds[marotte.ChatID(e.Ref)] = hold
+			if swapped {
+				settled = append(settled, e.ID)
+			}
+			continue
+		}
+		if m.releaseOwed(ctx, e, except) {
+			settled = append(settled, e.ID)
 		}
 	}
 	m.settle(ctx, settled)
+	return holds
 }
 
 // releaseOwed releases one owed entry's facts and reports whether every release returned nil.
@@ -1303,7 +1331,7 @@ func (m *Membership) closeTabsFor(ctx context.Context, chatID marotte.ChatID, op
 			Version:    version,
 			OpID:       opID,
 		})
-		m.releaseForClosed(ctx, owed, chatID)
+		m.releaseForClosed(ctx, owed, chatID, false)
 	}
 }
 

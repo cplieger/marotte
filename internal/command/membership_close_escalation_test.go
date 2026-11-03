@@ -11,6 +11,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
@@ -61,8 +62,8 @@ func newEscalationHostOver(store chatStore, tabSet TabSet, retention retentionRe
 		Bus:      bus,
 		Runs:     &fakeRunOwner{},
 		Teardown: h.teardown,
-		CloseChat: func(ctx context.Context, chatID marotte.ChatID, byPerson bool) {
-			h.teardown.CloseChatState(ctx, chatID, byPerson)
+		CloseChat: func(ctx context.Context, chatID marotte.ChatID, stop *chat.Claim) {
+			h.teardown.CloseChatState(ctx, chatID, stop)
 		},
 		DeleteChat: func(ctx context.Context, chatID marotte.ChatID, chain []string) {
 			_, exists := store.Get(ctx, chatID)

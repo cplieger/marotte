@@ -528,6 +528,7 @@ func TestRetention_KeepState(t *testing.T) {
 			b.runStart(t, "wf_run", sess("c-1"))
 			b.waitKey(t, "c-1", runKey("wf_run"), true)
 			eng.inspected(t, "wf_run", "cancelled", sess("c-1"))
+			eng.inspected(t, "wf_park", "paused", sess("c-1"))
 			eng.fail(t, kasCancel, "wf_park", "owner pid 979344 is live")
 
 			b.personClose(t, "c-1")
@@ -615,6 +616,36 @@ func TestRetention_KeepState(t *testing.T) {
 			release()
 			<-done
 			b.waitKey(t, "c-1", runKey("wf_1"), false)
+			b.age(t, "c-1", seamIdle)
+			b.pass(t)
+			b.purged(t, "c-1", sess("c-1"))
+		}},
+		// A purge pass while a person's close is still listing the runs to stop finds the close's stop hold where the
+		// tab fact was: the chat is kept, and purged only once the stop has ended and the chat is idle.
+		"close_purge_during_stop_list": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			b := bootSeam(t, root, eng, logs, seamOpts{})
+			b.create(t, "c-1", sess("c-1"))
+			eng.list(t, seamRow("wf_1", "running", sess("c-1")))
+			b.runStart(t, "wf_1", sess("c-1"))
+			b.waitKey(t, "c-1", runKey("wf_1"), true)
+			b.age(t, "c-1", seamIdle)
+			b.ageMark(t, "c-1", runKey("wf_1"), seamIdle)
+			eng.inspected(t, "wf_1", "cancelled", sess("c-1"))
+			entered, release := eng.block(t, kasList)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				b.personClose(t, "c-1")
+			}()
+			entered()
+			b.chatPass(t)
+			b.kept(t, "c-1", sess("c-1"))
+			if keys := b.keys(t, "c-1"); keys[marotte.KeyStop].Since == 0 || keys[marotte.KeyTab].Since != 0 {
+				t.Errorf("keep during the close's run list = %v, want the stop hold and no tab fact", keys)
+			}
+			release()
+			<-done
+			b.waitKey(t, "c-1", marotte.KeyStop, false)
 			b.age(t, "c-1", seamIdle)
 			b.pass(t)
 			b.purged(t, "c-1", sess("c-1"))

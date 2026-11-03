@@ -303,32 +303,40 @@ var (
 		"Open the chat to retry the run")
 )
 
-// retryHolders names a retry's holders by RunHolders over one fresh owner scan, refusing a run whose launching
-// session is in teardown, and one whose scan could not read every chat and found no holder.
-func (rs *Runs) retryHolders(ctx context.Context, workflowID string, o *runOrigin) ([]marotte.ChatID, error) {
+// retryHolders names a retry's mark holders by RunHolders over one fresh owner scan, and its launchers: the lease's
+// ChatID and the chats owning the parent session, never a chat the lease keeps only in doubt. It refuses a run whose
+// launching session is in teardown, and one whose scan could not read every chat and found no launcher.
+func (rs *Runs) retryHolders(
+	ctx context.Context, workflowID string, o *runOrigin,
+) (holders, launchers []marotte.ChatID, err error) {
 	if o.parent.session != "" && rs.chats.SessionInTeardown(o.parent.session) {
 		slog.Info("retry refused: the run's launching chat is being deleted", "workflow_id", workflowID)
-		return nil, command.StatusError(http.StatusConflict, errRetryChatPurging)
+		return nil, nil, command.StatusError(http.StatusConflict, errRetryChatPurging)
 	}
 	scan := rs.chats.SessionOwners(ctx)
 	var lp *runlease.Lease
 	if l, held := rs.lease(workflowID); held {
 		lp = &l
 	}
-	holders, _ := RunHolders([]string{o.parent.session}, lp, scan.Owners)
-	if len(holders) == 0 && !scan.Complete {
-		return nil, command.StatusError(http.StatusServiceUnavailable, errRetryChatUnread)
+	holders, _ = RunHolders([]string{o.parent.session}, lp, scan.Owners)
+	var launch *runlease.Lease
+	if lp != nil {
+		launch = &runlease.Lease{ChatID: lp.ChatID, Origin: lp.Origin}
 	}
-	return holders, nil
+	launchers, _ = RunHolders([]string{o.parent.session}, launch, scan.Owners)
+	if len(launchers) == 0 && !scan.Complete {
+		return nil, nil, command.StatusError(http.StatusServiceUnavailable, errRetryChatUnread)
+	}
+	return holders, launchers, nil
 }
 
-// refuseClosedLauncher refuses the retry of a chat-launched run none of whose launching chats has an open tab, so a
-// run a person's close stopped cannot be revived from its run tab or History.
-func (rs *Runs) refuseClosedLauncher(workflowID string, holders []marotte.ChatID) error {
-	if len(holders) == 0 || rs.coord == nil || rs.coord.chatHasTab == nil {
+// refuseClosedLauncher refuses the retry of a chat-launched run none of whose launchers has an open tab, so a run a
+// person's close stopped cannot be revived from its run tab or History.
+func (rs *Runs) refuseClosedLauncher(workflowID string, launchers []marotte.ChatID) error {
+	if len(launchers) == 0 || rs.coord == nil || rs.coord.chatHasTab == nil {
 		return nil
 	}
-	if slices.ContainsFunc(holders, rs.coord.chatHasTab) {
+	if slices.ContainsFunc(launchers, rs.coord.chatHasTab) {
 		return nil
 	}
 	slog.Info("retry refused: no tab shows the chat that launched the run", "workflow_id", workflowID)

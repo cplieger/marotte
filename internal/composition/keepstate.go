@@ -416,7 +416,7 @@ func keepRunLive(d *keepStateDeps, c *keepCandidate, wf string, id marotte.ChatI
 	return held
 }
 
-// keepPreviousBootFact releases a turn fact an earlier boot wrote, and records the tab facts no source can settle.
+// keepPreviousBootFact releases a turn or stop fact an earlier boot wrote, and records the tab facts no source can settle.
 // This boot's facts belong to this boot's writers; a run mark keeps by time (chat.Store.PurgeIdle).
 func keepPreviousBootFact(st *keepRoundState, id marotte.ChatID, r *chat.KeepRecord, key string, f marotte.KeepFact, open []marotte.TabSubject) {
 	if f.Boot == st.boot {
@@ -424,7 +424,7 @@ func keepPreviousBootFact(st *keepRoundState, id marotte.ChatID, r *chat.KeepRec
 	}
 	kind, wf := marotte.KeepKind(key)
 	switch kind {
-	case marotte.KeepKindTurn:
+	case marotte.KeepKindTurn, marotte.KeepKindStop:
 		if f.Process {
 			r.Release(key, chat.EvidenceProcessGone)
 			st.released++
@@ -456,6 +456,6 @@ func keepReport(st *keepRoundState, left int) {
 	slog.Info("keep-state reconcile finished",
 		"added_tab", st.added[marotte.KeepKindTab], "added_runtab", st.added[marotte.KeepKindRunTab],
 		"added_run", st.added[marotte.KeepKindRun],
-		"released_turn", st.released, "stuck_tab_facts", len(st.stuckTabs),
+		"released_process", st.released, "stuck_tab_facts", len(st.stuckTabs),
 		"runs_without_engine_state", st.stateless, "unreconciled", left)
 }

@@ -1,9 +1,9 @@
 package chat
 
 // Keep facts: every reason a chat must not be purged is written onto its own chat.json under the record lock, by the
-// subsystem where it happens, and leaves only on evidence that its thing ended (Release), by the rollback of the claim
-// that wrote it (Rollback), or with the record. Every writer of marotte.Chat.Keep is here; startKeep is the one a
-// create calls.
+// subsystem where it happens, and leaves only on evidence that its thing ended (Release), by the claim that wrote it
+// (Rollback, EndStop), or with the record. Every writer of marotte.Chat.Keep is here; startKeep is the one a create
+// calls.
 
 import (
 	"context"
@@ -226,6 +226,19 @@ func (s *Store) pend(chatID marotte.ChatID, key string, f marotte.KeepFact, caus
 		"chat_id", chatID, "key", key, "error", cause)
 }
 
+// dropPendingClaim drops chatID's pended key only while it carries token.
+func (s *Store) dropPendingClaim(chatID marotte.ChatID, key, token string) {
+	s.keep.mu.Lock()
+	defer s.keep.mu.Unlock()
+	if f, ok := s.keep.pending[chatID][key]; !ok || f.Token != token {
+		return
+	}
+	delete(s.keep.pending[chatID], key)
+	if len(s.keep.pending[chatID]) == 0 {
+		delete(s.keep.pending, chatID)
+	}
+}
+
 func (s *Store) dropPending(chatID marotte.ChatID, key string) {
 	s.keep.mu.Lock()
 	defer s.keep.mu.Unlock()
@@ -423,6 +436,71 @@ func (s *Store) releaseLocked(ctx context.Context, chatID marotte.ChatID, key st
 		slog.Debug("keep fact released", "chat_id", chatID, "key", key, "evidence", ev.String())
 	}
 	return nil
+}
+
+// SwapTabForStop is a person's close of chatID's last tab: one header write replaces the tab fact with the
+// process-scope stop hold, so no purge pass reads the record with neither. swapped is false when the record could not
+// be read or written: the hold then pends and the tab fact stays on disk until the close's owed release lands. An
+// absent record answers swapped with a claim that holds nothing.
+func (s *Store) SwapTabForStop(ctx context.Context, chatID marotte.ChatID) (cl Claim, swapped bool) {
+	if _, err := s.pathFor(chatID); err != nil {
+		return Claim{}, false
+	}
+	m := s.lock(chatID)
+	m.Lock()
+	defer m.Unlock()
+	cl = Claim{ChatID: chatID, Key: marotte.KeyStop, Token: randomHex(8)}
+	f := s.newFact(KeepProcess)
+	f.Token = cl.Token
+	c, err := s.loadKeepLocked(ctx, chatID)
+	if isAbsence(err) {
+		return Claim{}, true
+	}
+	if err == nil {
+		flushed := s.flushPendingLocked(chatID, c)
+		deleteKeep(c, marotte.KeyTab)
+		setKeep(c, marotte.KeyStop, f)
+		if err = s.writeHeader(ctx, chatID, c); err == nil {
+			s.settlePending(chatID, flushed)
+			return cl, true
+		}
+	}
+	s.pend(chatID, marotte.KeyStop, f, err)
+	return cl, false
+}
+
+// EndStop releases cl's stop hold once every stop its close started has ended, while the record or the pending set
+// still carries cl's token, so a later close's hold survives an earlier close's end. A read or write failure is logged
+// and the hold keeps the chat until this process exits.
+func (s *Store) EndStop(ctx context.Context, cl *Claim) {
+	if cl.Token == "" {
+		return
+	}
+	m := s.lock(cl.ChatID)
+	m.Lock()
+	defer m.Unlock()
+	s.dropPendingClaim(cl.ChatID, cl.Key, cl.Token)
+	c, err := s.loadKeepLocked(ctx, cl.ChatID)
+	if isAbsence(err) {
+		return
+	}
+	if err == nil {
+		flushed := s.flushPendingLocked(cl.ChatID, c)
+		f, held := c.Keep[cl.Key]
+		mine := held && f.Token == cl.Token
+		if !mine && len(flushed) == 0 {
+			return
+		}
+		if mine {
+			deleteKeep(c, cl.Key)
+		}
+		if err = s.writeHeader(ctx, cl.ChatID, c); err == nil {
+			s.settlePending(cl.ChatID, flushed)
+			return
+		}
+	}
+	slog.Warn("close: the stop hold was not released; the chat is kept until restart", "chat_id", cl.ChatID,
+		"error", err)
 }
 
 // startKeep gives a created record no keep facts, so a fork's Init copying its parent cannot carry the parent's, and
@@ -642,10 +720,11 @@ func (s *Store) ReconcileKeep(ctx context.Context, chatID marotte.ChatID, fn fun
 	return nil
 }
 
-// PurgeIdle removes chatID when its record, read under the record lock, holds no keep fact but run marks, no unsent
-// words, and a last use and freshest run mark (runMarkUntil) before cutoff, and the reconcile has passed over it this
-// boot. A record that cannot be read is never removed: the error is returned and the record stays. A removal marks
-// the chat and its chain in teardown until the caller's EndTeardown, and broadcasts chat_deleted.
+// PurgeIdle removes chatID when its record, read under the record lock, holds no keep fact but run marks and no
+// pending hold, no unsent words, a last use and freshest run mark (runMarkUntil) before cutoff, the reconcile has
+// passed over it this boot, and no run is unattributed. A record that cannot be read is never removed: the error is
+// returned and the record stays. A removal marks the chat and its chain in teardown until the caller's EndTeardown,
+// and broadcasts chat_deleted.
 func (s *Store) PurgeIdle(ctx context.Context, chatID marotte.ChatID, cutoff time.Time) (archive.PurgeVerdict, error) {
 	if err := ctx.Err(); err != nil {
 		return archive.PurgeVerdict{}, err

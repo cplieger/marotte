@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -131,8 +132,8 @@ func (*benchDeps) InflightDone()   {}
 func (*benchDeps) Draining() bool  { return false }
 func (*benchDeps) DeleteChatStateByChain(context.Context, marotte.ChatID, []string, RunStopCause) {
 }
-func (*benchDeps) CloseChatState(context.Context, marotte.ChatID, bool) {}
-func (*benchDeps) BeginChatTeardown(marotte.ChatID, bool)               {}
+func (*benchDeps) CloseChatState(context.Context, marotte.ChatID, *chat.Claim) {}
+func (*benchDeps) BeginChatTeardown(marotte.ChatID, bool)                      {}
 func (d *benchDeps) KillForTurn(turn TurnRef) {
 	d.stopSteps = append(d.stopSteps, "kill "+turn.Turn)
 }

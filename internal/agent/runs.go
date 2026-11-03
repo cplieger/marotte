@@ -92,6 +92,7 @@ type runChatReader interface {
 	HoldOrPend(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
 	Rollback(ctx context.Context, claim *chat.Claim) error
 	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
+	EndStop(ctx context.Context, claim *chat.Claim)
 	HoldUnattributed(workflowID string)
 	ClearUnattributed(workflowID string)
 	SessionInTeardown(sessionID string) bool

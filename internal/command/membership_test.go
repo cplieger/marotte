@@ -93,7 +93,7 @@ func (r *recordingTeardown) DeleteChatStateByChain(_ context.Context, id marotte
 	r.causes[id] = cause
 }
 
-func (r *recordingTeardown) CloseChatState(_ context.Context, id marotte.ChatID, _ bool) {
+func (r *recordingTeardown) CloseChatState(_ context.Context, id marotte.ChatID, _ *chat.Claim) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.closed = append(r.closed, id)
@@ -452,7 +452,7 @@ func TestCloseTab_AChatTabRunsTheTeardownAndKeepsTheRecord(t *testing.T) {
 	var tornDown []marotte.ChatID
 	mem := newMembership(&membershipDeps{
 		Chats: withKeep(store), Tabs: st, Bus: &tabBus{},
-		CloseChat: func(_ context.Context, id marotte.ChatID, _ bool) { tornDown = append(tornDown, id) },
+		CloseChat: func(_ context.Context, id marotte.ChatID, _ *chat.Claim) { tornDown = append(tornDown, id) },
 	})
 	opened := createChat(t, mem, "op-a")
 
@@ -486,7 +486,7 @@ func TestCmdCloseTab_OnlyThePagesCloseIsAPersons(t *testing.T) {
 			var byPerson []bool
 			mem := newMembership(&membershipDeps{
 				Chats: withKeep(testsupport.NewInMemoryChatStore()), Tabs: st, Bus: &tabBus{},
-				CloseChat: func(_ context.Context, _ marotte.ChatID, p bool) { byPerson = append(byPerson, p) },
+				CloseChat: func(_ context.Context, _ marotte.ChatID, p *chat.Claim) { byPerson = append(byPerson, p != nil) },
 			})
 			opened := createChat(t, mem, "op-a")
 			payload, err := json.Marshal(marotte.CloseTabCommand{ID: opened.Subject.ID, OpID: "op-close"})

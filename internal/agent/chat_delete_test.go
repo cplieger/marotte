@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -244,7 +245,7 @@ func TestCloseChatState_DeletesNothing(t *testing.T) {
 	insertChatSession(t, h, rig, "c1", "sess_cur")
 	leased(t, h.runs, "wf_1")
 
-	h.CloseChatState(t.Context(), "c1", true)
+	h.CloseChatState(t.Context(), "c1", &chat.Claim{})
 
 	if n := len(rig.of(marotte.MethodSessionDelete)); n != 0 {
 		t.Errorf("CloseChatState sent %d session/delete, want 0: a close keeps the chat reopenable", n)

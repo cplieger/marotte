@@ -419,11 +419,11 @@ func (rs *Runs) retry(
 
 	// Threaded from the gate: nothing here can learn it once the run re-drives.
 	recipe := aff.origin.recipe
-	holders, err := rs.retryHolders(cctx, workflowID, &aff.origin)
+	holders, launchers, err := rs.retryHolders(cctx, workflowID, &aff.origin)
 	if err != nil {
 		return out, err
 	}
-	if refused := rs.refuseClosedLauncher(workflowID, holders); refused != nil {
+	if refused := rs.refuseClosedLauncher(workflowID, launchers); refused != nil {
 		return out, refused
 	}
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,

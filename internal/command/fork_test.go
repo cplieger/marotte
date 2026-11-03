@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -750,7 +751,7 @@ func TestCmdForkChat_TheRecordSurvivesAClose(t *testing.T) {
 	host := newForkHost(store, br, "c-parent")
 
 	_, _ = cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
-	closeChatTeardown(t.Context(), host, host, host, host, "c-tangent", true)
+	closeChatTeardown(t.Context(), host, host, host, host, "c-tangent", &chat.Claim{})
 
 	c, ok := store.Get(t.Context(), "c-tangent")
 	if !ok {

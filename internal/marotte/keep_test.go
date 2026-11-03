@@ -16,7 +16,7 @@ func TestKeyRun(t *testing.T) {
 		t.Fatal("KeyRun(wf_0a1b) refused")
 	}
 	tab, _ := KeyRunTab("wf_0a1b")
-	for key, want := range map[string]string{run: KeepKindRun, tab: KeepKindRunTab, KeyTab: KeepKindTab, KeyTurn: KeepKindTurn, "future": ""} {
+	for key, want := range map[string]string{run: KeepKindRun, tab: KeepKindRunTab, KeyTab: KeepKindTab, KeyTurn: KeepKindTurn, KeyStop: KeepKindStop, "future": ""} {
 		kind, wf := KeepKind(key)
 		if kind != want {
 			t.Errorf("KeepKind(%q) = %q, want %q", key, kind, want)

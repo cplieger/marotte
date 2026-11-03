@@ -18,6 +18,8 @@ type KeepFact struct {
 const (
 	KeyTab  = "tab"
 	KeyTurn = "turn"
+	// KeyStop is a person's close stopping the chat's runs, from the close's commit until every stop has ended.
+	KeyStop = "stop"
 )
 
 // The kinds KeepKind answers, one per holder key shape.
@@ -26,6 +28,7 @@ const (
 	KeepKindRun    = "run"
 	KeepKindRunTab = "runtab"
 	KeepKindTurn   = "turn"
+	KeepKindStop   = "stop"
 )
 
 const (
@@ -57,6 +60,8 @@ func KeepKind(key string) (kind, workflowID string) {
 		return KeepKindTab, ""
 	case key == KeyTurn:
 		return KeepKindTurn, ""
+	case key == KeyStop:
+		return KeepKindStop, ""
 	case strings.HasPrefix(key, keyRunTabPrefix):
 		if wf := strings.TrimPrefix(key, keyRunTabPrefix); ids.ValidChatID(wf) {
 			return KeepKindRunTab, wf
