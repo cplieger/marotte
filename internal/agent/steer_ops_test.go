@@ -383,6 +383,30 @@ func TestSteerRead_ACombinedResendReadAfterTheLedgerForgotItNamesItsRows(t *test
 	}
 }
 
+// Between a turn_end and KAS going idle, a row KAS still holds is the continuation's to read: it reads
+// delivering, and a delete is refused with a clear-free 409 that says so rather than claiming a resend.
+func TestCmdSteerRemove_ARowKASIsDeliveringIsRefusedWithNoClear(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, _, br := turnEndedBesideASteer(t)
+
+		rec := postCmd(t, s.h, removeCmd("steer-a"))
+
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("steer_remove = %d %s, want 409", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "reading or dropping") || strings.Contains(body, "resent") {
+			t.Errorf("refusal = %s, want it to say the agent is reading or dropping the message, with no resend claimed", body)
+		}
+		if n := countCalls(br, marotte.MethodSessionSteerClear); n != 0 {
+			t.Errorf("_session/steer/clear calls = %d, want 0", n)
+		}
+		if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowState("delivering") {
+			t.Errorf("steer-a's last frame state = %q, want delivering", f.State)
+		}
+	})
+}
+
 // A bridge death with a probe outstanding and a steer waiting collects both for one resend, marks the
 // outstanding one possibly still in KAS's log, and owes the post-load clear.
 func TestSteerRecords_ABridgeDeathCollectsOutstandingAndWaitingRows(t *testing.T) {

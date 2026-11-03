@@ -36,6 +36,12 @@ While a reply runs, deleting a message the agent has not read yet can leave the 
 
 Reported as [kirodotdev/Kiro#11449](https://github.com/kirodotdev/Kiro/issues/11449), open. When you delete one waiting message, marotte clears them all and sends the ones you kept again as one message. It reaches the running reply when the agent has read none of your messages in that reply yet. Otherwise it waits, and marotte sends it as your next message once the reply ends.
 
+### Deleting or editing a waiting message as a reply ends can start an empty reply
+
+When a reply ends while a message you sent is still unread, kiro-cli continues the reply so the agent reads it. If you delete or edit a waiting message within a fraction of a second of the reply ending, kiro-cli can empty its queue after it has decided to continue. The agent then starts a reply with none of your messages in it.
+
+Not yet reported upstream. Only kiro-cli can close this: it needs to check for unread messages again before it continues, or to offer a way to withdraw one message without emptying the queue. Once marotte sees a reply end, it shows each message kiro-cli still holds as "Delivering", with no Edit or Delete, until the agent reads it or kiro-cli drops it, and refuses a delete sent during that time. A delete or edit that marotte sent just before it saw the reply end is not covered.
+
 ### A message sent just after a stop can run out of view
 
 When you stop a reply while workflow messages wait for the agent, kiro-cli starts a reply of its own to pass them on. A message that reaches kiro-cli while that reply is still starting can run with none of its output in the chat. What it does still happens, such as a message to a workflow step or a new workflow, and the agent forgets it afterwards.

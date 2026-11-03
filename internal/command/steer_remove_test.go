@@ -379,6 +379,22 @@ func TestCmdSteerClear_AClearWithNoReplyIsAGatewayError(t *testing.T) {
 	}
 }
 
+// A discard the record refuses (a clear would race a turn end's continuation) sends no clear.
+func TestCmdSteerClear_ARefusedDiscardSendsNoClear(t *testing.T) {
+	b := newSteerBridge()
+	q := clearingQueue()
+	q.discardRef = SteerRefuseSettling
+
+	_, err := cmdSteerClear(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), clearReq("c1"))
+
+	if statusOf(err) != http.StatusConflict || reasonOf(err) != SteerRefuseSettling {
+		t.Errorf("status = %d reason %q, want 409 settling (body %s)", statusOf(err), reasonOf(err), errText(err))
+	}
+	if got := b.methods(); len(got) != 0 {
+		t.Errorf("calls = %v, want none", got)
+	}
+}
+
 // Nothing KAS may hold means nothing to clear: the discard costs no RPC.
 func TestCmdSteerClear_NothingInKASCostsNoClear(t *testing.T) {
 	b := newSteerBridge()

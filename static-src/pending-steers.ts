@@ -41,6 +41,8 @@ interface StackState {
   /** No workflow result is in the dock, so each row can go on its own: the server refuses a
    *  one-row delete beside an agent row (`agent_rows_waiting`). */
   perRow: boolean;
+  /** No row is delivering: the server refuses every whole-buffer clear while one is. */
+  clearable: boolean;
   src: SteerStackSource;
 }
 
@@ -77,6 +79,7 @@ function steerSig(e: PendingSteer): string {
     pending: e.pending === true ? "1" : "",
     compacted: e.compacted === true ? "1" : "",
     unsent: e.unsent === true ? "1" : "",
+    delivering: e.delivering === true ? "1" : "",
     awaitsPrompt: e.awaitsPrompt === true ? "1" : "",
     caller: e.caller === undefined ? "" : sentBy(e.caller),
     kas: "",
@@ -93,6 +96,7 @@ function render(
   const state: StackState = {
     waiting: steers.filter((e) => e.pending !== true).length,
     perRow: steers.every((e) => e.origin === "user"),
+    clearable: !steers.some((e) => e.delivering === true),
     src,
   };
   const waiting = state.waiting;
@@ -156,6 +160,9 @@ function rowState(steer: PendingSteer): string {
   if (steer.pending === true) {
     return "sending";
   }
+  if (steer.delivering === true) {
+    return "delivering";
+  }
   return steer.unsent === true ? "unsent" : "sent";
 }
 
@@ -197,9 +204,13 @@ const actionSig = new WeakMap<HTMLElement, string>();
  *  button takes focus off one a keyboard reader is on. The signature enumerates EVERY input
  *  `fillActions` branches on. */
 function syncActions(row: HTMLElement, steer: PendingSteer, state: StackState): void {
-  const sig = [rowState(steer), steer.origin, String(state.waiting), state.perRow ? "1" : "0"].join(
-    "\u0001",
-  );
+  const sig = [
+    rowState(steer),
+    steer.origin,
+    String(state.waiting),
+    state.perRow ? "1" : "0",
+    state.clearable ? "1" : "0",
+  ].join("\u0001");
   if (actionSig.get(row) === sig) {
     return;
   }
@@ -255,13 +266,14 @@ function buildRow(steer: PendingSteer, state: StackState): HTMLElement {
 }
 
 /** Put the right-hand controls into the column, or empty it. A row still SENDING gets NONE:
- *  nothing on the wire can address it yet. */
+ *  nothing on the wire can address it yet. Nor does one the agent is DELIVERING: the server
+ *  refuses a delete while KAS holds it. */
 function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState): void {
-  if (steer.pending === true) {
+  if (steer.pending === true || steer.delivering === true) {
     column.replaceChildren();
     return;
   }
-  const { waiting, perRow, src } = state;
+  const { waiting, perRow, clearable, src } = state;
   const user = steer.origin === "user";
   const controls: HTMLElement[] = [];
   // Send now LEADS, and the destructive control stays last. Not on an unsent row: it has no turn to
@@ -282,7 +294,9 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
       ),
     );
   }
-  if (perRow) {
+  // While a row is delivering the server refuses any delete that would clear KAS's buffer; only a row
+  // the server holds itself (unsent) still goes on its own.
+  if (perRow && (clearable || steer.unsent === true)) {
     controls.push(
       actionButton(
         ICON_EDIT,
@@ -302,6 +316,10 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
         "steer-act-danger",
       ),
     );
+    column.replaceChildren(...controls);
+    return;
+  }
+  if (!clearable) {
     column.replaceChildren(...controls);
     return;
   }
@@ -640,6 +658,9 @@ function accessibleName(steer: PendingSteer): string {
   if (steer.unsent === true) {
     return `${stateWord(steer)}: ${steerText}`;
   }
+  if (steer.delivering === true) {
+    return `${stateWord(steer)}, the agent is reading or dropping it: ${steerText}`;
+  }
   return `${stateWord(steer)}, waiting for the agent: ${steerText}`;
 }
 
@@ -648,6 +669,9 @@ function accessibleName(steer: PendingSteer): string {
 function stateWord(steer: PendingSteer): string {
   if (steer.pending === true) {
     return "Sending";
+  }
+  if (steer.delivering === true) {
+    return "Delivering";
   }
   const sent = steer.caller === undefined ? "Sent" : sentBy(steer.caller);
   if (steer.unsent === true) {
