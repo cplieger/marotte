@@ -9,8 +9,8 @@ import (
 
 // EngineSource is where the agent engine's binary and environment come from, as the composition root resolves them.
 type EngineSource interface {
-	// ChatPath is the kiro-cli-chat sidecar to spawn, "" while none is available.
-	ChatPath() string
+	// CLIPath is the kiro-cli binary the engine runs `acp` on, "" while none is available.
+	CLIPath() string
 	// Installed closes once a managed install is active; nil means an unmanaged runtime that starts at once.
 	Installed() <-chan struct{}
 	// Env is appended to the engine's environment, so the active install directory leads PATH.
@@ -22,7 +22,7 @@ type EngineSource interface {
 // noEngine is the source of a runtime with no kiro-cli: no path and no install to wait for, so the owner never starts.
 type noEngine struct{}
 
-func (noEngine) ChatPath() string              { return "" }
+func (noEngine) CLIPath() string               { return "" }
 func (noEngine) Installed() <-chan struct{}    { return nil }
 func (noEngine) Env() []string                 { return nil }
 func (noEngine) EnvAllow() map[string]struct{} { return nil }

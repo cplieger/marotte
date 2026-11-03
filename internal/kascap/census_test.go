@@ -128,7 +128,7 @@ type bundle struct {
 //
 //	curl -fsSLO https://desktop-release.q.us-east-1.amazonaws.com/<version>/kirocli-x86_64-linux.zip
 //	unzip -q kirocli-x86_64-linux.zip
-//	env -u KIRO_KAS_SERVER_PATH -u KIRO_KAS_NODE_PATH -u KIRO_HOME HOME=<scratch> ./kirocli/bin/kiro-cli-chat acp --agent-engine v3 </dev/null
+//	env -u KIRO_KAS_SERVER_PATH -u KIRO_KAS_NODE_PATH -u KIRO_HOME HOME=<scratch> ./kirocli/bin/kiro-cli acp --agent-engine v3 </dev/null
 //	env -u KIRO_HOME HOME=<scratch> go test ./internal/kascap/
 func forEachBundle(t *testing.T, check func(t *testing.T, b bundle)) {
 	t.Helper()

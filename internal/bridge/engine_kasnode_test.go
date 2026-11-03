@@ -18,9 +18,9 @@ import (
 const fakeLauncher = "/app/marotte"
 
 // kasNodeFixture is a HOME holding kiro-cli's extracted node (a script answering --version), its node.sha256, and a
-// kiro-cli-chat embedding the node's hash before KIRO_KAS_NODE_PATH, as 2.37.1 does. It returns the chat and node
+// kiro-cli embedding the node's hash before KIRO_KAS_NODE_PATH, as 3.0.0 does. It returns the cli and node
 // paths. Not parallel: it sets HOME and swaps selfExecutable.
-func kasNodeFixture(t *testing.T, version string) (chat, node string) {
+func kasNodeFixture(t *testing.T, version string) (cli, node string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -52,16 +52,16 @@ func kasNodeFixture(t *testing.T, version string) (chat, node string) {
 	if err := os.WriteFile(node+".sha256", []byte(hash), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	chat = filepath.Join(t.TempDir(), "kiro-cli-chat")
-	if err := os.WriteFile(chat, []byte("\x7fELF..."+hash+kasnode.NodePathVar+"KIRO_KAS_SERVER_PATH"), 0o600); err != nil {
+	cli = filepath.Join(t.TempDir(), "kiro-cli")
+	if err := os.WriteFile(cli, []byte("\x7fELF..."+hash+kasnode.NodePathVar+"KIRO_KAS_SERVER_PATH"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return chat, node
+	return cli, node
 }
 
-func kasNodeEngine(t *testing.T, chat string, on bool) *Engine {
+func kasNodeEngine(t *testing.T, cli string, on bool) *Engine {
 	t.Helper()
-	e := NewEngine(chat, t.TempDir())
+	e := NewEngine(cli, t.TempDir())
 	e.lifecycleCtx = t.Context()
 	e.highThroughput = on
 	return e
@@ -74,12 +74,12 @@ func launcherEnv(env []string) []string {
 }
 
 func TestProcessEnv_TheSettingNamesTheLauncher(t *testing.T) {
-	chat, node := kasNodeFixture(t, kasnode.ValidatedNodeVersion)
+	cli, node := kasNodeFixture(t, kasnode.ValidatedNodeVersion)
 	t.Setenv(nodeOptionsVar, "--max-semi-space-size=64")
 	logs := capture.Default(t)
 
 	t.Run("on", func(t *testing.T) {
-		e := kasNodeEngine(t, chat, true)
+		e := kasNodeEngine(t, cli, true)
 		e.heapMiB = 4096
 		env := e.processEnv()
 		want := []string{kasnode.NodePathVar + "=" + fakeLauncher, kasnode.LaunchVar + "=" + node}
@@ -102,7 +102,7 @@ func TestProcessEnv_TheSettingNamesTheLauncher(t *testing.T) {
 	})
 	t.Run("off", func(t *testing.T) {
 		t.Setenv(kasnode.LaunchVar, "/inherited/node")
-		e := kasNodeEngine(t, chat, false)
+		e := kasNodeEngine(t, cli, false)
 		if got := launcherEnv(e.processEnv()); len(got) != 0 {
 			t.Errorf("launcher variables = %q, want none: off is kiro-cli's stock launch", got)
 		}
@@ -120,7 +120,7 @@ func TestProcessEnv_AFailedCheckStartsTheStockEngine(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		version string
-		mutate  func(t *testing.T, chat, node string)
+		mutate  func(t *testing.T, cli, node string)
 		reason  []string
 	}{
 		{
@@ -146,9 +146,9 @@ func TestProcessEnv_AFailedCheckStartsTheStockEngine(t *testing.T) {
 			reason: []string{"has not extracted its node yet"},
 		},
 		{
-			name: "a kiro-cli-chat with no node hash", version: kasnode.ValidatedNodeVersion,
-			mutate: func(t *testing.T, chat, _ string) {
-				if err := os.WriteFile(chat, []byte("KIRO_KAS_SERVER_PATH"), 0o600); err != nil {
+			name: "a kiro-cli with no node hash", version: kasnode.ValidatedNodeVersion,
+			mutate: func(t *testing.T, cli, _ string) {
+				if err := os.WriteFile(cli, []byte("KIRO_KAS_SERVER_PATH"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -161,12 +161,12 @@ func TestProcessEnv_AFailedCheckStartsTheStockEngine(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			chat, node := kasNodeFixture(t, tc.version)
+			cli, node := kasNodeFixture(t, tc.version)
 			if tc.mutate != nil {
-				tc.mutate(t, chat, node)
+				tc.mutate(t, cli, node)
 			}
 			logs := capture.Default(t)
-			e := kasNodeEngine(t, chat, true)
+			e := kasNodeEngine(t, cli, true)
 			env := e.processEnv()
 			if v, ok := envValue(env, kasnode.LaunchVar); ok {
 				t.Errorf("%s = %q, want unset: the check failed", kasnode.LaunchVar, v)

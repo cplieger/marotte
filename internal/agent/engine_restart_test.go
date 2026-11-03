@@ -62,7 +62,7 @@ func executingLease(t *testing.T, h *Runtime, wf string) {
 // KAS reads its log level only from the spawn environment, so a Debug logs move reaches it at the next engine.
 func TestSettings_DebugLogsMoveIsAnEngineRestartReason(t *testing.T) {
 	h, dir, src := restartFixture(t)
-	if off := h.resolveEngine(t.Context(), "/fake/kiro-cli-chat").opts; off.DebugLogs {
+	if off := h.resolveEngine(t.Context(), "/fake/kiro-cli").opts; off.DebugLogs {
 		t.Fatal("EngineOpts.DebugLogs = true with no debug_logs saved, want false")
 	}
 	executingLease(t, h, "wf_1")
@@ -71,7 +71,7 @@ func TestSettings_DebugLogsMoveIsAnEngineRestartReason(t *testing.T) {
 	if st := h.engine.status(); !st.Restart.Pending || !slices.Equal(st.Restart.Reasons, []marotte.EngineReason{"debug_logs"}) {
 		t.Errorf("status = %+v, want a restart pending for debug_logs", st.Restart)
 	}
-	on := h.resolveEngine(t.Context(), "/fake/kiro-cli-chat").opts
+	on := h.resolveEngine(t.Context(), "/fake/kiro-cli").opts
 	if !on.DebugLogs {
 		t.Error("EngineOpts.DebugLogs = false after debug_logs was saved true")
 	}

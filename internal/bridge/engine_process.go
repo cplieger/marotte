@@ -48,7 +48,7 @@ func sidecarExitOf(state *os.ProcessState) string {
 	return fmt.Sprintf("exit_code=%d", state.ExitCode())
 }
 
-// reapProcess reaps the sidecar's group, then the node engine's: on 2.18.0 a head-only kill left kiro-cli-chat and
+// reapProcess reaps the sidecar's group, then the node engine's: on 2.18.0 a head-only kill left the kiro-cli process and
 // its node child alive at about 250 MB (procgroup.Kill), and the node engine leads its own group (sweepEngineGroups).
 // stdin is already closed. endedItself is endedOnItsOwn's answer from before that close.
 func (e *Engine) reapProcess(endedItself bool) {

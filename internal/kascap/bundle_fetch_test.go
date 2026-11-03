@@ -31,13 +31,13 @@ import (
 // the pin is the one change whose whole point is a new bundle, so there the readers fetch every
 // archive whose pin moved instead, and a moved contract turns the PR red rather than skipping.
 const (
-	// The 2.31 x86_64 zip is about 162 MB, its chat sidecar about 216 MB, the embedded runtime tar
-	// about 183 MB and the agent server about 13 MB.
+	// The 3.0.0 x86_64 zip is about 137 MB, its kiro-cli binary about 219 MB, the embedded runtime
+	// tar about 183 MB and the agent server about 13 MB.
 	maxKiroArchive = 1 << 30
-	maxChatBinary  = 1 << 30
+	maxCLIBinary   = 1 << 30
 	maxRuntimeTar  = 1 << 30
 	maxAgentServer = 256 << 20
-	chatMember     = "kirocli/bin/kiro-cli-chat"
+	cliMember      = "kirocli/bin/kiro-cli"
 	// Per archive; both together stay under go test's default 10-minute package timeout, which CI
 	// does not raise.
 	fetchBudget = 4 * time.Minute
@@ -62,6 +62,7 @@ type fetchResult struct {
 	nodeErr  error
 	src, url string
 	node     bundledNode
+	acp      acpFallback
 }
 
 // changedArchesOnThisPR returns the architectures whose kiro-cli archive this GitHub pull request
@@ -164,7 +165,7 @@ func TestPinPatternsMatchTheEntrypoint(t *testing.T) {
 func fetchedBundle(t *testing.T, active, arch string) bundle {
 	t.Helper()
 	res := fetchedArchive(t, active, arch)
-	return bundle{name: arch, src: res.src, path: res.url + "!/" + chatMember + "!/" + filepath.ToSlash(bundleRel)}
+	return bundle{name: arch, src: res.src, path: res.url + "!/" + cliMember + "!/" + filepath.ToSlash(bundleRel)}
 }
 
 // fetchedArchive returns what the pinned release's arch archive holds, fetching it on first use.
@@ -207,8 +208,8 @@ func pinnedDigest(t *testing.T, arch string) string {
 }
 
 // fetchKAS downloads the pinned arch archive through the URL marotte installs from, verifies it
-// against the pinned digest, and reads the agent server and the node out of its chat sidecar. err is
-// the agent server's failure, nodeErr the node's.
+// against the pinned digest, and reads the agent server, the node and the acp engine fallback out of its
+// kiro-cli binary. err is the agent server's failure, nodeErr the node's.
 func fetchKAS(ctx context.Context, version, arch, digest string) (res fetchResult) {
 	rel := kirocli.Release()
 	token, ok := rel.ArchTokens[arch]
@@ -229,17 +230,18 @@ func fetchKAS(ctx context.Context, version, arch, digest string) (res fetchResul
 		res.err = err
 		return res
 	}
-	chat, err := readMember(archive, chatMember)
+	cli, err := readMember(archive, cliMember)
 	if err != nil {
 		res.err = err
 		return res
 	}
-	if res.node, res.nodeErr = embeddedNode(chat); res.nodeErr != nil {
-		res.nodeErr = fmt.Errorf("%s in %s: %w", chatMember, res.url, res.nodeErr)
+	if res.node, res.nodeErr = embeddedNode(cli); res.nodeErr != nil {
+		res.nodeErr = fmt.Errorf("%s in %s: %w", cliMember, res.url, res.nodeErr)
 	}
-	server, err := embeddedAgentServer(chat)
+	res.acp = readACPFallback(cli)
+	server, err := embeddedAgentServer(cli)
 	if err != nil {
-		res.err = fmt.Errorf("%s in %s: %w", chatMember, res.url, err)
+		res.err = fmt.Errorf("%s in %s: %w", cliMember, res.url, err)
 		return res
 	}
 	res.src = string(server)
@@ -287,14 +289,14 @@ func readMember(archive, member string) ([]byte, error) {
 		return nil, fmt.Errorf("%s in the kiro-cli archive: %w", member, err)
 	}
 	defer func() { _ = zf.Close() }()
-	return io.ReadAll(io.LimitReader(zf, maxChatBinary))
+	return io.ReadAll(io.LimitReader(zf, maxCLIBinary))
 }
 
-// embeddedAgentServer reads the agent server out of the chat sidecar's bytes without running the
-// sidecar, so an archive built for another architecture than the runner's reads the same way. The
-// sidecar carries its runtime tree as one zstd-compressed tar, which kiro-cli itself unpacks into
+// embeddedAgentServer reads the agent server out of the kiro-cli binary's bytes without running it,
+// so an archive built for another architecture than the runner's reads the same way. The binary
+// carries its runtime tree as one zstd-compressed tar, which kiro-cli itself unpacks into
 // kas/<version>-<sha256 of that frame>/; the frame is the one that decodes to a tar header.
-func embeddedAgentServer(chat []byte) ([]byte, error) {
+func embeddedAgentServer(cli []byte) ([]byte, error) {
 	dec, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(maxRuntimeTar))
 	if err != nil {
 		return nil, err
@@ -302,19 +304,19 @@ func embeddedAgentServer(chat []byte) ([]byte, error) {
 	defer dec.Close()
 	var tars []int
 	for off := 0; ; off++ {
-		i := bytes.Index(chat[off:], zstdMagic)
+		i := bytes.Index(cli[off:], zstdMagic)
 		if i < 0 {
 			break
 		}
 		off += i
-		if opensAsTar(dec, chat[off:]) {
+		if opensAsTar(dec, cli[off:]) {
 			tars = append(tars, off)
 		}
 	}
 	if len(tars) != 1 {
 		return nil, fmt.Errorf("found %d zstd-compressed tars at offsets %v, want the one runtime tree; kiro-cli changed how it embeds the agent server", len(tars), tars)
 	}
-	if err := dec.Reset(bytes.NewReader(chat[tars[0]:])); err != nil {
+	if err := dec.Reset(bytes.NewReader(cli[tars[0]:])); err != nil {
 		return nil, err
 	}
 	want := filepath.ToSlash(bundleRel)
@@ -338,7 +340,7 @@ func embeddedAgentServer(chat []byte) ([]byte, error) {
 	}
 }
 
-// TestEmbeddedAgentServer pins the sidecar reader on built bytes: the runtime tar is found among
+// TestEmbeddedAgentServer pins the binary's reader on built bytes: the runtime tar is found among
 // other zstd frames and stray magic, and any count of tar frames but one is refused.
 func TestEmbeddedAgentServer(t *testing.T) {
 	enc, err := zstd.NewWriter(nil)
@@ -379,14 +381,14 @@ func TestEmbeddedAgentServer(t *testing.T) {
 	})
 	for _, tc := range []struct {
 		name string
-		chat []byte
+		cli  []byte
 	}{
 		{"no runtime tar", sidecar(elf, stray, other)},
 		{"two runtime tars", sidecar(elf, runtimeTar("a"), runtimeTar("b"))},
 		{"a runtime tar without the agent server", sidecar(elf, tarFrame(otherFile))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got, err := embeddedAgentServer(tc.chat); err == nil {
+			if got, err := embeddedAgentServer(tc.cli); err == nil {
 				t.Errorf("embeddedAgentServer = %q, nil; want an error", got)
 			}
 		})

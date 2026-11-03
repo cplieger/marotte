@@ -18,14 +18,14 @@ import (
 )
 
 const (
-	// NodePathVar is read by kiro-cli-chat (undocumented; it sits beside KIRO_KAS_SERVER_PATH in the binary) and names
+	// NodePathVar is read by kiro-cli (undocumented; it sits beside KIRO_KAS_SERVER_PATH in the binary) and names
 	// the node it runs the agent server on. While it is set, kiro-cli does not extract its embedded node.
 	NodePathVar = "KIRO_KAS_NODE_PATH"
 	// LaunchVar carries the real node's path to the re-executed marotte binary; its presence selects Exec.
 	LaunchVar = "MAROTTE_KAS_NODE"
 )
 
-// ValidatedNodeVersion is the Node.js Flags were measured on, the one kiro-cli 2.37.1 bundles. A kiro-cli bump that
+// ValidatedNodeVersion is the Node.js Flags were measured on, the one kiro-cli 2.37.1 and 3.0.0 bundle. A kiro-cli bump that
 // bundles another fails internal/kascap's TestBundledNodeIsValidated; re-run the tuning harness on the new Node before
 // changing it.
 const ValidatedNodeVersion = "v22.23.4"
@@ -67,7 +67,7 @@ func launch(environ, args []string) (node string, argv, env []string, err error)
 // errNoNodeHash means the binary does not contain the variable name with a hash before it.
 var errNoNodeHash = errors.New("no KIRO_KAS_NODE_PATH string preceded by a node sha256")
 
-// EmbeddedNodeHash returns the sha256 of the node kiro-cli-chat embeds: in 2.37.1 its 64 lowercase hex digits sit
+// EmbeddedNodeHash returns the sha256 of the node kiro-cli embeds: in 3.0.0 its 64 lowercase hex digits sit
 // immediately before the first NodePathVar string. An absence is errNoNodeHash.
 func EmbeddedNodeHash(r io.Reader) (string, error) {
 	const chunk = 1 << 20

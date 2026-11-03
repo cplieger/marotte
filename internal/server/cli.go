@@ -46,15 +46,14 @@ type cliRunner interface {
 // construction.
 type execCLIRunner struct {
 	cliPath func() string
-	// env is the spawn's environment overlay (pinstall's Manager.PathEnv). Load-bearing:
-	// `settings` re-execs kiro-cli-chat by a PATH search, which fails unless the version
-	// directory leads PATH. nil inherits the parent environment.
+	// env is the spawn's environment overlay (pinstall's Manager.PathEnv), which puts the
+	// active version directory first on PATH. nil inherits the parent environment.
 	env func() []string
 }
 
 func (r *execCLIRunner) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.cliPath(), args...) //nolint:gosec // G204: binary path from the install manager, never user input
-	// `settings` forks kiro-cli-chat, which would otherwise hold the pipes past a deadline.
+	// A child kiro-cli forks would otherwise hold the pipes past a deadline.
 	procgroup.OwnGroup(cmd, cliWaitDelay)
 	if r.env != nil {
 		// The overlay lands LAST: os/exec keeps the last value for a repeated key.
