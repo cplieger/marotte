@@ -49,13 +49,13 @@ const (
 	DefaultNotifyRunOutcome    = true
 )
 
-// DefaultHighThroughput is ON by the user's choice: the flags carry 3 to 4 times the prompt load on one engine.
-const DefaultHighThroughput = true
+// defaultHighThroughput is ON because the flags carry 3 to 4 times the prompt load on one engine.
+const defaultHighThroughput = true
 
 // HighThroughput reports whether the next engine starts with the high throughput launcher. An absent or unreadable
 // value is the default.
 func HighThroughput(ctx context.Context, configDir string) bool {
-	on, _ := FieldOr(ctx, configDir, KeyHighThroughput, DefaultHighThroughput)
+	on, _ := FieldOr(ctx, configDir, KeyHighThroughput, defaultHighThroughput)
 	return on
 }
 
@@ -70,7 +70,7 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		AutoCompactPct:        DefaultAutoCompactPct,
 		ChatRetentionDays:     DefaultChatRetentionDays,
 		GuardPayloadLinks:     defaultGuardPayloadLinks,
-		HighThroughput:        DefaultHighThroughput,
+		HighThroughput:        defaultHighThroughput,
 		KnowledgeEnabled:      defaultKnowledgeEnabled,
 		ContentCollection:     DefaultContentCollectionEnabled,
 		MemoryMode:            DefaultMemoryMode,

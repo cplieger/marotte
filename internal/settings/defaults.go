@@ -99,7 +99,7 @@ const (
 	KeyEngineHeapMiB = "engine_heap_mib"
 
 	// KeyHighThroughput starts the agent server on kiro-cli's bundled Node.js with internal/kasnode's flags, default
-	// ON (DefaultHighThroughput); off is kiro-cli's stock engine. It applies when the engine restarts.
+	// ON (defaultHighThroughput); off is kiro-cli's stock engine. It applies when the engine restarts.
 	KeyHighThroughput = "high_throughput_optimizations"
 
 	// KeyTheme is "dark" | "light" | "system" ("system" is a stored choice; absent resolves to
