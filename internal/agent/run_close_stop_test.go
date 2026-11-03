@@ -313,8 +313,8 @@ func TestStopChatRuns_AReopenedChatDropsTheStop(t *testing.T) {
 // An inspect whose pauseDetail drifted in type still reads a terminal status as the stop confirmed.
 func TestRunReadTerminal_KeepsTheStatusWhenAFieldDrifts(t *testing.T) {
 	h, _, br := newTestHub()
-	br.setCallResult(methodKiroWorkflowInspect, json.RawMessage(
-		`{"workflowId":"wf_1","state":{"workflowId":"wf_1","pauseDetail":"transient-error","status":"cancelled"}}`))
+	const drifted = `{"workflowId":"wf_1","state":{"workflowId":"wf_1","pauseDetail":"transient-error","status":"cancelled"}}`
+	br.setCallResult(methodKiroWorkflowInspect, json.RawMessage(drifted))
 
 	if !h.runs.runReadTerminal(t.Context(), "wf_1") {
 		t.Error("a cancelled run whose pauseDetail is a string was read as not terminal")
