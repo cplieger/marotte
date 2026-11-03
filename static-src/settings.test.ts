@@ -48,9 +48,6 @@ vi.mock("./actions/settings.js", () => ({
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve(undefined)),
   apiGetTyped: vi.fn(),
-  // settings-steering.ts is in this graph and reads the ETag off the response headers, so the name
-  // has to exist for Browser Mode's real linking.
-  apiGetWithHeaders: vi.fn(() => Promise.resolve({ data: null, headers: null })),
 }));
 vi.mock("./wire/decoders.gen.js", () => ({ decodeWhoamiResponse: vi.fn() }));
 // governance.ts reaches the SSE bus and its decoders, which the partial decoder mock above does not
