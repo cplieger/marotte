@@ -420,7 +420,7 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 		canonicalAPIPath,
 		idem.middleware,
 		// INNERMOST: the cache stores identity bytes and a replay re-negotiates encoding.
-		compressJSON,
+		compressJSON(),
 	}
 }
 

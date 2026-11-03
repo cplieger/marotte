@@ -52,12 +52,14 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 		sp.Approvals = specapproval.Derive(s.specApprovals.For(sp.Dir), sp.Docs)
 	}
 	etag := specETag(sp.Docs, sp.Approvals)
-	if r.Header.Get(headerIfNoneMatch) == etag {
-		w.Header().Set(headerETag, etag)
+	w.Header().Set(headerETag, etag)
+	if ifNoneMatchHolds(r, etag) {
+		// The 200's Content-Type, so the compressor names Accept-Encoding in the 304's Vary as it
+		// would in the 200's (RFC 9110 section 15.4.5); net/http drops the type itself on a 304.
+		webhttp.JSONHeaders(w)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	w.Header().Set(headerETag, etag)
 	webhttp.WriteJSON(w, sp)
 }
 
