@@ -744,6 +744,28 @@
           "empty": "50%, 50%"
         }
       },
+      "-webkit-text-fill-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "-webkit-text-stroke-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
       "background-color": {
         "by": "theme outcome",
         "is": {
@@ -956,6 +978,39 @@
         }
       },
       "box-sizing": "border-box",
+      "caret-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "column-rule-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
       "display": {
         "by": "outcome",
         "is": {
@@ -1088,6 +1143,17 @@
           "running": "0px"
         }
       },
+      "outline-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
       "position": {
         "by": "outcome",
         "is": {
@@ -1096,7 +1162,40 @@
           "refused": "relative"
         }
       },
+      "row-rule-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
       "scrollbar-width": "thin",
+      "text-decoration-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "text-emphasis-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
       "top": {
         "by": "outcome",
         "is": {
@@ -3708,7 +3807,42 @@
       "in": "interrupted, failed, refused"
     },
     "style": {
+      "-webkit-text-fill-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "-webkit-text-stroke-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
       "background-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-block-end-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-block-start-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-bottom-color": {
         "by": "theme",
         "is": {
           "dark": "oklch(0.79 0.13 2.8)",
@@ -3719,20 +3853,104 @@
       "border-bottom-right-radius": "1.5px",
       "border-end-end-radius": "1.5px",
       "border-end-start-radius": "1.5px",
+      "border-inline-end-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-inline-start-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-left-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-right-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
       "border-start-end-radius": "1.5px",
       "border-start-start-radius": "1.5px",
+      "border-top-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
       "border-top-left-radius": "1.5px",
       "border-top-right-radius": "1.5px",
-      "bottom": "0px",
+      "bottom": "-3px",
+      "caret-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "column-rule-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
       "content": "\"\"",
       "display": "block",
-      "inset-block-end": "0px",
-      "inset-block-start": "0px",
-      "inset-inline-start": "0px",
-      "left": "0px",
+      "inset-block-end": "-3px",
+      "inset-block-start": "3px",
+      "inset-inline-start": "3px",
+      "left": "3px",
+      "outline-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
       "position": "absolute",
-      "top": "0px",
-      "transform": "matrix(0.707107, 0.707107, -0.707107, 0.707107, 0, 0)"
+      "row-rule-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "text-decoration-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "text-emphasis-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "top": "3px",
+      "transform": "matrix(0.707107, 0.707107, -0.707107, 0.707107, -3, -3)"
     }
   }
 }
