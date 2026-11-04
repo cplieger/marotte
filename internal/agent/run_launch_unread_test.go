@@ -14,7 +14,6 @@ import (
 	"github.com/cplieger/marotte/internal/schedule"
 )
 
-// undecodedReply is the error the bridge returns for an answer that arrived and could not be decoded.
 func undecodedReply() error {
 	return fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded,
 		&marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "marotte could not decode kiro-cli's answer"})

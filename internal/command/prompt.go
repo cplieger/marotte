@@ -130,8 +130,8 @@ func sendTurnPrompt(ctx context.Context, gate promptSendGate, sb promptWriter, p
 
 // recoverEmptyTurn re-prompts a turn that produced nothing: recreate the session, then send the
 // same prompt once more as a turn of its own. result is the FINALIZED turn's captured outcome,
-// never the live accumulator. Both admission holds are released, so the retry re-reserves with a
-// try and a user prompt that won the slot abandons it.
+// never the live accumulator. Both admission holds are released, so the retry re-reserves: it
+// waits out a transient holder and abandons when a turn runs, the chat closes or the wait ends.
 func recoverEmptyTurn(
 	ctx context.Context, roles *promptRoles, sb Bridge, res Reservation, turnID string,
 	result marotte.TurnResult, p *marotte.PromptCommand, params map[string]any,
@@ -155,7 +155,7 @@ func recoverEmptyTurn(
 	// Waiting: the close's drain holds the slot a moment while it looks for a queued prompt.
 	out, retryRes := roles.admission.ReserveTurn(ctx, chatID, marotte.TurnSourceEmptyRetry, res.Stamp, AdmissionWait)
 	if out != IdleAcquired {
-		slog.Warn("empty turn: another turn was admitted during recovery, or the chat closed; abandoning retry",
+		slog.Warn("empty turn: the retry could not take the chat's turn slot, so it was not sent",
 			"chat_id", chatID)
 		return
 	}

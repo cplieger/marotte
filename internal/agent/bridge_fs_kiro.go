@@ -83,8 +83,8 @@ func (in *inbound) handleKiroFSRequest(_ context.Context, chatID marotte.ChatID,
 	return true
 }
 
-// kiroFSPath decodes the request's params. Each verb confines the path to a root and a
-// root-relative name, never an absolute path, so the verdict and the operation share a handle.
+// Each verb confines the path to a root and a root-relative name, never an absolute path, so
+// the verdict and the operation share a handle.
 func kiroFSPath(msg *marotte.RPCResponse) (kiroFSParams, error) {
 	var p kiroFSParams
 	if err := parseRequest(msg, &p); err != nil {

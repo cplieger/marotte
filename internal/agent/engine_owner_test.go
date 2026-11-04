@@ -327,7 +327,6 @@ func TestEngineExit_ACauseForAStopMarotteDidNotSend(t *testing.T) {
 	}
 }
 
-// oomStep reads 0 container OOM kills at the spawn and 1 at the exit.
 func oomStep() func() (uint64, bool) {
 	var mu sync.Mutex
 	n := uint64(0)
