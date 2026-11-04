@@ -210,7 +210,7 @@ func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
 				t.Fatal("the fixture holds a lease, so Retry mints none and this proves nothing")
 			}
 
-			aff := h.runs.affordance(t.Context(), "wf_1", "aborted")
+			aff := h.runs.affordance("wf_1", &runHead{Status: "aborted"})
 			if _, err := h.runs.retry(t.Context(), "wf_1", aff); err == nil {
 				t.Fatal("a failed retry reported success")
 			}
@@ -564,7 +564,7 @@ func TestRetry_RefusesARunWhoseLaunchingSegmentTheChatRetired(t *testing.T) {
 		t.Fatalf("Setup: seeding the chat: %s", err)
 	}
 
-	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted"))
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "aborted"}))
 	if !errors.Is(err, errLaunchSessionUnavailable) {
 		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable", err)
 	}
@@ -691,7 +691,7 @@ func TestRetry_RefusesARetiredSegmentRunWhileItsChatIsOpen(t *testing.T) {
 		t.Fatalf("Setup: opening the chat = (%v, %v), want it live on sess_now", open, err)
 	}
 
-	_, err = h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted"))
+	_, err = h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "aborted"}))
 	if !errors.Is(err, errLaunchSessionUnavailable) {
 		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable", err)
 	}

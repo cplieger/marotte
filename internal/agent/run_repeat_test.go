@@ -159,7 +159,17 @@ func TestFinishRepeat_AnUpdatedFalseIsARefusal(t *testing.T) {
 // inspectAtCap is wf_1 paused with its repeat at its cap, as KAS answers inspect.
 func inspectAtCap(t *testing.T) json.RawMessage {
 	t.Helper()
-	return inspectReply(t, "wf_1", marotte.RunStatusPaused, "Repeat 'loop' reached maxIterations.")
+	raw, err := json.Marshal(map[string]any{
+		"workflowId": "wf_1",
+		"state": map[string]any{
+			"status": marotte.RunStatusPaused, "pauseReason": "Repeat 'loop' reached maxIterations.",
+			"pause": map[string]any{"kind": pauseKindMaxIterations, "nodeId": "loop"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal inspect: %v", err)
+	}
+	return raw
 }
 
 func maxIterationsHub(t *testing.T) (*Runtime, *fakeBridge) {
@@ -170,7 +180,6 @@ func maxIterationsHub(t *testing.T) (*Runtime, *fakeBridge) {
 		methodKiroWorkflowInspect: inspectAtCap(t),
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
 			"workflowId": "wf_1", "name": "nightly", "status": "paused",
-			"pauseKind": "maxIterations", "pauseNodeId": "loop",
 		}),
 	}
 	return h, br
