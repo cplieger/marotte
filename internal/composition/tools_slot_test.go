@@ -47,7 +47,7 @@ func TestWireToolsEngineBootsOverAnInvalidManifestAndSaysWhy(t *testing.T) {
 	}
 	logs := captureDefaultLogger(t)
 
-	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
+	tools, err := wireToolsEngine(&Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
 	if err != nil {
 		t.Fatalf("a tools.json toolbelt refuses stopped the boot: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestWireToolsEngineBootsOverAnUnreadableManifest(t *testing.T) {
 	}
 	captureDefaultLogger(t)
 
-	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
+	tools, err := wireToolsEngine(&Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
 	if err != nil {
 		t.Fatalf("an unreadable tools.json stopped the boot: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestWireToolsEngine_StaysDownOverAnUnusableToolsFolder(t *testing.T) {
 	captureDefaultLogger(t)
 	cfg := &Config{ConfigDir: configDir, Tools: paths.tools}
 
-	tools, err := wireToolsEngine(t.Context(), cfg, testRuntime(t), nil)
+	tools, err := wireToolsEngine(cfg, testRuntime(t), nil)
 	if err != nil {
 		t.Fatalf("an unusable tools folder stopped the boot: %v", err)
 	}

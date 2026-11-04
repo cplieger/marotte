@@ -49,6 +49,7 @@ const { mountChatView, mountTurnBody, activeTranscriptView, teardownAll } =
 const { scrollToBottom, readingState } = await import("./scroll.js");
 const { setPinSettleMs } = await import("./scroll-controller.js");
 const { pinAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
+const { until } = await import("./__test-helpers__/until.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
 const { projectTurns } = await import("./turns.js");
@@ -556,6 +557,23 @@ describe("scrolling moves the window", () => {
     });
   }
 
+  /** Until `el`'s height holds for three frames: rows nearing the viewport take their real size
+   *  over several frames, and a poll on a timer can read two agreeing values between two of them. */
+  async function heightSettled(el: HTMLElement): Promise<void> {
+    let last = -1;
+    let still = 0;
+    await until(
+      () => {
+        const h = el.offsetHeight;
+        still = h === last ? still + 1 : 0;
+        last = h;
+        return still >= 3;
+      },
+      "the card's height to hold",
+      { detail: () => `${String(el.offsetHeight)}px` },
+    );
+  }
+
   /** Wait until the window stops MOVING (two polls agree); `settled` waits for a cold fill. */
   async function windowSettled(turnID: string): Promise<void> {
     // Seeded with a reading no window can produce, or an EMPTY window satisfies the
@@ -1030,7 +1048,13 @@ describe("scrolling moves the window", () => {
     activate(id, [hugeTurn("t1", 6), toolTurn("t2", 60), hugeTurn("t3", HUGE)]);
     await settled("t3");
     await atLiveEdge();
-    await dragTo(card("t2").offsetTop + Math.floor(card("t2").offsetHeight / 2));
+    // Aimed twice: from the live edge t2's rows are skipped placeholders, and as the first drag
+    // brings them near they take their real height, which native anchoring adds to the offset,
+    // so the first landing can sit within a row of t2's end. The second aims at the settled middle.
+    const middleOfT2 = (): number => card("t2").offsetTop + Math.floor(card("t2").offsetHeight / 2);
+    await dragTo(middleOfT2());
+    await heightSettled(card("t2"));
+    await dragTo(middleOfT2());
     expect(card("t2").hasAttribute("data-folded")).toBe(false);
 
     // Folded from the rail while Reading: `deferWhileReading` keeps the card bodied on screen.

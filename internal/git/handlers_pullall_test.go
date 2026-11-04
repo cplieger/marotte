@@ -14,7 +14,7 @@ import (
 
 func pullAllRepos(t *testing.T, workDir string) map[string]pullResult {
 	t.Helper()
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	rec := httptest.NewRecorder()
 	h.handlePullAll(rec, httptest.NewRequest(http.MethodPost, "/api/git/pull-all", nil))
 	if rec.Code != http.StatusOK {
@@ -184,7 +184,7 @@ func TestPullOne_CarriesAVerdictWhenTheBudgetIsAlreadySpent(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	h := NewHandler(t.TempDir())
+	h := newTestHandler(t, t.TempDir())
 	got := h.pullOne(ctx, repoEntry{Name: "work", Dir: t.TempDir()}, time.Now())
 	if got.Verdict != verdictSkipped || got.Reason != reasonOutOfTime {
 		t.Errorf("verdict/reason = %q/%q, want skipped/out_of_time", got.Verdict, got.Reason)
@@ -210,7 +210,7 @@ func TestPullAll_EveryRowCarriesAVerdict(t *testing.T) {
 }
 
 func TestPullAll_RefusesANonPOST(t *testing.T) {
-	h := NewHandler(t.TempDir())
+	h := newTestHandler(t, t.TempDir())
 	rec := httptest.NewRecorder()
 	h.handlePullAll(rec, httptest.NewRequest(http.MethodGet, "/api/git/pull-all", nil))
 	if rec.Code != http.StatusMethodNotAllowed {

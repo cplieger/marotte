@@ -48,8 +48,7 @@ func connectGitHubDotcom(t *testing.T, configDir, token string) {
 func loadedForges(t *testing.T, configDir string) *forges.Manager {
 	t.Helper()
 	isolateForgeGit(t)
-	m := forges.NewManager(configDir, func(context.Context, forges.Change) {})
-	t.Cleanup(m.Close)
+	m := testForges(t, configDir, func(context.Context, forges.Change) {})
 	m.Load(t.Context())
 	return m
 }

@@ -109,24 +109,28 @@ type keyPair struct {
 // Store holds the persisted list in memory plus the coordination
 // needed to serialise writes and notify watchers on changes.
 type Store struct {
+	// ctx is the store's lifetime, ended by Shutdown; mu orders each callback's callbacks.Go before
+	// Shutdown's cancel, so none is added once Wait may have begun.
 	ctx context.Context
+	end context.CancelFunc
 	// rendered is written on the write turn and read without it, so RenderedWaitForReady never queues behind a render.
 	rendered atomic.Pointer[renderedWait]
 	// writeTurn is the store's one writer slot, taken before mu: every change to servers and every write of either
 	// file holds it, so a holder reads servers without mu. A channel because a turn awaited under a context must be
 	// abandonable, which sync.Mutex.Lock is not.
 	writeTurn chan struct{}
-	path      string
-	kasPath   string
-	// kasRefused keys the last KAS file state readKASDoc refused, so a retry over it is not
-	// reported again; written on the write turn.
-	kasRefused string
-	onChange   func(context.Context)
+	onChange  func(context.Context)
 	// waitForReady answers the global mcp_wait_for_ready setting. Read on every
 	// write rather than captured at construction, because the user changes it
 	// while the store is alive.
 	waitForReady func(context.Context) (waitForReady, readable bool)
-	servers      []*Server
+	path         string
+	kasPath      string
+	// kasRefused keys the last KAS file state readKASDoc refused, so a retry over it is not
+	// reported again; written on the write turn.
+	kasRefused string
+	servers    []*Server
+	callbacks  sync.WaitGroup
 	// mu guards servers and onChange; a writer of servers holds it only alongside the turn.
 	mu sync.RWMutex
 }
@@ -138,17 +142,19 @@ type renderedWait struct {
 }
 
 // New loads the file (or initialises empty) and returns a ready store. onChange runs on a fresh
-// goroutine, without the store mutex, on every persisted mutation; nil is valid. ctx bounds the
-// fire-and-forget persists. mcp.json is marotte's record; KAS's ~/.kiro/settings/mcp.json is
-// rendered from it (kasfile.go).
+// goroutine, without the store mutex, on every persisted mutation; nil is valid. ctx parents the
+// change callbacks, which Shutdown also ends. mcp.json is marotte's record; KAS's
+// ~/.kiro/settings/mcp.json is rendered from it (kasfile.go).
 func New(ctx context.Context, configDir string, onChange func(context.Context), opts ...Option) (*Store, error) {
 	// Required, not defaulted: ctx IS the store's lifetime and parents notifyChange's callback
 	// work, so a missing one is a startup error rather than a silent substitution.
 	if ctx == nil {
 		return nil, errors.New("mcp: New requires a non-nil ctx: it is the store's lifetime and parents the change callback")
 	}
+	lifetime, end := context.WithCancel(ctx)
 	s := &Store{
-		ctx:       ctx,
+		ctx:       lifetime,
+		end:       end,
 		writeTurn: make(chan struct{}, 1),
 		path:      filepath.Join(configDir, "mcp.json"),
 		kasPath:   kasConfigPath(),
@@ -159,6 +165,7 @@ func New(ctx context.Context, configDir string, onChange func(context.Context), 
 		opt(s)
 	}
 	if err := s.load(); err != nil {
+		end()
 		return nil, err
 	}
 	// Boot reconcile, before anything can race on the store. A failure must not stop the server:
@@ -271,22 +278,37 @@ func (s *Store) load() error {
 	return nil
 }
 
-// notifyChange fires the change callback on a fresh goroutine, parented on
-// the STORE's lifetime rather than the caller's request context. Every
-// caller is an HTTP mutation handler, so a request-scoped parent would
-// cancel the callback the moment the handler returned — and the
-// production callback runs MCP prewarm, fire-and-forget work that must
-// survive the response.
+// notifyChange fires the change callback on a fresh goroutine Shutdown waits for, parented on the
+// STORE's lifetime rather than the caller's request context: every caller is an HTTP mutation
+// handler, and the production callback starts MCP prewarm, work that must survive the response.
+// Nothing fires once Shutdown has begun.
 func (s *Store) notifyChange() {
 	s.mu.RLock()
+	defer s.mu.RUnlock()
 	cb := s.onChange
-	s.mu.RUnlock()
-	if cb == nil {
+	if cb == nil || s.ctx.Err() != nil {
 		return
 	}
-	// s.ctx is write-once in New and never mutated, so it needs no lock;
-	// s.onChange is swappable via SetOnChange, which is why that one does.
-	go cb(s.ctx)
+	s.callbacks.Go(func() { cb(s.ctx) })
+}
+
+// Shutdown cancels the change callbacks in flight, refuses any later one, and returns once those
+// in flight have, or with ctx's error when ctx ends first. It may be called more than once.
+func (s *Store) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	s.end()
+	s.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		s.callbacks.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("mcp: change callbacks still running: %w", ctx.Err())
+	}
 }
 
 func (s *Store) indexLocked(id serverID) int {

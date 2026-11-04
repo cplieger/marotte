@@ -136,9 +136,13 @@ func NewManager(configDir string, notify func(context.Context, Change)) *Manager
 	return m
 }
 
-// Close ends the listing fills no caller waits on and returns once each has; a listing the cache cannot answer
-// after Close fails.
-func (m *Manager) Close() { m.lists.life.close() }
+// Shutdown cancels every forge read m started behind a caller (a cache fill or
+// revalidation), and blocks until each has returned or ctx ends, answering
+// ctx's error then. After it a listing the cache cannot answer fails with no
+// forge read; the rest of m stays usable.
+func (m *Manager) Shutdown(ctx context.Context) error {
+	return m.lists.fills.close(ctx)
+}
 
 // MakeID returns the canonical ID for a kind+host pair, the kind's default
 // host standing in for an empty one.

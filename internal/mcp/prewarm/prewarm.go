@@ -66,6 +66,9 @@ type Runner struct {
 	lifetime context.Context
 	cancel   context.CancelFunc
 	OnStatus func(pkg string, state State)
+	// installs is every queue goroutine; mu orders each Add before Stop's cancel, so
+	// none is added once Wait may run.
+	installs sync.WaitGroup
 	mu       sync.Mutex
 	Disabled atomic.Bool
 }
@@ -87,9 +90,13 @@ func NewRunner(ctx context.Context, lister ServerLister) *Runner {
 	}
 }
 
-// Stop cancels all in-flight and future installs.
+// Stop cancels all in-flight and future installs and waits for those in flight, each of which
+// ends within installWaitDelay of its cancel.
 func (p *Runner) Stop() {
+	p.mu.Lock()
 	p.cancel()
+	p.mu.Unlock()
+	p.installs.Wait()
 }
 
 // Run enumerates enabled prewarm-flagged npx servers and kicks off a
@@ -132,9 +139,12 @@ func (p *Runner) Run(ctx context.Context) {
 		if !p.reserve(pkg) {
 			continue
 		}
+		if !p.goQueue(ctx, npmBin, pkg) {
+			p.release(pkg)
+			break
+		}
 		queued++
 		slog.Debug("mcp: prewarm queued", "package", pkg, "position", queued)
-		go p.queue(ctx, npmBin, pkg)
 	}
 	slog.Info("mcp: prewarm pass", "candidates", len(candidates), "queued", queued)
 }
@@ -155,6 +165,17 @@ func (p *Runner) queue(ctx context.Context, npmBin, pkg string) {
 	}
 	defer p.sem.Release(1)
 	p.installOne(workCtx, npmBin, pkg)
+}
+
+// goQueue runs queue on installs unless Stop has begun, reporting whether it did.
+func (p *Runner) goQueue(ctx context.Context, npmBin, pkg string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.lifetime.Err() != nil {
+		return false
+	}
+	p.installs.Go(func() { p.queue(ctx, npmBin, pkg) })
+	return true
 }
 
 func (p *Runner) reserve(pkg string) bool {
