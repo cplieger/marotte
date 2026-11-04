@@ -115,6 +115,7 @@
      which is `.banner`'s gap. */
   flex-direction: row;
   align-items: center;
+  min-block-size: var(--row-tap-dense);
 
   /* THE CANVAS TOKEN, NOT THE RAISED ONE, which is what makes `info` need no rule
      of its own: it IS this neutral base, and the two severity rules below are the

@@ -8,7 +8,7 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 /** `--ctl-h-dense` and `--btn-h` on the fine tier, stated so a token retune fails here. */
 const DENSE_PX = 32;
 const BTN_PX = 36;
-/** `--hit-floor` and `--ctl-h` on the coarse tier, which share 44px. */
+/** `--hit-floor` on the coarse tier. */
 const COARSE_PX = 44;
 
 let style: HTMLStyleElement;
@@ -108,13 +108,18 @@ describe("a .btn-small inside a .list-row", () => {
     );
   });
 
-  it("still clears the touch floor on a coarse pointer", () => {
-    // Why the rule reads `max()`: it outranks the zero-specificity hit-target floor, and a bare `--ctl-h-dense` would put
-    // a 40px button beside the 44px `.list-row-btn`. Fine-tier only.
+  it("paints the dense tier on a coarse pointer and keeps the 44px target in its row", () => {
     document.documentElement.setAttribute("data-pointer", "coarse");
     try {
-      const { btn } = rowWithAction();
-      expect(h(btn), "a finger's action keeps the 44px target").toBeCloseTo(COARSE_PX, 0);
+      const { row, btn } = rowWithAction();
+      expect(h(btn), "the box is the mouse's").toBeCloseTo(DENSE_PX, 0);
+      expect(h(row), "the row reserves the target").toBeGreaterThanOrEqual(COARSE_PX);
+      const r = btn.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      for (const y of [cy - COARSE_PX / 2 + 1, cy + COARSE_PX / 2 - 1]) {
+        expect(document.elementFromPoint(cx, y), `${String(y - cy)}px`).toBe(btn);
+      }
     } finally {
       document.documentElement.setAttribute("data-pointer", "fine");
     }

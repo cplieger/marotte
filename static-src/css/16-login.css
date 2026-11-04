@@ -81,7 +81,7 @@
 }
 
 .modal-input {
-  min-block-size: var(--btn-h);
+  min-block-size: var(--field-h);
   width: 100%;
   padding: var(--sp-2) var(--sp-3);
   background: var(--c-bg-primary);

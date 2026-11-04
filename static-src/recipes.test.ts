@@ -979,7 +979,7 @@ describe("the Run form's plan", () => {
 
   it("scrolls a long plan in a box about eight rows tall, keyboard-reachable", async () => {
     const style = document.createElement("style");
-    style.textContent = `:root { --btn-h: 36px; }\n${loadCSS("28-docs.css")}\n${loadCSS("31-exec-view.css")}`;
+    style.textContent = `:root { --btn-h: 36px; --row-tap: 36px; }\n${loadCSS("28-docs.css")}\n${loadCSS("31-exec-view.css")}`;
     document.head.appendChild(style);
     try {
       const steps = Array.from({ length: 50 }, (_, i) => ({

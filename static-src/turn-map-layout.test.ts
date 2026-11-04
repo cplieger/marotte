@@ -217,7 +217,8 @@ describe("a swipe over the map", () => {
     after.forEach((li, i) => {
       expect(li, `row ${String(i)} kept its element`).toBe(rows[i]);
     });
-    await userEvent.hover(area, { position: { x: 1, y: 1 } });
+    // Clear of the bare #send-btn and #prompt-input the fixture appends at the body's corner.
+    await userEvent.hover(area, { position: { x: 600, y: 1 } });
   });
 });
 

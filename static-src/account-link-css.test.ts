@@ -198,9 +198,9 @@ describe("the link's corner and box", () => {
 });
 
 describe("the card's block position", () => {
-  it.each(TIERS)("puts the card's bottom one --sp-1 above the TRIGGER at %s", (tier) => {
-    // `bottom: calc(100% + var(--sp-1))` is relative to the ANCHOR, so the anchor must wrap
-    // its trigger; measured against the trigger, so it holds at every tier.
+  it.each(TIERS)("puts the card's bottom one --sp-1 above the footer's hairline at %s", (tier) => {
+    // The trigger is shorter than the band at every tier, so a card one --sp-1 above the
+    // trigger would cross the band's top edge.
     document.documentElement.dataset["pointer"] = tier;
     const { card, footer, btn } = mountFooter();
     open(btn, card);
@@ -211,10 +211,10 @@ describe("the card's block position", () => {
     gapProbe.remove();
     expect(sp1).toBeGreaterThan(0);
 
-    const top = btn.getBoundingClientRect().top;
+    const top = footer.getBoundingClientRect().top;
     expect(
       card.getBoundingClientRect().bottom,
-      `the card's bottom against the trigger's top ${top}`,
+      `the card's bottom against the band's top edge ${top}`,
     ).toBeCloseTo(top - sp1, 0);
   });
 });

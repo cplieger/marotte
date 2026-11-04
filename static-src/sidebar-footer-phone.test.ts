@@ -123,7 +123,17 @@ function assertFooter(label: string, floor: number): void {
     f.logout.getBoundingClientRect().height,
     0,
   );
-  expect(btnBox.height, `${label}: and clears the tier's floor`).toBeGreaterThanOrEqual(floor);
+  // The box is the pair's pill; the tier's floor is the TARGET around it.
+  for (const el of [f.btn, f.logout]) {
+    const r = el.getBoundingClientRect();
+    const cy = r.top + r.height / 2;
+    for (const y of [cy - floor / 2 + 1, cy + floor / 2 - 1]) {
+      expect(
+        el.contains(document.elementFromPoint(r.left + r.width / 2, y)),
+        `${label}: ${el.id} reaches the tier's floor at ${String(y - cy)}`,
+      ).toBe(true);
+    }
+  }
   expect(btnBox.top - (footerBox.top + border), `${label}: slack above against below`).toBeCloseTo(
     footerBox.bottom - btnBox.bottom,
     0,

@@ -9,8 +9,9 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 type Tier = "fine" | "coarse";
 const TIERS: readonly Tier[] = ["fine", "coarse"];
-const BTN_H: Record<Tier, number> = { fine: 36, coarse: 44 };
-const BAR_H: Record<Tier, number> = { fine: 40, coarse: 44 };
+// A control paints at the mouse's size under a finger too; its 44px is its target.
+const BTN_H: Record<Tier, number> = { fine: 36, coarse: 36 };
+const BAR_H: Record<Tier, number> = { fine: 40, coarse: 40 };
 
 let style: HTMLStyleElement;
 let shell: HTMLElement;
@@ -134,7 +135,7 @@ describe.each(TIERS)("the page toolbar at the %s tier", (tier) => {
     },
   );
 
-  it("the page switcher is a rung over a control with a mouse and a control with a finger", () => {
+  it("the page switcher is a rung over a control", () => {
     document.documentElement.dataset["pointer"] = tier;
     for (const bar of ["#docs-tab-bar", "#git-tab-bar", "#settings-tab-bar"]) {
       expect(rect(el(bar)).height, bar).toBe(BAR_H[tier]);

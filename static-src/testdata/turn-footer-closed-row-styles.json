@@ -303,9 +303,10 @@
       "inset-block-end": "0px",
       "inset-block-start": "0px",
       "inset-inline-start": "0px",
+      "isolation": "isolate",
       "left": "0px",
-      "min-block-size": "0px",
-      "min-height": "0px",
+      "min-block-size": "24px",
+      "min-height": "24px",
       "min-inline-size": "0px",
       "min-width": "0px",
       "outline-color": {
@@ -432,8 +433,8 @@
       "bottom": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "0px"
         }
       },
@@ -468,16 +469,16 @@
       "inset-block-end": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "0px"
         }
       },
       "inset-block-start": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "0px"
         }
       },
@@ -515,41 +516,21 @@
       "top": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "0px"
         }
-      }
+      },
+      "z-index": "-1"
     }
   },
   "footer > button.turn-ledger-summary > span.sr-only": {
     "style": {
-      "bottom": {
-        "by": "width",
-        "is": {
-          "320": "18.5px",
-          "390": "18.5px",
-          "1280": "12.5px"
-        }
-      },
+      "bottom": "12.5px",
       "box-sizing": "border-box",
       "clip-path": "inset(50%)",
-      "inset-block-end": {
-        "by": "width",
-        "is": {
-          "320": "18.5px",
-          "390": "18.5px",
-          "1280": "12.5px"
-        }
-      },
-      "inset-block-start": {
-        "by": "width",
-        "is": {
-          "320": "18.5px",
-          "390": "18.5px",
-          "1280": "12.5px"
-        }
-      },
+      "inset-block-end": "12.5px",
+      "inset-block-start": "12.5px",
       "inset-inline-start": "4px",
       "left": "4px",
       "margin-block-end": "-1px",
@@ -571,14 +552,7 @@
       "position": "absolute",
       "scrollbar-width": "thin",
       "text-wrap-mode": "nowrap",
-      "top": {
-        "by": "width",
-        "is": {
-          "320": "18.5px",
-          "390": "18.5px",
-          "1280": "12.5px"
-        }
-      }
+      "top": "12.5px"
     }
   },
   "footer > button.turn-ledger-summary > span.turn-ledger-info": {
@@ -1071,8 +1045,8 @@
       "column-gap": {
         "by": "width",
         "is": {
-          "320": "8px",
-          "390": "8px",
+          "320": "20px",
+          "390": "20px",
           "1280": "2px"
         }
       },
@@ -1086,8 +1060,8 @@
       "row-gap": {
         "by": "width",
         "is": {
-          "320": "8px",
-          "390": "8px",
+          "320": "20px",
+          "390": "20px",
           "1280": "2px"
         }
       },
@@ -1243,6 +1217,7 @@
           "390": "0px"
         }
       },
+      "isolation": "isolate",
       "justify-content": "center",
       "left": {
         "by": "width",
@@ -1272,30 +1247,10 @@
           "390": "none"
         }
       },
-      "min-block-size": {
-        "by": "width",
-        "is": {
-          "1280": "0px"
-        }
-      },
-      "min-height": {
-        "by": "width",
-        "is": {
-          "1280": "0px"
-        }
-      },
-      "min-inline-size": {
-        "by": "width",
-        "is": {
-          "1280": "0px"
-        }
-      },
-      "min-width": {
-        "by": "width",
-        "is": {
-          "1280": "0px"
-        }
-      },
+      "min-block-size": "24px",
+      "min-height": "24px",
+      "min-inline-size": "24px",
+      "min-width": "24px",
       "position": "relative",
       "scrollbar-width": "thin",
       "top": {
@@ -1321,8 +1276,8 @@
       "bottom": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "min(0px, 50% - 12px)"
         }
       },
@@ -1339,32 +1294,32 @@
       "inset-block-end": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "min(0px, 50% - 12px)"
         }
       },
       "inset-block-start": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "min(0px, 50% - 12px)"
         }
       },
       "inset-inline-start": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "min(0px, 50% - 12px)"
         }
       },
       "left": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "min(0px, 50% - 12px)"
         }
       },
@@ -1393,11 +1348,12 @@
       "top": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "min(0px, 50% - 12px)"
         }
-      }
+      },
+      "z-index": "-1"
     }
   },
   "footer > span.turn-actions-buttons > details.turn-actions-more > span.turn-actions-group": {
@@ -1411,8 +1367,8 @@
       "column-gap": {
         "by": "width",
         "is": {
-          "320": "8px",
-          "390": "8px",
+          "320": "20px",
+          "390": "20px",
           "1280": "2px"
         }
       },
@@ -1427,8 +1383,8 @@
       "row-gap": {
         "by": "width",
         "is": {
-          "320": "8px",
-          "390": "8px",
+          "320": "20px",
+          "390": "20px",
           "1280": "2px"
         }
       },
@@ -1600,6 +1556,7 @@
           "1280": "0px"
         }
       },
+      "isolation": "isolate",
       "justify-content": {
         "by": "width",
         "is": {
@@ -1619,7 +1576,7 @@
         "is": {
           "320": "44px",
           "390": "44px",
-          "1280": "0px"
+          "1280": "24px"
         }
       },
       "min-height": {
@@ -1627,21 +1584,11 @@
         "is": {
           "320": "44px",
           "390": "44px",
-          "1280": "0px"
+          "1280": "24px"
         }
       },
-      "min-inline-size": {
-        "by": "width",
-        "is": {
-          "1280": "0px"
-        }
-      },
-      "min-width": {
-        "by": "width",
-        "is": {
-          "1280": "0px"
-        }
-      },
+      "min-inline-size": "24px",
+      "min-width": "24px",
       "outline-color": {
         "by": "theme",
         "is": {
@@ -1907,7 +1854,8 @@
           "390": "min(0px, 50% - 22px)",
           "1280": "0px"
         }
-      }
+      },
+      "z-index": "-1"
     }
   },
   "footer > span.turn-actions-buttons > details.turn-actions-more > span.turn-actions-group > button.turn-action-btn[Copy as text] > svg.ic-ui": {
@@ -2169,6 +2117,7 @@
           "1280": "0px"
         }
       },
+      "isolation": "isolate",
       "justify-content": {
         "by": "width",
         "is": {
@@ -2188,7 +2137,7 @@
         "is": {
           "320": "44px",
           "390": "44px",
-          "1280": "0px"
+          "1280": "24px"
         }
       },
       "min-height": {
@@ -2196,21 +2145,11 @@
         "is": {
           "320": "44px",
           "390": "44px",
-          "1280": "0px"
+          "1280": "24px"
         }
       },
-      "min-inline-size": {
-        "by": "width",
-        "is": {
-          "1280": "0px"
-        }
-      },
-      "min-width": {
-        "by": "width",
-        "is": {
-          "1280": "0px"
-        }
-      },
+      "min-inline-size": "24px",
+      "min-width": "24px",
       "outline-color": {
         "by": "theme",
         "is": {
@@ -2476,7 +2415,8 @@
           "390": "min(0px, 50% - 22px)",
           "1280": "0px"
         }
-      }
+      },
+      "z-index": "-1"
     }
   },
   "footer > span.turn-actions-buttons > details.turn-actions-more > span.turn-actions-group > button.turn-action-btn[Copy as markdown] > svg.ic-ui": {
@@ -2736,6 +2676,7 @@
           "1280": "0px"
         }
       },
+      "isolation": "isolate",
       "justify-content": {
         "by": "width",
         "is": {
@@ -2755,7 +2696,7 @@
         "is": {
           "320": "44px",
           "390": "44px",
-          "1280": "0px"
+          "1280": "24px"
         }
       },
       "min-height": {
@@ -2763,21 +2704,11 @@
         "is": {
           "320": "44px",
           "390": "44px",
-          "1280": "0px"
+          "1280": "24px"
         }
       },
-      "min-inline-size": {
-        "by": "width",
-        "is": {
-          "1280": "0px"
-        }
-      },
-      "min-width": {
-        "by": "width",
-        "is": {
-          "1280": "0px"
-        }
-      },
+      "min-inline-size": "24px",
+      "min-width": "24px",
       "outline-color": {
         "by": "theme",
         "is": {
@@ -3043,7 +2974,8 @@
           "390": "min(0px, 50% - 22px)",
           "1280": "0px"
         }
-      }
+      },
+      "z-index": "-1"
     }
   },
   "footer > span.turn-actions-buttons > details.turn-actions-more > span.turn-actions-group > button.turn-action-btn[Copy link to this turn] > svg.ic-ui": {
@@ -3273,15 +3205,30 @@
       "inset-block-end": "0px",
       "inset-block-start": "0px",
       "inset-inline-start": "0px",
+      "isolation": "isolate",
       "justify-content": "center",
       "justify-self": "end",
       "left": "0px",
-      "margin-inline-start": "8px",
-      "margin-left": "8px",
-      "min-block-size": "0px",
-      "min-height": "0px",
-      "min-inline-size": "0px",
-      "min-width": "0px",
+      "margin-inline-start": {
+        "by": "width",
+        "is": {
+          "320": "20px",
+          "390": "20px",
+          "1280": "8px"
+        }
+      },
+      "margin-left": {
+        "by": "width",
+        "is": {
+          "320": "20px",
+          "390": "20px",
+          "1280": "8px"
+        }
+      },
+      "min-block-size": "24px",
+      "min-height": "24px",
+      "min-inline-size": "24px",
+      "min-width": "24px",
       "opacity": {
         "by": "rewind",
         "is": {
@@ -3444,8 +3391,8 @@
       "bottom": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "0px"
         }
       },
@@ -3478,32 +3425,32 @@
       "inset-block-end": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "0px"
         }
       },
       "inset-block-start": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "0px"
         }
       },
       "inset-inline-start": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "0px"
         }
       },
       "left": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "0px"
         }
       },
@@ -3539,11 +3486,12 @@
       "top": {
         "by": "width",
         "is": {
-          "320": "-4px",
-          "390": "-4px",
+          "320": "-10px",
+          "390": "-10px",
           "1280": "0px"
         }
-      }
+      },
+      "z-index": "-1"
     }
   },
   "footer > button.turn-rewind[Rewind to this point] > svg.ic-ui": {

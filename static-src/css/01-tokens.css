@@ -405,21 +405,50 @@
     /* ---- Control heights ------------------------------------------------- *
      * --ctl-h stands alone in its row or beside a full-size button, --ctl-h-dense
      * is a labelled field or an action in a dense row; every action in one row
-     * takes one height. THE TIER IS THE POINTER, NOT THE WIDTH, and --hit-floor
-     * lives here so one tier decides both. --btn-h is an alias. */
+     * takes one height. --btn-h is an alias. A control PAINTS at these sizes on
+     * every tier: the pointer tier moves only --hit-floor, the invisible target
+     * the shared expander (61-mcp-tools.css) grows to, and the tokens below
+     * that derive from it. THE TIER IS THE POINTER, NOT THE WIDTH. */
     --ctl-h: 2.25rem;
     --ctl-h-dense: 2rem;
     --ctl-h-sm: 1.5rem;
     --hit-floor: 1.5rem;
     --btn-h: var(--ctl-h);
+    /* The smallest painted box of an interactive element, WCAG 2.5.8's 24px. */
+    --paint-floor: 1.5rem;
+    /* The expander's `inset`: `%` resolves on the pseudo-element against its host,
+     * so the target is --hit-floor on each axis the host is smaller than it, and
+     * the host's own box on an axis that already clears it. */
+    --hit-inset: min(0px, calc((100% - var(--hit-floor)) / 2));
+    /* A row that IS the target (a list entry, a menu item, a disclosure head) grows
+     * to the floor, because its fill is what shows the finger its target. One per
+     * control height the row stands at on a mouse. */
+    --row-tap: max(var(--ctl-h), var(--hit-floor));
+    --row-tap-dense: max(var(--ctl-h-dense), var(--hit-floor));
+    --row-tap-sm: max(var(--ctl-h-sm), var(--hit-floor));
+    /* A checkbox or switch label on a line of its own: its text height on a mouse, where
+     * the box's own expander is the target, and the floor on touch. */
+    --row-tap-line: auto;
+    /* A text field or select keeps its typing height at the floor: it has no
+     * pseudo-element to carry an expander. */
+    --field-h: max(var(--ctl-h), var(--hit-floor));
+    --field-h-dense: max(var(--ctl-h-dense), var(--hit-floor));
+    /* The gap at which two neighbours painted at one control height have targets that
+     * meet without overlapping. Negative where the paint clears the floor, so a site
+     * writes `gap: max(<its own gap>, var(--tap-gap*))` and keeps its fine-tier gap. */
+    --tap-gap: calc(var(--hit-floor) - var(--ctl-h));
+    --tap-gap-dense: calc(var(--hit-floor) - var(--ctl-h-dense));
+    --tap-gap-sm: calc(var(--hit-floor) - var(--ctl-h-sm));
+    /* How far the coarse tier lifts the target: 0 on a mouse. A spacing that a 44px
+     * row makes redundant subtracts it. */
+    --hit-grow: calc(var(--hit-floor) - var(--paint-floor));
 
     /* How far the sidebar's resize target reaches over the main area, 0px while
      * 10-shell-app.css hides the handle. A surface flush to the sidebar starts its
      * first glyph past it. */
     --sidebar-reach: var(--hit-floor);
 
-    /* The page switcher (`.page-header > .seg-bar`): a rung over a control on the
-     * fine pointer, the control's own height once the tier is coarse. */
+    /* The page switcher (`.page-header > .seg-bar`): a rung over a control. */
     --bar-h: max(2.5rem, var(--ctl-h));
 
     /* ---- List-row heights ------------------------------------------------ *
@@ -427,8 +456,8 @@
      * not fit truncates on its own line and the row never grows. Two rungs,
      * because a list carries either a title plus one line of metadata or a title
      * plus a description region, and a page picks one for every row it renders.
-     * POINTER-TIERED like --ctl-h: a coarse row is one rung taller because its
-     * inks and its actions are, not because a finger needs a bigger row. */
+     * POINTER-TIERED like --hit-floor: a coarse row is one rung taller because its
+     * inks are (--fs-item), not because a finger needs a bigger row. */
     --row-h-2: 3.5rem;
     --row-h-3: 4.5rem;
 
@@ -444,12 +473,11 @@
   /* A finger or a pen: 44px is Apple's HIG figure and WCAG 2.5.5 (AAA), against
    * WCAG 2.5.8's 24px (AA) on the fine tier. */
   :root[data-pointer="coarse"] {
-    --ctl-h: 2.75rem;
-    --ctl-h-dense: 2.5rem;
-    --ctl-h-sm: 2.25rem;
     --hit-floor: 2.75rem;
+    --row-tap-line: var(--hit-floor);
     --row-h-2: 3.75rem;
     --row-h-3: 4.75rem;
+    --icon-toolbar: 1.25rem;
   }
 
   /* NO-JS FALLBACK. A capability query cannot decide this tier: Chromium reports
@@ -458,12 +486,11 @@
    * trackpad. */
   @media (width <= 48rem) {
     :root:not([data-pointer="fine"]) {
-      --ctl-h: 2.75rem;
-      --ctl-h-dense: 2.5rem;
-      --ctl-h-sm: 2.25rem;
       --hit-floor: 2.75rem;
+      --row-tap-line: var(--hit-floor);
       --row-h-2: 3.75rem;
       --row-h-3: 4.75rem;
+      --icon-toolbar: 1.25rem;
     }
   }
 
@@ -480,6 +507,9 @@
     --titlebar-h: 3.25rem;
     --icon-inline: 0.75rem;
     --icon-ui: 1rem;
+    /* The chat header's glyph, one step up on touch, where the header icons keep a
+     * box at the floor (12-chat.css). */
+    --icon-toolbar: var(--icon-ui);
     --icon-lg: 1.5rem;
     --icon-hero: 3rem;
     /* ---- Status dots ------------------------------------------------------ *
@@ -523,16 +553,6 @@
     --icon-stroke-hero: 2;
   }
 
-  :root[data-pointer="coarse"] {
-    --icon-ui: 1.25rem;
-  }
-
-  @media (width <= 48rem) {
-    :root:not([data-pointer="fine"]) {
-      --icon-ui: 1.25rem;
-    }
-  }
-
   :root {
     /* ---- The ITEM type scale --------------------------------------------- *
      * An ITEM's own text and the metadata beside it: a list row's title and its
@@ -540,7 +560,7 @@
      * the same object at two sizes of container. The --fs-popup-* names are
      * ALIASES declared once, here: an alias re-resolves per tier by itself, so
      * the tier blocks below move only the item pair. THE TIER IS THE POINTER, like
-     * --ctl-h above; two rungs rather than a coarse tier over the whole --fs-*
+     * --hit-floor above; two rungs rather than a coarse tier over the whole --fs-*
      * scale, or a lifted caption would EQUAL --fs-md wherever they pair. */
     --fs-item: var(--fs-base);
     --fs-item-meta: var(--fs-sm);
@@ -548,26 +568,13 @@
     --fs-popup-meta: var(--fs-item-meta);
 
     /* ---- The FORM type scale --------------------------------------------- *
-     * A form field's own LABEL or hint, and a control that shares a ROW with a
-     * field. It exists because a field's size is not this app's to choose on the
-     * coarse tier: the iOS text-entry floor (61-mcp-tools.css) puts every input,
-     * textarea and select at 16px so focusing one cannot zoom the page, and a
-     * label left at --fs-xs then sits 5px UNDER its own field. Measured across
-     * the app at the iPad preset before these two rungs: 28 controls read larger
-     * than the nearest string beside them, 17 of them by 5px.
-     *
-     * TWO RUNGS BECAUSE RANK DIFFERS. A label is metadata, so it stays one rung
-     * under the field it names; a control sharing the field's row is equal rank,
-     * so it MATCHES the floor and the row reads as one row. Do not fold them:
-     * a 16px hint is not a hint, and a 14px button beside a 16px field is the
-     * inversion one rung smaller.
-     *
-     * THE TIER IS THE POINTER, like --ctl-h, --hit-floor and --fs-item above,
-     * because a width query cannot separate a tablet from a desktop.
-     *
-     * --fs-sm AT THE FINE TIER FOR BOTH, so the form-label rung is uniform: the
-     * eleven sites that read --fs-xs move up 1px on a mouse, which is the price
-     * of one rung rather than two tokens that differ only in a legacy value. */
+     * A form field's LABEL or hint, and a control sharing a ROW with a field. On
+     * the coarse tier the iOS text-entry floor (61-mcp-tools.css) puts every field
+     * at 16px so focusing one cannot zoom the page; a label at --fs-xs would sit
+     * 5px under its own field. TWO RUNGS BECAUSE RANK DIFFERS: a label stays one
+     * rung under its field, a control in the field's row matches it. THE TIER IS
+     * THE POINTER, like --hit-floor and --fs-item above, because a width query
+     * cannot separate a tablet from a desktop. --fs-sm at the fine tier for both. */
     --fs-form-label: var(--fs-sm);
     --fs-form-peer: var(--fs-sm);
   }

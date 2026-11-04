@@ -1565,44 +1565,32 @@ describe("an installed row measures the same whether or not it carries a badge",
     return { badged, plain };
   }
 
-  it("keeps the chip inline with the name on a fine pointer", () => {
-    document.documentElement.dataset["pointer"] = "fine";
-    const { badged, plain } = twoRows();
+  // Under a finger too: the row's 24px actions leave no second line's slack in its 44px floor.
+  it.each(["fine", "coarse"] as const)(
+    "keeps the chip inline with the name on a %s pointer",
+    (tier) => {
+      document.documentElement.dataset["pointer"] = tier;
+      const { badged, plain } = twoRows();
 
-    // The wrap was an unconditional flex COLUMN, so the chip took its own line
-    // and added 20-22px to every badged row — the reported ragged column.
-    const name = badged.querySelector<HTMLElement>(".list-row-name");
-    const chip = badged.querySelector<HTMLElement>(".tool-source-chip");
-    expect(name).not.toBeNull();
-    expect(chip).not.toBeNull();
-    const nameBox = name?.getBoundingClientRect();
-    const chipBox = chip?.getBoundingClientRect();
-    // The chip's font is smaller, so the two tops never align and their gap is a
-    // font-stack property; a chip on the name's line starts before that line ends.
-    expect(chipBox?.top, "the chip shares the name's line").toBeLessThan(nameBox?.bottom ?? 0);
-    expect(chipBox?.left, "the chip sits after the name").toBeGreaterThan(nameBox?.right ?? 0);
+      // The wrap was an unconditional flex COLUMN, so the chip took its own line
+      // and added 20-22px to every badged row — the reported ragged column.
+      const name = badged.querySelector<HTMLElement>(".list-row-name");
+      const chip = badged.querySelector<HTMLElement>(".tool-source-chip");
+      expect(name).not.toBeNull();
+      expect(chip).not.toBeNull();
+      const nameBox = name?.getBoundingClientRect();
+      const chipBox = chip?.getBoundingClientRect();
+      // The chip's font is smaller, so the two tops never align and their gap is a
+      // font-stack property; a chip on the name's line starts before that line ends.
+      expect(chipBox?.top, "the chip shares the name's line").toBeLessThan(nameBox?.bottom ?? 0);
+      expect(chipBox?.left, "the chip sits after the name").toBeGreaterThan(nameBox?.right ?? 0);
 
-    expect(badged.getBoundingClientRect().height).toBeCloseTo(
-      plain.getBoundingClientRect().height,
-      1,
-    );
-  });
-
-  it("gives the chip its own line under a finger, at no cost in row height", () => {
-    document.documentElement.dataset["pointer"] = "coarse";
-    const { badged, plain } = twoRows();
-
-    const nameBox = badged.querySelector<HTMLElement>(".list-row-name")?.getBoundingClientRect();
-    const chipBox = badged.querySelector<HTMLElement>(".tool-source-chip")?.getBoundingClientRect();
-    expect(chipBox?.top, "the chip drops below the name").toBeGreaterThan(nameBox?.bottom ?? 0);
-
-    // Both lines fit in the slack the row's 44px action buttons force, so the table stays uniform.
-    expect(plain.getBoundingClientRect().height).toBeGreaterThanOrEqual(36);
-    expect(badged.getBoundingClientRect().height).toBeCloseTo(
-      plain.getBoundingClientRect().height,
-      1,
-    );
-  });
+      expect(badged.getBoundingClientRect().height).toBeCloseTo(
+        plain.getBoundingClientRect().height,
+        1,
+      );
+    },
+  );
 
   it("centres a chipless row's text in the floored box", () => {
     document.documentElement.dataset["pointer"] = "coarse";

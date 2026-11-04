@@ -109,7 +109,7 @@ describe.each([
     }
   });
 
-  it("grows each segment's target to the bar's edges and no further sideways", async () => {
+  it("grows each segment's target to the bar's edges, the gap split between neighbours", async () => {
     await at(width, height, pointer);
     const bar = q(".web-viewport").getBoundingClientRect();
     const [first, second] = segs();
@@ -119,7 +119,10 @@ describe.each([
     expect(document.elementFromPoint(cx, bar.top + 0.5)?.closest(".seg")).toBe(first);
     expect(document.elementFromPoint(cx, bar.bottom - 0.5)?.closest(".seg")).toBe(first);
     const gapX = (a.right + b.left) / 2;
-    expect(document.elementFromPoint(gapX, a.top + a.height / 2)?.closest(".seg")).toBeNull();
+    const midY = a.top + a.height / 2;
+    // 1px either side: a box edge snaps to the device pixel grid.
+    expect(document.elementFromPoint(gapX - 1, midY)?.closest(".seg")).toBe(first);
+    expect(document.elementFromPoint(gapX + 1, midY)?.closest(".seg")).toBe(second);
   });
 });
 

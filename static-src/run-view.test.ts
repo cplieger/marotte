@@ -683,13 +683,22 @@ describe("run view controls", () => {
       }
       document.documentElement.setAttribute("data-pointer", "coarse");
       for (const face of faces) {
+        // The mouse's square under a finger too; the coarse 44px is the target around it.
         const box = face.btn.getBoundingClientRect();
-        expect(box.width, `${face.name ?? ""} under the coarse hit floor`).toBeGreaterThanOrEqual(
-          44,
-        );
-        expect(box.height, `${face.name ?? ""} under the coarse hit floor`).toBeGreaterThanOrEqual(
-          44,
-        );
+        expect(box.width, `${face.name ?? ""} is not square`).toBeCloseTo(box.height, 0);
+        const cx = box.left + box.width / 2;
+        const cy = box.top + box.height / 2;
+        for (const [dx, dy] of [
+          [-21, 0],
+          [21, 0],
+          [0, -21],
+          [0, 21],
+        ] as const) {
+          const hit = document.elementFromPoint(cx + dx, cy + dy);
+          expect(face.btn.contains(hit), `${face.name ?? ""} at ${String(dx)},${String(dy)}`).toBe(
+            true,
+          );
+        }
       }
     } finally {
       document.documentElement.removeAttribute("data-pointer");

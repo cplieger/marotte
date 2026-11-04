@@ -104,30 +104,12 @@
      and only bounds it when the note arrives and has to wrap. */
   max-inline-size: min(24rem, calc(100vw - 2 * var(--sp-3)));
 
-  /* THE TWO INLINE INSETS ARE DIFFERENT ON PURPOSE, and the reason is that the
-     bar's two edge children have different heights. The row's height is set by
-     the buttons (`--btn-h`), so a button fills it and the input does not.
-
-     What a reader compares against the bar's border is the INK, and for an icon
-     button the ink sits `(--btn-h − icon)/2` inside its own box on every side.
-     That slack is the same term vertically and horizontally, so the two gaps are
-     equal only when the block padding and the inline-END padding are equal:
-     `--sp-2` at the end put the × 19px from the border against 15px above and
-     below it, which is the mismatch this reads as. `--sp-1` at both makes it
-     15px on all three, at any `--btn-h` (the mobile 2.75rem included, which is
-     why that block needs no second answer).
-
-     THAT ARITHMETIC IS THE ROW'S, NOT THE BOX'S, now that the box is a column:
-     the block-END padding sits under the NOTE, so the × is 15px from the row's
-     own lower edge and the note is what the box's bottom padding separates from
-     its border. While the note is empty it takes no height, so the measurement a
-     reader sees is unchanged.
-
-     The INPUT gets the wider `--sp-2` at the start for the same reason read the
-     other way: its own box is shorter than the row, so `align-items: center`
-     already gives it 4px of slack above and below on top of the block padding —
-     8px from the border either way, which the start inset then has to match.
-     Setting both insets to `--sp-1` would fix the × by breaking the input. */
+  /* THE TWO INLINE INSETS DIFFER because the edge children differ in height, and the
+     taller sets the row: the buttons (`--btn-h`) on a mouse, the field (`--field-h`)
+     under a finger. On a mouse `--sp-1` at the block and inline-end edges puts the ×'s
+     ink 15px from the border on all three sides, and the shorter input centres with
+     4px above and below, which `--sp-2` at the start matches. The block-end padding
+     sits under the note, which takes no height while empty. */
   padding-block: var(--sp-1);
   padding-inline: var(--sp-2) var(--sp-1);
 }
@@ -173,7 +155,7 @@
 .page-find-row {
   display: flex;
   align-items: center;
-  gap: var(--sp-1);
+  gap: max(var(--sp-1), var(--tap-gap));
 }
 
 /* The kind's glyph, and the ONE place a reader learns which of the two this box
@@ -203,7 +185,7 @@
 .page-find-input {
   flex: 1;
   min-inline-size: 0;
-  min-block-size: var(--btn-h);
+  min-block-size: var(--field-h);
   font: inherit;
   padding: var(--sp-1) var(--sp-2);
   color: var(--c-text-primary);
@@ -449,7 +431,7 @@
 .chat-find-nav {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: max(2px, var(--tap-gap));
 }
 
 /* The bar's buttons take the shared rule above, beside the page find bar's. */
@@ -548,10 +530,9 @@ mark.find-hit-current {
   }
 }
 
-/* Mobile LAYOUT for the two find bars. The SIZES are gone: both button bases
-   already declare `inline-size`/`block-size: var(--btn-h)`, which is
-   pointer-tiered (01-tokens.css), so a 2.75rem literal here was answering a
-   POINTER question with a WIDTH. In THIS file rather than 50-mobile.css: a
+/* Mobile LAYOUT for the two find bars, no sizes: both button bases declare
+   `inline-size`/`block-size: var(--btn-h)`, one value on every tier, and the
+   pointer tier grows only their targets. In THIS file rather than 50-mobile.css: a
    surface's mobile overrides live beside the surface (the house pattern;
    50-mobile.css carries only the cross-surface shell rules). */
 @media (width <= 40rem) {

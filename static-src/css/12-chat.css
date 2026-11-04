@@ -133,9 +133,11 @@
   background: var(--c-bg-primary);
   border-block-end: 1px solid var(--c-border);
 
+  /* The one control group whose painted box grows with the tier: the box and its
+     active fill are the 44px target, so no expander reaches past them. */
   & .icon-btn {
-    min-width: var(--btn-h);
-    min-height: var(--btn-h);
+    min-width: max(var(--btn-h), var(--hit-floor));
+    min-height: max(var(--btn-h), var(--hit-floor));
     display: flex;
     align-items: center;
     justify-content: center;
@@ -146,6 +148,11 @@
        the mobile rule zeroed. `--r-sm` is the rung for a control under 28px on
        the fine tier; see 01-tokens.css's ladder. */
     border-radius: var(--r-sm);
+
+    & > .ic-ui {
+      inline-size: var(--icon-toolbar);
+      block-size: var(--icon-toolbar);
+    }
   }
 
   & .mobile-only {

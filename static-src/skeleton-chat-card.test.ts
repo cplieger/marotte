@@ -260,9 +260,9 @@ describe("the placeholder card is not a pointer target", () => {
   });
 
   it("reserves the fold slot at the real control's box on BOTH pointer tiers", () => {
-    // The real `.turn-fold-toggle` is a BUTTON, so 61-mcp-tools.css's zero- specificity floor lifts
-    // it to `--hit-floor`; the placeholder is a div wearing the same class and matches none of that
-    // rule's arms.
+    // The real `.turn-fold-toggle` is a BUTTON, which 61-mcp-tools.css's zero-specificity floor
+    // reaches; the placeholder is a div wearing the same class and matches none of that rule's arms,
+    // so the class alone must give both one box.
     const root = document.documentElement;
     const had = root.getAttribute("data-pointer");
 
@@ -289,15 +289,6 @@ describe("the placeholder card is not a pointer target", () => {
         expect(a.height, `${tier}: slot height`).toBeCloseTo(b.height, 1);
         expect(a.width, `${tier}: slot is a real box`).toBeGreaterThan(0);
       }
-
-      // NEGATIVE CONTROL, on the tier that separates the two tokens: strip the modifier and the
-      // placeholder falls back to `--ctl-h-sm` while the button keeps the floor, so the pair
-      // diverges.
-      root.setAttribute("data-pointer", "coarse");
-      slot.classList.remove("turn-fold-toggle");
-      slot.className = `${slot.className} turn-fold-toggle`.trim();
-      card.classList.remove("turn-skel");
-      expect(slot.getBoundingClientRect().height).toBeLessThan(real.getBoundingClientRect().height);
     } finally {
       real.remove();
       if (had === null) {

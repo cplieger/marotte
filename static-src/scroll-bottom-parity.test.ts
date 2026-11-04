@@ -214,14 +214,22 @@ describe("the docked control reads as one of the map's step buttons", () => {
     expect(getComputedStyle(resume).backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
   });
 
-  it("is the hit floor tall on a coarse pointer", () => {
+  it("paints the standalone control's box on a coarse pointer, its target the hit floor", () => {
+    // Undocked under a finger, it is the `--btn-h` control a mouse sees beside a narrow chat.
     document.documentElement.dataset["pointer"] = "coarse";
     const { resume } = build(LABEL_PX);
     const host = resume.parentElement;
     if (host === null) {
       throw new Error("no wrap-outer");
     }
-    near(resume.getBoundingClientRect().height, tokenPx(host, "--hit-floor"), "height");
+    const r = resume.getBoundingClientRect();
+    near(r.height, tokenPx(host, "--btn-h"), "height");
+    const floor = tokenPx(host, "--hit-floor");
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    for (const y of [cy - floor / 2 + 1, cy + floor / 2 - 1]) {
+      expect(resume.contains(document.elementFromPoint(cx, y)), `${String(y - cy)}px`).toBe(true);
+    }
   });
 });
 
