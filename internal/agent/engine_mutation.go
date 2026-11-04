@@ -71,12 +71,14 @@ func (lt *lifetime) answerEngineMutation(w http.ResponseWriter, r *http.Request,
 	}
 	timer := time.NewTimer(clientAnswerBudget)
 	defer timer.Stop()
+	left := false
 	select {
 	case rep := <-done:
 		rep.write(w)
 		return
 	case <-timer.C:
 	case <-r.Context().Done():
+		left = true
 	}
 	mu.Lock()
 	select {
@@ -88,7 +90,11 @@ func (lt *lifetime) answerEngineMutation(w http.ResponseWriter, r *http.Request,
 	}
 	abandoned = true
 	mu.Unlock()
-	slog.Warn("an engine change has not answered in time; telling the client it is still applying", "verb", m.verb)
+	if left {
+		slog.Info("the client left before an engine change answered; it may still apply", "verb", m.verb)
+	} else {
+		slog.Warn("an engine change has not answered in time; telling the client it is still applying", "verb", m.verb)
+	}
 	webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout, httpreply.ErrorJSONWithCode(
 		"kiro-cli has not answered yet and may still apply the change; the list updates when it does",
 		stillApplyingCode,

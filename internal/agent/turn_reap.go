@@ -10,8 +10,8 @@ import (
 // Matches KiroCrew's silence budget for upstream issue #3583.
 const compactionFailedTurnBudget = 60 * time.Second
 
-// compactionStallCeiling caps how long an engine stall defers the reap past the budget; bridge's stallExtendCeiling
-// owns the figure.
+// compactionStallCeiling caps how long an engine stall defers the reap past the budget, above the 81.6 s event-loop
+// stall measured on kiro-cli 2.37 (kirodotdev/Kiro#12261).
 const compactionStallCeiling = 120 * time.Second
 
 // CompactionFailed bounds the named turn, which the failure was recorded in, since it may never get its response.

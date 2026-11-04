@@ -518,7 +518,8 @@ const writeChunk = 64 << 10
 // writeStall is the window in which one chunk's write to kiro-cli's stdin must move bytes or see the node engine's CPU
 // advance; a backstop, so not a setting, and a var for tests. writeMu serialises every outbound frame, so one wedged
 // write silently blocks every later Respond, Call and Notify, session/cancel included. A node engine that stops
-// reading with about 1 MiB queued is ended first by the kiro-cli relay's own 15 s write bound (kiro-cli 2.37).
+// reading is ended first by the kiro-cli relay, which buffers one frame plus about 64 KiB and then gives up after 15 s
+// with no progress (kiro-cli 2.37).
 var writeStall = 30 * time.Second
 
 // stallProbeAfter is when a chunk's write first samples the engine's CPU: a write that finishes sooner never reads

@@ -58,13 +58,13 @@ export const loadRuns = apiAction<
 });
 
 /** Launch one PARENTLESS run. A 409 (the recipe already has a live run) is surfaced verbatim; a launch kiro-cli
- *  has not answered may still start, and run_started shows it. */
+ *  has not answered may still start, and run_started shows it if it does. */
 export const launchRun = apiAction<RunLaunchRequest, RunLaunchedResponse>({
   name: "runs.launch",
   request: (body) => ({ method: "POST", path: "/api/runs", body }),
   error: (_args, err) =>
     mayStillApply(err)
-      ? "Still starting the run; it appears when kiro-cli answers"
+      ? "Still starting the run; it appears if kiro-cli starts it"
       : (serverSentence(err) ?? "Could not launch"),
 });
 
@@ -121,7 +121,7 @@ export const retryRun = apiAction<string, RunRetriedResponse>({
   decode: (data) => decodeRunRetriedResponse(data),
   error: errorAbout(onRun, (_args, err) =>
     mayStillApply(err)
-      ? "Still retrying the run; it updates when kiro-cli answers"
+      ? "Still retrying the run; it updates if kiro-cli takes the retry"
       : (serverSentence(err) ?? "Could not retry the run"),
   ),
   onSuccess: (res, workflowID) => {

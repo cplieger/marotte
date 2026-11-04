@@ -3,7 +3,9 @@ package bridge
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -273,5 +275,30 @@ func TestStalled(t *testing.T) {
 				time.Sleep(stallSample) // lets a setup's goroutine end inside the bubble
 			})
 		})
+	}
+}
+
+// initialize runs before any group is noted, so Stalled notes node's group itself, else it could never extend the
+// handshake.
+func TestStalled_NotesTheEngineGroupBeforeInitializeDoes(t *testing.T) {
+	b := NewEngine("cli", t.TempDir())
+	t.Cleanup(b.engineLane.close)
+	b.cmd = exec.Command("sh", "-c", "setsid sleep 60 & wait")
+	if err := b.cmd.Start(); err != nil {
+		t.Fatalf("Setup: start the stand-in relay: %v", err)
+	}
+	t.Cleanup(func() { _ = b.cmd.Process.Kill(); _ = b.cmd.Wait() })
+	b.cpuTicks = func() (uint64, bool) { return 0, false }
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		b.Stalled()
+		if pid, ok := b.groupLedBy(b.cmd.Process.Pid); ok {
+			t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Stalled never noted the group the relay's child leads")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

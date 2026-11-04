@@ -46,7 +46,7 @@ func (e *Engine) noteFrame(n int) {
 
 // engineCPU is the node engine's CPU time, never the kiro-cli relay's: the relay's process-tree tracker always burns
 // a little, which would hide a wedged engine. It reads only the noted groups, since it runs under writeMu and
-// engineLeader's re-note walks /proc under e.mu. ok is false while node's pid is unknown or its stat is unreadable.
+// engineLeader's re-note walks /proc. ok is false while node's pid is unknown or its stat is unreadable.
 func (e *Engine) engineCPU() (uint64, bool) {
 	if e.cmd == nil || e.cmd.Process == nil {
 		return 0, false

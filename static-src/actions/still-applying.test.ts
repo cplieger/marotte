@@ -121,13 +121,13 @@ const cases: { what: string; run: () => Promise<unknown>; still: string; failed:
   {
     what: "a run retry",
     run: () => retryRun.dispatch("wf_1"),
-    still: "Still retrying the run; it updates when kiro-cli answers",
+    still: "Still retrying the run; it updates if kiro-cli takes the retry",
     failed: "kiro-cli refused",
   },
   {
     what: "a run launch",
     run: () => launchRun.dispatch({ source: "agent://reviewer", inputs: { prompt: "go" } }),
-    still: "Still starting the run; it appears when kiro-cli answers",
+    still: "Still starting the run; it appears if kiro-cli starts it",
     failed: "kiro-cli refused",
   },
 ];

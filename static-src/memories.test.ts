@@ -290,6 +290,23 @@ describe("a memory change kiro-cli reports", () => {
     expect(body.value).toBe("half typed");
   });
 
+  it("shows the landed body when an editor open across the change is cancelled", async () => {
+    await mount();
+    panel
+      .querySelector<HTMLButtonElement>('[data-memory-id="b"] [aria-label="Edit Newer"]')
+      ?.click();
+    await settle();
+    oneReply = ok({ memory: { ...record("b", "repo:org/one", "Newer"), content: "landed late" } });
+    dispatch({ type: "memories_changed", chat_id: "" });
+    await settle();
+    const cancel = [...panel.querySelectorAll<HTMLButtonElement>(".memories-form button")].find(
+      (b) => b.textContent === "Cancel",
+    );
+    cancel?.click();
+    await settle();
+    expect(panel.querySelector(".memories-content")?.textContent).toBe("landed late");
+  });
+
   it("fetches nothing while the panel is hidden", async () => {
     await mount();
     panel.classList.add("hidden");

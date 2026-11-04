@@ -491,9 +491,9 @@ func (rs *Runs) retry(
 		return cErr
 	})
 	if errors.Is(err, errRetryOutcomeUnreadable) || errors.Is(err, errRetryOutcomeUnknown) {
-		// The retry may be running; tearing down would kill the work mid-node. cctx may be spent, so the re-arm's
-		// writes run on ctx.
-		rs.rearmRetried(ctx, workflowID, &origin, holders)
+		// The retry may be running; tearing down would kill the work mid-node. cctx may be spent and the client may
+		// have left, so the re-arm's writes run detached.
+		rs.rearmRetried(durable.Context(ctx), workflowID, &origin, holders)
 		return out, err
 	}
 	if err != nil {

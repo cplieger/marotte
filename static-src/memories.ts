@@ -89,6 +89,8 @@ let container: HTMLElement | null = null;
 const selected = new Set<string>();
 let openID: string | null = null;
 let editing = false;
+/** A change landed while the editor was open, so Cancel re-reads the body the editor still caches. */
+let editStale = false;
 /** Editing waits for `ready`, so a failed fetch never opens an editor over an empty body. */
 type Detail =
   | { readonly kind: "loading" }
@@ -137,7 +139,9 @@ function onMemoriesChanged(): void {
   if (!isShowing()) {
     return;
   }
-  if (!editing) {
+  if (editing) {
+    editStale = true;
+  } else {
     details.clear();
     if (openID !== null) {
       void loadContent(openID);
@@ -550,6 +554,10 @@ function editForm(m: MemoryRecord, content: string): HTMLElement {
   const cancel = el("button", { type: "button", className: "btn-small" }, "Cancel");
   cancel.addEventListener("click", () => {
     editing = false;
+    if (editStale) {
+      editStale = false;
+      void loadContent(m.id);
+    }
     paint();
   });
   const form = el(
@@ -590,6 +598,7 @@ async function saveEdit(id: string, edit: MemoryEdit): Promise<void> {
   }
   details.delete(id);
   editing = false;
+  editStale = false;
   await refresh();
   if (openID === id) {
     void loadContent(id);
@@ -653,6 +662,7 @@ export function _resetMemoriesForTest(): void {
   selected.clear();
   openID = null;
   editing = false;
+  editStale = false;
   details.clear();
   onCounts = null;
   generation++;

@@ -29,6 +29,8 @@ func (e *Engine) Stalled() bool {
 	if last != 0 && time.Since(time.Unix(0, last)) < stallQuiet {
 		return false
 	}
+	// Notes node's group while it is unknown, as during initialize; Stalled never runs under writeMu.
+	e.engineLeader()
 	before, ok := e.cpuTicks()
 	if !ok {
 		return false
