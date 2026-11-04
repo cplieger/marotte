@@ -219,8 +219,10 @@ describe("a turn's outcome marks take the tool row's shapes", () => {
   it("draws a broken turn as the tab strip's diamond on the header dot and the footer glyph", () => {
     const strip = ruleContaining(tabs, '.tab-status-dot[data-status="failed"]', "top");
     const corner = /border-radius:\s*([\d.]+px)/.exec(strip.body)?.[1];
-    const broken = shapeRule('.turn-header[data-severity="broken"] .turn-dot', "transform");
-    expect(broken.selector).toContain('.turn-footer[data-severity="broken"] .turn-ledger-glyph');
+    const broken = shapeRule('.turn-header[data-severity="broken"] .turn-dot::before', "transform");
+    expect(broken.selector).toContain(
+      '.turn-footer[data-severity="broken"] .turn-ledger-glyph::before',
+    );
     expect(broken.body).toContain("inline-size: var(--dot-size-sm)");
     expect(broken.body).toContain("block-size: var(--dot-size-sm)");
     expect(broken.body).toContain("transform: rotate(45deg)");

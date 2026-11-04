@@ -694,14 +694,26 @@ button.turn-wake-row-run:focus-visible {
 }
 
 /* The two turn marks take the tool row's shapes (client-transcript.md: a failure is the tab dot's silhouette).
- * A failure is the tab strip's diamond, by 12-tabs.css's construction; the margin keeps the disc's footprint, so
- * the row does not move when the outcome lands. `outcome-mark.test.ts` pins both shapes to their owners. */
+ * A failure is the tab strip's diamond, by 12-tabs.css's construction, drawn on a pseudo-element so the mark's
+ * own box keeps the disc's footprint and the row does not move when the outcome lands. Red as the hue rules
+ * above; `outcome-mark.test.ts` pins both shapes to their owners. */
 .turn-header[data-severity="broken"] .turn-dot,
 .turn-footer[data-severity="broken"] .turn-ledger-glyph {
+  position: relative;
+  border-color: transparent;
+  background: none;
+}
+
+.turn-header[data-severity="broken"] .turn-dot::before,
+.turn-footer[data-severity="broken"] .turn-ledger-glyph::before {
+  content: "";
+  position: absolute;
+  inset: 0;
   inline-size: var(--dot-size-sm);
   block-size: var(--dot-size-sm);
-  margin-inline: calc((var(--dot-size) - var(--dot-size-sm)) / 2);
+  margin: auto;
   border-radius: 1.5px;
+  background: var(--c-red);
   transform: rotate(45deg);
 }
 
