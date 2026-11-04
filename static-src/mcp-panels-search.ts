@@ -20,7 +20,7 @@ import { wireDetailsSlide } from "./disclosure-row.js";
 import { emptyNote, type Nouns } from "./textsearch/copy.js";
 import { configuredServers } from "./mcp-state.js";
 import type { KeyPair, Server } from "./mcp-state.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 
 /**
  * The no-rows answers, from a 502 body, the reply's `filtered` count and the query length. `tooShort` renders through

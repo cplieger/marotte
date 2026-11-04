@@ -38,7 +38,7 @@ func launchScheduled(t *testing.T, h *Runtime, br *fakeBridge, entry *schedule.E
 	t.Helper()
 	h.insertBridgeNow(runChatID(workflowID), testBridge(br, bridgeIdle))
 	h.runs.grantLease(t.Context(), workflowID, "nightly",
-		scheduledLaunch(entry.ID(), time.Now().Add(time.Hour)), hostSec())
+		scheduledLaunch(entry.Row(), time.Now().Add(time.Hour)), hostSec())
 }
 
 // A launch refused by the single-run rule names the live run and is not a hold; the manual route still answers 409
@@ -50,7 +50,7 @@ func TestLaunch_ARecipeBusyRefusalNamesTheLiveRun(t *testing.T) {
 		"workflowId": "wf_live", "name": "publish", "status": "running",
 	})
 
-	_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1",
+	_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"},
 		marotte.RunDefaults{}, time.Now().Add(time.Hour))
 	var busy *schedule.BusyError
 	if !errors.As(err, &busy) || busy.WorkflowID != "wf_live" {
@@ -86,7 +86,7 @@ func TestLaunch_ARecipeBusyRefusalCarriesTheLiveRunsLease(t *testing.T) {
 	}
 	refusal := func(t *testing.T, h *Runtime, entry *schedule.Entry) *schedule.BusyError {
 		t.Helper()
-		_, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.ID(),
+		_, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(),
 			marotte.RunDefaults{}, time.Now().Add(25*time.Hour))
 		busy, ok := errors.AsType[*schedule.BusyError](err)
 		if !ok || busy.WorkflowID != "wf_1" {
@@ -109,7 +109,7 @@ func TestLaunch_ARecipeBusyRefusalCarriesTheLiveRunsLease(t *testing.T) {
 		h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
 			"workflowId": "wf_1", "status": "failed",
 		}))
-		h.runs.grantRetryLease(t.Context(), "wf_1", &runOrigin{recipe: "nightly"})
+		h.runs.grantRetryLease(t.Context(), "wf_1", &runOrigin{recipe: "nightly"}, nil)
 		if busy := refusal(t, h, &entry); busy.ScheduleID != "" || !busy.SlotAt.IsZero() {
 			t.Errorf("the retried run's refusal carries (%q, %v), want no schedule and no slot", busy.ScheduleID, busy.SlotAt)
 		}
@@ -130,7 +130,7 @@ func TestRetry_AScheduledRunWhoseEndWasMissedIsRetriedAsThePersons(t *testing.T)
 		"workflowId": id, "name": "nightly", "status": "failed", "parentSessionId": testLaunchSession,
 	})
 
-	if _, err := h.runs.retry(t.Context(), id, h.runs.affordance(t.Context(), id, "failed")); err != nil {
+	if _, err := h.runs.retry(t.Context(), id, h.runs.affordance(id, &runHead{Status: "failed"})); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 
@@ -215,10 +215,10 @@ func TestScheduledRun_ALongStopReasonIsCappedOnTheRow(t *testing.T) {
 	}))
 
 	row := onlyRow(t, st)
-	if len(row.LastReason) > maxRowTextBytes || !strings.HasPrefix(row.LastReason, "step build failed: x") ||
+	if len(row.LastReason) > schedule.MaxReasonBytes || !strings.HasPrefix(row.LastReason, "step build failed: x") ||
 		!strings.HasSuffix(row.LastReason, "...") {
 		t.Errorf("a 4 KB stop reason reads %d bytes on the row (%.40q...), want at most %d, marked as cut",
-			len(row.LastReason), row.LastReason, maxRowTextBytes)
+			len(row.LastReason), row.LastReason, schedule.MaxReasonBytes)
 	}
 }
 

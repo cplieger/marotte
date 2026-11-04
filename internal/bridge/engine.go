@@ -74,7 +74,8 @@ const (
 	ExitEnded exitReason = "ended"
 	// exitReadError means reading stdout failed.
 	exitReadError exitReason = "read_error"
-	// ExitStdinStalled means a write chunk made no progress within writeStall.
+	// ExitStdinStalled means a write chunk was reaped by its stallWatch: no bytes in a writeStall window that saw no
+	// engine CPU or a frame, or no bytes in writeStallCeiling.
 	ExitStdinStalled exitReason = "stdin_stalled"
 	// exitWriteFailed means a write to stdin failed or was short, so the frames after it cannot be read.
 	exitWriteFailed exitReason = "write_failed"
@@ -92,7 +93,7 @@ const (
 // only by Exit, after Done.
 type ExitInfo struct {
 	Reason exitReason
-	// SidecarExit is the kiro-cli-chat process's own status ("exit_code=N" or "signal=NAME"); its node child's status
+	// SidecarExit is the kiro-cli acp process's own status ("exit_code=N" or "signal=NAME"); its node child's status
 	// never reaches marotte, so it names no cause.
 	SidecarExit string
 	Uptime      time.Duration
@@ -137,7 +138,9 @@ type Engine struct {
 	onDetach   func(DetachedSession)
 	engineLane *lane
 	background func(func()) bool
-	sessions   map[marotte.SessionID]*Session
+	// cpuTicks is the engine's CPU-progress probe (engineCPU); a field so a test can stub it.
+	cpuTicks func() (ticks uint64, ok bool)
+	sessions map[marotte.SessionID]*Session
 	// envAllow re-permits names the credential screen would drop (bridge_env.go).
 	envAllow map[string]struct{}
 	// done closes once the engine has ended: lanes closed, pending failed, process reaped. stopping closes at the
@@ -166,7 +169,9 @@ type Engine struct {
 	// startTerminalTimeoutMs: see startIgnoreFiles.
 	startTerminalTimeoutMs int
 	nextID                 atomic.Int64
-	heapMiB                int
+	// lastFrame is when readLoop last read a frame, in unix nanoseconds; 0 before the first.
+	lastFrame atomic.Int64
+	heapMiB   int
 	// rssPeakMiB and heapLimitMiB are the memory sampler's record for ExitInfo. Guarded by mu.
 	rssPeakMiB          int
 	heapLimitMiB        int
@@ -217,7 +222,7 @@ func WithDetachHandler(fn func(DetachedSession)) Option { return func(e *Engine)
 // WithGeneration labels this engine's log lines with the owner's spawn count.
 func WithGeneration(gen uint64) Option { return func(e *Engine) { e.generation = gen } }
 
-// NewEngine returns an engine that runs the kiro-cli-chat sidecar at cliPath; call Start next. Its engine lane exists
+// NewEngine returns an engine that runs `acp` on the kiro-cli at cliPath; call Start next. Its engine lane exists
 // from here on, so a consumer can attach before Start writes initialize.
 func NewEngine(cliPath, workDir string, opts ...Option) *Engine {
 	e := &Engine{
@@ -230,6 +235,7 @@ func NewEngine(cliPath, workDir string, opts ...Option) *Engine {
 		stopping:   make(chan struct{}),
 		exited:     make(chan struct{}),
 	}
+	e.cpuTicks = e.engineCPU
 	for _, o := range opts {
 		o(e)
 	}
@@ -312,8 +318,8 @@ func handshakeTimeout(err error, phase string, budget time.Duration) error {
 }
 
 // Start launches the engine process and initializes the connection; no session verb runs here. ctx bounds the
-// handshake, capped by handshakeBudget; o.Lifetime bounds the process and is required. On an error the caller owns
-// the teardown: Stop, then wait on Done.
+// handshake, capped by handshakeBudget (StallAware); o.Lifetime bounds the process and is required. On an error the
+// caller owns the teardown: Stop, then wait on Done.
 func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 	if o.Lifetime == nil {
 		return errors.New("bridge: EngineOpts.Lifetime is required: it bounds the kiro-cli process, and every default for it is a process nothing can cancel")
@@ -342,7 +348,7 @@ func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 		return err
 	}
 	start := time.Now()
-	hctx, cancel := context.WithTimeout(ctx, handshakeBudget)
+	hctx, cancel := e.StallAware(ctx, handshakeBudget)
 	defer cancel()
 	e.resolveTerminalTimeout(hctx, o.TerminalTimeout)
 	if err := e.initialize(hctx); err != nil {
@@ -429,7 +435,7 @@ func (e *Engine) initialize(ctx context.Context) error {
 			"_meta":       map[string]any{metaKeyKiro: kiroMeta},
 		},
 		"clientInfo": map[string]any{
-			"name": "marotte", "title": "Marotte for Kiro", "version": version.Build,
+			"name": kascap.ClientName, "title": "Marotte for Kiro", "version": version.Build,
 		},
 	})
 	if err != nil {

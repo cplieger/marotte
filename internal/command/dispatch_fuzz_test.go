@@ -21,7 +21,7 @@ func FuzzDispatcherServeHTTP(f *testing.F) {
 	f.Add([]byte(`not json at all`))
 
 	d := New()
-	d.Register("test_cmd", func(context.Context, *marotte.ClientCommand) (any, error) {
+	d.register("test_cmd", func(context.Context, *marotte.ClientCommand) (any, error) {
 		return responseOK, nil
 	})
 

@@ -1,4 +1,4 @@
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 
 export const FB_ROW = "fb-row";
 /** A row mounted past the `FB_ENTER_ROWS`th row a render pass mounts carries this and skips the entry animation (19-files.css). */

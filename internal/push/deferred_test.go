@@ -145,7 +145,7 @@ func TestDeferred_RetractionBeforeTheFlipDeliversNothing(t *testing.T) {
 	s.presence.Observe(connected(tagOf(presentEP)))
 
 	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
-	s.Retract(marotte.ChatSubject("c1"))
+	s.Retract(marotte.ChatSubject("c1"), "")
 	if n := s.heldCount(); n != 0 {
 		t.Fatalf("held deliveries after the retraction = %d, want 0", n)
 	}
@@ -153,6 +153,84 @@ func TestDeferred_RetractionBeforeTheFlipDeliversNothing(t *testing.T) {
 	time.Sleep(4 * deferPoll)
 	if h.count() != 0 {
 		t.Error("a retracted delivery was sent")
+	}
+}
+
+// A retraction names the ask it settles: another ask held about the same chat, raised inside the debounce or after it,
+// and a held push of another kind stay held, and the profile gets one push per kind when it goes.
+func TestDeferred_RetractingAnAskLeavesOtherWorkHeld(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		answered string
+		debounce bool
+	}{
+		{name: "the earlier ask answered, the later one past the debounce", answered: "1", debounce: true},
+		{name: "the earlier ask answered, the later one inside the debounce", answered: "1"},
+		{name: "the later ask answered first", answered: "2", debounce: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deferredOn(t)
+			h := &payloadHandler{}
+			s, clock := filteredService(t, h)
+			s.unsubscribe(goneEP)
+			s.presence.Observe(connected(tagOf(presentEP)))
+			ask := func(id string) *marotte.NotificationPayload {
+				return &marotte.NotificationPayload{
+					PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "ask " + id, Body: "body", Ask: id,
+				}
+			}
+
+			s.Send(t.Context(), ask("1"))
+			if tc.debounce {
+				resetDebounce(s)
+			}
+			s.Send(t.Context(), ask("2"))
+			s.Send(t.Context(), &marotte.NotificationPayload{
+				PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindAgentFinished, Title: "done", Body: "body",
+			})
+			s.Retract(marotte.ChatSubject("c1"), tc.answered)
+
+			if n := s.heldCount(); n != 2 {
+				t.Fatalf("held deliveries after an answer = %d, want the other ask's and the turn's", n)
+			}
+			clock.Advance(liveness.AliveWindow + time.Millisecond)
+			waitFor(t, "both held deliveries", func() bool { return h.count() == 2 })
+			time.Sleep(4 * deferPoll)
+			if n := h.count(); n != 2 {
+				t.Errorf("deliveries = %d, want one per held kind", n)
+			}
+		})
+	}
+}
+
+// An ask whose push the debounce kept from sending is announced by the push held for the chat, so a retraction of the
+// earlier ask leaves that push announcing this one.
+func TestDeferred_ADebouncedAskReplacesTheHeldPayload(t *testing.T) {
+	deferredOn(t)
+	h := &payloadHandler{}
+	s, _ := filteredService(t, h)
+	s.unsubscribe(goneEP)
+	s.presence.Observe(connected(tagOf(presentEP)))
+	for _, id := range []string{"1", "2"} {
+		s.Send(t.Context(), &marotte.NotificationPayload{
+			PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "ask " + id, Body: "body", Ask: id,
+		})
+	}
+	s.Retract(marotte.ChatSubject("c1"), "1")
+
+	key := heldKey{tag: tagOf(presentEP), kind: marotte.PushKindPermission, subject: "c1"}
+	s.deferred.mu.Lock()
+	held := s.deferred.held[key]
+	s.deferred.mu.Unlock()
+	if len(held.events) != 1 {
+		t.Fatalf("held events = %d, want the second ask's alone", len(held.events))
+	}
+	var p marotte.NotificationPayload
+	if err := json.Unmarshal(held.events[0].payload, &p); err != nil {
+		t.Fatalf("held payload is not the envelope: %v", err)
+	}
+	if p.Title != "ask 2" {
+		t.Errorf("held title = %q, want the second ask's", p.Title)
 	}
 }
 
@@ -175,7 +253,10 @@ func TestSend_TheEnvelopeIsTheNotification(t *testing.T) {
 	held := s.deferred.held[key]
 	s.deferred.mu.Unlock()
 	var got marotte.NotificationPayload
-	if err := json.Unmarshal(held.payload, &got); err != nil {
+	if len(held.events) != 1 {
+		t.Fatalf("held events = %d, want 1", len(held.events))
+	}
+	if err := json.Unmarshal(held.events[0].payload, &got); err != nil {
 		t.Fatalf("held payload is not the envelope: %v", err)
 	}
 	if got != want {
@@ -204,7 +285,10 @@ func TestDeferred_ASecondEventReplacesTheHeldPayload(t *testing.T) {
 	held := s.deferred.held[key]
 	s.deferred.mu.Unlock()
 	var p marotte.NotificationPayload
-	if err := json.Unmarshal(held.payload, &p); err != nil {
+	if len(held.events) != 1 {
+		t.Fatalf("held events = %d, want the later event alone", len(held.events))
+	}
+	if err := json.Unmarshal(held.events[0].payload, &p); err != nil {
 		t.Fatalf("held payload is not the envelope: %v", err)
 	}
 	if p.Title != "second" {

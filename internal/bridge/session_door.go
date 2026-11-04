@@ -225,9 +225,10 @@ func (s *Session) doorCall(
 // NewSession creates a session under an id it mints (ids.NewSessionID) and sends as `_meta.kiro.overrideSessionId`.
 // attach runs once the lane is registered and before session/new is written, so a consumer reads every frame KAS
 // sends for the session, the requests during creation included, which must be answered for the door to finish; an
-// attach error ends the door with nothing written and is returned. handshakeBudget bounds the door on top of ctx. A
-// door that gives up keeps its handle until kiro-cli answers, and the session KAS created is released and its files
-// reaped, never leaked. A close asked during the door releases what KAS created and answers ErrChatClosedDuringCall.
+// attach error ends the door with nothing written and is returned. handshakeBudget bounds the door on top of ctx
+// (StallAware). A door that gives up keeps its handle until kiro-cli answers, and the session KAS created is released
+// and its files reaped, never leaked. A close asked during the door releases what KAS created and answers
+// ErrChatClosedDuringCall.
 func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(*Session) error) (*Session, error) {
 	if o.Model != "" && !validIdent(o.Model) {
 		return nil, fmt.Errorf("invalid model identifier: %q", o.Model)
@@ -244,7 +245,7 @@ func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach 
 			return nil, err
 		}
 	}
-	dctx, cancel := context.WithTimeout(ctx, handshakeBudget)
+	dctx, cancel := e.StallAware(ctx, handshakeBudget)
 	defer cancel()
 	start := time.Now()
 	params := withClientSteering(withSessionChoices(s.withSessionMeta(withAdditionalDirectories(map[string]any{
@@ -348,9 +349,9 @@ func (e *Engine) closeAndReap(id marotte.SessionID) {
 }
 
 // LoadSession loads o.SessionID with a lane registered under it first, attach running before the write as
-// NewSession's does. replayBudget bounds the door on top of ctx: KAS replays the transcript before the reply. A door
-// that gives up keeps its handle until kiro-cli answers, then releases the loaded session, so a door for the id waits
-// for that.
+// NewSession's does. replayBudget bounds the door on top of ctx (StallAware): KAS replays the transcript before the
+// reply. A door that gives up keeps its handle until kiro-cli answers, then releases the loaded session, so a door
+// for the id waits for that.
 func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(*Session) error) (*Session, error) {
 	id := marotte.SessionID(o.SessionID)
 	if !ids.ValidSessionID(o.SessionID) {
@@ -369,7 +370,7 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 			return nil, err
 		}
 	}
-	dctx, cancel := context.WithTimeout(ctx, replayBudget)
+	dctx, cancel := e.StallAware(ctx, replayBudget)
 	defer cancel()
 	start := time.Now()
 	// The door's call keeps the reply's lane position: KAS replays the session as notifications before the result.

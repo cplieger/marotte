@@ -1,6 +1,6 @@
 import type { PlanEntry } from "./types.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 
 /** Build the plan card shell and reconcile entries into it. */
 export function planElement(entries: readonly PlanEntry[]): HTMLDivElement {

@@ -7,7 +7,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -100,6 +103,22 @@ func TestCancel_CallerContextCancelledAfterTheTakeStillAnswersAndCancels(t *test
 	}
 }
 
+// The bridge waits out an engine that is slow to read its stdin but working, so an answer it accepted late is no
+// reason to drop the session/cancel after it.
+func TestCancel_ALateAcceptedAnswerStillSendsSessionCancel(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		b := &ctxBridge{}
+		d := newCancelDeps(b)
+		d.onCancel = func() { time.Sleep(2 * time.Minute) }
+		if err := runCancel(t, t.Context(), d); err != nil {
+			t.Fatalf("cmdCancel: %v", err)
+		}
+		if len(b.live) != 1 || !b.live[0] {
+			t.Errorf("session/cancel contexts live = %v, want [true] after an answer the engine read two minutes late", b.live)
+		}
+	})
+}
+
 // A card that could not be answered on a live session leaves the reply running: no session/cancel, its terminals
 // alive, and a 502 that tells the user to press Stop again.
 func TestCancel_AnUndeliveredAnswerIsBadGatewayAndSendsNoSessionCancel(t *testing.T) {
@@ -142,7 +161,7 @@ func TestCloseTeardown_UndeliveredAnswerStillTearsDown(t *testing.T) {
 	d := newCancelDeps(b)
 	d.err = fmt.Errorf("%w: write refused", ErrCancelNotDelivered)
 
-	closeChatTeardown(t.Context(), d, d, d, "c1")
+	closeChatTeardown(t.Context(), d, d, d, "c1", &chat.Claim{})
 
 	if len(d.scopes) != 1 || d.scopes[0] != ScopeChatAndRuns {
 		t.Errorf("permission scopes = %v, want [ScopeChatAndRuns]", d.scopes)
@@ -179,7 +198,7 @@ func TestCloseTeardown_AnswersChatAndStepAsksBeforeSessionCancel(t *testing.T) {
 	notifiedAtAnswers := -1
 	d.onCancel = func() { notifiedAtAnswers = len(b.notified) }
 
-	closeChatTeardown(t.Context(), d, d, d, "c1")
+	closeChatTeardown(t.Context(), d, d, d, "c1", &chat.Claim{})
 
 	assertAnswersBeforeCancel(t, d, b, notifiedAtAnswers)
 	if len(d.closed) != 1 {
@@ -212,7 +231,7 @@ func TestStop_RecordsItsIssuersCause(t *testing.T) {
 			}
 		}},
 		{name: "a tab close", want: marotte.TurnStopTeardown, run: func(t *testing.T, d *cancelDeps) {
-			closeChatTeardown(t.Context(), d, d, d, "c1")
+			closeChatTeardown(t.Context(), d, d, d, "c1", &chat.Claim{})
 		}},
 		{name: "a chat delete", want: marotte.TurnStopTeardown, run: func(t *testing.T, d *cancelDeps) {
 			deleteChatTeardown(t.Context(), d, d, d, "c1", []string{"sess-1"}, RunStopTabClosed)

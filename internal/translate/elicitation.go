@@ -50,9 +50,11 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID marotte
 		NodeID:          step.NodeID,
 		RequestedSchema: p.Elicitation.RequestedSchema,
 	})
-	t.bus.Broadcast(ctx, t.pendingPerms.PendingPermsAdd(reqID, evt, origin))
+	added := t.pendingPerms.PendingPermsAdd(reqID, evt, origin)
+	t.bus.Broadcast(ctx, added)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID, marotte.WorkingLabelPayload{Label: marotte.WorkingLabelInput}))
 	n := notice.Question(t.push.NoticeTarget(ctx, chatID, step.WorkflowID),
 		step.NodeID, message)
+	n.Ask = notice.AskKey(marotte.DecisionRequestID(added.Payload))
 	t.push.Notify(ctx, chatID, &n)
 }

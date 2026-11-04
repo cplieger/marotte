@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -30,7 +31,10 @@ func (g teardownGrade) String() string { return gradeNames[g] }
 // teardownJob is one chat's teardown, built inside the commit that owes it.
 type teardownJob struct {
 	// hold is the committed life-gate hold; the job releases it when its grade returned.
-	hold   ChatHold
+	hold ChatHold
+	// stop is a person's close's stop hold on the chat's runs, which the close grade's run stop ends; nil leaves
+	// the runs running.
+	stop   *chat.Claim
 	chatID marotte.ChatID
 	// chain is the removed record's session chain, for the delete grades.
 	chain []string
@@ -41,7 +45,7 @@ type teardownJob struct {
 
 // teardownQueue is the runner as Membership uses it.
 type teardownQueue interface {
-	enqueue(job teardownJob) (done <-chan struct{}, runAfterUnlock func())
+	enqueue(job *teardownJob) (done <-chan struct{}, runAfterUnlock func())
 }
 
 // teardownRunner runs every committed teardown in the background, one job at a time per chat in commit order.
@@ -53,13 +57,13 @@ type teardownRunner struct {
 	goBackground func(func()) bool
 	// lifetime is the context a job's budget counts under, and its release.
 	lifetime func() (context.Context, context.CancelFunc)
-	run      func(context.Context, teardownJob)
+	run      func(context.Context, *teardownJob)
 	// tails is the newest job's done channel per chat.
 	tails map[marotte.ChatID]chan struct{}
 	mu    sync.Mutex
 }
 
-func newTeardownRunner(life lifecycleAccess, run func(context.Context, teardownJob)) *teardownRunner {
+func newTeardownRunner(life lifecycleAccess, run func(context.Context, *teardownJob)) *teardownRunner {
 	r := &teardownRunner{run: run, tails: map[marotte.ChatID]chan struct{}{}}
 	if life != nil {
 		r.goBackground = life.GoUnlessDraining
@@ -71,7 +75,7 @@ func newTeardownRunner(life lifecycleAccess, run func(context.Context, teardownJ
 // enqueue puts job behind its chat's newest job and starts it in the background. While the runtime drains (or with
 // no lifetime wired) it starts nothing and returns the job as runAfterUnlock, which the caller runs after it
 // released m.mu; the job still waits for its predecessor, so commit order holds.
-func (r *teardownRunner) enqueue(job teardownJob) (done <-chan struct{}, runAfterUnlock func()) {
+func (r *teardownRunner) enqueue(job *teardownJob) (done <-chan struct{}, runAfterUnlock func()) {
 	own := make(chan struct{})
 	r.mu.Lock()
 	prev := r.tails[job.chatID]
@@ -91,7 +95,7 @@ func (r *teardownRunner) enqueue(job teardownJob) (done <-chan struct{}, runAfte
 }
 
 // runBudgeted runs job on a budget counted from its own start.
-func (r *teardownRunner) runBudgeted(job teardownJob) {
+func (r *teardownRunner) runBudgeted(job *teardownJob) {
 	base, release := context.Background(), context.CancelFunc(func() {})
 	if r.lifetime != nil {
 		base, release = r.lifetime()
@@ -107,7 +111,7 @@ func (r *teardownRunner) runBudgeted(job teardownJob) {
 
 // finish releases job's hold, then marks it done and drops its tail when no later job replaced it. Deferred, so a
 // panicking grade still releases the gate.
-func (r *teardownRunner) finish(job teardownJob, own chan struct{}) {
+func (r *teardownRunner) finish(job *teardownJob, own chan struct{}) {
 	if job.hold != nil {
 		job.hold.Release()
 	}

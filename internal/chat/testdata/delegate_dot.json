@@ -43,9 +43,9 @@
       "page_word": "stopped",
       "terminal": true,
       "sites": [
-        "internal/chat/entrylog.go:1040",
+        "internal/chat/entrylog.go:1061",
         "internal/translate/projection_entries.go:669",
-        "internal/translate/streaming_tools.go:392",
+        "internal/translate/streaming_tools.go:395",
         "internal/translate/wire_enums.go:35",
         "internal/turnlog/turnlog.go:650"
       ]
@@ -122,7 +122,7 @@
       "status": "completed"
     },
     {
-      "site": "internal/chat/entrylog.go:1040",
+      "site": "internal/chat/entrylog.go:1061",
       "form": "status_field",
       "status": "aborted"
     },
@@ -142,37 +142,37 @@
       "status": "aborted"
     },
     {
-      "site": "internal/translate/streaming_tools.go:367",
+      "site": "internal/translate/streaming_tools.go:370",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:391",
+      "site": "internal/translate/streaming_tools.go:394",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:392",
+      "site": "internal/translate/streaming_tools.go:395",
       "form": "status_assign",
       "status": "aborted"
     },
     {
-      "site": "internal/translate/streaming_tools.go:413",
+      "site": "internal/translate/streaming_tools.go:416",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:429",
+      "site": "internal/translate/streaming_tools.go:432",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:429",
+      "site": "internal/translate/streaming_tools.go:432",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:451",
+      "site": "internal/translate/streaming_tools.go:454",
       "form": "compare",
       "status": "completed"
     },

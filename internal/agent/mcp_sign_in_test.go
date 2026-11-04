@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -320,7 +322,7 @@ func TestSignIn_TerminalStatusReleasesTheSlot(t *testing.T) {
 	for name, report := range cases {
 		t.Run(name, func(t *testing.T) {
 			h, _ := signInHub(t, "linear", "github")
-			if err := h.mcpRegistry.claimSignIn("linear"); err != nil {
+			if _, err := h.mcpRegistry.claimSignIn("linear"); err != nil {
 				t.Fatalf("claimSignIn = %v", err)
 			}
 			if name != "the engine ended" {
@@ -345,7 +347,7 @@ func TestOpenExternalURL_ClaimedBySignInRecordsTheAnchor(t *testing.T) {
 	h, _, lane := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	h.mcpRegistry.RecordOAuth(t.Context(), "theirs", marotte.MCPSource{Origin: "workspace", Root: "/w"})
-	if err := h.mcpRegistry.claimSignIn("theirs"); err != nil {
+	if _, err := h.mcpRegistry.claimSignIn("theirs"); err != nil {
 		t.Fatalf("claimSignIn = %v", err)
 	}
 	before := h.bus.fanout.Position().Head
@@ -390,5 +392,51 @@ func awaitLaneAnswer(t *testing.T, lane *fakeBridge, id int64) fakeResponse {
 			t.Fatalf("request %d went unanswered", id)
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+// A sign-in whose reset is still unanswered when the server reports and a second Sign in takes the slot ends with that
+// status: its late failure leaves the second sign-in's slot and row alone.
+func TestSignIn_AnEarlierAttemptsLateFailureLeavesTheNextOneAlone(t *testing.T) {
+	h, lane := signInHub(t, "linear")
+	late := make(chan struct{})
+	resets := 0
+	lane.mu.Lock()
+	lane.onCallFails = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool, error) {
+		if method != methodV3MCPResetServer {
+			return nil, nil, false, nil
+		}
+		lane.mu.Lock()
+		resets++
+		first := resets == 1
+		lane.mu.Unlock()
+		if !first {
+			return nil, nil, false, nil
+		}
+		<-late
+		return nil, nil, false, errors.New("the first attempt's reset timed out")
+	}
+	lane.mu.Unlock()
+
+	if code, body := postSignIn(h, "linear"); code != http.StatusAccepted {
+		t.Fatalf("first sign-in = %d %s, want 202", code, body)
+	}
+	awaitResets(t, lane, 1)
+	h.mcpRegistry.RecordOAuth(t.Context(), "linear", marotte.MCPSource{})
+	if code, body := postSignIn(h, "linear"); code != http.StatusAccepted {
+		t.Fatalf("second sign-in = %d %s, want 202", code, body)
+	}
+	awaitResets(t, lane, 2)
+	close(late)
+	joinInflight(t, h)
+
+	if got := slotServer(h); got != "linear" {
+		t.Errorf("slot = %q after the first attempt failed late, want the second attempt's kept", got)
+	}
+	if row := rowOf(t, h, "linear"); row.State != mcpStateOAuth || row.Error != "" {
+		t.Errorf("row = %+v, want it waiting for the second sign-in, not failed", row)
+	}
+	if _, ok := h.mcpRegistry.claimSignInURL(t.Context(), "https://provider.example/authorize?state=s2"); !ok {
+		t.Error("the second attempt's consent URL was not claimed for linear")
 	}
 }

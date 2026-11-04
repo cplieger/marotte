@@ -122,10 +122,10 @@ func TestFieldOr_IsNoAnswerOnlyOverAnUnreadableDocument(t *testing.T) {
 				writeSettings(t, dir, []byte(tc.content))
 			}
 
-			got, readable := FieldOr(t.Context(), dir, KeyDebugLogs, true)
+			got, readable := fieldOr(t.Context(), dir, KeyDebugLogs, true)
 
 			if got != tc.want || readable != tc.wantReadable {
-				t.Errorf("FieldOr(%s, def true) over %s = (%v, readable %v), want (%v, readable %v)",
+				t.Errorf("fieldOr(%s, def true) over %s = (%v, readable %v), want (%v, readable %v)",
 					KeyDebugLogs, tc.desc, got, readable, tc.want, tc.wantReadable)
 			}
 		})

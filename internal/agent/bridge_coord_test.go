@@ -62,22 +62,32 @@ type recordingPush struct {
 	noSubs  atomic.Bool
 	subject marotte.PushSubject
 	title   string
-	// retracted records each Retract call's subject, in order.
-	retracted []marotte.PushSubject
+	// retracted records each Retract call's subject and ask, in order; asks records each Send's ask.
+	retracted []retraction
+	asks      []string
 	mu        sync.Mutex
+}
+
+// retraction is one Retract call.
+type retraction struct {
+	subject marotte.PushSubject
+	ask     string
 }
 
 func (p *recordingPush) HasSubscribers() bool                   { return !p.noSubs.Load() }
 func (*recordingPush) SetPreferences(map[marotte.PushKind]bool) {}
 func (*recordingPush) Preferences() map[marotte.PushKind]bool   { return nil }
 func (*recordingPush) Close()                                   {}
-func (p *recordingPush) Retract(subj marotte.PushSubject) {
+func (p *recordingPush) Retract(subj marotte.PushSubject, ask string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.retracted = append(p.retracted, subj)
+	p.retracted = append(p.retracted, retraction{subject: subj, ask: ask})
 }
 
 func (p *recordingPush) Send(_ context.Context, n *marotte.NotificationPayload) {
+	p.mu.Lock()
+	p.asks = append(p.asks, n.Ask)
+	p.mu.Unlock()
 	p.subject = n.PushSubject
 	p.title = n.Title
 	select {
@@ -1055,7 +1065,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 	}{
 		{
 			name:        "close keeps the session on disk",
-			teardown:    func(h *Runtime, ctx context.Context, id marotte.ChatID) { h.CloseChatState(ctx, id) },
+			teardown:    func(h *Runtime, ctx context.Context, id marotte.ChatID) { h.CloseChatState(ctx, id, nil) },
 			wantSurvive: true,
 		},
 		{

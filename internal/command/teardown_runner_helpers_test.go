@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
@@ -99,10 +100,10 @@ func (g *gradeTeardown) DeleteChatStateByChain(_ context.Context, chatID marotte
 	g.grade(name, chatID)
 }
 
-func (*gradeTeardown) CloseChatState(context.Context, marotte.ChatID)       {}
-func (*gradeTeardown) BeginChatTeardown(marotte.ChatID, bool)               {}
-func (*gradeTeardown) AwaitSessionLeases(context.Context, marotte.ChatID)   {}
-func (*gradeTeardown) TeardownCancel(context.Context, marotte.ChatID) error { return nil }
+func (*gradeTeardown) CloseChatState(context.Context, marotte.ChatID, *chat.Claim) {}
+func (*gradeTeardown) BeginChatTeardown(marotte.ChatID, bool)                      {}
+func (*gradeTeardown) AwaitSessionLeases(context.Context, marotte.ChatID)          {}
+func (*gradeTeardown) TeardownCancel(context.Context, marotte.ChatID) error        { return nil }
 
 func (g *gradeTeardown) HoldChat(chatID marotte.ChatID) ChatHold {
 	g.log.add("hold " + string(chatID))
@@ -145,8 +146,8 @@ func newRunnerHost(t *testing.T, opts runnerOpts) *runnerHost {
 		tabSet = opts.wrapTabs(st, h.log)
 	}
 	deps := &membershipDeps{
-		Chats: h.store, Tabs: tabSet, Bus: h.bus, Teardown: h.teardown, Impact: opts.impact,
-		CloseChat: func(_ context.Context, chatID marotte.ChatID) { h.teardown.grade("close", chatID) },
+		Chats: withKeep(h.store), Tabs: tabSet, Bus: h.bus, Teardown: h.teardown, Impact: opts.impact,
+		CloseChat: func(_ context.Context, chatID marotte.ChatID, _ *chat.Claim) { h.teardown.grade("close", chatID) },
 		DeleteChat: func(_ context.Context, chatID marotte.ChatID, _ []string, cause RunStopCause) {
 			h.teardown.causes.Store(chatID, cause)
 			h.teardown.grade("close-delete", chatID)

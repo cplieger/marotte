@@ -934,6 +934,11 @@ export interface EngineExit {
 export interface EngineRestart {
   reasons: string[];
   pending: boolean;
+  /**
+ * ConfigUnreadable: config.json could not be read at the last look, so no queued reason applies until it can;
+ * Reasons stay queued.
+ */
+  config_unreadable: boolean;
 }
 
 /** EngineStatus is GET /api/engine's answer and the engine_status event's payload. */
@@ -1239,11 +1244,13 @@ export interface EntryToolCall {
   kind: ToolKind;
   status: ToolStatus;
   output?: string;
+  tool_name?: string;
   agent_subtask_id?: string;
   workflow_id?: string;
   terminal_id?: string;
   source_path?: string;
   checkpoint?: ToolCheckpoint;
+  mcp?: MCPToolIdentity;
   disclosed?: ToolDisclosed;
   denial?: ToolDenial;
   truncated?: ToolTruncation;
@@ -2067,7 +2074,7 @@ export interface MCPSignInOpenPayload {
   url: string;
 }
 
-/** MCPToolIdentity names the verified MCP server and tool behind a permission request. */
+/** MCPToolIdentity names the MCP server and tool behind a tool call or a permission request. */
 export interface MCPToolIdentity {
   server_name: string;
   tool_name: string;
@@ -2572,7 +2579,8 @@ export interface ProbeResult {
  * QueuedPrompt is one follow-up waiting for a turn to end. A row with Resends is CARRIED,
  * written at shutdown from unread steers. Held marks a row a previous process queued; it is
  * never sent automatically. A list holds at most one carried row, and it is held. Label is the
- * row's PromptCommand.DisplayText.
+ * row's PromptCommand.DisplayText. Next marks the row send_queued_now chose: the next drain sends
+ * it first, even after a stop.
  */
 export interface QueuedPrompt {
   /** Caller is set on a row an API caller queued. */
@@ -2583,6 +2591,7 @@ export interface QueuedPrompt {
   attachments?: Attachment[];
   resends?: string[];
   held?: boolean;
+  next?: boolean;
 }
 
 /**
@@ -2883,12 +2892,9 @@ export interface RunAsksPayload {
 }
 
 /**
- * RunControlsResponse is GET /api/runs/{id}/controls's reply: what may be done to
- * one run, and why not for the rest.
- * //
- * Its own route rather than a field on GET /api/runs/{id}, a verbatim KAS
- * passthrough. Only the server sees all three inputs: a client's SSE-fed cache of
- * which chat launched the run is empty after a reload.
+ * RunControlsResponse is what may be done to one run, and why not for the rest:
+ * GET /api/runs/{id}/controls's reply and the `controls` key of GET /api/runs/{id},
+ * decided from the same inspect read as the state beside it.
  */
 export interface RunControlsResponse {
   /**
@@ -2896,12 +2902,6 @@ export interface RunControlsResponse {
  * needs, and carries only a verb whose absence would otherwise be unexplained.
  */
   refused?: { [key: string]: string };
-  /**
- * ParentChatID names the chat whose agent launched the run, empty for a
- * parentless one. Read from the chat store here rather than from an event-fed
- * client cache, which is empty after a reload.
- */
-  parent_chat_id: string;
   /**
  * PauseNodeID is the repeat a maxIterations pause stopped at; the extend and
  * finish_loop verbs send it back. Empty for every other run.
@@ -3772,6 +3772,11 @@ export interface TabSubject {
  */
   parent: string;
   /**
+ * LaunchChats names, on a run tab, the chats holding its run-tab keep fact, so its close knows whose facts it
+ * releases without an engine read. It only grows.
+ */
+  launch_chats?: string[];
+  /**
  * Seen is the read position the reader last acknowledged for a chat or run tab, 0 for none;
  * only ack_tab moves it, never backward.
  */
@@ -3788,6 +3793,11 @@ export interface TabSubject {
  * open, so the authority cannot change under a reader.
  */
   owns: boolean;
+  /**
+ * LaunchResolved is true on every run tab whose holders were resolved at open; false only on a tab that predates
+ * LaunchChats, which the keep-state reconcile resolves.
+ */
+  launch_resolved?: boolean;
 }
 
 /**
@@ -3907,6 +3917,11 @@ export interface ToolCall {
   status: ToolStatus;
   output?: string;
   /**
+ * ToolName is the built-in tool's id (`update_workflow`, `web_search`) when the translator
+ * could name one the transcript distinguishes, else empty. Fixed at the create frame.
+ */
+  tool_name?: string;
+  /**
  * AgentSubtaskID is _meta.kiro.agentSubtaskId on a subagent's tool_call; it links
  * the card to its nested deltas, which carry the same id.
  */
@@ -3933,6 +3948,8 @@ export interface ToolCall {
  * wrote a file. Pointers sit ahead of the slices for govet fieldalignment.
  */
   checkpoint?: ToolCheckpoint;
+  /** MCP is KAS's MCP server and tool for this call, nil for any other tool. */
+  mcp?: MCPToolIdentity;
   /**
  * Disclosed names the skill or steering doc a `disclose_context` call loaded
  * (_meta.kiro.disclosedContext), the only signal that its body reached the model.

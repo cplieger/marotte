@@ -2,9 +2,12 @@ package command
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/tabs"
 )
@@ -13,7 +16,7 @@ import (
 // for tests of the chat half.
 func newTestMembership(t *testing.T, chats chatStore) *Membership {
 	t.Helper()
-	return newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: chats})
+	return newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: withKeep(chats), Sessions: claimsOf(chats), Runs: &fakeRunOwner{}})
 }
 
 // newTabbedMembership builds a coordinator over a chat store, a REAL tab store in a temp dir and a
@@ -25,7 +28,7 @@ func newTabbedMembership(t *testing.T, chats chatStore) (*Membership, *tabs.Stor
 		t.Fatalf("open tab store: %v", err)
 	}
 	bus := &tabBus{}
-	return newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: chats, Tabs: st, Bus: bus}), st, bus
+	return newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: withKeep(chats), Tabs: st, Bus: bus, Runs: &fakeRunOwner{}}), st, bus
 }
 
 // A separate constructor rather than a wider signature on the helper above, which has 27 call sites
@@ -38,7 +41,7 @@ func newTornDownMembership(t *testing.T, chats chatStore) (*Membership, *tabs.St
 	}
 	bus := &tabBus{}
 	td := &recordingTeardown{}
-	mem := newMembership(&membershipDeps{Chats: chats, Tabs: st, Bus: bus, Teardown: td})
+	mem := newMembership(&membershipDeps{Chats: withKeep(chats), Tabs: st, Bus: bus, Teardown: td})
 	return mem, st, bus, td
 }
 
@@ -91,4 +94,125 @@ func (b *tabBus) removedIDs(t *testing.T) []string {
 		out = append(out, p.RemovedIDs...)
 	}
 	return out
+}
+
+// withKeep gives a test chat store the coordinator's keep-fact writes. A store that already has them (the real
+// chat.Store) is returned as is; any other gets an in-memory stand-in over its own Lookup and Mutate, which is enough
+// for the tests that do not assert on keep facts. Keep-fact behaviour is asserted against the real store.
+func withKeep(c chatStore) membershipChats {
+	if mc, ok := c.(membershipChats); ok {
+		return mc
+	}
+	return &keepingStore{chatStore: c}
+}
+
+type keepingStore struct {
+	chatStore
+	tokens int
+	mu     sync.Mutex
+}
+
+func (k *keepingStore) Hold(ctx context.Context, id marotte.ChatID, key string, _ chat.KeepScope) (chat.Claim, error) {
+	if _, found, err := k.Lookup(ctx, id); err != nil {
+		return chat.Claim{}, err
+	} else if !found {
+		return chat.Claim{}, chat.ErrChatNotFound
+	}
+	k.mu.Lock()
+	k.tokens++
+	token := fmt.Sprint(k.tokens)
+	k.mu.Unlock()
+	claim := chat.Claim{ChatID: id, Key: key, Token: token}
+	_, err := k.Mutate(ctx, id, func(c *marotte.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		if prev, ok := c.Keep[key]; ok {
+			claim.Prior, claim.PriorFact = chat.PriorThisBoot, prev
+		}
+		if c.Keep == nil {
+			c.Keep = map[string]marotte.KeepFact{}
+		}
+		c.Keep[key] = marotte.KeepFact{Token: token}
+		return true
+	})
+	return claim, err
+}
+
+// SwapTabForStop drops the tab fact and holds the stop key in one record write, as chat.Store does.
+func (k *keepingStore) SwapTabForStop(ctx context.Context, id marotte.ChatID) (chat.Claim, bool) {
+	k.mu.Lock()
+	k.tokens++
+	token := fmt.Sprint(k.tokens)
+	k.mu.Unlock()
+	claim := chat.Claim{ChatID: id, Key: marotte.KeyStop, Token: token}
+	_, err := k.Mutate(ctx, id, func(c *marotte.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		delete(c.Keep, marotte.KeyTab)
+		if c.Keep == nil {
+			c.Keep = map[string]marotte.KeepFact{}
+		}
+		c.Keep[marotte.KeyStop] = marotte.KeepFact{Token: token}
+		return true
+	})
+	return claim, err == nil
+}
+
+func (*keepingStore) SessionInTeardown(string) bool { return false }
+
+func (*keepingStore) ReconcileKeep(context.Context, marotte.ChatID, func(*chat.KeepRecord)) error {
+	return errors.New("keepingStore keeps no keep facts to reconcile")
+}
+
+func (k *keepingStore) Rollback(ctx context.Context, cl *chat.Claim) error {
+	_, err := k.Mutate(ctx, cl.ChatID, func(c *marotte.Chat, exists bool) bool {
+		if f, ok := c.Keep[cl.Key]; !exists || !ok || f.Token != cl.Token {
+			return false
+		}
+		if cl.Prior == chat.PriorAbsent {
+			delete(c.Keep, cl.Key)
+		} else {
+			c.Keep[cl.Key] = cl.PriorFact
+		}
+		return true
+	})
+	return err
+}
+
+func (k *keepingStore) Release(ctx context.Context, id marotte.ChatID, key string, _ chat.Evidence) error {
+	_, err := k.Mutate(ctx, id, func(c *marotte.Chat, exists bool) bool {
+		if _, ok := c.Keep[key]; !exists || !ok {
+			return false
+		}
+		delete(c.Keep, key)
+		return true
+	})
+	return err
+}
+
+type headerLister interface {
+	List(ctx context.Context) []marotte.ChatHeader
+}
+
+// claimsOf answers the owner scan from a test store's headers when it lists them, else nil.
+func claimsOf(chats chatStore) sessionClaims {
+	if l, ok := chats.(headerLister); ok {
+		return headerClaims{chats: l}
+	}
+	return nil
+}
+
+// headerClaims answers the owner scan from a store's headers, every record read.
+type headerClaims struct{ chats headerLister }
+
+func (h headerClaims) SessionOwners(ctx context.Context) chat.OwnerScan {
+	owners := chat.SessionOwners{}
+	for _, hd := range h.chats.List(ctx) {
+		for _, sess := range hd.SessionChain() {
+			owners[sess] = append(owners[sess], marotte.ChatID(hd.ID))
+		}
+	}
+	return chat.OwnerScan{Owners: owners, Listed: true, Complete: true}
 }

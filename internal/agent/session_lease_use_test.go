@@ -11,7 +11,7 @@ import (
 )
 
 func TestSessionLease_ARefusedLeaseRunsNothing(t *testing.T) {
-	r := newTurnRegistry()
+	r := newTurnRegistry(nopTurnRecords{})
 	const chatID marotte.ChatID = "chat-lease"
 	sb := newSharedBridge(r.testLifecycle(chatID))
 	fb := newFakeBridge()

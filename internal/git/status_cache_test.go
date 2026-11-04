@@ -54,7 +54,7 @@ func getStatusAll(t *testing.T, h *Handler, query string) statusAllResp {
 func TestHandleStatusAll_PollAnswersFromTheSnapshot(t *testing.T) {
 	workDir := t.TempDir()
 	initFixtureRepo(t, workDir)
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	seeded := []allRepoStatus{repoRow("seeded")}
 	seedSnapshot(&h.statusCache, statusKeyPoll, seeded, time.Now())
 
@@ -69,7 +69,7 @@ func TestHandleStatusAll_PollAnswersFromTheSnapshot(t *testing.T) {
 // The answer carries the snapshot's age, which is what lets a client show data it
 // knows is seconds old instead of waiting for certainty.
 func TestHandleStatusAll_ReportsTheSnapshotAge(t *testing.T) {
-	h := NewHandler(t.TempDir())
+	h := newTestHandler(t, t.TempDir())
 	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{}, time.Now().Add(-3*time.Second))
 
 	got := getStatusAll(t, h, "")
@@ -88,7 +88,7 @@ func TestHandleStatusAll_StaleSnapshotRefreshesBehindTheAnswer(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	initFixtureRepo(t, repoDir)
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	stale := []allRepoStatus{repoRow("seeded")}
 	seedSnapshot(&h.statusCache, statusKeyPoll, stale, time.Now().Add(-statusMaxAge-time.Second))
 
@@ -134,7 +134,7 @@ func TestHandleStatusAll_ForcedRefreshWaitsForFreshData(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	initFixtureRepo(t, repoDir)
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	seeded := []allRepoStatus{repoRow("seeded")}
 	seedSnapshot(&h.statusCache, statusKeyFetch, seeded, time.Now())
 
@@ -150,7 +150,7 @@ func TestHandleStatusAll_ForcedRefreshWaitsForFreshData(t *testing.T) {
 // fetch-less answer onto a forced refresh or the reverse. They report different
 // facts: `?fetch=1` measures ahead/behind against a freshly fetched ref.
 func TestHandleStatusAll_TheFetchVariantHasItsOwnSnapshot(t *testing.T) {
-	h := NewHandler(t.TempDir())
+	h := newTestHandler(t, t.TempDir())
 	seeded := []allRepoStatus{repoRow("poll-only")}
 	seedSnapshot(&h.statusCache, statusKeyPoll, seeded, time.Now())
 
@@ -166,7 +166,7 @@ func TestHandleStatusAll_TheFetchVariantHasItsOwnSnapshot(t *testing.T) {
 // TestHandleStatusAll_ReportsAScanInFlight: while a scan runs the answer says so, so the client can
 // show a spinner over its data.
 func TestHandleStatusAll_ReportsAScanInFlight(t *testing.T) {
-	h := NewHandler(t.TempDir())
+	h := newTestHandler(t, t.TempDir())
 	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{}, time.Now().Add(-statusMaxAge-time.Second))
 	done, started := h.statusCache.claim(statusKeyPoll, nil)
 	if !started {

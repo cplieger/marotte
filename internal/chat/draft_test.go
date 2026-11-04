@@ -67,8 +67,7 @@ func TestSetDraft(t *testing.T) {
 		}
 	})
 
-	// Retention ages a chat from UpdatedAt (archive.purgeReferenceTime), so a stamping autosave would keep an abandoned
-	// draft, which can hold a credential, from ever being purged.
+	// Typing is not use: UpdatedAt is the last use the purge ages from (lastUse) and History sorts by.
 	t.Run("does_not_move_the_retention_clock", func(t *testing.T) {
 		t.Parallel()
 		s, err := NewStore(t.TempDir())

@@ -16,7 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// clientAPITimeout reads the shared fixture pinning @cplieger/fetch's
+// clientAPITimeout reads the shared fixture pinning @cplieger/ui/fetch's
 // API_TIMEOUT_MS — the timeout every client action dispatches under. The TS
 // half (static-src/api-timeout.node.test.ts) asserts the fixture equals the
 // INSTALLED library's constant, so a library bump fails that gate and forces a
@@ -324,6 +324,10 @@ func (g *gatedBridgeAccess) Bridge(id marotte.ChatID) Bridge { return g.inner.Br
 func (g *gatedBridgeAccess) BridgeLive(id marotte.ChatID) bool                                   { return g.inner.BridgeLive(id) }
 func (g *gatedBridgeAccess) closeBridgeOld(context.Context, marotte.ChatID, marotte.TurnOutcome) {}
 
+func (g *gatedBridgeAccess) CallBudget(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return g.inner.CallBudget(ctx, d)
+}
+
 func (g *gatedBridgeAccess) OpenBridge(ctx context.Context, id marotte.ChatID, model string) (Bridge, error) {
 	select {
 	case <-g.gate:
@@ -343,6 +347,7 @@ func TestCmdPrompt_A409WritesNothing(t *testing.T) {
 		"plain busy":       {refusal: AdmissionBusy, wantReason: "turn_live"},
 		"starting variant": {refusal: AdmissionStarting, wantReason: "starting"},
 		"closed variant":   {refusal: AdmissionClosed, wantReason: "chat_closed"},
+		"chat gone":        {refusal: AdmissionChatGone, wantReason: "chat_not_found"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

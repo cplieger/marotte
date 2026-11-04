@@ -147,6 +147,15 @@ func TestLaunchRoute_ChecksThePickAgainstTheTemplateWithNoLiveCatalog(t *testing
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("POST /api/runs = %d %s, want 503", rec.Code, rec.Body.String())
 		}
+		if got := rec.Header().Get("Retry-After"); got == "" {
+			t.Error("no Retry-After header on a refusal the client is told to retry")
+		}
+		var body struct {
+			Code string `json:"code"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Code != "model_list_unreadable" {
+			t.Errorf("body = %s, want code model_list_unreadable", rec.Body.String())
+		}
 		if slices.Contains(br.callLog(), methodKiroWorkflowNew) {
 			t.Errorf("calls = %v, want no workflow/new for an unchecked pick", br.callLog())
 		}
@@ -192,7 +201,7 @@ func TestScheduleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
 func TestLaunchScheduled_SendsTheSchedulesPick(t *testing.T) {
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_sched")
-	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1",
+	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"},
 		marotte.RunDefaults{Model: "opus", Effort: "low"}, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("LaunchScheduled: %v", err)
 	}

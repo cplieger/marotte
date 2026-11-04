@@ -66,7 +66,8 @@ func cmdCloseTab(ctx context.Context, mem *Membership, cmd *marotte.ClientComman
 	if !validTabID(p.ID) || p.ID == "" || !validIdent(p.OpID) || !validCloseImpact(p.Impact) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	closed, version, err := mem.closeTab(ctx, p.ID, p.OpID, p.Impact)
+	// Only the page's own request is a person's close, which stops the chat's runs.
+	closed, version, err := mem.closeTab(ctx, p.ID, p.OpID, cmd.From == nil, p.Impact)
 	if err != nil {
 		return nil, err
 	}

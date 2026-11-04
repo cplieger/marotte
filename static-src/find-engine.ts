@@ -1,7 +1,7 @@
 // The DOM find engine: match discovery, <mark> highlighting and step state for one root, shared by the transcript's and
 // the editor's find. A leaf with no app imports, scrolling or overlay.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { occurrences, prepare } from "./textsearch/scan.js";
 import type { Needle } from "./textsearch/scan.js";
 

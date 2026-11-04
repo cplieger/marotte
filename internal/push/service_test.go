@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/slogx/capture"
 )
 
@@ -31,14 +32,13 @@ func TestNew_GeneratesKeys(t *testing.T) {
 	}
 }
 
-// TestNew_ClientTimeout pins the 10-second HTTP client timeout New
-// configures (an integer-division slip would zero it out).
+// TestNew_ClientTimeout pins New's client timeout; pushClientTimeout owns why it is 15 s.
 func TestNew_ClientTimeout(t *testing.T) {
 	s := New(t.Context(), t.TempDir(), testSubject)
 	defer s.Close()
 
-	if s.client.Timeout != 10*time.Second {
-		t.Errorf("client.Timeout = %v, want %v", s.client.Timeout, 10*time.Second)
+	if s.client.Timeout != 15*time.Second {
+		t.Errorf("client.Timeout = %v, want %v", s.client.Timeout, 15*time.Second)
 	}
 }
 
@@ -317,7 +317,11 @@ func TestResolvePreferences_ResolvesEveryKeyedKindAgainstItsOwnDefault(t *testin
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ResolvePreferences(t.Context(), seedConfig(t, tc.body))
+			d, _, err := settings.Read(t.Context(), seedConfig(t, tc.body))
+			if err != nil {
+				t.Fatalf("Setup: read %q: %v", tc.body, err)
+			}
+			got := ResolvePreferences(d)
 			if !maps.Equal(got, tc.want) {
 				t.Errorf("ResolvePreferences over %q = %v, want %v", tc.body, got, tc.want)
 			}

@@ -41,7 +41,7 @@ func (q steerQueue) AwaitReadLoop(ctx context.Context, chatID marotte.ChatID, se
 
 func (q steerQueue) OnSteerJob(run func(command.SteerJob)) { q.recs.runJob = run }
 
-func (q steerQueue) SetSteerLead(chatID marotte.ChatID, key string) func() {
+func (q steerQueue) SetSteerLead(chatID marotte.ChatID, key string) (func(), bool) {
 	return q.recs.setLead(chatID, key)
 }
 

@@ -521,8 +521,8 @@ func watchChain(t *testing.T, br *fakeBridge, ids ...string) *chainRuns {
 	return c
 }
 
-// A run whose heal budget is spent stays paused for the user however its chat comes back: a sibling run's reopen
-// sweeps the chain and resumes only the sibling. The user's own resume needs no budget.
+// A run whose heal budget is spent stays paused however its chat comes back: a sibling run's reopen sweeps the chain
+// and resumes only the sibling. The user's own resume needs no budget.
 func TestHealBudget_ASpentRunIsNotResumedByItsChatsSweep(t *testing.T) {
 	h, br := agentRunOnChat(t, "wf_spent")
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -556,7 +556,7 @@ func TestSignInGate_ALaunchIsRefusedBeforeAnythingIsCreated(t *testing.T) {
 	if _, err := g.h.runs.admitRunWork(refuseClosed, gateRunID, ""); !errors.Is(err, errRunsNeedSignIn) {
 		t.Fatalf("admission signed out = %v, want the sign-in refusal", err)
 	}
-	if _, _, err := g.h.runs.LaunchScheduled(t.Context(), "bundled://demo", "s1", marotte.RunDefaults{}, time.Time{}); !errors.Is(err, errRunsNeedSignIn) || !errors.Is(err, schedule.ErrNoRunCanStart) {
+	if _, _, err := g.h.runs.LaunchScheduled(t.Context(), "bundled://demo", schedule.Row{ID: "s1"}, marotte.RunDefaults{}, time.Time{}); !errors.Is(err, errRunsNeedSignIn) || !errors.Is(err, schedule.ErrNoRunCanStart) {
 		t.Errorf("LaunchScheduled signed out = %v, want the sign-in refusal the schedule runner holds", err)
 	}
 	rec := httptest.NewRecorder()
@@ -571,7 +571,7 @@ func TestSignInGate_ALaunchIsRefusedBeforeAnythingIsCreated(t *testing.T) {
 	}
 
 	g.signIn(t)
-	if _, _, err := g.h.runs.LaunchScheduled(t.Context(), "bundled://no-such-recipe", "s1", marotte.RunDefaults{}, time.Time{}); err == nil || errors.Is(err, schedule.ErrNoRunCanStart) {
+	if _, _, err := g.h.runs.LaunchScheduled(t.Context(), "bundled://no-such-recipe", schedule.Row{ID: "s1"}, marotte.RunDefaults{}, time.Time{}); err == nil || errors.Is(err, schedule.ErrNoRunCanStart) {
 		t.Errorf("LaunchScheduled of a missing recipe signed in = %v, want a failure the schedule runner records", err)
 	}
 }

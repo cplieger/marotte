@@ -1,4 +1,4 @@
-// marotte's contract over ui-primitives' createTheme: the toggle CYCLES light -> dark -> system, an
+// marotte's contract over @cplieger/ui/theme's createTheme: the toggle CYCLES light -> dark -> system, an
 // unset value resolves the OS preference without persisting, and the label names what "system"
 // resolved to. The adapter is the paint cache prepaint.js reads, so the blob assertions pin the
 // storage behaviour a reader would notice, siblings preserved.

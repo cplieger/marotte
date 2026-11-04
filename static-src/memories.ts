@@ -1,6 +1,6 @@
 // kiro-cli's own store: the list is refetched after every mutation, and addressed by id since titles repeat.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join as joinKey } from "@cplieger/keyenc";
 import { apiGetTypedOrError } from "./api-client.js";
 import { asObject, decodeArray, optStr, reqNum, reqStr } from "./wire/validators.gen.js";
@@ -12,6 +12,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { deleteMemory, updateMemory } from "./actions/memory.js";
 import type { MemoryEdit } from "./actions/memory.js";
 import { forceReflow } from "./dom.js";
+import { onSSE } from "./bus.js";
 
 interface MemoryRecord {
   readonly id: string;
@@ -88,6 +89,8 @@ let container: HTMLElement | null = null;
 const selected = new Set<string>();
 let openID: string | null = null;
 let editing = false;
+/** A change landed while the editor was open, so Cancel re-reads the body the editor still caches. */
+let editStale = false;
 /** Editing waits for `ready`, so a failed fetch never opens an editor over an empty body. */
 type Detail =
   | { readonly kind: "loading" }
@@ -97,6 +100,7 @@ const details = new Map<string, Detail>();
 let onCounts: ((c: MemoryCounts) => void) | null = null;
 /** Bumped per fetch, so a stale answer cannot overwrite a newer one. */
 let generation = 0;
+let wired = false;
 
 export function setMemoryCountsListener(fn: (c: MemoryCounts) => void): void {
   onCounts = fn;
@@ -113,6 +117,10 @@ function visible(): MemoryRecord[] {
 /** Render into the panel. An unchanged filter (a tab switch or refresh) refetches; a filter change only repaints. */
 export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
   container = panel;
+  if (!wired) {
+    wired = true;
+    onSSE("memories_changed", onMemoriesChanged);
+  }
   const next = filter.trim().toLowerCase();
   const filterMoved = next !== filterText;
   filterText = next;
@@ -120,6 +128,26 @@ export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
   if (!filterMoved || state.kind === "loading") {
     void refresh();
   }
+}
+
+function isShowing(): boolean {
+  return container?.isConnected === true && !container.classList.contains("hidden");
+}
+
+/** A write kiro-cli applied, late or from another device. An open editor keeps its body, so typing is not lost. */
+function onMemoriesChanged(): void {
+  if (!isShowing()) {
+    return;
+  }
+  if (editing) {
+    editStale = true;
+  } else {
+    details.clear();
+    if (openID !== null) {
+      void loadContent(openID);
+    }
+  }
+  void refresh();
 }
 
 async function refresh(): Promise<void> {
@@ -340,7 +368,14 @@ function entryKey(e: ListEntry): string {
   const m = e.m;
   return e.kind === "row"
     ? joinKey("row", m.id, m.title, m.summary, m.memoryType, String(m.updatedMs ?? ""))
-    : joinKey("detail", m.id, String(editing), details.get(m.id)?.kind ?? "loading");
+    : detailKey(m);
+}
+
+/** An open editor's key ignores the record, so a refetch never replaces what is being typed. */
+function detailKey(m: MemoryRecord): string {
+  const d = details.get(m.id) ?? { kind: "loading" };
+  const shown = d.kind === "ready" && !editing ? viewText(m, d.content) : "";
+  return joinKey("detail", m.id, String(editing), d.kind, shown);
 }
 
 function syncRow(row: HTMLElement, m: MemoryRecord): void {
@@ -481,6 +516,10 @@ function buildDetail(m: MemoryRecord): HTMLElement {
   }
 }
 
+function viewText(m: MemoryRecord, content: string): string {
+  return content === "" ? m.summary : content;
+}
+
 function viewBody(m: MemoryRecord, content: string): HTMLElement {
   const edit = el("button", { type: "button", className: "btn-small" }, "Edit");
   edit.addEventListener("click", () => {
@@ -489,7 +528,7 @@ function viewBody(m: MemoryRecord, content: string): HTMLElement {
   return el(
     "div",
     { className: "memories-detail" },
-    el("div", { className: "memories-content" }, content === "" ? m.summary : content),
+    el("div", { className: "memories-content" }, viewText(m, content)),
     el("div", { className: "memories-detail-actions" }, edit),
   );
 }
@@ -515,6 +554,10 @@ function editForm(m: MemoryRecord, content: string): HTMLElement {
   const cancel = el("button", { type: "button", className: "btn-small" }, "Cancel");
   cancel.addEventListener("click", () => {
     editing = false;
+    if (editStale) {
+      editStale = false;
+      void loadContent(m.id);
+    }
     paint();
   });
   const form = el(
@@ -555,6 +598,7 @@ async function saveEdit(id: string, edit: MemoryEdit): Promise<void> {
   }
   details.delete(id);
   editing = false;
+  editStale = false;
   await refresh();
   if (openID === id) {
     void loadContent(id);
@@ -618,6 +662,7 @@ export function _resetMemoriesForTest(): void {
   selected.clear();
   openID = null;
   editing = false;
+  editStale = false;
   details.clear();
   onCounts = null;
   generation++;

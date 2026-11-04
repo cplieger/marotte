@@ -6,8 +6,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { CloseImpact } from "./wire/types.gen.js";
 import type { Mock } from "vitest";
-import { effect } from "@cplieger/reactive";
-import { mountLiveRegions } from "@cplieger/ui-primitives/announce";
+import { effect } from "@cplieger/ui";
+import { mountLiveRegions } from "@cplieger/ui/announce";
 
 // Mock dependencies that tabs.ts imports at module level.
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
@@ -115,7 +115,6 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
-  setTapCallback: vi.fn(),
 }));
 // The COMPLETE store helper (the factory's name stores, the close's active-pointer writers, and
 // what actions/chat.js links): a partial factory fails the file when store.ts grows an export.
@@ -194,12 +193,7 @@ import { observeStamp, _resetForTest as _resetFreshnessForTest } from "./subject
 import { closeTabCommand } from "./actions/tabs.js";
 import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info as toastInfo, error as toastErrorFn } from "./toast.js";
-import {
-  attachDrag,
-  pointerDragActivation,
-  setReorderCallback,
-  setTapCallback,
-} from "./tabs-drag.js";
+import { attachDrag, pointerDragActivation, setReorderCallback } from "./tabs-drag.js";
 import { $ } from "./dom.js";
 import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
@@ -228,8 +222,6 @@ bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 // at module load and every suite below clears mocks in its beforeEach. Driving it
 // is exactly what a completed drag does.
 const commitDrop = vi.mocked(setReorderCallback).mock.calls[0]?.[0];
-// What a lifted hold released without travel asks the strip to do.
-const tapRow = vi.mocked(setTapCallback).mock.calls[0]?.[0];
 
 // `materializeTab` needs openers registered; a spec's `onClose` is the FACTORY's, so a teardown is
 // watched through the opener it delegates to.
@@ -358,14 +350,6 @@ describe("openTab", () => {
     expect.assertions(2);
     await openChat("a");
     expect(hasTab("chat", "a")).toBe(true);
-    expect(getActiveTabId()).toBe(chatID("a"));
-  });
-
-  it("activates the tab a lifted tap names", async () => {
-    expect.assertions(2);
-    await openChats("a", "b");
-    expect(tapRow).toBeTypeOf("function");
-    tapRow?.(chatID("a"));
     expect(getActiveTabId()).toBe(chatID("a"));
   });
 
@@ -1407,6 +1391,7 @@ describe("a person's close goes through the close gate", () => {
         }),
       );
     }
+    x.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   }
 
   function rowEl(id: string): HTMLElement {
@@ -1572,6 +1557,7 @@ describe("a close another device made stale", () => {
         }),
       );
     }
+    x.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   }
 
   /** A gate that sends `first` and, asked again, answers `again` on the merge it was handed. */
@@ -1699,6 +1685,10 @@ describe("a drag on the strip scrolls it and never activates a row", () => {
   const ORIGIN_X = 40;
   const ORIGIN_Y = 100;
 
+  function click(x: number, y: number): MouseEvent {
+    return new MouseEvent("click", { clientX: x, clientY: y, bubbles: true, cancelable: true });
+  }
+
   // `buttons` is stated: a held contact is what a reflow cannot fake (touch reports 1, then 0).
   function ptr(
     type: "pointerdown" | "pointermove" | "pointerup",
@@ -1719,14 +1709,15 @@ describe("a drag on the strip scrolls it and never activates a row", () => {
   }
 
   /** One whole gesture on `target`: press at the origin, travel by `(dx, dy)`,
-   *  release there. A zero travel sends no move at all, which is what a stationary
-   *  tap looks like on the wire. */
+   *  release there, and the click a browser sends after it. A zero travel sends no
+   *  move at all, which is what a stationary tap looks like on the wire. */
   function gesture(target: HTMLElement, dx: number, dy: number, pointerType = "touch"): void {
     target.dispatchEvent(ptr("pointerdown", ORIGIN_X, ORIGIN_Y, pointerType));
     if (dx !== 0 || dy !== 0) {
       target.dispatchEvent(ptr("pointermove", ORIGIN_X + dx, ORIGIN_Y + dy, pointerType));
     }
     target.dispatchEvent(ptr("pointerup", ORIGIN_X + dx, ORIGIN_Y + dy, pointerType));
+    target.dispatchEvent(click(ORIGIN_X + dx, ORIGIN_Y + dy));
   }
 
   /** Two chats, painted. `b` is the active one, so an activation of `a` is visible
@@ -1807,6 +1798,7 @@ describe("a drag on the strip scrolls it and never activates a row", () => {
     vv.offsetTop = 0;
     row.dispatchEvent(ptr("pointermove", ORIGIN_X, 20, "mouse"));
     row.dispatchEvent(ptr("pointerup", ORIGIN_X, 20, "mouse"));
+    row.dispatchEvent(click(ORIGIN_X, 20));
 
     expect(getActiveTabId()).toBe(chatID("a"));
   });

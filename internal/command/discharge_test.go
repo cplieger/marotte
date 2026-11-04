@@ -82,6 +82,7 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdSteerClear:          "CmdSteerClear",
 		marotte.CmdQueuePrompt:         "CmdQueuePrompt",
 		marotte.CmdUnqueuePrompt:       "CmdUnqueuePrompt",
+		marotte.CmdSendQueuedNow:       "CmdSendQueuedNow",
 		marotte.CmdSetInterruptMode:    "CmdSetInterruptMode",
 		marotte.CmdRenameChat:          "CmdRenameChat",
 		marotte.CmdSteerRemove:         "CmdSteerRemove",
@@ -243,7 +244,7 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			if handler == nil {
 				handler = func(context.Context, *marotte.ClientCommand) (any, error) { return nil, nil }
 			}
-			d.Register(tc.cmdType, handler)
+			d.register(tc.cmdType, handler)
 
 			body := `{"type":"` + string(tc.cmdType) + `","chat_id":"c-abc123"`
 			if tc.payload != "" {
@@ -276,7 +277,7 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 // the nil guard is load-bearing rather than defensive.
 func TestDispatch_NoStatusRoleIsSilent(t *testing.T) {
 	d := New()
-	d.Register(marotte.CmdSteer, func(context.Context, *marotte.ClientCommand) (any, error) { return nil, nil })
+	d.register(marotte.CmdSteer, func(context.Context, *marotte.ClientCommand) (any, error) { return nil, nil })
 	req := httptest.NewRequest(http.MethodPost, "/api/command",
 		strings.NewReader(`{"type":"steer","chat_id":"c-abc123"}`))
 	w := httptest.NewRecorder()

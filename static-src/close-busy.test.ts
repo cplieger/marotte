@@ -83,8 +83,10 @@ async function gate(chats = [A]): Promise<string | null> {
 }
 
 beforeEach(() => {
-  runStore.noteRunSettled("wf-1");
-  runStore.noteRunSettled("wf-2");
+  for (const id of ["wf-1", "wf-2", "wf-3"]) {
+    runStore.noteRunSettled(id);
+    runStore.forgetRun(id);
+  }
   pendingAsks.clear();
   inFlight.clear();
   mockConfirm.mockImplementation(async () => true);
@@ -126,12 +128,34 @@ describe("each kind of live work names itself", () => {
   it("live workflow runs, a parked one included", async () => {
     runStore.noteRunLive("wf-1", "a", true);
     runStore.noteRunLive("wf-2", "a", false);
-    expect(await gate()).toBe("Closing Alpha cancels 2 workflow runs.");
+    expect(await gate()).toBe("Closing Alpha stops 2 workflow runs.");
   });
 
   it("one live workflow run", async () => {
     runStore.noteRunLive("wf-1", "a", false);
-    expect(await gate()).toBe("Closing Alpha cancels 1 workflow run.");
+    expect(await gate()).toBe("Closing Alpha stops 1 workflow run.");
+  });
+
+  it("names each run whose name is known", async () => {
+    runStore.noteRunLive("wf-1", "a", true);
+    runStore.noteRunLive("wf-2", "a", false);
+    runStore.noteRunLabel("wf-1", "Build");
+    runStore.noteRunLabel("wf-2", "Deploy");
+    expect(await gate()).toBe("Closing Alpha stops the workflow runs Build and Deploy.");
+  });
+
+  it("names one run", async () => {
+    runStore.noteRunLive("wf-1", "a", true);
+    runStore.noteRunLabel("wf-1", "Build");
+    expect(await gate()).toBe("Closing Alpha stops the workflow run Build.");
+  });
+
+  it("counts the runs whose name has not loaded beside the named ones", async () => {
+    runStore.noteRunLive("wf-1", "a", true);
+    runStore.noteRunLive("wf-2", "a", true);
+    runStore.noteRunLive("wf-3", "a", false);
+    runStore.noteRunLabel("wf-1", "Build");
+    expect(await gate()).toBe("Closing Alpha stops the workflow runs Build and 2 others.");
   });
 
   it("unread steers and unsent follow-ups, held ones included", async () => {
@@ -166,7 +190,7 @@ describe("each kind of live work names itself", () => {
     pendingAsks.set("a", ["3"]);
     runStore.noteRunLive("wf-1", "a", true);
     expect(await gate()).toBe(
-      "Closing Alpha stops the reply, cancels the question waiting for your answer, cancels 1 workflow run, and drops 1 queued message.",
+      "Closing Alpha stops the reply, cancels the question waiting for your answer, stops 1 workflow run, and drops 1 queued message.",
     );
   });
 });
@@ -194,7 +218,7 @@ describe("the subtree", () => {
     runStore.noteRunLive("wf-1", "a", true);
     runStore.noteRunLive("wf-2", "t", true);
     expect(await gate([A, T])).toBe(
-      "Closing Alpha cancels 2 workflow runs and drops 1 queued message.",
+      "Closing Alpha stops 2 workflow runs and drops 1 queued message.",
     );
   });
 
@@ -294,7 +318,7 @@ describe("the impact the close sends", () => {
     ]);
     runStore.noteRunLive("wf-1", "a", true);
     runStore.noteRunLive("wf-2", "a", false);
-    expect(await gate()).toBe("Closing Alpha cancels 2 workflow runs and drops 3 queued messages.");
+    expect(await gate()).toBe("Closing Alpha stops 2 workflow runs and drops 3 queued messages.");
   });
 
   it("an idle subtree still sends its chats", () => {
@@ -374,9 +398,13 @@ describe("deleteStopsWork", () => {
 
   it("names each busy chat otherwise", () => {
     openTurn("t", "t1");
+    expect(deleteStopsWork([T]).text).toBe("Closing its tabs also stops the reply in Tangent.");
+  });
+
+  it("names no run, since a descendant's close leaves its runs running", () => {
     runStore.noteRunLive("wf-1", "t", true);
-    expect(deleteStopsWork([T]).text).toBe(
-      "Closing its tabs also stops the reply in Tangent and cancels 1 workflow run.",
-    );
+    const asked = deleteStopsWork([T]);
+    expect(asked.text).toBe("");
+    expect(asked.impact).toEqual({ chats: [idle("t")] });
   });
 });

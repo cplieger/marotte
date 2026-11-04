@@ -21,7 +21,7 @@ func TestCloseChatTeardown_ASessionNotOpenIsNothingToCancel(t *testing.T) {
 			b := &cancelBridge{notifyErr: refusal}
 			d := newCancelDeps(b)
 
-			closeChatTeardown(t.Context(), d, d, d, "c1")
+			closeChatTeardown(t.Context(), d, d, d, "c1", nil)
 
 			if !slices.Equal(d.scopes, []CancelScope{ScopeChatAndRuns}) {
 				t.Errorf("permission scopes = %v, want [ScopeChatAndRuns]: the asks are answered whatever the session's state", d.scopes)
@@ -42,7 +42,7 @@ func TestCloseChatTeardown_AnUndeliveredCancelStillWarns(t *testing.T) {
 	b := &cancelBridge{notifyErr: ErrCancelNotDelivered}
 	d := newCancelDeps(b)
 
-	closeChatTeardown(t.Context(), d, d, d, "c1")
+	closeChatTeardown(t.Context(), d, d, d, "c1", nil)
 
 	if !strings.Contains(logs.String(), "close: turn cancel failed") {
 		t.Errorf("an undelivered cancel logged no warning: %s", logs.String())

@@ -1,6 +1,6 @@
 // Where a new connection points, shared by the device sign-in and the token form in one add pane.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { chevronEl } from "./chevron.js";
 import type { ConnectionOptions } from "./actions/forge.js";
 import { DEFAULT_HOST, HOST_LOCKED_KINDS } from "./forge-types.js";

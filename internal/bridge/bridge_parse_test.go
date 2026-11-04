@@ -5,6 +5,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -115,8 +116,12 @@ func TestReadLoop_UndecodableResponseFailsOnlyItsRequest(t *testing.T) {
 	gotReply(t, mine, undecodedResp, "the request the undecodable response answered")
 	noReply(t, other, "another pending request")
 	noWrite(t, out, "a response is never answered")
-	if _, _, err := replyOutcome(pendingReply{resp: undecodedResp}); err == nil {
-		t.Error("the undecodable-response reply reads as success to its caller")
+	if _, _, err := replyOutcome(pendingReply{resp: undecodedResp}); !errors.Is(err, marotte.ErrReplyUndecoded) {
+		t.Errorf("the undecodable-response reply = %v, want marotte.ErrReplyUndecoded: the request may have taken effect", err)
+	}
+	kasParseErr := &marotte.RPCResponse{Error: &marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "Parse error"}}
+	if _, _, err := replyOutcome(pendingReply{resp: kasParseErr}); err == nil || errors.Is(err, marotte.ErrReplyUndecoded) {
+		t.Errorf("a -32700 kiro-cli sent = %v, want a refusal without marotte.ErrReplyUndecoded", err)
 	}
 }
 

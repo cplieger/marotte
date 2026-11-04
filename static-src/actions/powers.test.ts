@@ -5,7 +5,7 @@ const m = vi.hoisted(() => ({
   errors: [] as string[],
 }));
 
-import { configure, configureApi } from "@cplieger/actions";
+import { configure, configureApi } from "@cplieger/ui/actions";
 import { installPower, uninstallPower } from "./powers.js";
 
 beforeEach(() => {

@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => {
   return {
     clearDispatch: vi.fn(() => Promise.resolve(true)),
     cancelDispatch: vi.fn((_args: { chatID: string; lead?: string }) => ({
-      outcome: Promise.resolve<{ status: string }>({ status: "success" }),
+      outcome: Promise.resolve<{ status: string; value?: boolean }>({ status: "success" }),
     })),
     removeDispatch: vi.fn((_args: { chatID: string; steerID: string }) => ({
       outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
@@ -29,17 +29,24 @@ const mocks = vi.hoisted(() => {
     })),
     addAttachmentMock: vi.fn((_chatID: string, _path: string) => true),
     removeAttachmentMock: vi.fn(),
+    sendQueuedNowDispatch: vi.fn((_args: { chatID: string; messageID: string }) => ({
+      outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
+    })),
+    announceMock: vi.fn((_message: string) => undefined),
   };
 });
 
 type RemoveOutcome =
-  { status: "success" } | { status: "error"; error: { status?: number; message: string } };
+  | { status: "success"; value?: boolean }
+  | { status: "error"; error: { status?: number; message: string } };
 
+vi.mock("@cplieger/ui/announce", () => ({ announce: mocks.announceMock }));
 vi.mock("./actions/chat.js", () => ({
   clearSteers: { dispatch: mocks.clearDispatch },
   cancelTurn: { dispatch: mocks.cancelDispatch },
   removeSteer: { dispatch: mocks.removeDispatch },
   unqueuePrompt: { dispatch: mocks.unqueueDispatch },
+  sendQueuedNow: { dispatch: mocks.sendQueuedNowDispatch },
 }));
 // Every export is present so real-ESM linking succeeds; only the restore is observed.
 vi.mock("./attachments.js", () => ({
@@ -86,6 +93,7 @@ const {
   unqueueDispatch,
   addAttachmentMock,
   removeAttachmentMock,
+  sendQueuedNowDispatch,
 } = mocks;
 
 import {
@@ -99,7 +107,7 @@ import {
   get,
 } from "./store.js";
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
-import { signal } from "@cplieger/reactive";
+import { signal } from "@cplieger/ui";
 import type { Entry, PendingSteer, QueuedPrompt, Session } from "./types.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
@@ -263,6 +271,8 @@ describe("the steer stack", () => {
     unqueueDispatch.mockReturnValue({ outcome: Promise.resolve({ status: "success" }) });
     addAttachmentMock.mockClear();
     removeAttachmentMock.mockClear();
+    sendQueuedNowDispatch.mockReset();
+    sendQueuedNowDispatch.mockReturnValue({ outcome: Promise.resolve({ status: "success" }) });
   });
 
   it("renders into the bottom-bar stack rather than inside the composer", () => {
@@ -597,6 +607,21 @@ describe("the steer stack", () => {
     expect(clearDispatch).not.toHaveBeenCalled();
     expect(removeDispatch).not.toHaveBeenCalled();
     expect(setComposerValueMock).not.toHaveBeenCalled();
+  });
+
+  // The server stopped nothing (the resend already carries the row), so "Stopping the turn" is false.
+  it("takes back the stop announcement when the server skipped the stop", async () => {
+    cancelDispatch.mockReturnValueOnce({
+      outcome: Promise.resolve({ status: "success", value: true }),
+    });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main", origin: "user" });
+    clickAction(firstRow(), "Send this message now");
+
+    await vi.waitFor(() => {
+      expect(mocks.announceMock).toHaveBeenLastCalledWith(
+        "The turn keeps running: the message already left the queue",
+      );
+    });
   });
 
   it("names the pressed row when several are waiting", async () => {
@@ -1010,6 +1035,131 @@ describe("the steer stack", () => {
     });
     expect(clearDispatch).not.toHaveBeenCalled();
     expect(confirmMock).not.toHaveBeenCalled();
+  });
+
+  // SEND NOW. A follow-up gets the held steer's arrow: the server moves the row to the head of
+  // the queue, stops the turn, and the stopped close sends that row next.
+  it("offers a waiting follow-up the steer's send-now arrow, first", () => {
+    withQueued(three);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
+
+    expect(actions(rowAt(1))).toEqual([
+      "Send this follow-up now",
+      "Edit this follow-up",
+      "Discard this follow-up",
+    ]);
+    const svg = (row: HTMLElement, label: string): string =>
+      actionButton(row, label).querySelector("svg")?.outerHTML ?? "";
+    expect(svg(rowAt(1), "Send this follow-up now")).not.toBe("");
+    expect(svg(rowAt(1), "Send this follow-up now")).toBe(svg(rowAt(0), "Send this message now"));
+  });
+
+  it("stops the turn and sends the pressed follow-up first", async () => {
+    withQueued(three);
+
+    expect(actionButton(rowAt(2), "Send this follow-up now").dataset["tooltip"]).toBe(
+      "Stops the turn and sends this follow-up next",
+    );
+    clickAction(rowAt(2), "Send this follow-up now");
+
+    await vi.waitFor(() => {
+      expect(sendQueuedNowDispatch).toHaveBeenCalledWith({ chatID: "chat-1", messageID: "m-q3" });
+    });
+    expect(cancelDispatch).not.toHaveBeenCalled();
+    expect(unqueueDispatch).not.toHaveBeenCalled();
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(setComposerValueMock).not.toHaveBeenCalled();
+  });
+
+  it("takes back the stop announcement when the follow-up's turn had already opened", async () => {
+    sendQueuedNowDispatch.mockReturnValueOnce({
+      outcome: Promise.resolve<RemoveOutcome>({ status: "success", value: true }),
+    });
+    withQueued(three);
+    clickAction(rowAt(2), "Send this follow-up now");
+
+    await vi.waitFor(() => {
+      expect(mocks.announceMock).toHaveBeenLastCalledWith(
+        "The turn keeps running: the message already left the queue",
+      );
+    });
+  });
+
+  it("sends a follow-up at once while no turn runs", async () => {
+    withQueued(three, false);
+
+    expect(actionButton(rowAt(1), "Send this follow-up now").dataset["tooltip"]).toBe(
+      "Sends this follow-up now",
+    );
+    clickAction(rowAt(1), "Send this follow-up now");
+
+    await vi.waitFor(() => {
+      expect(sendQueuedNowDispatch).toHaveBeenCalledWith({ chatID: "chat-1", messageID: "m-q2" });
+    });
+    expect(cancelDispatch).not.toHaveBeenCalled();
+  });
+
+  it("offers no arrow on a held or sent follow-up", () => {
+    withQueued(
+      [
+        { id: "m-q1", text: "first" },
+        { id: "m-h", text: "from before", held: true },
+        { id: "m-c", text: "carried", resends: ["steer-1"], held: true },
+        { id: "m-q2", text: "second" },
+      ],
+      false,
+    );
+    openTurn("chat-1", {
+      id: "tq-open",
+      turn: "tq",
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "prompt", n: 1, prompt: { id: "m-q1", text: "first" } },
+    });
+
+    expect(rows().map(labelOf)).toEqual([
+      "Sent",
+      "Not sent \u00b7 the server restarted",
+      "Not sent \u00b7 the server restarted",
+      "After this turn",
+    ]);
+    expect(actions(rowAt(0))).toEqual(["Edit this follow-up", "Discard this follow-up"]);
+    expect(actions(rowAt(1))).toEqual(["Edit this follow-up", "Discard this follow-up"]);
+    expect(actions(rowAt(2))).toEqual(["Edit this follow-up", "Discard this follow-up"]);
+    expect(actions(rowAt(3))[0]).toBe("Send this follow-up now");
+  });
+
+  // The server sends the marked row before unread steers, which then ride into its turn.
+  it("counts a follow-up marked next as the next turn beside unread steers", () => {
+    withQueued([
+      { id: "m-q2", text: "second", next: true },
+      { id: "m-q1", text: "first" },
+    ]);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "a", origin: "user", state: "unsent" });
+
+    expect(rows().map(labelOf)).toEqual([
+      "Unread \u00b7 sends next",
+      "After this turn",
+      "After 2 turns",
+    ]);
+  });
+
+  it("reports a refused send-now in the server's words", async () => {
+    withQueued([{ id: "m-q1", text: "first" }]);
+    sendQueuedNowDispatch.mockReturnValue({
+      outcome: Promise.resolve({
+        status: "error",
+        error: { status: 409, message: "this follow-up was queued before the server restarted" },
+      }),
+    });
+    clickAction(firstRow(), "Send this follow-up now");
+
+    await vi.waitFor(() => {
+      expect(errorToastMock).toHaveBeenCalledWith(
+        "this follow-up was queued before the server restarted",
+      );
+    });
   });
 
   it("fills the composer with the follow-up and its attachments before the removal is sent", () => {

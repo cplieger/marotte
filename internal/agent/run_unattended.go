@@ -96,7 +96,7 @@ var (
 // which pause this was, a step's question, a repeat's limit or a fault KAS does not class as transient.
 func reasonPausedOther(pauseReason string) string {
 	quoted := ""
-	if r := rowText(pauseReason); r != "" {
+	if r := schedule.ReasonText(pauseReason); r != "" {
 		quoted = " (" + r + ")"
 	}
 	return "paused with nobody watching" + quoted + ", so it was cancelled after " + pauseBudgetText +

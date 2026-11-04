@@ -4,6 +4,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { buildEvent, type EventEntry } from "./messages-events.js";
 import type { EntryKind, KindedEntry } from "./types.js";
+import { glyphMarkup, registryMarkup } from "./__test-helpers__/glyph.js";
+import { ICON_ALERT, ICON_COMPACT, ICON_REWIND, ICON_SHIELD, ICON_TOOL_SWITCH } from "./icons.js";
 
 function event<K extends EntryKind & EventEntry["kind"]>(
   kind: K,
@@ -42,6 +44,48 @@ describe("the row a kind draws", () => {
     ];
     for (const [entry, face] of faces) {
       expect(buildEvent(entry).className, entry.kind).toContain(face);
+    }
+  });
+
+  it("draws each kind's registry glyph, hidden from assistive tech", () => {
+    const glyphs: readonly (readonly [string, EventEntry, string])[] = [
+      ["a model switch", event("model_switched", { from: "a", to: "b" }), ICON_TOOL_SWITCH],
+      [
+        "a mode switch",
+        event("mode_switched", { from: "spec", to: "vibe", source: "user" }),
+        ICON_TOOL_SWITCH,
+      ],
+      ["a routed model", event("model_routed", { message: "" }), ICON_TOOL_SWITCH],
+      [
+        "a fallback",
+        event("model_fallback", { from: "a", to: "b", trigger: "refusal" }),
+        ICON_TOOL_SWITCH,
+      ],
+      [
+        "a rewind",
+        event("turn_revert", {
+          from: "t-2",
+          from_n: 2,
+          through: "t-2",
+          kas_message_id: "kas-2",
+          cause: "rewind",
+        }),
+        ICON_REWIND,
+      ],
+      ["a compaction", event("compaction", { summary: "" }), ICON_COMPACT],
+      [
+        "a compaction with a summary",
+        event("compaction", { summary: "Kept the plan." }),
+        ICON_COMPACT,
+      ],
+      ["a failed compaction", event("compaction_failed", { reason: "" }), ICON_ALERT],
+      ["a safety block", event("safety_blocked", { properties: [] }), ICON_SHIELD],
+    ];
+    for (const [name, entry, glyph] of glyphs) {
+      const icon = buildEvent(entry).querySelector(".boundary-icon, .compaction-icon");
+      expect(icon?.getAttribute("aria-hidden"), name).toBe("true");
+      expect(icon?.childElementCount, name).toBe(1);
+      expect(glyphMarkup(icon?.firstElementChild), name).toBe(registryMarkup(glyph));
     }
   });
 });

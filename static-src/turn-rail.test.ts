@@ -136,7 +136,7 @@ import { apiGet } from "./api-client.js";
 import { loadOlderTurns } from "./store-load.js";
 import { setSessions, setActive, get } from "./store.js";
 import type { Entry, Session, TurnState } from "./types.js";
-import { KEY_ATTR } from "@cplieger/reactive";
+import { KEY_ATTR } from "@cplieger/ui";
 import type { TurnOutcome } from "./turns.js";
 
 const MINUTE = 60_000;

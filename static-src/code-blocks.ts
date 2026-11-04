@@ -3,7 +3,7 @@
 // provisionally and upgrades it on close. The provisional sweep is the only thing that decorates a fence the model
 // never closed: the renderer's per-block callback fires only on close, and `parser_end` closes no open token.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { highlightByLang, normalizeLang } from "./highlight.js";
 import { ICON_COPY, ICON_PLAY } from "./icons.js";
 import { iconEl } from "./icon-el.js";

@@ -35,6 +35,7 @@ const (
 	CmdSteerClear          CommandType = "steer_clear"
 	CmdQueuePrompt         CommandType = "queue_prompt"
 	CmdUnqueuePrompt       CommandType = "unqueue_prompt"
+	CmdSendQueuedNow       CommandType = "send_queued_now"
 	CmdSetInterruptMode    CommandType = "set_interrupt_mode"
 	CmdRenameChat          CommandType = "rename_chat"
 	// CmdSteerRemove drops ONE waiting steer: KAS has no per-steer verb, so the
@@ -365,6 +366,14 @@ type QueuePromptCommand struct {
 // UnqueuePromptCommand is the payload for type="unqueue_prompt". An id no row
 // carries is success: two devices can discard one row.
 type UnqueuePromptCommand struct {
+	MessageID string `json:"message_id"`
+}
+
+// SendQueuedNowCommand is the payload for type="send_queued_now": the row goes next,
+// ahead of the other queued rows, which keep their order. A running turn is stopped
+// and its close sends the row; with none running it is sent at once. An id no row
+// carries, or a row already sending, stops nothing; a held row is a 409 held.
+type SendQueuedNowCommand struct {
 	MessageID string `json:"message_id"`
 }
 

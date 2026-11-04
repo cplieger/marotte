@@ -1,6 +1,6 @@
 // The recurrence picker behind the Schedule button on /docs/workflows.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { LAST_DAY, INTERVAL_BOUNDS } from "./schedule-types.js";
 import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./schedule-types.js";
 import type { RunDefaults, RunDefaultsPicker } from "./run-defaults-picker.js";
@@ -148,6 +148,8 @@ export function describeOutcome(view: ScheduleView): string {
       return `last failed${stamp}${because}`;
     case "unknown":
       return `last outcome unknown${stamp}${because}`;
+    case "skipped":
+      return `last skipped${stamp}${because}`;
     default:
       return `last${stamp}${because}`;
   }
@@ -164,8 +166,12 @@ export function summaryLine(view: ScheduleView | undefined): string {
     line += `, next ${next}`;
   }
   // The outcome trails the rule and the next run, separated by the app's own middot: what will
-  // happen reads first, what happened last reads second, and a schedule that has never fired shows
-  // nothing rather than an empty segment.
+  // happen reads first, a slot still waiting on the engine next, what happened last after it, and
+  // a schedule that has never fired shows nothing rather than an empty segment.
+  const waiting = formatStamp(view.waiting_for);
+  if (waiting !== "") {
+    line += ` · the ${waiting} run is waiting on the agent engine`;
+  }
   const last = describeOutcome(view);
   return last === "" ? line : `${line} · ${last}`;
 }

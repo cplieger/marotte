@@ -311,19 +311,19 @@ func TestReserveLocked_AHoldAfterTheLookupParksTheReservation(t *testing.T) {
 	stamp := turns.gates.stamp()
 	hold := h.HoldChat("c1")
 	lc.mu.Lock()
-	res, v, idle := turns.reserveLocked(lc, marotte.TurnSourcePrompt, stamp, "")
+	a := turns.reserveLocked(lc, marotte.TurnSourcePrompt, stamp, "")
 	lc.mu.Unlock()
-	if res.Token != 0 || v != gateWait || idle == nil {
-		t.Errorf("reserve during a hold = %+v %v (idle %v), want no reservation and gateWait", res, v, idle != nil)
+	if a.res.Token != 0 || a.verdict != gateWait || a.idle == nil {
+		t.Errorf("reserve during a hold = %+v %v (idle %v), want no reservation and gateWait", a.res, a.verdict, a.idle != nil)
 	}
 	hold.Commit()
 	turns.forget("c1")
 	hold.Release()
 	lc2 := turns.testLifecycle("c1")
 	lc2.mu.Lock()
-	res, v, _ = turns.reserveLocked(lc2, marotte.TurnSourcePrompt, stamp, "")
+	a = turns.reserveLocked(lc2, marotte.TurnSourcePrompt, stamp, "")
 	lc2.mu.Unlock()
-	if res.Token != 0 || v != gateClosedSince {
-		t.Errorf("reserve at a stamp from before the commit = %+v %v, want gateClosedSince", res, v)
+	if a.res.Token != 0 || a.verdict != gateClosedSince {
+		t.Errorf("reserve at a stamp from before the commit = %+v %v, want gateClosedSince", a.res, a.verdict)
 	}
 }

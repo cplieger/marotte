@@ -98,17 +98,17 @@ func (f *fakeImpact) readCount() int {
 // recordingQueue is a teardownQueue that records each job and runs none; done is closed at once.
 type recordingQueue struct {
 	// onEnqueue runs inside enqueue, so a test can observe the caller's lock.
-	onEnqueue func(teardownJob)
+	onEnqueue func(*teardownJob)
 	jobs      []teardownJob
 	mu        sync.Mutex
 }
 
-func (q *recordingQueue) enqueue(job teardownJob) (<-chan struct{}, func()) {
+func (q *recordingQueue) enqueue(job *teardownJob) (<-chan struct{}, func()) {
 	if q.onEnqueue != nil {
 		q.onEnqueue(job)
 	}
 	q.mu.Lock()
-	q.jobs = append(q.jobs, job)
+	q.jobs = append(q.jobs, *job)
 	q.mu.Unlock()
 	done := make(chan struct{})
 	close(done)
@@ -144,7 +144,7 @@ func newCloseHost(t *testing.T) *closeHost {
 		impact: &fakeImpact{work: map[marotte.ChatID]CloseWork{}}, queue: &recordingQueue{},
 	}
 	h.mem = newMembership(&membershipDeps{
-		Chats: h.store, Tabs: st, Bus: h.bus,
+		Chats: withKeep(h.store), Tabs: st, Bus: h.bus,
 		Teardown:  holdTeardown{recordingTeardown: &recordingTeardown{}, log: h.holds},
 		Impact:    h.impact,
 		Teardowns: h.queue,

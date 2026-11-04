@@ -65,7 +65,7 @@ type AlwaysAllowBlock string
 // match this command, so a saved rule would be a permanent no-op in permissions.yaml.
 const AlwaysAllowBlockUnparseable AlwaysAllowBlock = "unparseable"
 
-// MCPToolIdentity names the verified MCP server and tool behind a permission request.
+// MCPToolIdentity names the MCP server and tool behind a tool call or a permission request.
 type MCPToolIdentity struct {
 	ServerName string `json:"server_name"`
 	ToolName   string `json:"tool_name"`
@@ -227,6 +227,20 @@ func DecisionRunID(payload any) string {
 		return p.RunID
 	default:
 		return ""
+	}
+}
+
+// DecisionRequestID is the ask id a *_needed payload carries, 0 for any other payload.
+func DecisionRequestID(payload any) int64 {
+	switch p := payload.(type) {
+	case PermissionNeededPayload:
+		return p.RequestID
+	case ElicitationNeededPayload:
+		return p.RequestID
+	case UserInputNeededPayload:
+		return p.RequestID
+	default:
+		return 0
 	}
 }
 
@@ -614,6 +628,14 @@ type HooksChangedPayload struct{}
 // PowersChangedPayload is the payload for type="powers_changed", workspace-global
 // and empty: the installed Powers moved, so the Powers tab refetches.
 type PowersChangedPayload struct{}
+
+// MemoriesChangedPayload is the payload for type="memories_changed", workspace-global and empty: a memory write
+// answered, so the Memories list refetches.
+type MemoriesChangedPayload struct{}
+
+// KnowledgeChangedPayload is the payload for type="knowledge_changed", workspace-global and empty: a knowledge
+// base change answered, so the Knowledge list refetches.
+type KnowledgeChangedPayload struct{}
 
 // RecipesChangedPayload is the payload for type="recipes_changed", workspace-global and
 // empty. The client refetches GET /api/recipes on receipt.

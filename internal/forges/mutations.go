@@ -15,7 +15,7 @@ import (
 const (
 	// mutationDeadline ends a sign-in's, a sign-out's or an owners edit's
 	// forge-facing and context-aware work before the browser stops waiting:
-	// every forge action and the device poll go through @cplieger/fetch, whose
+	// every forge action and the device poll go through @cplieger/ui/fetch, whose
 	// API_TIMEOUT_MS is 30 s from the request's start. The 5 s margin covers the
 	// request's own transit.
 	mutationDeadline = 25 * time.Second

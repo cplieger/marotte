@@ -5,7 +5,7 @@
 // carries the delegate's asks. No factory seed (the slot is reserved) and no state of its own: the
 // tab set is the membership, enumerated per pass (cheap; else use `chat.ts`'s per-tab registry).
 
-import { effect, touch } from "@cplieger/reactive";
+import { effect, touch } from "@cplieger/ui";
 import { openSubagentRefs, setTabStatus, tabIdFor } from "./tabs.js";
 import { get, messagesVersionOf, subagentStatusFor, turnLive } from "./store.js";
 import { findSubagentInvocation } from "./subagent-slice.js";

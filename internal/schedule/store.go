@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -16,13 +17,15 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/marotte/internal/sanitize"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // fileName is the store's file, beside mcp.json in the config dir.
 const fileName = "schedules.json"
 
-// errNotFound means no schedule owns the given id.
-var errNotFound = errors.New("schedule not found")
+// ErrNotFound means no schedule owns the given id, or its row is a later life than the one the writer names (Row).
+var ErrNotFound = errors.New("schedule not found")
 
 // status is how a schedule's last slot ended, as far as the server knows.
 type status string
@@ -36,7 +39,22 @@ const (
 	StatusFailed status = "failed"
 	// StatusUnknown means the run went away without a terminal signal.
 	StatusUnknown status = "unknown"
+	// StatusSkipped means the slot never started and no failure caused it; the reason says why.
+	StatusSkipped status = "skipped"
 )
+
+// reasonEngineBusy is the reason of a slot the agent engine never answered before the schedule's next slot.
+const reasonEngineBusy = "engine busy"
+
+// MaxReasonBytes bounds a reason quoted on a row, one line persisted at every fire. KAS's pause and stop sentences run
+// under 200 bytes; a step's own failure text or a launch error can be any length.
+const MaxReasonBytes = 512
+
+// ReasonText defuses text marotte did not write for a row's reason: one line, no escapes, capped at MaxReasonBytes.
+func ReasonText(s string) string {
+	text, _ := runesafe.SanitizeSingleLineCapped(sanitize.Output(s), MaxReasonBytes, "...")
+	return text
+}
 
 // Outcome is one slot's ending. Reason is plain text a person reads, never a
 // prefix-coded value: status alone carries the classification.
@@ -53,15 +71,21 @@ type Entry struct {
 	// back to creation so a new schedule does not immediately fire for every
 	// slot since the epoch.
 	Anchor time.Time `json:"anchor"`
-	// LastRunAt, LastStatus and LastReason are for display only; the run's own
-	// record is the durable history.
+	// LastStatus and LastReason are for display; the run's own record is the durable history.
+	// LastRunAt is the last slot's due time, or its run's start (RecordStart) until the runner records that slot.
 	LastRunAt  time.Time `json:"last_run_at,omitzero"`
 	Source     string    `json:"source"`
 	Name       string    `json:"name,omitempty"`
 	LastStatus status    `json:"last_status,omitempty"`
 	LastReason string    `json:"last_reason,omitempty"`
+	// WaitingFor is the due slot whose launch is retried until the agent engine answers (Runner.settle); zero when none.
+	// It is persisted so a restart resumes the wait instead of skipping the slot as missed while offline.
+	WaitingFor time.Time `json:"waiting_for,omitzero"`
 	// LastRunID is the workflow the last fire launched: the only run whose outcome may land on the row.
 	LastRunID string `json:"last_run_id,omitempty"`
+	// Life is minted by Put when it creates the row and kept by an edit. ID is the recipe's, so a schedule deleted and
+	// added again is told from its predecessor only by Life; "" on a row written before rows carried one.
+	Life string `json:"life,omitempty"`
 	// Model and Effort are sent at each fire as the run's marotte.RunDefaults; empty sends none.
 	Model   string `json:"model,omitempty"`
 	Effort  string `json:"effort,omitempty"`
@@ -76,10 +100,23 @@ func (e *Entry) ID() string {
 	return base64.RawURLEncoding.EncodeToString(sum[:16])
 }
 
+// Row names one life of a schedule row: a writer naming it changes nothing once the row is deleted or recreated.
+type Row struct {
+	ID   string
+	Life string
+}
+
+// Row is the life of e that a writer names.
+func (e *Entry) Row() Row { return Row{ID: e.ID(), Life: e.Life} }
+
 // Run names one launch of a schedule: the row and the workflow run its fire started.
 type Run struct {
-	ScheduleID string
-	WorkflowID string
+	// StartedAt is when the run was created, which RecordStart writes as LastRunAt; zero leaves LastRunAt as it was.
+	StartedAt time.Time
+	// ScheduleID and ScheduleLife are the Row the launch was made for.
+	ScheduleID   string
+	ScheduleLife string
+	WorkflowID   string
 }
 
 // Writes never emit it.
@@ -147,6 +184,14 @@ func (s *Store) List() []Entry {
 	return s.sortedLocked()
 }
 
+// get returns the schedule id names, false when none does.
+func (s *Store) get(id string) (Entry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[id]
+	return e, ok
+}
+
 func (s *Store) sortedLocked() []Entry {
 	return slices.SortedFunc(maps.Values(s.entries), func(a, b Entry) int {
 		return strings.Compare(a.Source, b.Source)
@@ -164,12 +209,18 @@ func (s *Store) Put(ctx context.Context, e *Entry) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	e.WaitingFor = time.Time{}
+	e.Life = rand.Text()
 	if prev, ok := s.entries[e.ID()]; ok {
-		// Preserve run history across an edit; the client does not send it.
+		// Preserve the row's life and run history across an edit; the client sends neither.
 		e.LastRunAt, e.LastStatus, e.LastReason = prev.LastRunAt, prev.LastStatus, prev.LastReason
-		e.LastRunID = prev.LastRunID
+		e.LastRunID, e.Life = prev.LastRunID, prev.Life
 		if e.Anchor.IsZero() {
 			e.Anchor = prev.Anchor
+		}
+		// The wait survives an edit only while it still waits for this schedule's due slot.
+		if due, err := NextRunFrom(e.Spec, e.Anchor, time.Time{}); e.Enabled && err == nil && due.Equal(prev.WaitingFor) {
+			e.WaitingFor = prev.WaitingFor
 		}
 	}
 	if e.Anchor.IsZero() {
@@ -194,34 +245,64 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 // than now, so the schedule cannot drift by the tick's latency. runID is the run the fire
 // launched, "" for none; a row already tracking it keeps its outcome, since a fast run can end
 // (RecordEnding) before its launch returns.
-func (s *Store) recordFire(ctx context.Context, id string, due time.Time, runID string, o Outcome) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	e, ok := s.entries[id]
-	if !ok {
-		return errNotFound
-	}
-	e.Anchor = due
-	e.LastRunAt = due
-	if runID == "" || e.LastRunID != runID {
-		e.LastStatus, e.LastReason, e.LastRunID = o.Status, o.Reason, runID
-	}
-	s.entries[id] = e
-	return s.persistLocked(ctx)
+func (s *Store) recordFire(ctx context.Context, row Row, due time.Time, runID string, o Outcome) error {
+	return s.update(ctx, row, func(e *Entry) bool {
+		e.Anchor = due
+		e.LastRunAt = due
+		e.WaitingFor = time.Time{}
+		if runID == "" || e.LastRunID != runID {
+			e.LastStatus, e.LastReason, e.LastRunID = o.Status, o.Reason, runID
+		}
+		return true
+	})
 }
 
 // skipTo advances the anchor WITHOUT recording a run, for a slot missed while
 // the container was down or refused by a run whose bound ends it at that slot (BusyError.boundBy).
-func (s *Store) skipTo(ctx context.Context, id string, to time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	e, ok := s.entries[id]
-	if !ok {
-		return errNotFound
-	}
-	e.Anchor = to
-	s.entries[id] = e
-	return s.persistLocked(ctx)
+func (s *Store) skipTo(ctx context.Context, row Row, to time.Time) error {
+	return s.update(ctx, row, func(e *Entry) bool {
+		e.Anchor, e.WaitingFor = to, time.Time{}
+		return true
+	})
+}
+
+// missedSlot is a due slot every launch refused until its grace ran out, and the last refusal's text.
+type missedSlot struct {
+	due time.Time
+	why string
+}
+
+// skipFailed advances the anchor like skipTo and records the missed slot as failed. It detaches the
+// row's run, so a late outcome of the previous slot's run cannot replace this slot's failure.
+func (s *Store) skipFailed(ctx context.Context, row Row, to time.Time, m missedSlot) error {
+	return s.skipRecorded(ctx, row, to, m.due, Outcome{Status: StatusFailed, Reason: m.why})
+}
+
+// skipBusy records the slot due as skipped because the engine never answered, anchored at due so the
+// schedule's next slot, the one that ended the wait, still fires.
+func (s *Store) skipBusy(ctx context.Context, row Row, due time.Time) error {
+	return s.skipRecorded(ctx, row, due, due, Outcome{Status: StatusSkipped, Reason: reasonEngineBusy})
+}
+
+// skipRecorded advances the anchor to `to` and records o as the slot due's outcome, detaching the row's run.
+func (s *Store) skipRecorded(ctx context.Context, row Row, to, due time.Time, o Outcome) error {
+	return s.update(ctx, row, func(e *Entry) bool {
+		e.Anchor, e.LastRunAt, e.WaitingFor = to, due, time.Time{}
+		e.LastStatus, e.LastReason, e.LastRunID = o.Status, o.Reason, ""
+		return true
+	})
+}
+
+// setWaiting marks (a non-zero due) or clears (zero) the slot the row waits on the engine for, leaving the anchor
+// and the last outcome, which stay the previous slot's until this one ends.
+func (s *Store) setWaiting(ctx context.Context, row Row, due time.Time) error {
+	return s.update(ctx, row, func(e *Entry) bool {
+		if e.WaitingFor.Equal(due) {
+			return false
+		}
+		e.WaitingFor = due
+		return true
+	})
 }
 
 // RecordStart marks run as the row's live run, before the run can execute, so its ending has a
@@ -229,6 +310,9 @@ func (s *Store) skipTo(ctx context.Context, id string, to time.Time) error {
 func (s *Store) RecordStart(ctx context.Context, run Run) error {
 	return s.recordRun(ctx, run, func(e *Entry) bool {
 		e.LastRunID, e.LastStatus, e.LastReason = run.WorkflowID, statusStarted, ""
+		if !run.StartedAt.IsZero() {
+			e.LastRunAt = run.StartedAt
+		}
 		return true
 	})
 }
@@ -260,18 +344,24 @@ func (s *Store) RecordEnding(ctx context.Context, run Run, o Outcome) error {
 	})
 }
 
-// recordRun applies set to run's row and persists when set reports a change.
+// recordRun applies set to the row run was launched for (update).
 func (s *Store) recordRun(ctx context.Context, run Run, set func(e *Entry) bool) error {
+	return s.update(ctx, Row{ID: run.ScheduleID, Life: run.ScheduleLife}, set)
+}
+
+// update is every writer's one path to a row: it applies set to row while the stored row is still that life, and
+// persists when set reports a change. ErrNotFound once the row is deleted or recreated.
+func (s *Store) update(ctx context.Context, row Row, set func(e *Entry) bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	e, ok := s.entries[run.ScheduleID]
-	if !ok {
-		return errNotFound
+	e, ok := s.entries[row.ID]
+	if !ok || e.Life != row.Life {
+		return ErrNotFound
 	}
 	if !set(&e) {
 		return nil
 	}
-	s.entries[run.ScheduleID] = e
+	s.entries[row.ID] = e
 	return s.persistLocked(ctx)
 }
 

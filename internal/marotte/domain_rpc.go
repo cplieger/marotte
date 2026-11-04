@@ -106,6 +106,10 @@ var ErrBridgeExited = errors.New("ACP bridge exited")
 // same turn would likely overflow again.
 var ErrFrameTooLarge = errors.New("a message from kiro-cli was too large to read and was dropped, so this turn was stopped")
 
+// ErrReplyUndecoded is the sentinel a Call returns, beside its -32700 *RPCError, when this call's answer arrived but
+// could not be decoded. Unlike a -32700 kiro-cli sends, it does not mean the request was refused: it may have taken effect.
+var ErrReplyUndecoded = errors.New("kiro-cli's answer arrived but could not be decoded")
+
 // ErrBridgeNotStarted is the sentinel every write on an engine returns when there is no process to
 // write to: Start has not run, or it failed.
 var ErrBridgeNotStarted = errors.New("ACP bridge has not started")

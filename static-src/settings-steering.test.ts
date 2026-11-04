@@ -3,7 +3,7 @@
 // typeable before the read lands; the read is what unlocks it.
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { userEvent } from "vitest/browser";
-import type { ActionInstance } from "@cplieger/actions";
+import type { ActionInstance } from "@cplieger/ui/actions";
 
 const H = vi.hoisted(() => ({
   get: vi.fn(),

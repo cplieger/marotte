@@ -25,7 +25,7 @@ type loggingTabs struct {
 	mu         sync.Mutex
 }
 
-func (l *loggingTabs) Close(ctx context.Context, id string) ([]marotte.TabSubject, uint64, error) {
+func (l *loggingTabs) Close(ctx context.Context, id string) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error) {
 	l.log.add("tabs.Close " + id)
 	l.mu.Lock()
 	fail, gone := l.failCloses > 0, l.gone[id]
@@ -34,10 +34,10 @@ func (l *loggingTabs) Close(ctx context.Context, id string) ([]marotte.TabSubjec
 	}
 	l.mu.Unlock()
 	if fail {
-		return nil, 0, errCloseFailed
+		return nil, nil, 0, errCloseFailed
 	}
 	if gone {
-		return nil, 0, nil
+		return nil, nil, 0, nil
 	}
 	return l.Store.Close(ctx, id)
 }
@@ -58,7 +58,7 @@ func TestCloseTab_AnswersBeforeItsTeardownRuns(t *testing.T) {
 	chatID, tab := h.chatUnder(t, "op-a", "")
 	h.gates.park(chatID)
 
-	closed, _, err := h.mem.closeTab(t.Context(), tab, "op-close", nil)
+	closed, _, err := h.mem.closeTab(t.Context(), tab, "op-close", true, nil)
 
 	if err != nil || !slices.Equal(subjectIDs(closed), []string{tab}) {
 		t.Fatalf("closeTab = %v, %v; want the tab closed", subjectIDs(closed), err)
@@ -112,7 +112,7 @@ func TestCloseTab_HoldsEveryClosedChatFromTheCheckUntilItsJobReturns(t *testing.
 	}
 	page := &marotte.CloseImpact{Chats: []marotte.ChatWork{{Ref: string(parent)}, {Ref: string(doomedChild)}, {Ref: string(keptChild)}}}
 
-	closed, _, err := h.mem.closeTab(t.Context(), parentTab, "op-close", page)
+	closed, _, err := h.mem.closeTab(t.Context(), parentTab, "op-close", true, page)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestCloseTab_EnqueuesBeforeItUnlocks(t *testing.T) {
 			c, cTab := h.chatUnder(t, "op-c", "")
 			h.chatUnder(t, "op-d", cTab)
 			var unlocked []string
-			h.queue.onEnqueue = func(job teardownJob) {
+			h.queue.onEnqueue = func(job *teardownJob) {
 				if h.mem.mu.TryLock() {
 					h.mem.mu.Unlock()
 					unlocked = append(unlocked, string(job.chatID))
@@ -248,7 +248,7 @@ func TestCloseTab_EnqueuesBeforeItUnlocks(t *testing.T) {
 
 			switch path {
 			case "closeTab":
-				_, _, err := h.mem.closeTab(t.Context(), cTab, "op-close", nil)
+				_, _, err := h.mem.closeTab(t.Context(), cTab, "op-close", true, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -278,7 +278,7 @@ func TestRetentionClose_WaitsForABackgroundCloseOfTheSameChat(t *testing.T) {
 	h := newRunnerHost(t, runnerOpts{})
 	c, cTab := h.chatUnder(t, "op-c", "")
 	h.gates.park(c)
-	if _, _, err := h.mem.closeTab(t.Context(), cTab, "op-close", nil); err != nil {
+	if _, _, err := h.mem.closeTab(t.Context(), cTab, "op-close", true, nil); err != nil {
 		t.Fatal(err)
 	}
 	h.log.awaitEvent(t, "start close "+string(c))
@@ -317,7 +317,7 @@ func TestRetentionClose_ACloseCommittedAfterItRunsAfterIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := h.mem.closeTab(t.Context(), reopened.ID, "op-close", nil); err != nil {
+	if _, _, err := h.mem.closeTab(t.Context(), reopened.ID, "op-close", true, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -357,7 +357,7 @@ func TestRetentionClose_AStuckTeardownCostsThePassOneBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := h.mem.closeTab(t.Context(), reopened.ID, "op-close", nil); err != nil {
+	if _, _, err := h.mem.closeTab(t.Context(), reopened.ID, "op-close", true, nil); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(20 * time.Millisecond) // a close that did not queue behind the stuck job would start here
@@ -390,7 +390,7 @@ func TestTeardownJobs_CarryTheirStopCause(t *testing.T) {
 	t.Run("a retention-off close", func(t *testing.T) {
 		h := newRunnerHost(t, runnerOpts{retention: retentionOff})
 		c, tab := h.chatUnder(t, "op-c", "")
-		if _, _, err := h.mem.closeTab(t.Context(), tab, "op-close", nil); err != nil {
+		if _, _, err := h.mem.closeTab(t.Context(), tab, "op-close", true, nil); err != nil {
 			t.Fatal(err)
 		}
 		h.log.awaitEvent(t, "end close-delete "+string(c))

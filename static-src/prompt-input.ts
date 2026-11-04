@@ -16,7 +16,7 @@ import { composerText, isSendable, setComposerValue, syncComposerText } from "./
 import { touchComposer, wireTouchComposer } from "./composer-touch.js";
 import { continueList } from "./list-continue.js";
 import { applyEdit } from "./text-edit.js";
-import { computed, effect, el, signal, touch, type ReadonlySignal } from "@cplieger/reactive";
+import { computed, effect, el, signal, touch, type ReadonlySignal } from "@cplieger/ui";
 import type { InterruptMode } from "./types.js";
 
 /** The active chat's interrupt mode, value-deduped so an unrelated store write does not repaint

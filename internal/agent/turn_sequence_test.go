@@ -209,7 +209,7 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 // The wait does not stop at the awaited turn's close: the empty-turn gate's later-turn read is only sound once the
 // folder has consumed everything before the response, or it re-sends an answered prompt.
 func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
-	r := newTurnRegistry()
+	r := newTurnRegistry(nopTurnRecords{})
 	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
 	gen := r.attachForwardNow(chatID).gen
@@ -289,7 +289,7 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 // goroutine: the exit its teardown captured must still close when the goroutine ends, or the delete waits out
 // its whole drain budget.
 func TestAttachForward_ExitClosesAfterTheLifecycleWasForgotten(t *testing.T) {
-	r := newTurnRegistry()
+	r := newTurnRegistry(nopTurnRecords{})
 	const chatID marotte.ChatID = "c1"
 	att := r.attachForwardNow(chatID)
 	exit := r.forwardExit(chatID)

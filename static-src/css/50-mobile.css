@@ -7,16 +7,10 @@
    work. The layer declaration in
    00-header.css now names only reset and tokens - the two sets that are MEANT
    to lose to everything. */
-/* The control-height bump that used to open this block is GONE, and it did not
-   move here — it moved off the WIDTH axis entirely. `--ctl-h`, `--ctl-h-dense`,
-   `--ctl-h-sm` and `--hit-floor` now flip on `[data-pointer="coarse"]`
-   (01-tokens.css), because touch and width are orthogonal: keying size to width
-   is what left an iPad and a touch laptop served as mouse desktops, and it put
-   this file's 48rem bump on a different breakpoint from the hit-target floor's
-   40rem one, so the 640-768px band got 44px controls beside a 24px floor. A
-   phone still gets the enlarged tier — it reports a coarse pointer, and
-   01-tokens.css carries a narrow-viewport fallback for a browser running no JS
-   at all. This file keeps only LAYOUT. */
+/* No control sizes here: the touch tier flips `--hit-floor` on `[data-pointer="coarse"]`
+   (01-tokens.css), because touch and width are orthogonal, and 01-tokens.css carries a
+   narrow-viewport fallback for a browser running no JS at all. This file keeps only
+   LAYOUT. */
 @media (width <= 48rem) {
   [id="chat-area"] {
     margin-inline-start: 0;
@@ -47,7 +41,7 @@
      a full-viewport-width element every frame, on exactly the devices the mobile
      breakpoint serves; translateX is compositor-only. Safe because nothing inside
      the sidebar is `position: fixed` or anchor-positioned (popovers and menus are
-     hosted into <body> by @cplieger/ui-primitives), so the containing block a
+     hosted into <body> by @cplieger/ui), so the containing block a
      transform introduces repositions nothing. Re-check before moving a
      fixed-position surface INTO the sidebar. */
   [id="sidebar"] {
@@ -122,16 +116,12 @@
     );
   }
 
-  /* There is no `.pill` or `#send-btn` sizing here. Both live in the unlayered
-     15-input.css, so a declaration in this layer loses to it whatever its
-     specificity, and the three rules that used to sit here (heights of
-     2.25rem, a 2.5rem send min-width, a 1.1rem glyph, 12px padding and
-     --fs-sm labels) were all measured inert. The touch height comes from the
-     zero-specificity hit-target rule in 61-mcp-tools.css instead, which is
-     unlayered and therefore reaches them. */
+  /* No `.pill` or `#send-btn` sizing here: both live in the unlayered 15-input.css,
+     so a declaration in this layer loses to it whatever its specificity. */
 
+  /* The toolbar's 36px buttons: on touch, the gap their targets meet across. */
   .view-toolbar-inner {
-    gap: var(--sp-1);
+    gap: max(var(--sp-1), var(--tap-gap));
   }
 
   .fb-actions {

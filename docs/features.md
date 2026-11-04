@@ -6,7 +6,7 @@ This page describes each part of the marotte page. Everything here works from an
 
 Conversations stay in sync across devices, so a chat open on a phone and a desktop shows the same messages. Replies stream in as formatted text, and the agent's reasoning shows in blocks you can fold.
 
-- Send a message while the agent is working and it joins the running turn, or with **Queue messages** switched on in the composer's **Chat options** menu, runs after it. Queued messages send one per turn, in order, and each row above the composer says how many turns it waits. On a touch screen, Return adds a new line, so send it with the **Steer** or **Queue** button beside Cancel.
+- Send a message while the agent is working and it joins the running turn, or with **Queue messages** switched on in the composer's **Chat options** menu, runs after it. Queued messages send one per turn, in order, and each row above the composer says how many turns it waits. Its up arrow stops the reply and sends that message next, ahead of the others, or sends it at once when nothing is running. On a touch screen, Return adds a new line, so send it with the **Steer** or **Queue** button beside Cancel.
 - `/compact` compacts the context now. `/drop` ends a turn that is stuck. `/goal` sets an objective the agent works toward across turns, until it meets the goal or runs out of attempts.
 - A Mermaid diagram in a reply (a fenced `mermaid` block) is drawn as a picture. Its buttons switch to the source, copy it, download the SVG, or open the diagram full screen, where a pinch, the mouse wheel or the zoom buttons enlarge it. A diagram that cannot be drawn shows its source with a note saying why.
 - Attach files by drag and drop, paste or the composer's **Chat options** menu. PDF, CSV and Office documents reach the agent as documents and images as images. Any other file reaches it as a path it opens with its file tools.
@@ -47,7 +47,7 @@ Signing out stops the account within about four minutes, because kiro-cli keeps 
 
 One agent engine runs every chat and workflow. **Agent engine** on the **General** tab in **Settings** holds **Restart now** and **Agent engine memory limit**, which caps the engine's JavaScript heap and is empty by default, leaving kiro-cli's own limit of about 4 GB.
 
-These settings apply only when the engine restarts, and their rows say so: **Knowledge base search**, **Model fallback**, **Steering reminders**, **Auto model routing**, **Smart helper models**, **AWS CloudFormation safety check**, **kiro-cli telemetry**, **Agent engine memory limit**, **High throughput optimizations** and the engine's part of **Debug logs**. After a change, a banner names them, and the engine restarts by itself as soon as no reply and no workflow is running. **Restart now**, in the banner or in **Settings**, asks first and names the chats whose reply would stop and the workflows that would pause. Those workflows resume by themselves once the engine is back. [How marotte works](how-it-works.md#the-agent-engine) describes restarts and crashes.
+These settings apply only when the engine restarts, and their rows say so: **Knowledge base search**, **Model fallback**, **Steering reminders**, **Auto model routing**, **Smart helper models**, **AWS CloudFormation safety check**, **kiro-cli telemetry**, **Agent engine memory limit**, **High throughput optimizations** and the engine's part of **Debug logs**. After a change, a banner names them, and the engine restarts by itself as soon as no reply and no workflow is running; while `config.json` cannot be read, it waits until the file reads again. **Restart now**, in the banner or in **Settings**, asks first and names the chats whose reply would stop and the workflows that would pause. Those workflows resume by themselves once the engine is back. [How marotte works](how-it-works.md#the-agent-engine) describes restarts and crashes.
 
 ## Files, editor and terminal
 
@@ -108,7 +108,11 @@ A steering doc or agent that kiro-cli loaded but does not use carries a badge na
 
 A schedule whose workflow file is gone stays on the **Workflows** panel, marked orphaned, with a **Delete schedule** button.
 
+If the agent engine is too busy to start a scheduled run, marotte tries again, waiting longer each time, up to 8 minutes between tries. Meanwhile the schedule's row says the run is waiting on the agent engine. If the schedule's next run time comes first, the row records the missed run as skipped because the engine was busy, and the next run starts on time.
+
 A workflow step's file tools reach the same folders as a chat's: `/workspace`, `/uploads` for reading, and the [additional directories](configuration.md#folders-the-agent-can-use-beyond-workspace) you grant. A step that reads another path, such as `/config/home/.kiro/sessions`, fails with `path escapes workspace`, so write that step to read the file with a shell command.
+
+A `command` or `background-process` watch runs its command outside any tool call, so no `PreToolUse` hook sees it. A hook that blocks a shell command, such as a `git push`, does not stop the same command in a watch's command line. Put a command a hook must check in a step instead.
 
 Instructions for every chat and knowledge bases are under **Custom instructions** in **Settings**, and **Settings** also has a diagnostics report you can copy. **Data sharing** on its **General** tab holds the **kiro-cli telemetry** switch, one switch for kiro-cli's usage telemetry and its legacy toolkit telemetry. It is on by default, as in kiro-cli, and an enterprise organization's usage-analytics setting overrides it. The sidebar shows your account's usage and switches between light, dark and system themes. The prompt bar shows the current chat's context use and credits. Open tabs follow you to every device, while each device keeps its own active tab, shell panel height and sidebar width.
 

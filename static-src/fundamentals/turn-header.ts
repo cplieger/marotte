@@ -5,8 +5,10 @@
 // and a labelled request's full text shows only while open; attachment chips stay outside the clamp.
 
 import { join } from "@cplieger/keyenc";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { chevronEl } from "../chevron.js";
+import { iconEl } from "../icon-el.js";
+import { workflowIcon } from "../icons.js";
 import { watchCut } from "../clamp-text.js";
 import { linkifyPaths } from "../linkify.js";
 import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
@@ -265,7 +267,13 @@ function syncWakeLabel(
     return;
   }
   const run = wake.run?.id ?? "";
-  if (line !== null && line.dataset["label"] === wake.label && line.dataset["run"] === run) {
+  const message = String(wake.message);
+  if (
+    line !== null &&
+    line.dataset["label"] === wake.label &&
+    line.dataset["run"] === run &&
+    line.dataset["message"] === message
+  ) {
     return;
   }
   if (line === null) {
@@ -274,12 +282,23 @@ function syncWakeLabel(
   }
   line.dataset["label"] = wake.label;
   line.dataset["run"] = run;
+  line.dataset["message"] = message;
+  // The glyph a step-message note carries, so the turn it started reads as the same message.
+  const glyph = wake.message
+    ? [
+        el(
+          "span",
+          { className: "turn-wake-icon", "aria-hidden": "true" },
+          iconEl(workflowIcon("message")),
+        ),
+      ]
+    : [];
   const rest = el("span", { className: "turn-wake-rest" }, wake.rest);
   if (wake.run === undefined) {
-    line.replaceChildren(rest);
+    line.replaceChildren(...glyph, rest);
     return;
   }
-  line.replaceChildren(wakeRunEl(wake.run, "turn-wake-run", open), rest);
+  line.replaceChildren(...glyph, wakeRunEl(wake.run, "turn-wake-run", open), rest);
 }
 
 function wakeRunEl(

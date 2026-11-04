@@ -12,7 +12,7 @@ import (
 )
 
 func TestChatLife_BeginWorkIsCountedUntilTheEndAndRefusedAfter(t *testing.T) {
-	r := newTurnRegistry()
+	r := newTurnRegistry(nopTurnRecords{})
 	lc := r.testLifecycle("c1")
 	ctx, done, ok := lc.beginWork(workTail)
 	if !ok || ctx == nil {
@@ -52,7 +52,7 @@ func TestChatLife_BeginWorkIsCountedUntilTheEndAndRefusedAfter(t *testing.T) {
 }
 
 func TestChatLife_EndLifeCancelsRemintsAndIsIdempotent(t *testing.T) {
-	r := newTurnRegistry()
+	r := newTurnRegistry(nopTurnRecords{})
 	lc := r.testLifecycle("c1")
 	ctx, done, _ := lc.beginWork(workDoor)
 	defer done()
@@ -88,7 +88,7 @@ func TestChatLife_EndLifeCancelsRemintsAndIsIdempotent(t *testing.T) {
 }
 
 func TestChatLife_QuietClosesAtOnceWhenNoWorkRuns(t *testing.T) {
-	r := newTurnRegistry()
+	r := newTurnRegistry(nopTurnRecords{})
 	lc := r.testLifecycle("c1")
 	r.endLife("c1")
 	select {
@@ -99,7 +99,7 @@ func TestChatLife_QuietClosesAtOnceWhenNoWorkRuns(t *testing.T) {
 }
 
 func TestChatLife_ForgetEndsTheLife(t *testing.T) {
-	r := newTurnRegistry()
+	r := newTurnRegistry(nopTurnRecords{})
 	lc := r.testLifecycle("c1")
 	ctx, done, _ := lc.beginWork(workForward)
 	done()
@@ -114,7 +114,7 @@ func TestChatLife_ForgetEndsTheLife(t *testing.T) {
 
 func TestChatLife_AwaitQuietWarnsOnceAndKeepsWaiting(t *testing.T) {
 	logs := captureLogs(t)
-	r := newTurnRegistry()
+	r := newTurnRegistry(nopTurnRecords{})
 	lc := r.testLifecycle("c1")
 	_, done, _ := lc.beginWork(workSweep)
 	r.endLife("c1")
@@ -145,7 +145,7 @@ func TestChatLife_AwaitQuietWarnsOnceAndKeepsWaiting(t *testing.T) {
 }
 
 func TestChatLife_AnEndedLifeAdmitsNoReservationAndIsNeverHandedOut(t *testing.T) {
-	r := newTurnRegistry()
+	r := newTurnRegistry(nopTurnRecords{})
 	r.testLifecycle("c1")
 	h := r.gates.hold("c1")
 	h.commit()
@@ -169,10 +169,10 @@ func TestLifecycleForRun_RefusesAChatID(t *testing.T) {
 				t.Error("lifecycleForRun took a chat id")
 			}
 		}()
-		newTurnRegistry().lifecycleForRun("c1")
+		newTurnRegistry(nopTurnRecords{}).lifecycleForRun("c1")
 	})
 	t.Run("a run chat attaches past any gate", func(t *testing.T) {
-		r := newTurnRegistry()
+		r := newTurnRegistry(nopTurnRecords{})
 		run := marotte.ChatID(runChatPrefix + "wf1")
 		h := r.gates.hold(run)
 		h.commit()
@@ -198,7 +198,7 @@ func TestLifecycleForRun_RefusesAChatID(t *testing.T) {
 // A reply for a turn of a life that was replaced waits on nothing of the new life: the new forward's position says
 // nothing about the old session's frames.
 func TestAwaitClosePosition_ATurnOfAnotherLifeWaitsOnNothing(t *testing.T) {
-	r := newTurnRegistry()
+	r := newTurnRegistry(nopTurnRecords{})
 	r.testLifecycle("c1")
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()

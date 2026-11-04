@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -52,6 +53,11 @@ func (b bridgeRole) RefreshForRetry(ctx context.Context, chatID marotte.ChatID, 
 // BridgeLive reports a bridge for the chat that is past its session open.
 func (b bridgeRole) BridgeLive(chatID marotte.ChatID) bool { return b.coord.bridgeLive(chatID) }
 
+// CallBudget is the engine owner's stall-aware budget (engineOwner.stallAware).
+func (b bridgeRole) CallBudget(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return b.coord.engine.stallAware(ctx, d)
+}
+
 // DeleteChatStateByChain deletes a chat's runs and KAS sessions from a captured chain. Order is
 // the contract: runs before sessions (KAS refuses a session owning a live run), sessions
 // before the bridge closes, Reap last.
@@ -71,10 +77,13 @@ func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID marotte.Ch
 	rt.reapSessions(sessionChain)
 }
 
-// CloseChatState tears down in-memory state without touching the KAS session, so a reopen session/loads it.
-func (rt *Runtime) CloseChatState(ctx context.Context, chatID marotte.ChatID) {
+// CloseChatState tears down in-memory state without touching the KAS session, so a reopen session/loads it, and
+// stops the chat's runs under stop, a person's close's stop hold, when it is set (Runs.stopChatRuns).
+func (rt *Runtime) CloseChatState(ctx context.Context, chatID marotte.ChatID, stop *chat.Claim) {
 	rt.beginSteerTeardown(ctx, chatID, true)
-	rt.runs.cancelForChat(ctx, chatID, userStop(stopWhyTabClosed))
+	if stop != nil {
+		rt.runs.stopChatRuns(ctx, chatID, stop)
+	}
 	rt.cleanupChatState(ctx, chatID)
 }
 

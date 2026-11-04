@@ -302,7 +302,7 @@ func (rs *Runs) retractAsks(positions []string) {
 		return
 	}
 	for _, p := range positions {
-		rs.coord.retractPush(marotte.RunAskSubject(p))
+		rs.coord.retractPush(marotte.RunAskSubject(p), p)
 	}
 }
 
@@ -418,7 +418,8 @@ func (rs *Runs) sendNotices(ctx context.Context, c *askCell, n askNotice) {
 		p := notice.Question(rs.coord.NoticeTarget(ctx, c.chatID, c.workflowID),
 			cmp.Or(a.AgentName, a.NodeID), cmp.Or(a.Text, unseenAskText))
 		// One tag per wait: a re-park replaces its own banner, a sibling's is its own.
-		p.PushSubject = marotte.RunAskSubject(askPosition(c.workflowID, a))
+		pos := askPosition(c.workflowID, a)
+		p.PushSubject, p.Ask = marotte.RunAskSubject(pos), pos
 		slog.Info("a workflow step is waiting for an answer", "workflow_id", scrubLog(c.workflowID),
 			"node_id", scrubLog(a.NodeID), "text_source", string(a.TextSource), "chat_id", c.chatID)
 		rs.coord.Notify(ctx, c.chatID, &p)

@@ -55,19 +55,6 @@ func (s *InMemoryChatStore) List(_ context.Context) []marotte.ChatHeader {
 	return hs
 }
 
-// SessionClaimed reports whether any held chat's session chain names sessionID;
-// the in-memory store reads every record, so the answer is always complete.
-func (s *InMemoryChatStore) SessionClaimed(_ context.Context, sessionID string) (claimed, complete bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, c := range s.chats {
-		if slices.Contains(c.SessionChain(), sessionID) {
-			return true, true
-		}
-	}
-	return false, true
-}
-
 // Mutate applies the mutate function to the chat with the given id, creating it if needed.
 func (s *InMemoryChatStore) Mutate(_ context.Context, id marotte.ChatID, mutate func(*marotte.Chat, bool) bool) (string, error) {
 	s.mu.Lock()

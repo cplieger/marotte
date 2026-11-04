@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -49,9 +50,11 @@ type fakeBridge struct {
 	refuseAfterCall map[string]*marotte.RPCError
 	// failAfterCall is the transport failing after onCall ran: the words were written, then the reply was lost.
 	failAfterCall map[string]error
-	sessionID     string
-	modelID       string
-	effort        string
+	// refuseCancelled refuses a Call whose ctx is already done, unwritten, as the engine's request does.
+	refuseCancelled bool
+	sessionID       string
+	modelID         string
+	effort          string
 	// observedEffort is the level the SESSION reported, not the one asked for.
 	observedEffort   string
 	thinking         string
@@ -371,6 +374,12 @@ func (b *fakeBridge) PromptAt(ctx context.Context, params any, commit func() err
 func (b *fakeBridge) callScript(
 	ctx context.Context, method string, params any, deliver func(*marotte.RPCResponse), commit func() error,
 ) (*marotte.RPCResponse, error) {
+	b.mu.Lock()
+	refuse := b.refuseCancelled
+	b.mu.Unlock()
+	if err := ctx.Err(); refuse && err != nil {
+		return nil, err
+	}
 	if err := b.writeRequest(ctx, method, commit); err != nil {
 		return nil, err
 	}
@@ -631,6 +640,17 @@ func (b *fakeBridge) setCallResult(method string, res json.RawMessage) {
 	b.callResults[method] = res
 }
 
+// setBlockOn holds every later call of method open until gate closes or the call's ctx ends, for a bridge already in use.
+func (b *fakeBridge) setBlockOn(method string, gate chan struct{}) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.blockOn = maps.Clone(b.blockOn)
+	if b.blockOn == nil {
+		b.blockOn = map[string]chan struct{}{}
+	}
+	b.blockOn[method] = gate
+}
+
 // setCallErr re-arms a transport failure and setCallRPCErr an in-band refusal, under the mutex.
 func (b *fakeBridge) setCallErr(method string, err error) {
 	b.mu.Lock()
@@ -657,6 +677,18 @@ func (b *fakeBridge) setNotifyErr(method string, err error) {
 	b.notifyErrs[method] = err
 }
 
+// setRefuseAfterCall makes this bridge's later calls of method refuse in band with err; a call already in progress is
+// unaffected.
+func (b *fakeBridge) setRefuseAfterCall(method string, err *marotte.RPCError) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refuseAfterCall = maps.Clone(b.refuseAfterCall)
+	if b.refuseAfterCall == nil {
+		b.refuseAfterCall = map[string]*marotte.RPCError{}
+	}
+	b.refuseAfterCall[method] = err
+}
+
 func (b *fakeBridge) setCallRPCErr(method string, err *marotte.RPCError) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -664,6 +696,13 @@ func (b *fakeBridge) setCallRPCErr(method string, err *marotte.RPCError) {
 		b.callRPCErrs = map[string]*marotte.RPCError{}
 	}
 	b.callRPCErrs[method] = err
+}
+
+// setOnCall installs a call hook under the mutex, for a bridge whose background readers already call.
+func (b *fakeBridge) setOnCall(hook func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.onCall = hook
 }
 
 // setStartGate parks every later Start until the returned channel closes.
@@ -833,8 +872,20 @@ func (b *fakeBridge) NotifCh() <-chan marotte.Notification {
 
 type testChatStore struct {
 	*chat.Store
+	// ownerScan, when set, rewrites every SessionOwners answer, for a test about a scan's timing or completeness.
+	ownerScan func(ctx context.Context, scan chat.OwnerScan) chat.OwnerScan
+	// onGet, when set, runs before every Get, for a test that lands a write inside a caller's read.
+	onGet atomic.Pointer[func(id marotte.ChatID)]
 	// Gets counts Get calls, for a test about how often the store is read.
 	Gets atomic.Int64
+}
+
+func (s *testChatStore) SessionOwners(ctx context.Context) chat.OwnerScan {
+	scan := s.Store.SessionOwners(ctx)
+	if s.ownerScan != nil {
+		return s.ownerScan(ctx, scan)
+	}
+	return scan
 }
 
 // testChatRoot holds every test hub's chat directory, created and removed by TestMain.
@@ -861,6 +912,9 @@ func (s *testChatStore) wire(h *Runtime) {
 
 func (s *testChatStore) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
 	s.Gets.Add(1)
+	if hook := s.onGet.Load(); hook != nil {
+		(*hook)(id)
+	}
 	return s.Store.Get(ctx, id)
 }
 

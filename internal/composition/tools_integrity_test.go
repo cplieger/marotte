@@ -18,6 +18,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp/prewarm"
 	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/toolbelt/v3"
@@ -179,7 +180,7 @@ func TestWireToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 			slices.Sort(want)
 
 			logs := captureDefaultLogger(t)
-			tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
+			tools, err := wireToolsEngine(&Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
 			if err != nil {
 				t.Fatalf("an unfit root stopped the boot; a dev box whose volume drifted cannot be repaired from inside a container that will not start: %v", err)
 			}
@@ -216,7 +217,7 @@ func TestBootTightensEveryRootTheEngineJudges(t *testing.T) {
 	cfg := &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}, ToolCatalogPath: filepath.Join(t.TempDir(), "absent.json")}
 
 	logs := captureDefaultLogger(t)
-	tools, err := wireToolsEngine(t.Context(), cfg, testRuntime(t), nil)
+	tools, err := wireToolsEngine(cfg, testRuntime(t), nil)
 	if err != nil {
 		t.Fatalf("wireToolsEngine over group-writable roots = %v, want the degraded slot", err)
 	}
@@ -228,7 +229,7 @@ func TestBootTightensEveryRootTheEngineJudges(t *testing.T) {
 	}
 
 	healBootModes(configDir, toolsDir, "", "")
-	healed, err := wireToolsEngine(t.Context(), cfg, testRuntime(t), nil)
+	healed, err := wireToolsEngine(cfg, testRuntime(t), nil)
 	if err != nil {
 		t.Fatalf("wireToolsEngine after the heal = %v", err)
 	}
@@ -247,7 +248,7 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	}
 	captureDefaultLogger(t)
 
-	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
+	tools, err := wireToolsEngine(&Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
 	if err != nil {
 		t.Fatalf("wireToolsEngine over an unfit root = %v, want the degraded slot", err)
 	}
@@ -259,9 +260,16 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	purgeScheduler, err := chat.NewPurgeScheduler(chatStore, chat.PurgeConfig{
+		Retention: func() time.Duration { return 0 },
+		OnPurge:   func(marotte.ChatID, []string) {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	app := &App{
 		Runtime:        agent.New(t.Context(), t.TempDir(), nil, chatStore),
-		purgeScheduler: chat.NewPurgeScheduler(chatStore, func() time.Duration { return 0 }),
+		purgeScheduler: purgeScheduler,
 		mcpPrewarm:     prewarm.NewRunner(t.Context(), nil),
 		tools:          tools,
 		stopKiro:       func() {},
@@ -275,7 +283,7 @@ func TestWireToolsEngineKeepsOtherFailuresFatal(t *testing.T) {
 	configDir, _ := fitTree(t)
 	logs := captureDefaultLogger(t)
 
-	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir}, testRuntime(t), nil)
+	tools, err := wireToolsEngine(&Config{ConfigDir: configDir}, testRuntime(t), nil)
 
 	if err == nil {
 		t.Fatal("a missing tools dir was absorbed into a tool-less boot; only an unfit root or an unusable tools.json may degrade")

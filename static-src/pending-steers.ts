@@ -1,10 +1,16 @@
-import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
+import { el, computed, effect, touch, untracked } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
-import { announce } from "@cplieger/ui-primitives/announce";
+import { announce } from "@cplieger/ui/announce";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
-import { activeSession, getActiveId } from "./store.js";
-import { cancelTurn, clearSteers, removeSteer, unqueuePrompt } from "./actions/chat.js";
+import { activeSession, getActiveId, isBusy } from "./store.js";
+import {
+  cancelTurn,
+  clearSteers,
+  removeSteer,
+  sendQueuedNow,
+  unqueuePrompt,
+} from "./actions/chat.js";
 import { setComposerValue } from "./composer-value.js";
 import { composerDraft, restoreRefusedEdit } from "./composer-state.js";
 import { addAttachmentTo, removeAttachmentFrom } from "./attachments.js";
@@ -392,8 +398,14 @@ async function sendSteerNow(steerID: string): Promise<void> {
       ? "Stopping the turn and sending this message"
       : `Stopping the turn and sending ${String(waiting)} messages`,
   );
-  await cancelTurn.dispatch({ chatID, lead: steerID }).outcome;
+  const outcome = await cancelTurn.dispatch({ chatID, lead: steerID }).outcome;
+  if (outcome.status === "success" && outcome.value) {
+    announce(NOTHING_STOPPED);
+  }
 }
+
+/** Replaces a stop announcement the server's skip made false: the turn runs on. */
+const NOTHING_STOPPED = "The turn keeps running: the message already left the queue";
 
 /** The statuses that say the delete did not happen and will not: the row still stands, or the
  *  agent already has the words. Anything else (no reply, a 500) may have deleted it, so the
@@ -546,7 +558,8 @@ function discardHint(row: QueuedPrompt): string {
  *  controls read it from here. */
 const queuedRowOf = new WeakMap<HTMLElement, QueuedPrompt>();
 
-/** Edit and Discard on every row: each is one `unqueue_prompt` addressing this row alone. */
+/** Edit and Discard on every row: each is one `unqueue_prompt` addressing this row alone. The
+ *  send-now arrow leads them on a row a turn end sends (syncQueuedArrow). */
 function buildQueuedRow(slot: QueuedSlot): HTMLElement {
   const { row } = slot;
   const li = el(
@@ -605,6 +618,33 @@ function updateQueuedRow(li: HTMLElement, slot: QueuedSlot): void {
   if (text !== null) {
     text.textContent = queuedShown(row);
   }
+  syncQueuedArrow(li, slot);
+}
+
+const queuedArrowOf = new WeakMap<HTMLElement, HTMLElement>();
+
+/** Only the arrow comes and goes, so a wait change never rebuilds Edit or Discard under the
+ *  reader's focus. A held or sent row gets none: no turn end sends it, or its turn already opened. */
+function syncQueuedArrow(li: HTMLElement, slot: QueuedSlot): void {
+  const { wait } = slot;
+  const arrow = queuedArrowOf.get(li);
+  if (wait.kind !== "turns") {
+    arrow?.remove();
+    queuedArrowOf.delete(li);
+    return;
+  }
+  const tooltip = wait.running
+    ? "Stops the turn and sends this follow-up next"
+    : "Sends this follow-up now";
+  if (arrow !== undefined) {
+    arrow.dataset["tooltip"] = tooltip;
+    return;
+  }
+  const btn = actionButton(ICON_ARROW_UP, "Send this follow-up now", tooltip, () => {
+    void sendQueuedRowNow((queuedRowOf.get(li) ?? slot.row).id);
+  });
+  li.querySelector(".steer-actions")?.prepend(btn);
+  queuedArrowOf.set(li, btn);
 }
 
 /** `editSteer`'s discipline: the box is filled BEFORE the unqueue is dispatched, so a lost reply
@@ -645,6 +685,33 @@ async function discardQueued(messageID: string): Promise<void> {
   }
   announce("Discarding the follow-up");
   await unqueuePrompt.dispatch({ chatID, messageID }).outcome;
+}
+
+/** The server owns the order (`send_queued_now`): it moves the row to the head, then stops a
+ *  running turn, whose close sends it, or sends it at once. */
+async function sendQueuedRowNow(messageID: string): Promise<void> {
+  const chatID = getActiveId();
+  if (chatID === "") {
+    return;
+  }
+  const name = subjectName(chatID);
+  announce(
+    isBusy(chatID) ? "Stopping the turn and sending this follow-up" : "Sending this follow-up",
+  );
+  const outcome = await sendQueuedNow.dispatch({ chatID, messageID }).outcome;
+  if (outcome.status === "success" && outcome.value) {
+    announce(NOTHING_STOPPED);
+  }
+  if (outcome.status === "error") {
+    const status = outcome.error.status ?? 0;
+    reportRefusal(
+      chatID,
+      name,
+      DEFINITE_REFUSALS.has(status)
+        ? outcome.error.message
+        : "Couldn't confirm the follow-up was sent",
+    );
+  }
 }
 
 // The row's state in words, because the glyph and the label's styling are both visual, and the

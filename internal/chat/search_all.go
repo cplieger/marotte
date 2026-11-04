@@ -180,7 +180,7 @@ func (s *Store) chatEntries(ctx context.Context) (entries []chatEntry, truncated
 		slog.Error("chat search: unreadable dir", "dir", s.dir, "error", err)
 		return nil, true
 	}
-	dirs, complete := chatDirs(des, s.dir)
+	dirs, skipped := chatDirs(des, s.dir)
 	entries = make([]chatEntry, 0, len(dirs))
 	for _, ce := range dirs {
 		if ctx.Err() != nil {
@@ -188,7 +188,7 @@ func (s *Store) chatEntries(ctx context.Context) (entries []chatEntry, truncated
 		}
 		entries = append(entries, ce)
 	}
-	return entries, !complete
+	return entries, len(skipped) > 0
 }
 
 // bestHit picks the row's hit: the earliest, where the conversation first touches the subject.

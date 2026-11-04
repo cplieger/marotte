@@ -1,12 +1,12 @@
-// What closing a tab stops: the server's close cancels the chat's reply, its questions, its
-// workflow runs and its unread queued messages, tangents included, with no undo. An idle close
-// asks nothing. The server checks the ids the dialog named against what it would stop and
+// What closing a tab stops: the server's close cancels the chat's reply, its questions and its
+// unread queued messages, and stops its workflow runs, tangents included, with no undo. An idle
+// close asks nothing. The server checks the ids the dialog named against what it would stop and
 // refuses a close another device made stale (`close_impact_changed`).
 
 import { confirm } from "./confirm.js";
 import { pendingDecisionIDs } from "./decision-dock.js";
 import { sessionDrain } from "./queue-slots.js";
-import { liveRunIDsForChat } from "./run-store.js";
+import { liveRunIDsForChat, runLabelOf } from "./run-store.js";
 import { get, turnLive } from "./store.js";
 import { inFlightMessageIDs } from "./submit.js";
 import type { ChatWork, CloseImpact } from "./wire/types.gen.js";
@@ -89,7 +89,8 @@ export function mergeImpact(sent: CloseImpact, server: CloseImpact): CloseImpact
 interface WorkByKind {
   readonly replies: readonly ClosingChat[];
   readonly asks: readonly ClosingChat[];
-  readonly runs: number;
+  /** Each run's name, "" for one whose name has not loaded. */
+  readonly runs: readonly string[];
   readonly queued: number;
 }
 
@@ -105,14 +106,17 @@ function byKind(impact: CloseImpact, chats: readonly ClosingChat[]): WorkByKind 
   return {
     replies: impact.chats.filter(replying).map(named),
     asks: impact.chats.filter((w) => w.asks.length > 0).map(named),
-    runs: impact.chats.reduce((n, w) => n + w.runs.length, 0),
+    runs: impact.chats.flatMap((w) => w.runs.map(runLabelOf)),
     queued: impact.chats.reduce((n, w) => n + w.steers.length + w.queued.length, 0),
   };
 }
 
 function isIdle(work: WorkByKind): boolean {
   return (
-    work.replies.length === 0 && work.asks.length === 0 && work.runs === 0 && work.queued === 0
+    work.replies.length === 0 &&
+    work.asks.length === 0 &&
+    work.runs.length === 0 &&
+    work.queued === 0
   );
 }
 
@@ -125,6 +129,17 @@ function listOf(parts: readonly string[]): string {
     return parts.join(" and ");
   }
   return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1) ?? ""}`;
+}
+
+/** The runs term, naming each run whose name is known and counting the rest. */
+function runsText(runs: readonly string[]): string {
+  const named = runs.filter((n) => n !== "");
+  const unnamed = runs.length - named.length;
+  if (named.length === 0) {
+    return `stops ${count(unnamed, "workflow run", "workflow runs")}`;
+  }
+  const items = unnamed === 0 ? named : [...named, count(unnamed, "other", "others")];
+  return `stops the ${runs.length === 1 ? "workflow run" : "workflow runs"} ${listOf(items)}`;
 }
 
 /** A per-chat term: `bare` when the closed tab's own chat is the only one, else naming each. */
@@ -160,8 +175,8 @@ function stopsClauses(ref: string, work: WorkByKind): string[] {
       ),
     );
   }
-  if (work.runs > 0) {
-    parts.push(`cancels ${count(work.runs, "workflow run", "workflow runs")}`);
+  if (work.runs.length > 0) {
+    parts.push(runsText(work.runs));
   }
   if (work.queued > 0) {
     parts.push(`drops ${count(work.queued, "queued message", "queued messages")}`);
@@ -204,13 +219,15 @@ export function confirmBusyClose(
 /** What a History delete of a chat also stops in the chats under its tabs (`chats`, the deleted
  *  chat excluded): the sentence its confirm appends ("" when they are all idle) and the impact the
  *  delete sends, which lists every one of them. With `server` it is the merge of `sent` and the
- *  server's answer. */
+ *  server's answer. Their workflow runs go on (only a person's close of a chat's own tab stops
+ *  them), so neither the sentence nor the impact names a run. */
 export function deleteStopsWork(
   chats: readonly ClosingChat[],
   stale?: { readonly sent: CloseImpact; readonly server: CloseImpact },
 ): { readonly text: string; readonly impact: CloseImpact } {
-  const impact =
+  const merged =
     stale === undefined ? closeStopsWork(chats) : mergeImpact(stale.sent, stale.server);
+  const impact: CloseImpact = { chats: merged.chats.map((w) => ({ ...w, runs: [] })) };
   const work = byKind(impact, chats);
   if (isIdle(work)) {
     return { text: "", impact };

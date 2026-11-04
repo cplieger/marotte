@@ -87,7 +87,7 @@ func TestPublishIfPresent_PublishesOnlyAPresentRecordAndUnderItsLock(t *testing.
 	published, lockHeld := false, false
 	got := s.PublishIfPresent(t.Context(), "c1", func() {
 		published = true
-		m := s.Lock("c1")
+		m := s.lock("c1")
 		if lockHeld = !m.TryLock(); !lockHeld {
 			m.Unlock()
 		}

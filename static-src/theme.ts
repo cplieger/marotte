@@ -1,12 +1,12 @@
-// Theme toggle (light / dark / system) over ui-primitives' createTheme, which applies the choice to
+// Theme toggle (light / dark / system) over @cplieger/ui/theme's createTheme, which applies the choice to
 // <html data-theme>. The storage adapter is a PARAMETER: the preference lives in config.json with a
 // paint cache, both owned by settings.ts, which imports this module. THREE states, or "follow the
 // OS" is unreachable after one click. The button shows the CHOICE, not the resolved theme.
 
 import { $, forceReflow } from "./dom.js";
 import { LS_UI_STATE_KEY, THEME_ATTRIBUTE } from "./ls-keys.js";
-import { createTheme } from "@cplieger/ui-primitives/theme";
-import type { ThemeController, ThemeStorage } from "@cplieger/ui-primitives/theme";
+import { createTheme } from "@cplieger/ui/theme";
+import type { ThemeController, ThemeStorage } from "@cplieger/ui/theme";
 // The vocabulary is declared where the paint cache stores it, so the two
 // cannot drift; a type import couples nothing at runtime.
 import type { ThemeChoice } from "./device-view.js";

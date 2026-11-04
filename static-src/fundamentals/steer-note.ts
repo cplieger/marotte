@@ -3,10 +3,10 @@
 // It holds the reader's words alone and no control: the agent's `steer_ack` renders at its own
 // position, marked here by an attribute plus a label clause.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { attachClamp } from "../clamp-text.js";
 import { iconEl } from "../icon-el.js";
-import { ICON_SEND, ICON_TAB_CHAT, ICON_TAB_RUN } from "../icons.js";
+import { ICON_SEND, ICON_TAB_RUN, workflowIcon } from "../icons.js";
 import { absoluteTime } from "../relative-time.js";
 import { sentBy } from "../sent-by.js";
 import type { Caller, SteerOrigin, SteerReason } from "../types.js";
@@ -79,13 +79,14 @@ const REASONS: Record<SteerReason, string> = {
 };
 
 /** The second channel, never a hue (WCAG 1.4.1 would forbid one as the only
- *  channel anyway): the composer's send arrow, the run tab's glyph, or the chat tab's
- *  for the launching chat's message to a step. */
+ *  channel anyway): the composer's send arrow for the reader's own message, the
+ *  workflow tree for a run's result, and the tree's message badge for a workflow
+ *  message in either direction, whose label says which way it went. */
 const GLYPHS: Record<SteerOrigin, string> = {
   user: ICON_SEND,
   agent: ICON_TAB_RUN,
-  parent: ICON_TAB_CHAT,
-  step: ICON_TAB_RUN,
+  parent: workflowIcon("message"),
+  step: workflowIcon("message"),
 };
 
 /** Lines the reader's own message shows before the opener appears. */

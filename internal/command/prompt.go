@@ -461,7 +461,7 @@ func startPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
 
 // reservePromptAdmission takes the chat's admission slot for a prompt whose intent began at stamp: AdmissionBusy
 // answers 409 `turn_live` (which the client steers or queues, per the chat's mode), AdmissionClosed 409
-// `chat_closed`, AdmissionStarting 409 `starting`.
+// `chat_closed`, AdmissionChatGone 409 `chat_not_found`, AdmissionStarting 409 `starting`.
 func reservePromptAdmission(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, stamp uint64, messageID string) (Reservation, error) {
 	out, res := roles.admission.ReserveTurnForPrompt(ctx, chatID, AdmissionWait, stamp, messageID)
 	switch out {
@@ -471,6 +471,8 @@ func reservePromptAdmission(ctx context.Context, roles *promptRoles, chatID maro
 		return Reservation{}, StatusErrorReason(http.StatusConflict, reasonTurnLive, errBusy)
 	case AdmissionClosed:
 		return Reservation{}, StatusErrorReason(http.StatusConflict, reasonChatClosed, errChatClosed)
+	case AdmissionChatGone:
+		return Reservation{}, StatusErrorReason(http.StatusConflict, reasonChatGone, ErrChatNotFound)
 	case AdmissionStarting:
 	}
 	return Reservation{}, StatusErrorReason(http.StatusConflict, reasonStarting, errBusy)

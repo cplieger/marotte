@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -96,6 +97,10 @@ func (*benchDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, e
 // follow the bridge it holds.
 func (*benchDeps) BridgeLive(marotte.ChatID) bool { return true }
 
+func (*benchDeps) CallBudget(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, d)
+}
+
 func (*benchDeps) closeBridgeOld(context.Context, marotte.ChatID, marotte.TurnOutcome) {}
 
 func (*benchDeps) ClearPendingInputAsks(marotte.ChatID, CancelScope) {}
@@ -132,11 +137,11 @@ func (*benchDeps) Draining() bool                  { return false }
 func (*benchDeps) GoUnlessDraining(fn func()) bool { go fn(); return true }
 func (*benchDeps) DeleteChatStateByChain(context.Context, marotte.ChatID, []string, RunStopCause) {
 }
-func (*benchDeps) CloseChatState(context.Context, marotte.ChatID)       {}
-func (*benchDeps) BeginChatTeardown(marotte.ChatID, bool)               {}
-func (*benchDeps) HoldChat(marotte.ChatID) ChatHold                     { return nopHold{} }
-func (*benchDeps) AwaitSessionLeases(context.Context, marotte.ChatID)   {}
-func (*benchDeps) TeardownCancel(context.Context, marotte.ChatID) error { return nil }
+func (*benchDeps) CloseChatState(context.Context, marotte.ChatID, *chat.Claim) {}
+func (*benchDeps) BeginChatTeardown(marotte.ChatID, bool)                      {}
+func (*benchDeps) HoldChat(marotte.ChatID) ChatHold                            { return nopHold{} }
+func (*benchDeps) AwaitSessionLeases(context.Context, marotte.ChatID)          {}
+func (*benchDeps) TeardownCancel(context.Context, marotte.ChatID) error        { return nil }
 func (d *benchDeps) KillForTurn(turn TurnRef) {
 	d.stopSteps = append(d.stopSteps, "kill "+turn.Turn)
 }
@@ -304,7 +309,7 @@ func TestBenchDeps_Contract(t *testing.T) {
 // Replay cost belongs to the header middleware.
 func BenchmarkDispatcherServeHTTP(b *testing.B) {
 	d := New()
-	d.Register("create_chat", func(context.Context, *marotte.ClientCommand) (any, error) {
+	d.register("create_chat", func(context.Context, *marotte.ClientCommand) (any, error) {
 		return responseOK, nil
 	})
 

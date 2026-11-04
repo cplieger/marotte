@@ -2,7 +2,7 @@
 // lumpy deltas across frames at a fixed lag behind the live edge; mounted history paints at once.
 // `.message.assistant` is the prose container (~40rem measure).
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { createMarkdownStream, renderMarkdownInto, type MarkdownStream } from "../markdown.js";
 import { releaseScrollableTablesIn } from "../table-scroll.js";
 import { createReveal, type Reveal } from "../reveal.js";

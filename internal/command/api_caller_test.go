@@ -81,15 +81,15 @@ func newCallerFixture(t *testing.T) *callerFixture {
 
 	d := New()
 	d.status = &fakeChatStatus{}
-	d.Register(marotte.CmdPrompt, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
+	d.register(marotte.CmdPrompt, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 		return cmdPrompt(ctx, roles, cmd)
 	})
 	// benchDeps holds a prompt turn for the steer to join.
 	steerRoles := steerRolesOf(newBenchDeps(), NewSteerLedger(), steers)
-	d.Register(marotte.CmdSteer, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
+	d.register(marotte.CmdSteer, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 		return cmdSteer(ctx, steerRoles, cmd)
 	})
-	d.Register(marotte.CmdQueuePrompt, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
+	d.register(marotte.CmdQueuePrompt, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 		return cmdQueuePrompt(ctx, queue, cmd)
 	})
 	return &callerFixture{d: d, opens: opens, store: store, steers: steers, queue: queue, join: join}

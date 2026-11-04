@@ -132,7 +132,7 @@ func TestScheduledRun_AFaultPastItsHealsEndsTheRun(t *testing.T) {
 					got, runEndUnattended, br.callLog())
 			}
 			if got := stateWrites(br.callLog()); slices.Contains(got, methodKiroWorkflowPause) {
-				t.Errorf("writes = %v, want no pause: a park for the user waits on nobody", got)
+				t.Errorf("writes = %v, want no pause: a scheduled run is ended, not left waiting on nobody", got)
 			}
 			heals := strconv.Itoa(maxAutoHeals) + " automatic resumes"
 			row := awaitEndedRow(t, st)
@@ -277,7 +277,7 @@ func TestBootSweep_EndsAScheduledRunLeftPausedOnAQuestion(t *testing.T) {
 // chat id, still reaches the heal: otherwise nothing resumes a transient fault and a scheduled run is ended for it.
 func TestParentlessRun_AFaultPauseIsResumedOnItsFrame(t *testing.T) {
 	for name, origin := range map[string]launchOrigin{
-		"scheduled": scheduledLaunch("s1", time.Now().Add(time.Hour)),
+		"scheduled": scheduledLaunch(schedule.Row{ID: "s1"}, time.Now().Add(time.Hour)),
 		"manual":    {origin: runlease.OriginManual},
 	} {
 		t.Run(name, func(t *testing.T) {

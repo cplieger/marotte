@@ -120,7 +120,7 @@ func TestMarkSessionsForReload_LeavesHostSessionsUnmarked(t *testing.T) {
 
 	h.markSessionsForReload("test")
 
-	if h.bridge.mgr.claimReload(runChatID("wf-1"), sb).due {
+	if h.bridge.mgr.claimReload(runChatID("wf-1"), sb, false).due {
 		t.Error("the mark reached a run's host session, whose presets only its lease decides")
 	}
 }

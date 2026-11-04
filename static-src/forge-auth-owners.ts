@@ -1,7 +1,7 @@
 // Every add or remove sends the whole list, one write at a time, each built from the list the last one stored.
 
 import { join } from "@cplieger/keyenc";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { chevronEl } from "./chevron.js";
 import { buildChip } from "./chip.js";
 import { iconEl } from "./icon-el.js";

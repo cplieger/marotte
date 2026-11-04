@@ -3,7 +3,7 @@
 // mocked with a real signal behind it, so a predicate that stopped subscribing fails.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { signal, touch, effect } from "@cplieger/reactive";
+import { signal, touch, effect } from "@cplieger/ui";
 import type { Session } from "./types.js";
 
 // run-store fetches through the API client on invalidation; nothing here invalidates,

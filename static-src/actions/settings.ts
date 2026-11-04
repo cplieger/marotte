@@ -57,7 +57,7 @@ export const logout = apiAction<
   error: (_args, err) => serverSentence(err) ?? "Could not sign out",
 });
 
-/** Restart the agent engine now. 202 admits it; 409 means one is already running, and says so. */
+/** Restart the agent engine now. 202 admits it; 409 means one is already running, or config.json cannot be read while a restart is queued, and the server sentence says which. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
 export const restartEngine = apiAction<void, true>({
   name: "settings.restart_engine",

@@ -2,7 +2,7 @@
 // bars share. It owns the ARIA wiring, the keyboard model, the icon-only fit and the active-segment
 // projection, and nothing else — no route, no panel, no subtitle, no store.
 
-import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
+import { rovingFocus } from "@cplieger/ui/roving-focus";
 import { fitTabBar, refitTabBar } from "./tab-bar-fit.js";
 
 interface SegmentedTab<T extends string> {

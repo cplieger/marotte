@@ -19,7 +19,7 @@ vi.mock("./actions/forge-list.js", async (importOriginal) => {
   };
 });
 
-import { resetActionFramework } from "@cplieger/actions/testing";
+import { resetActionFramework } from "@cplieger/ui/actions/testing";
 import { apiGetTyped } from "./api-client.js";
 import { initSourcesTab } from "./git-sources-tab.js";
 import { _resetForTest as resetForgeStore } from "./forge-store.js";

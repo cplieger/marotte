@@ -43,8 +43,7 @@
   padding-block: var(--sp-2);
 }
 
-/* The page switcher takes `--bar-h`, a rung over a control with a mouse; touch keeps
-   the 44px floor. */
+/* The page switcher takes `--bar-h`, a rung over a control. */
 .page-header > .seg-bar {
   --seg-bar-h: var(--bar-h);
 }
@@ -77,8 +76,14 @@
   --seg-inset: 0.25rem;
   --seg-radius: var(--r-sm);
   --seg-bar-h: var(--btn-h);
+  /* A wrapped bar's rows sit far enough apart that a finger's target fits between
+     them: the floor less the segment's painted height. */
+  --seg-row-gap: max(
+    var(--seg-inset),
+    calc(var(--hit-floor) - var(--seg-bar-h) + 2 * (var(--seg-inset) + 1px))
+  );
 
-  gap: var(--seg-inset);
+  gap: var(--seg-row-gap) var(--seg-inset);
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: calc(var(--seg-radius) + 1px + var(--seg-inset));
@@ -117,24 +122,38 @@
     color var(--dur-micro),
     border-color var(--dur-micro) var(--ease-standard);
 
-  /* Two expanders on the PADDING box: `::before` reaches the bar's edge,
-     `::after` half the row gap and stacks above every `::before`, so in a wrapped
-     bar (the MCP modal's) each row owns the half of the gap nearest to it. */
+  /* The bar's stacking context, not the shared expander's own (61-mcp-tools.css), so
+     one segment's expanders can stack against its neighbour's. */
+  isolation: auto;
+
+  /* Two expanders on the PADDING box (hence the 1px border terms). `::before` reaches the
+     hit floor on the block axis, `::after` half the row gap of a wrapped bar (the MCP
+     modal's); inline, both reach half the gap, so neighbours meet at its midpoint, and the
+     end segments' `::before` reaches the bar's padding edge. */
   &::before,
   &::after {
     content: "";
     position: absolute;
-    inset-inline: 0;
   }
 
   &::before {
     z-index: -2;
-    inset-block: calc(-1 * (var(--seg-inset) + 2px));
+    inset-block: min(calc(-1 * (var(--seg-inset) + 2px)), var(--hit-inset));
+    inset-inline: calc(-1 * (var(--seg-inset) / 2 + 1px));
+  }
+
+  &:first-child::before {
+    inset-inline-start: calc(-1 * (var(--seg-inset) + 1px));
+  }
+
+  &:last-child::before {
+    inset-inline-end: calc(-1 * (var(--seg-inset) + 1px));
   }
 
   &::after {
     z-index: -1;
-    inset-block: calc(-1 * (var(--seg-inset) / 2 + 1px));
+    inset-block: calc(-1 * (var(--seg-row-gap) / 2 + 1px));
+    inset-inline: calc(-1 * (var(--seg-inset) / 2 + 1px));
   }
 
   /* Scoped away from the selected segment, or hover repaints the selected fill.
@@ -339,22 +358,20 @@ button.entry-open {
 }
 
 /* ONE CONTROL HEIGHT PER ROW: every action in the slot reads the
-   dense tier, icon or text. `max()` rather than the bare token because the
-   universal hit floor (61-mcp-tools.css) scores zero and LOSES to this rule, which
-   would take a 40px button beside a 44px sibling on coarse; `.list-row .btn-small`
-   spells it the same way. `.entry` leads the slot selectors for specificity: a
+   dense tier, icon or text. `.entry` leads the slot selectors for specificity: a
    control's own class declares its height and its hover fill in a LATER slice, and
    at a tie the later slice wins (measured, a text action at 36px in a 32px row). */
 .entry-actions {
   display: flex;
   align-items: center;
-  gap: var(--sp-1);
+  /* Two actions as narrow as the slot's 24px floor have targets that meet at this gap. */
+  gap: max(var(--sp-1), var(--tap-gap-sm));
   flex-shrink: 0;
 }
 
 .entry .entry-actions > * {
-  min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
-  min-inline-size: var(--hit-floor);
+  min-block-size: var(--ctl-h-dense);
+  min-inline-size: var(--paint-floor);
   padding-block: 0;
 }
 
@@ -367,8 +384,8 @@ button.entry-open {
 /* A SWITCH'S HIDDEN INPUT IS THE TARGET HERE. `.toggle` (18-pages.css) collapses it
    to 0x0 at the label's corner, which put the universal checkbox expander
    (61-mcp-tools.css) 10px into the open control beside it on coarse: a tap on the
-   row's trailing edge flipped the hook. Sized to the slot's floored box and layered
-   over the track, the input answers the hit test and the expander sits inside it. */
+   row's trailing edge flipped the hook. Sized to the label and layered over the
+   track, the input answers the hit test and the expander sits inside it. */
 .entry .entry-actions .toggle > input {
   position: absolute;
   inset: 0;

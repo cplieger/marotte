@@ -33,6 +33,7 @@ func (rt *Runtime) registerCommandHandlers() {
 			UploadsDir: marotte.DefaultUploadDir,
 		},
 		Lifecycle:     rt.lifecycle,
+		AnswerBudget:  clientAnswerBudget,
 		Admission:     rt,
 		TurnOutcome:   rt,
 		Steers:        rt.steerLedger,
@@ -49,7 +50,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		StepSessions:  rt,
 	})
 
-	rt.dispatcher.Register(marotte.CmdSwitchModel, rt.cmdSwitchModel)
+	rt.dispatcher.RegisterChange(marotte.CmdSwitchModel, rt.cmdSwitchModel)
 }
 
 func tabSetOrNil(st *tabs.Store) command.TabSet {

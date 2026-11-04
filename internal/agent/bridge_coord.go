@@ -57,6 +57,8 @@ type bridgeCoordinator struct {
 	sessionOpts func(ctx context.Context, rec *marotte.Chat, ask *sessionAsk, steering []marotte.ClientSteeringDoc) *marotte.SessionOpts
 	// syncLive pushes the engine each live setting it has not confirmed.
 	syncLive func(context.Context)
+	// configHeld is the configDoc owner's verdict, which holds a marked session (bridgeManager.claimReload).
+	configHeld func() bool
 	// replayProjection is the session/load replay lifecycle; nil in tests without a load.
 	replayProjection replayProjector
 	// onSessionRehydrated fires after a successful session/load, on the door generation's life and context, to heal
@@ -115,7 +117,7 @@ type bridgeCoordinator struct {
 
 // newBridgeCoordinator builds the coordinator once, from NewHub after all options apply.
 func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
-	turns := newTurnRegistry()
+	turns := newTurnRegistry(h.chatStore)
 	if h.lifecycle != nil {
 		turns.lifeParent = h.lifecycle.shutdownCtx
 	}
@@ -140,6 +142,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		engine:      h.engine,
 		sessionOpts: h.chatSessionOpts,
 		syncLive:    func(ctx context.Context) { h.engine.syncLive(ctx, h.liveSettings) },
+		configHeld:  h.configDoc.held,
 		// h implements replayProjector (load_projection.go).
 		replayProjection: h.replay,
 		chatHasLiveRun: func(chatID marotte.ChatID) bool {
@@ -282,7 +285,7 @@ func (bc *bridgeCoordinator) generationAt(
 // waited out, then the caller asks again, so no open hands out a session being closed. The close is a lease, so the
 // chat's close refuses it or cuts it (its Close then turns into a release) and this open fails with that error.
 func (bc *bridgeCoordinator) reloadIfMarked(ctx context.Context, chatID marotte.ChatID, sb *sharedBridge) (reopen bool, err error) {
-	claim := bc.bridge.mgr.claimReload(chatID, sb)
+	claim := bc.bridge.mgr.claimReload(chatID, sb, bc.configHeld())
 	switch {
 	case claim.busy != nil:
 		select {
@@ -991,11 +994,6 @@ func (bc *bridgeCoordinator) bridgeFor(chatID marotte.ChatID) *sharedBridge {
 	return bc.bridge.mgr.get(chatID)
 }
 
-// HasResidentSession reports whether a chat has a resident session; retention never purges such a chat (archive.WithLiveChats).
-func (rt *Runtime) HasResidentSession(chatID marotte.ChatID) bool {
-	return rt.bridge.mgr.get(chatID) != nil
-}
-
 // TurnLive reports whether the reader must treat the chat as running: its own turn, an
 // admitted prompt awaiting its bracket, or a held slot (chat.WithLiveTurn).
 func (rt *Runtime) TurnLive(chatID marotte.ChatID) bool {
@@ -1223,12 +1221,12 @@ func (bc *bridgeCoordinator) Notify(ctx context.Context, chatID marotte.ChatID, 
 	}
 }
 
-// retractPush drops any held ask push about subj: the ask was settled elsewhere.
-func (bc *bridgeCoordinator) retractPush(subj marotte.PushSubject) {
+// retractPush drops the held push about subj announcing ask: the ask was settled elsewhere.
+func (bc *bridgeCoordinator) retractPush(subj marotte.PushSubject, ask string) {
 	if bc.push == nil {
 		return
 	}
-	bc.push.Retract(subj)
+	bc.push.Retract(subj, ask)
 }
 
 // reportNoSubscribers logs once per episode that a notification had no subscriber; a

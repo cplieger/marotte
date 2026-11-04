@@ -1,8 +1,8 @@
 // "Quote in reply": a button beside a text selection inside one reply, which appends the selected text to the
 // composer as a quote. The button follows the selection: it shows while one qualifies and goes when it stops.
 
-import { el } from "@cplieger/reactive";
-import { createPopover, type PopoverController } from "@cplieger/ui-primitives/popover";
+import { el } from "@cplieger/ui";
+import { createPopover, type PopoverController } from "@cplieger/ui/popover";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { setComposerValue } from "./composer-value.js";
 import { $ } from "./dom.js";

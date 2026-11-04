@@ -31,7 +31,7 @@ func TestUnattendedBudget_MatchesTheDisclaimer(t *testing.T) {
 // TestIsScheduledRun_ReadsTheLeasesOrigin pins the `scheduled` flag's source: only the launch path can tell a
 // scheduled parentless run from a manual one, and the lease records it.
 func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
-	h := &Runs{}
+	h := &Runs{chats: newTestChatStore()}
 
 	if h.IsScheduled("wf_1") {
 		t.Error("an unknown run reported scheduled; a manual launch must never be marked")
@@ -40,7 +40,7 @@ func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
 	if h.IsScheduled("wf_manual") {
 		t.Error("a manual run reported scheduled")
 	}
-	h.grantLease(t.Context(), "wf_1", "publish", scheduledLaunch("sched-1", time.Time{}), hostSec())
+	h.grantLease(t.Context(), "wf_1", "publish", scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Time{}), hostSec())
 	if !h.IsScheduled("wf_1") {
 		t.Error("a scheduled run did not report scheduled")
 	}
@@ -59,9 +59,9 @@ func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
 }
 
 func TestRunLabel_RebuildsTheLaunchLabelFromTheLease(t *testing.T) {
-	h := &Runs{}
+	h := &Runs{chats: newTestChatStore()}
 	h.grantLease(t.Context(), "wf_manual", "publish", manualLaunch(), hostSec())
-	h.grantLease(t.Context(), "wf_sched", "publish", scheduledLaunch("sched-1", time.Time{}), hostSec())
+	h.grantLease(t.Context(), "wf_sched", "publish", scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Time{}), hostSec())
 	if got := h.RunLabel("wf_sched"); got != "publish · scheduled" {
 		t.Errorf("RunLabel(scheduled) = %q, want %q", got, "publish · scheduled")
 	}
@@ -81,15 +81,15 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	h := &Runs{leases: store}
-	h.grantLease(t.Context(), "wf_1", "nightly", scheduledLaunch("sched-1", time.Time{}), hostSec())
+	h := &Runs{chats: newTestChatStore(), leases: store}
+	h.grantLease(t.Context(), "wf_1", "nightly", scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Time{}), hostSec())
 
 	// The restart: a new store over the same directory, a runtime that launched nothing.
 	reopened, err := runlease.NewStore(dir)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	after := &Runs{leases: reopened}
+	after := &Runs{chats: newTestChatStore(), leases: reopened}
 
 	l, held := after.lease("wf_1")
 	if !held {
@@ -109,9 +109,9 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 // TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk pins that the floor answers by request id, so an id-less ask must
 // not arm (it would dereference nothing); the ordinary handler still runs.
 func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
-	rs := &Runs{}
+	rs := &Runs{chats: newTestChatStore()}
 	rs.grantLease(t.Context(), "wf_1", "nightly",
-		scheduledLaunch("sched-1", time.Now().Add(30*time.Second)), hostSec())
+		scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Now().Add(30*time.Second)), hostSec())
 	if l, held := rs.lease("wf_1"); !held || !l.Unattended {
 		t.Fatal("the fixture did not produce the unattended lease the floor reaches through")
 	}
@@ -474,7 +474,7 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	}
 	h.runs.schedules = st
 	// The row tracks the run its fire launched; only that run's outcome lands on it.
-	run := schedule.Run{ScheduleID: entry.ID(), WorkflowID: "wf_deny"}
+	run := schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_deny"}
 	if rErr := st.RecordStart(t.Context(), run); rErr != nil {
 		t.Fatalf("RecordStart: %v", rErr)
 	}
@@ -523,7 +523,7 @@ func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing
 	}
 	h.runs.schedules = st
 	// The row tracks the run its fire launched; only that run's outcome lands on it.
-	run := schedule.Run{ScheduleID: entry.ID(), WorkflowID: "wf_deny"}
+	run := schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_deny"}
 	if rErr := st.RecordStart(t.Context(), run); rErr != nil {
 		t.Fatalf("RecordStart: %v", rErr)
 	}
@@ -574,7 +574,7 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 	}
 	h.runs.schedules = st
 	// The row tracks the run its fire launched; only that run's outcome lands on it.
-	run := schedule.Run{ScheduleID: entry.ID(), WorkflowID: "wf_deny"}
+	run := schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_deny"}
 	if rErr := st.RecordStart(t.Context(), run); rErr != nil {
 		t.Fatalf("RecordStart: %v", rErr)
 	}

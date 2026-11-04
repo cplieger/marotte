@@ -50,9 +50,9 @@
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
       "sites": [
-        "internal/agent/bridge_coord.go:1710",
+        "internal/agent/bridge_coord.go:1708",
         "internal/agent/entry_merge.go:606",
-        "internal/agent/runtime.go:790"
+        "internal/agent/runtime.go:793"
       ]
     },
     {
@@ -62,7 +62,7 @@
       "label": "Workflow result",
       "sites": [
         "internal/agent/run_appender.go:121",
-        "internal/agent/run_bounds.go:485",
+        "internal/agent/run_bounds.go:492",
         "internal/agent/run_plan.go:116",
         "internal/translate/steering.go:130",
         "internal/translate/steering.go:272"
@@ -160,7 +160,7 @@
       "reason": "boundary",
       "label": "Not read · the turn ended first",
       "sites": [
-        "internal/agent/command_chat_ops.go:150",
+        "internal/agent/command_chat_ops.go:151",
         "internal/agent/steer_buffer.go:431",
         "internal/translate/steering.go:198"
       ]
@@ -172,7 +172,7 @@
       "label": "Not read · the session restarted",
       "sites": [
         "internal/agent/entry_merge.go:606",
-        "internal/agent/runtime.go:784"
+        "internal/agent/runtime.go:787"
       ]
     },
     {
@@ -182,7 +182,7 @@
       "label": "Mid-turn message",
       "sites": [
         "internal/agent/run_appender.go:238",
-        "internal/agent/run_message.go:516",
+        "internal/agent/run_message.go:517",
         "internal/translate/steering.go:130",
         "internal/translate/steering.go:272"
       ]
@@ -200,14 +200,14 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1710",
+      "site": "internal/agent/bridge_coord.go:1708",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/command_chat_ops.go:150",
+      "site": "internal/agent/command_chat_ops.go:151",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
@@ -235,14 +235,14 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/run_bounds.go:485",
+      "site": "internal/agent/run_bounds.go:492",
       "form": "literal",
       "origin": "agent",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/agent/run_message.go:516",
+      "site": "internal/agent/run_message.go:517",
       "form": "literal",
       "origin": "user",
       "state": "read",
@@ -256,14 +256,14 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:784",
+      "site": "internal/agent/runtime.go:787",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/runtime.go:790",
+      "site": "internal/agent/runtime.go:793",
       "form": "mutation",
       "origin": "agent",
       "state": "dropped",

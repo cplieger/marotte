@@ -3,7 +3,6 @@ package command
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -24,17 +23,14 @@ const (
 // session/cancel was written and the reply goes on.
 var ErrCancelNotDelivered = errors.New("a permission card could not be answered")
 
-// cancelBudget is the shared stdin's no-progress window: a write that cannot finish within it has reaped the engine.
-const cancelBudget = 30 * time.Second
-
 // cancelSession answers every pending permission ask in scope `cancelled`, then writes session/cancel on the same
 // pipe, so KAS reads the answers first (ACP: a client cancelling a turn MUST answer its open permission requests).
 // It is detached from the caller, so a client that leaves cannot strand a taken ask or skip the cancel. An engine
 // end during the answers (marotte.ErrBridgeExited) and ErrCancelNotDelivered both write no session/cancel. A
 // session still opening has no turn on the wire yet, so its refusal is nil: the stop's grace ends the admitted prompt.
 func cancelSession(ctx context.Context, perms permissionCanceller, sb Bridge, chatID marotte.ChatID, scope CancelScope) error {
-	ctx, cancel := context.WithTimeout(durable.Context(ctx), cancelBudget)
-	defer cancel()
+	// No deadline of its own: each write is bounded by the bridge, which waits out an engine that reads late.
+	ctx = durable.Context(ctx)
 	if err := perms.CancelPendingPermissions(ctx, chatID, scope); err != nil {
 		return err
 	}

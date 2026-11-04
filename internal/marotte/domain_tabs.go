@@ -84,6 +84,9 @@ type TabSubject struct {
 	// reassigns it, and only to an open CHAT tab, so a chain cannot close on itself and no
 	// cycle check is needed.
 	Parent string `json:"parent"`
+	// LaunchChats names, on a run tab, the chats holding its run-tab keep fact, so its close knows whose facts it
+	// releases without an engine read. It only grows.
+	LaunchChats []string `json:"launch_chats,omitempty"`
 	// Seen is the read position the reader last acknowledged for a chat or run tab, 0 for none;
 	// only ack_tab moves it, never backward.
 	Seen uint64 `json:"seen,omitempty"`
@@ -95,12 +98,18 @@ type TabSubject struct {
 	// launcher-OWNED run share (Kind, Ref), and closing the owned one cancels the run. Set at
 	// open, so the authority cannot change under a reader.
 	Owns bool `json:"owns"`
+	// LaunchResolved is true on every run tab whose holders were resolved at open; false only on a tab that predates
+	// LaunchChats, which the keep-state reconcile resolves.
+	LaunchResolved bool `json:"launch_resolved,omitempty"`
 }
 
 // OpenTab is the argument to tabs.Store.Open: everything a subject needs that the store cannot
 // mint. A struct because Ref and Parent are adjacent same-typed strings. No op_id: that is the
 // command envelope's.
 type OpenTab struct {
+	// Launch is a new run tab's resolved holders, set by the run-tab door alone; nil leaves
+	// TabSubject.LaunchResolved false.
+	Launch *RunLaunch `json:"launch,omitempty"`
 	// Kind is required and must be one of the eleven (see TabKind.Valid).
 	Kind TabKind `json:"kind"`
 	// Ref is required for every kind but a singleton, where it must be empty.
@@ -114,6 +123,11 @@ type OpenTab struct {
 	// decides it, because only the caller knows whether it launched the thing
 	// this tab shows.
 	Owns bool `json:"owns,omitempty"`
+}
+
+// RunLaunch is what the run-tab door resolved about a run's holders, stored as TabSubject.LaunchChats.
+type RunLaunch struct {
+	Chats []string `json:"chats,omitempty"`
 }
 
 // TabList is the answer to GET /api/tabs: the open set in order plus the version it reflects,

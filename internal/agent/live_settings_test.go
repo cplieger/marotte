@@ -33,7 +33,7 @@ type liveRecorder struct {
 
 func newLiveRecorder(t *testing.T) *liveRecorder {
 	t.Helper()
-	return &liveRecorder{recordingPush: &recordingPush{}, applied: push.ResolvePreferences(t.Context(), t.TempDir())}
+	return &liveRecorder{recordingPush: &recordingPush{}, applied: push.ResolvePreferences(settings.Document{})}
 }
 
 func (r *liveRecorder) options() []Option {
@@ -388,40 +388,37 @@ func openChat(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 	}
 }
 
-func TestReadLiveSettings_AWriteBetweenTwoFieldReadsIsReadAsOneDocument(t *testing.T) {
+// A write landing while the readers decode is the next read's document: the readers decode the snapshot they were
+// handed, whatever the file holds by then.
+func TestReadLiveSettings_AWriteDuringTheReadersIsTheNextReadsDocument(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		next      string
-		readable  bool
-		every     bool
-		terminal  int
-		debugLogs bool
+		name         string
+		next         string
+		nextReadable bool
 	}{
-		{name: "replaced_by_another_document", next: `{"terminal_command_timeout_ms":600000,"debug_logs":true}`, readable: true, terminal: 600000, debugLogs: true},
+		{name: "replaced_by_another_document", next: `{"terminal_command_timeout_ms":600000,"debug_logs":true}`, nextReadable: true},
 		{name: "truncated_mid_write", next: `{"debug_logs":`},
-		{name: "replaced_at_every_read", next: `{"terminal_command_timeout_ms":600000,"debug_logs":true}`, every: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			rewriteConfigByHand(t, dir, `{"terminal_command_timeout_ms":300000,"debug_logs":false}`)
-			var once sync.Once
-			fields := func(ctx context.Context, dir string) liveSettings {
-				read := readLiveFields(ctx, dir)
-				if tc.every {
-					rewriteConfigByHand(t, dir, tc.next)
-				}
-				once.Do(func() { rewriteConfigByHand(t, dir, tc.next) })
-				return read
+			fields := func(d settings.Document) liveSettings {
+				rewriteConfigByHand(t, dir, tc.next)
+				return readLiveFields(d)
 			}
 
 			got := readLiveSettings(t.Context(), dir, fields)
 
-			if got.readable != tc.readable {
-				t.Fatalf("readLiveSettings over a write to %s between its field reads: readable = %t, want %t", tc.next, got.readable, tc.readable)
+			if !got.readable || got.terminalTimeoutMs != 300000 || got.debugLogs {
+				t.Errorf("the read during the write = readable %t, timeout %d, debug %t, want the first document's: readable, 300000, false",
+					got.readable, got.terminalTimeoutMs, got.debugLogs)
 			}
-			if tc.readable && (got.terminalTimeoutMs != tc.terminal || got.debugLogs != tc.debugLogs) {
-				t.Errorf("readLiveSettings read timeout %d and debug %t, want %d and %t, both from %s",
-					got.terminalTimeoutMs, got.debugLogs, tc.terminal, tc.debugLogs, tc.next)
+			next := readLiveSettings(t.Context(), dir, readLiveFields)
+			if next.readable != tc.nextReadable {
+				t.Fatalf("the next read over %s: readable = %t, want %t", tc.next, next.readable, tc.nextReadable)
+			}
+			if tc.nextReadable && (next.terminalTimeoutMs != 600000 || !next.debugLogs) {
+				t.Errorf("the next read = timeout %d, debug %t, want %s's 600000 and true", next.terminalTimeoutMs, next.debugLogs, tc.next)
 			}
 		})
 	}

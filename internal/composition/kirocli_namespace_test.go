@@ -94,11 +94,9 @@ func (e *nsEnv) plantOwnVersion() string {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		e.t.Fatalf("MkdirAll(%s): %v", dir, err)
 	}
-	// Answers --version with its directory's name and exits 0 for every settings assertion; both
-	// dispatchers are planted because kiro-cli-chat is Required.
+	// Answers --version with its directory's name and exits 0 for every settings assertion.
 	script := "case \"$1\" in --version) printf 'kiro-cli " + nsVersion + "\\n' ;; esac\n"
 	e.writeScript(filepath.Join(dir, nsTool), script)
-	e.writeScript(filepath.Join(dir, nsTool+"-chat"), script)
 	if err := os.WriteFile(filepath.Join(dir, ".complete"), []byte(nsVersion+"\n"), 0o600); err != nil {
 		e.t.Fatalf("write sentinel: %v", err)
 	}

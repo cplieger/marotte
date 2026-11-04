@@ -2,10 +2,15 @@ package agent
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestHookIDRoundTrip(t *testing.T) {
@@ -206,4 +211,27 @@ func TestToHookInfo_MatcherWarning(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHookSetEnabled_AStalledEngineAnswersStillApplying pins that a toggle the engine has not answered within the
+// browser's budget is reported as still applying, never as failed, and that the late answer refreshes the list.
+func TestHookSetEnabled_AStalledEngineAnswersStillApplying(t *testing.T) {
+	answerBudgetOf(t, 50*time.Millisecond)
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.setCallResult(methodKiroHooksSetEnabled, json.RawMessage(`{"success":true}`))
+	release := holdCall(t, br, methodKiroHooksSetEnabled)
+	before := len(eventsOfType(h, marotte.EventHooksChanged))
+
+	id := encodeHookID("/w/.kiro/hooks/lint.json")
+	req := httptest.NewRequest(http.MethodPost, "/api/hooks/"+id+"/enabled", strings.NewReader(`{"enabled":false}`))
+	req.SetPathValue("id", id)
+	rec := answeredWithin(t, func(w http.ResponseWriter) { h.config.handleHookSetEnabled(w, req) })
+
+	assertStillApplying(t, rec)
+	if got := len(eventsOfType(h, marotte.EventHooksChanged)); got != before {
+		t.Errorf("hooks_changed events = %d before the engine answered, want %d", got, before)
+	}
+	release()
+	awaitEventCount(t, h, marotte.EventHooksChanged, before+1)
 }

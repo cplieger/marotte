@@ -119,14 +119,23 @@ describe("the two end bands", () => {
     expect(band(header)).toBeCloseTo(token, 1);
   });
 
-  it("clear both controls at the coarse hit floor, which is what the band is FOR", () => {
-    // The floor lifts each end's `.icon-btn` from 32px to 44px, so the band has to hold 44 without
-    // growing — otherwise `min-height` is doing nothing and the ends agree only on the mouse tier.
+  it("holds both controls' coarse targets, which is what the band is FOR", () => {
+    // Each end's `.icon-btn` paints at the mouse's size and its target is the 44px floor around
+    // it, so the band has to hold that target without growing: otherwise `min-height` does nothing
+    // and the ends agree only on the mouse tier.
     document.documentElement.dataset["pointer"] = "coarse";
     try {
       const { header, footer, buttons } = mountSidebar();
       for (const btn of buttons) {
-        expect(btn.getBoundingClientRect().height, "the floor applies").toBeCloseTo(44, 0);
+        const r = btn.getBoundingClientRect();
+        const cx = r.left + r.width / 2;
+        const cy = r.top + r.height / 2;
+        for (const y of [cy - 21, cy + 21]) {
+          expect(
+            btn.contains(document.elementFromPoint(cx, y)),
+            `${btn.id} at ${String(y - cy)}`,
+          ).toBe(true);
+        }
       }
       expect(band(header)).toBeCloseTo(band(footer), 1);
       expect(band(footer)).toBeGreaterThan(44);

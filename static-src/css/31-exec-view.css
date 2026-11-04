@@ -252,7 +252,7 @@
      `--btn-h` rather than `--ctl-h-dense`: the dense tier is for a control
      sharing a row with taller content, and this row stands alone on its line.
      The padding stays as the floor's complement for a label that wraps. */
-  min-block-size: var(--btn-h);
+  min-block-size: var(--row-tap);
 
   /* The indent is the row's, from its own depth, so a nested container needs no
      wrapper with padding — which is what keeps the reconcile an ordering pass over
@@ -1060,16 +1060,17 @@
 /* The head is the run's identity row in every state, never washed or wrapped, and
    the panel's hit target (`disclosure-row.ts` `wireRowToggle`), forwarding to the
    chevron that keeps `aria-expanded`; its controls are their own. The verbs end on
-   its corner, so its end inset is theirs (`--head-act-in`, 2px fine, 0 coarse); the
-   chevron is flush with its start edge and takes that corner. */
+   its corner, so its end inset is theirs (`--head-act-in`, 2px fine, 6px coarse, which
+   keeps their expanders inside the dock's clip); the chevron is flush with its start
+   edge and takes that corner. */
 .ev-dock-head {
-  --head-act-in: calc((var(--btn-h) - max(var(--ctl-h-dense), var(--hit-floor))) / 2);
+  --head-act-in: calc((var(--row-tap) - var(--ctl-h-dense)) / 2);
 
   position: relative;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  min-block-size: var(--btn-h);
+  min-block-size: var(--row-tap);
   padding-inline: 0 var(--head-act-in);
   border-radius: var(--stack-in-r);
   cursor: pointer;
@@ -1106,6 +1107,11 @@
 
   &[aria-expanded="true"] .disclosure-chevron {
     --chev-turn: 0deg;
+  }
+
+  /* Flush with the box's clipped edge, so its target grows inward only. */
+  &::after {
+    inset-inline: 0 min(0px, calc(1.5rem - var(--hit-floor)));
   }
 }
 
@@ -1337,7 +1343,7 @@
 .run-extend {
   display: flex;
   align-items: center;
-  gap: var(--sp-1);
+  gap: max(var(--sp-1), var(--tap-gap-dense));
 }
 
 /* The house icon button at every width: a dense row-action square, the name in
@@ -1348,8 +1354,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-inline-size: max(var(--ctl-h-dense), var(--hit-floor));
-  block-size: max(var(--ctl-h-dense), var(--hit-floor));
+  min-inline-size: var(--ctl-h-dense);
+  block-size: var(--ctl-h-dense);
   padding: 0;
   color: var(--c-text-control);
   font-size: var(--fs-sm);
@@ -1375,7 +1381,7 @@
 /* Outranks `.tool-form-input`'s padding (61-mcp-tools.css), which left no room for a digit. */
 .run-controls .run-extend-count {
   inline-size: 4rem;
-  min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
+  min-block-size: var(--ctl-h-dense);
   padding-inline: var(--sp-2);
 }
 
@@ -1410,7 +1416,8 @@
 
   display: flex;
   align-items: flex-start;
-  gap: var(--stack-in);
+  /* Room for the `+N`'s expander beside the row it follows, which is its own target. */
+  gap: max(var(--stack-in), calc(var(--tap-gap-sm) / 2));
 }
 
 .ev-dock[data-open] .ev-dock-live {
@@ -1510,7 +1517,9 @@
 .ev-dock-more {
   display: none;
   flex-shrink: 0;
-  min-inline-size: var(--hit-floor);
+
+  /* Its target fits between the live dots' gap and the panel's clip, --stack-in away. */
+  min-inline-size: max(var(--paint-floor), calc(var(--hit-floor) - 2 * var(--stack-in)));
   block-size: var(--dock-row-h);
   padding-inline: var(--sp-2);
   border: 1px solid var(--c-border);
@@ -1583,7 +1592,10 @@
 
 .ev-dock-seg {
   flex: none;
-  margin: 0;
+
+  /* The panel clips, so the bar leaves its segments' targets room above it: they reach
+     past the bar by half the floor less its height. */
+  margin: max(0px, calc((var(--hit-floor) - var(--seg-bar-h)) / 2)) 0 0;
 }
 
 /* The scroller is a box of its own below the switcher, so a row scrolled past its
@@ -1620,6 +1632,8 @@
    clamp openers, the dock question's and a result's. */
 .ev-dock-ask-more,
 .ev-r-more {
+  /* `.dock-ask-more` (26-dock.css) owns why the box is the target. */
+  min-block-size: var(--row-tap-sm);
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
   background: none;
@@ -1660,13 +1674,6 @@
     column-gap: var(--sp-1);
   }
 
-  /* Under the hit floor's width on purpose: the head row is the toggle's target
-     (`wireRowToggle`) and keeps the floor's height, so the chevron's box needs only
-     its glyph's width. */
-  .ev-dock-head > .ev-box-toggle {
-    min-inline-size: 0;
-  }
-
   /* The mini timeline becomes a band along the head's bottom edge. */
   .ev-dock-head .ev-mini {
     position: absolute;
@@ -1686,7 +1693,9 @@
   .ev-dock-head[data-alert] {
     flex-wrap: wrap;
     row-gap: 0;
-    padding-block-end: var(--sp-1);
+    /* The verbs ride the first line's top edge; this keeps their expander inside the
+       dock's clip, past its `--stack-in` padding. */
+    padding-block: max(0px, calc(var(--tap-gap-dense) / 2 - var(--stack-in))) var(--sp-1);
 
     & > .ev-sum {
       display: contents;

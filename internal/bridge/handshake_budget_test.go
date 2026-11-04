@@ -21,13 +21,26 @@ import (
 // stallingFake writes a fake kiro-cli that answers every request except method, which it reads and ignores.
 func stallingFake(t *testing.T, dir, stallOn string) string {
 	t.Helper()
+	return handshakeFake(t, dir, stallOn, "continue")
+}
+
+// slowFake writes a fake kiro-cli that answers method only after delay seconds, sending nothing meanwhile.
+func slowFake(t *testing.T, dir, slowOn, delay string) string {
+	t.Helper()
+	return handshakeFake(t, dir, slowOn, "sleep "+delay)
+}
+
+// handshakeFake writes a fake kiro-cli that runs action (shell) on a request for method, then answers it unless
+// action continued the loop.
+func handshakeFake(t *testing.T, dir, method, action string) string {
+	t.Helper()
 	script := `#!/bin/sh
 while IFS= read -r line; do
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
   sid=$(echo "$line" | sed -n 's/.*"overrideSessionId":"\([^"]*\)".*/\1/p')
-  if [ "$method" = "` + stallOn + `" ]; then
-    continue
+  if [ "$method" = "` + method + `" ]; then
+    ` + action + `
   fi
   case "$method" in
     initialize)
@@ -47,7 +60,7 @@ while IFS= read -r line; do
   esac
 done
 `
-	scriptPath := filepath.Join(dir, "stalling-kiro-cli")
+	scriptPath := filepath.Join(dir, "fake-kiro-cli")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake script: %v", err)
 	}
@@ -142,6 +155,64 @@ func TestSessionDoor_ExpiresOnAnUnansweredHandshake(t *testing.T) {
 				t.Errorf("the engine answered nothing after a session's door expired: %v", err)
 			}
 		})
+	}
+}
+
+// shortenForStall sets the door budgets below the fake's delay and the stall checks below the budgets, so only a
+// stall extension lets a door finish.
+func shortenForStall(t *testing.T, ceiling time.Duration) {
+	t.Helper()
+	origHandshake, origReplay := handshakeBudget, replayBudget
+	handshakeBudget, replayBudget = 500*time.Millisecond, 500*time.Millisecond
+	t.Cleanup(func() { handshakeBudget, replayBudget = origHandshake, origReplay })
+	shortenStallChecks(t, 50*time.Millisecond, 50*time.Millisecond, 10*time.Millisecond, ceiling)
+}
+
+// An engine silent past a door's budget while its CPU advances is in an event-loop stall (kirodotdev/Kiro#12261):
+// the door waits it out instead of failing a session the engine is about to answer.
+func TestSessionDoors_SurviveAnEngineStall(t *testing.T) {
+	cases := map[string]struct {
+		slowOn    string
+		sessionID string
+	}{
+		"initialize answers late":   {slowOn: "initialize"},
+		"session/new answers late":  {slowOn: "session/new"},
+		"session/load answers late": {slowOn: "session/load", sessionID: "sess_resume"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			shortenForStall(t, 10*time.Second)
+			dir := t.TempDir()
+			b := NewEngine(slowFake(t, dir, tc.slowOn, "1.5"), dir)
+			b.cpuTicks = advancingCPU()
+
+			s, err := openSessionOn(t, b, &marotte.SessionOpts{SessionID: tc.sessionID})
+			if err != nil {
+				t.Fatalf("door over a %s answered after 1.5 s at advancing CPU = %v, want it waited out", tc.slowOn, err)
+			}
+			if s == nil {
+				t.Fatal("door returned no session and no error")
+			}
+		})
+	}
+}
+
+// A silent engine at flat CPU is hung, not stalled: the door expires at its budget, not at the extension ceiling.
+func TestNewSession_StillTimesOutAHungEngine(t *testing.T) {
+	shortenForStall(t, 30*time.Second)
+	dir := t.TempDir()
+	b := NewEngine(stallingFake(t, dir, "session/new"), dir)
+	b.cpuTicks = func() (uint64, bool) { return 42, true }
+
+	start := time.Now()
+	_, err := openSessionOn(t, b, &marotte.SessionOpts{})
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("NewSession error = %v, want it to wrap context.DeadlineExceeded", err)
+	}
+	if elapsed > 10*time.Second {
+		t.Errorf("NewSession took %v to give up on a hung engine, want about its %v budget", elapsed, handshakeBudget)
 	}
 }
 

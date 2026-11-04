@@ -119,7 +119,7 @@
 .mermaid-overlay-actions {
   display: flex;
   flex-shrink: 0;
-  gap: var(--sp-05);
+  gap: max(var(--sp-05), var(--tap-gap-dense));
 }
 
 /* pele zooms by moving the viewBox inside the box mermaid-overlay.ts sizes, so

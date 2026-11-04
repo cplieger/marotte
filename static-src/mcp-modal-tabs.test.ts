@@ -139,7 +139,11 @@ describe("the bar keeps its labels on a phone", () => {
 
     const segs = [...bar.querySelectorAll<HTMLElement>(".seg")];
     expect(segs).toHaveLength(4);
-    const truncated = segs.filter((s) => s.scrollWidth > s.clientWidth);
+    // The label owns the ellipsis; the segment's own scroll width also counts its hit expanders.
+    const truncated = segs.filter((s) => {
+      const label = s.querySelector<HTMLElement>(".seg-label") ?? s;
+      return label.scrollWidth > label.clientWidth;
+    });
     expect(truncated.map((s) => s.textContent)).toEqual([]);
     const tops = new Set(segs.map((s) => s.getBoundingClientRect().top));
     expect(tops.size, "two rows").toBe(2);

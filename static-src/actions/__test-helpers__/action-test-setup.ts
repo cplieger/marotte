@@ -1,10 +1,10 @@
-/** Shared action-test setup over @cplieger/actions' internals. `vi.mock()` calls stay at the top
+/** Shared action-test setup over @cplieger/ui/actions' internals. `vi.mock()` calls stay at the top
  *  of each test file (hoisting); pass these factories as the implementation argument. */
-import { configure, configureTransport } from "@cplieger/actions";
-import { resetActionFramework as resetFramework } from "@cplieger/actions/testing";
-import type { TransportSendResult } from "@cplieger/actions";
+import { configure, configureTransport } from "@cplieger/ui/actions";
+import { resetActionFramework as resetFramework } from "@cplieger/ui/actions/testing";
 import { error as toastError, success as toastSuccess } from "../../toast.js";
 import { send as transportSend } from "../../transport.js";
+import { forAction } from "../transport-result.js";
 
 export function resetActionFramework(): void {
   resetFramework();
@@ -16,13 +16,14 @@ export function resetActionFramework(): void {
       toastError(msg, retry);
     },
   });
-  configureTransport(async (cmd, { signal }) => {
-    const r = await transportSend(cmd as Parameters<typeof transportSend>[0], {
-      signal,
-      reportSendState: false,
-    });
-    return r as TransportSendResult;
-  });
+  configureTransport(async (cmd, { signal }) =>
+    forAction(
+      await transportSend(cmd as Parameters<typeof transportSend>[0], {
+        signal,
+        reportSendState: false,
+      }),
+    ),
+  );
 }
 
 /** A header from a mocked `fetch` call's RequestInit, case-insensitive, whatever the headers'

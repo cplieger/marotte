@@ -50,7 +50,6 @@ vi.mock("../run-view.js", async (importOriginal) => ({
 vi.mock("../run-store.js", async (importOriginal) => ({
   ...(await importOriginal<typeof RunStore>()),
   invalidateRun: vi.fn(),
-  invalidateRunControls: vi.fn(),
 }));
 vi.mock("../run-dots.js", async (importOriginal) => ({
   ...(await importOriginal<typeof RunDots>()),

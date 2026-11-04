@@ -1,6 +1,6 @@
 // The installed set is kiro-cli's own, so the list is refetched after a change rather than patched.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join as joinKey } from "@cplieger/keyenc";
 import { apiGetTyped, apiGetTypedOrError } from "./api-client.js";
 import {

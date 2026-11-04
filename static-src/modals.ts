@@ -1,9 +1,9 @@
-// Shared modal system on @cplieger/ui-primitives' createModal (native <dialog>).
+// Shared modal system on @cplieger/ui/modal's createModal (native <dialog>).
 // Each `[data-modal]` content element is pre-authored in index.html; createModal
 // wraps it in a <dialog> and owns focus, Escape, backdrop dismiss and scroll-lock.
 
-import { createModal, type ModalController } from "@cplieger/ui-primitives/modal";
-import { el } from "@cplieger/reactive";
+import { createModal, type ModalController } from "@cplieger/ui/modal";
+import { el } from "@cplieger/ui";
 import { pollUntil, registerCleanup } from "./actions/index.js";
 import { $, byId } from "./dom.js";
 import { apiGetTyped, apiPostTypedOrError } from "./api-client.js";

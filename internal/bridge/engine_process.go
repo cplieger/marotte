@@ -48,9 +48,9 @@ func sidecarExitOf(state *os.ProcessState) string {
 	return fmt.Sprintf("exit_code=%d", state.ExitCode())
 }
 
-// reapProcess reaps the sidecar's group, then the node engine's: on 2.18.0 a head-only kill left kiro-cli-chat and
-// its node child alive at about 250 MB (procgroup.Kill), and the node engine leads its own group (sweepEngineGroups).
-// stdin is already closed. endedItself is endedOnItsOwn's answer from before that close.
+// reapProcess reaps the kiro-cli process's group, then the node engine's: on 2.18.0 a head-only kill left the kiro-cli
+// process and its node child alive at about 250 MB (procgroup.Kill), and the node engine leads its own group
+// (sweepEngineGroups). stdin is already closed. endedItself is endedOnItsOwn's answer from before that close.
 func (e *Engine) reapProcess(endedItself bool) {
 	// Before the signal empties it (procgroup.GroupOf).
 	pgid, owns := procgroup.GroupOf(e.cmd.Process)
@@ -89,12 +89,12 @@ func (e *Engine) reapProcess(endedItself bool) {
 	e.sweepEngineGroups()
 }
 
-// exitSettle bounds the wait for a sidecar whose stdout reached EOF to become waitable: the kernel closes an exiting
-// process's files before it marks the exit, so a probe right after the EOF can fall in between.
+// exitSettle bounds the wait for a kiro-cli process whose stdout reached EOF to become waitable: the kernel closes an
+// exiting process's files before it marks the exit, so a probe right after the EOF can fall in between.
 const exitSettle = 100 * time.Millisecond
 
-// endedOnItsOwn reports whether the sidecar exited before marotte closed its stdin or signalled it. It must run
-// before the stdin close, on which kiro-cli exits. A nil lifecycleCtx means no cmd.Cancel was installed to signal it.
+// endedOnItsOwn reports whether the kiro-cli process exited before marotte closed its stdin or signalled it. It must
+// run before the stdin close, on which kiro-cli exits. A nil lifecycleCtx means no cmd.Cancel was installed.
 func (e *Engine) endedOnItsOwn() bool {
 	if e.lifecycleCtx != nil && e.lifecycleCtx.Err() != nil {
 		return false
@@ -127,9 +127,9 @@ func exitedUnreaped(pid int) bool {
 	return err == nil && info.Signo == int32(unix.SIGCHLD)
 }
 
-// noteEngineGroups adds the groups below the sidecar to engineGroups. kiro-cli's node engine leads its own group,
-// which its stdio MCP servers join, so the sidecar's group kill misses them. It runs after initialize and again at
-// reap: once the relay dies they are init's, and no walk finds them.
+// noteEngineGroups adds the groups below the kiro-cli process to engineGroups. kiro-cli's node engine leads its own
+// group, which its stdio MCP servers join, so the kiro-cli process's group kill misses them. It runs after initialize
+// and again at reap: once the kiro-cli process dies they are init's, and no walk finds them.
 func (e *Engine) noteEngineGroups() {
 	if e.cmd == nil || e.cmd.Process == nil {
 		return
@@ -138,7 +138,7 @@ func (e *Engine) noteEngineGroups() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for _, g := range found {
-		// The newer stamp wins: an id found again may now name a later group below the sidecar.
+		// The newer stamp wins: an id found again may now name a later group below the kiro-cli process.
 		if i := slices.IndexFunc(e.engineGroups, func(n procgroup.Group) bool { return n.ID == g.ID }); i >= 0 {
 			e.engineGroups[i] = g
 		} else {
@@ -147,9 +147,9 @@ func (e *Engine) noteEngineGroups() {
 	}
 }
 
-// sweepEngineGroups gives each noted group bridgeGroupGrace to empty after the sidecar's, then kills what is left: an
-// MCP server that ignores stdin EOF outlives an abrupt engine death, and tini reaps zombies but signals no live
-// orphan.
+// sweepEngineGroups gives each noted group bridgeGroupGrace to empty after the kiro-cli process's, then kills what is
+// left: an MCP server that ignores stdin EOF outlives an abrupt engine death, and tini reaps zombies but signals no
+// live orphan.
 func (e *Engine) sweepEngineGroups() {
 	e.mu.Lock()
 	groups := slices.Clone(e.engineGroups)
@@ -299,7 +299,7 @@ func (e *Engine) startProcess() error {
 	// Own process group, so teardown reclaims the whole tree; closing stdin alone does not reclaim it (procgroup.Kill).
 	e.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	e.cmd.Env = e.processEnv()
-	// Backstop when lifecycleCtx ends before Stop: close stdin and SIGTERM the sidecar's group, SIGKILL after
+	// Backstop when lifecycleCtx ends before Stop: close stdin and SIGTERM the kiro-cli process's group, SIGKILL after
 	// bridgeTeardownGrace. A second Close is expected after Stop, so its error is dropped.
 	e.cmd.Cancel = func() error {
 		if p := e.stdin.Load(); p != nil {
@@ -366,7 +366,7 @@ func (e *Engine) processEnv() []string {
 	return env
 }
 
-// The stderr lines that name an engine end's cause; the node child writes to the sidecar's stderr pipe.
+// The stderr lines that name an engine end's cause; the node child writes to the kiro-cli process's stderr pipe.
 const (
 	jsHeapOOMLine         = "JavaScript heap out of memory"
 	relayWriteTimeoutLine = "timed out writing to the v3 engine's stdin"

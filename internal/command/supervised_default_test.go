@@ -34,7 +34,9 @@ func newSupervisedMembership(t *testing.T, chats chatStore, configDir string) *M
 	t.Helper()
 	return newMembership(&membershipDeps{
 		Teardown:          &recordingTeardown{},
-		Chats:             chats,
+		Chats:             withKeep(chats),
+		Sessions:          claimsOf(chats),
+		Runs:              &fakeRunOwner{},
 		SupervisedDefault: func(ctx context.Context) bool { return supervisedDefaultSetting(ctx, configDir) },
 	})
 }
@@ -168,7 +170,7 @@ func setSupervised(t *testing.T, store chatStore, id marotte.ChatID, supervised 
 // wires no reader mints unsupervised chats rather than panicking, which is what
 // every test helper in this package relies on.
 func TestMembership_SupervisedDefaultUnwiredIsFalse(t *testing.T) {
-	mem := newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: testsupport.NewInMemoryChatStore()})
+	mem := newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: withKeep(testsupport.NewInMemoryChatStore())})
 
 	if mem.supervisedDefaultValue(t.Context()) {
 		t.Error("an unwired SupervisedDefault read as true; it must fail closed")

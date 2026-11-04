@@ -111,13 +111,22 @@ type impactCheck struct {
 	chats  []marotte.ChatID
 }
 
-// checkImpact reads what closing chats stops and compares it with page. ok is true for a nil page or an unwired
-// reader (unchecked). Caller holds mu, after the chats' holds.
-func (m *Membership) checkImpact(ctx context.Context, page *marotte.CloseImpact, chats []marotte.ChatID) (impactCheck, bool) {
+// checkImpact reads what closing chats stops and compares it with page. stopsRuns is false for a close that leaves
+// the chats' runs running (a delete's descendants), whose runs are then neither compared nor answered. ok is true
+// for a nil page or an unwired reader (unchecked). Caller holds mu, after the chats' holds.
+func (m *Membership) checkImpact(
+	ctx context.Context, page *marotte.CloseImpact, chats []marotte.ChatID, stopsRuns bool,
+) (impactCheck, bool) {
 	if page == nil || m.impact == nil {
 		return impactCheck{}, true
 	}
 	c := impactCheck{page: page, chats: chats, server: m.impact.CloseImpact(ctx, chats)}
+	if !stopsRuns {
+		for chatID, w := range c.server {
+			w.Runs = nil
+			c.server[chatID] = w
+		}
+	}
 	ok := c.covered()
 	return c, ok
 }

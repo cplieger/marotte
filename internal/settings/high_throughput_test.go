@@ -18,8 +18,9 @@ func TestHighThroughput_OnUnlessStoredOff(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeSettings(t, dir, []byte(tc.stored))
-			if got := HighThroughput(t.Context(), dir); got != tc.want {
-				t.Errorf("HighThroughput(%s) = %v, want %v", tc.stored, got, tc.want)
+			d, _, _ := Read(t.Context(), dir)
+			if got := HighThroughputIn(d); got != tc.want {
+				t.Errorf("HighThroughputIn(%s) = %v, want %v", tc.stored, got, tc.want)
 			}
 		})
 	}

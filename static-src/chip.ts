@@ -1,4 +1,4 @@
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { ICON_CLOSE } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 

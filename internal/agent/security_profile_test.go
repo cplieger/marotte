@@ -32,7 +32,7 @@ func TestSecurityPresets_ResolvesEachProfile(t *testing.T) {
 		t.Run(p.ID, func(t *testing.T) {
 			dir := t.TempDir()
 			writeProfileSetting(t, dir, p.ID)
-			got := securityPresets(t.Context(), dir)
+			got := securityPresets(securityProfileID(docAt(t, dir)))
 			if !slices.Equal(got, p.Presets) {
 				t.Errorf("securityPresets(%q) = %v, want %v", p.ID, got, p.Presets)
 			}
@@ -50,7 +50,7 @@ func TestSecurityPresets_FallsBackLoudlyNotSilently(t *testing.T) {
 		t.Run("value="+value, func(t *testing.T) {
 			dir := t.TempDir()
 			writeProfileSetting(t, dir, value)
-			got := securityPresets(t.Context(), dir)
+			got := securityPresets(securityProfileID(docAt(t, dir)))
 			if len(got) == 0 {
 				t.Fatalf("securityPresets(%q) returned nothing; that is the Custom wire and would drop the fs_read floor", value)
 			}
@@ -64,7 +64,7 @@ func TestSecurityPresets_FallsBackLoudlyNotSilently(t *testing.T) {
 // TestSecurityPresets_AbsentConfigResolvesToDefault covers a first boot, a different reader path.
 func TestSecurityPresets_AbsentConfigResolvesToDefault(t *testing.T) {
 	fallback, _ := policyfile.ProfileFor(policyfile.DefaultProfile)
-	got := securityPresets(t.Context(), t.TempDir())
+	got := securityPresets(securityProfileID(settings.Document{}))
 	if !slices.Equal(got, fallback.Presets) {
 		t.Errorf("securityPresets with no config.json = %v, want %v", got, fallback.Presets)
 	}
@@ -74,14 +74,14 @@ func TestSecurityPresets_AbsentConfigResolvesToDefault(t *testing.T) {
 func TestSecurityPresets_CallerCannotMutateTheProfile(t *testing.T) {
 	dir := t.TempDir()
 	writeProfileSetting(t, dir, policyfile.ProfileTrusted)
-	first := securityPresets(t.Context(), dir)
+	first := securityPresets(securityProfileID(docAt(t, dir)))
 	if len(first) == 0 {
 		t.Fatal("trusted resolved to nothing")
 	}
 	for i := range first {
 		first[i] = "tampered"
 	}
-	second := securityPresets(t.Context(), dir)
+	second := securityPresets(securityProfileID(docAt(t, dir)))
 	if slices.Contains(second, "tampered") {
 		t.Error("securityPresets hands out the package's own slice; one caller's write reaches every later session")
 	}

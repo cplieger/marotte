@@ -2,7 +2,7 @@
 // payloads the page adopts, and exposes it to the tab-close handler (keep vs delete) and the
 // history button (hidden when retention is off).
 
-import { signal, subscribe } from "@cplieger/reactive";
+import { signal, subscribe } from "@cplieger/ui";
 import type { EffectiveSettings } from "./persist.js";
 
 // It mirrored settings.DefaultChatRetentionDays with nothing holding the two together, applying to

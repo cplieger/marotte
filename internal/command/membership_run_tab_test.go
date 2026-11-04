@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -16,11 +17,20 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
+// fakeRunOwner answers RunOwner from chats: a named chat is the run's one holder (holders names several), "" a
+// parentless run, and a run it does not list is parentless too unless unknown names it. parents is the run's
+// parent session per run.
 type fakeRunOwner struct {
-	// chats is RunChat's answer per run; an absent run and a parentless one both answer "".
-	chats map[string]marotte.ChatID
-	// chatErr is RunChat's failure: the launcher could not be read.
+	chats   map[string]marotte.ChatID
+	holders map[string][]marotte.ChatID
+	parents map[string]string
+	unknown map[string]bool
+	// chatErr is RunOwner's failure: the owners could not be read.
 	chatErr error
+	// parented is RunsParentedBy's live answer per session, parentedAll its all, parentedErr its failure.
+	parented    map[string][]string
+	parentedAll map[string][]string
+	parentedErr error
 	// bounds is what RunReadBound answers per run, and boundErr its failure.
 	bounds   map[string]uint64
 	boundErr error
@@ -30,21 +40,41 @@ func (f *fakeRunOwner) RunReadBound(_ context.Context, workflowID string) (uint6
 	return f.bounds[workflowID], f.boundErr
 }
 
-func (f *fakeRunOwner) RunChat(_ context.Context, workflowID string) (marotte.ChatID, error) {
-	return f.chats[workflowID], f.chatErr
+func (f *fakeRunOwner) RunOwner(_ context.Context, workflowID string) (RunOwner, error) {
+	if f.chatErr != nil {
+		return RunOwner{}, f.chatErr
+	}
+	if f.unknown[workflowID] {
+		return RunOwner{Verdict: RunUnknown}, nil
+	}
+	out := RunOwner{Verdict: RunParentless}
+	if p := f.parents[workflowID]; p != "" {
+		out.ParentSessions = []string{p}
+	}
+	if c := f.chats[workflowID]; c != "" {
+		out.Verdict, out.Holders = RunOwned, []marotte.ChatID{c}
+	}
+	if hs := f.holders[workflowID]; len(hs) > 0 {
+		out.Verdict, out.Holders = RunOwned, hs
+	}
+	return out, nil
 }
 
-// slowRunOwner answers RunChat only once released: a finished run's engine read.
+func (f *fakeRunOwner) RunsParentedBy(_ context.Context, sessionID string) (live, all []string, err error) {
+	return f.parented[sessionID], append(slices.Clone(f.parented[sessionID]), f.parentedAll[sessionID]...), f.parentedErr
+}
+
+// slowRunOwner answers RunOwner only once released: a finished run's engine read.
 type slowRunOwner struct {
 	fakeRunOwner
 	asked   chan struct{}
 	release chan struct{}
 }
 
-func (s *slowRunOwner) RunChat(ctx context.Context, workflowID string) (marotte.ChatID, error) {
+func (s *slowRunOwner) RunOwner(ctx context.Context, workflowID string) (RunOwner, error) {
 	close(s.asked)
 	<-s.release
-	return s.fakeRunOwner.RunChat(ctx, workflowID)
+	return s.fakeRunOwner.RunOwner(ctx, workflowID)
 }
 
 func newRunTabMembership(t *testing.T, chats chatStore, runs runOwner) (*Membership, *tabs.Store) {
@@ -54,7 +84,7 @@ func newRunTabMembership(t *testing.T, chats chatStore, runs runOwner) (*Members
 		t.Fatalf("open tab store: %v", err)
 	}
 	bus := &tabBus{}
-	return newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: chats, Tabs: st, Bus: bus, Runs: runs}), st
+	return newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: withKeep(chats), Tabs: st, Bus: bus, Runs: runs}), st
 }
 
 func runTabParent(t *testing.T, st *tabs.Store, workflowID string) string {
@@ -180,8 +210,6 @@ func TestOpenTab_LeavesAParentlessRunTopLevel(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	for name, runs := range map[string]runOwner{
 		"a parentless run names no chat": &fakeRunOwner{chats: map[string]marotte.ChatID{"wf_1": ""}},
-		"no source names the run":        &fakeRunOwner{},
-		"no run owner is wired":          nil,
 		"the launching chat was deleted": &fakeRunOwner{chats: map[string]marotte.ChatID{"wf_1": "c-gone"}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -208,7 +236,7 @@ func TestOpenTab_ReopensAClosedLaunchersTab(t *testing.T) {
 	bus := &tabBus{}
 	mem := newMembership(&membershipDeps{
 		Teardown: &recordingTeardown{},
-		Chats:    store, Tabs: st, Bus: bus,
+		Chats:    withKeep(store), Tabs: st, Bus: bus,
 		Runs: &fakeRunOwner{chats: map[string]marotte.ChatID{"wf_1": "c-launcher"}},
 	})
 	seedRecord(t, store, "c-launcher")
@@ -300,8 +328,8 @@ func (u *unreadableChats) Lookup(ctx context.Context, id marotte.ChatID) (*marot
 }
 
 // TestOpenTab_RefusesANewRunTabWhoseLauncherRecordCouldNotBeRead — a live run names its chat from
-// the lease, but that chat's tab is closed and its record unreadable: it may still exist, so opening
-// the run top level would be permanent.
+// the lease, but that chat's record is unreadable: its run-tab fact cannot be held, and opening the
+// run top level would be permanent.
 func TestOpenTab_RefusesANewRunTabWhoseLauncherRecordCouldNotBeRead(t *testing.T) {
 	store := &unreadableChats{InMemoryChatStore: testsupport.NewInMemoryChatStore(), unreadable: "c-launcher"}
 	mem, st := newRunTabMembership(t, store, &fakeRunOwner{chats: map[string]marotte.ChatID{"wf_1": "c-launcher"}})
@@ -325,7 +353,7 @@ func closedSuppliedParent(t *testing.T, mem *Membership, st *tabs.Store, store *
 	if err != nil {
 		t.Fatalf("open the launching chat's tab: %v", err)
 	}
-	if _, _, err := st.Close(t.Context(), seen.Subject.ID); err != nil {
+	if _, _, _, err := st.Close(t.Context(), seen.Subject.ID); err != nil {
 		t.Fatalf("close it elsewhere: %v", err)
 	}
 	return seen.Subject.ID

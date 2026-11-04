@@ -3,14 +3,14 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { batch, effect, el } from "@cplieger/reactive";
+import { batch, effect, el } from "@cplieger/ui";
 import { openEditorView, tabIdFor, setTabDirty, getActiveTabId } from "./tabs.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
 import { apiGetTypedOrError } from "./api-client.js";
 import { editorDocSkeleton, paintPlaceholder } from "./skeleton.js";
-import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
-import type { SkeletonTimingController } from "@cplieger/ui-primitives/skeleton";
+import { skeletonTiming } from "@cplieger/ui/skeleton";
+import type { SkeletonTimingController } from "@cplieger/ui/skeleton";
 import { loadDiff as loadDiffAction } from "./actions/editor.js";
 import type { FileMode, FileState } from "./editor-types.js";
 import {

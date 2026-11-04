@@ -320,3 +320,136 @@ func TestUnqueue_AnOpenedRowIsSending(t *testing.T) {
 		t.Errorf("queue = %+v, want both rows gone", rows)
 	}
 }
+
+func queuedIDs(t *testing.T, cs *testChatStore, chatID marotte.ChatID) (ids, marked []string) {
+	t.Helper()
+	for _, r := range queuedRows(t, cs, chatID) {
+		ids = append(ids, r.ID)
+		if r.Next {
+			marked = append(marked, r.ID)
+		}
+	}
+	return ids, marked
+}
+
+// The send-now row goes to the head of the rows a drain can send; a held row no drain sends keeps its place.
+func TestMarkNext_MovesTheRowAheadOfTheSendableRowsKeepingTheirOrder(t *testing.T) {
+	h, cs := drainHub(t)
+	seedQueue(t, cs, "c1",
+		marotte.QueuedPrompt{ID: "m-h", Text: "from before", Held: true},
+		marotte.QueuedPrompt{ID: "m-q1", Text: "first"},
+		marotte.QueuedPrompt{ID: "m-q2", Text: "second"},
+		marotte.QueuedPrompt{ID: "m-q3", Text: "third"},
+	)
+
+	found, sending, held, err := h.coord.MarkNext(t.Context(), "c1", "m-q3")
+
+	if err != nil || !found || sending || held {
+		t.Fatalf("MarkNext(m-q3) = (%v, %v, %v, %v), want found only", found, sending, held, err)
+	}
+	ids, marked := queuedIDs(t, cs, "c1")
+	if !slices.Equal(ids, []string{"m-h", "m-q3", "m-q1", "m-q2"}) {
+		t.Errorf("queue = %v, want m-q3 ahead of m-q1 and m-q2, the held row where it was", ids)
+	}
+	if !slices.Equal(marked, []string{"m-q3"}) {
+		t.Errorf("marked = %v, want [m-q3]", marked)
+	}
+}
+
+func TestMarkNext_ASecondMarkMovesTheFlag(t *testing.T) {
+	h, cs := drainHub(t)
+	seedQueue(t, cs, "c1",
+		marotte.QueuedPrompt{ID: "m-q1", Text: "first"},
+		marotte.QueuedPrompt{ID: "m-q2", Text: "second"},
+		marotte.QueuedPrompt{ID: "m-q3", Text: "third"},
+	)
+
+	for _, id := range []string{"m-q3", "m-q2"} {
+		if _, _, _, err := h.coord.MarkNext(t.Context(), "c1", id); err != nil {
+			t.Fatalf("MarkNext(%s) = %v", id, err)
+		}
+	}
+
+	ids, marked := queuedIDs(t, cs, "c1")
+	if !slices.Equal(ids, []string{"m-q2", "m-q3", "m-q1"}) {
+		t.Errorf("queue = %v, want m-q2 first, m-q3 keeping the place its own mark gave it", ids)
+	}
+	if !slices.Equal(marked, []string{"m-q2"}) {
+		t.Errorf("marked = %v, want only the latest pick", marked)
+	}
+}
+
+func TestMarkNext_HeldCarriedOpenedAbsent(t *testing.T) {
+	h, cs := drainHub(t)
+	carried := marotte.CarriedRow("m-c", []string{"x"}, []string{"steer-1"})
+	carried.Held = true
+	seedQueue(t, cs, "c1",
+		marotte.QueuedPrompt{ID: "m-open", Text: "opening"},
+		marotte.QueuedPrompt{ID: "m-h", Text: "from before", Held: true},
+		carried,
+	)
+	if err := h.coord.Dequeue(t.Context(), "c1", "m-open"); err != nil {
+		t.Fatalf("Dequeue(m-open) = %v", err)
+	}
+
+	for _, tc := range []struct {
+		id                   string
+		found, sending, held bool
+	}{
+		{id: "m-open", found: true, sending: true},
+		{id: "m-h", found: true, held: true},
+		{id: "m-c", found: true, held: true},
+		{id: "m-gone"},
+	} {
+		found, sending, held, err := h.coord.MarkNext(t.Context(), "c1", tc.id)
+		if err != nil || found != tc.found || sending != tc.sending || held != tc.held {
+			t.Errorf("MarkNext(%s) = (%v, %v, %v, %v), want (%v, %v, %v, nil)",
+				tc.id, found, sending, held, err, tc.found, tc.sending, tc.held)
+		}
+	}
+	if _, marked := queuedIDs(t, cs, "c1"); len(marked) != 0 {
+		t.Errorf("marked = %v, want none", marked)
+	}
+}
+
+// After a stop, which sends no user row on its own, the marked row goes as the next turn.
+func TestDrain_AStoppedCloseSendsTheMarkedRow(t *testing.T) {
+	h, cs := drainHub(t)
+	seedQueue(t, cs, "c1",
+		marotte.QueuedPrompt{ID: "m-q3", Text: "third", Next: true},
+		marotte.QueuedPrompt{ID: "m-q1", Text: "first"},
+	)
+
+	drainOnce(t, h, "c1", marotte.TurnOutcomeCancelled)
+	waitFor(t, func() bool { return !h.coord.turns.live("c1") && len(closesOf(t, logOf(t, cs, "c1"))) == 2 })
+
+	if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-first", "m-q3"}) {
+		t.Errorf("turns opened = %v, want the marked row after the stop", ids)
+	}
+	if ids, _ := queuedIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-q1"}) {
+		t.Errorf("queue = %v, want m-q1 left for its own turn", ids)
+	}
+}
+
+func TestSendQueuedNow_IdleSendsTheRowAtOnce(t *testing.T) {
+	h, cs := drainHub(t)
+	seedQueue(t, cs, "c1",
+		marotte.QueuedPrompt{ID: "m-q1", Text: "first"},
+		marotte.QueuedPrompt{ID: "m-q2", Text: "second"},
+	)
+
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(`{"message_id":"m-q2"}`),
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("send_queued_now = %d %s", rec.Code, rec.Body.String())
+	}
+
+	waitFor(t, func() bool { return !h.coord.turns.live("c1") && len(closesOf(t, logOf(t, cs, "c1"))) == 2 })
+	if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-first", "m-q2"}) {
+		t.Errorf("turns opened = %v, want m-q2 sent at once", ids)
+	}
+	if ids, _ := queuedIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-q1"}) {
+		t.Errorf("queue = %v, want m-q1 still waiting", ids)
+	}
+}

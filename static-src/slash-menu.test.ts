@@ -44,7 +44,7 @@ import type { FileMatch, FileSearchResult, SlashCommand } from "./wire/types.gen
 import { dispatch } from "./bus.js";
 import { setActive } from "./store.js";
 import { _setReposForTest } from "./git-status-store.js";
-import { _resetForTest as resetAsk } from "@cplieger/ui-primitives/ask";
+import { _resetForTest as resetAsk } from "@cplieger/ui/ask";
 import { _resetForTest as resetWorkspace, setWorkspaceRoot } from "./workspace.js";
 
 const CATALOG: SlashCommand[] = [

@@ -78,7 +78,9 @@ func cmdRewindChat(
 		return nil, err
 	}
 
-	result, status, err := revertToMessage(ctx, bridge, cmp.Or(target.KASMessageID, p.MessageID))
+	rctx, cancel := bridges.CallBudget(ctx, engineChangeBudget)
+	result, status, err := revertToMessage(rctx, bridge, cmp.Or(target.KASMessageID, p.MessageID))
+	cancel()
 	if err != nil {
 		slog.Warn("rewind: revert failed", "chat", cmd.ChatID, "status", status,
 			"kas_id_known", target.KASMessageID != "", keyError, err)

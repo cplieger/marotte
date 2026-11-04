@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { signal } from "@cplieger/reactive";
+import { signal } from "@cplieger/ui";
 import type { PreviewHint, PreviewStamp } from "./wire/types.gen.js";
 import type { GrantOutcome } from "./actions/preview.js";
 import type * as Tabs from "./tabs.js";

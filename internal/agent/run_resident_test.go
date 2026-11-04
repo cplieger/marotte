@@ -21,6 +21,7 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -96,7 +97,7 @@ func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
 	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	// A scheduled launch carries the unattended mark.
 	h.runs.grantLease(t.Context(), "wf_1", "nightly",
-		scheduledLaunch("sched_1", time.Now().Add(time.Hour)), hostSec())
+		scheduledLaunch(schedule.Row{ID: "sched_1"}, time.Now().Add(time.Hour)), hostSec())
 
 	h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runCompleteFrame(t, "wf_1", string(marotte.RunStatusPaused)))
 
@@ -210,7 +211,7 @@ func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
 				t.Fatal("the fixture holds a lease, so Retry mints none and this proves nothing")
 			}
 
-			aff := h.runs.affordance(t.Context(), "wf_1", "aborted")
+			aff := h.runs.affordance("wf_1", &runHead{Status: "aborted"})
 			if _, err := h.runs.retry(t.Context(), "wf_1", aff); err == nil {
 				t.Fatal("a failed retry reported success")
 			}
@@ -564,7 +565,7 @@ func TestRetry_RefusesARunWhoseLaunchingSegmentTheChatRetired(t *testing.T) {
 		t.Fatalf("Setup: seeding the chat: %s", err)
 	}
 
-	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted"))
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "aborted"}))
 	if !errors.Is(err, errLaunchSessionUnavailable) {
 		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable", err)
 	}
@@ -691,7 +692,7 @@ func TestRetry_RefusesARetiredSegmentRunWhileItsChatIsOpen(t *testing.T) {
 		t.Fatalf("Setup: opening the chat = (%v, %v), want it live on sess_now", open, err)
 	}
 
-	_, err = h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted"))
+	_, err = h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "aborted"}))
 	if !errors.Is(err, errLaunchSessionUnavailable) {
 		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable", err)
 	}

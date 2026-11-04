@@ -532,7 +532,7 @@ describe("Ctrl-F overlay", () => {
 
 // Server-hit navigation: when the walker marked nothing but the server found the text, stepping reveals the hit.
 
-import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
+import { createDisclosure } from "@cplieger/ui/disclosure";
 import type { Session } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Tally } from "./textsearch/copy.js";

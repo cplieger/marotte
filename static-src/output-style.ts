@@ -1,7 +1,7 @@
 // Settings → Output style: its options are the styles kiro-cli's template serves, which reach
 // this module through session-catalog.ts.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { settingsAsShown } from "./persist.js";
 import type { OutputStyle } from "./wire/types.gen.js";
 

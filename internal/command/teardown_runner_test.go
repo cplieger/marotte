@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -18,7 +19,7 @@ func newLoggingRunner(t *testing.T, life *fakeLife, log *holdLog, g *gates) *tea
 		lifeAccess = life
 		t.Cleanup(func() { g.openAll(); life.wg.Wait() })
 	}
-	return newTeardownRunner(lifeAccess, func(_ context.Context, job teardownJob) {
+	return newTeardownRunner(lifeAccess, func(_ context.Context, job *teardownJob) {
 		name := string(job.chatID) + " " + job.grade.String()
 		log.add("start " + name)
 		g.wait(job.chatID)
@@ -40,9 +41,9 @@ func TestTeardownRunner_RunsOneJobPerChatInCommitOrder(t *testing.T) {
 	r := newLoggingRunner(t, &fakeLife{}, log, g)
 	g.park("c")
 
-	r.enqueue(teardownJob{chatID: "c", grade: gradeClose, hold: loggedHold{log: log, chatID: "c"}})
-	r.enqueue(teardownJob{chatID: "c", grade: gradeDelete, hold: loggedHold{log: log, chatID: "c"}})
-	last, _ := r.enqueue(teardownJob{chatID: "c", grade: gradeRetention, hold: loggedHold{log: log, chatID: "c"}})
+	r.enqueue(&teardownJob{chatID: "c", grade: gradeClose, hold: loggedHold{log: log, chatID: "c"}})
+	r.enqueue(&teardownJob{chatID: "c", grade: gradeDelete, hold: loggedHold{log: log, chatID: "c"}})
+	last, _ := r.enqueue(&teardownJob{chatID: "c", grade: gradeRetention, hold: loggedHold{log: log, chatID: "c"}})
 	log.awaitEvent(t, "start c close")
 	if n := log.count("start c delete"); n != 0 {
 		t.Fatal("the second job started while the first ran")
@@ -65,8 +66,8 @@ func TestTeardownRunner_RunsOtherChatsAtOnce(t *testing.T) {
 	r := newLoggingRunner(t, &fakeLife{}, log, g)
 	g.park("a")
 
-	r.enqueue(teardownJob{chatID: "a", grade: gradeClose})
-	done, _ := r.enqueue(teardownJob{chatID: "b", grade: gradeClose})
+	r.enqueue(&teardownJob{chatID: "a", grade: gradeClose})
+	done, _ := r.enqueue(&teardownJob{chatID: "b", grade: gradeClose})
 
 	awaitDone(t, done, "b's job while a's is parked")
 	if log.count("end a close") != 0 {
@@ -79,11 +80,11 @@ func TestTeardownRunner_HandsADrainingJobBackToRunAfterTheUnlock(t *testing.T) {
 	life := &fakeLife{}
 	r := newLoggingRunner(t, life, log, g)
 	g.park("c")
-	r.enqueue(teardownJob{chatID: "c", grade: gradeClose})
+	r.enqueue(&teardownJob{chatID: "c", grade: gradeClose})
 	log.awaitEvent(t, "start c close")
 	life.draining.Store(true)
 
-	done, run := r.enqueue(teardownJob{chatID: "c", grade: gradeDelete})
+	done, run := r.enqueue(&teardownJob{chatID: "c", grade: gradeDelete})
 
 	if run == nil {
 		t.Fatal("a draining runner started the job; want it handed back")
@@ -111,7 +112,7 @@ func TestTeardownRunner_WithNoLifetimeHandsEveryJobBack(t *testing.T) {
 	log, g := &holdLog{}, &gates{}
 	r := newLoggingRunner(t, nil, log, g)
 
-	done, run := r.enqueue(teardownJob{chatID: "c", grade: gradeClose})
+	done, run := r.enqueue(&teardownJob{chatID: "c", grade: gradeClose})
 
 	if run == nil {
 		t.Fatal("an unwired runner started the job")
@@ -122,8 +123,8 @@ func TestTeardownRunner_WithNoLifetimeHandsEveryJobBack(t *testing.T) {
 
 func TestTeardownRunner_ReleasesTheHoldWhenAGradePanics(t *testing.T) {
 	log := &holdLog{}
-	r := newTeardownRunner(nil, func(context.Context, teardownJob) { panic("grade failed") })
-	done, run := r.enqueue(teardownJob{chatID: "c", grade: gradeClose, hold: loggedHold{log: log, chatID: "c"}})
+	r := newTeardownRunner(nil, func(context.Context, *teardownJob) { panic("grade failed") })
+	done, run := r.enqueue(&teardownJob{chatID: "c", grade: gradeClose, hold: loggedHold{log: log, chatID: "c"}})
 
 	func() {
 		defer func() {
@@ -148,7 +149,7 @@ func TestTeardownRunner_BudgetsEachJobFromItsStart(t *testing.T) {
 		mu      sync.Mutex
 		windows = map[teardownGrade]window{}
 	)
-	r := newTeardownRunner(life, func(ctx context.Context, job teardownJob) {
+	r := newTeardownRunner(life, func(ctx context.Context, job *teardownJob) {
 		start := time.Now()
 		deadline, _ := ctx.Deadline()
 		mu.Lock()
@@ -159,8 +160,8 @@ func TestTeardownRunner_BudgetsEachJobFromItsStart(t *testing.T) {
 		}
 	})
 
-	r.enqueue(teardownJob{chatID: "c", grade: gradeClose})
-	done, _ := r.enqueue(teardownJob{chatID: "c", grade: gradeDelete})
+	r.enqueue(&teardownJob{chatID: "c", grade: gradeClose})
+	done, _ := r.enqueue(&teardownJob{chatID: "c", grade: gradeDelete})
 	awaitDone(t, done, "the second job")
 
 	mu.Lock()
@@ -180,7 +181,7 @@ func TestTeardownRunner_NeverRunsAJobUnderTheCommitLock(t *testing.T) {
 		h := newRunnerHost(t, runnerOpts{})
 		mem = h.mem
 		chatID, tab := h.chatUnder(t, "op-a", "")
-		mem.closeChat = func(context.Context, marotte.ChatID) {
+		mem.closeChat = func(context.Context, marotte.ChatID, *chat.Claim) {
 			locked := make(chan struct{})
 			go func() { mem.mu.Lock(); close(locked); mem.mu.Unlock() }()
 			select {
@@ -191,7 +192,7 @@ func TestTeardownRunner_NeverRunsAJobUnderTheCommitLock(t *testing.T) {
 			}
 		}
 
-		if _, _, err := mem.closeTab(t.Context(), tab, "op-close", nil); err != nil {
+		if _, _, err := mem.closeTab(t.Context(), tab, "op-close", true, nil); err != nil {
 			t.Fatal(err)
 		}
 		select {
@@ -214,14 +215,14 @@ func TestTeardownRunner_NeverRunsAJobUnderTheCommitLock(t *testing.T) {
 			_, tab := h.chatUnder(t, "op-a", "")
 			var free bool
 			ran := false
-			h.mem.closeChat = func(context.Context, marotte.ChatID) {
+			h.mem.closeChat = func(context.Context, marotte.ChatID, *chat.Claim) {
 				ran = true
 				if free = h.mem.mu.TryLock(); free {
 					h.mem.mu.Unlock()
 				}
 			}
 
-			if _, _, err := h.mem.closeTab(t.Context(), tab, "op-close", nil); err != nil {
+			if _, _, err := h.mem.closeTab(t.Context(), tab, "op-close", true, nil); err != nil {
 				t.Fatal(err)
 			}
 			if !ran {

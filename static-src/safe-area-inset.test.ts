@@ -278,7 +278,8 @@ describe("the composer's bottom clearance", () => {
     // Read off the row's own TOP inset rather than restated, so a retune of `--composer-pill-pad`
     // moves both sides of the comparison together.
     const top = parseFloat(getComputedStyle(row).paddingBlockStart);
-    expect(top, "the row's own inset term, resolved").toBeCloseTo(4, 0);
+    // The phone-width tier: a 32px control's 44px target reaches 6px past its box.
+    expect(top, "the row's own inset term, resolved").toBeCloseTo(6, 0);
     expect(inset).toBeCloseTo(top, 0);
     const page = form.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom;
     expect(page).toBeCloseTo(12, 0);

@@ -126,7 +126,7 @@ func TestCloseTab_AnImpactTheDialogDidNotCoverClosesNothing(t *testing.T) {
 			}
 			framesBefore := len(h.bus.frames(t))
 
-			_, _, err := h.mem.closeTab(t.Context(), parentTab, "op-close", page)
+			_, _, err := h.mem.closeTab(t.Context(), parentTab, "op-close", true, page)
 
 			impact := refusedImpact(t, err)
 			for k, chatID := range ids {
@@ -168,7 +168,7 @@ func TestCloseTab_ARefusedCloseReleasesItsHoldsUncommitted(t *testing.T) {
 	chatID, tab := h.chatUnder(t, "op-a", "")
 	h.impact.work[chatID] = CloseWork{Turns: []CloseTurn{{ID: "t-1"}}}
 
-	_, _, err := h.mem.closeTab(t.Context(), tab, "op-close", &marotte.CloseImpact{Chats: []marotte.ChatWork{{Ref: string(chatID)}}})
+	_, _, err := h.mem.closeTab(t.Context(), tab, "op-close", true, &marotte.CloseImpact{Chats: []marotte.ChatWork{{Ref: string(chatID)}}})
 
 	refusedImpact(t, err)
 	want := []string{"hold " + string(chatID), "release " + string(chatID)}
@@ -220,7 +220,7 @@ func TestCloseTab_ACoveredImpactCloses(t *testing.T) {
 			h.impact.work[chatID] = r.server
 			r.page.Ref = string(chatID)
 
-			closed, _, err := h.mem.closeTab(t.Context(), tab, "op-close", &marotte.CloseImpact{Chats: []marotte.ChatWork{r.page}})
+			closed, _, err := h.mem.closeTab(t.Context(), tab, "op-close", true, &marotte.CloseImpact{Chats: []marotte.ChatWork{r.page}})
 			if err != nil {
 				t.Fatalf("closeTab = %v, want the covered close to commit", err)
 			}
@@ -243,7 +243,7 @@ func TestCloseTab_NoImpactIsUnchecked(t *testing.T) {
 	chatID, tab := h.chatUnder(t, "op-a", "")
 	h.impact.work[chatID] = CloseWork{Turns: []CloseTurn{{ID: "t-1"}}, Runs: []string{"wf"}}
 
-	if _, _, err := h.mem.closeTab(t.Context(), tab, "op-close", nil); err != nil {
+	if _, _, err := h.mem.closeTab(t.Context(), tab, "op-close", true, nil); err != nil {
 		t.Fatalf("closeTab with no impact = %v, want it to close", err)
 	}
 	if n := h.impact.readCount(); n != 0 {

@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { reconcile } from "./reconcile.js";
 import { sigChanged } from "./paint-sig.js";

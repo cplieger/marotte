@@ -19,7 +19,7 @@ import { clearTurnSigs } from "./store-signals.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
-import { effect, el, touch } from "@cplieger/reactive";
+import { effect, el, touch } from "@cplieger/ui";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
 import { $ } from "./dom.js";

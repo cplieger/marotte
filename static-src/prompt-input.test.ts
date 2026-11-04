@@ -3,7 +3,7 @@
 // while Escape, which saved to a local first, worked.
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
-import { signal } from "@cplieger/reactive";
+import { signal } from "@cplieger/ui";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { refreshContextUI } from "./context-ui.js";
 import { setSessions, setActive, setChatInterruptMode, openTurn } from "./store.js";

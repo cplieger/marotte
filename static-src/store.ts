@@ -42,7 +42,7 @@ import {
   touch,
   SignalMap,
   type Signal,
-} from "@cplieger/reactive";
+} from "@cplieger/ui";
 import { forgetView, viewStale } from "./view-freshness.js";
 import {
   bumpLane,

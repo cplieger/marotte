@@ -64,25 +64,23 @@ type OpenTurnTail struct {
 // without it, an append arriving after a concurrent Delete would re-create the chat
 // directory as a ghost row.
 type Store struct {
-	broadcast   broadcaster
-	versions    *subject.Versions
-	epoch       func() string
-	listScans   listFlight
-	onPurge     func(chatID marotte.ChatID, sessionChain []string)
-	isLive      func(chatID marotte.ChatID) bool
-	hasOpenTab  func(chatID marotte.ChatID) bool
-	live        func(chatID marotte.ChatID) bool
-	openTurns   func(chatID marotte.ChatID) []OpenTurnTail
-	tombstone   map[marotte.ChatID]tombstone
-	archive     *archive.Service
-	dequeued    dequeues
-	locks       sync.Map
-	logs        sync.Map
-	dir         string
-	index       searchIndex
-	fileCap     chatFileCap
-	archiveOnce sync.Once
-	tombMu      sync.Mutex
+	broadcast broadcaster
+	tombstone map[marotte.ChatID]tombstone
+	versions  *subject.Versions
+	epoch     func() string
+	live      func(chatID marotte.ChatID) bool
+	openTurns func(chatID marotte.ChatID) []OpenTurnTail
+	locks     sync.Map
+	logs      sync.Map
+	keep      keepSets
+	dequeued  dequeues
+	listScans listFlight
+	dir       string
+	index     searchIndex
+	// boot is minted once per process; a process-scope keep fact under another boot id is dead.
+	boot    string
+	fileCap chatFileCap
+	tombMu  sync.Mutex
 }
 
 // tombstoneTTL is how long a deleted chat id blocks re-creation via Mutate: longer
@@ -121,6 +119,8 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 		fileCap:   resolveChatFileCap(),
 		tombstone: make(map[marotte.ChatID]tombstone),
 		versions:  &subject.Versions{},
+		keep:      newKeepSets(),
+		boot:      randomHex(16),
 	}
 	// Options land AFTER the derivation so an option overrides it, and the
 	// derivation's own log line still records what the container asked for.
@@ -154,18 +154,6 @@ func WithEpoch(fn func() string) StoreOption {
 	return func(s *Store) { s.epoch = fn }
 }
 
-// WithLive registers the live-chat predicate purging exempts. See
-// archive.WithLiveChats.
-func WithLive(fn func(chatID marotte.ChatID) bool) StoreOption {
-	return func(s *Store) { s.isLive = fn }
-}
-
-// WithOpenTab registers retention's second exemption: a chat with an open TAB is
-// never purged, however old. See archive.WithOpenTabs for what that costs.
-func WithOpenTab(fn func(chatID marotte.ChatID) bool) StoreOption {
-	return func(s *Store) { s.hasOpenTab = fn }
-}
-
 // WithLiveTurn registers the runtime's turn-in-flight predicate, so this package's
 // HTTP surface can STATE whether the chat's own turn is live rather than infer it
 // from the log. Injected post-construction because the agent runtime needs the
@@ -190,13 +178,6 @@ func (s *Store) isLiveChat(chatID marotte.ChatID) bool {
 		return false
 	}
 	return s.live(chatID)
-}
-
-// WithOnPurge registers a callback fired after a retention purge removes a chat.
-// sessionChain carries every KAS session the chat ran on, captured before the chat
-// directory was removed, so the purge can reap its own session directories.
-func WithOnPurge(fn func(chatID marotte.ChatID, sessionChain []string)) StoreOption {
-	return func(s *Store) { s.onPurge = fn }
 }
 
 func chatIDPattern(id marotte.ChatID) bool {
@@ -274,18 +255,16 @@ func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate 
 func (s *Store) saveLocked(ctx context.Context, chatID marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (version string, saved *marotte.Chat, exists bool, err error) {
 	c, err := s.load(ctx, chatID)
 	exists = err == nil
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	var priorChain []string
+	switch {
+	case exists:
+		priorChain = c.SessionChain()
+	case !errors.Is(err, os.ErrNotExist):
 		return "", nil, exists, err
-	}
-	if !exists {
-		// A late write must not resurrect a deleted chat as a ghost row. The refusal is named
-		// because a caller reading it as success would spawn a bridge for output discarded at
-		// persist.
-		if s.isTombstoned(chatID) {
-			slog.Info("chat: refused to resurrect tombstoned id", "chat_id", logsafe.Field(string(chatID)))
-			return "", nil, exists, ErrTombstoned
+	default:
+		if c, err = s.newRecord(chatID); err != nil {
+			return "", nil, exists, err
 		}
-		c = &marotte.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}
 	}
 	stripped := exists && s.dequeued.strip(chatID, c)
 	originalCreatedAt := c.CreatedAt
@@ -307,6 +286,9 @@ func (s *Store) saveLocked(ctx context.Context, chatID marotte.ChatID, mutate fu
 		return "", nil, exists, fmt.Errorf("chat mutate: mutator reassigned id %q → %q", chatID, c.ID)
 	}
 	c.CreatedAt = originalCreatedAt
+	if err := s.admitSave(chatID, c, exists, priorChain); err != nil {
+		return "", nil, exists, err
+	}
 	if err := validateChatUTF8(c); err != nil {
 		return "", nil, exists, err
 	}
@@ -316,11 +298,40 @@ func (s *Store) saveLocked(ctx context.Context, chatID marotte.ChatID, mutate fu
 	if stripped {
 		s.dequeued.settle(chatID)
 	}
+	if !exists {
+		s.markReconciled(chatID)
+	}
 	// The cross-chat filter indexes the title, so a header write invalidates it.
 	s.index.drop(chatID)
 	version = s.versions.BumpCounter(subject.KindChat, string(chatID))
 	slog.Debug("chat mutate", "chat_id", logsafe.Field(string(chatID)), "existed", exists)
 	return version, c, exists, nil
+}
+
+// newRecord is the zero record a create starts from. A late write must not resurrect a deleted chat as a ghost row:
+// the refusal is named because a caller reading it as success would spawn a bridge for output discarded at persist.
+func (s *Store) newRecord(chatID marotte.ChatID) (*marotte.Chat, error) {
+	if s.inTeardown(chatID) {
+		return nil, ErrInTeardown
+	}
+	if s.isTombstoned(chatID) {
+		slog.Info("chat: refused to resurrect tombstoned id", "chat_id", logsafe.Field(string(chatID)))
+		return nil, ErrTombstoned
+	}
+	return &marotte.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}, nil
+}
+
+// admitSave refuses a save that binds a session whose chat is being torn down, and starts a created record's keep
+// state (startKeep).
+func (s *Store) admitSave(chatID marotte.ChatID, c *marotte.Chat, exists bool, priorChain []string) error {
+	if s.bindsTornDownSession(priorChain, c.SessionChain()) {
+		slog.Info("chat: refused to bind a session whose chat is being torn down", "chat_id", logsafe.Field(string(chatID)))
+		return ErrInTeardown
+	}
+	if !exists {
+		startKeep(c)
+	}
+	return nil
 }
 
 // validateChatUTF8 returns errInvalidUTF8 when the chat name or the composer draft
@@ -483,17 +494,13 @@ func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) (sessionChain
 		m.Unlock()
 		return nil, loadErr
 	}
-	chatsVersion, rmErr := s.Remove(chatID)
+	chatsVersion, rmErr := s.remove(chatID)
 	missing := errors.Is(rmErr, os.ErrNotExist)
 	m.Unlock()
 	if rmErr != nil && !missing {
 		return nil, rmErr
 	}
-	if s.broadcast != nil {
-		frame := marotte.NewEvent(marotte.EventChatDeleted, chatID, marotte.ChatDeletedPayload{ID: string(chatID)})
-		frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
-		s.broadcast.Broadcast(ctx, frame)
-	}
+	s.broadcastDeleted(ctx, chatID, chatsVersion)
 	if missing {
 		slog.Info("chat delete: no-op on missing chat", "chat_id", chatID)
 	} else {
@@ -504,4 +511,15 @@ func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) (sessionChain
 		slog.Debug("chat delete", "chat_id", chatID, "tombstones", tombCount)
 	}
 	return sessionChain, nil
+}
+
+// broadcastDeleted announces a removal stamped with the `chats` version remove minted. It reads s.broadcast at call
+// time, so a broadcaster wired after construction still reaches every delete.
+func (s *Store) broadcastDeleted(ctx context.Context, chatID marotte.ChatID, chatsVersion string) {
+	if s.broadcast == nil {
+		return
+	}
+	frame := marotte.NewEvent(marotte.EventChatDeleted, chatID, marotte.ChatDeletedPayload{ID: string(chatID)})
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
+	s.broadcast.Broadcast(ctx, frame)
 }

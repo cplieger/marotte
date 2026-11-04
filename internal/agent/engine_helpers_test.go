@@ -38,8 +38,14 @@ type fakeEngineSource struct {
 	exitGate chan struct{}
 	// callGate, when set, sees every engine-lane call's scripted answer and returns the one the caller gets.
 	callGate func(ctx context.Context, method string, resp *marotte.RPCResponse, err error) (*marotte.RPCResponse, error)
+	// stalled, when set, is every engine's Stalled answer.
+	stalled func() bool
 	// withheld counts lane frames toward the position and never delivers them: a wedged engine lane.
 	withheld bool
+	// cliPath is what CLIPath answers; empty is the default path.
+	cliPath string
+	// exitHook stands in for the runtime's exit hook on a source with no runtime (an owner fixture).
+	exitHook func(gen uint64)
 	rt       *Runtime
 	engines  []*fakeEngine
 	mu       sync.Mutex
@@ -59,13 +65,28 @@ func fakeEngineOf(factory sessionFactory, lane *fakeBridge) *fakeEngineSource {
 	return &fakeEngineSource{factory: factory, lane: lane}
 }
 
-func (*fakeEngineSource) ChatPath() string              { return "/fake/kiro-cli-chat" }
+func (s *fakeEngineSource) CLIPath() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cliPath == "" {
+		return "/fake/kiro-cli"
+	}
+	return s.cliPath
+}
+
 func (*fakeEngineSource) Installed() <-chan struct{}    { return nil }
 func (*fakeEngineSource) Env() []string                 { return nil }
 func (*fakeEngineSource) EnvAllow() map[string]struct{} { return nil }
 
-func (s *fakeEngineSource) spawnEngine(gen uint64, _ string, _ ...bridge.Option) engineHandle {
-	e := &fakeEngine{src: s, gen: gen, done: make(chan struct{}), notifCh: make(chan marotte.Notification, 16)}
+// setCLIPath moves the kiro-cli the next spawn runs, as an install of a new version does.
+func (s *fakeEngineSource) setCLIPath(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cliPath = path
+}
+
+func (s *fakeEngineSource) spawnEngine(gen uint64, path string, _ ...bridge.Option) engineHandle {
+	e := &fakeEngine{src: s, gen: gen, path: path, done: make(chan struct{}), notifCh: make(chan marotte.Notification, 16)}
 	s.mu.Lock()
 	s.engines = append(s.engines, e)
 	s.mu.Unlock()
@@ -123,6 +144,7 @@ func (s *fakeEngineSource) generations() int {
 type fakeEngine struct {
 	src      *fakeEngineSource
 	opts     *marotte.EngineOpts
+	path     string
 	done     chan struct{}
 	notifCh  chan marotte.Notification
 	sessions []engineSession
@@ -198,10 +220,13 @@ func (e *fakeEngine) crash() { e.end(bridge.ExitInfo{}) }
 func (e *fakeEngine) end(info bridge.ExitInfo) {
 	e.stopOnce.Do(func() {
 		e.src.mu.Lock()
-		rt := e.src.rt
+		rt, hook := e.src.rt, e.src.exitHook
 		e.src.mu.Unlock()
-		if rt != nil {
+		switch {
+		case rt != nil:
 			rt.engine.onExit(e.gen)
+		case hook != nil:
+			hook(e.gen)
 		}
 		e.mu.Lock()
 		e.exit = info
@@ -407,6 +432,56 @@ func (e *fakeEngine) RefreshContentCollection(ctx context.Context) (bool, error)
 }
 
 func (*fakeEngine) KASLogDir() string { return "" }
+
+// StallAware stands in for bridge.Engine's: the budget expires at d unless Stalled reads true then, and is
+// checked again every d while it does. Expiry reports context.DeadlineExceeded, as the real one does.
+func (e *fakeEngine) StallAware(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	inner, cancel := context.WithCancel(ctx)
+	sc := &fakeStallCtx{Context: inner}
+	go func() {
+		timer := time.NewTimer(d)
+		defer timer.Stop()
+		for {
+			select {
+			case <-inner.Done():
+				return
+			case <-timer.C:
+				if e.Stalled() {
+					timer.Reset(d)
+					continue
+				}
+				sc.mu.Lock()
+				sc.err = context.DeadlineExceeded
+				sc.mu.Unlock()
+				cancel()
+				return
+			}
+		}
+	}()
+	return sc, cancel
+}
+
+type fakeStallCtx struct {
+	context.Context
+	err error
+	mu  sync.Mutex
+}
+
+func (c *fakeStallCtx) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return c.err
+	}
+	return c.Context.Err()
+}
+
+func (e *fakeEngine) Stalled() bool {
+	e.src.mu.Lock()
+	stalled := e.src.stalled
+	e.src.mu.Unlock()
+	return stalled != nil && stalled()
+}
 
 // newRuntimeOn builds a runtime over src and binds src's exit hook to it; Shutdown it from the test. A first engine
 // that is coming up is waited for with its boot work (awaitBoot), since that work reads the fakes a test then edits.
