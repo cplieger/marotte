@@ -107,6 +107,9 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.TabSubject](),
 	wiregen.TypeRef[marotte.TabsChangedPayload](),
 	wiregen.TypeRef[marotte.TabList](),
+	// A close_tab or delete_chat confirmation, and the impact a close_impact_changed refusal answers.
+	wiregen.TypeRef[marotte.ChatWork](),
+	wiregen.TypeRef[marotte.CloseImpact](),
 	wiregen.TypeRef[marotte.PreviewGrantRequest](),
 	wiregen.TypeRef[marotte.PreviewHint](),
 	wiregen.TypeRef[marotte.PreviewGrant](),

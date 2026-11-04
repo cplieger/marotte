@@ -44,7 +44,9 @@ type Handler func(ctx context.Context, cmd *marotte.ClientCommand) (any, error)
 // statuses in different places (e.g. ErrChatNotFound is 409 from a prompt
 // but 404 from set_mode).
 type statusError struct {
-	err    error
+	err error
+	// impact is what a refused close stops, which its confirmation did not cover; nil elsewhere.
+	impact *marotte.CloseImpact
 	reason string
 	// currentHash is the hash a refused compare-and-swap found instead of the
 	// one that was claimed; empty elsewhere.
@@ -76,6 +78,12 @@ func StatusErrorReason(code int, reason string, err error) error {
 // so the client's confirmation can say which work the cut stops.
 func statusErrorRuns(code int, reason string, runs []LiveRunRef, err error) error {
 	return &statusError{code: code, reason: reason, runs: runs, err: err}
+}
+
+// statusErrorImpact is StatusErrorReason plus the server's impact a refused close answers, so the page can confirm
+// again on what the close would stop.
+func statusErrorImpact(code int, reason string, impact *marotte.CloseImpact, err error) error {
+	return &statusError{code: code, reason: reason, impact: impact, err: err}
 }
 
 // statusErrorCurrentHash is StatusErrorReason plus the hash a refused
@@ -179,7 +187,9 @@ func (d *Dispatcher) DrainAfterClose(ctx context.Context, chatID marotte.ChatID,
 }
 
 type errorResponse struct {
-	Error string `json:"error"`
+	// Impact is what a close refused with close_impact_changed would stop. See statusErrorImpact.
+	Impact *marotte.CloseImpact `json:"impact,omitempty"`
+	Error  string               `json:"error"`
 	// Reason is the machine-readable refusal class, additive; existing
 	// clients ignore it. See StatusErrorReason.
 	Reason string `json:"reason,omitempty"`
@@ -202,6 +212,7 @@ func writeError(w http.ResponseWriter, err error) {
 	if se, ok := errors.AsType[*statusError](err); ok {
 		resp.Reason = se.reason
 		resp.Runs = se.runs
+		resp.Impact = se.impact
 		resp.CurrentHash = se.currentHash
 	}
 	webhttp.WriteJSONStatus(w, statusOf(err), resp)

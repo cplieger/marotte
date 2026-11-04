@@ -16,7 +16,7 @@ type bridgeRole struct{ coord *bridgeCoordinator }
 // in its door has no session to address, so a command sees no bridge there.
 func (b bridgeRole) Bridge(chatID marotte.ChatID) command.Bridge {
 	sb := b.coord.bridgeFor(chatID)
-	if sb == nil || sb.current() == nil {
+	if sb == nil || !sb.hasSession() {
 		return nil
 	}
 	return sb
@@ -31,8 +31,22 @@ func (b bridgeRole) OpenBridge(ctx context.Context, chatID marotte.ChatID, model
 	return sb, nil
 }
 
-func (b bridgeRole) CloseBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome) {
-	b.coord.closeBridge(ctx, chatID, outcome)
+// OpenBridgeAt is OpenBridge for a caller whose intent began at stamp.
+func (b bridgeRole) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, stamp uint64) (command.Bridge, error) {
+	sb, err := b.coord.openBridgeAt(ctx, chatID, model, stamp)
+	if err != nil || sb == nil {
+		return nil, err
+	}
+	return sb, nil
+}
+
+// RefreshForRetry abandons the empty turn's session as one lease on its entry (bridgeCoordinator.refreshForRetry).
+func (b bridgeRole) RefreshForRetry(ctx context.Context, chatID marotte.ChatID, sb command.Bridge) error {
+	entry, ok := sb.(*sharedBridge)
+	if !ok {
+		return marotte.ErrSessionClosed
+	}
+	return b.coord.refreshForRetry(ctx, chatID, entry)
 }
 
 // BridgeLive reports a bridge for the chat that is past its session open.
@@ -50,6 +64,7 @@ func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID marotte.Ch
 		stop = userStop(stopWhyChatDeleted)
 	}
 	rt.beginSteerTeardown(ctx, chatID, false)
+	rt.AwaitSessionLeases(ctx, chatID)
 	rt.runs.deleteForSessions(ctx, chatID, sessionChain, stop)
 	rt.deleteSessions(ctx, chatID, sessionChain)
 	rt.cleanupChatState(ctx, chatID)
@@ -91,24 +106,34 @@ func (rt *Runtime) EndPromptCall(turn command.TurnRef) {
 	rt.coord.EndPromptCall(turn)
 }
 
+// LifeStamp is the life gate's position now.
+func (rt *Runtime) LifeStamp() uint64 { return rt.coord.LifeStamp() }
+
+// AwaitNoClose waits until no close of chatID is held.
+func (rt *Runtime) AwaitNoClose(ctx context.Context, chatID marotte.ChatID) (bool, error) {
+	return rt.coord.AwaitNoClose(ctx, chatID)
+}
+
 // ReserveTurnForPrompt takes the chat's admission slot for a prompt, waiting up to wait; a refusal keys on the holder's source.
-func (rt *Runtime) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration) command.AdmissionOutcome {
-	return rt.coord.ReserveTurnForPrompt(ctx, chatID, wait)
+func (rt *Runtime) ReserveTurnForPrompt(
+	ctx context.Context, chatID marotte.ChatID, wait time.Duration, stamp uint64, messageID string,
+) (command.AdmissionOutcome, command.Reservation) {
+	return rt.coord.ReserveTurnForPrompt(ctx, chatID, wait, stamp, messageID)
 }
 
 // TryReserveTurn takes the chat's admission slot iff it is free.
-func (rt *Runtime) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
-	return rt.coord.TryReserveTurn(chatID, source)
+func (rt *Runtime) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
+	return rt.coord.TryReserveTurn(chatID, source, stamp)
 }
 
 // TryReserveIdleTurn takes the chat's admission slot iff no turn is open and nothing holds it.
-func (rt *Runtime) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
-	return rt.coord.TryReserveIdleTurn(chatID, source)
+func (rt *Runtime) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
+	return rt.coord.TryReserveIdleTurn(chatID, source, stamp)
 }
 
 // TryReserveTurnFenced takes the chat's admission slot iff it is free and no turn
 // opened after the fenced one.
-func (rt *Runtime) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) bool {
+func (rt *Runtime) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) (command.Reservation, bool) {
 	return rt.coord.TryReserveTurnFenced(chatID, source, fence)
 }
 
@@ -118,8 +143,8 @@ func (rt *Runtime) PromptHolder(chatID marotte.ChatID) (string, bool) {
 }
 
 // ReleaseTurnReservation frees the chat's admission slot and wakes waiters.
-func (rt *Runtime) ReleaseTurnReservation(chatID marotte.ChatID) {
-	rt.coord.ReleaseTurnReservation(chatID)
+func (rt *Runtime) ReleaseTurnReservation(res command.Reservation) {
+	rt.coord.ReleaseTurnReservation(res)
 }
 
 // AwaitTurn blocks until the named turn has finalized and reports what it did.
@@ -145,6 +170,11 @@ func (rt *Runtime) SettleTurnOnResponse(ctx context.Context, chatID marotte.Chat
 // TurnOpenedAfter reports whether any own turn on the chat opened after turnID.
 func (rt *Runtime) TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool {
 	return rt.coord.TurnOpenedAfter(chatID, turnID)
+}
+
+// TurnIsOpen reports whether turnID is an open, non-finalizing turn of the chat's live lifecycle.
+func (rt *Runtime) TurnIsOpen(chatID marotte.ChatID, turnID string) bool {
+	return rt.coord.turns.isOpen(chatID, turnID)
 }
 
 // StopRequestedAfter reports whether a stop was requested after turnID opened.
@@ -173,8 +203,9 @@ func (rt *Runtime) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpe
 }
 
 // PreSendCompact runs the compaction policy's before-a-send trigger.
-func (rt *Runtime) PreSendCompact(ctx context.Context, chatID marotte.ChatID) {
-	rt.coord.autoCompact.preSend(ctx, chatID)
+func (rt *Runtime) PreSendCompact(ctx context.Context, chatID marotte.ChatID, sb command.Bridge) {
+	entry, _ := sb.(*sharedBridge)
+	rt.coord.autoCompact.preSend(ctx, chatID, entry)
 }
 
 // AbandonInFlightTurn finalizes a turn that failed before it could end.

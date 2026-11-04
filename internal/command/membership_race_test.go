@@ -34,7 +34,7 @@ func TestMembership_ConcurrentCreateAndDeleteOfOneChat(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			_ = mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del")
+			_ = mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del", nil)
 		}()
 		wg.Wait()
 
@@ -101,7 +101,7 @@ func TestMembership_ADeleteWhoseTabCloseFailsRetriesUnderRace(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			_ = mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del")
+			_ = mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del", nil)
 		}()
 		go func() {
 			defer wg.Done()
@@ -171,7 +171,7 @@ func TestMembership_ADeleteCannotInterleaveWithACreate(t *testing.T) {
 	chats.hook = func() {
 		go func() {
 			defer close(deleted)
-			_ = mem.DeleteChatAndCloseTabs(context.Background(), chatID, "op-del")
+			_ = mem.DeleteChatAndCloseTabs(context.Background(), chatID, "op-del", nil)
 		}()
 		select {
 		case <-deleted:

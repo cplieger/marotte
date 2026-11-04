@@ -2519,7 +2519,7 @@ func agentRunOnChatAs(
 	e.mu.Lock()
 	e.sessions = append(e.sessions, first)
 	e.mu.Unlock()
-	h.bridge.mgr.insert(chat, &sharedBridge{bridge: first, state: bridgeIdle})
+	h.insertBridgeNow(chat, testBridge(first, bridgeIdle))
 	h.runs.useLog(newRunLog(t.TempDir()))
 	h.coord.runs = h.runs.log
 	if _, err := cs.Mutate(t.Context(), chat, func(c *marotte.Chat, _ bool) bool {
@@ -2725,7 +2725,9 @@ func (c *holdCell) goAsync(fn func(ctx context.Context)) {
 
 func (c *holdCell) rehydrate() {
 	runs := c.h.runs
-	c.goAsync(func(ctx context.Context) { runs.resumeInterruptedRuns(ctx, c.chat) })
+	c.goAsync(func(ctx context.Context) {
+		runs.resumeInterruptedRuns(ctx, runs.coord.turns.testLifecycle(c.chat), c.chat)
+	})
 }
 
 // engineRestart ends the engine, so the next one resumes the runs it interrupted (Runtime.resumeInterrupted).
@@ -2783,7 +2785,7 @@ func (c *holdCell) restart(t *testing.T, s *holdStep) {
 				}
 				time.Sleep(time.Millisecond)
 			}
-			runs.resumeInterruptedRuns(ctx, chat)
+			runs.resumeInterruptedRuns(ctx, runs.coord.turns.testLifecycle(chat), chat)
 		}
 	})
 	if c.c.chat() && persisted == kasPausePending {
@@ -3326,9 +3328,9 @@ func TestGateHold_EachDoorOpensItsOwnHandleOverTheCellsRun(t *testing.T) {
 		return sb
 	}
 	// Both generations open through the cell's doors, so each holds its session as forwardAt is handed it.
-	first := reopen().current()
+	first := reopen().session()
 	sb := reopen()
-	second := sb.current()
+	second := sb.session()
 	if second == first {
 		t.Error("the reload's door handed out the closed generation's session handle")
 	}

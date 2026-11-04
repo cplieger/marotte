@@ -23,7 +23,7 @@ func clearCauseHub(t *testing.T, onCancel func(clear func())) (*Runtime, *testCh
 	h, cs, br := newTestHub(WithTabs(st))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 	opened, err := h.Membership().OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c1"}, "op-open")
 	if err != nil {
 		t.Fatalf("Setup: open tab: %v", err)
@@ -108,6 +108,7 @@ func TestWorkflowMessage_AStopsClearRecordsWhoStopped(t *testing.T) {
 			}
 
 			tc.stop(t, h, tab)
+			awaitTeardown(t, h, "c1")
 
 			if c := clearCausesOf(t, cs); len(c) != 1 || c[0] != tc.wantCause {
 				t.Errorf("clear causes = %v, want [%s]", c, tc.wantCause)
@@ -158,6 +159,7 @@ func TestWorkflowMessage_ATeardownsClearKeepsItsCauseWhenAReadersStopOverlaps(t 
 	case <-time.After(5 * time.Second):
 		t.Fatal("close_tab did not answer within 5s")
 	}
+	awaitTeardown(t, h, "c1")
 
 	if c := clearCausesOf(t, cs); len(c) != 1 || c[0] != marotte.SteerClearCauseBoundary {
 		t.Errorf("clear causes = %v, want [boundary]: the clear came from the tab close's cancel", c)

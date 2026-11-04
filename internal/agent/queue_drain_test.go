@@ -124,21 +124,21 @@ func TestDrain_WaitsOutTheClosingPromptsReservation(t *testing.T) {
 	h, cs := drainHub(t)
 	armDrain(h, true)
 	seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q1", Text: "then run the tests"})
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 		t.Fatal("TryReserveTurn(c1) refused on an idle chat")
 	}
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		h.coord.afterTurnClose(t.Context(), "c1", closeFacts{outcome: marotte.TurnOutcomeCompleted})
+		h.coord.afterTurnClose(t.Context(), h.coord.turns.testLifecycle("c1"), closeFacts{outcome: marotte.TurnOutcomeCompleted})
 	}()
 	select {
 	case <-done:
 		t.Fatal("afterTurnClose returned while the closing prompt still held the slot, so the row would wait for a close that never comes")
 	case <-time.After(100 * time.Millisecond):
 	}
-	h.coord.ReleaseTurnReservation("c1")
+	h.coord.releaseHeld("c1")
 	<-done
 
 	waitFor(t, func() bool { return !h.coord.turns.live("c1") && len(closesOf(t, logOf(t, cs, "c1"))) == 2 })
@@ -152,20 +152,20 @@ func TestDrain_StandsDownWhenATurnOpensBehindTheReservation(t *testing.T) {
 	h, cs := drainHub(t)
 	armDrain(h, true)
 	seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q1", Text: "next"})
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 		t.Fatal("TryReserveTurn(c1) refused on an idle chat")
 	}
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		h.coord.afterTurnClose(t.Context(), "c1", closeFacts{outcome: marotte.TurnOutcomeCompleted})
+		h.coord.afterTurnClose(t.Context(), h.coord.turns.testLifecycle("c1"), closeFacts{outcome: marotte.TurnOutcomeCompleted})
 	}()
 	turnID, _ := h.stagePromptTurn(t, "c1")
 	<-done
 	armDrain(h, false)
 	endTurn(t, h, "c1", turnID)
-	h.coord.ReleaseTurnReservation("c1")
+	h.coord.releaseHeld("c1")
 
 	if ids := promptIDs(t, cs, "c1"); slices.Contains(ids, "m-q1") {
 		t.Errorf("turns opened = %v: the drain sent the row beside a turn that opened", ids)
@@ -270,6 +270,32 @@ func TestAppendIfLive_IdleRefusesAndLiveAppends(t *testing.T) {
 	endTurn(t, h, "c1", turnID)
 	if rows := queuedRows(t, cs, "c1"); len(rows) != 1 {
 		t.Errorf("queue = %+v, want the row a live turn accepted", rows)
+	}
+}
+
+// A row queued while the chat's close is held, or after it committed, would land in a life that is ending: refused.
+func TestAppendIfLive_AHeldOrCommittedCloseRefuses(t *testing.T) {
+	for _, commit := range []bool{false, true} {
+		name := map[bool]string{false: "held", true: "committed"}[commit]
+		t.Run(name, func(t *testing.T) {
+			h, cs := drainHub(t)
+			h.stagePromptTurn(t, "c1")
+			hold := h.HoldChat("c1")
+			defer hold.Release()
+			if commit {
+				hold.Commit()
+			}
+			live, err := h.coord.AppendIfLive(t.Context(), "c1", func(c *marotte.Chat) error {
+				c.QueuedPrompts = append(c.QueuedPrompts, marotte.QueuedPrompt{ID: "m-q1", Text: "x"})
+				return nil
+			})
+			if err != nil || live {
+				t.Errorf("AppendIfLive under a %s close = (%v, %v), want (false, nil)", name, live, err)
+			}
+			if rows := queuedRows(t, cs, "c1"); len(rows) != 0 {
+				t.Errorf("queue = %+v, want nothing stored", rows)
+			}
+		})
 	}
 }
 

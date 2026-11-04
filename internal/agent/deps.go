@@ -191,6 +191,11 @@ type engineSession interface {
 	// Close sends session/close: KAS quiesces and disposes the session in memory and keeps its persisted state. ctx
 	// bounds only the caller's wait. A refused close returns its error with the session still open.
 	Close(ctx context.Context) error
+	// Release lets go of the session at once: its lane closes, so its forward drains and exits, and the bridge owns
+	// its close from then (bridge.Session.Release).
+	Release()
+	// Released reports whether the session was released, by Release or by a Close its holder stopped waiting for.
+	Released() bool
 	// Open reports whether calls may use the session: its door succeeded, no close is under way, its engine lives.
 	Open() bool
 }

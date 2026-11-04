@@ -371,7 +371,7 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
 			chatID := runChatID("wf_deny")
-			h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+			h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
 			id := int64(90210)
 			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
@@ -427,7 +427,7 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 	}
 	h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
 	chatID := runChatID("wf_admin")
-	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
 	id := int64(4242)
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
@@ -459,7 +459,7 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	chatID := runChatID("wf_deny")
-	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
 	st, err := schedule.NewStore(t.TempDir())
 	if err != nil {
@@ -508,7 +508,7 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	chatID := runChatID("wf_deny")
-	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
 	st, err := schedule.NewStore(t.TempDir())
 	if err != nil {
@@ -559,7 +559,7 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 	chatID := runChatID("wf_deny")
 	br := &duringWriteBridge{fakeBridge: newFakeBridge()}
 	br.during = func() { h.bus.endAsksOf(br) }
-	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
 	st, err := schedule.NewStore(t.TempDir())
 	if err != nil {

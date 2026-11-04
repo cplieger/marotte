@@ -181,14 +181,15 @@ func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 	if roles.lifecycle.Draining() || len(roles.jobs.Ends(chatID)) > 0 {
 		return
 	}
-	if !roles.admission.TryReserveTurnFenced(chatID, marotte.TurnSourcePrompt, cl.Fence) {
+	res, ok := roles.admission.TryReserveTurnFenced(chatID, marotte.TurnSourcePrompt, cl.Fence)
+	if !ok {
 		return
 	}
 	live := roles.bridges.BridgeLive(chatID)
 	deathDrained := ends.Death && !ends.Undrained
 	if live || deathDrained {
 		if rows := roles.jobs.UnsentRows(chatID, deathDrained); len(rows) > 0 {
-			sendUnread(ctx, roles, chatID, rows, cl.Fence)
+			sendUnread(ctx, roles, res, rows, cl.Fence)
 			return
 		}
 	}
@@ -198,26 +199,27 @@ func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 		only = cl.AfterStop
 	}
 	if !live || (!clean && len(only) == 0) || roles.followups == nil {
-		roles.admission.ReleaseTurnReservation(chatID)
+		roles.admission.ReleaseTurnReservation(res)
 		return
 	}
-	sendNextUserRow(ctx, roles, chatID, cl.Fence, only)
+	sendNextUserRow(ctx, roles, res, cl.Fence, only)
 }
 
 // No row, or one that cannot be read, releases it. only narrows the pick (NextUserRow).
-func sendNextUserRow(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, fence TurnFence, only []string) {
+func sendNextUserRow(ctx context.Context, roles *promptRoles, res Reservation, fence TurnFence, only []string) {
+	chatID := res.Chat
 	row, ok, err := roles.followups.NextUserRow(ctx, chatID, only)
 	if err != nil || !ok {
 		if err != nil {
 			slog.Warn("queued prompts could not be read; they stay queued", "chat_id", chatID, keyError, err)
 		}
-		roles.admission.ReleaseTurnReservation(chatID)
+		roles.admission.ReleaseTurnReservation(res)
 		return
 	}
 	p := &marotte.PromptCommand{
 		Text: row.Text, MessageID: row.ID, DisplayText: row.Label, Attachments: row.Attachments, Caller: row.Caller,
 	}
-	if err := launchPrompt(ctx, roles, chatID, p, launch{dequeue: row.ID, fence: fence}); err != nil {
+	if err := launchPrompt(ctx, roles, chatID, p, &launch{res: res, dequeue: row.ID, fence: fence}); err != nil {
 		logDrainRefused(chatID, row.ID, err)
 		return
 	}
@@ -229,7 +231,8 @@ func sendNextUserRow(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 // The words are the rows' own, so the prompt carries no DisplayText: a label would
 // replace them in the transcript and in KAS's replay. It is an API caller's only when
 // no row is the user's (SharedCaller).
-func sendUnread(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, rows []SteerRow, fence TurnFence) {
+func sendUnread(ctx context.Context, roles *promptRoles, res Reservation, rows []SteerRow, fence TurnFence) {
+	chatID := res.Chat
 	keys := make([]string, 0, len(rows))
 	texts := make([]string, 0, len(rows))
 	callers := make([]*marotte.Caller, 0, len(rows))
@@ -241,7 +244,7 @@ func sendUnread(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, 
 	p := &marotte.PromptCommand{
 		Text: strings.Join(texts, "\n\n"), MessageID: ids.NewMessageID(), Caller: marotte.SharedCaller(callers),
 	}
-	if err := launchPrompt(ctx, roles, chatID, p, launch{resends: keys, fence: fence}); err != nil {
+	if err := launchPrompt(ctx, roles, chatID, p, &launch{res: res, resends: keys, fence: fence}); err != nil {
 		logDrainRefused(chatID, p.MessageID, err)
 		return
 	}

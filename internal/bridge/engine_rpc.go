@@ -410,27 +410,37 @@ func (e *Engine) request(
 	ctx context.Context, l *lane, sessionID marotte.SessionID, method string, params any, late func(*marotte.RPCResponse),
 	commit func() error,
 ) (*marotte.RPCResponse, uint64, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, 0, err
+	resp, seq, _, err := e.send(ctx, l, sessionID, method, params, late, commit)
+	return resp, seq, err
+}
+
+// send is request plus whether ctx abandoned the request after it was written, so its reply goes to late.
+func (e *Engine) send(
+	ctx context.Context, l *lane, sessionID marotte.SessionID, method string, params any, late func(*marotte.RPCResponse),
+	commit func() error,
+) (resp *marotte.RPCResponse, seq uint64, abandoned bool, err error) {
+	if cErr := ctx.Err(); cErr != nil {
+		return nil, 0, false, cErr
 	}
 	id := e.nextID.Add(1)
 	data, err := json.Marshal(marotte.RPCRequest{JSONRPC: jsonRPCVersion, ID: id, Method: method, Params: params})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	entry := e.register(id, l, sessionID, late)
 	refused, writeErr := e.writeFrameIf(append(data, '\n'), commit)
 	if refused != nil {
 		e.deregisterPending(id)
-		return nil, 0, refused
+		return nil, 0, false, refused
 	}
 	if writeErr != nil {
 		e.deregisterPending(id)
-		return nil, 0, &marotte.TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
+		return nil, 0, false, &marotte.TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
 	}
 	select {
 	case reply := <-entry.ch:
-		return replyOutcome(reply)
+		resp, seq, err = replyOutcome(reply)
+		return resp, seq, false, err
 	case <-ctx.Done():
 		e.pendingMu.Lock()
 		if _, ok := e.pending[id]; ok {
@@ -440,11 +450,12 @@ func (e *Engine) request(
 				delete(e.pending, id)
 			}
 			e.pendingMu.Unlock()
-			return nil, 0, ctx.Err()
+			return nil, 0, late != nil, ctx.Err()
 		}
 		e.pendingMu.Unlock()
 		// deliverResponse took the entry before the abandon, and sends under pendingMu, so the reply is waiting.
-		return replyOutcome(<-entry.ch)
+		resp, seq, err = replyOutcome(<-entry.ch)
+		return resp, seq, false, err
 	}
 }
 

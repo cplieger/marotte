@@ -18,12 +18,12 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		Bus:      r.Bus,
 		Teardown: r.Teardown,
 		CloseChat: func(ctx context.Context, chatID marotte.ChatID) {
-			closeChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID)
+			closeChatTeardown(ctx, r.Perms, r.Stops, r.Teardown, chatID)
 		},
 		// The delete grade, for a chat the close already erased: everything
 		// travels on the captured chain, since the record is gone by now.
-		DeleteChat: func(ctx context.Context, chatID marotte.ChatID, sessionChain []string) {
-			deleteChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID, sessionChain)
+		DeleteChat: func(ctx context.Context, chatID marotte.ChatID, sessionChain []string, cause RunStopCause) {
+			deleteChatTeardown(ctx, r.Perms, r.Stops, r.Teardown, chatID, sessionChain, cause)
 		},
 		// Fails toward KEEPING — deliberately not the purge's reader, whose
 		// 0-sentinel points the other way.
@@ -35,8 +35,10 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		SupervisedDefault: func(ctx context.Context) bool {
 			return supervisedDefaultSetting(ctx, r.Workspace.ConfigDir)
 		},
-		Runs:     r.Runs,
-		Sessions: r.Sessions,
+		Runs:      r.Runs,
+		Sessions:  r.Sessions,
+		Lifecycle: r.Lifecycle,
+		Impact:    r.Impact,
 	})
 
 	d.Register(marotte.CmdCreateChat, bind1(mem, cmdCreateChat))

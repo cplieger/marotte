@@ -50,9 +50,9 @@
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
       "sites": [
-        "internal/agent/bridge_coord.go:1514",
+        "internal/agent/bridge_coord.go:1710",
         "internal/agent/entry_merge.go:606",
-        "internal/agent/runtime.go:785"
+        "internal/agent/runtime.go:790"
       ]
     },
     {
@@ -160,7 +160,7 @@
       "reason": "boundary",
       "label": "Not read · the turn ended first",
       "sites": [
-        "internal/agent/command_chat_ops.go:58",
+        "internal/agent/command_chat_ops.go:150",
         "internal/agent/steer_buffer.go:431",
         "internal/translate/steering.go:198"
       ]
@@ -172,7 +172,7 @@
       "label": "Not read · the session restarted",
       "sites": [
         "internal/agent/entry_merge.go:606",
-        "internal/agent/runtime.go:779"
+        "internal/agent/runtime.go:784"
       ]
     },
     {
@@ -200,14 +200,14 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1514",
+      "site": "internal/agent/bridge_coord.go:1710",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/command_chat_ops.go:58",
+      "site": "internal/agent/command_chat_ops.go:150",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
@@ -256,14 +256,14 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:779",
+      "site": "internal/agent/runtime.go:784",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/runtime.go:785",
+      "site": "internal/agent/runtime.go:790",
       "form": "mutation",
       "origin": "agent",
       "state": "dropped",

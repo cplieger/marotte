@@ -485,9 +485,9 @@ func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	br, ok := unguarded(sb.bridge).(*fakeBridge)
+	br, ok := unguarded(sb.session()).(*fakeBridge)
 	if !ok {
-		t.Fatalf("the chat's bridge is %T, want the fake", sb.bridge)
+		t.Fatalf("the chat's bridge is %T, want the fake", sb.session())
 	}
 	if opts := br.lastSessionOpts(); opts == nil || opts.SessionID == "" {
 		// Without a named session the fake replays nothing, so fail as invalid.
@@ -516,7 +516,7 @@ func TestForward_ReportsEachFramesOwnPosition(t *testing.T) {
 	}
 
 	h.replay.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
-	att := h.coord.turns.attachForward(chatID)
+	att := h.coord.turns.attachForwardNow(chatID)
 	gen := att.gen
 	go h.coord.forwardAt(chatID, br, att)
 
@@ -662,6 +662,7 @@ func TestSwapProjectedTranscript_AnnouncesTheReplacement(t *testing.T) {
 		t.Fatal("seeding the chat broadcast nothing, so there is no id to measure from")
 	}
 
+	h.coord.turns.testLifecycle(chatID)
 	h.replay.swapProjectedTranscript(chatID, projectedTurn(t, h))
 
 	if got := textsOf(t, logOf(t, cs, chatID)); !slices.Contains(got, "reply") {
@@ -688,10 +689,12 @@ func TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged(t *testin
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)
+	h.coord.turns.testLifecycle(chatID)
 	h.replay.swapProjectedTranscript(chatID, projectedTurn(t, h))
 	first := logOf(t, cs, chatID)
 	before := bufferedSince(h, 0)
 
+	h.coord.turns.testLifecycle(chatID)
 	h.replay.swapProjectedTranscript(chatID, projectedTurn(t, h))
 
 	if got := extractTypes(t, bufferedSince(h, before[len(before)-1].Offset)); slices.Contains(got, string(marotte.EventSubjectChanged)) {
@@ -710,6 +713,7 @@ func TestSwapProjectedTranscript_WritesOnACancelledLifetime(t *testing.T) {
 
 	h.lifecycle.shutdownCancel()
 
+	h.coord.turns.testLifecycle(chatID)
 	h.replay.swapProjectedTranscript(chatID, projectedTurn(t, h))
 
 	if got := textsOf(t, logOf(t, cs, chatID)); !slices.Contains(got, "reply") {

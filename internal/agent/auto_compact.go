@@ -2,12 +2,12 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
-	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -64,9 +64,10 @@ type autoCompactState struct {
 
 // Every compaction is KAS's own verb through command.Compact.
 type autoCompactor struct {
-	chats    map[marotte.ChatID]*autoCompactState
-	live     func(marotte.ChatID) bool
-	bridgeOf func(marotte.ChatID) engineSession
+	chats map[marotte.ChatID]*autoCompactState
+	live  func(marotte.ChatID) bool
+	// bridgeOf is the chat's live entry, nil for none; every compaction call is one lease on it.
+	bridgeOf func(marotte.ChatID) *sharedBridge
 	usage    func(context.Context, marotte.ChatID) (marotte.Usage, bool)
 	policy   func(context.Context) (enabled bool, pct int)
 	compact  func(context.Context, command.CompactBridge) (bool, error)
@@ -77,12 +78,12 @@ func newAutoCompactor(bc *bridgeCoordinator) *autoCompactor {
 	return &autoCompactor{
 		chats: map[marotte.ChatID]*autoCompactState{},
 		live:  bc.turns.live,
-		bridgeOf: func(chatID marotte.ChatID) engineSession {
+		bridgeOf: func(chatID marotte.ChatID) *sharedBridge {
 			if !bc.bridgeLive(chatID) {
 				return nil
 			}
-			if sb := bc.bridgeFor(chatID); sb != nil {
-				return sb.current()
+			if sb := bc.bridgeFor(chatID); sb != nil && sb.hasSession() {
+				return sb
 			}
 			return nil
 		},
@@ -132,7 +133,7 @@ func (a *autoCompactor) forget(chatID marotte.ChatID) {
 }
 
 // read gathers the policy's inputs, or false with no live bridge or chat record.
-func (a *autoCompactor) read(ctx context.Context, chatID marotte.ChatID) (engineSession, compactReading, bool) {
+func (a *autoCompactor) read(ctx context.Context, chatID marotte.ChatID) (*sharedBridge, compactReading, bool) {
 	b := a.bridgeOf(chatID)
 	if b == nil {
 		return nil, compactReading{}, false
@@ -147,7 +148,7 @@ func (a *autoCompactor) read(ctx context.Context, chatID marotte.ChatID) (engine
 		pct:              pct,
 		contextPct:       u.ContextPct,
 		hasRealData:      u.HasRealData,
-		kasAutoOff:       b.AutoCompactionDisabled(),
+		kasAutoOff:       b.autoCompactionDisabled(),
 		sessionThreshold: u.SummarizationThresholdPct,
 	}, true
 }
@@ -158,7 +159,6 @@ func (a *autoCompactor) afterTurn(ctx context.Context, chatID marotte.ChatID) {
 	if a == nil {
 		return
 	}
-	ctx = durable.Context(ctx)
 	if a.live(chatID) {
 		return
 	}
@@ -188,12 +188,16 @@ func (a *autoCompactor) afterTurn(ctx context.Context, chatID marotte.ChatID) {
 }
 
 // preSend awaits a running compaction so the prompt does not abort it, and compacts first
-// only where marotte is the session's one compactor. It never refuses the send.
-func (a *autoCompactor) preSend(ctx context.Context, chatID marotte.ChatID) {
+// only where marotte is the session's one compactor. It never refuses the send. prompt is the prompt's own entry: a
+// prompt whose entry is no longer the chat's (its life ended) touches nothing; nil is the chat's current one.
+func (a *autoCompactor) preSend(ctx context.Context, chatID marotte.ChatID, prompt *sharedBridge) {
 	if a == nil {
 		return
 	}
 	b, r, ok := a.read(ctx, chatID)
+	if prompt != nil && b != prompt {
+		return
+	}
 	// Join or claim under one lock, so a turn-end claim is joined, never raced.
 	a.mu.Lock()
 	if st := a.chats[chatID]; st != nil && st.inflight != nil {
@@ -235,9 +239,14 @@ func (*autoCompactor) await(ctx context.Context, chatID marotte.ChatID, running 
 }
 
 // A refusal or error changes nothing and is retried at the next trigger.
-func (a *autoCompactor) run(ctx context.Context, chatID marotte.ChatID, st *autoCompactState, done chan struct{}, b engineSession, atPct float64, trigger string) {
+func (a *autoCompactor) run(ctx context.Context, chatID marotte.ChatID, st *autoCompactState, done chan struct{}, b *sharedBridge, atPct float64, trigger string) {
 	callCtx, cancel := context.WithTimeout(ctx, autoCompactPreSendBudget)
-	accepted, err := a.compact(callCtx, b)
+	var accepted bool
+	err := b.use(callCtx, func(ctx context.Context, s engineSession) error {
+		var cErr error
+		accepted, cErr = a.compact(ctx, s)
+		return cErr
+	})
 	cancel()
 
 	a.mu.Lock()
@@ -253,6 +262,8 @@ func (a *autoCompactor) run(ctx context.Context, chatID marotte.ChatID, st *auto
 	close(done)
 
 	switch {
+	case errors.Is(err, marotte.ErrChatClosedDuringCall):
+		slog.Debug("auto-compaction stood down: the chat closed", "chat_id", chatID, "trigger", trigger)
 	case err != nil:
 		slog.Warn("auto-compaction failed", "chat_id", chatID, "trigger", trigger, "context_pct", atPct, "error", err)
 	case !accepted:

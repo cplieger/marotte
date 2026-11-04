@@ -1,11 +1,15 @@
 // What closing a tab stops: the server's close cancels the chat's reply, its questions, its
 // workflow runs and its unread queued messages, tangents included, with no undo. An idle close
-// asks nothing.
+// asks nothing. The server checks the ids the dialog named against what it would stop and
+// refuses a close another device made stale (`close_impact_changed`).
 
-import { chatOutstanding } from "./chat-settled.js";
 import { confirm } from "./confirm.js";
+import { pendingDecisionIDs } from "./decision-dock.js";
 import { sessionDrain } from "./queue-slots.js";
-import { get } from "./store.js";
+import { liveRunIDsForChat } from "./run-store.js";
+import { get, turnLive } from "./store.js";
+import { inFlightMessageIDs } from "./submit.js";
+import type { ChatWork, CloseImpact } from "./wire/types.gen.js";
 
 /** One chat row the close takes with it: its ref and the name its tab shows. */
 export interface ClosingChat {
@@ -13,45 +17,102 @@ export interface ClosingChat {
   readonly name: string;
 }
 
-/** The live work a close stops, by kind. */
-interface CloseImpact {
+/** A gate's answer: the dialog's verdict (a plain `true` when nothing is stopped) and the impact
+ *  the close sends, read in the same pass as the dialog's text. */
+export interface CloseConfirm {
+  readonly verdict: true | Promise<boolean>;
+  readonly impact: CloseImpact;
+}
+
+/** One chat's work by id, from the signals the tab strip paints from: its open turns and its own
+ *  sends still in flight, its asks, its live runs, its unread steers and its follow-ups whose turn
+ *  has not opened. */
+function chatWork(ref: string): ChatWork {
+  const session = get(ref);
+  const turns: string[] = [];
+  if (session !== undefined) {
+    for (const [id, state] of session.turns) {
+      if (state.closeAt === undefined) {
+        turns.push(id);
+      }
+    }
+  }
+  turns.push(...inFlightMessageIDs(ref));
+  return {
+    ref,
+    turns,
+    asks: pendingDecisionIDs(ref),
+    runs: liveRunIDsForChat(ref),
+    steers: (session?.steers ?? []).map((s) => s.id),
+    queued:
+      session === undefined
+        ? []
+        : sessionDrain(session)
+            .rows.filter((r) => r.wait.kind !== "sent")
+            .map((r) => r.row.id),
+  };
+}
+
+function closeStopsWork(chats: readonly ClosingChat[]): CloseImpact {
+  return { chats: chats.map((c) => chatWork(c.ref)) };
+}
+
+function union(a: readonly string[], b: readonly string[]): string[] {
+  return [...new Set([...a, ...b])];
+}
+
+/** Each chat's id lists as the union of what the page sent and what the server answered; a chat
+ *  only the server named is added. */
+export function mergeImpact(sent: CloseImpact, server: CloseImpact): CloseImpact {
+  const byRef = new Map<string, ChatWork>();
+  for (const w of [...sent.chats, ...server.chats]) {
+    const had = byRef.get(w.ref);
+    byRef.set(
+      w.ref,
+      had === undefined
+        ? { ...w }
+        : {
+            ref: w.ref,
+            turns: union(had.turns, w.turns),
+            asks: union(had.asks, w.asks),
+            runs: union(had.runs, w.runs),
+            steers: union(had.steers, w.steers),
+            queued: union(had.queued, w.queued),
+          },
+    );
+  }
+  return { chats: [...byRef.values()] };
+}
+
+/** The chats of `impact` with each kind of work, named as `chats` shows them (the ref for a chat
+ *  the page has no row for). */
+interface WorkByKind {
   readonly replies: readonly ClosingChat[];
   readonly asks: readonly ClosingChat[];
   readonly runs: number;
   readonly queued: number;
 }
 
-/** Read every term from the signals the tab strip paints from, so the confirm never disagrees
- *  with the dots. Queued counts unread steers plus follow-ups whose turn has not opened. */
-function closeStopsWork(chats: readonly ClosingChat[]): CloseImpact {
-  const replies: ClosingChat[] = [];
-  const asks: ClosingChat[] = [];
-  let runs = 0;
-  let queued = 0;
-  for (const chat of chats) {
-    const outstanding = chatOutstanding(chat.ref);
-    if (outstanding.turn) {
-      replies.push(chat);
-    }
-    if (outstanding.asks) {
-      asks.push(chat);
-    }
-    runs += outstanding.runs;
-    const session = get(chat.ref);
-    if (session !== undefined) {
-      queued += (session.steers ?? []).length;
-      queued += sessionDrain(session).rows.filter((r) => r.wait.kind !== "sent").length;
-    }
-  }
-  return { replies, asks, runs, queued };
+/** A chat replies when the impact names a turn of it, or when its row says a turn runs whose id
+ *  this page has not loaded (`turnLive`); the server names that one on a refusal. */
+function byKind(impact: CloseImpact, chats: readonly ClosingChat[]): WorkByKind {
+  const names = new Map(chats.map((c) => [c.ref, c.name]));
+  const named = (w: ChatWork): ClosingChat => ({ ref: w.ref, name: names.get(w.ref) ?? w.ref });
+  const replying = (w: ChatWork): boolean => {
+    const session = get(w.ref);
+    return w.turns.length > 0 || (session !== undefined && turnLive(session));
+  };
+  return {
+    replies: impact.chats.filter(replying).map(named),
+    asks: impact.chats.filter((w) => w.asks.length > 0).map(named),
+    runs: impact.chats.reduce((n, w) => n + w.runs.length, 0),
+    queued: impact.chats.reduce((n, w) => n + w.steers.length + w.queued.length, 0),
+  };
 }
 
-function isIdle(impact: CloseImpact): boolean {
+function isIdle(work: WorkByKind): boolean {
   return (
-    impact.replies.length === 0 &&
-    impact.asks.length === 0 &&
-    impact.runs === 0 &&
-    impact.queued === 0
+    work.replies.length === 0 && work.asks.length === 0 && work.runs === 0 && work.queued === 0
   );
 }
 
@@ -79,46 +140,80 @@ function perChat(
   return `${named} ${listOf(chats.map((c) => c.name))}`;
 }
 
-/** The confirm's text for closing the tab named `name`, whose own chat is `ref` ("" for a tab
- *  that is not a chat). */
-function closeImpactText(name: string, ref: string, impact: CloseImpact): string {
+/** What the close stops, as the clauses after "Closing <name>"; `ref` is the closed tab's own
+ *  chat ("" for none), which goes unnamed. */
+function stopsClauses(ref: string, work: WorkByKind): string[] {
   const parts: string[] = [];
-  if (impact.replies.length > 0) {
-    const named = impact.replies.length === 1 ? "stops the reply in" : "stops the replies in";
-    parts.push(perChat(impact.replies, ref, "stops the reply", named));
+  if (work.replies.length > 0) {
+    const named = work.replies.length === 1 ? "stops the reply in" : "stops the replies in";
+    parts.push(perChat(work.replies, ref, "stops the reply", named));
   }
-  if (impact.asks.length > 0) {
+  if (work.asks.length > 0) {
     parts.push(
       perChat(
-        impact.asks,
+        work.asks,
         ref,
         "cancels the question waiting for your answer",
-        impact.asks.length === 1
+        work.asks.length === 1
           ? "cancels the question waiting for your answer in"
           : "cancels the questions waiting for your answer in",
       ),
     );
   }
-  if (impact.runs > 0) {
-    parts.push(`cancels ${count(impact.runs, "workflow run", "workflow runs")}`);
+  if (work.runs > 0) {
+    parts.push(`cancels ${count(work.runs, "workflow run", "workflow runs")}`);
   }
-  if (impact.queued > 0) {
-    parts.push(`drops ${count(impact.queued, "queued message", "queued messages")}`);
+  if (work.queued > 0) {
+    parts.push(`drops ${count(work.queued, "queued message", "queued messages")}`);
   }
-  return `Closing ${name} ${listOf(parts)}.`;
+  return parts;
+}
+
+function askToStop(
+  name: string,
+  ref: string,
+  chats: readonly ClosingChat[],
+  impact: CloseImpact,
+): true | Promise<boolean> {
+  const work = byKind(impact, chats);
+  if (isIdle(work)) {
+    return true;
+  }
+  return confirm(
+    `Closing ${name} ${listOf(stopsClauses(ref, work))}.`,
+    "Close and stop",
+    "destructive",
+  );
 }
 
 /** The gate tabs.ts runs before a person's close of the tab named `name` (chat `ref`, or "")
- *  taking `chats` with it: a plain `true` when none has live work, else the destructive
- *  confirm's answer. */
+ *  taking `chats` with it. With `stale` (the impact the refused close sent and the server's
+ *  answer) it asks again on their merge, naming a chat only the server knew by `chats`' name for
+ *  it. */
 export function confirmBusyClose(
   name: string,
   ref: string,
   chats: readonly ClosingChat[],
-): true | Promise<boolean> {
-  const impact = closeStopsWork(chats);
-  if (isIdle(impact)) {
-    return true;
+  stale?: { readonly sent: CloseImpact; readonly server: CloseImpact },
+): CloseConfirm {
+  const impact =
+    stale === undefined ? closeStopsWork(chats) : mergeImpact(stale.sent, stale.server);
+  return { verdict: askToStop(name, ref, chats, impact), impact };
+}
+
+/** What a History delete of a chat also stops in the chats under its tabs (`chats`, the deleted
+ *  chat excluded): the sentence its confirm appends ("" when they are all idle) and the impact the
+ *  delete sends, which lists every one of them. With `server` it is the merge of `sent` and the
+ *  server's answer. */
+export function deleteStopsWork(
+  chats: readonly ClosingChat[],
+  stale?: { readonly sent: CloseImpact; readonly server: CloseImpact },
+): { readonly text: string; readonly impact: CloseImpact } {
+  const impact =
+    stale === undefined ? closeStopsWork(chats) : mergeImpact(stale.sent, stale.server);
+  const work = byKind(impact, chats);
+  if (isIdle(work)) {
+    return { text: "", impact };
   }
-  return confirm(closeImpactText(name, ref, impact), "Close and stop", "destructive");
+  return { text: `Closing its tabs also ${listOf(stopsClauses("", work))}.`, impact };
 }

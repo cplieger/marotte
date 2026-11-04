@@ -54,7 +54,7 @@ func newRunTabMembership(t *testing.T, chats chatStore, runs runOwner) (*Members
 		t.Fatalf("open tab store: %v", err)
 	}
 	bus := &tabBus{}
-	return newMembership(&membershipDeps{Chats: chats, Tabs: st, Bus: bus, Runs: runs}), st
+	return newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: chats, Tabs: st, Bus: bus, Runs: runs}), st
 }
 
 func runTabParent(t *testing.T, st *tabs.Store, workflowID string) string {
@@ -207,7 +207,8 @@ func TestOpenTab_ReopensAClosedLaunchersTab(t *testing.T) {
 	}
 	bus := &tabBus{}
 	mem := newMembership(&membershipDeps{
-		Chats: store, Tabs: st, Bus: bus,
+		Teardown: &recordingTeardown{},
+		Chats:    store, Tabs: st, Bus: bus,
 		Runs: &fakeRunOwner{chats: map[string]marotte.ChatID{"wf_1": "c-launcher"}},
 	})
 	seedRecord(t, store, "c-launcher")

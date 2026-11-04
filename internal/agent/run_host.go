@@ -103,36 +103,44 @@ func (rs *Runs) launchAs(
 	// The host session's presets are resolved once and recorded on the lease: a reload after a restart applies
 	// these, never the profile as it is then.
 	presets := securityPresets(cctx, rs.lifecycle.configDir)
-	sb := &sharedBridge{state: bridgeStarting, settled: newSessionSettle()}
+	sb := newSharedBridge(runHostLife{ctx: rs.lifecycle.shutdownCtx})
 	var relay *hostRelay
 	door := &marotte.SessionOpts{
 		Role: marotte.SessionRoleHost, Presets: presets, AdditionalDirectories: rs.lifecycle.sessionDirs(cctx),
 	}
 	if _, oErr := rs.engine.openSession(cctx, door,
-		func(s engineSession) {
+		func(s engineSession) error {
 			relay = newHostRelay(s, func(msg *marotte.RPCResponse) { rs.answerEarly(s, msg) })
 			sb.attach(relay)
+			return nil
 		}); oErr != nil {
 		return "", "", fmt.Errorf("%w: %w", errRunHostStart, oErr)
 	}
-	host := sb.current()
-	parent := host.SessionID()
+	parent := sb.SessionID()
 	if parent == "" {
-		rs.bridges.closeSession(host)
+		sb.closeOwned(rs.bridges.closeSession)
 		return "", "", fmt.Errorf("%w: the host session's door answered no session id", errRunHostStart)
 	}
-	wfID, err := rs.workflowNew(cctx, host, recipe.Source, inputs, defaults, parent, o.runLabel(recipe.Name))
+	var wfID string
+	err = sb.useRun(cctx, func(ctx context.Context, s engineSession) error {
+		var nErr error
+		wfID, nErr = rs.workflowNew(ctx, s, recipe.Source, inputs, defaults, parent, o.runLabel(recipe.Name))
+		return nErr
+	})
 	if err != nil {
-		rs.bridges.closeSession(host)
+		sb.closeOwned(rs.bridges.closeSession)
 		return "", "", err
 	}
 	if !rs.bridges.insert(runChatID(wfID), sb) {
-		rs.bridges.closeSession(host)
+		sb.closeOwned(rs.bridges.closeSession)
 		return "", "", fmt.Errorf("workflow %s already has a host session", wfID)
 	}
 	sb.setIdle()
 	sb.settled.settle(nil)
-	rs.coord.goForward(runChatID(wfID), host)
+	_ = sb.useRun(cctx, func(_ context.Context, s engineSession) error {
+		rs.coord.goRunForward(runChatID(wfID), s)
+		return nil
+	})
 	relay.begin()
 	// The run's envelope, before anything can execute (runlease.Lease).
 	rs.grantLease(cctx, wfID, recipe.Name, o, hostSecurityOf(presets))
@@ -971,12 +979,20 @@ func resumablePause(reason string, detail *pauseDetail) bool {
 var orphanResumeDelay = 165 * time.Second
 
 // resumeInterruptedRuns resumes the restart-paused runs this chat's session chain launched, and sweeps again after
-// orphanResumeDelay while KAS has not yet reconciled one; never resumeAll, which would undo deliberate pauses.
-func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID marotte.ChatID) {
-	if s := rs.resumeChainRuns(ctx, chatID); s.running || s.failed {
+// orphanResumeDelay while KAS has not yet reconciled one; never resumeAll, which would undo deliberate pauses. Each
+// later sweep is lc's work, so once the chat's life ended the sweeps stand down: its next open runs its own.
+func (rs *Runs) resumeInterruptedRuns(ctx context.Context, lc *chatLifecycle, chatID marotte.ChatID) {
+	if s := rs.resumeChainRuns(ctx, chatID, lc.endedNow); s.running || s.failed {
 		slog.Info("rehydrate: a run is still listed running, or the chat's runs could not be listed or resumed; sweeping again later",
 			"chat_id", chatID, "delay", orphanResumeDelay)
-		rs.retryResumeLater(func(ctx context.Context) bool { return rs.resumeChainRuns(ctx, chatID).failed },
+		begin := func() (context.Context, func(), bool) {
+			ctx, done, ok := lc.beginWork(workSweep)
+			if !ok {
+				slog.Debug("rehydrate: the chat closed; its later run sweeps stand down", "chat_id", chatID)
+			}
+			return ctx, done, ok
+		}
+		rs.retryResumeLater(begin, func(ctx context.Context) bool { return rs.resumeChainRuns(ctx, chatID, lc.endedNow).failed },
 			func(sweeps int) {
 				slog.Error("rehydrate: the chat's runs could not be listed or resumed by any sweep; the chat's next reopen tries again",
 					"chat_id", chatID, "sweeps", sweeps)
@@ -988,23 +1004,34 @@ func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID marotte.ChatID
 const maxResweeps = 5
 
 // retryResumeLater follows the caller's one try: it calls try after orphanResumeDelay, again while it reports a
-// failed resume, until maxResweeps tries in all, then spent with that count. A stopping runtime tries nothing more.
-func (rs *Runs) retryResumeLater(try func(context.Context) (failed bool), spent func(tries int)) {
-	var after func(done int)
-	after = func(done int) {
-		if done >= maxResweeps {
-			spent(done)
+// failed resume, until maxResweeps tries in all, then spent with that count. Each try runs on the context begin
+// answers and calls its done when it returns; a refused begin, or a stopping runtime, tries nothing more.
+func (rs *Runs) retryResumeLater(begin func() (context.Context, func(), bool), try func(context.Context) (failed bool), spent func(tries int)) {
+	var after func(tries int)
+	after = func(tries int) {
+		if tries >= maxResweeps {
+			spent(tries)
 			return
 		}
 		rs.lifecycle.afterUnlessDraining(orphanResumeDelay, func() {
-			hctx, cancel := rs.lifecycle.derivedContext()
-			defer cancel()
-			if try(hctx) {
-				after(done + 1)
+			ctx, done, ok := begin()
+			if !ok {
+				return
+			}
+			failed := try(ctx)
+			done()
+			if failed {
+				after(tries + 1)
 			}
 		})
 	}
 	after(1)
+}
+
+// runtimeSweep is a sweep outside any chat's life, on the runtime's lifetime: it always begins.
+func (rs *Runs) runtimeSweep() (context.Context, func(), bool) {
+	ctx, cancel := rs.lifecycle.derivedContext()
+	return ctx, cancel, true
 }
 
 // chainSweep is what one resume sweep left unreconciled: a run still listed running, which after an engine end KAS
@@ -1014,8 +1041,9 @@ type chainSweep struct {
 	failed  bool
 }
 
-// resumeChainRuns is one resume sweep of chatID's session chain.
-func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID) (s chainSweep) {
+// resumeChainRuns is one resume sweep of chatID's session chain, standing down before a resume once ended reports
+// the chat's life over.
+func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID, ended func() bool) (s chainSweep) {
 	chat, ok := rs.chats.Get(ctx, chatID)
 	if !ok {
 		return s
@@ -1039,6 +1067,9 @@ func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID) (s c
 		}
 		switch marotte.RunStatus(r.Status) {
 		case marotte.RunStatusPaused:
+			if ended() {
+				return s
+			}
 			if rs.resumeIfInterrupted(ctx, chatID, r.WorkflowID) == resumeFailed {
 				s.failed = true
 			}

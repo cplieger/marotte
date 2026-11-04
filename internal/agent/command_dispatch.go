@@ -20,6 +20,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		Effort:    rt.coord,
 		Modes:     rt.coord,
 		Teardown:  rt,
+		Impact:    rt,
 		Perms:     rt.bus,
 		Profiles:  rt,
 		Terminals: rt.agentTerms,

@@ -543,7 +543,7 @@ func (o *engineOwner) releaseDoor() {
 }
 
 // openSession creates a session on the engine under an id it mints; see engineHandle.NewSession for attach.
-func (o *engineOwner) openSession(ctx context.Context, so *marotte.SessionOpts, attach func(engineSession)) (engineSession, error) {
+func (o *engineOwner) openSession(ctx context.Context, so *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error) {
 	h, _, release, err := o.acquire(ctx)
 	if err != nil {
 		return nil, err
@@ -553,14 +553,14 @@ func (o *engineOwner) openSession(ctx context.Context, so *marotte.SessionOpts, 
 }
 
 // loadSession loads so.SessionID on the engine.
-func (o *engineOwner) loadSession(ctx context.Context, so *marotte.SessionOpts, attach func(engineSession)) error {
+func (o *engineOwner) loadSession(ctx context.Context, so *marotte.SessionOpts, attach func(engineSession) error) error {
 	_, _, err := o.loadSessionAfter(ctx, 0, so, attach)
 	return err
 }
 
 // loadSessionAfter loads so.SessionID on a generation later than after, reporting the generation it ran on.
 func (o *engineOwner) loadSessionAfter(
-	ctx context.Context, after uint64, so *marotte.SessionOpts, attach func(engineSession),
+	ctx context.Context, after uint64, so *marotte.SessionOpts, attach func(engineSession) error,
 ) (session engineSession, gen uint64, err error) {
 	h, gen, release, err := o.acquireAfter(ctx, after)
 	if err != nil {

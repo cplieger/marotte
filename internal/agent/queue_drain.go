@@ -18,34 +18,49 @@ import (
 var errQueueChatGone = errors.New("agent: the chat has no record to queue on")
 
 // AppendIfLive applies fn to the record while the chat holds a live turn or a KAS hold, in the lifecycle section
-// (lifecycle then store), waiting out a finalizing turn: the close sees the row or the caller sees no turn. A row
+// (lifecycle then store), waiting out a finalizing turn: the close sees the row or the caller sees no turn. A life
+// that ended or a close being decided appends nothing, so a close's impact read sees every row it stops. A row
 // appended under a hold with no turn live is owed a send despite the stop; kasExec.holdRows owns which drain takes it.
 func (bc *bridgeCoordinator) AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
 	live := false
 	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
+		if v, _ := bc.turns.gates.admit(chatID, lc.stamp); lc.ended || v != gateAdmitted {
+			return nil
+		}
 		turnLive := lc.liveLockedState()
 		if !turnLive && !lc.kas.may().holdRows {
 			return nil
 		}
 		live = true
-		var fnErr error
-		var added []string
-		if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
-			if !exists {
-				fnErr = errQueueChatGone
-				return false
-			}
-			added, fnErr = appendedRows(c, fn)
-			return fnErr == nil && len(added) > 0
-		}); err != nil {
-			return err
-		}
-		if fnErr == nil && !turnLive {
-			lc.kas.keepHoldRows(added)
-		}
-		return fnErr
+		return bc.appendLocked(ctx, lc, chatID, turnLive, fn)
 	})
+	if errors.Is(err, errNoLife) {
+		return false, nil
+	}
 	return live, err
+}
+
+// appendLocked is AppendIfLive's write, under lc.mu: fn on the record, and the rows it added kept for the KAS hold's
+// drain when no turn is live.
+func (bc *bridgeCoordinator) appendLocked(
+	ctx context.Context, lc *chatLifecycle, chatID marotte.ChatID, turnLive bool, fn func(c *marotte.Chat) error,
+) error {
+	var fnErr error
+	var added []string
+	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+		if !exists {
+			fnErr = errQueueChatGone
+			return false
+		}
+		added, fnErr = appendedRows(c, fn)
+		return fnErr == nil && len(added) > 0
+	}); err != nil {
+		return err
+	}
+	if fnErr == nil && !turnLive {
+		lc.kas.keepHoldRows(added)
+	}
+	return fnErr
 }
 
 // appendedRows applies fn to c and answers the ids of the queued rows it added.
@@ -87,6 +102,22 @@ func (bc *bridgeCoordinator) NextUserRow(ctx context.Context, chatID marotte.Cha
 		return false
 	})
 	return row, found, err
+}
+
+// queuedPromptsPending is the ids of chatID's queued rows whose turn this process has not opened, read from the
+// cached header: the rows its page shows waiting.
+func (bc *bridgeCoordinator) queuedPromptsPending(ctx context.Context, chatID marotte.ChatID) []string {
+	c, ok := bc.chatStore.Get(ctx, chatID)
+	if !ok {
+		return nil
+	}
+	var ids []string
+	for i := range c.QueuedPrompts {
+		if id := c.QueuedPrompts[i].ID; !bc.chatStore.Opened(chatID, id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // Dequeue takes a sent row off the header, after its turn_opened frame.
@@ -151,11 +182,7 @@ func (bc *bridgeCoordinator) holdUnread(ctx context.Context, chatID marotte.Chat
 
 // settleAfterClose waits for the chat to idle after a close; a bare reservation is usually the
 // closing prompt's. False once a turn opens, or on budget or ctx expiry.
-func (bc *bridgeCoordinator) settleAfterClose(ctx context.Context, chatID marotte.ChatID, budget time.Duration) bool {
-	lc, ok := bc.turns.lookup(chatID)
-	if !ok {
-		return true
-	}
+func (lc *chatLifecycle) settleAfterClose(ctx context.Context, budget time.Duration) bool {
 	timer := time.NewTimer(budget)
 	defer timer.Stop()
 	for {

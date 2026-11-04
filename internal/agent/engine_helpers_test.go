@@ -290,15 +290,15 @@ func (e *fakeEngine) Respond(ctx context.Context, id int64, result any, err erro
 	return e.src.lane.Respond(ctx, id, result, err)
 }
 
-func (e *fakeEngine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession)) (engineSession, error) {
+func (e *fakeEngine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error) {
 	return e.open(ctx, o, attach, false)
 }
 
-func (e *fakeEngine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession)) (engineSession, error) {
+func (e *fakeEngine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error) {
 	return e.open(ctx, o, attach, true)
 }
 
-func (e *fakeEngine) open(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession), load bool) (engineSession, error) {
+func (e *fakeEngine) open(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession) error, load bool) (engineSession, error) {
 	select {
 	case <-e.done:
 		return nil, marotte.ErrBridgeExited
@@ -313,7 +313,13 @@ func (e *fakeEngine) open(ctx context.Context, o *marotte.SessionOpts, attach fu
 		r.reopen()
 	}
 	if attach != nil {
-		attach(s)
+		if err := attach(s); err != nil {
+			// The real door writes nothing for a refused attach and closes its handle.
+			if f, ok := s.(interface{ end() }); ok {
+				f.end()
+			}
+			return nil, err
+		}
 	}
 	e.mu.Lock()
 	eo := e.opts

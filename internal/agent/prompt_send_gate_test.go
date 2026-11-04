@@ -95,7 +95,7 @@ func (s sendGateStep) apply(t *testing.T, h *Runtime, release func(), folded *st
 	case kasRevision:
 		h.coord.ReviseTurnBinding(t.Context(), "c1")
 	case kasReply:
-		log := h.coord.TurnFoldTarget(t.Context(), "c1")
+		log := h.coord.foldTargetNow(t.Context(), "c1")
 		if log == nil {
 			t.Fatal("TurnFoldTarget refused KAS's re-wake text")
 		}
@@ -224,14 +224,14 @@ func closeOfTurn(t *testing.T, entries []marotte.Entry, turn string) (marotte.En
 // sent, and returns the turns they folded into.
 func earlyRunFrames(t *testing.T, h *Runtime, cs *testChatStore) (textTurn, toolTurn string) {
 	t.Helper()
-	text := h.coord.TurnFoldTarget(t.Context(), "c1")
+	text := h.coord.foldTargetNow(t.Context(), "c1")
 	if text == nil {
 		t.Fatal("TurnFoldTarget refused the run's text")
 	}
 	if _, err := text.TextDelta(t.Context(), "", "say-p", "prompt reply"); err != nil {
 		t.Fatalf("TextDelta: %v", err)
 	}
-	tool := h.coord.TurnFoldTarget(t.Context(), "c1")
+	tool := h.coord.foldTargetNow(t.Context(), "c1")
 	if tool == nil {
 		t.Fatal("TurnFoldTarget refused the run's tool call")
 	}

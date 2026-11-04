@@ -132,7 +132,7 @@ type scriptedAdmission struct {
 	admitted                int
 }
 
-func (a *scriptedAdmission) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
+func (a *scriptedAdmission) reservePromptOld(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.admitted++
@@ -151,15 +151,15 @@ func (a *scriptedAdmission) ReserveTurnForPrompt(context.Context, marotte.ChatID
 
 func (*scriptedAdmission) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
 
-func (a *scriptedAdmission) TryReserveIdleTurn(c marotte.ChatID, s marotte.TurnOpenSource) bool {
-	return a.TryReserveTurn(c, s)
+func (a *scriptedAdmission) tryReserveIdleOld(c marotte.ChatID, s marotte.TurnOpenSource) bool {
+	return a.tryReserveOld(c, s)
 }
 
-func (a *scriptedAdmission) TryReserveTurnFenced(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
-	return a.TryReserveTurn(c, s)
+func (a *scriptedAdmission) tryReserveFencedOld(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
+	return a.tryReserveOld(c, s)
 }
 
-func (a *scriptedAdmission) TryReserveTurn(_ marotte.ChatID, _ marotte.TurnOpenSource) bool {
+func (a *scriptedAdmission) tryReserveOld(_ marotte.ChatID, _ marotte.TurnOpenSource) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.rec.add("tryReserve")
@@ -170,7 +170,7 @@ func (a *scriptedAdmission) TryReserveTurn(_ marotte.ChatID, _ marotte.TurnOpenS
 	return true
 }
 
-func (a *scriptedAdmission) ReleaseTurnReservation(marotte.ChatID) {
+func (a *scriptedAdmission) releaseOld(marotte.ChatID) {
 	a.mu.Lock()
 	a.reserved = false
 	a.mu.Unlock()
@@ -219,6 +219,8 @@ func (a *scriptedAdmission) TurnOpenedAfter(marotte.ChatID, string) bool {
 }
 
 func (*scriptedAdmission) StopRequestedAfter(marotte.ChatID, string) bool { return false }
+
+func (*scriptedAdmission) TurnIsOpen(marotte.ChatID, string) bool { return true }
 
 func (a *scriptedAdmission) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string, marotte.FailureKind, uint64) {
 	a.rec.add("abandon")
@@ -317,11 +319,10 @@ type gatedBridgeAccess struct {
 	gate  chan struct{}
 }
 
-func (g *gatedBridgeAccess) Bridge(id marotte.ChatID) Bridge   { return g.inner.Bridge(id) }
-func (g *gatedBridgeAccess) BridgeLive(id marotte.ChatID) bool { return g.inner.BridgeLive(id) }
-func (g *gatedBridgeAccess) CloseBridge(ctx context.Context, id marotte.ChatID, outcome marotte.TurnOutcome) {
-	g.inner.CloseBridge(ctx, id, outcome)
-}
+func (g *gatedBridgeAccess) Bridge(id marotte.ChatID) Bridge { return g.inner.Bridge(id) }
+
+func (g *gatedBridgeAccess) BridgeLive(id marotte.ChatID) bool                                   { return g.inner.BridgeLive(id) }
+func (g *gatedBridgeAccess) closeBridgeOld(context.Context, marotte.ChatID, marotte.TurnOutcome) {}
 
 func (g *gatedBridgeAccess) OpenBridge(ctx context.Context, id marotte.ChatID, model string) (Bridge, error) {
 	select {
@@ -339,8 +340,9 @@ func TestCmdPrompt_A409WritesNothing(t *testing.T) {
 		refusal    AdmissionOutcome
 		wantReason string
 	}{
-		"plain busy":       {refusal: AdmissionBusy, wantReason: ""},
+		"plain busy":       {refusal: AdmissionBusy, wantReason: "turn_live"},
 		"starting variant": {refusal: AdmissionStarting, wantReason: "starting"},
+		"closed variant":   {refusal: AdmissionClosed, wantReason: "chat_closed"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -527,7 +529,7 @@ func TestCmdPrompt_APromptDuringRecoveryPreemptsTheRetry(t *testing.T) {
 	var competitor AdmissionOutcome
 	competitorGotBridge := false
 	host.admission.afterReservationRelease = func() {
-		competitor = host.admission.ReserveTurnForPrompt(context.Background(), "c1", 0)
+		competitor = host.admission.reservePromptOld(context.Background(), "c1", 0)
 		competitorGotBridge = host.bridge.TryAcquireForPrompt()
 	}
 
@@ -611,10 +613,52 @@ type promptJoin struct{ wg sync.WaitGroup }
 func (*promptJoin) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(reqCtx))
 }
-func (l *promptJoin) InflightAdd(delta int) { l.wg.Add(delta) }
-func (l *promptJoin) InflightDone()         { l.wg.Done() }
-func (*promptJoin) Draining() bool          { return false }
+func (l *promptJoin) InflightAdd(delta int)         { l.wg.Add(delta) }
+func (l *promptJoin) InflightDone()                 { l.wg.Done() }
+func (*promptJoin) Draining() bool                  { return false }
+func (*promptJoin) GoUnlessDraining(fn func()) bool { go fn(); return true }
 
 // join blocks until every in-flight turn has deregistered. Safe to call after
 // cmdPrompt returned: the registration is synchronous, before the ack.
 func (l *promptJoin) join() { l.wg.Wait() }
+
+func (r *scriptedAdmission) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, _ uint64, _ string) (AdmissionOutcome, Reservation) {
+	out := r.reservePromptOld(ctx, chatID, wait)
+	return out, testReservation(chatID, out == AdmissionAcquired)
+}
+
+func (r *scriptedAdmission) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
+	ok := r.tryReserveOld(chatID, source)
+	return testReservation(chatID, ok), ok
+}
+
+func (r *scriptedAdmission) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
+	ok := r.tryReserveIdleOld(chatID, source)
+	return testReservation(chatID, ok), ok
+}
+
+func (r *scriptedAdmission) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool) {
+	ok := r.tryReserveFencedOld(chatID, source, fence)
+	return testReservation(chatID, ok), ok
+}
+
+func (r *scriptedAdmission) ReleaseTurnReservation(res Reservation) { r.releaseOld(res.Chat) }
+
+func (r *scriptedAdmission) LifeStamp() uint64 { return 0 }
+
+func (r *scriptedAdmission) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) {
+	return false, nil
+}
+
+func (r *admissionHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
+}
+
+func (r *gatedBridgeAccess) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
+}
+
+func (r *gatedBridgeAccess) RefreshForRetry(ctx context.Context, chatID marotte.ChatID, _ Bridge) error {
+	r.closeBridgeOld(ctx, chatID, marotte.TurnOutcomeInterrupted)
+	return nil
+}

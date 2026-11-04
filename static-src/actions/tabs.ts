@@ -21,6 +21,8 @@ import type { ActionDefinition } from "@cplieger/actions";
 import { send as transportSend, type SendResult } from "../transport.js";
 import type { TabKind, TabSubject } from "../types.js";
 import { decodeTabSubject } from "../wire/decoders.gen.js";
+import type { CloseImpact } from "../wire/types.gen.js";
+import { impactRefusal } from "./close-impact.js";
 
 /** What `open_tab` needs about the thing being opened. `ref` is empty for a
  *  singleton, whose identity is its kind. */
@@ -105,6 +107,9 @@ export const openTabQuietCommand = defineAction({
 interface CloseTabArgs {
   id: string;
   opID: string;
+  /** What the person's confirm named; the server refuses the close when it stops more. A remote
+   *  close or a singleton toggle sends none and is unchecked. */
+  impact?: CloseImpact;
 }
 
 /** How long a close may stay unanswered before the pending-op machine VERIFIES by re-listing
@@ -126,11 +131,11 @@ export const closeTabCommand = defineAction<CloseTabArgs, CloseTabReply | null>(
   retry: RETRY_STANDARD,
   timeout: CLOSE_CONFIRM_MS,
   dedupe: (args) => joinKey("tabs.close", args.id),
-  run: async ({ id, opID }, signal, ctx) => {
+  run: async ({ id, opID, impact }, signal, ctx) => {
     const r = await transportSend(
       {
         type: "close_tab",
-        payload: { id, op_id: opID },
+        payload: { id, op_id: opID, ...(impact === undefined ? {} : { impact }) },
         ...(ctx?.idempotencyKey === undefined
           ? {}
           : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
@@ -138,7 +143,7 @@ export const closeTabCommand = defineAction<CloseTabArgs, CloseTabReply | null>(
       { signal, reportSendState: false },
     );
     if (!r.ok) {
-      throw sendFailure(r, "close that tab");
+      throw impactRefusal(r, sendFailure(r, "close that tab"));
     }
     const body = asObject(r.body);
     const closed = body?.["closed"];

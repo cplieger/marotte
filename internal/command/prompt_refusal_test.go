@@ -220,3 +220,11 @@ func TestReportPromptSuccess_ClearsAuthLatch(t *testing.T) {
 		t.Error("AuthReadiness stayed unavailable after a completed prompt")
 	}
 }
+
+func (r *promptSpy) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
+}
+
+func (r *promptBridgeSpy) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
+}

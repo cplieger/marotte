@@ -114,9 +114,9 @@ func TestLoadSession_AnswersOnlyOnceTheReplayMergedIntoTheLog(t *testing.T) {
 		t.Fatalf("log texts before the last replay frame was read = %q, want the replayed turn absent", got)
 	}
 
-	br, ok := unguarded(h.coord.bridgeFor("c1").bridge).(*fakeBridge)
+	br, ok := unguarded(h.coord.bridgeFor("c1").session()).(*fakeBridge)
 	if !ok {
-		t.Fatalf("the chat's bridge is %T, want the fake", h.coord.bridgeFor("c1").bridge)
+		t.Fatalf("the chat's bridge is %T, want the fake", h.coord.bridgeFor("c1").session())
 	}
 	br.releaseWithheld()
 	if err := h.coord.LoadSession(t.Context(), "c1"); err != nil {
@@ -195,7 +195,7 @@ func TestLoadSession_AFailedGenerationIsNotReopenedOrResumed(t *testing.T) {
 	errSwap := errors.New("disk full")
 	h.replay.underLifecycle = func(context.Context, marotte.ChatID, func() error) error { return errSwap }
 	var resumed atomic.Int32
-	h.coord.onSessionRehydrated = func(marotte.ChatID) { resumed.Add(1) }
+	h.coord.onSessionRehydrated = func(context.Context, *chatLifecycle, marotte.ChatID) { resumed.Add(1) }
 	before := opens.Load()
 
 	// A reopen loop spins until this deadline rather than hanging the package.
@@ -257,9 +257,9 @@ func TestOpenBridge_AdmitsNoCallerBeforeTheReplayMerged(t *testing.T) {
 	if first == nil {
 		t.Fatal("the load registered no generation")
 	}
-	br, ok := unguarded(first.bridge).(*fakeBridge)
+	br, ok := unguarded(first.session()).(*fakeBridge)
 	if !ok {
-		t.Fatalf("the chat's bridge is %T, want the fake", first.bridge)
+		t.Fatalf("the chat's bridge is %T, want the fake", first.session())
 	}
 	br.releaseWithheld()
 
@@ -470,7 +470,7 @@ func newResumingHub(t *testing.T, store *refusedAtPublication) (*Runtime, *atomi
 	t.Cleanup(func() { shutdownHub(t, h) })
 	loadedChat(t, store.testChatStore, "c1")
 	var resumed atomic.Int32
-	h.coord.onSessionRehydrated = func(marotte.ChatID) { resumed.Add(1) }
+	h.coord.onSessionRehydrated = func(context.Context, *chatLifecycle, marotte.ChatID) { resumed.Add(1) }
 	return h, &resumed
 }
 
@@ -863,7 +863,9 @@ func TestTangentMerge_AParentDeletedWhileItsSessionLoadsFailsTheMergeOnce(t *tes
 			}
 
 			deleted := make(chan error, 1)
-			go func() { deleted <- h.membership.DeleteChatAndCloseTabs(context.Background(), "c-parent", "op-del") }()
+			go func() {
+				deleted <- h.membership.DeleteChatAndCloseTabs(context.Background(), "c-parent", "op-del", nil)
+			}()
 			for deadline := time.Now().Add(5 * time.Second); cs.Presence("c-parent") != chat.PresenceAbsent; time.Sleep(5 * time.Millisecond) {
 				if time.Now().After(deadline) {
 					close(gate)

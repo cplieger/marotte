@@ -750,7 +750,7 @@ func TestCmdForkChat_TheRecordSurvivesAClose(t *testing.T) {
 	host := newForkHost(store, br, "c-parent")
 
 	_, _ = cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
-	closeChatTeardown(t.Context(), host, host, host, host, "c-tangent")
+	closeChatTeardown(t.Context(), host, host, host, "c-tangent")
 
 	c, ok := store.Get(t.Context(), "c-tangent")
 	if !ok {
@@ -830,4 +830,8 @@ func TestCmdForkChat_AnUntitledForkIsNotUserNamed(t *testing.T) {
 	if c.NameSetByUser {
 		t.Errorf("an untitled fork is marked user-named (name %q)", c.Name)
 	}
+}
+
+func (r *forkHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
 }

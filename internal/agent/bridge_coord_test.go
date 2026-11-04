@@ -168,7 +168,7 @@ func TestApplyModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := h.coord.applyModelSwitch(ctx, "c1", &effortDecision{to: "m-new", sent: "max"}); got != true {
+	if got := h.coord.switchedOK(ctx, "c1", &effortDecision{to: "m-new", sent: "max"}); got != true {
 		t.Errorf("ApplyModelSwitch(success) = %v, want true", got)
 	}
 	if got := br.lastEffort(); got != "max" {
@@ -186,7 +186,7 @@ func TestApplyModelSwitch_TouchesNoOpenTurn(t *testing.T) {
 	}
 	id, log := streamingPromptTurn(t, h, "c1", "the user's own reply, still streaming")
 
-	if got := h.coord.applyModelSwitch(ctx, "c1", &effortDecision{to: "m-new"}); !got {
+	if got := h.coord.switchedOK(ctx, "c1", &effortDecision{to: "m-new"}); !got {
 		t.Fatalf("ApplyModelSwitch = %v, want true", got)
 	}
 
@@ -207,7 +207,7 @@ func TestApplyModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := h.coord.applyModelSwitch(ctx, "c1", &effortDecision{to: "m-new"}); got != true {
+	if got := h.coord.switchedOK(ctx, "c1", &effortDecision{to: "m-new"}); got != true {
 		t.Errorf("ApplyModelSwitch(success) = %v, want true", got)
 	}
 	if got := br.lastEffort(); got != "" {
@@ -870,7 +870,7 @@ func TestLiveSessionIDs_CoversEveryResidentSession(t *testing.T) {
 
 	setSession := func(chatID marotte.ChatID, sessionID string) {
 		t.Helper()
-		sb, _ := h.bridge.mgr.orInsert(chatID)
+		sb, _ := h.bridge.mgr.orInsertNow(chatID)
 		fb := newFakeBridge()
 		fb.sessionID = sessionID
 		sb.attach(fb)
@@ -1178,14 +1178,14 @@ func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// The first frame opens a turn and pays for the facts.
-	first := h.coord.TurnFoldTarget(ctx, chatID)
+	first := h.coord.foldTargetNow(ctx, chatID)
 	if first == nil {
 		t.Fatal("TurnFoldTarget opened no turn, so there is no fold path to measure")
 	}
 	before := cs.Gets.Load()
 
 	for range 20 {
-		if got := h.coord.TurnFoldTarget(ctx, chatID); got != first {
+		if got := h.coord.foldTargetNow(ctx, chatID); got != first {
 			t.Fatalf("a folded frame's target = %p, want the open turn %p", got, first)
 		}
 	}
@@ -1496,7 +1496,7 @@ func TestChatForACPSession_NamesTheResidentChat(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Setup: openBridge(%s): %v", chatID, err)
 		}
-		sessions[chatID] = string(sb.bridge.SessionID())
+		sessions[chatID] = string(sb.session().SessionID())
 	}
 	if sessions["c1"] == sessions["c2"] {
 		t.Fatalf("Setup: both chats share session %q", sessions["c1"])

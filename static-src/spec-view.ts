@@ -750,6 +750,9 @@ export function applyResult(ref: string, id: string, result: SendPromptResult): 
       st.gone = true;
       st.spec = null;
       break;
+    case "closed":
+      st.failure = "The chat was closed, so the prompt was not sent";
+      break;
     case "failed":
       st.failure = "The prompt could not be sent";
       break;

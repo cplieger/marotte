@@ -366,6 +366,20 @@ export interface ChatHeader {
   tangent?: boolean;
 }
 
+/**
+ * ChatWork names what closing one chat stops, every item by its id: a count could not tell the reply a dialog
+ * named from another device's new reply in the same chat.
+ */
+export interface ChatWork {
+  ref: string;
+  /** Turns are open turn ids, prompt message ids, and "res:<n>" ids naming a prompt admitted with no turn yet. */
+  turns: string[];
+  asks: string[];
+  runs: string[];
+  steers: string[];
+  queued: string[];
+}
+
 /** Check is one commit-status context. */
 export interface Check {
   name: string;
@@ -381,6 +395,14 @@ export interface CloneRepo {
   forge_id: string;
   /** RepoID is the canonical id of the clone's repository on that connection. */
   repo_id: string;
+}
+
+/**
+ * CloseImpact is the work a close stops, one entry per chat tab it takes. delete_chat carries it too, for the
+ * chats under the deleted chat's tabs.
+ */
+export interface CloseImpact {
+  chats: ChatWork[];
 }
 
 /**

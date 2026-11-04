@@ -63,12 +63,12 @@ func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
 					t.Fatalf("OpenBridge: %v", err)
 				}
 			}
-			if !h.coord.TryReserveTurn(chatID, tc.holder) {
+			if !h.coord.tryReserveNow(chatID, tc.holder) {
 				t.Fatal("setup: the admission slot was already held")
 			}
-			t.Cleanup(func() { h.coord.ReleaseTurnReservation(chatID) })
+			t.Cleanup(func() { h.coord.releaseHeld(chatID) })
 
-			got := h.coord.ReserveTurnForPrompt(t.Context(), chatID, 60*time.Millisecond)
+			got := h.coord.reserveForPromptNow(t.Context(), chatID, 60*time.Millisecond)
 			if got != tc.want {
 				t.Errorf("ReserveTurnForPrompt(holder %v, bridged %v) = %v, want %v", tc.holder, tc.bridged, got, tc.want)
 			}
@@ -80,23 +80,23 @@ func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
 func TestReserveTurnForPrompt_AcquiresAFreeOrFreedSlot(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	if got := h.coord.ReserveTurnForPrompt(t.Context(), "c1", 60*time.Millisecond); got != command.AdmissionAcquired {
+	if got := h.coord.reserveForPromptNow(t.Context(), "c1", 60*time.Millisecond); got != command.AdmissionAcquired {
 		t.Fatalf("free slot = %v, want acquired", got)
 	}
-	h.coord.ReleaseTurnReservation("c1")
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
+	h.coord.releaseHeld("c1")
+	if !h.coord.tryReserveNow("c1", marotte.TurnSourceRevert) {
 		t.Fatal("setup: the admission slot was already held")
 	}
 	answered := make(chan command.AdmissionOutcome, 1)
 	go func() {
-		answered <- h.coord.ReserveTurnForPrompt(context.Background(), "c1", 5*time.Second)
+		answered <- h.coord.reserveForPromptNow(context.Background(), "c1", 5*time.Second)
 	}()
 	select {
 	case got := <-answered:
 		t.Fatalf("the waiter answered %v while the slot was held", got)
 	case <-time.After(50 * time.Millisecond):
 	}
-	h.coord.ReleaseTurnReservation("c1")
+	h.coord.releaseHeld("c1")
 	select {
 	case got := <-answered:
 		if got != command.AdmissionAcquired {
@@ -105,7 +105,7 @@ func TestReserveTurnForPrompt_AcquiresAFreeOrFreedSlot(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the waiter never woke on the release")
 	}
-	h.coord.ReleaseTurnReservation("c1")
+	h.coord.releaseHeld("c1")
 }
 
 // A prompt-class holder whose session door is still open answers busy at once, from its source rather than readiness or expiry.
@@ -116,10 +116,10 @@ func TestReserveTurnForPrompt_AnOpeningPromptHolderAnswersBusyAtOnce(t *testing.
 	br.mu.Lock()
 	br.startGate = startGate
 	br.mu.Unlock()
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 		t.Fatal("setup: the admission slot was already held")
 	}
-	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+	t.Cleanup(func() { h.coord.releaseHeld("c1") })
 	opened := make(chan error, 1)
 	go func() {
 		_, err := h.coord.openBridge(t.Context(), "c1", "")
@@ -128,7 +128,7 @@ func TestReserveTurnForPrompt_AnOpeningPromptHolderAnswersBusyAtOnce(t *testing.
 
 	const budget = 10 * time.Second
 	start := time.Now()
-	got := h.coord.ReserveTurnForPrompt(context.Background(), "c1", budget)
+	got := h.coord.reserveForPromptNow(context.Background(), "c1", budget)
 	elapsed := time.Since(start)
 	close(startGate)
 	if err := <-opened; err != nil {
@@ -147,10 +147,10 @@ func TestPrompt_FullPath409StartingCarriesTheReason(t *testing.T) {
 	shrinkAdmissionWait(t, 60*time.Millisecond)
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
+	if !h.coord.tryReserveNow("c1", marotte.TurnSourceRevert) {
 		t.Fatal("setup: the admission slot was already held")
 	}
-	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+	t.Cleanup(func() { h.coord.releaseHeld("c1") })
 
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
@@ -667,20 +667,20 @@ func TestTryReserve_BesideAWireTurn(t *testing.T) {
 				t.Fatal("setup: no wire turn is open")
 			}
 
-			if h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceRevert) {
+			if h.coord.tryReserveIdleNow("c1", marotte.TurnSourceRevert) {
 				t.Error("TryReserveIdleTurn reserved beside an open wire turn, want refused")
-				h.coord.ReleaseTurnReservation("c1")
+				h.coord.releaseHeld("c1")
 			}
-			got := h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt)
+			got := h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt)
 			if got {
-				h.coord.ReleaseTurnReservation("c1")
+				h.coord.releaseHeld("c1")
 			}
 			if got != tc.wantBare {
 				t.Errorf("TryReserveTurn = %t, want %t", got, tc.wantBare)
 			}
-			got = h.coord.TryReserveTurnFenced("c1", marotte.TurnSourcePrompt, command.TurnFence{})
+			got = h.coord.tryReserveFencedNow("c1", marotte.TurnSourcePrompt, command.TurnFence{})
 			if got {
-				h.coord.ReleaseTurnReservation("c1")
+				h.coord.releaseHeld("c1")
 			}
 			if got != tc.wantFence {
 				t.Errorf("TryReserveTurnFenced = %t, want %t", got, tc.wantFence)
@@ -692,13 +692,13 @@ func TestTryReserve_BesideAWireTurn(t *testing.T) {
 func TestTryReserveIdleTurn_TakesAnIdleSlotAndRefusesAHeldOne(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	if !h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceRevert) {
+	if !h.coord.tryReserveIdleNow("c1", marotte.TurnSourceRevert) {
 		t.Fatal("TryReserveIdleTurn(c1) refused an idle chat")
 	}
 	if src, held := h.coord.AdmissionHolderSource("c1"); !held || src != marotte.TurnSourceRevert {
 		t.Errorf("after TryReserveIdleTurn the holder is %v (held %t), want revert", src, held)
 	}
-	if h.coord.TryReserveIdleTurn("c1", marotte.TurnSourcePrompt) {
+	if h.coord.tryReserveIdleNow("c1", marotte.TurnSourcePrompt) {
 		t.Error("a second TryReserveIdleTurn(c1) took a held slot")
 	}
 }
@@ -741,9 +741,9 @@ func TestReserveTurnForPrompt_BesideAWireTurn(t *testing.T) {
 			seedChat(t, cs, "c1")
 			tc.open(t, h)
 
-			got := h.coord.ReserveTurnForPrompt(t.Context(), "c1", 60*time.Millisecond)
+			got := h.coord.reserveForPromptNow(t.Context(), "c1", 60*time.Millisecond)
 			if got == command.AdmissionAcquired {
-				h.coord.ReleaseTurnReservation("c1")
+				h.coord.releaseHeld("c1")
 			}
 			if got != tc.want {
 				t.Errorf("ReserveTurnForPrompt = %v, want %v", got, tc.want)
@@ -784,8 +784,8 @@ func TestCmdPrompt_BesideAWireTurnAnswersThePlainBusyAndSendsNothing(t *testing.
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal body %q: %v", rec.Body.String(), err)
 	}
-	if body.Reason != "" {
-		t.Errorf("reason = %q, want the plain 409 the client converts into its busy verb", body.Reason)
+	if body.Reason != "turn_live" {
+		t.Errorf("reason = %q, want turn_live, the one 409 the client converts into its busy verb", body.Reason)
 	}
 	if got := len(opensOf(t, logOf(t, cs, "c1"))); got != opens {
 		t.Errorf("turn_open entries = %d, want %d: a refused prompt opens no turn", got, opens)

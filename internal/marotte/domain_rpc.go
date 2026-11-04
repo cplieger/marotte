@@ -114,12 +114,25 @@ var ErrBridgeNotStarted = errors.New("ACP bridge has not started")
 // minted: KAS parses `_meta.kiro` all or nothing, so one field failing its schema dropped them all.
 var ErrSessionMetaRefused = errors.New("kiro-cli did not accept this chat's session settings; the server log names them")
 
-// ErrSessionClosing refuses a call on a session whose session/close is written but unconfirmed;
-// KAS's requests during the close are still answered.
+// ErrSessionClosing refuses a call on a session whose session/close is written but unconfirmed, and fails a door whose
+// predecessor kiro-cli still holds after the release report; KAS's requests during the close are still answered.
 var ErrSessionClosing = errors.New("the agent engine did not finish closing this chat's session; restart the agent engine from Settings")
 
 // ErrSessionClosed refuses a call on a session that is closed.
 var ErrSessionClosed = errors.New("this session is closed")
+
+// ErrSessionOpening refuses a call on a session whose door has not answered yet: nothing of the chat is on the wire.
+var ErrSessionOpening = errors.New("this chat's session is still opening")
+
+// ErrChatClosedDuringCall is the chat's close ending this call. It also matches ErrSessionClosing, so an arm that
+// treats a closing session as "refused before the write" handles it unchanged.
+var ErrChatClosedDuringCall error = &chatClosedError{}
+
+type chatClosedError struct{}
+
+func (*chatClosedError) Error() string { return "the chat's close ended this call" }
+
+func (*chatClosedError) Is(target error) bool { return target == ErrSessionClosing }
 
 // TransportError wraps engine-level transport failures (pipe closed,
 // write stall, process exited) with explicit retryability semantics.

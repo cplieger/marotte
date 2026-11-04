@@ -53,7 +53,7 @@ func TestInboundRequest_AnswersOnTheBridgeItArrivedOn(t *testing.T) {
 			successor := newRecordingTermBridge()
 			h := hubWithBridge(t, work, successor)
 			if isRunChat(tc.chat) {
-				h.bridge.mgr.insert(tc.chat, &sharedBridge{bridge: successor, state: bridgeIdle})
+				h.insertBridgeNow(tc.chat, testBridge(successor, bridgeIdle))
 			}
 			origin := newRecordingTermBridge()
 

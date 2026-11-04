@@ -82,12 +82,17 @@ type bridgeAccess interface {
 	Bridge(chatID marotte.ChatID) Bridge
 	// OpenBridge answers once the chat's log holds KAS's account of its session (sessionLoader).
 	OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (Bridge, error)
+	// OpenBridgeAt is OpenBridge for a caller whose intent began at stamp (TurnAdmission.LifeStamp): a close of the
+	// chat committed since answers marotte.ErrChatClosedDuringCall.
+	OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, stamp uint64) (Bridge, error)
 	// BridgeLive reports a bridge for the chat that is past its session open: the state
 	// a steer can be delivered into, where an opening one parks it.
 	BridgeLive(chatID marotte.ChatID) bool
-	// CloseBridge closes every turn the session hosted with outcome, then closes the
-	// session: `cancelled` for a stop the reader asked for, `interrupted` otherwise.
-	CloseBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome)
+	// RefreshForRetry abandons the session sb holds after a turn that produced nothing: it releases the session,
+	// closes the turns it hosted `interrupted` and blanks the record's session id while it still names that session,
+	// so the next open starts session/new. An error wrapping marotte.ErrChatClosedDuringCall is the chat's close
+	// refusing or cutting it; the retry must not go on after any error.
+	RefreshForRetry(ctx context.Context, chatID marotte.ChatID, sb Bridge) error
 }
 
 // sessionLoader opens a chat's bridge and answers nil once the chat's log holds KAS's account of
@@ -200,6 +205,20 @@ type chatTeardown interface {
 	// so the turn end that cancel causes resends nothing. keep is a close, whose
 	// record survives and keeps a note per unread steer. Idempotent.
 	BeginChatTeardown(chatID marotte.ChatID, keep bool)
+	// HoldChat holds chatID's life gate for a close being decided: no new work for the chat begins while it stands.
+	HoldChat(chatID marotte.ChatID) ChatHold
+	// AwaitSessionLeases waits until every call on the chat's session admitted before its close committed returned.
+	AwaitSessionLeases(ctx context.Context, chatID marotte.ChatID)
+	// TeardownCancel sends the closed chat's session/cancel, after AwaitSessionLeases.
+	TeardownCancel(ctx context.Context, chatID marotte.ChatID) error
+}
+
+// ChatHold is one close's hold on a chat's life gate. Commit records that the close committed, which ends every
+// caller that began before it and the chat's life; Release lets the gate go, and a hold released uncommitted ends
+// nobody. Both are called with the commit's lock held, Release also from the close's teardown when it returned.
+type ChatHold interface {
+	Commit()
+	Release()
 }
 
 // pendingPermAccess provides the pending-permission bookkeeping handlers
@@ -415,6 +434,9 @@ type lifecycleAccess interface {
 	InflightDone()
 	// Draining reports that shutdown has begun, after which nothing sends.
 	Draining() bool
+	// GoUnlessDraining runs fn on the runtime's lifetime, which Shutdown waits for, unless shutdown has begun;
+	// it reports whether fn started.
+	GoUnlessDraining(fn func()) bool
 }
 
 // AdmissionOutcome is ReserveTurnForPrompt's answer.
@@ -432,6 +454,9 @@ const (
 	// reports with no steerable turn. Answered as 409 with the additive
 	// `reason: "starting"`, which hands the text back.
 	AdmissionStarting
+	// AdmissionClosed is a prompt whose stamp predates a committed close of the chat: the close ended it before it
+	// ran. Answered as 409 `reason: "chat_closed"`; the page keeps the text as the chat's draft.
+	AdmissionClosed
 )
 
 // turnAdmission is the chat's admission slot as the command handlers hold it:
@@ -439,32 +464,48 @@ const (
 // that says who holds it. Separate from turnOutcomeAccess because the steer reads
 // the holder and the rewind reserves the slot, and neither opens a turn.
 type turnAdmission interface {
-	// ReserveTurnForPrompt takes the chat's admission slot for a prompt,
-	// minting no turn — a bare per-chat reservation, decided synchronously
-	// before any bridge exists. A held slot parks the caller up to wait;
-	// the refusal is keyed on the holder's source — see AdmissionOutcome.
-	ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration) AdmissionOutcome
-	// TryReserveTurn takes the admission slot iff it is free, never waiting.
-	TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool
+	// LifeStamp is the chat life gate's position now. A caller takes it where its intent toward a chat begins and
+	// presents it to a reserve: a close that commits after it ends that intent.
+	LifeStamp() uint64
+	// ReserveTurnForPrompt takes the chat's admission slot for a prompt whose intent began at stamp, minting no
+	// turn: a bare per-chat reservation, decided synchronously before any bridge exists. A held slot or a held
+	// close parks the caller up to wait; the refusal is keyed on the holder's source (see AdmissionOutcome).
+	// messageID names the prompt to a close's impact read until its turn opens.
+	ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, stamp uint64, messageID string) (AdmissionOutcome, Reservation)
+	// TryReserveTurn takes the admission slot iff it is free and no close is held or committed since stamp, never
+	// waiting.
+	TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (Reservation, bool)
 	// TryReserveIdleTurn is TryReserveTurn that also refuses while a turn is open
 	// without a reservation (a wire turn), checked in the same acquisition.
-	TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool
+	TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (Reservation, bool)
 	// TryReserveTurnFenced is TryReserveTurn for a close's drain: it also refuses
 	// once the fence no longer holds, sparing a reservation the open would refuse.
-	TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) bool
+	TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool)
+	// AwaitNoClose waits until no close of chatID is being decided or torn down, reporting whether it waited; a ctx
+	// end answers the ctx's error. It admits nothing.
+	AwaitNoClose(ctx context.Context, chatID marotte.ChatID) (waited bool, err error)
 	// PromptHolder names the prompt-class turn holding admission: the pending
 	// prompt, else an own prompt-class turn. A bare reservation or a wire turn is
 	// never named.
 	PromptHolder(chatID marotte.ChatID) (turnID string, ok bool)
-	// ReleaseTurnReservation frees the admission slot, waking every
-	// waiter.
-	ReleaseTurnReservation(chatID marotte.ChatID)
+	// ReleaseTurnReservation frees the admission slot res holds, waking every waiter; a slot another reservation
+	// holds is left alone.
+	ReleaseTurnReservation(res Reservation)
 	// AdmissionHolderSource reports who holds the chat's admission: the open turn's
 	// source when one is open, else the reservation's. A non-prompt holder matters
 	// because a steer aimed into it lands somewhere the reader did not mean — a
 	// workflow step's turn reads it as the step's own input — so cmdSteer refuses
 	// instead.
 	AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpenSource, bool)
+}
+
+// Reservation is one admission a reserve call took: Token names it among every reservation of every chat, so its
+// release clears that slot and nothing a later life took, and Stamp is the life's, which every goroutine the
+// reservation launches presents when it opens the chat's session. The zero Reservation names none.
+type Reservation struct {
+	Chat  marotte.ChatID
+	Token uint64
+	Stamp uint64
 }
 
 // TurnFence names a closed turn by its lifecycle epoch and open sequence. A drain
@@ -540,6 +581,9 @@ type turnOutcomeAccess interface {
 	// TurnOpenedAfter reports whether any own turn on the chat opened after
 	// turnID — the structural half of the empty-turn gate.
 	TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool
+	// TurnIsOpen reports whether turnID is an open, non-finalizing turn of the chat's
+	// current life. False once a close committed: an old prompt then touches no record.
+	TurnIsOpen(chatID marotte.ChatID, turnID string) bool
 	// StopRequestedAfter reports whether any stop (marotte.TurnStopCause) was
 	// requested after turnID opened — the empty-turn retry's consent clause.
 	StopRequestedAfter(chatID marotte.ChatID, turnID string) bool
@@ -561,9 +605,10 @@ type promptSendGate interface {
 }
 
 // preSendCompactor is the compaction policy's before-a-send trigger. It returns
-// once the prompt may be sent, whatever the compaction did; it never refuses.
+// once the prompt may be sent, whatever the compaction did; it never refuses. It compacts only through sb, the
+// prompt's own bridge, so a prompt of an ended life never reaches another life's session.
 type preSendCompactor interface {
-	PreSendCompact(ctx context.Context, chatID marotte.ChatID)
+	PreSendCompact(ctx context.Context, chatID marotte.ChatID, sb Bridge)
 }
 
 // SteerRecorder is what the steer commands need of the steer ledger: record that
@@ -789,9 +834,11 @@ type Roles struct {
 	Chats chatStore
 	// Sessions answers whether a chat already claims a KAS session, read fresh
 	// so the run purge can decide under the membership lock.
-	Sessions  sessionClaims
-	Bus       broadcaster
-	Teardown  chatTeardown
+	Sessions sessionClaims
+	Bus      broadcaster
+	Teardown chatTeardown
+	// Impact reads what closing a chat stops, for a confirmation's check.
+	Impact    closeImpactReader
 	Perms     pendingPermAccess
 	Profiles  profileSwitcher
 	Terminals terminalAccess

@@ -31,6 +31,9 @@ const STARTING_FACE = "The chat is busy right now. Send again to retry";
 /** The 409 reason:"chat_not_found" face: the chat was deleted underneath the send. */
 const GONE_FACE = "This chat no longer exists, so the message was not sent";
 
+/** The 409 reason:"chat_closed" face: the chat was closed after the send began. */
+const CLOSED_FACE = "This chat was closed, so the message was not sent";
+
 /** Each chat's last failed TYPED attempt, so a retry of the same text reuses its message id:
  *  `hasMessage` reads the id (`turn_open`'s `prompt.id`) to tell a taken send from a refused one,
  *  so a fresh id would hand the text back twice. Per chat, because drafts are; only a typed send
@@ -56,6 +59,12 @@ export function forgetDeletedChat(chatID: string): void {
     send.deleted = true;
   }
   typedRetries.delete(chatID);
+}
+
+/** The message ids of this chat's typed sends still in flight: a close names them, since the
+ *  server may have admitted one whose turn has not opened here yet. */
+export function inFlightMessageIDs(chatID: string): string[] {
+  return [...(inFlightTyped.get(chatID) ?? [])].map((s) => s.messageID);
 }
 
 /** Runs `send` registered as in flight, so a deletion meanwhile reaches it. */
@@ -198,14 +207,12 @@ function busy(send: Send, convertBudget: number): Promise<SubmitResult> {
  *  and stops there. */
 const CONVERT_BUDGET = 2;
 
-/** Post one prompt, converting a plain 409 into the busy verb while budget remains. */
+/** Post one prompt, converting a turn_live 409 into the busy verb while budget remains. */
 async function prompt(send: Send, convertBudget: number): Promise<SubmitResult> {
   const { chatID, text, messageID } = send;
   const result = await sendPromptTo(chatID, text, { messageID, ...extras(send) });
   if (result === "queued") {
-    // Plain 409: a steerable turn started underneath us. The conversion is gated on
-    // the ABSENCE of the "starting" reason — that refusal's holder cannot receive a
-    // steer and takes the branch below.
+    // 409 turn_live: a steerable turn started underneath us.
     if (convertBudget > 0) {
       return busy(send, convertBudget - 1);
     }
@@ -225,6 +232,13 @@ async function prompt(send: Send, convertBudget: number): Promise<SubmitResult> 
     // "sent": the text goes back to the composer and the face says what happened.
     recordFailure(send);
     reportSendRefused(GONE_FACE);
+    return "failed";
+  }
+  if (result === "closed") {
+    // 409 reason:"chat_closed": a close of the chat committed after this send began, so the
+    // reopened chat never runs it. The text goes back, as for a gone chat.
+    recordFailure(send);
+    reportSendRefused(CLOSED_FACE);
     return "failed";
   }
   if (result === "failed") {

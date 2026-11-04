@@ -116,8 +116,8 @@ func TestConnect_StatesTheBusySet(t *testing.T) {
 // A workflow step's turn is its run's, so the hosting chat is not busy.
 func TestConnect_TheBusySetExcludesStepTurns(t *testing.T) {
 	rt := newBudgetRuntime(t)
-	rt.bridge.mgr.orInsert("c-step")
-	rt.bridge.mgr.orInsert("c-own")
+	rt.bridge.mgr.orInsertNow("c-step")
+	rt.bridge.mgr.orInsertNow("c-own")
 	if _, _, err := rt.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf-1", NodePath: "wf-1/step", SessionID: "sess-step"}, "c-step"); err != nil {
 		t.Fatalf("Open(step turn): %v", err)
 	}
@@ -140,10 +140,10 @@ func TestConnect_TheBusySetExcludesStepTurns(t *testing.T) {
 // In the admission window no Turn exists yet, so a reconnect must not retract.
 func TestConnect_TheBusySetIncludesAnAdmittedPromptWithNoTurnMinted(t *testing.T) {
 	rt := newBudgetRuntime(t)
-	if !rt.coord.TryReserveTurn("c-admitted", marotte.TurnSourcePrompt) {
+	if !rt.coord.tryReserveNow("c-admitted", marotte.TurnSourcePrompt) {
 		t.Fatal("a fresh chat refused a prompt reservation")
 	}
-	t.Cleanup(func() { rt.coord.ReleaseTurnReservation("c-admitted") })
+	t.Cleanup(func() { rt.coord.releaseHeld("c-admitted") })
 
 	if !busySetOf(connectPayload(t, rt, ""))["c-admitted"] {
 		t.Error("a chat whose prompt is admitted but whose Turn is not minted is absent from " +
@@ -155,7 +155,7 @@ func TestConnect_TheBusySetIsWithheldOverTheCap(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	for i := range maxBusyChats + 1 {
 		id := marotte.ChatID("c-over-" + string(rune('a'+i%26)) + string(rune('a'+i/26)))
-		if !rt.coord.TryReserveTurn(id, marotte.TurnSourcePrompt) {
+		if !rt.coord.tryReserveNow(id, marotte.TurnSourcePrompt) {
 			t.Fatalf("chat %q refused a reservation", id)
 		}
 	}
@@ -322,7 +322,7 @@ func TestConnect_V3StatusSnapshotCarriesTheWaitingSetMinusBusyChats(t *testing.T
 	rt.bus.chatStatus.mergeStamped("c-waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "pick one"})
 	rt.bus.chatStatus.mergeStamped("c-working", marotte.ChatStatusPayload{Status: "in_progress"})
 	rt.bus.chatStatus.mergeStamped("c-busy", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
-	rt.bridge.mgr.orInsert("c-busy")
+	rt.bridge.mgr.orInsertNow("c-busy")
 	rt.stagePromptTurn(t, "c-busy")
 
 	frames := connectFrames(t, rt, false)

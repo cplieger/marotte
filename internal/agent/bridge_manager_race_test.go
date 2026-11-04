@@ -17,7 +17,7 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 	wg.Go(func() {
 		for i := range N {
 			chatID := marotte.ChatID("chat-" + string(rune('A'+i%5)))
-			bm.orInsert(chatID)
+			bm.orInsertNow(chatID)
 		}
 	})
 
@@ -50,7 +50,7 @@ func TestBridgeManager_CloseConcurrentDrain(t *testing.T) {
 
 	for i := range 20 {
 		chatID := marotte.ChatID("drain-" + string(rune('A'+i)))
-		bm.orInsert(chatID)
+		bm.orInsertNow(chatID)
 	}
 
 	var wg sync.WaitGroup

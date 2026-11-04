@@ -122,7 +122,7 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 		h, _, br := newTestHub()
 		id := "wf_" + strconv.Itoa(round)
 		br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-		h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+		h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 		st, err := runlease.NewStore(t.TempDir())
 		if err != nil {
 			t.Fatalf("round %d: NewStore: %v", round, err)
@@ -207,7 +207,7 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	h.runs.leases = undurableLeaseStore(t)
 
@@ -281,7 +281,7 @@ func TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	// An EMPTY schedule store: the lease names a schedule that is no longer there.
 	st, err := schedule.NewStore(t.TempDir())
@@ -466,7 +466,7 @@ func TestRunDeadline_FiresAndCancelsAtTheDeadline(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 	leased(t, h.runs, id)
 
 	deadline := time.Now().Add(20 * time.Millisecond)
@@ -501,7 +501,7 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	st, err := schedule.NewStore(t.TempDir())
 	if err != nil {
@@ -557,7 +557,7 @@ func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *test
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	// A manual lease carrying a slot, and no schedule id: no row asked for this run.
 	h.runs.grantLease(t.Context(), id, "publish",

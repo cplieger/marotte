@@ -397,8 +397,29 @@ type OpenTabCommand struct {
 // CloseTabCommand is the payload for type="close_tab". Closing an id that is not open is not an
 // error. For a CHAT tab it also runs the chat teardown and keeps the record under retention.
 type CloseTabCommand struct {
-	ID   string `json:"id"`
-	OpID string `json:"op_id,omitempty"`
+	// Impact is what the page's confirmation named; when present the close commits only if it covers what the
+	// close stops, else it answers 409 close_impact_changed with the server's impact. Absent is unchecked.
+	Impact *CloseImpact `json:"impact,omitempty"`
+	ID     string       `json:"id"`
+	OpID   string       `json:"op_id,omitempty"`
+}
+
+// CloseImpact is the work a close stops, one entry per chat tab it takes. delete_chat carries it too, for the
+// chats under the deleted chat's tabs.
+type CloseImpact struct {
+	Chats []ChatWork `json:"chats"`
+}
+
+// ChatWork names what closing one chat stops, every item by its id: a count could not tell the reply a dialog
+// named from another device's new reply in the same chat.
+type ChatWork struct {
+	Ref string `json:"ref"`
+	// Turns are open turn ids, prompt message ids, and "res:<n>" ids naming a prompt admitted with no turn yet.
+	Turns  []string `json:"turns"`
+	Asks   []string `json:"asks"`
+	Runs   []string `json:"runs"`
+	Steers []string `json:"steers"`
+	Queued []string `json:"queued"`
 }
 
 // ReorderTabsCommand is the payload for type="reorder_tabs": the whole expanded order, every open

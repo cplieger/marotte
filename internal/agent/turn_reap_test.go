@@ -43,7 +43,7 @@ func TestCompactionReap_TripsTheSilentTurn(t *testing.T) {
 	if pctx.Err() == nil {
 		t.Error("silent failed-compaction turn kept its prompt context live")
 	}
-	lc := h.coord.turns.lifecycleFor("c1")
+	lc := h.coord.turns.testLifecycle("c1")
 	lc.mu.Lock()
 	turn := lc.own
 	lc.mu.Unlock()
@@ -57,7 +57,7 @@ func TestCompactionReap_TripsTheSilentTurn(t *testing.T) {
 
 func TestCompactionReap_ReArmsWhenTheBackendSpoke(t *testing.T) {
 	h, turnID, _, pctx := newCompactionReapFixture(t)
-	gen := h.coord.turns.attachForward("c1").gen
+	gen := h.coord.turns.attachForwardNow("c1").gen
 	synctest.Test(t, func(t *testing.T) {
 		h.coord.CompactionFailed("c1", turnID, "compaction failed")
 		h.coord.turns.observe("c1", gen, 1)

@@ -36,7 +36,7 @@ func scheduledHub(t *testing.T) (*Runtime, *fakeBridge, *schedule.Store, schedul
 // launchScheduled leases workflowID as the schedule's fire, bounded by a slot an hour out.
 func launchScheduled(t *testing.T, h *Runtime, br *fakeBridge, entry *schedule.Entry, workflowID string) {
 	t.Helper()
-	h.bridge.mgr.insert(runChatID(workflowID), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(workflowID), testBridge(br, bridgeIdle))
 	h.runs.grantLease(t.Context(), workflowID, "nightly",
 		scheduledLaunch(entry.ID(), time.Now().Add(time.Hour)), hostSec())
 }

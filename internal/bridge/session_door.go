@@ -109,28 +109,22 @@ func sessionSpawnOf(o *marotte.SessionOpts) kascap.SessionSpawn {
 var errSessionResident = errors.New("bridge: that session is already open on the engine")
 
 // newSessionHandle registers a lane under id in state opening, before anything is written, so every frame naming id
-// reaches it. A handle still closing under the same id is waited for, bounded by ctx.
+// reaches it. A predecessor still closing under the same id is waited for until it settles; one declared held fails
+// the door with ErrSessionClosing, and ctx ending first answers that ctx's error.
 func (e *Engine) newSessionHandle(ctx context.Context, id marotte.SessionID, o *marotte.SessionOpts) (*Session, error) {
 	for {
 		if e.readerExited.Load() {
 			return nil, &marotte.TransportError{Err: errBridgeExited, Retryable: true}
 		}
 		e.lanesMu.Lock()
-		if held, ok := e.releasing[id]; ok {
-			e.lanesMu.Unlock()
-			select {
-			case <-held:
-				continue
-			case <-ctx.Done():
-				return nil, marotte.ErrSessionClosing
-			}
-		}
 		prev := e.sessions[id]
 		if prev == nil {
 			s := &Session{
 				engine:    e,
 				lane:      newLane(),
 				closeDone: make(chan struct{}),
+				held:      make(chan struct{}),
+				gaveUp:    make(chan struct{}),
 				id:        id,
 				role:      o.Role,
 				spawn:     sessionSpawnOf(o),
@@ -141,15 +135,36 @@ func (e *Engine) newSessionHandle(ctx context.Context, id marotte.SessionID, o *
 			return s, nil
 		}
 		e.lanesMu.Unlock()
-		prev.mu.Lock()
-		closing := prev.state == stateClosing
-		prev.mu.Unlock()
-		if !closing {
+		if !prev.closePending() {
 			return nil, errSessionResident
 		}
-		if err := prev.awaitClosed(ctx); err != nil {
+		if err := prev.awaitPredecessor(ctx); err != nil {
 			return nil, err
 		}
+	}
+}
+
+// closePending reports a close under way, or one asked for during the door that the door will send.
+func (s *Session) closePending() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state == stateClosing || (s.state == stateOpening && s.closeAsked)
+}
+
+// awaitPredecessor waits for a closing session to settle (nil), to be declared held, or for ctx.
+func (s *Session) awaitPredecessor(ctx context.Context) error {
+	select {
+	case <-s.closeDone:
+		return nil
+	case <-s.held:
+		select {
+		case <-s.closeDone:
+			return nil
+		default:
+			return marotte.ErrSessionClosing
+		}
+	case <-ctx.Done():
+		return fmt.Errorf("waiting for the chat's previous session to close: %w", ctx.Err())
 	}
 }
 
@@ -157,17 +172,63 @@ func (e *Engine) newSessionHandle(ctx context.Context, id marotte.SessionID, o *
 // operator needs it. The lane leaves the table, so later frames naming the id reach the engine lane.
 func (s *Session) failDoor(phase string, err error) {
 	s.closed()
+	logDoorFailure(s, phase, err)
+}
+
+// abandonDoor keeps the handle of a door that gave up while its session/new or session/load is unanswered, as a
+// released one: a door for the id waits for kiro-cli's late answer (lateSessionNew, lateSessionLoad), and the held
+// clock bounds a silence. gaveUp lets the late answer act only after this.
+func (s *Session) abandonDoor(phase, method string, err error) {
+	s.mu.Lock()
+	s.state = stateClosing
+	s.released = true
+	s.closeAsked = true
+	s.mu.Unlock()
+	s.lane.close()
+	s.armHeldClock("no reply to " + method)
+	close(s.gaveUp)
+	if errors.Is(err, marotte.ErrChatClosedDuringCall) {
+		slog.Debug("session door ended by its chat's close", "session_id", s.id, "role", s.role, "phase", phase)
+		return
+	}
+	logDoorFailure(s, phase, err)
+}
+
+func logDoorFailure(s *Session, phase string, err error) {
 	slog.Warn("session door failed",
 		"session_id", s.id, "role", s.role, "phase", phase,
 		"kas_log_dir", logsafe.Field(s.engine.KASLogDir()), "error", err)
 }
 
+// doorCall writes the door's own session/new or session/load. When ctx ends first the door is abandoned: the error is
+// the ctx's cause (ErrChatClosedDuringCall for a chat's close), and the handle is kept for kiro-cli's late answer.
+func (s *Session) doorCall(
+	ctx context.Context, method, phase string, params any, late func(*marotte.RPCResponse),
+) (*marotte.RPCResponse, uint64, error) {
+	resp, seq, abandoned, err := s.engine.send(ctx, s.lane, s.id, method, params, late, nil)
+	if err == nil {
+		return resp, seq, nil
+	}
+	if cause := context.Cause(ctx); ctx.Err() != nil && errors.Is(cause, marotte.ErrChatClosedDuringCall) {
+		err = cause
+	}
+	if abandoned {
+		err = fmt.Errorf("%s: %w", method, err)
+		s.abandonDoor(phase, method, err)
+		return nil, 0, err
+	}
+	err = fmt.Errorf("%s: %w", method, err)
+	s.failDoor(phase, err)
+	return nil, 0, err
+}
+
 // NewSession creates a session under an id it mints (ids.NewSessionID) and sends as `_meta.kiro.overrideSessionId`.
 // attach runs once the lane is registered and before session/new is written, so a consumer reads every frame KAS
-// sends for the session, the requests during creation included, which must be answered for the door to finish.
-// handshakeBudget bounds the door on top of ctx. A reply that comes after the door gave up is still acted on: the
-// session KAS created is closed and its files reaped, never leaked.
-func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(*Session)) (*Session, error) {
+// sends for the session, the requests during creation included, which must be answered for the door to finish; an
+// attach error ends the door with nothing written and is returned. handshakeBudget bounds the door on top of ctx. A
+// door that gives up keeps its handle until kiro-cli answers, and the session KAS created is released and its files
+// reaped, never leaked. A close asked during the door releases what KAS created and answers ErrChatClosedDuringCall.
+func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(*Session) error) (*Session, error) {
 	if o.Model != "" && !validIdent(o.Model) {
 		return nil, fmt.Errorf("invalid model identifier: %q", o.Model)
 	}
@@ -178,7 +239,10 @@ func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach 
 	}
 	s.spawn.OverrideSessionID = string(minted)
 	if attach != nil {
-		attach(s)
+		if err = attach(s); err != nil {
+			s.closed()
+			return nil, err
+		}
 	}
 	dctx, cancel := context.WithTimeout(ctx, handshakeBudget)
 	defer cancel()
@@ -186,17 +250,15 @@ func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach 
 	params := withClientSteering(withSessionChoices(s.withSessionMeta(withAdditionalDirectories(map[string]any{
 		"cwd": e.workDir, "mcpServers": []any{},
 	}, o)), o), o)
-	resp, _, err := e.callAt(dctx, s.lane, minted, methodSessionNew, params, e.lateSessionNew(minted, params))
+	resp, _, err := s.doorCall(dctx, methodSessionNew, "new", params, e.lateSessionNew(s, params))
 	if err != nil {
-		err = handshakeTimeout(fmt.Errorf("session/new: %w", err), "session start", handshakeBudget)
-		s.failDoor("new", err)
-		return nil, err
+		return nil, handshakeTimeout(err, "session start", handshakeBudget)
 	}
 	var result sessionCreated
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		err = fmt.Errorf("parse session/new: %w", err)
-		s.failDoor("new", err)
-		e.closeAndReap(minted)
+		logDoorFailure(s, "new", err)
+		s.releaseNow(true)
 		return nil, err
 	}
 	if result.SessionID != minted {
@@ -219,31 +281,37 @@ func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach 
 	// the session on the wrong mode or model, or in autopilot for a supervised chat.
 	if err := dctx.Err(); err != nil {
 		err = handshakeTimeout(fmt.Errorf("session/new: %w", err), "session start", handshakeBudget)
-		s.failDoor("new", err)
-		e.closeAndReap(minted)
+		logDoorFailure(s, "new", err)
+		s.releaseNow(true)
 		return nil, err
 	}
-	s.open()
+	if !s.open(true) {
+		return nil, marotte.ErrChatClosedDuringCall
+	}
 	slog.Info("session opened",
 		"session_id", minted, "role", o.Role, "model", s.ModelID(), "phase", "new",
 		"elapsed_ms", time.Since(start).Milliseconds())
 	return s, nil
 }
 
-// lateSessionNew finishes an abandoned session/new from the id KAS actually created: the minted one is closed and
-// reaped, a different one (KAS ignored the override) is closed, reaped and logged, and an error reply created nothing.
-func (e *Engine) lateSessionNew(minted marotte.SessionID, params map[string]any) func(*marotte.RPCResponse) {
+// lateSessionNew settles the kept handle of an abandoned session/new from kiro-cli's answer: an error reply created
+// nothing; a result naming the minted id is released and reaped; one naming another id (KAS ignored the override)
+// ends the minted handle and closes and reaps that one.
+func (e *Engine) lateSessionNew(s *Session, params map[string]any) func(*marotte.RPCResponse) {
 	return func(resp *marotte.RPCResponse) {
+		<-s.gaveUp
 		if resp.Error != nil {
+			s.closed()
 			return
 		}
 		var result sessionCreated
 		_ = json.Unmarshal(resp.Result, &result)
-		if result.SessionID != "" && result.SessionID != minted {
-			e.refusedOverride(minted, result.SessionID, params)
+		if result.SessionID != "" && result.SessionID != s.id {
+			s.closed()
+			e.refusedOverride(s.id, result.SessionID, params)
 			return
 		}
-		e.closeAndReap(minted)
+		s.answeredLate(true)
 	}
 }
 
@@ -263,8 +331,8 @@ func metaKeysOf(params map[string]any) []string {
 	return slices.Sorted(maps.Keys(kiro))
 }
 
-// closeAndReap sends an engine-level session/close for id and reaps its files: the session exists in KAS, but no
-// handle holds it.
+// closeAndReap sends an engine-level session/close for id and reaps its files: the session exists in KAS under an id
+// marotte never registered (refusedOverride).
 func (e *Engine) closeAndReap(id marotte.SessionID) {
 	budget := closeBudget
 	e.goBackground(func() {
@@ -280,9 +348,10 @@ func (e *Engine) closeAndReap(id marotte.SessionID) {
 }
 
 // LoadSession loads o.SessionID with a lane registered under it first, attach running before the write as
-// NewSession's does. replayBudget bounds the door on top of ctx: KAS replays the transcript before the reply. A reply
-// that comes after the door gave up closes the session unless a newer handle for the id exists.
-func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(*Session)) (*Session, error) {
+// NewSession's does. replayBudget bounds the door on top of ctx: KAS replays the transcript before the reply. A door
+// that gives up keeps its handle until kiro-cli answers, then releases the loaded session, so a door for the id waits
+// for that.
+func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(*Session) error) (*Session, error) {
 	id := marotte.SessionID(o.SessionID)
 	if !ids.ValidSessionID(o.SessionID) {
 		return nil, fmt.Errorf("invalid acp session id: %q", o.SessionID)
@@ -295,19 +364,20 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 		return nil, err
 	}
 	if attach != nil {
-		attach(s)
+		if err = attach(s); err != nil {
+			s.closed()
+			return nil, err
+		}
 	}
 	dctx, cancel := context.WithTimeout(ctx, replayBudget)
 	defer cancel()
 	start := time.Now()
-	// CallAt: KAS replays the session as notifications before the result, so the caller needs its position.
-	resp, seq, err := e.callAt(dctx, s.lane, id, methodSessionLoad, withClientSteering(s.withSessionMeta(withAdditionalDirectories(map[string]any{
+	// The door's call keeps the reply's lane position: KAS replays the session as notifications before the result.
+	resp, seq, err := s.doorCall(dctx, methodSessionLoad, "load", withClientSteering(s.withSessionMeta(withAdditionalDirectories(map[string]any{
 		marotte.KeySessionID: id, "cwd": e.workDir, "mcpServers": []any{},
 	}, o)), o), e.lateSessionLoad(s))
 	if err != nil {
-		err = handshakeTimeout(fmt.Errorf("session/load: %w", err), "session resume", replayBudget)
-		s.failDoor("load", err)
-		return nil, err
+		return nil, handshakeTimeout(err, "session resume", replayBudget)
 	}
 	s.adoptLoadedSession(o.Model, resp)
 	s.mu.Lock()
@@ -322,55 +392,52 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 	// A loaded session keeps its memory mode, but reflection has a live setter.
 	s.applyMemoryReflection(dctx, o.Memory.Reflection)
 	s.applyContentCollection(dctx)
-	s.open()
+	if !s.open(false) {
+		return nil, marotte.ErrChatClosedDuringCall
+	}
 	slog.Info("session opened",
 		"session_id", id, "role", o.Role, "model", s.ModelID(), "phase", "load",
 		"elapsed_ms", time.Since(start).Milliseconds())
 	return s, nil
 }
 
-// lateSessionLoad closes a session whose load reply came after its door gave up, unless a newer handle took the id.
-// The id stays held until the close settles, so a door for it opened meanwhile waits instead of being closed.
+// lateSessionLoad settles the kept handle of an abandoned session/load from kiro-cli's answer: a result is released,
+// an error reply loaded nothing.
 func (e *Engine) lateSessionLoad(s *Session) func(*marotte.RPCResponse) {
 	return func(resp *marotte.RPCResponse) {
+		<-s.gaveUp
 		if resp.Error != nil {
+			s.closed()
 			return
 		}
-		e.lanesMu.Lock()
-		// s itself may still be registered: callAt gives up before LoadSession's failDoor removes it.
-		if cur := e.sessions[s.id]; (cur != nil && cur != s) || e.releasing[s.id] != nil {
-			e.lanesMu.Unlock()
-			return
-		}
-		held := make(chan struct{})
-		e.releasing[s.id] = held
-		e.lanesMu.Unlock()
-		release := func() {
-			e.lanesMu.Lock()
-			delete(e.releasing, s.id)
-			e.lanesMu.Unlock()
-			close(held)
-		}
-		budget := closeBudget
-		if !e.goBackground(func() {
-			defer release()
-			cctx, cancel := context.WithTimeout(e.lifecycleCtx, budget)
-			defer cancel()
-			if _, err := e.Call(cctx, methodSessionClose, map[string]any{marotte.KeySessionID: s.id}); err != nil {
-				slog.Warn("could not close a session whose load was abandoned", "session_id", s.id, "error", err)
-			}
-		}) {
-			release()
-		}
+		s.answeredLate(false)
 	}
 }
 
-func (s *Session) open() {
+// answeredLate starts custody for a kept handle kiro-cli answered: the abandon's held clock gives way to custody's.
+func (s *Session) answeredLate(reap bool) {
 	s.mu.Lock()
+	s.reapOnSettle = reap
+	s.stopHeldClockLocked()
+	s.mu.Unlock()
+	s.startCustody(false)
+}
+
+// open ends a door that succeeded: the session opens, unless a close was asked during the door, in which case what
+// KAS created is released (reaped when reap is set, a session no record names yet) and open reports false.
+func (s *Session) open(reap bool) bool {
+	s.mu.Lock()
+	if s.state == stateOpening && s.closeAsked {
+		s.mu.Unlock()
+		slog.Debug("session released at its door: a close was asked while it opened", "session_id", s.id, "role", s.role)
+		s.releaseNow(reap)
+		return false
+	}
 	if s.state == stateOpening {
 		s.state = stateOpen
 	}
 	s.mu.Unlock()
+	return true
 }
 
 // withSessionMeta adds the session door's _meta.kiro block to a session/new or session/load parameter map. Both

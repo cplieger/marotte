@@ -98,7 +98,10 @@ func (r *recordingTeardown) CloseChatState(_ context.Context, id marotte.ChatID)
 	r.closed = append(r.closed, id)
 }
 
-func (*recordingTeardown) BeginChatTeardown(marotte.ChatID, bool) {}
+func (*recordingTeardown) BeginChatTeardown(marotte.ChatID, bool)               {}
+func (*recordingTeardown) HoldChat(marotte.ChatID) ChatHold                     { return nopHold{} }
+func (*recordingTeardown) AwaitSessionLeases(context.Context, marotte.ChatID)   {}
+func (*recordingTeardown) TeardownCancel(context.Context, marotte.ChatID) error { return nil }
 
 func createChat(t *testing.T, mem *Membership, opID string) ChatOpened {
 	t.Helper()
@@ -389,7 +392,7 @@ func TestCloseTab_AParentAndItsChildrenAreOneMutation(t *testing.T) {
 	_, versionBefore := st.List()
 	framesBefore := len(bus.frames(t))
 
-	closed, version, err := mem.closeTab(t.Context(), parent.Subject.ID, "op-close")
+	closed, version, err := mem.closeTab(t.Context(), parent.Subject.ID, "op-close", nil)
 	if err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}
@@ -431,7 +434,7 @@ func TestCloseTab_AnIdThatIsNotOpenIsNotAnError(t *testing.T) {
 	createChat(t, mem, "op-a")
 	_, before := st.List()
 
-	closed, version, err := mem.closeTab(t.Context(), "not-open", "op-close")
+	closed, version, err := mem.closeTab(t.Context(), "not-open", "op-close", nil)
 	if err != nil {
 		t.Fatalf("closing an absent id = %v, want no error", err)
 	}
@@ -456,12 +459,13 @@ func TestCloseTab_AChatTabRunsTheTeardownAndKeepsTheRecord(t *testing.T) {
 	}
 	var tornDown []marotte.ChatID
 	mem := newMembership(&membershipDeps{
-		Chats: store, Tabs: st, Bus: &tabBus{},
+		Teardown: &recordingTeardown{},
+		Chats:    store, Tabs: st, Bus: &tabBus{},
 		CloseChat: func(_ context.Context, id marotte.ChatID) { tornDown = append(tornDown, id) },
 	})
 	opened := createChat(t, mem, "op-a")
 
-	if _, _, err := mem.closeTab(t.Context(), opened.Subject.ID, "op-close"); err != nil {
+	if _, _, err := mem.closeTab(t.Context(), opened.Subject.ID, "op-close", nil); err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}
 
@@ -482,12 +486,12 @@ func TestCloseTab_AChatTabCloseWakesRetention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
-	mem := newMembership(&membershipDeps{Chats: store, Tabs: st, Bus: &tabBus{}})
+	mem := newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: store, Tabs: st, Bus: &tabBus{}})
 	wakes := 0
 	mem.SetRetentionWake(func() { wakes++ })
 	opened := createChat(t, mem, "op-a")
 
-	if _, _, err := mem.closeTab(t.Context(), opened.Subject.ID, "op-close"); err != nil {
+	if _, _, err := mem.closeTab(t.Context(), opened.Subject.ID, "op-close", nil); err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}
 	if wakes != 1 {
@@ -495,7 +499,7 @@ func TestCloseTab_AChatTabCloseWakesRetention(t *testing.T) {
 			"the exemption, and nothing else asks the purge to look again", wakes)
 	}
 
-	if _, _, err := mem.closeTab(t.Context(), "not-open", "op-close-2"); err != nil {
+	if _, _, err := mem.closeTab(t.Context(), "not-open", "op-close-2", nil); err != nil {
 		t.Fatalf("CloseTab of an unopened id = %v", err)
 	}
 	if wakes != 1 {
@@ -511,7 +515,7 @@ func TestCloseTab_ARunTabCloseWakesRetention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
-	mem := newMembership(&membershipDeps{Chats: testsupport.NewInMemoryChatStore(), Tabs: st, Bus: &tabBus{}})
+	mem := newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: testsupport.NewInMemoryChatStore(), Tabs: st, Bus: &tabBus{}})
 	wakes := 0
 	mem.SetRetentionWake(func() { wakes++ })
 	opened, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}, "op-run")
@@ -522,7 +526,7 @@ func TestCloseTab_ARunTabCloseWakesRetention(t *testing.T) {
 		t.Fatal("AdmitRunPurge(wf_1) = true with its tab open, want false")
 	}
 
-	if _, _, err := mem.closeTab(t.Context(), opened.Subject.ID, "op-close"); err != nil {
+	if _, _, err := mem.closeTab(t.Context(), opened.Subject.ID, "op-close", nil); err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}
 	if wakes != 1 {
@@ -542,7 +546,7 @@ func TestOpenTab_ARunBeingPurgedIsRefusedUntilThePurgeIsDone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
-	mem := newMembership(&membershipDeps{Chats: testsupport.NewInMemoryChatStore(), Tabs: st, Bus: &tabBus{}})
+	mem := newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: testsupport.NewInMemoryChatStore(), Tabs: st, Bus: &tabBus{}})
 	spec := marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}
 	done, ok := mem.AdmitRunPurge(t.Context(), "wf_1", "")
 	if !ok {
@@ -584,7 +588,7 @@ func newClaimsMembership(t *testing.T, claims sessionClaims) *Membership {
 	if claims == nil {
 		claims = store
 	}
-	return newMembership(&membershipDeps{Chats: store, Tabs: st, Bus: &tabBus{}, Sessions: claims})
+	return newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: store, Tabs: st, Bus: &tabBus{}, Sessions: claims})
 }
 
 // The purge's earlier claim snapshot cannot decide: a chat that adopted the run's
@@ -611,7 +615,8 @@ func TestAdmitRunPurge_AnUnverifiableClaimSparesTheRun(t *testing.T) {
 	for name, mem := range map[string]*Membership{
 		"incomplete scan": newClaimsMembership(t, incompleteClaims{}),
 		"no reader": newMembership(&membershipDeps{
-			Chats: testsupport.NewInMemoryChatStore(), Bus: &tabBus{},
+			Teardown: &recordingTeardown{},
+			Chats:    testsupport.NewInMemoryChatStore(), Bus: &tabBus{},
 		}),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -656,7 +661,7 @@ func TestCloseTab_AChatTabCloseWithNoSchedulerWiredIsSafe(t *testing.T) {
 	mem, _, _ := newTabbedMembership(t, store)
 	opened := createChat(t, mem, "op-a")
 
-	if _, _, err := mem.closeTab(t.Context(), opened.Subject.ID, "op-close"); err != nil {
+	if _, _, err := mem.closeTab(t.Context(), opened.Subject.ID, "op-close", nil); err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}
 }
@@ -681,7 +686,7 @@ func TestDeleteChatAndCloseTabs_TheRecordLeads(t *testing.T) {
 		})
 	})
 
-	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del"); err != nil {
+	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del", nil); err != nil {
 		t.Fatalf("DeleteChatAndCloseTabs = %v", err)
 	}
 	openDone.Wait()
@@ -716,7 +721,7 @@ func TestDeleteChatAndCloseTabs_RemovesTheRecordBeforeTheTeardown(t *testing.T) 
 	recordAtTeardown := true
 	td.onByChain = func() { _, recordAtTeardown = store.Get(context.Background(), chatID) }
 
-	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del"); err != nil {
+	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del", nil); err != nil {
 		t.Fatalf("DeleteChatAndCloseTabs = %v", err)
 	}
 
@@ -746,7 +751,7 @@ func TestDeleteChatAndCloseTabs_AFailedDeleteTearsNothingDown(t *testing.T) {
 	opened := createChat(t, mem, "op-a")
 	chatID := marotte.ChatID(opened.Chat.ID)
 
-	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del"); statusOf(err) != http.StatusInternalServerError {
+	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del", nil); statusOf(err) != http.StatusInternalServerError {
 		t.Fatalf("DeleteChatAndCloseTabs with a refused delete = status %d (%s), want 500", statusOf(err), errText(err))
 	}
 
@@ -783,7 +788,7 @@ func TestDeleteChatAndCloseTabs_AnUndecodableRecordIsKept(t *testing.T) {
 		t.Fatalf("Setup: corrupt the header: %v", err)
 	}
 
-	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del"); statusOf(err) != http.StatusInternalServerError {
+	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del", nil); statusOf(err) != http.StatusInternalServerError {
 		t.Fatalf("DeleteChatAndCloseTabs(%q) with an undecodable header = status %d (%s), want 500", chatID, statusOf(err), errText(err))
 	}
 
@@ -810,7 +815,7 @@ func TestDeleteChatAndCloseTabs_RetriesAFailedCloseWithoutARestart(t *testing.T)
 	chatID := marotte.ChatID(opened.Chat.ID)
 	flaky.failCloseOnce()
 
-	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del"); err != nil {
+	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del", nil); err != nil {
 		t.Fatalf("DeleteChatAndCloseTabs = %v", err)
 	}
 
@@ -834,7 +839,7 @@ func TestDeleteChatAndCloseTabs_AnnouncesTheRemovalEvenWhenTheCloseKeepsFailing(
 	flaky.openFails(0)
 	flaky.setFailCloses(10)
 
-	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del"); err != nil {
+	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del", nil); err != nil {
 		t.Fatalf("DeleteChatAndCloseTabs = %v", err)
 	}
 
@@ -943,7 +948,7 @@ func TestHasOpenTab_IsRetentionsSecondPredicate(t *testing.T) {
 	mem, _, _ := newTabbedMembership(t, store)
 	opened := createChat(t, mem, "op-a")
 	closedChat := createChat(t, mem, "op-b")
-	if _, _, err := mem.closeTab(t.Context(), closedChat.Subject.ID, "op-close"); err != nil {
+	if _, _, err := mem.closeTab(t.Context(), closedChat.Subject.ID, "op-close", nil); err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}
 

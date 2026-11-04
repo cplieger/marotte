@@ -5,7 +5,12 @@
 import { el, signal, subscribe, effect } from "@cplieger/reactive";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { $ } from "./dom.js";
-import { hasTab, setHistoryTab as setHistoryTabRoute, tabSetVersion } from "./tabs.js";
+import {
+  descendantChatsOf,
+  hasTab,
+  setHistoryTab as setHistoryTabRoute,
+  tabSetVersion,
+} from "./tabs.js";
 import type { TabRunDotStatus } from "./tabs.js";
 import { pushRoute } from "./router.js";
 import type { HistoryTab } from "./route-path.js";
@@ -18,13 +23,16 @@ import { setPageSubtitle } from "./page-title.js";
 import { entryRow, entrySkeleton } from "./entry-row.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";
 import { loadSessions } from "./actions/chat.js";
-import { registerCleanup } from "./actions/index.js";
+import { registerCleanup, retryNetwork } from "./actions/index.js";
+import { serverImpactOf } from "./actions/close-impact.js";
+import { deleteStopsWork } from "./close-busy.js";
+import { actionNotice } from "./notice-subject.js";
 import { openPreviousSession, openChatTab } from "./chat.js";
 import { searchChats } from "./actions/chat-search.js";
 import { openChatFindAt } from "./find-in-chat.js";
 import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
 import type { Nouns } from "./textsearch/copy.js";
-import type { Match } from "./wire/types.gen.js";
+import type { CloseImpact, Match } from "./wire/types.gen.js";
 import { openRunView } from "./run-view.js";
 import { runChatID } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
@@ -639,8 +647,9 @@ function openRow(row: HistoryRow, onGone: () => void): void {
 }
 
 /**
- * Neither kind is recoverable. A chat runs `delete_chat` (chat file, its runs, its KAS session chain); a run runs
- * `_kiro/workflow/delete` (cancels if moving, then the run directory, lease, timer, end reason). True when gone.
+ * Neither kind is recoverable. A chat runs `delete_chat` (chat file, its runs, its KAS session chain, and the chat tabs
+ * under its tabs, whose work the confirm names); a run runs `_kiro/workflow/delete` (cancels if moving, then the run
+ * directory, lease, timer, end reason). True when gone.
  */
 async function deleteRow(row: HistoryRow): Promise<boolean> {
   const label = row.kind === "run" ? "run" : "conversation";
@@ -649,8 +658,12 @@ async function deleteRow(row: HistoryRow): Promise<boolean> {
     n === 0
       ? ""
       : ` It also deletes the ${n === 1 ? "workflow run" : `${String(n)} workflow runs`} it started.`;
+  const chatID = row.kind === "run" ? "" : (row.session?.chat_id ?? "");
+  const stops = deleteStopsWork(chatID === "" ? [] : descendantChatsOf(chatID));
   const ok = await confirm(
-    `Delete this ${label}? "${row.title}" and its stored history are removed for good.${runs}`,
+    `Delete this ${label}? "${row.title}" and its stored history are removed for good.${runs}${
+      stops.text === "" ? "" : ` ${stops.text}`
+    }`,
     "Delete",
     "destructive",
   );
@@ -660,12 +673,52 @@ async function deleteRow(row: HistoryRow): Promise<boolean> {
   if (row.kind === "run" && row.run !== undefined) {
     return (await deleteRun.dispatch(row.run.workflow_id)) !== null;
   }
-  const chatID = row.session?.chat_id ?? "";
   if (chatID === "") {
     return false;
   }
-  // The tab is not closed here: the membership coordinator closes tabs for a deleted chat under the same lock.
-  return (await deleteChatAction.dispatch(chatID)) !== null;
+  return deleteChatAsked(chatID, row.title, stops.impact);
+}
+
+/** Send the delete with what the confirm named; a stale confirm (another device changed what the delete stops in
+ *  the chats under its tabs) asks again on the merge, and each answer is a person's, so the loop needs no cap.
+ *  The tab is not closed here: the membership coordinator closes tabs for a deleted chat under the same lock. */
+async function deleteChatAsked(
+  chatID: string,
+  title: string,
+  named: CloseImpact,
+): Promise<boolean> {
+  let impact = named;
+  for (;;) {
+    const args = { id: chatID, impact };
+    const outcome = await deleteChatAction.dispatch(args).outcome;
+    if (outcome.status !== "error") {
+      return outcome.status === "success";
+    }
+    const server = serverImpactOf(outcome.error);
+    if (server === undefined) {
+      if (outcome.error.code !== "cancelled") {
+        const retry = retryNetwork(outcome.error)
+          ? {
+              onClick: () => {
+                void deleteChatAction.dispatch(args);
+              },
+            }
+          : undefined;
+        actionNotice(chatID, `Could not delete chat: ${outcome.error.message}`, "error", retry);
+      }
+      return false;
+    }
+    const again = deleteStopsWork(descendantChatsOf(chatID), { sent: impact, server });
+    const yes = await confirm(
+      `What deleting "${title}" also stops changed. Delete it?${again.text === "" ? "" : ` ${again.text}`}`,
+      "Delete",
+      "destructive",
+    );
+    if (!yes) {
+      return false;
+    }
+    impact = again.impact;
+  }
 }
 
 function buildRow(row: HistoryRow, refresh: () => void): HTMLElement {

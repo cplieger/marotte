@@ -142,7 +142,7 @@ func TestCloseTeardown_UndeliveredAnswerStillTearsDown(t *testing.T) {
 	d := newCancelDeps(b)
 	d.err = fmt.Errorf("%w: write refused", ErrCancelNotDelivered)
 
-	closeChatTeardown(t.Context(), d, d, d, d, "c1")
+	closeChatTeardown(t.Context(), d, d, d, "c1")
 
 	if len(d.scopes) != 1 || d.scopes[0] != ScopeChatAndRuns {
 		t.Errorf("permission scopes = %v, want [ScopeChatAndRuns]", d.scopes)
@@ -179,7 +179,7 @@ func TestCloseTeardown_AnswersChatAndStepAsksBeforeSessionCancel(t *testing.T) {
 	notifiedAtAnswers := -1
 	d.onCancel = func() { notifiedAtAnswers = len(b.notified) }
 
-	closeChatTeardown(t.Context(), d, d, d, d, "c1")
+	closeChatTeardown(t.Context(), d, d, d, "c1")
 
 	assertAnswersBeforeCancel(t, d, b, notifiedAtAnswers)
 	if len(d.closed) != 1 {
@@ -193,7 +193,7 @@ func TestDeleteTeardown_AnswersChatAndStepAsksBeforeSessionCancel(t *testing.T) 
 	notifiedAtAnswers := -1
 	d.onCancel = func() { notifiedAtAnswers = len(b.notified) }
 
-	deleteChatTeardown(t.Context(), d, d, d, d, "c1", []string{"sess-1"})
+	deleteChatTeardown(t.Context(), d, d, d, "c1", []string{"sess-1"}, RunStopTabClosed)
 
 	assertAnswersBeforeCancel(t, d, b, notifiedAtAnswers)
 }
@@ -212,10 +212,10 @@ func TestStop_RecordsItsIssuersCause(t *testing.T) {
 			}
 		}},
 		{name: "a tab close", want: marotte.TurnStopTeardown, run: func(t *testing.T, d *cancelDeps) {
-			closeChatTeardown(t.Context(), d, d, d, d, "c1")
+			closeChatTeardown(t.Context(), d, d, d, "c1")
 		}},
 		{name: "a chat delete", want: marotte.TurnStopTeardown, run: func(t *testing.T, d *cancelDeps) {
-			deleteChatTeardown(t.Context(), d, d, d, d, "c1", []string{"sess-1"})
+			deleteChatTeardown(t.Context(), d, d, d, "c1", []string{"sess-1"}, RunStopTabClosed)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

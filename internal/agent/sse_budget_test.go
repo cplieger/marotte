@@ -60,7 +60,7 @@ func busyChatsWithHugeTurns(tb testing.TB, rt *Runtime, n int) []marotte.ChatID 
 	ids := make([]marotte.ChatID, 0, n)
 	for i := range n {
 		id := marotte.ChatID(fmt.Sprintf("c-budget-%02d", i))
-		rt.bridge.mgr.orInsert(id)
+		rt.bridge.mgr.orInsertNow(id)
 		_, log := rt.stagePromptTurn(tb, id)
 		fillTurn(tb, log, string(id))
 		openBudgetChatTab(tb, rt, id)

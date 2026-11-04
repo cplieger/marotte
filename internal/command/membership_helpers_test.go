@@ -13,7 +13,7 @@ import (
 // for tests of the chat half.
 func newTestMembership(t *testing.T, chats chatStore) *Membership {
 	t.Helper()
-	return newMembership(&membershipDeps{Chats: chats})
+	return newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: chats})
 }
 
 // newTabbedMembership builds a coordinator over a chat store, a REAL tab store in a temp dir and a
@@ -25,7 +25,7 @@ func newTabbedMembership(t *testing.T, chats chatStore) (*Membership, *tabs.Stor
 		t.Fatalf("open tab store: %v", err)
 	}
 	bus := &tabBus{}
-	return newMembership(&membershipDeps{Chats: chats, Tabs: st, Bus: bus}), st, bus
+	return newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: chats, Tabs: st, Bus: bus}), st, bus
 }
 
 // A separate constructor rather than a wider signature on the helper above, which has 27 call sites
@@ -45,11 +45,16 @@ func newTornDownMembership(t *testing.T, chats chatStore) (*Membership, *tabs.St
 // tabBus records the tabs_changed frames a coordinator emitted, under its own mutex for the -race
 // tests.
 type tabBus struct {
-	events []marotte.ServerEvent
-	mu     sync.Mutex
+	// onBroadcast runs with each frame, before it is recorded.
+	onBroadcast func()
+	events      []marotte.ServerEvent
+	mu          sync.Mutex
 }
 
 func (b *tabBus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
+	if b.onBroadcast != nil {
+		b.onBroadcast()
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.events = append(b.events, evt)

@@ -905,6 +905,23 @@ func (r *steerRecords) beginTeardown(chatID marotte.ChatID, exit <-chan struct{}
 	return unread
 }
 
+// unreadKeys is the keys of the rows a teardown of chatID would drop (beginTeardown), the dock rows its page shows.
+func (r *steerRecords) unreadKeys(chatID marotte.ChatID) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec := r.chats[chatID]
+	if rec == nil || rec.gone {
+		return nil
+	}
+	var keys []string
+	rec.live(func(w *dockRow) {
+		if rowRuleFor(w.state, evTeardown) == rDrop {
+			keys = append(keys, w.key)
+		}
+	})
+	return keys
+}
+
 // shutdownRow is one row a shutdown takes: KASHeld when KAS may hold its words (textless entry, decided at next
 // boot), Agent for a workflow's row.
 type shutdownRow struct {
@@ -959,9 +976,9 @@ func sortLeadFirst(rows []*dockRow, lead string) {
 	})
 }
 
-// endTeardown forgets the record once the chat's last forward goroutine and every
-// queued step have drained, bounded, so a late fold cannot recreate it for a chat
-// that is gone.
+// endTeardown forgets the record once every queued step has drained, so a late fold
+// cannot recreate it for a chat that is gone. The ResendBridgeWait bound has no normal-path
+// case: closeBridge, the owner of the forward's exit, already awaited it.
 func (r *steerRecords) endTeardown(chatID marotte.ChatID) {
 	r.mu.Lock()
 	rec := r.chats[chatID]

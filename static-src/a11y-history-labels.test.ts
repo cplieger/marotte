@@ -28,7 +28,12 @@ vi.mock("./actions/chat-search.js", () => ({
 // actions/index.js is reduced to one symbol here, so an unmocked action def cannot build.
 vi.mock("./actions/runs.js", () => ({ deleteRun: { dispatch: noop } }));
 vi.mock("./confirm.js", () => ({ confirm: async () => false }));
-vi.mock("./actions/index.js", () => ({ registerCleanup: noop }));
+vi.mock("./actions/index.js", () => ({ registerCleanup: noop, retryNetwork: () => false }));
+vi.mock("./actions/close-impact.js", () => ({ serverImpactOf: () => undefined }));
+vi.mock("./close-busy.js", () => ({
+  deleteStopsWork: () => ({ text: "", impact: { chats: [] } }),
+}));
+vi.mock("./notice-subject.js", () => ({ actionNotice: noop }));
 vi.mock("./chat.js", () => ({ openPreviousSession: noop, openChatTab: noop }));
 vi.mock("./run-view.js", () => ({ openRunView: noop }));
 // The real dock module reaches actions/index.js past the stub above. No run here has an ask.
@@ -39,6 +44,7 @@ vi.mock("./decision-dock.js", () => ({
 // the block dispatcher and the store, neither of which this suite stages.
 vi.mock("./find-in-chat.js", () => ({ openChatFindAt: noop }));
 vi.mock("./tabs.js", () => ({
+  descendantChatsOf: () => [],
   hasTab: () => false,
   // The pane's route sync: a no-op here, because no tab is open to point.
   setHistoryTab: noop,

@@ -85,7 +85,7 @@ func TestCancelForSessions_ReadsTheRunInventoryOnce(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 	leased(t, h.runs, "wf_1")
 	leased(t, h.runs, "wf_2")
 
@@ -119,7 +119,7 @@ func TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED(t *testing.T) {
 		t.Fatal("Setup: the recorder handed back something other than a fake")
 	}
 	owner.sessionID = "sess_owner"
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: owner, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(owner, bridgeIdle))
 	if _, found := cs.Get(t.Context(), "c1"); found {
 		t.Fatal("Setup: the chat record exists, so this is not the delete-grade state")
 	}

@@ -71,7 +71,7 @@ func TestCancelExpired_AnUnreadableRunWithNoOpenStepIsAStall(t *testing.T) {
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	br.callErrs = map[string]error{methodKiroWorkflowInspect: errors.New("engine unavailable")}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 
 	h.runs.cancelExpired(id, deadline)
@@ -253,8 +253,8 @@ func TestFinishTermination_TellsTheLaunchingChatWhy(t *testing.T) {
 		t.Fatalf("seed the chat: %v", err)
 	}
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	host := &sharedBridge{bridge: br, state: bridgeIdle}
-	h.bridge.mgr.insert(chatID, host)
+	host := testBridge(br, bridgeIdle)
+	h.insertBridgeNow(chatID, host)
 	h.runs.grantLease(t.Context(), id, "nightly", launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
 	before := time.Now().UnixMilli()
 
@@ -310,8 +310,8 @@ func TestFinishTermination_NotesTheStopWhenTheTerminalFrameWinsTheRace(t *testin
 		h.runs.forgetBounds(t.Context(), id)
 		return json.RawMessage(`{}`), nil, true
 	}
-	host := &sharedBridge{bridge: br, state: bridgeIdle}
-	h.bridge.mgr.insert(chatID, host)
+	host := testBridge(br, bridgeIdle)
+	h.insertBridgeNow(chatID, host)
 	h.runs.grantLease(t.Context(), id, "nightly", launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
 
 	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}, noRetry); err != nil {
@@ -335,8 +335,8 @@ func TestFinishTermination_AParentlessRunLeavesNoNote(t *testing.T) {
 	defer shutdownHub(t, h)
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	host := &sharedBridge{bridge: br, state: bridgeIdle}
-	h.bridge.mgr.insert(runChatID(id), host)
+	host := testBridge(br, bridgeIdle)
+	h.insertBridgeNow(runChatID(id), host)
 	leased(t, h.runs, id)
 
 	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}, noRetry); err != nil {

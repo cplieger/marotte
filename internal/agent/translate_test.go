@@ -537,10 +537,10 @@ func TestTranslateACPEvent_RoutesTerminalRequest(t *testing.T) {
 // is parentSession, so h.parentACPSession(chatID) returns it.
 func registerParentSession(t *testing.T, h *Runtime, chatID marotte.ChatID, parentSession string) {
 	t.Helper()
-	sb, _ := h.bridge.mgr.orInsert(chatID)
+	sb, _ := h.bridge.mgr.orInsertNow(chatID)
 	br := newFakeBridge()
 	br.sessionID = parentSession
-	sb.bridge = br
+	sb.attach(br)
 	sb.state = bridgeIdle
 }
 

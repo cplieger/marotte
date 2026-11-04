@@ -101,7 +101,7 @@ func TestKiroSessionExport_MergesTheChainThroughTheEngine(t *testing.T) {
 	live := newFakeBridge()
 	live.sessionID = "sess_b"
 	exportAnswer(live, map[string]string{"sess_b": pathB}, &liveAsked, &mu)
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: live, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(live, bridgeIdle))
 
 	rec := exportRequest(h, "c1")
 	if rec.Code != http.StatusOK {

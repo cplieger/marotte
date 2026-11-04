@@ -198,6 +198,9 @@ func (lt *lifetime) Draining() bool {
 	return lt.draining.Load()
 }
 
+// GoUnlessDraining is goUnlessDraining for the command layer's background work.
+func (lt *lifetime) GoUnlessDraining(fn func()) bool { return lt.goUnlessDraining(fn) }
+
 type bridges struct {
 	mgr *bridgeManager
 }
@@ -227,6 +230,8 @@ type bus struct {
 // Runtime is the central coordinator.
 type Runtime struct {
 	steerQueue steerQueue
+	// teardownHook runs between cleanupChatState's steps, so a test can park a teardown; nil in production.
+	teardownHook atomic.Pointer[func(step string)]
 
 	push      pushService
 	chatStore chatRecords
@@ -930,10 +935,8 @@ func (rt *Runtime) sweepSessionsOnce() {
 func (rt *Runtime) liveSessionIDs() []string {
 	var ids []string
 	for _, sb := range rt.bridge.mgr.all() {
-		if cur := sb.current(); cur != nil {
-			if id := string(cur.SessionID()); id != "" {
-				ids = append(ids, id)
-			}
+		if id := string(sb.SessionID()); id != "" {
+			ids = append(ids, id)
 		}
 	}
 	return ids

@@ -66,7 +66,7 @@ func (rs *Runs) clearStaleNotices(ctx context.Context, chatID marotte.ChatID) {
 		slog.Warn("run notice: boundary clear failed; the notice stays queued for the next prompt", "chat_id", chatID, "error", err)
 		return
 	}
-	if !rs.coord.turns.awaitPosition(ctx, chatID, "", seq) {
+	if !rs.coord.turns.awaitPosition(ctx, chatID, seq) {
 		slog.Warn("run notice: the frames before the boundary clear's reply never folded", "chat_id", chatID)
 	}
 }

@@ -56,16 +56,17 @@ func cmdOpenTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand
 }
 
 // cmdCloseTab closes a tab and its children (one mutation, hence a list). For a chat tab it runs
-// the teardown; the record survives. An id that is not open closes nothing and is not an error.
+// the teardown; the record survives. An id that is not open closes nothing and is not an error. A payload impact
+// the close does not cover closes nothing (409 close_impact_changed).
 func cmdCloseTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.CloseTabCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if !validTabID(p.ID) || p.ID == "" || !validIdent(p.OpID) {
+	if !validTabID(p.ID) || p.ID == "" || !validIdent(p.OpID) || !validCloseImpact(p.Impact) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	closed, version, err := mem.closeTab(ctx, p.ID, p.OpID)
+	closed, version, err := mem.closeTab(ctx, p.ID, p.OpID, p.Impact)
 	if err != nil {
 		return nil, err
 	}

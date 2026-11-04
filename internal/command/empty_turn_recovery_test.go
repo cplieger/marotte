@@ -54,6 +54,8 @@ func (*recoveryOutcome) SettleTurnOnResponse(context.Context, marotte.ChatID, st
 
 func (o *recoveryOutcome) TurnOpenedAfter(marotte.ChatID, string) bool { return o.laterTurn }
 
+func (*recoveryOutcome) TurnIsOpen(marotte.ChatID, string) bool { return true }
+
 func (o *recoveryOutcome) StopRequestedAfter(marotte.ChatID, string) bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -64,8 +66,8 @@ func (*recoveryOutcome) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenS
 	return 0, false
 }
 
-func (o *recoveryOutcome) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
-	if o.TryReserveTurn("", marotte.TurnSourcePrompt) {
+func (o *recoveryOutcome) reservePromptOld(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
+	if o.tryReserveOld("", marotte.TurnSourcePrompt) {
 		return AdmissionAcquired
 	}
 	return AdmissionStarting
@@ -73,15 +75,15 @@ func (o *recoveryOutcome) ReserveTurnForPrompt(context.Context, marotte.ChatID, 
 
 func (*recoveryOutcome) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
 
-func (o *recoveryOutcome) TryReserveIdleTurn(c marotte.ChatID, s marotte.TurnOpenSource) bool {
-	return o.TryReserveTurn(c, s)
+func (o *recoveryOutcome) tryReserveIdleOld(c marotte.ChatID, s marotte.TurnOpenSource) bool {
+	return o.tryReserveOld(c, s)
 }
 
-func (o *recoveryOutcome) TryReserveTurnFenced(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
-	return o.TryReserveTurn(c, s)
+func (o *recoveryOutcome) tryReserveFencedOld(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
+	return o.tryReserveOld(c, s)
 }
 
-func (o *recoveryOutcome) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource) bool {
+func (o *recoveryOutcome) tryReserveOld(marotte.ChatID, marotte.TurnOpenSource) bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.reserved {
@@ -91,7 +93,7 @@ func (o *recoveryOutcome) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource)
 	return true
 }
 
-func (o *recoveryOutcome) ReleaseTurnReservation(marotte.ChatID) {
+func (o *recoveryOutcome) releaseOld(marotte.ChatID) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.reserved = false
@@ -111,7 +113,7 @@ type recoveryBridges struct {
 	closed int
 }
 
-func (b *recoveryBridges) CloseBridge(context.Context, marotte.ChatID, marotte.TurnOutcome) {
+func (b *recoveryBridges) closeBridgeOld(context.Context, marotte.ChatID, marotte.TurnOutcome) {
 	b.closed++
 }
 
@@ -212,7 +214,7 @@ func TestRecoverEmptyTurn_GateRequiresAllClauses(t *testing.T) {
 			roles.admission = outcome
 			roles.turnOutcome = outcome
 
-			recoverEmptyTurn(t.Context(), roles, "c1", "t-0", tc.result, p, map[string]any{})
+			recoverEmptyTurn(t.Context(), roles, nil, testReservation("c1", true), "t-0", tc.result, p, map[string]any{})
 
 			fired := bridges.closed > 0
 			if fired != tc.wantFire {
@@ -247,7 +249,7 @@ func TestRecoverEmptyTurn_StopDuringReopenSendsNothing(t *testing.T) {
 	roles.turnOutcome = outcome
 	firing := marotte.TurnResult{Stop: marotte.StopReasonEndTurn, EmittedNothing: true, WireEnded: true}
 
-	recoverEmptyTurn(t.Context(), roles, "c1", "t-0", firing, &marotte.PromptCommand{Text: "q", MessageID: "m1"}, map[string]any{})
+	recoverEmptyTurn(t.Context(), roles, nil, testReservation("c1", true), "t-0", firing, &marotte.PromptCommand{Text: "q", MessageID: "m1"}, map[string]any{})
 
 	if bridges.closed != 1 {
 		t.Errorf("session refreshes = %d, want 1: the stop landed after the refresh", bridges.closed)
@@ -324,11 +326,52 @@ func TestRecoverEmptyTurn_TheRetryDrainsUnderTheSteerLockBeforeItsPrompt(t *test
 	roles.queue, roles.jobs = q, q
 	firing := marotte.TurnResult{Stop: marotte.StopReasonEndTurn, EmittedNothing: true, WireEnded: true}
 
-	recoverEmptyTurn(t.Context(), roles, "c1", "t-0", firing, &marotte.PromptCommand{Text: "q", MessageID: "m1"}, map[string]any{})
+	recoverEmptyTurn(t.Context(), roles, nil, testReservation("c1", true), "t-0", firing, &marotte.PromptCommand{Text: "q", MessageID: "m1"}, map[string]any{})
 
 	mu.Lock()
 	defer mu.Unlock()
 	if want := []string{"lock", "unlock", "prompt"}; !slices.Equal(order, want) {
 		t.Errorf("order = %v, want %v", order, want)
 	}
+}
+
+func (r *recoveryOutcome) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, _ uint64, _ string) (AdmissionOutcome, Reservation) {
+	out := r.reservePromptOld(ctx, chatID, wait)
+	return out, testReservation(chatID, out == AdmissionAcquired)
+}
+
+func (r *recoveryOutcome) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
+	ok := r.tryReserveOld(chatID, source)
+	return testReservation(chatID, ok), ok
+}
+
+func (r *recoveryOutcome) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
+	ok := r.tryReserveIdleOld(chatID, source)
+	return testReservation(chatID, ok), ok
+}
+
+func (r *recoveryOutcome) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool) {
+	ok := r.tryReserveFencedOld(chatID, source, fence)
+	return testReservation(chatID, ok), ok
+}
+
+func (r *recoveryOutcome) ReleaseTurnReservation(res Reservation) { r.releaseOld(res.Chat) }
+
+func (r *recoveryOutcome) LifeStamp() uint64 { return 0 }
+
+func (r *recoveryOutcome) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) {
+	return false, nil
+}
+
+func (r *recoveryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
+}
+
+func (r *orderedRetryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
+}
+
+func (r *recoveryBridges) RefreshForRetry(ctx context.Context, chatID marotte.ChatID, _ Bridge) error {
+	r.closeBridgeOld(ctx, chatID, marotte.TurnOutcomeInterrupted)
+	return nil
 }

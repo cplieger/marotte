@@ -36,7 +36,7 @@ func (q steerQueue) AwaitReadLoop(ctx context.Context, chatID marotte.ChatID, se
 		}
 		chatID = t.host
 	}
-	return q.coord.turns.awaitPosition(ctx, chatID, "", seq)
+	return q.coord.turns.awaitPosition(ctx, chatID, seq)
 }
 
 func (q steerQueue) OnSteerJob(run func(command.SteerJob)) { q.recs.runJob = run }

@@ -10,7 +10,7 @@ The server keeps the only copy of each chat, under `/config/chats/`. Every actio
 
 ## The agent engine
 
-One engine serves every chat, every workflow run and the short sessions marotte opens for its own reads, such as the permissions page. A new or reopened chat opens a session on the running engine instead of starting a program. When the engine needs the Kiro account, it asks marotte, which answers from its own sign-in (see [Features](features.md#kiro-account)).
+One engine serves every chat, every workflow run and the short sessions marotte opens for its own reads, such as the permissions page. A new or reopened chat opens a session on the running engine instead of starting a program. Closing a tab answers at once: marotte stops the closed chats' replies and releases their sessions in the background, and a chat reopened meanwhile waits for that to finish. When the engine needs the Kiro account, it asks marotte, which answers from its own sign-in (see [Features](features.md#kiro-account)).
 
 A few settings apply only when the engine restarts. Their rows on the **Settings** page say "Applies after the agent engine restarts", and after a change a banner says so too. The engine then restarts by itself as soon as no reply and no workflow is running. **Restart now**, in the banner and under **Agent engine** in **Settings**, restarts it at once. Its confirmation names the chats whose reply would stop and the workflows that would pause. Running replies stop and are marked interrupted, open permission cards close, and the workflows resume by themselves once the engine is back. A newly activated kiro-cli version, and a few account switches, wait for a restart the same way.
 

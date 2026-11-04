@@ -9,21 +9,112 @@ import (
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// In-memory state only; durable state is the delete grade's.
+// cleanupChatState drops the chat's in-memory state; durable state is the delete grade's. Order is the contract:
+// the life is ended and the bridge released and drained before anything is forgotten, and nothing is forgotten
+// while the life's work runs (chatLifecycle owns that rule).
 func (rt *Runtime) cleanupChatState(ctx context.Context, chatID marotte.ChatID) {
 	// waiting_on_user outlives ClearAtTurnEnd, so clear it here.
 	rt.bus.chatStatus.clear(chatID)
-	rt.beginSteerTeardown(ctx, chatID, false)
+	lc, lived := rt.beginSteerTeardown(ctx, chatID, false)
+	rt.teardownStep("begun")
 	rt.coord.closeBridge(ctx, chatID, marotte.TurnOutcomeCancelled)
+	rt.teardownStep("bridge closed")
+	if lived {
+		lc.awaitQuiet(rt.lifecycle.shutdownCtx, budgetLeft(ctx))
+	}
+	rt.teardownStep("quiet")
 	rt.agentTerms.killForChat(chatID)
 	rt.coord.turns.forget(chatID)
 	rt.coord.autoCompact.forget(chatID)
 	rt.lines.Clear(chatID)
 	// The ledger and the record are separate; neither clears the other.
 	rt.steerLedger.ForgetChat(chatID)
+	rt.teardownStep("forgotten")
 	rt.bus.steers.endTeardown(chatID)
+}
+
+// teardownStep runs the test hook between cleanupChatState's steps; nil in production.
+func (rt *Runtime) teardownStep(step string) {
+	if hook := rt.teardownHook.Load(); hook != nil {
+		(*hook)(step)
+	}
+}
+
+// lifeWarnAfter is when a teardown with no deadline names the life's work it still waits for.
+const lifeWarnAfter = time.Minute
+
+// budgetLeft is what remains of the job's budget, after which a wait for the life's work logs its WARN and goes on
+// waiting.
+func budgetLeft(ctx context.Context) time.Duration {
+	if deadline, ok := ctx.Deadline(); ok {
+		return max(time.Until(deadline), 0)
+	}
+	return lifeWarnAfter
+}
+
+// chatHold is command.ChatHold over the turn registry's life gate.
+type chatHold struct {
+	hold   *gateHold
+	turns  *turnRegistry
+	chatID marotte.ChatID
+}
+
+// Commit records the close at the gate and ends the chat's life in the same critical section of the commit.
+func (h chatHold) Commit() {
+	if h.hold.commit() {
+		h.turns.endLife(h.chatID)
+	}
+}
+
+func (h chatHold) Release() { h.hold.release() }
+
+// HoldChat holds chatID's life gate for a close being decided (chatGates owns the contract).
+func (rt *Runtime) HoldChat(chatID marotte.ChatID) command.ChatHold {
+	return chatHold{hold: rt.coord.turns.gates.hold(chatID), turns: rt.coord.turns, chatID: chatID}
+}
+
+// CloseImpact reads what closing each chat stops, from in-memory and cached state only (command.closeImpactReader).
+func (rt *Runtime) CloseImpact(ctx context.Context, chatIDs []marotte.ChatID) map[marotte.ChatID]command.CloseWork {
+	var leases []runlease.Lease
+	if rt.runs != nil {
+		leases = rt.runs.leaseStore().List()
+	}
+	out := make(map[marotte.ChatID]command.CloseWork, len(chatIDs))
+	for _, chatID := range chatIDs {
+		out[chatID] = command.CloseWork{
+			Turns:  rt.coord.turns.closeWork(chatID),
+			Asks:   rt.bus.pendingPerms.idsForChat(chatID),
+			Runs:   chatLiveRuns(leases, chatID),
+			Steers: rt.bus.steers.unreadKeys(chatID),
+			Queued: rt.coord.queuedPromptsPending(ctx, chatID),
+		}
+	}
+	return out
+}
+
+// AwaitSessionLeases waits until every lease on the chat's session admitted before its close committed has
+// returned; the commit cut each, so the teardown's own cancel and release are the only session access after it.
+func (rt *Runtime) AwaitSessionLeases(ctx context.Context, chatID marotte.ChatID) {
+	if lc, ok := rt.coord.turns.lookup(chatID); ok {
+		lc.awaitWork(rt.lifecycle.shutdownCtx, workSession, budgetLeft(ctx))
+	}
+}
+
+// TeardownCancel sends the chat's session/cancel as the teardown's closer, after AwaitSessionLeases. A chat with no
+// session has nothing to cancel.
+func (rt *Runtime) TeardownCancel(ctx context.Context, chatID marotte.ChatID) error {
+	sb := rt.coord.bridgeFor(chatID)
+	if sb == nil {
+		return nil
+	}
+	var err error
+	sb.closeOwned(func(s engineSession) {
+		err = s.Notify(ctx, marotte.MethodCancel, map[string]any{marotte.KeySessionID: s.SessionID()})
+	})
+	return err
 }
 
 // BeginChatTeardown is command.chatTeardown's first step, before its cancel, so that turn end resends nothing.
@@ -31,10 +122,11 @@ func (rt *Runtime) BeginChatTeardown(chatID marotte.ChatID, keep bool) {
 	rt.beginSteerTeardown(rt.lifecycle.shutdownCtx, chatID, keep)
 }
 
-// The lifecycle is re-fenced first and the record marked under the steer lock; on a close an unread
-// row no opened resend carries leaves its cancel note.
-func (rt *Runtime) beginSteerTeardown(ctx context.Context, chatID marotte.ChatID, notes bool) {
-	rt.coord.turns.refence(chatID)
+// beginSteerTeardown ends the chat's life (the commit already did; this is idempotent) and marks the steer record
+// gone under the steer lock; on a close an unread row no opened resend carries leaves its cancel note. It returns
+// the ended lifecycle, false when the chat has none.
+func (rt *Runtime) beginSteerTeardown(ctx context.Context, chatID marotte.ChatID, notes bool) (*chatLifecycle, bool) {
+	lc, lived := rt.coord.turns.endLife(chatID)
 	if rt.steerQueue.locks != nil && !rt.bus.steers.gone(chatID) {
 		lockCtx, cancel := context.WithTimeout(ctx, command.ResendBridgeWait)
 		unlock, err := rt.steerQueue.LockSteerOps(lockCtx, chatID)
@@ -47,7 +139,7 @@ func (rt *Runtime) beginSteerTeardown(ctx context.Context, chatID marotte.ChatID
 	}
 	unread := rt.bus.steers.beginTeardown(chatID, rt.coord.turns.forwardExit(chatID))
 	if !notes || len(unread) == 0 {
-		return
+		return lc, lived
 	}
 	resent := rt.resentKeys(durable.Context(ctx), chatID)
 	for i := range unread {
@@ -60,6 +152,7 @@ func (rt *Runtime) beginSteerTeardown(ctx context.Context, chatID marotte.ChatID
 			Caller: p.Caller,
 		})
 	}
+	return lc, lived
 }
 
 // sessionDeleteTimeout bounds one session/delete: KAS quiesces an active turn first.
