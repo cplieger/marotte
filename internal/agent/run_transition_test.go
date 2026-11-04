@@ -24,6 +24,8 @@ type transitionState struct {
 	set  func(t *testing.T, br *fakeBridge)
 	name string
 	seen runSeen
+	// stopped is marotte's record that it stopped resuming the run (Runs.stopAutoResume).
+	stopped bool
 }
 
 // askPausedInspect is a paused run whose one step KAS parked waiting on a person, for reason.
@@ -111,15 +113,18 @@ var transitionStates = []transitionState{
 	{name: "a person's pause", seen: seenPersonPaused, set: inspectAs(func(t *testing.T) json.RawMessage {
 		return heldInspect(t, "")
 	})},
-	{name: "marotte's park for the user", seen: seenPersonPaused, set: inspectAs(func(t *testing.T) json.RawMessage {
-		return heldInspect(t, manualResumeReason)
-	})},
 	{name: "a restart's pause", seen: seenRestartPaused, set: inspectAs(func(t *testing.T) json.RawMessage {
 		return inspectPaused(t, gateRunID, stalePauseReason)
 	})},
 	{name: "an interruption's pause", seen: seenInvoluntary, set: inspectAs(func(t *testing.T) json.RawMessage {
 		return inspectPaused(t, gateRunID, interruptedReason)
 	})},
+	{
+		name: "an interruption's pause marotte stopped resuming", seen: seenAutoStopped, stopped: true,
+		set: inspectAs(func(t *testing.T) json.RawMessage {
+			return inspectPaused(t, gateRunID, interruptedReason)
+		}),
+	},
 	{name: "a step's ask", seen: seenAskPaused, set: inspectAs(func(t *testing.T) json.RawMessage {
 		return askPausedInspect(t, "Step requested user input via send_message.")
 	})},
@@ -183,7 +188,8 @@ var (
 	personResumes = withRows(personRefusals, map[runSeen]transitionWant{
 		seenRunning: {answer: "already_running"}, seenPausing: {answer: "already_running"},
 		seenGatePaused: resumeWrote, seenPersonPaused: resumeWrote, seenRestartPaused: resumeWrote,
-		seenInvoluntary: resumeWrote, seenOtherPause: resumeWrote, seenAskPaused: {answer: "awaiting_answer"},
+		seenInvoluntary: resumeWrote, seenAutoStopped: resumeWrote, seenOtherPause: resumeWrote,
+		seenAskPaused: {answer: "awaiting_answer"},
 	})
 	finishWrote = transitionWant{wrote: methodKiroWorkflowUpdate, answer: "done"}
 )
@@ -212,7 +218,7 @@ var transitionAsks = []transitionAsk{
 		},
 		want: withRows(personRefusals, map[runSeen]transitionWant{
 			seenRunning: pauseWrote, seenPausing: pauseWrote, seenGatePaused: pauseWrote,
-			seenRestartPaused: pauseWrote, seenInvoluntary: pauseWrote,
+			seenRestartPaused: pauseWrote, seenInvoluntary: pauseWrote, seenAutoStopped: pauseWrote,
 			seenPersonPaused: {answer: "already_paused"}, seenOtherPause: {answer: "already_paused"},
 			seenAskPaused: {answer: "already_paused"},
 		}),
@@ -239,7 +245,8 @@ var transitionAsks = []transitionAsk{
 		want: withRows(personRefusals, map[runSeen]transitionWant{
 			seenRunning: {answer: "already_running"}, seenPausing: {answer: "already_running"},
 			seenGatePaused: finishWrote, seenPersonPaused: finishWrote, seenRestartPaused: finishWrote,
-			seenInvoluntary: finishWrote, seenOtherPause: finishWrote, seenAskPaused: finishWrote,
+			seenInvoluntary: finishWrote, seenAutoStopped: finishWrote, seenOtherPause: finishWrote,
+			seenAskPaused: finishWrote,
 		}),
 	},
 	{
@@ -367,6 +374,11 @@ func TestRunTransitions_EveryRequestInEveryState(t *testing.T) {
 				br.setCallResult(methodKiroWorkflowResume, json.RawMessage(`{}`))
 				br.setCallResult(methodKiroWorkflowUpdate, json.RawMessage(`{"updated":true}`))
 				st.set(t, br)
+				if st.stopped {
+					if err := h.runs.stopAutoResume(t.Context(), gateRunID); err != nil {
+						t.Fatalf("Setup: recording the stop: %v", err)
+					}
+				}
 				if ask.prep != nil {
 					ask.prep(t, br)
 				}
@@ -559,12 +571,12 @@ var (
 		"methodKiroWorkflowUpdate": "Runs.updateNodeStatus", strconv.Quote(methodKiroWorkflowUpdate): "Runs.updateNodeStatus",
 	}
 	transitionActions = []string{
-		"writePause", "sendResume", "resumeAsked", "holdPause", "heal", "parkForUser", "writeHealResume", "finishAsked",
+		"writePause", "sendResume", "resumeAsked", "holdPause", "heal", "writeHealResume", "finishAsked",
 		"keepHold", "endStepAsked", "updateNodeStatus",
 	}
 	transitionOwned = []string{
 		"Runs.transition", "Runs.carryOut", "Runs.writePause", "Runs.sendResume", "Runs.resumeAsked", "Runs.holdPause",
-		"Runs.heal", "Runs.healSpent", "Runs.parkForUser", "Runs.writeHealResume", "Runs.finishAsked", "Runs.keepHold",
+		"Runs.heal", "Runs.healSpent", "Runs.writeHealResume", "Runs.finishAsked", "Runs.keepHold",
 		"Runs.endStepAsked",
 	}
 	holdWriters = map[string][]string{

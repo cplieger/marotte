@@ -28,6 +28,8 @@ type node struct {
 	Status           string           `json:"status"`
 	AgentName        string           `json:"agentName"`
 	CompletionSignal string           `json:"completionSignal"`
+	StartedAt        string           `json:"startedAt"`
+	EndedAt          string           `json:"endedAt"`
 	Children         []node           `json:"children"`
 	Attention        []attentionEntry `json:"attention"`
 }
@@ -51,6 +53,19 @@ type State struct {
 	WorkflowName    string `json:"workflowName"`
 	// PauseReason is KAS's sentence for the run's latest park, whichever step parked.
 	PauseReason string `json:"pauseReason"`
+	CreatedAt   string `json:"createdAt"`
+}
+
+// UpdatedAt is the run's last activity as `_kiro/workflow/list` derives its row's updatedAt from this same state: the
+// root's end, else its start, else the state's creation; "" when none is recorded.
+func (s *State) UpdatedAt() string {
+	if s.Root != nil && s.Root.EndedAt != "" {
+		return s.Root.EndedAt
+	}
+	if s.Root != nil && s.Root.StartedAt != "" {
+		return s.Root.StartedAt
+	}
+	return s.CreatedAt
 }
 
 // InspectResult is `_kiro/workflow/inspect`'s reply, decoded to the parts

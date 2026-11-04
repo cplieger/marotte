@@ -9,6 +9,7 @@ import {
   type RunNode,
   type RunState,
   stopSentence,
+  autoResumeStopSentence,
 } from "./run-store.js";
 import { askedSteps, type AskedSteps, type RunAsks } from "./run-asks.js";
 import { runStatusTerminal, type ClassifiedRunStatus } from "./run-status.js";
@@ -618,7 +619,8 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
   }
   const stopped = stopSentence(state);
   if (state.status === "paused") {
-    return { kind: "paused", text: pausedText(state, stopped) };
+    // marotte's stop outranks KAS's attribution: a gate pause's reason promises a resume it no longer makes.
+    return { kind: "paused", text: pausedText(state, autoResumeStopSentence(state) ?? stopped) };
   }
   if (stopped !== undefined) {
     return { kind: "stopped", text: stopped };
@@ -645,7 +647,8 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
 }
 
 /** A paused run's one line: the loop a cap stopped (in place of KAS's cap sentence), then who
- *  paused it (`stopSentence`), else on an uncapped pause KAS's reason, then `pauseDetailPhrase`. */
+ *  paused it or why marotte stopped resuming it (`attributed`), else on an uncapped pause KAS's
+ *  reason, then `pauseDetailPhrase`. */
 function pausedText(state: RunState, attributed: string | undefined): string {
   const cap = state.pause;
   const limit =

@@ -132,7 +132,7 @@ func TestScheduledRun_AFaultPastItsHealsEndsTheRun(t *testing.T) {
 					got, runEndUnattended, br.callLog())
 			}
 			if got := stateWrites(br.callLog()); slices.Contains(got, methodKiroWorkflowPause) {
-				t.Errorf("writes = %v, want no pause: a park for the user waits on nobody", got)
+				t.Errorf("writes = %v, want no pause: a scheduled run is ended, not left waiting on nobody", got)
 			}
 			heals := strconv.Itoa(maxAutoHeals) + " automatic resumes"
 			row := awaitEndedRow(t, st)

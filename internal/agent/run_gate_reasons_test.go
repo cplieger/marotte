@@ -21,7 +21,7 @@ func TestPauseReasons_MatchTheClientFixture(t *testing.T) {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		t.Fatalf("decode fixture: %v", err)
 	}
-	if want := []string{signInHoldReason, providerHoldReason, manualResumeReason}; !slices.Equal(f.Reasons, want) {
+	if want := []string{signInHoldReason, providerHoldReason}; !slices.Equal(f.Reasons, want) {
 		t.Errorf("fixture reasons = %q, want %q (update testdata/pause_reasons.json and run-store.ts together)",
 			f.Reasons, want)
 	}
@@ -33,9 +33,5 @@ func TestPauseReasons_MatchTheClientFixture(t *testing.T) {
 		if !isHoldReason(r) {
 			t.Errorf("isHoldReason(%q) = false", r)
 		}
-	}
-	// A run parked for the user is never resumed automatically.
-	if isHoldReason(manualResumeReason) {
-		t.Errorf("isHoldReason(%q) = true, want false", manualResumeReason)
 	}
 }

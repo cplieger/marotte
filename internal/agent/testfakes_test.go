@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -574,6 +575,17 @@ func (b *fakeBridge) setCallResult(method string, res json.RawMessage) {
 	b.callResults[method] = res
 }
 
+// setBlockOn holds every later call of method open until gate closes or the call's ctx ends, for a bridge already in use.
+func (b *fakeBridge) setBlockOn(method string, gate chan struct{}) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.blockOn = maps.Clone(b.blockOn)
+	if b.blockOn == nil {
+		b.blockOn = map[string]chan struct{}{}
+	}
+	b.blockOn[method] = gate
+}
+
 // setCallErr re-arms a transport failure and setCallRPCErr an in-band refusal, under the mutex.
 func (b *fakeBridge) setCallErr(method string, err error) {
 	b.mu.Lock()
@@ -598,6 +610,18 @@ func (b *fakeBridge) setNotifyErr(method string, err error) {
 		b.notifyErrs = map[string]error{}
 	}
 	b.notifyErrs[method] = err
+}
+
+// setRefuseAfterCall makes this bridge's later calls of method refuse in band with err; a call already in progress is
+// unaffected.
+func (b *fakeBridge) setRefuseAfterCall(method string, err *marotte.RPCError) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refuseAfterCall = maps.Clone(b.refuseAfterCall)
+	if b.refuseAfterCall == nil {
+		b.refuseAfterCall = map[string]*marotte.RPCError{}
+	}
+	b.refuseAfterCall[method] = err
 }
 
 func (b *fakeBridge) setCallRPCErr(method string, err *marotte.RPCError) {
