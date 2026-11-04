@@ -297,10 +297,15 @@ func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach 
 
 // lateSessionNew settles the kept handle of an abandoned session/new from kiro-cli's answer: an error reply created
 // nothing; a result naming the minted id is released and reaped; one naming another id (KAS ignored the override)
-// ends the minted handle and closes and reaps that one.
+// ends the minted handle and closes and reaps that one. An answer marotte could not read may have created the minted
+// one, so it is released and reaped too.
 func (e *Engine) lateSessionNew(s *Session, params map[string]any) func(*marotte.RPCResponse) {
 	return func(resp *marotte.RPCResponse) {
 		<-s.gaveUp
+		if unreadResp(resp) {
+			s.answeredLate(true)
+			return
+		}
 		if resp.Error != nil {
 			s.closed()
 			return
@@ -402,12 +407,12 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 	return s, nil
 }
 
-// lateSessionLoad settles the kept handle of an abandoned session/load from kiro-cli's answer: a result is released,
-// an error reply loaded nothing.
+// lateSessionLoad settles the kept handle of an abandoned session/load from kiro-cli's answer: a result, or an answer
+// marotte could not read, is released; an error reply loaded nothing.
 func lateSessionLoad(s *Session) func(*marotte.RPCResponse) {
 	return func(resp *marotte.RPCResponse) {
 		<-s.gaveUp
-		if resp.Error != nil {
+		if resp.Error != nil && !unreadResp(resp) {
 			s.closed()
 			return
 		}

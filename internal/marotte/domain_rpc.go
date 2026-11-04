@@ -110,6 +110,12 @@ var ErrFrameTooLarge = errors.New("a message from kiro-cli was too large to read
 // could not be decoded. Unlike a -32700 kiro-cli sends, it does not mean the request was refused: it may have taken effect.
 var ErrReplyUndecoded = errors.New("kiro-cli's answer arrived but could not be decoded")
 
+// ReplyUnread reports an answer that arrived but could not be read (undecoded or oversize), so kiro-cli may have
+// taken the call. A -32700 kiro-cli itself sends carries no ErrReplyUndecoded and stays a refusal.
+func ReplyUnread(err error) bool {
+	return errors.Is(err, ErrReplyUndecoded) || errors.Is(err, ErrFrameTooLarge)
+}
+
 // ErrBridgeNotStarted is the sentinel every write on an engine returns when there is no process to
 // write to: Start has not run, or it failed.
 var ErrBridgeNotStarted = errors.New("ACP bridge has not started")

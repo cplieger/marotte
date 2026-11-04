@@ -131,9 +131,10 @@ func decodeOneMemory(raw json.RawMessage) (memoryRow, error) {
 	return rowFromKAS(res.Memory), nil
 }
 
-// writeMemoryErr answers a KAS refusal with KAS's text (409 not_enabled, else 400) and anything else with a generic 502.
+// writeMemoryErr answers a KAS refusal with KAS's text (409 not_enabled, else 400) and anything else, an answer
+// marotte could not read included, with a generic 502.
 func writeMemoryErr(w http.ResponseWriter, err error) {
-	if _, ok := errors.AsType[*marotte.RPCError](err); ok {
+	if _, ok := errors.AsType[*marotte.RPCError](err); ok && !marotte.ReplyUnread(err) {
 		text := rpcerr.Text(err)
 		if strings.Contains(text, "Memory is not enabled") {
 			webhttp.WriteJSONStatus(w, http.StatusConflict,

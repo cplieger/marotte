@@ -144,19 +144,27 @@ func (e *Engine) closePending() int {
 // entry is dropped: its caller is gone and nothing is left to close on an ended engine.
 func (e *Engine) failPending(resp *marotte.RPCResponse, match func(id int64, entry *pendingEntry) bool) int {
 	e.pendingMu.Lock()
-	defer e.pendingMu.Unlock()
 	n := 0
+	var lates []func(*marotte.RPCResponse)
 	for id, entry := range e.pending {
 		if !match(id, entry) {
 			continue
 		}
 		delete(e.pending, id)
 		if entry.abandoned {
+			// The real answer can no longer reach the hook, so an unread one stands in for it.
+			if entry.late != nil && unreadResp(resp) {
+				lates = append(lates, entry.late)
+			}
 			continue
 		}
 		n++
 		// A failure carries the lane's position too, so a settle does not wait for a position the dropped frame took.
 		entry.ch <- pendingReply{resp: resp, seq: entry.lane.position()}
+	}
+	e.pendingMu.Unlock()
+	for _, late := range lates {
+		e.goBackground(func() { late(resp) })
 	}
 	return n
 }
@@ -166,6 +174,12 @@ func matchAll(int64, *pendingEntry) bool { return true }
 // undecodedResp is what a pending request gets when its response arrived but could not be decoded.
 var undecodedResp = &marotte.RPCResponse{
 	Error: &marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "marotte could not decode kiro-cli's answer"},
+}
+
+// unreadResp reports a sentinel for an answer that arrived but could not be read, so kiro-cli may have acted on the
+// request; a late hook must not read its Error as a refusal.
+func unreadResp(resp *marotte.RPCResponse) bool {
+	return resp == undecodedResp || resp == frameTooLargeResp
 }
 
 // reportUndecodedFrame settles what a frame that fits but fails to decode concerned, judged from its head: a request is

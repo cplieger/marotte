@@ -373,7 +373,7 @@ func (rs *Runs) sendResume(ctx context.Context, a runAdmission, host *drivenHost
 		_, err := rs.write(cctx, a, host.sb, workflowID, methodKiroWorkflowResume, params, mutationDrive)
 		return err
 	})
-	if replyUnread(err) {
+	if marotte.ReplyUnread(err) {
 		rs.armDeadline(ctx, workflowID)
 	}
 	return err
@@ -450,7 +450,7 @@ func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest, r 
 	if claimed {
 		// A claim another verb held past its TTL is that verb's write, and an unread answer may have taken: neither is
 		// a failed one of marotte's.
-		rs.noteHealWrite(workflowID, wErr != nil && !errors.Is(wErr, workflow.ErrJustClaimed) && !replyUnread(wErr))
+		rs.noteHealWrite(workflowID, wErr != nil && !errors.Is(wErr, workflow.ErrJustClaimed) && !marotte.ReplyUnread(wErr))
 	}
 	charged = charged || claimed
 	if wErr != nil {
@@ -512,7 +512,7 @@ func (rs *Runs) writeHealResume(ctx context.Context, a runAdmission, chatID maro
 		slog.Info("rehydrate: another verb held this run's claim past its TTL, so the heal left it to that one",
 			"workflow_id", workflowID, "chat_id", chatID)
 		return true, cErr
-	case replyUnread(cErr):
+	case marotte.ReplyUnread(cErr):
 		slog.Warn("rehydrate: the resume was sent but its answer could not be read",
 			"workflow_id", workflowID, "chat_id", chatID, "error", cErr)
 		return true, cErr

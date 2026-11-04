@@ -101,8 +101,9 @@ func writeInspectErr(w http.ResponseWriter, id string, err error) {
 			map[string]string{"error": "the workflow engine is not available on this kiro-cli build"})
 		return
 	}
-	// Only an *marotte.RPCError is the engine answering; anything else says nothing about whether the run exists, so it is not a 404.
-	if _, answered := errors.AsType[*marotte.RPCError](err); !answered {
+	// Only KAS's own *marotte.RPCError is the engine answering; anything else, an unread answer included, says
+	// nothing about whether the run exists, so it is not a 404.
+	if !isRPCRefusal(err) || marotte.ReplyUnread(err) {
 		slog.Warn("workflow inspect did not reach the engine", "workflow_id", logsafe.Field(id),
 			"error", err, "detail", rpcerr.Details(err))
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
@@ -914,7 +915,7 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		slog.Info("run control refused: another claim on the run is in flight",
 			"verb", verb, "workflow_id", logsafe.Field(id), "detail", rpcerr.Details(err))
 		httpreply.Conflict(w, runClaimInFlightText)
-	case replyUnread(err):
+	case marotte.ReplyUnread(err):
 		slog.Warn("run control sent but its answer could not be read",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(controlUnreadText))

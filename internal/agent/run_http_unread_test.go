@@ -50,6 +50,32 @@ func TestControlHandler_AnAnswerThatCouldNotBeReadIsNotARefusal(t *testing.T) {
 	}
 }
 
+// An inspect answer that arrived unread says nothing about whether the run exists: 502, never the 404 a client
+// treats as final. Only KAS's own refusal is the engine saying it has no such run.
+func TestWriteInspectErr_AnAnswerThatCouldNotBeReadIsNotRunNotFound(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want int
+	}{
+		"an undecoded answer":            {undecodedReply(), http.StatusBadGateway},
+		"an oversize answer":             {&marotte.TransportError{Err: marotte.ErrFrameTooLarge}, http.StatusBadGateway},
+		"a parse error KAS itself sends": {&marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "Parse error"}, http.StatusNotFound},
+		"KAS has no such run": {
+			&marotte.RPCError{Code: -32602, Message: "Workflow not found", Data: json.RawMessage(`{"errorType":"WorkflowNotFoundError"}`)},
+			http.StatusNotFound,
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			writeInspectErr(rec, "wf_1", c.err)
+			if rec.Code != c.want {
+				t.Errorf("writeInspectErr(%v) = %d %s, want %d", c.err, rec.Code, rec.Body.String(), c.want)
+			}
+		})
+	}
+}
+
 // A resume whose answer could not be read may have re-driven the run, so the run gets its deadline as a resume
 // that took does; a resume KAS refused leaves the run unbounded.
 func TestResume_AnAnswerThatCouldNotBeReadArmsTheDeadline(t *testing.T) {

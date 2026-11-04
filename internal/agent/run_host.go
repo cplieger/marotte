@@ -577,7 +577,7 @@ func (rs *Runs) retryCall(
 	none := marotte.RunRetriedResponse{}
 	rs.retries.mark(workflowID, time.Now())
 	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
-	if err != nil && ctx.Err() == nil && replyUnread(err) {
+	if err != nil && ctx.Err() == nil && marotte.ReplyUnread(err) {
 		// An answer arrived and could not be read, so KAS may have taken the verb.
 		return none, fmt.Errorf("%w: %w", errRetryOutcomeUnreadable, err)
 	}
@@ -666,7 +666,7 @@ func (rs *Runs) updateNodeStatus(ctx context.Context, host *drivenHost, workflow
 		"nodeId":      nodeID,
 	})
 	if err != nil {
-		if replyUnread(err) {
+		if marotte.ReplyUnread(err) {
 			// KAS may have ended the step and re-driven the run, so it is bounded as an end that took.
 			rs.armDeadline(ctx, workflowID)
 		}

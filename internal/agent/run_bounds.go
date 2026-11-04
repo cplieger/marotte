@@ -454,7 +454,7 @@ func (rs *Runs) finishTermination(
 		err = rs.cancelRPC(sctx, workflowID, stop)
 		return err == nil
 	})
-	if err != nil && replyUnread(err) && rs.readsTerminal(ctx, workflowID) {
+	if err != nil && marotte.ReplyUnread(err) && rs.readsTerminal(ctx, workflowID) {
 		err = nil
 	}
 	if err != nil {
