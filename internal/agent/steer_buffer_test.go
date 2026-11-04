@@ -783,7 +783,7 @@ func TestSteerRecords_ATurnEndingUnderTheOpRecordsTheEndWithItsLead(t *testing.T
 	s.steer("steer-b", "second")
 	op := "op-steer-a"
 	s.q.BeginRemove(s.chat, "steer-a", op)
-	undo := s.q.SetSteerLead(s.chat, "steer-b")
+	undo, _ := s.q.SetSteerLead(s.chat, "steer-b")
 	defer undo()
 	s.endTurn()
 
@@ -950,7 +950,7 @@ func TestSteerRecords_ResolvedRowsStayUntilDelivered(t *testing.T) {
 	s.bind()
 	s.steer("steer-a", "first")
 	s.steer("steer-b", "second")
-	undo := s.q.SetSteerLead(s.chat, "steer-b")
+	undo, _ := s.q.SetSteerLead(s.chat, "steer-b")
 	defer undo()
 	s.endTurn()
 	ends := s.q.Ends(s.chat)
@@ -986,6 +986,30 @@ func TestSteerRecords_ResolvedRowsStayUntilDelivered(t *testing.T) {
 		if _, live := s.state(k); live {
 			t.Errorf("row %s is still held after its prompt opened", k)
 		}
+	}
+}
+
+// The send-now arrow's row leads only while it waits in the dock: once the prompt carrying it opened, or the
+// agent read it, the arrow has nothing left to send first.
+func TestSteerRecords_ALeadIsWaitingOnlyWhileItsRowIsInTheDock(t *testing.T) {
+	s := newSteerHarness(t)
+	s.bind()
+	s.steer("steer-a", "first")
+	s.steer("steer-b", "second")
+	readInjected(s, s.kasID("steer-a"))
+
+	if _, waiting := s.q.SetSteerLead(s.chat, "steer-b"); !waiting {
+		t.Error("SetSteerLead(steer-b) answered not waiting, want the dock row led")
+	}
+	if _, waiting := s.q.SetSteerLead(s.chat, "steer-a"); waiting {
+		t.Error("SetSteerLead(steer-a) answered waiting, want the row the agent read not led")
+	}
+	s.q.Delivered(s.chat, []string{"steer-b"})
+	if _, waiting := s.q.SetSteerLead(s.chat, "steer-b"); waiting {
+		t.Error("SetSteerLead(steer-b) answered waiting after its prompt opened, want nothing led")
+	}
+	if _, waiting := s.q.SetSteerLead(s.chat, "steer-z"); waiting {
+		t.Error("SetSteerLead(steer-z) answered waiting for a key no row has")
 	}
 }
 

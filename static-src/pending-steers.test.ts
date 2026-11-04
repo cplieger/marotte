@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => {
   return {
     clearDispatch: vi.fn(() => Promise.resolve(true)),
     cancelDispatch: vi.fn((_args: { chatID: string; lead?: string }) => ({
-      outcome: Promise.resolve<{ status: string }>({ status: "success" }),
+      outcome: Promise.resolve<{ status: string; value?: boolean }>({ status: "success" }),
     })),
     removeDispatch: vi.fn((_args: { chatID: string; steerID: string }) => ({
       outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
@@ -32,12 +32,15 @@ const mocks = vi.hoisted(() => {
     sendQueuedNowDispatch: vi.fn((_args: { chatID: string; messageID: string }) => ({
       outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
     })),
+    announceMock: vi.fn((_message: string) => undefined),
   };
 });
 
 type RemoveOutcome =
-  { status: "success" } | { status: "error"; error: { status?: number; message: string } };
+  | { status: "success"; value?: boolean }
+  | { status: "error"; error: { status?: number; message: string } };
 
+vi.mock("@cplieger/ui-primitives/announce", () => ({ announce: mocks.announceMock }));
 vi.mock("./actions/chat.js", () => ({
   clearSteers: { dispatch: mocks.clearDispatch },
   cancelTurn: { dispatch: mocks.cancelDispatch },
@@ -606,6 +609,21 @@ describe("the steer stack", () => {
     expect(setComposerValueMock).not.toHaveBeenCalled();
   });
 
+  // The server stopped nothing (the resend already carries the row), so "Stopping the turn" is false.
+  it("takes back the stop announcement when the server skipped the stop", async () => {
+    cancelDispatch.mockReturnValueOnce({
+      outcome: Promise.resolve({ status: "success", value: true }),
+    });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main", origin: "user" });
+    clickAction(firstRow(), "Send this message now");
+
+    await vi.waitFor(() => {
+      expect(mocks.announceMock).toHaveBeenLastCalledWith(
+        "The turn keeps running: the message already left the queue",
+      );
+    });
+  });
+
   it("names the pressed row when several are waiting", async () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "first", origin: "user" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "second", origin: "user" });
@@ -1051,6 +1069,20 @@ describe("the steer stack", () => {
     expect(unqueueDispatch).not.toHaveBeenCalled();
     expect(confirmMock).not.toHaveBeenCalled();
     expect(setComposerValueMock).not.toHaveBeenCalled();
+  });
+
+  it("takes back the stop announcement when the follow-up's turn had already opened", async () => {
+    sendQueuedNowDispatch.mockReturnValueOnce({
+      outcome: Promise.resolve<RemoveOutcome>({ status: "success", value: true }),
+    });
+    withQueued(three);
+    clickAction(rowAt(2), "Send this follow-up now");
+
+    await vi.waitFor(() => {
+      expect(mocks.announceMock).toHaveBeenLastCalledWith(
+        "The turn keeps running: the message already left the queue",
+      );
+    });
   });
 
   it("sends a follow-up at once while no turn runs", async () => {

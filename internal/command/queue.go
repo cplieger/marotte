@@ -171,8 +171,8 @@ func cmdUnqueuePrompt(ctx context.Context, roles *promptRoles, cmd *marotte.Clie
 // cmdSendQueuedNow sends one queued row next (SendQueuedNowCommand). The mark and the
 // idle reservation share the steer lock with a drain's pick, so a drain either sends
 // this row or ran before the mark. A turn closing on its own between the mark and the
-// stop has its drain open this row, so the stop re-checks the row under the lock and
-// cancels nothing once its turn opened.
+// stop has its drain open this row, so the stop checks the row again before it is
+// requested (stopChatTurn) and stops nothing once its turn opened.
 func cmdSendQueuedNow(
 	ctx context.Context,
 	roles *promptRoles,
@@ -192,8 +192,8 @@ func cmdSendQueuedNow(
 	if !stop || err != nil {
 		return responseOrErr(err)
 	}
-	return stopChatTurn(ctx, roles.bridges, perms, terms, stops, cmd.ChatID, func() (func(), bool) {
-		if queuedRowSending(ctx, roles, cmd.ChatID, p.MessageID) {
+	return stopChatTurn(ctx, roles.bridges, perms, terms, stops, roles.queue, cmd.ChatID, func() (func(), bool) {
+		if roles.followups.Sending(cmd.ChatID, p.MessageID) {
 			return nil, true
 		}
 		return func() {
@@ -202,19 +202,6 @@ func cmdSendQueuedNow(
 			}
 		}, false
 	})
-}
-
-// queuedRowSending reports whether the row's turn opened. It reads under the steer
-// lock because a drain holds that lock from its pick until the row is dequeued, so a
-// drain mid-launch is waited out rather than read as not yet sending. A lock the
-// request's context cannot take answers false, leaving the stop to the cancel.
-func queuedRowSending(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, id string) bool {
-	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
-	if err != nil {
-		return false
-	}
-	defer unlock()
-	return roles.followups.Sending(chatID, id)
 }
 
 // markQueuedNext marks the row next and, with no turn running, sends it at once.
