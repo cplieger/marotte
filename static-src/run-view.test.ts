@@ -1619,6 +1619,12 @@ describe("run view structure", () => {
   // Every node carries its own timestamps, so the execution's shape over time is on the wire and no
   // surface had ever drawn it. One lane per leaf.
   it("draws a lane per leaf on the timeline", async () => {
+    // A live window runs to now, so the clock is pinned to the fixture's last stamp.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-26T18:02:00Z"));
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const { body } = await paint(openRunView, "running", {
       root: {
         nodeId: "wf_1",

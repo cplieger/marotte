@@ -23,9 +23,9 @@ marotte lets you write and ship code with the Kiro agent from any device, while 
 
 ## Who it is for
 
-marotte is built for a developer who wants a full Kiro workspace on a server they run, in any browser. Start a task at your desk, then follow it and answer the agent from your phone. One container is one person's workspace.
+marotte is built for a developer who wants a full Kiro workspace on a server they run, in their browser. Start a task at your desk, then follow it and answer the agent from your phone. One container is one person's workspace.
 
-You need a Kiro account and an `amd64` or `arm64` Docker host. marotte has no login of its own, so keep it on your private network or behind a reverse proxy with a login.
+You need a Kiro account, an `amd64` or `arm64` Docker host, and a browser no older than Chrome or Edge 132, Firefox 133 or Safari 26 (iOS or iPadOS 26 on an iPhone or iPad). marotte has no login of its own, so keep it on your private network or behind a reverse proxy with a login.
 
 Consider [Web Terminal for Kiro](https://github.com/cplieger/web-terminal-kiro), by the same author, if you want kiro-cli's own terminal screen with no chat layer.
 
