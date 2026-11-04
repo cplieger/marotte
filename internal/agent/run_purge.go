@@ -207,8 +207,9 @@ const retryInFlightBound = 10 * time.Minute
 
 // retryMarks holds, per run, when marotte last sent it a retry KAS has not shown taking effect: the purge's "retry in
 // flight". Only the purge reads it, so quiescence and the interrupted snapshot never see it. A mark is dropped only by
-// the facts purgeKeep reads (dropOvertaken, the bound) or by the retry or run ceasing to exist (clear): KAS emits a
-// retry's run_start before it records the start, so a frame proves nothing. The zero value is ready.
+// the facts purgeKeep reads (dropOvertaken, the bound) or by the run ceasing to exist (clear): KAS emits a retry's
+// run_start before it records the start, so a frame proves nothing, and a mark is per run, so a refused attempt says
+// nothing of an earlier one KAS may still be running (its just-claimed refusal means one is). The zero value is ready.
 type retryMarks struct {
 	at map[string]time.Time
 	mu sync.Mutex
@@ -225,7 +226,7 @@ func (m *retryMarks) mark(workflowID string, now time.Time) {
 	m.at[workflowID] = time.UnixMilli(now.UnixMilli())
 }
 
-// clear drops workflowID's mark: KAS refused the retry, or the run is gone.
+// clear drops workflowID's mark: the run is gone.
 func (m *retryMarks) clear(workflowID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

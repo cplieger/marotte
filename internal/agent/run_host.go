@@ -544,9 +544,6 @@ func (rs *Runs) retryCall(
 	none := marotte.RunRetriedResponse{}
 	rs.retries.mark(workflowID, time.Now())
 	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
-	if _, refused := errors.AsType[*marotte.RPCError](err); refused {
-		rs.retries.clear(workflowID)
-	}
 	if err != nil {
 		return none, fmt.Errorf("workflow retry: %w", rs.retryDeadlineErr(ctx, err))
 	}

@@ -612,6 +612,18 @@ func (b *fakeBridge) setNotifyErr(method string, err error) {
 	b.notifyErrs[method] = err
 }
 
+// setRefuseAfterCall makes this bridge's later calls of method refuse in band with err; a call already in progress is
+// unaffected.
+func (b *fakeBridge) setRefuseAfterCall(method string, err *marotte.RPCError) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refuseAfterCall = maps.Clone(b.refuseAfterCall)
+	if b.refuseAfterCall == nil {
+		b.refuseAfterCall = map[string]*marotte.RPCError{}
+	}
+	b.refuseAfterCall[method] = err
+}
+
 func (b *fakeBridge) setCallRPCErr(method string, err *marotte.RPCError) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

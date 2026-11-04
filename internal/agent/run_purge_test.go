@@ -174,12 +174,15 @@ const (
 	retryFailsBeforeItsStart
 	// retryRevivesUnseen sets the run running from a new root startedAt and answers before marotte receives any frame.
 	retryRevivesUnseen
+	// retryRefused changes nothing and answers with the purgedRun's refusal.
+	retryRefused
 )
 
 // purgedRun is one parentless run as KAS holds it, listed and inspected as it stands, and retried as retried says.
 // updated is the root's endedAt and started its startedAt; the list's updatedAt is the first set.
 type purgedRun struct {
 	updated, started time.Time
+	refusal          *marotte.RPCError
 	id, parent       string
 	status           marotte.RunStatus
 	mu               sync.Mutex
@@ -213,7 +216,7 @@ func (k *purgedRun) retry() (json.RawMessage, []*marotte.RPCResponse, bool) {
 		runNotif(methodWFRunStart, map[string]any{"workflowId": k.id, "workflowName": "build", "parentSessionId": k.parent}),
 	}
 	switch k.retried {
-	case retryLost:
+	case retryLost, retryRefused:
 		return nil, nil, false
 	case retryRevives:
 		k.status = marotte.RunStatusRunning
@@ -270,6 +273,9 @@ func newPurgedRunRig(
 	if kas.retried == retryLost {
 		// Never closed: the retry's own deadline abandons the call.
 		rig.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: make(chan struct{})}
+	}
+	if kas.retried == retryRefused {
+		rig.refuseAfterCall = map[string]*marotte.RPCError{methodKiroWorkflowRetry: kas.refusal}
 	}
 	h, _ = newRigOver(t, rig, func(ctx context.Context, s chat.OwnerScan) chat.OwnerScan {
 		if during != nil && armed.Load() && ownerScan(scans.Add(1)) == at {
@@ -471,6 +477,116 @@ func lapseRetryMarks(h *Runtime) {
 	for wf, at := range m.at {
 		m.at[wf] = at.Add(-retryInFlightBound)
 	}
+}
+
+// Neither KAS refusing a retry nor an answer marotte could not decode drops the run's retry mark: the mark is per run,
+// so a refusal says nothing of an earlier attempt KAS may still be running (a just-claimed refusal means one is), and
+// an undecoded answer may hide a retry KAS took. With KAS showing nothing since, the run is kept until the bound.
+func TestPurgeParentlessRuns_KeepsARunWhoseRetryWasRefused(t *testing.T) {
+	shortRetryTimeout(t)
+	const window = 24 * time.Hour
+	justClaimed := &marotte.RPCError{
+		Code: -32603, Message: "Internal error",
+		Data: json.RawMessage(`{"details":"Workflow wf_1 was just claimed by another process"}`),
+	}
+	undecoded := &marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "marotte could not decode kiro-cli's answer"}
+	cases := []struct {
+		refusal *marotte.RPCError
+		name    string
+		// overlap leaves a first attempt unanswered and refuses a second one sent while it waits.
+		overlap bool
+	}{
+		{name: "a second attempt refused as just claimed while the first is unanswered", refusal: justClaimed, overlap: true},
+		{name: "a retry refused as just claimed", refusal: justClaimed},
+		{name: "a retry whose answer marotte could not decode", refusal: undecoded},
+	}
+	for _, tc := range cases {
+		for _, at := range []ownerScan{scanOfThePass, scanOfAdmission} {
+			when := "after the list"
+			if at == scanOfAdmission {
+				when = "during admission"
+			}
+			t.Run(tc.name+" "+when, func(t *testing.T) {
+				kas := &purgedRun{
+					id: "wf_1", parent: "sess_host", status: marotte.RunStatusFailed, updated: time.Now().Add(-2 * window),
+					retried: retryRefused, refusal: tc.refusal,
+				}
+				wantVerbs := 1
+				if tc.overlap {
+					kas.retried, wantVerbs = retryLost, 2
+				}
+				var errs []error
+				var rig *deleteRig
+				h, rig, arm := newPurgedRunRig(t, kas, nil, func(ctx context.Context, h *Runtime) {
+					errs = retryAttempts(ctx, t, h, rig, kas, tc.overlap)
+				}, at)
+				arm()
+
+				res := h.PurgeParentlessRuns(t.Context(), window)
+
+				if got := len(rig.of(methodKiroWorkflowRetry)); got != wantVerbs || len(errs) != wantVerbs {
+					t.Fatalf("Setup: the retries sent %d verbs and ended %d times, want %d", got, len(errs), wantVerbs)
+				}
+				if rpc, ok := errors.AsType[*marotte.RPCError](errs[wantVerbs-1]); !ok || rpc.Code != tc.refusal.Code {
+					t.Fatalf("Setup: the refused attempt ended with %v, want the refusal coded %d", errs[wantVerbs-1], tc.refusal.Code)
+				}
+				if tc.overlap && !errors.Is(errs[0], context.DeadlineExceeded) {
+					t.Fatalf("Setup: the first attempt ended with %v, want it abandoned on its deadline", errs[0])
+				}
+				if got := deletedRunIDs(rig); len(got) != 0 {
+					t.Errorf("PurgeParentlessRuns deleted %v, want nothing", got)
+				}
+				if res.Purged != 0 || res.Kept != 1 || res.NextDeadline.IsZero() {
+					t.Errorf("PurgeParentlessRuns = purged %d kept %d next %v, want purged 0 kept 1 and the mark's bound as deadline",
+						res.Purged, res.Kept, res.NextDeadline)
+				}
+				if !retryMarked(h, "wf_1") {
+					t.Error("wf_1's retry mark after the pass = dropped, want held: KAS shows no activity since the send")
+				}
+				lapseRetryMarks(h)
+				before := len(deletedRunIDs(rig))
+
+				res = h.PurgeParentlessRuns(t.Context(), window)
+
+				if got := deletedRunIDs(rig)[before:]; !slices.Equal(got, []string{"wf_1"}) || res.Purged != 1 {
+					t.Errorf("PurgeParentlessRuns past the mark's bound deleted %v and purged %d, want [wf_1] and 1", got, res.Purged)
+				}
+			})
+		}
+	}
+}
+
+// retryAttempts retries kas's run once, or with overlap twice: the second attempt starts while the first waits
+// unanswered, and KAS refuses it with kas's refusal. It returns every attempt's error, first first, once all have
+// ended and marotte's registry of unsettled writes has settled them.
+func retryAttempts(ctx context.Context, t *testing.T, h *Runtime, rig *deleteRig, kas *purgedRun, overlap bool) []error {
+	t.Helper()
+	if !overlap {
+		_, err := h.runs.retry(ctx, kas.id, failedAffordance(h, kas.id))
+		waitDrivesSettled(t, h)
+		return []error{err}
+	}
+	first := make(chan error, 1)
+	// A run's ask cell holds the second attempt until the first ends, inside the second's own retryTimeout, so the
+	// first gives up well before it.
+	fctx, cancel := context.WithTimeout(ctx, retryTimeout/3)
+	defer cancel()
+	go func() {
+		_, err := h.runs.retry(fctx, kas.id, failedAffordance(h, kas.id))
+		first <- err
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(rig.of(methodKiroWorkflowRetry)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("Setup: the first retry sent no verb within 5s")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	rig.of(methodKiroWorkflowRetry)[0].bridge.setRefuseAfterCall(methodKiroWorkflowRetry, kas.refusal)
+	_, second := h.runs.retry(ctx, kas.id, failedAffordance(h, kas.id))
+	errs := []error{<-first, second}
+	waitDrivesSettled(t, h)
+	return errs
 }
 
 // A retry mark keeps its run until KAS shows activity of the run at or after the send, to KAS's millisecond, or until
