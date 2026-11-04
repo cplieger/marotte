@@ -30,7 +30,7 @@ import { kindGlyph } from "../exec-view/tree.js";
 import { paintLabel } from "../exec-view/label.js";
 import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
-import { ICON_TAB_RUN, ICON_EXTERNAL } from "../icons.js";
+import { ICON_TAB_RUN } from "../icons.js";
 import { buildPath } from "../route-path.js";
 import type { RunAsks } from "../run-asks.js";
 import { runToExec, type StepEnds } from "../run-exec-source.js";
@@ -202,7 +202,7 @@ export function buildRunCard(
     "a",
     { className: "run-open", href: runHref },
     "Open run",
-    el("span", { className: "run-open-icon", "aria-hidden": "true" }, iconEl(ICON_EXTERNAL)),
+    el("span", { className: "run-open-icon", "aria-hidden": "true" }, iconEl(ICON_TAB_RUN)),
   );
   open.addEventListener("click", (e) => {
     // A modified click is a deliberate escape from the app's own routing.

@@ -177,12 +177,15 @@ describe("whose words the note holds", () => {
     expect(textOf(n, ".steer-note-label")).toBe("Message from the main agent not delivered");
   });
 
-  it("gives the main agent's message a glyph of its own", () => {
-    const glyph = (n: HTMLElement): string | undefined =>
-      n.querySelector(".tool-icon svg path")?.getAttribute("d") ?? undefined;
+  it("marks a workflow message the same way in both directions, apart from a result and the reader's own", () => {
+    const glyph = (n: HTMLElement): string =>
+      [...n.querySelectorAll(".tool-icon svg path")]
+        .map((p) => p.getAttribute("d") ?? "")
+        .join(" ");
     const parent = glyph(note({ origin: "parent" }));
 
-    expect(parent).toBeDefined();
+    expect(parent).not.toBe("");
+    expect(glyph(note({ origin: "step" }))).toBe(parent);
     expect(parent).not.toBe(glyph(note()));
     expect(parent).not.toBe(glyph(note({ origin: "agent" })));
   });

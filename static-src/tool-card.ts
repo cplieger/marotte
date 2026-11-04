@@ -41,10 +41,12 @@ import { el } from "@cplieger/ui";
 
 /** Build a tool-call element. Does not append it to the DOM. */
 export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
-  const info = renderInfoFor(opts.title, opts.kind, opts.input, {
+  const info = renderInfoFor(opts.kind, opts.input, {
     disclosed: opts.disclosed,
     denial: opts.denial,
     sourcePath: opts.sourcePath,
+    toolName: opts.toolName,
+    mcp: opts.mcp,
   });
   const depth1 = toolDepth1(info.kind);
   const withToggle = hasDepth1(info.kind);
@@ -54,7 +56,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     info.disclosed !== null
       ? disclosedClaim(info.disclosed)
       : info.mcp !== null
-        ? formatMCPToolName(info.mcp.tool)
+        ? formatMCPToolName(info.mcp.tool_name)
         : (shellTitle ?? toolTitleText(opts.title));
 
   const node = el("div", { className: `tool-call tool-depth1-${depth1}` }) as HTMLDivElement;
@@ -62,6 +64,9 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   node.dataset["title"] = displayTitle;
   node.dataset["depth1"] = depth1;
   node.dataset["toolId"] = opts.id;
+  if (info.toolName !== "") {
+    node.dataset["toolName"] = info.toolName;
+  }
   if (info.disclosed !== null) {
     node.dataset["disclosed"] = info.disclosed.type;
   }
@@ -75,7 +80,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     node.dataset["declined"] = "1";
   }
   if (info.mcp !== null) {
-    node.dataset["mcpServer"] = info.mcp.server;
+    node.dataset["mcpServer"] = info.mcp.server_name;
   }
   if (info.filePath !== "") {
     node.dataset["filename"] = info.fileBasename;
@@ -273,7 +278,7 @@ function buildHeader(
     title: displayTitle,
   }) as HTMLDivElement;
 
-  const iconSpan = el("span", { className: "tool-icon" }, iconEl(toolIcon(info.kind, opts.title)));
+  const iconSpan = el("span", { className: "tool-icon" }, iconEl(toolIcon(info)));
   header.appendChild(iconSpan);
 
   const titleSpan = el("span", { className: "tool-title" }, displayTitle);
@@ -284,12 +289,12 @@ function buildHeader(
       "span",
       {
         className: "tool-mcp-badge",
-        title: `From the ${info.mcp.server} MCP integration`,
+        title: `From the ${info.mcp.server_name} MCP integration`,
         [CHROME_ATTR]: "",
       },
-      info.mcp.server,
+      info.mcp.server_name,
     );
-    badge.style.setProperty("--mcp-hue", String(mcpHue(info.mcp.server)));
+    badge.style.setProperty("--mcp-hue", String(mcpHue(info.mcp.server_name)));
     header.appendChild(badge);
   }
 

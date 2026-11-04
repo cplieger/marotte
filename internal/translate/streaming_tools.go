@@ -79,9 +79,12 @@ func (*Translator) trackFileChanges(turn *turnlog.Turn, diffs []marotte.ToolDiff
 func toolCallFromWire(
 	tc *acpToolCallWire, subtask string, content toolUpdateContent, ts int64,
 ) marotte.ToolCall {
+	mcp := mcpCallIdentity(tc.Meta.Kiro.ServerName, tc.Title)
 	return marotte.ToolCall{
 		ID:             tc.ToolCallID,
 		Title:          displayText(tc.Title),
+		ToolName:       builtinToolName(tc.Meta.Kiro.ToolID, tc.Title, mcp),
+		MCP:            mcp,
 		Kind:           tc.Kind,
 		Status:         tc.Status,
 		Input:          tc.RawInput,

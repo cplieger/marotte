@@ -203,3 +203,39 @@ describe("the mark reads one ink and one size wherever it renders", () => {
     }
   });
 });
+
+describe("a turn's outcome marks take the tool row's shapes", () => {
+  const turns = loadCSS("29-turns.css");
+
+  /** The one rule listing `selector` that declares `property`: the hue rules list the same selector. */
+  function shapeRule(selector: string, property: string): { selector: string; body: string } {
+    const hits = allRules(turns).filter(
+      (r) => r.selector.includes(selector) && r.body.includes(`${property}:`),
+    );
+    expect(hits, `one ${property} rule for ${selector}`).toHaveLength(1);
+    return hits[0] ?? { selector: "", body: "" };
+  }
+
+  it("draws a broken turn as the tab strip's diamond on the header dot and the footer glyph", () => {
+    const strip = ruleContaining(tabs, '.tab-status-dot[data-status="failed"]', "top");
+    const corner = /border-radius:\s*([\d.]+px)/.exec(strip.body)?.[1];
+    const broken = shapeRule('.turn-header[data-severity="broken"] .turn-dot', "transform");
+    expect(broken.selector).toContain('.turn-footer[data-severity="broken"] .turn-ledger-glyph');
+    expect(broken.body).toContain("inline-size: var(--dot-size-sm)");
+    expect(broken.body).toContain("block-size: var(--dot-size-sm)");
+    expect(broken.body).toContain("transform: rotate(45deg)");
+    expect(broken.body).toContain(`border-radius: ${corner ?? "?"}`);
+  });
+
+  it("cuts a stopped turn's bar to the stop glyph's proportions", () => {
+    const stopped = shapeRule('.turn-header[data-severity="stopped"] .turn-dot', "mask-image");
+    expect(stopped.selector).toContain('.turn-footer[data-severity="stopped"] .turn-ledger-glyph');
+    expect(stopped.body).toContain("mask-composite: exclude");
+    const HV = /^M([\d.]+) ([\d.]+)h([\d.]+)v([\d.]+)h-([\d.]+)$/;
+    const bar = HV.exec(barSubpath(outcomeIcon("warn")));
+    const disc = units(DOT_REM);
+    const size = /mask-size:[^;]*,\s*([\d.]+)%\s+([\d.]+)%/.exec(stopped.body);
+    expect(Number(size?.[1])).toBeCloseTo((Number(bar?.[3]) / disc) * 100, 2);
+    expect(Number(size?.[2])).toBeCloseTo((Number(bar?.[4]) / disc) * 100, 2);
+  });
+});

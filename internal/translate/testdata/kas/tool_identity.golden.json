@@ -1,0 +1,521 @@
+[
+  {
+    "name": "read_file (wire)",
+    "call": {
+      "id": "tc-read_file-wire",
+      "title": "Read File",
+      "kind": "read",
+      "status": "pending",
+      "input": {
+        "path": "/work/notes.txt",
+        "offset": null,
+        "limit": null
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "tool_load (wire)",
+    "call": {
+      "id": "tc-tool_load-wire",
+      "title": "Tool Load",
+      "kind": "other",
+      "status": "in_progress",
+      "tool_name": "tool_load",
+      "input": {
+        "id": "tool::capture::ask_value"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "MCP via tool_call (wire)",
+    "call": {
+      "id": "tc-MCP-via-tool_call-wire",
+      "title": "@capture/ask_value",
+      "kind": "other",
+      "status": "pending",
+      "mcp": {
+        "server_name": "capture",
+        "tool_name": "ask_value"
+      },
+      "input": {
+        "tool_id": "tool::capture::ask_value",
+        "arguments": {}
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "update_workflow via tool_call",
+    "call": {
+      "id": "tc-update_workflow-via-tool_call",
+      "title": "Update Workflow",
+      "kind": "other",
+      "status": "completed",
+      "tool_name": "update_workflow",
+      "input": {
+        "tool_id": "tool::update_workflow",
+        "arguments": {
+          "action": "text",
+          "status": "text",
+          "workflowId": "wf_0123456789abcdef"
+        }
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "update_workflow direct",
+    "call": {
+      "id": "tc-update_workflow-direct",
+      "title": "Update Workflow",
+      "kind": "other",
+      "status": "pending",
+      "tool_name": "update_workflow",
+      "input": {
+        "workflowId": "wf_0123456789abcdef",
+        "action": "text",
+        "status": "text",
+        "remainingSteps": []
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "inspect_workflow via tool_call",
+    "call": {
+      "id": "tc-inspect_workflow-via-tool_call",
+      "title": "Inspect Workflow",
+      "kind": "other",
+      "status": "completed",
+      "tool_name": "inspect_workflow",
+      "input": {
+        "tool_id": "tool::inspect_workflow",
+        "arguments": {
+          "workflowId": "wf_0123456789abcdef"
+        }
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "inspect_workflow direct",
+    "call": {
+      "id": "tc-inspect_workflow-direct",
+      "title": "Inspect Workflow",
+      "kind": "other",
+      "status": "pending",
+      "tool_name": "inspect_workflow",
+      "input": {
+        "workflowId": "wf_0123456789abcdef"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "run_workflow",
+    "call": {
+      "id": "tc-run_workflow",
+      "title": "Run Workflow",
+      "kind": "other",
+      "status": "pending",
+      "tool_name": "run_workflow",
+      "input": {
+        "workflowPrompt": "text",
+        "inputs": {},
+        "runLabel": "text"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "send_message",
+    "call": {
+      "id": "tc-send_message",
+      "title": "Send Message",
+      "kind": "other",
+      "status": "pending",
+      "tool_name": "send_message",
+      "input": {
+        "sessionId": "sess_00000000-0000-0000-0000-000000000000",
+        "message": "text",
+        "severity": "text"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "web_search direct",
+    "call": {
+      "id": "tc-web_search-direct",
+      "title": "web_search",
+      "kind": "other",
+      "status": "pending",
+      "tool_name": "web_search",
+      "input": {
+        "query": "text",
+        "_meta": {
+          "_isValid": true,
+          "_activePath": [
+            "text"
+          ],
+          "_completedPaths": [
+            [
+              "text"
+            ]
+          ]
+        }
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "web_search via tool_call",
+    "call": {
+      "id": "tc-web_search-via-tool_call",
+      "title": "web_search",
+      "kind": "other",
+      "status": "completed",
+      "tool_name": "web_search",
+      "input": {
+        "tool_id": "tool::remote_web_search",
+        "arguments": {
+          "query": "text"
+        }
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "mailbox send_message via tool_call",
+    "call": {
+      "id": "tc-mailbox-send_message-via-tool_call",
+      "title": "@mailbox/send_message",
+      "kind": "other",
+      "status": "pending",
+      "mcp": {
+        "server_name": "mailbox",
+        "tool_name": "send_message"
+      },
+      "input": {
+        "tool_id": "tool::mailbox::send_message",
+        "arguments": {
+          "project_key": "text",
+          "sender_name": "text",
+          "sender_token": "text",
+          "to": [
+            "text"
+          ],
+          "thread_id": "text",
+          "topic": "text",
+          "importance": "text",
+          "subject": "text",
+          "body_md": "text"
+        }
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "mailbox fetch_inbox via tool_call",
+    "call": {
+      "id": "tc-mailbox-fetch_inbox-via-tool_call",
+      "title": "@mailbox/fetch_inbox",
+      "kind": "other",
+      "status": "completed",
+      "mcp": {
+        "server_name": "mailbox",
+        "tool_name": "fetch_inbox"
+      },
+      "input": {
+        "tool_id": "tool::mailbox::fetch_inbox",
+        "arguments": {
+          "agent_name": "text",
+          "project_key": "text",
+          "unread_only": true,
+          "include_bodies": true,
+          "limit": 10
+        }
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "unloaded built-in via tool_call",
+    "call": {
+      "id": "tc-unloaded-built-in-via-tool_call",
+      "title": "Tool Call",
+      "kind": "other",
+      "status": "failed",
+      "input": {
+        "tool_id": "tool::inspect_workflow",
+        "arguments": {
+          "workflowId": "wf_0123456789abcdef"
+        }
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "unloaded MCP tool via tool_call",
+    "call": {
+      "id": "tc-unloaded-MCP-tool-via-tool_call",
+      "title": "Tool Call",
+      "kind": "other",
+      "status": "pending",
+      "input": {
+        "tool_id": "tool::mailbox::reply_message",
+        "arguments": {
+          "body_md": "text",
+          "project_key": "text",
+          "sender_name": "text",
+          "message_id": 3717
+        }
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "tool_load",
+    "call": {
+      "id": "tc-tool_load",
+      "title": "Tool Load",
+      "kind": "other",
+      "status": "completed",
+      "tool_name": "tool_load",
+      "input": {
+        "tool_ids": [
+          "builtin::inspect_workflow"
+        ]
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "read_file",
+    "call": {
+      "id": "tc-read_file",
+      "title": "Read File",
+      "kind": "read",
+      "status": "pending",
+      "input": {
+        "path": "/work/notes.txt",
+        "offset": null,
+        "limit": 150
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "fs_write",
+    "call": {
+      "id": "tc-fs_write",
+      "title": "Write File",
+      "kind": "edit",
+      "status": "pending",
+      "input": {
+        "path": "/work/notes.txt"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "str_replace",
+    "call": {
+      "id": "tc-str_replace",
+      "title": "Replace in File",
+      "kind": "edit",
+      "status": "pending",
+      "input": {
+        "path": "/work/notes.txt",
+        "oldStr": "text",
+        "newStr": "text"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "fs_append",
+    "call": {
+      "id": "tc-fs_append",
+      "title": "Append to File",
+      "kind": "edit",
+      "status": "pending",
+      "input": {
+        "path": "/work/notes.txt"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "delete_file",
+    "call": {
+      "id": "tc-delete_file",
+      "title": "Delete File",
+      "kind": "delete",
+      "status": "pending",
+      "input": {
+        "targetFile": "/work/notes.txt",
+        "explanation": "text"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "grep_search",
+    "call": {
+      "id": "tc-grep_search",
+      "title": "Grep Search",
+      "kind": "search",
+      "status": "pending",
+      "input": {
+        "query": "text",
+        "includePattern": "text"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "file_search",
+    "call": {
+      "id": "tc-file_search",
+      "title": "File Search",
+      "kind": "search",
+      "status": "pending",
+      "input": {
+        "explanation": "text",
+        "query": "text"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "list_directory",
+    "call": {
+      "id": "tc-list_directory",
+      "title": "List Directory",
+      "kind": "search",
+      "status": "pending",
+      "input": {
+        "path": "/work/notes.txt",
+        "explanation": "text",
+        "depth": 2
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "web_fetch",
+    "call": {
+      "id": "tc-web_fetch",
+      "title": "Fetch URL",
+      "kind": "fetch",
+      "status": "pending",
+      "input": {
+        "url": "https://example.com/",
+        "mode": "text"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "described shell call",
+    "call": {
+      "id": "tc-described-shell-call",
+      "title": "List the work folder",
+      "kind": "execute",
+      "status": "pending",
+      "input": {
+        "command": "ls",
+        "description": "text",
+        "run_in_background": false
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "control process via tool_call",
+    "call": {
+      "id": "tc-control-process-via-tool_call",
+      "title": "Control Process",
+      "kind": "execute",
+      "status": "pending",
+      "input": {
+        "tool_id": "tool::control_bash_process",
+        "arguments": {
+          "action": "text",
+          "command": "ls"
+        }
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "list_processes",
+    "call": {
+      "id": "tc-list_processes",
+      "title": "List Processes",
+      "kind": "other",
+      "status": "completed",
+      "input": {},
+      "ts": 0
+    }
+  },
+  {
+    "name": "update_session_information",
+    "call": {
+      "id": "tc-update_session_information",
+      "title": "Update Session Information",
+      "kind": "other",
+      "status": "completed",
+      "input": {
+        "title": "text",
+        "description": "text"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "save_workflow_definition",
+    "call": {
+      "id": "tc-save_workflow_definition",
+      "title": "Save Workflow Definition",
+      "kind": "other",
+      "status": "pending",
+      "tool_name": "save_workflow_definition",
+      "input": {
+        "name": "text"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "disclose_context skill",
+    "call": {
+      "id": "tc-disclose_context-skill",
+      "title": "Load skill: release-notes",
+      "kind": "other",
+      "status": "pending",
+      "tool_name": "disclose_context",
+      "input": {
+        "name": "release-notes"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "disclose_context steering",
+    "call": {
+      "id": "tc-disclose_context-steering",
+      "title": "Load steering: code-style",
+      "kind": "other",
+      "status": "pending",
+      "tool_name": "disclose_context",
+      "input": {
+        "name": "code-style"
+      },
+      "ts": 0
+    }
+  }
+]

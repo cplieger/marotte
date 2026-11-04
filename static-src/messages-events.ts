@@ -9,6 +9,8 @@ import type {
 } from "./types.js";
 import { el } from "@cplieger/ui";
 import { chevronEl } from "./chevron.js";
+import { iconEl } from "./icon-el.js";
+import { ICON_ALERT, ICON_COMPACT, ICON_REWIND, ICON_SHIELD, ICON_TOOL_SWITCH } from "./icons.js";
 import { wireDetailsSlide } from "./disclosure-row.js";
 import { effortLabel } from "./effort.js";
 import { renderMarkdownInto } from "./markdown.js";
@@ -39,42 +41,42 @@ const REVERT_LABELS: Record<TurnRevertCause, string> = { rewind: "Rewound to her
 export function buildEvent(e: EventEntry): HTMLElement {
   switch (e.kind) {
     case "model_switched": {
-      return boundary("switched", "\u21bb", switchedLabel(e.payload));
+      return boundary("switched", ICON_TOOL_SWITCH, switchedLabel(e.payload));
     }
     case "model_routed": {
       // KAS's own notice (the decode door words it in the past tense); the model pill keeps saying Auto.
       const message = e.payload.message;
       return boundary(
         "switched",
-        "\u21bb",
+        ICON_TOOL_SWITCH,
         message === "" ? "Auto moved to a stronger model" : message,
       );
     }
     case "model_fallback": {
-      return boundary("switched", "\u21bb", fallbackLabel(e.payload));
+      return boundary("switched", ICON_TOOL_SWITCH, fallbackLabel(e.payload));
     }
     case "mode_switched": {
       // One boundary row for both switches, so a reader learns one shape whichever thing moved.
-      return boundary("switched", "\u21bb", modeSwitchedLabel(e.payload));
+      return boundary("switched", ICON_TOOL_SWITCH, modeSwitchedLabel(e.payload));
     }
     case "turn_revert": {
       // The simple form, never `compactionBreak`: a revert has no summary to disclose.
-      return boundary("rewound", "\u21ba", REVERT_LABELS[e.payload.cause]);
+      return boundary("rewound", ICON_REWIND, REVERT_LABELS[e.payload.cause]);
     }
     case "compaction": {
       const summary = e.payload.summary;
       const label = "Conversation compacted";
       // The one kind whose payload is a body rather than a reason.
       return summary === ""
-        ? boundary("compacted", "\u273b", label)
-        : compactionBreak("\u273b", label, summary);
+        ? boundary("compacted", ICON_COMPACT, label)
+        : compactionBreak(ICON_COMPACT, label, summary);
     }
     case "compaction_failed": {
       // The compaction's own reason, never the turn's: `turnFailureText` owns that account and this row never repeats it.
       const reason = e.payload.reason;
       return boundary(
         "failed",
-        "\u26a0",
+        ICON_ALERT,
         reason === "" ? "Compaction failed" : `Compaction failed: ${reason}`,
       );
     }
@@ -84,7 +86,7 @@ export function buildEvent(e: EventEntry): HTMLElement {
       const props = e.payload.properties.join(", ");
       return boundary(
         "blocked",
-        "\u{1F6E1}",
+        ICON_SHIELD,
         props === ""
           ? "Infrastructure Safety blocked a change"
           : `Infrastructure Safety blocked: ${props}`,
@@ -198,9 +200,10 @@ function modeSwitchedLabel(p: {
   return p.source === "agent" ? `${row}, switched by the agent` : row;
 }
 
+/** `icon` is a registry glyph, hidden from assistive tech: the label carries the row's meaning. */
 function boundary(kind: BoundaryKind, icon: string, label: string): HTMLElement {
   const node = el("div", { className: `boundary boundary-${kind}` });
-  node.appendChild(el("span", { className: "boundary-icon" }, icon));
+  node.appendChild(el("span", { className: "boundary-icon", "aria-hidden": "true" }, iconEl(icon)));
   node.appendChild(el("span", { className: "boundary-label" }, label));
   return node;
 }
@@ -216,7 +219,7 @@ function compactionBreak(icon: string, label: string, summary: string): HTMLElem
     { className: "compaction-head" },
     // Leads the row because it discloses: a disclosing chevron comes first and rotates, a navigating one trails.
     chevronEl(),
-    el("span", { className: "compaction-icon" }, icon),
+    el("span", { className: "compaction-icon", "aria-hidden": "true" }, iconEl(icon)),
     el("span", { className: "compaction-label" }, label),
   );
   root.append(head, body);

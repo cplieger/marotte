@@ -80,6 +80,9 @@ type ToolCall struct {
 	Kind   ToolKind   `json:"kind"`
 	Status ToolStatus `json:"status"`
 	Output string     `json:"output,omitempty"`
+	// ToolName is the built-in tool's id (`update_workflow`, `web_search`) when the translator
+	// could name one the transcript distinguishes, else empty. Fixed at the create frame.
+	ToolName string `json:"tool_name,omitempty"`
 	// AgentSubtaskID is _meta.kiro.agentSubtaskId on a subagent's tool_call; it links
 	// the card to its nested deltas, which carry the same id.
 	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
@@ -97,6 +100,8 @@ type ToolCall struct {
 	// Checkpoint is KAS's snapshot mapping (_meta.kiro.checkpoint) for a call that
 	// wrote a file. Pointers sit ahead of the slices for govet fieldalignment.
 	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
+	// MCP is KAS's MCP server and tool for this call, nil for any other tool.
+	MCP *MCPToolIdentity `json:"mcp,omitempty"`
 	// Disclosed names the skill or steering doc a `disclose_context` call loaded
 	// (_meta.kiro.disclosedContext), the only signal that its body reached the model.
 	Disclosed *ToolDisclosed `json:"disclosed,omitempty"`

@@ -65,6 +65,10 @@ type acpKiroBlock struct {
 	// ToolID is KAS's machine name for a tool call (`execute_bash`, `user_input`). Not model-
 	// or locale-composed, so the internal-tool suppression keys on it.
 	ToolID string `json:"toolId"`
+	// ServerName is stamped from engine config by KAS's MCP wrapper and Power routes, but
+	// kiro_powers' own serverName argument reaches it too, so it names an MCP call only beside
+	// KAS's `@…<server>/<tool>` title (mcpCallIdentity).
+	ServerName string `json:"serverName"`
 	// WorkflowID names the run a `run_workflow` invocation started. On a REPLAY it is the only
 	// channel carrying it: replayed `rawOutput` is prose (kiro-cli 2.21.4).
 	WorkflowID string `json:"workflowId"`

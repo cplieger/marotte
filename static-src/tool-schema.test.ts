@@ -1,8 +1,6 @@
 // Unit tests for tool-schema.ts — pure functions, no DOM dependency.
 import { describe, it, expect } from "vitest";
-import fc from "fast-check";
 import {
-  mcpToolInfo,
   profileFor,
   toolDepth1,
   hasDepth1,
@@ -17,154 +15,13 @@ import type { ToolKind, ToolDepth1 as Depth1 } from "./tool-schema.js";
 import type { ToolStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
-// mcpToolInfo — table-driven
-// ---------------------------------------------------------------------------
-
-describe("mcpToolInfo", () => {
-  const valid: { input: string; expected: { server: string; tool: string } }[] = [
-    { input: "mcp__github__create_issue", expected: { server: "github", tool: "create_issue" } },
-    { input: "mcp__s3__list_buckets", expected: { server: "s3", tool: "list_buckets" } },
-    { input: "mcp__a__b", expected: { server: "a", tool: "b" } },
-    { input: "mcp__Server1__tool.name", expected: { server: "Server1", tool: "tool.name" } },
-    { input: "mcp__my-server__my-tool", expected: { server: "my-server", tool: "my-tool" } },
-    { input: "mcp:github:create_issue", expected: { server: "github", tool: "create_issue" } },
-    { input: "mcp:s3:list_buckets", expected: { server: "s3", tool: "list_buckets" } },
-    { input: "mcp:a:b", expected: { server: "a", tool: "b" } },
-    { input: "mcp:Server1:tool.name", expected: { server: "Server1", tool: "tool.name" } },
-    { input: "mcp:my-server:my-tool", expected: { server: "my-server", tool: "my-tool" } },
-  ];
-
-  it.each(valid)("parses $input", ({ input, expected }) => {
-    expect(mcpToolInfo(input)).toEqual(expected);
-  });
-
-  const invalid = [
-    "",
-    "mcp_github_tool", // single underscore
-    "mcp___github__tool", // triple underscore prefix
-    "mcp__", // missing segments
-    "mcp____", // empty segments
-    "mcp::github:tool", // double colon
-    "mcp::", // empty colon segments
-    "notmcp__a__b", // wrong prefix
-    "MCP__a__b", // case-sensitive prefix
-    "mcp__ __tool", // space in server
-    "mcp:server:", // empty tool
-    "mcp::tool", // empty server
-    "readFile", // normal tool name
-    "mcp__-invalid__tool", // leading dash in server
-    "mcp__.invalid__tool", // leading dot in server
-    "mcp__server__-tool", // leading dash in tool
-    "mcp__server__.tool", // leading dot in tool
-  ];
-
-  it.each(invalid)("returns null for %j", (input) => {
-    expect(mcpToolInfo(input)).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// mcpToolInfo — property-based fuzz
-// ---------------------------------------------------------------------------
-
-describe("mcpToolInfo (property-based)", () => {
-  // Arbitrary for valid server/tool name segments: starts with alnum, rest is alnum/underscore/dot/dash.
-  // Exclude double-underscore sequences since those are the separator in the mcp__ format.
-  const nameSegment = fc
-    .stringMatching(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,20}$/)
-    .filter((s) => !s.includes("__"));
-
-  it("round-trips underscore variant: mcp__<server>__<tool>", () => {
-    fc.assert(
-      fc.property(nameSegment, nameSegment, (server, tool) => {
-        const title = `mcp__${server}__${tool}`;
-        const result = mcpToolInfo(title);
-        expect(result).toEqual({ server, tool });
-      }),
-      { numRuns: 200 },
-    );
-  });
-
-  it("round-trips colon variant: mcp:<server>:<tool>", () => {
-    // Colon variant: segments must not contain colons (they don't — regex char class excludes them)
-    fc.assert(
-      fc.property(nameSegment, nameSegment, (server, tool) => {
-        const title = `mcp:${server}:${tool}`;
-        const result = mcpToolInfo(title);
-        expect(result).toEqual({ server, tool });
-      }),
-      { numRuns: 200 },
-    );
-  });
-
-  it("returns null for strings not starting with mcp__ or mcp:", () => {
-    const nonMcp = fc
-      .string({ minLength: 0, maxLength: 100 })
-      .filter((s) => !s.startsWith("mcp__") && !s.startsWith("mcp:"));
-    fc.assert(
-      fc.property(nonMcp, (s) => {
-        expect(mcpToolInfo(s)).toBeNull();
-      }),
-      { numRuns: 200 },
-    );
-  });
-
-  it("result is never partially populated", () => {
-    fc.assert(
-      fc.property(fc.string({ minLength: 0, maxLength: 100 }), (s) => {
-        const result = mcpToolInfo(s);
-        if (result !== null) {
-          expect(result.server.length).toBeGreaterThan(0);
-          expect(result.tool.length).toBeGreaterThan(0);
-        } else {
-          expect(result).toBeNull();
-        }
-      }),
-      { numRuns: 500 },
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
 // profileFor — table-driven
 // ---------------------------------------------------------------------------
 
+const PROBE = { server_name: "probe", tool_name: "echo_text" };
+
 describe("profileFor", () => {
-  const titleCases: {
-    title: string;
-    kind: string;
-    expectedKind: ToolKind;
-    expectedWrites: boolean;
-  }[] = [
-    { title: "readFile", kind: "read", expectedKind: "read", expectedWrites: false },
-    { title: "readCode", kind: "read", expectedKind: "read", expectedWrites: false },
-    { title: "readMultipleFiles", kind: "read", expectedKind: "read", expectedWrites: false },
-    { title: "listDirectory", kind: "read", expectedKind: "read", expectedWrites: false },
-    { title: "fsWrite", kind: "write", expectedKind: "write", expectedWrites: true },
-    { title: "fsAppend", kind: "write", expectedKind: "write", expectedWrites: true },
-    { title: "strReplace", kind: "edit", expectedKind: "edit", expectedWrites: true },
-    { title: "FileEdit", kind: "edit", expectedKind: "edit", expectedWrites: true },
-    { title: "FileWrite", kind: "write", expectedKind: "write", expectedWrites: true },
-    { title: "deleteFile", kind: "delete", expectedKind: "delete", expectedWrites: false },
-    { title: "smartRelocate", kind: "move", expectedKind: "move", expectedWrites: false },
-    { title: "semanticRename", kind: "edit", expectedKind: "edit", expectedWrites: false },
-    { title: "fileSearch", kind: "search", expectedKind: "search", expectedWrites: false },
-    { title: "grepSearch", kind: "search", expectedKind: "search", expectedWrites: false },
-    { title: "executePwsh", kind: "execute", expectedKind: "execute", expectedWrites: false },
-    { title: "webFetch", kind: "fetch", expectedKind: "fetch", expectedWrites: false },
-    { title: "remote_web_search", kind: "fetch", expectedKind: "fetch", expectedWrites: false },
-  ];
-
-  it.each(titleCases)(
-    "title=$title → kind=$expectedKind, writesFile=$expectedWrites",
-    ({ title, kind, expectedKind, expectedWrites }) => {
-      const p = profileFor(title, kind);
-      expect(p.kind).toBe(expectedKind);
-      expect(p.writesFile).toBe(expectedWrites);
-    },
-  );
-
-  const kindFallbackCases: {
+  const kindCases: {
     kind: string;
     expectedKind: ToolKind;
     expectedWrites: boolean;
@@ -179,31 +36,34 @@ describe("profileFor", () => {
     { kind: "fetch", expectedKind: "fetch", expectedWrites: false },
     { kind: "think", expectedKind: "think", expectedWrites: false },
     { kind: "switch_mode", expectedKind: "switch_mode", expectedWrites: false },
+    { kind: "hook", expectedKind: "hook", expectedWrites: false },
   ];
 
-  it.each(kindFallbackCases)(
-    "unknown title + kind=$kind → $expectedKind",
+  it.each(kindCases)(
+    "no tool name + kind=$kind → $expectedKind",
     ({ kind, expectedKind, expectedWrites }) => {
-      const p = profileFor("unknownTool", kind);
+      const p = profileFor("", kind, null);
       expect(p.kind).toBe(expectedKind);
       expect(p.writesFile).toBe(expectedWrites);
     },
   );
 
-  it("unknown title + unknown kind → other", () => {
-    const p = profileFor("unknownTool", "unknownKind");
+  it.each(["unknownKind", "constructor", "toString"])("kind=%s → other", (kind) => {
+    const p = profileFor("", kind, null);
     expect(p.kind).toBe("other");
     expect(p.writesFile).toBe(false);
   });
 
-  it("MCP-prefixed title → mcp kind", () => {
-    const p = profileFor("mcp__github__create_issue", "execute");
-    expect(p.kind).toBe("mcp");
-    expect(p.writesFile).toBe(false);
+  it.each(["tool_load", "load_resource"])("tool %s reads as a search", (tool) => {
+    expect(profileFor(tool, "other", null).kind).toBe("search");
   });
 
-  it("MCP colon-prefixed title → mcp kind", () => {
-    const p = profileFor("mcp:github:create_issue", "execute");
+  it("a server-named tool with no profile keeps its kind", () => {
+    expect(profileFor("update_workflow", "other", null).kind).toBe("other");
+  });
+
+  it("an MCP identity is an integration call whatever the kind", () => {
+    const p = profileFor("", "execute", PROBE);
     expect(p.kind).toBe("mcp");
     expect(p.writesFile).toBe(false);
   });
@@ -278,8 +138,8 @@ describe("formatMCPToolName", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderInfoFor", () => {
-  it("file write with strReplace input", () => {
-    const info = renderInfoFor("strReplace", "edit", {
+  it("an edit with oldStr/newStr input", () => {
+    const info = renderInfoFor("edit", {
       path: "src/main.ts",
       oldStr: "a",
       newStr: "b",
@@ -290,82 +150,49 @@ describe("renderInfoFor", () => {
     expect(info.fileBasename).toBe("main.ts");
     expect(info.diffSources).toEqual({ oldText: "a", newText: "b" });
     expect(info.mcp).toBeNull();
+    expect(info.toolName).toBe("");
   });
 
-  it("fsWrite with text input", () => {
-    const info = renderInfoFor("fsWrite", "write", { path: "out.txt", text: "hello" });
+  it("a write with text input", () => {
+    const info = renderInfoFor("write", { path: "out.txt", text: "hello" });
     expect(info.kind).toBe("write");
     expect(info.writesFile).toBe(true);
     expect(info.diffSources).toEqual({ oldText: "", newText: "hello" });
   });
 
   it("read tool — no diff, no mcp", () => {
-    const info = renderInfoFor("readFile", "read", { path: "foo.ts" });
+    const info = renderInfoFor("read", { path: "foo.ts" });
     expect(info.kind).toBe("read");
     expect(info.writesFile).toBe(false);
     expect(info.diffSources).toBeNull();
     expect(info.mcp).toBeNull();
   });
 
-  it("MCP tool — extracts server/tool", () => {
-    const info = renderInfoFor("mcp__github__create_issue", "execute", {});
+  it("an MCP call carries the identity the server named", () => {
+    const info = renderInfoFor(
+      "other",
+      { tool_id: "tool::probe::echo_text", arguments: {} },
+      { mcp: PROBE },
+    );
     expect(info.kind).toBe("mcp");
-    expect(info.mcp).toEqual({ server: "github", tool: "create_issue" });
+    expect(info.mcp).toEqual(PROBE);
   });
 
-  it("deferred tool_call: renders as the server's integration call", () => {
-    const info = renderInfoFor("Tool Call", "other", {
-      tool_id: "github::create_issue",
-      arguments: { title: "x" },
-    });
-    expect(info.kind).toBe("mcp");
-    expect(info.mcp).toEqual({ server: "github", tool: "create_issue" });
-  });
-
-  it("deferred tool_call: the live frame, titled by the MCP wrapper", () => {
-    const info = renderInfoFor("@probe/echo_text", "other", {
-      tool_id: "probe::echo_text",
-      arguments: { text: "hello-p5" },
-    });
-    expect(info.kind).toBe("mcp");
-    expect(info.mcp).toEqual({ server: "probe", tool: "echo_text" });
-  });
-
-  it("deferred tool_call: identified by its arguments when the title is model-written", () => {
-    const info = renderInfoFor("Open an issue", "other", {
-      tool_id: "github::create_issue",
-      arguments: {},
-    });
-    expect(info.kind).toBe("mcp");
-    expect(info.mcp).toEqual({ server: "github", tool: "create_issue" });
-  });
-
-  it.each([
-    ["a builtin routed through the envelope", "builtin::read_file"],
-    ["an id with two separators", "a::b::c"],
-    ["an empty server", "::create_issue"],
-    ["an empty tool", "github::"],
-    ["no separator", "github"],
-  ])("deferred tool_call: %s is not an integration", (_desc, toolID) => {
-    const info = renderInfoFor("tool_call", "other", { tool_id: toolID, arguments: {} });
-    expect(info.kind).not.toBe("mcp");
-    expect(info.mcp).toBeNull();
-  });
-
-  it("a tool_id outside the envelope shape is not unwrapped", () => {
-    const info = renderInfoFor("someTool", "other", { tool_id: "github::create_issue" });
+  it("an envelope input names nothing on its own", () => {
+    const info = renderInfoFor("other", { tool_id: "tool::probe::echo_text", arguments: {} });
     expect(info.kind).toBe("other");
     expect(info.mcp).toBeNull();
+    expect(info.toolName).toBe("");
   });
 
-  it.each(["tool_load", "Tool Load"])("%s renders as a search", (title) => {
-    expect(renderInfoFor(title, "other", { tool_ids: ["github::create_issue"] }).kind).toBe(
-      "search",
-    );
+  it("a server-named built-in carries its name", () => {
+    const info = renderInfoFor("other", {}, { toolName: "update_workflow" });
+    expect(info.toolName).toBe("update_workflow");
+    expect(info.mcp).toBeNull();
   });
 
   it("unknown tool with no input", () => {
-    const info = renderInfoFor("mystery", "unknown", undefined);
+    const info = renderInfoFor("unknown", undefined);
     expect(info.kind).toBe("other");
     expect(info.writesFile).toBe(false);
     expect(info.filePath).toBe("");
@@ -375,9 +202,15 @@ describe("renderInfoFor", () => {
   });
 
   it("picks targetFile when path is absent", () => {
-    const info = renderInfoFor("fsWrite", "write", { targetFile: "dest.ts", text: "x" });
+    const info = renderInfoFor("write", { targetFile: "dest.ts", text: "x" });
     expect(info.filePath).toBe("dest.ts");
     expect(info.fileBasename).toBe("dest.ts");
+  });
+
+  it("a hook card's file is the hook definition", () => {
+    const info = renderInfoFor("hook", undefined, { sourcePath: ".kiro/hooks/lint.json" });
+    expect(info.filePath).toBe(".kiro/hooks/lint.json");
+    expect(info.fileBasename).toBe("lint.json");
   });
 });
 
