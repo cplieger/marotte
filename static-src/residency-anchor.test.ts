@@ -28,8 +28,7 @@ scrollerEl.appendChild(messagesEl);
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { mountChatView, activeTranscriptView } = await import("./messages.js");
 const { scrollToBottom } = await import("./scroll.js");
-const { setPinSettleMs } = await import("./scroll-controller.js");
-const { pinAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
+const { restAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
 const { RESIDENT_ENTRIES } = await import("./block-window.js");
@@ -264,23 +263,14 @@ describe("the residency anchor under a reader's own scroll", () => {
       },
       { timeout: 10000, interval: 60 },
     );
-    // Back to the live edge, then out past the bottom pin's own settle window: a gesture inside it
-    // is undone before any pass sees it. Armed short, with the real window back in force before the
-    // case acts.
-    await pinAtLiveEdge(scroller(), 20, () => {
-      const real = setPinSettleMs(20);
-      try {
-        scrollToBottom();
-      } finally {
-        setPinSettleMs(real);
-      }
+    // Back to the live edge, with the rows near it settled before the case acts.
+    await restAtLiveEdge(scroller(), () => {
+      scrollToBottom();
     });
   }
 
-  /** Scroll UP by `px` as a reader does, and let the frame settle. The wheel's DIRECTION is
-   *  load-bearing rather than decoration: the controller enters Reading from the aim of the
-   *  reader's input, and a bare positional write is the shape of the platform's own clamp, which
-   *  stays Following on purpose. */
+  /** Scroll UP by `px` as a reader does, and let the frame settle: the wheel opens the gesture the move is the
+   *  reader's own in. */
   async function readerScrollsUp(px: number, frames = 6): Promise<number> {
     const el = scroller();
     const asked = Math.max(0, el.scrollTop - px);

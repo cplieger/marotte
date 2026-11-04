@@ -5,7 +5,7 @@ import { vi, describe, it, expect } from "vitest";
 import { loadCSS } from "./__test-helpers__/css-rules.js";
 
 vi.mock("./scroll.js", () => ({
-  setUserScrolledUp: vi.fn(),
+  pressHold: vi.fn(),
 }));
 
 import { chevronEl } from "./chevron.js";

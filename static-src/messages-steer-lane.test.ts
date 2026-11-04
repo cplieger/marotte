@@ -27,6 +27,7 @@ const LANE = "sub-A";
 setActive(CHAT_ID);
 
 initBlockRenderer({
+  liveAnchorChanged: () => undefined,
   pushEntryEffect: (): void => {
     /* noop */
   },

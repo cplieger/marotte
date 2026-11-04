@@ -130,13 +130,6 @@ function isOpen(): boolean {
   return popup?.isOpen === true;
 }
 
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-}
-
 /** SVG glyphs, so `align-items: center` centres the ink (see search-shell.ts's searchIconButton). */
 function navButton(
   label: string,
@@ -418,7 +411,7 @@ function revealCurrent(): void {
   jumpTo(mark, {
     block: "center",
     inline: "nearest",
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
+    behavior: "smooth",
   });
 }
 
@@ -980,7 +973,7 @@ function selectContainer(target: HTMLElement): void {
   jumpTo(target, {
     block: "center",
     inline: "nearest",
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
+    behavior: "smooth",
   });
 }
 

@@ -43,10 +43,12 @@
   }
 }
 
-/* Native scroll anchoring (`overflow-anchor` left at `auto`,
- * https://drafts.csswg.org/css-scroll-anchoring/) may absorb some layout changes
- * above the reader; `ScrollController` (scroll-controller.ts) holds a Reading
- * position across near-row layout and later child resizes. */
+/* While the scroll owner (scroll-controller.ts) holds the clamp floor, the space a shrink frees goes below the
+ * content, so nothing above the shrink moves before the owner answers it. */
+[data-scroll-owner] [data-scroll-floor] {
+  justify-content: flex-start;
+}
+
 [id="messages-wrap"] {
   position: absolute;
   inset: 0;
@@ -75,11 +77,6 @@
   padding-inline: max(var(--sp-4), env(safe-area-inset-left, 0))
     max(0px, calc(var(--sp-4) - var(--scrollbar-w, 0px)), env(safe-area-inset-right, 0));
   scrollbar-gutter: stable;
-
-  /* Smooth for user-initiated scrolls only. Streaming auto-scroll calls scrollTo
-   * with behavior:"instant", which overrides this: small per-chunk deltas compose
-   * into continuous motion that "smooth" would stutter through. */
-  scroll-behavior: smooth;
 }
 
 /* UNDER 57.5rem THE COLUMN LEAVES NO GUTTER, so the map sits `--sp-2` inside the chat area's end,
@@ -120,12 +117,7 @@
  * spacing, the centred cap and the flex-end geometry are per-view state that
  * parks and unparks with the chat. */
 .transcript-view {
-  /* START ONLY. The air under the LAST turn is the live-edge marker's top margin
-   * below, and it has to be, or the marker sits `--sp-4` above the scroller's
-   * content bottom and the two paths that answer "is the reader at the live edge"
-   * disagree by that much (scroll.ts: an `isAtBottom()` of 100px against an
-   * observed 116px). Same total height, same air, one geometry. */
-  padding-block-start: var(--sp-4);
+  padding-block: var(--sp-4);
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
@@ -134,28 +126,6 @@
   width: 100%;
   min-height: 100%;
   justify-content: flex-end;
-}
-
-/* THE LIVE EDGE, as an element an IntersectionObserver can watch (scroll.ts).
- *
- * `order: 1` is what puts it last, and it is load-bearing rather than tidy: the
- * marker is unkeyed furniture inside the view, and `reconcile` seats unkeyed
- * children BEFORE the keyed turn cards, so its DOM position drifts above them on
- * every paint. Flex order is decided by this property, not by the DOM, and every
- * card sits at the default `order: 0`.
- *
- * THE MARGIN CARRIES THE VIEW'S BLOCK-END AIR, which is what puts the marker
- * exactly ON the scroller's content bottom — the only position at which a
- * `rootMargin` of `BOTTOM_TOLERANCE_PX` observes the same threshold `isAtBottom()`
- * measures. `--sp-4` is that air, less the column `gap` flex already draws above a
- * zero-height last item (which is also why the value cannot simply be `--sp-4`:
- * the gap is drawn whatever the item's size, same mechanism as the collapsing
- * toolbar button in 12-chat.css). With the view's `padding-block-end` gone, the
- * total height and the space under the final turn are both unchanged. */
-.transcript-edge {
-  order: 1;
-  block-size: 0;
-  margin-block-start: calc(var(--sp-4) - var(--sp-3));
 }
 
 /* THE HISTORY EDGE, the live edge's twin at the other end (scroll-controller.ts `topSentinel`). `order: -1` seats it

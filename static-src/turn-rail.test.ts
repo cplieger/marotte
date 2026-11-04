@@ -3,8 +3,8 @@ import { userEvent } from "vitest/browser";
 
 import indexHtml from "../static/index.html?raw";
 
-// scroll.ts initialises a #messages singleton at import, so it is stubbed. The fake records the
-// epoch and absolute landings and fires `scrollend` for programmatic scrolls as Chromium does.
+// scroll.ts initialises a #messages singleton at import, so it is stubbed. The fake records each
+// jump's landing, resolves it on a later task and fires `scrollend` as Chromium does.
 // `top: scrollTop` on its rect keeps a card's measured top INVARIANT under scroll, as a real one is.
 const { scrollable } = vi.hoisted(() => {
   const handlers = new Map<string, Set<() => void>>();
@@ -36,8 +36,8 @@ const { scrollable } = vi.hoisted(() => {
       atLiveEdge: false,
       el,
       landings: [] as { px: number; behavior: string }[],
-      /** `begin` / `end`, so a case can see the epoch bracket the whole operation. */
-      epochs: [] as string[],
+      /** Jumps that have landed, of `landings.length` asked for. */
+      landed: 0,
       readerGesture: undefined as (() => void) | undefined,
       transcriptMutate: undefined as (() => void) | undefined,
       contentResize: undefined as (() => void) | undefined,
@@ -52,7 +52,7 @@ const { scrollable } = vi.hoisted(() => {
         this.line = 0;
         this.atLiveEdge = false;
         this.landings.length = 0;
-        this.epochs.length = 0;
+        this.landed = 0;
         el.scrollTop = 0;
       },
     },
@@ -64,20 +64,27 @@ vi.mock("./scroll.js", () => ({
     return scrollable.by;
   },
   readingLineOffset: () => scrollable.line,
-  atLiveEdgeNow: () => scrollable.atLiveEdge,
+  readingState: () => (scrollable.atLiveEdge ? "following" : "reading"),
   getScrollEl: () => scrollable.el,
-  beginSelfScroll: () => {
-    scrollable.epochs.push("begin");
-  },
-  endSelfScroll: () => {
-    scrollable.epochs.push("end");
-  },
-  scrollToOffset: (px: number, behavior: string) => {
+  jumpToOffset: (px: number, behavior: string): Promise<boolean> => {
     scrollable.landings.push({ px, behavior });
     scrollable.el.scrollTop = px;
-    setTimeout(() => {
-      scrollable.fire("scrollend");
-    }, 0);
+    // An instant jump has landed when the call returns and its `scrollend` comes after; a smooth one resolves at
+    // its own end.
+    if (behavior === "instant") {
+      scrollable.landed++;
+      setTimeout(() => {
+        scrollable.fire("scrollend");
+      }, 0);
+      return Promise.resolve(true);
+    }
+    return new Promise<boolean>((resolve) => {
+      setTimeout(() => {
+        scrollable.fire("scrollend");
+        scrollable.landed++;
+        resolve(true);
+      }, 0);
+    });
   },
   onReaderGesture: (cb: () => void) => {
     scrollable.readerGesture = cb;
@@ -994,13 +1001,20 @@ describe("which card a row jumps to", () => {
     };
   }
 
-  /** Wait out the whole operation: the body build, one frame, the scroll and its
-   *  settle. The epoch's close is the one observable every exit reaches, including
-   *  the exits that scroll nowhere. */
+  /** Wait out the whole operation: the body build, one frame, the jump and its corrections, until every jump asked
+   *  for has landed and no further one follows. */
   async function settleJump(): Promise<void> {
-    await vi.waitFor(() => {
-      expect(scrollable.epochs).toContain("end");
-    });
+    let seen = -1;
+    await vi.waitFor(
+      () => {
+        const now = scrollable.landings.length;
+        const still =
+          now === seen && scrollable.landed === now && rail.getAttribute("aria-busy") === null;
+        seen = now;
+        expect(still).toBe(true);
+      },
+      { interval: 60, timeout: 5000 },
+    );
   }
 
   it("lands on the clicked turn's own card, not the one holding that window ordinal", async () => {
@@ -1036,7 +1050,7 @@ describe("which card a row jumps to", () => {
     // ONE animation, and a correction never starts a second: `auto` is the only
     // behavior a correction may use.
     expect(scrollable.landings[0]?.behavior).toBe("smooth");
-    expect(scrollable.landings.slice(1).every((l) => l.behavior === "auto")).toBe(true);
+    expect(scrollable.landings.slice(1).every((l) => l.behavior === "instant")).toBe(true);
   });
 
   it("resolves inside the ACTIVE view, not a parked one", async () => {
@@ -1125,9 +1139,8 @@ describe("which card a row jumps to", () => {
     expect(isPending(marker(1))).toBe(false);
   });
 
-  it("does not let a superseded jump close the epoch the second one opened", async () => {
-    // TWO CLICKS INSIDE ONE PAGING BUDGET: unguarded, the first jump's exit closed the SECOND's epoch
-    // and `autoScrollIfAnchored` took the reader to the live edge.
+  it("lands a second click inside the first's paging budget on the second's turn", async () => {
+    // TWO CLICKS INSIDE ONE PAGING BUDGET: the first jump's exit runs inside the second's flight.
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await loadTurnRail("c-overlap");
     setSessions([paged("c-overlap", ["m2"], true)]);
@@ -1149,8 +1162,7 @@ describe("which card a row jumps to", () => {
     });
 
     // The second card measures as MOVING, so the first's release at the second measurement lands its
-    // exit INSIDE the second's flight; by the third it has provably run.
-    const epochsWhenFirstExited: string[] = [];
+    // exit INSIDE the second's flight.
     let measured = 0;
     Object.defineProperty(target, "getBoundingClientRect", {
       configurable: true,
@@ -1158,9 +1170,6 @@ describe("which card a row jumps to", () => {
         measured += 1;
         if (measured === 2) {
           releaseFirst?.();
-        }
-        if (measured === 3) {
-          epochsWhenFirstExited.push(...scrollable.epochs);
         }
         // Settles from the fourth measurement, so the loop converges rather than
         // spending its whole budget.
@@ -1175,15 +1184,10 @@ describe("which card a row jumps to", () => {
     marker(1).click();
     marker(2).click();
     await vi.waitFor(() => {
-      expect(epochsWhenFirstExited.length).toBeGreaterThan(0);
+      expect(measured).toBeGreaterThan(3);
     });
 
-    // The second jump's epoch is still the only one, and still open.
-    expect(epochsWhenFirstExited).toEqual(["begin"]);
-
     await settleJump();
-    // One bracket for the two clicks, and the landing the second click asked for.
-    expect(scrollable.epochs).toEqual(["begin", "end"]);
     expect(target.dataset["railTarget"]).toBe("");
     expect(currentOf(rail)).toBe("2");
   });
@@ -1265,20 +1269,6 @@ describe("which card a row jumps to", () => {
     // third measurement never happens.
     expect(scrollable.landings.map((l) => l.px)).toEqual([1000, 2000, 7000]);
   });
-
-  it("closes the epoch on every exit, including the one that scrolls nowhere", async () => {
-    // An epoch left open suspends pagination and silences every reader gesture, so
-    // the close sits in a `finally` rather than after the scroll.
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
-    await loadTurnRail("c-epoch");
-    setSessions([paged("c-epoch", ["m2"], false)]);
-    setActive("c-epoch");
-
-    marker(1).click();
-    await settleJump();
-
-    expect(scrollable.epochs).toEqual(["end"]);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1338,7 +1328,7 @@ describe("a click always produces a reaction", () => {
 
   async function settleJump(): Promise<void> {
     await vi.waitFor(() => {
-      expect(scrollable.epochs).toContain("end");
+      expect(scrollable.landed).toBeGreaterThan(0);
     });
   }
 
@@ -1913,7 +1903,7 @@ describe("moving through the map", () => {
     key(link(1), "ArrowDown");
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(() => {
-      expect(scrollable.epochs).toContain("end");
+      expect(scrollable.landed).toBeGreaterThan(0);
     });
     expect(currentOf(rail)).toBe("2");
   });
@@ -1956,7 +1946,7 @@ describe("moving through the map", () => {
 
     next?.click();
     await vi.waitFor(() => {
-      expect(scrollable.epochs).toContain("end");
+      expect(scrollable.landed).toBeGreaterThan(0);
     });
     expect(currentOf(rail)).toBe("2");
     expect(prev?.disabled).toBe(false);
@@ -2036,7 +2026,7 @@ describe("moving through the map", () => {
     link(1).click();
     await vi.waitFor(() => {
       expect(
-        scrollable.epochs.length + vi.mocked(loadOlderTurns).mock.calls.length,
+        scrollable.landings.length + vi.mocked(loadOlderTurns).mock.calls.length,
       ).toBeGreaterThan(0);
     });
     await vi.waitFor(() => {

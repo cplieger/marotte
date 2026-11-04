@@ -168,7 +168,6 @@ describe("an older page landing through the paint", () => {
     // As `loadMessages` and `chat.ts` land it: the page through one `load` bump, then the skeleton dropped.
     seat(s, [1, 2, 3], "front");
     store.bumpMessages("c1", "load");
-    scroll.rebaseLoadMore();
     document.getElementById("load-more-skeleton")?.remove();
     await land();
     await drained();

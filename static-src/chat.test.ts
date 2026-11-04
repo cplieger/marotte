@@ -159,7 +159,6 @@ vi.mock("./picker.js", () => ({ showModelPicker: vi.fn(), hideModelPicker: vi.fn
 vi.mock("./messages.js", () => ({
   mountChatView: vi.fn(),
   setLoadMore: vi.fn(),
-  rebaseLoadMore: vi.fn(),
   // activateChatView's success branch calls it, so it must exist.
   loadTurnRail: vi.fn(),
   pointTurnRail: vi.fn(),

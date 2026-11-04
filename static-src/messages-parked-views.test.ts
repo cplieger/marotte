@@ -440,13 +440,14 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     seed(longChat(a), longChat(b), oneTurn(c, "x"));
     await flushed();
 
-    // No frame wait before the gesture: every step is synchronous, and the follow write re-reads its licence, so the
-    // verdict does not depend on compositor speed.
-
-    // Reading needs all three: the wheel marks it the reader's, the instant scrollTo beats `scroll-behavior: smooth`,
-    // and the event is what the listener acts on.
+    // The reader's move up from the live edge: the follower lands there first, then the wheel opens a gesture and the
+    // scroll event says where it went.
     const scroller = scroll.getScrollEl();
     expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight + 150);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    expect(scroller.scrollTop, "the premise: Following at the end").toBe(
+      scroller.scrollHeight - scroller.clientHeight,
+    );
     scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     scroller.scrollTo({ top: 5, behavior: "instant" });
     scroller.dispatchEvent(new Event("scroll"));

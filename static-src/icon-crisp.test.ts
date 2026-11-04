@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { clearDeviceScale, setDeviceScale } from "./__test-helpers__/device-scale.js";
 import { snapIcons } from "./icon-crisp.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -366,5 +367,118 @@ describe("snapIcons", () => {
     expect(svg.getBoundingClientRect().width).toBe(42);
     snapIcons();
     expect(drawingOff(svg, 0.5)).toBeLessThan(0.02);
+  });
+});
+
+// A snap taken off the screen goes stale whenever a scroll changes the device-pixel phase, and the next pass then moves
+// every icon in the scroller while its text stands still.
+describe("snapping inside a scroller", () => {
+  afterEach(async () => {
+    await clearDeviceScale();
+  });
+
+  /** A 100px scroller over 1000px of content, its box at a fractional offset, holding `icons` placed by `style`. */
+  function scroller(styles: readonly string[]): { box: HTMLElement; svgs: SVGSVGElement[] } {
+    const frame = document.createElement("div");
+    frame.style.cssText = "position:absolute;left:10.3px;top:20.7px;";
+    const box = document.createElement("div");
+    box.style.cssText = "overflow-y:auto;block-size:100px;inline-size:200px;";
+    const content = document.createElement("div");
+    content.style.cssText = "block-size:1000px;padding-block-start:5.3px;";
+    const svgs = styles.map((style) => {
+      const holder = document.createElement("div");
+      holder.style.cssText = style;
+      const svg = icon();
+      holder.append(svg);
+      content.append(holder);
+      return svg;
+    });
+    box.append(content);
+    frame.append(box);
+    document.body.append(frame);
+    hosts.push(frame);
+    return { box, svgs };
+  }
+
+  /** Snap at scrollTop 40, scroll one pixel, snap again: the translate before and after, and how far it carried the
+   *  icon on screen. */
+  function acrossOnePixel(
+    box: HTMLElement,
+    svg: SVGSVGElement,
+  ): { carried: number; before: string; after: string } {
+    box.scrollTop = 40;
+    snapIcons();
+    const before = svg.style.translate;
+    const y = svg.getBoundingClientRect().y;
+    box.scrollTop = 41;
+    expect(box.scrollTop, "the premise: a one-pixel scroll, half a device pixel of phase").toBe(41);
+    const carried = Math.round((y - svg.getBoundingClientRect().y) * 1000) / 1000;
+    snapIcons();
+    return { carried, before, after: svg.style.translate };
+  }
+
+  it("moves no in-flow icon when the scroller scrolls by a pixel at DPR 1.5", async () => {
+    await setDeviceScale(1.5);
+    const { box, svgs } = scroller([""]);
+    const svg = svgs[0]!;
+
+    const { carried, before, after } = acrossOnePixel(box, svg);
+
+    expect({ needed: before !== "", carried, after }).toEqual({
+      needed: true,
+      carried: 1,
+      after: before,
+    });
+  });
+
+  it.each([
+    // Painted where the viewport puts it, however far the scroller has moved.
+    ["a fixed icon", "position:fixed;left:40.3px;top:60.6px;"],
+    // Stuck to the scroller's top once its own offset has scrolled by.
+    ["a stuck sticky icon", "position:sticky;top:0;"],
+  ])(
+    "moves %s neither on screen nor in its snap on a one-pixel scroll at DPR 1.5",
+    async (_, style) => {
+      await setDeviceScale(1.5);
+      const { box, svgs } = scroller([style]);
+
+      const { carried, before, after } = acrossOnePixel(box, svgs[0]!);
+
+      expect({ carried, after }).toEqual({ carried: 0, after: before });
+    },
+  );
+
+  it("keeps the snap of an absolute icon whose containing block is outside the scroller", async () => {
+    await setDeviceScale(1.5);
+    const { box, svgs } = scroller(["position:absolute;left:3.3px;top:7.7px;"]);
+
+    const { carried, before, after } = acrossOnePixel(box, svgs[0]!);
+
+    expect({ carried, after }).toEqual({ carried: 0, after: before });
+  });
+
+  it("keeps the snap of a fixed icon a contained row holds, which the scroller carries", async () => {
+    await setDeviceScale(1.5);
+    // `contain: paint` (which `.msg-row`'s `content-visibility: auto` implies) makes the row the fixed box's
+    // containing block.
+    const { box, svgs } = scroller(["contain:paint;block-size:30px;"]);
+    const svg = svgs[0]!;
+    const fixed = document.createElement("div");
+    fixed.style.cssText = "position:fixed;left:4.3px;top:6.6px;";
+    svg.replaceWith(fixed);
+    fixed.append(svg);
+
+    const { carried, before, after } = acrossOnePixel(box, svg);
+
+    expect({ carried, after }).toEqual({ carried: 1, after: before });
+  });
+
+  it("keeps the snap of a sticky icon its inset has not caught, which scrolls with the content", async () => {
+    await setDeviceScale(1.5);
+    const { box, svgs } = scroller(["position:sticky;top:0;margin-block-start:300px;"]);
+
+    const { carried, before, after } = acrossOnePixel(box, svgs[0]!);
+
+    expect({ carried, after }).toEqual({ carried: 1, after: before });
   });
 });

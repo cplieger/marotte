@@ -31,6 +31,7 @@ const CHAT_ID = "c-prose-run";
 setActive(CHAT_ID);
 
 initBlockRenderer({
+  liveAnchorChanged: () => undefined,
   pushEntryEffect: (): void => {
     /* noop */
   },

@@ -10,20 +10,17 @@ export const scrollMock = {
   attach: vi.fn(),
   detach: vi.fn((): ViewScrollState => ({ scrollTop: 0, readingState: "following" })),
   scrollToBottom: vi.fn(),
-  setUserScrolledUp: vi.fn(),
+  pressHold: vi.fn(),
   jumpTo: vi.fn(),
   shiftScroll: vi.fn(),
-  // `scrollToOffset` moves nothing here; a suite asserting a landing drives the scroller itself.
-  beginSelfScroll: vi.fn(),
-  endSelfScroll: vi.fn(),
-  scrollToOffset: vi.fn(),
-  atLiveEdgeNow: vi.fn(() => true),
+  // `jumpToOffset` moves nothing here; a suite asserting a landing drives the scroller itself.
+  jumpToOffset: vi.fn((): Promise<boolean> => Promise.resolve(true)),
+  followTargetChanged: vi.fn(),
   // A real answer: a suite asserting a landing must prime it, or the two coincide for any arithmetic.
   readingLineOffset: vi.fn(() => 0),
   resetScrollState: vi.fn(),
   setLoadMore: vi.fn(),
   noteHistoryEdge: vi.fn(),
-  rebaseLoadMore: vi.fn(),
   readingState: vi.fn((): ReadingState => "following"),
   onReadingStateChange: vi.fn(),
   // Inert registrations: a mocked scroller never fires them; each returns the promised unregister.
@@ -42,4 +39,5 @@ export const scrollMock = {
   fillViewport: vi.fn(),
   // Non-zero: the turn rail hides below MIN_SCROLL_PX, so 0 would withdraw it from every suite.
   scrollableBy: vi.fn(() => 500),
+  readerGestureOpen: vi.fn(() => false),
 };

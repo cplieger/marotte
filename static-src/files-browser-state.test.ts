@@ -74,7 +74,7 @@ vi.mock("@cplieger/ui/skeleton", () => ({
 }));
 vi.mock("./scroll.js", () => ({
   scroll: vi.fn(),
-  setUserScrolledUp: vi.fn(),
+  pressHold: vi.fn(),
   // Present for Browser Mode's real-ESM linking.
   apiGetTyped: vi.fn(),
 }));

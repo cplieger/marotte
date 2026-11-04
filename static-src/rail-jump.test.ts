@@ -24,14 +24,17 @@ const TOLERANCE_PX = 8;
 const { probe } = vi.hoisted(() => ({
   probe: {
     landings: [] as { px: number; behavior: string; at: number }[],
-    /** When the epoch was released, which is the operation's own last act. */
+    /** When each jump landed. */
     releases: [] as number[],
     /** Reader gestures delivered to the map's own subscription. */
     gestures: 0,
+    /** Run once, in the task of the next jump, right after it is aimed. */
+    onAim: null as (() => void) | null,
     reset(): void {
       this.landings.length = 0;
       this.releases.length = 0;
       this.gestures = 0;
+      this.onAim = null;
     },
   },
 }));
@@ -40,13 +43,15 @@ vi.mock("./scroll.js", async (importOriginal) => {
   const real = await importOriginal<typeof ScrollModule>();
   return {
     ...real,
-    scrollToOffset: (px: number, behavior: ScrollBehavior): void => {
+    jumpToOffset: async (px: number, behavior: "instant" | "smooth"): Promise<boolean> => {
       probe.landings.push({ px, behavior, at: Date.now() });
-      real.scrollToOffset(px, behavior);
-    },
-    endSelfScroll: (): void => {
+      const flight = real.jumpToOffset(px, behavior);
+      const aimed = probe.onAim;
+      probe.onAim = null;
+      aimed?.();
+      const landed = await flight;
       probe.releases.push(Date.now());
-      real.endSelfScroll();
+      return landed;
     },
     onReaderGesture: (cb: () => void): (() => void) =>
       real.onReaderGesture(() => {
@@ -77,10 +82,7 @@ outer.id = "messages-wrap-outer";
 outer.style.cssText = "position:relative";
 const wrap = document.createElement("div");
 wrap.id = "messages-wrap";
-// `overflow-anchor: none` is production's (css/13-messages.css) and it is load-bearing: without it
-// Chromium's own scroll anchoring moves `scrollTop` when a card above the reader changes height,
-// which is the number every case here reads.
-wrap.style.cssText = "height:300px;overflow-y:auto;overflow-anchor:none;position:relative";
+wrap.style.cssText = "height:300px;overflow-y:auto;position:relative";
 const messagesEl = document.createElement("div");
 messagesEl.id = "messages";
 wrap.appendChild(messagesEl);
@@ -224,7 +226,7 @@ async function until(pred: () => boolean, what: string): Promise<void> {
 /** Wait out the whole operation. The release is the one observable every exit reaches, including
  *  the exits that scroll nowhere. */
 function released(): Promise<void> {
-  return until(() => probe.releases.length > 0, "the jump to release its epoch");
+  return until(() => probe.releases.length > 0, "the jump to land");
 }
 
 /** Wait until the scroller has stopped moving on its own, so a position read is the landing
@@ -246,18 +248,8 @@ async function quiet(): Promise<void> {
 
 /** Run `fn` once, on the first scroll event the jump's own animation produces — which is the
  *  moment the target can still be moved under it. */
-function onFirstScroll(fn: () => void): void {
-  wrap.addEventListener(
-    "scroll",
-    () => {
-      fn();
-    },
-    { once: true, passive: true },
-  );
-}
-
-/** Make the platform report a reduced-motion preference, which is what takes the jump's own
- *  behavior to `auto`. Chromium cannot be asked to prefer it, and `matchMedia` is an ordinary
+/** Make the platform report a reduced-motion preference, under which the owner lands a jump in
+ *  its own task. Chromium cannot be asked to prefer it, and `matchMedia` is an ordinary
  *  property, so the query is stubbed and every other query still answers for real.
  *  `unstubGlobals` restores it. */
 function preferReducedMotion(): void {
@@ -265,19 +257,6 @@ function preferReducedMotion(): void {
   vi.stubGlobal("matchMedia", (q: string) =>
     q.includes("prefers-reduced-motion") ? ({ matches: true } as MediaQueryList) : real(q),
   );
-}
-
-/** Take `scrollend` away from the rail's own settle. The controller registered its own listener
- *  at import, so the epoch still closes on the event — what this suppresses is the rail hearing
- *  it, which leaves `PICK_SETTLE_MS` as the only release path. */
-function suppressScrollend(): void {
-  const real = wrap.addEventListener.bind(wrap);
-  vi.spyOn(wrap, "addEventListener").mockImplementation((type, fn, opts) => {
-    if (type === "scrollend") {
-      return;
-    }
-    real(type, fn, opts);
-  });
 }
 
 async function residentChat(n: number): Promise<void> {
@@ -307,6 +286,20 @@ beforeEach(async () => {
   await until(() => wrap.scrollTop === 0, "the scroller to be back at the top");
 });
 
+/** The window the release is measured in: from the SCROLL the settle belongs to, stamped as
+ *  the rail asks for it and therefore strictly before its own timer starts. */
+function releaseAfterScroll(): number {
+  const scrolled = probe.landings[0]?.at;
+  const at = probe.releases[0];
+  if (scrolled === undefined || at === undefined) {
+    throw new Error("the jump never scrolled, or never landed");
+  }
+  return at - scrolled;
+}
+
+/** A frame and change: well under any settle the rail could wait. */
+const FRAME_MS = 100;
+
 describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
   it("uses the platform's animation and leaves the turn on the reading line", async () => {
     await residentChat(6);
@@ -330,21 +323,23 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
     await released();
     await quiet();
 
-    expect(probe.landings.map((l) => l.behavior)).toEqual(["auto"]);
+    // The rail asks for its animation; the scroller lands it in the jump's own task under reduced motion.
+    expect(probe.landings.map((l) => l.behavior)).toEqual(["smooth"]);
+    expect(releaseAfterScroll()).toBeLessThan(FRAME_MS);
     expect(Math.abs(topOnScreen("u4") - readingLine())).toBeLessThanOrEqual(TOLERANCE_PX);
   });
 
   it("corrects a target that moved under the animation, and starts no second one", async () => {
     // A smooth flight's target is frozen when it starts, so height arriving above the target while
-    // it runs lands the reader short of the reading line — which is what the correction closes,
-    // with `auto` so exactly one animation is ever in flight.
+    // it runs lands the reader short of the reading line: the correction closes it with an instant
+    // write, so exactly one animation is ever in flight.
     await residentChat(6);
-    onFirstScroll(() => {
+    probe.onAim = () => {
       const first = messagesEl.firstElementChild as HTMLElement | null;
       if (first !== null) {
         first.style.blockSize = "400px";
       }
-    });
+    };
 
     markerFor(4).click();
     await released();
@@ -352,7 +347,7 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
 
     expect(probe.landings.length).toBeGreaterThan(1);
     expect(probe.landings[0]?.behavior).toBe("smooth");
-    expect(probe.landings.slice(1).every((l) => l.behavior === "auto")).toBe(true);
+    expect(probe.landings.slice(1).every((l) => l.behavior === "instant")).toBe(true);
     expect(Math.abs(topOnScreen("u4") - readingLine())).toBeLessThanOrEqual(TOLERANCE_PX);
   });
 
@@ -389,11 +384,11 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
         messagesEl.prepend(e);
         grown.push(e);
       }
-      onFirstScroll(() => {
+      probe.onAim = () => {
         for (const e of grown) {
           e.style.blockSize = "200px";
         }
-      });
+      };
       return Promise.resolve(true);
     });
 
@@ -403,7 +398,7 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
 
     expect(vi.mocked(loadOlderTurns)).toHaveBeenCalledTimes(1);
     expect(probe.landings.length).toBeGreaterThan(1);
-    expect(probe.landings.slice(1).every((l) => l.behavior === "auto")).toBe(true);
+    expect(probe.landings.slice(1).every((l) => l.behavior === "instant")).toBe(true);
     expect(Math.abs(topOnScreen("u3") - readingLine())).toBeLessThanOrEqual(TOLERANCE_PX);
     // The pending state means a fetch is in flight, so the operation has to clear it.
     expect(isPending(markerFor(3))).toBe(false);
@@ -411,17 +406,6 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
 });
 
 describe("what releases the jump", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
-  /** The window the release is measured in: from the SCROLL the settle belongs to, stamped as
-   *  the rail asks for it and therefore strictly before its own timer starts. */
-  function releaseAfterScroll(): number {
-    const scrolled = probe.landings[0]?.at;
-    const at = probe.releases[0];
-    if (scrolled === undefined || at === undefined) {
-      throw new Error("the jump never scrolled, or never released its epoch");
-    }
-    return at - scrolled;
-  }
-
   it("releases on the scroll's own end, without waiting the settle out", async () => {
     // Reduced motion, so the scroll is INSTANT: Chromium fires `scrollend` for one of those too,
     // which is what makes this window the event's rather than the timer's whatever the frame rate
@@ -435,26 +419,9 @@ describe("what releases the jump", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
     expect(releaseAfterScroll()).toBeLessThan(SETTLE_MS);
   });
 
-  it("releases on the timeout when scrollend never arrives", async () => {
-    // `scrollend` is not universally implemented, so the timeout is the only release path on an
-    // engine without it rather than belt-and-braces. Chromium has it and would satisfy the case
-    // above for free, so the event is taken away.
-    preferReducedMotion();
-    await residentChat(6);
-    suppressScrollend();
-
-    markerFor(4).click();
-    await released();
-
-    expect(releaseAfterScroll()).toBeGreaterThanOrEqual(SETTLE_MS);
-    // Released rather than merely late: the landing still stands.
-    expect(Math.abs(topOnScreen("u4") - readingLine())).toBeLessThanOrEqual(TOLERANCE_PX);
-  });
-
   it("hands the position back when the reader wheels out of the jump", async () => {
     // The reader states a position while the jump holds one, so the pick goes: the wheel ends the
-    // epoch inside scroll.ts and the scroll event that follows publishes the gesture the rail
-    // cancels on.
+    // owner's flight and the scroll event that follows publishes the gesture the rail cancels on.
     await residentChat(6);
     markerFor(4).click();
     await until(() => probe.landings.length > 0, "the jump's own scroll to start");

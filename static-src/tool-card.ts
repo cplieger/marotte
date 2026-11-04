@@ -13,7 +13,7 @@ import { specDirOf } from "./spec-path.js";
 import { STEERING_TITLE_PREFIX, docName, docTarget } from "./steering-docs.js";
 import { lineDiff, windowHunks, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
-import { setUserScrolledUp } from "./scroll.js";
+import { pressHold } from "./scroll.js";
 import { wireRowToggle } from "./disclosure-row.js";
 import { toolCallBulk, type ToolBulk } from "./tool-bulk.js";
 import {
@@ -886,7 +886,7 @@ function wireToggle(el: HTMLElement, buildBody: () => void, initialOpen: boolean
     open: initialOpen,
     onToggle: (open, source) => {
       if (!open && source === "user") {
-        setUserScrolledUp(true);
+        pressHold();
       }
     },
   });

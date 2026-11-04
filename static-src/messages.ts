@@ -27,11 +27,11 @@ import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
 import { $ } from "./dom.js";
 import {
+  followTargetChanged,
   getScrollEl,
   scrollToBottom,
   resetScrollState,
   setLoadMore,
-  rebaseLoadMore,
   deferWhileReading,
   fillViewport,
   onReadingStateChange,
@@ -152,7 +152,7 @@ import { syncRefusal, setRefusalRewindHandler } from "./refusal.js";
 
 // --- Public re-exports ---
 
-export { getScrollEl, setLoadMore, rebaseLoadMore };
+export { getScrollEl, setLoadMore };
 // This module owns the rail, so chat.ts reaches it through here.
 export { loadTurnRail, pointTurnRail };
 
@@ -532,6 +532,7 @@ initBlockRenderer({
   disposeEntryEffects,
   makeRow,
   makeEvent: buildEvent,
+  liveAnchorChanged: followTargetChanged,
 });
 // The refusal callout's Rewind reuses this module's rewind flow; injected because refusal.ts cannot import this.
 setRefusalRewindHandler((target) => {
@@ -1010,8 +1011,6 @@ function paint(): void {
       skel.remove();
     }
   }
-  // An older page lands in this write (scroll.ts `rebaseLoadMore`).
-  rebaseLoadMore();
   reconcile(root, turns, turnSpec);
   // One walk builds the card list the rail and the fold pass share.
   const cards = turnCards(root);

@@ -49,7 +49,12 @@ const { tableObservationCount } = await import("./table-scroll.js");
 const CHAT_ID = "c-blocks";
 setActive(CHAT_ID);
 
+/** Reports of a changed follow anchor, which the scroller answers by re-reading its follow position. */
+let liveAnchorChanges = 0;
 initBlockRenderer({
+  liveAnchorChanged: () => {
+    liveAnchorChanges++;
+  },
   // messages.ts owns the effect registry; no case here asserts on it.
   pushEntryEffect: (): void => {
     /* noop */
@@ -954,6 +959,26 @@ describe("getLiveAnchor: the registry, not the tree", () => {
     expect(getLiveAnchor()).toBeNull();
   });
 
+  it("tells the scroller each time the anchor element changes, and not otherwise", () => {
+    const start = liveAnchorChanges;
+    const first = renderLiveBody([text("t", 1, "older")]);
+    const taken = liveAnchorChanges - start;
+    const second = renderLiveBody([text("t", 1, "newer")]);
+    const moved = liveAnchorChanges - start;
+    getLiveAnchor();
+    const reread = liveAnchorChanges - start;
+    disposeAssistantBody(second.turnID);
+    const fellBack = liveAnchorChanges - start;
+    disposeAssistantBody(first.turnID);
+    expect({ taken, moved, reread, fellBack, cleared: liveAnchorChanges - start }).toEqual({
+      taken: 1,
+      moved: 2,
+      reread: 2,
+      fellBack: 3,
+      cleared: 4,
+    });
+  });
+
   it("never anchors into a PARKED chat on the fallback scan", () => {
     const parked = renderLiveBody([text("t", 1, "other chat")], "c-other");
     const active = renderLiveBody([text("t", 1, "this chat")]);
@@ -1344,6 +1369,7 @@ describe("legacy internal tool calls are dropped at the dispatcher", () => {
 
 describe("one entry that fails to render does not take its turn with it", () => {
   const baseCbs = {
+    liveAnchorChanged: () => undefined,
     pushEntryEffect: (): void => {
       /* noop */
     },

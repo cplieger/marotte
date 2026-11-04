@@ -112,7 +112,7 @@ vi.mock("@cplieger/ui/skeleton", () => ({
 }));
 vi.mock("./scroll.js", () => ({
   scroll: vi.fn(),
-  setUserScrolledUp: vi.fn(),
+  pressHold: vi.fn(),
   apiGetTyped: vi.fn(),
 }));
 vi.mock("./transport.js", () => ({ send: vi.fn() }));

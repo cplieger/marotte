@@ -42,7 +42,6 @@ vi.mock("./skeleton.js", () => ({
 }));
 
 const scroll = await import("./scroll.js");
-const { setPinSettleMs } = await import("./scroll-controller.js");
 
 /** The scroller is faked with writable properties. That is the right level here: the helper's
  *  contract is arithmetic over three numbers, not real layout. */
@@ -75,7 +74,7 @@ function fakeScroller(init: { scrollHeight: number; clientHeight: number; scroll
   return state;
 }
 
-// The controller's windows (READER_CONTROL_MS, PIN_SETTLE_MS) read `Date.now()`, so a faked Date
+// The gesture tracker's idle bound reads `Date.now()`, so a faked Date
 // lets `land` step past one without sleeping it out. Only Date: the scenes' frames, observers,
 // timers and smooth flights stay real.
 beforeAll(() => {
@@ -92,7 +91,7 @@ beforeEach(() => {
 describe("deferWhileReading", () => {
   it("applies immediately while Following", () => {
     fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 500 });
-    scroll.setUserScrolledUp(false);
+    scroll.scrollToBottom();
     const fn = vi.fn();
     scroll.deferWhileReading(fn);
     expect(fn).toHaveBeenCalledTimes(1);
@@ -102,44 +101,44 @@ describe("deferWhileReading", () => {
   // exactly what a turn folding mid-read would do.
   it("queues while Reading and applies on the return to Following", () => {
     fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     const fn = vi.fn();
     scroll.deferWhileReading(fn);
     expect(fn).not.toHaveBeenCalled();
 
-    scroll.setUserScrolledUp(false);
+    scroll.scrollToBottom();
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
   it("preserves arrival order", () => {
     fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     const order: number[] = [];
     scroll.deferWhileReading(() => order.push(1));
     scroll.deferWhileReading(() => order.push(2));
     scroll.deferWhileReading(() => order.push(3));
-    scroll.setUserScrolledUp(false);
+    scroll.scrollToBottom();
     expect(order).toEqual([1, 2, 3]);
   });
 
   it("does not replay a flushed queue on the next return", () => {
     fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     const fn = vi.fn();
     scroll.deferWhileReading(fn);
-    scroll.setUserScrolledUp(false);
-    scroll.setUserScrolledUp(true);
-    scroll.setUserScrolledUp(false);
+    scroll.scrollToBottom();
+    scroll.pressHold();
+    scroll.scrollToBottom();
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
   it("drops the queue on a chat switch", () => {
     fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     const fn = vi.fn();
     scroll.deferWhileReading(fn);
     scroll.resetScrollState();
-    scroll.setUserScrolledUp(false);
+    scroll.scrollToBottom();
     expect(fn).not.toHaveBeenCalled();
   });
 });
@@ -254,6 +253,8 @@ describe("jumpTo", () => {
     expect(scroll.readingState()).toBe("following");
 
     scroll.resetScrollState();
+    // The first jump's follow write moved the fake scroller, and this target is placed on screen.
+    fakeScroller({ scrollHeight: 4000, clientHeight: 800, scrollTop: 0 });
     scroll.jumpTo(nearBottom, { block: "center" });
     expect(scroll.readingState()).toBe("reading");
   });
@@ -272,7 +273,7 @@ describe("jumpTo", () => {
     expect(scroll.readingState()).toBe("reading");
   });
 
-  // Laying a skipped row out grows it, and native anchoring moves the scroller by that growth before a flight's first
+  // Laying a skipped row out grows it, and the owner's hold moves the scroller by that growth before a flight's first
   // frame, so a scroller that moved is not by that alone a landing.
   it("treats a jump whose scroller moved short of the landing as a flight in progress", () => {
     const state = fakeScroller({ scrollHeight: 4000, clientHeight: 800, scrollTop: 2400 });
@@ -283,7 +284,7 @@ describe("jumpTo", () => {
     scroll.jumpTo(far);
     const seen = vi.fn();
     const off = scroll.onReaderGesture(seen);
-    // A frame of the flight: inside its epoch, the controller's own animation and not the reader.
+    // A frame of the flight: inside its flight, the owner's own animation and not the reader.
     state.scrollTop -= 300;
     scroll.getScrollEl().dispatchEvent(new Event("scroll"));
     off();
@@ -298,9 +299,9 @@ describe("readingState", () => {
   });
   it("names the state rather than exposing a boolean", () => {
     fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     expect(scroll.readingState()).toBe("reading");
-    scroll.setUserScrolledUp(false);
+    scroll.scrollToBottom();
     expect(scroll.readingState()).toBe("following");
   });
 
@@ -308,9 +309,9 @@ describe("readingState", () => {
     fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
     const seen: string[] = [];
     scroll.onReadingStateChange((s) => seen.push(s));
-    scroll.setUserScrolledUp(true);
-    scroll.setUserScrolledUp(true);
-    scroll.setUserScrolledUp(false);
+    scroll.pressHold();
+    scroll.pressHold();
+    scroll.scrollToBottom();
     expect(seen).toEqual(["reading", "following"]);
   });
 });
@@ -320,18 +321,23 @@ describe("readingState", () => {
 const messagesEl = document.getElementById("messages")!;
 const scrollBtn = document.getElementById("scrollBottom")!;
 
-/** The reader's own scroll, in the two events a device produces: the INPUT that says WHOSE
- *  scroll it is, then the `scroll` the browser delivers. Both halves are load-bearing. */
+/** The reader's own move to where the fixture has put the scroller (`readerArrivedAt`). */
 function readerScroll(): void {
   readerArrivedAt(scroll.getScrollEl());
 }
 
-/** Dispatch the wheel whose DIRECTION would have brought the reader to where `el` already sits,
- *  then the `scroll` event. */
+/** The reader's own move to where the fixture has put `el`: from 50px the other side (below it, or above it at the
+ *  end), the input that opens the gesture, then the `scroll` event. The owner reads the state from where the scroller
+ *  went. */
 function readerArrivedAt(el: HTMLElement): void {
-  const atEdge = el.scrollTop + el.clientHeight >= el.scrollHeight - 100;
-  el.dispatchEvent(new WheelEvent("wheel", { deltaY: atEdge ? 1 : -1 }));
+  const to = el.scrollTop;
+  const max = el.scrollHeight - el.clientHeight;
+  const atEnd = to >= max - 1;
+  el.scrollTop = atEnd ? Math.max(0, to - 50) : Math.min(max, to + 50);
+  el.dispatchEvent(new WheelEvent("wheel", { deltaY: atEnd ? 1 : -1 }));
+  el.scrollTop = to;
   el.dispatchEvent(new Event("scroll"));
+  el.dispatchEvent(new Event("scrollend"));
   // The history-edge observer's report, which fake geometry cannot produce: the edge counts as reached within
   // HISTORY_LEAD_PX of the top.
   scroll.noteHistoryEdge(el.scrollTop < HISTORY_LEAD_PX);
@@ -420,9 +426,8 @@ function onePage(page: () => void): () => void {
   };
 }
 
-/** Every pin writes synchronously, so two frames cover the observer-driven state revalidation and
- *  the bottom pin's re-assert frame: that frame schedule is the controller's contract, and what a
- *  positive pins. An absence reads after `drained()`. */
+/** Two frames cover a correction's frame and the settle's re-assert frame: that frame schedule is the owner's
+ *  contract, and what a positive pins. An absence reads after `drained()`. */
 async function settle(): Promise<void> {
   await frames(2);
 }
@@ -544,41 +549,13 @@ describe("the scroll listener's reading model", () => {
     expect(scroll.readingState()).toBe("following");
   });
 
-  it("returns to Following when the scroll reaches the bottom again", () => {
+  it("returns to Following when the reader's scroll reaches the bottom again and ends there", () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
     readerScroll();
     s.scrollTop = 1500;
     readerScroll();
+    scroll.getScrollEl().dispatchEvent(new Event("scrollend"));
     expect(scroll.readingState()).toBe("following");
-  });
-
-  // BOTTOM_TOLERANCE_PX is 100, so the last 100px still count as the live edge: 1400 + 500 === 2000
-  // - 100 exactly.
-  it("counts the tolerance band as the bottom", () => {
-    fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1400 });
-    readerScroll();
-    expect(scroll.readingState()).toBe("following");
-  });
-
-  it("counts one pixel above the tolerance band as Reading", () => {
-    fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1399 });
-    readerScroll();
-    expect(scroll.readingState()).toBe("reading");
-  });
-
-  // The control window is what stops the auto-scroll fighting a scroll still in flight: a wheel
-  // gesture that ends inside the tolerance band leaves the reader Following, and a chunk arriving
-  // inside READER_CONTROL_MS must not yank.
-  it("suppresses the auto-scroll for the debounce window after a user scroll", async () => {
-    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
-    readerScroll();
-    expect(scroll.readingState()).toBe("following");
-    // The document GROWS with the chunk, or the pin would write 1500 either way and the case could
-    // not fail: at the live edge the suppressed write and the one that lands are the same number.
-    s.scrollHeight = 3000;
-    messagesEl.appendChild(document.createElement("div"));
-    await drained();
-    expect(s.scrollTop).toBe(1500);
   });
 });
 
@@ -605,21 +582,6 @@ describe("the reader's input surfaces", () => {
     expect(s.scrollTop, "a write after the pin's frames").toBe(at);
     return at;
   }
-
-  it("hands the scroller to a scrolling key", async () => {
-    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown" }));
-    expect(await chunkLands(s)).toBe(1500);
-  });
-
-  it("hands the scroller to a scrolling key under a modifier", async () => {
-    // Ctrl+Home scrolls this box to the top. Dropped for its modifier, the reader ends at a
-    // position carrying no fingerprint, which reads as Following and gets pinned straight back
-    // down.
-    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", ctrlKey: true }));
-    expect(await chunkLands(s)).toBe(1500);
-  });
 
   it("takes no licence from a pointer moving with no thumb held", async () => {
     // Without the held-thumb guard every mouse movement over the page refreshes the quiet period,
@@ -655,25 +617,6 @@ describe("the reader's input surfaces", () => {
     s.scrollTop = 0;
     scroll.getScrollEl().dispatchEvent(new Event("scroll"));
     expect(scroll.readingState()).toBe("reading");
-  });
-
-  it("spends the reader's aim when they reach the live edge", () => {
-    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
-    const el = scroll.getScrollEl();
-    el.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
-    s.scrollTop = 0;
-    el.dispatchEvent(new Event("scroll"));
-    expect(scroll.readingState()).toBe("reading");
-
-    s.scrollTop = 1500;
-    el.dispatchEvent(new Event("scroll"));
-    expect(scroll.readingState()).toBe("following");
-
-    // The layout now moves them off the edge with no input at all. An aim left standing from the
-    // gesture they have already satisfied would re-park them here.
-    s.scrollTop = 0;
-    el.dispatchEvent(new Event("scroll"));
-    expect(scroll.readingState()).toBe("following");
   });
 
   it("leaves the scroller alone for a key that does not scroll", async () => {
@@ -715,35 +658,6 @@ describe("the reader's input surfaces", () => {
     expect(scroll.readingState()).toBe("following");
   });
 
-  it("keeps the momentum after a lifted finger inside the reader's window", async () => {
-    // `touchend` after a moving finger marks but cannot aim. It is in the set for the SUPPRESSION
-    // only: iOS momentum outlives the finger, and a chunk arriving under it must not yank.
-    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
-    const el = scroll.getScrollEl();
-    el.dispatchEvent(touchEvent("touchstart", el));
-    el.dispatchEvent(touchEvent("touchmove", el));
-    el.dispatchEvent(touchEvent("touchend", el));
-    expect(await chunkLands(s)).toBe(1500);
-  });
-
-  // A tap's wobble inside the slop scrolls nothing, so the pin runs; past it, the reader owns the scroller.
-  for (const [travel, reads, landed] of [
-    [6, "a tap", 2500],
-    [12, "the reader's scroll", 1500],
-  ] as const) {
-    it(`treats a ${String(travel)}px touch as ${reads}`, async () => {
-      const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
-      const el = scroll.getScrollEl();
-      touchAt(el, "touchstart", 100);
-      touchAt(el, "touchmove", 100 - travel);
-      el.dispatchEvent(touchEvent("touchend", el));
-      expect(await chunkLands(s)).toBe(landed);
-    });
-  }
-
-  // The premise the touch cases rest on, in the two halves they cannot check for themselves: the
-  // event carries the position, and where the engine can build a real one the builder did not
-  // quietly fall through to the shaped tier.
   it("builds a touch event carrying the position the listeners read", () => {
     const el = scroll.getScrollEl();
     const { TouchEvent: Ctor } = globalThis as { readonly TouchEvent?: typeof TouchEvent };
@@ -771,7 +685,7 @@ describe("the End key", () => {
   // the controller's own has to be the position the browser will really reach.
   it("resumes Following and pins to the live edge", async () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     pressEnd(document.body);
     expect(scroll.readingState()).toBe("following");
     await settle();
@@ -780,7 +694,7 @@ describe("the End key", () => {
 
   it("leaves the reader alone when they are already Following", async () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
-    scroll.setUserScrolledUp(false);
+    scroll.scrollToBottom();
     pressEnd(document.body);
     await drained();
     expect(s.scrollTop).toBe(1500);
@@ -790,7 +704,7 @@ describe("the End key", () => {
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
     const input = document.createElement("input");
     document.body.appendChild(input);
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     pressEnd(input);
     input.remove();
     expect(scroll.readingState()).toBe("reading");
@@ -801,7 +715,7 @@ describe("the End key", () => {
     const box = document.createElement("div");
     box.contentEditable = "true";
     document.body.appendChild(box);
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     pressEnd(box);
     box.remove();
     expect(scroll.readingState()).toBe("reading");
@@ -814,10 +728,10 @@ describe("the End key", () => {
     const before = document.createElement("my-input");
     const after = document.createElement("input-box");
     document.body.append(before, after);
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     pressEnd(before);
     const resumedForSuffix = scroll.readingState();
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     pressEnd(after);
     const resumedForPrefix = scroll.readingState();
     before.remove();
@@ -827,28 +741,28 @@ describe("the End key", () => {
 
   it("ignores End with Ctrl held", () => {
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     pressEnd(document.body, { ctrlKey: true });
     expect(scroll.readingState()).toBe("reading");
   });
 
   it("ignores End with Meta held", () => {
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     pressEnd(document.body, { metaKey: true });
     expect(scroll.readingState()).toBe("reading");
   });
 
   it("ignores End with Alt held", () => {
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     pressEnd(document.body, { altKey: true });
     expect(scroll.readingState()).toBe("reading");
   });
 
   it("ignores a key that is not End", () => {
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
     expect(scroll.readingState()).toBe("reading");
   });
@@ -859,15 +773,15 @@ describe("the resume control", () => {
 
   it("is shown while Reading and hidden on the return to Following", () => {
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     const shownWhileReading = scrollBtn.classList.contains("hidden");
-    scroll.setUserScrolledUp(false);
+    scroll.scrollToBottom();
     expect([shownWhileReading, scrollBtn.classList.contains("hidden")]).toEqual([false, true]);
   });
 
   it("returns the reader to the live edge when clicked", async () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     scrollBtn.click();
     expect(scroll.readingState()).toBe("following");
     await settle();
@@ -885,7 +799,7 @@ describe("scrollToBottom", () => {
 
   it("returns to Following and jumps to the live edge on the next frame", async () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     scroll.scrollToBottom();
     expect(scroll.readingState()).toBe("following");
     await settle();
@@ -894,7 +808,7 @@ describe("scrollToBottom", () => {
 
   it("hides the resume control once the jump has landed", async () => {
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     scroll.scrollToBottom();
     await settle();
     expect(scrollBtn.classList.contains("hidden")).toBe(true);
@@ -918,7 +832,7 @@ describe("the streaming auto-scroll", () => {
 
   it("does not move the reader while they are Reading", async () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 100 });
-    scroll.setUserScrolledUp(true);
+    scroll.pressHold();
     messagesEl.appendChild(document.createElement("div"));
     await drained();
     expect(s.scrollTop).toBe(100);
@@ -1028,39 +942,6 @@ describe("pagination", () => {
     await until(() => fixtureTasks === 0, "the second empty page to land");
   });
 
-  it("asks for the page that was held back once a self-scroll flight ends", async () => {
-    const load = vi.fn();
-    fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.setLoadMore(load, true);
-    scroll.beginSelfScroll();
-    scroll.noteHistoryEdge(true);
-    expect(load).not.toHaveBeenCalled();
-
-    scroll.endSelfScroll();
-    expect(load).toHaveBeenCalledTimes(1);
-  });
-
-  // The whole point of the module: the older page lands ABOVE the reader, so the scroller has to
-  // give back exactly the height it gained.
-  it("keeps the reader's position when the older page lands above them", async () => {
-    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
-    // The real caller fetches, prepends the page, and drops the skeleton — all after
-    // maybeLoadMore has returned and its observer is watching.
-    const load = vi.fn(
-      onePage(() => {
-        messagesEl.prepend(document.createElement("div"));
-        s.scrollHeight = 1400;
-      }),
-    );
-    scroll.setLoadMore(load, true);
-    readerScroll();
-    await until(() => load.mock.calls.length >= 2 && fixtureTasks === 0, "both pages to land", {
-      detail: () => `${String(load.mock.calls.length)} asks, ${String(fixtureTasks)} pages queued`,
-    });
-    await drained();
-    expect(s.scrollTop).toBe(400);
-  });
-
   it("clears the in-flight flag once the page has landed", async () => {
     const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     const load = vi.fn(() => {
@@ -1101,8 +982,8 @@ describe("pagination", () => {
     scroll.resetScrollState();
 
     // The incoming chat is shorter, and the reader scrolls up into it. Reading is the state that
-    // makes the damage stick: the streaming auto-scroll re-pins a Following reader on the very next
-    // mutation, and returns early for this one.
+    // makes the damage stick: the follow correction moves a Following reader at the very next
+    // mutation, and leaves this one alone.
     s.scrollHeight = 1000;
     s.scrollTop = 300;
     readerScroll();
@@ -1123,9 +1004,9 @@ describe("fillViewport", () => {
   // Folding can starve pagination: a transcript shorter than its viewport fires no scroll event, so
   // nothing ever asks for the next page. The fetch is forced here, which is why a reader parked at
   // the threshold still gets one.
-  it("fetches while the transcript is not taller than the viewport plus the tolerance", () => {
+  it("fetches while the transcript does not overflow its viewport", () => {
     const load = vi.fn();
-    fakeScroller({ scrollHeight: 600, clientHeight: 500, scrollTop: 100 });
+    fakeScroller({ scrollHeight: 500, clientHeight: 500, scrollTop: 0 });
     scroll.setLoadMore(load, true);
     scroll.fillViewport();
     expect(load).toHaveBeenCalledTimes(1);
@@ -1169,9 +1050,10 @@ function realScroller(): HTMLElement {
     Reflect.deleteProperty(wrap, key);
   }
   // `scrollbar-gutter: stable` is a shipped declaration (css/13-messages.css) this section
-  // MEASURES rather than decorates: the gutter is what a scrollbar press aims at. Scroll anchoring
-  // is left at its shipped `auto`, because the controller's model has to hold with it on.
-  wrap.style.cssText = "height:400px;overflow-y:auto;position:relative;scrollbar-gutter:stable;";
+  // MEASURES rather than decorates: the gutter is what a scrollbar press aims at. `overflow-anchor:
+  // none` is the owner's own inline declaration, which this `cssText` replaces.
+  wrap.style.cssText =
+    "height:400px;overflow-y:auto;position:relative;scrollbar-gutter:stable;overflow-anchor:none;";
   if (messagesEl.parentElement !== wrap) {
     wrap.appendChild(messagesEl);
   }
@@ -1433,7 +1315,7 @@ describe("a large tool card below the streaming block", () => {
     });
   });
 
-  it("re-pins on every chunk rather than once per debounce window", async () => {
+  it("follows every chunk as it arrives", async () => {
     block(1500);
     const streaming = block(200, "message assistant streaming");
     block(900);
@@ -1454,15 +1336,14 @@ describe("a large tool card below the streaming block", () => {
   });
 });
 
-// A gesture landing inside BOTTOM_TOLERANCE_PX parks the reader, and content arriving afterwards
-// leaves them where they asked to be.
-describe("a deliberate upward gesture inside the bottom tolerance", () => {
+// A gesture landing a little above the end parks the reader, and content arriving afterwards leaves them where they
+// asked to be.
+describe("a deliberate upward gesture that lands near the end", () => {
   beforeEach(realLayoutReset);
 
   /** Following at the live edge of a real overflowing box, put there by the auto-scroll rather
    *  than by any input — so the wheel below is the only gesture in the scene. 3000px of content
-   *  in a 400px viewport, so the maximum is 2600 and a 100px gesture lands exactly ON the
-   *  tolerance. */
+   *  in a 400px viewport, so the maximum is 2600. */
   async function atTheLiveEdge(): Promise<HTMLElement> {
     const wrap = realScroller();
     block(3000);
@@ -1474,10 +1355,8 @@ describe("a deliberate upward gesture inside the bottom tolerance", () => {
     return wrap;
   }
 
-  /** Wheel up `px` in `notches`, as a device delivers it: the input event that carries the aim,
-   *  then the position it reaches. `scrollTo` with an explicit `instant` rather than an
-   *  assignment, because the shipped scroller declares `scroll-behavior: smooth` and an
-   *  assignment there only starts an animation. */
+  /** Wheel up `px` in `notches`, as a device delivers it: the input event that opens the gesture,
+   *  then the position it reaches. */
   async function wheelUp(wrap: HTMLElement, px: number, notches: number): Promise<void> {
     const step = px / notches;
     for (let n = 0; n < notches; n++) {
@@ -1500,8 +1379,7 @@ describe("a deliberate upward gesture inside the bottom tolerance", () => {
   it("holds that position across content mutations", async () => {
     const wrap = await atTheLiveEdge();
     await wheelUp(wrap, 100, 2);
-    // Past READER_CONTROL_MS, so the debounce is not what holds the reader here — the state is.
-    // Inside it every mutation is suppressed anyway and the case would pass with the fix absent.
+    // Past the gesture's idle bound, so the open gesture is not what holds the reader here: the state is.
     await land(400);
 
     const positions: number[] = [];
@@ -1522,13 +1400,13 @@ describe("a deliberate upward gesture inside the bottom tolerance", () => {
     });
   });
 
-  it("keeps Following when a positional write with no input lands inside the band", async () => {
-    // The other side of the same branch: a `content-visibility` re-measure clamps `scrollTop` with
-    // nothing behind it, and reading THAT as a park would latch the auto-scroll off for a session.
+  it("keeps Following when a shrink clamps the scroller with no input behind it", async () => {
+    // A clamp moves the scroller up onto the new end with nothing behind it, and reading THAT as a park would latch
+    // the auto-scroll off for a session.
     const wrap = await atTheLiveEdge();
     await land(400);
 
-    wrap.scrollTo({ top: 2500, behavior: "instant" });
+    (messagesEl.lastElementChild as HTMLElement).style.height = "2900px";
     await land();
 
     expect({ at: wrap.scrollTop, state: scroll.readingState() }).toEqual({
@@ -1537,10 +1415,8 @@ describe("a deliberate upward gesture inside the bottom tolerance", () => {
     });
   });
 
-  it("releases a parked reader once their gesture window has expired", async () => {
-    // The park needs a LIVE gesture, not a remembered one: past READER_CONTROL_MS the reader is no
-    // longer working the scroller, so a bare positional write inside the band promotes them and
-    // spends the aim.
+  it("keeps a parked reader parked when a scroll with no input lands near the end after the gesture ended", async () => {
+    // A move with no input is the reader's, and one short of the end is not a return.
     const wrap = await atTheLiveEdge();
     await wheelUp(wrap, 100, 2);
     expect(scroll.readingState()).toBe("reading");
@@ -1551,14 +1427,13 @@ describe("a deliberate upward gesture inside the bottom tolerance", () => {
 
     expect({ at: wrap.scrollTop, state: scroll.readingState() }).toEqual({
       at: 2540,
-      state: "following",
+      state: "reading",
     });
   });
 
-  it("keeps the reader parked when their upward gesture lands on a bottom the content shrank to", async () => {
-    // A notch up that coincides with content folding below the reader: the platform clamps
-    // scrollTop onto the NEW maximum, so the event lands exactly on the bottom with the reader's
-    // aim standing.
+  it("keeps Following when an upward gesture lands on the end the content shrank to", async () => {
+    // A notch up that coincides with content folding below the reader: the platform clamps scrollTop onto the new
+    // end, which reads as the clamp. Both readings leave the reader at the end, so the stream keeps carrying them.
     const wrap = realScroller();
     const content = block(3000);
     await land();
@@ -1573,7 +1448,7 @@ describe("a deliberate upward gesture inside the bottom tolerance", () => {
     block(40);
     await land();
 
-    expect(landing(wrap)).toEqual({ scrollTop: 2400, state: "reading", hidden: false });
+    expect(landing(wrap)).toEqual({ scrollTop: 2480, state: "following", hidden: true });
   });
 
   it("still promotes a reader who moves down onto the bottom with their upward aim standing", async () => {
@@ -1590,10 +1465,9 @@ describe("a deliberate upward gesture inside the bottom tolerance", () => {
     expect(landing(wrap)).toEqual({ scrollTop: 2600, state: "following", hidden: true });
   });
 
-  it("keeps the reader parked when scroll anchoring holds them under content arriving above", async () => {
-    // Anchoring moves scrollTop DOWN by the height that arrived above, which is the browser holding
-    // the reader and not the reader coming back. Inside the gesture window and inside the band, so
-    // only that distinction holds the park.
+  it("keeps the reader parked when the owner holds them under content arriving above", async () => {
+    // The hold moves scrollTop DOWN by the height that arrived above, which is the owner holding the
+    // reader and not the reader coming back.
     const wrap = await atTheLiveEdge();
     await wheelUp(wrap, 60, 1);
     expect(scroll.readingState()).toBe("reading");
@@ -1762,20 +1636,10 @@ describe("the anchor's coordinate space", () => {
     scroll.setAnchorProvider(() => streaming);
     await land();
 
-    // A gesture landing inside the tolerance band keeps Following, which is how a reader gets to
-    // the live edge while the anchor still owes a negative pin.
-    readerScrollTo(wrap, wrap.scrollHeight - wrap.clientHeight);
-    await land(400);
-    expect({ at: wrap.scrollTop, state: scroll.readingState() }).toEqual({
-      at: 2800,
-      state: "following",
-    });
-
     streaming.appendChild(document.createTextNode("a streamed chunk"));
     await land();
 
-    // −150 asked for (a 200px anchor bottom, a 400px viewport, half a 100px band), so 0 is the
-    // reachable landing.
+    // −150 asked for (a 200px anchor bottom, a 400px viewport, 50px of air), so 0 is the reachable landing.
     expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
       scrollTop: 0,
       state: "following",
@@ -1827,11 +1691,12 @@ describe("the resume control's landing", () => {
     scrollBtn.click();
     await land(900);
 
-    expect(landing(wrap)).toEqual({
-      scrollTop: wrap.scrollHeight - wrap.clientHeight,
-      state: "following",
-      hidden: true,
-    });
+    // The end within the one slack every at-the-end decision shares: a growth of under a pixel is not rewritten.
+    expect({
+      onEnd: Math.abs(wrap.scrollHeight - wrap.clientHeight - wrap.scrollTop) <= 1,
+      state: scroll.readingState(),
+      hidden: scrollBtn.classList.contains("hidden"),
+    }).toEqual({ onEnd: true, state: "following", hidden: true });
   });
 
   it("lands at the true bottom when the turn keeps streaming through the click", async () => {
@@ -1855,9 +1720,9 @@ describe("the resume control's landing", () => {
     });
   });
 
-  it("hands the scroller back when the reader scrolls during the settle window", async () => {
-    // The pin holds the bottom for a bounded window, and a gesture inside it is the reader
-    // overruling their own click. It must stop the pass rather than drag them back.
+  it("hands the scroller back when the reader scrolls while the resume settles", async () => {
+    // The resume's settle re-asserts the end for a few frames, and a gesture inside it is the reader
+    // overruling their own click. It must stop the settle rather than drag them back.
     const wrap = realScroller();
     block(3000);
     await land();
@@ -1884,16 +1749,15 @@ describe("the resume control's landing", () => {
     await park(wrap);
     scrollBtn.click();
     await land(60);
-    scroll.attach({ el: messagesEl, scrollTop: 300, readingState: "following" });
+    scroll.attach({ el: messagesEl, scrollTop: 300, readingState: "reading" });
     await land(400);
 
     expect(wrap.scrollTop).toBe(300);
   });
 });
 
-// The other side of that window: while it runs it must hold the position Following MEANS, not a
-// different one.
-describe("the bottom pin's settle window", () => {
+// While the resume settles, it holds the position Following means, not a different one.
+describe("the resume's settle", () => {
   beforeEach(realLayoutReset);
 
   /** The reachable shape: a live text block with tall evidence BELOW it, so the anchor's pin
@@ -1909,7 +1773,7 @@ describe("the bottom pin's settle window", () => {
     return { wrap, streaming };
   }
 
-  it("pins the live text block, not the document bottom, while the window runs", async () => {
+  it("pins the live text block, not the document bottom, while it settles", async () => {
     const { wrap, streaming } = pinScene();
     await land();
 
@@ -1934,9 +1798,8 @@ describe("the bottom pin's settle window", () => {
   });
 
   it("lands the resume click on the live text block too", async () => {
-    // The other producer of a pin pass, and the one whose landing this changed: `resume` is
-    // reachable only from Reading, and a reader resuming into a live turn has an anchor registered,
-    // so the click now lands where Following means rather than at the document maximum.
+    // A reader resuming into a live turn has an anchor registered, so the click lands where Following
+    // means rather than at the document maximum.
     const { wrap } = pinScene();
     await land();
 
@@ -1949,60 +1812,24 @@ describe("the bottom pin's settle window", () => {
     expect(landing(wrap)).toEqual({ scrollTop: 1350, state: "following", hidden: true });
   });
 
-  it("does not move the reader when the window closes", async () => {
+  it("does not move the reader when the settle ends", async () => {
     const { wrap, streaming } = pinScene();
     await land();
 
     scroll.scrollToBottom();
     await land(300);
     const inside = wrap.scrollTop;
-    // Past PIN_SETTLE_MS, so the pass is dead and the anchor re-pin owns the next frame.
+    // Past the settle, so the follow correction owns the next frame.
     await land(500);
     streaming.appendChild(document.createTextNode("a chunk past the deadline"));
     await land(60);
     const handedOff = wrap.scrollTop;
 
-    // Equal is the assertion: the hand-off between the two writers has to move the reader nowhere.
-    // A window holding the maximum reads 2200 then 1350 — the 850px jump the reader saw as a snap.
+    // Equal is the assertion: a settle holding the maximum would read 2200 then 1350, an 850px snap.
     expect({ inside, handedOff }).toEqual({ inside: 1350, handedOff: 1350 });
   });
 
-  // The window's LENGTH, pinned against the real value.
-  it("re-asserts the live edge after a platform move inside the window", async () => {
-    const wrap = realScroller();
-    block(3000);
-    await land();
-
-    scroll.scrollToBottom();
-    await land(300);
-    const max = wrap.scrollHeight - wrap.clientHeight;
-    wrap.scrollTop = max - 50;
-    await land(100);
-
-    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
-      scrollTop: max,
-      state: "following",
-    });
-  });
-
-  it("leaves a platform move alone once the window has closed", async () => {
-    const wrap = realScroller();
-    block(3000);
-    await land();
-
-    scroll.scrollToBottom();
-    await land(1000);
-    const max = wrap.scrollHeight - wrap.clientHeight;
-    wrap.scrollTop = max - 50;
-    await land(150);
-
-    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
-      scrollTop: max - 50,
-      state: "following",
-    });
-  });
-
-  it("keeps following the anchor for growth arriving inside the window", async () => {
+  it("keeps following the anchor for growth arriving while the resume settles", async () => {
     const { wrap, streaming } = pinScene();
     await land();
 
@@ -2016,39 +1843,12 @@ describe("the bottom pin's settle window", () => {
     await land(60);
     const grownAgain = wrap.scrollTop;
 
-    // Both landings are short of their own maximum (2400, then 2600), which is what the window
-    // exists to cover — the growth arrives after the click.
+    // Both landings are short of their own maximum (2400, then 2600): the growth arrives after the click.
     expect({ grown, grownAgain }).toEqual({ grown: 1550, grownAgain: 1750 });
   });
 
-  it("yields to an aimless reader move that lands inside the bottom tolerance", async () => {
-    // The one input that marks the reader's window without aiming it: `touchend` does not end a
-    // touch scroll, and the iOS momentum that outlives the finger carries a position with no
-    // direction attached. The move carries no position, so it aims nothing either.
-    const wrap = realScroller();
-    block(3000);
-    await land();
-
-    await park(wrap);
-    scrollBtn.click();
-    await land(60);
-
-    wrap.dispatchEvent(touchEvent("touchstart", wrap));
-    wrap.dispatchEvent(touchEvent("touchmove", wrap));
-    wrap.dispatchEvent(touchEvent("touchend", wrap));
-    wrap.scrollTo({ top: 2560, behavior: "instant" });
-    await land(400);
-
-    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
-      scrollTop: 2560,
-      state: "following",
-    });
-  });
-
-  it("parks the reader on an upward gesture that lands inside the tolerance", async () => {
-    // 40px up off the resume's own landing: a deliberate gesture of any size is a gesture, so the
-    // reader is parked here rather than promoted back to Following for being inside the band — and
-    // the pass has to leave them where they asked either way.
+  it("parks the reader on an upward gesture that lands just above the end", async () => {
+    // 40px up off the resume's own landing: a gesture past the slack parks the reader where they asked.
     const wrap = realScroller();
     block(3000);
     await land();
@@ -2067,39 +1867,33 @@ describe("the bottom pin's settle window", () => {
   });
 
   it("leaves a jump landing at the live edge where it landed", async () => {
-    // The landing is within BOTTOM_TOLERANCE_PX of the maximum, so the jump keeps the reader
-    // Following and the pass's state check cannot stop it. The next frame would overwrite the
-    // landing and abort the smooth scroll with it.
+    // The landing clamps to the end, so the jump keeps the reader Following, and the resume's settle must not
+    // overwrite it or abort the smooth scroll.
     const wrap = realScroller();
     block(3000);
     const target = block(200);
-    block(250);
+    block(150);
     await land();
 
     await park(wrap);
     scrollBtn.click();
     await land(60);
 
-    const landed = flightEnds(wrap);
     scroll.jumpTo(target, { block: "start" });
-    await landed;
     await land(500);
 
     expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
-      scrollTop: target.offsetTop,
+      scrollTop: wrap.scrollHeight - wrap.clientHeight,
       state: "following",
     });
   });
 
-  it("keeps a jump's in-band landing Following when the reader's aim still stands", async () => {
-    // The jump is the reader's NEW stated position, so it spends the aim that took them up: no
-    // resume click intervenes here, and a jump arms the gesture window itself, so an aim left
-    // standing would make the jump's own scroll event park the reader and raise the control over a
-    // landing 50px from the maximum.
+  it("keeps a jump's landing on the end Following after the reader's own park", async () => {
+    // The jump is the reader's new position: its own scroll event is the owner's, and a landing on the end follows.
     const wrap = realScroller();
     block(3000);
     const target = block(200);
-    block(250);
+    block(150);
     await land();
 
     await park(wrap);
@@ -2109,7 +1903,7 @@ describe("the bottom pin's settle window", () => {
     await land();
 
     expect(landing(wrap)).toEqual({
-      scrollTop: target.offsetTop,
+      scrollTop: wrap.scrollHeight - wrap.clientHeight,
       state: "following",
       hidden: true,
     });
@@ -2121,20 +1915,13 @@ describe("the bottom pin's settle window", () => {
 describe("the streaming follow write's licence", () => {
   beforeEach(realLayoutReset);
 
-  /** Following at the live edge with the pin pass DEAD, which is the state that licenses a
-   *  follow write and nothing else. The pass is armed short and has ended before the case acts,
-   *  so a write observed afterwards is this pass's own rather than the pin's re-assert; the real
-   *  window is back in force by then. */
+  /** Following at the live edge with the resume's settle over, so a write observed afterwards is
+   *  the follow correction's own rather than the settle's re-assert. */
   async function followingAtEdge(): Promise<HTMLElement> {
     const wrap = realScroller();
     block(3000);
     await land();
-    const real = setPinSettleMs(20);
-    try {
-      scroll.scrollToBottom();
-    } finally {
-      setPinSettleMs(real);
-    }
+    scroll.scrollToBottom();
     await land(100);
     return wrap;
   }
@@ -2184,12 +1971,7 @@ describe("a smooth jump's own flight", () => {
     block(20_000);
     const tail = block(10);
     await land();
-    const real = setPinSettleMs(20);
-    try {
-      scroll.scrollToBottom();
-    } finally {
-      setPinSettleMs(real);
-    }
+    scroll.scrollToBottom();
     await land(100);
     expect(scroll.readingState()).toBe("following");
 
@@ -2239,7 +2021,7 @@ describe("onReaderGesture", () => {
   });
 
   it("stays silent for a scroll event at the position the last one reported", async () => {
-    // The scroller left and came back inside one task, as a clamp the next layout's anchoring undoes
+    // The scroller left and came back inside one task, as a clamp the next layout undoes
     // does: the event it leaves states no new position.
     const wrap = realScroller();
     block(3000);
@@ -2297,8 +2079,7 @@ describe("onReaderGesture", () => {
   });
 
   it("publishes a live-edge request once, not once per re-assert frame", async () => {
-    // The pin holds its landing for PIN_SETTLE_MS by re-asserting it every frame (~42 of them). The
-    // GESTURE happened once, so publishing from the frame loop would hand a consumer dozens of
+    // The resume's settle re-asserts its landing every frame until it holds. The GESTURE happened once, so publishing from the frame loop would hand a consumer dozens of
     // identical revocations and make the seam unusable for anything that repaints on one.
     const wrap = realScroller();
     block(3000);
@@ -2311,7 +2092,7 @@ describe("onReaderGesture", () => {
     const seen = vi.fn();
     const off = scroll.onReaderGesture(seen);
     scrollBtn.click();
-    // Well past the settle window, with growth arriving inside it so the frames have something to
+    // Well past the resume's settle, with growth arriving inside it so the frames have something to
     // re-assert.
     await land(200);
     streaming.appendChild(document.createTextNode("a streamed chunk"));
@@ -2341,7 +2122,7 @@ describe("onReaderGesture", () => {
     expect(seen).not.toHaveBeenCalled();
   });
 
-  it("does not fire for the controller's own streaming re-pin", async () => {
+  it("does not fire for the owner's own follow writes while a turn streams", async () => {
     // The other half of the contract, and the case the seam was built for: a turn streaming under a
     // reader who has not moved writes a scroll position several times a second, and none of those
     // is the reader changing their mind.
@@ -2364,12 +2145,13 @@ describe("onReaderGesture", () => {
   });
 
   it("fires for a gesture that keeps the reader Following", async () => {
-    // Not `onReadingStateChange`: a scroll landing inside BOTTOM_TOLERANCE_PX stays Following, so a
-    // state listener hears nothing while the reader has plainly acted.
+    // Not `onReadingStateChange`: a move within the end's slack stays Following, so a state listener hears
+    // nothing while the reader has plainly acted.
     const wrap = realScroller();
     block(3000);
     await land();
-    wrap.scrollTop = 2600;
+    // A pixel up from the end is within the slack: the end, and still Following.
+    wrap.scrollTop = 2599;
     await land();
     expect(scroll.readingState()).toBe("following");
 
@@ -2378,7 +2160,7 @@ describe("onReaderGesture", () => {
     scroll.onReadingStateChange(stateSeen);
     const off = scroll.onReaderGesture(seen);
 
-    wrap.scrollTop = 2560;
+    wrap.scrollTop = 2600;
     await land();
     off();
 
@@ -2444,16 +2226,11 @@ describe.skipIf(!reservesScrollbarGutter())("the scrollbar as an input surface",
     };
   }
 
-  /** A transcript that overflows, with the reader moved off the live edge by the PLATFORM rather
-   *  than by any input — the auto-scroll pins to the bottom on the append, and a case asserting
-   *  the bottom asserts nothing about a press. The returned state is half the assertion: a
-   *  positionless move must leave the reader Following, so a demotion in any case below came
-   *  from the press. */
+  /** A transcript that overflows, Following at its end: a demotion in any case below came from the press and the
+   *  scroller's own move. */
   async function driftedOffTheEdge(): Promise<HTMLElement> {
     block(1500);
     const wrap = scroll.getScrollEl();
-    await land();
-    wrap.scrollTop = 0;
     await land();
     expect(scroll.readingState()).toBe("following");
     return wrap;
@@ -2478,6 +2255,7 @@ describe.skipIf(!reservesScrollbarGutter())("the scrollbar as an input surface",
 
     press();
     dragThumb(wrap, -40);
+    wrap.scrollTop -= 40;
     wrap.dispatchEvent(new Event("scroll"));
     expect(scroll.readingState()).toBe("reading");
   });
@@ -2506,9 +2284,7 @@ describe.skipIf(!reservesScrollbarGutter())("the scrollbar as an input surface",
   });
 
   it("suppresses the auto-scroll for as long as the thumb is held", async () => {
-    // Untimed, because a held thumb produces no repeat input to refresh a deadline: 400ms is past
-    // READER_CONTROL_MS with the press still down. This is the half of the press that survives —
-    // the aim comes from the drag, the licence from the hold.
+    // A held thumb keeps the gesture open whatever the idle bound, so no follow write lands under it.
     await driftedOffTheEdge();
     const wrap = scroll.getScrollEl();
     gutterPress(wrap).press();
@@ -2526,6 +2302,7 @@ describe.skipIf(!reservesScrollbarGutter())("the scrollbar as an input surface",
     gutterPress(wrap).press();
     document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
     await land(400);
+    await frames(16);
     block(1500);
     await land();
     expect(wrap.scrollTop).toBe(wrap.scrollHeight - wrap.clientHeight);
@@ -2543,8 +2320,6 @@ describe("the scrollbar surface a platform does not reserve", () => {
     wrap.style.setProperty("scrollbar-width", "none");
     block(1500);
     await land();
-    wrap.scrollTop = 0;
-    await land();
     expect({ gutter: wrap.offsetWidth - wrap.clientWidth, state: scroll.readingState() }).toEqual({
       gutter: 0,
       state: "following",
@@ -2559,335 +2334,6 @@ describe("the scrollbar surface a platform does not reserve", () => {
     document.dispatchEvent(new PointerEvent("pointermove", { clientX: right, clientY: 160 }));
     wrap.dispatchEvent(new Event("scroll"));
     expect(scroll.readingState()).toBe("following");
-  });
-});
-
-// EVERY PAGINATION LOOKUP IS SCOPED TO THE ATTACHED VIEW.
-describe("the self-scroll epoch", () => {
-  /** The section's reset plus an explicit re-root, so these cases do not depend on which view an
-   *  earlier block left the scroller attached to. */
-  async function epochReset(): Promise<void> {
-    scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
-    await realLayoutReset();
-  }
-
-  /** 3000px of content in the 400px scrollport and an epoch open over a landing at */
-  async function openEpochAt400(): Promise<HTMLElement> {
-    const wrap = realScroller();
-    block(1500);
-    block(200);
-    block(1300);
-    await land();
-    scroll.beginSelfScroll();
-    scroll.scrollToOffset(400, "instant");
-    return wrap;
-  }
-
-  /** Does an ordinary scroll publish a reader gesture? False while an epoch is open, so it is
-   *  the observable a closer has to move. */
-  async function gesturePublishes(wrap: HTMLElement): Promise<boolean> {
-    const seen = vi.fn();
-    const off = scroll.onReaderGesture(seen);
-    wrap.scrollTop = 1200;
-    await land();
-    off();
-    return seen.mock.calls.length > 0;
-  }
-
-  /** A page of content prepended above the reader, which scroll anchoring holds them under. */
-  function foldIn(px: number): void {
-    const page = document.createElement("div");
-    page.style.cssText = `height:${String(px)}px;`;
-    messagesEl.prepend(page);
-  }
-
-  beforeEach(epochReset);
-
-  it("publishes no gesture across the animation's own events", async () => {
-    const wrap = realScroller();
-    block(3000);
-    await land();
-    const seen = vi.fn();
-    const off = scroll.onReaderGesture(seen);
-
-    const landed = flightEnds(wrap);
-    scroll.beginSelfScroll();
-    scroll.scrollToOffset(400, "smooth");
-    await landed;
-    await land(1000);
-    off();
-
-    expect(wrap.scrollTop).toBe(400);
-    expect(seen).not.toHaveBeenCalled();
-  });
-
-  it("hands the events back the moment the reader touches the scroller", async () => {
-    const wrap = realScroller();
-    block(3000);
-    await land();
-
-    const moving = flightMoves(wrap);
-    scroll.beginSelfScroll();
-    scroll.scrollToOffset(400, "smooth");
-    const seen = vi.fn();
-    const off = scroll.onReaderGesture(seen);
-    await moving;
-    expect(wrap.scrollTop).toBeGreaterThan(400);
-    readerScrollTo(wrap, 1800);
-    await land();
-    off();
-
-    expect(seen).toHaveBeenCalled();
-  });
-
-  it("keeps the streaming follow write out of the animation", async () => {
-    const wrap = realScroller();
-    block(1500);
-    const streaming = block(200, "message assistant streaming");
-    block(900);
-    scroll.setAnchorProvider(() => streaming);
-    await land();
-    expect(scroll.readingState()).toBe("following");
-
-    await park(wrap);
-    // Out of the park's own READER_CONTROL_MS window, or that is what holds the follow write back
-    // and the epoch's guard is never the thing under test.
-    await land(350);
-
-    // Back to the live edge, so the state stays Following and the epoch is the only thing left that
-    // can stop a follow write. SMOOTH, because the flight is what keeps the epoch open: Chromium
-    // answers an instant `scrollTo` with `scrollend`.
-    const moving = flightMoves(wrap);
-    let ended = false;
-    wrap.addEventListener(
-      "scrollend",
-      () => {
-        ended = true;
-      },
-      { once: true },
-    );
-    scroll.beginSelfScroll();
-    scroll.scrollToOffset(wrap.scrollHeight, "smooth");
-    expect(scroll.readingState()).toBe("following");
-    const writes = recordWrites(wrap);
-    streaming.appendChild(document.createTextNode("a streamed chunk"));
-    await moving;
-    await framesDrained("the chunk's follow frames");
-    expect({ writes, ended }).toEqual({ writes: [], ended: false });
-
-    scroll.endSelfScroll();
-    streaming.appendChild(document.createTextNode("the chunk after it closed"));
-    await land();
-    expect(writes.length).toBeGreaterThan(0);
-  });
-
-  it("stays open with nothing to close it", async () => {
-    const wrap = await openEpochAt400();
-    expect(await gesturePublishes(wrap)).toBe(false);
-  });
-
-  it("closes on attach", async () => {
-    const wrap = await openEpochAt400();
-    scroll.attach({ el: messagesEl, scrollTop: 400, readingState: "reading" });
-    // Inside the epoch's backstop, past the restore's hold, which undoes a move no input made.
-    await land();
-    expect(await gesturePublishes(wrap)).toBe(true);
-  });
-
-  it("closes on detach", async () => {
-    const wrap = await openEpochAt400();
-    scroll.detach();
-    expect(await gesturePublishes(wrap)).toBe(true);
-  });
-
-  it("closes on resetScrollState", async () => {
-    const wrap = await openEpochAt400();
-    scroll.resetScrollState();
-    expect(await gesturePublishes(wrap)).toBe(true);
-  });
-
-  it("closes on jumpTo", async () => {
-    const wrap = realScroller();
-    block(1500);
-    const target = block(200);
-    block(1300);
-    await land();
-    scroll.beginSelfScroll();
-    scroll.scrollToOffset(400, "instant");
-
-    scroll.jumpTo(target, { behavior: "instant" });
-
-    expect(await gesturePublishes(wrap)).toBe(true);
-  });
-
-  it("parks the reader, and a mutation after the epoch cannot re-pin them", async () => {
-    const wrap = realScroller();
-    block(1500);
-    const streaming = block(200, "message assistant streaming");
-    block(900);
-    scroll.setAnchorProvider(() => streaming);
-    await land();
-    expect(scroll.readingState()).toBe("following");
-
-    const landed = flightEnds(wrap);
-    scroll.beginSelfScroll();
-    scroll.scrollToOffset(500, "smooth");
-    expect(scroll.readingState()).toBe("reading");
-
-    // Past `scrollend`, which closes the epoch, and past every controller window on the clock, so
-    // the chunk below is delivered with the park the only thing still holding the reader.
-    await landed;
-    await land(1700);
-    streaming.appendChild(document.createTextNode("a streamed chunk"));
-    await land();
-
-    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
-      scrollTop: 500,
-      state: "reading",
-    });
-  });
-
-  it("holds the park when a card resizes the reader onto the live edge", async () => {
-    const wrap = realScroller();
-    block(500);
-    const tail = block(2500);
-    await land();
-    readerScrollTo(wrap, 2600);
-    await land();
-    readerScrollTo(wrap, 500);
-    await land();
-    expect(scroll.readingState()).toBe("reading");
-    // Out of the gesture's own READER_CONTROL_MS window, or that is what refuses the release and
-    // the epoch's clause is never the thing under test.
-    await land(350);
-
-    scroll.beginSelfScroll();
-    // The tail collapsing to 2px past the scrollport leaves the reader inside the live edge's band
-    // by arithmetic and does NOT move `scrollTop`, so the resize seam is the only path that can
-    // re-derive the state.
-    tail.style.height = "402px";
-    await land();
-    expect(scroll.readingState()).toBe("reading");
-
-    // The control: with the epoch closed, the same seam releases them — so the assertion above is
-    // about the epoch rather than about a resize that reaches nothing. A shrink, because only a
-    // change that brings the end closer releases.
-    scroll.endSelfScroll();
-    tail.style.height = "400px";
-    await land();
-    expect(scroll.readingState()).toBe("following");
-  });
-
-  it("sets Following when the landing is the live edge", async () => {
-    const wrap = realScroller();
-    block(3000);
-    await land();
-    await park(wrap);
-    expect(scroll.readingState()).toBe("reading");
-
-    scroll.beginSelfScroll();
-    scroll.scrollToOffset(2600, "instant");
-
-    expect(landing(wrap)).toEqual({ scrollTop: 2600, state: "following", hidden: true });
-  });
-
-  it("suspends the pagination pass while it is open", async () => {
-    realScroller();
-    block(3000);
-    await land();
-    const load = vi.fn();
-
-    scroll.beginSelfScroll();
-    scroll.setLoadMore(load, true);
-    scroll.scrollToOffset(0, "instant");
-    scroll.noteHistoryEdge(true);
-
-    expect(load).not.toHaveBeenCalled();
-  });
-
-  it("runs the pagination pass again once it closes", async () => {
-    realScroller();
-    block(3000);
-    const load = vi.fn();
-    scroll.setLoadMore(load, true);
-    await land();
-    scroll.beginSelfScroll();
-    scroll.scrollToOffset(0, "instant");
-    scroll.noteHistoryEdge(true);
-    await land();
-
-    scroll.endSelfScroll();
-    await land();
-
-    expect(load).toHaveBeenCalledTimes(1);
-  });
-
-  it("still runs the viewport fill inside it", async () => {
-    // A transcript too short to scroll reports no edge crossing, so the fill is the one caller that must not wait.
-    realScroller();
-    block(100);
-    const load = vi.fn();
-    scroll.setLoadMore(load, true);
-    await land();
-    scroll.beginSelfScroll();
-
-    scroll.fillViewport();
-
-    expect(load).toHaveBeenCalledTimes(1);
-  });
-
-  it("writes nothing into a flight when a page lands above mid-animation", async () => {
-    // The flight's owner re-measures its target after it settles (turn-rail.ts `correctLanding`);
-    // a write from here would cut the animation short.
-    const wrap = realScroller();
-    block(3000);
-    await land();
-
-    const landed = flightEnds(wrap);
-    const moving = flightMoves(wrap);
-    scroll.beginSelfScroll();
-    scroll.scrollToOffset(500, "smooth");
-    await moving;
-    expect(wrap.scrollTop).toBeGreaterThan(900);
-    const writes = recordWrites(wrap);
-    foldIn(200);
-    await landed;
-    await land(1000);
-
-    expect(writes).toEqual([]);
-    expect(wrap.scrollTop).toBe(500);
-  });
-
-  it("holds a parked reader when a page lands above them", async () => {
-    const wrap = realScroller();
-    block(3000);
-    await land();
-    await park(wrap);
-    readerScrollTo(wrap, 500);
-    await land();
-    expect(scroll.readingState()).toBe("reading");
-
-    foldIn(200);
-    await land();
-
-    expect(wrap.scrollTop).toBe(700);
-  });
-
-  it("holds the landing when a page arrives after the animation settled", async () => {
-    const wrap = realScroller();
-    block(3000);
-    await land();
-    const landed = flightEnds(wrap);
-    scroll.beginSelfScroll();
-    scroll.scrollToOffset(500, "smooth");
-    await landed;
-    await land(1000);
-    expect(wrap.scrollTop).toBe(500);
-
-    foldIn(200);
-    await land();
-
-    expect(wrap.scrollTop).toBe(700);
   });
 });
 
@@ -2907,7 +2353,7 @@ describe("holding what the reader reads", () => {
     return { wrap, rows };
   }
 
-  it("publishes no reader gesture for the browser's own anchoring", async () => {
+  it("publishes no reader gesture for the owner's own hold", async () => {
     const { wrap } = await parkedAmongRows();
     const seen = vi.fn();
     const off = scroll.onReaderGesture(seen);
@@ -2917,14 +2363,13 @@ describe("holding what the reader reads", () => {
     await land();
     off();
 
-    // The premise: anchoring did move the scroller.
+    // The premise: the hold did move the scroller.
     expect(wrap.scrollTop).toBe(700);
     expect(seen).not.toHaveBeenCalled();
   });
 
   it("puts the reading line back when the row above it grows", async () => {
-    // Anchoring holds the TOP edge, and the top row is the one growing, so it alone would push the
-    // row the reader is on down by the growth.
+    // The top row is the one growing, so with no hold the row the reader is on would move down by the growth.
     const { rows } = await parkedAmongRows();
     const reading = rows[6]!;
     const was = reading.getBoundingClientRect().top;
@@ -3043,11 +2488,9 @@ describe("holding what the reader reads", () => {
   /** The page writers' order around a landing: the paint re-measures and writes the page, then the skeleton's owner
    *  re-measures and drops it (messages.ts, chat.ts). */
   function landPage(px: number): void {
-    scroll.rebaseLoadMore();
     const page = document.createElement("div");
     page.style.cssText = `height:${String(px)}px;`;
     document.getElementById("load-more-skeleton")?.after(page);
-    scroll.rebaseLoadMore();
     document.getElementById("load-more-skeleton")?.remove();
   }
 
@@ -3177,10 +2620,8 @@ describe("holding what the reader reads", () => {
 
   it("leaves the reader where a rail jump put them while the older page was in flight", async () => {
     const { rows, page } = await pageInFlight();
-    scroll.beginSelfScroll();
-    scroll.scrollToOffset(1200, "instant");
+    await scroll.jumpToOffset(1200, "instant");
     await land();
-    scroll.endSelfScroll();
     const was = rows[14]!.getBoundingClientRect().top;
     page.land();
     await land();
@@ -3191,7 +2632,7 @@ describe("holding what the reader reads", () => {
   it("writes nothing below the live edge a resume reached while the older page was in flight", async () => {
     const { wrap, rows, page } = await pageInFlight();
     scroll.scrollToBottom();
-    // Past the bottom pin's settle window, so only the landing can write.
+    // Past the resume's settle, so only the landing can write.
     await land(900);
     const was = rows[19]!.getBoundingClientRect().top;
     const edge = wrap.scrollTop;
@@ -3225,7 +2666,7 @@ describe("holding what the reader reads", () => {
     });
   });
 
-  it("keeps anchoring's hold of a growth above the view while the older page was in flight", async () => {
+  it("keeps the hold of a growth above the view while the older page was in flight", async () => {
     const wrap = realScroller();
     const rows = Array.from({ length: 20 }, () => block(100));
     await land();
@@ -3405,11 +2846,9 @@ describe("a cold row laid out above the reader", () => {
   beforeEach(async () => {
     document.head.appendChild(sheet);
     await realLayoutReset();
-    scroll.getScrollEl().style.overflowAnchor = "none";
   });
   afterEach(() => {
     sheet.remove();
-    scroll.getScrollEl().style.overflowAnchor = "";
     scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
   });
 
@@ -3563,14 +3002,11 @@ describe("a cold row laid out above the reader", () => {
 // that reset by collapsing the view for one forced layout right after the restore; the rest return to a parked view
 // under the reader's own scroll, or a change that moves their text or replaces the element showing it.
 describe("a parked view's restore under a platform reset", () => {
-  // Anchoring off, so the controller alone holds the reader, as in an engine whose anchoring misses this geometry.
   beforeEach(async () => {
     await realLayoutReset();
-    scroll.getScrollEl().style.overflowAnchor = "none";
   });
   afterEach(() => {
     skeleton.px = 0;
-    scroll.getScrollEl().style.overflowAnchor = "";
     scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
   });
 
@@ -3743,84 +3179,71 @@ describe("a parked view's restore under a platform reset", () => {
     return { moves: moves.filter((m) => m !== 0), state: scroll.readingState() };
   }
 
-  it.each(["none", "auto"])(
-    "puts the reader's text back where they left it when they leave with an older page still loading (overflow-anchor: %s)",
-    async (anchor) => {
-      const wrap = scroll.getScrollEl();
-      wrap.style.overflowAnchor = anchor;
-      const view = rowsView();
-      scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
-      await land();
-      readerScrollTo(wrap, 500);
-      await land();
-      skeleton.px = 200;
+  it("puts the reader's text back where they left it when they leave with an older page still loading", async () => {
+    const wrap = scroll.getScrollEl();
+    const view = rowsView();
+    scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    await land();
+    readerScrollTo(wrap, 500);
+    await land();
+    skeleton.px = 200;
+    scroll.setLoadMore(() => undefined, true);
+    scroll.noteHistoryEdge(true);
+    await land();
+    const box = wrap.getBoundingClientRect();
+    const ref = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
+    const left = ref.getBoundingClientRect().top;
+    const loading = document.getElementById("load-more-skeleton") !== null;
+    const parked = scroll.detach();
+    view.hidden = true;
+    const other = document.createElement("div");
+    other.style.cssText = "height:2000px;";
+    messagesEl.appendChild(other);
+    scroll.attach({ el: other, scrollTop: 0, readingState: "following" });
+    await land();
+    scroll.detach();
+    other.remove();
+    view.hidden = false;
+    scroll.attach({ el: view, ...parked });
+    await land();
+
+    expect({
+      loading,
+      moved: Math.round(ref.getBoundingClientRect().top - left),
+      state: scroll.readingState(),
+    }).toEqual({ loading: true, moved: 0, state: "reading" });
+  });
+
+  it("keeps the reader's text still when an older page's skeleton lands above them on return", async () => {
+    const view = rowsView();
+    skeleton.px = 200;
+    // The activation rewires pagination; with the reader inside the history lead the first delivery asks for a page,
+    // whose skeleton lands above them while the fetch is pending, and the pass compensates its height.
+    const out = await movesAfterReturn(view, 500, () => {
       scroll.setLoadMore(() => undefined, true);
-      scroll.noteHistoryEdge(true);
-      await land();
-      const box = wrap.getBoundingClientRect();
-      const ref = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
-      const left = ref.getBoundingClientRect().top;
-      const loading = document.getElementById("load-more-skeleton") !== null;
-      const parked = scroll.detach();
-      view.hidden = true;
-      const other = document.createElement("div");
-      other.style.cssText = "height:2000px;";
-      messagesEl.appendChild(other);
-      scroll.attach({ el: other, scrollTop: 0, readingState: "following" });
-      await land();
-      scroll.detach();
-      other.remove();
-      view.hidden = false;
-      scroll.attach({ el: view, ...parked });
-      await land();
+    });
 
-      expect({
-        loading,
-        moved: Math.round(ref.getBoundingClientRect().top - left),
-        state: scroll.readingState(),
-      }).toEqual({ loading: true, moved: 0, state: "reading" });
-    },
-  );
+    expect({
+      skeleton: document.getElementById("load-more-skeleton")?.getBoundingClientRect().height,
+      ...out,
+    }).toEqual({ skeleton: 200, moves: [], state: "reading" });
+  });
 
-  // Anchoring on as well: a held restore must leave alone what native anchoring already kept still.
-  it.each(["none", "auto"])(
-    "keeps the reader's text still when an older page's skeleton lands above them on return (overflow-anchor: %s)",
-    async (anchor) => {
-      scroll.getScrollEl().style.overflowAnchor = anchor;
-      const view = rowsView();
-      skeleton.px = 200;
-      // The activation rewires pagination; with the reader inside the history lead the first delivery asks for a page,
-      // whose skeleton lands above them while the fetch is pending, and the pass compensates its height.
-      const out = await movesAfterReturn(view, 500, () => {
-        scroll.setLoadMore(() => undefined, true);
+  it("keeps the reader's text still when a row above them grows in the first frame after return", async () => {
+    const view = rowsView();
+    const row = view.children[2] as HTMLElement;
+    const out = await movesAfterReturn(view, 1500, () => {
+      requestAnimationFrame(() => {
+        row.style.height = "300px";
       });
+    });
 
-      expect({
-        skeleton: document.getElementById("load-more-skeleton")?.getBoundingClientRect().height,
-        ...out,
-      }).toEqual({ skeleton: 200, moves: [], state: "reading" });
-    },
-  );
-
-  it.each(["none", "auto"])(
-    "keeps the reader's text still when a row above them grows in the first frame after return (overflow-anchor: %s)",
-    async (anchor) => {
-      scroll.getScrollEl().style.overflowAnchor = anchor;
-      const view = rowsView();
-      const row = view.children[2] as HTMLElement;
-      const out = await movesAfterReturn(view, 1500, () => {
-        requestAnimationFrame(() => {
-          row.style.height = "300px";
-        });
-      });
-
-      expect({ grown: row.getBoundingClientRect().height, ...out }).toEqual({
-        grown: 300,
-        moves: [],
-        state: "reading",
-      });
-    },
-  );
+    expect({ grown: row.getBoundingClientRect().height, ...out }).toEqual({
+      grown: 300,
+      moves: [],
+      state: "reading",
+    });
+  });
 
   /** A full-window layer over the transcript, as the phone's side menu stands while it slides shut. */
   function coverScroller(): HTMLElement {
@@ -3861,74 +3284,61 @@ describe("a parked view's restore under a platform reset", () => {
     return view;
   }
 
-  it.each(["none", "auto"])(
-    "keeps the reader's entry still when the turn holding it is rebuilt taller above it as the view returns (overflow-anchor: %s)",
-    async (anchor) => {
-      scroll.getScrollEl().style.overflowAnchor = anchor;
-      const view = cardsView();
-      const body = view.children[1]!.firstElementChild!;
-      const entry = (): Element =>
-        view.querySelector('[data-entry-turn="t1"][data-entry-seq="6"]')!;
-      const out = await movesAfterReturn(
-        view,
-        1500,
-        () => {
-          // A turn still open at park is rebuilt with what landed meanwhile: new elements for the same entries.
-          body.replaceChildren(...entries("t1", 300));
-        },
-        { ref: entry },
-      );
+  it("keeps the reader's entry still when the turn holding it is rebuilt taller above it as the view returns", async () => {
+    const view = cardsView();
+    const body = view.children[1]!.firstElementChild!;
+    const entry = (): Element => view.querySelector('[data-entry-turn="t1"][data-entry-seq="6"]')!;
+    const out = await movesAfterReturn(
+      view,
+      1500,
+      () => {
+        // A turn still open at park is rebuilt with what landed meanwhile: new elements for the same entries.
+        body.replaceChildren(...entries("t1", 300));
+      },
+      { ref: entry },
+    );
 
-      expect(out).toEqual({ moves: [], state: "reading" });
-    },
-  );
+    expect(out).toEqual({ moves: [], state: "reading" });
+  });
 
-  it.each(["none", "auto"])(
-    "keeps the reader's text still when the row on the reading line is replaced as the view returns and a page's skeleton lands above (overflow-anchor: %s)",
-    async (anchor) => {
-      scroll.getScrollEl().style.overflowAnchor = anchor;
-      const view = rowsView();
-      const rows = [...view.children];
-      skeleton.px = 200;
-      const out = await movesAfterReturn(
-        view,
-        500,
-        () => {
-          rows[6]!.replaceWith(rows[6]!.cloneNode(true));
-          scroll.setLoadMore(() => undefined, true);
-        },
-        { ref: () => rows[11]! },
-      );
+  it("keeps the reader's text still when the row on the reading line is replaced as the view returns and a page's skeleton lands above", async () => {
+    const view = rowsView();
+    const rows = [...view.children];
+    skeleton.px = 200;
+    const out = await movesAfterReturn(
+      view,
+      500,
+      () => {
+        rows[6]!.replaceWith(rows[6]!.cloneNode(true));
+        scroll.setLoadMore(() => undefined, true);
+      },
+      { ref: () => rows[11]! },
+    );
 
-      expect({ replaced: !rows[6]!.isConnected, ...out }).toEqual({
-        replaced: true,
-        moves: [],
-        state: "reading",
-      });
-    },
-  );
+    expect({ replaced: !rows[6]!.isConnected, ...out }).toEqual({
+      replaced: true,
+      moves: [],
+      state: "reading",
+    });
+  });
 
-  it.each(["none", "auto"])(
-    "keeps the reader's text still when the row on the reading line is deleted as the view returns and a page's skeleton lands above (overflow-anchor: %s)",
-    async (anchor) => {
-      scroll.getScrollEl().style.overflowAnchor = anchor;
-      const view = rowsView();
-      const rows = [...view.children];
-      skeleton.px = 200;
-      // The text above the deleted row stays put; what followed it closes the gap.
-      const out = await movesAfterReturn(
-        view,
-        500,
-        () => {
-          rows[6]!.remove();
-          scroll.setLoadMore(() => undefined, true);
-        },
-        { ref: () => rows[5]! },
-      );
+  it("keeps the reader's text still when the row on the reading line is deleted as the view returns and a page's skeleton lands above", async () => {
+    const view = rowsView();
+    const rows = [...view.children];
+    skeleton.px = 200;
+    // The text above the deleted row stays put; what followed it closes the gap.
+    const out = await movesAfterReturn(
+      view,
+      500,
+      () => {
+        rows[6]!.remove();
+        scroll.setLoadMore(() => undefined, true);
+      },
+      { ref: () => rows[5]! },
+    );
 
-      expect(out).toEqual({ moves: [], state: "reading" });
-    },
-  );
+    expect(out).toEqual({ moves: [], state: "reading" });
+  });
 
   /** `n` 100px paragraphs. */
   function paras(n: number): HTMLElement[] {
@@ -3960,15 +3370,9 @@ describe("a parked view's restore under a platform reset", () => {
     return { view, inner, above: c0.children[9] as HTMLElement };
   }
 
-  it.each([
-    ["inside the reader's entry", "none"],
-    ["inside the reader's entry", "auto"],
-    ["in an entry above", "none"],
-    ["in an entry above", "auto"],
-  ])(
-    "keeps the reader's text still when a box %s grows above the line in the first frame after return (overflow-anchor: %s)",
-    async (where, anchor) => {
-      scroll.getScrollEl().style.overflowAnchor = anchor;
+  it.each(["inside the reader's entry", "in an entry above"])(
+    "keeps the reader's text still when a box %s grows above the line in the first frame after return",
+    async (where) => {
       const { view, inner, above } = tallEntryView();
       const grow = where === "in an entry above" ? above : inner;
       const out = await movesAfterReturn(view, 1800, () => {
@@ -4003,15 +3407,9 @@ describe("a parked view's restore under a platform reset", () => {
     return row;
   }
 
-  it.each([
-    ["still open", "none"],
-    ["still open", "auto"],
-    ["sealed", "none"],
-    ["sealed", "auto"],
-  ])(
-    "keeps the reader's text still when the open entry they read is rebuilt %s below an arrival as the view returns (overflow-anchor: %s)",
-    async (rebuilt, anchor) => {
-      scroll.getScrollEl().style.overflowAnchor = anchor;
+  it.each(["still open", "sealed"])(
+    "keeps the reader's text still when the open entry they read is rebuilt %s below an arrival as the view returns",
+    async (rebuilt) => {
       const view = document.createElement("div");
       const c0 = document.createElement("div");
       c0.append(...entries("t0"));
@@ -4063,160 +3461,140 @@ describe("a parked view's restore under a platform reset", () => {
     return row;
   }
 
-  it.each(["none", "auto"])(
-    "keeps the reader's text still when the paragraph they read is rebuilt from a different number of streamed pieces as the view returns (overflow-anchor: %s)",
-    async (anchor) => {
-      scroll.getScrollEl().style.overflowAnchor = anchor;
-      const view = document.createElement("div");
-      const c0 = document.createElement("div");
-      c0.append(...entries("t0"));
-      const body = document.createElement("div");
-      body.append(...entries("t1").slice(0, 5), chunkedSayRow(5));
-      const c1 = document.createElement("div");
-      c1.appendChild(body);
-      view.append(c0, c1);
-      messagesEl.appendChild(view);
-      const row = (): Element => body.lastElementChild!;
-      const out = await movesAfterReturn(
-        view,
-        1850,
-        () => {
-          const arrival = document.createElement("div");
-          arrival.dataset["entryTurn"] = "t1";
-          arrival.dataset["entrySeq"] = "5";
-          arrival.style.height = "200px";
-          row().replaceWith(arrival, chunkedSayRow(10));
+  it("keeps the reader's text still when the paragraph they read is rebuilt from a different number of streamed pieces as the view returns", async () => {
+    const view = document.createElement("div");
+    const c0 = document.createElement("div");
+    c0.append(...entries("t0"));
+    const body = document.createElement("div");
+    body.append(...entries("t1").slice(0, 5), chunkedSayRow(5));
+    const c1 = document.createElement("div");
+    c1.appendChild(body);
+    view.append(c0, c1);
+    messagesEl.appendChild(view);
+    const row = (): Element => body.lastElementChild!;
+    const out = await movesAfterReturn(
+      view,
+      1850,
+      () => {
+        const arrival = document.createElement("div");
+        arrival.dataset["entryTurn"] = "t1";
+        arrival.dataset["entrySeq"] = "5";
+        arrival.style.height = "200px";
+        row().replaceWith(arrival, chunkedSayRow(10));
+      },
+      { ref: () => row().firstElementChild!.children[6]! },
+    );
+
+    expect(out).toEqual({ moves: [], state: "reading" });
+  });
+
+  it("keeps the reader's text still when the block they read inside a streamed paragraph follows a different number of pieces as the view returns", async () => {
+    const view = document.createElement("div");
+    const c0 = document.createElement("div");
+    c0.append(...entries("t0"));
+    const body = document.createElement("div");
+    body.append(...entries("t1").slice(0, 5), chunkedSayRow(5, 60));
+    const c1 = document.createElement("div");
+    c1.appendChild(body);
+    view.append(c0, c1);
+    messagesEl.appendChild(view);
+    const row = (): Element => body.lastElementChild!;
+    const out = await movesAfterReturn(
+      view,
+      1850,
+      () => {
+        const arrival = document.createElement("div");
+        arrival.dataset["entryTurn"] = "t1";
+        arrival.dataset["entrySeq"] = "5";
+        arrival.style.height = "200px";
+        row().replaceWith(arrival, chunkedSayRow(10, 60));
+      },
+      { ref: () => row().firstElementChild!.children[6]! },
+    );
+
+    expect(out).toEqual({ moves: [], state: "reading" });
+  });
+
+  it("keeps the reader's text still when a box above the line grows inside the entry they read while they read it", async () => {
+    const wrap = scroll.getScrollEl();
+    const { view, inner } = tallEntryView();
+    scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    await land();
+    readerScrollTo(wrap, 1800);
+    await land(400);
+    const box = wrap.getBoundingClientRect();
+    const ref = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
+    const before = ref.getBoundingClientRect().top;
+    inner.style.height = "300px";
+    await land();
+
+    expect({
+      moved: Math.round(ref.getBoundingClientRect().top - before),
+      state: scroll.readingState(),
+    }).toEqual({ moved: 0, state: "reading" });
+  });
+
+  it("keeps the reader's text still when the side menu still covers the transcript as the view returns and a page's skeleton lands above", async () => {
+    const view = rowsView();
+    const rows = [...view.children];
+    skeleton.px = 200;
+    let cover: HTMLElement | null = null;
+    const out = await movesAfterReturn(
+      view,
+      500,
+      () => {
+        requestAnimationFrame(() => {
+          cover?.remove();
+        });
+        scroll.setLoadMore(() => undefined, true);
+      },
+      {
+        ref: () => rows[11]!,
+        beforeReturn: () => {
+          cover = coverScroller();
         },
-        { ref: () => row().firstElementChild!.children[6]! },
-      );
+      },
+    );
 
-      expect(out).toEqual({ moves: [], state: "reading" });
-    },
-  );
+    expect(out).toEqual({ moves: [], state: "reading" });
+  });
 
-  it.each(["none", "auto"])(
-    "keeps the reader's text still when the block they read inside a streamed paragraph follows a different number of pieces as the view returns (overflow-anchor: %s)",
-    async (anchor) => {
-      scroll.getScrollEl().style.overflowAnchor = anchor;
-      const view = document.createElement("div");
-      const c0 = document.createElement("div");
-      c0.append(...entries("t0"));
-      const body = document.createElement("div");
-      body.append(...entries("t1").slice(0, 5), chunkedSayRow(5, 60));
-      const c1 = document.createElement("div");
-      c1.appendChild(body);
-      view.append(c0, c1);
-      messagesEl.appendChild(view);
-      const row = (): Element => body.lastElementChild!;
-      const out = await movesAfterReturn(
-        view,
-        1850,
-        () => {
-          const arrival = document.createElement("div");
-          arrival.dataset["entryTurn"] = "t1";
-          arrival.dataset["entrySeq"] = "5";
-          arrival.style.height = "200px";
-          row().replaceWith(arrival, chunkedSayRow(10, 60));
-        },
-        { ref: () => row().firstElementChild!.children[6]! },
-      );
+  it("puts the reader's text back where they left it when they leave under the side menu with an older page still loading", async () => {
+    const wrap = scroll.getScrollEl();
+    const view = rowsView();
+    scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    await land();
+    readerScrollTo(wrap, 500);
+    await land();
+    skeleton.px = 200;
+    scroll.setLoadMore(() => undefined, true);
+    scroll.noteHistoryEdge(true);
+    await land();
+    const box = wrap.getBoundingClientRect();
+    const ref = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
+    const left = ref.getBoundingClientRect().top;
+    const loading = document.getElementById("load-more-skeleton") !== null;
+    const cover = coverScroller();
+    const parked = scroll.detach();
+    cover.remove();
+    view.hidden = true;
+    const other = document.createElement("div");
+    other.style.cssText = "height:2000px;";
+    messagesEl.appendChild(other);
+    scroll.attach({ el: other, scrollTop: 0, readingState: "following" });
+    await land();
+    scroll.detach();
+    other.remove();
+    view.hidden = false;
+    scroll.attach({ el: view, ...parked });
+    await land();
 
-      expect(out).toEqual({ moves: [], state: "reading" });
-    },
-  );
-
-  it.each(["none", "auto"])(
-    "keeps the reader's text still when a box above the line grows inside the entry they read while they read it (overflow-anchor: %s)",
-    async (anchor) => {
-      const wrap = scroll.getScrollEl();
-      wrap.style.overflowAnchor = anchor;
-      const { view, inner } = tallEntryView();
-      scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
-      await land();
-      readerScrollTo(wrap, 1800);
-      await land(400);
-      const box = wrap.getBoundingClientRect();
-      const ref = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
-      const before = ref.getBoundingClientRect().top;
-      inner.style.height = "300px";
-      await land();
-
-      expect({
-        moved: Math.round(ref.getBoundingClientRect().top - before),
-        state: scroll.readingState(),
-      }).toEqual({ moved: 0, state: "reading" });
-    },
-  );
-
-  it.each(["none", "auto"])(
-    "keeps the reader's text still when the side menu still covers the transcript as the view returns and a page's skeleton lands above (overflow-anchor: %s)",
-    async (anchor) => {
-      scroll.getScrollEl().style.overflowAnchor = anchor;
-      const view = rowsView();
-      const rows = [...view.children];
-      skeleton.px = 200;
-      let cover: HTMLElement | null = null;
-      const out = await movesAfterReturn(
-        view,
-        500,
-        () => {
-          requestAnimationFrame(() => {
-            cover?.remove();
-          });
-          scroll.setLoadMore(() => undefined, true);
-        },
-        {
-          ref: () => rows[11]!,
-          beforeReturn: () => {
-            cover = coverScroller();
-          },
-        },
-      );
-
-      expect(out).toEqual({ moves: [], state: "reading" });
-    },
-  );
-
-  it.each(["none", "auto"])(
-    "puts the reader's text back where they left it when they leave under the side menu with an older page still loading (overflow-anchor: %s)",
-    async (anchor) => {
-      const wrap = scroll.getScrollEl();
-      wrap.style.overflowAnchor = anchor;
-      const view = rowsView();
-      scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
-      await land();
-      readerScrollTo(wrap, 500);
-      await land();
-      skeleton.px = 200;
-      scroll.setLoadMore(() => undefined, true);
-      scroll.noteHistoryEdge(true);
-      await land();
-      const box = wrap.getBoundingClientRect();
-      const ref = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
-      const left = ref.getBoundingClientRect().top;
-      const loading = document.getElementById("load-more-skeleton") !== null;
-      const cover = coverScroller();
-      const parked = scroll.detach();
-      cover.remove();
-      view.hidden = true;
-      const other = document.createElement("div");
-      other.style.cssText = "height:2000px;";
-      messagesEl.appendChild(other);
-      scroll.attach({ el: other, scrollTop: 0, readingState: "following" });
-      await land();
-      scroll.detach();
-      other.remove();
-      view.hidden = false;
-      scroll.attach({ el: view, ...parked });
-      await land();
-
-      expect({
-        loading,
-        moved: Math.round(ref.getBoundingClientRect().top - left),
-        state: scroll.readingState(),
-      }).toEqual({ loading: true, moved: 0, state: "reading" });
-    },
-  );
+    expect({
+      loading,
+      moved: Math.round(ref.getBoundingClientRect().top - left),
+      state: scroll.readingState(),
+    }).toEqual({ loading: true, moved: 0, state: "reading" });
+  });
 });
 
 describe("onContentResize", () => {
@@ -4368,53 +3746,6 @@ describe("pagination furniture belongs to its own view", () => {
   });
 });
 
-// THREE SEAMS WHERE NOTHING ELSE CAN ANSWER.
-describe("the epoch's timed backstop", () => {
-  beforeEach(realLayoutReset);
-  // The backstop is a `setTimeout`, so this block fakes it too and `land` steps the clock past it.
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-  });
-  afterEach(() => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-  });
-
-  it("closes an epoch nothing scrolled, so the reader's next gesture is theirs", async () => {
-    const wrap = realScroller();
-    block(3000);
-    await land();
-    // An epoch with no scroll in it: Chromium answers a scroll with `scrollend`, which is a close,
-    // so an epoch that moves nothing has no event closer at all and the backstop is the only one
-    // left.
-    scroll.beginSelfScroll();
-
-    await land(1600); // past SELF_SCROLL_MAX_MS
-
-    const seen = vi.fn();
-    const off = scroll.onReaderGesture(seen);
-    wrap.scrollTop = 1200;
-    await land();
-    off();
-    expect(seen.mock.calls.length).toBeGreaterThan(0);
-  });
-
-  it("holds the epoch open before its budget runs out", async () => {
-    const wrap = realScroller();
-    block(3000);
-    await land();
-    scroll.beginSelfScroll();
-
-    await land(600); // well inside SELF_SCROLL_MAX_MS
-
-    const seen = vi.fn();
-    const off = scroll.onReaderGesture(seen);
-    wrap.scrollTop = 1200;
-    await land();
-    off();
-    expect(seen).not.toHaveBeenCalled();
-  });
-});
-
 describe("onViewportChange's release", () => {
   beforeEach(realLayoutReset);
 
@@ -4469,8 +3800,8 @@ describe("jumpTo's end-aligned landing", () => {
   beforeEach(realLayoutReset);
 
   it("parks the reader for a target whose BOTTOM lands short of the live edge", async () => {
-    // 3000px of content in the 400px scrollport, so the maximum offset is 2600 and the live-edge
-    // band starts at 2500.
+    // 3000px of content in the 400px scrollport, so the maximum offset is 2600 and the target's
+    // bottom lands 250px short of it.
     const wrap = realScroller();
     block(2550);
     const target = block(200);
@@ -4481,5 +3812,109 @@ describe("jumpTo's end-aligned landing", () => {
     scroll.jumpTo(target, { block: "end", behavior: "instant" });
 
     expect(scroll.readingState()).toBe("reading");
+  });
+});
+
+// A jump's own smooth flight belongs to the owner: no reader gesture is published across it, reader input ends it,
+// pagination waits for it, and a bound ends a flight whose scroll never ends.
+describe("the owner's own flight", () => {
+  beforeEach(realLayoutReset);
+
+  async function flightFromTheEnd(): Promise<{ wrap: HTMLElement; landed: Promise<boolean> }> {
+    const wrap = realScroller();
+    block(4000);
+    await land();
+    scroll.scrollToBottom();
+    await land();
+    expect(wrap.scrollTop, "the premise: at the end").toBe(3600);
+    const landed = scroll.jumpToOffset(1000, "smooth");
+    await flightMoves(wrap);
+    return { wrap, landed };
+  }
+
+  it("publishes no reader gesture across the flight, and lands Reading", async () => {
+    const { wrap, landed } = await flightFromTheEnd();
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+
+    const result = await landed;
+    await land();
+    off();
+
+    expect({ result, seen: seen.mock.calls.length, ...landing(wrap) }).toEqual({
+      result: true,
+      seen: 0,
+      scrollTop: 1000,
+      state: "reading",
+      hidden: false,
+    });
+  });
+
+  it("hands the scroller to the reader the moment they touch it", async () => {
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+    const wrap = realScroller();
+    block(4000);
+    await land();
+    scroll.scrollToBottom();
+    await land();
+    expect(wrap.scrollTop, "the premise: at the end").toBe(3600);
+    // The reader's wheel in the flight's first moving frame.
+    wrap.addEventListener(
+      "scroll",
+      () => {
+        wrap.dispatchEvent(new WheelEvent("wheel", { deltaY: -3, deltaMode: 1 }));
+      },
+      { once: true },
+    );
+    const landed = scroll.jumpToOffset(1000, "smooth");
+    const result = await landed;
+    wrap.scrollTop = wrap.scrollTop - 30;
+    await land();
+    off();
+
+    expect({ result, published: seen.mock.calls.length > 0 }).toEqual({
+      result: false,
+      published: true,
+    });
+  });
+
+  it("holds the history edge's page back until the flight ends, then asks for it", async () => {
+    const load = vi.fn();
+    const { landed } = await flightFromTheEnd();
+    scroll.setLoadMore(load, true);
+    scroll.noteHistoryEdge(true);
+    const during = load.mock.calls.length;
+
+    await landed;
+    await land();
+    scroll.setLoadMore(null, false);
+    document.getElementById("load-more-skeleton")?.remove();
+
+    expect({ during, after: load.mock.calls.length }).toEqual({ during: 0, after: 1 });
+  });
+
+  it("ends a flight whose scroll never ends at its bound", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    try {
+      const wrap = realScroller();
+      block(4000);
+      // A flight to where the scroller already stands with a smooth write the engine ignores.
+      wrap.scrollTo = (() => undefined) as typeof wrap.scrollTo;
+      await frames(2);
+      let result: boolean | null = null;
+      void scroll.jumpToOffset(1000, "smooth").then((r) => {
+        result = r;
+      });
+      vi.advanceTimersByTime(1499);
+      await taskHop();
+      const before = result;
+      vi.advanceTimersByTime(2);
+      await taskHop();
+      expect({ before, after: result }).toEqual({ before: null, after: true });
+    } finally {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      Reflect.deleteProperty(scroll.getScrollEl(), "scrollTo");
+    }
   });
 });

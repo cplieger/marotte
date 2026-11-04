@@ -41,6 +41,7 @@ style.textContent =
 document.head.appendChild(style);
 
 const rail = await import("./turn-rail.js");
+const scroll = await import("./scroll.js");
 const { apiGet } = await import("./api-client.js");
 
 rail.mountTurnRail(outer);
@@ -118,6 +119,8 @@ function repaint(): void {
 const THREE = [summary(1), summary(2), summary(3)];
 
 beforeEach(() => {
+  // A case's own scroll is the reader's, so it leaves them Reading; each case starts at the live edge.
+  scroll.resetScrollState();
   rail.resetTurnRail();
   messagesEl.replaceChildren();
   vi.mocked(apiGet).mockReset();

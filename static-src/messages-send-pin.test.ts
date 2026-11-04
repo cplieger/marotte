@@ -22,8 +22,6 @@ outer.id = "messages-wrap-outer";
 outer.style.cssText = "position:relative;";
 const wrap = document.createElement("div");
 wrap.id = "messages-wrap";
-// Production's `overflow-anchor: none`: without it Chromium's scroll anchoring moves scrollTop when older turns
-// land above, which is the number these cases read.
 wrap.style.cssText = "height:300px;overflow-y:auto;overflow-anchor:none;position:relative;";
 const messagesEl = document.createElement("div");
 messagesEl.id = "messages";

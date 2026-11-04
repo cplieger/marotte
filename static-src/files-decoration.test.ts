@@ -3,7 +3,7 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("./scroll.js", () => ({
-  setUserScrolledUp: vi.fn(),
+  pressHold: vi.fn(),
   scrollToBottom: vi.fn(),
   initScroll: vi.fn(),
 }));

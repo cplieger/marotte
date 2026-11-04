@@ -296,8 +296,7 @@ describe(
       });
     }
 
-    // The resize path releases only when the end comes CLOSER, and a clamping shrink, a sentinel
-    // crossing and a style mutation all reach the same re-derivation by other callers.
+    // The batch runs at the reader's own return, a task of its own, never inside a resize delivery.
     it(
       "releases the deferred batch OUTSIDE the resize delivery",
       { timeout: testTimeoutFor(3 * FRAME_BUDGET_MS) },
@@ -314,12 +313,10 @@ describe(
         view.appendChild(spacer);
         await settle();
 
-        // 50px above the end, inside the band, then parked there: `setUserScrolledUp` enters
-        // Reading through `setState` and marks no input, so the reader does not own the scroller
-        // and the promotion path below is reachable.
+        // 50px above the end, then parked there by a press, which enters Reading with no gesture.
         scrollerEl.scrollTop = scrollerEl.scrollHeight - scrollerEl.clientHeight - 50;
         await settle();
-        scroll.setUserScrolledUp(true);
+        scroll.pressHold();
 
         let deliveryAtFlush: boolean | null = null;
         scroll.deferWhileReading(() => {
@@ -328,9 +325,12 @@ describe(
           spacer.style.blockSize = "10px";
         });
 
-        // 20px off the end: 50px of room becomes 30px, so the end came closer and the state is
-        // released.
+        // A shrink that brings the end closer releases nothing; the reader's own return does, from
+        // the resume control's click, a task of its own.
         spacer.style.blockSize = "380px";
+        await settle();
+        expect(deliveryAtFlush, "the premise: a size change released nothing").toBeNull();
+        document.getElementById("scroll-bottom")?.click();
         await settle();
 
         // `null` would mean the batch never ran, which is the vacuous pass this assertion has to
@@ -339,10 +339,7 @@ describe(
       },
     );
 
-    // The other half of that release: content appended BETWEEN the delivery and the frame that
-    // applies it takes the reader off the edge with no input, no scroll event and no sentinel
-    // crossing, so a measurement carried across the frame releases a reader who is 450px above the
-    // end.
+    // Content appended below a held reader, with no input and no scroll event, never releases the batch.
     it(
       "keeps the batch held when the content grows before the deferred apply",
       { timeout: testTimeoutFor(3 * FRAME_BUDGET_MS) },
@@ -359,20 +356,16 @@ describe(
 
         scrollerEl.scrollTop = scrollerEl.scrollHeight;
         await settle();
-        scroll.setUserScrolledUp(true);
+        scroll.pressHold();
 
         let flushed = false;
         scroll.deferWhileReading(() => {
           flushed = true;
         });
 
-        // 50px, inside BOTTOM_TOLERANCE_PX (100), so this delivery measures the reader at the edge
-        // — the release the case above asserts.
         spacer.style.blockSize = "450px";
         await frame();
         await frame();
-        // 450px more, well outside it. Nothing else can notice: no gesture, and the sentinel's own
-        // crossing is not delivered until after this frame's apply.
         spacer.style.blockSize = "900px";
         await settle();
 
