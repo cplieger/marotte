@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -99,6 +101,22 @@ func TestCancel_CallerContextCancelledAfterTheTakeStillAnswersAndCancels(t *test
 	if len(b.live) != 1 || !b.live[0] {
 		t.Errorf("session/cancel contexts live = %v, want [true]", b.live)
 	}
+}
+
+// The bridge waits out an engine that is slow to read its stdin but working, so an answer it accepted late is no
+// reason to drop the session/cancel after it.
+func TestCancel_ALateAcceptedAnswerStillSendsSessionCancel(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		b := &ctxBridge{}
+		d := newCancelDeps(b)
+		d.onCancel = func() { time.Sleep(2 * time.Minute) }
+		if err := runCancel(t, t.Context(), d); err != nil {
+			t.Fatalf("cmdCancel: %v", err)
+		}
+		if len(b.live) != 1 || !b.live[0] {
+			t.Errorf("session/cancel contexts live = %v, want [true] after an answer the engine read two minutes late", b.live)
+		}
+	})
 }
 
 // A card that could not be answered on a live session leaves the reply running: no session/cancel, its terminals
