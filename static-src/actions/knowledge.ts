@@ -1,8 +1,8 @@
 // Knowledge-base actions. The list is server-canonical (kiro-cli's global store) and refetched
 // after every mutation, so no optimistic state.
 
-import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
-import { STILL_APPLYING, stillOr } from "./still-applying.js";
+import { apiAction, RETRY_STANDARD } from "./index.js";
+import { retryUnlessStill, stillOr } from "./still-applying.js";
 
 const KNOWLEDGE_API = "/api/knowledge";
 
@@ -12,12 +12,11 @@ interface AddArgs {
 }
 
 /** Start a background index of a directory. `error: false`: the add form writes the failure
- *  beside its field from the dispatch's typed outcome. Never retried while still applying: a 5xx
- *  frees the Idempotency-Key, so the retry would run a second add. */
+ *  beside its field from the dispatch's typed outcome. */
 export const addKnowledge = apiAction<AddArgs, { message?: string }>({
   name: "knowledge.add",
   idempotencyKey: true,
-  retryable: (err) => err.code !== STILL_APPLYING && retryNetwork(err),
+  retryable: retryUnlessStill,
   retry: RETRY_STANDARD,
   request: ({ path, name }) => ({
     method: "POST",
