@@ -233,12 +233,6 @@ func (k *purgedRun) retry() (json.RawMessage, []*marotte.RPCResponse, bool) {
 	return raw, frames, true
 }
 
-func (k *purgedRun) statusNow() marotte.RunStatus {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	return k.status
-}
-
 // ownerScan names one of a purge pass's chat-owner scans.
 type ownerScan int32
 
