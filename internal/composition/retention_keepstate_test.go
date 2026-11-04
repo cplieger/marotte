@@ -59,7 +59,7 @@ func TestRetention_KeepState(t *testing.T) {
 		"turn_set": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			b.seed(t, "c-1", sess("c-1"))
-			if _, ok := b.h.TryReserveTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp()); !ok {
+			if _, ok := b.h.TryReserveIdleTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp()); !ok {
 				t.Fatal("Setup: the turn reservation was refused")
 			}
 			b.age(t, "c-1", seamIdle)
@@ -69,7 +69,7 @@ func TestRetention_KeepState(t *testing.T) {
 		"turn_unset": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			b.seed(t, "c-1", sess("c-1"))
-			res, ok := b.h.TryReserveTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp())
+			res, ok := b.h.TryReserveIdleTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp())
 			if !ok {
 				t.Fatal("Setup: the turn reservation was refused")
 			}
@@ -84,7 +84,7 @@ func TestRetention_KeepState(t *testing.T) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			b.seed(t, "c-1", sess("c-1"))
 			b.age(t, "c-1", seamIdle)
-			res, ok := b.h.TryReserveTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp())
+			res, ok := b.h.TryReserveIdleTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp())
 			if !ok {
 				t.Fatal("Setup: the turn reservation was refused")
 			}
@@ -241,7 +241,7 @@ func TestRetention_KeepState(t *testing.T) {
 			if got, _ := b.h.ReserveTurnForPrompt(t.Context(), "c-1", 0, b.h.LifeStamp(), ""); got != command.AdmissionChatGone {
 				t.Errorf("a prompt on the purged chat = %v, want AdmissionChatGone", got)
 			}
-			if _, ok := b.h.TryReserveTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp()); ok {
+			if _, ok := b.h.TryReserveIdleTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp()); ok {
 				t.Error("a turn was reserved on the purged chat")
 			}
 			if b.present(t, "c-1") {
@@ -417,7 +417,7 @@ func TestRetention_KeepState(t *testing.T) {
 			if code, body := b.cmd(t, marotte.CmdResumeSession, "", map[string]any{"session_id": sess("c-1")}); code != http.StatusConflict {
 				t.Errorf("r15: resume of a chain session = %d %v, want 409", code, body)
 			}
-			if _, ok := b.h.TryReserveTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp()); ok {
+			if _, ok := b.h.TryReserveIdleTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp()); ok {
 				t.Error("a turn was reserved on the chat in teardown")
 			}
 			if b.runTabOf("wf_1") != "" || b.present(t, "c-1") {

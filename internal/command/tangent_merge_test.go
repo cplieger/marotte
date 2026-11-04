@@ -873,11 +873,6 @@ func TestTangentMerges_PublishesOnlyTheOutcomeItCommitted(t *testing.T) {
 	}
 }
 
-func (r *mergeHost) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
-	ok := r.tryReserveOld(chatID, source)
-	return testReservation(chatID, ok), ok
-}
-
 func (r *promptParamsBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
 	return r.OpenBridge(ctx, chatID, model)
 }

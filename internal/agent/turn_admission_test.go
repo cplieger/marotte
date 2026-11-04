@@ -676,7 +676,7 @@ func TestTryReserve_BesideAWireTurn(t *testing.T) {
 				h.coord.releaseHeld("c1")
 			}
 			if got != tc.wantBare {
-				t.Errorf("TryReserveTurn = %t, want %t", got, tc.wantBare)
+				t.Errorf("tryReserve = %t, want %t", got, tc.wantBare)
 			}
 			got = h.coord.tryReserveFencedNow("c1", marotte.TurnSourcePrompt, command.TurnFence{})
 			if got {

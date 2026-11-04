@@ -35,7 +35,7 @@ func TestRewindChat_WaitsOutAReservationThatOpensNoTurn(t *testing.T) {
 	openChat(t, h, "c1")
 	runPrompt(t, h, cs, "c1", "m-1")
 	br.setCallResult(marotte.MethodCheckpointRevertMultiple, json.RawMessage(`{"success":true}`))
-	res, ok := h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
+	res, ok := h.coord.turns.tryReserve("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
 	if !ok {
 		t.Fatal("Setup: the chat's admission slot was already held")
 	}
@@ -77,7 +77,7 @@ func TestRewindChat_ASlotHeldPastTheWaitRefusesAsBusy(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	openChat(t, h, "c1")
 	runPrompt(t, h, cs, "c1", "m-1")
-	res, ok := h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert, h.coord.LifeStamp())
+	res, ok := h.coord.turns.tryReserve("c1", marotte.TurnSourceRevert, h.coord.LifeStamp())
 	if !ok {
 		t.Fatal("Setup: the chat's admission slot was already held")
 	}

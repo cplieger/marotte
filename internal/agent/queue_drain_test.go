@@ -125,7 +125,7 @@ func TestDrain_WaitsOutTheClosingPromptsReservation(t *testing.T) {
 	armDrain(h, true)
 	seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q1", Text: "then run the tests"})
 	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
-		t.Fatal("TryReserveTurn(c1) refused on an idle chat")
+		t.Fatal("tryReserve(c1) refused on an idle chat")
 	}
 
 	done := make(chan struct{})
@@ -153,7 +153,7 @@ func TestDrain_StandsDownWhenATurnOpensBehindTheReservation(t *testing.T) {
 	armDrain(h, true)
 	seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q1", Text: "next"})
 	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
-		t.Fatal("TryReserveTurn(c1) refused on an idle chat")
+		t.Fatal("tryReserve(c1) refused on an idle chat")
 	}
 
 	done := make(chan struct{})

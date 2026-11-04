@@ -22,6 +22,8 @@ type closingParent struct {
 	parked chan struct{}
 	mu     sync.Mutex
 	held   bool
+	// closedSince makes the parent's next reserve answer a close that committed and ended since its stamp.
+	closedSince bool
 }
 
 func newClosingParent(h *mergeHost) *closingParent {
@@ -72,11 +74,21 @@ func (c *closingParent) AwaitNoClose(ctx context.Context, chatID marotte.ChatID)
 	}
 }
 
-func (c *closingParent) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (Reservation, bool) {
-	if chatID == "c-parent" && c.holding() {
-		return Reservation{}, false
+// ReserveTurn answers a close committed since the stamp while the parent's close is held, as the life gate does once
+// the hold ends.
+func (c *closingParent) ReserveTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation) {
+	if chatID == "c-parent" && (c.holding() || c.takeClosedSince()) {
+		return IdleClosed, Reservation{}
 	}
-	return c.mergeHost.TryReserveTurn(chatID, source, stamp)
+	return c.mergeHost.ReserveTurn(ctx, chatID, source, stamp, wait)
+}
+
+func (c *closingParent) takeClosedSince() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	was := c.closedSince
+	c.closedSince = false
+	return was
 }
 
 // closingQueue refuses an append while the parent's close is held, as AppendIfLive's gate read does.
@@ -176,6 +188,25 @@ func TestTangentMerge_AParentClosedDuringTheSummaryGetsTheFindingsAfterItsTeardo
 		}
 		if q.appends != 0 || len(q.chat.QueuedPrompts) != 0 {
 			t.Errorf("appends = %d, queued rows = %+v, want nothing queued into the closing life", q.appends, q.chat.QueuedPrompts)
+		}
+		if n := f.host.promptCount(); n != 2 {
+			t.Errorf("prompts opened = %d, want the summary then the findings", n)
+		}
+	})
+
+	t.Run("a close that ended between the stamp and the reserve", func(t *testing.T) {
+		f, c, q := setup(t)
+		c.closedSince = true
+		if _, err := f.merge(t, findings); err != nil {
+			t.Fatalf("CmdMergeTangent = %v, want accepted", err)
+		}
+
+		rec := awaitMergeSettled(t, f)
+		if rec.State != marotte.TangentMergeSucceeded {
+			t.Errorf("merge = %+v, want succeeded in the next life", rec)
+		}
+		if q.appends != 0 || len(q.chat.QueuedPrompts) != 0 {
+			t.Errorf("appends = %d, queued rows = %+v, want the findings prompted, not queued", q.appends, q.chat.QueuedPrompts)
 		}
 		if n := f.host.promptCount(); n != 2 {
 			t.Errorf("prompts opened = %d, want the summary then the findings", n)

@@ -130,11 +130,6 @@ func (rt *Runtime) ReserveTurnForPrompt(
 	return rt.coord.ReserveTurnForPrompt(ctx, chatID, wait, stamp, messageID)
 }
 
-// TryReserveTurn takes the chat's admission slot iff it is free.
-func (rt *Runtime) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
-	return rt.coord.TryReserveTurn(chatID, source, stamp)
-}
-
 // TryReserveIdleTurn takes the chat's admission slot iff no turn is open and nothing holds it.
 func (rt *Runtime) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
 	return rt.coord.TryReserveIdleTurn(chatID, source, stamp)

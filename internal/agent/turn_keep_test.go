@@ -63,7 +63,7 @@ func TestReservation_ADeletedChatIsRefusedAndNothingIsReserved(t *testing.T) {
 			return out == command.AdmissionChatGone
 		},
 		"try reserve": func(bc *bridgeCoordinator) bool {
-			_, ok := bc.TryReserveTurn("c1", marotte.TurnSourcePrompt, bc.LifeStamp())
+			_, ok := bc.turns.tryReserve("c1", marotte.TurnSourcePrompt, bc.LifeStamp())
 			return !ok
 		},
 		"try reserve idle": func(bc *bridgeCoordinator) bool {

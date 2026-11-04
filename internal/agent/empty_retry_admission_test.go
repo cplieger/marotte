@@ -50,10 +50,10 @@ func TestEmptyTurnRetry_WaitsOutTheClosesDrain(t *testing.T) {
 		// moment the empty turn's prompt lets it go.
 		held := make(chan struct{})
 		go func() {
-			res, ok := h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
+			res, ok := h.coord.turns.tryReserve("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
 			for !ok {
 				runtime.Gosched()
-				res, ok = h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
+				res, ok = h.coord.turns.tryReserve("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
 			}
 			close(held)
 			time.Sleep(50 * time.Millisecond)

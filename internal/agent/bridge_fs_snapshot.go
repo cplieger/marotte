@@ -34,7 +34,7 @@ func (in *inbound) confineRead(ctx context.Context, sessionID marotte.SessionID,
 
 // snapshotDir reports the run directory p names an edit snapshot file in, when that run is sessionID's.
 func (in *inbound) snapshotDir(sessionID marotte.SessionID, p string) (string, bool) {
-	if !filepath.IsAbs(p) || filepath.Clean(p) != p || !editSnapshotName.MatchString(filepath.Base(p)) {
+	if !editSnapshotName.MatchString(filepath.Base(p)) {
 		return "", false
 	}
 	wf, ok := in.stepRun(sessionID)

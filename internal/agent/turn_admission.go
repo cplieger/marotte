@@ -260,11 +260,6 @@ func (r *turnRegistry) admissionHolder(chatID marotte.ChatID) (marotte.TurnOpenS
 	return lc.holderSourceLocked()
 }
 
-// TryReserveTurn takes the admission slot iff free and the life gate admits stamp, never waiting.
-func (bc *bridgeCoordinator) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
-	return bc.turns.tryReserve(chatID, source, stamp)
-}
-
 // TryReserveIdleTurn takes the admission slot iff no turn is open and nothing holds it, never waiting.
 func (bc *bridgeCoordinator) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
 	return bc.turns.tryReserveIdle(chatID, source, stamp)
@@ -279,8 +274,8 @@ func (bc *bridgeCoordinator) ReserveIdleTurn(
 	return bc.reserveWaiting(ctx, chatID, source, stamp, wait, true)
 }
 
-// ReserveTurn is TryReserveTurn that waits up to wait for a holder that is not a running turn, as ReserveIdleTurn
-// does, with the same answers.
+// ReserveTurn takes the admission slot for a caller whose intent began at stamp, waiting up to wait for a holder that
+// is not a running turn, as ReserveIdleTurn does, with the same answers; an open wire turn does not refuse it.
 func (bc *bridgeCoordinator) ReserveTurn(
 	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration,
 ) (command.IdleAdmission, command.Reservation) {
@@ -317,7 +312,7 @@ func (bc *bridgeCoordinator) reserveWaiting(
 	}
 }
 
-// TryReserveTurnFenced is TryReserveTurn for a close's drain, refused once a turn
+// TryReserveTurnFenced takes the admission slot for a close's drain iff it is free, never waiting, refused once a turn
 // opened after the closed one. The open checks the fence again where it appends.
 func (bc *bridgeCoordinator) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) (command.Reservation, bool) {
 	return bc.turns.tryReserveFenced(chatID, source, fence)

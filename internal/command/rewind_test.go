@@ -819,11 +819,6 @@ func TestCmdRewindChat_RefusedWhenAPromptTakesTheSlotFirst(t *testing.T) {
 	}
 }
 
-func (r *slotAdmission) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
-	ok := r.tryReserveOld(chatID, source)
-	return testReservation(chatID, ok), ok
-}
-
 func (r *slotAdmission) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
 	ok := r.tryReserveIdleOld(chatID, source)
 	return testReservation(chatID, ok), ok

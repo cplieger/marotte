@@ -354,11 +354,6 @@ func (r *recoveryOutcome) ReserveTurnForPrompt(ctx context.Context, chatID marot
 	return out, testReservation(chatID, out == AdmissionAcquired)
 }
 
-func (r *recoveryOutcome) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
-	ok := r.tryReserveOld(chatID, source)
-	return testReservation(chatID, ok), ok
-}
-
 func (r *recoveryOutcome) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
 	ok := r.tryReserveIdleOld(chatID, source)
 	return testReservation(chatID, ok), ok

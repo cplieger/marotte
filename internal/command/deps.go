@@ -494,21 +494,19 @@ type turnAdmission interface {
 	// close parks the caller up to wait; the refusal is keyed on the holder's source (see AdmissionOutcome).
 	// messageID names the prompt to a close's impact read until its turn opens.
 	ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, stamp uint64, messageID string) (AdmissionOutcome, Reservation)
-	// TryReserveTurn takes the admission slot iff it is free and no close is held or committed since stamp, never
-	// waiting.
-	TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (Reservation, bool)
-	// ReserveTurn is TryReserveTurn that waits up to wait for a holder that is not a running turn (a close's drain
+	// ReserveTurn takes the admission slot for a caller whose intent began at stamp, waiting up to wait for a holder
+	// that is not a running turn (a close's drain
 	// looking for a queued prompt, a closing turn, a held close), refusing at once beside a turn marotte or kiro-cli
 	// runs. It answers as ReserveIdleTurn does.
 	ReserveTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation)
-	// TryReserveIdleTurn is TryReserveTurn that also refuses while a turn is open
-	// without a reservation (a wire turn), checked in the same acquisition.
+	// TryReserveIdleTurn takes the admission slot iff it is free, no close is held or committed since stamp and no
+	// turn is open without a reservation (a wire turn), checked in one acquisition and never waiting.
 	TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (Reservation, bool)
 	// ReserveIdleTurn is TryReserveIdleTurn that waits up to wait for a holder that is not a running turn (a bare
 	// reservation, a closing turn, a held close); a turn marotte or kiro-cli runs answers IdleTurnOpen at once. The
 	// Reservation is the zero one unless the answer is IdleAcquired.
 	ReserveIdleTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation)
-	// TryReserveTurnFenced is TryReserveTurn for a close's drain: it also refuses
+	// TryReserveTurnFenced takes the admission slot for a close's drain iff it is free, never waiting; it also refuses
 	// once the fence no longer holds, sparing a reservation the open would refuse.
 	TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool)
 	// AwaitNoClose waits until no close of chatID is being decided or torn down, reporting whether it waited; a ctx

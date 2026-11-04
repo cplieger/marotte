@@ -496,11 +496,6 @@ func (r *surfaceDeps) ReserveTurnForPrompt(ctx context.Context, chatID marotte.C
 	return out, testReservation(chatID, out == AdmissionAcquired)
 }
 
-func (r *surfaceDeps) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
-	ok := r.tryReserveOld(chatID, source)
-	return testReservation(chatID, ok), ok
-}
-
 func (r *surfaceDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
 	return r.OpenBridge(ctx, chatID, model)
 }

@@ -221,6 +221,9 @@ func (m *tangentMerges) deliver(ctx context.Context, parent marotte.ChatID, p *m
 			return "", false
 		}
 		out, res := m.roles.admission.ReserveTurn(ctx, parent, marotte.TurnSourcePrompt, m.roles.admission.LifeStamp(), AdmissionWait)
+		if out == IdleClosed {
+			continue
+		}
 		if out == IdleAcquired {
 			turnID, err := startPrompt(ctx, m.roles, parent, p, &launch{res: res, awaited: true})
 			switch {

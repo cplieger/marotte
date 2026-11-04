@@ -396,11 +396,6 @@ func (r *benchDeps) ReserveTurnForPrompt(ctx context.Context, chatID marotte.Cha
 	return out, testReservation(chatID, out == AdmissionAcquired)
 }
 
-func (r *benchDeps) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
-	ok := r.tryReserveOld(chatID, source)
-	return testReservation(chatID, ok), ok
-}
-
 func (r *benchDeps) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
 	ok := r.tryReserveIdleOld(chatID, source)
 	return testReservation(chatID, ok), ok

@@ -34,11 +34,11 @@ func TestCloseTab_AnEndedPromptsReleaseLeavesTheReopenedPromptsSlot(t *testing.T
 	current := reserveNow(t, h)
 
 	h.coord.ReleaseTurnReservation(old)
-	if _, ok := h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp()); ok {
+	if _, ok := h.coord.turns.tryReserve("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp()); ok {
 		t.Error("the old life's release freed the reopened life's slot")
 	}
 	h.coord.ReleaseTurnReservation(current)
-	if _, ok := h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp()); !ok {
+	if _, ok := h.coord.turns.tryReserve("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp()); !ok {
 		t.Error("the reopened life's own release left its slot held")
 	}
 }
@@ -183,7 +183,7 @@ func TestTryReserve_DuringACloseRefusesAtOnce(t *testing.T) {
 			stamp := h.coord.LifeStamp()
 			start := time.Now()
 			_, idle := h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceRevert, stamp)
-			_, try := h.coord.TryReserveTurn("c1", marotte.TurnSourceEmptyRetry, stamp)
+			_, try := h.coord.turns.tryReserve("c1", marotte.TurnSourceEmptyRetry, stamp)
 			if took := time.Since(start); took > 100*time.Millisecond {
 				t.Errorf("the try reservations answered after %v, want at once", took)
 			}
