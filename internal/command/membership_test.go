@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -1293,4 +1294,53 @@ func storedChatIDs(t *testing.T, store *testsupport.InMemoryChatStore) []marotte
 	}
 	slices.Sort(out)
 	return out
+}
+
+// detachOnGoroutine is a Detach that runs the teardown on its own goroutine, as the runtime's lifetime does.
+func detachOnGoroutine(ctx context.Context, fn func(context.Context)) {
+	go fn(context.WithoutCancel(ctx))
+}
+
+// TestDeleteChatAndCloseTabs_AnswersBeforeTheTeardownEnds pins that the delete answers once the record is gone: its
+// teardown's engine calls can outlast the browser's request budget while kiro-cli stalls, and must still finish.
+func TestDeleteChatAndCloseTabs_AnswersBeforeTheTeardownEnds(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	st, err := tabs.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("open tab store: %v", err)
+	}
+	td := &recordingTeardown{}
+	mem := newMembership(&membershipDeps{Chats: store, Tabs: st, Bus: &tabBus{}, Teardown: td, Detach: detachOnGoroutine})
+	opened := createChat(t, mem, "op-a")
+	chatID := marotte.ChatID(opened.Chat.ID)
+	gate := make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	t.Cleanup(release)
+	td.onByChain = func() { <-gate }
+
+	answered := make(chan error, 1)
+	go func() { answered <- mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del") }()
+	select {
+	case err := <-answered:
+		if err != nil {
+			t.Fatalf("DeleteChatAndCloseTabs = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("DeleteChatAndCloseTabs is still waiting on the teardown, want it to answer once the record is gone")
+	}
+	if _, ok := store.Get(t.Context(), chatID); ok {
+		t.Error("the delete answered with the record still there")
+	}
+	release()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		td.mu.Lock()
+		_, ran := td.deletedByChain[chatID]
+		td.mu.Unlock()
+		if ran {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the teardown never finished after the delete answered")
+		}
+	}
 }

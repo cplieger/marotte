@@ -189,6 +189,8 @@ type Membership struct {
 	// sessions; CreateChatAndOpen refuses to bind one. Both guarded by mu.
 	purgingRuns     map[string]struct{}
 	purgingSessions map[string]int
+	// detach is membershipDeps.Detach.
+	detach func(ctx context.Context, fn func(context.Context))
 	// mu is THE operation lock, held across the reservation, the mint, both
 	// durable writes and the event. Order: mu -> chat record lock -> tabs writeMu.
 	mu sync.Mutex
@@ -214,6 +216,9 @@ type membershipDeps struct {
 	// Sessions answers the run purge's claim check. Nil spares every run with a
 	// parent session (the fail-toward-keeping direction).
 	Sessions sessionClaims
+	// Detach runs a teardown past the command's answer, on a context detached from ctx's cancellation and
+	// held for Shutdown. Nil runs it inline on ctx, for a fixture with no lifetime.
+	Detach func(ctx context.Context, fn func(context.Context))
 }
 
 // newMembership builds the coordinator.
@@ -229,6 +234,7 @@ func newMembership(deps *membershipDeps) *Membership {
 		runs:              deps.Runs,
 		sessions:          deps.Sessions,
 		supervisedDefault: deps.SupervisedDefault,
+		detach:            deps.Detach,
 		ops:               newCreateLedger(),
 		purgingRuns:       map[string]struct{}{},
 		purgingSessions:   map[string]int{},
@@ -657,7 +663,9 @@ func (m *Membership) tearDownClosed(
 		if chain, isDoomed := deleted[chatID]; isDoomed {
 			if !dispatched[chatID] {
 				dispatched[chatID] = true
-				m.deleteChat(ctx, chatID, chain)
+				// Past the answer, as an explicit delete's teardown (DeleteChatAndCloseTabs); the record is gone,
+				// so nothing can reopen the chat under it.
+				m.runDetached(ctx, func(ctx context.Context) { m.deleteChat(ctx, chatID, chain) })
 			}
 			continue
 		}
@@ -895,15 +903,27 @@ func (m *Membership) reparent(ctx context.Context, id, parent, opID string) (mar
 // record held. The record is the admission barrier: once it is gone every later open is
 // refused and a bridge opening on it settles ErrChatGone, and the teardown after it closes
 // any bridge that opened before. A failed delete tears nothing down, so the chat keeps
-// working. The teardown runs after the lock: its KAS calls have no client-side timeout,
-// so one wedged process would block every tab mutation.
+// working. The teardown runs after the lock, so one wedged process cannot block every tab
+// mutation, and after the answer (runDetached), since its engine calls can outlast the
+// client's request budget.
 func (m *Membership) DeleteChatAndCloseTabs(ctx context.Context, chatID marotte.ChatID, opID string) error {
 	chain, err := m.deleteRecordAndCloseTabs(ctx, chatID, opID)
 	if err != nil {
 		return StatusError(http.StatusInternalServerError, err)
 	}
-	m.teardown.DeleteChatStateByChain(ctx, chatID, chain, RunStopChatDeleted)
+	m.runDetached(ctx, func(ctx context.Context) {
+		m.teardown.DeleteChatStateByChain(ctx, chatID, chain, RunStopChatDeleted)
+	})
 	return nil
+}
+
+// runDetached runs fn through detach, or inline on ctx when none is wired.
+func (m *Membership) runDetached(ctx context.Context, fn func(context.Context)) {
+	if m.detach == nil {
+		fn(ctx)
+		return
+	}
+	m.detach(ctx, fn)
 }
 
 func (m *Membership) deleteRecordAndCloseTabs(ctx context.Context, chatID marotte.ChatID, opID string) (sessionChain []string, err error) {

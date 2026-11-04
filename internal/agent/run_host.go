@@ -62,7 +62,8 @@ func unanswered(ctx context.Context, err error) error {
 	return err
 }
 
-// launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`. A var so a test can shorten it.
+// launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`, extended through an engine
+// stall (engineOwner.stallAware). A var so a test can shorten it.
 var launchTimeout = 120 * time.Second
 
 // launch starts one parentless attended run of the recipe and returns its workflow id and name.
@@ -103,7 +104,7 @@ func (rs *Runs) launchAs(
 		return "", "", gErr
 	}
 	defer func() { a.settle(id) }()
-	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
+	cctx, cancel := rs.engine.stallAware(ctx, launchTimeout)
 	defer cancel()
 
 	recipe, err := rs.launchRecipe(cctx, source, inputs)
@@ -416,9 +417,16 @@ var retryTimeout = clientRequestBudget - 5*time.Second
 // clientRequestBudget is the timeout @cplieger/ui/fetch hard-wires into every apiAction.
 const clientRequestBudget = 30 * time.Second
 
-// errRetrySlow reports a retry not handed off within retryTimeout; the REST layer answers 503.
+// errRetrySlow reports a retry whose run's session did not load within retryTimeout, so the verb was never sent;
+// the REST layer answers 503.
 var errRetrySlow = errors.New(
 	"the run's session did not load in time, so nothing was retried. Try again",
+)
+
+// errRetryOutcomeUnknown reports a retry verb sent and not answered within retryTimeout: KAS may be running it, so
+// the lease stays and the REST layer answers 504 still_applying.
+var errRetryOutcomeUnknown = errors.New(
+	"kiro-cli has not answered the retry yet and may still be running it. The run updates when it does",
 )
 
 // errRetryOutcomeUnreadable reports a retry KAS accepted whose report was unreadable. The run may be
@@ -482,9 +490,10 @@ func (rs *Runs) retry(
 		out, cErr = rs.retryCall(sctx, host, workflowID)
 		return cErr
 	})
-	if errors.Is(err, errRetryOutcomeUnreadable) {
-		// Only the report is lost; tearing down would kill the work mid-node.
-		rs.rearmRetried(cctx, workflowID, &origin, holders)
+	if errors.Is(err, errRetryOutcomeUnreadable) || errors.Is(err, errRetryOutcomeUnknown) {
+		// The retry may be running; tearing down would kill the work mid-node. cctx may be spent, so the re-arm's
+		// writes run on ctx.
+		rs.rearmRetried(ctx, workflowID, &origin, holders)
 		return out, err
 	}
 	if err != nil {
@@ -542,7 +551,7 @@ func (*Runs) retryResidencyErr(ctx context.Context, err error) error {
 
 func (*Runs) retryDeadlineErr(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
-		return errRetrySlow
+		return fmt.Errorf("%w: %w", errRetryOutcomeUnknown, err)
 	}
 	return err
 }
@@ -950,6 +959,9 @@ func (rs *Runs) workflowNew(
 	}
 	resp, err := bridge.Call(ctx, methodKiroWorkflowNew, params)
 	if cErr := runCallErr(resp, err); cErr != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("workflow new: kiro-cli did not answer in time and may have created the run: %w", cErr)
+		}
 		return "", fmt.Errorf("workflow new: %w", cErr)
 	}
 	var res struct {

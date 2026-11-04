@@ -642,6 +642,15 @@ func (o *engineOwner) current() (h engineHandle, gen uint64) {
 	return o.engine, o.gen
 }
 
+// stallAware bounds an engine call by d, extended through a stall of the ready engine (bridge.Engine.StallAware);
+// with no engine ready it is a plain timeout.
+func (o *engineOwner) stallAware(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if h, _ := o.current(); h != nil {
+		return h.StallAware(ctx, d)
+	}
+	return context.WithTimeout(ctx, d)
+}
+
 // stop ends the engine at shutdown and waits for its reap, bounded by ctx; the supervisor sees draining and stops.
 func (o *engineOwner) stop(ctx context.Context) error {
 	o.mu.Lock()

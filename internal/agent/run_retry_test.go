@@ -493,3 +493,23 @@ func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
 		t.Error("the retried run's backstop reads spent: it inherited its last run's executing time")
 	}
 }
+
+// TestHandleRetry_AVerbKASHasNotAnsweredIsStillApplying pins that a retry whose verb was sent and not answered inside
+// the retry's budget is reported as still applying, since KAS may have taken it, and keeps the lease it minted.
+func TestHandleRetry_AVerbKASHasNotAnsweredIsStillApplying(t *testing.T) {
+	h, br := seedChatParentedRun(t, true, "plan")
+	holdCall(t, br, methodKiroWorkflowRetry)
+	prev := retryTimeout
+	retryTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { retryTimeout = prev })
+
+	rec := answeredWithin(t, func(w http.ResponseWriter) { h.runRoutes.handleRetry(w, retryReq("wf_1")) })
+
+	assertStillApplying(t, rec)
+	if strings.Contains(rec.Body.String(), "nothing was retried") {
+		t.Errorf("the answer = %s, want no claim that nothing was retried: the verb reached KAS", rec.Body.String())
+	}
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Error("the lease was released for a retry KAS may be running")
+	}
+}

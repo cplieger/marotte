@@ -629,6 +629,14 @@ type HooksChangedPayload struct{}
 // and empty: the installed Powers moved, so the Powers tab refetches.
 type PowersChangedPayload struct{}
 
+// MemoriesChangedPayload is the payload for type="memories_changed", workspace-global and empty: a memory write
+// answered, so the Memories list refetches.
+type MemoriesChangedPayload struct{}
+
+// KnowledgeChangedPayload is the payload for type="knowledge_changed", workspace-global and empty: a knowledge
+// base change answered, so the Knowledge list refetches.
+type KnowledgeChangedPayload struct{}
+
 // RecipesChangedPayload is the payload for type="recipes_changed", workspace-global and
 // empty. The client refetches GET /api/recipes on receipt.
 type RecipesChangedPayload struct{}

@@ -16,12 +16,14 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v4"
 )
 
 const keySubcommand = "subcommand"
 
-// knowledgeCallTimeout bounds one _kiro/knowledge round-trip, the wait for the engine included.
+// knowledgeCallTimeout bounds one _kiro/knowledge round-trip, the wait for the engine included, extended through an
+// engine stall (engineOwner.stallAware).
 const knowledgeCallTimeout = 45 * time.Second
 
 // kasKnowledgeResult is the _kiro/knowledge reply: `show` fills Entries, mutations fill Message.
@@ -65,7 +67,7 @@ type knowledgeMessageResponse struct {
 
 // knowledgeCall issues one bounded _kiro/knowledge engine call, never with a sessionId.
 func (st *Settings) knowledgeCall(ctx context.Context, params map[string]any) (json.RawMessage, error) {
-	cctx, cancel := context.WithTimeout(ctx, knowledgeCallTimeout)
+	cctx, cancel := st.engine.stallAware(ctx, knowledgeCallTimeout)
 	defer cancel()
 	return st.engine.knowledgeRaw(cctx, params)
 }
@@ -147,16 +149,17 @@ func (st *Settings) handleKnowledge(w http.ResponseWriter, r *http.Request) {
 }
 
 func (st *Settings) handleKnowledgeClear(w http.ResponseWriter, r *http.Request) {
-	res, err := st.knowledgeMutate(r.Context(), map[string]any{keySubcommand: "clear"})
-	if err != nil {
-		writeKnowledgeErr(w, err)
-		return
-	}
-	if !res.Success {
-		httpreply.ServerError(w, "clear failed", errors.New(cleanKnowledgeMsg(res.Message)))
-		return
-	}
-	webhttp.Ok(w)
+	st.knowledgeWrite(w, r, "knowledge clear", func(ctx context.Context) engineReply {
+		res, err := st.knowledgeMutate(ctx, map[string]any{keySubcommand: "clear"})
+		if err != nil {
+			return knowledgeFailure(err)
+		}
+		if !res.Success {
+			refusal := errors.New(cleanKnowledgeMsg(res.Message))
+			return engineReply{err: refusal, write: func(w http.ResponseWriter) { httpreply.ServerError(w, "clear failed", refusal) }}
+		}
+		return engineReply{write: webhttp.Ok, applied: true}
+	})
 }
 
 // handleKnowledgeCancel resolves the name to the operation's short id, which only `show` reports.
@@ -170,28 +173,19 @@ func (st *Settings) handleKnowledgeCancel(w http.ResponseWriter, r *http.Request
 		httpreply.BadRequest(w, "name required")
 		return
 	}
-	opID, err := st.knowledgeOperationID(r.Context(), name)
-	if err != nil {
-		writeKnowledgeErr(w, err)
-		return
-	}
-	if opID == "" {
-		httpreply.NotFound(w, "no indexing in progress under that name")
-		return
-	}
-	res, err := st.knowledgeMutate(r.Context(), map[string]any{
-		keySubcommand: "cancel",
-		"operationId": opID,
+	st.knowledgeWrite(w, r, "knowledge cancel", func(ctx context.Context) engineReply {
+		opID, err := st.knowledgeOperationID(ctx, name)
+		if err != nil {
+			return knowledgeFailure(err)
+		}
+		if opID == "" {
+			return knowledgeNotFound("no indexing in progress under that name")
+		}
+		return knowledgeMessage(st.knowledgeMutate(ctx, map[string]any{
+			keySubcommand: "cancel",
+			"operationId": opID,
+		}))
 	})
-	if err != nil {
-		writeKnowledgeErr(w, err)
-		return
-	}
-	if !res.Success {
-		httpreply.NotFound(w, cleanKnowledgeMsg(res.Message))
-		return
-	}
-	webhttp.WriteJSON(w, knowledgeMessageResponse{Message: res.Message})
 }
 
 func (st *Settings) knowledgeOperationID(ctx context.Context, name string) (string, error) {
@@ -253,20 +247,21 @@ func (st *Settings) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, reason)
 		return
 	}
-	res, err := st.knowledgeMutate(r.Context(), map[string]any{
-		keySubcommand: "add",
-		"name":        name,
-		"path":        abs,
+	st.knowledgeWrite(w, r, "knowledge add", func(ctx context.Context) engineReply {
+		res, err := st.knowledgeMutate(ctx, map[string]any{
+			keySubcommand: "add",
+			"name":        name,
+			"path":        abs,
+		})
+		if err != nil {
+			return knowledgeFailure(err)
+		}
+		if !res.Success {
+			msg := cleanKnowledgeMsg(res.Message)
+			return engineReply{err: errors.New(msg), write: func(w http.ResponseWriter) { httpreply.BadRequest(w, msg) }}
+		}
+		return knowledgeConfirmed(res)
 	})
-	if err != nil {
-		writeKnowledgeErr(w, err)
-		return
-	}
-	if !res.Success {
-		httpreply.BadRequest(w, cleanKnowledgeMsg(res.Message))
-		return
-	}
-	webhttp.WriteJSON(w, knowledgeMessageResponse{Message: res.Message})
 }
 
 // KAS matches path, then name. Missing is 404.
@@ -276,19 +271,19 @@ func (st *Settings) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request
 		httpreply.BadRequest(w, "name required")
 		return
 	}
-	res, err := st.knowledgeMutate(r.Context(), map[string]any{
-		keySubcommand: "remove",
-		"target":      name,
+	st.knowledgeWrite(w, r, "knowledge remove", func(ctx context.Context) engineReply {
+		res, err := st.knowledgeMutate(ctx, map[string]any{
+			keySubcommand: "remove",
+			"target":      name,
+		})
+		if err != nil {
+			return knowledgeFailure(err)
+		}
+		if !res.Success {
+			return knowledgeNotFound(cleanKnowledgeMsg(res.Message))
+		}
+		return engineReply{write: webhttp.Ok, applied: true}
 	})
-	if err != nil {
-		writeKnowledgeErr(w, err)
-		return
-	}
-	if !res.Success {
-		httpreply.NotFound(w, cleanKnowledgeMsg(res.Message))
-		return
-	}
-	webhttp.Ok(w)
 }
 
 // The name is resolved here because KAS's `update` matches `path` against sourcePath exactly.
@@ -302,28 +297,19 @@ func (st *Settings) handleKnowledgeReindex(w http.ResponseWriter, r *http.Reques
 		httpreply.BadRequest(w, "name required")
 		return
 	}
-	path, err := st.knowledgeSourcePath(r.Context(), name)
-	if err != nil {
-		writeKnowledgeErr(w, err)
-		return
-	}
-	if path == "" {
-		httpreply.NotFound(w, "no indexed knowledge base under that name")
-		return
-	}
-	res, err := st.knowledgeMutate(r.Context(), map[string]any{
-		keySubcommand: "update",
-		"path":        path,
+	st.knowledgeWrite(w, r, "knowledge reindex", func(ctx context.Context) engineReply {
+		path, err := st.knowledgeSourcePath(ctx, name)
+		if err != nil {
+			return knowledgeFailure(err)
+		}
+		if path == "" {
+			return knowledgeNotFound("no indexed knowledge base under that name")
+		}
+		return knowledgeMessage(st.knowledgeMutate(ctx, map[string]any{
+			keySubcommand: "update",
+			"path":        path,
+		}))
 	})
-	if err != nil {
-		writeKnowledgeErr(w, err)
-		return
-	}
-	if !res.Success {
-		httpreply.NotFound(w, cleanKnowledgeMsg(res.Message))
-		return
-	}
-	webhttp.WriteJSON(w, knowledgeMessageResponse{Message: res.Message})
 }
 
 // knowledgeSourcePath answers the source path of the settled base named name, or "". In-flight
@@ -347,6 +333,40 @@ func (st *Settings) knowledgeMutate(ctx context.Context, params map[string]any) 
 		return nil, err
 	}
 	return parseKnowledgeResult(raw)
+}
+
+// knowledgeWrite runs a knowledge change as an engine mutation, so the list refetches on knowledge_changed once it
+// lands. The lookup a change resolves its target with runs inside call, under the same answer budget.
+func (st *Settings) knowledgeWrite(w http.ResponseWriter, r *http.Request, verb string, call func(context.Context) engineReply) {
+	st.lifecycle.answerEngineMutation(w, r, engineMutation{verb: verb, changed: st.broadcastKnowledgeChanged, call: call})
+}
+
+func (st *Settings) broadcastKnowledgeChanged() {
+	st.broadcast(context.Background(), marotte.NewEvent(marotte.EventKnowledgeChanged, "", marotte.KnowledgeChangedPayload{}))
+}
+
+// knowledgeMessage answers a change whose refusal means its target is missing (404) with KAS's confirmation.
+func knowledgeMessage(res *kasKnowledgeResult, err error) engineReply {
+	if err != nil {
+		return knowledgeFailure(err)
+	}
+	if !res.Success {
+		return knowledgeNotFound(cleanKnowledgeMsg(res.Message))
+	}
+	return knowledgeConfirmed(res)
+}
+
+func knowledgeConfirmed(res *kasKnowledgeResult) engineReply {
+	body := knowledgeMessageResponse{Message: res.Message}
+	return engineReply{write: func(w http.ResponseWriter) { webhttp.WriteJSON(w, body) }, applied: true}
+}
+
+func knowledgeNotFound(msg string) engineReply {
+	return engineReply{err: errors.New(msg), write: func(w http.ResponseWriter) { httpreply.NotFound(w, msg) }}
+}
+
+func knowledgeFailure(err error) engineReply {
+	return engineReply{err: err, write: func(w http.ResponseWriter) { writeKnowledgeErr(w, err) }}
 }
 
 func writeKnowledgeErr(w http.ResponseWriter, err error) {

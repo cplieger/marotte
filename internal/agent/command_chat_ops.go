@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -62,21 +63,27 @@ func (rt *Runtime) beginSteerTeardown(ctx context.Context, chatID marotte.ChatID
 	}
 }
 
-// sessionDeleteTimeout bounds one session/delete: KAS quiesces an active turn first.
-const sessionDeleteTimeout = 30 * time.Second
+// sessionDeleteTimeout bounds one session/delete, extended through an engine stall (engineOwner.stallAware): KAS
+// quiesces an active turn first. A var for tests.
+var sessionDeleteTimeout = 30 * time.Second
 
-// deleteSessions sends an engine-level session/delete for every id in the chain. A refusal Warns; Reap is the
-// fallback.
+// deleteSessions sends an engine-level session/delete for every id in the chain. A refusal or a timeout Warns; Reap is
+// the fallback.
 func (rt *Runtime) deleteSessions(ctx context.Context, chatID marotte.ChatID, chain []string) {
 	for _, id := range chain {
 		if id == "" {
 			continue
 		}
-		dctx, cancel := context.WithTimeout(ctx, sessionDeleteTimeout)
+		dctx, cancel := rt.engine.stallAware(ctx, sessionDeleteTimeout)
 		_, err := rt.engine.rawCall(dctx, "session delete", marotte.MethodSessionDelete,
 			map[string]any{marotte.KeySessionID: id})
+		late := errors.Is(dctx.Err(), context.DeadlineExceeded)
 		cancel()
-		if err != nil {
+		switch {
+		case err != nil && late:
+			slog.Warn("delete: kiro-cli did not answer session/delete in time and may still apply it; the reaper removes its files either way",
+				"session_id", id, "chat_id", chatID)
+		case err != nil:
 			slog.Warn("delete: session delete failed; the reaper removes it", "session_id", id, "chat_id", chatID, "error", rpcerr.Text(err))
 		}
 	}

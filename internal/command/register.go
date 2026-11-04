@@ -38,6 +38,16 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		},
 		Runs:     r.Runs,
 		Sessions: r.Sessions,
+		Detach: func(ctx context.Context, fn func(context.Context)) {
+			// Before the answer, so Shutdown waits for the teardown.
+			r.Lifecycle.InflightAdd(1)
+			dctx, cancel := r.Lifecycle.TurnContext(ctx)
+			go func() {
+				defer r.Lifecycle.InflightDone()
+				defer cancel()
+				fn(dctx)
+			}()
+		},
 	})
 
 	// The handlers take the narrower chatStore; only the coordinator writes keep facts.

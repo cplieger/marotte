@@ -427,8 +427,47 @@ func (e *fakeEngine) RefreshContentCollection(ctx context.Context) (bool, error)
 
 func (*fakeEngine) KASLogDir() string { return "" }
 
-func (*fakeEngine) StallAware(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, d)
+// StallAware stands in for bridge.Engine's: the budget expires at d unless Stalled reads true then, and is
+// checked again every d while it does. Expiry reports context.DeadlineExceeded, as the real one does.
+func (e *fakeEngine) StallAware(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	inner, cancel := context.WithCancel(ctx)
+	sc := &fakeStallCtx{Context: inner}
+	go func() {
+		timer := time.NewTimer(d)
+		defer timer.Stop()
+		for {
+			select {
+			case <-inner.Done():
+				return
+			case <-timer.C:
+				if e.Stalled() {
+					timer.Reset(d)
+					continue
+				}
+				sc.mu.Lock()
+				sc.err = context.DeadlineExceeded
+				sc.mu.Unlock()
+				cancel()
+				return
+			}
+		}
+	}()
+	return sc, cancel
+}
+
+type fakeStallCtx struct {
+	context.Context
+	err error
+	mu  sync.Mutex
+}
+
+func (c *fakeStallCtx) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return c.err
+	}
+	return c.Context.Err()
 }
 
 func (e *fakeEngine) Stalled() bool {
