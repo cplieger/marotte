@@ -810,11 +810,7 @@ func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Reci
 	if source == "" {
 		return marotte.Recipe{}, errMissingRecipeSource
 	}
-	recipes, held, err := rs.recipes.get(ctx, rs.lifecycle, rs.fetchRecipes)
-	if err == nil && held && !slices.ContainsFunc(recipes, func(r marotte.Recipe) bool { return r.Source == source }) {
-		// recipeCatalog says why a hold can lack a listed recipe.
-		recipes, err = rs.recipes.fresh(ctx, rs.lifecycle, rs.fetchRecipes, 0)
-	}
+	recipes, err := rs.recipes.live(ctx, rs.lifecycle, rs.fetchRecipes)
 	if err != nil {
 		return marotte.Recipe{}, err
 	}
@@ -870,16 +866,10 @@ type kasRecipe struct {
 	BuiltIn         bool              `json:"builtIn"`
 }
 
-// listRecipes answers the held catalog (recipeCatalog), listing only when none is held.
-func (rs *Runs) listRecipes(ctx context.Context) ([]marotte.Recipe, error) {
-	recipes, _, err := rs.recipes.get(ctx, rs.lifecycle, rs.fetchRecipes)
-	return recipes, err
-}
-
 // recipeList is the list a person opens: a fresh listing, or the held catalog once that listing outlasts
 // recipeListPatience.
 func (rs *Runs) recipeList(ctx context.Context) ([]marotte.Recipe, error) {
-	return rs.recipes.fresh(ctx, rs.lifecycle, rs.fetchRecipes, recipeListPatience)
+	return rs.recipes.display(ctx, rs.lifecycle, rs.fetchRecipes, recipeListPatience)
 }
 
 // fetchRecipes walks KAS's whole catalog; KAS admits every recipe file on each call.

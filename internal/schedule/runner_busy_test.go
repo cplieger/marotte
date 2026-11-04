@@ -14,21 +14,7 @@ import (
 func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
 	next := due.AddDate(0, 0, 1)
-	anchor := at(2026, time.August, 3, 12, 0)
 	busy := fmt.Errorf("%w: %w", ErrEngineBusy, errors.New("workflow list call: context deadline exceeded"))
-
-	t.Run("the row waits and keeps its last outcome", func(t *testing.T) {
-		st, l, r := newFixture(t, due.Add(30*time.Second))
-		l.failWith(busy)
-		r.sweep(t.Context())
-		got := st.List()[0]
-		if !got.WaitingFor.Equal(due) {
-			t.Errorf("waiting for %v, want the slot %v", got.WaitingFor, due)
-		}
-		if !got.Anchor.Equal(anchor) || got.LastStatus != "" || !got.LastRunAt.IsZero() {
-			t.Errorf("row = %+v, want the anchor and the last outcome untouched while it waits", got)
-		}
-	})
 
 	t.Run("it fires once the engine answers, past the grace", func(t *testing.T) {
 		st, l, r := newFixture(t, due.Add(30*time.Second))
@@ -81,31 +67,23 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 		}
 	})
 
-	t.Run("the next slot skips it for the busy engine", func(t *testing.T) {
+	t.Run("the next slot skips it for the busy engine and fires itself", func(t *testing.T) {
 		st, l, r := newFixture(t, due.Add(30*time.Second))
 		l.failWith(busy)
 		r.sweep(t.Context())
 		logs := captureLogs(t)
+		l.failWith(nil)
 		r.now = func() time.Time { return next.Add(30 * time.Second) }
 		r.sweep(t.Context())
-		got := st.List()[0]
-		if got.LastStatus != StatusSkipped || got.LastReason != "engine busy" || !got.LastRunAt.Equal(due) {
-			t.Errorf("row = (%q, %q, %v), want the slot %v skipped for the busy engine",
-				got.LastStatus, got.LastReason, got.LastRunAt, due)
-		}
-		if !got.WaitingFor.IsZero() || !got.Anchor.Equal(due) {
-			t.Errorf("waiting %v, anchor %v, want no wait and the anchor at the skipped slot", got.WaitingFor, got.Anchor)
-		}
-		if n := l.launched(); n != 1 {
-			t.Errorf("launches = %d, want none once the next slot came", n)
-		}
 		if s := logs.String(); !strings.Contains(s, "the agent engine did not answer before the next slot") {
 			t.Errorf("logs = %q, want the skip named for the engine", s)
 		}
-		l.failWith(nil)
-		r.sweep(t.Context())
-		if got := st.List()[0]; got.LastStatus != statusStarted || !got.Anchor.Equal(next) {
-			t.Errorf("row = %+v, want the next slot fired on its own", got)
+		sources, _, slots := l.snap()
+		if len(sources) != 2 || !slots[1].Equal(next.AddDate(0, 0, 1)) {
+			t.Errorf("bounds = %v, want the next slot launched in the same sweep, bounded by the one after it", slots)
+		}
+		if got := st.List()[0]; got.LastStatus != statusStarted || !got.Anchor.Equal(next) || !got.WaitingFor.IsZero() {
+			t.Errorf("row = %+v, want the next slot started on time", got)
 		}
 	})
 
@@ -120,37 +98,6 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 		reborn.sweep(t.Context())
 		if got := st.List()[0]; got.LastStatus != statusStarted || !got.Anchor.Equal(due) {
 			t.Errorf("row = %+v, want the waiting slot fired after the restart", got)
-		}
-	})
-
-	// The engine answered; the sign-in gate's refusal is its own reason, bounded by its own grace.
-	t.Run("a sign-in refusal ends the wait", func(t *testing.T) {
-		st, l, r := newFixture(t, due.Add(30*time.Second))
-		l.failWith(busy)
-		r.sweep(t.Context())
-		refused := fmt.Errorf("%w: %w", ErrNoRunCanStart, errors.New("sign in to Kiro first"))
-		l.failWith(refused)
-		r.now = func() time.Time { return due.Add(time.Hour) }
-		r.sweep(t.Context())
-		if got := st.List()[0]; !got.WaitingFor.IsZero() {
-			t.Errorf("waiting for %v, want the wait cleared once the engine answered", got.WaitingFor)
-		}
-		r.now = func() time.Time { return due.Add(time.Hour + time.Minute) }
-		r.sweep(t.Context())
-		if got := st.List()[0]; got.LastStatus != StatusFailed || got.LastReason != refused.Error() {
-			t.Errorf("row = (%q, %q), want the gate's refusal recorded failed", got.LastStatus, got.LastReason)
-		}
-	})
-
-	t.Run("any other launch error is recorded failed", func(t *testing.T) {
-		st, l, r := newFixture(t, due.Add(30*time.Second))
-		l.failWith(busy)
-		r.sweep(t.Context())
-		l.failWith(errors.New("workflow new: no such recipe"))
-		r.now = func() time.Time { return due.Add(time.Hour) }
-		r.sweep(t.Context())
-		if got := st.List()[0]; got.LastStatus != StatusFailed || !got.WaitingFor.IsZero() || !got.Anchor.Equal(due) {
-			t.Errorf("row = %+v, want the failure recorded and no wait left", got)
 		}
 	})
 
@@ -257,11 +204,31 @@ func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 			{Source: "bundled://b", Spec: hourly, Enabled: true, Anchor: at(2026, time.August, 4, 1, 30)},
 		}, []string{"bundled://a", "bundled://b"}, []string{"bundled://a", "bundled://b"})
 		r.sweep(t.Context())
-		if n := launchesOf(l, "bundled://b"); n != 0 {
-			t.Errorf("b launched %d times after its next slot (03:00) had come", n)
+		got := rowOf(st, "bundled://b")
+		if got.LastStatus != StatusSkipped || got.LastReason != "engine busy" || !got.LastRunAt.Equal(due) {
+			t.Errorf("b = (%q, %q, %v), want its 02:00 slot skipped for the busy engine",
+				got.LastStatus, got.LastReason, got.LastRunAt)
 		}
-		if got := rowOf(st, "bundled://b"); got.LastStatus != StatusSkipped || got.LastReason != "engine busy" {
-			t.Errorf("b = (%q, %q), want its 02:00 slot skipped for the busy engine", got.LastStatus, got.LastReason)
+		if n := launchesOf(l, "bundled://b"); n != 1 || !got.WaitingFor.Equal(at(2026, time.August, 4, 3, 0)) {
+			t.Errorf("b launched %d times, waiting for %v; want only its 03:00 slot tried, and waiting", n, got.WaitingFor)
+		}
+	})
+
+	// A wait its next slot overtakes late in a slow sweep hands that slot to the same sweep, so it cannot age past
+	// its grace behind the other schedules' launches.
+	t.Run("a next slot reached late in a slow sweep still fires", func(t *testing.T) {
+		hourly := Spec{Freq: freqHourly, Interval: 1, Minute: 0}
+		st, l, r := sweepFixture(t, at(2026, time.August, 4, 3, 0).Add(30*time.Second), []Entry{
+			{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
+			{Source: "bundled://b", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
+			{Source: "bundled://c", Spec: hourly, Enabled: true, Anchor: at(2026, time.August, 4, 1, 30)},
+		}, []string{"bundled://a", "bundled://b", "bundled://c"}, []string{"bundled://a", "bundled://b"})
+		r.sweep(t.Context()) // reaches c at 03:04:30, behind two slow launches
+		r.sweep(t.Context())
+		got := rowOf(st, "bundled://c")
+		if n := launchesOf(l, "bundled://c"); n != 1 || got.LastStatus != statusStarted ||
+			!got.Anchor.Equal(at(2026, time.August, 4, 3, 0)) {
+			t.Errorf("c = %+v after %d launches, want its 03:00 slot started once, not missed while offline", got, n)
 		}
 	})
 

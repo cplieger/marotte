@@ -2929,7 +2929,7 @@ export interface RunFinishedPayload {
  * RunLaunchRequest is POST /api/runs's body: launch one recipe, PARENTLESS.
  * //
  * Source is `_kiro/workflow/listRecipes`' own value verbatim. The server
- * re-validates it against its listRecipes catalog rather than trusting it, so the
+ * re-validates it against a fresh listRecipes call rather than trusting it, so the
  * endpoint cannot be steered at an arbitrary file even though the value looks like
  * a path.
  */

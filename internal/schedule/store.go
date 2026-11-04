@@ -65,7 +65,7 @@ type Entry struct {
 	Name       string    `json:"name,omitempty"`
 	LastStatus status    `json:"last_status,omitempty"`
 	LastReason string    `json:"last_reason,omitempty"`
-	// WaitingFor is the due slot whose launch is retried until the agent engine answers (Runner.wait); zero when none.
+	// WaitingFor is the due slot whose launch is retried until the agent engine answers (Runner.settle); zero when none.
 	// It is persisted so a restart resumes the wait instead of skipping the slot as missed while offline.
 	WaitingFor time.Time `json:"waiting_for,omitzero"`
 	// LastRunID is the workflow the last fire launched: the only run whose outcome may land on the row.

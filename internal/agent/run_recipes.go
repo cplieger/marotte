@@ -24,16 +24,16 @@ var recipeListPatience = 5 * time.Second
 var (
 	// errRecipeListSlow is a listing that ran past its deadline: the engine is busy, not refusing.
 	errRecipeListSlow = errors.New("the recipe list is still loading, try again in a few seconds")
-	// errEngineSlow is a launch the engine did not answer in time before the run was created (launchOrigin.unanswered).
+	// errEngineSlow is a launch the engine did not answer in time before the run was created (unanswered).
 	errEngineSlow          = errors.New("the agent engine is busy, try again in a few seconds")
 	errUnknownRecipe       = errors.New("unknown recipe source")
 	errMissingRecipeSource = errors.New("missing recipe source")
 )
 
-// recipeCatalog holds the last listRecipes answer until KAS reports a catalog change or the engine ends, so a launch
-// or a schedule save reads it instead of walking every recipe file. Concurrent readers share one listing. KAS 2.37.1
-// reports a change only through a session opened with workflows on, so a hold can lack a recipe added while none was
-// live: a source missing from it is looked up afresh (fresh), and the recipe list a person opens lists afresh.
+// recipeCatalog shares one listRecipes call among concurrent readers and holds its last answer for the recipe list a
+// person opens while a listing is slow. The hold is a display hint only: KAS 2.37.1 reports a catalog change only
+// through a session opened with workflows on, so a held name can be stale, and a decision (a launch, a schedule save,
+// the one-live-run rule) reads live.
 type recipeCatalog struct {
 	flight *recipeListing
 	held   []marotte.Recipe
@@ -50,7 +50,8 @@ type recipeListing struct {
 	recipes []marotte.Recipe
 }
 
-// invalidate drops the held catalog and detaches the listing in flight, whose waiters still get its answer.
+// invalidate drops the held catalog and detaches the listing in flight, whose waiters still get its answer, so a
+// reader after a reported change starts a listing of its own.
 func (c *recipeCatalog) invalidate() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -58,29 +59,23 @@ func (c *recipeCatalog) invalidate() {
 	c.held, c.flight = nil, nil
 }
 
-// get answers the held catalog, or joins or starts the one listing; held reports which. list runs on lt's context,
-// never on a caller's, so a caller walking away does not fail the others; each caller waits only as long as its ctx.
-func (c *recipeCatalog) get(
+// live joins or starts the one listing, never answering the hold. list runs on lt's context, never on a caller's,
+// so a caller walking away does not fail the others; each caller waits only as long as its ctx.
+func (c *recipeCatalog) live(
 	ctx context.Context, lt *lifetime, list func(context.Context) ([]marotte.Recipe, error),
-) (recipes []marotte.Recipe, held bool, err error) {
+) ([]marotte.Recipe, error) {
 	c.mu.Lock()
-	if c.held != nil {
-		recipes = c.held
-		c.mu.Unlock()
-		return recipes, true, nil
-	}
 	f, err := c.joinLocked(lt, list)
 	c.mu.Unlock()
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	recipes, err = f.wait(ctx)
-	return recipes, false, err
+	return f.wait(ctx)
 }
 
-// fresh joins or starts a listing even over a held catalog, whose answer then replaces the hold. A positive patience
-// answers the hold, when there is one, once the listing has run that long or ran out of time; zero waits it out.
-func (c *recipeCatalog) fresh(
+// display is live for the recipe list a person opens, answering the hold, when there is one, once the listing has
+// run patience long or ran out of time.
+func (c *recipeCatalog) display(
 	ctx context.Context, lt *lifetime, list func(context.Context) ([]marotte.Recipe, error), patience time.Duration,
 ) ([]marotte.Recipe, error) {
 	c.mu.Lock()
@@ -90,7 +85,7 @@ func (c *recipeCatalog) fresh(
 	if err != nil {
 		return nil, err
 	}
-	if held == nil || patience <= 0 {
+	if held == nil {
 		return f.wait(ctx)
 	}
 	t := time.NewTimer(patience)
@@ -164,22 +159,26 @@ func classifyRecipeListErr(err error) error {
 // writeEngineSlow answers a listing or a launch the engine did not answer in time with 503 and a Retry-After,
 // reporting whether err was one.
 func writeEngineSlow(w http.ResponseWriter, err error) bool {
-	var reason, code string
 	switch {
 	case errors.Is(err, errRecipeListSlow):
-		reason, code = errRecipeListSlow.Error(), recipeListSlowCode
+		writeTryLater(w, errRecipeListSlow.Error(), recipeListSlowCode)
 	case errors.Is(err, errEngineSlow):
-		reason, code = errEngineSlow.Error(), engineSlowCode
+		writeTryLater(w, errEngineSlow.Error(), engineSlowCode)
 	default:
 		return false
 	}
+	return true
+}
+
+// writeTryLater answers 503 with a Retry-After and the machine reason code.
+func writeTryLater(w http.ResponseWriter, reason, code string) {
 	w.Header().Set("Retry-After", strconv.Itoa(engineSlowRetryAfter))
 	webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSONWithCode(reason, code))
-	return true
 }
 
 // The 503s' machine reasons, so a client branches on them rather than on the sentence.
 const (
-	recipeListSlowCode = "recipe_list_slow"
-	engineSlowCode     = "engine_slow"
+	recipeListSlowCode      = "recipe_list_slow"
+	engineSlowCode          = "engine_slow"
+	modelListUnreadableCode = "model_list_unreadable"
 )

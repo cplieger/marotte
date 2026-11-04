@@ -257,7 +257,7 @@ func TestListRecipes_CarriesKASsValidationError(t *testing.T) {
 			{"name":"fix-and-review","source":"/w/fix-and-review.workflow.json","validationError":"Invalid workflow: include 'review' (./review-seats.workflow.json): recipe was not resolved"},
 			{"name":"publish","source":"bundled://publish"}]}`),
 	}
-	got, err := h.runs.listRecipes(t.Context())
+	got, err := h.runs.recipeList(t.Context())
 	if err != nil {
 		t.Fatalf("listRecipes: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestListRecipes_KeysEachRecipeAsTheCapturedStandingKeysItsFile(t *testing.T
 	}
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowListRecipes: capture.ListRecipes}
-	recipes, err := h.runs.listRecipes(t.Context())
+	recipes, err := h.runs.recipeList(t.Context())
 	if err != nil {
 		t.Fatalf("listRecipes = %v", err)
 	}
