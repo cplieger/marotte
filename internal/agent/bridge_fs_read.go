@@ -49,9 +49,10 @@ func (in *inbound) handleFSRequest(_ context.Context, chatID marotte.ChatID, ori
 // answering { content }. line/limit are 1-indexed and inclusive per ACP.
 func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	var p struct {
-		Line  *int   `json:"line,omitempty"`
-		Limit *int   `json:"limit,omitempty"`
-		Path  string `json:"path"`
+		Line      *int              `json:"line,omitempty"`
+		Limit     *int              `json:"limit,omitempty"`
+		Path      string            `json:"path"`
+		SessionID marotte.SessionID `json:"sessionId"`
 	}
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, fmt.Errorf("parse params: %w", err))
@@ -61,7 +62,7 @@ func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, ori
 		in.respondFSError(ctx, chatID, origin, msg, errors.New("path is required"))
 		return
 	}
-	target, err := in.lifetime.confine(ctx, p.Path, fsRead)
+	target, err := in.confineRead(ctx, p.SessionID, p.Path)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
