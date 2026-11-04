@@ -24,8 +24,8 @@ import (
 // fileName is the store's file, beside mcp.json in the config dir.
 const fileName = "schedules.json"
 
-// errNotFound means no schedule owns the given id, or its row is a later life than the one the writer names (Row).
-var errNotFound = errors.New("schedule not found")
+// ErrNotFound means no schedule owns the given id, or its row is a later life than the one the writer names (Row).
+var ErrNotFound = errors.New("schedule not found")
 
 // status is how a schedule's last slot ended, as far as the server knows.
 type status string
@@ -350,13 +350,13 @@ func (s *Store) recordRun(ctx context.Context, run Run, set func(e *Entry) bool)
 }
 
 // update is every writer's one path to a row: it applies set to row while the stored row is still that life, and
-// persists when set reports a change. errNotFound once the row is deleted or recreated.
+// persists when set reports a change. ErrNotFound once the row is deleted or recreated.
 func (s *Store) update(ctx context.Context, row Row, set func(e *Entry) bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.entries[row.ID]
 	if !ok || e.Life != row.Life {
-		return errNotFound
+		return ErrNotFound
 	}
 	if !set(&e) {
 		return nil

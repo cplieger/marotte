@@ -316,7 +316,7 @@ func (r *Runner) settle(ctx context.Context, e *Entry, t *slotTurn) error {
 		err = r.store.recordFire(wctx, row, t.due, t.runID, o)
 	}
 	switch {
-	case errors.Is(err, errNotFound):
+	case errors.Is(err, ErrNotFound):
 		slog.Info("schedule slot not recorded: the schedule was deleted or recreated during its launch",
 			"id", id, "due", t.due, "run_id", t.runID)
 	case err != nil:

@@ -84,11 +84,11 @@ func TestStore_ARunOfARecreatedScheduleLeavesItsSuccessorAlone(t *testing.T) {
 	if err := st.Put(t.Context(), &reborn); err != nil {
 		t.Fatalf("Put (recreate): %v", err)
 	}
-	if err := st.RecordStart(t.Context(), stale); !errors.Is(err, errNotFound) {
-		t.Errorf("RecordStart = %v, want errNotFound for a deleted life", err)
+	if err := st.RecordStart(t.Context(), stale); !errors.Is(err, ErrNotFound) {
+		t.Errorf("RecordStart = %v, want ErrNotFound for a deleted life", err)
 	}
-	if err := st.RecordEnding(t.Context(), stale, Outcome{Status: StatusFailed, Reason: "step build failed"}); !errors.Is(err, errNotFound) {
-		t.Errorf("RecordEnding = %v, want errNotFound for a deleted life", err)
+	if err := st.RecordEnding(t.Context(), stale, Outcome{Status: StatusFailed, Reason: "step build failed"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("RecordEnding = %v, want ErrNotFound for a deleted life", err)
 	}
 	if got := st.List()[0]; got.LastRunID != "" || got.LastStatus != "" || got.LastReason != "" || !got.LastRunAt.IsZero() {
 		t.Errorf("recreated row = %+v, want no run recorded", got)

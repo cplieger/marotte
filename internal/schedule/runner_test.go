@@ -682,7 +682,7 @@ func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 
 func TestRecordOutcome_UnknownSchedule(t *testing.T) {
 	st := mustStore(t)
-	if err := st.RecordOutcome(t.Context(), Run{ScheduleID: "gone", WorkflowID: "wf-1"}, Outcome{Status: StatusFailed}); !errors.Is(err, errNotFound) {
+	if err := st.RecordOutcome(t.Context(), Run{ScheduleID: "gone", WorkflowID: "wf-1"}, Outcome{Status: StatusFailed}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
 }

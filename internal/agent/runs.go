@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -126,7 +127,11 @@ func (rs *Runs) writeSchedule(run schedule.Run, write func() error) {
 	if rs.schedules == nil || run.ScheduleID == "" {
 		return
 	}
-	if err := write(); err != nil {
+	switch err := write(); {
+	case errors.Is(err, schedule.ErrNotFound):
+		slog.Info("schedule outcome not recorded: the schedule was deleted or recreated during its run",
+			"schedule_id", run.ScheduleID, "workflow_id", run.WorkflowID)
+	case err != nil:
 		slog.Warn("could not record the schedule's outcome",
 			"schedule_id", run.ScheduleID, "workflow_id", run.WorkflowID, "error", err)
 	}
