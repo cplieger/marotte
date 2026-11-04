@@ -418,3 +418,53 @@ func TestWriteFrame_PartialChunkProgressIsNotAStall(t *testing.T) {
 	default:
 	}
 }
+
+// A frame read while stdin does not move means node's event loop runs and the relay is the stuck reader, so node's
+// CPU buys no time and the write is reaped at writeStall, not the ceiling.
+func TestWriteFrame_AReaderStuckWhileFramesFlowIsReaped(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	t.Cleanup(func() { _ = pw.Close(); _ = pr.Close() })
+	shortenWriteStall(t, 100*time.Millisecond)
+	shortenStallProbe(t, 20*time.Millisecond, 10*time.Second)
+	b := NewEngine("/nonexistent", "/work")
+	b.cpuTicks = advancingCPU()
+	b.stdin.Store(&stdinPipe{w: pw})
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-tick.C:
+				b.noteFrame(1)
+			}
+		}
+	}()
+
+	err = awaitWrite(t, writeInBackground(b, 256*1024), 3*time.Second)
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("writeFrame to a stuck reader while frames flowed = %v, want a stall", err)
+	}
+	waitReaped(t, b, "a stuck reader while frames flowed")
+	if got := b.Exit().Reason; got != ExitStdinStalled {
+		t.Errorf("exit reason = %q, want %q", got, ExitStdinStalled)
+	}
+}
+
+// The shipped ceiling outlasts the longest event-loop stall measured (81.6 s, kirodotdev/Kiro#12261) and holds writeMu
+// no longer than any other engine-silence bound waits.
+func TestWriteStallCeiling_WaitsOutTheMeasuredStallAndNoLonger(t *testing.T) {
+	const measured = 81600 * time.Millisecond
+	if writeStallCeiling <= measured {
+		t.Errorf("writeStallCeiling = %v, want above the %v stall", writeStallCeiling, measured)
+	}
+	if writeStallCeiling > stallExtendCeiling {
+		t.Errorf("writeStallCeiling = %v, want at most stallExtendCeiling %v", writeStallCeiling, stallExtendCeiling)
+	}
+}

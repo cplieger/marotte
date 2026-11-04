@@ -516,19 +516,20 @@ func (e *Engine) Respond(ctx context.Context, id int64, result any, err error) e
 const writeChunk = 64 << 10
 
 // writeStall is the window in which one chunk's write to kiro-cli's stdin must move bytes or see the node engine's CPU
-// advance; a backstop, so not a setting, and a var for tests. writeMu serialises every outbound frame, so one wedged
-// write silently blocks every later Respond, Call and Notify, session/cancel included. A node engine that stops
-// reading is ended first by the kiro-cli relay, which buffers one frame plus about 64 KiB and then gives up after 15 s
-// with no progress (kiro-cli 2.37).
+// advance with no frame read; a backstop, so not a setting, and a var for tests. writeMu serialises every outbound
+// frame, so one wedged write silently blocks every later Respond, Call and Notify, session/cancel included. A node
+// engine that stops reading is ended first by the kiro-cli relay, which buffers one frame plus about 64 KiB and then
+// gives up after 15 s with no progress (kiro-cli 2.37).
 var writeStall = 30 * time.Second
 
 // stallProbeAfter is when a chunk's write first samples the engine's CPU: a write that finishes sooner never reads
 // /proc. A var for tests.
 var stallProbeAfter = time.Second
 
-// writeStallCeiling caps how long one chunk may wait on an engine that burns CPU but never drains: a livelock. Equal to
-// replayBudget, the longest budget of any one call. A var for tests.
-var writeStallCeiling = 300 * time.Second
+// writeStallCeiling caps how long one chunk may wait on an engine that burns CPU but never drains, above the 81.6 s
+// event-loop stall measured on kiro-cli 2.37 (kirodotdev/Kiro#12261): every frame waits on writeMu meanwhile. A var
+// for tests.
+var writeStallCeiling = 120 * time.Second
 
 // writeFrame serialises stdin writes, refuses each once the read loop exited (readerExited, loaded under writeMu so
 // closePending's wait orders it), and writes in chunks, each watched by a stallWatch. Any write failure ends the engine:

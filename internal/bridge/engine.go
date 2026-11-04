@@ -74,8 +74,8 @@ const (
 	ExitEnded exitReason = "ended"
 	// exitReadError means reading stdout failed.
 	exitReadError exitReason = "read_error"
-	// ExitStdinStalled means a write chunk was reaped by its stallWatch: no bytes and no engine CPU in a writeStall
-	// window, or no bytes in writeStallCeiling.
+	// ExitStdinStalled means a write chunk was reaped by its stallWatch: no bytes in a writeStall window that saw no
+	// engine CPU or a frame, or no bytes in writeStallCeiling.
 	ExitStdinStalled exitReason = "stdin_stalled"
 	// exitWriteFailed means a write to stdin failed or was short, so the frames after it cannot be read.
 	exitWriteFailed exitReason = "write_failed"
