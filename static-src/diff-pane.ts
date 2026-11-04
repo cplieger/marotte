@@ -3,7 +3,7 @@
 
 import { lineDiff, wordMarks, type CharRange, type DiffLine } from "./diff.js";
 import { highlightMarked, resolveLangHint } from "./highlight.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { CHROME_ATTR } from "./chrome-attr.js";
 
 interface DiffPaneOpts {

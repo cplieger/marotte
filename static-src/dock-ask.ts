@@ -1,6 +1,6 @@
 // The prose-question card's regions (`user-input.ts`).
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { attachClamp } from "./clamp-text.js";
 
 /**

@@ -17,7 +17,7 @@
 # (30-utilities) afterwards flipped ZERO pairs — the layers were pure risk.
 #
 # Ordering rules that carry weight:
-#   00-02  header (layer decl + @property defs), tokens, ui-primitives base +
+#   00-02  header (layer decl + @property defs), tokens, @cplieger/ui base +
 #          skin (unlayered, skin wins by order), reset
 #   03     base — shared element defaults; every feature file may override
 #   10-29  feature stylesheets, split by feature. 10-shell-app is FIRST so
@@ -43,10 +43,10 @@
 # cascade at all.
 00-fonts.css
 01-tokens.css
-# @cplieger/ui-primitives headless base (structure + motion), then marotte's
+# @cplieger/ui headless base (structure + motion), then marotte's
 # skin. Both unlayered so the skin's .uip-* rules win by source order. The base
 # is the vendored package stylesheet (resolved via ../node_modules at build).
-../node_modules/@cplieger/ui-primitives/css/ui-primitives.css
+../node_modules/@cplieger/ui/css/ui-primitives.css
 04-uip-skin.css
 02-reset.css
 03-base.css

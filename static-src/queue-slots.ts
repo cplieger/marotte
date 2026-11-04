@@ -1,4 +1,4 @@
-import { touch } from "@cplieger/reactive";
+import { touch } from "@cplieger/ui";
 import { messagesVersionOf, promptOpened, sessionBusy } from "./store.js";
 import type { PendingSteer, QueuedPrompt, Session } from "./types.js";
 

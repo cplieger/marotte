@@ -23,10 +23,10 @@ import {
   REORDER_SETTLE_MS,
   REORDER_SLOT_FADE_MS,
 } from "./tabs-drag.js";
-import { announce } from "@cplieger/ui-primitives/announce";
+import { announce } from "@cplieger/ui/announce";
 import shellCss from "./css/10-shell-app.css?raw";
 
-vi.mock("@cplieger/ui-primitives/announce", () => ({ announce: vi.fn() }));
+vi.mock("@cplieger/ui/announce", () => ({ announce: vi.fn() }));
 
 const MOUSE_SLOP = MOUSE_DRAG.slopPx;
 const TOUCH_HOLD = TOUCH_DRAG.holdMs;

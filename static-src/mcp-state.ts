@@ -11,7 +11,7 @@ import {
   type ReadonlySignal,
   type Signal,
   type Collection,
-} from "@cplieger/reactive";
+} from "@cplieger/ui";
 import {
   asObject,
   decodeArray,

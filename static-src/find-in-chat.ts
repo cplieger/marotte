@@ -1,10 +1,10 @@
 // Find in Chat (Ctrl-F / Cmd-F): a search overlay scoped to the active chat. A local DOM pass marks what is rendered;
 // the server's answer is the honest count and the step list, and stepping reveals hits the DOM cannot mark.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
-import { createPopup } from "@cplieger/ui-primitives/popup";
-import type { PopupController } from "@cplieger/ui-primitives/popup";
+import { createPopup } from "@cplieger/ui/popup";
+import type { PopupController } from "@cplieger/ui/popup";
 import { $, byId } from "./dom.js";
 import { jumpTo, onTranscriptMutate } from "./scroll.js";
 import { runServerSearch, resetServerSearch, revealHitTurn } from "./chat-search.js";

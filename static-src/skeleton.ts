@@ -1,4 +1,4 @@
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 
 import { setBusy } from "./dom.js";
 import { KEY_ATTR } from "./reconcile.js";

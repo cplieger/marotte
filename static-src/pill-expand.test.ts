@@ -231,6 +231,24 @@ function stubbedPill(fill?: (card: HTMLElement) => void): {
   return { pill, card };
 }
 
+function countedPill(): { pill: HTMLElement; ac: AbortController; collapses: () => number } {
+  const slot = document.createElement("span");
+  const pill = document.createElement("button");
+  const card = document.createElement("div");
+  slot.append(pill, card);
+  document.body.appendChild(slot);
+  hosts.push(slot);
+  const ac = new AbortController();
+  let collapses = 0;
+  makeExpandable(pill, card, {
+    signal: ac.signal,
+    onCollapse: () => {
+      collapses++;
+    },
+  });
+  return { pill, ac, collapses: () => collapses };
+}
+
 afterEach(() => {
   for (const ac of controllers.splice(0)) {
     ac.abort();
@@ -299,7 +317,6 @@ describe(
 
       pill.click();
       expect(fake.listeners()).toBe(VIEWPORT_LISTENERS_PER_CARD);
-      // dispose() hides first, so the abort teardown routes through onClose.
       controllers.splice(0)[0]?.abort();
       expect(fake.listeners()).toBe(0);
 
@@ -309,6 +326,26 @@ describe(
       window.dispatchEvent(new Event("resize"));
       await frames();
       expect(capOf(card)).toBe(atAbort);
+    });
+
+    it("collapses the pill once when the consumer aborts with the card open", () => {
+      const { pill, ac, collapses } = countedPill();
+
+      pill.click();
+      expect(pill.classList.contains("pill-expanded")).toBe(true);
+      ac.abort();
+      expect(pill.classList.contains("pill-expanded")).toBe(false);
+      expect(collapses()).toBe(1);
+    });
+
+    it("reports no collapse when the consumer aborts with the card closed", () => {
+      const { pill, ac, collapses } = countedPill();
+
+      pill.click();
+      pill.click();
+      expect(collapses()).toBe(1);
+      ac.abort();
+      expect(collapses()).toBe(1);
     });
 
     it("does no work for a frame that has not moved", async () => {

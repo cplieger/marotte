@@ -3,8 +3,8 @@
 // workflow knows — the status's verbs, what an empty step body means, and which of the run's own
 // log turns each step renders.
 
-import { batch, el, effect, signal, touch } from "@cplieger/reactive";
-import { announce } from "@cplieger/ui-primitives/announce";
+import { batch, el, effect, signal, touch } from "@cplieger/ui";
+import { announce } from "@cplieger/ui/announce";
 import { join } from "@cplieger/keyenc";
 import { openRunTab, openTab, parentChatRef, tabIdFor } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks, runPendingAsks } from "./decision-dock.js";

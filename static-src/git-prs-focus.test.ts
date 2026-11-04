@@ -62,7 +62,7 @@ vi.mock("./search-popup.js", () => ({
     shell: { setNote: vi.fn() },
   })),
 }));
-vi.mock("@cplieger/ui-primitives/dialog", () => ({
+vi.mock("@cplieger/ui/dialog", () => ({
   createDialog: vi.fn(() => ({ open: vi.fn(), close: vi.fn() })),
 }));
 

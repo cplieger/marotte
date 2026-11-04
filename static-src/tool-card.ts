@@ -21,7 +21,7 @@ import {
   silenceLabel,
   silenceMsFor,
 } from "./tool-silence.js";
-import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
+import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
 import {
   renderInfoFor,
   disclosedClaim,
@@ -37,7 +37,7 @@ import {
 import type { ToolDenial, ToolInteraction, ToolOffload } from "./types.js";
 import { buildPath } from "./route-path.js";
 import { interactionFact } from "./interaction.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 
 /** Build a tool-call element. Does not append it to the DOM. */
 export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {

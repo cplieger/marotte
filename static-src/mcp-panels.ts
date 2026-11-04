@@ -1,7 +1,7 @@
 // Add/edit modal forms (registry search, npm, remote, raw JSON, registry overrides), submit helpers and pair editors.
 
 import { $, byId } from "./dom.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { closeModal, RollingOutput } from "./modals.js";
 import {
   type Server,

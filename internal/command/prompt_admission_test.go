@@ -16,7 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// clientAPITimeout reads the shared fixture pinning @cplieger/fetch's
+// clientAPITimeout reads the shared fixture pinning @cplieger/ui/fetch's
 // API_TIMEOUT_MS — the timeout every client action dispatches under. The TS
 // half (static-src/api-timeout.node.test.ts) asserts the fixture equals the
 // INSTALLED library's constant, so a library bump fails that gate and forces a

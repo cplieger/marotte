@@ -3,7 +3,7 @@
 // It holds the reader's words alone and no control: the agent's `steer_ack` renders at its own
 // position, marked here by an attribute plus a label clause.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { attachClamp } from "../clamp-text.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_SEND, ICON_TAB_CHAT, ICON_TAB_RUN } from "../icons.js";

@@ -1,22 +1,11 @@
-/* ==========================================================================
-   @cplieger/ui-primitives — marotte SKIN.
-   ==========================================================================
-
-   The headless base stylesheet (css/ui-primitives.css, vendored from
-   @cplieger/ui-primitives and concatenated into the bundle immediately BEFORE
-   this file — see css/MANIFEST) ships STRUCTURE + MOTION only, keyed off
-   --uip-* custom properties. This file supplies the SKIN: it (1) maps every
-   --uip-* motion/duration/easing + z-index onto marotte's existing
-   --dur-* / --ease-* vocabulary and z-index ladder so the animation system stays
-   IDENTICAL, and (2) styles the .uip-* classes with the exact colors, borders,
-   radii, and shadows the hand-rolled toast/tooltip/confirm/context-menu used.
-
-   Both the base and this skin are UNLAYERED (outside marotte's @layer cascade),
-   so this file's .uip-* rules sit above the base by source order — which is why
-   the toast bottom-right override, the tooltip enter fade, etc. win. Reduced
-   motion is handled globally by 40-a11y.css (`* { transition-duration: 0.01ms
-   !important }`), which neutralizes these transitions the same near-zero way
-   the library's own reduced-motion block does. */
+/* marotte's skin for @cplieger/ui's headless base (css/ui-primitives.css), which
+   css/MANIFEST concatenates immediately BEFORE this file: it maps the --uip-*
+   motion and z-index properties onto marotte's --dur-* / --ease-* vocabulary and
+   z-index ladder, and colours the .uip-* classes. INVARIANT: both files stay
+   UNLAYERED, so these .uip-* rules beat the base by source order alone; moving
+   the skin alone into an @layer hands the base the win. Reduced motion is
+   40-a11y.css's global `transition-duration: 0.01ms !important`, which reaches
+   these transitions too. */
 
 :root {
   /* --- z-index ladder: preserve marotte's exact ORDER (modal < popover <
@@ -168,13 +157,13 @@
    rule: `info` is the neutral base, because accent ink is this app's
    text-control idiom and most `toast.info` calls are statements of fact. */
 
-/* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui-primitives */
+/* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui */
 .uip-toast--error {
   background: color-mix(in srgb, var(--c-red) 8%, var(--c-bg-primary));
   color: var(--c-red);
 }
 
-/* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui-primitives */
+/* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui */
 .uip-toast--success {
   background: color-mix(in srgb, var(--c-green) 8%, var(--c-bg-primary));
   color: var(--c-green);
@@ -267,26 +256,13 @@
   padding: 4px 8px;
   border-radius: var(--r-sm);
 
-  /* THE TRAILING SPACE IS A BORDER, NOT PADDING, and this is the same mechanism
-     27-run-card.css records for `.run-step-capture` with a different remedy.
-     `overflow: hidden` clips at the PADDING box, so block-end padding inside a
-     clip region leaves a band the first overflowing line paints its ascenders
-     into: the content box here is EXACTLY --tooltip-lines line boxes, so the
-     clamp itself lands correctly and the clip sat 4px lower, where the third
-     line rendered 3.5-4px of its 14-15px band (measured 2026-09-18 over the
-     assembled bundle: Chromium 0.286 of a line with 23-32 ink pixels per device
-     row at dpr 3, Firefox 0.267 with 26-35, WebKit 0.250 with zero ink — WebKit
-     is the one engine that keeps `display: -webkit-box` and clips the third
-     line's ink entirely, so its clean read is not a pass anywhere else).
-
-     A margin is not available (the box has a background and a shadow, and a
-     margin would put the space outside both) and the inner-wrapper shape is not
-     either, because the tooltip ELEMENT is @cplieger/ui-primitives' and this
-     rule is marotte's own skin. A BORDER is outside the clip region, and
-     `background-clip` defaults to `border-box`, so the 4px is filled with this
-     tooltip's own background and reads exactly as the padding did. The border
-     box is unchanged at 38px, so `placeAnchored` — which measures the border
-     box — is unaffected, and so is the shadow ring that outlines it. */
+  /* THE TRAILING SPACE IS A BORDER, NOT PADDING: `overflow: hidden` clips at the
+     padding box, so block-end padding would show the cap-tops of the first
+     clamped line (WebKit's `-webkit-box` hides this; Chromium and Firefox do
+     not). A margin would sit outside the background and shadow, and the element
+     is @cplieger/ui's, so no inner wrapper. The border is outside the clip and
+     painted by `background-clip: border-box`, and the border box `placeAnchored`
+     measures keeps its size. */
   padding-block: 4px 0;
   border-block-end: 4px solid transparent;
 

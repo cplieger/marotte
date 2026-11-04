@@ -413,7 +413,7 @@ func (rs *Runs) resume(ctx context.Context, workflowID string, caller controlCal
 // whether it released a lease it minted. It bounds the host session's load and the call. A var for tests.
 var retryTimeout = clientRequestBudget - 5*time.Second
 
-// clientRequestBudget is the timeout @cplieger/fetch hard-wires into every apiAction.
+// clientRequestBudget is the timeout @cplieger/ui/fetch hard-wires into every apiAction.
 const clientRequestBudget = 30 * time.Second
 
 // errRetrySlow reports a retry not handed off within retryTimeout; the REST layer answers 503.

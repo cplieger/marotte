@@ -1,6 +1,6 @@
 // Model-refusal callout (kiro-cli 2.13 refusal contract).
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import type { EntryPrompt, RefusalInfo } from "./types.js";
 import { getActive } from "./store.js";
 import { switchModel } from "./actions/chat.js";

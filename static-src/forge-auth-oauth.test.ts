@@ -13,7 +13,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   apiPostTyped: mocks.apiPostTyped,
 }));
 
-const { resetActionFramework } = await import("@cplieger/actions/testing");
+const { resetActionFramework } = await import("@cplieger/ui/actions/testing");
 const { renderDevicePrompt, renderDeviceSignIn, abortPoll, endGrantsIn } =
   await import("./forge-auth-oauth.js");
 

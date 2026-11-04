@@ -35,7 +35,7 @@
 // prose CSS in 20-editor.css, drifting from the first.
 // ---------------------------------------------------------------------------
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { renderMarkdownInto } from "./markdown.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { splitFrontMatter, type FrontMatterField } from "./front-matter.js";

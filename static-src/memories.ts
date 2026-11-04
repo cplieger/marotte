@@ -1,6 +1,6 @@
 // kiro-cli's own store: the list is refetched after every mutation, and addressed by id since titles repeat.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join as joinKey } from "@cplieger/keyenc";
 import { apiGetTypedOrError } from "./api-client.js";
 import { asObject, decodeArray, optStr, reqNum, reqStr } from "./wire/validators.gen.js";

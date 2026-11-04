@@ -1,6 +1,6 @@
-import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
+import { el, computed, effect, touch, untracked } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
-import { announce } from "@cplieger/ui-primitives/announce";
+import { announce } from "@cplieger/ui/announce";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
 import { activeSession, getActiveId, isBusy } from "./store.js";

@@ -1,5 +1,5 @@
 import { join } from "@cplieger/keyenc";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { effect } from "@cplieger/reactive";
+import { effect } from "@cplieger/ui";
 import {
   adaptStatus,
   servers,

@@ -7,7 +7,7 @@ import { allRules, loadCSS } from "./__test-helpers__/css-rules.js";
 import manifest from "./css/MANIFEST?raw";
 
 /** Every sheet the bundle concatenates, by name, excluding the vendored base
- *  (ui-primitives is a dependency, so its declarations are not ours to police). */
+ *  (@cplieger/ui is a dependency, so its declarations are not ours to police). */
 function ownSheets(): string[] {
   return manifest
     .split("\n")

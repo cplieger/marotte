@@ -1,7 +1,7 @@
 // Expandable pills: click or keyboard to expand a pill into a detail card anchored to the pill's
 // position. One pill open at a time; click outside, click the pill, or press Escape to collapse.
 
-import { closePopupGroup, createPopup } from "@cplieger/ui-primitives/popup";
+import { closePopupGroup, createPopup } from "@cplieger/ui/popup";
 
 import type { ViewportBox } from "./viewport-frame.js";
 import { onViewportChange, viewportBox, viewportMoved } from "./viewport-frame.js";
@@ -21,6 +21,18 @@ export function makeExpandable(
 ): void {
   const listenerOpts = opts?.signal !== undefined ? { signal: opts.signal } : undefined;
   let releaseViewport: (() => void) | undefined;
+  let expanded = false;
+
+  const collapse = (): void => {
+    if (!expanded) {
+      return;
+    }
+    expanded = false;
+    releaseViewport?.();
+    releaseViewport = undefined;
+    pill.classList.remove("pill-expanded");
+    opts?.onCollapse?.();
+  };
 
   // Normalize the legacy display state: consumers author the card with the `hidden` utility CLASS;
   // the popup primitive drives the `[hidden]` ATTRIBUTE plus the is-open / is-leaving state
@@ -39,6 +51,7 @@ export function makeExpandable(
     isolateEscape: false,
     ...(opts?.haspopup !== undefined ? { haspopup: opts.haspopup } : {}),
     onOpen: () => {
+      expanded = true;
       pill.classList.add("pill-expanded");
       opts?.onExpand?.();
       // Consumers such as the model and mode pickers build their rows on open; position from that
@@ -46,12 +59,7 @@ export function makeExpandable(
       releaseViewport?.();
       releaseViewport = trackViewport(pill, contentEl);
     },
-    onClose: () => {
-      releaseViewport?.();
-      releaseViewport = undefined;
-      pill.classList.remove("pill-expanded");
-      opts?.onCollapse?.();
-    },
+    onClose: collapse,
   });
 
   pill.addEventListener(
@@ -86,9 +94,11 @@ export function makeExpandable(
     listenerOpts,
   );
 
-  // A consumer tearing down via its AbortSignal also drops the popup wiring.
+  // A consumer tearing down via its AbortSignal also drops the popup wiring. dispose() calls no
+  // onClose, so an open card's collapse runs here.
   opts?.signal?.addEventListener("abort", () => {
     popup.dispose();
+    collapse();
   });
 }
 

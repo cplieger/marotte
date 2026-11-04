@@ -1,6 +1,6 @@
 // Mounts the forge-auth panel into #git-sources-mount; the panel repaints from forge-store.ts on its own.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 
 import { withAsyncFeedback } from "./async-button.js";
 import { iconEl } from "./icon-el.js";

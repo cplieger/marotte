@@ -40,7 +40,7 @@ type RemoveOutcome =
   | { status: "success"; value?: boolean }
   | { status: "error"; error: { status?: number; message: string } };
 
-vi.mock("@cplieger/ui-primitives/announce", () => ({ announce: mocks.announceMock }));
+vi.mock("@cplieger/ui/announce", () => ({ announce: mocks.announceMock }));
 vi.mock("./actions/chat.js", () => ({
   clearSteers: { dispatch: mocks.clearDispatch },
   cancelTurn: { dispatch: mocks.cancelDispatch },
@@ -107,7 +107,7 @@ import {
   get,
 } from "./store.js";
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
-import { signal } from "@cplieger/reactive";
+import { signal } from "@cplieger/ui";
 import type { Entry, PendingSteer, QueuedPrompt, Session } from "./types.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 

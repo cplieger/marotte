@@ -1,7 +1,7 @@
-// Wires @cplieger/actions to marotte's toast, api-client and transport layers. Import once at
+// Wires @cplieger/ui/actions to marotte's toast, api-client and transport layers. Import once at
 // startup (app.ts) before any action dispatch.
 
-import { configure, configureTransport } from "@cplieger/actions";
+import { configure, configureTransport } from "@cplieger/ui/actions";
 import { actionNotice, subjectName } from "../notice-subject.js";
 import { configureSubjectNotice, takeSubject } from "./subject.js";
 import { send as transportSend } from "../transport.js";

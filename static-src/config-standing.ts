@@ -1,7 +1,7 @@
 // Which loaded items of the workspace's composed configuration kiro-cli does not use (another layer replaced or
 // switched them off), and the agent files it could not load: one store, read by the Docs rows and the MCP cards.
 
-import { el, signal, type ReadonlySignal } from "@cplieger/reactive";
+import { el, signal, type ReadonlySignal } from "@cplieger/ui";
 import { apiGetTyped } from "./api-client.js";
 import { BUS_RECONCILE, onBus, onSSE } from "./bus.js";
 import { decodeConfigStandingResponse } from "./wire/decoders.gen.js";

@@ -1,4 +1,4 @@
-import { announce } from "@cplieger/ui-primitives/announce";
+import { announce } from "@cplieger/ui/announce";
 import { join } from "@cplieger/keyenc";
 import { messageRunStep } from "./actions/runs.js";
 import { noticeAbout } from "./actions/subject.js";

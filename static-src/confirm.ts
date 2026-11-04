@@ -1,7 +1,7 @@
-// Confirm dialog over `@cplieger/ui-primitives`' `ask`, keeping marotte's positional `confirm(message, label?, variant?)`.
+// Confirm dialog over `@cplieger/ui/ask`'s `ask`, keeping marotte's positional `confirm(message, label?, variant?)`.
 // The destructive variant uses role="alertdialog" and focuses Cancel. Skin: `.uip-ask` in css/04-uip-skin.css.
 
-import { ask } from "@cplieger/ui-primitives/ask";
+import { ask } from "@cplieger/ui/ask";
 
 const CONTROL = "button, summary, a[href], [role='button'], [role='menuitem']";
 

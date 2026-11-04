@@ -106,7 +106,7 @@ vi.mock("./git-scroll.js", () => ({
 }));
 // The stub supplies what this suite reads: the trigger's aria-expanded, the body staying in the tree, and a trigger
 // click reaching `onToggle` as the reader's own.
-vi.mock("@cplieger/ui-primitives/disclosure", () => ({
+vi.mock("@cplieger/ui/disclosure", () => ({
   createDisclosure: (
     trigger: HTMLElement,
     _body: HTMLElement,

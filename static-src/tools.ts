@@ -28,7 +28,7 @@ import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { onSSE } from "./bus.js";
 import { $, byId } from "./dom.js";
 import { openConfigFile } from "./editor-openers.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { reconcile, KEY_ATTR } from "./reconcile.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";

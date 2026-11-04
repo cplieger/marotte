@@ -3,7 +3,7 @@
 // the read verified before it becomes an editable baseline.
 // ---------------------------------------------------------------------------
 import { describe, it, expect, beforeEach, onTestFinished, vi } from "vitest";
-import { effect } from "@cplieger/reactive";
+import { effect } from "@cplieger/ui";
 import type { FileState } from "./editor-types.js";
 import type { FileStat } from "./wire/types.gen.js";
 

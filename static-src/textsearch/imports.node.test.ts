@@ -72,13 +72,13 @@ describe("static-src/textsearch is a leaf", () => {
     // Guard the guard, in the three shapes a reach-out can take.
     const planted = [
       'import { x } from "../strings.js";',
-      'export type { T } from "@cplieger/reactive";',
+      'export type { T } from "@cplieger/ui";',
       'const m = await import("../dom.js");',
       'type R = import("../types.js").Message;',
     ].join("\n");
     expect(specifiers("planted.ts", planted)).toEqual([
       "../strings.js",
-      "@cplieger/reactive",
+      "@cplieger/ui",
       "../dom.js",
       "../types.js",
     ]);

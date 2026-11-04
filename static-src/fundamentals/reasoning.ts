@@ -2,7 +2,7 @@
 // the trace ends or sibling text arrives. The summary shows a word count only: no reasoning
 // content may leak into a collapsed summary.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { chevronEl } from "../chevron.js";
 import { CHROME_ATTR } from "../chrome-attr.js";
 import { slideDetails, wireDetailsSlide } from "../disclosure-row.js";

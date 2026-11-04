@@ -4,7 +4,7 @@
 // inserted as markup: its security policy lets an app do that when it meets the duties `mermaid-svg.ts`
 // RENDER_OPTIONS and `adoptSvg` carry, and the CSP's `script-src 'self'` refuses any handler anyway.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { extractLang } from "./code-blocks.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_CODE_UI, ICON_DOWNLOAD, ICON_EXPAND_UI, ICON_EYE_UI } from "./icons.js";

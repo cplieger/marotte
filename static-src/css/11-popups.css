@@ -79,6 +79,3 @@
   color: var(--c-text-tertiary);
   flex-shrink: 0;
 }
-
-/* Toast notifications moved to @cplieger/ui-primitives — see the .uip-toast
-   skin in css/04-uip-skin.css (structure + motion from the vendored base). */

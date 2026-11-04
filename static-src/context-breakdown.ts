@@ -1,4 +1,4 @@
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { occurrenceKeys, type ItemPart, type PanelItem } from "./turn-info-panel.js";
 import type { ContextBreakdown, ContextCategory, ContextItem } from "./wire/types.gen.js";
