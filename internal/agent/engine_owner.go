@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/cplieger/marotte/internal/bridge"
@@ -387,7 +388,11 @@ func (o *engineOwner) exited(h engineHandle, gen uint64) (restarted bool) {
 	info := h.Exit()
 	busy := o.busyNow()
 	o.mu.Lock()
-	cause := exitCause(&info, o.cause, o.lt.draining.Load())
+	base := o.oomBaseline
+	o.mu.Unlock()
+	oomKills, oomKnown := o.oomKillsSince(base)
+	o.mu.Lock()
+	cause := exitCause(&info, o.cause, o.lt.draining.Load(), oomKnown && oomKills > 0)
 	restarted = o.cause != nil
 	o.cause = nil
 	o.held = nil
@@ -406,13 +411,12 @@ func (o *engineOwner) exited(h engineHandle, gen uint64) (restarted bool) {
 		o.state = marotte.EngineRestarting
 	}
 	o.lastExit = &marotte.EngineExit{Reason: cause, At: o.now()}
-	base := o.oomBaseline
 	if o.restartWait != nil {
 		close(o.restartWait)
 		o.restartWait = nil
 	}
 	o.mu.Unlock()
-	o.logExit(&info, gen, cause, base, &busy, logsafe.Field(h.KASLogDir()))
+	o.logExit(&info, gen, cause, oomKills, oomKnown, &busy, logsafe.Field(h.KASLogDir()))
 	if o.hooks.ended != nil {
 		o.hooks.ended(gen)
 	}
@@ -426,7 +430,13 @@ type oomBaseline struct {
 	known bool
 }
 
-func exitCause(info *bridge.ExitInfo, restart *restartCause, draining bool) string {
+// externalStopSignals are the signals another process sends to stop one; a SIGSEGV or SIGABRT is the engine's own
+// fault.
+var externalStopSignals = []syscall.Signal{syscall.SIGHUP, syscall.SIGINT, syscall.SIGKILL, syscall.SIGTERM}
+
+// exitCause names an engine's end for the exit line and /api/engine. A SIGKILL while the kernel OOM-killed something
+// in the container (oomKilled) stays a crash: the OOM killer sends SIGKILL.
+func exitCause(info *bridge.ExitInfo, restart *restartCause, draining, oomKilled bool) string {
 	switch info.Reason {
 	case bridge.ExitStopped:
 		switch {
@@ -445,13 +455,27 @@ func exitCause(info *bridge.ExitInfo, restart *restartCause, draining bool) stri
 	case bridge.ExitLaneOverflow:
 		return "lane_overflow"
 	}
+	if slices.Contains(externalStopSignals, info.SidecarSignal) && (info.SidecarSignal != syscall.SIGKILL || !oomKilled) {
+		return "external_stop"
+	}
 	return "crash"
+}
+
+// oomKillsSince is the container's OOM kills since base, false when either count is unknown.
+func (o *engineOwner) oomKillsSince(base oomBaseline) (uint64, bool) {
+	now, ok := o.oomKill()
+	if !ok || !base.known || now < base.count {
+		return 0, false
+	}
+	return now - base.count, true
 }
 
 // logExit writes the one engine exited line per generation; the Loki engine-crash alerts match its message and
 // ended_itself verbatim. container_oom_kills counts every process in the container the kernel killed for memory
 // during the engine's life, so it is coincident evidence, not proof the engine was the victim.
-func (o *engineOwner) logExit(info *bridge.ExitInfo, gen uint64, cause string, base oomBaseline, busy *engineBusy, logDir any) {
+func (o *engineOwner) logExit(
+	info *bridge.ExitInfo, gen uint64, cause string, oomKills uint64, oomKnown bool, busy *engineBusy, logDir any,
+) {
 	attrs := []any{
 		"ended_itself", info.EndedItself(),
 		"uptime_s", int64(info.Uptime.Seconds()),
@@ -467,8 +491,8 @@ func (o *engineOwner) logExit(info *bridge.ExitInfo, gen uint64, cause string, b
 		"rss_peak_mib", info.RSSPeakMiB,
 		"heap_limit_mib", info.HeapLimitMiB,
 	}
-	if now, ok := o.oomKill(); ok && base.known && now >= base.count {
-		attrs = append(attrs, "container_oom_kills", now-base.count)
+	if oomKnown {
+		attrs = append(attrs, "container_oom_kills", oomKills)
 	}
 	level := slog.LevelInfo
 	if info.EndedItself() {
