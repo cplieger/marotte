@@ -3,6 +3,7 @@ package schedule
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -168,6 +169,137 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 		}
 		if _, ok := r.retry[e.ID()]; ok {
 			t.Error("a disabled schedule kept its backoff")
+		}
+	})
+}
+
+// A launch the engine leaves unanswered holds the sweep for its own timeout, so each slot is judged by the clock when
+// the sweep reaches it, not when the sweep began.
+func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
+	const launchTakes = 2 * time.Minute // the launch's own timeout, as a slow engine spends it
+	busy := fmt.Errorf("%w: %w", ErrEngineBusy, errors.New("workflow list call: context deadline exceeded"))
+	daily := func(h, m int) Spec { return Spec{Freq: FreqDaily, Hour: h, Minute: m} }
+	yesterday := at(2026, time.August, 3, 12, 0)
+	due := at(2026, time.August, 4, 2, 0)
+
+	// sweepFixture puts the entries, marks those named in waiting as waiting on their 02:00 slot, and makes a launch
+	// of a source named in slow advance the clock and come back busy.
+	sweepFixture := func(t *testing.T, start time.Time, entries []Entry, waiting, slow []string) (*Store, *fakeLauncher, *Runner) {
+		t.Helper()
+		st, err := NewStore(t.TempDir())
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		for i := range entries {
+			if err := st.Put(t.Context(), &entries[i]); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+		}
+		for _, src := range waiting {
+			if err := st.setWaiting(t.Context(), idOf(src), due); err != nil {
+				t.Fatalf("setWaiting: %v", err)
+			}
+		}
+		clock := start
+		l := &fakeLauncher{}
+		r := NewRunner(st, l)
+		r.now = func() time.Time { return clock }
+		l.during = func(src string) {
+			if slices.Contains(slow, src) {
+				clock = clock.Add(launchTakes)
+				l.failWith(busy)
+			} else {
+				l.failWith(nil)
+			}
+		}
+		return st, l, r
+	}
+	launchesOf := func(l *fakeLauncher, src string) int {
+		sources, _, _ := l.snap()
+		n := 0
+		for _, s := range sources {
+			if s == src {
+				n++
+			}
+		}
+		return n
+	}
+	rowOf := func(st *Store, src string) Entry {
+		for _, e := range st.List() {
+			if e.Source == src {
+				return e
+			}
+		}
+		return Entry{}
+	}
+
+	t.Run("the backoff counts from the launch's return", func(t *testing.T) {
+		_, l, r := sweepFixture(t, due.Add(30*time.Second),
+			[]Entry{{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday}},
+			nil, []string{"bundled://a"})
+		r.sweep(t.Context())
+		r.sweep(t.Context()) // the ticker's buffered tick, at once
+		if n := l.launched(); n != 1 {
+			t.Errorf("launches = %d, want 1: the retry came with no gap after a launch that took %v", n, launchTakes)
+		}
+		returned := due.Add(30*time.Second + launchTakes)
+		r.now = func() time.Time { return returned.Add(r.tick) }
+		r.sweep(t.Context())
+		if n := l.launched(); n != 2 {
+			t.Errorf("launches = %d, want the retry one tick after the launch returned", n)
+		}
+	})
+
+	t.Run("a next slot passed during an earlier launch skips the wait", func(t *testing.T) {
+		hourly := Spec{Freq: freqHourly, Interval: 1, Minute: 0}
+		st, l, r := sweepFixture(t, at(2026, time.August, 4, 2, 59), []Entry{
+			{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
+			{Source: "bundled://b", Spec: hourly, Enabled: true, Anchor: at(2026, time.August, 4, 1, 30)},
+		}, []string{"bundled://a", "bundled://b"}, []string{"bundled://a", "bundled://b"})
+		r.sweep(t.Context())
+		if n := launchesOf(l, "bundled://b"); n != 0 {
+			t.Errorf("b launched %d times after its next slot (03:00) had come", n)
+		}
+		if got := rowOf(st, "bundled://b"); got.LastStatus != StatusSkipped || got.LastReason != "engine busy" {
+			t.Errorf("b = (%q, %q), want its 02:00 slot skipped for the busy engine", got.LastStatus, got.LastReason)
+		}
+	})
+
+	t.Run("a slot due while this sweep launches still fires", func(t *testing.T) {
+		st, l, r := sweepFixture(t, due.Add(30*time.Second), []Entry{
+			{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
+			{Source: "bundled://b", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
+			{Source: "bundled://c", Spec: daily(2, 1), Enabled: true, Anchor: yesterday},
+		}, []string{"bundled://a", "bundled://b"}, []string{"bundled://a", "bundled://b"})
+		r.sweep(t.Context())
+		r.sweep(t.Context())
+		if got := rowOf(st, "bundled://c"); launchesOf(l, "bundled://c") != 1 || got.LastStatus != statusStarted {
+			t.Errorf("c = %+v after %d launches, want its 02:01 slot started, not skipped as missed while offline",
+				got, launchesOf(l, "bundled://c"))
+		}
+	})
+
+	t.Run("a slot due after this sweep passed it fires on the next", func(t *testing.T) {
+		st, l, r := sweepFixture(t, due.Add(30*time.Second), []Entry{
+			{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
+			{Source: "bundled://b", Spec: daily(2, 3), Enabled: true, Anchor: yesterday},
+			{Source: "bundled://c", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
+		}, []string{"bundled://a", "bundled://c"}, []string{"bundled://a", "bundled://c"})
+		r.sweep(t.Context()) // reaches b at 02:02:30, before its slot, and ends at 02:04:30
+		r.sweep(t.Context()) // reaches b at 02:06:30, behind a's retry
+		if got := rowOf(st, "bundled://b"); launchesOf(l, "bundled://b") != 1 || got.LastStatus != statusStarted {
+			t.Errorf("b = %+v, want its 02:03 slot started: it fell due while the runner was still launching", got)
+		}
+	})
+
+	t.Run("a slot due while nothing swept is still missed", func(t *testing.T) {
+		st, l, r := sweepFixture(t, at(2026, time.August, 4, 1, 0),
+			[]Entry{{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday}}, nil, nil)
+		r.sweep(t.Context())
+		r.now = func() time.Time { return at(2026, time.August, 4, 5, 0) }
+		r.sweep(t.Context())
+		if got := rowOf(st, "bundled://a"); l.launched() != 0 || got.LastStatus != "" {
+			t.Errorf("a = %+v after %d launches, want its 02:00 slot skipped as missed while paused", got, l.launched())
 		}
 	})
 }

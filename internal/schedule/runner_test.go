@@ -41,11 +41,16 @@ type fakeLauncher struct {
 	// defaults records the model and effort each launch carried.
 	defaults []marotte.RunDefaults
 	err      error
+	// during runs inside each launch, so a test can move the runner's clock while the launch holds the sweep.
+	during func(source string)
 }
 
 func (f *fakeLauncher) LaunchScheduled(
 	_ context.Context, source, scheduleID string, defaults marotte.RunDefaults, deadline time.Time,
 ) (string, string, error) {
+	if f.during != nil {
+		f.during(source)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.defaults = append(f.defaults, defaults)

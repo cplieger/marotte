@@ -94,7 +94,7 @@ func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	recipe, err := rr.runs.recipeBySource(r.Context(), req.Source)
 	switch {
 	case err == nil:
-	case writeRecipeListSlow(w, err):
+	case writeEngineSlow(w, err):
 		return
 	case errors.Is(err, errUnknownRecipe) || errors.Is(err, errMissingRecipeSource):
 		httpreply.BadRequest(w, "unknown recipe: "+req.Source)

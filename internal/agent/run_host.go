@@ -48,6 +48,19 @@ func workflowIDOf(chatID marotte.ChatID) string {
 	return strings.TrimPrefix(string(chatID), runChatPrefix)
 }
 
+// unanswered wraps a launch's err with errEngineSlow when the engine ran out of time or was not ready. Only for an
+// error returned before workflow/new is sent: after it, a run may exist and a retry could double it. ctx is the
+// caller's, so a launch its caller abandoned is not the engine's fault.
+func unanswered(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return err
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, marotte.ErrBridgeExited) {
+		return fmt.Errorf("%w: %w", errEngineSlow, err)
+	}
+	return err
+}
+
 // launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`.
 const launchTimeout = 120 * time.Second
 
@@ -71,8 +84,11 @@ func (rs *Runs) LaunchScheduled(
 	}
 	defer release()
 	id, name, err = rs.launchAs(ctx, source, nil, defaults, scheduledLaunch(scheduleID, slotAt))
-	if errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown) {
+	switch {
+	case errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown):
 		err = fmt.Errorf("%w: %w", schedule.ErrNoRunCanStart, err)
+	case errors.Is(err, errEngineSlow):
+		err = fmt.Errorf("%w: %w", schedule.ErrEngineBusy, err)
 	}
 	return id, name, err
 }
@@ -91,14 +107,14 @@ func (rs *Runs) launchAs(
 
 	recipe, err := rs.launchRecipe(cctx, source, inputs)
 	if err != nil {
-		return "", "", o.unanswered(ctx, err)
+		return "", "", unanswered(ctx, err)
 	}
 	if o.origin == runlease.OriginManual && !isAgentSource(source) {
 		// A manual run yields to its recipe's next slot.
 		o.slotAt = rs.manualSlot(recipe.Source)
 	}
 	if bErr := rs.recipeIdle(cctx, recipe.Name); bErr != nil {
-		return "", "", o.unanswered(ctx, bErr)
+		return "", "", unanswered(ctx, bErr)
 	}
 
 	// The host session's presets are resolved once and recorded on the lease: a reload after a restart applies
@@ -114,7 +130,7 @@ func (rs *Runs) launchAs(
 			relay = newHostRelay(s, func(msg *marotte.RPCResponse) { rs.answerEarly(s, msg) })
 			sb.attach(relay)
 		}); oErr != nil {
-		return "", "", o.unanswered(ctx, fmt.Errorf("%w: %w", errRunHostStart, oErr))
+		return "", "", unanswered(ctx, fmt.Errorf("%w: %w", errRunHostStart, oErr))
 	}
 	host := sb.current()
 	parent := host.SessionID()
@@ -794,7 +810,11 @@ func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Reci
 	if source == "" {
 		return marotte.Recipe{}, errMissingRecipeSource
 	}
-	recipes, err := rs.listRecipes(ctx)
+	recipes, held, err := rs.recipes.get(ctx, rs.lifecycle, rs.fetchRecipes)
+	if err == nil && held && !slices.ContainsFunc(recipes, func(r marotte.Recipe) bool { return r.Source == source }) {
+		// recipeCatalog says why a hold can lack a listed recipe.
+		recipes, err = rs.recipes.fresh(ctx, rs.lifecycle, rs.fetchRecipes, 0)
+	}
 	if err != nil {
 		return marotte.Recipe{}, err
 	}
@@ -852,7 +872,14 @@ type kasRecipe struct {
 
 // listRecipes answers the held catalog (recipeCatalog), listing only when none is held.
 func (rs *Runs) listRecipes(ctx context.Context) ([]marotte.Recipe, error) {
-	return rs.recipes.get(ctx, rs.lifecycle, rs.fetchRecipes)
+	recipes, _, err := rs.recipes.get(ctx, rs.lifecycle, rs.fetchRecipes)
+	return recipes, err
+}
+
+// recipeList is the list a person opens: a fresh listing, or the held catalog once that listing outlasts
+// recipeListPatience.
+func (rs *Runs) recipeList(ctx context.Context) ([]marotte.Recipe, error) {
+	return rs.recipes.fresh(ctx, rs.lifecycle, rs.fetchRecipes, recipeListPatience)
 }
 
 // fetchRecipes walks KAS's whole catalog; KAS admits every recipe file on each call.

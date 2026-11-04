@@ -66,8 +66,11 @@ type Runner struct {
 	held map[string]missedSlot
 	// retry is each waiting slot's backoff (Entry.WaitingFor holds the wait itself), so a restart retries at once.
 	retry map[string]engineRetry
-	tick  time.Duration
-	grace time.Duration
+	// lastStart and lastEnd bound the previous sweep, for lateness.
+	lastStart time.Time
+	lastEnd   time.Time
+	tick      time.Duration
+	grace     time.Duration
 }
 
 // engineRetry is when the slot due a launch left waiting on the engine is tried next, and the step that set it.
@@ -98,7 +101,8 @@ func (r *Runner) Run(ctx context.Context) {
 }
 
 func (r *Runner) sweep(ctx context.Context) {
-	now := r.now()
+	start := r.now()
+	defer func() { r.lastStart, r.lastEnd = start, r.now() }()
 	list := r.store.List()
 	// A hold belongs to an enabled schedule's due slot: a disabled or deleted one keeps none.
 	enabled := make(map[string]bool, len(list))
@@ -120,6 +124,8 @@ func (r *Runner) sweep(ctx context.Context) {
 			slog.Warn("schedule has no next run", "id", e.ID(), "error", err)
 			continue
 		}
+		// Read per slot: each launch before it can hold the sweep for the launch's own timeout.
+		now := r.now()
 		if now.Before(due) {
 			continue
 		}
@@ -127,12 +133,22 @@ func (r *Runner) sweep(ctx context.Context) {
 			r.wait(ctx, e, due, now)
 			continue
 		}
-		if now.Sub(due) > r.grace {
+		if r.lateness(due, start) > r.grace {
 			r.miss(ctx, e.ID(), due, now)
 			continue
 		}
-		r.fire(ctx, e, due, now)
+		r.fire(ctx, e, due)
 	}
+}
+
+// lateness is how long the runner left due unswept, the time the grace bounds. A slot that fell due while the previous
+// sweep was still launching counts from that sweep's end, and one that fell due during this sweep is not late.
+func (r *Runner) lateness(due, start time.Time) time.Duration {
+	from := due
+	if due.After(r.lastStart) && due.Before(r.lastEnd) {
+		from = r.lastEnd
+	}
+	return start.Sub(from)
 }
 
 // wait tries a slot waiting on the engine again once its backoff lapses, bounded by the schedule's next slot (by the
@@ -154,10 +170,11 @@ func (r *Runner) wait(ctx context.Context, e *Entry, due, now time.Time) {
 	if b, ok := r.retry[e.ID()]; ok && b.due.Equal(due) && now.Before(b.at) {
 		return
 	}
-	r.fire(ctx, e, due, now)
+	r.fire(ctx, e, due)
 }
 
-// waitOn records the slot due as waiting on the engine and backs its next try off, doubling from one tick.
+// waitOn records the slot due as waiting on the engine and backs its next try off from now, the time its launch
+// returned, doubling from one tick.
 func (r *Runner) waitOn(ctx context.Context, id string, due, now time.Time, why error) {
 	step := r.tick
 	if b, ok := r.retry[id]; ok && b.due.Equal(due) {
@@ -201,7 +218,7 @@ func (r *Runner) miss(ctx context.Context, id string, due, now time.Time) {
 
 // The anchor advances either way so a schedule whose launch keeps failing does not retry every
 // tick, except for a launch refused with ErrNoRunCanStart (held for a later tick) or ErrEngineBusy (waiting).
-func (r *Runner) fire(ctx context.Context, e *Entry, due, now time.Time) {
+func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
 	// Bound the run by the next slot after `due` (not now), so a late fire cannot extend the
 	// budget into it. An uncomputable slot degrades to the idle window, never to unbounded.
 	slotAt, dErr := nextRun(e.Spec, due)
@@ -214,7 +231,7 @@ func (r *Runner) fire(ctx context.Context, e *Entry, due, now time.Time) {
 		marotte.RunDefaults{Model: e.Model, Effort: e.Effort}, slotAt)
 	if errors.Is(err, ErrEngineBusy) {
 		delete(r.held, e.ID())
-		r.waitOn(ctx, e.ID(), due, now, err)
+		r.waitOn(ctx, e.ID(), due, r.now(), err)
 		return
 	}
 	delete(r.retry, e.ID())
