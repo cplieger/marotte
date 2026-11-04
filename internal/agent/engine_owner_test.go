@@ -299,9 +299,10 @@ func TestEngineExit_LogsOneLineWithTheSidecarStatus(t *testing.T) {
 }
 
 // An engine another process stopped is not a crash, and a crash stays one: a non-zero exit of its own, a SIGSEGV or a
-// SIGABRT, or a SIGKILL with the kernel's OOM killer at work in the container.
+// SIGABRT, or a SIGKILL unless the container's OOM count is known and unchanged.
 func TestEngineExit_ACauseForAStopMarotteDidNotSend(t *testing.T) {
 	noOOM := func() (uint64, bool) { return 0, true }
+	oomUnknown := func() (uint64, bool) { return 0, false }
 	for name, tc := range map[string]struct {
 		info bridge.ExitInfo
 		oom  func() (uint64, bool)
@@ -312,6 +313,7 @@ func TestEngineExit_ACauseForAStopMarotteDidNotSend(t *testing.T) {
 		"SIGHUP":                     {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGHUP}, want: "external_stop"},
 		"SIGKILL":                    {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGKILL}, oom: noOOM, want: "external_stop"},
 		"SIGKILL beside an OOM kill": {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGKILL}, oom: oomStep(), want: "crash"},
+		"SIGKILL, OOM count unknown": {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGKILL}, oom: oomUnknown, want: "crash"},
 		"SIGSEGV":                    {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGSEGV}, want: "crash"},
 		"SIGABRT":                    {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGABRT}, want: "crash"},
 		"a non-zero exit":            {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarExit: "exit_code=1"}, want: "crash"},

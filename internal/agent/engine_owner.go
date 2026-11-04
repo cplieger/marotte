@@ -392,7 +392,7 @@ func (o *engineOwner) exited(h engineHandle, gen uint64) (restarted bool) {
 	o.mu.Unlock()
 	oomKills, oomKnown := o.oomKillsSince(base)
 	o.mu.Lock()
-	cause := exitCause(&info, o.cause, o.lt.draining.Load(), oomKnown && oomKills > 0)
+	cause := exitCause(&info, o.cause, o.lt.draining.Load(), oomKnown && oomKills == 0)
 	restarted = o.cause != nil
 	o.cause = nil
 	o.held = nil
@@ -434,9 +434,10 @@ type oomBaseline struct {
 // fault.
 var externalStopSignals = []syscall.Signal{syscall.SIGHUP, syscall.SIGINT, syscall.SIGKILL, syscall.SIGTERM}
 
-// exitCause names an engine's end for the exit line and /api/engine. A SIGKILL while the kernel OOM-killed something
-// in the container (oomKilled) stays a crash: the OOM killer sends SIGKILL.
-func exitCause(info *bridge.ExitInfo, restart *restartCause, draining, oomKilled bool) string {
+// exitCause names an engine's end for the exit line and /api/engine. A SIGKILL is an external stop only when the
+// container's OOM count is known and unchanged (oomClear): the OOM killer sends SIGKILL, so an unknown count stays a
+// crash.
+func exitCause(info *bridge.ExitInfo, restart *restartCause, draining, oomClear bool) string {
 	switch info.Reason {
 	case bridge.ExitStopped:
 		switch {
@@ -455,7 +456,7 @@ func exitCause(info *bridge.ExitInfo, restart *restartCause, draining, oomKilled
 	case bridge.ExitLaneOverflow:
 		return "lane_overflow"
 	}
-	if slices.Contains(externalStopSignals, info.SidecarSignal) && (info.SidecarSignal != syscall.SIGKILL || !oomKilled) {
+	if slices.Contains(externalStopSignals, info.SidecarSignal) && (info.SidecarSignal != syscall.SIGKILL || oomClear) {
 		return "external_stop"
 	}
 	return "crash"
