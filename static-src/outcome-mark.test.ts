@@ -207,31 +207,24 @@ describe("the mark reads one ink and one size wherever it renders", () => {
 describe("a turn's outcome marks take the tool row's shapes", () => {
   const turns = loadCSS("29-turns.css");
 
-  /** The one rule listing `selector` that declares `property`: the hue rules list the same selector. */
-  function shapeRule(selector: string, property: string): { selector: string; body: string } {
-    const hits = allRules(turns).filter(
-      (r) => r.selector.includes(selector) && r.body.includes(`${property}:`),
-    );
-    expect(hits, `one ${property} rule for ${selector}`).toHaveLength(1);
-    return hits[0] ?? { selector: "", body: "" };
-  }
-
   it("draws a broken turn as the tab strip's diamond on the header dot and the footer glyph", () => {
     const strip = ruleContaining(tabs, '.tab-status-dot[data-status="failed"]', "top");
     const corner = /border-radius:\s*([\d.]+px)/.exec(strip.body)?.[1];
-    const broken = shapeRule('.turn-header[data-severity="broken"] .turn-dot::before', "transform");
-    expect(broken.selector).toContain(
+    const diamond = ruleContaining(turns, '.turn-header[data-severity="broken"] .turn-dot::before');
+    expect(diamond.selector).toContain(
       '.turn-footer[data-severity="broken"] .turn-ledger-glyph::before',
     );
-    expect(broken.body).toContain("inline-size: var(--dot-size-sm)");
-    expect(broken.body).toContain("block-size: var(--dot-size-sm)");
-    expect(broken.body).toContain("transform: rotate(45deg)");
-    expect(broken.body).toContain(`border-radius: ${corner ?? "?"}`);
+    expect(diamond.body).toContain("inline-size: var(--dot-size-sm)");
+    expect(diamond.body).toContain("block-size: var(--dot-size-sm)");
+    expect(diamond.body).toContain("rotate(45deg)");
+    expect(diamond.body).toContain(`border-radius: ${corner ?? "?"}`);
   });
 
-  it("cuts a stopped turn's bar to the stop glyph's proportions", () => {
-    const stopped = shapeRule('.turn-header[data-severity="stopped"] .turn-dot', "mask-image");
-    expect(stopped.selector).toContain('.turn-footer[data-severity="stopped"] .turn-ledger-glyph');
+  it.each([
+    '.turn-header[data-severity="stopped"] .turn-dot',
+    '.turn-footer[data-severity="stopped"] .turn-ledger-glyph',
+  ])("cuts the stop glyph's bar out of %s", (selector) => {
+    const stopped = ruleContaining(turns, selector);
     expect(stopped.body).toContain("mask-composite: exclude");
     const HV = /^M([\d.]+) ([\d.]+)h([\d.]+)v([\d.]+)h-([\d.]+)$/;
     const bar = HV.exec(barSubpath(outcomeIcon("warn")));

@@ -64,7 +64,15 @@ describe("hue comes off the severity table, on every surface", () => {
     expect(glyph.body, "a broken turn does not keep the clean green ring").not.toMatch(
       /--c-green/u,
     );
-    expect(glyph.body, "a broken glyph is filled, not a ring").toMatch(/background:/u);
+    // Filled by its diamond, which paints the rule's red through `currentcolor`.
+    expect(glyph.body).toMatch(/color:\s*var\(--c-red\)/u);
+    const fill = ruleContaining(
+      turns,
+      '.turn-footer[data-severity="broken"] .turn-ledger-glyph::before',
+    );
+    expect(fill.body, "a broken glyph is filled, not a ring").toMatch(
+      /background:\s*currentcolor/u,
+    );
 
     const bar = ruleContaining(turns, '.turn-pill[data-severity="broken"]');
     expect(bar.body, "a broken turn-map bar is red").toMatch(/--pill-ink:\s*var\(--c-red\)/u);

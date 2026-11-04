@@ -113,13 +113,22 @@
  * label and the tooltip separate the two, as `.tool-icon.is-warn` does for a stopped run. */
 .turn-header[data-severity="stopped"] .turn-dot {
   background: var(--c-yellow);
+  mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  mask-size:
+    100% 100%,
+    65% 20.8333%;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-composite: exclude;
 }
 
 /* RED, and `interrupted` IS IN HERE: a fault nobody chose stopped the turn, and the
  * tab dot's own latch already grades it `failed`. `refused` shares the hue — see
  * `.refusal-callout` (13-messages.css) — because the words carry the distinction. */
 .turn-header[data-severity="broken"] .turn-dot {
-  background: var(--c-red);
+  position: relative;
+  color: var(--c-red);
+  background: none;
 }
 
 /* THE ONE EXCEPTION, stated at every surface that takes it: `unknown` keeps a NEUTRAL
@@ -677,12 +686,21 @@ button.turn-wake-row-run:focus-visible {
 .turn-footer[data-severity="stopped"] .turn-ledger-glyph {
   border-color: var(--c-yellow);
   background: var(--c-yellow);
+  mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  mask-size:
+    100% 100%,
+    65% 20.8333%;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-composite: exclude;
 }
 
 /* RED, `interrupted` included — see the header dot's broken arm. */
 .turn-footer[data-severity="broken"] .turn-ledger-glyph {
-  border-color: var(--c-red);
-  background: var(--c-red);
+  position: relative;
+  border-color: transparent;
+  color: var(--c-red);
+  background: none;
 }
 
 /* FILLED and neutral, not the default green ring: with no rule an unknown turn would carry
@@ -694,40 +712,21 @@ button.turn-wake-row-run:focus-visible {
 }
 
 /* The two turn marks take the tool row's shapes (client-transcript.md: a failure is the tab dot's silhouette).
- * A failure is the tab strip's diamond, by 12-tabs.css's construction, drawn on a pseudo-element so the mark's
- * own box keeps the disc's footprint and the row does not move when the outcome lands. Red as the hue rules
- * above; `outcome-mark.test.ts` pins both shapes to their owners. */
-.turn-header[data-severity="broken"] .turn-dot,
-.turn-footer[data-severity="broken"] .turn-ledger-glyph {
-  position: relative;
-  border-color: transparent;
-  background: none;
-}
-
+ * A failure is the tab strip's diamond, by 12-tabs.css's construction, drawn in the broken rules' red on a
+ * pseudo-element, so the mark's own box keeps the disc's footprint and the row does not move when the outcome
+ * lands. A stop is the tool row's barred disc (`icons.ts` ICON_OUTCOME_WARN), its 7.8 by 2.5 unit bar on the
+ * 12-unit disc cut out by the stopped rules' mask; the unknown rule keeps it. `outcome-mark.test.ts` pins both. */
 .turn-header[data-severity="broken"] .turn-dot::before,
 .turn-footer[data-severity="broken"] .turn-ledger-glyph::before {
   content: "";
   position: absolute;
-  inset: 0;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
   inline-size: var(--dot-size-sm);
   block-size: var(--dot-size-sm);
-  margin: auto;
   border-radius: 1.5px;
-  background: var(--c-red);
-  transform: rotate(45deg);
-}
-
-/* A stop is the tool row's barred disc (`icons.ts` ICON_OUTCOME_WARN): its 7.8 by 2.5 unit bar on the 12-unit
- * disc, cut out of the fill. */
-.turn-header[data-severity="stopped"] .turn-dot,
-.turn-footer[data-severity="stopped"] .turn-ledger-glyph {
-  mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
-  mask-size:
-    100% 100%,
-    65% 20.8333%;
-  mask-position: center;
-  mask-repeat: no-repeat;
-  mask-composite: exclude;
+  background: currentcolor;
+  transform: translate(-50%, -50%) rotate(45deg);
 }
 
 /* OPEN reads off the INK, not a rotation: the trigger is an `i`, and a rotating
