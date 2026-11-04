@@ -113,9 +113,21 @@ func deletedRunIDs(rig *deleteRig) []string {
 // inspectOf is KAS's inspect of a run whose state reads status and whose root ended at ended, the instant KAS's list
 // reports as the run's updatedAt; a zero ended records no time.
 func inspectOf(workflowID string, status marotte.RunStatus, ended time.Time) json.RawMessage {
+	return inspectOfRoot(workflowID, status, time.Time{}, ended)
+}
+
+// inspectOfRoot is inspectOf with the root's startedAt too; a zero time records none.
+func inspectOfRoot(workflowID string, status marotte.RunStatus, started, ended time.Time) json.RawMessage {
 	state := map[string]any{"status": status}
+	root := map[string]any{"nodeId": "root"}
+	if !started.IsZero() {
+		root["startedAt"] = started.UTC().Format(time.RFC3339Nano)
+	}
 	if !ended.IsZero() {
-		state["root"] = map[string]any{"nodeId": "root", "endedAt": ended.UTC().Format(time.RFC3339Nano)}
+		root["endedAt"] = ended.UTC().Format(time.RFC3339Nano)
+	}
+	if len(root) > 1 {
+		state["root"] = root
 	}
 	raw, _ := json.Marshal(map[string]any{"workflowId": workflowID, "state": state})
 	return raw
@@ -157,15 +169,21 @@ const (
 	retryFailsAgain
 	// retryLost is a retry KAS takes and never answers or applies.
 	retryLost
+	// retryFailsBeforeItsStart answers, delivers the run's run_start and run_complete, and leaves the run failed with
+	// its old end: the run loop threw after emitting run_start and before recording the root's startedAt.
+	retryFailsBeforeItsStart
+	// retryRevivesUnseen sets the run running from a new root startedAt and answers before marotte receives any frame.
+	retryRevivesUnseen
 )
 
 // purgedRun is one parentless run as KAS holds it, listed and inspected as it stands, and retried as retried says.
+// updated is the root's endedAt and started its startedAt; the list's updatedAt is the first set.
 type purgedRun struct {
-	updated    time.Time
-	id, parent string
-	status     marotte.RunStatus
-	mu         sync.Mutex
-	retried    retryEffect
+	updated, started time.Time
+	id, parent       string
+	status           marotte.RunStatus
+	mu               sync.Mutex
+	retried          retryEffect
 }
 
 func (k *purgedRun) answer(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
@@ -173,11 +191,15 @@ func (k *purgedRun) answer(method string, params map[string]any) (json.RawMessag
 	defer k.mu.Unlock()
 	switch method {
 	case methodKiroWorkflowList:
-		raw, _ := json.Marshal(map[string]any{"runs": []map[string]string{purgeRow(k.id, string(k.status), k.parent, k.updated)}})
+		last := k.updated
+		if last.IsZero() {
+			last = k.started
+		}
+		raw, _ := json.Marshal(map[string]any{"runs": []map[string]string{purgeRow(k.id, string(k.status), k.parent, last)}})
 		return raw, nil, true
 	case methodKiroWorkflowInspect:
 		if id, _ := params[keyWorkflowID].(string); id == k.id {
-			return inspectOf(k.id, k.status, k.updated), nil, true
+			return inspectOfRoot(k.id, k.status, k.started, k.updated), nil, true
 		}
 	case methodKiroWorkflowRetry:
 		return k.retry()
@@ -198,6 +220,11 @@ func (k *purgedRun) retry() (json.RawMessage, []*marotte.RPCResponse, bool) {
 	case retryFailsAgain:
 		k.status, k.updated = marotte.RunStatusFailed, time.Now()
 		frames = append(frames, runNotif(methodWFRunComplete, map[string]any{"workflowId": k.id, "status": marotte.RunStatusFailed}))
+	case retryFailsBeforeItsStart:
+		frames = append(frames, runNotif(methodWFRunComplete, map[string]any{"workflowId": k.id, "status": marotte.RunStatusFailed}))
+	case retryRevivesUnseen:
+		k.status, k.started, k.updated = marotte.RunStatusRunning, time.Now(), time.Time{}
+		frames = nil
 	}
 	raw, _ := json.Marshal(map[string]any{"workflowId": k.id, "status": marotte.RunStatusRunning, "retriedNodeIds": []string{"build"}})
 	return raw, frames, true
@@ -209,15 +236,28 @@ func (k *purgedRun) statusNow() marotte.RunStatus {
 	return k.status
 }
 
+// ownerScan names one of a purge pass's chat-owner scans.
+type ownerScan int32
+
+const (
+	// scanOfThePass is the pass's own scan, after its list and before it judges any row.
+	scanOfThePass ownerScan = iota + 1
+	// scanOfAdmission is admission's re-read, after the row was judged and before the delete's hold.
+	scanOfAdmission
+)
+
 // newPurgedRunRig is a purge rig over kas whose settle ceiling fires at once. Once arm is called, every engine call
-// runs onCall and the first owner scan runs during.
-func newPurgedRunRig(t *testing.T, kas *purgedRun, onCall func(string, map[string]any), during func(context.Context, *Runtime)) (h *Runtime, rig *deleteRig, arm func()) {
+// runs onCall and owner scan number at runs during.
+func newPurgedRunRig(
+	t *testing.T, kas *purgedRun, onCall func(string, map[string]any), during func(context.Context, *Runtime), at ownerScan,
+) (h *Runtime, rig *deleteRig, arm func()) {
 	t.Helper()
 	st, err := tabs.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("Setup: tabs.NewStore: %v", err)
 	}
-	var armed, fired atomic.Bool
+	var armed atomic.Bool
+	var scans atomic.Int32
 	rig = &deleteRig{
 		results: map[string]json.RawMessage{methodKiroWorkflowDelete: json.RawMessage(`{}`)},
 		answer:  kas.answer,
@@ -232,7 +272,7 @@ func newPurgedRunRig(t *testing.T, kas *purgedRun, onCall func(string, map[strin
 		rig.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: make(chan struct{})}
 	}
 	h, _ = newRigOver(t, rig, func(ctx context.Context, s chat.OwnerScan) chat.OwnerScan {
-		if during != nil && armed.Load() && fired.CompareAndSwap(false, true) {
+		if during != nil && armed.Load() && ownerScan(scans.Add(1)) == at {
 			during(ctx, h)
 		}
 		return s
@@ -280,59 +320,119 @@ func shortRetryTimeout(t *testing.T) {
 }
 
 // The purge judges a run on its list row and again, in full, on a fresh read under the delete's hold, so a retry
-// landing between the list and the delete decides the outcome as it would had the purge listed the run after it.
+// landing between the list and the delete decides the outcome as it would had the purge listed the run after it. A
+// retry after the list marks the run before its row is judged; one during admission is seen only by the fresh read.
 func TestPurgeParentlessRuns_DeletesOnlyARunAFreshReadStillFindsPurgeable(t *testing.T) {
 	shortRetryTimeout(t)
 	const window = 24 * time.Hour
+	type outcome struct {
+		deadline bool
+		// marked is whether the retry's mark outlives the pass: only a fresh read of activity since it drops it.
+		marked bool
+	}
 	cases := []struct {
-		name         string
-		retried      retryEffect
-		retry        bool
-		answered     bool
-		deleted      bool
-		wantDeadline bool
+		name               string
+		retried            retryEffect
+		afterList, inAdmit outcome
+		answered           bool
 	}{
-		{name: "a retry revived it", retry: true, answered: true, retried: retryRevives},
-		{name: "a retry re-drove it and it failed again", retry: true, answered: true, retried: retryFailsAgain, wantDeadline: true},
-		{name: "a retry's answer was lost", retry: true, retried: retryLost, wantDeadline: true},
-		{name: "no retry", deleted: true},
+		{
+			name: "a retry revived it", answered: true, retried: retryRevives,
+			afterList: outcome{deadline: true, marked: true}, inAdmit: outcome{marked: true},
+		},
+		{
+			name: "a retry re-drove it and it failed again", answered: true, retried: retryFailsAgain,
+			afterList: outcome{deadline: true, marked: true}, inAdmit: outcome{deadline: true},
+		},
+		{
+			name: "a retry's answer was lost", retried: retryLost,
+			afterList: outcome{deadline: true, marked: true}, inAdmit: outcome{deadline: true, marked: true},
+		},
+		{
+			name: "a retry's run_start came and it failed before KAS recorded the start", answered: true,
+			retried:   retryFailsBeforeItsStart,
+			afterList: outcome{deadline: true, marked: true}, inAdmit: outcome{deadline: true, marked: true},
+		},
+		{
+			name: "a retry revived it before marotte saw any frame", answered: true, retried: retryRevivesUnseen,
+			afterList: outcome{deadline: true, marked: true}, inAdmit: outcome{},
+		},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			kas := &purgedRun{
-				id: "wf_1", parent: "sess_host", status: marotte.RunStatusFailed, updated: time.Now().Add(-2 * window),
-				retried: tc.retried,
+		for _, at := range []ownerScan{scanOfThePass, scanOfAdmission} {
+			want, when := tc.afterList, "after the list"
+			if at == scanOfAdmission {
+				want, when = tc.inAdmit, "during admission"
 			}
-			var retryErr error
-			var during func(context.Context, *Runtime)
-			wantVerbs := 0
-			if tc.retry {
-				during, wantVerbs = retryDuringTheScan(t, kas, &retryErr), 1
-			}
-			h, rig, arm := newPurgedRunRig(t, kas, nil, during)
-			arm()
+			t.Run(tc.name+" "+when, func(t *testing.T) {
+				kas := &purgedRun{
+					id: "wf_1", parent: "sess_host", status: marotte.RunStatusFailed, updated: time.Now().Add(-2 * window),
+					retried: tc.retried,
+				}
+				var retryErr error
+				h, rig, arm := newPurgedRunRig(t, kas, nil, retryDuringTheScan(t, kas, &retryErr), at)
+				arm()
 
-			res := h.PurgeParentlessRuns(t.Context(), window)
+				res := h.PurgeParentlessRuns(t.Context(), window)
 
-			if got := len(rig.of(methodKiroWorkflowRetry)); got != wantVerbs || (retryErr == nil) != (tc.answered || !tc.retry) {
-				t.Fatalf("Setup: the retry sent %d verbs and answered %v, want %d verbs, answered %v", got, retryErr, wantVerbs, tc.answered)
-			}
-			var want []string
-			wantPurged, wantKept := 0, 1
-			if tc.deleted {
-				want, wantPurged, wantKept = []string{"wf_1"}, 1, 0
-			}
-			if got := deletedRunIDs(rig); !slices.Equal(got, want) {
-				t.Errorf("PurgeParentlessRuns deleted %v, want %v", got, want)
-			}
-			if res.Purged != wantPurged || res.Kept != wantKept {
-				t.Errorf("PurgeParentlessRuns = purged %d kept %d, want purged %d kept %d", res.Purged, res.Kept, wantPurged, wantKept)
-			}
-			if got := !res.NextDeadline.IsZero(); got != tc.wantDeadline {
-				t.Errorf("PurgeParentlessRuns.NextDeadline = %v, want one set %v: a keep that lapses by itself schedules the next pass",
-					res.NextDeadline, tc.wantDeadline)
-			}
-		})
+				if got := len(rig.of(methodKiroWorkflowRetry)); got != 1 || (retryErr == nil) != tc.answered {
+					t.Fatalf("Setup: the retry sent %d verbs and answered %v, want 1 verb, answered %v", got, retryErr, tc.answered)
+				}
+				if got := deletedRunIDs(rig); len(got) != 0 {
+					t.Errorf("PurgeParentlessRuns deleted %v, want nothing", got)
+				}
+				if res.Purged != 0 || res.Kept != 1 {
+					t.Errorf("PurgeParentlessRuns = purged %d kept %d, want purged 0 kept 1", res.Purged, res.Kept)
+				}
+				if got := !res.NextDeadline.IsZero(); got != want.deadline {
+					t.Errorf("PurgeParentlessRuns.NextDeadline = %v, want one set %v: a keep that lapses by itself schedules the next pass",
+						res.NextDeadline, want.deadline)
+				}
+				if got := retryMarked(h, "wf_1"); got != want.marked {
+					t.Errorf("wf_1's retry mark held after the pass = %v, want %v", got, want.marked)
+				}
+			})
+		}
+	}
+	t.Run("no retry", func(t *testing.T) {
+		kas := &purgedRun{id: "wf_1", parent: "sess_host", status: marotte.RunStatusFailed, updated: time.Now().Add(-2 * window)}
+		h, rig, arm := newPurgedRunRig(t, kas, nil, nil, 0)
+		arm()
+
+		res := h.PurgeParentlessRuns(t.Context(), window)
+
+		if got := deletedRunIDs(rig); !slices.Equal(got, []string{"wf_1"}) {
+			t.Errorf("PurgeParentlessRuns deleted %v, want [wf_1]", got)
+		}
+		if res.Purged != 1 || res.Kept != 0 || !res.NextDeadline.IsZero() {
+			t.Errorf("PurgeParentlessRuns = purged %d kept %d next %v, want purged 1 kept 0 and no deadline",
+				res.Purged, res.Kept, res.NextDeadline)
+		}
+	})
+}
+
+func retryMarked(h *Runtime, workflowID string) bool {
+	m := &h.runs.retries
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.at[workflowID]
+	return ok
+}
+
+// Each pass drops the retry marks whose bound has passed, including those of runs it never judges.
+func TestPurgeParentlessRuns_SweepsLapsedRetryMarksOfRunsItDoesNotJudge(t *testing.T) {
+	kas := &purgedRun{id: "wf_1", parent: "sess_host", status: marotte.RunStatusRunning, updated: time.Now().Add(-time.Hour)}
+	h, _, _ := newPurgedRunRig(t, kas, nil, nil, 0)
+	h.runs.retries.mark("wf_lapsed", time.Now().Add(-retryInFlightBound))
+	h.runs.retries.mark("wf_recent", time.Now())
+
+	h.PurgeParentlessRuns(t.Context(), 0)
+
+	if retryMarked(h, "wf_lapsed") {
+		t.Error("a mark past retryInFlightBound outlived the pass, want it swept")
+	}
+	if !retryMarked(h, "wf_recent") {
+		t.Error("a mark within retryInFlightBound was swept, want it kept")
 	}
 }
 
@@ -346,7 +446,7 @@ func TestPurgeParentlessRuns_PurgesARunOnceItsLostRetryLapses(t *testing.T) {
 		retried: retryLost,
 	}
 	var retryErr error
-	h, rig, arm := newPurgedRunRig(t, kas, nil, retryDuringTheScan(t, kas, &retryErr))
+	h, rig, arm := newPurgedRunRig(t, kas, nil, retryDuringTheScan(t, kas, &retryErr), scanOfThePass)
 	arm()
 	if first := h.PurgeParentlessRuns(t.Context(), window); first.Kept != 1 || retryErr == nil {
 		t.Fatalf("Setup: the pass with the retry lost = kept %d, retry answered %v; want kept 1 and no answer", first.Kept, retryErr)
@@ -410,18 +510,38 @@ func TestRetryMarks_HoldUntilTheRunMovesOrTheBoundPasses(t *testing.T) {
 	}
 }
 
-// Once KAS showed the run moving, the mark is gone: a later read of older activity does not bring it back.
-func TestRetryMarks_AnOvertakenMarkStaysGone(t *testing.T) {
+// A fresh read drops the mark only once it shows activity at or after the send; once dropped, a later read of older
+// activity does not bring it back.
+func TestRetryMarks_DropOvertakenNeedsActivitySinceTheSend(t *testing.T) {
+	t.Parallel()
+	sent := time.UnixMilli(1_800_000_000_000)
+	var m retryMarks
+	m.mark("wf_1", sent)
+
+	m.dropOvertaken("wf_1", sent.Add(-time.Millisecond))
+	if _, ok := m.inFlight("wf_1", sent.Add(-time.Hour), sent.Add(time.Second)); !ok {
+		t.Fatal("dropOvertaken on activity before the send dropped the mark, want it held")
+	}
+	m.dropOvertaken("wf_1", sent)
+
+	if _, ok := m.inFlight("wf_1", sent.Add(-time.Hour), sent.Add(time.Second)); ok {
+		t.Error("inFlight after activity in the send's millisecond = true, want the mark dropped")
+	}
+}
+
+// inFlight is a read: a read of activity since the send answers not in flight without dropping the mark, which only
+// dropOvertaken and the bound do.
+func TestRetryMarks_InFlightNeverDropsAMark(t *testing.T) {
 	t.Parallel()
 	sent := time.UnixMilli(1_800_000_000_000)
 	var m retryMarks
 	m.mark("wf_1", sent)
 	if _, ok := m.inFlight("wf_1", sent.Add(time.Second), sent.Add(time.Second)); ok {
-		t.Fatal("Setup: a mark KAS's activity overtook still reads in flight")
+		t.Fatal("Setup: inFlight on activity since the send = true, want false")
 	}
 
-	if _, ok := m.inFlight("wf_1", sent.Add(-time.Hour), sent.Add(time.Second)); ok {
-		t.Error("inFlight after the mark was overtaken = true, want false")
+	if _, ok := m.inFlight("wf_1", sent.Add(-time.Hour), sent.Add(time.Second)); !ok {
+		t.Error("inFlight after an earlier read of newer activity = false, want the mark still held")
 	}
 }
 
@@ -437,7 +557,7 @@ func TestPurgeParentlessRuns_ARetryDuringTheDeleteIsRefused(t *testing.T) {
 		}
 		tried = true
 		_, retryErr = h.runs.retry(t.Context(), "wf_1", failedAffordance(h, "wf_1"))
-	}, nil)
+	}, nil, 0)
 	arm()
 
 	h.PurgeParentlessRuns(t.Context(), 0)

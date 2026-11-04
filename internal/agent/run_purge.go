@@ -36,6 +36,7 @@ func (rt *Runtime) PurgeParentlessRuns(ctx context.Context, window time.Duration
 		return RunPurgeResult{}
 	}
 	defer release()
+	rt.runs.retries.sweep(time.Now())
 	runs, err := rt.runs.listRaw(ctx)
 	if err != nil {
 		slog.Warn("run purge: run list unavailable, purging nothing this pass", "error", err)
@@ -168,6 +169,9 @@ func (rs *Runs) deleteIfPurgeable(ctx context.Context, workflowID string, window
 		d.settle()
 		return false, time.Time{}, nil
 	}
+	if read.updated > 0 {
+		rs.retries.dropOvertaken(workflowID, time.UnixMilli(read.updated))
+	}
 	why, until := rs.purgeKeep(workflowID, read, window, time.Now())
 	if why == "" {
 		err = rs.deleteHeld(ctx, d, runStop{})
@@ -202,7 +206,9 @@ func (rs *Runs) inspectPurgeRead(ctx context.Context, workflowID string) (purgeR
 const retryInFlightBound = 10 * time.Minute
 
 // retryMarks holds, per run, when marotte last sent it a retry KAS has not shown taking effect: the purge's "retry in
-// flight". Only the purge reads it, so quiescence and the interrupted snapshot never see it. The zero value is ready.
+// flight". Only the purge reads it, so quiescence and the interrupted snapshot never see it. A mark is dropped only by
+// the facts purgeKeep reads (dropOvertaken, the bound) or by the retry or run ceasing to exist (clear): KAS emits a
+// retry's run_start before it records the start, so a frame proves nothing. The zero value is ready.
 type retryMarks struct {
 	at map[string]time.Time
 	mu sync.Mutex
@@ -219,15 +225,35 @@ func (m *retryMarks) mark(workflowID string, now time.Time) {
 	m.at[workflowID] = time.UnixMilli(now.UnixMilli())
 }
 
-// clear drops workflowID's mark: KAS showed the retry's effect or refused it, or the run is gone.
+// clear drops workflowID's mark: KAS refused the retry, or the run is gone.
 func (m *retryMarks) clear(workflowID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.at, workflowID)
 }
 
-// inFlight reports workflowID's mark while it is younger than retryInFlightBound at now and KAS shows no activity of
-// the run at or after it, with when it lapses; a lapsed or overtaken mark is dropped.
+// dropOvertaken drops workflowID's mark once a fresh inspect shows the run's last activity at or after it.
+func (m *retryMarks) dropOvertaken(workflowID string, last time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if at, ok := m.at[workflowID]; ok && !last.Before(at) {
+		delete(m.at, workflowID)
+	}
+}
+
+// sweep drops every mark retryInFlightBound has passed at now, so a run the purge never judges keeps none.
+func (m *retryMarks) sweep(now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for wf, at := range m.at {
+		if !now.Before(at.Add(retryInFlightBound)) {
+			delete(m.at, wf)
+		}
+	}
+}
+
+// inFlight reports workflowID's mark while it is younger than retryInFlightBound at now and last, the run's last
+// activity, is before it, with when it lapses. It never drops a mark.
 func (m *retryMarks) inFlight(workflowID string, last, now time.Time) (until time.Time, ok bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -237,7 +263,6 @@ func (m *retryMarks) inFlight(workflowID string, last, now time.Time) (until tim
 	}
 	until = at.Add(retryInFlightBound)
 	if !last.Before(at) || !now.Before(until) {
-		delete(m.at, workflowID)
 		return time.Time{}, false
 	}
 	return until, true

@@ -855,7 +855,6 @@ func runStartLaunch(chatID marotte.ChatID) launchOrigin {
 // re-arms a resumed run.
 func (rs *Runs) observeStart(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" {
-		rs.retries.clear(f.WorkflowID)
 		rs.startRunMarks(ctx, chatID, &f)
 		rs.recordParentSession(ctx, f.WorkflowID, f.ParentSessionID)
 		rs.armDeadline(ctx, f.WorkflowID)
