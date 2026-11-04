@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -108,7 +109,7 @@ func (s *Session) callable() error {
 		return marotte.ErrSessionClosing
 	case stateClosed:
 		if s.engine.readerExited.Load() {
-			return &marotte.TransportError{Err: errBridgeExited, Retryable: true}
+			return &marotte.TransportError{Err: fmt.Errorf("%w: %w", errBridgeExited, marotte.ErrNotWritten), Retryable: true}
 		}
 		return marotte.ErrSessionClosed
 	}

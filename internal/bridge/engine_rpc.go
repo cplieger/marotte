@@ -30,7 +30,7 @@ var frameTooLargeResp = &marotte.RPCResponse{
 }
 
 // errWriteFenced refuses a frame once the read loop exited: nothing is left to read it, so it is never written.
-var errWriteFenced = errors.New("ACP bridge exited before the frame was written")
+var errWriteFenced = fmt.Errorf("ACP bridge exited before the frame was written: %w", marotte.ErrNotWritten)
 
 // pendingReply is the answer to one of marotte's requests plus the position of its lane when it arrived: the
 // response skips the frames queued before it, so the position is captured with it.
@@ -602,22 +602,32 @@ func (e *Engine) writeFrameIf(data []byte, commit func() error) (refused, err er
 		if err == nil && n == chunkLen {
 			continue
 		}
-		reason := exitWriteFailed
-		switch {
-		case errors.Is(err, os.ErrDeadlineExceeded):
-			// writeWatched logged which bound reaped it.
-			reason = ExitStdinStalled
-		case err == nil:
-			err = fmt.Errorf("short write to ACP stdin: %d of %d bytes", off, len(data))
-			slog.Error("ACP write: short write left a partial frame in kiro-cli's stdin; reaping the agent engine",
-				"wrote_bytes", off, "frame_bytes", len(data))
-		default:
-			slog.Error("ACP write failed; reaping the agent engine", "wrote_bytes", off, "frame_bytes", len(data), "error", err)
-		}
-		e.fail(reason)
-		return nil, fmt.Errorf("%w: %w", errBridgeExited, err)
+		return nil, e.failWrite(err, off, len(data))
 	}
 	return nil, nil
+}
+
+// failWrite reaps the engine after a failed or short stdin write that left off of total bytes written, and returns
+// the write's error.
+func (e *Engine) failWrite(err error, off, total int) error {
+	reason := exitWriteFailed
+	switch {
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		// writeWatched logged which bound reaped it.
+		reason = ExitStdinStalled
+	case err == nil:
+		err = fmt.Errorf("short write to ACP stdin: %d of %d bytes", off, total)
+		slog.Error("ACP write: short write left a partial frame in kiro-cli's stdin; reaping the agent engine",
+			"wrote_bytes", off, "frame_bytes", total)
+	default:
+		slog.Error("ACP write failed; reaping the agent engine", "wrote_bytes", off, "frame_bytes", total, "error", err)
+	}
+	e.fail(reason)
+	if off < total {
+		// The frame's closing newline never went out, so kiro-cli read no request.
+		return fmt.Errorf("%w: %w: %w", errBridgeExited, marotte.ErrNotWritten, err)
+	}
+	return fmt.Errorf("%w: %w", errBridgeExited, err)
 }
 
 // deadlineWriter is the part of a stdin handle a write deadline needs: cmd.StdinPipe's *os.File has it, the test

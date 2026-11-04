@@ -63,8 +63,8 @@ func unanswered(ctx context.Context, err error) error {
 	return err
 }
 
-var errLaunchUnconfirmed = errors.New("the run was created and its start was sent, but the answer could not be " +
-	"read, so whether it started is unknown. Open the run from History to see where it is")
+var errLaunchUnconfirmed = errors.New("the run was created and its start was sent, but the answer was lost or " +
+	"could not be read, so whether it started is unknown. Open the run from History to see where it is")
 
 var errLaunchNewUnconfirmed = errors.New("the engine's answer to the launch was lost or could not be read, " +
 	"so a run may have been created. Check History before launching again")
@@ -196,8 +196,8 @@ func (rs *Runs) launchAs(
 	return wfID, recipe.Name, nil
 }
 
-// invokeFailed settles a launch whose invoke failed and returns its error. An unread or deadline-outlived answer may
-// have started the run, so it keeps its lease, route and bridge under an armed deadline (errLaunchUnconfirmed); a
+// invokeFailed settles a launch whose invoke failed and returns its error. An unconfirmed (verdictOf) or
+// deadline-outlived answer may have started the run, so it keeps its lease, route and bridge under an armed deadline (errLaunchUnconfirmed); a
 // refusal records the schedule failure on the row grantLease wrote and releases the run.
 func (rs *Runs) invokeFailed(ctx context.Context, wfID, recipe string, o launchOrigin, err error) error {
 	err = fmt.Errorf("workflow invoke: %w", err)
@@ -476,10 +476,10 @@ var errRetryOutcomeUnknown = errors.New(
 	"kiro-cli has not answered the retry yet and may still be running it. The run updates when it does",
 )
 
-// errRetryOutcomeUnreadable reports a retry KAS accepted whose report was unreadable. The run may be
+// errRetryOutcomeUnreadable reports a retry KAS may have taken whose report was lost or unreadable. The run may be
 // executing, so the remedy is refreshing, not retrying.
 var errRetryOutcomeUnreadable = errors.New(
-	"the retry was accepted but its report could not be read, so which steps it reset " +
+	"the retry was sent but its report was lost or could not be read, so which steps it reset " +
 		"is unknown. Refresh the run to see where it is",
 )
 
@@ -577,8 +577,7 @@ func (rs *Runs) retryCall(
 	none := marotte.RunRetriedResponse{}
 	rs.retries.mark(workflowID, time.Now())
 	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
-	if err != nil && ctx.Err() == nil && marotte.ReplyUnread(err) {
-		// An answer arrived and could not be read, so KAS may have taken the verb.
+	if err != nil && ctx.Err() == nil && verdictOf(err) == kasUnconfirmed {
 		return none, fmt.Errorf("%w: %w", errRetryOutcomeUnreadable, err)
 	}
 	if err != nil {

@@ -100,6 +100,10 @@ var ErrSessionBusy = errors.New("session busy")
 // transient failure because the two want opposite actions: a retry on a dead engine only burns time.
 var ErrBridgeExited = errors.New("ACP bridge exited")
 
+// ErrNotWritten is wrapped into a request's error when the engine ended before the request's whole frame reached
+// kiro-cli, so kiro-cli never saw it. An ErrBridgeExited without it may hide a request kiro-cli took.
+var ErrNotWritten = errors.New("the request was not written to kiro-cli")
+
 // ErrFrameTooLarge is the sentinel a Call returns (wrapped in a NON-retryable TransportError) when a
 // stdout frame exceeded the engine's cap and was dropped with this call's answer possibly inside it.
 // The engine and session live, so nothing is torn down; the text is user-facing. Not retryable: the

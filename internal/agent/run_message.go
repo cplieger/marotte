@@ -416,11 +416,14 @@ func (rs *Runs) sendStepWords(ctx context.Context, host *drivenHost, at stepAddr
 	return got, nil
 }
 
-// A dead bridge, an oversize reply or an undecoded one is reported only for a written request.
+// verdictOf owns the rule for a written request's lost answer. An engine that ended after the write may have taken it,
+// and a run it took survives the restart paused (KAS's initialize sweep reconciles a running run to paused).
 func verdictOf(err error) kasVerdict {
 	switch {
 	case err == nil:
 		return kasTook
+	case errors.Is(err, marotte.ErrNotWritten):
+		return kasRefused
 	case errors.Is(err, marotte.ErrBridgeExited), marotte.ReplyUnread(err):
 		return kasUnconfirmed
 	}

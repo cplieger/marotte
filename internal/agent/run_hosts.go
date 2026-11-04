@@ -198,7 +198,7 @@ func (rs *Runs) write(
 		return cErr
 	})
 	if errors.Is(err, marotte.ErrSessionClosed) || errors.Is(err, marotte.ErrSessionClosing) ||
-		errors.Is(err, errRunWorkUnadmitted) {
+		errors.Is(err, marotte.ErrNotWritten) || errors.Is(err, errRunWorkUnadmitted) {
 		// Refused before the write.
 		m.unwritten()
 		return nil, err
