@@ -58,9 +58,8 @@ type Entry struct {
 	// back to creation so a new schedule does not immediately fire for every
 	// slot since the epoch.
 	Anchor time.Time `json:"anchor"`
-	// LastRunAt, LastStatus and LastReason are for display; the run's own record is the durable history.
-	// LastRunAt is the last slot's due time, or its run's start (RecordStart) until the runner records the slot:
-	// a run started at or after a due slot is that slot's launch (Runner.reach).
+	// LastStatus and LastReason are for display; the run's own record is the durable history.
+	// LastRunAt is the last slot's due time, or its run's start (RecordStart) until the runner records that slot.
 	LastRunAt  time.Time `json:"last_run_at,omitzero"`
 	Source     string    `json:"source"`
 	Name       string    `json:"name,omitempty"`

@@ -265,6 +265,63 @@ func TestLaunchScheduled_ACallerCancelOnceTheRunExistsStillLaunchesIt(t *testing
 	}
 }
 
+// Dropping the caller's cancel keeps the launch's deadline: an invoke the engine never answers ends at it, so the
+// schedule runner's sweep is not held until shutdown, and the row on disk names the run failed.
+func TestLaunchScheduled_ACallerCancelOnceTheRunExistsKeepsTheLaunchDeadline(t *testing.T) {
+	saved := launchTimeout
+	launchTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { launchTimeout = saved })
+	h, br, _, entry := nightlyLaunch(t)
+	dir := t.TempDir()
+	st, err := schedule.NewStore(dir)
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	if pErr := st.Put(t.Context(), &entry); pErr != nil {
+		t.Fatalf("Put schedule: %v", pErr)
+	}
+	h.runs.schedules = st
+	br.refuseCancelled = true
+	unanswered := make(chan struct{})
+	t.Cleanup(func() { close(unanswered) })
+	br.blockOn = map[string]chan struct{}{methodKiroWorkflowInvoke: unanswered}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method == methodKiroWorkflowNew {
+			cancel()
+		}
+		return nil, nil, false
+	}
+	type answer struct {
+		err error
+		id  string
+	}
+	done := make(chan answer, 1)
+	go func() {
+		id, _, lErr := h.runs.LaunchScheduled(ctx, entry.Source, entry.ID(), marotte.RunDefaults{},
+			time.Now().Add(time.Hour))
+		done <- answer{id: id, err: lErr}
+	}()
+
+	var got answer
+	select {
+	case got = <-done:
+	case <-time.After(10 * launchTimeout):
+		t.Fatal("LaunchScheduled outlived its launch deadline")
+	}
+	if got.id != "wf_1" || !errors.Is(got.err, context.DeadlineExceeded) {
+		t.Errorf("LaunchScheduled = %q, %v; want wf_1 with the launch deadline", got.id, got.err)
+	}
+	reopened, err := schedule.NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen schedule.NewStore: %v", err)
+	}
+	if row := reopened.List()[0]; row.LastRunID != "wf_1" || row.LastStatus != schedule.StatusFailed {
+		t.Errorf("row on disk = %+v, want wf_1 failed", row)
+	}
+}
+
 // A run created but never invoked is named with its failure, so the runner records the slot it tried as failed with
 // that run rather than as a launch that created nothing.
 func TestLaunchScheduled_AFailedInvokeNamesTheRunWithItsFailure(t *testing.T) {

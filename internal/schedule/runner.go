@@ -116,9 +116,7 @@ func (r *Runner) sweep(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if list[i].Enabled {
-			r.judge(ctx, &list[i], start)
-		}
+		r.judge(ctx, list[i].ID(), start)
 	}
 }
 
@@ -158,34 +156,29 @@ type slotTurn struct {
 	event slotEvent
 }
 
-// judge settles the entry's due slot once the clock has reached it. An overtaken slot hands the sweep to the next
+// judge settles schedule id's due slot once the clock has reached it. An overtaken slot hands the sweep to the next
 // slot in the same pass, judged against this sweep's start, so a long sweep cannot age it past its grace.
-func (r *Runner) judge(ctx context.Context, e *Entry, start time.Time) {
-	// No floor: the runner is the one caller that must SEE a slot already gone, to tell a due slot from a missed one.
-	due, err := NextRunFrom(e.Spec, e.Anchor, time.Time{})
-	if err != nil {
-		// Say so once per tick rather than disabling the user's row.
-		slog.Warn("schedule has no next run", "id", e.ID(), "error", err)
-		return
-	}
+func (r *Runner) judge(ctx context.Context, id string, start time.Time) {
 	for {
-		// Read per slot: each launch before it can hold the sweep for the launch's own timeout.
+		// Read per slot, the row and the clock: each launch before it can hold the sweep for the launch's own
+		// timeout, and the user may have edited, disabled or deleted the schedule meanwhile.
+		e, ok := r.store.get(id)
+		if !ok || !e.Enabled {
+			return
+		}
+		// No floor: the runner is the one caller that must SEE a slot already gone, to tell a due slot from a missed one.
+		due, err := NextRunFrom(e.Spec, e.Anchor, time.Time{})
+		if err != nil {
+			// Say so once per tick rather than disabling the user's row.
+			slog.Warn("schedule has no next run", "id", id, "error", err)
+			return
+		}
 		now := r.now()
 		if now.Before(due) {
 			return
 		}
-		turn := r.reach(ctx, e, due, start, now)
-		if r.settle(ctx, e, &turn) != nil || turn.event != slotOvertaken {
-			return
-		}
-		// Re-read: the sweep's copy predates every launch before this one, and the user may have edited,
-		// disabled or deleted the schedule since.
-		row, ok := r.store.get(e.ID())
-		if !ok || !row.Enabled {
-			return
-		}
-		*e = row
-		if due, err = NextRunFrom(e.Spec, e.Anchor, time.Time{}); err != nil {
+		turn := r.reach(ctx, &e, due, start, now)
+		if r.settle(ctx, &e, &turn) != nil || turn.event != slotOvertaken {
 			return
 		}
 	}
@@ -195,6 +188,7 @@ func (r *Runner) judge(ctx context.Context, e *Entry, start time.Time) {
 func (r *Runner) reach(ctx context.Context, e *Entry, due, start, now time.Time) slotTurn {
 	turn := slotTurn{due: due, at: now}
 	switch {
+	// A run started at or after due is this slot's launch whose record never landed.
 	case e.LastRunID != "" && !e.LastRunAt.Before(due):
 		turn.event, turn.runID = slotLaunched, e.LastRunID
 		return turn
@@ -265,8 +259,8 @@ func (r *Runner) launch(ctx context.Context, e *Entry, due time.Time) slotTurn {
 }
 
 // settle is the one writer of a slot's state: the row (recordFire, skipTo, skipFailed, skipBusy, setWaiting) and the
-// runner's held and retry memory, returning the row write's error. The row writes ignore ctx's cancel: a run that
-// started during a shutdown must still be recorded, or the next start launches its slot again.
+// runner's held and retry memory, returning the row write's error. The row writes ignore ctx's cancel, so a slot
+// settled during a shutdown is recorded rather than judged again at the next start.
 func (r *Runner) settle(ctx context.Context, e *Entry, t *slotTurn) error {
 	id := e.ID()
 	wctx := context.WithoutCancel(ctx)

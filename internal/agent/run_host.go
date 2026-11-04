@@ -61,8 +61,8 @@ func unanswered(ctx context.Context, err error) error {
 	return err
 }
 
-// launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`.
-const launchTimeout = 120 * time.Second
+// launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`. A var so a test can shorten it.
+var launchTimeout = 120 * time.Second
 
 // launch starts one parentless attended run of the recipe and returns its workflow id and name.
 func (rs *Runs) launch(
@@ -163,12 +163,14 @@ func (rs *Runs) launchAs(
 	rs.router.registerOwner(wfID, parent)
 	if _, err := rs.write(rctx, a, sb, wfID, methodKiroWorkflowInvoke,
 		map[string]any{keyWorkflowID: wfID}, mutationDrive); err != nil {
-		// Created but never started; the row grantLease wrote names this run, so it gets the failure.
+		// Created but never started; the row grantLease wrote names this run, so it gets the failure. The invoke may
+		// have ended on the launch's deadline, which would refuse these writes too.
 		err = fmt.Errorf("workflow invoke: %w", err)
-		rs.recordScheduleOutcome(rctx, schedule.Run{ScheduleID: o.scheduleID, WorkflowID: wfID},
+		fctx := durable.Context(rctx)
+		rs.recordScheduleOutcome(fctx, schedule.Run{ScheduleID: o.scheduleID, WorkflowID: wfID},
 			schedule.Outcome{Status: schedule.StatusFailed, Reason: rowText(err.Error())})
-		rs.releaseLease(rctx, wfID)
-		rs.coord.closeBridge(rctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
+		rs.releaseLease(fctx, wfID)
+		rs.coord.closeBridge(fctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
 		return wfID, recipe.Name, err
 	}
 	// After invoke, so a run that never started leaves no timer.

@@ -323,11 +323,23 @@ func TestStore_KeepsAWaitAcrossAReopen(t *testing.T) {
 	}
 }
 
-// A wait its next slot overtakes hands that slot to the same sweep only while the schedule still exists and is on: an
-// earlier launch can hold the sweep long enough for the user to delete or disable it.
-func TestSweep_AnOvertakenWaitStopsAtAScheduleChangedMidSweep(t *testing.T) {
+// A sweep launches a schedule's slot, a plainly due one or the one an overtaken wait hands on, only while the schedule
+// still exists and is on: an earlier launch can hold the sweep long enough for the user to delete or disable it.
+func TestSweep_AScheduleChangedMidSweepDoesNotLaunch(t *testing.T) {
 	yesterday := at(2026, time.August, 3, 12, 0)
 	due := at(2026, time.August, 4, 2, 0)
+	states := []struct {
+		anchor  time.Time
+		arrange func(t *testing.T, st *Store, b *Entry)
+		name    string
+	}{
+		{name: "due", anchor: due, arrange: func(*testing.T, *Store, *Entry) {}},
+		{name: "waiting", anchor: yesterday, arrange: func(t *testing.T, st *Store, b *Entry) {
+			if err := st.setWaiting(t.Context(), b.ID(), due); err != nil {
+				t.Fatalf("setWaiting: %v", err)
+			}
+		}},
+	}
 	changes := []struct {
 		change func(t *testing.T, st *Store, b *Entry)
 		name   string
@@ -345,34 +357,34 @@ func TestSweep_AnOvertakenWaitStopsAtAScheduleChangedMidSweep(t *testing.T) {
 			}
 		}},
 	}
-	for _, tc := range changes {
-		t.Run(tc.name, func(t *testing.T) {
-			st, err := NewStore(t.TempDir())
-			if err != nil {
-				t.Fatalf("NewStore: %v", err)
-			}
-			a := Entry{Source: "bundled://a", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true, Anchor: due}
-			b := Entry{Source: "bundled://b", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true, Anchor: yesterday}
-			for _, e := range []*Entry{&a, &b} {
-				if err := st.Put(t.Context(), e); err != nil {
-					t.Fatalf("Put: %v", err)
+	for _, state := range states {
+		for _, tc := range changes {
+			t.Run(state.name+" "+tc.name, func(t *testing.T) {
+				st, err := NewStore(t.TempDir())
+				if err != nil {
+					t.Fatalf("NewStore: %v", err)
 				}
-			}
-			if err := st.setWaiting(t.Context(), b.ID(), due); err != nil {
-				t.Fatalf("setWaiting: %v", err)
-			}
-			l := &fakeLauncher{}
-			l.during = func(src string) {
-				if src == a.Source {
-					tc.change(t, st, &b)
+				a := Entry{Source: "bundled://a", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true, Anchor: due}
+				b := Entry{Source: "bundled://b", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true, Anchor: state.anchor}
+				for _, e := range []*Entry{&a, &b} {
+					if err := st.Put(t.Context(), e); err != nil {
+						t.Fatalf("Put: %v", err)
+					}
 				}
-			}
-			r := NewRunner(st, l)
-			r.now = func() time.Time { return due.AddDate(0, 0, 1).Add(30 * time.Second) }
-			r.sweep(t.Context())
-			if sources, _, _ := l.snap(); slices.Contains(sources, b.Source) {
-				t.Errorf("launched %v, want no launch of b once it was %s", sources, tc.name)
-			}
-		})
+				state.arrange(t, st, &b)
+				l := &fakeLauncher{}
+				l.during = func(src string) {
+					if src == a.Source {
+						tc.change(t, st, &b)
+					}
+				}
+				r := NewRunner(st, l)
+				r.now = func() time.Time { return due.AddDate(0, 0, 1).Add(30 * time.Second) }
+				r.sweep(t.Context())
+				if sources, _, _ := l.snap(); slices.Contains(sources, b.Source) {
+					t.Errorf("launched %v, want no launch of b once it was %s", sources, tc.name)
+				}
+			})
+		}
 	}
 }
