@@ -544,6 +544,11 @@ func (rs *Runs) retryCall(
 	none := marotte.RunRetriedResponse{}
 	rs.retries.mark(workflowID, time.Now())
 	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
+	if err != nil && ctx.Err() == nil &&
+		(errors.Is(err, marotte.ErrReplyUndecoded) || errors.Is(err, marotte.ErrFrameTooLarge)) {
+		// An answer arrived and could not be read, so KAS may have taken the verb.
+		return none, fmt.Errorf("%w: %w", errRetryOutcomeUnreadable, err)
+	}
 	if err != nil {
 		return none, fmt.Errorf("workflow retry: %w", rs.retryDeadlineErr(ctx, err))
 	}

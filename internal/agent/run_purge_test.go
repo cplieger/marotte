@@ -479,9 +479,9 @@ func lapseRetryMarks(h *Runtime) {
 	}
 }
 
-// Neither KAS refusing a retry nor an answer marotte could not decode drops the run's retry mark: the mark is per run,
-// so a refusal says nothing of an earlier attempt KAS may still be running (a just-claimed refusal means one is), and
-// an undecoded answer may hide a retry KAS took. With KAS showing nothing since, the run is kept until the bound.
+// KAS refusing a retry does not drop the run's retry mark: the mark is per run, so a refusal says nothing of an earlier
+// attempt KAS may still be running (a just-claimed refusal means one is). With KAS showing nothing since, the run is
+// kept until the bound.
 func TestPurgeParentlessRuns_KeepsARunWhoseRetryWasRefused(t *testing.T) {
 	shortRetryTimeout(t)
 	const window = 24 * time.Hour
@@ -489,7 +489,7 @@ func TestPurgeParentlessRuns_KeepsARunWhoseRetryWasRefused(t *testing.T) {
 		Code: -32603, Message: "Internal error",
 		Data: json.RawMessage(`{"details":"Workflow wf_1 was just claimed by another process"}`),
 	}
-	undecoded := &marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "marotte could not decode kiro-cli's answer"}
+	parseErr := &marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "Parse error"}
 	cases := []struct {
 		refusal *marotte.RPCError
 		name    string
@@ -498,7 +498,7 @@ func TestPurgeParentlessRuns_KeepsARunWhoseRetryWasRefused(t *testing.T) {
 	}{
 		{name: "a second attempt refused as just claimed while the first is unanswered", refusal: justClaimed, overlap: true},
 		{name: "a retry refused as just claimed", refusal: justClaimed},
-		{name: "a retry whose answer marotte could not decode", refusal: undecoded},
+		{name: "a retry refused with a parse error", refusal: parseErr},
 	}
 	for _, tc := range cases {
 		for _, at := range []ownerScan{scanOfThePass, scanOfAdmission} {

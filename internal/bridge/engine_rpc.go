@@ -456,6 +456,8 @@ func replyOutcome(reply pendingReply) (*marotte.RPCResponse, uint64, error) {
 	case resp == frameTooLargeResp:
 		// Not retryable: the same prompt would likely produce the same oversize payload (marotte.ErrFrameTooLarge).
 		return nil, reply.seq, &marotte.TransportError{Err: marotte.ErrFrameTooLarge, Retryable: false}
+	case resp == undecodedResp:
+		return resp, reply.seq, fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded, resp.Error)
 	case resp.Error != nil:
 		if resp.Error.Code == marotte.RPCCodeSessionBusy {
 			return resp, reply.seq, fmt.Errorf("ACP error %d: %w: %w", resp.Error.Code, marotte.ErrSessionBusy, resp.Error)

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"testing"
@@ -128,6 +129,25 @@ func TestDelete_AfterAnUnconfirmedSendClearsItsRetryRecord(t *testing.T) {
 			t.Errorf("KAS got %d session/prompt, want 1", n)
 		}
 	})
+}
+
+// An answer to the step's words that arrived but could not be decoded may hide words KAS took, so they are recorded
+// as sent and a second send is answered from that record instead of reaching KAS again.
+func TestMessageStep_AnUndecodedAnswerRecordsTheWordsAsSent(t *testing.T) {
+	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
+	newStepScript(t, br, "paused")
+	br.setCallErr(marotte.MethodPrompt, fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded,
+		&marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "marotte could not decode kiro-cli's answer"}))
+
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-51", "", nil); !errors.Is(err, errStepUnconfirmed) {
+		t.Fatalf("MessageStep whose answer could not be decoded = %v, want errStepUnconfirmed", err)
+	}
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-51", "", nil); err != nil {
+		t.Errorf("the same message sent again = %v, want it answered from the record", err)
+	}
+	if n := promptCount(br); n != 1 {
+		t.Errorf("KAS got %d session/prompt, want 1: the words may already be in the step", n)
+	}
 }
 
 // Delete winning over a retry: the retry record of a send made before it goes with the run, so the
