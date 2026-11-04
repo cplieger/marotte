@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 )
@@ -265,11 +266,69 @@ func (rs *Runs) autoResumeStopped(workflowID string) bool {
 
 // stopAutoResume records that marotte no longer resumes the paused run on its own, until a resume or pause it did
 // not write moves the run (endAutoResumeStop). The record lands after KAS's pause frame, so it is announced, also
-// on a failed write: the store keeps the stamp in memory, where the run read finds it.
-func (rs *Runs) stopAutoResume(ctx context.Context, workflowID string) error {
+// on a failed write: the store keeps the stamp in memory, where the run read finds it. KAS tells neither the user
+// nor the launching agent of the pause, so both are told here.
+func (rs *Runs) stopAutoResume(ctx context.Context, workflowID string, throttled bool) error {
 	err := rs.leaseStore().SetAutoResumeStoppedAt(ctx, workflowID, time.Now())
 	rs.announcePaused(ctx, workflowID)
+	rs.notifyAutoResumeStop(ctx, workflowID, throttled)
 	return err
+}
+
+// throttledPause reports whether a pause's detail is a model throttle; the run view's autoResumeStopSentence draws
+// the same line.
+func throttledPause(d *pauseDetail) bool {
+	return d != nil && strings.Contains(strings.ToLower(d.Code), "throttl")
+}
+
+// notifyAutoResumeStop pushes the stop under the run and tells the launching agent, off the caller's resume lock:
+// the steer can wait behind KAS's write backpressure.
+func (rs *Runs) notifyAutoResumeStop(ctx context.Context, workflowID string, throttled bool) {
+	l, held := rs.lease(workflowID)
+	if !held || rs.coord == nil {
+		return
+	}
+	name := rs.leasedRunName(&l)
+	n := notice.AutoResumeStopped(notice.RunTarget(workflowID, name), throttled)
+	rs.coord.Notify(ctx, marotte.ChatID(l.ChatID), &n)
+	chat := marotte.ChatID(l.ChatID)
+	if chat == "" || isRunChat(chat) || rs.lifecycle == nil {
+		return
+	}
+	text := autoResumeStopNoteText(workflowID, name, throttled)
+	rs.lifecycle.goUnlessDraining(func() {
+		nctx, cancel := rs.lifecycle.derivedContext()
+		defer cancel()
+		rs.tellLaunchingAgent(nctx, workflowID, chat, text)
+	})
+}
+
+// autoResumeStopNoteText is the launching agent's copy of the stop, naming the run by id for its workflow tools.
+func autoResumeStopNoteText(workflowID, name string, throttled bool) string {
+	cause := "for a cause nobody chose"
+	if throttled {
+		cause = "for model throttling"
+	}
+	run := workflowID
+	if name != "" {
+		run = name + " (" + workflowID + ")"
+	}
+	return "marotte stopped resuming workflow run " + run + " on its own: it kept pausing " + cause +
+		" with no progress between resumes. It stays paused until it is resumed (update_workflow resume) or ended."
+}
+
+// tellLaunchingAgent files text in the run's launching session; command.SteerWarningNotice owns how it is read.
+func (rs *Runs) tellLaunchingAgent(ctx context.Context, workflowID string, chat marotte.ChatID, text string) {
+	host, err := rs.ensureResident(ctx, workflowID)
+	if err == nil {
+		err = command.SteerWarningNotice(ctx, host.sb, text)
+	}
+	if err != nil {
+		slog.Warn("marotte stopped resuming a run, but its launching agent could not be told",
+			"workflow_id", workflowID, "chat_id", chat, "error", err)
+		return
+	}
+	slog.Info("told a run's launching agent that marotte stopped resuming it", "workflow_id", workflowID, "chat_id", chat)
 }
 
 // endAutoResumeStop drops a run's stop and the spent heal budget behind it, reporting whether it had one: the run

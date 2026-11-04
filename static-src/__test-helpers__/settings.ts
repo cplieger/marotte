@@ -10,7 +10,6 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     additional_directories_refused: {},
     chat_retention_days: 7,
     theme: "",
-    fb_path: "",
     last_model: "",
     last_effort_by_model: {},
     kiro_defaults: {},

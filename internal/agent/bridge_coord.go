@@ -1214,8 +1214,10 @@ func (bc *bridgeCoordinator) Notify(ctx context.Context, chatID marotte.ChatID, 
 	}
 	bc.noSubscribers.Store(false)
 	// Gated, since a caller need not run on inflight (the PR status poller outlives Shutdown). Once draining the send
-	// still goes, unwaited: push.Close in Shutdown unblocks it and owns its writes.
-	send := func() { bc.push.Send(ctx, n) }
+	// still goes, unwaited: push.Close in Shutdown unblocks it and owns its writes. The send outlives the caller's
+	// ctx (a heal cancels its own on return); push.Close bounds it.
+	sendCtx := context.WithoutCancel(ctx)
+	send := func() { bc.push.Send(sendCtx, n) }
 	if !bc.lifecycle.goUnlessDraining(send) {
 		go send()
 	}

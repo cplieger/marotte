@@ -103,7 +103,7 @@ func TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead(t *testing.T) {
 			before := tc.seed(t, path)
 			s := &Server{agent: &fakeEngine{}, push: &testPush{}, configDir: dir}
 
-			req := httptest.NewRequest(tc.method, "/api/settings", bytes.NewReader([]byte(`{"fb_path":"/workspace/src"}`)))
+			req := httptest.NewRequest(tc.method, "/api/settings", bytes.NewReader([]byte(`{"last_merge_method":"squash"}`)))
 			rec := httptest.NewRecorder()
 			s.handleSettingsWrite(rec, req)
 

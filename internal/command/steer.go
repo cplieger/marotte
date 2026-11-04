@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -59,6 +60,23 @@ type steerReply struct {
 func sendSteer(ctx context.Context, sb SessionCaller, steerID, text string) (steerReply, error) {
 	resp, err := sb.Call(ctx, marotte.MethodSessionSteer, steerParams(sb, steerID, text))
 	return decodeSteerReply(resp), err
+}
+
+// SteerWarningNotice files marotte's own text in sb's steering buffer as a warning notification, the buffer KAS
+// delivers a step's send_message into: a running turn reads it at its next boundary, else the session's next turn
+// does. KAS serves a client no send_message delivery or parent wake, so this is the one way into an agent's
+// context (KAS 3.0.0 handleSessionSteer files a "[notification/<sev>]" steer as kind notification; a new execution
+// reads past the last-read id, readerIndexPastLastRead). KAS wakes no idle session for it, and a session/load does
+// not re-queue it. A user's words never take this shape (ValidSteerText refuses it).
+func SteerWarningNotice(ctx context.Context, sb SessionCaller, text string) error {
+	reply, err := sendSteer(ctx, sb, ids.NewMessageID(), "[notification/warning] "+text)
+	switch {
+	case err != nil:
+		return err
+	case !reply.Queued:
+		return fmt.Errorf("the engine dropped the notice: %s", reply.Dropped)
+	}
+	return nil
 }
 
 // SteerTarget is one steering buffer and what reaches it: a chat's own session, or one of a

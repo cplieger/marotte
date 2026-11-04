@@ -18,8 +18,6 @@ import { fileDownloadURL } from "./utils-url.js";
 import { onGitStatusChange, statusForPath, statusUnder } from "./git-status-store.js";
 import { describeStatus } from "./git-types.js";
 import { confirm as confirmDialog } from "./confirm.js";
-// The browser's path is a workspace preference in config.json, so another device lands where this one looked.
-import { patchSettings } from "./persist.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
 import { isPreviewablePage } from "./preview-page.js";
 import { openWebPreview } from "./web-open.js";
@@ -101,25 +99,6 @@ function stateFor(ref: string): FileBrowserState {
   return created;
 }
 
-/** Module-level because `patchSettings` debounces, so the settings payload may lag the last navigation. */
-let defaultDir = FB_ROOT;
-
-/** Seed the start folder for a new Files tab from loaded settings; "" means the mounts listing. Local only. */
-export function noteDefaultBrowsePath(path: string): void {
-  defaultDir = normalizeDirPath(path);
-}
-
-/** That folder, FB_ROOT when none was recorded. */
-function defaultBrowsePath(): string {
-  return defaultDir;
-}
-
-/** Records both the local value and config.json, so the two cannot drift. */
-function recordBrowsePath(path: string): void {
-  defaultDir = normalizeDirPath(path);
-  void patchSettings({ fb_path: path });
-}
-
 /** Bind the shared DOM to one files tab without loading; the same browser skips the repaint. */
 export function bindFilesTab(ref: string): void {
   if (boundRef !== ref) {
@@ -160,7 +139,7 @@ export function showFilesTab(ref: string): void {
   loadDir();
 }
 
-/** Drop a closed tab's state, unbinding when it was on screen. Does not write `fb_path`, which says where a new tab starts. */
+/** Drop a closed tab's state, unbinding when it was on screen. Its folder goes with it: a plain open starts at FB_ROOT. */
 export function releaseFilesTab(ref: string): void {
   browserStates.delete(ref);
   if (boundRef !== ref) {
@@ -192,7 +171,7 @@ function filesRowName(dir: string): string {
 
 export function initFileBrowser(): void {
   $.filesBtn.addEventListener("click", () => {
-    void toggleFilesView(defaultBrowsePath());
+    void toggleFilesView(FB_ROOT);
   });
   $.fbBack.addEventListener("click", goBack);
   $.fbForward.addEventListener("click", goForward);
@@ -222,7 +201,7 @@ export function initFileBrowser(): void {
     getSearchPath: () => (boundRef === "" ? "" : cur().currentPath),
     // Show, never toggle: a Ctrl-F from another tab must bring the browser forward.
     activateBrowser: () => {
-      void openFilesView(defaultBrowsePath());
+      void openFilesView(FB_ROOT);
     },
     // Close first: `#fb-list` is hidden while the bar is open.
     openFolder: (path) => {
@@ -346,7 +325,7 @@ function settle(path: string, d: DirResult, transition: boolean): void {
       settleOnParent(path, st.pendingOpen);
       return;
     case "error":
-      // Heal an unreachable origin to the mounts listing once. `fb_path` is not cleared.
+      // Heal an unreachable origin to the mounts listing once.
       if (st.pendingRestore && path !== FB_ROOT) {
         st.pendingRestore = false;
         st.reset();
@@ -392,7 +371,7 @@ function applyListing(files: FileEntry[], writable: boolean): void {
 }
 
 /**
- * `file` named a file: its folder takes its place in the trail, the route and `fb_path`. Only the path field `open`s it;
+ * `file` named a file: its folder takes its place in the trail and the route. Only the path field `open`s it;
  * every other door (a deep link, the boot restore) lands on the folder alone, since an unasked editor tab is a surprise.
  */
 function settleOnParent(file: string, open: boolean): void {
@@ -412,7 +391,6 @@ function settleOnParent(file: string, open: boolean): void {
 
 /** The row's route, not `pushRoute`: the projection is the one URL writer. */
 function publishRoute(ref: string, path: string): void {
-  recordBrowsePath(path);
   setFilesRoute(ref, path);
   renameTab(filesTabIdFor(ref), filesRowName(path));
 }
@@ -439,8 +417,8 @@ function navigate(path: string): void {
 }
 
 /**
- * The path field's move publishes once the answer says what the path is, so a typed file never reaches the route or
- * `fb_path`. An unchanged path reloads.
+ * The path field's move publishes once the answer says what the path is, so a typed file never reaches the route.
+ * An unchanged path reloads.
  */
 function navigateTyped(path: string): void {
   if (cur().navigate(path)) {

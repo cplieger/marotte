@@ -6,7 +6,6 @@ import { initAllModals } from "./modals.js";
 import { toggleSettingsView, toggleGitView } from "./tabs.js";
 import { initGitBadge } from "./git-badge.js";
 import { getGitTab } from "./git-tabs.js";
-import { noteDefaultBrowsePath } from "./files.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { restoreNotifications } from "./notify.js";
 import { adoptWriteAnswer, patchSettings, refreshSettings, settingsAsShown } from "./persist.js";
@@ -190,9 +189,6 @@ export async function syncSettings(): Promise<EffectiveSettings | null> {
  *  only when the read answered, so per-device state does not belong here: a failed read never
  *  calls this. (Theme is applied separately by initThemeToggle() during initUI.) */
 export function restoreAll(s: EffectiveSettings): void {
-  // UNCONDITIONAL: "" is a real value meaning "nothing recorded", and the recorder maps it to the
-  // mounts listing, so a guard would leave the recorder uncalled on a fresh volume for no gain.
-  noteDefaultBrowsePath(s.fb_path);
   // `ui-state.editor_files` existed only to recover a path from a synthetic `editor:<path>` id.
 
   restoreNotifications(s);

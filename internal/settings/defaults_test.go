@@ -275,3 +275,25 @@ func effectiveKeys() []string {
 	var out marotte.EffectiveSettings
 	return slices.Sorted(maps.Keys(effectiveSetters(&out)))
 }
+
+// The file browser keeps no workspace-wide folder: a closed browser's folder is forgotten on every device, so a
+// config.json an older build wrote with `fb_path` loads with the key inert and unknown.
+func TestEffective_IgnoresAStoredBrowserPath(t *testing.T) {
+	got, rejected := EffectiveFrom(map[string]json.RawMessage{"fb_path": json.RawMessage(`"/workspace/marotte/x"`)})
+	if len(rejected) != 0 {
+		t.Errorf("rejected = %v, want none", rejected)
+	}
+	if !reflect.DeepEqual(got, EffectiveDefaults()) {
+		t.Error("a stored fb_path changed the effective settings")
+	}
+	if _, known := KnownKeys["fb_path"]; known {
+		t.Error("fb_path is still a known key")
+	}
+	body, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(body, []byte(`"fb_path"`)) {
+		t.Errorf("the settings document still carries fb_path: %s", body)
+	}
+}

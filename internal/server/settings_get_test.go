@@ -329,7 +329,7 @@ func TestSettingsGet_ThenPatchPersistsOnlyTheStoredKeys(t *testing.T) {
 	}
 	// ...then writes one key.
 	s := &Server{agent: &fakeEngine{}, push: &testPush{}, configDir: dir}
-	req := httptest.NewRequest(http.MethodPatch, "/api/settings", bytes.NewReader([]byte(`{"fb_path":"/workspace"}`)))
+	req := httptest.NewRequest(http.MethodPatch, "/api/settings", bytes.NewReader([]byte(`{"last_merge_method":"squash"}`)))
 	rec := httptest.NewRecorder()
 	s.handleSettingsWrite(rec, req)
 	if rec.Code != http.StatusOK {
@@ -345,7 +345,7 @@ func TestSettingsGet_ThenPatchPersistsOnlyTheStoredKeys(t *testing.T) {
 		t.Fatalf("parse %s: %v", raw, err)
 	}
 	if len(onDisk) != 4 {
-		t.Errorf("config.json holds %d keys (%s), want exactly 4 — the stored theme, the patched fb_path and the write's epoch and revision", len(onDisk), raw)
+		t.Errorf("config.json holds %d keys (%s), want exactly 4 — the stored theme, the patched last_merge_method and the write's epoch and revision", len(onDisk), raw)
 	}
 	for _, unwanted := range []string{settings.KeyKnowledgeEnabled, settings.KeyChatRetentionDays, settings.KeyNotifyAgentFinished} {
 		if _, ok := onDisk[unwanted]; ok {

@@ -104,9 +104,8 @@ const (
 
 	// KeyTheme is "dark" | "light" | "system" ("system" is a stored choice; absent resolves to
 	// system at the client). The browser's localStorage copy is a pre-paint hint this value
-	// overwrites. KeyFBPath is the file browser's last directory, per workspace.
-	KeyTheme  = "theme"
-	KeyFBPath = "fb_path"
+	// overwrites.
+	KeyTheme = "theme"
 
 	// KeySettingsEpoch and KeySettingsRevision stamp the document's version: Update owns both, and
 	// a PATCH may set neither.
@@ -156,7 +155,6 @@ var KnownKeys = map[string]struct{}{
 	KeyTerminalCommandTimeoutMs: {},
 	KeyWorkValidation:           {},
 	KeyWorkflowsEnabled:         {},
-	KeyFBPath:                   {},
 	KeyGuardPayloadLinks:        {},
 	KeyKnowledgeEnabled:         {},
 	KeyModelFallback:            {},

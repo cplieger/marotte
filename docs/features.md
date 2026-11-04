@@ -138,7 +138,7 @@ Index a subfolder, not a repository root, so the index skips code and assets. In
 
 ## Notifications
 
-marotte can be installed as an app from the browser. It then sends notifications when a turn finishes, a pull request's checks settle, a workflow run ends, or the agent needs permission, even with the tab closed. Browsers allow this only over HTTPS or on `localhost`.
+marotte can be installed as an app from the browser. It then sends notifications when a turn finishes, a pull request's checks settle, a workflow run ends or stays paused because marotte stopped resuming it, or the agent needs permission, even with the tab closed. Browsers allow this only over HTTPS or on `localhost`.
 
 The turn, pull request and workflow run notifications each have a switch on the **General** tab in **Settings**. Turns and workflow runs are on by default. Pull requests are off by default, because the forge already shows their checks. Pull request notifications work on GitHub, GitLab, Gitea, Forgejo and Codeberg, once the pull request's CI reports a result. The permission notice has no switch, because nothing else tells you off-screen that a turn is waiting on you.
 

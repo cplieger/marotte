@@ -130,7 +130,9 @@ import { $ } from "./dom.js";
 import { setWorkspaceRoot } from "./workspace.js";
 import { apiGetOrError } from "./api-client.js";
 import { uploadFiles } from "./upload.js";
-import { FB_CHECK, FB_NAME } from "./files-shared.js";
+import { FB_CHECK, FB_NAME, FB_ROOT } from "./files-shared.js";
+import { openFilesView, toggleFilesView } from "./tabs.js";
+import { initFilesSearch } from "./files-search.js";
 import {
   bindFilesTab,
   initFileBrowser,
@@ -762,5 +764,32 @@ describe("the Upload files button", () => {
     const opts = vi.mocked(uploadFiles).mock.calls[0]?.[0];
     expect(opts?.targetDir).toBe("/w");
     expect(Array.from(opts?.files ?? [])).toEqual([file]);
+  });
+});
+
+describe("a closed browser's folder", () => {
+  /** A browser opened at /a, moved into /a/sub, then closed. */
+  async function navigateThenClose(): Promise<void> {
+    initFileBrowser();
+    await show("/a");
+    rowFor("sub").querySelector(`.${FB_NAME}`)?.dispatchEvent(new MouseEvent("click"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(($.fbPath as HTMLInputElement).value, "the browser moved before it closed").toBe(
+      "/a/sub",
+    );
+    releaseFilesTab("/a");
+  }
+
+  it("is forgotten, so the sidebar button opens the next browser at the root", async () => {
+    await navigateThenClose();
+    $.filesBtn.dispatchEvent(new MouseEvent("click"));
+    expect(vi.mocked(toggleFilesView)).toHaveBeenCalledExactlyOnceWith(FB_ROOT);
+  });
+
+  it("is forgotten by the find shortcut's door too", async () => {
+    await navigateThenClose();
+    const deps = vi.mocked(initFilesSearch).mock.calls[0]?.[0];
+    deps?.activateBrowser();
+    expect(vi.mocked(openFilesView)).toHaveBeenCalledExactlyOnceWith(FB_ROOT);
   });
 });

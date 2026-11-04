@@ -678,7 +678,6 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     kiro_defaults: own(o, "kiro_defaults") === null ? {} : decodeRecord(own(o, "kiro_defaults"), decodeKiroDefault, "$.effective_settings.kiro_defaults"),
     additional_directories_refused: own(o, "additional_directories_refused") === null ? {} : decodeRecord(own(o, "additional_directories_refused"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.effective_settings.additional_directories_refused"),
     theme: reqStr(o, "theme", "$.effective_settings"),
-    fb_path: reqStr(o, "fb_path", "$.effective_settings"),
     last_model: reqStr(o, "last_model", "$.effective_settings"),
     last_merge_method: reqStr(o, "last_merge_method", "$.effective_settings"),
     memory_mode: reqStr(o, "memory_mode", "$.effective_settings"),

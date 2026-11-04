@@ -89,7 +89,7 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, sc steerScope, u 
 }
 
 // A severity (set only when KAS sniffed a `[notification/<sev>]` prefix, which command/steer.go
-// refuses) marks an agent's notice, which goes to the ephemeral stack instead of the chip row. A run
+// refuses in a user's text) marks an agent's notice, which goes to the ephemeral stack instead of the chip row. A run
 // tab has no such stack, so a step's notice waits for its read entry.
 func (t *Translator) steeringQueued(ctx context.Context, sc steerScope, k *sessionInfoKiroBlock) {
 	if k.NotificationSeverity != "" {
