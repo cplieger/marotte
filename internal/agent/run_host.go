@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"slices"
 	"strings"
@@ -288,7 +289,14 @@ func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop) e
 	if err != nil {
 		return err
 	}
+	return rs.deleteHeld(ctx, d, stop)
+}
+
+// deleteHeld sends the delete d holds its run closed for, and settles d once KAS's answer is known.
+func (rs *Runs) deleteHeld(ctx context.Context, d *runDeletion, stop runStop) error {
+	workflowID := d.workflowID
 	var got kasVerdict
+	var err error
 	rs.stopSerialized(ctx, workflowID, func(sctx context.Context) bool {
 		got, err = rs.deleteCall(sctx, workflowID, stop)
 		return got != kasRefused
@@ -416,6 +424,8 @@ var retryTimeout = clientRequestBudget - 5*time.Second
 // clientRequestBudget is the timeout @cplieger/ui/fetch hard-wires into every apiAction.
 const clientRequestBudget = 30 * time.Second
 
+var errRetryRunDeleting = errors.New("this run is being deleted, so nothing was retried")
+
 // errRetrySlow reports a retry not handed off within retryTimeout; the REST layer answers 503.
 var errRetrySlow = errors.New(
 	"the run's session did not load in time, so nothing was retried. Try again",
@@ -442,6 +452,12 @@ func (rs *Runs) retry(
 	if workflowID == "" {
 		return out, errors.New("missing workflow id")
 	}
+	// The purge re-reads a run under its delete hold and deletes on that answer, so no retry may run inside the hold.
+	lease, err := rs.life.admit(workflowID)
+	if err != nil {
+		return out, command.StatusError(http.StatusConflict, errRetryRunDeleting)
+	}
+	defer lease.end()
 	// Read before the verb and reused throughout: nothing can learn it once the run re-drives, and two reads can disagree.
 	origin := rs.originOf(ctx, workflowID)
 	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
@@ -457,18 +473,7 @@ func (rs *Runs) retry(
 	}
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
-	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
-		rs.settleMissedEnd(cctx, &l, aff.status)
-	}
-	minted := false
-	if l, held := rs.lease(workflowID); held {
-		// A manual or agent lease is the one this origin would grant; the run under it is a new one all the same.
-		rs.restartLife(cctx, workflowID)
-		rs.recordKeepChats(cctx, &l, holders)
-	} else {
-		rs.grantRetryLease(cctx, workflowID, &origin, holders)
-		minted = true
-	}
+	minted := rs.leaseForRetry(cctx, workflowID, &origin, holders, aff)
 	rs.markRunAlive(cctx, workflowID, holders)
 	host, err := rs.ensureResident(cctx, workflowID)
 	if err != nil {
@@ -500,6 +505,23 @@ func (rs *Runs) retry(
 		"workflow_id", workflowID, "recipe", recipe,
 		"retried_nodes", len(out.RetriedNodeIDs), "status", out.Status)
 	return out, nil
+}
+
+// leaseForRetry renews the run's lease for the retry, or grants one from origin, reporting whether it minted one.
+func (rs *Runs) leaseForRetry(
+	ctx context.Context, workflowID string, origin *runOrigin, holders []marotte.ChatID, aff *runAffordance,
+) (minted bool) {
+	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
+		rs.settleMissedEnd(ctx, &l, aff.status)
+	}
+	if l, held := rs.lease(workflowID); held {
+		// A manual or agent lease is the one this origin would grant; the run under it is a new one all the same.
+		rs.restartLife(ctx, workflowID)
+		rs.recordKeepChats(ctx, &l, holders)
+		return false
+	}
+	rs.grantRetryLease(ctx, workflowID, origin, holders)
+	return true
 }
 
 // retryCall issues the verb and decodes its report, through runCallErr so an `error` member is not read as success.

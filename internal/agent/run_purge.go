@@ -9,6 +9,7 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // RunPurgeResult reports one parentless-run purge pass; NextDeadline is when the earliest age-kept run becomes purgeable, zero for none.
@@ -23,8 +24,9 @@ type RunPurgeResult struct {
 func (rt *Runtime) ReattributeRuns(ctx context.Context) { rt.runs.reattributeRuns(ctx) }
 
 // PurgeParentlessRuns deletes finished runs no chat claims once older than window (from last update); zero
-// deletes them all. Shown, live or paused runs, unreadable ages and runs naming no valid launching session are
-// kept, and nothing is deleted while the tab arrangement is unread; a chat-launched run goes with its chat.
+// deletes them all. Shown, live or paused runs, unreadable ages, runs naming no valid launching session and runs
+// a re-read before the delete does not find finished are kept, and nothing is deleted while the tab arrangement is
+// unread; a chat-launched run goes with its chat.
 func (rt *Runtime) PurgeParentlessRuns(ctx context.Context, window time.Duration) RunPurgeResult {
 	// The purge scheduler outlives Shutdown; once draining, the next boot's pass purges.
 	release, ok := rt.lifecycle.enterUnlessDraining()
@@ -98,15 +100,56 @@ func (rt *Runtime) purgeCandidate(ctx context.Context, r *kasWorkflowRun, window
 		res.Kept++
 		return refused
 	}
-	err := rt.runs.deleteAs(ctx, r.WorkflowID, runStop{})
+	deleted, err := rt.runs.deleteIfFinished(ctx, r.WorkflowID)
 	done()
-	if err != nil {
+	switch {
+	case err != nil:
 		res.Errors++
 		slog.Warn("run purge: delete failed", "workflow_id", r.WorkflowID, "error", err)
-		return nil
+	case deleted:
+		res.Purged++
+	default:
+		res.Kept++
 	}
-	res.Purged++
 	return nil
+}
+
+// deleteIfFinished deletes a run the list showed finished only when an inspect under the delete's hold, which no
+// retry passes, still finds it finished; any other answer keeps the run, logged with why, and deletes nothing.
+func (rs *Runs) deleteIfFinished(ctx context.Context, workflowID string) (deleted bool, err error) {
+	d, err := rs.life.beginDelete(ctx, workflowID)
+	if err != nil {
+		return false, err
+	}
+	status, err := rs.inspectStatus(ctx, workflowID)
+	switch {
+	case workflowNotFound(err):
+		slog.Info("run purge: KAS no longer knows a run it listed finished, deleting nothing", "workflow_id", workflowID)
+	case err != nil:
+		slog.Warn("run purge: could not re-read a finished run before deleting it, keeping it",
+			"workflow_id", workflowID, "error", err)
+	case !status.Terminal():
+		slog.Info("run purge: a run listed finished is no longer finished, keeping it",
+			"workflow_id", workflowID, "status", status)
+	default:
+		err = rs.deleteHeld(ctx, d, runStop{})
+		return err == nil, err
+	}
+	d.settle()
+	return false, nil
+}
+
+// inspectStatus is a run's status as KAS's inspect reports it, refusing a reply with no state or about another run.
+func (rs *Runs) inspectStatus(ctx context.Context, workflowID string) (marotte.RunStatus, error) {
+	raw, err := rs.rawInspect(ctx, workflowID)
+	if err != nil {
+		return "", err
+	}
+	in, err := workflow.DecodeInspect(workflowID, raw)
+	if err != nil {
+		return "", err
+	}
+	return marotte.RunStatus(in.State.Status), nil
 }
 
 func (rt *Runtime) admitRunPurge(ctx context.Context, workflowID, parentSessionID string) (done func(), refused error) {
