@@ -120,7 +120,7 @@ func (o *engineOwner) observe(
 func (o *engineOwner) closePass(ctx context.Context, s engineSession) {
 	err := s.Close(ctx)
 	if _, refused := errors.AsType[*marotte.RPCError](err); refused {
-		dctx, cancel := context.WithTimeout(ctx, sessionDeleteTimeout)
+		dctx, cancel := o.stallAware(ctx, sessionDeleteTimeout)
 		_, err = o.rawCall(dctx, "observer pass delete", marotte.MethodSessionDelete,
 			map[string]any{marotte.KeySessionID: s.SessionID()})
 		cancel()

@@ -124,7 +124,7 @@ func awaitHost(ctx context.Context, sb *sharedBridge) (*sharedBridge, error) {
 
 func (rs *Runs) openHost(workflowID, session string, presets []string, sb *sharedBridge) {
 	chatID := runChatID(workflowID)
-	lctx, cancel := context.WithTimeout(rs.lifecycle.shutdownCtx, launchTimeout)
+	lctx, cancel := rs.engine.stallAware(rs.lifecycle.shutdownCtx, launchTimeout)
 	defer cancel()
 	err := rs.engine.loadSession(lctx, &marotte.SessionOpts{
 		SessionID: session, Role: marotte.SessionRoleHost, Presets: presets,

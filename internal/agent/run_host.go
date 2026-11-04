@@ -63,7 +63,8 @@ func unanswered(ctx context.Context, err error) error {
 	return err
 }
 
-// launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`. A var so a test can shorten it.
+// launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`, extended through an engine
+// stall (engineOwner.stallAware). A var so a test can shorten it.
 var launchTimeout = 120 * time.Second
 
 // launch starts one parentless attended run of the recipe and returns its workflow id and name.
@@ -104,7 +105,8 @@ func (rs *Runs) launchAs(
 		return "", "", gErr
 	}
 	defer func() { a.settle(id) }()
-	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
+	budgetEnd := time.Now().Add(launchTimeout)
+	cctx, cancel := rs.engine.stallAware(ctx, launchTimeout)
 	defer cancel()
 
 	recipe, err := rs.launchRecipe(cctx, source, inputs)
@@ -151,9 +153,9 @@ func (rs *Runs) launchAs(
 		return "", "", fmt.Errorf("workflow %s already has a host session", wfID)
 	}
 	// The run exists: a caller that stops waiting now must not leave it half launched, its row naming a run that
-	// nothing tracks, so the rest keeps the launch's budget and drops the caller's cancel.
-	deadline, _ := cctx.Deadline()
-	rctx, rcancel := context.WithDeadline(context.WithoutCancel(cctx), deadline)
+	// nothing tracks, so the rest keeps the launch's budget and drops the caller's cancel. A stall-aware context's
+	// Deadline is its extension ceiling, not its budget, so the budget's end is carried over instead.
+	rctx, rcancel := rs.engine.stallAware(context.WithoutCancel(ctx), time.Until(budgetEnd))
 	defer rcancel()
 	sb.setIdle()
 	sb.settled.settle(nil)
@@ -432,16 +434,16 @@ const clientRequestBudget = 30 * time.Second
 var errRetryRunDeleting = errors.New("this run is being deleted or checked for deletion, so nothing was retried. " +
 	"Try again in a moment")
 
-// errRetrySlow reports a retry whose run's session did not load within retryTimeout; the REST layer answers 503.
+// errRetrySlow reports a retry whose run's session did not load within retryTimeout, so the verb was never sent;
+// the REST layer answers 503.
 var errRetrySlow = errors.New(
 	"the run's session did not load in time, so nothing was retried. Try again",
 )
 
-// errRetryUnanswered reports a retry verb unanswered within retryTimeout, which KAS may still apply; the REST layer
-// answers 504.
-var errRetryUnanswered = errors.New(
-	"the retry was sent but its answer did not arrive in time, so whether it took is unknown. " +
-		"Refresh the run to see where it is",
+// errRetryOutcomeUnknown reports a retry verb sent and not answered within retryTimeout: KAS may be running it, so
+// the lease stays and the REST layer answers 504 still_applying.
+var errRetryOutcomeUnknown = errors.New(
+	"kiro-cli has not answered the retry yet and may still be running it. The run updates when it does",
 )
 
 // errRetryOutcomeUnreadable reports a retry KAS accepted whose report was unreadable. The run may be
@@ -500,9 +502,10 @@ func (rs *Runs) retry(
 		out, cErr = rs.retryCall(sctx, host, workflowID)
 		return cErr
 	})
-	if errors.Is(err, errRetryOutcomeUnreadable) {
-		// Only the report is lost; tearing down would kill the work mid-node.
-		rs.rearmRetried(cctx, workflowID, &origin, holders)
+	if errors.Is(err, errRetryOutcomeUnreadable) || errors.Is(err, errRetryOutcomeUnknown) {
+		// The retry may be running; tearing down would kill the work mid-node. cctx may be spent and the client may
+		// have left, so the re-arm's writes run detached.
+		rs.rearmRetried(durable.Context(ctx), workflowID, &origin, holders)
 		return out, err
 	}
 	if err != nil {
@@ -581,10 +584,10 @@ func (*Runs) retryResidencyErr(ctx context.Context, err error) error {
 	return fmt.Errorf("retry: load the run's session: %w", err)
 }
 
-// retryDeadlineErr labels a verb this call's deadline abandoned, keeping the context error retry's lease release reads.
+// retryDeadlineErr labels a verb this call's deadline abandoned errRetryOutcomeUnknown, since KAS may still apply it.
 func (*Runs) retryDeadlineErr(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
-		return fmt.Errorf("%w: %w", errRetryUnanswered, ctx.Err())
+		return fmt.Errorf("%w: %w", errRetryOutcomeUnknown, err)
 	}
 	return err
 }
@@ -992,6 +995,9 @@ func (rs *Runs) workflowNew(
 	}
 	resp, err := bridge.Call(ctx, methodKiroWorkflowNew, params)
 	if cErr := runCallErr(resp, err); cErr != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("workflow new: kiro-cli did not answer in time and may have created the run: %w", cErr)
+		}
 		return "", fmt.Errorf("workflow new: %w", cErr)
 	}
 	var res struct {

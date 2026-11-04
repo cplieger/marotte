@@ -475,24 +475,34 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	if err := rr.runs.checkRunDefaults(r.Context(), defaults); writeDefaultsErr(w, err) {
 		return
 	}
-	id, name, err := rr.runs.launch(r.Context(), req.Source, req.Inputs, defaults)
-	if err != nil {
-		if writeStatusErr(w, err) {
-			return
-		}
-		if busy, ok := errors.AsType[*schedule.BusyError](err); ok {
-			httpreply.Conflict(w, busy.Error())
-			return
-		}
-		slog.Warn("run launch failed", "source", logsafe.Field(req.Source), "error", err, "detail", rpcerr.Details(err))
-		if writeEngineSlow(w, err) {
-			return
-		}
-		// KAS's launch validation names the problem, and the fix is the user's.
-		httpreply.BadRequest(w, rpcerr.Text(err))
+	// Off the request: a browser that gives up must not abandon a run KAS may already have created.
+	rr.runs.lifecycle.answerEngineMutation(w, r, engineMutation{
+		verb: "run launch",
+		call: func(ctx context.Context) engineReply {
+			id, name, err := rr.runs.launch(ctx, req.Source, req.Inputs, defaults)
+			if err != nil {
+				return engineReply{err: err, write: func(w http.ResponseWriter) { writeLaunchErr(w, req.Source, err) }}
+			}
+			body := marotte.RunLaunchedResponse{WorkflowID: id, Name: name}
+			return engineReply{write: func(w http.ResponseWriter) { webhttp.WriteJSON(w, body) }, applied: true}
+		},
+	})
+}
+
+func writeLaunchErr(w http.ResponseWriter, source string, err error) {
+	if writeStatusErr(w, err) {
 		return
 	}
-	webhttp.WriteJSON(w, marotte.RunLaunchedResponse{WorkflowID: id, Name: name})
+	if busy, ok := errors.AsType[*schedule.BusyError](err); ok {
+		httpreply.Conflict(w, busy.Error())
+		return
+	}
+	slog.Warn("run launch failed", "source", logsafe.Field(source), "error", err, "detail", rpcerr.Details(err))
+	if writeEngineSlow(w, err) {
+		return
+	}
+	// KAS's launch validation names the problem, and the fix is the user's.
+	httpreply.BadRequest(w, rpcerr.Text(err))
 }
 
 // The reply confirms the ask; the terminal frame follows the stop.
@@ -869,9 +879,6 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		slog.Info("run control unavailable: the run's launching session cannot be opened here",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
 		httpreply.Conflict(w, launchSessionUnavailableText)
-	case errors.Is(err, errRetryUnanswered):
-		slog.Warn("run control sent but its answer did not arrive in time", "verb", verb, "workflow_id", logsafe.Field(id))
-		webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout, httpreply.ErrorJSON(errRetryUnanswered.Error()))
 	case errors.Is(err, errRetrySlow):
 		slog.Warn("run control timed out loading the run's session", "verb", verb, "workflow_id", logsafe.Field(id))
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
@@ -881,6 +888,11 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		slog.Warn("run control sent but its answer was lost",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(deleteUnconfirmedText))
+	case errors.Is(err, errRetryOutcomeUnknown):
+		slog.Warn("run control sent but not answered in time; it may still apply",
+			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
+		webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout,
+			httpreply.ErrorJSONWithCode(errRetryOutcomeUnknown.Error(), stillApplyingCode))
 	case errors.Is(err, errRetryOutcomeUnreadable):
 		// KAS accepted the verb and only its report is unusable: 502, sending the reader to a refresh.
 		slog.Warn("run control landed but its report could not be read",

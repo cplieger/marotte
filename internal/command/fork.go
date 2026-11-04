@@ -228,7 +228,9 @@ func forkSession(ctx context.Context, bridges bridgeAccess, ws Workspace, p maro
 	if p.Title != "" {
 		meta["title"] = p.Title
 	}
-	resp, err := bridge.Call(ctx, marotte.MethodSessionFork, sessionParams(bridge, map[string]any{
+	cctx, cancel := bridges.CallBudget(ctx, engineChangeBudget)
+	defer cancel()
+	resp, err := bridge.Call(cctx, marotte.MethodSessionFork, sessionParams(bridge, map[string]any{
 		"cwd":   ws.Dir,
 		"_meta": map[string]any{"kiro": meta},
 	}))

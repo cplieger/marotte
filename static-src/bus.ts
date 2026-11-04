@@ -137,6 +137,8 @@ export interface SSEPayloads {
   readonly forges_changed: undefined;
   readonly forge_inventory: InventoryChangedPayload;
   readonly hooks_changed: undefined;
+  readonly memories_changed: undefined;
+  readonly knowledge_changed: undefined;
   readonly recipes_changed: undefined;
   readonly powers_changed: undefined;
   readonly slash_commands_changed: undefined;

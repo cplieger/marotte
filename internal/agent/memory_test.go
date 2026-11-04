@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -116,6 +117,34 @@ func TestWriteMemoryErr_ClassifiesTheFailure(t *testing.T) {
 				t.Errorf("writeMemoryErr(%v) = %d %s, want %d containing %q",
 					tc.err, rec.Code, rec.Body.String(), tc.wantCode, tc.wantText)
 			}
+		})
+	}
+}
+
+// TestHandleMemoryOne_AStalledEngineAnswersStillApplying pins that an edit or delete the engine has not answered within
+// the browser's budget is reported as still applying, never as failed, and that the late answer refreshes the list.
+func TestHandleMemoryOne_AStalledEngineAnswersStillApplying(t *testing.T) {
+	for _, tc := range []struct {
+		method, kasMethod, body, reply string
+	}{
+		{http.MethodPatch, methodKiroMemoryUpdate, `{"title":"New"}`, `{"memory":{"id":"m1","memoryType":"SEMANTIC","title":"New","summary":"s"}}`},
+		{http.MethodDelete, methodKiroMemoryDelete, ``, `{"id":"m1","title":"x"}`},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			answerBudgetOf(t, 50*time.Millisecond)
+			h, _, br := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			br.setCallResult(tc.kasMethod, json.RawMessage(tc.reply))
+			release := holdCall(t, br, tc.kasMethod)
+			before := len(eventsOfType(h, marotte.EventMemoriesChanged))
+
+			req := httptest.NewRequest(tc.method, "/api/memory/m1", strings.NewReader(tc.body))
+			req.SetPathValue("id", "m1")
+			rec := answeredWithin(t, func(w http.ResponseWriter) { h.config.handleMemoryOne(w, req) })
+
+			assertStillApplying(t, rec)
+			release()
+			awaitEventCount(t, h, marotte.EventMemoriesChanged, before+1)
 		})
 	}
 }

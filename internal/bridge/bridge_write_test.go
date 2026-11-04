@@ -253,3 +253,218 @@ func TestCallAt_RefusesASessionPrompt(t *testing.T) {
 		t.Error("a session/prompt asked of a plain call was written")
 	}
 }
+
+// shortenStallProbe replaces the shipped first-sample delay and livelock ceiling for one test. Callers must not run in
+// parallel with anything that writes a frame.
+func shortenStallProbe(t *testing.T, after, ceiling time.Duration) {
+	t.Helper()
+	origAfter, origCeiling := stallProbeAfter, writeStallCeiling
+	stallProbeAfter, writeStallCeiling = after, ceiling
+	t.Cleanup(func() { stallProbeAfter, writeStallCeiling = origAfter, origCeiling })
+}
+
+// writeInBackground runs writeFrame on its own goroutine, so a write that never returns fails the test instead of
+// hanging it.
+func writeInBackground(b *Engine, n int) <-chan error {
+	done := make(chan error, 1)
+	go func() { done <- b.writeFrame(make([]byte, n)) }()
+	return done
+}
+
+func awaitWrite(t *testing.T, done <-chan error, within time.Duration) error {
+	t.Helper()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(within):
+		t.Fatalf("writeFrame did not return within %v", within)
+		return nil
+	}
+}
+
+// A busy engine reads nothing while its event loop is blocked but keeps burning CPU; the write waits it out.
+func TestWriteFrame_ABusyEngineIsWaitedOut(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	t.Cleanup(func() { _ = pw.Close(); _ = pr.Close() })
+	shortenWriteStall(t, 150*time.Millisecond)
+	shortenStallProbe(t, 20*time.Millisecond, 10*time.Second)
+	b := NewEngine("/nonexistent", "/work")
+	b.cpuTicks = advancingCPU()
+	b.stdin.Store(&stdinPipe{w: pw})
+	drainAt := 3 * writeStall
+	go func() {
+		time.Sleep(drainAt)
+		_, _ = io.Copy(io.Discard, pr)
+	}()
+
+	if err := awaitWrite(t, writeInBackground(b, 256*1024), 5*time.Second); err != nil {
+		t.Fatalf("writeFrame to an engine whose CPU kept advancing = %v, want it waited out", err)
+	}
+	select {
+	case <-b.done:
+		t.Errorf("an engine that kept burning CPU was reaped as %q", b.Exit().Reason)
+	default:
+	}
+}
+
+// A reader that stopped draining at flat CPU is wedged and still ends the engine.
+func TestWriteFrame_ReapsAFlatCPUEngine(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	t.Cleanup(func() { _ = pw.Close(); _ = pr.Close() })
+	shortenWriteStall(t, 100*time.Millisecond)
+	shortenStallProbe(t, 20*time.Millisecond, 10*time.Second)
+	b := NewEngine("/nonexistent", "/work")
+	b.cpuTicks = func() (uint64, bool) { return 42, true }
+	b.stdin.Store(&stdinPipe{w: pw})
+
+	err = awaitWrite(t, writeInBackground(b, 256*1024), 5*time.Second)
+	if !errors.Is(err, os.ErrDeadlineExceeded) || !errors.Is(err, marotte.ErrBridgeExited) {
+		t.Fatalf("writeFrame against a wedged reader at flat CPU = %v, want a stall that reads as ErrBridgeExited", err)
+	}
+	waitReaped(t, b, "a wedged reader at flat CPU")
+	if got := b.Exit().Reason; got != ExitStdinStalled {
+		t.Errorf("exit reason = %q, want %q", got, ExitStdinStalled)
+	}
+}
+
+// No CPU evidence buys no time: a probe that cannot read /proc reaps as a flat engine does.
+func TestWriteFrame_ReapsWhenTheCPUProbeCannotRead(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	t.Cleanup(func() { _ = pw.Close(); _ = pr.Close() })
+	shortenWriteStall(t, 100*time.Millisecond)
+	shortenStallProbe(t, 20*time.Millisecond, 10*time.Second)
+	b := NewEngine("/nonexistent", "/work")
+	var calls uint64
+	b.cpuTicks = func() (uint64, bool) { calls++; return calls, false }
+	b.stdin.Store(&stdinPipe{w: pw})
+
+	err = awaitWrite(t, writeInBackground(b, 256*1024), 5*time.Second)
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("writeFrame with an unreadable CPU probe = %v, want a stall", err)
+	}
+	waitReaped(t, b, "a stalled write whose CPU probe could not read")
+	if got := b.Exit().Reason; got != ExitStdinStalled {
+		t.Errorf("exit reason = %q, want %q", got, ExitStdinStalled)
+	}
+}
+
+// An engine that burns CPU but never drains is a livelock, reaped at the ceiling rather than waited on forever.
+func TestWriteFrame_ABusyEngineIsReapedAtTheCeiling(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	t.Cleanup(func() { _ = pw.Close(); _ = pr.Close() })
+	shortenWriteStall(t, 100*time.Millisecond)
+	shortenStallProbe(t, 20*time.Millisecond, 600*time.Millisecond)
+	b := NewEngine("/nonexistent", "/work")
+	b.cpuTicks = advancingCPU()
+	b.stdin.Store(&stdinPipe{w: pw})
+
+	start := time.Now()
+	err = awaitWrite(t, writeInBackground(b, 256*1024), 5*time.Second)
+	elapsed := time.Since(start)
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("writeFrame to a never-draining engine with CPU advancing = %v, want a stall at the ceiling", err)
+	}
+	if elapsed < writeStallCeiling {
+		t.Errorf("the write was reaped after %v, want it waited out to the %v ceiling while CPU advanced", elapsed, writeStallCeiling)
+	}
+	waitReaped(t, b, "a livelocked engine at the ceiling")
+	if got := b.Exit().Reason; got != ExitStdinStalled {
+		t.Errorf("exit reason = %q, want %q", got, ExitStdinStalled)
+	}
+}
+
+// Bytes moving inside a chunk's window is progress, even when the whole chunk takes longer than writeStall and the
+// CPU reads flat.
+func TestWriteFrame_PartialChunkProgressIsNotAStall(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	t.Cleanup(func() { _ = pw.Close(); _ = pr.Close() })
+	shortenWriteStall(t, 100*time.Millisecond)
+	shortenStallProbe(t, 20*time.Millisecond, 10*time.Second)
+	go func() {
+		buf := make([]byte, 8<<10)
+		for {
+			// A chunk needs eight of these reads, about 400 ms, four stall windows.
+			time.Sleep(50 * time.Millisecond)
+			if _, rErr := pr.Read(buf); rErr != nil {
+				return
+			}
+		}
+	}()
+	b := NewEngine("/nonexistent", "/work")
+	b.cpuTicks = func() (uint64, bool) { return 42, true }
+	b.stdin.Store(&stdinPipe{w: pw})
+
+	if err := awaitWrite(t, writeInBackground(b, 256*1024), 10*time.Second); err != nil {
+		t.Fatalf("writeFrame to a reader draining part of a chunk in each window = %v, want no stall", err)
+	}
+	select {
+	case <-b.done:
+		t.Errorf("a reader that drained inside every window was reaped as %q", b.Exit().Reason)
+	default:
+	}
+}
+
+// A frame read while stdin does not move means node's event loop runs and the relay is the stuck reader, so node's
+// CPU buys no time and the write is reaped at writeStall, not the ceiling.
+func TestWriteFrame_AReaderStuckWhileFramesFlowIsReaped(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	t.Cleanup(func() { _ = pw.Close(); _ = pr.Close() })
+	shortenWriteStall(t, 100*time.Millisecond)
+	shortenStallProbe(t, 20*time.Millisecond, 10*time.Second)
+	b := NewEngine("/nonexistent", "/work")
+	b.cpuTicks = advancingCPU()
+	b.stdin.Store(&stdinPipe{w: pw})
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-tick.C:
+				b.noteFrame(1)
+			}
+		}
+	}()
+
+	err = awaitWrite(t, writeInBackground(b, 256*1024), 3*time.Second)
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("writeFrame to a stuck reader while frames flowed = %v, want a stall", err)
+	}
+	waitReaped(t, b, "a stuck reader while frames flowed")
+	if got := b.Exit().Reason; got != ExitStdinStalled {
+		t.Errorf("exit reason = %q, want %q", got, ExitStdinStalled)
+	}
+}
+
+// The shipped ceiling outlasts the longest event-loop stall measured (81.6 s, kirodotdev/Kiro#12261) and holds writeMu
+// no longer than any other engine-silence bound waits.
+func TestWriteStallCeiling_WaitsOutTheMeasuredStallAndNoLonger(t *testing.T) {
+	const measured = 81600 * time.Millisecond
+	if writeStallCeiling <= measured {
+		t.Errorf("writeStallCeiling = %v, want above the %v stall", writeStallCeiling, measured)
+	}
+	if writeStallCeiling > stallExtendCeiling {
+		t.Errorf("writeStallCeiling = %v, want at most stallExtendCeiling %v", writeStallCeiling, stallExtendCeiling)
+	}
+}

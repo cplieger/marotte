@@ -381,9 +381,6 @@ func (b *bus) cancelPermission(ctx context.Context, chatID marotte.ChatID, id in
 		default:
 			return nil
 		}
-		if ctx.Err() != nil {
-			break
-		}
 	}
 	slog.Error("cancel: a permission card could not be answered, so the reply was not stopped",
 		"chat_id", chatID, "request_id", id, "error", wErr)

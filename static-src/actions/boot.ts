@@ -5,6 +5,7 @@ import { configure, configureTransport } from "@cplieger/ui/actions";
 import { actionNotice, subjectName } from "../notice-subject.js";
 import { configureSubjectNotice, takeSubject } from "./subject.js";
 import { send as transportSend } from "../transport.js";
+import { forAction } from "./transport-result.js";
 
 export function initActions(): void {
   configure({
@@ -19,11 +20,12 @@ export function initActions(): void {
   });
   configureSubjectNotice(actionNotice, subjectName);
 
-  configureTransport(async (cmd, { signal }) => {
-    const r = await transportSend(cmd as Parameters<typeof transportSend>[0], {
-      signal,
-      reportSendState: false,
-    });
-    return r;
-  });
+  configureTransport(async (cmd, { signal }) =>
+    forAction(
+      await transportSend(cmd as Parameters<typeof transportSend>[0], {
+        signal,
+        reportSendState: false,
+      }),
+    ),
+  );
 }

@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
@@ -270,5 +272,31 @@ func TestCloseChatState_DeletesNothing(t *testing.T) {
 	}
 	if n := len(rig.of(methodKiroWorkflowCancel)); n != 1 {
 		t.Errorf("CloseChatState sent %d workflow/cancel, want 1 for the live run", n)
+	}
+}
+
+// TestDeleteSessions_WaitsOutAnEngineStall pins that a session/delete the engine answers late while it is stalled at
+// work is waited for and used, not abandoned and logged as failed.
+func TestDeleteSessions_WaitsOutAnEngineStall(t *testing.T) {
+	logs := captureLogs(t)
+	prev := sessionDeleteTimeout
+	sessionDeleteTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { sessionDeleteTimeout = prev })
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	src := h.engine.source.(*fakeEngineSource)
+	src.mu.Lock()
+	src.stalled = func() bool { return true }
+	src.mu.Unlock()
+	br.setCallResult(marotte.MethodSessionDelete, json.RawMessage(`{}`))
+	release := holdCall(t, br, marotte.MethodSessionDelete)
+	time.AfterFunc(300*time.Millisecond, release)
+
+	h.deleteSessions(t.Context(), "c1", []string{"sess-stalled"})
+
+	for line := range strings.Lines(logs.String()) {
+		if strings.Contains(line, `"level":"WARN"`) && strings.Contains(line, "sess-stalled") {
+			t.Errorf("the delete was given up on while the engine was stalled at work: %s", line)
+		}
 	}
 }

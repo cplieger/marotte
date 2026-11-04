@@ -39,6 +39,11 @@ func (b bridgeRole) CloseBridge(ctx context.Context, chatID marotte.ChatID, outc
 // BridgeLive reports a bridge for the chat that is past its session open.
 func (b bridgeRole) BridgeLive(chatID marotte.ChatID) bool { return b.coord.bridgeLive(chatID) }
 
+// CallBudget is the engine owner's stall-aware budget (engineOwner.stallAware).
+func (b bridgeRole) CallBudget(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return b.coord.engine.stallAware(ctx, d)
+}
+
 // DeleteChatStateByChain deletes a chat's runs and KAS sessions from a captured chain. Order is
 // the contract: runs before sessions (KAS refuses a session owning a live run), sessions
 // before the bridge closes, Reap last.

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"time"
 
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -51,6 +52,9 @@ type engineHandle interface {
 	StartLive() (ignoreFiles []string, terminalTimeoutMs int)
 	RefreshContentCollection(ctx context.Context) (bool, error)
 	KASLogDir() string
+	// StallAware and Stalled are bridge.Engine's: a deadline that waits out an engine stall, and whether one is on.
+	StallAware(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc)
+	Stalled() bool
 }
 
 // bridgeEngine adapts *bridge.Engine, whose doors hand back the concrete *bridge.Session.

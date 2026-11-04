@@ -38,6 +38,8 @@ type fakeEngineSource struct {
 	exitGate chan struct{}
 	// callGate, when set, sees every engine-lane call's scripted answer and returns the one the caller gets.
 	callGate func(ctx context.Context, method string, resp *marotte.RPCResponse, err error) (*marotte.RPCResponse, error)
+	// stalled, when set, is every engine's Stalled answer.
+	stalled func() bool
 	// withheld counts lane frames toward the position and never delivers them: a wedged engine lane.
 	withheld bool
 	// cliPath is what CLIPath answers; empty is the default path.
@@ -424,6 +426,56 @@ func (e *fakeEngine) RefreshContentCollection(ctx context.Context) (bool, error)
 }
 
 func (*fakeEngine) KASLogDir() string { return "" }
+
+// StallAware stands in for bridge.Engine's: the budget expires at d unless Stalled reads true then, and is
+// checked again every d while it does. Expiry reports context.DeadlineExceeded, as the real one does.
+func (e *fakeEngine) StallAware(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	inner, cancel := context.WithCancel(ctx)
+	sc := &fakeStallCtx{Context: inner}
+	go func() {
+		timer := time.NewTimer(d)
+		defer timer.Stop()
+		for {
+			select {
+			case <-inner.Done():
+				return
+			case <-timer.C:
+				if e.Stalled() {
+					timer.Reset(d)
+					continue
+				}
+				sc.mu.Lock()
+				sc.err = context.DeadlineExceeded
+				sc.mu.Unlock()
+				cancel()
+				return
+			}
+		}
+	}()
+	return sc, cancel
+}
+
+type fakeStallCtx struct {
+	context.Context
+	err error
+	mu  sync.Mutex
+}
+
+func (c *fakeStallCtx) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return c.err
+	}
+	return c.Context.Err()
+}
+
+func (e *fakeEngine) Stalled() bool {
+	e.src.mu.Lock()
+	stalled := e.src.stalled
+	e.src.mu.Unlock()
+	return stalled != nil && stalled()
+}
 
 // newRuntimeOn builds a runtime over src and binds src's exit hook to it; Shutdown it from the test. A first engine
 // that is coming up is waited for with its boot work (awaitBoot), since that work reads the fakes a test then edits.

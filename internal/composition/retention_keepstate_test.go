@@ -616,6 +616,8 @@ func TestRetention_KeepState(t *testing.T) {
 			release()
 			<-done
 			b.waitKey(t, "c-1", runKey("wf_1"), false)
+			// The confirmed stop releases the run mark before it ends the stop hold.
+			b.waitKey(t, "c-1", marotte.KeyStop, false)
 			b.age(t, "c-1", seamIdle)
 			b.pass(t)
 			b.purged(t, "c-1", sess("c-1"))

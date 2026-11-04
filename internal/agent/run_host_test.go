@@ -3,8 +3,11 @@ package agent
 // Run host tests: the synthetic-id plumbing, the dispatch split and the teardown rules.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1027,4 +1030,30 @@ func TestLaunchRun_RefusesAHostSessionDoorWithNoSessionID(t *testing.T) {
 	if len(h.bridge.mgr.all()) != 0 {
 		t.Errorf("sessions registered after the refusal = %v, want none", h.bridge.mgr.all())
 	}
+}
+
+// TestHandleLaunch_AStalledEngineAnswersStillApplyingAndTheLaunchLands pins that a launch the engine has not answered
+// within the browser's budget is reported as still applying, and that the browser walking away does not abandon a
+// run KAS may already have created.
+func TestHandleLaunch_AStalledEngineAnswersStillApplyingAndTheLaunchLands(t *testing.T) {
+	answerBudgetOf(t, 50*time.Millisecond)
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
+		methodKiroWorkflowList:        json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowNew:         json.RawMessage(`{"workflowId":"wf_9"}`),
+		methodKiroWorkflowInvoke:      json.RawMessage(`{}`),
+	}
+	release := holdCall(t, br, methodKiroWorkflowNew)
+	reqCtx, walkAway := context.WithCancel(context.Background())
+	defer walkAway()
+	req := httptest.NewRequestWithContext(reqCtx, http.MethodPost, "/api/runs", strings.NewReader(`{"source":"bundled://publish"}`))
+
+	rec := answeredWithin(t, func(w http.ResponseWriter) { h.runRoutes.handleLaunch(w, req) })
+
+	assertStillApplying(t, rec)
+	walkAway()
+	release()
+	waitUntil(t, "the late launch's host registration", func() bool { return h.bridge.mgr.get("run:wf_9") != nil })
 }

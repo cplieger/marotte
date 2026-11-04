@@ -161,8 +161,12 @@ const (
 	// EventRecipesChanged is an empty refetch signal for GET /api/recipes.
 	EventRecipesChanged EventType = "recipes_changed"
 	// EventPowersChanged is an empty refetch signal for GET /api/powers.
-	EventPowersChanged   EventType = "powers_changed"
-	EventSettingsUpdated EventType = "settings_updated"
+	EventPowersChanged EventType = "powers_changed"
+	// EventMemoriesChanged and EventKnowledgeChanged are empty refetch signals for GET /api/memory and
+	// GET /api/knowledge.
+	EventMemoriesChanged  EventType = "memories_changed"
+	EventKnowledgeChanged EventType = "knowledge_changed"
+	EventSettingsUpdated  EventType = "settings_updated"
 	// EventEngineStatus carries EngineStatus on every engine state change, and on every pending or busy change while a
 	// restart is pending.
 	EventEngineStatus EventType = "engine_status"

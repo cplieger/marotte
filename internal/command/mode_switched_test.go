@@ -1,9 +1,11 @@
 package command
 
 import (
+	"cmp"
 	"context"
 	"testing"
 
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -30,10 +32,10 @@ func newModeSwitchSpy(t *testing.T) *modeSwitchSpy {
 func TestCmdSetMode_RecordsTheSwitchItApplied(t *testing.T) {
 	spy := newModeSwitchSpy(t)
 
-	if _, err := cmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "spec")); err != nil {
+	if _, err := cmdSetMode(t.Context(), spy, spy, spy, spy, keylock.New(cmp.Compare[marotte.ChatID]), setModeReq(t, "c1", "spec")); err != nil {
 		t.Fatalf("first pick: %v", err)
 	}
-	if _, err := cmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "vibe")); err != nil {
+	if _, err := cmdSetMode(t.Context(), spy, spy, spy, spy, keylock.New(cmp.Compare[marotte.ChatID]), setModeReq(t, "c1", "vibe")); err != nil {
 		t.Fatalf("second pick: %v", err)
 	}
 
@@ -59,11 +61,11 @@ func TestCmdSetMode_RecordsTheSwitchItApplied(t *testing.T) {
 func TestCmdSetMode_RepeatPickRecordsNothing(t *testing.T) {
 	spy := newModeSwitchSpy(t)
 
-	if _, err := cmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "spec")); err != nil {
+	if _, err := cmdSetMode(t.Context(), spy, spy, spy, spy, keylock.New(cmp.Compare[marotte.ChatID]), setModeReq(t, "c1", "spec")); err != nil {
 		t.Fatalf("first pick: %v", err)
 	}
 	before := len(spy.switches)
-	if _, err := cmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "spec")); err != nil {
+	if _, err := cmdSetMode(t.Context(), spy, spy, spy, spy, keylock.New(cmp.Compare[marotte.ChatID]), setModeReq(t, "c1", "spec")); err != nil {
 		t.Fatalf("repeat pick: %v", err)
 	}
 

@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -502,5 +504,56 @@ func TestCloseTab_RecordlessChatSkipped(t *testing.T) {
 	}
 	if deletesAfter != deletesBefore {
 		t.Errorf("a chat_deleted frame went out for a recordless chat (%d -> %d)", deletesBefore, deletesAfter)
+	}
+}
+
+// TestCloseTab_TheDeleteGradeRunsPastTheAnswer pins that a retention-off close answers once the record is gone, as
+// an explicit delete does: the delete grade's engine calls can outlast the browser's request budget.
+func TestCloseTab_TheDeleteGradeRunsPastTheAnswer(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	st, err := tabs.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("open tab store: %v", err)
+	}
+	seedSessionedRecord(t, store, "c-root", "sess-root")
+	gate := make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	t.Cleanup(release)
+	tornDown := make(chan []string, 1)
+	mem := newMembership(&membershipDeps{
+		Chats: withKeep(store), Tabs: st, Bus: &tabBus{}, Teardown: &recordingTeardown{},
+		DeleteChat: func(_ context.Context, _ marotte.ChatID, chain []string) {
+			<-gate
+			tornDown <- chain
+		},
+		Retention: retentionOff,
+		Detach:    detachOnGoroutine,
+	})
+	root, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-root"}, "op-r")
+	if err != nil {
+		t.Fatalf("open root: %v", err)
+	}
+
+	answered := make(chan error, 1)
+	go func() {
+		_, _, cErr := mem.closeTab(t.Context(), root.Subject.ID, "op-close", true)
+		answered <- cErr
+	}()
+	select {
+	case err := <-answered:
+		if err != nil {
+			t.Fatalf("CloseTab = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("CloseTab is still waiting on the delete grade, want it to answer once the record is gone")
+	}
+	release()
+	select {
+	case chain := <-tornDown:
+		if !slices.Equal(chain, []string{"sess-root"}) {
+			t.Errorf("delete grade chain = %v, want [sess-root]", chain)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the delete grade never finished after the close answered")
 	}
 }

@@ -282,9 +282,9 @@ func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *te
 	}
 }
 
-// A retry verb KAS read but did not answer within retryTimeout may still run, so the reply says its outcome is
-// unknown rather than that nothing was retried, and the run keeps the lease the retry minted for its deadline.
-func TestHandleRetry_AVerbLeftUnansweredKeepsItsLeaseAndSaysTheOutcomeIsUnknown(t *testing.T) {
+// A retry verb KAS read but did not answer within retryTimeout may still run, so the reply says it is still applying
+// rather than that nothing was retried, and the run keeps the lease the retry minted for its deadline.
+func TestHandleRetry_AVerbLeftUnansweredKeepsItsLeaseAndIsStillApplying(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	br.setBlockOn(methodKiroWorkflowRetry, make(chan struct{}))
 	prev := retryTimeout
@@ -297,14 +297,15 @@ func TestHandleRetry_AVerbLeftUnansweredKeepsItsLeaseAndSaysTheOutcomeIsUnknown(
 	if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
 		t.Fatalf("Setup: the verb never reached KAS; calls were %v", br.callLog())
 	}
-	if rec.Code != http.StatusGatewayTimeout {
-		t.Errorf("an unanswered retry = %d, want %d: %s", rec.Code, http.StatusGatewayTimeout, rec.Body.String())
-	}
-	if body := rec.Body.String(); strings.Contains(body, "nothing was retried") || !strings.Contains(body, "Refresh") {
-		t.Errorf("the reply = %s, want it to say the outcome is unknown and send the reader to a refresh", body)
+	assertStillApplying(t, rec)
+	if body := rec.Body.String(); strings.Contains(body, "nothing was retried") {
+		t.Errorf("the reply = %s, want no claim that nothing was retried: the verb reached KAS", body)
 	}
 	if _, held := h.runs.lease("wf_1"); !held {
 		t.Error("the unanswered retry released the lease it minted, so a retry KAS applies runs with no deadline")
+	}
+	if !h.runs.bounded("wf_1") {
+		t.Error("the run was not re-armed, so nothing bounds a retry KAS may be running")
 	}
 }
 

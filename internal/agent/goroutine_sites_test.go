@@ -24,8 +24,9 @@ var unheldSites = map[string]struct {
 	"turn_stop.go (chatLifecycle).armCallGraceLocked": {
 		"it cancels a prompt context; the held prompt goroutine closes", 1,
 	},
-	"turn_reap.go (bridgeCoordinator).armCompactionReapLocked": {
-		"it claims the turn's cause and cancels that turn's prompt context; the held prompt goroutine closes", 1,
+	"turn_reap.go (bridgeCoordinator).armCompactionReapForLocked": {
+		"it claims the turn's cause and cancels that turn's prompt context, after at most one stall sample; " +
+			"the held prompt goroutine closes", 1,
 	},
 	"agent_terminal.go (agentTerminals).awaitExit":      {"a process-group observation its caller joins", 1},
 	"turn_finalize.go (bridgeCoordinator).publishClose": {"a fixture with no lifetime", 1},
