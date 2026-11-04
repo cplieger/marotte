@@ -26,11 +26,11 @@ func (s *Store) lock(chatID marotte.ChatID) *sync.Mutex {
 // Dir returns the store's base directory.
 func (s *Store) Dir() string { return s.dir }
 
-// Remove deletes a chat's directory and tombstones the id (only a chat that existed). The log is
+// remove deletes a chat's directory and tombstones the id (only a chat that existed). The log is
 // closed and tombstoned first, so a folding turn cannot re-create entries.jsonl under the directory
 // being unlinked. The caller must hold Lock for chatID. Returns the `chats` version minted, or ""
 // when nothing was removed.
-func (s *Store) Remove(chatID marotte.ChatID) (string, error) {
+func (s *Store) remove(chatID marotte.ChatID) (string, error) {
 	dir, err := s.pathFor(chatID)
 	if err != nil {
 		return "", err

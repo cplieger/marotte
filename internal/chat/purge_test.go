@@ -14,8 +14,8 @@ import (
 )
 
 // purgeExpired runs one synchronous retention pass over the store, ending each teardown as composition's OnPurge does.
-func purgeExpired(ctx context.Context, s *Store, maxAge time.Duration) archive.PurgeResult {
-	return archive.New(s, s.EndTeardown).Purge(ctx, maxAge)
+func purgeExpired(ctx context.Context, s *Store, maxAge time.Duration) {
+	archive.New(s, s.EndTeardown).Purge(ctx, maxAge)
 }
 
 func newScheduler(t *testing.T, s *Store, retention func() time.Duration) *archive.PurgeScheduler {

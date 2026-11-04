@@ -118,12 +118,12 @@ type runOwner interface {
 	RunReadBound(ctx context.Context, workflowID string) (uint64, error)
 }
 
-// RunVerdict is what RunOwner could establish about a run.
-type RunVerdict int
+// runVerdict is what RunOwner could establish about a run.
+type runVerdict int
 
 const (
 	// RunOwned names at least one holder.
-	RunOwned RunVerdict = iota + 1
+	RunOwned runVerdict = iota + 1
 	// RunParentless is a run the engine answered for whose parent session no chat owns.
 	RunParentless
 	// RunUnknown is a run no lease, inventory row or inspect reply names, so its
@@ -136,7 +136,7 @@ const (
 type RunOwner struct {
 	Holders        []marotte.ChatID
 	ParentSessions []string
-	Verdict        RunVerdict
+	Verdict        runVerdict
 }
 
 // chatCloser is the tab-close teardown for a chat tab: cancel the turn, stop the

@@ -28,6 +28,7 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/asidefile"
 	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -994,7 +995,7 @@ func (l *EntryLog) unreadableLineLocked(off int64, err, rerr error) error {
 		return fmt.Errorf("entry log: %s: corrupt line at offset %d, copy aside: %w", l.path(), off, cerr)
 	}
 	slog.Warn("entry log: copied a log with a corrupt line aside before dropping from it",
-		"root", l.root, "offset", off, "aside", aside, "cause", err)
+		"root", l.root, "offset", off, "aside", logsafe.Field(aside), "cause", logsafe.Field(err.Error()))
 	return l.dropTailLocked(off, err)
 }
 

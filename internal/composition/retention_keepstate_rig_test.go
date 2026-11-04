@@ -70,7 +70,6 @@ const (
 	kasList    = "_kiro/workflow/list"
 	kasInspect = "_kiro/workflow/inspect"
 	kasDelete  = "_kiro/workflow/delete"
-	kasRetry   = "_kiro/workflow/retry"
 	kasCancel  = "_kiro/workflow/cancel"
 	kasSessDel = "session/delete"
 )

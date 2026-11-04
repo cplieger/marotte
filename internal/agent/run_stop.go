@@ -37,14 +37,14 @@ type stopHold struct {
 	left  int
 }
 
-// StopChatRuns stops every run chatID launched that KAS lists as not terminal, and every leased run chatID launched
+// stopChatRuns stops every run chatID launched that KAS lists as not terminal, and every leased run chatID launched
 // (the lease's ChatID, or its parent session in the chat's chain) that the list omits or could not show: a person
 // closed the chat's last tab. A chat holding a run's mark only because an owner scan could not rule it out is not the
 // run's launcher. An unreadable record has no chain, so it stops only the leases whose ChatID is chatID. hold, the
 // close's stop hold, keeps the chat until every stop has ended. Each run's first cancel is sent before it returns,
 // while the chat's session is still resident; the read-backs, retries and the delete fallback run later on the
 // runtime's lifetime.
-func (rs *Runs) StopChatRuns(ctx context.Context, chatID marotte.ChatID, hold *chat.Claim) {
+func (rs *Runs) stopChatRuns(ctx context.Context, chatID marotte.ChatID, hold *chat.Claim) {
 	rec, found, err := rs.chats.Lookup(ctx, chatID)
 	if err == nil && !found {
 		rs.chats.EndStop(ctx, hold)

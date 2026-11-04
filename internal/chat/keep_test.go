@@ -114,8 +114,8 @@ func TestHold_AForeignBootFactReportsPriorForeignBoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claim.Prior != PriorForeignBoot || claim.PriorFact.Boot != s.Boot() {
-		t.Errorf("claim = %+v, want PriorForeignBoot over the first store's fact", claim)
+	if claim.Prior != priorForeignBoot || claim.PriorFact.Boot != s.Boot() {
+		t.Errorf("claim = %+v, want priorForeignBoot over the first store's fact", claim)
 	}
 }
 
@@ -174,8 +174,8 @@ func TestHoldOrPend_AFailedWritePendsAndTheNextReadFlushesIt(t *testing.T) {
 	repair := failHeaderWrites(t, "c1")
 
 	claim, err := s.HoldOrPend(t.Context(), "c1", key, KeepDurable)
-	if err != nil || claim.Prior != PriorUnknown {
-		t.Fatalf("HoldOrPend = %+v, %v; want a PriorUnknown claim and nil", claim, err)
+	if err != nil || claim.Prior != priorUnknown {
+		t.Fatalf("HoldOrPend = %+v, %v; want a priorUnknown claim and nil", claim, err)
 	}
 	if !s.hasPending("c1") {
 		t.Fatal("no pending hold after a failed write")

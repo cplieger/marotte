@@ -494,7 +494,7 @@ func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) (sessionChain
 		m.Unlock()
 		return nil, loadErr
 	}
-	chatsVersion, rmErr := s.Remove(chatID)
+	chatsVersion, rmErr := s.remove(chatID)
 	missing := errors.Is(rmErr, os.ErrNotExist)
 	m.Unlock()
 	if rmErr != nil && !missing {
@@ -513,7 +513,7 @@ func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) (sessionChain
 	return sessionChain, nil
 }
 
-// broadcastDeleted announces a removal stamped with the `chats` version Remove minted. It reads s.broadcast at call
+// broadcastDeleted announces a removal stamped with the `chats` version remove minted. It reads s.broadcast at call
 // time, so a broadcaster wired after construction still reaches every delete.
 func (s *Store) broadcastDeleted(ctx context.Context, chatID marotte.ChatID, chatsVersion string) {
 	if s.broadcast == nil {

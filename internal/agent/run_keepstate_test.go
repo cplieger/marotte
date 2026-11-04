@@ -81,7 +81,7 @@ func TestStartRunMarks_AnUnlistableChatsDirectoryMarksTheRunUntilReattributed(t 
 		t.Errorf("PurgeIdle with an unattributed run = %v, want kept", v.Outcome)
 	}
 	unlisted = false
-	h.runs.ReattributeRuns(t.Context())
+	h.runs.reattributeRuns(t.Context())
 	l, _ := h.runs.lease("wf_1")
 	if l.Unattributed || !slices.Contains(l.KeepChats, "c-launcher") || !holdsKey(t, cs, "c-launcher", runKey) {
 		t.Errorf("after ReattributeRuns: lease %+v, fact %v; want attributed to c-launcher",
@@ -152,7 +152,7 @@ func TestReattributeRuns_AttributesARunWhoseLeaseEndedUnattributed(t *testing.T)
 	h.runs.releaseLease(t.Context(), "wf_1")
 	unlisted = false
 
-	h.runs.ReattributeRuns(t.Context())
+	h.runs.reattributeRuns(t.Context())
 
 	if !holdsKey(t, cs, "c-launcher", runKey) {
 		t.Error("the ended run's launcher holds no mark after the reattribution")

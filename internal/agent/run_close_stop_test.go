@@ -71,7 +71,7 @@ func TestStopChatRuns_ReadsTheRunInventoryOnce(t *testing.T) {
 	leased(t, h.runs, "wf_1")
 	leased(t, h.runs, "wf_2")
 
-	h.runs.StopChatRuns(t.Context(), "c1", &chat.Claim{})
+	h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
 
 	if got := callsOf(br, methodKiroWorkflowCancel); got != 2 {
 		t.Errorf("the cancel went out %d times for 2 live runs, want 2", got)
@@ -104,7 +104,7 @@ func TestStopChatRuns_TheFirstCancelRidesTheChatsResidentSession(t *testing.T) {
 	h.bridge.mgr.insert("c1", &sharedBridge{bridge: owner, state: bridgeIdle})
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_owner", Origin: runlease.OriginAgent})
 
-	h.runs.StopChatRuns(t.Context(), "c1", &chat.Claim{})
+	h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
 
 	if !slices.Contains(owner.callLog(), methodKiroWorkflowCancel) {
 		t.Error("the cancel did not ride the launching chat's resident session")
@@ -119,7 +119,7 @@ func TestStopChatRuns_ACancelReadBackTerminalReleasesTheMark(t *testing.T) {
 	setStopTiming(t, time.Hour, 10*time.Millisecond)
 	h, cs, br := newStopRig(t)
 
-	h.runs.StopChatRuns(t.Context(), "c1", &chat.Claim{})
+	h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
 
 	if !holdsKey(t, cs, "c1", runKey) {
 		t.Error("the mark went before the stop was confirmed")
@@ -142,7 +142,7 @@ func TestStopChatRuns_ARefusedCancelFallsBackToDeleteAfterTheWindow(t *testing.T
 	br.setCallErr(methodKiroWorkflowCancel, errors.New("owner pid 979344 is live"))
 
 	start := time.Now()
-	h.runs.StopChatRuns(t.Context(), "c1", &chat.Claim{})
+	h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
 
 	waitUntil(t, "the delete fallback", func() bool { return callsOf(br, methodKiroWorkflowDelete) > 0 })
 	if waited := time.Since(start); waited < window {
@@ -218,7 +218,7 @@ func TestStopChatRuns_ADoubtHoldersCloseStopsNothing(t *testing.T) {
 		KeepChats: []string{"c-launcher", "c-bystander"},
 	})
 
-	h.runs.StopChatRuns(t.Context(), "c-bystander", &chat.Claim{})
+	h.runs.stopChatRuns(t.Context(), "c-bystander", &chat.Claim{})
 	time.Sleep(100 * time.Millisecond)
 
 	if n := callsOf(br, methodKiroWorkflowCancel) + callsOf(br, methodKiroWorkflowDelete); n != 0 {
@@ -264,7 +264,7 @@ func TestStopChatRuns_ALeasedRunListedFinishedIsNotStopped(t *testing.T) {
 			})
 			tc.list(t, br)
 
-			h.runs.StopChatRuns(t.Context(), "c1", &chat.Claim{})
+			h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
 
 			if tc.stopped {
 				waitUntil(t, "the leased run's delete fallback", func() bool { return callsOf(br, methodKiroWorkflowDelete) > 0 })
@@ -291,7 +291,7 @@ func TestStopChatRuns_AnUnreadableRecordStopsTheLeasedRuns(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	h.runs.StopChatRuns(ctx, "c1", &chat.Claim{})
+	h.runs.stopChatRuns(ctx, "c1", &chat.Claim{})
 
 	waitUntil(t, "the leased run's cancel", func() bool { return callsOf(br, methodKiroWorkflowCancel) > 0 })
 	if want := "close: the chat could not be read; stopping only the runs its leases name"; !strings.Contains(logs.String(), want) {
@@ -309,7 +309,7 @@ func TestStopChatRuns_AReopenedChatDropsTheStop(t *testing.T) {
 	h.coord.chatHasTab = func(marotte.ChatID) bool { return reopened.Load() }
 	br.setCallErr(methodKiroWorkflowCancel, errors.New("owner pid 979344 is live"))
 
-	h.runs.StopChatRuns(t.Context(), "c1", &chat.Claim{})
+	h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
 	reopened.Store(true)
 	waitUntil(t, "the dropped stop", func() bool { return strings.Contains(logs.String(), "its run's stop is dropped") })
 	time.Sleep(2 * window)
@@ -363,7 +363,7 @@ func TestStopChatRuns_ALeasedRunKASNoLongerKnowsIsStopped(t *testing.T) {
 	br.setCallResult(methodKiroWorkflowList, kasRuns(t))
 	br.setCallErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 
-	h.runs.StopChatRuns(t.Context(), "c1", &chat.Claim{})
+	h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
 
 	waitUntil(t, "the gone run's release", func() bool { return !holdsKey(t, cs, "c1", runKey) })
 	time.Sleep(160 * time.Millisecond)
@@ -452,7 +452,7 @@ func TestStopChatRuns_TheStopHoldEndsWithTheLastStop(t *testing.T) {
 			}
 			hold, _ := r.cs.SwapTabForStop(t.Context(), tc.chat)
 
-			r.h.runs.StopChatRuns(t.Context(), tc.chat, &hold)
+			r.h.runs.stopChatRuns(t.Context(), tc.chat, &hold)
 
 			if tc.atOnce {
 				if holdsKey(t, r.cs, tc.chat, marotte.KeyStop) {

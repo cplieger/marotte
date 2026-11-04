@@ -86,7 +86,7 @@ func TestPurgeIdle_DecidesFromTheRecordAlone(t *testing.T) {
 		},
 		{
 			name:        "live_turn_this_boot",
-			setup:       func(t *testing.T, s *Store) { holdKey(t, s, "c1", marotte.KeyTurn, KeepProcess) },
+			setup:       func(t *testing.T, s *Store) { holdKey(t, s, "c1", marotte.KeyTurn, keepProcess) },
 			wantOutcome: archive.PurgeKept, wantKeptBy: archive.KeptByTurn,
 		},
 		{

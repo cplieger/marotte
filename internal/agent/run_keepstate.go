@@ -71,7 +71,7 @@ func (rs *Runs) InspectRunRow(ctx context.Context, workflowID string) (RunRow, e
 func (rs *Runs) SetRecordedRuns(parents map[string]string) { rs.recorded.set(parents) }
 
 // RecordLeaseHolders adds holders to a held lease's KeepChats, a union; a lease released meanwhile is left alone. The
-// unattributed mark stays for ReattributeRuns, which holds the facts on every chat before it clears the mark.
+// unattributed mark stays for reattributeRuns, which holds the facts on every chat before it clears the mark.
 func (rs *Runs) RecordLeaseHolders(ctx context.Context, workflowID string, holders []marotte.ChatID) {
 	if l, held := rs.lease(workflowID); held {
 		rs.recordKeepChats(ctx, &l, holders)
@@ -109,7 +109,7 @@ func (m *runMarks) forget(workflowID string) {
 	delete(m.wrote, workflowID)
 }
 
-// handOff keeps an unattributed run's parent session past its lease, for ReattributeRuns.
+// handOff keeps an unattributed run's parent session past its lease, for reattributeRuns.
 func (m *runMarks) handOff(workflowID, parent string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -250,9 +250,9 @@ func (rs *Runs) recordKeepChats(ctx context.Context, l *runlease.Lease, holders 
 	}
 }
 
-// ReattributeRuns retries every unattributed run, leased or ended, with a fresh owner scan; one that lists the chats
+// reattributeRuns retries every unattributed run, leased or ended, with a fresh owner scan; one that lists the chats
 // directory writes the run's keep marks on its holders and clears the mark. A purge side pass.
-func (rs *Runs) ReattributeRuns(ctx context.Context) {
+func (rs *Runs) reattributeRuns(ctx context.Context) {
 	leases := rs.leaseStore().List()
 	for i := range leases {
 		if leases[i].Unattributed {

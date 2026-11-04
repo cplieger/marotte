@@ -19,8 +19,8 @@ type RunPurgeResult struct {
 	Errors       int
 }
 
-// ReattributeRuns is Runs.ReattributeRuns, a retention side pass.
-func (rt *Runtime) ReattributeRuns(ctx context.Context) { rt.runs.ReattributeRuns(ctx) }
+// ReattributeRuns is Runs.reattributeRuns, a retention side pass.
+func (rt *Runtime) ReattributeRuns(ctx context.Context) { rt.runs.reattributeRuns(ctx) }
 
 // PurgeParentlessRuns deletes finished runs no chat claims once older than window (from last update); zero
 // deletes them all. Shown, live or paused runs, unreadable ages and runs naming no valid launching session are

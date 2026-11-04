@@ -88,9 +88,7 @@ type runChatReader interface {
 	Lookup(ctx context.Context, id marotte.ChatID) (c *marotte.Chat, found bool, err error)
 	// SessionOwners is one fresh owner scan, the attribution every run keep fact and the purge teardown share.
 	SessionOwners(ctx context.Context) chat.OwnerScan
-	Hold(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
 	HoldOrPend(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
-	Rollback(ctx context.Context, claim *chat.Claim) error
 	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
 	EndStop(ctx context.Context, claim *chat.Claim)
 	HoldUnattributed(workflowID string)

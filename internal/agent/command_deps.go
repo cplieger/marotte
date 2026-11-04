@@ -58,11 +58,11 @@ func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID marotte.Ch
 }
 
 // CloseChatState tears down in-memory state without touching the KAS session, so a reopen session/loads it, and
-// stops the chat's runs under stop, a person's close's stop hold, when it is set (Runs.StopChatRuns).
+// stops the chat's runs under stop, a person's close's stop hold, when it is set (Runs.stopChatRuns).
 func (rt *Runtime) CloseChatState(ctx context.Context, chatID marotte.ChatID, stop *chat.Claim) {
 	rt.beginSteerTeardown(ctx, chatID, true)
 	if stop != nil {
-		rt.runs.StopChatRuns(ctx, chatID, stop)
+		rt.runs.stopChatRuns(ctx, chatID, stop)
 	}
 	rt.cleanupChatState(ctx, chatID)
 }

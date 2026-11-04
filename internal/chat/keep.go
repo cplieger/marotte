@@ -34,22 +34,22 @@ type KeepScope int
 const (
 	// KeepDurable facts stay until their evidence end.
 	KeepDurable KeepScope = iota
-	// KeepProcess facts die with the boot that wrote them.
-	KeepProcess
+	// keepProcess facts die with the boot that wrote them.
+	keepProcess
 )
 
-// KeepPrior is what a hold found under its key before it wrote.
-type KeepPrior int
+// keepPrior is what a hold found under its key before it wrote.
+type keepPrior int
 
 const (
 	// PriorAbsent means the key was not on the record.
-	PriorAbsent KeepPrior = iota
+	PriorAbsent keepPrior = iota
 	// PriorThisBoot means a fact this boot wrote was there.
 	PriorThisBoot
-	// PriorForeignBoot means a fact another boot wrote was there.
-	PriorForeignBoot
-	// PriorUnknown means the record could not be read, so the hold was pended (HoldOrPend).
-	PriorUnknown
+	// priorForeignBoot means a fact another boot wrote was there.
+	priorForeignBoot
+	// priorUnknown means the record could not be read, so the hold was pended (HoldOrPend).
+	priorUnknown
 )
 
 // Claim is one hold's receipt, the only input Rollback takes.
@@ -58,7 +58,7 @@ type Claim struct {
 	Key       string
 	Token     string
 	PriorFact marotte.KeepFact
-	Prior     KeepPrior
+	Prior     keepPrior
 }
 
 // Evidence names why a fact's thing ended. It has no value for absence, so no absence path can release a fact.
@@ -141,7 +141,7 @@ func (s *Store) factLive(key string, f marotte.KeepFact) bool {
 }
 
 func (s *Store) newFact(scope KeepScope) marotte.KeepFact {
-	return marotte.KeepFact{Since: time.Now().UnixMilli(), Boot: s.boot, Process: scope == KeepProcess}
+	return marotte.KeepFact{Since: time.Now().UnixMilli(), Boot: s.boot, Process: scope == keepProcess}
 }
 
 func setKeep(c *marotte.Chat, key string, f marotte.KeepFact) {
@@ -248,12 +248,6 @@ func (s *Store) dropPending(chatID marotte.ChatID, key string) {
 	}
 }
 
-func (s *Store) hasPending(chatID marotte.ChatID) bool {
-	s.keep.mu.Lock()
-	defer s.keep.mu.Unlock()
-	return len(s.keep.pending[chatID]) > 0
-}
-
 // Hold writes the fact key onto chatID's record and answers the claim a failed open rolls back. An absent record is
 // ErrInTeardown, ErrTombstoned or ErrChatNotFound; any other failure is returned and nothing is held. Every call writes,
 // so the last writer's token is on the record. It stamps no UpdatedAt and broadcasts nothing.
@@ -276,7 +270,7 @@ func (s *Store) holdLocked(ctx context.Context, chatID marotte.ChatID, key strin
 	claim := Claim{ChatID: chatID, Key: key, Token: randomHex(8)}
 	if prev, ok := c.Keep[key]; ok {
 		claim.PriorFact = prev
-		claim.Prior = PriorForeignBoot
+		claim.Prior = priorForeignBoot
 		if prev.Boot == s.boot {
 			claim.Prior = PriorThisBoot
 		}
@@ -292,7 +286,7 @@ func (s *Store) holdLocked(ctx context.Context, chatID marotte.ChatID, key strin
 }
 
 // HoldOrPend is Hold for a writer whose action cannot be refused: a read or write failure on a record that may exist
-// pends the fact, which keeps the chat until a later read of the record writes it, and answers a PriorUnknown claim
+// pends the fact, which keeps the chat until a later read of the record writes it, and answers a priorUnknown claim
 // with a nil error.
 func (s *Store) HoldOrPend(ctx context.Context, chatID marotte.ChatID, key string, scope KeepScope) (Claim, error) {
 	if _, err := s.pathFor(chatID); err != nil {
@@ -306,7 +300,7 @@ func (s *Store) HoldOrPend(ctx context.Context, chatID marotte.ChatID, key strin
 		return claim, err
 	}
 	s.pend(chatID, key, s.newFact(scope), err)
-	return Claim{ChatID: chatID, Key: key, Prior: PriorUnknown}, nil
+	return Claim{ChatID: chatID, Key: key, Prior: priorUnknown}, nil
 }
 
 // HoldTurn is the turn registry's reservation hold: the process-scope turn fact, written unless this boot already
@@ -326,7 +320,7 @@ func (s *Store) HoldTurn(ctx context.Context, chatID marotte.ChatID) error {
 	case errors.Is(err, ErrChatNotFound):
 		return nil
 	case err != nil:
-		s.pend(chatID, marotte.KeyTurn, s.newFact(KeepProcess), err)
+		s.pend(chatID, marotte.KeyTurn, s.newFact(keepProcess), err)
 		return nil
 	}
 	s.turnFactLocked(ctx, chatID, c)
@@ -339,9 +333,9 @@ func (s *Store) turnFactLocked(ctx context.Context, chatID marotte.ChatID, c *ma
 	if f, ok := c.Keep[marotte.KeyTurn]; ok && f.Boot == s.boot && len(flushed) == 0 {
 		return
 	}
-	setKeep(c, marotte.KeyTurn, s.newFact(KeepProcess))
+	setKeep(c, marotte.KeyTurn, s.newFact(keepProcess))
 	if err := s.writeHeader(ctx, chatID, c); err != nil {
-		s.pend(chatID, marotte.KeyTurn, s.newFact(KeepProcess), err)
+		s.pend(chatID, marotte.KeyTurn, s.newFact(keepProcess), err)
 		return
 	}
 	s.settlePending(chatID, flushed)
@@ -353,14 +347,14 @@ func (s *Store) openTurnFactLocked(ctx context.Context, chatID marotte.ChatID) {
 	c, err := s.loadKeepLocked(ctx, chatID)
 	if err == nil {
 		flushed := s.flushPendingLocked(chatID, c)
-		setKeep(c, marotte.KeyTurn, s.newFact(KeepProcess))
+		setKeep(c, marotte.KeyTurn, s.newFact(keepProcess))
 		c.UpdatedAt = time.Now().UnixMilli()
 		if err = s.writeHeader(ctx, chatID, c); err == nil {
 			s.settlePending(chatID, flushed)
 			return
 		}
 	}
-	s.pend(chatID, marotte.KeyTurn, s.newFact(KeepProcess), err)
+	s.pend(chatID, marotte.KeyTurn, s.newFact(keepProcess), err)
 }
 
 // Rollback undoes one failed open: while the record still carries the claim's token it deletes a key the claim found
@@ -368,7 +362,7 @@ func (s *Store) openTurnFactLocked(ctx context.Context, chatID marotte.ChatID) {
 // did not create, survives unchanged. A missing record answers nil; a read or write error is returned and the fact
 // stays, which keeps the chat.
 func (s *Store) Rollback(ctx context.Context, cl *Claim) error {
-	if cl.Prior == PriorUnknown || cl.Token == "" {
+	if cl.Prior == priorUnknown || cl.Token == "" {
 		return nil
 	}
 	m := s.lock(cl.ChatID)
@@ -450,7 +444,7 @@ func (s *Store) SwapTabForStop(ctx context.Context, chatID marotte.ChatID) (cl C
 	m.Lock()
 	defer m.Unlock()
 	cl = Claim{ChatID: chatID, Key: marotte.KeyStop, Token: randomHex(8)}
-	f := s.newFact(KeepProcess)
+	f := s.newFact(keepProcess)
 	f.Token = cl.Token
 	c, err := s.loadKeepLocked(ctx, chatID)
 	if isAbsence(err) {
@@ -573,7 +567,7 @@ func (s *Store) anyUnattributed() bool {
 	return len(s.keep.unattributed) > 0
 }
 
-// beginTeardown marks chatID and its chain as torn down. Called under the record lock before Remove, so no writer can
+// beginTeardown marks chatID and its chain as torn down. Called under the record lock before remove, so no writer can
 // slip between the removal and the mark.
 func (s *Store) beginTeardown(chatID marotte.ChatID, chain []string) {
 	s.keep.mu.Lock()
@@ -772,7 +766,7 @@ func (s *Store) purgeIdleLocked(ctx context.Context, chatID marotte.ChatID, cuto
 	}
 	chain := c.SessionChain()
 	s.beginTeardown(chatID, chain)
-	chatsVersion, err := s.Remove(chatID)
+	chatsVersion, err := s.remove(chatID)
 	if err != nil {
 		s.EndTeardown(chatID, chain)
 		return kept, "", err
