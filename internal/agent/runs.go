@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -13,10 +14,8 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/sanitize"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // Runs owns the workflow-run surface: launch, cancel, retry, the durable lease, the deadline and turn-cap
@@ -107,7 +106,9 @@ func (rs *Runs) useLog(l *runLog) {
 
 // scheduleRun names the schedule row a lease's run reports to; ScheduleID is "" for an unscheduled run.
 func scheduleRun(l *runlease.Lease) schedule.Run {
-	return schedule.Run{StartedAt: l.StartedAt, ScheduleID: l.ScheduleID, WorkflowID: l.WorkflowID}
+	return schedule.Run{
+		StartedAt: l.StartedAt, ScheduleID: l.ScheduleID, ScheduleLife: l.ScheduleLife, WorkflowID: l.WorkflowID,
+	}
 }
 
 // recordScheduleOutcome overwrites run's outcome on its row (schedule.Store.RecordOutcome). No schedule or
@@ -126,26 +127,20 @@ func (rs *Runs) writeSchedule(run schedule.Run, write func() error) {
 	if rs.schedules == nil || run.ScheduleID == "" {
 		return
 	}
-	if err := write(); err != nil {
+	switch err := write(); {
+	case errors.Is(err, schedule.ErrNotFound):
+		slog.Info("schedule outcome not recorded: the schedule was deleted or recreated during its run",
+			"schedule_id", run.ScheduleID, "workflow_id", run.WorkflowID)
+	case err != nil:
 		slog.Warn("could not record the schedule's outcome",
 			"schedule_id", run.ScheduleID, "workflow_id", run.WorkflowID, "error", err)
 	}
 }
 
-// maxRowTextBytes bounds KAS text quoted on a schedule row, one line persisted at every fire. KAS's pause and stop
-// sentences run under 200 bytes; a step's own failure text can be any length.
-const maxRowTextBytes = 512
-
-// rowText defuses KAS text for the row: one line, no escapes, capped.
-func rowText(s string) string {
-	text, _ := runesafe.SanitizeSingleLineCapped(sanitize.Output(s), maxRowTextBytes, "...")
-	return text
-}
-
 // runEnding is the row's outcome for a terminal status: completed, or failed with KAS's stopReason, else a
 // sentence naming the status.
 func runEnding(status marotte.RunStatus, stopReason string) schedule.Outcome {
-	stopReason = rowText(stopReason)
+	stopReason = schedule.ReasonText(stopReason)
 	switch status {
 	case marotte.RunStatusCompleted:
 		return schedule.Outcome{Status: schedule.StatusCompleted}

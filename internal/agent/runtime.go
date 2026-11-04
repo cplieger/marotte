@@ -215,7 +215,7 @@ type bus struct {
 	// stageStatusDesc records a declared description on the open turn, for the agent_finished push.
 	stageStatusDesc func(marotte.ChatID, string)
 	// retractPush drops a held push whose ask was settled (bridgeCoordinator.RetractPush).
-	retractPush func(marotte.PushSubject)
+	retractPush func(subj marotte.PushSubject, ask string)
 	// legacyConnects and v3Connects count connects by wire generation; a legacy one (no SSE-Wire header) is an
 	// old bundle still running. Observability only.
 	legacyConnects atomic.Uint64

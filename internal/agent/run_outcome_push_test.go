@@ -18,6 +18,7 @@ type runOutcomePush struct {
 type runPushSent struct {
 	title   string
 	body    string
+	ask     string
 	kind    marotte.PushKind
 	subject marotte.PushSubject
 }
@@ -30,11 +31,11 @@ func (*runOutcomePush) HasSubscribers() bool                     { return true }
 func (*runOutcomePush) SetPreferences(map[marotte.PushKind]bool) {}
 func (*runOutcomePush) Preferences() map[marotte.PushKind]bool   { return nil }
 func (*runOutcomePush) Close()                                   {}
-func (*runOutcomePush) Retract(marotte.PushSubject)              {}
+func (*runOutcomePush) Retract(marotte.PushSubject, string)      {}
 func (p *runOutcomePush) Send(_ context.Context, n *marotte.NotificationPayload) {
 	p.subject = n.PushSubject
 	select {
-	case p.sent <- runPushSent{title: n.Title, body: n.Body, kind: n.Kind, subject: n.PushSubject}:
+	case p.sent <- runPushSent{title: n.Title, body: n.Body, ask: n.Ask, kind: n.Kind, subject: n.PushSubject}:
 	default:
 	}
 }
@@ -207,7 +208,8 @@ func TestRunAsks_NotifiesTheStepsQuestion(t *testing.T) {
 	got := awaitRunPush(t, fp)
 	want := runPushSent{
 		title: "code-review", body: "Input required · reviewer: Merge it?",
-		kind: marotte.PushKindPermission, subject: marotte.RunAskSubject(askPosition("wf_1", &ask)),
+		ask: askPosition("wf_1", &ask), kind: marotte.PushKindPermission,
+		subject: marotte.RunAskSubject(askPosition("wf_1", &ask)),
 	}
 	if got != want {
 		t.Errorf("step question pushed %+v, want %+v", got, want)

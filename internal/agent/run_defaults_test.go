@@ -201,7 +201,7 @@ func TestScheduleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
 func TestLaunchScheduled_SendsTheSchedulesPick(t *testing.T) {
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_sched")
-	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1",
+	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"},
 		marotte.RunDefaults{Model: "opus", Effort: "low"}, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("LaunchScheduled: %v", err)
 	}

@@ -20,7 +20,7 @@ func leaseScheduledWithSlot(t *testing.T, h *Runtime, br *fakeBridge, entry *sch
 	t.Helper()
 	h.bridge.mgr.insert(runChatID(workflowID), &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.grantLease(t.Context(), workflowID, "nightly",
-		scheduledLaunch(entry.ID(), time.Now().Add(slotIn)), hostSec())
+		scheduledLaunch(entry.Row(), time.Now().Add(slotIn)), hostSec())
 }
 
 // pauseRun delivers a parentless run's `_kiro/workflow/paused` frame through the bounds' handler, with the empty

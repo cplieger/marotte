@@ -107,8 +107,8 @@ type chatRecords interface {
 type pushNotifier interface {
 	HasSubscribers() bool
 	Send(ctx context.Context, n *marotte.NotificationPayload)
-	// Retract drops any ask push about subject still held for delivery.
-	Retract(subject marotte.PushSubject)
+	// Retract drops the push about subject announcing ask (NotificationPayload.Ask) still held for delivery.
+	Retract(subject marotte.PushSubject, ask string)
 }
 
 // pushService is the runtime's view of push: send plus the preference and lifecycle calls it owns.

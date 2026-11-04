@@ -504,6 +504,32 @@ describe("the Changes tab", () => {
     await waitForOnClock(() => expectIdle(pullAll), 3000);
   });
 
+  it("a second Push keeps the open-PR hint for its own minute, past the first Push's", async () => {
+    useSteppableClock();
+    const mine = { ...repoStatus(), branch: "feat/x" };
+    await show(mine);
+    const calls = heldFetch();
+    const hint = (): Element | null => section(mine.repo).querySelector(".git-open-pr-hint");
+    const push = async (n: number): Promise<void> => {
+      await waitForOnClock(() => expectIdle(byLabel(mine.repo, "Push")), 5000);
+      byLabel(mine.repo, "Push")!.click();
+      await vi.waitFor(() => expect(calls).toHaveLength(n));
+      calls[n - 1]!.answer(json({ output: "" }));
+      await waitForOnClock(() => expect(hint()).not.toBeNull(), 3000);
+    };
+
+    await push(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await push(2);
+    await vi.advanceTimersByTimeAsync(40_000);
+    await refreshChanges();
+
+    expect(hint(), "the second push's hint, 40 s after it").not.toBeNull();
+    await vi.advanceTimersByTimeAsync(25_000);
+    await refreshChanges();
+    expect(hint(), "the hint past the second push's minute").toBeNull();
+  });
+
   it("Refresh reports a read it could not make as a failure, beside the error the list shows", async () => {
     await show(repoStatus());
     const refresh = document.getElementById("git-refresh-all-btn") as HTMLButtonElement;

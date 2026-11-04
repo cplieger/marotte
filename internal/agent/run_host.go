@@ -76,7 +76,7 @@ func (rs *Runs) launch(
 // The sign-in gate's refusal wraps schedule.ErrNoRunCanStart; an engine that did not answer before the run was
 // created wraps schedule.ErrEngineBusy.
 func (rs *Runs) LaunchScheduled(
-	ctx context.Context, source, scheduleID string, defaults marotte.RunDefaults, slotAt time.Time,
+	ctx context.Context, source string, row schedule.Row, defaults marotte.RunDefaults, slotAt time.Time,
 ) (id, name string, err error) {
 	// The schedule runner outlives Shutdown, so a launch is held on inflight and refused once draining.
 	release, ok := rs.lifecycle.enterUnlessDraining()
@@ -84,7 +84,7 @@ func (rs *Runs) LaunchScheduled(
 		return "", "", errRuntimeDraining
 	}
 	defer release()
-	id, name, err = rs.launchAs(ctx, source, nil, defaults, scheduledLaunch(scheduleID, slotAt))
+	id, name, err = rs.launchAs(ctx, source, nil, defaults, scheduledLaunch(row, slotAt))
 	switch {
 	case errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown):
 		err = fmt.Errorf("%w: %w", schedule.ErrNoRunCanStart, err)
@@ -169,8 +169,8 @@ func (rs *Runs) launchAs(
 		// have ended on the launch's deadline, which would refuse these writes too.
 		err = fmt.Errorf("workflow invoke: %w", err)
 		fctx := durable.Context(rctx)
-		rs.recordScheduleOutcome(fctx, schedule.Run{ScheduleID: o.scheduleID, WorkflowID: wfID},
-			schedule.Outcome{Status: schedule.StatusFailed, Reason: rowText(err.Error())})
+		rs.recordScheduleOutcome(fctx, schedule.Run{ScheduleID: o.scheduleRow().ID, ScheduleLife: o.scheduleRow().Life, WorkflowID: wfID},
+			schedule.Outcome{Status: schedule.StatusFailed, Reason: schedule.ReasonText(err.Error())})
 		rs.releaseLease(fctx, wfID)
 		rs.coord.closeBridge(fctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
 		return wfID, recipe.Name, err
@@ -865,7 +865,7 @@ func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 		}
 		busy := &schedule.BusyError{WorkflowID: runs[i].WorkflowID}
 		if l, held := rs.lease(busy.WorkflowID); held {
-			busy.ScheduleID, busy.SlotAt = l.ScheduleID, l.SlotAt
+			busy.ScheduleID, busy.ScheduleLife, busy.SlotAt = l.ScheduleID, l.ScheduleLife, l.SlotAt
 		}
 		return busy
 	}

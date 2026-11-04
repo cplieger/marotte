@@ -21,6 +21,7 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -96,7 +97,7 @@ func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 	// A scheduled launch carries the unattended mark.
 	h.runs.grantLease(t.Context(), "wf_1", "nightly",
-		scheduledLaunch("sched_1", time.Now().Add(time.Hour)), hostSec())
+		scheduledLaunch(schedule.Row{ID: "sched_1"}, time.Now().Add(time.Hour)), hostSec())
 
 	h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runCompleteFrame(t, "wf_1", string(marotte.RunStatusPaused)))
 

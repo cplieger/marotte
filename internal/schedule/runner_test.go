@@ -48,7 +48,7 @@ type fakeLauncher struct {
 }
 
 func (f *fakeLauncher) LaunchScheduled(
-	_ context.Context, source, scheduleID string, defaults marotte.RunDefaults, deadline time.Time,
+	_ context.Context, source string, row Row, defaults marotte.RunDefaults, deadline time.Time,
 ) (string, string, error) {
 	if f.during != nil {
 		f.during(source)
@@ -57,7 +57,7 @@ func (f *fakeLauncher) LaunchScheduled(
 	defer f.mu.Unlock()
 	f.defaults = append(f.defaults, defaults)
 	f.sources = append(f.sources, source)
-	f.schedules = append(f.schedules, scheduleID)
+	f.schedules = append(f.schedules, row.ID)
 	f.deadlines = append(f.deadlines, deadline)
 	if f.err != nil {
 		return f.failID, "", f.err
@@ -269,7 +269,8 @@ func TestSweep_ABusyRefusalByTheRowsOwnRunKeepsItsOutcome(t *testing.T) {
 	setup := func(t *testing.T) (*Store, *fakeLauncher, *Runner, Run) {
 		t.Helper()
 		st, l, r := newFixture(t, due.Add(30*time.Second))
-		run := Run{ScheduleID: st.List()[0].ID(), WorkflowID: "wf-old"}
+		row := st.List()[0].Row()
+		run := Run{ScheduleID: row.ID, ScheduleLife: row.Life, WorkflowID: "wf-old"}
 		if err := st.RecordStart(t.Context(), run); err != nil {
 			t.Fatalf("RecordStart: %v", err)
 		}
@@ -278,7 +279,7 @@ func TestSweep_ABusyRefusalByTheRowsOwnRunKeepsItsOutcome(t *testing.T) {
 
 	t.Run("its outcome lands after the refusal", func(t *testing.T) {
 		st, l, r, run := setup(t)
-		l.failWith(&BusyError{WorkflowID: run.WorkflowID, ScheduleID: run.ScheduleID, SlotAt: due})
+		l.failWith(&BusyError{WorkflowID: run.WorkflowID, ScheduleID: run.ScheduleID, ScheduleLife: run.ScheduleLife, SlotAt: due})
 		r.sweep(t.Context())
 		got := st.List()[0]
 		if !got.Anchor.Equal(due) || got.LastRunID != run.WorkflowID || got.LastStatus != statusStarted {
@@ -297,7 +298,7 @@ func TestSweep_ABusyRefusalByTheRowsOwnRunKeepsItsOutcome(t *testing.T) {
 		if err := st.RecordOutcome(t.Context(), run, overran); err != nil {
 			t.Fatalf("RecordOutcome: %v", err)
 		}
-		l.failWith(&BusyError{WorkflowID: run.WorkflowID, ScheduleID: run.ScheduleID, SlotAt: due})
+		l.failWith(&BusyError{WorkflowID: run.WorkflowID, ScheduleID: run.ScheduleID, ScheduleLife: run.ScheduleLife, SlotAt: due})
 		r.sweep(t.Context())
 		if got := st.List()[0]; !got.Anchor.Equal(due) || got.LastReason != overran.Reason {
 			t.Errorf("the row = %+v, want the anchor at the slot and the overran outcome kept", got)
@@ -340,7 +341,7 @@ func TestSweep_ABusyRefusalByTheRowsOwnRunKeepsItsOutcome(t *testing.T) {
 			return &BusyError{WorkflowID: run.WorkflowID}
 		},
 		"the row's run is bounded by a later slot": func(run Run) *BusyError {
-			return &BusyError{WorkflowID: run.WorkflowID, ScheduleID: run.ScheduleID, SlotAt: due.Add(24 * time.Hour)}
+			return &BusyError{WorkflowID: run.WorkflowID, ScheduleID: run.ScheduleID, ScheduleLife: run.ScheduleLife, SlotAt: due.Add(24 * time.Hour)}
 		},
 		"another schedule's run holds the recipe": func(run Run) *BusyError {
 			return &BusyError{WorkflowID: run.WorkflowID, ScheduleID: "other-schedule", SlotAt: due}
@@ -432,7 +433,8 @@ func TestSweep_HoldsASlotWhileNoRunCanStart(t *testing.T) {
 	// The run the previous slot started may still be live, parked on the same sign-in; its late outcome is not this slot's.
 	t.Run("a missed slot detaches the previous run", func(t *testing.T) {
 		st, l, r := newFixture(t, due.Add(30*time.Second))
-		prev := Run{ScheduleID: st.List()[0].ID(), WorkflowID: "wf-old"}
+		row := st.List()[0].Row()
+		prev := Run{ScheduleID: row.ID, ScheduleLife: row.Life, WorkflowID: "wf-old"}
 		if err := st.RecordStart(t.Context(), prev); err != nil {
 			t.Fatalf("RecordStart: %v", err)
 		}
@@ -613,7 +615,7 @@ func TestStore_PutPreservesHistory(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	due := at(2026, time.August, 4, 1, 0)
-	if err := st.recordFire(ctx, e.ID(), due, "wf-1", Outcome{Status: statusStarted}); err != nil {
+	if err := st.recordFire(ctx, e.Row(), due, "wf-1", Outcome{Status: statusStarted}); err != nil {
 		t.Fatalf("recordFire: %v", err)
 	}
 
@@ -661,12 +663,12 @@ func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	due := at(2026, time.August, 4, 2, 0)
-	if err := st.recordFire(ctx, e.ID(), due, "wf-1", Outcome{Status: statusStarted}); err != nil {
+	if err := st.recordFire(ctx, e.Row(), due, "wf-1", Outcome{Status: statusStarted}); err != nil {
 		t.Fatalf("recordFire: %v", err)
 	}
 
 	denial := Outcome{Status: StatusFailed, Reason: "needed approval for Write with nobody watching"}
-	if err := st.RecordOutcome(ctx, Run{ScheduleID: e.ID(), WorkflowID: "wf-1"}, denial); err != nil {
+	if err := st.RecordOutcome(ctx, Run{ScheduleID: e.ID(), ScheduleLife: e.Life, WorkflowID: "wf-1"}, denial); err != nil {
 		t.Fatalf("RecordOutcome: %v", err)
 	}
 	got := st.List()[0]
@@ -680,7 +682,7 @@ func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 
 func TestRecordOutcome_UnknownSchedule(t *testing.T) {
 	st := mustStore(t)
-	if err := st.RecordOutcome(t.Context(), Run{ScheduleID: "gone", WorkflowID: "wf-1"}, Outcome{Status: StatusFailed}); !errors.Is(err, errNotFound) {
+	if err := st.RecordOutcome(t.Context(), Run{ScheduleID: "gone", WorkflowID: "wf-1"}, Outcome{Status: StatusFailed}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
 }

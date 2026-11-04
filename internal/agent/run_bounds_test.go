@@ -76,7 +76,7 @@ func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 			const id = "wf_1"
 			o := manualLaunch()
 			if tc.slotIn != 0 {
-				o = scheduledLaunch("sched-1", time.Now().Add(tc.slotIn))
+				o = scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Now().Add(tc.slotIn))
 			}
 			h.grantLease(t.Context(), id, "publish", o, hostSec())
 			if tc.spent != 0 {
@@ -274,9 +274,9 @@ func TestDisarmRunDeadline_ParksInMemoryWhenTheParkCannotBePersisted(t *testing.
 	}
 }
 
-// TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite pins that a failed row write is logged (a schedule
-// deleted while its run executes).
-func TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite(t *testing.T) {
+// TestCancelExpiredRun_LogsAScheduleDeletedDuringItsRunAtInfo pins that the store's refusal for a schedule
+// deleted while its run executes is an expected outcome, logged at INFO rather than WARN.
+func TestCancelExpiredRun_LogsAScheduleDeletedDuringItsRunAtInfo(t *testing.T) {
 	logs := captureLogs(t)
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -290,7 +290,7 @@ func TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite(t *testing.T) {
 	}
 	h.runs.schedules = st
 
-	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch("sched-gone", time.Now().Add(30*time.Second)), hostSec())
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(schedule.Row{ID: "sched-gone"}, time.Now().Add(30*time.Second)), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
 
@@ -299,13 +299,14 @@ func TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite(t *testing.T) {
 	if got := h.runs.endReason(id); got != runEndOverran {
 		t.Errorf("endReason = %q, want %q; the run is cancelled whatever the row does", got, runEndOverran)
 	}
-	const wantLine = "could not record the schedule's outcome"
-	if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
-		t.Errorf("the schedule row could not be written and nothing said so; want a line reading "+
-			"%q. Got: %s", wantLine, out)
+	out := logs.String()
+	const wantLine = `"level":"INFO","msg":"schedule outcome not recorded: the schedule was deleted or recreated during its run","schedule_id":"sched-gone"`
+	if !strings.Contains(out, wantLine) {
+		t.Errorf("the deleted schedule's row was not written and no INFO line named it; want %s. Got: %s",
+			wantLine, out)
 	}
-	if out := logs.String(); !strings.Contains(out, `"schedule_id":"sched-gone"`) {
-		t.Errorf("the failed-outcome line does not name the schedule it is about: %s", out)
+	if strings.Contains(out, `"msg":"could not record the schedule's outcome"`) {
+		t.Errorf("a schedule deleted during its run was logged as a WARN write failure: %s", out)
 	}
 }
 
@@ -517,7 +518,7 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	h.runs.schedules = st
 
 	// A slot INSIDE the floor, so the armed deadline lands later than SlotAt.
-	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(entry.ID(), time.Now().Add(30*time.Second)), hostSec())
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(entry.Row(), time.Now().Add(30*time.Second)), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
 	if !l.Deadline.After(l.SlotAt) {

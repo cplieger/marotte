@@ -79,6 +79,9 @@ type NotificationPayload struct {
 	Kind  PushKind `json:"kind"`
 	Title string   `json:"title"`
 	Body  string   `json:"body"`
+	// Ask is the decision a PushKindPermission notification announces, the id its retraction names; it never
+	// reaches either channel.
+	Ask string `json:"-"`
 }
 
 // ChatSubject is the subject of a notification about one chat. Pass a zero
