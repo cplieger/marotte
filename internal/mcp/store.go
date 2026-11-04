@@ -12,14 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
-	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -124,12 +121,17 @@ type Store struct {
 	// write rather than captured at construction, because the user changes it
 	// while the store is alive.
 	waitForReady func(context.Context) (waitForReady, readable bool)
-	path         string
-	kasPath      string
+	// held names the KAS mcpServers keys the unreadable record entries may own (renderServersKey).
+	// It and unreadable are set before New returns and never change, so they are read without mu.
+	held    map[string]bool
+	path    string
+	kasPath string
 	// kasRefused keys the last KAS file state readKASDoc refused, so a retry over it is not
 	// reported again; written on the write turn.
 	kasRefused string
 	servers    []*Server
+	// unreadable are the record's entries load could not decode, which persist writes back.
+	unreadable []json.RawMessage
 	callbacks  sync.WaitGroup
 	// mu guards servers and onChange; a writer of servers holds it only alongside the turn.
 	mu sync.RWMutex
@@ -164,14 +166,15 @@ func New(ctx context.Context, configDir string, onChange func(context.Context), 
 	for _, opt := range opts {
 		opt(s)
 	}
-	if err := s.load(); err != nil {
+	nameless, err := s.load()
+	if err != nil {
 		end()
 		return nil, err
 	}
 	// Boot reconcile, before anything can race on the store. A failure must not stop the server:
 	// the user needs the UI to fix the path or disk, and a stale KAS file keeps the previous set.
 	// readKASDoc has already reported an ErrKASUnreadable refusal.
-	if err := s.writeKASConfig(ctx, s.servers); err != nil && !errors.Is(err, ErrKASUnreadable) {
+	if err := s.bootReconcile(ctx, nameless); err != nil && !errors.Is(err, ErrKASUnreadable) {
 		slog.Error("mcp: initial kas config write failed; the agent may use a stale server set",
 			"path", s.kasPath, "error", err)
 	}
@@ -235,47 +238,6 @@ func (s *Store) SetOnChange(fn func(context.Context)) {
 	s.mu.Lock()
 	s.onChange = fn
 	s.mu.Unlock()
-}
-
-func (s *Store) load() error {
-	data, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read mcp.json: %w", err)
-	}
-	// mcp.json holds plaintext API keys, so its 0600 is the whole protection; EnforceFile reports a
-	// filesystem that stores wider and refuses a symlink. Warn-and-continue, so a reshaped /config
-	// still boots and can be repaired.
-	if _, chErr := filemode.EnforceFile(s.path, 0o600); chErr != nil {
-		slog.Warn("mcp: mcp.json is not 0600 and could not be made 0600; the API keys in it may be readable by other users on this host",
-			"path", s.path, "error", chErr)
-	}
-	data, empty := decodeUserJSON(data)
-	if empty {
-		return nil
-	}
-	var f file
-	if uErr := json.Unmarshal(data, &f); uErr != nil {
-		corruptPath := fmt.Sprintf("%s.corrupt.%s.%d",
-			s.path,
-			time.Now().UTC().Format("20060102-150405"),
-			os.Getpid())
-		if rErr := os.Rename(s.path, corruptPath); rErr != nil {
-			slog.Error("mcp: preserve corrupt mcp.json failed",
-				"path", s.path, "error", rErr, "parse_error", uErr)
-		} else {
-			slog.Warn("mcp: mcp.json unparseable, moved aside",
-				"from", s.path, "to", corruptPath, "parse_error", uErr)
-		}
-		return nil
-	}
-	if f.Servers == nil {
-		return nil
-	}
-	s.servers = f.Servers
-	return nil
 }
 
 // notifyChange fires the change callback on a fresh goroutine Shutdown waits for, parented on the

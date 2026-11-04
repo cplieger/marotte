@@ -509,8 +509,10 @@
 /* Shell is the canonical empty state in 18-pages.css. */
 
 /* Governance notice: the mcp_enabled=false notice, with the add affordance
-   disabled alongside it, and the registry panel's lead. */
-.mcp-gov-disabled {
+   disabled alongside it, and the registry panel's lead. The unreadable-record
+   notice shares it. */
+.mcp-gov-disabled,
+.mcp-store-unreadable {
   margin: 0 0 var(--sp-3);
   color: var(--c-yellow);
   font-size: var(--fs-sm);

@@ -142,31 +142,32 @@ func pairsRecord(in []keyPair) map[string]string {
 	return out
 }
 
-// writeKASConfig renders the server set into KAS's config file, preserving
-// every top-level key it does not own. An existing file it cannot read is left
-// as it is and the write fails with ErrKASUnreadable. The wait setting is read
-// per write, which is how a settings flip reaches the file. MUST be called on
-// the write turn, or before New returns: it records the wait value the file now
-// holds.
-func (s *Store) writeKASConfig(ctx context.Context, servers []*Server) error {
+// bootReconcile renders the server set into KAS's config file before New returns. An existing file
+// it cannot read is left as it is and the write fails with ErrKASUnreadable.
+func (s *Store) bootReconcile(ctx context.Context, holdOrphans bool) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	doc, err := s.readKASConfig()
+	doc, _, err := s.readKASDoc()
 	if err != nil {
 		return err
+	}
+	if holdOrphans {
+		s.holdBootOrphans(doc.members[kasServerKey])
 	}
 	policy, _ := s.renderPolicy(ctx)
-	return s.writeKASConfigWith(ctx, doc, servers, policy)
+	return s.writeKASConfigWith(ctx, doc, s.servers, policy)
 }
 
-// writeKASConfigWith puts the rendered servers into doc, a readKASConfig result, and writes it.
-func (s *Store) writeKASConfigWith(ctx context.Context, doc map[string]json.RawMessage, servers []*Server, policy kasRenderPolicy) error {
-	rendered, err := renderServersKey(servers, policy)
+// writeKASConfigWith puts the rendered servers into doc, a readKASDoc result, and writes it,
+// keeping every top-level key it does not own. MUST be called on the write turn, or before New
+// returns: it records the wait value the file now holds.
+func (s *Store) writeKASConfigWith(ctx context.Context, doc *kasDoc, servers []*Server, policy kasRenderPolicy) error {
+	rendered, err := s.renderServersKey(servers, doc.members[kasServerKey], policy)
 	if err != nil {
 		return err
 	}
-	doc[kasServerKey] = rendered
+	doc.members[kasServerKey] = rendered
 	if err := s.writeKASDoc(ctx, doc); err != nil {
 		return err
 	}
@@ -174,20 +175,35 @@ func (s *Store) writeKASConfigWith(ctx context.Context, doc map[string]json.RawM
 	return nil
 }
 
-func renderServersKey(servers []*Server, policy kasRenderPolicy) (json.RawMessage, error) {
-	rendered, err := json.Marshal(renderKASServers(servers, policy))
+// renderServersKey is the `mcpServers` member a write puts in KAS's file: servers rendered, plus
+// each entry of file (the member as read) that s.held names and no server renders, as the file has
+// it. That keeps an unreadable store entry's last declaration until the user fixes or deletes it.
+func (s *Store) renderServersKey(servers []*Server, file json.RawMessage, policy kasRenderPolicy) (json.RawMessage, error) {
+	rendered := renderKASServers(servers, policy)
+	out := make(map[string]any, len(rendered))
+	for name := range rendered {
+		out[name] = rendered[name]
+	}
+	if len(s.held) > 0 {
+		for name, entry := range objectOrEmpty(file) {
+			if _, own := rendered[name]; !own && s.held[name] {
+				out[name] = entry
+			}
+		}
+	}
+	data, err := json.Marshal(out)
 	if err != nil {
 		return nil, fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
 	}
-	return rendered, nil
+	return data, nil
 }
 
-// writeKASDoc writes the whole document. 0600: the file holds header values and
-// OAuth client secrets, and KAS reads it as the same user.
-func (s *Store) writeKASDoc(ctx context.Context, doc map[string]json.RawMessage) error {
-	data, err := json.MarshalIndent(doc, "", "  ")
+// writeKASDoc writes doc with only marotte's two keys changed. 0600: the file holds header values
+// and OAuth client secrets, and KAS reads it as the same user.
+func (s *Store) writeKASDoc(ctx context.Context, doc *kasDoc) error {
+	data, err := doc.render()
 	if err != nil {
-		return fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
+		return err
 	}
 	if _, err := atomicfile.WriteFile(ctx, s.kasPath, data,
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
@@ -211,7 +227,7 @@ func (s *Store) WritePowersServers(ctx context.Context, servers map[string]json.
 	if err != nil {
 		return false, err
 	}
-	rawBlock, hasBlock := doc[kasPowersKey]
+	rawBlock, hasBlock := doc.members[kasPowersKey]
 	block := objectOrEmpty(rawBlock)
 	if !fresh && powersBlockMatches(block, hasBlock, servers) {
 		return false, nil
@@ -220,17 +236,17 @@ func (s *Store) WritePowersServers(ctx context.Context, servers map[string]json.
 	if fresh {
 		// The file held no document, so marotte's own key goes back with the block.
 		policy, _ := s.renderPolicy(ctx)
-		rendered, err := renderServersKey(s.servers, policy)
+		rendered, err := s.renderServersKey(s.servers, nil, policy)
 		if err != nil {
 			return false, err
 		}
-		doc[kasServerKey] = rendered
+		doc.members[kasServerKey] = rendered
 		resent = &renderedWait{waitForReady: policy.waitAll, known: true}
 	}
 	if err := setOrDelete(block, kasServerKey, servers); err != nil {
 		return false, err
 	}
-	if err := setOrDelete(doc, kasPowersKey, block); err != nil {
+	if err := setOrDelete(doc.members, kasPowersKey, block); err != nil {
 		return false, err
 	}
 	if err := s.writeKASDoc(ctx, doc); err != nil {
@@ -309,7 +325,7 @@ func (s *Store) RenderKASConfig(ctx context.Context) error {
 	if !readable {
 		return nil
 	}
-	doc, err := s.readKASConfig()
+	doc, _, err := s.readKASDoc()
 	if err != nil {
 		return err
 	}
@@ -324,37 +340,25 @@ func (s *Store) RenderedWaitForReady() (waitForReady, known bool) {
 	return r.waitForReady, r.known
 }
 
-// readKASConfig returns the existing document's top-level keys minus
-// `mcpServers`, so a write can put ours back without touching `powers` or
-// anything else.
-func (s *Store) readKASConfig() (map[string]json.RawMessage, error) {
-	doc, _, err := s.readKASDoc()
-	if err != nil {
-		return nil, err
-	}
-	delete(doc, kasServerKey)
-	return doc, nil
-}
-
 // ErrKASUnreadable refuses a write over a KAS config file that exists but is not a JSON object
-// marotte can read: rewriting it would drop every key marotte does not own. KAS parses the file
-// as JSONC, so a hand-written comment is valid to KAS and still lands here. The store logs each
-// refusal of one file state once, so a caller retrying it need not log it again.
+// marotte can read, in the commented JSON KAS reads (kasjsonc.go): rewriting it would drop every
+// key marotte does not own. The store logs each refusal of one file state once, so a caller
+// retrying it need not log it again.
 var ErrKASUnreadable = errors.New("kas mcp.json is not a readable JSON object")
 
 // kasUnreadableHint is ErrKASUnreadable's text for the person whose save it refused.
-const kasUnreadableHint = "marotte could not read ~/.kiro/settings/mcp.json, so it left the file unchanged. The file must be plain JSON with no comments and under 4 MB. Fix the file or move it aside, then save again."
+const kasUnreadableHint = "marotte could not read ~/.kiro/settings/mcp.json, so it left the file unchanged. The file must be one JSON object under 4 MB; comments and trailing commas are fine. Fix the file or move it aside, then save again."
 
-// readKASDoc returns every top-level key of the existing document; an absent file is an empty
-// one. fresh is true when the file holds no document (only whitespace or JSON null, after an
-// optional UTF-8 BOM), so the caller replaces it whole and puts marotte's own key back. A file
-// that cannot be stat'd, read or parsed, or is over kasFileMaxBytes, returns ErrKASUnreadable.
-// MUST be called on the write turn, or before New returns: it records the last refusal.
-func (s *Store) readKASDoc() (doc map[string]json.RawMessage, fresh bool, err error) {
+// readKASDoc returns the existing document; an absent file is an empty one. fresh is true when
+// the file holds no document (only whitespace or JSON null, after an optional UTF-8 BOM), so the
+// caller puts marotte's own key back. A file that cannot be stat'd, read or parsed, or is over
+// kasFileMaxBytes, returns ErrKASUnreadable. MUST be called on the write turn, or before New
+// returns: it records the last refusal.
+func (s *Store) readKASDoc() (doc *kasDoc, fresh bool, err error) {
 	info, err := os.Stat(s.kasPath)
 	if errors.Is(err, os.ErrNotExist) {
 		s.kasRefused = ""
-		return map[string]json.RawMessage{}, false, nil
+		return &kasDoc{members: map[string]json.RawMessage{}}, false, nil
 	}
 	if err != nil {
 		return nil, false, s.refuseKAS(nil, err)
@@ -366,17 +370,12 @@ func (s *Store) readKASDoc() (doc map[string]json.RawMessage, fresh bool, err er
 	if err != nil {
 		return nil, false, s.refuseKAS(info, err)
 	}
-	data, empty := decodeUserJSON(data)
-	if !empty {
-		if err := json.Unmarshal(data, &doc); err != nil {
-			return nil, false, s.refuseKAS(info, err)
-		}
+	doc, fresh, err = parseKASDoc(data)
+	if err != nil {
+		return nil, false, s.refuseKAS(info, err)
 	}
 	s.kasRefused = ""
-	if doc == nil {
-		return map[string]json.RawMessage{}, true, nil
-	}
-	return doc, false, nil
+	return doc, fresh, nil
 }
 
 // refuseKAS returns the refusal, logged at Error the first time for one file state (size,
