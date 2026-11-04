@@ -12,6 +12,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { deleteMemory, updateMemory } from "./actions/memory.js";
 import type { MemoryEdit } from "./actions/memory.js";
 import { forceReflow } from "./dom.js";
+import { onSSE } from "./bus.js";
 
 interface MemoryRecord {
   readonly id: string;
@@ -97,6 +98,7 @@ const details = new Map<string, Detail>();
 let onCounts: ((c: MemoryCounts) => void) | null = null;
 /** Bumped per fetch, so a stale answer cannot overwrite a newer one. */
 let generation = 0;
+let wired = false;
 
 export function setMemoryCountsListener(fn: (c: MemoryCounts) => void): void {
   onCounts = fn;
@@ -113,6 +115,10 @@ function visible(): MemoryRecord[] {
 /** Render into the panel. An unchanged filter (a tab switch or refresh) refetches; a filter change only repaints. */
 export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
   container = panel;
+  if (!wired) {
+    wired = true;
+    onSSE("memories_changed", onMemoriesChanged);
+  }
   const next = filter.trim().toLowerCase();
   const filterMoved = next !== filterText;
   filterText = next;
@@ -120,6 +126,24 @@ export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
   if (!filterMoved || state.kind === "loading") {
     void refresh();
   }
+}
+
+function isShowing(): boolean {
+  return container?.isConnected === true && !container.classList.contains("hidden");
+}
+
+/** A write kiro-cli applied, late or from another device. An open editor keeps its body, so typing is not lost. */
+function onMemoriesChanged(): void {
+  if (!isShowing()) {
+    return;
+  }
+  if (!editing) {
+    details.clear();
+    if (openID !== null) {
+      void loadContent(openID);
+    }
+  }
+  void refresh();
 }
 
 async function refresh(): Promise<void> {
@@ -340,7 +364,14 @@ function entryKey(e: ListEntry): string {
   const m = e.m;
   return e.kind === "row"
     ? joinKey("row", m.id, m.title, m.summary, m.memoryType, String(m.updatedMs ?? ""))
-    : joinKey("detail", m.id, String(editing), details.get(m.id)?.kind ?? "loading");
+    : detailKey(m);
+}
+
+/** An open editor's key ignores the record, so a refetch never replaces what is being typed. */
+function detailKey(m: MemoryRecord): string {
+  const d = details.get(m.id) ?? { kind: "loading" };
+  const shown = d.kind === "ready" && !editing ? viewText(m, d.content) : "";
+  return joinKey("detail", m.id, String(editing), d.kind, shown);
 }
 
 function syncRow(row: HTMLElement, m: MemoryRecord): void {
@@ -481,6 +512,10 @@ function buildDetail(m: MemoryRecord): HTMLElement {
   }
 }
 
+function viewText(m: MemoryRecord, content: string): string {
+  return content === "" ? m.summary : content;
+}
+
 function viewBody(m: MemoryRecord, content: string): HTMLElement {
   const edit = el("button", { type: "button", className: "btn-small" }, "Edit");
   edit.addEventListener("click", () => {
@@ -489,7 +524,7 @@ function viewBody(m: MemoryRecord, content: string): HTMLElement {
   return el(
     "div",
     { className: "memories-detail" },
-    el("div", { className: "memories-content" }, content === "" ? m.summary : content),
+    el("div", { className: "memories-content" }, viewText(m, content)),
     el("div", { className: "memories-detail-actions" }, edit),
   );
 }
