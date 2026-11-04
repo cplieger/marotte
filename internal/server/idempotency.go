@@ -17,7 +17,7 @@ import (
 )
 
 // idempotencyHeader is the request header carrying the client's
-// idempotency key, set by @cplieger/actions apiAction.
+// idempotency key, set by @cplieger/ui/actions apiAction.
 const idempotencyHeader = "Idempotency-Key"
 
 // idempotencyTTL: 5 minutes is long enough to cover a client's network-retry

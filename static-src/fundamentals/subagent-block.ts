@@ -3,7 +3,7 @@
 // `.sr-only` span only on an INERT head: a screen reader ignores `aria-label` on a plain div,
 // while an anchor head carries both in its own label.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import type { ToolStatus } from "../types.js";
 import { isToolActive } from "../tool-schema.js";
 import { iconEl } from "../icon-el.js";

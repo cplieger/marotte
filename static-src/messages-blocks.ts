@@ -32,7 +32,7 @@ import {
 } from "./block-window.js";
 import { steerAckID, toolResultID } from "./entry-ids.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
-import { effect, el } from "@cplieger/reactive";
+import { effect, el } from "@cplieger/ui";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
 import {

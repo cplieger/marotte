@@ -1,9 +1,9 @@
-// Ephemeral toasts: a thin wrapper over ui-primitives' default `toast` singleton keeping marotte's
+// Ephemeral toasts: a thin wrapper over @cplieger/ui/toast's default `toast` singleton keeping marotte's
 // surface (`info` / `success` / `error` / `showToast`). Announcement goes through the shared
 // announce() live region, not a role on the stack. Visuals: the .uip-toast skin (04-uip-skin.css).
 
-import { toast, _resetForTest as uipResetToast } from "@cplieger/ui-primitives/toast";
-import type { ToastLevel, ToastRetry } from "@cplieger/ui-primitives/toast";
+import { toast, _resetForTest as uipResetToast } from "@cplieger/ui/toast";
+import type { ToastLevel, ToastRetry } from "@cplieger/ui/toast";
 import type { NoticeLevel } from "./wire/types.gen.js";
 
 export type { ToastLevel, ToastRetry };
@@ -23,7 +23,7 @@ export function success(message: string): () => void {
  *  only way to take the action. MAX_STICKY bounds those. */
 const ERROR_DURATION_MS = 12_000;
 
-/** How many sticky toasts may be live at once. The stack shows 3 (ui-primitives'
+/** How many sticky toasts may be live at once. The stack shows 3 (@cplieger/ui's
  *  DEFAULT_MAX_VISIBLE, unexported, restated) and promotes only on dismiss or expiry, so a third
  *  sticky holds the last slot and queues everything else unseen. One fault is reported per chat, so
  *  three chats raise three copies. */

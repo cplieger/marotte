@@ -1,1 +1,1 @@
-export { withAsyncFeedback } from "@cplieger/actions";
+export { withAsyncFeedback } from "@cplieger/ui/actions";

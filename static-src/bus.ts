@@ -1,7 +1,7 @@
 // Event bus. `onSSE`/`dispatch` route SSE events with payload types from SSEPayloads;
 // `onBus`/`emitBus` carry cross-module notifications typed by BusPayloads.
 
-import { createBus } from "@cplieger/reactive";
+import { createBus } from "@cplieger/ui";
 
 import type {
   EngineStatus,
@@ -295,7 +295,7 @@ interface BusPayloads {
   readonly [BUS_CATALOG_MODELS]: undefined;
 }
 
-// The generic bus is @cplieger/reactive's createBus; the SSE surface stays bespoke
+// The generic bus is @cplieger/ui's createBus; the SSE surface stays bespoke
 // (chatID-prepended handlers, a decoder registry).
 const bus = createBus<BusPayloads>();
 

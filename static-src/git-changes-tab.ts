@@ -25,15 +25,15 @@ import {
   unstage,
 } from "./actions/git-changes.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
+import { skeletonTiming } from "@cplieger/ui/skeleton";
 import { gitRepoSkeleton, paintPlaceholder } from "./skeleton.js";
 import { reconcile } from "./reconcile.js";
 import { openChange } from "./navigate.js";
-import { effect, el, on } from "@cplieger/reactive";
+import { effect, el, on } from "@cplieger/ui";
 import { chevronEl } from "./chevron.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
-import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
+import { createDisclosure } from "@cplieger/ui/disclosure";
 import { escAttr as escapeHTML } from "./strings.js";
 import {
   renderRecentCommits,

@@ -7,7 +7,7 @@ import type {
   ModelSwitchReason,
   TurnRevertCause,
 } from "./types.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { chevronEl } from "./chevron.js";
 import { wireDetailsSlide } from "./disclosure-row.js";
 import { effortLabel } from "./effort.js";

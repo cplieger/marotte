@@ -2,14 +2,12 @@
 // global reconcile loop.
 
 import type { ToolCall } from "./types.js";
-import { SignalMap, type Signal } from "@cplieger/reactive";
+import { SignalMap, type Signal } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
-
-// SignalMap (the dynamic per-id signal registry) is provided by @cplieger/reactive.
 
 /** One per-entry streaming write: the open entry's accumulated text plus the growth this write
  *  carries, so a consumer can append `delta` instead of re-deriving the tail from an ever-longer
- *  `full`. INVARIANT: the pair is meaningful only under @cplieger/reactive's synchronous flush
+ *  `full`. INVARIANT: the pair is meaningful only under @cplieger/ui's synchronous flush
  *  contract — a write re-runs every subscribed effect before the setter returns, so a consumer
  *  observes one value per delta with none skipped. */
 interface EntrySignalValue {

@@ -5,7 +5,7 @@
 // limit. git-changes-tab.ts keeps its own `?fetch=1` read for user gestures.
 
 import { apiAction, defineAction } from "./actions/index.js";
-import { signal, subscribe } from "@cplieger/reactive";
+import { signal, subscribe } from "@cplieger/ui";
 import { absPath, onWorkspaceRoot, workspaceRoot } from "./workspace.js";
 import type { GitRepoStatus } from "./git-types.js";
 import { statusLetter } from "./git-types.js";

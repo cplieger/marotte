@@ -9,7 +9,7 @@ import type {
   PermissionNeededPayload,
   PermissionOption,
 } from "./types.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { formatMCPToolName } from "./tool-schema.js";
 import { openChange } from "./navigate.js";
 import { openSetting } from "./settings-highlight.js";

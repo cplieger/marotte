@@ -64,7 +64,7 @@ function bumpMessageVersion(id: string): void {
 }
 
 vi.mock("./store.js", async () => {
-  const { signal } = await import("@cplieger/reactive");
+  const { signal } = await import("@cplieger/ui");
   return {
     // The pager effect's tracked read; a case bumps it through `bumpMessageVersion`.
     messagesVersionOf: (id: string) => {
@@ -149,7 +149,7 @@ vi.mock("./skeleton.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Skeleton>()),
   chatSkeleton: vi.fn(() => document.createElement("div")),
 }));
-vi.mock("@cplieger/ui-primitives/skeleton", () => ({
+vi.mock("@cplieger/ui/skeleton", () => ({
   skeletonTiming: vi.fn(() => ({ commit: vi.fn(), cancel: vi.fn() })),
 }));
 vi.mock("./picker.js", () => ({ showModelPicker: vi.fn(), hideModelPicker: vi.fn() }));
@@ -250,7 +250,7 @@ import { loadTurnRail, pointTurnRail, setLoadMore, disposeChatView } from "./mes
 import { seedComposerState } from "./composer-state.js";
 import { info } from "./toast.js";
 import { isRetentionEnabled } from "./retention.js";
-import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
+import { skeletonTiming } from "@cplieger/ui/skeleton";
 // No `closeChat`: a chat-tab close's process teardown is the server's `close_tab`.
 import { deleteChat } from "./actions/chat.js";
 

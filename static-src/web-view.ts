@@ -1,5 +1,5 @@
-import { effect, el } from "@cplieger/reactive";
-import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
+import { effect, el } from "@cplieger/ui";
+import { rovingFocus } from "@cplieger/ui/roving-focus";
 import { pollAction } from "./actions/index.js";
 import { grantPreview, previewStamp } from "./actions/preview.js";
 import { $ } from "./dom.js";

@@ -1,7 +1,7 @@
 // The activity dot on a workflow run's tab.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { signal } from "@cplieger/reactive";
+import { signal } from "@cplieger/ui";
 import type { RunState } from "./run-store.js";
 
 const m = {

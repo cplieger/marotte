@@ -1,6 +1,6 @@
 // The run pane's step transcript: ONE source, the run's own entry log.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import {
   buildDetachedBody,
   disposeDetachedBody,

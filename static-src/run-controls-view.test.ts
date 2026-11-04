@@ -141,7 +141,7 @@ describe("the run's controls row", () => {
   });
 
   it("shows a verb in flight on its button until its row is replaced or disposed", async () => {
-    const { defineAction } = await import("@cplieger/actions");
+    const { defineAction } = await import("@cplieger/ui/actions");
     const inFlight = defineAction<undefined, undefined>({
       name: "test.pause",
       run: (_args, signal) =>

@@ -27,7 +27,7 @@ import {
 import { rowStatus, usableStatus } from "./forge-auth-status.js";
 import { registerCleanup } from "./actions/index.js";
 import { withAsyncFeedback } from "./async-button.js";
-import { signal, effect, el, touch } from "@cplieger/reactive";
+import { signal, effect, el, touch } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";

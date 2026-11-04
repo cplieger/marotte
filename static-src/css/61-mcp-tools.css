@@ -437,10 +437,6 @@
   display: none;
 }
 
-/* Tooltip + confirm dialog moved to @cplieger/ui-primitives — see the
-   .uip-tooltip / .uip-ask skins in css/04-uip-skin.css (structure + motion
-   from the vendored base stylesheet). */
-
 /* Editor gutter: agent-modified line indicator. No `line-height` here — a line
    cell and the code row it numbers share one line box, owned by `.viewer`
    (20-editor.css). A second value drifts every number off its own line. */

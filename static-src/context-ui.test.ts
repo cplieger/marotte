@@ -15,7 +15,7 @@ vi.mock("./session-context.js", () => ({ getLastEffortFor: () => "" }));
 
 import { refreshContextUI } from "./context-ui.js";
 import { compactionPolicy } from "./context-ring.js";
-import { effect } from "@cplieger/reactive";
+import { effect } from "@cplieger/ui";
 
 /** `seq` feeds `entryRenders`' plan rule; `id` is what a compaction watermark names. */
 function entry(turn: string, seq: number, kind: EntryKind, id: string): Entry {

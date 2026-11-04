@@ -5,7 +5,7 @@
 
 import type { ToolCall, ToolStatus, ToolDiff, TextSpan } from "./types.js";
 import { ensureToolCallSig, toolCallSigs, toolCallSigKey } from "./store-signals.js";
-import { effect, el } from "@cplieger/reactive";
+import { effect, el } from "@cplieger/ui";
 
 import { isToolDone, commandTitle, toolTitleText, type ToolKind } from "./tool-schema.js";
 import {

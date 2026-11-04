@@ -1,7 +1,7 @@
 // The list is kiro-cli's own store, so this module refetches and never holds an authoritative copy. Progress is polled:
 // knowledge_indexing frames name a per-agent store this endpoint cannot read (handlers/knowledge-indexing.ts shows them).
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { byId } from "./dom.js";
 import { reconcile } from "./reconcile.js";

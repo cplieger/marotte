@@ -1,9 +1,9 @@
-// Two properties of `@cplieger/reactive` that marotte code reasons from, neither stated in the
+// Two properties of `@cplieger/ui`'s signal graph that marotte code reasons from, neither stated in the
 // library's own docs. A DEPENDENCY contract: its subject is the library, and its value is a version
 // bump going red rather than a leak found later.
 
 import { describe, it, expect } from "vitest";
-import { signal, effect, reconcile } from "@cplieger/reactive";
+import { signal, effect, reconcile } from "@cplieger/ui";
 
 describe("a nested effect's lifetime is its OWN", () => {
   // `mcp-ui.ts`'s foreign row list carried the opposite claim in a comment for as long as it

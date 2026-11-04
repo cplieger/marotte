@@ -44,7 +44,7 @@ vi.mock("./actions/forge-list.js", async (importOriginal) => {
   };
 });
 
-import { resetActionFramework } from "@cplieger/actions/testing";
+import { resetActionFramework } from "@cplieger/ui/actions/testing";
 import { renderForgesPanel } from "./forge-auth.js";
 import { abortPoll } from "./forge-auth-oauth.js";
 import { apiGetTyped } from "./api-client.js";

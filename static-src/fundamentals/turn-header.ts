@@ -5,7 +5,7 @@
 // and a labelled request's full text shows only while open; attachment chips stay outside the clamp.
 
 import { join } from "@cplieger/keyenc";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { chevronEl } from "../chevron.js";
 import { watchCut } from "../clamp-text.js";
 import { linkifyPaths } from "../linkify.js";

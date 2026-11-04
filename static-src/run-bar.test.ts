@@ -29,7 +29,7 @@ vi.mock("./run-view.js", () => ({
 }));
 
 const announce = vi.hoisted(() => vi.fn());
-vi.mock("@cplieger/ui-primitives/announce", () => ({ announce }));
+vi.mock("@cplieger/ui/announce", () => ({ announce }));
 
 /** Per-run inspect answers, consulted by the stubbed run read. A run absent from this map
  *  answers a failed read, which is the honest "nothing fetched yet" case. */

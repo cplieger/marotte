@@ -6,7 +6,7 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 // behind a 100ms timer, so reading the DOM would be asserting on that timer instead of on what the
 // picker decided to say.
 const { announced } = vi.hoisted(() => ({ announced: { said: [] as string[] } }));
-vi.mock("@cplieger/ui-primitives/announce", () => ({
+vi.mock("@cplieger/ui/announce", () => ({
   announce: (message: string) => {
     announced.said.push(message);
   },

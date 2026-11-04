@@ -1,7 +1,7 @@
 // The run label on a workflow-update note: what the dock row calls the run, kept current as the
 // run's state arrives, so a step card says which run it belongs to.
 
-import { effect } from "@cplieger/reactive";
+import { effect } from "@cplieger/ui";
 import { setSteerNoteRunLabel } from "./fundamentals/steer-note.js";
 import {
   forgetRun,

@@ -26,7 +26,7 @@ vi.mock("./actions/git-prs.js", () => ({
 }));
 // The dialog follows the held rows through a signal, so the double holds them in one.
 vi.mock("./forge-store.js", async () => {
-  const { signal } = await import("@cplieger/reactive");
+  const { signal } = await import("@cplieger/ui");
   const { staticStore } = await import("./__test-helpers__/forge-rows.js");
   const held = signal<ForgesListResponse | null>(null);
   mocks.setHeld = (v: unknown) => {

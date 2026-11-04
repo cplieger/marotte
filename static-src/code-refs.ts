@@ -1,7 +1,7 @@
 // Licensed-code attribution footnote (v3 `_kiro/code_references`). The wire carries {license_name, repository, url}
 // per reference with no content span, so an attribution annotates the whole turn.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import type { CodeReference } from "./types.js";
 import { isSafeURL } from "./url-safety.js";
 import { iconEl } from "./icon-el.js";

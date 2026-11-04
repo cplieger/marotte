@@ -45,7 +45,7 @@ vi.mock("./tabs.js", () => ({
   tabSetVersion: () => 0,
 }));
 vi.mock("./router.js", () => ({ pushRoute: noop }));
-vi.mock("@cplieger/ui-primitives/skeleton", () => ({
+vi.mock("@cplieger/ui/skeleton", () => ({
   skeletonTiming: () => ({ cancel: noop }),
 }));
 vi.mock("./editor-openers.js", () => ({

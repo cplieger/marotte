@@ -6,8 +6,8 @@
 // app state, and is planted by hand in that module's shape where none does.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { page, server } from "vitest/browser";
-import { _resetForTest as resetAsk } from "@cplieger/ui-primitives/ask";
-import { _resetForTest as resetScrollLock } from "@cplieger/ui-primitives/modal";
+import { _resetForTest as resetAsk } from "@cplieger/ui/ask";
+import { _resetForTest as resetScrollLock } from "@cplieger/ui/modal";
 
 import indexHtml from "../static/index.html?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";

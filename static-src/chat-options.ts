@@ -2,7 +2,7 @@
 // slot by changing per MESSAGE, which none of these do. Every row is built here;
 // static/index.html carries an empty card. Actions first, the two switches last.
 
-import { el, effect } from "@cplieger/reactive";
+import { el, effect } from "@cplieger/ui";
 import { $ } from "./dom.js";
 import { activeSession, isBusy, isEmptyChat, watchBusy } from "./store.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";

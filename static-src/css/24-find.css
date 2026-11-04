@@ -1,46 +1,17 @@
-/* ==========================================================================
-   The search popup, in two layers.
+/* `.search-pop` is the skin and reveal shared by every floating search box: the
+   transcript's Ctrl-F bar, History, the configuration browser and the git view's
+   two panels. `.chat-find` and `.page-find` add only placement and layout: the
+   transcript's box sits in a wrapper that does not scroll, while a page's view
+   IS its scroller, where a box placed inside would scroll away from the toolbar
+   button that opened it. */
 
-   `.search-pop` is the SKIN and the reveal, shared by every search box in the
-   app that floats: the transcript's Ctrl-F bar and the four page boxes below it
-   (History, the configuration browser, and the git view's two panels). Those
-   four used to be permanent in-flow fields — two built through the shared shell,
-   two hand-authored into index.html with their own magnifier — so a reader who
-   learned find on a chat met a different control on every other page, and on the
-   git view met a toolbar magnifier that did nothing at all.
-
-   `.chat-find` and `.page-find` add only PLACEMENT and LAYOUT, which is where
-   the two genuinely differ: the transcript's is anchored inside a wrapper that
-   does not scroll and lays its controls out in one row around a match counter;
-   a page's view IS its scroller, so a box positioned inside it would scroll away
-   from the toolbar button that opened it, and its status line is a sentence
-   rather than a counter.
-
-   BOTH LEGS ANIMATE, and getting there took removing the mechanism rather than
-   adding one. The box was shown and hidden through the global `.hidden` utility,
-   which is `display: none !important` (40-a11y.css) — `display` is a discrete
-   property, so the close could not animate at all and the box simply vanished.
-
-   It is a @cplieger/ui-primitives popup now, so the reveal is the `[hidden]`
-   ATTRIBUTE (the library's own `.uip-popup[hidden] { display: none }`) plus the
-   `is-open` / `is-leaving` state-class pair. The library un-hides, forces a
-   reflow, then adds `is-open`, so a transition from the RESTING state below
-   plays on the way in; on the way out it removes `is-open`, adds `is-leaving`
-   and waits for this element's own transitionend before `[hidden]` lands. So the
-   resting state IS the leave target and one declaration covers both directions.
-   @starting-style went with it: nothing enters the layout any more.
-
-   `display … transition-behavior: allow-discrete` is NOT the answer here and was
-   not tried again: 21-shell-panel.css records that it SNAPPED SHUT in practice
-   on this codebase, which is why the shell panel collapses a live element
-   instead. Believe that comment.
-
-   Reduced motion stays covered by 40-a11y.css's global
-   `transition-duration: 0.01ms !important`, which reaches this transition like
-   any other — and the leave still finalizes, because transitionend fires for a
-   near-zero duration. A leave that depended on a TIMER rather than the
-   transition would have needed its own reduced-motion answer; this one does not.
-   ========================================================================== */
+/* Both legs animate because the box is a @cplieger/ui popup: the library
+   un-hides the `[hidden]` attribute, forces a reflow and adds `is-open`; on
+   close it swaps `is-open` for `is-leaving` and waits for this element's
+   transitionend before `[hidden]` lands. INVARIANT: the RESTING state below is
+   the leave target, so one transition covers both directions; the global
+   `.hidden` utility (`display: none !important`) would cut the close dead.
+   `transition-behavior: allow-discrete` snapped shut here (21-shell-panel.css). */
 
 .search-pop {
   z-index: 60;

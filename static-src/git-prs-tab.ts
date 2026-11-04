@@ -77,15 +77,15 @@ import { ensureForges, forgeRows, usableAccount, usablePairs } from "./forge-sto
 import { partialWhy } from "./forge-types.js";
 import { reconcile } from "./reconcile.js";
 import { forgetSig, sigChanged, wireSignature } from "./paint-sig.js";
-import { effect, el, on } from "@cplieger/reactive";
+import { effect, el, on } from "@cplieger/ui";
 import { chevronEl } from "./chevron.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
 import type { Nouns } from "./textsearch/copy.js";
-import { createDialog, type DialogController } from "@cplieger/ui-primitives/dialog";
-import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
-import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
+import { createDialog, type DialogController } from "@cplieger/ui/dialog";
+import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
+import { skeletonTiming } from "@cplieger/ui/skeleton";
 import { gitRepoSkeleton, paintPlaceholder } from "./skeleton.js";
 import { iconEl } from "./icon-el.js";
 

@@ -5,7 +5,7 @@
 // native find opens there. A buffer not yet read is no answer (blank counter, re-run when it
 // lands); one that could not be read answers "File not read".
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { $ } from "./dom.js";
 import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
 import { fileStates, getActiveFilePath } from "./editor-types.js";

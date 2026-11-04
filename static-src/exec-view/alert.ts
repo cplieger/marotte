@@ -1,7 +1,7 @@
 // The run's alert as a mark and a sentence, painted by the run summary (`summary.ts`) wherever it
 // shows.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { iconEl } from "../icon-el.js";
 import { ICON_ALERT } from "../icons.js";
 import type { ExecRun } from "./model.js";

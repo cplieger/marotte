@@ -3,7 +3,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { userEvent } from "vitest/browser";
-import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
+import { rovingFocus } from "@cplieger/ui/roving-focus";
 
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import { buildEffortSlider, type EffortSliderHandle } from "./effort-slider.js";
