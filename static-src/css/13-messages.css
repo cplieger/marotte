@@ -985,8 +985,9 @@
   }
 
   & .boundary-icon {
+    display: inline-flex;
+    flex: none;
     color: var(--c-accent);
-    font-size: 1.1em;
   }
 
   & .boundary-label {
@@ -1074,9 +1075,9 @@
 }
 
 .compaction-icon {
-  flex-shrink: 0;
+  display: inline-flex;
+  flex: none;
   color: var(--c-accent);
-  font-size: 1.1em;
 }
 
 .compaction-label {

@@ -1222,11 +1222,13 @@ export interface EntryToolCall {
   kind: ToolKind;
   status: ToolStatus;
   output?: string;
+  tool_name?: string;
   agent_subtask_id?: string;
   workflow_id?: string;
   terminal_id?: string;
   source_path?: string;
   checkpoint?: ToolCheckpoint;
+  mcp?: MCPToolIdentity;
   disclosed?: ToolDisclosed;
   denial?: ToolDenial;
   truncated?: ToolTruncation;
@@ -2050,7 +2052,7 @@ export interface MCPSignInOpenPayload {
   url: string;
 }
 
-/** MCPToolIdentity names the verified MCP server and tool behind a permission request. */
+/** MCPToolIdentity names the MCP server and tool behind a tool call or a permission request. */
 export interface MCPToolIdentity {
   server_name: string;
   tool_name: string;
@@ -3893,6 +3895,11 @@ export interface ToolCall {
   status: ToolStatus;
   output?: string;
   /**
+ * ToolName is the built-in tool's id (`update_workflow`, `web_search`) when the translator
+ * could name one the transcript distinguishes, else empty. Fixed at the create frame.
+ */
+  tool_name?: string;
+  /**
  * AgentSubtaskID is _meta.kiro.agentSubtaskId on a subagent's tool_call; it links
  * the card to its nested deltas, which carry the same id.
  */
@@ -3919,6 +3926,8 @@ export interface ToolCall {
  * wrote a file. Pointers sit ahead of the slices for govet fieldalignment.
  */
   checkpoint?: ToolCheckpoint;
+  /** MCP is KAS's MCP server and tool for this call, nil for any other tool. */
+  mcp?: MCPToolIdentity;
   /**
  * Disclosed names the skill or steering doc a `disclose_context` call loaded
  * (_meta.kiro.disclosedContext), the only signal that its body reached the model.

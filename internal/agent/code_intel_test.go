@@ -19,7 +19,7 @@ func TestEnsureCodeIntelligence_Guards(t *testing.T) {
 
 	t.Run("not wired is a no-op", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		h.EnsureCodeIntelligence(t.Context())
+		h.ensureCodeIntelligence(t.Context())
 	})
 
 	t.Run("existing config is a no-op", func(t *testing.T) {
@@ -29,7 +29,7 @@ func TestEnsureCodeIntelligence_Guards(t *testing.T) {
 		}
 		gateCalled := false
 		h.SetCodeIntelligence(cfgPath, func() bool { gateCalled = true; return true })
-		h.EnsureCodeIntelligence(t.Context())
+		h.ensureCodeIntelligence(t.Context())
 		if gateCalled {
 			t.Error("gate consulted although lsp.json already exists")
 		}
@@ -41,7 +41,7 @@ func TestEnsureCodeIntelligence_Guards(t *testing.T) {
 	t.Run("closed gate is a no-op", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.SetCodeIntelligence(cfgPath, func() bool { return false })
-		h.EnsureCodeIntelligence(t.Context())
+		h.ensureCodeIntelligence(t.Context())
 		if h.ciBusy.Load() {
 			t.Error("in-flight guard left set on the closed-gate path")
 		}
@@ -53,7 +53,7 @@ func TestEnsureCodeIntelligence_Guards(t *testing.T) {
 		h.SetCodeIntelligence(cfgPath, func() bool { gateCalled = true; return true })
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		h.EnsureCodeIntelligence(ctx)
+		h.ensureCodeIntelligence(ctx)
 		if gateCalled {
 			t.Error("gate consulted, running every tool's probe, for an init a cancelled ctx can only fail")
 		}
@@ -73,7 +73,7 @@ func TestEnsureCodeIntelligence_WiredAndUnconfiguredRunsTheInit(t *testing.T) {
 	// A path that does not exist yet is the trigger.
 	h.SetCodeIntelligence(filepath.Join(t.TempDir(), "lsp.json"), func() bool { return true })
 
-	h.EnsureCodeIntelligence(t.Context())
+	h.ensureCodeIntelligence(t.Context())
 
 	if !slices.Contains(br.callLog(), methodKiroCodeIntel) {
 		t.Fatalf("no code-intelligence init was issued; calls were %v", br.callLog())

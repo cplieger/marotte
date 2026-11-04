@@ -73,15 +73,15 @@
   color: var(--c-text-secondary);
 }
 
-/* A dot, not an emoji: one shape, three colours, no font dependency; the accessible name
- * and the tooltip carry the meaning, so colour is never the sole channel, and it appears
- * only when the outcome is worth a mark. MOBILE-ONLY (revealed below): above the drawer
+/* A CSS mark, no font dependency: a disc while running, the diamond or the barred disc for an
+ * outcome (below), so shape, the accessible name and the tooltip all carry the meaning beside the
+ * colour, and it appears only when the outcome is worth a mark. MOBILE-ONLY (revealed below): above the drawer
  * breakpoint the TAB STRIP answers the same question. `display: none`, never
  * `visibility: hidden` — a merely invisible flex item still spends 8px of the row's gap. */
 .turn-dot {
   display: none;
-  width: 0.5rem;
-  height: 0.5rem;
+  inline-size: var(--dot-size);
+  block-size: var(--dot-size);
   border-radius: 50%;
   flex-shrink: 0;
   background: var(--c-text-tertiary);
@@ -113,13 +113,22 @@
  * label and the tooltip separate the two, as `.tool-icon.is-warn` does for a stopped run. */
 .turn-header[data-severity="stopped"] .turn-dot {
   background: var(--c-yellow);
+  mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  mask-size:
+    100% 100%,
+    65% 20.8333%;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-composite: exclude;
 }
 
 /* RED, and `interrupted` IS IN HERE: a fault nobody chose stopped the turn, and the
  * tab dot's own latch already grades it `failed`. `refused` shares the hue — see
  * `.refusal-callout` (13-messages.css) — because the words carry the distinction. */
 .turn-header[data-severity="broken"] .turn-dot {
-  background: var(--c-red);
+  position: relative;
+  color: var(--c-red);
+  background: none;
 }
 
 /* THE ONE EXCEPTION, stated at every surface that takes it: `unknown` keeps a NEUTRAL
@@ -277,6 +286,16 @@
 }
 
 .turn-header[data-trigger="caller"] :is(.turn-req-text, .turn-req-full) {
+  color: var(--c-text-secondary);
+}
+
+/* The step-message glyph leads the line, centred in a box one line (1.5em) tall. */
+.turn-wake-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  block-size: 1.5em;
+  margin-inline-end: var(--sp-1);
   color: var(--c-text-secondary);
 }
 
@@ -648,8 +667,8 @@ button.turn-wake-row-run:focus-visible {
  * the summary text carry the same fact in words, and the shape differs too (a ring for a
  * clean turn, filled for a non-clean one). Hidden on a clean turn, as the dot is. */
 .turn-ledger-glyph {
-  width: 0.5rem;
-  height: 0.5rem;
+  inline-size: var(--dot-size);
+  block-size: var(--dot-size);
   flex-shrink: 0;
   border-radius: 50%;
   border: 1.5px solid var(--c-green);
@@ -667,12 +686,21 @@ button.turn-wake-row-run:focus-visible {
 .turn-footer[data-severity="stopped"] .turn-ledger-glyph {
   border-color: var(--c-yellow);
   background: var(--c-yellow);
+  mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  mask-size:
+    100% 100%,
+    65% 20.8333%;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-composite: exclude;
 }
 
 /* RED, `interrupted` included — see the header dot's broken arm. */
 .turn-footer[data-severity="broken"] .turn-ledger-glyph {
-  border-color: var(--c-red);
-  background: var(--c-red);
+  position: relative;
+  border-color: transparent;
+  color: var(--c-red);
+  background: none;
 }
 
 /* FILLED and neutral, not the default green ring: with no rule an unknown turn would carry
@@ -681,6 +709,24 @@ button.turn-wake-row-run:focus-visible {
 .turn-footer[data-outcome="unknown"] .turn-ledger-glyph {
   border-color: var(--c-text-tertiary);
   background: var(--c-text-tertiary);
+}
+
+/* The two turn marks take the tool row's shapes, and a failure takes the tab dot's silhouette.
+ * A failure is the tab strip's diamond, by 12-tabs.css's construction, drawn in the broken rules' red on a
+ * pseudo-element, so the mark's own box keeps the disc's footprint and the row does not move when the outcome
+ * lands. A stop is the tool row's barred disc (`icons.ts` ICON_OUTCOME_WARN), its 7.8 by 2.5 unit bar on the
+ * 12-unit disc cut out by the stopped rules' mask; the unknown rule keeps it. `outcome-mark.test.ts` pins both. */
+.turn-header[data-severity="broken"] .turn-dot::before,
+.turn-footer[data-severity="broken"] .turn-ledger-glyph::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
+  inline-size: var(--dot-size-sm);
+  block-size: var(--dot-size-sm);
+  border-radius: 1.5px;
+  background: currentcolor;
+  transform: translate(-50%, -50%) rotate(45deg);
 }
 
 /* OPEN reads off the INK, not a rotation: the trigger is an `i`, and a rotating

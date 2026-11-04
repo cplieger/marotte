@@ -18,7 +18,7 @@ import {
 import { copyClipboard } from "./actions/messages.js";
 import { downloadChatExport } from "./chat-export.js";
 import { buildPath } from "./route-path.js";
-import { ICON_EXPORT, ICON_LINK } from "./icons.js";
+import { ICON_COMPACT, ICON_EXPORT, ICON_LINK } from "./icons.js";
 import { openFilePicker } from "./files-picker.js";
 import { uploadLimitHint } from "./upload-policy.js";
 import { openTangentChat } from "./chat.js";
@@ -42,8 +42,6 @@ const ICON_SESSION =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>';
 const ICON_RENAME =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>';
-const ICON_COMPACT =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 19h16"/><path d="M12 9v-3l-3 3"/><path d="M12 9v-3l3 3"/><path d="M12 15v3l-3-3"/><path d="M12 15v3l3-3"/></svg>';
 
 /**
  * KAS's own clamp on the goal loop's budget, mirrored: `parseGoalCommand` runs

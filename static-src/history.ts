@@ -210,6 +210,7 @@ function runMark(
  */
 const ROW_RENDER_INFO: ToolRenderInfo = {
   kind: "other",
+  toolName: "",
   writesFile: false,
   filePath: "",
   fileBasename: "",

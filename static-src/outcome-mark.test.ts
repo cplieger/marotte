@@ -203,3 +203,34 @@ describe("the mark reads one ink and one size wherever it renders", () => {
     }
   });
 });
+
+describe("a turn's outcome marks take the tool row's shapes", () => {
+  const turns = loadCSS("29-turns.css");
+
+  it("draws a broken turn as the tab strip's diamond on the header dot and the footer glyph", () => {
+    const strip = ruleContaining(tabs, '.tab-status-dot[data-status="failed"]', "top");
+    const corner = /border-radius:\s*([\d.]+px)/.exec(strip.body)?.[1];
+    const diamond = ruleContaining(turns, '.turn-header[data-severity="broken"] .turn-dot::before');
+    expect(diamond.selector).toContain(
+      '.turn-footer[data-severity="broken"] .turn-ledger-glyph::before',
+    );
+    expect(diamond.body).toContain("inline-size: var(--dot-size-sm)");
+    expect(diamond.body).toContain("block-size: var(--dot-size-sm)");
+    expect(diamond.body).toContain("rotate(45deg)");
+    expect(diamond.body).toContain(`border-radius: ${corner ?? "?"}`);
+  });
+
+  it.each([
+    '.turn-header[data-severity="stopped"] .turn-dot',
+    '.turn-footer[data-severity="stopped"] .turn-ledger-glyph',
+  ])("cuts the stop glyph's bar out of %s", (selector) => {
+    const stopped = ruleContaining(turns, selector);
+    expect(stopped.body).toContain("mask-composite: exclude");
+    const HV = /^M([\d.]+) ([\d.]+)h([\d.]+)v([\d.]+)h-([\d.]+)$/;
+    const bar = HV.exec(barSubpath(outcomeIcon("warn")));
+    const disc = units(DOT_REM);
+    const size = /mask-size:[^;]*,\s*([\d.]+)%\s+([\d.]+)%/.exec(stopped.body);
+    expect(Number(size?.[1])).toBeCloseTo((Number(bar?.[3]) / disc) * 100, 2);
+    expect(Number(size?.[2])).toBeCloseTo((Number(bar?.[4]) / disc) * 100, 2);
+  });
+});

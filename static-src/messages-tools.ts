@@ -617,6 +617,7 @@ function applyStatusUpdate(card: HTMLDivElement, status: ToolStatus): void {
   // The outcome glyph, through the one writer that owns that vocabulary.
   applyOutcome(card, status, card.dataset["title"] ?? "", {
     kind: (card.dataset["kind"] ?? "other") as ToolKind,
+    toolName: card.dataset["toolName"] ?? "",
     writesFile: false,
     filePath: card.dataset["filePath"] ?? "",
     fileBasename: card.dataset["filename"] ?? "",

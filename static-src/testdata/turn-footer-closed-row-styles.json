@@ -728,19 +728,51 @@
   },
   "footer > button.turn-ledger-summary > span.turn-ledger-glyph": {
     "style": {
+      "-webkit-mask-position-x": {
+        "by": "outcome",
+        "is": {
+          "cancelled": "50%, 50%",
+          "unknown": "50%, 50%",
+          "empty": "50%, 50%"
+        }
+      },
+      "-webkit-mask-position-y": {
+        "by": "outcome",
+        "is": {
+          "cancelled": "50%, 50%",
+          "unknown": "50%, 50%",
+          "empty": "50%, 50%"
+        }
+      },
+      "-webkit-text-fill-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "-webkit-text-stroke-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
       "background-color": {
         "by": "theme outcome",
         "is": {
           "dark cancelled": "oklch(0.919 0.07 86.5)",
-          "dark interrupted": "oklch(0.79 0.13 2.8)",
-          "dark failed": "oklch(0.79 0.13 2.8)",
-          "dark refused": "oklch(0.79 0.13 2.8)",
           "dark unknown": "oklch(0.774 0.034 277.1)",
           "dark empty": "oklch(0.919 0.07 86.5)",
           "light cancelled": "oklch(0.437 0.09 86.5)",
-          "light interrupted": "oklch(0.457 0.15 2.8)",
-          "light failed": "oklch(0.457 0.15 2.8)",
-          "light refused": "oklch(0.457 0.15 2.8)",
           "light unknown": "oklch(0.438 0.015 277.1)",
           "light empty": "oklch(0.437 0.09 86.5)"
         }
@@ -751,17 +783,17 @@
           "dark completed": "oklch(0.858 0.109 142.7)",
           "dark running": "oklch(0.858 0.109 142.7)",
           "dark cancelled": "oklch(0.919 0.07 86.5)",
-          "dark interrupted": "oklch(0.79 0.13 2.8)",
-          "dark failed": "oklch(0.79 0.13 2.8)",
-          "dark refused": "oklch(0.79 0.13 2.8)",
+          "dark interrupted": "rgba(0, 0, 0, 0)",
+          "dark failed": "rgba(0, 0, 0, 0)",
+          "dark refused": "rgba(0, 0, 0, 0)",
           "dark unknown": "oklch(0.774 0.034 277.1)",
           "dark empty": "oklch(0.919 0.07 86.5)",
           "light completed": "oklch(0.426 0.12 142.7)",
           "light running": "oklch(0.426 0.12 142.7)",
           "light cancelled": "oklch(0.437 0.09 86.5)",
-          "light interrupted": "oklch(0.457 0.15 2.8)",
-          "light failed": "oklch(0.457 0.15 2.8)",
-          "light refused": "oklch(0.457 0.15 2.8)",
+          "light interrupted": "rgba(0, 0, 0, 0)",
+          "light failed": "rgba(0, 0, 0, 0)",
+          "light refused": "rgba(0, 0, 0, 0)",
           "light unknown": "oklch(0.438 0.015 277.1)",
           "light empty": "oklch(0.437 0.09 86.5)"
         }
@@ -774,17 +806,17 @@
           "dark completed": "oklch(0.858 0.109 142.7)",
           "dark running": "oklch(0.858 0.109 142.7)",
           "dark cancelled": "oklch(0.919 0.07 86.5)",
-          "dark interrupted": "oklch(0.79 0.13 2.8)",
-          "dark failed": "oklch(0.79 0.13 2.8)",
-          "dark refused": "oklch(0.79 0.13 2.8)",
+          "dark interrupted": "rgba(0, 0, 0, 0)",
+          "dark failed": "rgba(0, 0, 0, 0)",
+          "dark refused": "rgba(0, 0, 0, 0)",
           "dark unknown": "oklch(0.774 0.034 277.1)",
           "dark empty": "oklch(0.919 0.07 86.5)",
           "light completed": "oklch(0.426 0.12 142.7)",
           "light running": "oklch(0.426 0.12 142.7)",
           "light cancelled": "oklch(0.437 0.09 86.5)",
-          "light interrupted": "oklch(0.457 0.15 2.8)",
-          "light failed": "oklch(0.457 0.15 2.8)",
-          "light refused": "oklch(0.457 0.15 2.8)",
+          "light interrupted": "rgba(0, 0, 0, 0)",
+          "light failed": "rgba(0, 0, 0, 0)",
+          "light refused": "rgba(0, 0, 0, 0)",
           "light unknown": "oklch(0.438 0.015 277.1)",
           "light empty": "oklch(0.437 0.09 86.5)"
         }
@@ -797,17 +829,17 @@
           "dark completed": "oklch(0.858 0.109 142.7)",
           "dark running": "oklch(0.858 0.109 142.7)",
           "dark cancelled": "oklch(0.919 0.07 86.5)",
-          "dark interrupted": "oklch(0.79 0.13 2.8)",
-          "dark failed": "oklch(0.79 0.13 2.8)",
-          "dark refused": "oklch(0.79 0.13 2.8)",
+          "dark interrupted": "rgba(0, 0, 0, 0)",
+          "dark failed": "rgba(0, 0, 0, 0)",
+          "dark refused": "rgba(0, 0, 0, 0)",
           "dark unknown": "oklch(0.774 0.034 277.1)",
           "dark empty": "oklch(0.919 0.07 86.5)",
           "light completed": "oklch(0.426 0.12 142.7)",
           "light running": "oklch(0.426 0.12 142.7)",
           "light cancelled": "oklch(0.437 0.09 86.5)",
-          "light interrupted": "oklch(0.457 0.15 2.8)",
-          "light failed": "oklch(0.457 0.15 2.8)",
-          "light refused": "oklch(0.457 0.15 2.8)",
+          "light interrupted": "rgba(0, 0, 0, 0)",
+          "light failed": "rgba(0, 0, 0, 0)",
+          "light refused": "rgba(0, 0, 0, 0)",
           "light unknown": "oklch(0.438 0.015 277.1)",
           "light empty": "oklch(0.437 0.09 86.5)"
         }
@@ -824,17 +856,17 @@
           "dark completed": "oklch(0.858 0.109 142.7)",
           "dark running": "oklch(0.858 0.109 142.7)",
           "dark cancelled": "oklch(0.919 0.07 86.5)",
-          "dark interrupted": "oklch(0.79 0.13 2.8)",
-          "dark failed": "oklch(0.79 0.13 2.8)",
-          "dark refused": "oklch(0.79 0.13 2.8)",
+          "dark interrupted": "rgba(0, 0, 0, 0)",
+          "dark failed": "rgba(0, 0, 0, 0)",
+          "dark refused": "rgba(0, 0, 0, 0)",
           "dark unknown": "oklch(0.774 0.034 277.1)",
           "dark empty": "oklch(0.919 0.07 86.5)",
           "light completed": "oklch(0.426 0.12 142.7)",
           "light running": "oklch(0.426 0.12 142.7)",
           "light cancelled": "oklch(0.437 0.09 86.5)",
-          "light interrupted": "oklch(0.457 0.15 2.8)",
-          "light failed": "oklch(0.457 0.15 2.8)",
-          "light refused": "oklch(0.457 0.15 2.8)",
+          "light interrupted": "rgba(0, 0, 0, 0)",
+          "light failed": "rgba(0, 0, 0, 0)",
+          "light refused": "rgba(0, 0, 0, 0)",
           "light unknown": "oklch(0.438 0.015 277.1)",
           "light empty": "oklch(0.437 0.09 86.5)"
         }
@@ -847,17 +879,17 @@
           "dark completed": "oklch(0.858 0.109 142.7)",
           "dark running": "oklch(0.858 0.109 142.7)",
           "dark cancelled": "oklch(0.919 0.07 86.5)",
-          "dark interrupted": "oklch(0.79 0.13 2.8)",
-          "dark failed": "oklch(0.79 0.13 2.8)",
-          "dark refused": "oklch(0.79 0.13 2.8)",
+          "dark interrupted": "rgba(0, 0, 0, 0)",
+          "dark failed": "rgba(0, 0, 0, 0)",
+          "dark refused": "rgba(0, 0, 0, 0)",
           "dark unknown": "oklch(0.774 0.034 277.1)",
           "dark empty": "oklch(0.919 0.07 86.5)",
           "light completed": "oklch(0.426 0.12 142.7)",
           "light running": "oklch(0.426 0.12 142.7)",
           "light cancelled": "oklch(0.437 0.09 86.5)",
-          "light interrupted": "oklch(0.457 0.15 2.8)",
-          "light failed": "oklch(0.457 0.15 2.8)",
-          "light refused": "oklch(0.457 0.15 2.8)",
+          "light interrupted": "rgba(0, 0, 0, 0)",
+          "light failed": "rgba(0, 0, 0, 0)",
+          "light refused": "rgba(0, 0, 0, 0)",
           "light unknown": "oklch(0.438 0.015 277.1)",
           "light empty": "oklch(0.437 0.09 86.5)"
         }
@@ -870,17 +902,17 @@
           "dark completed": "oklch(0.858 0.109 142.7)",
           "dark running": "oklch(0.858 0.109 142.7)",
           "dark cancelled": "oklch(0.919 0.07 86.5)",
-          "dark interrupted": "oklch(0.79 0.13 2.8)",
-          "dark failed": "oklch(0.79 0.13 2.8)",
-          "dark refused": "oklch(0.79 0.13 2.8)",
+          "dark interrupted": "rgba(0, 0, 0, 0)",
+          "dark failed": "rgba(0, 0, 0, 0)",
+          "dark refused": "rgba(0, 0, 0, 0)",
           "dark unknown": "oklch(0.774 0.034 277.1)",
           "dark empty": "oklch(0.919 0.07 86.5)",
           "light completed": "oklch(0.426 0.12 142.7)",
           "light running": "oklch(0.426 0.12 142.7)",
           "light cancelled": "oklch(0.437 0.09 86.5)",
-          "light interrupted": "oklch(0.457 0.15 2.8)",
-          "light failed": "oklch(0.457 0.15 2.8)",
-          "light refused": "oklch(0.457 0.15 2.8)",
+          "light interrupted": "rgba(0, 0, 0, 0)",
+          "light failed": "rgba(0, 0, 0, 0)",
+          "light refused": "rgba(0, 0, 0, 0)",
           "light unknown": "oklch(0.438 0.015 277.1)",
           "light empty": "oklch(0.437 0.09 86.5)"
         }
@@ -893,17 +925,17 @@
           "dark completed": "oklch(0.858 0.109 142.7)",
           "dark running": "oklch(0.858 0.109 142.7)",
           "dark cancelled": "oklch(0.919 0.07 86.5)",
-          "dark interrupted": "oklch(0.79 0.13 2.8)",
-          "dark failed": "oklch(0.79 0.13 2.8)",
-          "dark refused": "oklch(0.79 0.13 2.8)",
+          "dark interrupted": "rgba(0, 0, 0, 0)",
+          "dark failed": "rgba(0, 0, 0, 0)",
+          "dark refused": "rgba(0, 0, 0, 0)",
           "dark unknown": "oklch(0.774 0.034 277.1)",
           "dark empty": "oklch(0.919 0.07 86.5)",
           "light completed": "oklch(0.426 0.12 142.7)",
           "light running": "oklch(0.426 0.12 142.7)",
           "light cancelled": "oklch(0.437 0.09 86.5)",
-          "light interrupted": "oklch(0.457 0.15 2.8)",
-          "light failed": "oklch(0.457 0.15 2.8)",
-          "light refused": "oklch(0.457 0.15 2.8)",
+          "light interrupted": "rgba(0, 0, 0, 0)",
+          "light failed": "rgba(0, 0, 0, 0)",
+          "light refused": "rgba(0, 0, 0, 0)",
           "light unknown": "oklch(0.438 0.015 277.1)",
           "light empty": "oklch(0.437 0.09 86.5)"
         }
@@ -918,17 +950,17 @@
           "dark completed": "oklch(0.858 0.109 142.7)",
           "dark running": "oklch(0.858 0.109 142.7)",
           "dark cancelled": "oklch(0.919 0.07 86.5)",
-          "dark interrupted": "oklch(0.79 0.13 2.8)",
-          "dark failed": "oklch(0.79 0.13 2.8)",
-          "dark refused": "oklch(0.79 0.13 2.8)",
+          "dark interrupted": "rgba(0, 0, 0, 0)",
+          "dark failed": "rgba(0, 0, 0, 0)",
+          "dark refused": "rgba(0, 0, 0, 0)",
           "dark unknown": "oklch(0.774 0.034 277.1)",
           "dark empty": "oklch(0.919 0.07 86.5)",
           "light completed": "oklch(0.426 0.12 142.7)",
           "light running": "oklch(0.426 0.12 142.7)",
           "light cancelled": "oklch(0.437 0.09 86.5)",
-          "light interrupted": "oklch(0.457 0.15 2.8)",
-          "light failed": "oklch(0.457 0.15 2.8)",
-          "light refused": "oklch(0.457 0.15 2.8)",
+          "light interrupted": "rgba(0, 0, 0, 0)",
+          "light failed": "rgba(0, 0, 0, 0)",
+          "light refused": "rgba(0, 0, 0, 0)",
           "light unknown": "oklch(0.438 0.015 277.1)",
           "light empty": "oklch(0.437 0.09 86.5)"
         }
@@ -937,7 +969,48 @@
       "border-top-right-radius": "50%",
       "border-top-style": "solid",
       "border-top-width": "1px",
+      "bottom": {
+        "by": "outcome",
+        "is": {
+          "interrupted": "0px",
+          "failed": "0px",
+          "refused": "0px"
+        }
+      },
       "box-sizing": "border-box",
+      "caret-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "column-rule-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
       "display": {
         "by": "outcome",
         "is": {
@@ -946,6 +1019,102 @@
         }
       },
       "flex-shrink": "0",
+      "inset-block-end": {
+        "by": "outcome",
+        "is": {
+          "interrupted": "0px",
+          "failed": "0px",
+          "refused": "0px"
+        }
+      },
+      "inset-block-start": {
+        "by": "outcome",
+        "is": {
+          "interrupted": "0px",
+          "failed": "0px",
+          "refused": "0px"
+        }
+      },
+      "inset-inline-start": {
+        "by": "outcome",
+        "is": {
+          "interrupted": "0px",
+          "failed": "0px",
+          "refused": "0px"
+        }
+      },
+      "left": {
+        "by": "outcome",
+        "is": {
+          "interrupted": "0px",
+          "failed": "0px",
+          "refused": "0px"
+        }
+      },
+      "mask-clip": {
+        "by": "outcome",
+        "is": {
+          "cancelled": "border-box, border-box",
+          "unknown": "border-box, border-box",
+          "empty": "border-box, border-box"
+        }
+      },
+      "mask-composite": {
+        "by": "outcome",
+        "is": {
+          "cancelled": "exclude, exclude",
+          "unknown": "exclude, exclude",
+          "empty": "exclude, exclude"
+        }
+      },
+      "mask-image": {
+        "by": "outcome",
+        "is": {
+          "cancelled": "linear-gradient(rgb(0, 0, 0) 0px, rgb(0, 0, 0) 0px), linear-gradient(rgb(0, 0, 0) 0px, rgb(0, 0, 0) 0px)",
+          "unknown": "linear-gradient(rgb(0, 0, 0) 0px, rgb(0, 0, 0) 0px), linear-gradient(rgb(0, 0, 0) 0px, rgb(0, 0, 0) 0px)",
+          "empty": "linear-gradient(rgb(0, 0, 0) 0px, rgb(0, 0, 0) 0px), linear-gradient(rgb(0, 0, 0) 0px, rgb(0, 0, 0) 0px)"
+        }
+      },
+      "mask-mode": {
+        "by": "outcome",
+        "is": {
+          "cancelled": "match-source, match-source",
+          "unknown": "match-source, match-source",
+          "empty": "match-source, match-source"
+        }
+      },
+      "mask-origin": {
+        "by": "outcome",
+        "is": {
+          "cancelled": "border-box, border-box",
+          "unknown": "border-box, border-box",
+          "empty": "border-box, border-box"
+        }
+      },
+      "mask-position": {
+        "by": "outcome",
+        "is": {
+          "cancelled": "50% 50%, 50% 50%",
+          "unknown": "50% 50%, 50% 50%",
+          "empty": "50% 50%, 50% 50%"
+        }
+      },
+      "mask-repeat": {
+        "by": "outcome",
+        "is": {
+          "cancelled": "no-repeat, no-repeat",
+          "unknown": "no-repeat, no-repeat",
+          "empty": "no-repeat, no-repeat"
+        }
+      },
+      "mask-size": {
+        "by": "outcome",
+        "is": {
+          "cancelled": "100% 100%, 65% 20.8333%",
+          "unknown": "100% 100%, 65% 20.8333%",
+          "empty": "100% 100%, 65% 20.8333%"
+        }
+      },
       "min-block-size": {
         "by": "outcome",
         "is": {
@@ -974,7 +1143,67 @@
           "running": "0px"
         }
       },
-      "scrollbar-width": "thin"
+      "outline-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "position": {
+        "by": "outcome",
+        "is": {
+          "interrupted": "relative",
+          "failed": "relative",
+          "refused": "relative"
+        }
+      },
+      "row-rule-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "scrollbar-width": "thin",
+      "text-decoration-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "text-emphasis-color": {
+        "by": "theme outcome",
+        "is": {
+          "dark interrupted": "oklch(0.79 0.13 2.8)",
+          "dark failed": "oklch(0.79 0.13 2.8)",
+          "dark refused": "oklch(0.79 0.13 2.8)",
+          "light interrupted": "oklch(0.457 0.15 2.8)",
+          "light failed": "oklch(0.457 0.15 2.8)",
+          "light refused": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "top": {
+        "by": "outcome",
+        "is": {
+          "interrupted": "0px",
+          "failed": "0px",
+          "refused": "0px"
+        }
+      }
     }
   },
   "footer > button.turn-ledger-summary > span.turn-ledger-text": {
@@ -3570,6 +3799,158 @@
         }
       },
       "scrollbar-width": "thin"
+    }
+  },
+  "footer > button.turn-ledger-summary > span.turn-ledger-glyph::before": {
+    "where": {
+      "by": "outcome",
+      "in": "interrupted, failed, refused"
+    },
+    "style": {
+      "-webkit-text-fill-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "-webkit-text-stroke-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "background-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-block-end-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-block-start-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-bottom-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-bottom-left-radius": "1.5px",
+      "border-bottom-right-radius": "1.5px",
+      "border-end-end-radius": "1.5px",
+      "border-end-start-radius": "1.5px",
+      "border-inline-end-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-inline-start-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-left-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-right-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-start-end-radius": "1.5px",
+      "border-start-start-radius": "1.5px",
+      "border-top-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "border-top-left-radius": "1.5px",
+      "border-top-right-radius": "1.5px",
+      "bottom": "-3px",
+      "caret-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "column-rule-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "content": "\"\"",
+      "display": "block",
+      "inset-block-end": "-3px",
+      "inset-block-start": "3px",
+      "inset-inline-start": "3px",
+      "left": "3px",
+      "outline-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "position": "absolute",
+      "row-rule-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "text-decoration-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "text-emphasis-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.79 0.13 2.8)",
+          "light": "oklch(0.457 0.15 2.8)"
+        }
+      },
+      "top": "3px",
+      "transform": "matrix(0.707107, 0.707107, -0.707107, 0.707107, -3, -3)"
     }
   }
 }

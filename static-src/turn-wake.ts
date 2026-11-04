@@ -48,6 +48,8 @@ export interface WakeLine {
   rows?: WakeRow[];
   /** The wake names nothing marotte can show, so the header keeps the typed system line. */
   fallback: boolean;
+  /** A workflow message started the turn, delivered or re-delivered; the header draws its glyph. */
+  message: boolean;
 }
 
 /** The wake's label and message. The twin of `marotte.WakeLine`; `internal/chat/testdata/wake_line.json`
@@ -73,10 +75,11 @@ const FALLBACK: WakeLine = {
   label: WAKE_FALLBACK_LINE,
   body: "",
   fallback: true,
+  message: false,
 };
 
-function named(run: WakeRun, rest: string, body: string): WakeLine {
-  return { run, rest, label: run.name + rest, body, fallback: false };
+function named(run: WakeRun, rest: string, body: string, message: boolean): WakeLine {
+  return { run, rest, label: run.name + rest, body, fallback: false, message };
 }
 
 function stepWakeLine(w: EntryTurnWake): WakeLine {
@@ -88,22 +91,22 @@ function stepWakeLine(w: EntryTurnWake): WakeLine {
   const loop = w.loop ?? "";
   const max = w.max_iterations ?? 0;
   if (w.note === "repeat_cap" && loop !== "" && max > 0) {
-    return named(run, ` paused: ${loop} reached its round limit (${String(max)})`, "");
+    return named(run, ` paused: ${loop} reached its round limit (${String(max)})`, "", true);
   }
   const from = SEP + (s.step ?? "");
   if (w.note === "network") {
-    return named(run, `${from} is waiting for the network`, s.text);
+    return named(run, `${from} is waiting for the network`, s.text, true);
   }
   if (w.note === "network_lost") {
-    return named(run, `${from} lost the network`, s.text);
+    return named(run, `${from} lost the network`, s.text, true);
   }
   if (s.severity === "warning") {
-    return named(run, `${from} asks you`, s.text);
+    return named(run, `${from} asks you`, s.text, true);
   }
   if (s.severity === "error") {
-    return named(run, `${from} reports an error`, s.text);
+    return named(run, `${from} reports an error`, s.text, true);
   }
-  return named(run, `${from} to you`, s.text);
+  return named(run, `${from} to you`, s.text, true);
 }
 
 function runFinishedLine(w: EntryTurnWake): WakeLine {
@@ -117,7 +120,7 @@ function runFinishedLine(w: EntryTurnWake): WakeLine {
   switch (w.run_status) {
     case "completed":
       if (byUser) {
-        return named(run, " marked complete by you", "");
+        return named(run, " marked complete by you", "", false);
       }
       rest = " completed";
       break;
@@ -132,7 +135,7 @@ function runFinishedLine(w: EntryTurnWake): WakeLine {
       return FALLBACK;
   }
   const reason = (w.stop_reason ?? "").replace(LABEL_SPACE, " ").replace(/^ | $/gu, "");
-  return named(run, reason === "" ? rest : `${rest}: ${reason}`, "");
+  return named(run, reason === "" ? rest : `${rest}: ${reason}`, "", false);
 }
 
 /** Go's unicode.IsSpace set, the twin's strings.Fields: JS `\s` adds U+FEFF and lacks U+0085. */
@@ -154,7 +157,7 @@ function rewakeLine(steers: readonly WakeSteer[]): WakeLine {
     };
   });
   const body = rows.map((r) => r.run.name + r.rest + r.text).join("\n");
-  return { rest: label, label, body, rows, fallback: false };
+  return { rest: label, label, body, rows, fallback: false, message: true };
 }
 
 /** What the wake says as one string, label then message, for the rail and Copy as text; "" for a

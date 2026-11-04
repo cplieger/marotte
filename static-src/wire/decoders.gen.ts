@@ -1228,6 +1228,10 @@ export const decodeEntryToolCall: Decoder<EntryToolCall> = (v) => {
     if ($v !== undefined && $v !== null) out.output = reqStr(o, "output", "$.entry_tool_call");
   }
   {
+    const $v = own(o, "tool_name");
+    if ($v !== undefined && $v !== null) out.tool_name = reqStr(o, "tool_name", "$.entry_tool_call");
+  }
+  {
     const $v = own(o, "agent_subtask_id");
     if ($v !== undefined && $v !== null) out.agent_subtask_id = reqStr(o, "agent_subtask_id", "$.entry_tool_call");
   }
@@ -1246,6 +1250,10 @@ export const decodeEntryToolCall: Decoder<EntryToolCall> = (v) => {
   {
     const $v = own(o, "checkpoint");
     if ($v !== undefined && $v !== null) out.checkpoint = decodeToolCheckpoint(own(o, "checkpoint"));
+  }
+  {
+    const $v = own(o, "mcp");
+    if ($v !== undefined && $v !== null) out.mcp = decodeMCPToolIdentity(own(o, "mcp"));
   }
   {
     const $v = own(o, "disclosed");
@@ -4261,6 +4269,10 @@ export const decodeToolCall: Decoder<ToolCall> = (v) => {
     if ($v !== undefined && $v !== null) out.output = reqStr(o, "output", "$.tool_call");
   }
   {
+    const $v = own(o, "tool_name");
+    if ($v !== undefined && $v !== null) out.tool_name = reqStr(o, "tool_name", "$.tool_call");
+  }
+  {
     const $v = own(o, "agent_subtask_id");
     if ($v !== undefined && $v !== null) out.agent_subtask_id = reqStr(o, "agent_subtask_id", "$.tool_call");
   }
@@ -4279,6 +4291,10 @@ export const decodeToolCall: Decoder<ToolCall> = (v) => {
   {
     const $v = own(o, "checkpoint");
     if ($v !== undefined && $v !== null) out.checkpoint = decodeToolCheckpoint(own(o, "checkpoint"));
+  }
+  {
+    const $v = own(o, "mcp");
+    if ($v !== undefined && $v !== null) out.mcp = decodeMCPToolIdentity(own(o, "mcp"));
   }
   {
     const $v = own(o, "disclosed");

@@ -1,6 +1,7 @@
 // The one owner of what the client knows about each tool kind and name.
 
 import type { ToolDenial, ToolDisclosed, ToolKind, ToolStatus } from "./types.js";
+import type { MCPToolIdentity } from "./wire/types.gen.js";
 import { humanName, truncate } from "./strings.js";
 export type { ToolKind };
 
@@ -57,6 +58,8 @@ interface ToolProfile {
 
 export interface ToolRenderInfo {
   kind: ToolKind;
+  /** The built-in tool's id the server named (`update_workflow`), or "". */
+  toolName: string;
   writesFile: boolean;
   /** Normalized workspace-relative path of the affected file, or "". */
   filePath: string;
@@ -64,8 +67,8 @@ export interface ToolRenderInfo {
   fileBasename: string;
   /** Source pair for a diff render, or null when not applicable. */
   diffSources: { oldText: string; newText: string } | null;
-  /** MCP server and tool names for an MCP call, else null. */
-  mcp: { server: string; tool: string } | null;
+  /** The MCP server and tool the server named for this call, else null. */
+  mcp: MCPToolIdentity | null;
   /** The skill or steering doc a `disclose_context` call loaded, or null. */
   disclosed: ToolDisclosed | null;
   /** The policy verdict that refused this call, or null; the card then reads as a
@@ -73,60 +76,32 @@ export interface ToolRenderInfo {
   denial: ToolDenial | null;
 }
 
-/** Lookup profile by tool title (kiro-cli names). Unknown titles resolve
- *  through the kind field the server already provides. */
-const TITLE_PROFILES: Readonly<Record<string, ToolProfile>> = {
-  // File reads
-  readFile: { kind: "read", writesFile: false },
-  readCode: { kind: "read", writesFile: false },
-  readMultipleFiles: { kind: "read", writesFile: false },
-  listDirectory: { kind: "read", writesFile: false },
+/** Profiles for the built-in tools whose ACP kind is `other` but whose card reads as
+ *  another kind, keyed on the server's `tool_name`. */
+const TOOL_PROFILES: ReadonlyMap<string, ToolProfile> = new Map<string, ToolProfile>([
+  ["tool_load", { kind: "search", writesFile: false }],
+  ["load_resource", { kind: "search", writesFile: false }],
+]);
 
-  // File writes
-  fsWrite: { kind: "write", writesFile: true },
-  fsAppend: { kind: "write", writesFile: true },
-  strReplace: { kind: "edit", writesFile: true },
-  FileEdit: { kind: "edit", writesFile: true },
-  FileWrite: { kind: "write", writesFile: true },
-
-  // File lifecycle
-  deleteFile: { kind: "delete", writesFile: false },
-  smartRelocate: { kind: "move", writesFile: false },
-  semanticRename: { kind: "edit", writesFile: false },
-
-  // Discovery
-  fileSearch: { kind: "search", writesFile: false },
-  grepSearch: { kind: "search", writesFile: false },
-
-  // Shell / web / reasoning
-  executePwsh: { kind: "execute", writesFile: false },
-  webFetch: { kind: "fetch", writesFile: false },
-  remote_web_search: { kind: "fetch", writesFile: false },
-
-  // Deferred MCP tool discovery.
-  tool_load: { kind: "search", writesFile: false },
-  "Tool Load": { kind: "search", writesFile: false },
-};
-
-/** Fallback profile keyed on the ACP kind, for titles the client does not know. */
-const KIND_FALLBACK: Readonly<Record<string, ToolProfile>> = {
-  read: { kind: "read", writesFile: false },
-  edit: { kind: "edit", writesFile: true },
-  write: { kind: "write", writesFile: true },
-  delete: { kind: "delete", writesFile: false },
-  move: { kind: "move", writesFile: false },
-  search: { kind: "search", writesFile: false },
-  execute: { kind: "execute", writesFile: false },
+/** Profile keyed on the ACP kind. */
+const KIND_FALLBACK: ReadonlyMap<string, ToolProfile> = new Map<string, ToolProfile>([
+  ["read", { kind: "read", writesFile: false }],
+  ["edit", { kind: "edit", writesFile: true }],
+  ["write", { kind: "write", writesFile: true }],
+  ["delete", { kind: "delete", writesFile: false }],
+  ["move", { kind: "move", writesFile: false }],
+  ["search", { kind: "search", writesFile: false }],
+  ["execute", { kind: "execute", writesFile: false }],
   // KAS never emits shell, but older chats carry it. hook is minted server-side for the
   // `Hook fired` card; KAS's own hook ASK arrives as kind:"other".
-  shell: { kind: "shell", writesFile: false },
-  hook: { kind: "hook", writesFile: false },
-  command: { kind: "command", writesFile: false },
-  browser: { kind: "browser", writesFile: false },
-  fetch: { kind: "fetch", writesFile: false },
-  think: { kind: "think", writesFile: false },
-  switch_mode: { kind: "switch_mode", writesFile: false },
-};
+  ["shell", { kind: "shell", writesFile: false }],
+  ["hook", { kind: "hook", writesFile: false }],
+  ["command", { kind: "command", writesFile: false }],
+  ["browser", { kind: "browser", writesFile: false }],
+  ["fetch", { kind: "fetch", writesFile: false }],
+  ["think", { kind: "think", writesFile: false }],
+  ["switch_mode", { kind: "switch_mode", writesFile: false }],
+]);
 
 const OTHER: ToolProfile = { kind: "other", writesFile: false };
 
@@ -147,72 +122,16 @@ export function isToolDone(s: ToolStatus): boolean {
   return s === "completed" || s === "failed" || s === "aborted";
 }
 
-/** Resolve the profile for a (title, kind) pair: a known title wins, else the ACP kind.
- *  MCP-prefixed titles resolve to the synthetic "mcp" kind. */
-export function profileFor(title: string, kind: string): ToolProfile {
-  if (mcpToolInfo(title) !== null) {
+/** Resolve the profile for a call: an MCP identity, else the server-named tool, else the ACP kind. */
+export function profileFor(
+  toolName: string,
+  kind: string,
+  mcp: MCPToolIdentity | null,
+): ToolProfile {
+  if (mcp !== null) {
     return { kind: "mcp", writesFile: false };
   }
-  return TITLE_PROFILES[title] ?? KIND_FALLBACK[kind] ?? OTHER;
-}
-
-// MCP tool names come as `mcp__<server>__<tool>` or `mcp:<server>:<tool>`. Exactly two
-// separators, so a built-in name containing `__` is not misread.
-
-const MCP_UNDERSCORE_RE = /^mcp__([A-Za-z0-9][A-Za-z0-9_.-]*)__([A-Za-z0-9][A-Za-z0-9_.-]*)$/;
-const MCP_COLON_RE = /^mcp:([A-Za-z0-9][A-Za-z0-9_.-]*):([A-Za-z0-9][A-Za-z0-9_.-]*)$/;
-
-/** The server and tool names of an MCP-prefixed title, else null. The caller strips any
- *  "Running: " prefix. */
-export function mcpToolInfo(title: string): { server: string; tool: string } | null {
-  const u = MCP_UNDERSCORE_RE.exec(title);
-  if (u !== null) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    return { server: u[1]!, tool: u[2]! };
-  }
-  const c = MCP_COLON_RE.exec(title);
-  if (c !== null) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    return { server: c[1]!, tool: c[2]! };
-  }
-  return null;
-}
-
-// KAS runs every deferred MCP tool through one `tool_call` tool whose input is
-// {tool_id: "<server>::<tool>", arguments}, so the card names the server's
-// tool rather than the envelope. Its title is model-composed, so the input's
-// own `arguments` member also identifies the envelope.
-const DEFERRED_CALL_TITLES: ReadonlySet<string> = new Set(["tool_call", "Tool Call"]);
-const DEFERRED_ID_RE = /^([^:]+)::([^:]+)$/;
-
-/** The MCP server and tool a deferred `tool_call` runs, or null when this is
- *  not that envelope. A builtin routed through the same envelope is not an
- *  integration, so `builtin::` resolves to null. */
-function deferredMCPCall(
-  title: string,
-  input: Record<string, unknown> | undefined,
-): { server: string; tool: string } | null {
-  if (input === undefined) {
-    return null;
-  }
-  if (!DEFERRED_CALL_TITLES.has(title) && !Object.hasOwn(input, "arguments")) {
-    return null;
-  }
-  const id = input["tool_id"];
-  if (typeof id !== "string") {
-    return null;
-  }
-  const m = DEFERRED_ID_RE.exec(id);
-  if (m === null) {
-    return null;
-  }
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  const server = m[1]!;
-  if (server === "builtin") {
-    return null;
-  }
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  return { server, tool: m[2]! };
+  return TOOL_PROFILES.get(toolName) ?? KIND_FALLBACK.get(kind) ?? OTHER;
 }
 
 /** Format an MCP tool name for display: underscores become spaces. A server name stays
@@ -296,25 +215,26 @@ function pickDiffSources(
 
 /** The rendering info for a tool call; every rendering path goes through it. */
 export function renderInfoFor(
-  title: string,
   kind: string,
   input: Record<string, unknown> | undefined,
   meta?: {
     disclosed?: ToolDisclosed | undefined;
     denial?: ToolDenial | undefined;
     sourcePath?: string | undefined;
+    toolName?: string | undefined;
+    mcp?: MCPToolIdentity | undefined;
   },
 ): ToolRenderInfo {
-  const deferred = deferredMCPCall(title, input);
-  const profile: ToolProfile =
-    deferred !== null ? { kind: "mcp", writesFile: false } : profileFor(title, kind);
+  const mcp = meta?.mcp ?? null;
+  const toolName = meta?.toolName ?? "";
+  const profile = profileFor(toolName, kind, mcp);
   // A hook card carries no input; its file is the hook definition KAS named.
   const filePath = profile.kind === "hook" ? (meta?.sourcePath ?? "") : pickFilePath(input);
   const fileBasename = filePath !== "" ? (filePath.split("/").pop() ?? filePath) : "";
   const diffSources = profile.writesFile ? pickDiffSources(input) : null;
-  const mcp = deferred ?? (profile.kind === "mcp" ? mcpToolInfo(title) : null);
   return {
     kind: profile.kind,
+    toolName,
     writesFile: profile.writesFile,
     filePath,
     fileBasename,

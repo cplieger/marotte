@@ -65,7 +65,7 @@ type AlwaysAllowBlock string
 // match this command, so a saved rule would be a permanent no-op in permissions.yaml.
 const AlwaysAllowBlockUnparseable AlwaysAllowBlock = "unparseable"
 
-// MCPToolIdentity names the verified MCP server and tool behind a permission request.
+// MCPToolIdentity names the MCP server and tool behind a tool call or a permission request.
 type MCPToolIdentity struct {
 	ServerName string `json:"server_name"`
 	ToolName   string `json:"tool_name"`
