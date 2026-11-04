@@ -33,8 +33,10 @@ var builtinToolAliases = map[string]string{
 	"remote_web_search": webSearchTool,
 }
 
+// distinguishedBuiltins is every built-in id the transcript draws a glyph of its own for: the
+// titled ones, and disclose_context, which KAS names by toolId alone.
 var distinguishedBuiltins = func() map[string]bool {
-	set := make(map[string]bool, len(builtinToolByTitle))
+	set := map[string]bool{"disclose_context": true}
 	for _, id := range builtinToolByTitle {
 		set[id] = true
 	}
@@ -66,22 +68,26 @@ func callIdentity(tc *acpToolCallWire) (string, *marotte.MCPToolIdentity) {
 // builtinToolName is the built-in tool KAS's toolId or display title names, "" for neither.
 func builtinToolName(toolID, title string) string {
 	if toolID != "" {
-		return displayText(toolID)
+		if distinguishedBuiltins[toolID] {
+			return toolID
+		}
+		return ""
 	}
 	return builtinToolByTitle[title]
 }
 
 // mcpCallIdentity is the MCP server and tool a create frame names, nil unless title is KAS's
 // MCP title for serverName: `@<server>/<tool>`, or a Power route's `@<power>/<server>/<tool>`
-// (tried first, so a Power named like its server parses right). The title supplies the tool
-// half no _meta field carries, and a stray serverName on a built-in's frame names nothing.
+// (tried first, so a Power named like its server parses right; a power name holds no `/`, so
+// a tool name containing `/<server>/` keeps its head). The title supplies the tool half no
+// _meta field carries, and a stray serverName on a built-in's frame names nothing.
 func mcpCallIdentity(serverName, title string) *marotte.MCPToolIdentity {
 	rest, ok := strings.CutPrefix(title, "@")
 	if serverName == "" || !ok {
 		return nil
 	}
 	var tool string
-	if _, after, found := strings.Cut(rest, "/"+serverName+"/"); found {
+	if power, after, found := strings.Cut(rest, "/"+serverName+"/"); found && !strings.Contains(power, "/") {
 		tool = after
 	} else if after, found := strings.CutPrefix(rest, serverName+"/"); found {
 		tool = after

@@ -1709,6 +1709,12 @@
   inline-size: 1rem;
   margin-block-start: 0.125rem;
   color: var(--c-text-tertiary);
+
+  /* A registry `.ic-ui` glyph (Compact's) draws at the 14px of the local glyphs beside it. */
+  & > .ic-ui {
+    inline-size: 0.875rem;
+    block-size: 0.875rem;
+  }
 }
 
 .chat-opt-row {

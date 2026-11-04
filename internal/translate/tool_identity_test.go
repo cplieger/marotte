@@ -161,6 +161,7 @@ func TestMCPCallIdentity(t *testing.T) {
 		"a Power route":                     {"srv", "@pw/srv/do_thing", &marotte.MCPToolIdentity{ServerName: "srv", ToolName: "do_thing"}},
 		"a Power named like its server":     {"srv", "@srv/srv/do_thing", &marotte.MCPToolIdentity{ServerName: "srv", ToolName: "do_thing"}},
 		"a tool name with a slash":          {"probe", "@probe/a/b", &marotte.MCPToolIdentity{ServerName: "probe", ToolName: "a/b"}},
+		"a tool name holding /server/":      {"probe", "@probe/a/probe/b", &marotte.MCPToolIdentity{ServerName: "probe", ToolName: "a/probe/b"}},
 		"no server name":                    {"", "@probe/echo_text", nil},
 		"a stray server name on a built-in": {"probe", "Read File", nil},
 		"a title naming another server":     {"probe", "@other/x", nil},
@@ -188,6 +189,7 @@ func TestBuiltinToolName(t *testing.T) {
 		toolID, title, want string
 	}{
 		"KAS's toolId wins":                {"disclose_context", "Load skill: x", "disclose_context"},
+		"an undistinguished toolId":        {"create_diagram", "Create Diagram", ""},
 		"a known display title":            {"", "Update Workflow", "update_workflow"},
 		"an unknown title names nothing":   {"", "Kiro Powers", ""},
 		"a model-composed title":           {"", "Update the plan", ""},
@@ -213,6 +215,7 @@ func TestEnvelopeIdentity(t *testing.T) {
 		"a built-in":                        {`{"tool_id":"tool::inspect_workflow","arguments":{}}`, "inspect_workflow", nil},
 		"the older built-in prefix":         {`{"tool_id":"builtin::update_workflow"}`, "update_workflow", nil},
 		"an aliased built-in":               {`{"tool_id":"tool::remote_web_search"}`, "web_search", nil},
+		"a built-in named by toolId alone":  {`{"tool_id":"tool::disclose_context"}`, "disclose_context", nil},
 		"an undistinguished built-in":       {`{"tool_id":"tool::control_bash_process"}`, "", nil},
 		"an inherited name":                 {`{"tool_id":"tool::constructor"}`, "", nil},
 		"an inherited name, older prefix":   {`{"tool_id":"builtin::constructor"}`, "", nil},

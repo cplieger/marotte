@@ -107,6 +107,15 @@ describe("every recorded tool call draws its ruled glyph", () => {
     expect(hook.glyph).toBe(toolIcon({ kind: "hook", toolName: "" }));
     expect(hook.glyph).not.toBe(toolIcon({ kind: "other", toolName: "" }));
   });
+
+  // wantGlyph reads a kind's glyph from toolIcon itself, so this pins each one clear of the wrench.
+  it("every kind a recorded row expects draws its own glyph, not the unknown-tool wrench", () => {
+    const wrench = toolIcon({ kind: "other", toolName: "" });
+    const kinds: ToolKind[] = ["mcp", "fetch", "read", "edit", "search", "execute", "delete"];
+    for (const kind of kinds) {
+      expect(toolIcon({ kind, toolName: "" }), kind).not.toBe(wrench);
+    }
+  });
 });
 
 describe("the workflow family is one base with distinct badges", () => {
