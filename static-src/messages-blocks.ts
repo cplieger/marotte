@@ -90,6 +90,7 @@ import { delegateDetail, iconForSubagent, subagentLabel, subagentName } from "./
 import { buildRunCard, type RunCardView, type RunDisclosure } from "./fundamentals/run-card.js";
 import {
   invalidateRun,
+  runGone,
   runPlan,
   runState,
   runStepEnds,
@@ -1851,6 +1852,7 @@ function armRunCard(st: TurnRender, workflowID: string, card: RunCardView): void
     card.render(state, runPendingAsks(workflowID), {
       plan: runPlan(workflowID),
       ends: runStepEnds(workflowID),
+      gone: runGone(workflowID),
     });
   });
   st.runEffects.set(workflowID, stop);

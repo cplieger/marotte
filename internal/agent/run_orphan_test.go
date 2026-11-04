@@ -18,6 +18,9 @@ import (
 // kasRuns builds a workflow/list reply, defaulting `workflowName` to `name` as the wire always carries both.
 func kasRuns(t *testing.T, rows ...map[string]any) json.RawMessage {
 	t.Helper()
+	if rows == nil {
+		rows = []map[string]any{}
+	}
 	for _, row := range rows {
 		if _, ok := row["workflowName"]; !ok {
 			row["workflowName"] = row["name"]

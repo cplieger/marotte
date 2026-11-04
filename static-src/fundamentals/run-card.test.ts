@@ -137,6 +137,31 @@ describe("the head against the foot", () => {
   });
 });
 
+describe("a run the server no longer holds", () => {
+  function openLink(root: HTMLElement): HTMLElement | null {
+    return root.querySelector<HTMLElement>(".run-open");
+  }
+
+  it("reads deleted, with no Open run link", () => {
+    const c = card();
+    c.render(undefined, NO_ASKS, { gone: true });
+    expect(c.root.dataset["status"]).toBe("deleted");
+    expect(ledger(c.root)).toBe("This run was deleted");
+    expect(statusWord(c.root)).toBe("deleted");
+    expect(openLink(c.root)?.classList.contains("hidden")).toBe(true);
+  });
+
+  it("gets its link and its status back when a later read describes the run", () => {
+    const c = card();
+    c.render(undefined, NO_ASKS, { gone: true });
+    c.render(runOf("completed", step("a", "completed")), NO_ASKS, {});
+    expect(c.root.dataset["status"]).toBe("completed");
+    expect(ledger(c.root)).toContain("completed");
+    expect(statusWord(c.root)).toBe("completed");
+    expect(openLink(c.root)?.classList.contains("hidden")).toBe(false);
+  });
+});
+
 describe("a background-process watch's result", () => {
   const record = JSON.stringify({
     terminalId: "t1",

@@ -284,7 +284,7 @@ func TestHealKASConfig_KeepsKeysItDoesNotOwn(t *testing.T) {
 func TestHealKASConfig_LeavesAnUnreadableFileAlone(t *testing.T) {
 	s, kas := newHealStore(t)
 	captureSlog(t)
-	body := "// hand-written\n{\"mcpServers\": {}}"
+	body := "# hand-written\n{\"mcpServers\": {}}"
 	writeKASFile(t, kas, body)
 
 	_, err := s.HealKASConfig(t.Context(), "poll")

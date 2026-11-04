@@ -598,7 +598,7 @@ func TestAdmitRunPurge_RefusesWhileTheArrangementIsUnread(t *testing.T) {
 	}
 	mem := newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: store, Tabs: st, Bus: &tabBus{}, Sessions: store, Runs: &fakeRunOwner{}})
 
-	_, refused := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_host")
+	_, refused := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_host", false)
 	var unread *ArrangementUnreadError
 	if !errors.As(refused, &unread) || unread.Aside != st.Unread() {
 		t.Errorf("AdmitRunPurge with the arrangement unread = %v, want *ArrangementUnreadError naming %s", refused, st.Unread())
@@ -610,11 +610,11 @@ func TestAdmitRunPurge_RefusesARunWhoseLauncherIsInTeardown(t *testing.T) {
 	f.seedTabless(t, "c-launcher", "sess_launcher")
 	f.purgeParked(t, "c-launcher")
 
-	if _, refused := f.mem.AdmitRunPurge(t.Context(), "wf_1", "sess_launcher"); refused == nil {
+	if _, refused := f.mem.AdmitRunPurge(t.Context(), "wf_1", "sess_launcher", false); refused == nil {
 		t.Error("AdmitRunPurge admitted a run whose launching chat's teardown still runs, want a refusal")
 	}
 	f.store.EndTeardown("c-launcher", []string{"sess_launcher"})
-	done, refused := f.mem.AdmitRunPurge(t.Context(), "wf_1", "sess_launcher")
+	done, refused := f.mem.AdmitRunPurge(t.Context(), "wf_1", "sess_launcher", false)
 	if refused != nil {
 		t.Fatalf("AdmitRunPurge after the teardown ended = %v, want it admitted", refused)
 	}

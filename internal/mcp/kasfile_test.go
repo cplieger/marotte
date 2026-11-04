@@ -476,14 +476,15 @@ func TestReadKASDoc_EmptyFileIsReplacedQuietly(t *testing.T) {
 	}
 }
 
-// A file marotte cannot parse may still be valid to KAS (JSONC), so every writer leaves it
-// byte for byte and refuses, rather than replacing it with marotte's key alone. Not parallel:
-// it swaps the process-wide slog default.
+// A file marotte cannot parse is left byte for byte and every writer refuses, rather than
+// replacing it with marotte's key alone. Not parallel: it swaps the process-wide slog default.
 func TestReadKASDoc_UnreadableFileIsKeptAndTheWriteRefused(t *testing.T) {
 	for _, tc := range []struct{ name, content string }{
 		{name: "garbage", content: "{garbage"},
-		{name: "jsonc comment", content: "{\n  // mine\n  \"powers\": {\"mcpServers\": {\"power-a-b\": {\"command\": \"c\"}}}\n}"},
+		{name: "single quotes", content: "{'mcpServers': {}}"},
+		{name: "unterminated block comment", content: "{\"mcpServers\": {} /* open"},
 		{name: "array document", content: `[1]`},
+		{name: "nesting past the decoder's depth", content: `{"mcpServers": ` + strings.Repeat("[", 3<<20)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -538,7 +539,7 @@ func TestReadKASDoc_UnreadableFileIsKeptAndTheWriteRefused(t *testing.T) {
 func TestNew_BootOverAnUnreadableKASFileKeepsItAndStarts(t *testing.T) {
 	dir := t.TempDir()
 	kas := filepath.Join(dir, "kas-mcp.json")
-	const content = "{\n  // mine\n  \"keep\": true\n}"
+	const content = "{\n  # mine\n  \"keep\": true\n}"
 	if err := os.WriteFile(kas, []byte(content), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

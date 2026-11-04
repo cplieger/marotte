@@ -87,14 +87,17 @@ type runRecord struct {
 // One mutex, held across the store call; nothing here runs under the log's own lock.
 type runLog struct {
 	runs map[string]*runRecord
-	root string
-	mu   sync.Mutex
+	// removeAll is removeDir's os.RemoveAll, a field so a test can fail one removal as root cannot be refused.
+	removeAll func(path string) error
+	root      string
+	mu        sync.Mutex
 }
 
 func newRunLog(configDir string) *runLog {
 	return &runLog{
-		runs: make(map[string]*runRecord),
-		root: filepath.Join(configDir, runLogDir),
+		runs:      make(map[string]*runRecord),
+		removeAll: os.RemoveAll,
+		root:      filepath.Join(configDir, runLogDir),
 	}
 }
 
@@ -651,7 +654,7 @@ func (r *runLog) removeDir(workflowID string) error {
 	if err != nil {
 		return err
 	}
-	err = os.RemoveAll(dir)
+	err = r.removeAll(dir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}

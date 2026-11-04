@@ -33,12 +33,10 @@ func wireRetention(appCtx context.Context, cfg *Config, chatStore *chat.Store, h
 		}),
 		SidePasses: []func(context.Context) archive.PurgeResult{
 			func(pctx context.Context) archive.PurgeResult {
-				window, purge := runRetention(pctx, cfg.ConfigDir)
-				if !purge {
-					return archive.PurgeResult{}
-				}
-				r := h.PurgeParentlessRuns(pctx, window)
-				return archive.PurgeResult{NextDeadline: r.NextDeadline, Purged: r.Purged, Kept: r.Kept, Errors: r.Errors}
+				return purgeResult(h.PurgeFinishedRuns(pctx, runRetention(pctx, cfg.ConfigDir)))
+			},
+			func(pctx context.Context) archive.PurgeResult {
+				return purgeResult(h.SweepOrphanRunLogs(pctx, runRetention(pctx, cfg.ConfigDir)))
 			},
 			h.Membership().SettleOwed,
 			func(pctx context.Context) archive.PurgeResult {
@@ -60,4 +58,8 @@ func wireRetention(appCtx context.Context, cfg *Config, chatStore *chat.Store, h
 		return runBackground(appCtx, "keep-state reconcile", func(ctx context.Context) { reconcileKeepState(ctx, deps) })
 	}
 	return sched, start, nil
+}
+
+func purgeResult(r agent.RunPurgeResult) archive.PurgeResult {
+	return archive.PurgeResult{NextDeadline: r.NextDeadline, Purged: r.Purged, Kept: r.Kept, Errors: r.Errors}
 }

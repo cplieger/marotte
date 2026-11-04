@@ -30,9 +30,11 @@ type deleteRig struct {
 	// refuseAfterCall, set before the rig's runtime is built, refuses every bridge's call of a method in band after
 	// onCall ran (fakeBridge.refuseAfterCall).
 	refuseAfterCall map[string]*marotte.RPCError
-	calls           []rigCall
-	opened          []*fakeBridge
-	mu              sync.Mutex
+	// override, set through setAnswer at any time, answers or fails a call in place of answer and results when ok.
+	override func(method string, params map[string]any) (res json.RawMessage, ok bool, err error)
+	calls    []rigCall
+	opened   []*fakeBridge
+	mu       sync.Mutex
 }
 
 type rigCall struct {
@@ -63,6 +65,16 @@ func (r *deleteRig) factory() engineSession {
 		}
 		return nil, nil, false
 	}
+	br.onCallFails = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool, error) {
+		r.mu.Lock()
+		override := r.override
+		r.mu.Unlock()
+		if override == nil {
+			return nil, nil, false, nil
+		}
+		res, ok, err := override(method, params)
+		return res, nil, ok, err
+	}
 	r.mu.Lock()
 	r.opened = append(r.opened, br)
 	r.mu.Unlock()
@@ -79,6 +91,12 @@ func (r *deleteRig) of(method string) []rigCall {
 		}
 	}
 	return out
+}
+
+func (r *deleteRig) setAnswer(answer func(method string, params map[string]any) (json.RawMessage, bool, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.override = answer
 }
 
 func (r *deleteRig) methods() []string {

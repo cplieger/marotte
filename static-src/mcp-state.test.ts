@@ -7,6 +7,7 @@ import {
   removeConfiguredEntry,
   mcpState,
   standingFor,
+  unreadableEntries,
   updateConfiguredEntry,
 } from "./mcp-state.js";
 import type { Server } from "./mcp-state.js";
@@ -94,6 +95,19 @@ describe("the server list decoder", () => {
       expect(servers.get("srv-s")).toBeDefined();
     });
     expect(servers.get("srv-s")?.oauth_scopes).toEqual(["read", "write"]);
+  });
+
+  it("carries the count of unreadable record entries, and none when the body omits it", async () => {
+    wire.body = { servers: [], unreadable: 2 };
+    mcpState.refetchServers();
+    await vi.waitFor(() => {
+      expect(unreadableEntries.value).toBe(2);
+    });
+    wire.body = { servers: [] };
+    mcpState.refetchServers();
+    await vi.waitFor(() => {
+      expect(unreadableEntries.value).toBe(0);
+    });
   });
 });
 
