@@ -19,9 +19,9 @@ import { iconEl } from "./icon-el.js";
 import {
   ICON_CANCEL,
   ICON_PAUSE,
-  ICON_PLAY,
   ICON_PLUS_UI,
   ICON_REFRESH,
+  ICON_RESUME,
   ICON_SAVE_FAIL,
   ICON_SAVE_OK,
 } from "./icons.js";
@@ -58,7 +58,7 @@ const RUN_ACTION: Record<
 
 const ICON: Record<RunVerb, string> = {
   pause: ICON_PAUSE,
-  resume: ICON_PLAY,
+  resume: ICON_RESUME,
   extend: ICON_PLUS_UI,
   finish_loop: ICON_SAVE_OK,
   cancel: ICON_CANCEL,

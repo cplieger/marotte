@@ -125,6 +125,13 @@ export const ICON_PAUSE = svg(
   '<rect x="6.5" y="6" width="4" height="12" rx="1" fill="currentColor" stroke="none"/>' +
     '<rect x="13.5" y="6" width="4" height="12" rx="1" fill="currentColor" stroke="none"/>',
 );
+// The run dock's Resume: a filled triangle as tall as `ICON_CANCEL`'s square, so the three run verbs share one weight.
+// `ICON_PLAY` is the stroked outline the code block and the docs agent use. The `translate` seats the triangle's
+// centroid, not its box, on x=12.
+export const ICON_RESUME = svg(
+  "ui",
+  '<g transform="translate(0.8 0)"><path d="M7 7.5Q7 6 8.33 6.69L17.17 11.31Q18.5 12 17.17 12.69L8.33 17.31Q7 18 7 16.5Z" fill="currentColor" stroke="none"/></g>',
+);
 
 /*
  * One `d`, two sizes (picker heading, model pill at 12px). A redraw keeps: filled eyes (a ring cannot survive 1.5 CSS
