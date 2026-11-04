@@ -49,7 +49,7 @@ func linkFreeBelow(root *os.Root, home, dir string) bool {
 		return false
 	}
 	want := filepath.Join(realHome, rel)
-	if got, err := filepath.EvalSymlinks(dir); err != nil || got != want {
+	if got, evalErr := filepath.EvalSymlinks(dir); evalErr != nil || got != want {
 		return false
 	}
 	opened, err := root.Stat(".")

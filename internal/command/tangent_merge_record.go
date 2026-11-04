@@ -228,15 +228,7 @@ func (m *tangentMerges) deliver(ctx context.Context, parent marotte.ChatID, p *m
 			continue
 		}
 		if out == IdleAcquired {
-			turnID, err := startPrompt(ctx, m.roles, parent, p, &launch{res: res, awaited: true})
-			switch {
-			case parentGone(err):
-				return mergeParentGone, true
-			case err != nil:
-				slog.Warn("tangent merge: the findings prompt could not open", "parent", parent, keyError, err)
-				return deliveryFailure(""), true
-			}
-			return m.awaitReceipt(ctx, parent, turnID)
+			return m.prompt(ctx, parent, p, res)
 		}
 		if m.closeMet(ctx, parent) {
 			continue
@@ -258,6 +250,19 @@ func (m *tangentMerges) deliver(ctx context.Context, parent marotte.ChatID, p *m
 		tries++
 	}
 	return deliveryFailure(""), true
+}
+
+// prompt opens the findings prompt on the parent's reserved slot res and awaits KAS's receipt.
+func (m *tangentMerges) prompt(ctx context.Context, parent marotte.ChatID, p *marotte.PromptCommand, res Reservation) (failure string, settled bool) {
+	turnID, err := startPrompt(ctx, m.roles, parent, p, &launch{res: res, awaited: true})
+	switch {
+	case parentGone(err):
+		return mergeParentGone, true
+	case err != nil:
+		slog.Warn("tangent merge: the findings prompt could not open", "parent", parent, keyError, err)
+		return deliveryFailure(""), true
+	}
+	return m.awaitReceipt(ctx, parent, turnID)
 }
 
 // closeMet reports whether a try met a close of the parent, which it then waits out; such a try does not count.
