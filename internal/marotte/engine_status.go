@@ -47,6 +47,9 @@ type EngineStatusVersion struct {
 type EngineRestart struct {
 	Reasons []EngineReason `json:"reasons"`
 	Pending bool           `json:"pending"`
+	// ConfigUnreadable: config.json could not be read at the last look, so no queued reason applies until it can;
+	// Reasons stay queued.
+	ConfigUnreadable bool `json:"config_unreadable"`
 }
 
 // EngineBusy is what a restart now would interrupt.

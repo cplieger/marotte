@@ -18,6 +18,7 @@ func (rt *Runtime) initWorkspaceHandlers() {
 			rt.powers.itemsChanged(ctx, msg.Params)
 		},
 		methodKiroWorkflowRecipesChanged: func(ctx context.Context, _ marotte.ChatID, _ *marotte.RPCResponse) {
+			rt.runs.recipes.invalidate()
 			rt.Broadcast(ctx, marotte.NewEvent(marotte.EventRecipesChanged, "", marotte.RecipesChangedPayload{}))
 		},
 		methodV3Governance: func(_ context.Context, _ marotte.ChatID, msg *marotte.RPCResponse) {

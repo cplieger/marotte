@@ -37,6 +37,11 @@ func (rt *Runtime) engineHooks() engineHooks {
 		publish:   rt.publishEngineStatus,
 		ready:     rt.onEngineReady,
 		ended:     rt.onEngineEnded,
+		configReadable: func(ctx context.Context) bool {
+			_, src := rt.configDocument(ctx)
+			return src == fromDocument
+		},
+		configHeld: rt.configDoc.held,
 	}
 }
 
@@ -210,9 +215,11 @@ func (rt *Runtime) onEngineReady(uint64) {
 }
 
 // onEngineEnded runs once generation gen ended and was reaped: its unsettled mutations go (their writes meet a dead
-// engine), and every MCP server it ran is reported gone.
+// engine), and every MCP server it ran is reported gone. The recipe catalog goes too: KAS sends no recipes_changed
+// for the next engine's first listing, so an edit made while no engine ran would otherwise never drop it.
 func (rt *Runtime) onEngineEnded(gen uint64) {
 	rt.runs.mutations.dropGeneration(gen)
+	rt.runs.recipes.invalidate()
 	rt.mcpRegistry.clearAll(rt.lifecycle.shutdownCtx)
 }
 

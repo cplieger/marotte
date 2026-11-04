@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/slogx/capture"
 )
 
@@ -316,7 +317,11 @@ func TestResolvePreferences_ResolvesEveryKeyedKindAgainstItsOwnDefault(t *testin
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ResolvePreferences(t.Context(), seedConfig(t, tc.body))
+			d, _, err := settings.Read(t.Context(), seedConfig(t, tc.body))
+			if err != nil {
+				t.Fatalf("Setup: read %q: %v", tc.body, err)
+			}
+			got := ResolvePreferences(d)
 			if !maps.Equal(got, tc.want) {
 				t.Errorf("ResolvePreferences over %q = %v, want %v", tc.body, got, tc.want)
 			}

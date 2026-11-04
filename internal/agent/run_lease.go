@@ -50,7 +50,7 @@ func retryLaunch(o *runOrigin) launchOrigin {
 func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOrigin, holders []marotte.ChatID) {
 	var host *runlease.HostSecurity
 	if o.parent.chat == "" {
-		host = hostSecurityOf(securityPresets(ctx, rs.lifecycle.configDir))
+		host = hostSecurityOf(rs.doorSettings(ctx).Presets)
 	}
 	lo := retryLaunch(o)
 	rs.grantKeeping(ctx, workflowID, o.recipe, &lo, host, &leaseKeep{chats: chatIDs(holders)})

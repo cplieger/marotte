@@ -1117,7 +1117,7 @@ describe("engine_status", () => {
       since: "2026-10-16T00:00:00Z",
       state: "restarting",
       busy: { turns: [], runs: [] },
-      restart: { pending: false, reasons: [] },
+      restart: { pending: false, reasons: [], config_unreadable: false },
     };
     fireSSE("engine_status", "", status);
     expect(mockAdoptEngineStatus).toHaveBeenCalledWith(status);

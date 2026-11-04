@@ -51,6 +51,8 @@ type bridgeCoordinator struct {
 	sessionOpts func(ctx context.Context, rec *marotte.Chat, ask *sessionAsk, steering []marotte.ClientSteeringDoc) *marotte.SessionOpts
 	// syncLive pushes the engine each live setting it has not confirmed.
 	syncLive func(context.Context)
+	// configHeld is the configDoc owner's verdict, which holds a marked session (bridgeManager.claimReload).
+	configHeld func() bool
 	// replayProjection is the session/load replay lifecycle; nil in tests without a load.
 	replayProjection replayProjector
 	// onSessionRehydrated fires after a successful session/load, off the session-open path, to heal paused runs.
@@ -125,6 +127,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		engine:      h.engine,
 		sessionOpts: h.chatSessionOpts,
 		syncLive:    func(ctx context.Context) { h.engine.syncLive(ctx, h.liveSettings) },
+		configHeld:  h.configDoc.held,
 		// h implements replayProjector (load_projection.go).
 		replayProjection: h.replay,
 		chatHasLiveRun: func(chatID marotte.ChatID) bool {
@@ -220,7 +223,7 @@ func (bc *bridgeCoordinator) openBridgeBy(ctx context.Context, chatID marotte.Ch
 // open, and the next door waits for the close to settle. A session another reload or a release is closing is
 // waited out, then the caller asks again, so no open hands out a session being closed.
 func (bc *bridgeCoordinator) reloadIfMarked(ctx context.Context, chatID marotte.ChatID, sb *sharedBridge) (reopen bool, err error) {
-	claim := bc.bridge.mgr.claimReload(chatID, sb)
+	claim := bc.bridge.mgr.claimReload(chatID, sb, bc.configHeld())
 	session := claim.session
 	switch {
 	case claim.busy != nil:
