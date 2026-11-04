@@ -3336,7 +3336,6 @@ export const decodeRunAsksPayload: Decoder<RunAsksPayload> = (v) => {
 export const decodeRunControlsResponse: Decoder<RunControlsResponse> = (v) => {
   const o = asObject(v, "$.run_controls_response");
   const out: RunControlsResponse = {
-    parent_chat_id: reqStr(o, "parent_chat_id", "$.run_controls_response"),
     verbs: own(o, "verbs") === null ? [] : decodeArray(own(o, "verbs"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.run_controls_response.verbs"),
   };
   {

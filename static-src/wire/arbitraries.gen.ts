@@ -2081,11 +2081,10 @@ const arbModel = fc.letrec<{
   RunControlsResponse: fc.record(
     {
       refused: fc.dictionary(fc.string(), fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
-      parent_chat_id: fc.string(),
       pause_node_id: fc.string(),
       verbs: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
     },
-    { requiredKeys: ["parent_chat_id", "verbs"] },
+    { requiredKeys: ["verbs"] },
   ),
   RunExtendRequest: fc.record(
     {

@@ -436,20 +436,13 @@ type LiveRunsResponse struct {
 	Runs    []LiveRun     `json:"runs"`
 }
 
-// RunControlsResponse is GET /api/runs/{id}/controls's reply: what may be done to
-// one run, and why not for the rest.
-//
-// Its own route rather than a field on GET /api/runs/{id}, a verbatim KAS
-// passthrough. Only the server sees all three inputs: a client's SSE-fed cache of
-// which chat launched the run is empty after a reload.
+// RunControlsResponse is what may be done to one run, and why not for the rest:
+// GET /api/runs/{id}/controls's reply and the `controls` key of GET /api/runs/{id},
+// decided from the same inspect read as the state beside it.
 type RunControlsResponse struct {
 	// Refused maps a verb this run does not offer to the one sentence a reader
 	// needs, and carries only a verb whose absence would otherwise be unexplained.
 	Refused map[string]string `json:"refused,omitempty"`
-	// ParentChatID names the chat whose agent launched the run, empty for a
-	// parentless one. Read from the chat store here rather than from an event-fed
-	// client cache, which is empty after a reload.
-	ParentChatID string `json:"parent_chat_id"`
 	// PauseNodeID is the repeat a maxIterations pause stopped at; the extend and
 	// finish_loop verbs send it back. Empty for every other run.
 	PauseNodeID string `json:"pause_node_id,omitempty"`

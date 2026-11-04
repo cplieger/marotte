@@ -394,7 +394,7 @@ func TestRetryTermination_ARetriedRunIsNotCancelledForItsLastRun(t *testing.T) {
 					"workflowId": "wf_1", "status": "failed",
 				}))
 			}
-			if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "failed")); err != nil {
+			if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"})); err != nil {
 				t.Fatalf("Retry: %v", err)
 			}
 			if !h.runs.bounded("wf_1") {

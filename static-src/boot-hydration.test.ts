@@ -30,7 +30,6 @@ vi.mock("./run-store.js", () => ({
   adoptConnectRuns: vi.fn(),
   invalidateCachedRuns: vi.fn(),
   invalidateRun: vi.fn(),
-  invalidateRunControls: vi.fn(),
   forgetRun: vi.fn(),
   noteRunLive: vi.fn(),
   noteRunSettled: vi.fn(),

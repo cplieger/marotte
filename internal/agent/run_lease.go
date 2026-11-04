@@ -43,7 +43,7 @@ func retryLaunch(o *runOrigin) launchOrigin {
 	return launchOrigin{origin: runlease.OriginAgent, chatID: string(o.parent.chat)}
 }
 
-// grantRetryLease leases a retried run from its gate's origin, parent session included: the retry's run_start finds
+// grantRetryLease leases a retried run from Retry's read of its origin, parent session included: the retry's run_start finds
 // the lease held and adds no chat to it. A parentless retry is a new launch decision, so its host session reloads
 // with the profile's presets as they are now, recorded here.
 func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOrigin) {

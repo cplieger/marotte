@@ -406,18 +406,19 @@ type kasRetryOutcome struct {
 	RetriedNodeIDs []string `json:"retriedNodeIds"`
 }
 
-// retry resets a failed or aborted run's failed work and reports what it reset, hosted from the gate's own read of the run's origin.
+// retry resets a failed or aborted run's failed work and reports what it reset, hosted from one read of the run's origin.
 func (rs *Runs) retry(
 	ctx context.Context, workflowID string, aff *runAffordance,
 ) (out marotte.RunRetriedResponse, err error) {
 	if workflowID == "" {
 		return out, errors.New("missing workflow id")
 	}
+	// Read before the verb and reused throughout: nothing can learn it once the run re-drives, and two reads can disagree.
+	origin := rs.originOf(ctx, workflowID)
 	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
 	defer cancel()
 
-	// Threaded from the gate: nothing here can learn it once the run re-drives.
-	recipe := aff.origin.recipe
+	recipe := origin.recipe
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
 	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
@@ -425,10 +426,10 @@ func (rs *Runs) retry(
 	}
 	minted := false
 	if _, held := rs.lease(workflowID); held {
-		// A manual or agent lease is the one the gate's origin would grant; the run under it is a new one all the same.
+		// A manual or agent lease is the one this origin would grant; the run under it is a new one all the same.
 		rs.restartLife(cctx, workflowID)
 	} else {
-		rs.grantRetryLease(cctx, workflowID, &aff.origin)
+		rs.grantRetryLease(cctx, workflowID, &origin)
 		minted = true
 	}
 	host, err := rs.ensureResident(cctx, workflowID)
@@ -445,7 +446,7 @@ func (rs *Runs) retry(
 	})
 	if errors.Is(err, errRetryOutcomeUnreadable) {
 		// Only the report is lost; tearing down would kill the work mid-node.
-		rs.rearmRetried(cctx, workflowID, &aff.origin)
+		rs.rearmRetried(cctx, workflowID, &origin)
 		return out, err
 	}
 	if err != nil {
@@ -456,7 +457,7 @@ func (rs *Runs) retry(
 		return out, err
 	}
 	// Only on success: a refused retry re-drove nothing.
-	rs.rearmRetried(cctx, workflowID, &aff.origin)
+	rs.rearmRetried(cctx, workflowID, &origin)
 	slog.Info("workflow run retried",
 		"workflow_id", workflowID, "recipe", recipe,
 		"retried_nodes", len(out.RetriedNodeIDs), "status", out.Status)
@@ -650,10 +651,6 @@ type runOrigin struct {
 	err    error
 	parent runParent
 	recipe string
-	// pauseKind and pauseNodeID are kasWorkflowRun's, off the same read.
-	pauseKind    string
-	pauseNodeID  string
-	pausePending bool
 }
 
 // An ownerless parent is trusted only after a complete chat scan: loading a chat's session as a
@@ -672,7 +669,6 @@ func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
 	// WorkflowName is the recipe the single-run rule compares; Name is `runLabel ?? workflowName`.
 	o := runOrigin{
 		recipe: runs[i].WorkflowName, parent: runParent{session: runs[i].ParentSessionID},
-		pauseKind: runs[i].PauseKind, pauseNodeID: runs[i].PauseNodeID, pausePending: runs[i].PausePending,
 	}
 	if o.parent.session == "" {
 		o.err = fmt.Errorf("%w: the run inventory names no launching session", errLaunchSessionUnavailable)
