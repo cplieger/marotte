@@ -45,7 +45,8 @@ func (res *RunPurgeResult) keep(until time.Time) {
 // main-thread time for a 238-step run), so one delete a minute keeps those rewrites paced.
 const runPurgePace = time.Minute
 
-// deletePacer holds when a retention pass last sent a delete. The zero value is ready.
+// deletePacer holds when a retention pass last spent its delete: the run purge on a delete sent or a run KAS no
+// longer finds, the log sweep on a pass that attempted a removal. The zero value is ready.
 type deletePacer struct {
 	last time.Time
 	mu   sync.Mutex
