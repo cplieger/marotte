@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -75,6 +76,17 @@ func TestRunMutations_UnwrittenAndRefusedSettleAtOnce(t *testing.T) {
 	}
 	if got := f.settles.Load(); got != 2 {
 		t.Errorf("settle edges = %d, want 2", got)
+	}
+}
+
+// An answer that arrived but could not be decoded is no refusal: the write may have taken effect.
+func TestRunMutations_AnUndecodedReplyKeepsTheEntry(t *testing.T) {
+	f := newMutationFixture(time.Hour)
+	undecoded := &marotte.RPCResponse{Error: &marotte.RPCError{Code: marotte.RPCCodeParseError}}
+	f.m.enter("wf_1", mutationDrive, 1).replied(undecoded,
+		fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded, undecoded.Error), ownerLane, 0)
+	if f.m.empty() {
+		t.Error("an undecoded reply settled the entry as a refusal")
 	}
 }
 

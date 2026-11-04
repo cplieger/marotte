@@ -1529,6 +1529,13 @@ func workflowNotFoundErr() *marotte.RPCError {
 	}
 }
 
+// incompleteNotFoundErr is workflowNotFoundErr from a search that could not reach every relayed session.
+func incompleteNotFoundErr() *marotte.RPCError {
+	e := workflowNotFoundErr()
+	e.Data = json.RawMessage(`{"details":"x","errorType":"WorkflowNotFoundError","searchIncomplete":true}`)
+	return e
+}
+
 // armWrite fails the release writes as w says, from the next one on; writeNone ends the fault.
 func (k *kasRun) armWrite(w writeFault) {
 	k.mu.Lock()

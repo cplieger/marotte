@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -279,6 +280,80 @@ func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *te
 	if _, held := h.runs.lease("wf_1"); held {
 		t.Error("the abandoned attempt kept the lease it minted")
 	}
+}
+
+// A retry verb KAS read but did not answer within retryTimeout may still run, so the reply says its outcome is
+// unknown rather than that nothing was retried, and the run keeps the lease the retry minted for its deadline.
+func TestHandleRetry_AVerbLeftUnansweredKeepsItsLeaseAndSaysTheOutcomeIsUnknown(t *testing.T) {
+	h, br := seedChatParentedRun(t, true, "final-verify")
+	br.setBlockOn(methodKiroWorkflowRetry, make(chan struct{}))
+	prev := retryTimeout
+	retryTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { retryTimeout = prev })
+
+	rec := httptest.NewRecorder()
+	h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+
+	if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
+		t.Fatalf("Setup: the verb never reached KAS; calls were %v", br.callLog())
+	}
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Errorf("an unanswered retry = %d, want %d: %s", rec.Code, http.StatusGatewayTimeout, rec.Body.String())
+	}
+	if body := rec.Body.String(); strings.Contains(body, "nothing was retried") || !strings.Contains(body, "Refresh") {
+		t.Errorf("the reply = %s, want it to say the outcome is unknown and send the reader to a refresh", body)
+	}
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Error("the unanswered retry released the lease it minted, so a retry KAS applies runs with no deadline")
+	}
+}
+
+// An answer to the retry verb that arrived but could not be read may hide a retry KAS took, so the run keeps the
+// lease the retry minted and is re-armed; a -32700 KAS itself sends is a refusal and gives the lease back.
+func TestHandleRetry_AnAnswerThatCouldNotBeReadKeepsItsLease(t *testing.T) {
+	unreadable := map[string]error{
+		"an undecoded answer": fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded,
+			&marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "marotte could not decode kiro-cli's answer"}),
+		"an oversize answer": &marotte.TransportError{Err: marotte.ErrFrameTooLarge},
+	}
+	for name, callErr := range unreadable {
+		t.Run(name, func(t *testing.T) {
+			h, br := seedChatParentedRun(t, true, "final-verify")
+			br.setCallErr(methodKiroWorkflowRetry, callErr)
+
+			rec := httptest.NewRecorder()
+			h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+
+			if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "Refresh") {
+				t.Errorf("the retry = %d %s, want %d sending the reader to a refresh",
+					rec.Code, rec.Body.String(), http.StatusBadGateway)
+			}
+			if _, held := h.runs.lease("wf_1"); !held {
+				t.Error("the lease the retry minted was released, so a retry KAS took runs with no deadline")
+			}
+			if !h.runs.bounded("wf_1") {
+				t.Error("the run was not re-armed, so nothing bounds a retry KAS may be running")
+			}
+			if !retryMarked(h, "wf_1") {
+				t.Error("the run's retry mark was dropped, so the purge may delete a run KAS just retried")
+			}
+		})
+	}
+
+	t.Run("a parse error KAS itself sends", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true, "final-verify")
+		br.setCallRPCErr(methodKiroWorkflowRetry, &marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "Parse error"})
+
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+
+		if rec.Code != http.StatusConflict {
+			t.Errorf("KAS's parse-error refusal = %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
+		}
+		if _, held := h.runs.lease("wf_1"); held {
+			t.Error("the lease minted for a retry KAS refused was not given back")
+		}
+	})
 }
 
 // TestHandleRetry_RefusesWhatTheAffordanceRefuses pins that the gate is server-side.

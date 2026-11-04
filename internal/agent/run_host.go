@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"slices"
 	"strings"
@@ -288,13 +289,25 @@ func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop) e
 	if err != nil {
 		return err
 	}
+	return rs.deleteHeld(ctx, d, stop)
+}
+
+// deleteHeld sends the delete d holds its run closed for, and settles d once KAS's answer is known. A run KAS no longer
+// finds is torn down all the same, and its not-found error returned.
+func (rs *Runs) deleteHeld(ctx context.Context, d *runDeletion, stop runStop) error {
+	workflowID := d.workflowID
 	var got kasVerdict
+	var err error
 	rs.stopSerialized(ctx, workflowID, func(sctx context.Context) bool {
 		got, err = rs.deleteCall(sctx, workflowID, stop)
 		return got != kasRefused
 	})
 	switch got {
 	case kasRefused:
+		if workflowNotFound(err) {
+			// No later list names the run, so nothing else would drop marotte's record of it.
+			rs.teardownDeleted(ctx, workflowID)
+		}
 		d.settle()
 		return err
 	case kasUnconfirmed:
@@ -320,9 +333,6 @@ func (rs *Runs) deleteCall(ctx context.Context, workflowID string, stop runStop)
 	defer release()
 	resp, err := h.Call(durable.Context(ctx), methodKiroWorkflowDelete, params)
 	err = runCallErr(resp, err)
-	if err == nil {
-		rs.router.forgetWorkflow(workflowID)
-	}
 	return verdictOf(err), err
 }
 
@@ -382,8 +392,11 @@ func (rs *Runs) readBack(ctx context.Context, workflowID string) readBackVerdict
 	return runKept
 }
 
-// teardownDeleted drops everything marotte keeps about a run KAS deleted.
+// teardownDeleted drops everything marotte keeps about a run KAS deleted or no longer finds.
 func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string) {
+	rs.router.forgetWorkflow(workflowID)
+	rs.translate.ForgetRunSteps(workflowID)
+	rs.retries.clear(workflowID)
 	rs.deleteRunLog(ctx, workflowID)
 	rs.coord.closeBridge(ctx, runChatID(workflowID), marotte.TurnOutcomeInterrupted)
 	rs.forgetBounds(ctx, workflowID)
@@ -416,9 +429,19 @@ var retryTimeout = clientRequestBudget - 5*time.Second
 // clientRequestBudget is the timeout @cplieger/ui/fetch hard-wires into every apiAction.
 const clientRequestBudget = 30 * time.Second
 
-// errRetrySlow reports a retry not handed off within retryTimeout; the REST layer answers 503.
+var errRetryRunDeleting = errors.New("this run is being deleted or checked for deletion, so nothing was retried. " +
+	"Try again in a moment")
+
+// errRetrySlow reports a retry whose run's session did not load within retryTimeout; the REST layer answers 503.
 var errRetrySlow = errors.New(
 	"the run's session did not load in time, so nothing was retried. Try again",
+)
+
+// errRetryUnanswered reports a retry verb unanswered within retryTimeout, which KAS may still apply; the REST layer
+// answers 504.
+var errRetryUnanswered = errors.New(
+	"the retry was sent but its answer did not arrive in time, so whether it took is unknown. " +
+		"Refresh the run to see where it is",
 )
 
 // errRetryOutcomeUnreadable reports a retry KAS accepted whose report was unreadable. The run may be
@@ -442,6 +465,12 @@ func (rs *Runs) retry(
 	if workflowID == "" {
 		return out, errors.New("missing workflow id")
 	}
+	// The purge re-reads a run under its delete hold and deletes on that answer, so no retry may run inside the hold.
+	lease, err := rs.life.admit(workflowID)
+	if err != nil {
+		return out, command.StatusError(http.StatusConflict, errRetryRunDeleting)
+	}
+	defer lease.end()
 	// Read before the verb and reused throughout: nothing can learn it once the run re-drives, and two reads can disagree.
 	origin := rs.originOf(ctx, workflowID)
 	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
@@ -457,18 +486,7 @@ func (rs *Runs) retry(
 	}
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
-	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
-		rs.settleMissedEnd(cctx, &l, aff.status)
-	}
-	minted := false
-	if l, held := rs.lease(workflowID); held {
-		// A manual or agent lease is the one this origin would grant; the run under it is a new one all the same.
-		rs.restartLife(cctx, workflowID)
-		rs.recordKeepChats(cctx, &l, holders)
-	} else {
-		rs.grantRetryLease(cctx, workflowID, &origin, holders)
-		minted = true
-	}
+	minted := rs.leaseForRetry(cctx, workflowID, &origin, holders, aff)
 	rs.markRunAlive(cctx, workflowID, holders)
 	host, err := rs.ensureResident(cctx, workflowID)
 	if err != nil {
@@ -502,12 +520,35 @@ func (rs *Runs) retry(
 	return out, nil
 }
 
+// leaseForRetry renews the run's lease for the retry, or grants one from origin, reporting whether it minted one.
+func (rs *Runs) leaseForRetry(
+	ctx context.Context, workflowID string, origin *runOrigin, holders []marotte.ChatID, aff *runAffordance,
+) (minted bool) {
+	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
+		rs.settleMissedEnd(ctx, &l, aff.status)
+	}
+	if l, held := rs.lease(workflowID); held {
+		// A manual or agent lease is the one this origin would grant; the run under it is a new one all the same.
+		rs.restartLife(ctx, workflowID)
+		rs.recordKeepChats(ctx, &l, holders)
+		return false
+	}
+	rs.grantRetryLease(ctx, workflowID, origin, holders)
+	return true
+}
+
 // retryCall issues the verb and decodes its report, through runCallErr so an `error` member is not read as success.
 func (rs *Runs) retryCall(
 	ctx context.Context, host *drivenHost, workflowID string,
 ) (marotte.RunRetriedResponse, error) {
 	none := marotte.RunRetriedResponse{}
+	rs.retries.mark(workflowID, time.Now())
 	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
+	if err != nil && ctx.Err() == nil &&
+		(errors.Is(err, marotte.ErrReplyUndecoded) || errors.Is(err, marotte.ErrFrameTooLarge)) {
+		// An answer arrived and could not be read, so KAS may have taken the verb.
+		return none, fmt.Errorf("%w: %w", errRetryOutcomeUnreadable, err)
+	}
 	if err != nil {
 		return none, fmt.Errorf("workflow retry: %w", rs.retryDeadlineErr(ctx, err))
 	}
@@ -540,9 +581,10 @@ func (*Runs) retryResidencyErr(ctx context.Context, err error) error {
 	return fmt.Errorf("retry: load the run's session: %w", err)
 }
 
+// retryDeadlineErr labels a verb this call's deadline abandoned, keeping the context error retry's lease release reads.
 func (*Runs) retryDeadlineErr(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
-		return errRetrySlow
+		return fmt.Errorf("%w: %w", errRetryUnanswered, ctx.Err())
 	}
 	return err
 }

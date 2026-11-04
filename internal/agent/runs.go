@@ -66,6 +66,8 @@ type Runs struct {
 	recorded recordedRuns
 	// marks throttles the run keep marks' progress refresh and keeps ended unattributed runs (run_keepstate.go).
 	marks runMarks
+	// retries marks each run whose retry KAS has not shown taking effect, the purge's retry in flight (run_purge.go).
+	retries retryMarks
 	// sweep pauses the running runs while the gate is closed (run_gate.go).
 	sweep gateSweep
 	// hosts serializes, per run, making its launching session resident (ensureResident). hosts, resumes and
