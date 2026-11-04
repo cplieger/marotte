@@ -496,8 +496,9 @@ func TestSignInGate_AStepSteerCrossingTheClosingEdgeSweepsAgain(t *testing.T) {
 	waitUntil(t, "the steer's own sweep", func() bool { return countCalls(br, methodKiroWorkflowList) == 2 })
 }
 
-// A run KAS parks again once its heal budget is spent is stamped for the user off the pause frame itself.
-func TestHealBudget_ASpentRunsNextPauseIsParkedForTheUser(t *testing.T) {
+// A restart-paused run KAS parks again once its heal budget is spent is recorded as stopped off the pause frame
+// itself, with no pause written and no resume.
+func TestHealBudget_ASpentRunsNextPauseStopsItsAutoResume(t *testing.T) {
 	h, br := agentRunOnChat(t, gateRunID)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	h.runs.grantLease(t.Context(), gateRunID, "publish", agentLaunch(), hostSec())
@@ -511,9 +512,9 @@ func TestHealBudget_ASpentRunsNextPauseIsParkedForTheUser(t *testing.T) {
 
 	heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 	heal(t.Context(), parkChat, runNotif(methodWFPaused, map[string]any{"workflowId": gateRunID, "pauseReason": stalePauseReason}))
-	waitUntil(t, "the run's pause stamped for the user", func() bool { return len(verbs.pauseParams()) == 1 })
-	if p := verbs.pauseParams()[0]; p["reason"] != manualResumeReason {
-		t.Errorf("pause reason = %v, want %q", p["reason"], manualResumeReason)
-	}
+	waitUntil(t, "the run's stop recorded", func() bool { return h.runs.autoResumeStopped(gateRunID) })
 	awaitResumes(t, &verbs.resumes, 0)
+	if p := verbs.pauseParams(); len(p) != 0 {
+		t.Errorf("pauses written = %v, want none: KAS records each as the user's", p)
+	}
 }

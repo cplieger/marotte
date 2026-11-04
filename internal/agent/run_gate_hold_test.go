@@ -138,8 +138,8 @@ const (
 
 const (
 	writeNone writeFault = iota
-	// A release write is a resume, or once the heal budget is spent the park for the user. writeLostOnce loses the
-	// first one before KAS takes it; writeLostEvery loses every one until the writers settle; writeReplyLost loses the
+	// A release write is a resume; a heal past its budget writes none. writeLostOnce loses the first one before KAS
+	// takes it; writeLostEvery loses every one until the writers settle; writeReplyLost loses the
 	// first one's reply after KAS took it.
 	writeLostOnce
 	writeLostEvery
@@ -276,8 +276,6 @@ const (
 	kasHoldRunning
 	kasCancelled
 	kasGone
-	// kasParked is marotte's park for the user (parkForUser), a person's pause.
-	kasParked
 	kasOther
 )
 
@@ -297,8 +295,6 @@ func (h kasHold) String() string {
 		return "cancelled"
 	case kasGone:
 		return "gone"
-	case kasParked:
-		return "paused for a person to resume"
 	}
 	return "in a state no cell names"
 }
@@ -309,20 +305,26 @@ func (h kasHold) ended() bool { return h == kasCancelled || h == kasGone }
 
 // listedPaused is whether KAS lists the run paused, so a finder of every paused run (pausedRuns) reads it.
 func (h kasHold) listedPaused() bool {
-	return h == kasGateReason || h == kasRestartPause || h == kasParked || h == kasOther
+	return h == kasGateReason || h == kasRestartPause || h == kasOther
 }
 
 // holdState is a run's hold at one point of a cell: how KAS reads the run, and whether the gate holds a heal of it.
 type holdState struct {
 	kas  kasHold
 	heal bool
+	// stopped: marotte stopped resuming the run on its own (Runs.stopAutoResume).
+	stopped bool
 }
 
 func (s holdState) String() string {
+	out := s.kas.String()
 	if s.heal {
-		return s.kas.String() + " and its heal held"
+		out += " and its heal held"
 	}
-	return s.kas.String()
+	if s.stopped {
+		out += ", marotte no longer resuming it"
+	}
+	return out
 }
 
 // holdEvent is what a step of a cell drives.
@@ -455,6 +457,8 @@ type holdSim struct {
 	readFired, writeFired, crossFired, orderFired bool
 	// endedUnattended: a scheduled run's heal found its budget spent and ended the run (endUnattended).
 	endedUnattended bool
+	// stopped: any other run's heal found its budget spent and marotte stopped resuming it (healSpent).
+	stopped bool
 }
 
 // holdModel is the reference model of the hold matrix: the steps a cell drives, each with the state the cell must
@@ -477,14 +481,14 @@ func holdModel(c holdCombo) (steps []holdStep, impossible string) {
 			"it running for an ended engine (resumeParentless)"
 	case c.write != writeNone && !s.writeFired && s.endedUnattended:
 		return nil, "no release write comes while its fault is armed: a scheduled run whose heal finds its budget " +
-			"spent is cancelled (endUnattended), a write no release fault covers, where another run is parked"
+			"spent is cancelled (endUnattended), a write no release fault covers, where marotte stops resuming another run"
 	case c.write != writeNone && !s.writeFired:
 		return nil, "no release write comes while its fault is armed: a heal writes only once its read finds a pause " +
-			"it resumes (runTransitions' healResume row)"
+			"it resumes (runTransitions' healResume row) and its budget is not spent (healSpent writes nothing)"
 	case c.cross.takesWrite() && !s.crossFired:
 		return nil, "no held release (resumeHeld) writes the run's resume at an open gate with no sweep of its round " +
 			"healing the run too, so no release write is lost or held in flight: a chat's rehydrate or a parentless " +
-			"run's tries heal it, it parks for a person or ends first, or failing reads leave no hold for a release"
+			"run's tries heal it, marotte stops resuming it or it ends first, or failing reads leave no hold for a release"
 	case c.order == orderSweepFirst && !s.orderFired:
 		return nil, "no closing sweep pauses the run again while a chat's rehydrate waits to read it: only a held " +
 			"release's resume write that reloads the chat's session and lands at the closed gate starts both"
@@ -543,7 +547,7 @@ func (c holdCombo) twin() (holdCombo, string) {
 		"either way"
 }
 
-func (s *holdSim) state() holdState { return holdState{kas: s.kas, heal: s.entry} }
+func (s *holdSim) state() holdState { return holdState{kas: s.kas, heal: s.entry, stopped: s.stopped} }
 
 // begin starts the next step.
 func (s *holdSim) begin(ev holdEvent, text string) {
@@ -860,10 +864,10 @@ func (s *holdSim) roundAfterEntry(ev holdEvent, text string, r releasers, entryF
 }
 
 func (s *holdSim) done() bool {
-	return s.kas == kasHoldRunning || s.kas == kasParked || (s.kas.ended() && !s.entry)
+	return s.kas == kasHoldRunning || s.stopped || (s.kas.ended() && !s.entry)
 }
 
-// loop drives the event that releases the run next until it ends, is resumed or parked, or nothing releases it.
+// loop drives the event that releases the run next until it ends, is resumed or stopped, or nothing releases it.
 func (s *holdSim) loop() {
 	for n := 0; !s.done(); n++ {
 		if n > 8 {
@@ -1017,27 +1021,11 @@ func (s *holdSim) deadLoud(r releasers, finderDead, healDead, open bool) []strin
 	return nil
 }
 
-// spentLoud is the ERRORs a round's writers log once every release write is lost: resumeHeld's when held, and a
-// sweep's, a chat's or a parentless run's, when swept.
-func (s *holdSim) spentLoud(held, swept bool) []string {
-	var loud []string
-	if held {
-		loud = append(loud, releaseSpentLog)
-	}
-	switch {
-	case swept && s.c.chat():
-		loud = append(loud, resweepSpentLog)
-	case swept:
-		loud = append(loud, parentlessSpentLog)
-	}
-	return loud
-}
-
 // release is a round at an open gate whose live readers can resume the held run: finderHeals is the finder's chain
 // (keepHold, then resumeHeld) reaching its heal, healerHeals the healer's own heal.
 func (s *holdSim) release(r releasers, finderHeals, healerHeals bool) []string {
 	if s.claims >= maxAutoHeals {
-		return s.park(finderHeals || (healerHeals && r.healer == healerHeld), healerHeals && r.healer == healerSweep)
+		return s.spent()
 	}
 	// The edge's release of a held heal and its finder's are one release (releases).
 	loops := 0
@@ -1063,8 +1051,6 @@ func (s *holdSim) release(r releasers, finderHeals, healerHeals bool) []string {
 	// mark that lands after the release's first write reloads the session at the next one.
 	firstSweeps := (healerHeals && r.healer == healerSweep) || (s.c.chat() && s.reload && !late)
 	sweeps := (healerHeals && r.healer == healerSweep) || (s.c.chat() && s.reload)
-	// A chat sweep's own first write reloads the session, so the reload's rehydrate is a second sweep and chain.
-	twoSweeps := healerHeals && r.healer == healerSweep && s.c.chat() && s.reload
 	if s.c.chat() {
 		s.reload = false
 	}
@@ -1103,14 +1089,13 @@ func (s *holdSim) release(r releasers, finderHeals, healerHeals bool) []string {
 			return nil
 		}
 		if sweeps {
-			// A sweep's tries outnumber the heals left, so they spend the budget, and their parks are lost too.
-			s.claims = maxAutoHeals
-			s.cur.text += "; every release write is lost, and the sweep's tries spend the heal budget and lose their parks"
-			loud := s.spentLoud(loops > 0, true)
-			if twoSweeps {
-				loud = append(loud, resweepSpentLog)
-			}
-			return loud
+			// A sweep's tries outnumber the heals left, so they spend the budget, and the next try of any release
+			// stops resuming the run, which ends every chain before its tries are spent; the stop's ERROR names the
+			// lost writes.
+			s.claims, s.entry, s.stopped = maxAutoHeals, false, true
+			s.cur.text += "; every release write is lost, the sweep's tries spend the heal budget, and its next try " +
+				"stops resuming the run"
+			return []string{healWritesSpentLog}
 		}
 		s.claims += loops
 		s.cur.text += "; every resume write is lost until its tries are spent"
@@ -1172,30 +1157,17 @@ func (s *holdSim) inFlightWrite(rehydrates bool) {
 	}
 }
 
-// park is a release that finds the heal budget spent and parks the run for the user (parkForUser), or ends a
-// scheduled run (endUnattended): held is whether resumeHeld writes the park, swept whether a sweep does.
-func (s *holdSim) park(held, swept bool) []string {
+// spent is a release that finds the heal budget spent: marotte stops resuming the run, writing nothing, or ends a
+// scheduled run (endUnattended), a cancel no release fault covers.
+func (s *holdSim) spent() []string {
 	s.cur.text += "; its heal finds the budget spent"
 	if s.c.kind == kindScheduled {
 		s.kas, s.entry, s.endedUnattended = kasCancelled, false, true
 		s.cur.text += "; it ends the run, which has nobody to resume it"
 		return nil
 	}
-	switch s.write {
-	case writeLostOnce:
-		s.write, s.writeFired = writeNone, true
-		s.block("its park write is lost, and the next try is held at its read")
-	case writeReplyLost:
-		s.write, s.writeFired = writeNone, true
-		s.kas = kasParked
-		s.block("KAS takes its park write and the reply is lost, and the next try is held at its read")
-	case writeLostEvery:
-		s.writeFired, s.cur.settleWrite, s.write = true, true, writeNone
-		s.cur.text += "; every park write is lost until its tries are spent"
-		return s.spentLoud(held, swept)
-	}
-	s.kas, s.entry = kasParked, false
-	s.cur.text += "; it parks it for the user"
+	s.entry, s.stopped = false, true
+	s.cur.text += "; marotte stops resuming it, and KAS keeps its pause"
 	return nil
 }
 
@@ -1354,7 +1326,7 @@ const gateHoldLead = "Every hold, by the matrix TestGateHold_EveryCell/<row>/<ce
 	"again before its release admits it. Cells: where the hold lands; what happens while it is held; a restart at its " +
 	"checkpoint, which keeps KAS's state and loses heldHeals and the heal budget, or the engine's replacement there, " +
 	"which keeps them; the gate crossing the hold or its release; a fault in the reads that form the hold or release " +
-	"it; a fault in the release's writes, a resume or, once the heal budget is spent, the park for the user; for a " +
+	"it; a fault in the release's resume writes, of which a heal past its budget writes none; for a " +
 	"chat-parented run, the orders production leaves open between a sign-in's reload mark and the gate's opening, " +
 	"and between a reload's rehydrate and a closing sweep; whether the runtime boots signed in, so no reload mark is " +
 	"pending as a chat's gate pause forms. Each item is the outcome of the cell that differs from the plain one in " +
@@ -1557,8 +1529,6 @@ func (k *kasRun) reads() kasHold {
 		return kasHoldRunning
 	case k.status == marotte.RunStatusPaused && isHoldReason(k.stopReason):
 		return kasGateReason
-	case k.status == marotte.RunStatusPaused && k.stopReason == manualResumeReason:
-		return kasParked
 	case k.status == marotte.RunStatusPaused && k.pauseReason == stalePauseReason && k.stopReason == "":
 		return kasRestartPause
 	}
@@ -1605,16 +1575,6 @@ func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, 
 		return k.inspectLocked(), nil, true, nil
 	case methodKiroWorkflowPause:
 		reason, _ := params["reason"].(string)
-		if reason == manualResumeReason {
-			if takes, err := k.releaseFaultLocked(); err != nil {
-				if takes {
-					k.pauses.Add(1)
-					k.pendingReason = reason
-					k.landLocked()
-				}
-				return nil, nil, true, err
-			}
-		}
 		k.pauses.Add(1)
 		k.pendingReason = reason
 		if !k.landLater {
@@ -1951,6 +1911,7 @@ var spentCounts = map[string]string{
 	releaseSpentLog:    fmt.Sprintf("attempts=%d", maxReleaseAttempts),
 	resweepSpentLog:    fmt.Sprintf("sweeps=%d", maxResweeps),
 	parentlessSpentLog: fmt.Sprintf("tries=%d", maxResweeps),
+	healWritesSpentLog: fmt.Sprintf("attempts=%d", maxAutoHeals),
 }
 
 // holdBlock is a read a cell holds in its transition until the cell's next step lets it go on.
@@ -3183,7 +3144,7 @@ func countOf(list []string, v string) int {
 }
 
 func (c *holdCell) holdNow() holdState {
-	return holdState{kas: c.k.reads(), heal: heldByTheGate(c.h.runs, c.id)}
+	return holdState{kas: c.k.reads(), heal: heldByTheGate(c.h.runs, c.id), stopped: c.h.runs.autoResumeStopped(c.id)}
 }
 
 // wantHold waits for the run to reach want, failing the cell if it does not.

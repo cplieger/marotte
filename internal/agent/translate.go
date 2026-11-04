@@ -263,6 +263,7 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatI
 
 	// After the replay gate: history is not progress.
 	rt.translator.ReportStepProgress(attr)
+	rt.reportStepHeadway(attr, base.Kind)
 	if attr.Step {
 		rt.runs.askTurnEdge(attr.RunID, env.Params.SessionID, base.Edge())
 	}
@@ -273,6 +274,18 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatI
 		return
 	}
 	fn(ctx, chatID, env.Params.Update, attr)
+}
+
+// reportStepHeadway refills a run's heal budget (Runs.healHeadway) on a step's model output. Only output kinds count:
+// a metering or info frame says the session is alive, not that a resume got any work done.
+func (rt *Runtime) reportStepHeadway(attr translate.FrameAttribution, kind marotte.ACPUpdateKind) {
+	if !attr.Step || attr.RunID == "" {
+		return
+	}
+	switch kind {
+	case marotte.ACPUpdateAgentChunk, marotte.ACPUpdateThoughtChunk, marotte.ACPUpdateToolCall, marotte.ACPUpdateToolUpdate:
+		rt.runs.healHeadway(attr.RunID)
+	}
 }
 
 // handleRunStepFrame is a parentless run host session's session/update door: every frame is a step's of the hosted
@@ -290,6 +303,7 @@ func (rt *Runtime) handleRunStepFrame(ctx context.Context, chatID marotte.ChatID
 	}
 	attr := rt.translator.StepAttribution(workflowIDOf(chatID), env.Params.SessionID, base.Meta.Kiro.Workflow)
 	rt.translator.ReportStepProgress(attr)
+	rt.reportStepHeadway(attr, base.Kind)
 	rt.runs.askTurnEdge(workflowIDOf(chatID), env.Params.SessionID, base.Edge())
 	fn, ok := rt.runStepHandlers[base.Kind]
 	if !ok {

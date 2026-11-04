@@ -1285,12 +1285,12 @@ type resumeOutcome int
 
 const (
 	resumeWritten resumeOutcome = iota + 1
-	// resumeSkipped: not a pause marotte resumes unasked, or the run's heal budget is spent and the run parked for
-	// the user, or ended when scheduled.
+	// resumeSkipped: not a pause marotte resumes unasked, or the run's heal budget is spent (recorded as marotte's
+	// stop, no pause written), or a scheduled run ended.
 	resumeSkipped
 	resumeHeld
-	// resumeFailed: the run could not be read, its session made resident, its resume written or, past its heal budget,
-	// its pause stamped for the user.
+	// resumeFailed: the run could not be read, its session made resident or its resume written, or a scheduled run
+	// past its heal budget could not be ended.
 	resumeFailed
 )
 

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/cplieger/marotte/internal/apicaller"
 	"github.com/cplieger/marotte/internal/command"
@@ -72,6 +73,9 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	extras := &runExtras{
 		asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan, readPosition: position,
 		displayName: rr.runs.runName(id),
+	}
+	if l, held := rr.runs.lease(id); held {
+		extras.autoResumeStoppedAt = l.AutoResumeStoppedAt
 	}
 	if head, hErr := headOf(raw); hErr == nil && head.Status != "" {
 		c := rr.runs.controls(id, &head)
@@ -154,14 +158,15 @@ func (rs *Runs) lastAsks(c *askCell) []marotte.RunAsk {
 
 // runExtras are marotte's top-level keys on GET /api/runs/{id}.
 type runExtras struct {
-	ends          map[string]marotte.RunStepEnd
-	starts        map[string]marotte.RunStepStart
-	plan          *marotte.RunPlanUpdate
-	controls      *marotte.RunControlsResponse
-	displayName   string
-	asks          []marotte.RunAsk
-	readPosition  uint64
-	asksReachable bool
+	autoResumeStoppedAt time.Time
+	ends                map[string]marotte.RunStepEnd
+	starts              map[string]marotte.RunStepStart
+	plan                *marotte.RunPlanUpdate
+	controls            *marotte.RunControlsResponse
+	displayName         string
+	asks                []marotte.RunAsk
+	readPosition        uint64
+	asksReachable       bool
 }
 
 // runReadPosition is a run's read position: the turns its own log holds plus one once KAS reports
@@ -215,8 +220,9 @@ func (rs *Runs) RunReadBound(ctx context.Context, workflowID string) (uint64, er
 // keys survive and nested values stay byte-identical: `open_asks`, `step_ends` and `step_starts`, never
 // null because an agent could not tell "none" from "unsupported", `asks_reachable`, false when
 // `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), `display_name`
-// (Runs.runName, "" when nothing names the run), `plan_update` when servedPlan answers one, and `controls`
-// (Runs.controls) when the reply's state carries a status.
+// (Runs.runName, "" when nothing names the run), `plan_update` when servedPlan answers one, `controls`
+// (Runs.controls) when the reply's state carries a status, and `auto_resume_stopped_at` when marotte stopped
+// resuming the run on its own (runlease.Lease.AutoResumeStoppedAt).
 func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
@@ -274,6 +280,11 @@ func withOptionalExtras(obj map[string]json.RawMessage, x *runExtras) (err error
 	}
 	if x.controls != nil {
 		if obj["controls"], err = json.Marshal(x.controls); err != nil {
+			return err
+		}
+	}
+	if !x.autoResumeStoppedAt.IsZero() {
+		if obj["auto_resume_stopped_at"], err = json.Marshal(x.autoResumeStoppedAt.UTC()); err != nil {
 			return err
 		}
 	}

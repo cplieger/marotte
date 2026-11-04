@@ -96,16 +96,17 @@ export interface RunState {
   /** marotte's, from the reply's `read_position`: the run's read position, 0 while it is live. Only
    *  a read sets it; a `run_progress` frame keeps the previous read's value. */
   readPosition?: number;
+  /** marotte's, from the reply's `auto_resume_stopped_at`: when marotte stopped resuming this paused
+   *  run on its own. KAS's own state never says so, since marotte writes no pause for it. */
+  autoResumeStoppedAt?: string;
 }
 
 /** The reasons marotte pauses a run with (internal/agent/run_gate.go, pinned by
- *  internal/agent/testdata/pause_reasons.json): the sign-in gate's two, and the one a run marotte no
- *  longer resumes on its own is stamped with. KAS attributes every reasoned pause to the user, so
- *  these are the pauses no person asked for. */
+ *  internal/agent/testdata/pause_reasons.json): the sign-in gate's two. KAS attributes every
+ *  reasoned pause to the user, so these are the pauses no person asked for. */
 const MAROTTE_PAUSE_REASONS: ReadonlySet<string> = new Set([
   "sign in to Kiro to continue; marotte resumes the run when you do",
   "the Kiro sign-in service is unreachable; marotte resumes the run when it answers",
-  "resume it to continue",
 ]);
 
 /** The reason marotte stamps beside `user` on a run control its REST API took from outside its
@@ -169,6 +170,16 @@ export function stopSentence(state: RunState): string | undefined {
   return attributedSentence(verb, state.stopInitiator ?? "", state.stopReason ?? "");
 }
 
+/** The alert of a paused run marotte stopped resuming on its own, or undefined for any other run. A
+ *  throttle is named, since it is the cause a person can wait out. */
+export function autoResumeStopSentence(state: RunState): string | undefined {
+  if (state.status !== "paused" || state.autoResumeStoppedAt === undefined) {
+    return undefined;
+  }
+  const throttled = /throttl/i.test(state.pauseDetail?.code ?? "");
+  return `marotte stopped resuming this run after repeated ${throttled ? "model throttling" : "pauses"}`;
+}
+
 /** KAS's attribution on each run's newest resume: `run_start` carries it and no read does. */
 const resumedBy = new Map<string, { initiator: string; reason: string }>();
 
@@ -222,6 +233,8 @@ interface RawRunInspect extends Omit<RunInspect, "state"> {
   /** marotte's own key beside KAS's reply: when each node's current attempt began in the run's log. */
   step_starts?: Record<string, RunStepStart>;
   read_position?: unknown;
+  /** marotte's own key beside KAS's reply: when marotte stopped resuming the run on its own. */
+  auto_resume_stopped_at?: unknown;
   /** marotte's own key beside KAS's reply: the run's display name, "" when nothing names it. */
   display_name?: unknown;
   /** marotte's own key beside KAS's reply: what may be done to the run, decided from this read's state. */
@@ -798,6 +811,9 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
         state.planUpdate = planUpdate;
       }
       state.readPosition = readPositionOf(d.read_position);
+      if (typeof d.auto_resume_stopped_at === "string" && d.auto_resume_stopped_at !== "") {
+        state.autoResumeStoppedAt = d.auto_resume_stopped_at;
+      }
       if (typeof d.display_name === "string" && d.display_name !== "") {
         state.displayName = d.display_name;
       }

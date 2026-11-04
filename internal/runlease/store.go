@@ -168,6 +168,18 @@ func (s *Store) SetFirstAbsentAt(ctx context.Context, workflowID string, at time
 	})
 }
 
+// SetAutoResumeStoppedAt records when marotte stopped resuming a run on its own, or clears it with the zero time;
+// ErrNotFound when no lease holds the run.
+func (s *Store) SetAutoResumeStoppedAt(ctx context.Context, workflowID string, at time.Time) error {
+	return s.update(ctx, workflowID, func(l *Lease) bool {
+		if l.AutoResumeStoppedAt.Equal(at) {
+			return false
+		}
+		l.AutoResumeStoppedAt = at
+		return true
+	})
+}
+
 // SetKeepChats adds chats to a lease's KeepChats, sorted; it never removes one. ErrNotFound when no lease holds the
 // run.
 func (s *Store) SetKeepChats(ctx context.Context, workflowID string, add []string) error {
