@@ -83,9 +83,10 @@ func newEngineRigAt(
 }
 
 // newRigOver is a runtime over rig's engine, a real chat store scanned through scan, and the tab store st.
-func newRigOver(t *testing.T, rig *deleteRig, scan func(context.Context, chat.OwnerScan) chat.OwnerScan, st *tabs.Store) (*Runtime, *deleteRig) {
+func newRigOver(t *testing.T, rig *deleteRig, scan func(context.Context, chat.OwnerScan) chat.OwnerScan, st *tabs.Store) *Runtime {
 	t.Helper()
-	return newRigAt(t, testReaperWorkDir, rig, scan, st)
+	h, _ := newRigAt(t, testReaperWorkDir, rig, scan, st)
+	return h
 }
 
 // newRigAt is newRigOver with workDir as the workspace, with opts.
@@ -292,7 +293,7 @@ func newPurgedRunRig(
 	if kas.retried == retryRefused {
 		rig.refuseAfterCall = map[string]*marotte.RPCError{methodKiroWorkflowRetry: kas.refusal}
 	}
-	h, _ = newRigOver(t, rig, func(ctx context.Context, s chat.OwnerScan) chat.OwnerScan {
+	h = newRigOver(t, rig, func(ctx context.Context, s chat.OwnerScan) chat.OwnerScan {
 		if during != nil && armed.Load() && ownerScan(scans.Add(1)) == at {
 			during(ctx, h)
 		}
