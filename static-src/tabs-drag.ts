@@ -165,7 +165,6 @@ class TabDragController {
   private releaseViewport: (() => void) | null = null;
   private reorderCallback: ((order: string[]) => readonly string[] | null) | null = null;
   private reprojectCallback: (() => void) | null = null;
-  private tapCallback: ((tabID: string) => void) | null = null;
   private pending: PendingPress | null = null;
 
   // Bound handlers for add/removeEventListener identity.
@@ -265,7 +264,7 @@ class TabDragController {
   };
 
   /** Whether a drag interaction just completed — used to suppress the
-   *  pointerup click that would otherwise fire on the tab element. */
+   *  click that would otherwise fire on the tab element. */
   isDragHandled(): boolean {
     return this.dragHandled;
   }
@@ -281,10 +280,6 @@ class TabDragController {
 
   setReprojectCallback(fn: () => void): void {
     this.reprojectCallback = fn;
-  }
-
-  setTapCallback(fn: (tabID: string) => void): void {
-    this.tapCallback = fn;
   }
 
   attachDrag(tabEl: HTMLElement): void {
@@ -693,14 +688,9 @@ class TabDragController {
   private onRelease(e: PointerEvent): void {
     this.endRestNet();
     if (!this.dragMoved) {
-      const row = this.dragEl;
-      // Under the list's capture the release targets the list; it reaches the row
-      // only when the capture never took, and then the row's own listener answers.
-      const reachesRow = e.target instanceof Node && row?.contains(e.target) === true;
+      // Never activate here: that closes the phone drawer before the release's click, which then lands
+      // on what the drawer uncovered. The click still reaches the row, whose own listener activates it.
       this.endDrag("tap");
-      if (row !== null && !reachesRow) {
-        this.tapCallback?.(row.dataset["tabId"] ?? "");
-      }
       return;
     }
     const box = this.dragList?.getBoundingClientRect();
@@ -777,7 +767,7 @@ class TabDragController {
 const instance = new TabDragController();
 
 /** Whether a drag interaction just completed — used to suppress the
- *  pointerup click that would otherwise fire on the tab element. */
+ *  click that would otherwise fire on the tab element. */
 export function isDragHandled(): boolean {
   return instance.isDragHandled();
 }
@@ -798,11 +788,6 @@ export function setReorderCallback(fn: (order: string[]) => readonly string[] | 
  *  end of a drag calls it, so a cancel and an unchanged drop both put the rows back. */
 export function setReprojectCallback(fn: () => void): void {
   instance.setReprojectCallback(fn);
-}
-
-/** Set the callback that activates a tab when a lifted hold is released as a tap. */
-export function setTapCallback(fn: (tabID: string) => void): void {
-  instance.setTapCallback(fn);
 }
 
 /** Attach drag-to-reorder behavior to a tab element. */
