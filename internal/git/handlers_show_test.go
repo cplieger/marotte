@@ -33,7 +33,7 @@ func TestHandleShow_RefusesWhatTheDiffCannotShow(t *testing.T) {
 			dir := t.TempDir()
 			initFixtureRepo(t, dir)
 			writeCommit(t, dir, "blob.dat", tc.content, "add blob")
-			rec := showReq(t, NewHandler(dir, WithShowMax(2<<20)), "blob.dat")
+			rec := showReq(t, newTestHandler(t, dir, WithShowMax(2<<20)), "blob.dat")
 			var got struct {
 				Content *string         `json:"content"`
 				Error   string          `json:"error"`
@@ -56,7 +56,7 @@ func TestHandleShow_ServesABlobAtTheCap(t *testing.T) {
 	dir := t.TempDir()
 	initFixtureRepo(t, dir)
 	writeCommit(t, dir, "full.txt", strings.Repeat("y", 4096), "add")
-	rec := showReq(t, NewHandler(dir, WithShowMax(4096)), "full.txt")
+	rec := showReq(t, newTestHandler(t, dir, WithShowMax(4096)), "full.txt")
 	var got ShowResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)

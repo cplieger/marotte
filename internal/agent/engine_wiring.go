@@ -211,7 +211,7 @@ func (rt *Runtime) onEngineReady(uint64) {
 	// A spawn moves the vault's Answerability silently (signin.Vault.EngineSpawned).
 	rt.runs.gateMoved()
 	// Off the supervisor: it must be back on the engine's end while the init's observer pass runs.
-	rt.lifecycle.goUnlessDraining(func() { rt.EnsureCodeIntelligence(rt.lifecycle.shutdownCtx) })
+	rt.KickCodeIntelligence()
 }
 
 // onEngineEnded runs once generation gen ended and was reaped: its unsettled mutations go (their writes meet a dead

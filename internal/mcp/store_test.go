@@ -31,6 +31,25 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
+// newCallbackStore is a store firing onChange, with Shutdown registered as cleanup so no callback
+// outlives the test.
+func newCallbackStore(t *testing.T, onChange func(context.Context)) *Store {
+	t.Helper()
+	dir := t.TempDir()
+	s, err := New(t.Context(), dir, onChange, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.Shutdown(ctx); err != nil {
+			t.Errorf("Shutdown: %v", err)
+		}
+	})
+	return s
+}
+
 func TestCreate_ValidStdio(t *testing.T) {
 	s := newTestStore(t)
 	got, err := s.Create(t.Context(), &Server{
@@ -269,12 +288,8 @@ func TestPersist_FileIs0600(t *testing.T) {
 }
 
 func TestOnChangeFires(t *testing.T) {
-	dir := t.TempDir()
 	var calls atomic.Int32
-	s, err := New(t.Context(), dir, func(context.Context) { calls.Add(1) }, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newCallbackStore(t, func(context.Context) { calls.Add(1) })
 	_, _ = s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"})
 	waitForCounter(t, &calls, 1)
 }
@@ -479,12 +494,8 @@ func waitForCounter(t *testing.T, c *atomic.Int32, want int32) {
 // SetOnChange replaces the callback so the later-wired consumer actually sees
 // mutations, which the circular-init ordering with PrewarmRunner depends on.
 func TestSetOnChange_ReplacesCallback(t *testing.T) {
-	dir := t.TempDir()
 	var firstCalls, secondCalls atomic.Int32
-	s, err := New(t.Context(), dir, func(context.Context) { firstCalls.Add(1) }, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newCallbackStore(t, func(context.Context) { firstCalls.Add(1) })
 
 	// First mutation fires the original callback.
 	if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"}); err != nil {
@@ -528,6 +539,54 @@ func TestSetOnChange_NilIsNoop(t *testing.T) {
 		synctest.Wait()
 		if got := calls.Load(); got != 0 {
 			t.Errorf("SetOnChange(nil) did not detach callback: calls = %d, want 0", got)
+		}
+	})
+}
+
+// Shutdown ends the callback in flight through its context and returns only once it has, and a
+// mutation after Shutdown fires no callback.
+func TestShutdown_WaitsForACallbackInFlightAndFiresNoneAfter(t *testing.T) {
+	dir := t.TempDir()
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		var cancelled atomic.Bool
+		release := make(chan struct{})
+		s, err := New(t.Context(), dir, func(ctx context.Context) {
+			calls.Add(1)
+			<-ctx.Done()
+			cancelled.Store(true)
+			<-release
+		}, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"}); err != nil {
+			t.Fatalf("Create a: %v", err)
+		}
+		synctest.Wait()
+
+		shutdown := make(chan error, 1)
+		go func() { shutdown <- s.Shutdown(t.Context()) }()
+		synctest.Wait()
+		if !cancelled.Load() {
+			t.Error("the callback's context was not cancelled by Shutdown")
+		}
+		select {
+		case err := <-shutdown:
+			t.Fatalf("Shutdown returned (%v) while the callback was still running", err)
+		default:
+		}
+		close(release)
+		if err := <-shutdown; err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+
+		if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "b", Command: "bash"}); err != nil {
+			t.Fatalf("Create b: %v", err)
+		}
+		synctest.Wait()
+		if got := calls.Load(); got != 1 {
+			t.Errorf("calls = %d, want 1: a mutation after Shutdown fired its callback", got)
 		}
 	})
 }

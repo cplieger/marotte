@@ -1650,8 +1650,8 @@ describe("run view structure", () => {
     });
     const names = [...body.querySelectorAll(".ev-tl-name")].map((n) => n.textContent);
     expect(names).toEqual(["a", "b"]);
-    // Overlapping steps overlap on screen, which is the whole point: `b` starts a third of the way
-    // into the window rather than after `a`.
+    // Overlapping steps overlap on screen, which is the whole point: `b` starts a quarter of the
+    // way into the window rather than after `a`.
     const bar = body.querySelector<HTMLElement>('.ev-tl-lane[data-path$=":b"] .ev-tl-bar');
     expect(parseFloat(bar?.style.insetInlineStart ?? "0")).toBeGreaterThan(0);
     expect(parseFloat(bar?.style.insetInlineStart ?? "100")).toBeLessThan(50);

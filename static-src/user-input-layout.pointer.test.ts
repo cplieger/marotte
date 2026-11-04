@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { page as browser, userEvent } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { until } from "./__test-helpers__/until.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import {
   _resetForTest as resetDocks,
@@ -189,6 +190,32 @@ function mountRun(height: number): { dock: HTMLElement; bar: HTMLElement; compos
 
 async function settle(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+}
+
+/** The frame's running animations that end: an infinite one (a spinner) never settles. */
+function settling(): Animation[] {
+  return frame!
+    .getAnimations({ subtree: true })
+    .filter(
+      (a) => a.playState === "running" && Number.isFinite(a.effect?.getComputedTiming().endTime),
+    );
+}
+
+/** The tray at rest: its phase over and every animation in the frame finished. The phase ends on a
+ *  timer set at the swap, but the tray's height transition and the card's keyframes start with the
+ *  next frame, which a loaded host delivers late, so the phase can clear while the box still grows. */
+async function traySettled(tray: HTMLElement): Promise<void> {
+  await expect
+    .poll(() => tray.dataset["dockPhase"], { message: "the tray settled" })
+    .toBeUndefined();
+  await until(() => settling().length === 0, "the frame's animations finished", {
+    detail: () =>
+      settling()
+        .map((a) =>
+          a instanceof CSSTransition ? a.transitionProperty : (a as CSSAnimation).animationName,
+        )
+        .join(", "),
+  });
 }
 
 /** `el` between `top` and `bottom` on the block axis, as a band bounds it. */
@@ -460,9 +487,7 @@ describe("the agent-question card", () => {
             });
             await settle();
             const card = dock.querySelector<HTMLElement>(":scope > .dock-user-input")!;
-            await expect
-              .poll(() => dock.dataset["dockPhase"], { message: "the tray settled" })
-              .toBeUndefined();
+            await traySettled(dock);
             // A raised keyboard means a focused field: here the card's own answer box, the state the
             // reader is in while answering. After the frames that publish the unshrunk height: what
             // `dock-ask.ts` writes once the keyboard shrinks the visual viewport and leaves the layout
@@ -783,9 +808,7 @@ describe("a waiting question and the composer", () => {
             });
             // The tray's entering phase pins its height until it settles.
             const tray = card.parentElement!;
-            await expect
-              .poll(() => tray.dataset["dockPhase"], { message: "the tray settled" })
-              .toBeUndefined();
+            await traySettled(tray);
             const answer = card.querySelector<HTMLElement>(".dock-ask-text")!;
             if (typing === "card") {
               answer.focus();
@@ -886,9 +909,7 @@ describe("a waiting question and the composer", () => {
       draft.focus();
       paintViewportHeight(vv, 1);
       const card = await pushQuestion("chat");
-      await expect
-        .poll(() => card.parentElement!.dataset["dockPhase"], { message: "the tray settled" })
-        .toBeUndefined();
+      await traySettled(card.parentElement!);
       pushDecision({
         kind: "user_input",
         chatID: "c1",
@@ -926,9 +947,7 @@ describe("a waiting question and the composer", () => {
           question: LOOP_QUESTION,
           options: [...AT_THE_CAP],
         });
-        await expect
-          .poll(() => card.parentElement!.dataset["dockPhase"], { message: "the tray settled" })
-          .toBeUndefined();
+        await traySettled(card.parentElement!);
         if (typing === "card") {
           card.querySelector<HTMLElement>(".dock-ask-text")!.focus();
         }
@@ -966,9 +985,7 @@ describe("a waiting question and the composer", () => {
     await mountDocked("chat", 844, 390);
     paintViewportHeight(170, 1);
     const card = await pushQuestion("chat");
-    await expect
-      .poll(() => card.parentElement!.dataset["dockPhase"], { message: "the tray settled" })
-      .toBeUndefined();
+    await traySettled(card.parentElement!);
     expect(card.scrollHeight, "a card that scrolls").toBeGreaterThan(card.clientHeight + 1);
     card.scrollTop = 0;
     paintViewportHeight(170, 1);
@@ -989,9 +1006,7 @@ describe("a waiting question and the composer", () => {
       submit: () => Promise.resolve("answered"),
     });
     const tray = first.parentElement!;
-    await expect
-      .poll(() => tray.dataset["dockPhase"], { message: "the tray settled" })
-      .toBeUndefined();
+    await traySettled(tray);
     expect(first.scrollHeight, "a card that scrolls").toBeGreaterThan(first.clientHeight + 1);
     first.scrollTop = 0;
     await settle();
@@ -999,9 +1014,7 @@ describe("a waiting question and the composer", () => {
     collapseSettledDecision("c1", "user_input", 1, "user");
     await settle();
     expect(tray.dataset["dockPhase"], "the next question advancing in").toBe("advancing");
-    await expect
-      .poll(() => tray.dataset["dockPhase"], { message: "the tray settled" })
-      .toBeUndefined();
+    await traySettled(tray);
     const second = tray.querySelector<HTMLElement>(":scope > .dock-user-input")!;
     expect(second, "the next question's card").not.toBe(first);
     expect(second.scrollHeight, "a card that scrolls").toBeGreaterThan(second.clientHeight + 1);
@@ -1016,9 +1029,7 @@ describe("a waiting question and the composer", () => {
       question: LOOP_QUESTION,
       options: [],
     });
-    await expect
-      .poll(() => card.parentElement!.dataset["dockPhase"], { message: "the tray settled" })
-      .toBeUndefined();
+    await traySettled(card.parentElement!);
     draft.focus();
     paintViewportHeight(261, 1);
     await settle();
@@ -1044,9 +1055,7 @@ describe("a waiting question and the composer", () => {
     view.classList.add("hidden");
     const card = await pushQuestion("chat");
     const tray = card.parentElement!;
-    await expect
-      .poll(() => tray.dataset["dockPhase"], { message: "the tray settled" })
-      .toBeUndefined();
+    await traySettled(tray);
     view.classList.remove("hidden");
     await expect
       .poll(() => Number.parseFloat(tray.style.getPropertyValue("--dock-floor")), {
@@ -1065,9 +1074,7 @@ describe("a waiting question and the composer", () => {
       draft.focus();
       paintViewportHeight(200, 1);
       const card = await pushQuestion(host);
-      await expect
-        .poll(() => card.parentElement!.dataset["dockPhase"], { message: "the tray settled" })
-        .toBeUndefined();
+      await traySettled(card.parentElement!);
       paintViewportHeight(200, 1);
       await settle();
       const box = draft.closest(".prompt-box")!.getBoundingClientRect();
@@ -1089,9 +1096,7 @@ describe("a waiting question and the composer", () => {
       question: LOOP_QUESTION,
       options: [...DESCRIBED_OPTIONS],
     });
-    await expect
-      .poll(() => card.parentElement!.dataset["dockPhase"], { message: "the tray settled" })
-      .toBeUndefined();
+    await traySettled(card.parentElement!);
     paintViewportHeight(335, 1);
     await settle();
     const row = (): number => stack.firstElementChild!.getBoundingClientRect().height;
@@ -1112,9 +1117,7 @@ describe("a waiting question and the composer", () => {
     draft.focus();
     paintViewportHeight(261, 1);
     const card = await pushQuestion("chat");
-    await expect
-      .poll(() => card.parentElement!.dataset["dockPhase"], { message: "the tray settled" })
-      .toBeUndefined();
+    await traySettled(card.parentElement!);
     paintViewportHeight(261, 1);
     await settle();
     inOneBand(card, 261);
@@ -1211,9 +1214,7 @@ describe("a press on a waiting question's controls", () => {
           });
           await settle();
           const card = dock.querySelector<HTMLElement>(":scope > .dock-user-input")!;
-          await expect
-            .poll(() => dock.dataset["dockPhase"], { message: "the tray settled" })
-            .toBeUndefined();
+          await traySettled(dock);
           const answer = card.querySelector<HTMLTextAreaElement>(".dock-ask-text")!;
           answer.value = ANSWER;
           if (typing === "card") {

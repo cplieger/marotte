@@ -146,22 +146,31 @@ func (*Handler) coldWait(snap *statusSnapshot, doFetch bool) time.Duration {
 }
 
 // refreshStatus starts a scan for key unless one is in flight and returns the channel that closes
-// when it publishes. `only` names the repositories to scan (nil = all); a scoped result is merged.
-// The scan is detached from the request.
+// when it publishes, nil once Shutdown has begun. `only` names the repositories to scan (nil =
+// all); a scoped result is merged. The scan keeps the request's values but not its cancellation,
+// and Shutdown ends it.
 func (h *Handler) refreshStatus(r *http.Request, key string, doFetch bool, only map[string]struct{}) chan struct{} {
+	h.scanMu.Lock()
+	defer h.scanMu.Unlock()
+	// Checked before claim: a claim this call then could not run would hold the slot forever.
+	if h.lifetime.Err() != nil {
+		return nil
+	}
 	done, started := h.statusCache.claim(key, only)
 	if !started {
 		return done
 	}
 	parent := context.WithoutCancel(r.Context())
-	go func() {
+	h.scans.Go(func() {
 		for scope, run := only, true; run; {
 			ctx, cancel := context.WithTimeout(parent, statusScanBudget)
+			stop := context.AfterFunc(h.lifetime, cancel)
 			rows := h.scanRepos(ctx, doFetch, scope)
+			stop()
 			cancel()
 			scope, run = h.statusCache.finish(key, rows)
 		}
-	}()
+	})
 	return done
 }
 

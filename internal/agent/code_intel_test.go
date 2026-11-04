@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestEnsureCodeIntelligence_Guards pins the three no-op paths; reaching an observer pass
@@ -86,5 +87,40 @@ func TestEnsureCodeIntelligence_WiredAndUnconfiguredRunsTheInit(t *testing.T) {
 	}
 	if !strings.Contains(out, `"detail":"started go, typescript"`) {
 		t.Errorf("the init line drops KAS's own report of what it started: %s", out)
+	}
+}
+
+// A kicked activation is the runtime's: Shutdown waits for one in flight, and a
+// kick once Shutdown has run starts nothing.
+func TestKickCodeIntelligence_ShutdownWaitsAndRefusesLaterKicks(t *testing.T) {
+	h, _, _ := newTestHub()
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	h.SetCodeIntelligence(filepath.Join(t.TempDir(), "lsp.json"), func() bool {
+		entered <- struct{}{}
+		<-release
+		return false
+	})
+
+	h.KickCodeIntelligence()
+	<-entered
+	stopped := make(chan struct{})
+	go func() {
+		shutdownHub(t, h)
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("Shutdown returned while a kicked activation was still in its gate")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	<-stopped
+
+	h.KickCodeIntelligence()
+	select {
+	case <-entered:
+		t.Error("a kick after Shutdown started an activation")
+	case <-time.After(200 * time.Millisecond):
 	}
 }

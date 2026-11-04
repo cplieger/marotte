@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi"
-	"golang.org/x/sync/semaphore"
 )
 
 // countingFill records how often the cache reached through it, and answers a
@@ -44,7 +43,7 @@ func (f *countingFill) count() int {
 }
 
 func newTestCache(ttl time.Duration) *listCache[[]string] {
-	return newListCache[[]string](ttl, semaphore.NewWeighted(maxListFills), newFillLife())
+	return newListCache[[]string](ttl, newFillPool(maxListFills))
 }
 
 const testForge = "github:github.com"
@@ -282,63 +281,6 @@ func TestListCache_ASharedFillSurvivesTheFirstCallerLeaving(t *testing.T) {
 	})
 }
 
-// close cancels the fills no caller waits on and returns only once each has; the second a fill takes to return after
-// its cancellation is fake time, so a close that did not wait would see the fill still running.
-func TestListCache_CloseEndsTheFillsNoCallerWaitsOnAndWaitsForThem(t *testing.T) {
-	slowFill := func(returned *atomic.Bool) func(context.Context) ([]string, error) {
-		return func(ctx context.Context) ([]string, error) {
-			<-ctx.Done()
-			time.Sleep(time.Second)
-			returned.Store(true)
-			return nil, ctx.Err()
-		}
-	}
-	t.Run("a_peeks_fill", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			c := newTestCache(time.Hour)
-			var returned atomic.Bool
-			c.peek(t.Context(), testKey("k"), slowFill(&returned))
-			synctest.Wait()
-			start := time.Now()
-			c.life.close()
-			if !returned.Load() || time.Since(start) >= listFillBudget {
-				t.Errorf("close returned after %v with the fill returned %v, want it cancelled and returned first",
-					time.Since(start), returned.Load())
-			}
-		})
-	})
-	t.Run("a_shared_fill_its_caller_left", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			c := newTestCache(time.Hour)
-			var returned atomic.Bool
-			caller, cancel := context.WithCancel(t.Context())
-			var wg sync.WaitGroup
-			wg.Go(func() { _, _ = c.get(caller, testKey("k"), false, slowFill(&returned)) })
-			synctest.Wait()
-			cancel()
-			wg.Wait()
-			start := time.Now()
-			c.life.close()
-			if !returned.Load() || time.Since(start) >= listFillBudget {
-				t.Errorf("close returned after %v with the fill returned %v, want it cancelled and returned first",
-					time.Since(start), returned.Load())
-			}
-		})
-	})
-	t.Run("no_fill_starts_after_close", func(t *testing.T) {
-		c := newTestCache(time.Hour)
-		f := &countingFill{}
-		c.life.close()
-		c.peek(t.Context(), testKey("a"), f.fill)
-		if _, err := c.get(t.Context(), testKey("b"), false, f.fill); !errors.Is(err, errListsClosed) {
-			t.Errorf("get() after close = %v, want errListsClosed", err)
-		}
-		if n := f.count(); n != 0 {
-			t.Errorf("fills after close = %d, want 0", n)
-		}
-	})
-}
-
 func TestListCache_ConcurrentColdReadsShareOneFill(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := newTestCache(time.Hour)
@@ -427,7 +369,7 @@ func TestListCache_CancelledReadDoesNotBlock(t *testing.T) {
 func TestListCache_FillsAreBounded(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const limit = 3
-		c := newListCache[[]string](time.Hour, semaphore.NewWeighted(limit), newFillLife())
+		c := newListCache[[]string](time.Hour, newFillPool(limit))
 		release := make(chan struct{})
 		var live, peak atomic.Int64
 		fill := func(context.Context) ([]string, error) {

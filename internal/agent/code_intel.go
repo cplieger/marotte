@@ -30,6 +30,12 @@ func (rt *Runtime) SetCodeIntelligence(lspConfigPath string, gate func() bool) {
 	rt.codeIntel.Store(&codeIntelWiring{path: lspConfigPath, gate: gate})
 }
 
+// KickCodeIntelligence runs EnsureCodeIntelligence behind the caller on the runtime's lifetime,
+// which Shutdown cancels and waits for; once Shutdown has begun it starts nothing.
+func (rt *Runtime) KickCodeIntelligence() {
+	rt.lifecycle.goUnlessDraining(func() { rt.EnsureCodeIntelligence(rt.lifecycle.shutdownCtx) })
+}
+
 // EnsureCodeIntelligence initializes code intelligence when needed. Safe from any goroutine;
 // concurrent callers coalesce, and the guard re-arms on failure. A cancelled ctx is a no-op.
 func (rt *Runtime) EnsureCodeIntelligence(ctx context.Context) {

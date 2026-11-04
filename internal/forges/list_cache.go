@@ -1,13 +1,14 @@
 // A read-through cache over the forge listing routes (repositories, pull requests, affordances),
 // first page only. No ticker: a fill happens only because a caller asked, and the one goroutine is
 // a fill no caller waits on (a get's revalidation of a stale value it served, or a peek's fill of a
-// missing or stale entry), bounded by listFillBudget and ended by Manager.Close.
+// missing or stale entry), bounded by listFillBudget and owned by the fillPool that close ends.
 
 package forges
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"strconv"
@@ -46,51 +47,90 @@ const maxListFills = 16
 // may leave while others still wait.
 const listFillBudget = 60 * time.Second
 
-// errListsClosed answers a cache fill asked for after Manager.Close.
-var errListsClosed = errors.New("forges: listings closed")
+// errFillsClosed is a fill asked for once its pool's close has begun.
+var errFillsClosed = errors.New("forges: the listing caches are shut down")
 
-// fillLife tracks the fills that run off their caller (a revalidation, a shared fill), so close can end them and wait.
-type fillLife struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	mu     sync.Mutex
-	closed bool
+// fillPool bounds and owns every cache fill: at most its slot count read a
+// forge at once, each on the starting caller's values but none of its
+// cancellation, and close cancels them all, refuses any later one and waits.
+type fillPool struct {
+	slots *semaphore.Weighted
+	// lifetime is the pool's own, ended only by close; mu orders each fill's
+	// wg.Add before close's cancel, so none is added once Wait may have begun.
+	lifetime context.Context
+	end      context.CancelFunc
+	wg       sync.WaitGroup
+	mu       sync.Mutex
 }
 
-func newFillLife() *fillLife {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &fillLife{ctx: ctx, cancel: cancel}
+func newFillPool(slots int64) *fillPool {
+	lifetime, end := context.WithCancel(context.Background())
+	return &fillPool{slots: semaphore.NewWeighted(slots), lifetime: lifetime, end: end}
 }
 
-// start counts one fill in, false once close began. Under mu, so no Add races close's Wait.
-func (l *fillLife) start() bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.closed {
+// hold counts one fill against close, false once close has begun.
+func (p *fillPool) hold() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.lifetime.Err() != nil {
 		return false
 	}
-	l.wg.Add(1)
+	p.wg.Add(1)
 	return true
 }
 
-// bound is a fill's context: parent's values without its cancellation, ended by listFillBudget or close.
-func (l *fillLife) bound(parent context.Context) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), listFillBudget)
-	stop := context.AfterFunc(l.ctx, cancel)
-	return ctx, func() {
-		stop()
-		cancel()
+// fill runs body on the caller's goroutine as one of the pool's fills,
+// answering errFillsClosed with body unrun once close has begun.
+func (p *fillPool) fill(ctx context.Context, body func(context.Context) error) error {
+	if !p.hold() {
+		return errFillsClosed
 	}
+	defer p.wg.Done()
+	return p.run(ctx, body)
 }
 
-// close cancels every fill in flight and returns once each has; no fill starts after it.
-func (l *fillLife) close() {
-	l.mu.Lock()
-	l.closed = true
-	l.mu.Unlock()
-	l.cancel()
-	l.wg.Wait()
+// detach runs body as fill does on a goroutine of its own, then after with
+// body's error, both before close's wait ends; false, starting nothing, once
+// close has begun.
+func (p *fillPool) detach(ctx context.Context, body func(context.Context) error, after func(error)) bool {
+	if !p.hold() {
+		return false
+	}
+	go func() {
+		defer p.wg.Done()
+		after(p.run(ctx, body))
+	}()
+	return true
+}
+
+func (p *fillPool) run(ctx context.Context, body func(context.Context) error) error {
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), listFillBudget)
+	defer cancel()
+	defer context.AfterFunc(p.lifetime, cancel)()
+	if err := p.slots.Acquire(fctx, 1); err != nil {
+		return err
+	}
+	defer p.slots.Release(1)
+	return body(fctx)
+}
+
+// close cancels every fill in flight, refuses any later one, and returns once
+// those in flight have, or with ctx's error when ctx ends first.
+func (p *fillPool) close(ctx context.Context) error {
+	p.mu.Lock()
+	p.end()
+	p.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("forges: listing fills still running: %w", ctx.Err())
+	}
 }
 
 // generation is what a fill started under: conn moves when the fill's
@@ -128,19 +168,17 @@ type listCache[T any] struct {
 	// stored, when set, is told each key a fill stored, with no lock held.
 	stored func(context.Context, cacheKey)
 	sf     singleflight.Group
-	fills  *semaphore.Weighted
-	life   *fillLife
+	fills  *fillPool
 	ttl    time.Duration
 	mu     sync.Mutex
 }
 
-func newListCache[T any](ttl time.Duration, fills *semaphore.Weighted, life *fillLife) *listCache[T] {
+func newListCache[T any](ttl time.Duration, fills *fillPool) *listCache[T] {
 	return &listCache[T]{
 		entries: make(map[cacheKey]*listEntry[T]),
 		gens:    make(map[string]uint64),
 		conns:   make(map[string]uint64),
 		fills:   fills,
-		life:    life,
 		ttl:     ttl,
 	}
 }
@@ -204,18 +242,33 @@ func (c *listCache[T]) peek(ctx context.Context, key cacheKey, fill func(context
 }
 
 // reviveLocked starts e's revalidation when since is a TTL old, none is in
-// flight and the caches are not closed, reporting whether it did.
+// flight and the pool is open, reporting whether it did.
 func (c *listCache[T]) reviveLocked(ctx context.Context, key cacheKey, e *listEntry[T], since time.Time,
 	fill func(context.Context) (T, error),
 ) bool {
-	if e.busy || time.Since(since) < c.ttl || !c.life.start() {
+	if e.busy || time.Since(since) < c.ttl {
+		return false
+	}
+	gen := e.gen
+	revalidate := func(fctx context.Context) error {
+		val, err := fill(fctx)
+		if err != nil {
+			return err
+		}
+		c.store(fctx, key, gen, val)
+		return nil
+	}
+	// A failure is not reported: the next get retries, and so does the next peek (peek says when).
+	settled := func(err error) {
+		c.clearBusy(key)
+		if err != nil {
+			slog.Debug("forges: listing revalidation failed", "key", key, "error", err)
+		}
+	}
+	if !c.fills.detach(ctx, revalidate, settled) {
 		return false
 	}
 	e.busy = true
-	go func() {
-		defer c.life.wg.Done()
-		c.revalidate(ctx, key, e.gen, fill)
-	}()
 	return true
 }
 
@@ -232,21 +285,19 @@ func (c *listCache[T]) fillNow(ctx context.Context, key cacheKey,
 	flight := keyenc.Join(key.conn, key.account, key.scope, key.page,
 		strconv.FormatUint(gen.conn, 10), strconv.FormatUint(gen.repo, 10))
 	ch := c.sf.DoChan(flight, func() (any, error) {
-		if !c.life.start() {
-			return nil, errListsClosed
-		}
-		defer c.life.wg.Done()
-		fctx, cancel := c.life.bound(ctx)
-		defer cancel()
-		if err := c.fills.Acquire(fctx, 1); err != nil {
-			return nil, err
-		}
-		defer c.fills.Release(1)
-		val, err := fill(fctx)
+		var val T
+		err := c.fills.fill(ctx, func(fctx context.Context) error {
+			got, err := fill(fctx)
+			if err != nil {
+				return err
+			}
+			val = got
+			c.store(fctx, key, gen, val)
+			return nil
+		})
 		if err != nil {
 			return nil, err
 		}
-		c.store(fctx, key, gen, val)
 		return val, nil
 	})
 
@@ -263,27 +314,6 @@ func (c *listCache[T]) fillNow(ctx context.Context, key cacheKey,
 		// not discard the work for whoever else is waiting on it.
 		return zero, ctx.Err()
 	}
-}
-
-// revalidate fills key for a caller that did not wait (reviveLocked), on fillLife.bound's context,
-// since the caller's ctx may die first. A failure is not reported: the next get retries, and so
-// does the next peek (peek says when).
-func (c *listCache[T]) revalidate(ctx context.Context, key cacheKey, gen generation,
-	fill func(context.Context) (T, error),
-) {
-	defer c.clearBusy(key)
-	bg, cancel := c.life.bound(ctx)
-	defer cancel()
-	if err := c.fills.Acquire(bg, 1); err != nil {
-		return
-	}
-	defer c.fills.Release(1)
-	val, err := fill(bg)
-	if err != nil {
-		slog.Debug("forges: listing revalidation failed", "key", key, "error", err)
-		return
-	}
-	c.store(bg, key, gen, val)
 }
 
 // store records a successful fill, unless its generation moved while it was in
@@ -334,25 +364,24 @@ func (c *listCache[T]) evict(scope string) {
 	maps.DeleteFunc(c.entries, func(k cacheKey, _ *listEntry[T]) bool { return k.scope == scope })
 }
 
-// They share one fill semaphore because the thing being bounded is concurrent forge reads, which
+// They share one fill pool because the thing being bounded is concurrent forge reads, which
 // every listing makes.
 type listCaches struct {
 	repos       *listCache[RepoList]
 	prs         *listCache[PRList]
 	affordances *listCache[RepoAffordances]
 	caps        *listCache[Capabilities]
-	life        *fillLife
+	fills       *fillPool
 }
 
 func newListCaches() *listCaches {
-	fills := semaphore.NewWeighted(maxListFills)
-	life := newFillLife()
+	fills := newFillPool(maxListFills)
 	return &listCaches{
-		repos:       newListCache[RepoList](repoListTTL, fills, life),
-		prs:         newListCache[PRList](prListTTL, fills, life),
-		affordances: newListCache[RepoAffordances](affordancesTTL, fills, life),
-		caps:        newListCache[Capabilities](affordancesTTL, fills, life),
-		life:        life,
+		repos:       newListCache[RepoList](repoListTTL, fills),
+		prs:         newListCache[PRList](prListTTL, fills),
+		affordances: newListCache[RepoAffordances](affordancesTTL, fills),
+		caps:        newListCache[Capabilities](affordancesTTL, fills),
+		fills:       fills,
 	}
 }
 
