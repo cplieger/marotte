@@ -2,6 +2,8 @@
 // `disclosure-row-css.test.ts` owns it against real layout; the cut fade is measured here.
 import { describe, it, expect, afterEach } from "vitest";
 import { mountAppCSS } from "../__test-helpers__/css-rules.js";
+import { glyphMarkup, registryMarkup } from "../__test-helpers__/glyph.js";
+import { workflowIcon } from "../icons.js";
 import { buildTurnHeader, updateTurnHeader, type TurnHeaderData } from "./turn-header.js";
 import { initAttachmentPillCallbacks } from "../attachment-pill.js";
 import { wakeLine } from "../turn-wake.js";
@@ -351,6 +353,25 @@ describe("a woken turn's header", () => {
     expect(text(h).textContent).toBe(ERROR);
     expect(text(h).hidden).toBe(false);
     expect(text(h).contains(label(h))).toBe(false);
+  });
+
+  it("leads a step message's line with the workflow message glyph, and a finished run's with none", () => {
+    const icon = label(buildTurnHeader(wakeData(stepWake("error"))))?.querySelector(
+      ".turn-wake-icon",
+    );
+    expect(icon?.getAttribute("aria-hidden")).toBe("true");
+    expect(glyphMarkup(icon?.firstElementChild)).toBe(registryMarkup(workflowIcon("message")));
+
+    const finished = buildTurnHeader(
+      wakeData({
+        reason: "run_finished",
+        run: RUN,
+        run_name: "publish-docs",
+        run_status: "completed",
+      }),
+    );
+    expect(label(finished)).not.toBeNull();
+    expect(label(finished)?.querySelector(".turn-wake-icon")).toBeNull();
   });
 
   it("opens the run from its name, and the name is plain text with no opener", () => {

@@ -224,7 +224,7 @@ export const ICON_SAVE_FAIL = svg(
 /** The workflow tree: three nodes top to bottom, distinct from the chat and subagent glyphs. */
 const PATH_TREE =
   '<rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/>';
-/** A workflow run, alone: the run card, the run tab, History, a run's result note and "Open run". */
+/** A workflow run: the bare tree. */
 export const ICON_TAB_RUN = svg("ui", PATH_TREE);
 
 /** The workflow family's actions. A badge names the action, never a status: tints and outcome marks carry that. */
@@ -292,7 +292,7 @@ const ICON_TOOL_FETCH = svg(
   "ui",
   '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 010 20"/><path d="M12 2a15 15 0 000 20"/>',
 );
-/** A model, mode or routing switch: the `switch_mode` card and the transcript's switch rows. */
+/** A model, mode or routing switch. */
 export const ICON_TOOL_SWITCH = svg(
   "ui",
   '<path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 01-4 4H3"/>',
@@ -313,10 +313,7 @@ const ICON_TOOL_MCP = svg(
   '<path d="M9 2v6"/><path d="M15 2v6"/><path d="M6 8h12v3a6 6 0 11-12 0z"/><path d="M12 17v5"/>',
 );
 
-/**
- * A fish-hook: the eye, the shank, the bend and the barbed point. Its own silhouette, clear of the wrench (an unknown
- * tool) and of every other tool glyph, because a hook card is the transcript's most frequent card.
- */
+/** A fish-hook: the eye, the shank, the bend and the barbed point. */
 const ICON_TOOL_HOOK = svg(
   "ui",
   '<g transform="translate(0.25 1)"><circle cx="15" cy="4" r="2.5"/><path d="M15 6.5V14a4.5 4.5 0 0 1-9 0V8.5l3 3"/></g>',

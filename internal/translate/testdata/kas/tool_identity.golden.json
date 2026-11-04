@@ -190,7 +190,7 @@
   {
     "name": "mailbox send_message via tool_call",
     "call": {
-      "id": "tc-mailbox-send_message-via-tool_call",
+      "id": "toolu_bdrk_011G26BVrkFJyEqN6EBV7uKE",
       "title": "@mailbox/send_message",
       "kind": "other",
       "status": "pending",
@@ -201,17 +201,8 @@
       "input": {
         "tool_id": "tool::mailbox::send_message",
         "arguments": {
-          "project_key": "text",
-          "sender_name": "text",
-          "sender_token": "text",
-          "to": [
-            "text"
-          ],
-          "thread_id": "text",
-          "topic": "text",
-          "importance": "text",
-          "subject": "text",
-          "body_md": "text"
+          "to": "ops",
+          "body": "pong"
         }
       },
       "ts": 0
@@ -220,23 +211,17 @@
   {
     "name": "mailbox fetch_inbox via tool_call",
     "call": {
-      "id": "tc-mailbox-fetch_inbox-via-tool_call",
+      "id": "toolu_bdrk_01CdH7hL4Xfoef5kMoz9NgD8",
       "title": "@mailbox/fetch_inbox",
       "kind": "other",
-      "status": "completed",
+      "status": "pending",
       "mcp": {
         "server_name": "mailbox",
         "tool_name": "fetch_inbox"
       },
       "input": {
         "tool_id": "tool::mailbox::fetch_inbox",
-        "arguments": {
-          "agent_name": "text",
-          "project_key": "text",
-          "unread_only": true,
-          "include_bodies": true,
-          "limit": 10
-        }
+        "arguments": {}
       },
       "ts": 0
     }
@@ -248,6 +233,7 @@
       "title": "Tool Call",
       "kind": "other",
       "status": "failed",
+      "tool_name": "inspect_workflow",
       "input": {
         "tool_id": "tool::inspect_workflow",
         "arguments": {
@@ -264,6 +250,10 @@
       "title": "Tool Call",
       "kind": "other",
       "status": "pending",
+      "mcp": {
+        "server_name": "mailbox",
+        "tool_name": "reply_message"
+      },
       "input": {
         "tool_id": "tool::mailbox::reply_message",
         "arguments": {

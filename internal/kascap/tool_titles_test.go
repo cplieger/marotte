@@ -30,6 +30,18 @@ func TestBuiltinToolTitlesMatchTheBundle(t *testing.T) {
 	})
 }
 
+// The pinned agent server folds each aliased id into the tool it names in its own tool-family
+// tables (`remote_web_search:"web_search"`).
+func TestBuiltinToolAliasesMatchTheBundle(t *testing.T) {
+	forEachBundle(t, func(t *testing.T, b bundle) {
+		for from, to := range translate.BuiltinToolAliases() {
+			if !strings.Contains(b.src, from+`:"`+to+`"`) {
+				t.Errorf("%s: no alias %s -> %s; fix builtinToolAliases in internal/translate/tool_identity.go", b.name, from, to)
+			}
+		}
+	})
+}
+
 // builtinToolName prefers `_meta.kiro.toolId`, and keeps a title table only because KAS stamps it on
 // so few tools. When the set grows, key on it and shrink builtinToolByTitle.
 func TestToolIDMetaIsStampedOnTheKnownTools(t *testing.T) {

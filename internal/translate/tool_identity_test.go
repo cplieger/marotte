@@ -106,8 +106,8 @@ func TestToolIdentity_RecordedFramesNameTheirTool(t *testing.T) {
 		"web_search via tool_call":           {tool: "web_search"},
 		"mailbox send_message via tool_call": {mcp: &marotte.MCPToolIdentity{ServerName: "mailbox", ToolName: "send_message"}},
 		"mailbox fetch_inbox via tool_call":  {mcp: &marotte.MCPToolIdentity{ServerName: "mailbox", ToolName: "fetch_inbox"}},
-		"unloaded built-in via tool_call":    {},
-		"unloaded MCP tool via tool_call":    {},
+		"unloaded built-in via tool_call":    {tool: "inspect_workflow"},
+		"unloaded MCP tool via tool_call":    {mcp: &marotte.MCPToolIdentity{ServerName: "mailbox", ToolName: "reply_message"}},
 		"tool_load":                          {tool: "tool_load"},
 		"save_workflow_definition":           {tool: "save_workflow_definition"},
 		"disclose_context skill":             {tool: "disclose_context"},
@@ -184,24 +184,98 @@ func TestMCPCallIdentity(t *testing.T) {
 
 func TestBuiltinToolName(t *testing.T) {
 	t.Parallel()
-	mcp := &marotte.MCPToolIdentity{ServerName: "probe", ToolName: "run_workflow"}
 	cases := map[string]struct {
-		toolID, title string
-		mcp           *marotte.MCPToolIdentity
-		want          string
+		toolID, title, want string
 	}{
-		"KAS's toolId wins":                {"disclose_context", "Load skill: x", nil, "disclose_context"},
-		"a known display title":            {"", "Update Workflow", nil, "update_workflow"},
-		"an unknown title names nothing":   {"", "Kiro Powers", nil, ""},
-		"a model-composed title":           {"", "Update the plan", nil, ""},
-		"an MCP call is never a built-in":  {"", "Run Workflow", mcp, ""},
-		"an inherited name is not a title": {"", "constructor", nil, ""},
+		"KAS's toolId wins":                {"disclose_context", "Load skill: x", "disclose_context"},
+		"a known display title":            {"", "Update Workflow", "update_workflow"},
+		"an unknown title names nothing":   {"", "Kiro Powers", ""},
+		"a model-composed title":           {"", "Update the plan", ""},
+		"an inherited name is not a title": {"", "constructor", ""},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := builtinToolName(tc.toolID, tc.title, tc.mcp); got != tc.want {
+			if got := builtinToolName(tc.toolID, tc.title); got != tc.want {
 				t.Errorf("builtinToolName(%q, %q) = %q, want %q", tc.toolID, tc.title, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEnvelopeIdentity(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		rawInput string
+		tool     string
+		mcp      *marotte.MCPToolIdentity
+	}{
+		"a built-in":                        {`{"tool_id":"tool::inspect_workflow","arguments":{}}`, "inspect_workflow", nil},
+		"the older built-in prefix":         {`{"tool_id":"builtin::update_workflow"}`, "update_workflow", nil},
+		"an aliased built-in":               {`{"tool_id":"tool::remote_web_search"}`, "web_search", nil},
+		"an undistinguished built-in":       {`{"tool_id":"tool::control_bash_process"}`, "", nil},
+		"an inherited name":                 {`{"tool_id":"tool::constructor"}`, "", nil},
+		"an inherited name, older prefix":   {`{"tool_id":"builtin::constructor"}`, "", nil},
+		"an MCP tool":                       {`{"tool_id":"tool::mailbox::reply_message"}`, "", &marotte.MCPToolIdentity{ServerName: "mailbox", ToolName: "reply_message"}},
+		"an MCP tool named like a built-in": {`{"tool_id":"tool::probe::run_workflow"}`, "", &marotte.MCPToolIdentity{ServerName: "probe", ToolName: "run_workflow"}},
+		"a Power member":                    {`{"tool_id":"power::pw::tool::srv::do_thing"}`, "", &marotte.MCPToolIdentity{ServerName: "srv", ToolName: "do_thing"}},
+		"a plugin member":                   {`{"tool_id":"plugin::pl::tool::srv::do_thing"}`, "", &marotte.MCPToolIdentity{ServerName: "srv", ToolName: "do_thing"}},
+		"a Power member naming a built-in":  {`{"tool_id":"power::pw::tool::run_workflow"}`, "", nil},
+		"a Power overview":                  {`{"tool_id":"power::pw::overview"}`, "", nil},
+		"a bare Power":                      {`{"tool_id":"power::pw"}`, "", nil},
+		"a skill":                           {`{"tool_id":"skill::release-notes"}`, "", nil},
+		"no server half":                    {`{"tool_id":"tool::::reply_message"}`, "", nil},
+		"no tool half":                      {`{"tool_id":"tool::mailbox::"}`, "", nil},
+		"tool_load's id is not read":        {`{"id":"tool::inspect_workflow"}`, "", nil},
+		"tool_load's tool_ids are not read": {`{"tool_ids":["tool::inspect_workflow"]}`, "", nil},
+		"a non-string id":                   {`{"tool_id":7}`, "", nil},
+		"no input":                          {``, "", nil},
+		"a null input":                      {`null`, "", nil},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tool, mcp := envelopeIdentity(json.RawMessage(tc.rawInput))
+			if tool != tc.tool {
+				t.Errorf("tool = %q, want %q", tool, tc.tool)
+			}
+			if !reflect.DeepEqual(mcp, tc.mcp) {
+				t.Errorf("mcp = %+v, want %+v", mcp, tc.mcp)
+			}
+		})
+	}
+}
+
+func TestCallIdentity_Precedence(t *testing.T) {
+	t.Parallel()
+	envelope := json.RawMessage(`{"tool_id":"tool::probe::echo_text"}`)
+	cases := map[string]struct {
+		tc   acpToolCallWire
+		tool string
+		mcp  *marotte.MCPToolIdentity
+	}{
+		"an MCP title is never a built-in": {
+			tc:  acpToolCallWire{Title: "@probe/run_workflow", Meta: acpKiroMeta{Kiro: acpKiroBlock{ServerName: "probe", ToolID: "run_workflow"}}},
+			mcp: &marotte.MCPToolIdentity{ServerName: "probe", ToolName: "run_workflow"},
+		},
+		"a known title outranks the envelope": {
+			tc:   acpToolCallWire{Title: "Inspect Workflow", RawInput: envelope},
+			tool: "inspect_workflow",
+		},
+		"the envelope names what the title does not": {
+			tc:  acpToolCallWire{Title: "Tool Call", RawInput: envelope},
+			mcp: &marotte.MCPToolIdentity{ServerName: "probe", ToolName: "echo_text"},
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tool, mcp := callIdentity(&c.tc)
+			if tool != c.tool {
+				t.Errorf("tool = %q, want %q", tool, c.tool)
+			}
+			if !reflect.DeepEqual(mcp, c.mcp) {
+				t.Errorf("mcp = %+v, want %+v", mcp, c.mcp)
 			}
 		})
 	}

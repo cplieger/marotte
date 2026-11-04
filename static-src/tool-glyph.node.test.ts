@@ -46,8 +46,8 @@ const WANT: Record<string, Want> = {
   "web_search via tool_call": { kind: "fetch" },
   "mailbox send_message via tool_call": { mcp: "mailbox" },
   "mailbox fetch_inbox via tool_call": { mcp: "mailbox" },
-  "unloaded built-in via tool_call": { kind: "other" },
-  "unloaded MCP tool via tool_call": { kind: "other" },
+  "unloaded built-in via tool_call": { workflow: "inspect" },
+  "unloaded MCP tool via tool_call": { mcp: "mailbox" },
   tool_load: { kind: "search" },
   "disclose_context skill": { book: true },
   "disclose_context steering": { book: true },
@@ -95,7 +95,7 @@ describe("every recorded tool call draws its ruled glyph", () => {
     });
   }
 
-  // marotte mints the hook card itself (translate's hookToolCall); this is a recorded one.
+  // marotte mints the hook card itself (translate's hookToolCall).
   it("a hook card draws the fish-hook, clear of the unknown-tool wrench", () => {
     const hook = drawn({
       id: "hook-op-1",

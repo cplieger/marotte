@@ -6,6 +6,8 @@ import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest
 import { buildSteerNote, setSteerNoteRunLabel, type SteerNoteData } from "./steer-note.js";
 import type { SteerReason } from "../types.js";
 import { mountAppCSS } from "../__test-helpers__/css-rules.js";
+import { glyphMarkup, registryMarkup } from "../__test-helpers__/glyph.js";
+import { ICON_TAB_RUN, workflowIcon } from "../icons.js";
 
 function note(over: Partial<SteerNoteData> = {}): HTMLElement {
   return buildSteerNote({ text: "actually target main", origin: "user", dropped: false, ...over });
@@ -188,6 +190,18 @@ describe("whose words the note holds", () => {
     expect(glyph(note({ origin: "step" }))).toBe(parent);
     expect(parent).not.toBe(glyph(note()));
     expect(parent).not.toBe(glyph(note({ origin: "agent" })));
+  });
+
+  it("draws the tree with the message badge for a workflow message, and the bare tree for a run's result", () => {
+    const drawn = (n: HTMLElement): string | null => {
+      const icon = n.querySelector(".tool-icon");
+      expect(icon?.getAttribute("aria-hidden")).toBe("true");
+      return glyphMarkup(icon?.firstElementChild);
+    };
+
+    expect(drawn(note({ origin: "parent" }))).toBe(registryMarkup(workflowIcon("message")));
+    expect(drawn(note({ origin: "step" }))).toBe(registryMarkup(workflowIcon("message")));
+    expect(drawn(note({ origin: "agent" }))).toBe(registryMarkup(ICON_TAB_RUN));
   });
 });
 
