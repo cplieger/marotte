@@ -328,9 +328,6 @@ func (rs *Runs) deleteCall(ctx context.Context, workflowID string, stop runStop)
 	defer release()
 	resp, err := h.Call(durable.Context(ctx), methodKiroWorkflowDelete, params)
 	err = runCallErr(resp, err)
-	if err == nil {
-		rs.router.forgetWorkflow(workflowID)
-	}
 	return verdictOf(err), err
 }
 
@@ -392,6 +389,7 @@ func (rs *Runs) readBack(ctx context.Context, workflowID string) readBackVerdict
 
 // teardownDeleted drops everything marotte keeps about a run KAS deleted.
 func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string) {
+	rs.router.forgetWorkflow(workflowID)
 	rs.deleteRunLog(ctx, workflowID)
 	rs.coord.closeBridge(ctx, runChatID(workflowID), marotte.TurnOutcomeInterrupted)
 	rs.forgetBounds(ctx, workflowID)
@@ -426,9 +424,16 @@ const clientRequestBudget = 30 * time.Second
 
 var errRetryRunDeleting = errors.New("this run is being deleted, so nothing was retried")
 
-// errRetrySlow reports a retry not handed off within retryTimeout; the REST layer answers 503.
+// errRetrySlow reports a retry whose run's session did not load within retryTimeout; the REST layer answers 503.
 var errRetrySlow = errors.New(
 	"the run's session did not load in time, so nothing was retried. Try again",
+)
+
+// errRetryUnanswered reports a retry verb unanswered within retryTimeout, which KAS may still apply; the REST layer
+// answers 504.
+var errRetryUnanswered = errors.New(
+	"the retry was sent but its answer did not arrive in time, so whether it took is unknown. " +
+		"Refresh the run to see where it is",
 )
 
 // errRetryOutcomeUnreadable reports a retry KAS accepted whose report was unreadable. The run may be
@@ -562,9 +567,10 @@ func (*Runs) retryResidencyErr(ctx context.Context, err error) error {
 	return fmt.Errorf("retry: load the run's session: %w", err)
 }
 
+// retryDeadlineErr labels a verb this call's deadline abandoned, keeping the context error retry's lease release reads.
 func (*Runs) retryDeadlineErr(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
-		return errRetrySlow
+		return fmt.Errorf("%w: %w", errRetryUnanswered, ctx.Err())
 	}
 	return err
 }

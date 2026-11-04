@@ -858,6 +858,9 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		slog.Info("run control unavailable: the run's launching session cannot be opened here",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
 		httpreply.Conflict(w, launchSessionUnavailableText)
+	case errors.Is(err, errRetryUnanswered):
+		slog.Warn("run control sent but its answer did not arrive in time", "verb", verb, "workflow_id", logsafe.Field(id))
+		webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout, httpreply.ErrorJSON(errRetryUnanswered.Error()))
 	case errors.Is(err, errRetrySlow):
 		slog.Warn("run control timed out loading the run's session", "verb", verb, "workflow_id", logsafe.Field(id))
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))

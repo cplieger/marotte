@@ -114,8 +114,10 @@ func (rt *Runtime) purgeCandidate(ctx context.Context, r *kasWorkflowRun, window
 	return nil
 }
 
-// deleteIfFinished deletes a run the list showed finished only when an inspect under the delete's hold, which no
-// retry passes, still finds it finished; any other answer keeps the run, logged with why, and deletes nothing.
+// deleteIfFinished deletes a run the list showed finished only when, under the delete's hold that marotte's retry is
+// admitted through, an inspect still finds it finished and no drive of it is unsettled (runMutations.drivePending).
+// A run KAS no longer finds is torn down here, since no later list names it; any other answer keeps the run, logged
+// with why. Another KAS client's retry does not pass the hold.
 func (rs *Runs) deleteIfFinished(ctx context.Context, workflowID string) (deleted bool, err error) {
 	d, err := rs.life.beginDelete(ctx, workflowID)
 	if err != nil {
@@ -124,13 +126,20 @@ func (rs *Runs) deleteIfFinished(ctx context.Context, workflowID string) (delete
 	status, err := rs.inspectStatus(ctx, workflowID)
 	switch {
 	case workflowNotFound(err):
-		slog.Info("run purge: KAS no longer knows a run it listed finished, deleting nothing", "workflow_id", workflowID)
+		slog.Info("run purge: KAS no longer knows a run it listed finished, dropping marotte's record of it",
+			"workflow_id", workflowID)
+		rs.teardownDeleted(ctx, workflowID)
+		d.settle()
+		return true, nil
 	case err != nil:
 		slog.Warn("run purge: could not re-read a finished run before deleting it, keeping it",
 			"workflow_id", workflowID, "error", err)
 	case !status.Terminal():
 		slog.Info("run purge: a run listed finished is no longer finished, keeping it",
 			"workflow_id", workflowID, "status", status)
+	case rs.mutations.drivePending(workflowID):
+		slog.Info("run purge: a write that drives a finished run is not settled yet, keeping it",
+			"workflow_id", workflowID)
 	default:
 		err = rs.deleteHeld(ctx, d, runStop{})
 		return err == nil, err

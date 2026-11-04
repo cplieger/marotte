@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -138,12 +139,14 @@ func inspectFromList(list json.RawMessage) func(string, map[string]any) (json.Ra
 }
 
 // purgedRun is one parentless run as KAS holds it: listed and inspected at its current status, which a retry sets
-// running before it answers.
+// running before it answers. An unanswered retry is taken but never answered, and the run reads failed until KAS
+// applies it.
 type purgedRun struct {
 	updated    time.Time
 	id, parent string
 	status     marotte.RunStatus
 	mu         sync.Mutex
+	unanswered bool
 }
 
 func (k *purgedRun) answer(method string, params map[string]any) (json.RawMessage, bool) {
@@ -158,6 +161,9 @@ func (k *purgedRun) answer(method string, params map[string]any) (json.RawMessag
 			return inspectOf(k.id, k.status), true
 		}
 	case methodKiroWorkflowRetry:
+		if k.unanswered {
+			return nil, false
+		}
 		k.status = marotte.RunStatusRunning
 		raw, _ := json.Marshal(map[string]any{"workflowId": k.id, "status": k.status, "retriedNodeIds": []string{"build"}})
 		return raw, true
@@ -188,6 +194,10 @@ func newPurgedRunRig(t *testing.T, kas *purgedRun, onCall func(string, map[strin
 				onCall(method, params)
 			}
 		},
+	}
+	if kas.unanswered {
+		// Never closed: the retry's own deadline abandons the call.
+		rig.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: make(chan struct{})}
 	}
 	h, _ = newRigOver(t, rig, func(ctx context.Context, s chat.OwnerScan) chat.OwnerScan {
 		if during != nil && armed.Load() && fired.CompareAndSwap(false, true) {
@@ -222,6 +232,35 @@ func TestPurgeParentlessRuns_KeepsARunARetryRevivedAfterTheList(t *testing.T) {
 	}
 	if got := deletedRunIDs(rig); len(got) != 0 {
 		t.Errorf("PurgeParentlessRuns deleted %v, want nothing: the retry made wf_1 live after the purge listed it finished", got)
+	}
+	if res.Purged != 0 || res.Kept != 1 {
+		t.Errorf("PurgeParentlessRuns = purged %d kept %d, want purged 0 kept 1", res.Purged, res.Kept)
+	}
+}
+
+// KAS may still apply a retry whose answer marotte stopped waiting for, so the purge keeps a run whose retry is
+// unsettled even though it still reads failed.
+func TestPurgeParentlessRuns_KeepsARunWhoseRetryAnswerWasAbandoned(t *testing.T) {
+	prev := retryTimeout
+	retryTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { retryTimeout = prev })
+	kas := &purgedRun{
+		id: "wf_1", parent: "sess_host", status: marotte.RunStatusFailed, updated: time.Now().Add(-time.Hour),
+		unanswered: true,
+	}
+	var retryErr error
+	h, rig, arm := newPurgedRunRig(t, kas, nil, func(ctx context.Context, h *Runtime) {
+		_, retryErr = h.runs.retry(ctx, "wf_1", failedAffordance(h, "wf_1"))
+	})
+	arm()
+
+	res := h.PurgeParentlessRuns(t.Context(), 0)
+
+	if got := rig.of(methodKiroWorkflowRetry); len(got) != 1 || retryErr == nil {
+		t.Fatalf("Setup: the retry sent %d verbs and answered %v, want one verb whose answer never came", len(got), retryErr)
+	}
+	if got := deletedRunIDs(rig); len(got) != 0 {
+		t.Errorf("PurgeParentlessRuns deleted %v, want nothing: KAS may still apply wf_1's abandoned retry", got)
 	}
 	if res.Purged != 0 || res.Kept != 1 {
 		t.Errorf("PurgeParentlessRuns = purged %d kept %d, want purged 0 kept 1", res.Purged, res.Kept)
@@ -273,7 +312,7 @@ func TestPurgeParentlessRuns_KeepsARunItsReReadDoesNotConfirmFinished(t *testing
 		"no state":              {inspect: json.RawMessage(`{"workflowId":"wf_1"}`)},
 		"another run's state":   {inspect: inspectOf("wf_2", marotte.RunStatusCompleted)},
 		"an unreadable inspect": {rpcErr: &marotte.RPCError{Code: -32603, Message: "engine draining"}},
-		"a run KAS cannot find": {rpcErr: workflowNotFoundErr()},
+		"an incomplete search":  {rpcErr: incompleteNotFoundErr()},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -296,6 +335,39 @@ func TestPurgeParentlessRuns_KeepsARunItsReReadDoesNotConfirmFinished(t *testing
 					res.Purged, res.Kept, res.Errors)
 			}
 		})
+	}
+}
+
+// A run KAS no longer finds on the re-read leaves nothing to delete there, and no later list names it, so the
+// purge drops marotte's own record of it there and then.
+func TestPurgeParentlessRuns_DropsTheRecordOfARunKASNoLongerFinds(t *testing.T) {
+	list := purgeRuns(t, purgeRow("wf_1", "completed", "sess_host", time.Now().Add(-30*24*time.Hour)))
+	h, rig := newEngineRig(t, map[string]json.RawMessage{methodKiroWorkflowList: list},
+		map[string]*marotte.RPCError{methodKiroWorkflowInspect: workflowNotFoundErr()}, nil)
+	h.runs.useLog(newRunLog(t.TempDir()))
+	dir, err := h.runs.log.dir("wf_1")
+	if err != nil {
+		t.Fatalf("Setup: run directory: %v", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	h.runs.router.seedSteps("wf_1", []string{"sess_step"})
+
+	res := h.PurgeParentlessRuns(t.Context(), 0)
+
+	if got := deletedRunIDs(rig); len(got) != 0 {
+		t.Errorf("PurgeParentlessRuns deleted %v in KAS, want nothing: KAS no longer has wf_1", got)
+	}
+	if res.Purged != 1 || res.Kept != 0 || res.Errors != 0 {
+		t.Errorf("PurgeParentlessRuns = purged %d kept %d errors %d, want purged 1 kept 0 errors 0",
+			res.Purged, res.Kept, res.Errors)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("wf_1's run directory after the purge: stat = %v, want it removed", err)
+	}
+	if wf, ok := h.runs.router.StepRun("sess_step"); ok {
+		t.Errorf("the router still routes sess_step to %q, want wf_1's rows dropped", wf)
 	}
 }
 

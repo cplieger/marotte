@@ -281,6 +281,32 @@ func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *te
 	}
 }
 
+// A retry verb KAS read but did not answer within retryTimeout may still run, so the reply says its outcome is
+// unknown rather than that nothing was retried, and the run keeps the lease the retry minted for its deadline.
+func TestHandleRetry_AVerbLeftUnansweredKeepsItsLeaseAndSaysTheOutcomeIsUnknown(t *testing.T) {
+	h, br := seedChatParentedRun(t, true, "final-verify")
+	br.setBlockOn(methodKiroWorkflowRetry, make(chan struct{}))
+	prev := retryTimeout
+	retryTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { retryTimeout = prev })
+
+	rec := httptest.NewRecorder()
+	h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+
+	if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
+		t.Fatalf("Setup: the verb never reached KAS; calls were %v", br.callLog())
+	}
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Errorf("an unanswered retry = %d, want %d: %s", rec.Code, http.StatusGatewayTimeout, rec.Body.String())
+	}
+	if body := rec.Body.String(); strings.Contains(body, "nothing was retried") || !strings.Contains(body, "Refresh") {
+		t.Errorf("the reply = %s, want it to say the outcome is unknown and send the reader to a refresh", body)
+	}
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Error("the unanswered retry released the lease it minted, so a retry KAS applies runs with no deadline")
+	}
+}
+
 // TestHandleRetry_RefusesWhatTheAffordanceRefuses pins that the gate is server-side.
 func TestHandleRetry_RefusesWhatTheAffordanceRefuses(t *testing.T) {
 	t.Run("a completed run is refused, naming its status", func(t *testing.T) {

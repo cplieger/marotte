@@ -64,8 +64,7 @@ func TestRunVerbs_AnswerNotFoundForAnUnknownRun(t *testing.T) {
 }
 
 func TestWorkflowNotFound_MatchesOnlyAConfirmedAbsence(t *testing.T) {
-	incomplete := workflowNotFoundErr()
-	incomplete.Data = json.RawMessage(`{"details":"x","errorType":"WorkflowNotFoundError","searchIncomplete":true}`)
+	incomplete := incompleteNotFoundErr()
 	cases := []struct {
 		err  error
 		name string

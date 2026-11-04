@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -575,6 +576,17 @@ func (b *fakeBridge) setCallResult(method string, res json.RawMessage) {
 }
 
 // setCallErr re-arms a transport failure and setCallRPCErr an in-band refusal, under the mutex.
+// setBlockOn holds every later call of method open until gate closes or the call's ctx ends, for a bridge already in use.
+func (b *fakeBridge) setBlockOn(method string, gate chan struct{}) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.blockOn = maps.Clone(b.blockOn)
+	if b.blockOn == nil {
+		b.blockOn = map[string]chan struct{}{}
+	}
+	b.blockOn[method] = gate
+}
+
 func (b *fakeBridge) setCallErr(method string, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

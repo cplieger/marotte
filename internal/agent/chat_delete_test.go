@@ -22,9 +22,11 @@ type deleteRig struct {
 	onCall func(method string, params map[string]any)
 	// answer, set before the rig's runtime is built, answers a call in place of results when it reports true.
 	answer func(method string, params map[string]any) (json.RawMessage, bool)
-	calls  []rigCall
-	opened []*fakeBridge
-	mu     sync.Mutex
+	// blockOn, set before the rig's runtime is built, holds every bridge's call of a method open (fakeBridge.blockOn).
+	blockOn map[string]chan struct{}
+	calls   []rigCall
+	opened  []*fakeBridge
+	mu      sync.Mutex
 }
 
 type rigCall struct {
@@ -38,6 +40,7 @@ func (r *deleteRig) factory() engineSession {
 	br := newFakeBridge()
 	br.callResults = r.results
 	br.callRPCErrs = r.rpcErrs
+	br.blockOn = r.blockOn
 	br.onCall = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		stopped := br.isClosed()
 		r.mu.Lock()
