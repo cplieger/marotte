@@ -100,7 +100,7 @@ func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "unknown recipe: "+req.Source)
 		return
 	default:
-		slog.Warn("schedule save: recipe list failed", "error", err, "detail", rpcerr.Details(err))
+		slog.Warn("schedule save: recipe list failed", "error", logsafe.Field(err.Error()), "detail", rpcerr.Details(err))
 		httpreply.InternalError(w, errors.New("recipe list unavailable"))
 		return
 	}
