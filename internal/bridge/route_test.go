@@ -41,7 +41,7 @@ func TestNewSession_SendsTheMintedOverrideAndRegistersTheLaneFirst(t *testing.T)
 func TestRoute_FramesDuringSessionNewReachTheNewSessionsLane(t *testing.T) {
 	k := newFakeKAS(t)
 	got := make(chan marotte.Notification, 4)
-	attach := func(s *Session) {
+	attach := func(s *Session) error {
 		go func() {
 			for n := range s.NotifCh() {
 				got <- n
@@ -50,6 +50,7 @@ func TestRoute_FramesDuringSessionNewReachTheNewSessionsLane(t *testing.T) {
 				}
 			}
 		}()
+		return nil
 	}
 	done := make(chan error, 1)
 	go func() {

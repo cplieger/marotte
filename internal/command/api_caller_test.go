@@ -200,7 +200,7 @@ func TestQueuePrompt_FromAnAPICallerIsAttributedThroughItsDrain(t *testing.T) {
 	roles.followups = f.queue
 	roles.lifecycle = f.join
 	roles.bridges = &admissionHost{hostDouble: newBenchDeps(), openErr: context.Canceled, rec: &callRecorder{}}
-	sendNextUserRow(t.Context(), roles, "c1", TurnFence{}, nil)
+	sendNextUserRow(t.Context(), roles, testReservation("c1", true), TurnFence{}, nil)
 	f.join.join()
 
 	prompts := opens.prompts()

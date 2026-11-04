@@ -20,12 +20,12 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		Bus:      r.Bus,
 		Teardown: r.Teardown,
 		CloseChat: func(ctx context.Context, chatID marotte.ChatID, stop *chat.Claim) {
-			closeChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID, stop)
+			closeChatTeardown(ctx, r.Perms, r.Stops, r.Teardown, chatID, stop)
 		},
 		// The delete grade, for a chat the close already erased: everything
 		// travels on the captured chain, since the record is gone by now.
-		DeleteChat: func(ctx context.Context, chatID marotte.ChatID, sessionChain []string) {
-			deleteChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID, sessionChain)
+		DeleteChat: func(ctx context.Context, chatID marotte.ChatID, sessionChain []string, cause RunStopCause) {
+			deleteChatTeardown(ctx, r.Perms, r.Stops, r.Teardown, chatID, sessionChain, cause)
 		},
 		// Fails toward KEEPING — deliberately not the purge's reader, whose
 		// 0-sentinel points the other way.
@@ -37,18 +37,10 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		SupervisedDefault: func(ctx context.Context) bool {
 			return supervisedDefaultSetting(ctx, r.Workspace.ConfigDir)
 		},
-		Runs:     r.Runs,
-		Sessions: r.Sessions,
-		Detach: func(ctx context.Context, fn func(context.Context)) {
-			// Before the answer, so Shutdown waits for the teardown.
-			r.Lifecycle.InflightAdd(1)
-			dctx, cancel := r.Lifecycle.TurnContext(ctx)
-			go func() {
-				defer r.Lifecycle.InflightDone()
-				defer cancel()
-				fn(dctx)
-			}()
-		},
+		Runs:      r.Runs,
+		Sessions:  r.Sessions,
+		Lifecycle: r.Lifecycle,
+		Impact:    r.Impact,
 	})
 
 	// The handlers take the narrower chatStore; only the coordinator writes keep facts.

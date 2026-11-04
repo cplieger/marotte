@@ -66,7 +66,7 @@ func newAckRig(t *testing.T) *ackRig {
 		chats: &boundChats{InMemoryChatStore: testsupport.NewInMemoryChatStore()},
 		runs:  &fakeRunOwner{bounds: map[string]uint64{}},
 	}
-	r.mem = newMembership(&membershipDeps{Chats: withKeep(r.chats), Tabs: st, Bus: r.bus, Runs: r.runs})
+	r.mem = newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: withKeep(r.chats), Tabs: st, Bus: r.bus, Runs: r.runs})
 	return r
 }
 
@@ -198,7 +198,7 @@ func TestAckTab_FailuresAnswerAndEmitNothing(t *testing.T) {
 		r := newAckRig(t)
 		id := r.chatTab(t)
 		r.chats.bound = 5
-		mem := newMembership(&membershipDeps{Chats: withKeep(r.chats), Tabs: failingSeen{r.st}, Bus: r.bus, Runs: r.runs})
+		mem := newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: withKeep(r.chats), Tabs: failingSeen{r.st}, Bus: r.bus, Runs: r.runs})
 		framesBefore := len(r.bus.frames(t))
 
 		_, _, err := mem.ackTab(t.Context(), id, 5, "")
@@ -242,7 +242,7 @@ func TestAckTab_FailuresAnswerAndEmitNothing(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Setup: OpenTab(run): %v", err)
 		}
-		mem := newMembership(&membershipDeps{Chats: withKeep(r.chats), Tabs: r.st, Bus: r.bus})
+		mem := newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: withKeep(r.chats), Tabs: r.st, Bus: r.bus})
 		if _, _, err := mem.ackTab(t.Context(), opened.Subject.ID, 1, ""); statusOf(err) != http.StatusServiceUnavailable {
 			t.Errorf("status = %d, want 503 (%s)", statusOf(err), errText(err))
 		}
@@ -323,7 +323,7 @@ func TestAckTab_ATabClosedDuringTheBoundReadIsANoOp(t *testing.T) {
 		done <- answer{version: v, stored: stored, err: err}
 	}()
 	<-r.chats.entered
-	if _, _, err := r.mem.closeTab(t.Context(), id, "op-close", true); err != nil {
+	if _, _, err := r.mem.closeTab(t.Context(), id, "op-close", true, nil); err != nil {
 		t.Fatalf("Setup: closeTab during the bound read: %v", err)
 	}
 	_, version := r.st.List()

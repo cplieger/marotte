@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -322,6 +323,24 @@ func (t *pendingPermsTracker) clearForRun(workflowID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.clearLocked(func(evt marotte.ServerEvent) bool { return marotte.DecisionRunID(evt.Payload) == workflowID })
+}
+
+// idsForChat is the ask ids of chatID's unresolved asks, in ask order: the ids its cards carry.
+func (t *pendingPermsTracker) idsForChat(chatID marotte.ChatID) []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	ids := make([]int64, 0, len(t.asks))
+	for id, e := range t.asks {
+		if !e.claimed && e.ask.evt.ChatID == chatID {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = strconv.FormatInt(id, 10)
+	}
+	return out
 }
 
 // list snapshots the unresolved decisions, optionally for one chat: exactly what TakeIfPresent

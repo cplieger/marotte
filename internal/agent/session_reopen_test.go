@@ -57,9 +57,7 @@ func unguarded(s engineSession) engineSession {
 }
 
 func fakeOf(sb *sharedBridge) *fakeBridge {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	br, _ := unguarded(sb.bridge).(*fakeBridge)
+	br, _ := unguarded(sb.session()).(*fakeBridge)
 	return br
 }
 
@@ -115,8 +113,8 @@ func TestMarkSessionsForReload_AnIdleChatReloadsAtItsNextOpen(t *testing.T) {
 // A host session keeps the presets its run launched with, so a mark never reaches it.
 func TestMarkSessionsForReload_LeavesHostSessionsUnmarked(t *testing.T) {
 	h, _ := reopenFixture(t)
-	sb := &sharedBridge{bridge: newFakeBridge(), state: bridgeIdle}
-	if !h.bridge.mgr.insert(runChatID("wf-1"), sb) {
+	sb := testBridge(newFakeBridge(), bridgeIdle)
+	if !h.insertBridgeNow(runChatID("wf-1"), sb) {
 		t.Fatal("Setup: insert host session = false")
 	}
 
@@ -595,7 +593,7 @@ func TestOpenBridge_AHandEditOfConfigReopensTheChatAtItsNextOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	session := first.bridge.SessionID()
+	session := first.session().SessionID()
 
 	rewriteConfigByHand(t, configDir, `{"`+settings.KeySecurityProfile+`":"unrestricted"}`)
 
@@ -637,7 +635,7 @@ func TestReconcileSessionSettings_ABusyChatSwitchesAfterItsTurn(t *testing.T) {
 		t.Fatal("the first open after the turn kept the session opened under the old profile")
 	}
 	opts := fakeOf(after).lastSessionOpts()
-	if !slices.Equal(opts.Presets, []string{"allow-all"}) || opts.SessionID != string(first.bridge.SessionID()) {
+	if !slices.Equal(opts.Presets, []string{"allow-all"}) || opts.SessionID != string(first.session().SessionID()) {
 		t.Errorf("the reopened bridge started with presets %v loading %q, want [allow-all] loading the chat's session", opts.Presets, opts.SessionID)
 	}
 }

@@ -97,14 +97,14 @@ func (rs *Runs) hostOnChat(ctx context.Context, workflowID string, parent runPar
 // bounds only this caller's wait, and a later caller waits on a load still under way rather than starting another.
 func (rs *Runs) loadHost(ctx context.Context, workflowID, session string, presets []string) (*sharedBridge, error) {
 	chatID := runChatID(workflowID)
-	sb, existed := rs.bridges.orInsert(chatID)
+	sb, existed := rs.bridges.orInsertRun(chatID, runHostLife{ctx: rs.lifecycle.shutdownCtx})
 	// pending first: a load that settles after the caller's residency read is resident by the second test.
 	if existed && (sb.settled.pending() || rs.residentRunHost(workflowID) == sb) {
 		return awaitHost(ctx, sb)
 	}
 	if existed {
 		rs.bridges.removeIfSame(chatID, sb)
-		if sb, existed = rs.bridges.orInsert(chatID); existed {
+		if sb, existed = rs.bridges.orInsertRun(chatID, runHostLife{ctx: rs.lifecycle.shutdownCtx}); existed {
 			return nil, fmt.Errorf("%w: another load of this run's session is under way", errRunHostStart)
 		}
 	}
@@ -129,9 +129,10 @@ func (rs *Runs) openHost(workflowID, session string, presets []string, sb *share
 	err := rs.engine.loadSession(lctx, &marotte.SessionOpts{
 		SessionID: session, Role: marotte.SessionRoleHost, Presets: presets,
 		AdditionalDirectories: rs.doorSettings(lctx).AdditionalDirectories,
-	}, func(s engineSession) {
+	}, func(s engineSession) error {
 		sb.attach(s)
-		rs.coord.goForward(chatID, s)
+		rs.coord.goRunForward(chatID, s)
+		return nil
 	})
 	if err != nil {
 		rs.bridges.removeIfSame(chatID, sb)
@@ -146,7 +147,7 @@ func (rs *Runs) openHost(workflowID, session string, presets []string, sb *share
 
 // residentRunHost is the run's own resident host session under run:<id>, or nil (also while loading).
 func (rs *Runs) residentRunHost(workflowID string) *sharedBridge {
-	if sb := rs.bridges.get(runChatID(workflowID)); sb != nil && sb.startedPastOpen() && sb.current().Open() {
+	if sb := rs.bridges.get(runChatID(workflowID)); sb != nil && sb.startedPastOpen() && sb.open() {
 		return sb
 	}
 	return nil
@@ -186,19 +187,23 @@ func (rs *Runs) write(
 		seq  uint64
 		err  error
 	)
-	if method == marotte.MethodPrompt {
-		// A step's words: no chat turn's stop orders them, so the write commits nothing.
-		resp, seq, err = sb.PromptAt(a.bind(ctx), params, nil)
-	} else {
-		resp, seq, err = sb.CallAt(a.bind(ctx), method, params)
-	}
+	err = sb.useRun(a.bind(ctx), func(ctx context.Context, s engineSession) error {
+		var cErr error
+		if method == marotte.MethodPrompt {
+			// A step's words: no chat turn's stop orders them, so the write commits nothing.
+			resp, seq, cErr = s.PromptAt(ctx, params, nil)
+		} else {
+			resp, seq, cErr = s.CallAt(ctx, method, params)
+		}
+		return cErr
+	})
 	if errors.Is(err, marotte.ErrSessionClosed) || errors.Is(err, marotte.ErrSessionClosing) ||
 		errors.Is(err, errRunWorkUnadmitted) {
 		// Refused before the write.
 		m.unwritten()
 		return nil, err
 	}
-	m.replied(resp, err, laneRef{session: sb.current()}, seq)
+	m.replied(resp, err, laneRef{session: sb.responder()}, seq)
 	return resp, runCallErr(resp, err)
 }
 
@@ -231,7 +236,7 @@ func (rs *Runs) residentOwner(workflowID string) (*drivenHost, bool) {
 	}
 	chatID := marotte.ChatID(l.ChatID)
 	sb := rs.bridges.get(chatID)
-	if sb == nil || !sb.startedPastOpen() || !sb.current().Open() || string(sb.SessionID()) != l.ParentSessionID {
+	if sb == nil || !sb.startedPastOpen() || !sb.open() || string(sb.SessionID()) != l.ParentSessionID {
 		return nil, false
 	}
 	return &drivenHost{sb: sb, chatID: chatID}, true

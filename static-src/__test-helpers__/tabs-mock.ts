@@ -16,6 +16,7 @@ export function tabsMock(): Record<string, unknown> {
     // `openTab` answers its success outcome, so callers stay off their failure branches.
     openTab: vi.fn(async () => "opened"),
     closeTab: vi.fn(async () => {}),
+    descendantChatsOf: vi.fn(() => []),
     setTabPinned: vi.fn(async () => {}),
     setTabParent: vi.fn(async () => false),
     openEditorView: vi.fn(async () => {}),

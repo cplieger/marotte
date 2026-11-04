@@ -70,7 +70,7 @@ func newKeepFixture(t *testing.T) *keepFixture {
 		t.Fatalf("Setup: tabs.NewStore: %v", err)
 	}
 	f := &keepFixture{store: store, chats: &faultyReleases{Store: store}, tabs: &failingOpens{Store: st}}
-	f.mem = newMembership(&membershipDeps{Chats: f.chats, Tabs: f.tabs, Bus: &tabBus{}, Sessions: store, Runs: &fakeRunOwner{}})
+	f.mem = newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: f.chats, Tabs: f.tabs, Bus: &tabBus{}, Sessions: store, Runs: &fakeRunOwner{}})
 	return f
 }
 
@@ -90,7 +90,7 @@ func (f *keepFixture) closeTabOf(t *testing.T, id marotte.ChatID) {
 	if tabID == "" {
 		t.Fatalf("no tab shows %s", id)
 	}
-	if _, _, err := f.mem.closeTab(t.Context(), tabID, "op-close", true); err != nil {
+	if _, _, err := f.mem.closeTab(t.Context(), tabID, "op-close", true, nil); err != nil {
 		t.Fatalf("closeTab(%s): %v", id, err)
 	}
 }
@@ -269,7 +269,7 @@ func TestDeleteChatAndCloseTabs_ReleasesTheFactsOfTheTabsItClosesUnderTheChat(t 
 	}
 	forkID := marotte.ChatID(fork.Chat.ID)
 
-	if err := f.mem.DeleteChatAndCloseTabs(t.Context(), parentID, "op-del"); err != nil {
+	if err := f.mem.DeleteChatAndCloseTabs(t.Context(), parentID, "op-del", nil); err != nil {
 		t.Fatalf("DeleteChatAndCloseTabs: %v", err)
 	}
 	if _, held := f.fact(t, forkID, marotte.KeyTab); held {
@@ -416,7 +416,7 @@ func TestOpenTab_ANewRunTabHoldsItsRunTabFactOnEveryHolder(t *testing.T) {
 		t.Errorf("run tab parent = %q, want the first holder's reopened tab", tab.Parent)
 	}
 
-	if _, _, err := f.mem.closeTab(t.Context(), tab.ID, "op-close", true); err != nil {
+	if _, _, err := f.mem.closeTab(t.Context(), tab.ID, "op-close", true, nil); err != nil {
 		t.Fatalf("closeTab(run): %v", err)
 	}
 	for _, id := range []marotte.ChatID{"c-a", "c-b"} {
@@ -596,7 +596,7 @@ func TestAdmitRunPurge_RefusesWhileTheArrangementIsUnread(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup: chat.NewStore: %v", err)
 	}
-	mem := newMembership(&membershipDeps{Chats: store, Tabs: st, Bus: &tabBus{}, Sessions: store, Runs: &fakeRunOwner{}})
+	mem := newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: store, Tabs: st, Bus: &tabBus{}, Sessions: store, Runs: &fakeRunOwner{}})
 
 	_, refused := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_host", false)
 	var unread *ArrangementUnreadError

@@ -500,6 +500,18 @@ describe("dispatch", () => {
     expect(body().querySelector(".spec-run")).toBeNull();
   });
 
+  it("renders closed as a failure line that says the chat was closed", async () => {
+    openParented();
+    m.replies = [reply(spec([tasksDoc([node("L1", "Pending one")])]))];
+    view.showSpec(DIR);
+    await settle();
+    view.applyResult(DIR, "L1", "closed");
+    expect(body().querySelector(".spec-failure")?.textContent).toBe(
+      "The chat was closed, so the prompt was not sent",
+    );
+    expect(body().querySelector(".spec-run")).not.toBeNull();
+  });
+
   it("sends Run all to the parent chat", async () => {
     openParented("c1");
     m.replies = [reply(spec([tasksDoc([node("L1", "Pending one")])]))];

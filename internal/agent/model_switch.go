@@ -48,7 +48,7 @@ func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *marotte.ClientComman
 	if err := rt.admitSwitchModel(ctx, cmd.ChatID, p); err != nil {
 		return nil, err
 	}
-	rt.applyPendingModel(ctx, cmd.ChatID)
+	rt.applyPendingModel(durable.Context(ctx), cmd.ChatID)
 	return responseOK2, nil
 }
 
@@ -56,9 +56,11 @@ func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *marotte.ClientComman
 // then the park. It holds the chat's switch lock, which every writer of the parked pair takes, so
 // no landing falls between its read, its stop and its park.
 func (rt *Runtime) admitSwitchModel(ctx context.Context, chatID marotte.ChatID, p marotte.SwitchModelCommand) error {
-	lc := rt.coord.turns.lifecycleFor(chatID)
-	lc.switchMu.Lock()
-	defer lc.switchMu.Unlock()
+	unlock, err := rt.coord.switchLocks.Lock(ctx, chatID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	chat, ok := rt.chatStore.Get(ctx, chatID)
 	if !ok {
 		return command.StatusError(http.StatusNotFound, command.ErrChatNotFound)
@@ -125,12 +127,13 @@ func (rt *Runtime) applyStopInPlace(ctx context.Context, chatID marotte.ChatID, 
 // set_config_option on a live bridge (one model_switched entry between turns), or straight onto
 // the record with no bridge. A busy chat, or one KAS reports running, keeps both for the closer.
 // Idleness is read under the lifecycle mutex; the bridge call holds only the chat's switch lock, so
-// a second applier reads the pick the first already cleared.
+// a second applier reads the pick the first already cleared. Only a swap kiro-cli refused clears the pick.
 func (rt *Runtime) applyPendingModel(ctx context.Context, chatID marotte.ChatID) {
-	ctx = durable.Context(ctx)
-	lc := rt.coord.turns.lifecycleFor(chatID)
-	lc.switchMu.Lock()
-	defer lc.switchMu.Unlock()
+	unlock, err := rt.coord.switchLocks.Lock(ctx, chatID)
+	if err != nil {
+		return
+	}
+	defer unlock()
 	if rt.coord.turns.live(chatID) || !rt.coord.turns.kasAllowsSessionCall(chatID) {
 		return
 	}
@@ -145,7 +148,12 @@ func (rt *Runtime) applyPendingModel(ctx context.Context, chatID marotte.ChatID)
 	// Resolved once: the swap asserts mv.sent, and the record keeps mv.pref.
 	in := rt.coord.effortInputFor(ctx, chat, chat.PendingModel, "")
 	mv := resolveEffort(&in)
-	if !rt.coord.applyModelSwitch(ctx, chatID, &mv) {
+	if err := rt.coord.applyModelSwitch(ctx, chatID, &mv); err != nil {
+		if pickOutlivesSession(err) {
+			slog.Debug("switch_model: the session ended under the swap; the pick waits for the next open",
+				"chat_id", chatID, "error", err)
+			return
+		}
 		rt.clearPendingModel(ctx, chatID)
 		rt.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
 			Code:    marotte.ErrCodeSwitchFailed,
@@ -157,6 +165,13 @@ func (rt *Runtime) applyPendingModel(ctx context.Context, chatID marotte.ChatID)
 }
 
 var errSwitchRefused = errors.New("the session refused the model switch. Try again later")
+
+// pickOutlivesSession reports a swap that no session refused: the chat's close refused or cut it, or the session
+// ended under it. The pick stays parked and the next open's fold applies it.
+func pickOutlivesSession(err error) bool {
+	return errors.Is(err, marotte.ErrChatClosedDuringCall) || errors.Is(err, marotte.ErrSessionClosing) ||
+		errors.Is(err, marotte.ErrSessionClosed)
+}
 
 // clearPendingModel drops a pick the session refused, with its effort, so the badge stops pulsing.
 func (rt *Runtime) clearPendingModel(ctx context.Context, chatID marotte.ChatID) {

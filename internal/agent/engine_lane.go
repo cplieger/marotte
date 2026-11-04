@@ -153,7 +153,7 @@ func (rt *Runtime) heldStepRequest(h engineHandle, workflowID string, msg *marot
 		rt.answerUnknownSession(h, msg)
 		return
 	}
-	rt.translateACPEvent(host.chatID, host.sb.current(), msg)
+	rt.translateACPEvent(host.chatID, host.sb.responder(), msg)
 }
 
 // answerUnknownSession is the one answer for a request whose session marotte does not hold. A permission is answered
@@ -249,7 +249,7 @@ func (rt *Runtime) answerDetached(h engineHandle, d bridge.DetachedSession) {
 // observerForward consumes an observer pass's frames: its requests as the engine lane answers an unknown session's
 // (it runs no tools), its workspace notifications through the one table, and its own command list as the slash
 // menu's seed.
-func (rt *Runtime) observerForward(s engineSession) {
+func (rt *Runtime) observerForward(s engineSession) error {
 	go func() {
 		ctx, cancel := rt.lifecycle.derivedContext()
 		defer cancel()
@@ -267,6 +267,7 @@ func (rt *Runtime) observerForward(s engineSession) {
 			}
 		}
 	}()
+	return nil
 }
 
 func (rt *Runtime) observerUpdate(msg *marotte.RPCResponse) {

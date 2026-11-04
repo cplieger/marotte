@@ -50,7 +50,7 @@ interface State {
   pending: TabsChangedPayload[];
   sent: Sent[];
   /** Command types the next dispatch of which fails, with the status to use. */
-  failures: { type: string; status: number; error: string; reason?: string }[];
+  failures: { type: string; status: number; error: string; reason?: string; body?: unknown }[];
   /** Command types the next dispatch of which COMMITS, then answers with this result instead. */
   lateAnswers: { type: string; result: SendResultLike }[];
   /** Command types the next dispatch of which COMMITS, then answers this result after `afterMs`. */
@@ -184,10 +184,16 @@ export const tabServer = {
     return state.sent.filter((c) => c.type === type);
   },
 
-  /** Make the next dispatch of `type` fail, with the error envelope's machine `reason` when given. Consumed by
-   *  that dispatch. */
-  failNext(type: string, status = 500, error = "nope", reason?: string): void {
-    state.failures.push({ type, status, error, ...(reason === undefined ? {} : { reason }) });
+  /** Make the next dispatch of `type` fail, with the error envelope's machine `reason` and its parsed `body` when
+   *  given. Consumed by that dispatch. */
+  failNext(type: string, status = 500, error = "nope", reason?: string, body?: unknown): void {
+    state.failures.push({
+      type,
+      status,
+      error,
+      ...(reason === undefined ? {} : { reason }),
+      ...(body === undefined ? {} : { body }),
+    });
   },
 
   /** Make the next dispatch of `type` commit (its frame goes out per the mode) and answer `result`: a server that
@@ -368,6 +374,7 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
       status: failure.status,
       error: failure.error,
       ...(failure.reason === undefined ? {} : { reason: failure.reason }),
+      ...(failure.body === undefined ? {} : { body: failure.body }),
     };
   }
   switch (type) {

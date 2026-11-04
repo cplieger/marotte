@@ -1,8 +1,9 @@
-// sendPrompt maps the admission ack and the 409 split:
-//   ack            → "sent" (thinking stays true; SSE owns the turn)
-//   plain 409      → "queued" (a steerable turn is in flight; submit.ts steers)
-//   409 "starting" → "starting" (thinking retracted, so the retry is a PROMPT)
-//   anything else  → null (rollback retracts thinking)
+// sendPrompt maps the admission ack and the 409 reasons:
+//   ack                  → "sent" (thinking stays true; SSE owns the turn)
+//   409 "turn_live"      → "queued" (a steerable turn is in flight; submit.ts steers)
+//   409 "chat_not_found" → "gone", 409 "chat_closed" → "closed"
+//   any other 409        → "starting" (thinking retracted, so the retry is a PROMPT)
+//   anything else        → null (rollback retracts thinking)
 // `thinking` is all the optimistic write risks: the tab dot reads `last_turn_outcome`, which no
 // client path writes.
 
@@ -102,57 +103,48 @@ describe("sendPrompt — the ack is the whole POST", () => {
   });
 });
 
-describe("sendPrompt — the three-way 409 split", () => {
-  it("returns 'queued' on a plain 409 WITHOUT enqueuing (steering is submit.ts's job)", async () => {
-    mockSend.mockResolvedValue({ ok: false, status: 409, error: "in-flight" });
-    const result = await sendPrompt.dispatch(args);
-    expect(result).toBe("queued");
-    // The action stays a PURE send: submit.ts owns what a busy chat means, and the steer chip is
-    // written only by the server's frame, so a chip here could show a message KAS may yet refuse.
-    expect(recordSteerQueued).not.toHaveBeenCalled();
-    expect(vi.mocked(setThinking).mock.calls).not.toContainEqual(["c1", false]);
-  });
+// The server's prompt refusal reasons, mirroring the Go constants reasonTurnLive, reasonStarting,
+// reasonChatGone and reasonChatClosed in internal/command/prompt.go, with the result each maps to.
+const PROMPT_REFUSALS: readonly {
+  reason: string | undefined;
+  result: string;
+  thinking: boolean;
+}[] = [
+  { reason: "turn_live", result: "queued", thinking: true },
+  { reason: "starting", result: "starting", thinking: false },
+  { reason: "chat_not_found", result: "gone", thinking: false },
+  { reason: "chat_closed", result: "closed", thinking: false },
+  // An unknown 409 is a refusal, never a steer: the idempotency layer's in-progress 409 carries none.
+  { reason: undefined, result: "starting", thinking: false },
+  { reason: "elsewhere", result: "starting", thinking: false },
+];
 
-  it("returns 'starting' on 409 reason:'starting' — a VALUE, never error-prose matching", async () => {
-    // Same prose as the plain 409: only the lifted `reason` distinguishes them (the contract).
-    mockSend.mockResolvedValue({ ok: false, status: 409, error: "in-flight", reason: "starting" });
+describe("sendPrompt — each 409 reason has its own arm", () => {
+  for (const row of PROMPT_REFUSALS) {
+    it(`maps 409 reason ${String(row.reason)} to '${row.result}', keyed on the reason, never the prose`, async () => {
+      mockSend.mockResolvedValue({
+        ok: false,
+        status: 409,
+        error: "in-flight",
+        ...(row.reason !== undefined ? { reason: row.reason } : {}),
+      });
 
-    const result = await sendPrompt.dispatch(args);
+      const result = await sendPrompt.dispatch(args);
 
-    expect(result).toBe("starting");
-    expect(recordSteerQueued).not.toHaveBeenCalled();
-  });
-
-  it("retracts the optimistic thinking on 'starting', so the retry is a prompt and not a steer", async () => {
-    mockSend.mockResolvedValue({ ok: false, status: 409, error: "busy", reason: "starting" });
-
-    await sendPrompt.dispatch(args);
-
-    expect(vi.mocked(setThinking).mock.calls).toContainEqual(["c1", true]);
-    expect(setThinking).toHaveBeenLastCalledWith("c1", false);
-  });
-
-  it("returns 'gone' on 409 reason:'chat_not_found' and retracts the optimistic thinking", async () => {
-    // Only the lifted `reason` decides it. A tombstoned chat has no turn, so `thinking` left true would
-    // offer a steer into nothing.
-    mockSend.mockResolvedValue({
-      ok: false,
-      status: 409,
-      error: "in-flight",
-      reason: "chat_not_found",
+      expect(result).toBe(row.result);
+      // The action stays a PURE send: submit.ts owns what a busy chat means, and the steer chip is
+      // written only by the server's frame.
+      expect(recordSteerQueued).not.toHaveBeenCalled();
+      const calls = vi.mocked(setThinking).mock.calls;
+      expect(calls).toContainEqual(["c1", true]);
+      if (row.thinking) {
+        expect(calls).not.toContainEqual(["c1", false]);
+      } else {
+        // A refusal is returned as a value, so the rollback never runs: the arm itself retracts it.
+        expect(setThinking).toHaveBeenLastCalledWith("c1", false);
+      }
     });
-
-    const result = await sendPrompt.dispatch(args);
-
-    expect(result).toBe("gone");
-    expect(recordSteerQueued).not.toHaveBeenCalled();
-    expect(setThinking).toHaveBeenLastCalledWith("c1", false);
-  });
-
-  it("treats a 409 with any OTHER reason as the plain queue signal", async () => {
-    mockSend.mockResolvedValue({ ok: false, status: 409, error: "busy", reason: "elsewhere" });
-    expect(await sendPrompt.dispatch(args)).toBe("queued");
-  });
+  }
 });
 
 // On every failure class the rollback retracts `setThinking(chatID, true)`, leaving the chat

@@ -48,7 +48,7 @@ func healEffortFixture(t *testing.T, chose string, opts ...Option) (*Runtime, *f
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 	return h, br
 }
 
@@ -300,7 +300,7 @@ func TestEffortDrift_ARefreshedSessionKeepsTheChatsLevel(t *testing.T) {
 	h := d.boot(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	d.firstSessionThenDrift(t, h)
-	bridgeRole{coord: h.coord}.CloseBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
+	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.RecordSession("")
 		return true
@@ -634,7 +634,7 @@ func parkPick(t *testing.T, d *effortDrift, model string) {
 // detach ends the bridge and the record's session, as refreshRetrySession does.
 func detach(t *testing.T, d *effortDrift, h *Runtime) {
 	t.Helper()
-	bridgeRole{coord: h.coord}.CloseBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
+	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.RecordSession("")
 		return true

@@ -45,7 +45,7 @@ func stepRouteHub(t *testing.T, tc stepRouteCase) (*Runtime, *fakeBridge, *http.
 	rootID, stepID := tc.NodePath[0], tc.NodePath[1]
 	h, _, br := newTestHub()
 	h.runs.log = newRunLog(t.TempDir())
-	h.bridge.mgr.insert(runChatID(tc.WorkflowID), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(tc.WorkflowID), testBridge(br, bridgeIdle))
 	br.setCallResult(methodKiroWorkflowInspect,
 		stepTreeInspect(t, tc.WorkflowID, marotte.RunStatusRunning, marotte.RunNodeStatusRunning, rootID, stepID, "sess_step"))
 	br.setCallResult(marotte.MethodSessionSteer, json.RawMessage(`{"queued":true}`))
@@ -84,7 +84,7 @@ func releaseSteerClear(t *testing.T, h *Runtime, br *fakeBridge, workflowID stri
 		t.Fatalf("Setup: marshalling the clear reply: %v", err)
 	}
 	br.setCallResult(marotte.MethodSessionSteerClear, raw)
-	gen := h.coord.turns.attachForward(runChatID(workflowID)).gen
+	gen := h.coord.turns.attachForwardNow(runChatID(workflowID)).gen
 	br.mu.Lock()
 	br.deliveredSeq = seq
 	br.mu.Unlock()

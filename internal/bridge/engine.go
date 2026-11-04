@@ -141,9 +141,6 @@ type Engine struct {
 	// cpuTicks is the engine's CPU-progress probe (engineCPU); a field so a test can stub it.
 	cpuTicks func() (ticks uint64, ok bool)
 	sessions map[marotte.SessionID]*Session
-	// releasing holds an id whose abandoned load is being closed with no handle: a door for that id waits for the
-	// close to settle, so the close never lands on the newer session. Guarded by lanesMu.
-	releasing map[marotte.SessionID]chan struct{}
 	// envAllow re-permits names the credential screen would drop (bridge_env.go).
 	envAllow map[string]struct{}
 	// done closes once the engine has ended: lanes closed, pending failed, process reaped. stopping closes at the
@@ -233,7 +230,6 @@ func NewEngine(cliPath, workDir string, opts ...Option) *Engine {
 		workDir:    workDir,
 		pending:    make(map[int64]*pendingEntry),
 		sessions:   make(map[marotte.SessionID]*Session),
-		releasing:  make(map[marotte.SessionID]chan struct{}),
 		engineLane: newLane(),
 		done:       make(chan struct{}),
 		stopping:   make(chan struct{}),

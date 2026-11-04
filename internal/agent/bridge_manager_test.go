@@ -13,8 +13,8 @@ func newTestBridgeManager() *bridgeManager { return newBridgeManager() }
 // removeIfSame removes only when the stored bridge is the given one.
 func TestBridgeManager_RemoveIfSame(t *testing.T) {
 	bm := newTestBridgeManager()
-	sb1, _ := bm.orInsert("c1")
-	sb2, _ := bm.orInsert("c2")
+	sb1, _ := bm.orInsertNow("c1")
+	sb2, _ := bm.orInsertNow("c2")
 
 	if removed := bm.removeIfSame("c1", sb2); removed {
 		t.Errorf("removeIfSame(c1, other) = true, want false")
@@ -34,7 +34,7 @@ func TestBridgeManager_RemoveIfSame(t *testing.T) {
 // removeIfBridge removes only when the stored session instance matches.
 func TestBridgeManager_RemoveIfBridge(t *testing.T) {
 	bm := newTestBridgeManager()
-	sb, _ := bm.orInsert("c1")
+	sb, _ := bm.orInsertNow("c1")
 	stored := newFakeBridge()
 	sb.attach(stored)
 	sb.setIdle()
@@ -61,7 +61,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 
 	// Pre-populated so the "exists" path is exercised.
 	for i := range 100 {
-		sb, existed := bm.orInsert(marotte.ChatID(fmt.Sprintf("chat-%d", i)))
+		sb, existed := bm.orInsertNow(marotte.ChatID(fmt.Sprintf("chat-%d", i)))
 		if !existed {
 			sb.state = bridgeIdle
 		}
@@ -71,7 +71,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			i := 0
 			for pb.Next() {
-				bm.orInsert(marotte.ChatID(fmt.Sprintf("chat-%d", i%100)))
+				bm.orInsertNow(marotte.ChatID(fmt.Sprintf("chat-%d", i%100)))
 				i++
 			}
 		})
@@ -90,7 +90,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 				id := fmt.Sprintf("new-%d", counter)
 				mu.Unlock()
 
-				sb, existed := bm2.orInsert(marotte.ChatID(id))
+				sb, existed := bm2.orInsertNow(marotte.ChatID(id))
 				if !existed {
 					sb.state = bridgeIdle
 				}

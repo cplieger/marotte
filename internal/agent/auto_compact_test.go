@@ -62,7 +62,7 @@ func newCompactRig(pct int, kasAutoOff bool) *compactRig {
 			defer r.mu.Unlock()
 			return r.live
 		},
-		bridgeOf: func(marotte.ChatID) engineSession { return r.bridge },
+		bridgeOf: func(marotte.ChatID) *sharedBridge { return testBridge(r.bridge, bridgeIdle) },
 		usage: func(context.Context, marotte.ChatID) (marotte.Usage, bool) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
@@ -149,7 +149,7 @@ func TestPreSendCompact_OnlyWhereMarotteIsTheCompactor(t *testing.T) {
 			r := newCompactRig(tc.pct, tc.kasAutoOff)
 			r.enabled = tc.enabled
 			r.reading(95)
-			r.ac.preSend(t.Context(), "c1")
+			r.ac.preSend(t.Context(), "c1", nil)
 			if got := r.count(); got != tc.want {
 				t.Errorf("preSend made %d compact calls, want %d", got, tc.want)
 			}
@@ -159,12 +159,36 @@ func TestPreSendCompact_OnlyWhereMarotteIsTheCompactor(t *testing.T) {
 	t.Run("twice with no turn between", func(t *testing.T) {
 		r := newCompactRig(85, true)
 		r.reading(95)
-		r.ac.preSend(t.Context(), "c1")
-		r.ac.preSend(t.Context(), "c1")
+		r.ac.preSend(t.Context(), "c1", nil)
+		r.ac.preSend(t.Context(), "c1", nil)
 		if got := r.count(); got != 1 {
 			t.Errorf("two sends with no turn between made %d compact calls, want 1: the reading is pre-compaction until the next turn", got)
 		}
 	})
+}
+
+// A prompt of a closed life holds its own entry; the reopened chat's entry, over the threshold, is not its to compact.
+func TestPreSendCompact_AnOldPromptNeverCompactsTheReopenedSession(t *testing.T) {
+	r := newCompactRig(85, true)
+	reopened := testBridge(r.bridge, bridgeIdle)
+	r.ac.bridgeOf = func(marotte.ChatID) *sharedBridge { return reopened }
+	r.reading(95)
+
+	r.ac.preSend(t.Context(), "c1", testBridge(newFakeBridge(), bridgeIdle))
+	if got := r.count(); got != 0 {
+		t.Errorf("the old prompt made %d compact calls on the reopened session, want 0", got)
+	}
+	r.ac.mu.Lock()
+	st := r.ac.chats["c1"]
+	r.ac.mu.Unlock()
+	if st != nil {
+		t.Errorf("the old prompt left auto-compact state %+v, want none: the state is the reopened life's", st)
+	}
+
+	r.ac.preSend(t.Context(), "c1", reopened)
+	if got := r.count(); got != 1 {
+		t.Errorf("the reopened chat's own prompt made %d compact calls, want 1", got)
+	}
 }
 
 func TestPreSendCompact_AwaitsInFlightAndIsBounded(t *testing.T) {
@@ -180,7 +204,7 @@ func TestPreSendCompact_AwaitsInFlightAndIsBounded(t *testing.T) {
 		waitFor(t, func() bool { return r.count() == 1 })
 		sent := make(chan struct{})
 		go func() {
-			r.ac.preSend(context.Background(), "c1")
+			r.ac.preSend(context.Background(), "c1", nil)
 			close(sent)
 		}()
 		select {
@@ -212,7 +236,7 @@ func TestPreSendCompact_AwaitsInFlightAndIsBounded(t *testing.T) {
 		}
 		sent := make(chan struct{})
 		go func() {
-			r.ac.preSend(context.Background(), "c1")
+			r.ac.preSend(context.Background(), "c1", nil)
 			close(sent)
 		}()
 		<-entered
@@ -245,7 +269,7 @@ func TestPreSendCompact_AwaitsInFlightAndIsBounded(t *testing.T) {
 		t.Cleanup(func() { close(r.block) })
 		r.reading(95)
 		start := time.Now()
-		r.ac.preSend(t.Context(), "c1")
+		r.ac.preSend(t.Context(), "c1", nil)
 		if elapsed := time.Since(start); elapsed > 2*time.Second {
 			t.Errorf("preSend held the prompt %s against a %s budget", elapsed, autoCompactPreSendBudget)
 		}
@@ -289,7 +313,7 @@ func TestAfterTurnClose_Order(t *testing.T) {
 		},
 		drainAfterClose: func(context.Context, marotte.ChatID, command.CloseFacts, command.EndFacts) { record("drain") },
 	}
-	bc.afterTurnClose(t.Context(), "c1", closeFacts{outcome: marotte.TurnOutcomeCompleted})
+	bc.afterTurnClose(t.Context(), bc.turns.testLifecycle("c1"), closeFacts{outcome: marotte.TurnOutcomeCompleted})
 	if want := []string{"resolve", "model", "compact", "drain"}; !slices.Equal(order, want) {
 		t.Errorf("afterTurnClose order = %v, want %v", order, want)
 	}

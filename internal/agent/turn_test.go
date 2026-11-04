@@ -23,7 +23,7 @@ func (nopTurnRecords) AnnounceHeader(context.Context, marotte.ChatID) {}
 func openTestTurn(t *testing.T, reg *turnRegistry, chatID marotte.ChatID) *activeTurn {
 	t.Helper()
 	id := "t-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	lc := reg.lifecycleFor(chatID)
+	lc := reg.testLifecycle(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	if !lc.slotFreeLocked(marotte.TurnSourcePrompt) {
@@ -226,7 +226,7 @@ func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) 
 	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
 
-	lc := r.lifecycleFor(chatID)
+	lc := r.testLifecycle(chatID)
 	open := openTestTurn(t, r, chatID)
 	claimed, won := r.claimTurn(ctx, chatID, open.ID, nil)
 	if !won {
@@ -285,10 +285,10 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 
 	t.Run("a prompt-class reservation with no Turn minted is busy", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+		if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 			t.Fatal("a fresh chat refused a prompt reservation")
 		}
-		t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+		t.Cleanup(func() { h.coord.releaseHeld("c1") })
 		if !busySet(t, h.coord.turns)["c1"] {
 			t.Error("a chat whose prompt is admitted but whose Turn is not minted is absent " +
 				"from busy_chats: the negative statement is incomplete for the admission window")
@@ -313,10 +313,10 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 // A rewind's reservation reaches this set through the same predicate.
 func TestBusyChatIDs_NamesARewindHoldingTheSlot(t *testing.T) {
 	h, _, _ := newTestHub()
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
+	if !h.coord.tryReserveNow("c1", marotte.TurnSourceRevert) {
 		t.Fatal("a fresh chat refused a revert reservation")
 	}
-	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+	t.Cleanup(func() { h.coord.releaseHeld("c1") })
 
 	if !slices.Contains(h.coord.turns.busyChatIDs(), "c1") {
 		t.Error("a chat holding a revert reservation is absent from busy_chats")

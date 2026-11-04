@@ -65,7 +65,7 @@ func hubForFSTest(t *testing.T, workDir string, opts ...Option) (*Runtime, *resp
 	if err != nil {
 		t.Fatalf("Setup: OpenBridge(c1): %v", err)
 	}
-	sb.bridge = br // ensure the map entry uses our respondingBridge
+	sb.attach(br) // ensure the map entry uses our respondingBridge
 	h.bridge.mgr.mu.Lock()
 	h.bridge.mgr.bridges["c1"] = sb
 	h.bridge.mgr.mu.Unlock()

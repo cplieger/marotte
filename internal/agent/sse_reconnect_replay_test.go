@@ -68,7 +68,7 @@ func newReplayGapRuntime(t *testing.T) (*Runtime, *http.ServeMux) {
 // reasoning is sealed and text still coalescing.
 func openReplayGapTurn(t *testing.T, rt *Runtime) {
 	t.Helper()
-	rt.bridge.mgr.orInsert(replayGapChat)
+	rt.bridge.mgr.orInsertNow(replayGapChat)
 	_, log := rt.stagePromptTurn(t, replayGapChat)
 	if _, err := log.ThinkingDelta(t.Context(), "", "say-1", replayGapReasoning); err != nil {
 		t.Fatalf("ThinkingDelta: %v", err)
@@ -147,7 +147,7 @@ func TestReconnectMidTurn_TheTranscriptGETCarriesTheInFlightTurn(t *testing.T) {
 func TestTranscriptGET_AnOpenTurnThatProducedNothingCarriesNoTail(t *testing.T) {
 	rt, mux := newReplayGapRuntime(t)
 	const quiet marotte.ChatID = "c-quiet"
-	rt.bridge.mgr.orInsert(quiet)
+	rt.bridge.mgr.orInsertNow(quiet)
 	rt.stagePromptTurn(t, quiet)
 
 	page := getTranscript(t, mux, quiet)
@@ -167,7 +167,7 @@ func TestTranscriptGET_AnOpenTurnThatProducedNothingCarriesNoTail(t *testing.T) 
 func TestTranscriptGET_AnIdleChatIsNotLive(t *testing.T) {
 	rt, mux := newReplayGapRuntime(t)
 	const idle marotte.ChatID = "c-idle"
-	rt.bridge.mgr.orInsert(idle)
+	rt.bridge.mgr.orInsertNow(idle)
 	id, _ := rt.stagePromptTurn(t, idle)
 	endTurn(t, rt, idle, id)
 

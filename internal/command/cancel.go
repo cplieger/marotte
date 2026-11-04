@@ -26,7 +26,8 @@ var ErrCancelNotDelivered = errors.New("a permission card could not be answered"
 // cancelSession answers every pending permission ask in scope `cancelled`, then writes session/cancel on the same
 // pipe, so KAS reads the answers first (ACP: a client cancelling a turn MUST answer its open permission requests).
 // It is detached from the caller, so a client that leaves cannot strand a taken ask or skip the cancel. An engine
-// end during the answers (marotte.ErrBridgeExited) and ErrCancelNotDelivered both write no session/cancel.
+// end during the answers (marotte.ErrBridgeExited) and ErrCancelNotDelivered both write no session/cancel. A
+// session still opening has no turn on the wire yet, so its refusal is nil: the stop's grace ends the admitted prompt.
 func cancelSession(ctx context.Context, perms permissionCanceller, sb Bridge, chatID marotte.ChatID, scope CancelScope) error {
 	// No deadline of its own: each write is bounded by the bridge, which waits out an engine that reads late.
 	ctx = durable.Context(ctx)
@@ -36,5 +37,9 @@ func cancelSession(ctx context.Context, perms permissionCanceller, sb Bridge, ch
 	if sb == nil {
 		return nil
 	}
-	return sb.Notify(ctx, marotte.MethodCancel, sessionParams(sb))
+	err := sb.Notify(ctx, marotte.MethodCancel, sessionParams(sb))
+	if errors.Is(err, marotte.ErrSessionOpening) {
+		return nil
+	}
+	return err
 }

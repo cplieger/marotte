@@ -99,17 +99,17 @@ func (rs *Runs) leasesOfChat(chatID marotte.ChatID, chain []string) map[string][
 	return out
 }
 
-// stopCandidates is leased less the runs KAS lists as terminal, plus the runs it lists as not terminal whose parent
+// stopCandidates is leaseHolders less the runs KAS lists as terminal, plus the runs it lists as not terminal whose parent
 // session chatID's chain owns, the test the purge teardown deletes by. A list that fails leaves the leased runs to
 // stop. A leased run KAS lists as terminal gets no stop attempt, so its mark is not refreshed and ages out.
 func (rs *Runs) stopCandidates(
-	ctx context.Context, chatID marotte.ChatID, chain []string, leased map[string][]marotte.ChatID,
+	ctx context.Context, chatID marotte.ChatID, chain []string, leaseHolders map[string][]marotte.ChatID,
 ) map[string][]marotte.ChatID {
 	runs, err := rs.listRaw(ctx)
 	if err != nil {
 		slog.Warn("close: the run list could not be read; stopping only the runs marotte leases",
 			"chat_id", chatID, "error", err)
-		return leased
+		return leaseHolders
 	}
 	out := map[string][]marotte.ChatID{}
 	owners := chat.OwnersOfChain(chatID, chain)
@@ -120,7 +120,7 @@ func (rs *Runs) stopCandidates(
 			continue
 		}
 		listed[r.WorkflowID] = true
-		holders, isLeased := leased[r.WorkflowID]
+		holders, isLeased := leaseHolders[r.WorkflowID]
 		if marotte.RunStatus(r.Status).Terminal() || (!isLeased && len(owners.Of(r.ParentSessionID)) == 0) {
 			continue
 		}
@@ -129,7 +129,7 @@ func (rs *Runs) stopCandidates(
 		}
 		out[r.WorkflowID] = holders
 	}
-	for wf, holders := range leased {
+	for wf, holders := range leaseHolders {
 		if !listed[wf] {
 			out[wf] = holders
 		}

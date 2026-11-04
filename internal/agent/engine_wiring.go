@@ -144,7 +144,7 @@ func (rt *Runtime) resumeParentless(ctx context.Context, workflowID string) {
 			return
 		}
 	}
-	rt.runs.retryResumeLater(resume, func(tries int) {
+	rt.runs.retryResumeLater(rt.runs.runtimeSweep, resume, func(tries int) {
 		slog.Error("an interrupted run could not be resumed by any try; it stays paused until it is resumed",
 			"workflow_id", workflowID, "tries", tries)
 	})
@@ -223,17 +223,8 @@ func (rt *Runtime) onEngineEnded(gen uint64) {
 	rt.mcpRegistry.clearAll(rt.lifecycle.shutdownCtx)
 }
 
-// closeSession ends a session the registry let go of, off the caller's path and bounded by the session's own close
-// budget; Shutdown waits for it.
-func (rt *Runtime) closeSession(s engineSession) {
-	if !rt.lifecycle.goUnlessDraining(func() {
-		if err := s.Close(rt.lifecycle.shutdownCtx); err != nil {
-			slog.Warn("a session did not close", "session_id", s.SessionID(), "error", err)
-		}
-	}) {
-		slog.Debug("a session close was skipped: the runtime is draining and the engine stops", "session_id", s.SessionID())
-	}
-}
+// closeSession releases a session the registry let go of; bridge.Session.Release owns every outcome after it.
+func (*Runtime) closeSession(s engineSession) { s.Release() }
 
 // onSignInChange applies a committed sign-in edge: the engine fingerprint holds the pending account, and the first
 // sign-in reloads resident sessions at their next idle open, so their model lists follow the account.

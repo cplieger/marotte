@@ -41,10 +41,7 @@ func (bc *bridgeCoordinator) OpenTurn(ctx context.Context, chatID marotte.ChatID
 			log.SetModel(model)
 		}
 		t = lc.openLocked(chatID, opened, source, model, log)
-		t.holds++
-		if open.Awaited {
-			t.holds++
-		}
+		t.takeOpenLocked(&open)
 		return nil
 	})
 	if err != nil {
@@ -62,9 +59,23 @@ func (bc *bridgeCoordinator) OpenTurn(ctx context.Context, chatID marotte.ChatID
 	return t.ID, nil
 }
 
+// takeOpenLocked records what open names the new turn by and the completion handles its caller holds: one, two
+// when awaited. Caller holds the lifecycle's mu.
+func (t *activeTurn) takeOpenLocked(open *command.TurnOpen) {
+	if open.Prompt != nil {
+		t.messageID, t.resends = open.Prompt.ID, open.Prompt.Resends
+	}
+	t.holds++
+	if open.Awaited {
+		t.holds++
+	}
+}
+
 // openRefusalLocked is why open may not append now, nil when it may. Caller holds mu.
 func (lc *chatLifecycle) openRefusalLocked(open *command.TurnOpen) error {
 	switch {
+	case lc.ended:
+		return marotte.ErrChatClosedDuringCall
 	case !lc.fenceHoldsLocked(open.Fence):
 		return command.ErrTurnSuperseded
 	case open.Replaces != "" && lc.stoppedAfterLocked(open.Replaces):
@@ -146,7 +157,10 @@ func (bc *bridgeCoordinator) StartTurn(ctx context.Context, turn command.TurnRef
 		return false
 	}
 	chatID := turn.Chat
-	lc := bc.turns.lifecycleFor(chatID)
+	lc, ok := bc.turns.lookup(chatID)
+	if !ok {
+		return false
+	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	t := lc.liveLocked(turn.Turn)

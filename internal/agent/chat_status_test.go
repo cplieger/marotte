@@ -394,7 +394,7 @@ func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
 		rt.bus.chatStatus.Merge("c1", waiting)
 		head := rt.bus.fanout.Position().Head
 
-		if _, err := rt.OpenTurn(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: prompt, Init: name}); err != nil {
+		if err := rt.openTurnNow(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: prompt, Init: name}); err != nil {
 			t.Fatalf("the fixture could not open a prompt turn: %v", err)
 		}
 		if got := rt.bus.chatStatus.Get("c1"); got.Status != "" {
@@ -413,7 +413,7 @@ func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
 		head := rt.bus.fanout.Position().Head
 		sent := &marotte.EntryPrompt{ID: "m-c1", Text: "Agent Mail: 1 new message", Caller: &marotte.Caller{Label: "Agent Mail"}}
 
-		if _, err := rt.OpenTurn(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: sent, Init: name}); err != nil {
+		if err := rt.openTurnNow(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: sent, Init: name}); err != nil {
 			t.Fatalf("the fixture could not open a prompt turn: %v", err)
 		}
 		if got := rt.bus.chatStatus.Get("c1"); got != waiting {

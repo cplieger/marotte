@@ -7,6 +7,7 @@ import type { Session } from "./types.js";
 import type * as ApiClient from "./api-client.js";
 import type * as DecisionDock from "./decision-dock.js";
 import type * as Confirm from "./confirm.js";
+import type * as Submit from "./submit.js";
 
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
@@ -15,10 +16,16 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   apiGetOrError: vi.fn(async () => ({ ok: false, status: 0, data: null, error: "" })),
 }));
 
-const pendingChats = new Set<string>();
+const pendingAsks = new Map<string, string[]>();
 vi.mock("./decision-dock.js", async (importOriginal) => ({
   ...(await importOriginal<typeof DecisionDock>()),
-  hasPendingDecision: (chatID: string) => pendingChats.has(chatID),
+  pendingDecisionIDs: (chatID: string) => pendingAsks.get(chatID) ?? [],
+}));
+
+const inFlight = new Map<string, string[]>();
+vi.mock("./submit.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Submit>()),
+  inFlightMessageIDs: (chatID: string) => inFlight.get(chatID) ?? [],
 }));
 
 const mockConfirm = vi.fn(async (_message: string, _label?: string, _variant?: string) => true);
@@ -27,7 +34,7 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   confirm: mockConfirm,
 }));
 
-const { confirmBusyClose } = await import("./close-busy.js");
+const { confirmBusyClose, deleteStopsWork, mergeImpact } = await import("./close-busy.js");
 const store = await import("./store.js");
 const runStore = await import("./run-store.js");
 
@@ -63,7 +70,7 @@ const T = { ref: "t", name: "Tangent" };
 /** The confirm's message, or null when the gate answered without a dialog. */
 async function gate(chats = [A]): Promise<string | null> {
   mockConfirm.mockClear();
-  const verdict = confirmBusyClose(chats[0]?.name ?? "", chats[0]?.ref ?? "", chats);
+  const { verdict } = confirmBusyClose(chats[0]?.name ?? "", chats[0]?.ref ?? "", chats);
   if (verdict === true) {
     expect(mockConfirm).not.toHaveBeenCalled();
     return null;
@@ -80,7 +87,8 @@ beforeEach(() => {
     runStore.noteRunSettled(id);
     runStore.forgetRun(id);
   }
-  pendingChats.clear();
+  pendingAsks.clear();
+  inFlight.clear();
   mockConfirm.mockImplementation(async () => true);
   store.setSessions([makeSession("a"), makeSession("t")]);
 });
@@ -101,7 +109,7 @@ describe("an idle close", () => {
   it("is unmoved by another chat's work", async () => {
     store.setTurnOpen("t", true);
     runStore.noteRunLive("wf-1", "t", true);
-    pendingChats.add("t");
+    pendingAsks.set("t", ["7"]);
     expect(await gate([A])).toBeNull();
   });
 });
@@ -113,7 +121,7 @@ describe("each kind of live work names itself", () => {
   });
 
   it("a question waiting", async () => {
-    pendingChats.add("a");
+    pendingAsks.set("a", ["3"]);
     expect(await gate()).toBe("Closing Alpha cancels the question waiting for your answer.");
   });
 
@@ -179,7 +187,7 @@ describe("each kind of live work names itself", () => {
   it("every term together, in one sentence", async () => {
     store.setSessions([makeSession("a", { queued: [{ id: "q1", text: "then" }] })]);
     store.setTurnOpen("a", true);
-    pendingChats.add("a");
+    pendingAsks.set("a", ["3"]);
     runStore.noteRunLive("wf-1", "a", true);
     expect(await gate()).toBe(
       "Closing Alpha stops the reply, cancels the question waiting for your answer, stops 1 workflow run, and drops 1 queued message.",
@@ -190,7 +198,7 @@ describe("each kind of live work names itself", () => {
 describe("the subtree", () => {
   it("a busy tangent under an idle parent makes the close busy and is named", async () => {
     store.setTurnOpen("t", true);
-    pendingChats.add("t");
+    pendingAsks.set("t", ["7"]);
     expect(await gate([A, T])).toBe(
       "Closing Alpha stops the reply in Tangent and cancels the question waiting for your answer in Tangent.",
     );
@@ -217,7 +225,7 @@ describe("the subtree", () => {
   it("names the chat for a tab that is not one itself", async () => {
     store.setTurnOpen("t", true);
     mockConfirm.mockClear();
-    const verdict = confirmBusyClose("Run tab", "", [T]);
+    const { verdict } = confirmBusyClose("Run tab", "", [T]);
     expect(verdict).not.toBe(true);
     await verdict;
     expect(mockConfirm.mock.calls[0]?.[0]).toBe("Closing Run tab stops the reply in Tangent.");
@@ -228,11 +236,175 @@ describe("the answer", () => {
   it("is the dialog's: Cancel keeps the tab", async () => {
     store.setTurnOpen("a", true);
     mockConfirm.mockImplementation(async () => false);
-    await expect(confirmBusyClose("Alpha", "a", [A])).resolves.toBe(false);
+    await expect(confirmBusyClose("Alpha", "a", [A]).verdict).resolves.toBe(false);
   });
 
   it("is the dialog's: confirming closes", async () => {
     store.setTurnOpen("a", true);
-    await expect(confirmBusyClose("Alpha", "a", [A])).resolves.toBe(true);
+    await expect(confirmBusyClose("Alpha", "a", [A]).verdict).resolves.toBe(true);
+  });
+});
+
+function openTurn(chat: string, turn: string, promptID = `${turn}-msg`): void {
+  store.openTurn(chat, {
+    id: `${turn}-open`,
+    turn,
+    kind: "turn_open",
+    seq: 0,
+    ts: 1,
+    payload: { source: "prompt", n: 1, prompt: { id: promptID, text: "go" } },
+  });
+}
+
+const idle = (ref: string) => ({ ref, turns: [], asks: [], runs: [], steers: [], queued: [] });
+
+describe("the impact the close sends", () => {
+  it("names every chat the close takes, with the ids of its open turns, its own in-flight sends, its asks, its runs, its unread steers and its queued follow-ups", () => {
+    store.setSessions([
+      makeSession("a", {
+        steers: [{ id: "steer-m1", text: "also", origin: "user", unsent: true }],
+        queued: [
+          { id: "q1", text: "then" },
+          { id: "q2", text: "later", held: true },
+        ],
+      }),
+      makeSession("t"),
+    ]);
+    openTurn("a", "t1");
+    inFlight.set("a", ["m-9"]);
+    pendingAsks.set("a", ["3"]);
+    runStore.noteRunLive("wf-1", "a", true);
+    expect(confirmBusyClose("Alpha", "a", [A, T]).impact).toEqual({
+      chats: [
+        {
+          ref: "a",
+          turns: ["t1", "m-9"],
+          asks: ["3"],
+          runs: ["wf-1"],
+          steers: ["steer-m1"],
+          queued: ["q1", "q2"],
+        },
+        idle("t"),
+      ],
+    });
+  });
+
+  it("does not name a follow-up whose turn opened, nor a closed turn", () => {
+    store.setSessions([makeSession("a", { queued: [{ id: "q1", text: "then" }] })]);
+    openTurn("a", "t0");
+    store.appendEntry("a", {
+      id: "t0-close",
+      turn: "t0",
+      kind: "turn_close",
+      seq: 1,
+      ts: 2,
+      payload: { outcome: "completed" },
+    });
+    openTurn("a", "t1", "q1");
+    const w = confirmBusyClose("Alpha", "a", [A]).impact.chats[0];
+    expect(w?.queued).toEqual([]);
+    expect(w?.turns).toContain("t1");
+  });
+
+  it("the dialog's counts are the lengths of those lists", async () => {
+    store.setSessions([
+      makeSession("a", {
+        steers: [
+          { id: "steer-1", text: "x", origin: "user", unsent: true },
+          { id: "steer-2", text: "y", origin: "user", unsent: true },
+        ],
+        queued: [{ id: "q1", text: "then" }],
+      }),
+    ]);
+    runStore.noteRunLive("wf-1", "a", true);
+    runStore.noteRunLive("wf-2", "a", false);
+    expect(await gate()).toBe("Closing Alpha stops 2 workflow runs and drops 3 queued messages.");
+  });
+
+  it("an idle subtree still sends its chats", () => {
+    const asked = confirmBusyClose("Alpha", "a", [A, T]);
+    expect(asked.verdict).toBe(true);
+    expect(asked.impact).toEqual({ chats: [idle("a"), idle("t")] });
+  });
+
+  it("asks again on the merge of a stale close, naming a chat only the server knew", async () => {
+    const sent = { chats: [{ ...idle("a"), turns: ["t1"] }] };
+    const server = {
+      chats: [
+        { ...idle("a"), turns: ["t2"] },
+        { ...idle("x"), asks: ["4"] },
+      ],
+    };
+    mockConfirm.mockClear();
+    const asked = confirmBusyClose("Alpha", "a", [A], { sent, server });
+    expect(asked.impact).toEqual({
+      chats: [
+        { ...idle("a"), turns: ["t1", "t2"] },
+        { ...idle("x"), asks: ["4"] },
+      ],
+    });
+    await asked.verdict;
+    expect(mockConfirm.mock.calls[0]?.[0]).toBe(
+      "Closing Alpha stops the reply and cancels the question waiting for your answer in x.",
+    );
+  });
+});
+
+describe("mergeImpact", () => {
+  it("unions each id list per chat and keeps every chat of either side", () => {
+    const sent = {
+      chats: [
+        { ref: "a", turns: ["t1"], asks: ["1"], runs: ["r1"], steers: ["s1"], queued: ["q1"] },
+      ],
+    };
+    const server = {
+      chats: [
+        {
+          ref: "a",
+          turns: ["t1", "res:7"],
+          asks: ["2"],
+          runs: ["r1"],
+          steers: ["s2"],
+          queued: ["q1", "q2"],
+        },
+        idle("b"),
+      ],
+    };
+    expect(mergeImpact(sent, server)).toEqual({
+      chats: [
+        {
+          ref: "a",
+          turns: ["t1", "res:7"],
+          asks: ["1", "2"],
+          runs: ["r1"],
+          steers: ["s1", "s2"],
+          queued: ["q1", "q2"],
+        },
+        idle("b"),
+      ],
+    });
+  });
+});
+
+describe("deleteStopsWork", () => {
+  it("lists every descendant chat and never the deleted one", () => {
+    store.setSessions([makeSession("a"), makeSession("t")]);
+    expect(deleteStopsWork([T]).impact).toEqual({ chats: [idle("t")] });
+  });
+
+  it("its text is empty when every descendant is idle", () => {
+    expect(deleteStopsWork([T]).text).toBe("");
+  });
+
+  it("names each busy chat otherwise", () => {
+    openTurn("t", "t1");
+    expect(deleteStopsWork([T]).text).toBe("Closing its tabs also stops the reply in Tangent.");
+  });
+
+  it("names no run, since a descendant's close leaves its runs running", () => {
+    runStore.noteRunLive("wf-1", "t", true);
+    const asked = deleteStopsWork([T]);
+    expect(asked.text).toBe("");
+    expect(asked.impact).toEqual({ chats: [idle("t")] });
   });
 });

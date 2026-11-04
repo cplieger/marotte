@@ -93,7 +93,7 @@ func TestPause_TellsKASTheUserAskedForIt(t *testing.T) {
 		methodKiroWorkflowPause:   json.RawMessage(`{}`),
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", marotte.RunStatusRunning, ""),
 	}
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 
 	if err := h.runs.pause(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Pause: %v", err)
@@ -108,7 +108,7 @@ func TestResume_IsNotAttributed(t *testing.T) {
 		methodKiroWorkflowResume:  json.RawMessage(`{}`),
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", ""),
 	}
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 
 	if err := h.runs.resume(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Resume: %v", err)

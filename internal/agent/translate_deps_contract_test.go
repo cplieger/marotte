@@ -110,8 +110,9 @@ func TestHub_TranslateRolesContract(t *testing.T) {
 	TranslateRolesContractTest(t, func(t *testing.T) *translate.Roles {
 		t.Helper()
 		h, cs, _ := newTestHub()
-		// A wire turn opens against the chat's record.
+		// A wire turn opens against the chat's record, on the life its forward would have.
 		cs.seed(t, "c1", nil)
+		h.coord.turns.ensureTestLife("c1")
 		// The production wiring itself, not a copy.
 		return h.translateRoles()
 	})

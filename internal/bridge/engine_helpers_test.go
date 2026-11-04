@@ -21,7 +21,9 @@ type fakeKAS struct {
 	inR    *os.File
 	outW   *os.File
 	frames chan wireFrame
-	mu     sync.Mutex
+	// background tracks the engine's background goroutines, so the test ends only after they did.
+	background sync.WaitGroup
+	mu         sync.Mutex
 }
 
 // wireFrame is one frame the engine wrote.
@@ -74,6 +76,7 @@ func newFakeKAS(t *testing.T, opts ...Option) *fakeKAS {
 	e.stdout = newFrameReader(bufio.NewReaderSize(outR, stdoutBufSize))
 	e.readLoopStarted.Store(true)
 	k := &fakeKAS{t: t, e: e, in: bufio.NewReader(inR), inR: inR, outW: outW, frames: make(chan wireFrame, 4096)}
+	e.background = func(fn func()) bool { k.background.Go(fn); return true }
 	go e.readLoop()
 	// What the reap does to a live process: its stdout ends once marotte tears the engine down.
 	go func() {
@@ -84,6 +87,13 @@ func newFakeKAS(t *testing.T, opts ...Option) *fakeKAS {
 	t.Cleanup(func() {
 		e.Stop()
 		_ = inR.Close()
+		done := make(chan struct{})
+		go func() { k.background.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("the engine's background goroutines outlived it")
+		}
 	})
 	return k
 }
@@ -173,7 +183,7 @@ func (k *fakeKAS) request(id int64, method string, params any) {
 }
 
 // openedSession runs a NewSession the fake answers with the minted id, answering every later door call too.
-func (k *fakeKAS) openedSession(attach func(*Session)) *Session {
+func (k *fakeKAS) openedSession(attach func(*Session) error) *Session {
 	k.t.Helper()
 	type result struct {
 		s   *Session

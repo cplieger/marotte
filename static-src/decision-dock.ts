@@ -382,6 +382,13 @@ export function hasPendingDecision(chatID: string): boolean {
   return (queues.get(chatID)?.length ?? 0) > 0;
 }
 
+/** The server ask ids of this chat's unanswered decisions, as a close names them. Subscribes the
+ *  calling effect to the queue. */
+export function pendingDecisionIDs(chatID: string): string[] {
+  touch(queueVersion);
+  return (queues.get(chatID) ?? []).map((d) => String(d.requestID));
+}
+
 /**
  * What one workflow run waits on a person for (the run card, the exec view, the dots): its steps' questions from the
  * run-asks store, then its request decisions from every queue (same join as `mountRunDecisionDock`). Subscribes the

@@ -135,7 +135,7 @@ func TestTurnClosed_ClearsTheBufferOfASettledChatHoldingANotice(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{
 		marotte.MethodSessionSteerClear: json.RawMessage(`{"cleared":true,"messageIds":["notify-wf-1"]}`),
 	}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 	turnID, _ := h.stagePromptTurn(t, "c1")
 	h.runs.observeComplete(t.Context(), "c1", runComplete("wf_1", "completed"))
 
@@ -165,7 +165,7 @@ func TestTurnClosed_TheNoticeClearWaitsForKASIdle(t *testing.T) {
 		br.callResults = map[string]json.RawMessage{
 			marotte.MethodSessionSteerClear: json.RawMessage(`{"cleared":true,"messageIds":["notify-wf-1"]}`),
 		}
-		h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+		h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 		turnID, _ := h.stagePromptTurn(t, "c1")
 		h.coord.WireTurnActivity("c1", true)
 		h.runs.observeComplete(t.Context(), "c1", runComplete("wf_1", "completed"))
@@ -195,7 +195,7 @@ func TestTurnClosed_NoNoticeClearWhenATurnOpensBeforeKASIdle(t *testing.T) {
 		br.callResults = map[string]json.RawMessage{
 			marotte.MethodSessionSteerClear: json.RawMessage(`{"cleared":true,"messageIds":["notify-wf-1"]}`),
 		}
-		h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+		h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 		turnID, _ := h.stagePromptTurn(t, "c1")
 		h.coord.WireTurnActivity("c1", true)
 		h.runs.observeComplete(t.Context(), "c1", runComplete("wf_1", "completed"))
@@ -218,7 +218,7 @@ func TestTurnClosed_NoNoticeClearWhenATurnOpensBeforeKASIdle(t *testing.T) {
 func TestTurnClosed_TheNoticeClearsDropIsCarriedByTheSameClose(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s, cs, br := steerOpsHub(t)
-		att := s.h.coord.turns.attachForward("c1")
+		att := s.h.coord.turns.attachForwardNow("c1")
 		t.Cleanup(att.exited)
 		var held []string
 		br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
@@ -268,7 +268,7 @@ func TestTurnClosed_OnceShutdownBeganSendsNoClear(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{
 		marotte.MethodSessionSteerClear: json.RawMessage(`{"cleared":true,"messageIds":["notify-wf-1"]}`),
 	}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 	turnID, _ := h.stagePromptTurn(t, "c1")
 	h.runs.observeComplete(t.Context(), "c1", runComplete("wf_1", "completed"))
 	beginDraining(h)
@@ -288,7 +288,7 @@ func TestTurnClosed_LeavesAChatHoldingNoNoticeAlone(t *testing.T) {
 	h, _, br := newTestHub()
 	defer shutdownHub(t, h)
 	br.callResults = map[string]json.RawMessage{marotte.MethodSessionSteerClear: json.RawMessage(`{"cleared":true}`)}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 	turnID, _ := h.stagePromptTurn(t, "c1")
 
 	h.coord.finalizeTurn(t.Context(), "c1", &turnClose{

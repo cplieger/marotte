@@ -4,6 +4,7 @@
 // `tabs-projection.test.ts`'s subject.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type { CloseImpact } from "./wire/types.gen.js";
 import type { Mock } from "vitest";
 import { effect } from "@cplieger/ui";
 import { mountLiveRegions } from "@cplieger/ui/announce";
@@ -1407,7 +1408,7 @@ describe("a person's close goes through the close gate", () => {
     await openChat("t", { parent: chatID("a") });
     await openRunTab("wf_1", "A run", { parent: chatID("a"), owns: false });
     await paint();
-    const gate = vi.fn<Gate>(() => Promise.resolve(false));
+    const gate = vi.fn<Gate>(() => ({ verdict: Promise.resolve(false) }));
     registerCloseGate(gate);
 
     tapClose(chatID("a"));
@@ -1425,7 +1426,7 @@ describe("a person's close goes through the close gate", () => {
     expect.assertions(2);
     await openChats("a", "b");
     await paint();
-    registerCloseGate(() => Promise.resolve(true));
+    registerCloseGate(() => ({ verdict: Promise.resolve(true) }));
 
     tapClose(chatID("a"));
     await until(() => tabServer.sentOfType("close_tab").length === 1, "the close dispatched");
@@ -1439,7 +1440,7 @@ describe("a person's close goes through the close gate", () => {
     expect.assertions(2);
     await openChats("a", "b");
     await paint();
-    const gate = vi.fn<Gate>(() => Promise.resolve(false));
+    const gate = vi.fn<Gate>(() => ({ verdict: Promise.resolve(false) }));
     registerCloseGate(gate);
 
     rowEl(chatID("a")).dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true }));
@@ -1454,7 +1455,7 @@ describe("a person's close goes through the close gate", () => {
     await openChats("a", "b", "c");
     await paint();
     const answer = deferred();
-    registerCloseGate(() => answer.promise);
+    registerCloseGate(() => ({ verdict: answer.promise }));
     const node = rowEl(chatID("b"));
     node.focus();
 
@@ -1472,7 +1473,7 @@ describe("a person's close goes through the close gate", () => {
     await openChats("a", "b", "c");
     await paint();
     const answer = deferred();
-    registerCloseGate(() => answer.promise);
+    registerCloseGate(() => ({ verdict: answer.promise }));
     const node = rowEl(chatID("b"));
     const successor = rowEl(chatID("c"));
     node.focus();
@@ -1490,7 +1491,7 @@ describe("a person's close goes through the close gate", () => {
     expect.assertions(2);
     await openChats("a", "b");
     await paint();
-    registerCloseGate(() => true);
+    registerCloseGate(() => ({ verdict: true }));
 
     tapClose(chatID("a"));
 
@@ -1503,7 +1504,7 @@ describe("a person's close goes through the close gate", () => {
     expect.assertions(2);
     await openEditorView("/a.ts");
     await paint();
-    const gate = vi.fn<Gate>(() => Promise.resolve(false));
+    const gate = vi.fn<Gate>(() => ({ verdict: Promise.resolve(false) }));
     registerCloseGate(gate);
 
     tapClose(tabIdFor("editor", "/a.ts"));
@@ -1511,6 +1512,169 @@ describe("a person's close goes through the close gate", () => {
 
     expect(gate).not.toHaveBeenCalled();
     expect(hasTab("editor", "/a.ts")).toBe(false);
+  });
+});
+
+// The server checks the impact a person's close sends against what the close would stop, and refuses one
+// another device made stale (409 close_impact_changed with its own impact): nothing closes, and the person
+// answers again on the merge.
+describe("a close another device made stale", () => {
+  type Gate = Parameters<typeof registerCloseGate>[0];
+  type Impact = CloseImpact;
+
+  const work = (ref: string, turns: string[] = []) => ({
+    ref,
+    turns,
+    asks: [],
+    runs: [],
+    steers: [],
+    queued: [],
+  });
+  const merged = (a: Impact, b: Impact): Impact => {
+    const out = new Map<string, Impact["chats"][number]>();
+    for (const w of [...a.chats, ...b.chats]) {
+      const had = out.get(w.ref);
+      out.set(
+        w.ref,
+        had === undefined ? w : { ...had, turns: [...new Set([...had.turns, ...w.turns])] },
+      );
+    }
+    return { chats: [...out.values()] };
+  };
+
+  function tapClose(id: string): void {
+    const x = document.querySelector<HTMLElement>(`[data-tab-id="${id}"] .tab-close`);
+    if (x === null) {
+      throw new Error("no close control");
+    }
+    for (const type of ["pointerdown", "pointerup"] as const) {
+      x.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          bubbles: true,
+        }),
+      );
+    }
+    x.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  /** A gate that sends `first` and, asked again, answers `again` on the merge it was handed. */
+  function staleGate(first: Impact, again: boolean): ReturnType<typeof vi.fn<Gate>> {
+    return vi.fn<Gate>((_name, _ref, _chats, stale) =>
+      stale === undefined
+        ? { verdict: true, impact: first }
+        : { verdict: Promise.resolve(again), impact: merged(stale.sent, stale.server) },
+    );
+  }
+
+  function refuseWith(server: Impact): void {
+    tabServer.failNext(
+      "close_tab",
+      409,
+      "what closing this tab stops changed; confirm again",
+      "close_impact_changed",
+      {
+        error: "what closing this tab stops changed; confirm again",
+        reason: "close_impact_changed",
+        impact: server,
+      },
+    );
+  }
+
+  it("closes nothing, toasts nothing, asks again with the server's impact and accept sends the merged one", async () => {
+    await openChat("a");
+    await paint();
+    const sent = { chats: [work("a")] };
+    const server = { chats: [work("a"), work("x", ["t9"])] };
+    const gate = staleGate(sent, true);
+    registerCloseGate(gate);
+    refuseWith(server);
+
+    tapClose(chatID("a"));
+    await until(
+      () => tabServer.sentOfType("close_tab").length === 2,
+      "the second close dispatched",
+    );
+    await settleTabs();
+
+    expect(gate).toHaveBeenCalledTimes(2);
+    expect(gate.mock.calls[1]?.[3]).toEqual({ sent, server });
+    const payloads = tabServer.sentOfType("close_tab").map((c) => c.payload["impact"]);
+    expect(payloads).toEqual([sent, { chats: [work("a"), work("x", ["t9"])] }]);
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+    expect(hasTab("chat", "a")).toBe(false);
+  });
+
+  it("a reply that ended and another device's new reply asks again, and the merge carries both ids", async () => {
+    await openChat("a");
+    await paint();
+    const sent = { chats: [work("a", ["t1"])] };
+    const server = { chats: [work("a", ["t2"])] };
+    registerCloseGate(staleGate(sent, true));
+    refuseWith(server);
+
+    tapClose(chatID("a"));
+    await until(
+      () => tabServer.sentOfType("close_tab").length === 2,
+      "the second close dispatched",
+    );
+
+    expect(tabServer.sentOfType("close_tab")[1]?.payload["impact"]).toEqual({
+      chats: [work("a", ["t1", "t2"])],
+    });
+  });
+
+  it("a close the page thought idle but the server finds busy asks first", async () => {
+    await openChat("a");
+    await paint();
+    const sent = { chats: [work("a")] };
+    const gate = staleGate(sent, false);
+    registerCloseGate(gate);
+    refuseWith({ chats: [work("a", ["res:7"])] });
+
+    tapClose(chatID("a"));
+    await until(() => gate.mock.calls.length === 2, "the second dialog");
+    await settleTabs();
+
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(1);
+    expect(hasTab("chat", "a")).toBe(true);
+  });
+
+  it("declining the second dialog leaves the tab open and sends nothing more", async () => {
+    await openChats("a", "b");
+    await paint();
+    const gate = staleGate({ chats: [work("a")] }, false);
+    registerCloseGate(gate);
+    refuseWith({ chats: [work("a", ["t3"])] });
+
+    tapClose(chatID("a"));
+    await until(() => gate.mock.calls.length === 2, "the second dialog");
+    await settleTabs();
+
+    expect(hasTab("chat", "a")).toBe(true);
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(1);
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("a person's close of a tab with no chat sends an empty impact", async () => {
+    await openEditorView("/a.ts");
+    await paint();
+
+    tapClose(tabIdFor("editor", "/a.ts"));
+    await settleTabs();
+
+    expect(tabServer.sentOfType("close_tab")[0]?.payload["impact"]).toEqual({ chats: [] });
+  });
+
+  it("a remote close sends no impact", async () => {
+    await openChat("a");
+    await settleTabs();
+
+    await closeTab(chatID("a"));
+
+    expect(tabServer.sentOfType("close_tab")[0]?.payload).not.toHaveProperty("impact");
   });
 });
 

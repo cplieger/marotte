@@ -61,7 +61,7 @@ func TestAskAnswer_GoesBackOnTheBridgeTheAskArrivedOn(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, _, _ := newTestHub()
 			origin, current := newFakeBridge(), newFakeBridge()
-			h.bridge.mgr.insert("c1", &sharedBridge{bridge: current, state: bridgeIdle})
+			h.insertBridgeNow("c1", testBridge(current, bridgeIdle))
 			askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(tc.event, "c1", tc.payload), origin))
 
 			if rec := postCmd(t, h, tc.cmd(askID)); rec.Code != http.StatusOK {
@@ -81,7 +81,7 @@ func TestAskAnswer_GoesBackOnTheBridgeTheAskArrivedOn(t *testing.T) {
 func TestAskAnswer_ADeliveredAnswerSettlesItOnceAsTheUsers(t *testing.T) {
 	h, _, _ := newTestHub()
 	origin := newFakeBridge()
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: origin, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(origin, bridgeIdle))
 	askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 		marotte.UserInputNeededPayload{}), origin))
 	head := h.bus.fanout.Position().Head
@@ -110,7 +110,7 @@ func (*exitedBridge) Respond(context.Context, int64, any, error) error {
 func TestAskAnswer_ToABridgeThatEndedSinceTheClaimSettlesItEnded(t *testing.T) {
 	h, _, _ := newTestHub()
 	ended := &exitedBridge{fakeBridge: newFakeBridge()}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: ended, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(ended, bridgeIdle))
 	askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 		marotte.UserInputNeededPayload{}), ended))
 	head := h.bus.fanout.Position().Head
@@ -148,7 +148,7 @@ func (b *endingBridge) Respond(context.Context, int64, any, error) error {
 func TestAskAnswer_AnEndDuringTheWriteSettlesItEndedOnce(t *testing.T) {
 	h, _, _ := newTestHub()
 	br := &endingBridge{fakeBridge: newFakeBridge(), h: h}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 	askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 		marotte.UserInputNeededPayload{}), br))
 	head := h.bus.fanout.Position().Head
@@ -174,7 +174,7 @@ func TestAskAnswer_AFailedWriteOnALiveBridgeRefusesTheAnswerAndReoffersTheAsk(t 
 		t.Run(name, func(t *testing.T) {
 			h, _, _ := newTestHub()
 			live := &droppingBridge{fakeBridge: newFakeBridge()}
-			h.bridge.mgr.insert("c1", &sharedBridge{bridge: live, state: bridgeIdle})
+			h.insertBridgeNow("c1", testBridge(live, bridgeIdle))
 			h.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
 			askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(tc.event, "c1", tc.payload), live))
 			head := h.bus.fanout.Position().Head
@@ -225,7 +225,7 @@ func TestAskAnswer_AnAskSettledDuringTheWriteRefusesTheAnswerAsWithdrawn(t *test
 				h, _, _ := newTestHub()
 				br := &duringWriteBridge{fakeBridge: newFakeBridge()}
 				br.during = func() { settle(h, br) }
-				h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+				h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 				h.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
 				askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(tc.event, "c1", tc.payload), br))
 
@@ -278,7 +278,7 @@ func TestAskAnswer_ATerminalTransitionDuringTheWriteSettlesTheClaimOnce(t *testi
 		"kasWithdrewThenBridgeEnded": {
 			transition: func(h *Runtime) bool {
 				ok := h.bus.PendingPermsWithdraw("c1", toolCallID)
-				h.bus.endAsksOf(h.bridge.mgr.get("c1").current())
+				h.bus.endAsksOf(h.bridge.mgr.get("c1").session())
 				return ok
 			},
 			want: []marotte.SettledBy{marotte.SettledByMoot},
@@ -298,7 +298,7 @@ func TestAskAnswer_ATerminalTransitionDuringTheWriteSettlesTheClaimOnce(t *testi
 					}
 					transitioned = tc.transition(h)
 				}
-				h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+				h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 				askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 					marotte.UserInputNeededPayload{ToolCallID: toolCallID, RunID: workflowID}), br))
 				head := h.bus.fanout.Position().Head

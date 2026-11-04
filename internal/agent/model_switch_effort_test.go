@@ -163,7 +163,7 @@ func TestSwitchModel_AStaleSeedTheNewModelLacksIsNotItsFallback(t *testing.T) {
 // refuse it, and the session the chat opens next runs at it.
 func TestSwitchModel_APickTheCatalogCannotJudgeKeepsItsTier(t *testing.T) {
 	d, h := switchFixture(t)
-	bridgeRole{coord: h.coord}.CloseBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
+	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 	h.coord.catalog.SetModels([]marotte.SessionModel{catalogModel(t, "fake-model", fiveTiersMeta)})
 
 	postOK(t, h, "switch_model", `{"model":"opus","effort":"xhigh"}`)
@@ -439,7 +439,7 @@ func admitHeld(t *testing.T, h *Runtime, p marotte.SwitchModelCommand) func() er
 // parkOnBridgelessChat closes the fixture's bridge and parks pair, as a pick made with no session.
 func parkOnBridgelessChat(t *testing.T, d *effortDrift, h *Runtime, pair pendingPair) {
 	t.Helper()
-	bridgeRole{coord: h.coord}.CloseBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
+	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.PendingModel, c.PendingEffort = pair.model, pair.effort
 		return true
@@ -567,7 +567,7 @@ func TestSwitchModel_ABusyChatParksTheTierWithThePick(t *testing.T) {
 // opens next runs at it.
 func TestSwitchModel_ABridgelessPickOpensItsSessionAtTheTier(t *testing.T) {
 	d, h := switchFixture(t)
-	bridgeRole{coord: h.coord}.CloseBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
+	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 
 	postOK(t, h, "switch_model", `{"model":"opus","effort":"xhigh"}`)
 
@@ -583,7 +583,7 @@ func TestSwitchModel_ABridgelessPickOpensItsSessionAtTheTier(t *testing.T) {
 // record first, so the session opens on the model at the parked tier.
 func TestSwitchModel_TheSpawnLandsAParkedPair(t *testing.T) {
 	d, h := switchFixture(t)
-	bridgeRole{coord: h.coord}.CloseBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
+	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.PendingModel, c.PendingEffort = "opus", "xhigh"
 		return true
@@ -606,7 +606,7 @@ func TestSwitchModel_TheSpawnLandsAParkedPair(t *testing.T) {
 // offers it, not at the target's seed.
 func TestSwitchModel_ASwitchByRestartCarriesTheChatsLevel(t *testing.T) {
 	d, h := switchFixture(t)
-	bridgeRole{coord: h.coord}.CloseBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
+	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Effort = "high"
 		return true
@@ -688,7 +688,7 @@ func TestSwitchModel_TheRowNamesTheCappedTierAndTheRecordThePreference(t *testin
 // since nothing in the catalog can refuse it, and the next session runs at it.
 func TestSwitchModel_ACarriedLevelRidesAPickTheCatalogCannotJudge(t *testing.T) {
 	d, h := switchFixture(t)
-	bridgeRole{coord: h.coord}.CloseBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
+	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 	h.coord.catalog.SetModels([]marotte.SessionModel{catalogModel(t, "fake-model", fiveTiersMeta)})
 
 	postOK(t, h, "set_effort", `{"level":"high"}`)

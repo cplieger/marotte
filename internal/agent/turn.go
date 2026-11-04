@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,8 +37,8 @@ type activeTurn struct {
 	// Log is this turn's accumulator over the chat's entry log, so one turn's open
 	// lane cannot extend the next turn's entry.
 	Log *turnlog.Turn
-	// lc is the owning lifecycle, carried rather than re-resolved: a forgotten chat's lookup mints a fresh one with
-	// another mutex and wake channel.
+	// lc is the owning lifecycle, carried rather than re-resolved: after a close, the chat's lifecycle by id is
+	// another life's or none.
 	lc *chatLifecycle
 	// done is closed once, at finalize.
 	done      chan struct{}
@@ -54,6 +55,10 @@ type activeTurn struct {
 	reapStallUntil time.Time
 	// opened is the turn_open entry as written, which the turn_opened frame carries.
 	opened *marotte.Entry
+	// messageID and resends are the turn's prompt id and the unread steer keys it carries, set at OpenTurn: the ids
+	// a close's confirmation may name the turn by (closeWork).
+	messageID string
+	resends   []string
 	// ID is the turn_open entry's id: every handle on the turn.
 	ID string
 	// Model is the model answering, stamped at StartTurn for a prompt and at open
@@ -121,18 +126,31 @@ type chatLifecycle struct {
 	// fwdExits holds, per forward generation still running, the channel its
 	// goroutine closes on exit.
 	fwdExits map[uint64]chan struct{}
+	// quiet is closed once the life ended and none of its work runs (turn_life.go).
+	quiet chan struct{}
+	// ctx is the life's: cancelled with marotte.ErrChatClosedDuringCall when the life ends, and every wait of the
+	// life's work selects on it.
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+	chatID marotte.ChatID
 	// changed is closed and replaced on every state change, under mu. A channel, not a Cond, which would re-take the
 	// lock the finalize needs.
 	changed chan struct{}
 	// restoreSession is the session whose writes are KAS applying or rolling back reviewed changes
 	// (expectRestores), "" for none.
 	restoreSession string
+	// admissionMessage is the prompt message id of the held reservation, "" for none.
+	admissionMessage string
+	// closedIDs are the ids of the life's newest finished turns, a ring at closedAt: a prompt's reply settles right
+	// after its turn closed, and its wait must stay in the life that turn belonged to (awaitClosePosition).
+	closedIDs [recentCloses]string
 	// kas is KAS's execution state for the chat's session; only kasStepLocked changes it.
 	kas kasExec
 	// nextSeq is the open sequence the newest record took; openLocked increments it
 	// before assigning, so the next record takes nextSeq+1.
 	nextSeq uint64
-	// epoch names this lifecycle among the chat's; a fence from another epoch never holds. Re-minted at teardown so a surviving drain opens nothing.
+	// epoch names this lifecycle among the chat's; a fence from another epoch never holds. Re-minted when the life
+	// ends, so a surviving drain opens nothing.
 	epoch uint64
 	// stopSeq is nextSeq when a stop was last requested: every turn at or below it was open then. Zero is no stop.
 	stopSeq uint64
@@ -143,11 +161,17 @@ type chatLifecycle struct {
 	// observedSeq is the read loop position the FOLDER has reached. Advanced for
 	// every frame consumed, not only the ones that touch a turn — see observe.
 	observedSeq uint64
-	// fwdGen counts the forward goroutines attached for this chat: a new bridge
-	// restarts its sequence at zero, so positions compare only within a generation.
+	// fwdGen names the attached forward goroutine, registry-wide (turnRegistry.fwdGens): a new bridge restarts its
+	// sequence at zero, so positions compare only within a generation.
 	fwdGen uint64
 	// reservedSource is who holds the admission slot while reserved; the reservation is not a Turn.
 	reservedSource marotte.TurnOpenSource
+	// work counts the life's running goroutines by kind (beginWork).
+	work [workKinds]int
+	// closedAt counts the writes to closedIDs; modulo recentCloses it is the next slot.
+	closedAt int
+	// stamp is the gate stamp that created the life; every reservation carries it.
+	stamp uint64
 	// forwardGone is whether the attached forward goroutine has exited, so a settle
 	// waiting on a position that can no longer advance stops waiting.
 	forwardGone bool
@@ -155,6 +179,13 @@ type chatLifecycle struct {
 	inFrame bool
 	// reserved is whether the admission slot is held.
 	reserved bool
+	// reservedForRow is whether the held reservation is a close's drain, whose row or steers a close's confirmation
+	// names until its turn opens.
+	reservedForRow bool
+	// admissionOpened is whether a turn opened under the held reservation.
+	admissionOpened bool
+	// ended is set once, when the life ends (endLifeLocked); an ended life admits nothing.
+	ended bool
 	// stopCause is the cause of the stops stopSeq records (requestStop decides it).
 	stopCause marotte.TurnStopCause
 	state     turnState
@@ -162,16 +193,16 @@ type chatLifecycle struct {
 	// without mu (sendCommitLocked).
 	stopCount atomic.Uint64
 	mu        sync.Mutex
-	// switchMu is held by every writer of pending_model (the switch's admission, the idle or
-	// turn-close apply, the session open's fold): otherwise two appliers read one pick and apply it twice,
-	// or a landing falls between an admission's read and its park. Held across the bridge call.
-	switchMu sync.Mutex
 }
 
 // turnRegistry holds one lifecycle per chat. Lock order registry.mu -> lifecycle.mu -> chat store: opens and
 // closers append under the lifecycle mutex, so log and registry agree.
 type turnRegistry struct {
-	chats map[marotte.ChatID]*chatLifecycle
+	// gates is the life gate every creation of a chat's life state and every reservation checks.
+	gates *chatGates
+	// lifeParent is the context every life's is a child of: the runtime's lifetime. Nil is context.Background.
+	lifeParent context.Context
+	chats      map[marotte.ChatID]*chatLifecycle
 	// records writes the chat's turn keep fact; required by newTurnRegistry.
 	records turnRecords
 	// onIdle runs, with no lock held, each time a chat leaves its last open turn or admission: an engine restart
@@ -183,6 +214,9 @@ type turnRegistry struct {
 	// openHook runs at the top of OpenTurn, before its section; nil in production, set as claimHook is.
 	openHook func()
 	epochs   atomic.Uint64
+	// admissions mints reservation tokens registry-wide, so a release clears its own slot and no later life's.
+	admissions atomic.Uint64
+	fwdGens    atomic.Uint64
 	// stopTokens mints each stop's send-hold token.
 	stopTokens atomic.Uint64
 	mu         sync.Mutex
@@ -198,21 +232,74 @@ type turnRecords interface {
 
 var _ turnRecords = (*chat.Store)(nil)
 
-// newTurnRegistry panics on a nil records: a registry that cannot write the turn fact would admit prompts the
-// retention purge cannot see.
+// newTurnRegistry builds a registry whose lives are children of context.Background until lifeParent is set. It
+// panics on a nil records: a registry that cannot write the turn fact would admit prompts the retention purge cannot
+// see.
 func newTurnRegistry(records turnRecords) *turnRegistry {
 	if records == nil {
 		panic("agent: newTurnRegistry needs the chat store's turn keep writes")
 	}
-	return &turnRegistry{chats: make(map[marotte.ChatID]*chatLifecycle), records: records}
+	return &turnRegistry{chats: make(map[marotte.ChatID]*chatLifecycle), gates: newChatGates(), records: records}
 }
 
-func (r *turnRegistry) lifecycleFor(chatID marotte.ChatID) *chatLifecycle {
+// lifecycleAt returns chatID's live lifecycle, creating it, for a caller whose intent began at stamp. It waits while
+// a close of the chat is held (bounded by ctx) and answers marotte.ErrChatClosedDuringCall once a close committed
+// after stamp. It is the only creation of a chat's lifecycle besides lifecycleForRun.
+func (r *turnRegistry) lifecycleAt(ctx context.Context, chatID marotte.ChatID, stamp uint64) (*chatLifecycle, error) {
+	for {
+		lc, wait, err := r.admitLife(chatID, stamp)
+		if lc != nil || err != nil {
+			return lc, err
+		}
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// tryLifecycleAt is lifecycleAt that never waits: false while a close is held or after one committed since stamp.
+func (r *turnRegistry) tryLifecycleAt(chatID marotte.ChatID, stamp uint64) (*chatLifecycle, bool) {
+	lc, _, _ := r.admitLife(chatID, stamp)
+	return lc, lc != nil
+}
+
+// admitLife is one gated look at chatID's lifecycle: the lifecycle, or the hold to wait on, or the refusal. An ended
+// lifecycle is never handed out.
+func (r *turnRegistry) admitLife(chatID marotte.ChatID, stamp uint64) (*chatLifecycle, <-chan struct{}, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch v, idle := r.gates.admit(chatID, stamp); v {
+	case gateClosedSince:
+		return nil, nil, marotte.ErrChatClosedDuringCall
+	case gateWait:
+		return nil, idle, nil
+	case gateAdmitted:
+	}
+	lc, ok := r.chats[chatID]
+	if !ok {
+		lc = r.newLifecycle(chatID, stamp)
+		r.chats[chatID] = lc
+		return lc, nil, nil
+	}
+	if lc.endedNow() {
+		return nil, nil, marotte.ErrChatClosedDuringCall
+	}
+	return lc, nil, nil
+}
+
+// lifecycleForRun returns or creates a run chat's lifecycle. A run chat is never held by a close, so it takes no
+// stamp; a chat id reaching it is a wiring error.
+func (r *turnRegistry) lifecycleForRun(chatID marotte.ChatID) *chatLifecycle {
+	if !isRunChat(chatID) {
+		panic("lifecycleForRun: " + string(chatID) + " is not a run chat")
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	lc, ok := r.chats[chatID]
 	if !ok {
-		lc = &chatLifecycle{changed: make(chan struct{}), epoch: r.epochs.Add(1)}
+		lc = r.newLifecycle(chatID, 0)
 		r.chats[chatID] = lc
 	}
 	return lc
@@ -230,7 +317,7 @@ func fenceOf(t *activeTurn) command.TurnFence {
 	return command.TurnFence{Epoch: t.lc.epoch, Seq: t.Seq}
 }
 
-// refence re-mints the chat's lifecycle epoch, so every earlier fence stops holding.
+// refence re-mints the chat's lifecycle epoch, so every earlier fence stops holding, ending no life.
 func (r *turnRegistry) refence(chatID marotte.ChatID) {
 	lc, ok := r.lookup(chatID)
 	if !ok {
@@ -242,7 +329,7 @@ func (r *turnRegistry) refence(chatID marotte.ChatID) {
 	lc.mu.Unlock()
 }
 
-// lookup returns the chat's lifecycle without creating one; on a read path lifecycleFor would leak one per opened chat.
+// lookup returns the chat's lifecycle without creating one.
 func (r *turnRegistry) lookup(chatID marotte.ChatID) (*chatLifecycle, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -250,12 +337,35 @@ func (r *turnRegistry) lookup(chatID marotte.ChatID) (*chatLifecycle, bool) {
 	return lc, ok
 }
 
-// forget drops a chat's lifecycle. An open turn keeps the dropped one through its own lc, so an in-flight finalize
-// publishes where its waiters park.
+// forget drops a chat's lifecycle, ending its life. An open turn keeps the dropped one through its own lc, so an
+// in-flight finalize publishes where its waiters park.
 func (r *turnRegistry) forget(chatID marotte.ChatID) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	if lc, ok := r.chats[chatID]; ok {
+		delete(r.chats, chatID)
+		lc.mu.Lock()
+		lc.endLifeLocked(r.mintEpoch)
+		lc.mu.Unlock()
+	}
+}
+
+// forgetIfIdle is forget for a lifecycle with no own, pending or reserved turn: a run chat's forward forgets its
+// chat this way, so a closer still owed its turn close forgets it after.
+func (r *turnRegistry) forgetIfIdle(chatID marotte.ChatID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lc, ok := r.chats[chatID]
+	if !ok {
+		return
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.liveLockedState() {
+		return
+	}
 	delete(r.chats, chatID)
-	r.mu.Unlock()
+	lc.endLifeLocked(r.mintEpoch)
 }
 
 // wakeLocked wakes every waiter without moving the state. Caller holds mu.
@@ -308,6 +418,7 @@ func (lc *chatLifecycle) openLocked(chatID marotte.ChatID, opened *marotte.Entry
 		if lc.reserved {
 			t.admission = lc.admission
 			t.stopped = lc.stoppedAdmission == lc.admission
+			lc.admissionOpened = true
 		}
 		lc.pending = t
 		if lc.own == nil {
@@ -380,8 +491,8 @@ func (lc *chatLifecycle) slotFreeLocked(source marotte.TurnOpenSource) bool {
 // attributed to an unacknowledged prompt: claiming it could retire the prompt's words before KAS reads them, and
 // the prompt's own session/prompt response stays its closer.
 func (r *turnRegistry) claimBound(ctx context.Context, chatID marotte.ChatID) (*activeTurn, bool) {
-	lc := r.lifecycleFor(chatID)
-	if !lc.awaitNotFinalizing(ctx) {
+	lc, ok := r.lookup(chatID)
+	if !ok || !lc.awaitNotFinalizing(ctx) {
 		return nil, false
 	}
 	defer lc.mu.Unlock()
@@ -457,6 +568,36 @@ func (lc *chatLifecycle) liveLocked(turnID string) *activeTurn {
 	return nil
 }
 
+// closeWork is the chat's turns a close stops: each non-finalizing open turn, and a reservation whose turn has not
+// opened unless it is a drain's (its row or steers are named on their own until the turn opens).
+func (r *turnRegistry) closeWork(chatID marotte.ChatID) []command.CloseTurn {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return nil
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	var out []command.CloseTurn
+	turns := []*activeTurn{lc.own}
+	if lc.pending != lc.own {
+		turns = append(turns, lc.pending)
+	}
+	for _, t := range turns {
+		if t == nil || t.finalizing {
+			continue
+		}
+		item := command.CloseTurn{ID: t.ID, MessageID: t.messageID, Resends: t.resends}
+		if t.admission != 0 {
+			item.Admission = command.AdmissionID(t.admission)
+		}
+		out = append(out, item)
+	}
+	if lc.reserved && !lc.admissionOpened && !lc.reservedForRow {
+		out = append(out, command.CloseTurn{MessageID: lc.admissionMessage, Admission: command.AdmissionID(lc.admission)})
+	}
+	return out
+}
+
 // finish publishes a claimed turn's result and returns the chat to idle: result stored and done closed before the
 // state moves. It publishes on the turn's own lifecycle, which a forgotten chat would otherwise strand.
 func (r *turnRegistry) finish(t *activeTurn, result marotte.TurnResult) {
@@ -481,11 +622,22 @@ func (r *turnRegistry) idle(chatID marotte.ChatID, announce bool) {
 	}
 }
 
+// recentCloses is how many finished turn ids a life keeps. Turns close one after another on one session, so a reply
+// whose turn is older than that many closes has nothing left to order.
+const recentCloses = 16
+
+// closedRecentlyLocked reports whether turnID is one of the life's newest finished turns. Caller holds mu.
+func (lc *chatLifecycle) closedRecentlyLocked(turnID string) bool {
+	return turnID != "" && slices.Contains(lc.closedIDs[:], turnID)
+}
+
 // finishLocked is finish under mu, reporting whether the chat is now idle.
 func (lc *chatLifecycle) finishLocked(t *activeTurn, result marotte.TurnResult) bool {
 	result.Turn = t.ID
 	t.result = result
 	close(t.done)
+	lc.closedIDs[lc.closedAt%recentCloses] = t.ID
+	lc.closedAt++
 	if lc.own == t {
 		lc.own = nil
 	}
@@ -518,7 +670,10 @@ func (lc *chatLifecycle) turnLocked(turnID string) *activeTurn {
 
 // finish drops open ones.
 func (r *turnRegistry) release(chatID marotte.ChatID, turnID string) {
-	lc := r.lifecycleFor(chatID)
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return
+	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	t := lc.turnLocked(turnID)
@@ -534,7 +689,10 @@ func (r *turnRegistry) release(chatID marotte.ChatID, turnID string) {
 // await blocks until the named turn finalized and returns its result, or ErrNoSuchTurn. done is read under mu
 // and waited on with mu released, or the waiter blocks its own finalize.
 func (r *turnRegistry) await(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error) {
-	lc := r.lifecycleFor(chatID)
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return marotte.TurnResult{}, marotte.ErrNoSuchTurn
+	}
 	lc.mu.Lock()
 	t := lc.turnLocked(turnID)
 	lc.mu.Unlock()
@@ -552,7 +710,10 @@ func (r *turnRegistry) await(ctx context.Context, chatID marotte.ChatID, turnID 
 // awaitBound blocks until the named turn's turn_bind is on disk (true) or the turn finalized without one (false),
 // or ErrNoSuchTurn.
 func (r *turnRegistry) awaitBound(ctx context.Context, chatID marotte.ChatID, turnID string) (bool, error) {
-	lc := r.lifecycleFor(chatID)
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return false, marotte.ErrNoSuchTurn
+	}
 	lc.mu.Lock()
 	t := lc.turnLocked(turnID)
 	lc.mu.Unlock()
@@ -582,7 +743,10 @@ func (r *turnRegistry) awaitBound(ctx context.Context, chatID marotte.ChatID, tu
 // openedAfter reports whether an own turn opened after the named one, the empty-turn gate's structural clause.
 // It compares the open sequence, never n; steps open nothing here.
 func (r *turnRegistry) openedAfter(chatID marotte.ChatID, turnID string) bool {
-	lc := r.lifecycleFor(chatID)
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return false
+	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	t := lc.turnLocked(turnID)
@@ -590,6 +754,18 @@ func (r *turnRegistry) openedAfter(chatID marotte.ChatID, turnID string) bool {
 		return false
 	}
 	return lc.nextSeq > t.Seq
+}
+
+// isOpen reports whether turnID is an open, non-finalizing turn of the chat's lifecycle and that life has not ended.
+func (r *turnRegistry) isOpen(chatID marotte.ChatID, turnID string) bool {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	t := lc.liveLocked(turnID)
+	return !lc.ended && t != nil && !t.finalizing
 }
 
 // expectRestores marks session's writes on chatID as KAS putting files back until the chat's next
@@ -610,7 +786,10 @@ func (r *turnRegistry) markRestores(chatID marotte.ChatID, session string, overO
 	if session == "" || workflowIDOf(chatID) != "" {
 		return
 	}
-	lc := r.lifecycleFor(chatID)
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return
+	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	if !overOpenTurn && (lc.own != nil || lc.pending != nil) {
@@ -676,7 +855,10 @@ func (r *turnRegistry) holdsTurn(turnID string) (marotte.ChatID, bool) {
 // currentTurn reports which turn the chat's activity belongs to (own, open or finalizing): a finalizing turn
 // still spawned its processes.
 func (r *turnRegistry) currentTurn(chatID marotte.ChatID) (string, bool) {
-	lc := r.lifecycleFor(chatID)
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return "", false
+	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	if lc.own == nil {
@@ -740,6 +922,24 @@ func (r *turnRegistry) openTurnIDs(chatID marotte.ChatID) []*activeTurn {
 	return out
 }
 
+// sessionTurns are the chat's open turns its session hosts: every open turn but a prompt still awaiting its send,
+// which no session has seen yet.
+func (r *turnRegistry) sessionTurns(chatID marotte.ChatID) []*activeTurn {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return nil
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	var out []*activeTurn
+	for _, t := range []*activeTurn{lc.own, lc.pending} {
+		if t != nil && !t.awaitsSend() && !slices.Contains(out, t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // ownTurns returns every chat's own open turn, so a connect replay reads the turn, not the prompt slot. Lock order registry.mu -> lifecycle.mu.
 func (r *turnRegistry) ownTurns() map[marotte.ChatID]*activeTurn {
 	r.mu.Lock()
@@ -773,7 +973,10 @@ func (r *turnRegistry) busyChatIDs() []marotte.ChatID {
 
 // interrupt records why the named turn was interrupted, first-wins and id-scoped.
 func (r *turnRegistry) interrupt(chatID marotte.ChatID, turnID string, cause marotte.InterruptCause) bool {
-	lc := r.lifecycleFor(chatID)
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return false
+	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	t := lc.liveLocked(turnID)

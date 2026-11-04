@@ -641,15 +641,44 @@ func (b *seamBoot) personClose(t *testing.T, id string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ref := b.tabRef(tab)
 	if code, body := b.serveAs(t, http.MethodPost, "/api/command", raw, "http://marotte.test"); code != http.StatusOK {
 		t.Errorf("a person's close_tab %s = %d %v", tab, code, body)
 	}
+	b.awaitTeardown(t, ref)
 }
 
 func (b *seamBoot) closeTabID(t *testing.T, tab string) {
 	t.Helper()
+	ref := b.tabRef(tab)
 	if code, body := b.cmd(t, marotte.CmdCloseTab, "", map[string]any{"id": tab}); code != http.StatusOK {
 		t.Fatalf("Setup: close_tab %s = %d %v", tab, code, body)
+	}
+	b.awaitTeardown(t, ref)
+}
+
+// tabRef is the chat an open chat tab shows, "" for any other tab.
+func (b *seamBoot) tabRef(tab string) marotte.ChatID {
+	open, _ := b.tabs.List()
+	for _, s := range open {
+		if s.ID == tab && s.Kind == marotte.TabKindChat {
+			return marotte.ChatID(s.Ref)
+		}
+	}
+	return ""
+}
+
+// awaitTeardown waits for the background teardown a close of chat ref started, so a step after the close sees it
+// done: close_tab answers before it.
+func (b *seamBoot) awaitTeardown(t *testing.T, ref marotte.ChatID) {
+	t.Helper()
+	if ref == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if _, err := b.h.AwaitNoClose(ctx, ref); err != nil {
+		t.Fatalf("the teardown of %s did not finish: %v", ref, err)
 	}
 }
 

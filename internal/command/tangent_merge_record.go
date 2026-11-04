@@ -180,8 +180,12 @@ func (m *tangentMerges) resume(ctx context.Context, k mergeKey, rec *marotte.Tan
 // means the merge ended before delivering.
 func (m *tangentMerges) reconcile(ctx context.Context, parent marotte.ChatID, deliveryID string) (failure string, settled bool) {
 	if err := m.loader.LoadSession(ctx, parent); err != nil {
-		if errors.Is(err, ErrChatGone) {
+		switch {
+		case parentGone(err):
 			return mergeParentGone, true
+		case errors.Is(err, marotte.ErrChatClosedDuringCall):
+			slog.Debug("tangent merge: the parent closed during its reconcile; the merge stays running", "parent", parent)
+			return "", false
 		}
 		if ctx.Err() == nil {
 			slog.Warn("tangent merge: the parent's session could not be reconciled, so an interrupted merge stays running", "parent", parent, keyError, err)
@@ -208,30 +212,63 @@ func (m *tangentMerges) reconcile(ctx context.Context, parent marotte.ChatID, de
 }
 
 // deliver sends the findings under p.MessageID and answers "" once KAS holds them, or the failure
-// the user reads; settled is false when ctx ended before either was known. The prompt is retried
-// once when the parent's turn ends between the two attempts.
+// the user reads; settled is false when ctx ended before either was known. The findings are the parent record's
+// across its lives, so a close of the parent is waited out and the delivery lands in its next life; a try that met
+// no close counts, and the prompt is retried once when the parent's turn ends between two counted tries.
 func (m *tangentMerges) deliver(ctx context.Context, parent marotte.ChatID, p *marotte.PromptCommand) (failure string, settled bool) {
-	for range 2 {
-		if m.roles.admission.TryReserveTurn(parent, marotte.TurnSourcePrompt) {
-			turnID, err := startPrompt(ctx, m.roles, parent, p, launch{awaited: true})
-			if err != nil {
+	for tries := 0; tries < 2; {
+		if _, err := m.roles.admission.AwaitNoClose(ctx, parent); err != nil {
+			return "", false
+		}
+		if res, ok := m.roles.admission.TryReserveTurn(parent, marotte.TurnSourcePrompt, m.roles.admission.LifeStamp()); ok {
+			turnID, err := startPrompt(ctx, m.roles, parent, p, &launch{res: res, awaited: true})
+			switch {
+			case parentGone(err):
+				return mergeParentGone, true
+			case err != nil:
 				slog.Warn("tangent merge: the findings prompt could not open", "parent", parent, keyError, err)
 				return deliveryFailure(""), true
 			}
 			return m.awaitReceipt(ctx, parent, turnID)
 		}
+		if m.closeMet(ctx, parent) {
+			continue
+		}
 		live, err := m.roles.followups.AppendIfLive(ctx, parent, func(c *marotte.Chat) error {
 			return appendUserRow(c, &marotte.QueuedPrompt{ID: p.MessageID, Text: p.Text, Label: p.DisplayText})
 		})
-		if err != nil {
+		switch {
+		case parentGone(err):
+			return mergeParentGone, true
+		case err != nil:
 			slog.Warn("tangent merge: the findings could not be queued", "parent", parent, keyError, err)
 			return deliveryFailure(""), true
-		}
-		if live {
+		case live:
 			return "", true
+		case m.closeMet(ctx, parent):
+			continue
 		}
+		tries++
 	}
 	return deliveryFailure(""), true
+}
+
+// closeMet reports whether a try met a close of the parent, which it then waits out; such a try does not count.
+func (m *tangentMerges) closeMet(ctx context.Context, parent marotte.ChatID) bool {
+	waited, err := m.roles.admission.AwaitNoClose(ctx, parent)
+	return waited || err != nil
+}
+
+// parentGone reports an error that means the parent chat was deleted.
+func parentGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrChatGone) || errors.Is(err, chat.ErrTombstoned) || errors.Is(err, chat.ErrChatNotFound) {
+		return true
+	}
+	_, reason, ok := StatusOf(err)
+	return ok && reason == reasonChatGone
 }
 
 // The caller's turn_bind is KAS's receipt: it lands after KAS accepts the message and before the

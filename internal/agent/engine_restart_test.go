@@ -130,10 +130,10 @@ func TestEngineRestart_AutoNeverFiresWhileAnyQuiescenceTermHolds(t *testing.T) {
 			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("Setup: OpenBridge: %v", err)
 			}
-			if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+			if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 				t.Fatal("Setup: the reservation was refused")
 			}
-			return func() { h.coord.ReleaseTurnReservation("c1") }
+			return func() { h.coord.releaseHeld("c1") }
 		}},
 		{name: "an executing run", hold: func(t *testing.T, h *Runtime) func() {
 			executingLease(t, h, "wf_1")
@@ -218,7 +218,7 @@ func TestEngineRestart_IdleChatsKeepRecordsAndLoadLazily(t *testing.T) {
 	recorded := string(first.SessionID())
 	h.engine.requestRestart(restartCause{Kind: restartConfirmed})
 	waitReady(t, h.engine, 2)
-	if sb := h.bridge.mgr.get("c1"); sb != nil && sb.startedPastOpen() && sb.current().Open() {
+	if sb := h.bridge.mgr.get("c1"); sb != nil && sb.startedPastOpen() && sb.session().Open() {
 		t.Error("the idle chat holds an open session on the new engine before anything asked for one")
 	}
 	again, err := h.coord.openBridge(t.Context(), "c1", "")
@@ -240,7 +240,7 @@ func TestEngineRestart_ConfirmedSnapshotsFirstAndWritesNoCancel(t *testing.T) {
 	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 		t.Fatal("Setup: the reservation was refused")
 	}
 	var cancels []string
@@ -251,7 +251,7 @@ func TestEngineRestart_ConfirmedSnapshotsFirstAndWritesNoCancel(t *testing.T) {
 
 	h.engine.requestRestart(restartCause{Kind: restartConfirmed, Reasons: []marotte.EngineReason{reasonHeap}})
 	waitReady(t, h.engine, 2)
-	h.coord.ReleaseTurnReservation("c1")
+	h.coord.releaseHeld("c1")
 	if len(cancels) != 0 {
 		t.Errorf("session/cancel frames written before the reap = %v, want none", cancels)
 	}
@@ -370,7 +370,7 @@ func TestRetryResumeLater_TriesMaxResweepsTimesInAll(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	var later atomic.Int32
 	spent := make(chan int, 1)
-	h.runs.retryResumeLater(func(context.Context) bool {
+	h.runs.retryResumeLater(h.runs.runtimeSweep, func(context.Context) bool {
 		later.Add(1)
 		return true
 	}, func(tries int) { spent <- tries })
@@ -392,7 +392,7 @@ func TestRetryResumeLater_AStoppedRuntimeTriesNothing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		var tries atomic.Int32
-		h.runs.retryResumeLater(func(context.Context) bool {
+		h.runs.retryResumeLater(h.runs.runtimeSweep, func(context.Context) bool {
 			tries.Add(1)
 			return true
 		}, func(int) {})
@@ -425,7 +425,7 @@ func TestEngineRestart_ChatParentedRunGetsExactlyOneResume(t *testing.T) {
 
 	heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 	heal(t.Context(), parkChat, runNotif(methodWFPaused, map[string]any{"workflowId": id, "pauseReason": stalePauseReason}))
-	h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	h.runs.resumeInterruptedRuns(t.Context(), h.coord.turns.testLifecycle(parkChat), parkChat)
 
 	awaitResumes(t, resumes, 1)
 }

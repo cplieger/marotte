@@ -699,7 +699,7 @@ type slotAdmission struct {
 
 func newSlotAdmission() *slotAdmission { return &slotAdmission{benchDeps: &benchDeps{}} }
 
-func (a *slotAdmission) TryReserveTurn(_ marotte.ChatID, source marotte.TurnOpenSource) bool {
+func (a *slotAdmission) tryReserveOld(_ marotte.ChatID, source marotte.TurnOpenSource) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.reserved {
@@ -709,11 +709,11 @@ func (a *slotAdmission) TryReserveTurn(_ marotte.ChatID, source marotte.TurnOpen
 	return true
 }
 
-func (a *slotAdmission) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
-	return a.TryReserveTurn(chatID, source)
+func (a *slotAdmission) tryReserveIdleOld(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
+	return a.tryReserveOld(chatID, source)
 }
 
-func (a *slotAdmission) ReleaseTurnReservation(marotte.ChatID) {
+func (a *slotAdmission) releaseOld(marotte.ChatID) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.reserved = false
@@ -746,7 +746,7 @@ func TestCmdRewindChat_AdmitsNoPromptWhileTheRevertRuns(t *testing.T) {
 
 	<-inRevert
 	holder, held := admission.AdmissionHolderSource("c1")
-	admittedDuringRevert := admission.TryReserveTurn("c1", marotte.TurnSourcePrompt)
+	admittedDuringRevert := admission.tryReserveOld("c1", marotte.TurnSourcePrompt)
 	close(release)
 
 	if err := <-done; err != nil {
@@ -759,7 +759,7 @@ func TestCmdRewindChat_AdmitsNoPromptWhileTheRevertRuns(t *testing.T) {
 	if !held || holder.PromptClass() {
 		t.Errorf("during the revert the slot holder was %v (held %t), want a non-prompt source a prompt parks behind", holder, held)
 	}
-	if !admission.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+	if !admission.tryReserveOld("c1", marotte.TurnSourcePrompt) {
 		t.Error("after the rewind returned the admission slot was still held, so every later prompt is refused")
 	}
 }
@@ -776,14 +776,14 @@ func TestCmdRewindChat_ReleasesTheAdmissionSlotWhenKASRefuses(t *testing.T) {
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (body %s)", statusOf(err), errText(err))
 	}
-	if !admission.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+	if !admission.tryReserveOld("c1", marotte.TurnSourcePrompt) {
 		t.Error("after a refused rewind the admission slot was still held")
 	}
 }
 
 type lostSlot struct{ *benchDeps }
 
-func (lostSlot) TryReserveIdleTurn(marotte.ChatID, marotte.TurnOpenSource) bool { return false }
+func (lostSlot) tryReserveIdleOld(marotte.ChatID, marotte.TurnOpenSource) bool { return false }
 
 func TestCmdRewindChat_RefusedWhenAPromptTakesTheSlotFirst(t *testing.T) {
 	store := seedRewindChat(t, false)
@@ -798,4 +798,31 @@ func TestCmdRewindChat_RefusedWhenAPromptTakesTheSlotFirst(t *testing.T) {
 	if b.callCount != 0 || len(store.reverted) != 0 {
 		t.Errorf("called KAS %d times and recorded %v without the slot, want nothing", b.callCount, store.reverted)
 	}
+}
+
+func (r *slotAdmission) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
+	ok := r.tryReserveOld(chatID, source)
+	return testReservation(chatID, ok), ok
+}
+
+func (r *slotAdmission) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
+	ok := r.tryReserveIdleOld(chatID, source)
+	return testReservation(chatID, ok), ok
+}
+
+func (r lostSlot) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
+	ok := r.tryReserveIdleOld(chatID, source)
+	return testReservation(chatID, ok), ok
+}
+
+func (r *slotAdmission) ReleaseTurnReservation(res Reservation) { r.releaseOld(res.Chat) }
+
+func (*slotAdmission) LifeStamp() uint64 { return 0 }
+
+func (*slotAdmission) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) {
+	return false, nil
+}
+
+func (r *bridgeDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
 }

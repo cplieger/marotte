@@ -23,6 +23,8 @@ func newTestSession() *Session {
 		engine:    NewEngine("/nonexistent", "/work"),
 		lane:      newLane(),
 		closeDone: make(chan struct{}),
+		held:      make(chan struct{}),
+		gaveUp:    make(chan struct{}),
 		id:        "sess-test",
 		state:     stateOpen,
 	}

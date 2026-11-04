@@ -306,7 +306,7 @@ func TestSignInGate_ABootWithNoSignInHoldsTheRunUntilTheSignIn(t *testing.T) {
 	g := newGateRun(t, t.TempDir())
 	resumes := countResumes(t, g.br, gateRunID)
 
-	g.h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	g.h.runs.resumeInterruptedRuns(t.Context(), g.h.coord.turns.testLifecycle(parkChat), parkChat)
 	awaitResumes(t, resumes, 0)
 
 	g.signIn(t)
@@ -322,7 +322,7 @@ func TestSignInGate_ALapsedSignInAtBootHoldsTheRun(t *testing.T) {
 	}
 	resumes := countResumes(t, g.br, gateRunID)
 
-	g.h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	g.h.runs.resumeInterruptedRuns(t.Context(), g.h.coord.turns.testLifecycle(parkChat), parkChat)
 	awaitResumes(t, resumes, 0)
 
 	g.signIn(t)
@@ -337,7 +337,7 @@ func TestSignInGate_APIKeyModePassesTheGate(t *testing.T) {
 		t.Errorf("admission with an API key = %v, want none", err)
 	}
 
-	g.h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	g.h.runs.resumeInterruptedRuns(t.Context(), g.h.coord.turns.testLifecycle(parkChat), parkChat)
 	awaitResumes(t, resumes, 1)
 }
 
@@ -431,7 +431,7 @@ func TestResume_EveryAutomaticResumerAtOnceResumesOnce(t *testing.T) {
 		return json.RawMessage(`{}`), nil, true
 	}
 	g.br.mu.Unlock()
-	g.h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	g.h.runs.resumeInterruptedRuns(t.Context(), g.h.coord.turns.testLifecycle(parkChat), parkChat)
 
 	heal := g.h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 	// Registered after the runtime's own listener, so the edge's resume has started when these do.
@@ -441,7 +441,7 @@ func TestResume_EveryAutomaticResumerAtOnceResumesOnce(t *testing.T) {
 		}
 		go heal(t.Context(), parkChat,
 			runNotif(methodWFPaused, map[string]any{"workflowId": gateRunID, "pauseReason": stalePauseReason}))
-		go g.h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+		go g.h.runs.resumeInterruptedRuns(t.Context(), g.h.coord.turns.testLifecycle(parkChat), parkChat)
 	})
 	g.signIn(t)
 
@@ -535,7 +535,7 @@ func TestHealBudget_ASpentRunIsNotResumedByItsChatsSweep(t *testing.T) {
 		h.runs.claimHeal("wf_spent")
 	}
 
-	h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	h.runs.resumeInterruptedRuns(t.Context(), h.coord.turns.testLifecycle(parkChat), parkChat)
 	waitUntil(t, "the sibling's resume", func() bool { return chain.count("wf_sibling") == 1 })
 	time.Sleep(quietWindow)
 	if n := chain.count("wf_spent"); n != 0 {

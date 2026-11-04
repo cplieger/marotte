@@ -47,8 +47,8 @@ type engineHandle interface {
 	Respond(ctx context.Context, id int64, result any, err error) error
 	// NewSession and LoadSession run attach once the session's lane exists and before the door writes, so a
 	// consumer reads every frame KAS sends for it.
-	NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession)) (engineSession, error)
-	LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession)) (engineSession, error)
+	NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error)
+	LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error)
 	StartLive() (ignoreFiles []string, terminalTimeoutMs int)
 	RefreshContentCollection(ctx context.Context) (bool, error)
 	KASLogDir() string
@@ -65,7 +65,7 @@ var (
 	_ engineSession = (*bridge.Session)(nil)
 )
 
-func (b bridgeEngine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession)) (engineSession, error) {
+func (b bridgeEngine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error) {
 	s, err := b.Engine.NewSession(ctx, o, sessionAttach(attach))
 	if err != nil {
 		return nil, err
@@ -73,7 +73,7 @@ func (b bridgeEngine) NewSession(ctx context.Context, o *marotte.SessionOpts, at
 	return s, nil
 }
 
-func (b bridgeEngine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession)) (engineSession, error) {
+func (b bridgeEngine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error) {
 	s, err := b.Engine.LoadSession(ctx, o, sessionAttach(attach))
 	if err != nil {
 		return nil, err
@@ -81,9 +81,9 @@ func (b bridgeEngine) LoadSession(ctx context.Context, o *marotte.SessionOpts, a
 	return s, nil
 }
 
-func sessionAttach(attach func(engineSession)) func(*bridge.Session) {
+func sessionAttach(attach func(engineSession) error) func(*bridge.Session) error {
 	if attach == nil {
 		return nil
 	}
-	return func(s *bridge.Session) { attach(s) }
+	return func(s *bridge.Session) error { return attach(s) }
 }

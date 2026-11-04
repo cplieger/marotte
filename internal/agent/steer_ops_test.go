@@ -50,7 +50,7 @@ func steerOpsHub(t *testing.T) (*steerHarness, *testChatStore, *fakeBridge) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
 	br.callResults = map[string]json.RawMessage{marotte.MethodSessionSteer: json.RawMessage(`{"queued":true}`)}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 	return harnessOn(h, "c1", t.Fatalf), cs, br
 }
 
@@ -63,7 +63,7 @@ func clearReply(ids []string) json.RawMessage {
 // and the late read is the row's one entry.
 func TestCmdSteerRemove_AReadThatCannotFoldBeforeTheBarrierDeletesNothing(t *testing.T) {
 	s, _, br := steerOpsHub(t)
-	att := s.h.coord.turns.attachForward("c1")
+	att := s.h.coord.turns.attachForwardNow("c1")
 	gen := att.gen
 	// No goroutine stands behind this generation, so close its exit as forward would.
 	t.Cleanup(att.exited)
@@ -217,15 +217,15 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 			s.steer("steer-b", "b")
 			var once sync.Once
 			s.h.bridge.mgr.remove("c1")
-			s.h.bridge.mgr.insert("c1", &sharedBridge{bridge: failingClear{fakeBridge: br, before: func() {
+			s.h.insertBridgeNow("c1", testBridge(failingClear{fakeBridge: br, before: func() {
 				once.Do(func() {
 					s.recs.turnEnded("c1", command.SteerTurnEnd{
 						TurnID: s.turnID(), BridgeDeath: true, Exit: deathExit, Source: marotte.TurnSourcePrompt,
 					})
 				})
-			}}, state: bridgeIdle})
+			}}, bridgeIdle))
 		}, closed: func(t *testing.T, s *steerHarness) {
-			s.h.coord.afterTurnClose(t.Context(), "c1", closeFacts{exit: deathExit, outcome: marotte.TurnOutcomeInterrupted})
+			s.h.coord.afterTurnClose(t.Context(), s.h.coord.turns.testLifecycle("c1"), closeFacts{exit: deathExit, outcome: marotte.TurnOutcomeInterrupted})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

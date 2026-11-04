@@ -71,6 +71,8 @@ type fakeBridge struct {
 	notifies              []string
 	// wire is every request and notification in write order (writeRequest, Notify).
 	wire []string
+	// abandonedAt is, per blocked method whose caller gave up, how many frames the wire held when it did.
+	abandonedAt map[string]int
 	// notifyParams holds each Notify's params as JSON, index-aligned with notifies.
 	notifyParams            []string
 	contentCollectionWrites []string
@@ -83,6 +85,10 @@ type fakeBridge struct {
 	stopGate chan struct{}
 	// closeErr refuses every Close, leaving the session open.
 	closeErr error
+	// onCloseStart runs as Close is entered, before stopGate.
+	onCloseStart func()
+	// onCloseReturn runs as Close returns, with its error.
+	onCloseReturn func(error)
 	// onStart runs at the top of the door, so a test can change the world while a session opens.
 	onStart func()
 	// startErr fails every door.
@@ -108,11 +114,19 @@ type fakeBridge struct {
 	responses    map[int64]fakeResponse
 	// setModelFailures fails the next N SetModel calls.
 	setModelFailures int
+	// setModelGate holds SetModel, after it is recorded, until it closes or the caller gives up.
+	setModelGate chan struct{}
 	// supervisedApplied is whether the session took `autopilot: off`, set by Start from opts.Supervised as the real bridge does.
 	supervisedApplied bool
 	// supervisedAssertFails makes Start refuse the assert, the fail-open a test observes.
-	supervisedAssertFails    bool
-	stopped                  bool
+	supervisedAssertFails bool
+	stopped               bool
+	// released is set by Release, which closes the stream at once and confirms the close once stopGate opens.
+	released bool
+	// onRelease runs once Release closed the stream, as a forward\'s exit follows it; nil for none.
+	onRelease func()
+	// beforeRelease runs in Release before the stream ends, so its delivered frames are queued at the release.
+	beforeRelease            func()
 	contentCollectionApplied bool
 	contentCollectionKnown   bool
 	// streamClosed guards the channel close apart from stopped, so endStream ends the stream without claiming a close.
@@ -239,10 +253,16 @@ func (b *fakeBridge) isClosed() bool {
 }
 
 // Close is session/close: the frame stream ends and the session is no longer open. closeErr refuses it.
-func (b *fakeBridge) Close(ctx context.Context) error {
+func (b *fakeBridge) Close(ctx context.Context) (err error) {
 	b.mu.Lock()
-	gate, refusal := b.stopGate, b.closeErr
+	gate, refusal, returned, started := b.stopGate, b.closeErr, b.onCloseReturn, b.onCloseStart
 	b.mu.Unlock()
+	if started != nil {
+		started()
+	}
+	if returned != nil {
+		defer func() { returned(err) }()
+	}
 	if gate != nil {
 		select {
 		case <-gate:
@@ -255,6 +275,45 @@ func (b *fakeBridge) Close(ctx context.Context) error {
 	}
 	b.end()
 	return nil
+}
+
+// Release is bridge.Session.Release: the stream ends at the call and the close is confirmed once stopGate opens,
+// with nothing returned to the caller. closeErr does not reopen a released session.
+func (b *fakeBridge) Release() {
+	b.mu.Lock()
+	if b.released {
+		b.mu.Unlock()
+		return
+	}
+	b.released = true
+	gate, hook, before := b.stopGate, b.onRelease, b.beforeRelease
+	b.mu.Unlock()
+	if before != nil {
+		before()
+	}
+	b.endStream()
+	if hook != nil {
+		hook()
+	}
+	confirm := func() {
+		b.mu.Lock()
+		b.stopped = true
+		b.mu.Unlock()
+	}
+	if gate == nil {
+		confirm()
+		return
+	}
+	go func() {
+		<-gate
+		confirm()
+	}()
+}
+
+func (b *fakeBridge) Released() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.released
 }
 
 // end closes the session's stream as an engine end does: no session/close is written.
@@ -273,7 +332,7 @@ func (b *fakeBridge) end() {
 func (b *fakeBridge) Open() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.started && !b.stopped
+	return b.started && !b.stopped && !b.released
 }
 
 // endStream ends the frame stream without marking the bridge stopped.
@@ -388,6 +447,12 @@ func (b *fakeBridge) callScript(
 		select {
 		case <-blocker:
 		case <-ctx.Done():
+			b.mu.Lock()
+			if b.abandonedAt == nil {
+				b.abandonedAt = map[string]int{}
+			}
+			b.abandonedAt[method] = len(b.wire)
+			b.mu.Unlock()
 			return nil, ctx.Err()
 		}
 	}
@@ -736,10 +801,20 @@ func (b *fakeBridge) Models() []marotte.SessionModel {
 	return b.models
 }
 
-func (b *fakeBridge) SetModel(_ context.Context, modelID string) error {
+func (b *fakeBridge) SetModel(ctx context.Context, modelID string) error {
+	b.mu.Lock()
+	gate := b.setModelGate
+	b.calls = append(b.calls, "session/set_config_option")
+	b.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.calls = append(b.calls, "session/set_config_option")
 	// Fail the next N swaps.
 	if b.setModelFailures > 0 {
 		b.setModelFailures--
@@ -882,5 +957,5 @@ func (s *testChatStore) seed(tb testing.TB, id marotte.ChatID, fill func(c *maro
 
 // Forward runs one session's forward loop in the caller, taking the chat's forward attachment first.
 func (bc *bridgeCoordinator) Forward(chatID marotte.ChatID, bridge engineSession) {
-	bc.forwardAt(chatID, bridge, bc.turns.attachForward(chatID))
+	bc.forwardAt(chatID, bridge, bc.turns.attachForwardNow(chatID))
 }

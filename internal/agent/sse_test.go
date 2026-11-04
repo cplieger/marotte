@@ -414,7 +414,7 @@ func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.
 
 	h.bus.pendingPerms.add(9, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{RequestID: 9}), nil)
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 	h.stagePromptTurn(t, "c1")
 
 	for _, legacy := range []bool{false, true} {

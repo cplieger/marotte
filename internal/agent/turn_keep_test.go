@@ -24,26 +24,51 @@ func hasTurnFact(t *testing.T, cs *testChatStore, id marotte.ChatID) bool {
 func TestReservation_HoldsTheTurnFactUntilTheLifecycleGoesIdle(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	if !h.coord.TryReserveIdleTurn("c1", marotte.TurnSourcePrompt) {
+	res, ok := h.coord.TryReserveIdleTurn("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
+	if !ok {
 		t.Fatal("reservation refused on an idle chat")
 	}
 	if !hasTurnFact(t, cs, "c1") {
 		t.Error("a reserved chat carries no turn fact")
 	}
-	h.coord.ReleaseTurnReservation("c1")
+	h.coord.ReleaseTurnReservation(res)
 	if hasTurnFact(t, cs, "c1") {
 		t.Error("the turn fact survived the reservation's release")
+	}
+}
+
+// A reservation can outlive its chat's teardown, which forgets the lifecycle once the life's work is done; its
+// release still owes the fact, or the chat is kept until restart.
+func TestReservation_AReleaseAfterTheTeardownForgotTheLifecycleReleasesTheFact(t *testing.T) {
+	h, cs, _ := newTestHub()
+	seedChat(t, cs, "c1")
+	res, ok := h.coord.TryReserveIdleTurn("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
+	if !ok {
+		t.Fatal("reservation refused on an idle chat")
+	}
+	hold := h.HoldChat("c1")
+	hold.Commit()
+	h.coord.turns.forget("c1")
+	hold.Release()
+	h.coord.ReleaseTurnReservation(res)
+	if hasTurnFact(t, cs, "c1") {
+		t.Error("the turn fact survived a reservation released after its lifecycle was forgotten")
 	}
 }
 
 func TestReservation_ADeletedChatIsRefusedAndNothingIsReserved(t *testing.T) {
 	cases := map[string]func(bc *bridgeCoordinator) bool{
 		"prompt": func(bc *bridgeCoordinator) bool {
-			return bc.ReserveTurnForPrompt(context.Background(), "c1", 10*time.Millisecond) == command.AdmissionChatGone
+			out, _ := bc.ReserveTurnForPrompt(context.Background(), "c1", 10*time.Millisecond, bc.LifeStamp(), "")
+			return out == command.AdmissionChatGone
 		},
-		"try reserve": func(bc *bridgeCoordinator) bool { return !bc.TryReserveTurn("c1", marotte.TurnSourcePrompt) },
+		"try reserve": func(bc *bridgeCoordinator) bool {
+			_, ok := bc.TryReserveTurn("c1", marotte.TurnSourcePrompt, bc.LifeStamp())
+			return !ok
+		},
 		"try reserve idle": func(bc *bridgeCoordinator) bool {
-			return !bc.TryReserveIdleTurn("c1", marotte.TurnSourcePrompt)
+			_, ok := bc.TryReserveIdleTurn("c1", marotte.TurnSourcePrompt, bc.LifeStamp())
+			return !ok
 		},
 	}
 	for name, refused := range cases {
@@ -94,17 +119,18 @@ func TestTurnRelease_RunsUnderTheLifecycleLockAndAnnouncesAfter(t *testing.T) {
 			reg.finish(openTestTurn(t, reg, chatID), marotte.TurnResult{})
 		},
 		"release reservation": func(reg *turnRegistry, chatID marotte.ChatID) {
-			if !reg.tryReserve(chatID, marotte.TurnSourcePrompt, command.TurnFence{}) {
+			res, ok := reg.tryReserve(chatID, marotte.TurnSourcePrompt, reg.gates.stamp())
+			if !ok {
 				t.Fatal("reservation refused")
 			}
-			reg.releaseReservation(chatID)
+			reg.releaseReservation(res)
 		},
 	}
 	for name, drive := range cases {
 		t.Run(name, func(t *testing.T) {
 			probe := &lockProbeRecords{}
 			reg := newTurnRegistry(probe)
-			probe.lc = reg.lifecycleFor("c1")
+			probe.lc = reg.testLifecycle("c1")
 			drive(reg, "c1")
 			if !probe.endUnderLock {
 				t.Error("EndTurn ran without the lifecycle mutex")

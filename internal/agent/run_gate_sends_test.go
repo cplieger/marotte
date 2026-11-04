@@ -144,7 +144,8 @@ var knownUnguarded = map[string][]string{
 	},
 	"guardedSession": {
 		"AutoCompactionDisabled", "Catalog", "Close", "CurrentMode", "EnsureEffort", "EnsureThinking", "ModelID", "Models",
-		"Modes", "NotifCh", "ObserveEffort", "ObserveThinking", "Open", "Respond", "SessionID", "SessionLoadSeq",
+		"Modes", "NotifCh", "ObserveEffort", "ObserveThinking", "Open", "Release", "Released", "Respond", "SessionID",
+		"SessionLoadSeq",
 		"SessionTitle", "SessionTitleSetByUser", "SetModel", "SummarizationThreshold", "SupervisedApplied",
 	},
 }

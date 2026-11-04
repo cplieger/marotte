@@ -431,7 +431,7 @@ func newResendHost(b Bridge, admit AdmissionOutcome, holder marotte.TurnOpenSour
 	return &resendHost{bridgeDeps: d, admit: admit, drained: make(chan struct{}, 1)}
 }
 
-func (h *resendHost) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
+func (h *resendHost) reservePromptOld(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
 	if h.onReserve != nil {
 		h.onReserve()
 	}
@@ -734,6 +734,13 @@ func (o orderTeardown) BeginChatTeardown(_ marotte.ChatID, keep bool) {
 	*o.log = append(*o.log, "begin keep="+strconv.FormatBool(keep))
 }
 
+func (orderTeardown) HoldChat(marotte.ChatID) ChatHold                   { return nopHold{} }
+func (orderTeardown) AwaitSessionLeases(context.Context, marotte.ChatID) {}
+func (o orderTeardown) TeardownCancel(context.Context, marotte.ChatID) error {
+	*o.log = append(*o.log, marotte.MethodCancel)
+	return nil
+}
+
 func (o orderTeardown) CloseChatState(context.Context, marotte.ChatID, *chat.Claim) {
 	*o.log = append(*o.log, "close")
 }
@@ -756,10 +763,10 @@ func TestChatTeardown_TheSteerRecordGoesBeforeTheCancel(t *testing.T) {
 		want []string
 	}{
 		{name: "close", run: func(ctx context.Context, h hostDouble, td chatTeardown) {
-			closeChatTeardown(ctx, h, h, h, td, "c1", &chat.Claim{})
+			closeChatTeardown(ctx, h, h, td, "c1", &chat.Claim{})
 		}, want: []string{"begin keep=true", marotte.MethodCancel, "close"}},
 		{name: "delete", run: func(ctx context.Context, h hostDouble, td chatTeardown) {
-			deleteChatTeardown(ctx, h, h, h, td, "c1", []string{"sess-1"})
+			deleteChatTeardown(ctx, h, h, td, "c1", []string{"sess-1"}, RunStopTabClosed)
 		}, want: []string{"begin keep=false", marotte.MethodCancel, "delete-by-chain tab-closed"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -774,4 +781,13 @@ func TestChatTeardown_TheSteerRecordGoesBeforeTheCancel(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (r *resendHost) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, _ uint64, _ string) (AdmissionOutcome, Reservation) {
+	out := r.reservePromptOld(ctx, chatID, wait)
+	return out, testReservation(chatID, out == AdmissionAcquired)
+}
+
+func (r *resendHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
 }

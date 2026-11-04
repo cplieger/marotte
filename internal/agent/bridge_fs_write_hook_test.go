@@ -294,7 +294,7 @@ func TestRespondFSWrite_RefusesAnotherSessionsWriteWhileATurnApprovalRestores(t 
 func TestRespondFSWrite_RefusesAgainOnceTheChatsNextTurnOpens(t *testing.T) {
 	h, br, manifest, _ := agentRewroteBadManifest(t)
 	raiseTurnApproval(t, h, "c1", "s-main")
-	if _, err := h.coord.OpenTurn(t.Context(), "c1", command.TurnOpen{
+	if _, err := h.coord.openTurnNow(t.Context(), "c1", command.TurnOpen{
 		Source: marotte.TurnSourcePrompt, Prompt: &marotte.EntryPrompt{ID: "m-2", Text: "next"},
 	}); err != nil {
 		t.Fatalf("Setup: OpenTurn: %v", err)
@@ -331,7 +331,7 @@ func TestRespondFSWrite_LetsARewindRestorePutBackContentTheHookRefuses(t *testin
 
 func TestRespondFSWrite_RefusesAfterARewindSentOverAnOpenTurn(t *testing.T) {
 	h, br, manifest, _ := agentRewroteBadManifest(t)
-	if _, err := h.coord.OpenTurn(t.Context(), "c1", command.TurnOpen{
+	if _, err := h.coord.openTurnNow(t.Context(), "c1", command.TurnOpen{
 		Source: marotte.TurnSourcePrompt, Prompt: &marotte.EntryPrompt{ID: "m-2", Text: "next"},
 	}); err != nil {
 		t.Fatalf("Setup: OpenTurn: %v", err)
