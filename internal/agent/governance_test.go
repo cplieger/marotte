@@ -34,6 +34,7 @@ func TestGovernanceCache_SetGetWarm(t *testing.T) {
 	}
 
 	c.setProfile(sampleGovernance())
+	c.markWarm()
 	got, ok := c.get()
 	if !ok || !got.Known || !got.Features.MCPEnabled {
 		t.Fatalf("after set: got=%+v ok=%v", got, ok)
@@ -46,6 +47,7 @@ func TestGovernanceCache_SetGetWarm(t *testing.T) {
 
 	// A second set must not panic (close-once) and must overwrite.
 	c.setProfile(marotte.GovernanceStatePayload{Known: true})
+	c.markWarm()
 	if got, _ := c.get(); got.Features.MCPEnabled {
 		t.Error("second set did not overwrite the cached state")
 	}

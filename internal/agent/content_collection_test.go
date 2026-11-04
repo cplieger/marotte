@@ -14,8 +14,10 @@ func newContentCollectionHub(t *testing.T, br *fakeBridge, opts ...Option) (*Run
 	t.Helper()
 	dir := writeSettings(t, `{"content_collection_enabled":true}`)
 	cs := newTestChatStore()
-	h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(func() engineSession { return br }, br), cs,
-		append([]Option{WithConfigDir(dir)}, opts...)...)
+	// Cold: these tests set the account's profile themselves, which a door's own profile would overwrite.
+	src := fakeEngineOf(func() engineSession { return br }, br)
+	src.noGovernance = true
+	h := newRuntimeOn(context.Background(), "/tmp/work", src, cs, append([]Option{WithConfigDir(dir)}, opts...)...)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	return h, cs
@@ -115,10 +117,13 @@ func TestGovernanceLockChange_ReachesTheEngineReadableOrNot(t *testing.T) {
 			lane := newFakeBridge()
 			pushed := make(chan struct{}, 1)
 			h, cs := newContentCollectionHub(t, lane,
-				WithGovernanceLocksHook(func(context.Context) { pushed <- struct{}{} }))
-			if !awaitEngine(h) {
-				t.Fatal("Setup: the engine never became ready")
-			}
+				WithGovernanceLocksHook(func(context.Context) {
+					select {
+					case pushed <- struct{}{}:
+					default:
+					}
+				}))
+			settleBoot(t, h)
 			before := len(contentCollectionWrites(lane))
 			if tc.document != "" {
 				rewriteConfigByHand(t, h.lifecycle.configDir, tc.document)

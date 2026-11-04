@@ -2452,6 +2452,7 @@ func (c *holdCell) boot(t *testing.T, signedIn bool) {
 		}
 		leaseRun(t, h, l)
 	}
+	h.engine.sleep = func(ctx context.Context, _ time.Duration) bool { return sleepCtx(ctx, time.Millisecond) }
 	c.stop = sync.OnceFunc(func() {
 		c.f.releaseAll()
 		shutdownHub(t, h)

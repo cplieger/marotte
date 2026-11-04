@@ -852,7 +852,9 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 					func(context.Context) (map[string]struct{}, bool) {
 						return map[string]struct{}{"sess_ref": {}}, tc.complete
 					},
-				))
+				),
+				// The loop's own first sweep would race this test's.
+				WithSessionSweepGate(make(chan struct{})))
 			cs.wire(h)
 			t.Cleanup(func() { shutdownHub(t, h) })
 

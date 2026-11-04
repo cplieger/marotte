@@ -44,6 +44,8 @@ type fakeEngineSource struct {
 	withheld bool
 	// cliPath is what CLIPath answers; empty is the default path.
 	cliPath string
+	// noGovernance makes the default observer fakes withhold the governance frame (fakeBridge.noGovernance).
+	noGovernance bool
 	// exitHook stands in for the runtime's exit hook on a source with no runtime (an owner fixture).
 	exitHook func(gen uint64)
 	rt       *Runtime
@@ -377,7 +379,12 @@ func (s *fakeEngineSource) observerFactory() sessionFactory {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.observer == nil {
-		s.observer = func() engineSession { return newFakeBridge() }
+		cold := s.noGovernance
+		s.observer = func() engineSession {
+			b := newFakeBridge()
+			b.noGovernance = cold
+			return b
+		}
 	}
 	return s.observer
 }

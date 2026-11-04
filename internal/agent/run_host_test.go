@@ -30,8 +30,13 @@ type bufferedEvent struct {
 // bufferedEvents decodes the SSE replay buffer, so a test asserts what a client sees.
 // bufferedEvents is every buffered event but engine_status, which the engine's own start publishes asynchronously.
 func bufferedEvents(h *Runtime) []bufferedEvent {
+	return bufferedEventsSince(h, 0)
+}
+
+// bufferedEventsSince is bufferedEvents after the replay position since, leaving out what the boot published.
+func bufferedEventsSince(h *Runtime, since uint64) []bufferedEvent {
 	var out []bufferedEvent
-	for _, e := range h.bus.fanout.Snapshot() {
+	for _, e := range bufferedSince(h, since) {
 		var evt bufferedEvent
 		if json.Unmarshal(e.Event.Data, &evt) == nil && evt.Type != string(marotte.EventEngineStatus) {
 			out = append(out, evt)
@@ -66,11 +71,12 @@ func TestRunChatID_Namespace(t *testing.T) {
 // TestRunDispatch_LifecycleGoesWorkspaceGlobal pins that a parentless run's lifecycle events carry an empty chat id, never the synthetic one.
 func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 	h, _, _ := newTestHub()
+	before := h.bus.fanout.Position().Head
 
 	h.dispatch(t.Context(), "run:wf_1", h.originOf("run:wf_1"),
 		runNotif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "publish"}))
 
-	events := bufferedEvents(h)
+	events := bufferedEventsSince(h, before)
 	if len(events) != 1 {
 		t.Fatalf("got %d events, want 1: %+v", len(events), events)
 	}
@@ -87,6 +93,7 @@ func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 	logs := captureLogs(t)
 	h := newBudgetRuntime(t)
+	before := h.bus.fanout.Position().Head
 
 	h.dispatch(t.Context(), "run:wf_1", h.originOf("run:wf_1"), runNotif(marotte.MethodSessionUpdate, map[string]any{
 		"sessionId": "sess_step",
@@ -102,7 +109,7 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 		},
 	}))
 
-	events := bufferedEvents(h)
+	events := bufferedEventsSince(h, before)
 	if len(events) != 2 {
 		t.Fatalf("a step chunk produced %d events, want 2 (turn_opened, entry_opened): %+v", len(events), events)
 	}
@@ -146,6 +153,7 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 // TestRunDispatch_UnmarkedStepContentIsDropped pins that a `session/update` without `_meta.kiro.workflow` names no node.
 func TestRunDispatch_UnmarkedStepContentIsDropped(t *testing.T) {
 	h, _, _ := newTestHub()
+	before := h.bus.fanout.Position().Head
 
 	h.dispatch(t.Context(), "run:wf_1", h.originOf("run:wf_1"), runNotif(marotte.MethodSessionUpdate, map[string]any{
 		"sessionId": "sess_step",
@@ -155,7 +163,7 @@ func TestRunDispatch_UnmarkedStepContentIsDropped(t *testing.T) {
 		},
 	}))
 
-	if events := bufferedEvents(h); len(events) != 0 {
+	if events := bufferedEventsSince(h, before); len(events) != 0 {
 		t.Fatalf("an unattributed chunk produced %d events, want 0: %+v", len(events), events)
 	}
 }

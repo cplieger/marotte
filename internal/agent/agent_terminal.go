@@ -29,8 +29,8 @@ import (
 const keySignal = "signal"
 
 // terminalDrainGrace bounds awaitExit's wait for output EOF after the process exits (a
-// grandchild holding the pipe). Matches cmd.WaitDelay.
-const terminalDrainGrace = 2 * time.Second
+// grandchild holding the pipe). Matches cmd.WaitDelay. A var only for tests.
+var terminalDrainGrace = 2 * time.Second
 
 // terminalGroupGrace bounds a teardown's wait for the process group to empty. A var only for tests.
 var terminalGroupGrace = 2 * time.Second

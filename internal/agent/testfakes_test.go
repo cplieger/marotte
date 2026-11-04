@@ -132,6 +132,21 @@ type fakeBridge struct {
 	// streamClosed guards the channel close apart from stopped, so endStream ends the stream without claiming a close.
 	streamClosed bool
 	started      bool
+	// noGovernance withholds the governance frame an observer's door delivers, leaving the cache cold.
+	noGovernance bool
+}
+
+// governanceFrame is the `_kiro/governance/state` KAS sends at every session/new, for an ungoverned account: KAS
+// 2.37.1's defaults have MCP, web tools, autonomous agents and content collection on, the rest off.
+func governanceFrame(sid string) *marotte.RPCResponse {
+	params, _ := json.Marshal(map[string]any{
+		"sessionId": sid, "isEnterprise": false, "disabledReason": nil,
+		"features": map[string]bool{
+			"mcpEnabled": true, "webToolsEnabled": true, "usageAnalytics": false, "contentCollection": true,
+			"promptLogging": false, "codeReferenceTracker": false, "autonomousAgents": true,
+		},
+	})
+	return &marotte.RPCResponse{JSONRPC: "2.0", Method: methodV3Governance, Params: params}
 }
 
 // newFakeBridge is an open session, as a door hands one out.
@@ -189,7 +204,12 @@ func (b *fakeBridge) door(ctx context.Context, so *marotte.SessionOpts, eo *maro
 	b.supervisedApplied = so.Supervised && !b.supervisedAssertFails
 	notifs := b.notifsOnStart
 	keep := len(notifs) - min(b.withholdReplay, len(notifs))
+	governance := !load && so.Role == marotte.SessionRoleObserver && !b.noGovernance
+	sid := b.sessionID
 	b.mu.Unlock()
+	if governance {
+		b.deliver(governanceFrame(sid))
+	}
 	if !load {
 		return nil
 	}

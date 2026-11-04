@@ -38,9 +38,22 @@ func settleBoot(t *testing.T, h *Runtime) {
 // Reassigning workDir afterwards misses the wiring's one read. Order-sensitive: cs.Bus can only be
 // set once New returned.
 func newTestHubIn(workDir string, opts ...Option) (*Runtime, *testChatStore, *fakeBridge) {
+	return newTestHubOn(workDir, false, opts...)
+}
+
+// newColdTestHub is newTestHub whose engine sends no governance profile, so the administrator rules stay unread
+// until a test resolves them.
+func newColdTestHub(opts ...Option) (*Runtime, *testChatStore, *fakeBridge) {
+	return newTestHubOn("/tmp/work", true, opts...)
+}
+
+func newTestHubOn(workDir string, coldGovernance bool, opts ...Option) (*Runtime, *testChatStore, *fakeBridge) {
 	cs := newTestChatStore()
 	br := newFakeBridge()
-	h := newRuntimeOn(context.Background(), workDir, fakeEngineOf(func() engineSession { return br }, br), cs, opts...)
+	br.noGovernance = coldGovernance
+	src := fakeEngineOf(func() engineSession { return br }, br)
+	src.noGovernance = coldGovernance
+	h := newRuntimeOn(context.Background(), workDir, src, cs, opts...)
 	cs.wire(h)
 	// The engine's boot work reads br's scripts; a test edits them unlocked, so only after this.
 	if err := awaitBoot(h); err != nil {
@@ -56,6 +69,15 @@ func awaitBoot(h *Runtime) error {
 	if !awaitEngine(h) {
 		return errors.New("setup: the fake engine was not ready within 5s")
 	}
+	// The profile's handler adds its follow-ups to inflight from the observer's forward loop, which is off inflight:
+	// draining before it ran could Wait while it Adds from zero.
+	if src, ok := h.engine.source.(*fakeEngineSource); ok && !src.noGovernance {
+		select {
+		case <-h.config.governance.warm:
+		case <-time.After(5 * time.Second):
+			return errors.New("setup: the boot's governance profile did not arrive within 5s")
+		}
+	}
 	drained := make(chan struct{})
 	go func() {
 		h.lifecycle.inflight.Wait()
@@ -63,9 +85,30 @@ func awaitBoot(h *Runtime) error {
 	}()
 	select {
 	case <-drained:
-		return nil
 	case <-time.After(5 * time.Second):
 		return errors.New("setup: the engine's boot work did not drain within 5s")
+	}
+	return awaitBootPowersSync(h)
+}
+
+// awaitBootPowersSync waits for the powers re-render the boot's administrator rules asked for: syncLoop runs off
+// inflight, so its powers_changed would otherwise land inside the test.
+func awaitBootPowersSync(h *Runtime) error {
+	if !h.config.adminPolicyKnown() {
+		return nil
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		for _, e := range h.bus.fanout.Snapshot() {
+			var msg marotte.ServerEvent
+			if json.Unmarshal(e.Event.Data, &msg) == nil && msg.Type == marotte.EventPowersChanged {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return errors.New("setup: the boot's powers re-render did not broadcast within 5s")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

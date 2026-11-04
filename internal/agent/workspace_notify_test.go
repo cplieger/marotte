@@ -46,6 +46,8 @@ func TestWorkspaceNotifications_HandledOnceOnEveryLane(t *testing.T) {
 	}
 	count := countWorkspaceHandlers(h)
 	o := oneObserver(t, h)
+	// Only the frames the test delivers are counted, not the profile KAS sends at the observer's door.
+	o.noGovernance = true
 	lanes := []struct {
 		name    string
 		deliver func(msg *marotte.RPCResponse)
