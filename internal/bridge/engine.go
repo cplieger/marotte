@@ -137,7 +137,9 @@ type Engine struct {
 	onDetach   func(DetachedSession)
 	engineLane *lane
 	background func(func()) bool
-	sessions   map[marotte.SessionID]*Session
+	// cpuTicks is the engine's CPU-progress probe (engineCPU); a field so a test can stub it.
+	cpuTicks func() (ticks uint64, ok bool)
+	sessions map[marotte.SessionID]*Session
 	// releasing holds an id whose abandoned load is being closed with no handle: a door for that id waits for the
 	// close to settle, so the close never lands on the newer session. Guarded by lanesMu.
 	releasing map[marotte.SessionID]chan struct{}
@@ -169,7 +171,9 @@ type Engine struct {
 	// startTerminalTimeoutMs: see startIgnoreFiles.
 	startTerminalTimeoutMs int
 	nextID                 atomic.Int64
-	heapMiB                int
+	// lastFrame is when readLoop last read a frame, in unix nanoseconds; 0 before the first.
+	lastFrame atomic.Int64
+	heapMiB   int
 	// rssPeakMiB and heapLimitMiB are the memory sampler's record for ExitInfo. Guarded by mu.
 	rssPeakMiB          int
 	heapLimitMiB        int
@@ -234,6 +238,7 @@ func NewEngine(cliPath, workDir string, opts ...Option) *Engine {
 		stopping:   make(chan struct{}),
 		exited:     make(chan struct{}),
 	}
+	e.cpuTicks = e.engineCPU
 	for _, o := range opts {
 		o(e)
 	}

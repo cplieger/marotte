@@ -55,6 +55,7 @@ func (e *Engine) readLoop() {
 	var reason exitReason
 	for {
 		line, dropped, head, err := e.stdout.readFrame()
+		e.noteFrame(len(line) + dropped)
 		if dropped > 0 {
 			e.reportDroppedFrame(dropped, head)
 		}
@@ -518,6 +519,14 @@ const writeChunk = 64 << 10
 // serialises every outbound frame, so one wedged write silently blocks every later Respond, Call and Notify,
 // session/cancel included. A reader that keeps draining is never reaped, however long the frame takes.
 var writeStall = 30 * time.Second
+
+// stallProbeAfter is when a chunk's write first samples the engine's CPU: a write that finishes sooner never reads
+// /proc. A var for tests.
+var stallProbeAfter = time.Second
+
+// writeStallCeiling caps how long one chunk may wait on an engine that burns CPU but never drains: a livelock. Equal to
+// replayBudget, the longest any one call may take. A var for tests.
+var writeStallCeiling = 300 * time.Second
 
 // writeFrame serialises stdin writes, refuses each once the read loop exited (readerExited, loaded under writeMu so
 // closePending's wait orders it), and writes in chunks, each bounded by writeStall. Any write failure ends the engine:

@@ -38,6 +38,8 @@ type fakeEngineSource struct {
 	exitGate chan struct{}
 	// callGate, when set, sees every engine-lane call's scripted answer and returns the one the caller gets.
 	callGate func(ctx context.Context, method string, resp *marotte.RPCResponse, err error) (*marotte.RPCResponse, error)
+	// stalled, when set, is every engine's Stalled answer.
+	stalled func() bool
 	// withheld counts lane frames toward the position and never delivers them: a wedged engine lane.
 	withheld bool
 	// cliPath is what CLIPath answers; empty is the default path.
@@ -424,6 +426,17 @@ func (e *fakeEngine) RefreshContentCollection(ctx context.Context) (bool, error)
 }
 
 func (*fakeEngine) KASLogDir() string { return "" }
+
+func (*fakeEngine) StallAware(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, d)
+}
+
+func (e *fakeEngine) Stalled() bool {
+	e.src.mu.Lock()
+	stalled := e.src.stalled
+	e.src.mu.Unlock()
+	return stalled != nil && stalled()
+}
 
 // newRuntimeOn builds a runtime over src and binds src's exit hook to it; Shutdown it from the test. A first engine
 // that is coming up is waited for with its boot work (awaitBoot), since that work reads the fakes a test then edits.
