@@ -1,11 +1,14 @@
 package filemode
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -428,58 +431,74 @@ func TestSetDirModes_RefusesARelativePath(t *testing.T) {
 const unprivilegedDirEnv = "FILEMODE_UNPRIVILEGED_DIR"
 
 // unprivilegedDir returns a folder the calling top-level test owns as an account that cannot open
-// a folder it lacks read permission on. As root it re-runs that test as uid 65534 and returns ""
-// once the re-run passed, so the caller returns.
+// a folder it lacks read permission on. As root it re-runs that test with no capabilities and
+// returns "" once the re-run passed, so the caller returns.
 func unprivilegedDir(t *testing.T) string {
 	t.Helper()
 	if dir := os.Getenv(unprivilegedDirEnv); dir != "" {
+		requireNoPermissionOverride(t, dir)
 		return dir
 	}
 	if os.Getuid() != 0 {
 		return t.TempDir()
 	}
-	base := t.TempDir()
-	for _, d := range []string{filepath.Dir(base), base} {
-		if err := os.Chmod(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	bin := filepath.Join(base, "filemode.test")
-	copyExecutable(t, bin)
-	work := filepath.Join(base, "work")
-	if err := os.Mkdir(work, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chown(work, 65534, 65534); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(bin, "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
-	cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return strings.HasPrefix(kv, "GOCOVERDIR=")
-	}), unprivilegedDirEnv+"="+work)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534}}
-	out, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(out), "--- PASS: "+t.Name()) {
-		t.Fatalf("re-run as uid 65534: %v\n%s", err, out)
-	}
-	return ""
-}
-
-// copyExecutable copies the test binary to dst, world-executable; ForkLock keeps a concurrent fork
-// from holding it open for writing when it runs (ETXTBSY, golang/go#22315).
-func copyExecutable(t *testing.T, dst string) {
-	t.Helper()
+	work := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(exe)
-	if err != nil {
+	cmd := exec.Command(exe, "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
+	cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		return strings.HasPrefix(kv, "GOCOVERDIR=")
+	}), unprivilegedDirEnv+"="+work)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := startWithoutCapabilities(cmd); err != nil {
+		t.Fatalf("re-run with no capabilities: %v", err)
+	}
+	if err := cmd.Wait(); err != nil || !strings.Contains(out.String(), "--- PASS: "+t.Name()) {
+		t.Fatalf("re-run with no capabilities: %v\n%s", err, &out)
+	}
+	return ""
+}
+
+// startWithoutCapabilities starts cmd from a thread whose capability bounding set is empty, so a
+// root child keeps uid 0, and so every folder the parent made, but gains no capability at exec
+// (capabilities(7), "Transformation of capabilities during execve()"). A uid switch would instead
+// need every folder above TMPDIR to admit that uid. The thread stays locked, so the runtime
+// retires it with the goroutine.
+func startWithoutCapabilities(cmd *exec.Cmd) error {
+	errc := make(chan error, 1)
+	go func() {
+		runtime.LockOSThread()
+		for c := 0; c <= unix.CAP_LAST_CAP; c++ {
+			err := unix.Prctl(unix.PR_CAPBSET_DROP, uintptr(c), 0, 0, 0)
+			if err != nil && !errors.Is(err, unix.EINVAL) {
+				errc <- fmt.Errorf("drop capability %d: %w", c, err)
+				return
+			}
+		}
+		errc <- cmd.Start()
+	}()
+	return <-errc
+}
+
+// requireNoPermissionOverride fails the test unless opening an unreadable folder in dir is refused.
+func requireNoPermissionOverride(t *testing.T, dir string) {
+	t.Helper()
+	probe := filepath.Join(dir, "probe")
+	mkdirAt(t, probe, 0)
+	f, err := os.Open(probe)
+	if err == nil {
+		_ = f.Close()
+	}
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("open of a mode-000 folder = %v, want a permission error", err)
+	}
+	if err := os.Chmod(probe, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	syscall.ForkLock.RLock()
-	defer syscall.ForkLock.RUnlock()
-	if err := os.WriteFile(dst, data, 0o755); err != nil {
+	if err := os.Remove(probe); err != nil {
 		t.Fatal(err)
 	}
 }
