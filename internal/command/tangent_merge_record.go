@@ -213,8 +213,8 @@ func (m *tangentMerges) reconcile(ctx context.Context, parent marotte.ChatID, de
 
 // deliver sends the findings under p.MessageID and answers "" once KAS holds them, or the failure
 // the user reads; settled is false when ctx ended before either was known. The findings are the parent record's
-// across its lives, so a close of the parent is waited out and the delivery lands in its next life; a try that met
-// no close counts, and the prompt is retried once when the parent's turn ends between two counted tries.
+// across its lives, so a close of the parent is waited out and the delivery lands in its next life; a try that waited
+// out no close counts, and the prompt is retried once when the parent's turn ends between two counted tries.
 func (m *tangentMerges) deliver(ctx context.Context, parent marotte.ChatID, p *marotte.PromptCommand) (failure string, settled bool) {
 	for tries := 0; tries < 2; {
 		if _, err := m.roles.admission.AwaitNoClose(ctx, parent); err != nil {
@@ -222,6 +222,9 @@ func (m *tangentMerges) deliver(ctx context.Context, parent marotte.ChatID, p *m
 		}
 		out, res := m.roles.admission.ReserveTurn(ctx, parent, marotte.TurnSourcePrompt, m.roles.admission.LifeStamp(), AdmissionWait)
 		if out == IdleClosed {
+			if !m.closeMet(ctx, parent) {
+				tries++
+			}
 			continue
 		}
 		if out == IdleAcquired {

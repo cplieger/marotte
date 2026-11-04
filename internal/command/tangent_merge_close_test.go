@@ -24,6 +24,9 @@ type closingParent struct {
 	held   bool
 	// closedSince makes the parent's next reserve answer a close that committed and ended since its stamp.
 	closedSince bool
+	// alwaysClosed makes every reserve of the parent answer a close with no hold standing, as a lifecycle left
+	// marked closed does.
+	alwaysClosed bool
 }
 
 func newClosingParent(h *mergeHost) *closingParent {
@@ -77,7 +80,7 @@ func (c *closingParent) AwaitNoClose(ctx context.Context, chatID marotte.ChatID)
 // ReserveTurn answers a close committed since the stamp while the parent's close is held, as the life gate does once
 // the hold ends.
 func (c *closingParent) ReserveTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation) {
-	if chatID == "c-parent" && (c.holding() || c.takeClosedSince()) {
+	if chatID == "c-parent" && (c.alwaysClosed || c.holding() || c.takeClosedSince()) {
 		return IdleClosed, Reservation{}
 	}
 	return c.mergeHost.ReserveTurn(ctx, chatID, source, stamp, wait)
@@ -210,6 +213,22 @@ func TestTangentMerge_AParentClosedDuringTheSummaryGetsTheFindingsAfterItsTeardo
 		}
 		if n := f.host.promptCount(); n != 2 {
 			t.Errorf("prompts opened = %d, want the summary then the findings", n)
+		}
+	})
+
+	t.Run("a parent whose every reserve answers a close", func(t *testing.T) {
+		f, c, q := setup(t)
+		c.alwaysClosed = true
+		if _, err := f.merge(t, findings); err != nil {
+			t.Fatalf("CmdMergeTangent = %v, want accepted", err)
+		}
+
+		rec := awaitMergeSettled(t, f)
+		if rec.State != marotte.TangentMergeFailed || rec.Message != deliveryFailure("") {
+			t.Errorf("merge = %+v, want failed with the delivery failure, the findings kept in the tangent", rec)
+		}
+		if q.appends != 0 || len(q.chat.QueuedPrompts) != 0 {
+			t.Errorf("appends = %d, queued rows = %+v, want nothing queued", q.appends, q.chat.QueuedPrompts)
 		}
 	})
 
