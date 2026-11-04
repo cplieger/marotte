@@ -43,6 +43,8 @@ type Runs struct {
 	mutations *runMutations
 	// answerEarly answers a request a new host session's door sent before its run's lane was known.
 	answerEarly func(s engineSession, msg *marotte.RPCResponse)
+	// doorSettings is a host door's inputs (Runtime.readSessionSettings).
+	doorSettings func(context.Context) sessionSettings
 	// servedModels is GET /api/config-template's model list (Runtime.servedModels), for checkRunDefaults.
 	servedModels func(context.Context) ([]marotte.SessionModel, bool)
 	// runEnded asks the retention purge for a pass when a run ends.

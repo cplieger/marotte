@@ -52,13 +52,6 @@ const (
 // defaultHighThroughput is ON because the flags carry 3 to 4 times the prompt load on one engine.
 const defaultHighThroughput = true
 
-// HighThroughput reports whether the next engine starts with the high throughput launcher. An absent or unreadable
-// value is the default.
-func HighThroughput(ctx context.Context, configDir string) bool {
-	on, _ := FieldOr(ctx, configDir, KeyHighThroughput, defaultHighThroughput)
-	return on
-}
-
 // EffectiveDefaults is the ONE statement of every client-rendered preference's value when
 // config.json is SILENT. It is not a consumer's answer for an UNREADABLE file, which differs
 // per consumer (composition's chatRetention purges nothing then), so the two must not merge.

@@ -27,7 +27,7 @@ func TestFeatures_TakesValidValuesAndDefaultsTheRest(t *testing.T) {
 		"terminal_command_timeout_ms": 500
 	}`)
 
-	session := sessionFeatures(t.Context(), dir, nil)
+	session := sessionFeatures(docAt(t, dir))
 	wantSession := marotte.SessionFeatures{
 		SpecPlan:             settings.SpecPlanningQuick,
 		SpecAskClarification: true,
@@ -38,7 +38,7 @@ func TestFeatures_TakesValidValuesAndDefaultsTheRest(t *testing.T) {
 	if session != wantSession {
 		t.Errorf("sessionFeatures() = %+v, want %+v", session, wantSession)
 	}
-	engine := engineFeatures(t.Context(), dir)
+	engine := engineFeatures(docAt(t, dir))
 	wantEngine := marotte.EngineFeatures{
 		AutoRouting:   settings.FeatureOn,
 		ModelFallback: true,
@@ -60,7 +60,7 @@ func TestFeatures_WorkflowsFollowsTheToggle(t *testing.T) {
 	} {
 		dir := t.TempDir()
 		writeAgentSettings(t, dir, tc.body)
-		if got := sessionFeatures(t.Context(), dir, nil).Workflows; got != tc.want {
+		if got := sessionFeatures(docAt(t, dir)).Workflows; got != tc.want {
 			t.Errorf("sessionFeatures(%s).Workflows = %v, want %v", tc.body, got, tc.want)
 		}
 	}
@@ -70,7 +70,7 @@ func TestFeatures_SpecPlanningOffSendsNoWorkflow(t *testing.T) {
 	dir := t.TempDir()
 	writeAgentSettings(t, dir, `{"spec_planning": "off"}`)
 
-	if got := sessionFeatures(t.Context(), dir, nil).SpecPlan; got != "" {
+	if got := sessionFeatures(docAt(t, dir)).SpecPlan; got != "" {
 		t.Errorf("sessionFeatures().SpecPlan = %q, want empty for off", got)
 	}
 }

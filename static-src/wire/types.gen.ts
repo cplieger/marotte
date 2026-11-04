@@ -912,6 +912,11 @@ export interface EngineExit {
 export interface EngineRestart {
   reasons: string[];
   pending: boolean;
+  /**
+ * ConfigUnreadable: config.json could not be read at the last look, so no queued reason applies until it can;
+ * Reasons stay queued.
+ */
+  config_unreadable: boolean;
 }
 
 /** EngineStatus is GET /api/engine's answer and the engine_status event's payload. */

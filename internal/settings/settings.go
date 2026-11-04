@@ -1,16 +1,17 @@
 // Package settings is the one reader for <configDir>/config.json: Field (typed key), FieldInto
-// (pointer target) and FieldStrict (unreadable kept apart from absent, for a caller gating a
-// destructive action), all through one freshness-checked cache capped at maxBytes.
+// (pointer target), FieldStrict (unreadable kept apart from absent, for a caller gating a
+// destructive action) and Read (one parsed generation for several keys), all through one
+// freshness-checked cache capped at maxBytes.
 //
 // There is no exported raw-bytes reader: the cache's slice is shared by every caller, so an
-// exported accessor would let any caller corrupt every other's settings.
+// exported accessor would let any caller corrupt every other's settings. For the same reason a
+// Document exposes decoders only, never the parsed map the cache shares.
 package settings
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -180,32 +181,12 @@ var errKeyParse = errors.New("settings: parse")
 // FieldStrict is Field with unreadability kept apart from absence: found reports the key was
 // PRESENT and decoded; err reports config.json exists and could not be read or parsed.
 func FieldStrict[T any](ctx context.Context, configDir, key string) (value T, found bool, err error) {
-	var zero T
-	raw, err := parsedMap(ctx, configDir)
+	d, _, err := Read(ctx, configDir)
 	if err != nil {
+		var zero T
 		return zero, false, err
 	}
-	if raw == nil {
-		return zero, false, nil // no config.json: ABSENT, and intentional
-	}
-	v, ok := raw[key]
-	if !ok {
-		return zero, false, nil // key absent: ABSENT, and intentional
-	}
-	var out T
-	if uErr := json.Unmarshal(v, &out); uErr != nil {
-		return zero, false, fmt.Errorf("%w %s: %w", errKeyParse, key, uErr)
-	}
-	return out, true, nil
-}
-
-// Generation identifies the config.json generation every reader currently sees, and reports
-// whether it is readable (absent or parsing). Equal numbers from two calls mean every read
-// between them saw the same document; an absent file is one generation while it stays absent.
-func Generation(ctx context.Context, configDir string) (gen uint64, readable bool) {
-	g := readGeneration(ctx, configDir)
-	_, err := parsedOf(configDir, g)
-	return g.gen, err == nil
+	return Lookup[T](d, key)
 }
 
 // readStopped reports a read that ended with its caller's ctx, which says nothing about the document.
@@ -251,31 +232,14 @@ func FieldOr[T any](ctx context.Context, configDir, key string, def T) (value T,
 // FieldInto is the pointer-target variant of Field: it decodes the named key into out and
 // reports success; like Field, it logs no failure that is ctx's.
 func FieldInto(ctx context.Context, configDir, key string, out any) bool {
-	raw, err := parsedMap(ctx, configDir)
+	d, _, err := Read(ctx, configDir)
 	if err != nil {
 		if !readStopped(err) {
 			slog.Warn("settings: read config.json for "+key, "error", err)
 		}
 		return false
 	}
-	if raw == nil {
-		return false
-	}
-	v, ok := raw[key]
-	if !ok {
-		return false
-	}
-	if err := json.Unmarshal(v, out); err != nil {
-		slog.Warn("settings: parse "+key, "error", err)
-		return false
-	}
-	return true
-}
-
-// parsedMap returns the cached parsed map[string]json.RawMessage for configDir, invalidated
-// when the bytes change.
-func parsedMap(ctx context.Context, configDir string) (map[string]json.RawMessage, error) {
-	return parsedOf(configDir, readGeneration(ctx, configDir))
+	return d.Into(key, out)
 }
 
 func parsedOf(configDir string, g generation) (map[string]json.RawMessage, error) {

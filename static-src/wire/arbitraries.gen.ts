@@ -760,8 +760,9 @@ const arbModel = fc.letrec<{
     {
       reasons: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       pending: fc.boolean(),
+      config_unreadable: fc.boolean(),
     },
-    { requiredKeys: ["reasons", "pending"] },
+    { requiredKeys: ["reasons", "pending", "config_unreadable"] },
   ),
   EngineStatus: fc.record(
     {
