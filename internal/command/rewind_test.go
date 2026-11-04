@@ -714,6 +714,13 @@ func (a *slotAdmission) tryReserveIdleOld(chatID marotte.ChatID, source marotte.
 	return a.tryReserveOld(chatID, source)
 }
 
+func (a *slotAdmission) ReserveTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if a.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
 func (a *slotAdmission) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
 	if a.tryReserveOld(chatID, source) {
 		return IdleAcquired, testReservation(chatID, true)

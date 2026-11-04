@@ -51,6 +51,13 @@ type mergeHost struct {
 	evMu     sync.Mutex
 }
 
+func (h *mergeHost) ReserveTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if h.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
 func (h *mergeHost) tryReserveOld(chatID marotte.ChatID, _ marotte.TurnOpenSource) bool {
 	return !h.busy[chatID]
 }

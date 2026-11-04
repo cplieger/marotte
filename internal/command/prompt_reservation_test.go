@@ -55,6 +55,18 @@ func (a *reservationLedger) TryReserveIdleTurn(chatID marotte.ChatID, source mar
 	return a.mint(a.turnAdmission.TryReserveIdleTurn(chatID, source, stamp))
 }
 
+func (a *reservationLedger) ReserveTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation) {
+	out, res := a.turnAdmission.ReserveTurn(ctx, chatID, source, stamp, wait)
+	res, _ = a.mint(res, out == IdleAcquired)
+	return out, res
+}
+
+func (a *reservationLedger) ReserveIdleTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation) {
+	out, res := a.turnAdmission.ReserveIdleTurn(ctx, chatID, source, stamp, wait)
+	res, _ = a.mint(res, out == IdleAcquired)
+	return out, res
+}
+
 func (a *reservationLedger) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool) {
 	return a.mint(a.turnAdmission.TryReserveTurnFenced(chatID, source, fence))
 }

@@ -79,6 +79,13 @@ func (o *recoveryOutcome) tryReserveIdleOld(c marotte.ChatID, s marotte.TurnOpen
 	return o.tryReserveOld(c, s)
 }
 
+func (o *recoveryOutcome) ReserveTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if o.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
 func (o *recoveryOutcome) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
 	if o.tryReserveOld(chatID, source) {
 		return IdleAcquired, testReservation(chatID, true)

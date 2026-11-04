@@ -155,6 +155,13 @@ func (a *scriptedAdmission) tryReserveIdleOld(c marotte.ChatID, s marotte.TurnOp
 	return a.tryReserveOld(c, s)
 }
 
+func (a *scriptedAdmission) ReserveTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if a.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
 func (a *scriptedAdmission) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
 	if a.tryReserveOld(chatID, source) {
 		return IdleAcquired, testReservation(chatID, true)

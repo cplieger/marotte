@@ -497,12 +497,16 @@ type turnAdmission interface {
 	// TryReserveTurn takes the admission slot iff it is free and no close is held or committed since stamp, never
 	// waiting.
 	TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (Reservation, bool)
+	// ReserveTurn is TryReserveTurn that waits up to wait for a holder that is not a running turn (a close's drain
+	// looking for a queued prompt, a closing turn, a held close), refusing at once beside a turn marotte or kiro-cli
+	// runs. It answers as ReserveIdleTurn does.
+	ReserveTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation)
 	// TryReserveIdleTurn is TryReserveTurn that also refuses while a turn is open
 	// without a reservation (a wire turn), checked in the same acquisition.
 	TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (Reservation, bool)
 	// ReserveIdleTurn is TryReserveIdleTurn that waits up to wait for a holder that is not a running turn (a bare
-	// reservation, a closing turn, kiro-cli not admitting yet, a held close); a running turn answers IdleTurnOpen at
-	// once. The Reservation is the zero one unless the answer is IdleAcquired.
+	// reservation, a closing turn, a held close); a turn marotte or kiro-cli runs answers IdleTurnOpen at once. The
+	// Reservation is the zero one unless the answer is IdleAcquired.
 	ReserveIdleTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation)
 	// TryReserveTurnFenced is TryReserveTurn for a close's drain: it also refuses
 	// once the fence no longer holds, sparing a reservation the open would refuse.

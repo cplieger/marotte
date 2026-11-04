@@ -147,6 +147,13 @@ func (rt *Runtime) ReserveIdleTurn(
 	return rt.coord.ReserveIdleTurn(ctx, chatID, source, stamp, wait)
 }
 
+// ReserveTurn takes the chat's admission slot, waiting up to wait for a holder that is not a running turn.
+func (rt *Runtime) ReserveTurn(
+	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration,
+) (command.IdleAdmission, command.Reservation) {
+	return rt.coord.ReserveTurn(ctx, chatID, source, stamp, wait)
+}
+
 // TryReserveTurnFenced takes the chat's admission slot iff it is free and no turn
 // opened after the fenced one.
 func (rt *Runtime) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) (command.Reservation, bool) {

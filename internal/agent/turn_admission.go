@@ -109,7 +109,7 @@ func (r *turnRegistry) tryReserveIdle(chatID marotte.ChatID, source marotte.Turn
 	return a.res, a.res.Token != 0
 }
 
-// idleLook is one look at an idle reservation: the reservation taken, or why not and what to wait on.
+// idleLook is one look at a waiting reservation: the reservation taken, or why not and what to wait on.
 type idleLook struct {
 	// changed is the lifecycle's next-change channel, gate the close hold's idle channel; either may be nil.
 	changed, gate         <-chan struct{}
@@ -117,9 +117,10 @@ type idleLook struct {
 	running, closed, gone bool
 }
 
-// reserveIdleOrRunning is tryReserveIdle that, on a refusal, reports whether a running turn or a close refused it,
-// with the channels to park on, in one acquisition. A closing turn is not running: it lets go within its close.
-func (r *turnRegistry) reserveIdleOrRunning(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) idleLook {
+// reserveOrRunning is tryReserve (tryReserveIdle when idle) that, on a refusal, reports whether a running turn or a
+// close refused it, with the channels to park on, in one acquisition. A turn kiro-cli runs without one open here (its
+// hold) counts as running; a closing turn does not, since it lets go within its close.
+func (r *turnRegistry) reserveOrRunning(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, idle bool) idleLook {
 	lc, gate, err := r.admitLife(chatID, stamp)
 	switch {
 	case err != nil:
@@ -129,7 +130,7 @@ func (r *turnRegistry) reserveIdleOrRunning(chatID marotte.ChatID, source marott
 	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	if _, held := lc.holderSourceLocked(); !held {
+	if _, held := lc.holderSourceLocked(); !idle || !held {
 		a := r.reserveLocked(lc, source, stamp, "")
 		switch {
 		case a.res.Token != 0:
@@ -142,7 +143,8 @@ func (r *turnRegistry) reserveIdleOrRunning(chatID marotte.ChatID, source marott
 			return idleLook{gate: a.idle, changed: lc.changed}
 		}
 	}
-	running := (lc.pending != nil && !lc.pending.finalizing) || (lc.own != nil && !lc.own.finalizing)
+	running := (lc.pending != nil && !lc.pending.finalizing) || (lc.own != nil && !lc.own.finalizing) ||
+		!lc.kas.may().admit
 	return idleLook{running: running, changed: lc.changed}
 }
 
@@ -274,10 +276,24 @@ func (bc *bridgeCoordinator) TryReserveIdleTurn(chatID marotte.ChatID, source ma
 func (bc *bridgeCoordinator) ReserveIdleTurn(
 	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration,
 ) (command.IdleAdmission, command.Reservation) {
+	return bc.reserveWaiting(ctx, chatID, source, stamp, wait, true)
+}
+
+// ReserveTurn is TryReserveTurn that waits up to wait for a holder that is not a running turn, as ReserveIdleTurn
+// does, with the same answers.
+func (bc *bridgeCoordinator) ReserveTurn(
+	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration,
+) (command.IdleAdmission, command.Reservation) {
+	return bc.reserveWaiting(ctx, chatID, source, stamp, wait, false)
+}
+
+func (bc *bridgeCoordinator) reserveWaiting(
+	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration, idle bool,
+) (command.IdleAdmission, command.Reservation) {
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for expired := false; ; {
-		a := bc.turns.reserveIdleOrRunning(chatID, source, stamp)
+		a := bc.turns.reserveOrRunning(chatID, source, stamp, idle)
 		switch {
 		case a.res.Token != 0:
 			return command.IdleAcquired, a.res

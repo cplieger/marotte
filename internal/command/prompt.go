@@ -152,8 +152,9 @@ func recoverEmptyTurn(
 			"chat_id", chatID, "turn", turnID)
 		return
 	}
-	retryRes, ok := roles.admission.TryReserveTurn(chatID, marotte.TurnSourceEmptyRetry, res.Stamp)
-	if !ok {
+	// Waiting: the close's drain holds the slot a moment while it looks for a queued prompt.
+	out, retryRes := roles.admission.ReserveTurn(ctx, chatID, marotte.TurnSourceEmptyRetry, res.Stamp, AdmissionWait)
+	if out != IdleAcquired {
 		slog.Warn("empty turn: another turn was admitted during recovery, or the chat closed; abandoning retry",
 			"chat_id", chatID)
 		return
