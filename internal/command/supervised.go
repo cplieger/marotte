@@ -11,13 +11,17 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // cmdSetSupervisedMode records the chat's supervised choice and applies it live to a running
 // session, so a mid-session toggle takes effect at once; a bridgeless chat's value reaches
 // `session/new` through SessionOpts.Supervised.
-func cmdSetSupervisedMode(ctx context.Context, bridges bridgeAccess, chats chatStore, cmd *marotte.ClientCommand) (any, error) {
+func cmdSetSupervisedMode(
+	ctx context.Context, bridges bridgeAccess, chats chatStore, supervisedLocks *keylock.Set[marotte.ChatID],
+	cmd *marotte.ClientCommand,
+) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -25,6 +29,11 @@ func cmdSetSupervisedMode(ctx context.Context, bridges bridgeAccess, chats chatS
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
+	unlock, lockErr := lockSessionChange(ctx, supervisedLocks, cmd.ChatID)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer unlock()
 
 	// Assert first, persist only on success (applySessionConfig's rule): a refused toggle persisted
 	// would show supervised over a session in autopilot. A bridge still opening its session grades as nil, so

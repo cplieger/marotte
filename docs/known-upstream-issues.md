@@ -28,7 +28,7 @@ kiro-cli's agent engine runs every chat, workflow step and subagent on one JavaS
 
 Reported as [kirodotdev/Kiro#12261](https://github.com/kirodotdev/Kiro/issues/12261), open, and the log delay as [kirodotdev/Kiro#12260](https://github.com/kirodotdev/Kiro/issues/12260), open. **High throughput optimizations**, under **Experimental features** in **Settings**, is on by default. It starts the engine's Node.js with `--experimental-async-context-frame` and `--max-semi-space-size=64`, which cut the time the thread spends on that work. [Configuration](configuration.md#high-throughput-optimizations) gives the measured effect.
 
-While the engine's thread stays busy, marotte waits up to 2 minutes before it restarts the engine, so one long stop does not end the replies in every chat. A change you make to a chat during the stop, such as a new mode or effort, shows as still applying instead of failed. The chat shows the change once kiro-cli applies it.
+While the engine's thread stays busy, marotte waits up to 2 minutes before it restarts the engine, so one long stop does not end the replies in every chat. kiro-cli itself still ends the engine, and the replies in every chat, when a very long message, such as a large pasted prompt, is sent to it during a stop of more than 15 seconds. A change you make to a chat during the stop, such as a new mode or effort, shows as still applying instead of failed. The chat shows the change once kiro-cli applies it.
 
 ### A command that finished can show as timed out
 

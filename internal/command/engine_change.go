@@ -11,9 +11,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// engineChangeBudget bounds one session change's engine call on a kiro-cli that is not stalled; CallBudget extends
-// it through a stall. Past the answer budget only the late outcome waits on it. The run launch's bound on the same
-// engine.
+// engineChangeBudget bounds one session change's engine call on a kiro-cli that is not stalled, as the agent's
+// launchTimeout bounds a run launch on the same engine; CallBudget extends it through a stall.
 const engineChangeBudget = 120 * time.Second
 
 // reasonStillApplying marks a 504 for a change kiro-cli has not answered yet and may still apply.
@@ -79,11 +78,13 @@ func (c detachedChange) wrap(verb marotte.CommandType, h Handler) Handler {
 		}()
 		timer := time.NewTimer(c.answerBudget)
 		defer timer.Stop()
+		left := false
 		select {
 		case o := <-done:
 			return o.body, o.err
 		case <-timer.C:
 		case <-ctx.Done():
+			left = true
 		}
 		mu.Lock()
 		defer mu.Unlock()
@@ -93,8 +94,13 @@ func (c detachedChange) wrap(verb marotte.CommandType, h Handler) Handler {
 		default:
 		}
 		abandoned = true
-		slog.Warn("a session change has not answered in time; telling the client it is still applying",
-			"verb", verb, "chat", cmd.ChatID)
+		if left {
+			slog.Info("the client left before a session change answered; it may still apply",
+				"verb", verb, "chat", cmd.ChatID)
+		} else {
+			slog.Warn("a session change has not answered in time; telling the client it is still applying",
+				"verb", verb, "chat", cmd.ChatID)
+		}
 		return nil, StatusErrorReason(http.StatusGatewayTimeout, reasonStillApplying, errStillApplying)
 	}
 }

@@ -77,8 +77,10 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	configLocks := keylock.New(cmp.Compare[marotte.ChatID])
 	d.RegisterChange(marotte.CmdSetEffort, bind6(r.Bridges, chats, r.Bus, r.Workspace, r.Effort, configLocks, cmdSetEffort))
 	d.RegisterChange(marotte.CmdSetThinking, bind3(r.Bridges, chats, configLocks, cmdSetThinking))
-	d.RegisterChange(marotte.CmdSetMode, bind4(r.Bridges, chats, r.Bus, r.Modes, cmdSetMode))
-	d.RegisterChange(marotte.CmdSetSupervisedMode, bind2(r.Bridges, chats, cmdSetSupervisedMode))
+	d.RegisterChange(marotte.CmdSetMode,
+		bind5(r.Bridges, chats, r.Bus, r.Modes, keylock.New(cmp.Compare[marotte.ChatID]), cmdSetMode))
+	d.RegisterChange(marotte.CmdSetSupervisedMode,
+		bind3(r.Bridges, chats, keylock.New(cmp.Compare[marotte.ChatID]), cmdSetSupervisedMode))
 
 	d.Register(marotte.CmdCancel, bind5(r.Bridges, r.Perms, r.Terminals, r.Stops, r.SteerQueue, cmdCancel))
 	d.RegisterChange(marotte.CmdForkChat, bind4(r.Bridges, chats, r.Workspace, mem, cmdForkChat))
