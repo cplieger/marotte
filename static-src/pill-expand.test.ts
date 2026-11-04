@@ -231,7 +231,6 @@ function stubbedPill(fill?: (card: HTMLElement) => void): {
   return { pill, card };
 }
 
-/** A pill whose consumer can abort it, counting the collapses it reports. */
 function countedPill(): { pill: HTMLElement; ac: AbortController; collapses: () => number } {
   const slot = document.createElement("span");
   const pill = document.createElement("button");

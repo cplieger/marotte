@@ -14,7 +14,6 @@ const HOVER_DELAY_MS = 500;
 export function initTooltips(): void {
   uipInitTooltips({
     attribute: "data-tooltip",
-    // Both equal @cplieger/ui/tooltip's defaults (`delayWarm` follows `delayCold`).
     delayCold: HOVER_DELAY_MS,
     delayWarm: HOVER_DELAY_MS,
   });
