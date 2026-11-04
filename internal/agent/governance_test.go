@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 func sampleGovernance() marotte.GovernanceStatePayload {
@@ -77,7 +78,7 @@ func TestGovernanceCache_AdminRulesResolveOnce(t *testing.T) {
 func TestHandleGovernance_ServesWarmCache(t *testing.T) {
 	h, _, _ := newTestHub()
 	// Pre-seeded, so no bridge warm-up.
-	h.config.SetGovernance(t.Context(), sampleGovernance())
+	reportAccount(t, h, sampleGovernance())
 
 	rec := httptest.NewRecorder()
 	h.config.handleGovernance(rec, httptest.NewRequest(http.MethodGet, "/api/governance", nil))
@@ -105,6 +106,9 @@ func TestApplyGovernance_CachesTheProfileFromAnySession(t *testing.T) {
 		`"contentCollection":true,"promptLogging":false,"codeReferenceTracker":false,` +
 		`"autonomousAgents":true}}`)
 
+	if p, ok := translate.DecodeGovernanceState(raw); ok {
+		fakeSourceOf(t, h).account.set(p)
+	}
 	h.config.applyGovernance(raw)
 
 	got, ok := h.config.governance.get()

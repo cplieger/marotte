@@ -59,7 +59,7 @@ func TestEngineSpawn_ResolvesTelemetryUnderTheOrganizationLock(t *testing.T) {
 			withKiroTelemetry(t, tc.cliJSON)
 			h, _ := reopenFixture(t)
 			if tc.org != nil {
-				h.config.SetGovernance(t.Context(), *tc.org)
+				reportAccount(t, h, *tc.org)
 			}
 
 			if got := h.resolveEngine(t.Context(), "/fake/kiro-cli").opts.DisableTelemetry; got != tc.want {

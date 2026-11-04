@@ -476,7 +476,12 @@ func TestReconcileSessionSettings_ATelemetrySwitchMarksTheEngineRestartPending(t
 
 func TestGovernanceLockChange_ReopensOpenChatsOnlyWhenAFingerprintMoves(t *testing.T) {
 	orgAnalytics := func(on bool) func(context.Context, *Runtime) {
-		return func(ctx context.Context, h *Runtime) { h.config.SetGovernance(ctx, orgTelemetry(on)) }
+		return func(ctx context.Context, h *Runtime) {
+			if src, ok := h.engine.source.(*fakeEngineSource); ok {
+				src.account.set(orgTelemetry(on))
+			}
+			h.config.SetGovernance(ctx, orgTelemetry(on))
+		}
 	}
 	denySubagents := func(ctx context.Context, h *Runtime) {
 		h.config.publishGovernance(ctx, h.config.governance.setAdmin(reduceAdminRules([]marotte.PolicyRule{adminRule("subagent", "deny")})))

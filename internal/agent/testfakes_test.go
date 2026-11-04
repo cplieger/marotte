@@ -132,21 +132,58 @@ type fakeBridge struct {
 	// streamClosed guards the channel close apart from stopped, so endStream ends the stream without claiming a close.
 	streamClosed bool
 	started      bool
+	// account is the profile an observer's door reports; nil is ungovernedAccount.
+	account *fakeAccount
 	// noGovernance withholds the governance frame an observer's door delivers, leaving the cache cold.
 	noGovernance bool
 }
 
-// governanceFrame is the `_kiro/governance/state` KAS sends at every session/new, for an ungoverned account: KAS
-// 2.37.1's defaults have MCP, web tools, autonomous agents and content collection on, the rest off.
-func governanceFrame(sid string) *marotte.RPCResponse {
+// ungovernedAccount is KAS 2.37.1's profile for an ungoverned account: MCP, web tools, autonomous agents and content
+// collection on, the rest off.
+var ungovernedAccount = marotte.GovernanceStatePayload{Features: marotte.GovernanceFeatures{
+	MCPEnabled: true, WebToolsEnabled: true, AutonomousAgents: true, ContentCollection: true,
+}}
+
+// governanceFrame is the `_kiro/governance/state` KAS sends at every session/new, reporting p.
+func governanceFrame(sid string, p marotte.GovernanceStatePayload) *marotte.RPCResponse {
+	var reason any
+	if p.DisabledReason != "" {
+		reason = p.DisabledReason
+	}
+	f := p.Features
 	params, _ := json.Marshal(map[string]any{
-		"sessionId": sid, "isEnterprise": false, "disabledReason": nil,
+		"sessionId": sid, "isEnterprise": p.IsEnterprise, "disabledReason": reason,
 		"features": map[string]bool{
-			"mcpEnabled": true, "webToolsEnabled": true, "usageAnalytics": false, "contentCollection": true,
-			"promptLogging": false, "codeReferenceTracker": false, "autonomousAgents": true,
+			"mcpEnabled": f.MCPEnabled, "webToolsEnabled": f.WebToolsEnabled, "usageAnalytics": f.UsageAnalytics,
+			"contentCollection": f.ContentCollection, "promptLogging": f.PromptLogging,
+			"codeReferenceTracker": f.CodeReferenceTracker, "autonomousAgents": f.AutonomousAgents,
 		},
 	})
 	return &marotte.RPCResponse{JSONRPC: "2.0", Method: methodV3Governance, Params: params}
+}
+
+// fakeAccount is the account profile the fake engine reports at every door, ungovernedAccount until set.
+type fakeAccount struct {
+	profile *marotte.GovernanceStatePayload
+	mu      sync.Mutex
+}
+
+func (a *fakeAccount) set(p marotte.GovernanceStatePayload) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.profile = &p
+}
+
+func (a *fakeAccount) current() marotte.GovernanceStatePayload {
+	if a == nil {
+		return ungovernedAccount
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.profile == nil {
+		return ungovernedAccount
+	}
+	return *a.profile
 }
 
 // newFakeBridge is an open session, as a door hands one out.
@@ -205,10 +242,10 @@ func (b *fakeBridge) door(ctx context.Context, so *marotte.SessionOpts, eo *maro
 	notifs := b.notifsOnStart
 	keep := len(notifs) - min(b.withholdReplay, len(notifs))
 	governance := !load && so.Role == marotte.SessionRoleObserver && !b.noGovernance
-	sid := b.sessionID
+	sid, account := b.sessionID, b.account
 	b.mu.Unlock()
 	if governance {
-		b.deliver(governanceFrame(sid))
+		b.deliver(governanceFrame(sid, account.current()))
 	}
 	if !load {
 		return nil
