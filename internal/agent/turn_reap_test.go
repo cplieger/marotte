@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -150,4 +151,86 @@ func TestCompactionReap_StoppedWhenTheTurnClosesNormally(t *testing.T) {
 		t.Error("claimed turn kept its compaction reap timer")
 	}
 	h.coord.turns.finish(turn, marotte.TurnResult{})
+}
+
+// stallEngine makes every engine of h answer Stalled from answers, one per call; the last answer repeats.
+func stallEngine(t *testing.T, h *Runtime, answers ...bool) {
+	t.Helper()
+	src := fakeSourceOf(t, h)
+	var mu sync.Mutex
+	src.mu.Lock()
+	src.stalled = func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		got := answers[0]
+		if len(answers) > 1 {
+			answers = answers[1:]
+		}
+		return got
+	}
+	src.mu.Unlock()
+}
+
+func TestCompactionReap_WaitsOutAnEngineStall(t *testing.T) {
+	h, turnID, _, pctx := newCompactionReapFixture(t)
+	stallEngine(t, h, true, false)
+	synctest.Test(t, func(t *testing.T) {
+		h.coord.CompactionFailed("c1", turnID, "compaction failed")
+		time.Sleep(compactionFailedTurnBudget)
+		synctest.Wait()
+		if pctx.Err() != nil {
+			t.Error("the turn was reaped while the whole engine was stalled, want its silence budget restarted")
+		}
+		time.Sleep(compactionFailedTurnBudget)
+		synctest.Wait()
+	})
+	if pctx.Err() == nil {
+		t.Error("the turn stayed silent a full budget after the stall ended and was not reaped")
+	}
+}
+
+func TestCompactionReap_StopsWaitingAtTheStallCeiling(t *testing.T) {
+	h, turnID, _, pctx := newCompactionReapFixture(t)
+	stallEngine(t, h, true)
+	synctest.Test(t, func(t *testing.T) {
+		h.coord.CompactionFailed("c1", turnID, "compaction failed")
+		time.Sleep(compactionFailedTurnBudget + compactionStallCeiling - time.Millisecond)
+		synctest.Wait()
+		if pctx.Err() != nil {
+			t.Error("the turn was reaped before the stall ceiling while the engine stayed stalled")
+		}
+		time.Sleep(compactionFailedTurnBudget)
+		synctest.Wait()
+	})
+	if pctx.Err() == nil {
+		t.Error("an engine stalled past the ceiling kept the silent turn alive")
+	}
+}
+
+func TestCompactionReap_AStallAfterTheTurnSpokeGetsAFreshCeiling(t *testing.T) {
+	h, turnID, _, pctx := newCompactionReapFixture(t)
+	gen := h.coord.turns.attachForward("c1").gen
+	stallEngine(t, h, true)
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		at := func(d time.Duration) {
+			time.Sleep(time.Until(start.Add(d)))
+			synctest.Wait()
+		}
+		budget := compactionFailedTurnBudget
+		h.coord.CompactionFailed("c1", turnID, "compaction failed")
+		// The first stall extends the reap at budget; the turn speaks inside that extension, at 1.5 budgets.
+		at(budget * 3 / 2)
+		h.coord.turns.observe("c1", gen, 1)
+		// The arm the turn spoke in ends at 2 budgets and re-arms; the new chain's first stalled expiry is at 3.
+		secondStall := 3 * budget
+		at(secondStall + compactionStallCeiling - time.Millisecond)
+		if pctx.Err() != nil {
+			t.Error("a stall after the turn spoke inherited the earlier stall's ceiling")
+		}
+		at(secondStall + compactionStallCeiling + budget)
+	})
+	if pctx.Err() == nil {
+		t.Error("the second stall's ceiling did not end the silent turn")
+	}
 }

@@ -50,6 +50,8 @@ type activeTurn struct {
 	Opened time.Time
 	// reapChainAt is when this turn's compaction-reap chain began; only a tool started at or after it extends the budget.
 	reapChainAt time.Time
+	// reapStallUntil is when an engine stall stops deferring this turn's compaction reap; zero outside a stall.
+	reapStallUntil time.Time
 	// opened is the turn_open entry as written, which the turn_opened frame carries.
 	opened *marotte.Entry
 	// ID is the turn_open entry's id: every handle on the turn.
