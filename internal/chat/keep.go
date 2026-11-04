@@ -469,9 +469,9 @@ func (s *Store) SwapTabForStop(ctx context.Context, chatID marotte.ChatID) (cl C
 	return cl, false
 }
 
-// EndStop releases cl's stop hold once every stop its close started has ended, while the record or the pending set
-// still carries cl's token, so a later close's hold survives an earlier close's end. A read or write failure is logged
-// and the hold keeps the chat until this process exits.
+// EndStop drops cl's stop hold from the pending set and the record while either carries cl's token, so a later
+// close's hold survives an earlier close's end. The caller calls it once every stop its close started has ended. A
+// read or write failure is logged; a hold already on the record then keeps the chat until this process exits.
 func (s *Store) EndStop(ctx context.Context, cl *Claim) {
 	if cl.Token == "" {
 		return
@@ -499,8 +499,8 @@ func (s *Store) EndStop(ctx context.Context, cl *Claim) {
 			return
 		}
 	}
-	slog.Warn("close: the stop hold was not released; the chat is kept until restart", "chat_id", cl.ChatID,
-		"error", err)
+	slog.Warn("close: the stop hold could not be released from the record; a hold already written keeps the chat until restart",
+		"chat_id", cl.ChatID, "error", err)
 }
 
 // startKeep gives a created record no keep facts, so a fork's Init copying its parent cannot carry the parent's, and

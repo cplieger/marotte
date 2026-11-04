@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -374,23 +375,150 @@ func TestStopChatRuns_ALeasedRunKASNoLongerKnowsIsStopped(t *testing.T) {
 	}
 }
 
-// The close's stop hold keeps the chat until its last stop ends, and a close with nothing to stop ends it at once.
+// holdRig is newStopRig with c2, an idle chat that launched nothing, a reopen switch for c1, and inspect replies by
+// run once arrangeTwoRuns installs them.
+type holdRig struct {
+	h           *Runtime
+	cs          *testChatStore
+	br          *fakeBridge
+	inspect     map[string]json.RawMessage
+	mu          sync.Mutex
+	wf2Inspects atomic.Int64
+	reopened    atomic.Bool
+}
+
+// The close's stop hold keeps the chat until the last of its stops ends, whichever way that stop ends, and a close
+// with nothing to stop ends it at once.
 func TestStopChatRuns_TheStopHoldEndsWithTheLastStop(t *testing.T) {
-	setStopTiming(t, time.Hour, 10*time.Millisecond)
-	h, cs, br := newStopRig(t)
-	cs.seed(t, "c2", func(c *marotte.Chat) { c.RecordSession("sess_idle") })
-	hold, _ := cs.SwapTabForStop(t.Context(), "c1")
-	idle, _ := cs.SwapTabForStop(t.Context(), "c2")
-
-	h.runs.StopChatRuns(t.Context(), "c1", &hold)
-	h.runs.StopChatRuns(t.Context(), "c2", &idle)
-
-	if holdsKey(t, cs, "c2", marotte.KeyStop) {
-		t.Error("a close that stopped nothing kept its stop hold")
+	refuseCancel := func(_ *testing.T, r *holdRig) {
+		r.br.setCallErr(methodKiroWorkflowCancel, errors.New("owner pid 979344 is live"))
 	}
-	if !holdsKey(t, cs, "c1", marotte.KeyStop) {
-		t.Fatal("the stop hold went before the run's stop ended")
+	cases := []struct {
+		arrange func(t *testing.T, r *holdRig)
+		// end drives the close's stops to their end; nil leaves them to end on their own.
+		end    func(t *testing.T, r *holdRig)
+		check  func(t *testing.T, r *holdRig)
+		name   string
+		chat   marotte.ChatID
+		window time.Duration
+		atOnce bool
+	}{
+		{name: "no_candidates", chat: "c2", atOnce: true},
+		{name: "one_confirmed", chat: "c1", end: func(t *testing.T, r *holdRig) {
+			r.br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", marotte.RunStatusCancelled, ""))
+		}},
+		{name: "two_runs_one_confirmed", chat: "c1", arrange: arrangeTwoRuns, end: endTwoRunsInTurn},
+		{name: "delete_fallback", chat: "c1", window: 200 * time.Millisecond, arrange: refuseCancel,
+			check: func(t *testing.T, r *holdRig) {
+				if holdsKey(t, r.cs, "c1", runKey) {
+					t.Error("the deleted run's mark was not released")
+				}
+			}},
+		{name: "delete_failed", chat: "c1", window: 200 * time.Millisecond,
+			arrange: func(t *testing.T, r *holdRig) {
+				refuseCancel(t, r)
+				r.br.setCallErr(methodKiroWorkflowDelete, errors.New("kas gone"))
+			},
+			check: func(t *testing.T, r *holdRig) {
+				if !holdsKey(t, r.cs, "c1", runKey) {
+					t.Error("a run whose delete failed lost the mark that keeps its chat by time")
+				}
+			}},
+		{name: "reopen_drop", chat: "c1", arrange: refuseCancel, end: func(_ *testing.T, r *holdRig) {
+			r.reopened.Store(true)
+		}, check: func(t *testing.T, r *holdRig) {
+			if n := callsOf(r.br, methodKiroWorkflowDelete); n != 0 {
+				t.Errorf("a reopened chat's run was deleted %d times", n)
+			}
+		}},
 	}
-	br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", marotte.RunStatusCancelled, ""))
-	waitUntil(t, "the ended stop's hold release", func() bool { return !holdsKey(t, cs, "c1", marotte.KeyStop) })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			window := tc.window
+			if window == 0 {
+				window = time.Hour
+			}
+			setStopTiming(t, window, 10*time.Millisecond)
+			r := &holdRig{}
+			r.h, r.cs, r.br = newStopRig(t)
+			r.h.coord.chatHasTab = func(id marotte.ChatID) bool { return id == "c1" && r.reopened.Load() }
+			r.cs.seed(t, "c2", func(c *marotte.Chat) { c.RecordSession("sess_idle") })
+			if tc.arrange != nil {
+				tc.arrange(t, r)
+			}
+			hold, _ := r.cs.SwapTabForStop(t.Context(), tc.chat)
+
+			r.h.runs.StopChatRuns(t.Context(), tc.chat, &hold)
+
+			if tc.atOnce {
+				if holdsKey(t, r.cs, tc.chat, marotte.KeyStop) {
+					t.Error("a close that stopped nothing kept its stop hold")
+				}
+				return
+			}
+			if !holdsKey(t, r.cs, tc.chat, marotte.KeyStop) {
+				t.Fatal("the stop hold went before the close's stops ended")
+			}
+			if tc.end != nil {
+				tc.end(t, r)
+			}
+			waitUntil(t, "the stop hold's release", func() bool { return !holdsKey(t, r.cs, tc.chat, marotte.KeyStop) })
+			if tc.check != nil {
+				tc.check(t, r)
+			}
+		})
+	}
+}
+
+// arrangeTwoRuns gives c1 a second running run, wf_2, and answers each run's inspect from wf_1's and wf_2's own
+// status, both running.
+func arrangeTwoRuns(t *testing.T, r *holdRig) {
+	t.Helper()
+	r.br.setCallResult(methodKiroWorkflowList, kasRuns(t,
+		map[string]any{"workflowId": "wf_1", "name": "r", "status": "running", "parentSessionId": "sess_owner"},
+		map[string]any{"workflowId": "wf_2", "name": "r", "status": "running", "parentSessionId": "sess_owner"},
+	))
+	r.h.runs.observeStart(t.Context(), "", runNotif(methodWFRunStart, map[string]any{
+		"workflowId": "wf_2", "workflowName": "r", "parentSessionId": "sess_owner",
+	}))
+	r.answerInspect(t, "wf_1", marotte.RunStatusRunning)
+	r.answerInspect(t, "wf_2", marotte.RunStatusRunning)
+	r.br.setOnCall(func(method string, p map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method != methodKiroWorkflowInspect {
+			return nil, nil, false
+		}
+		id, _ := p[keyWorkflowID].(string)
+		if id == "wf_2" {
+			r.wf2Inspects.Add(1)
+		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		reply, ok := r.inspect[id]
+		return reply, nil, ok
+	})
+}
+
+// endTwoRunsInTurn confirms wf_1's stop, checks the hold outlives it while wf_2 is still being stopped, then
+// confirms wf_2's.
+func endTwoRunsInTurn(t *testing.T, r *holdRig) {
+	t.Helper()
+	r.answerInspect(t, "wf_1", marotte.RunStatusCancelled)
+	waitUntil(t, "wf_1's confirmed stop", func() bool { return !holdsKey(t, r.cs, "c1", runKey) })
+	seen := r.wf2Inspects.Load()
+	waitUntil(t, "two more of wf_2's read-backs", func() bool { return r.wf2Inspects.Load() >= seen+2 })
+	if !holdsKey(t, r.cs, "c1", marotte.KeyStop) {
+		t.Fatal("the stop hold went with the first of the close's two stops")
+	}
+	r.answerInspect(t, "wf_2", marotte.RunStatusCancelled)
+}
+
+func (r *holdRig) answerInspect(t *testing.T, workflowID string, status marotte.RunStatus) {
+	t.Helper()
+	reply := inspectReply(t, workflowID, status, "")
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inspect == nil {
+		r.inspect = map[string]json.RawMessage{}
+	}
+	r.inspect[workflowID] = reply
 }
