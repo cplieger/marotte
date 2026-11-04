@@ -823,6 +823,10 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
       stepEnds.set(workflowID, new Map(Object.entries(d.step_ends ?? {})));
       stepStarts.set(workflowID, starts);
       controlCell(workflowID).value = controlsOf(d.controls);
+      const gone = goneCells.get(workflowID);
+      if (gone !== undefined) {
+        gone.value = false;
+      }
       cell(workflowID).value = state;
       answered = true;
     } else {
@@ -845,6 +849,7 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
         // CANCELLED rather than merely not armed: a rung an earlier transient armed is still due,
         // and the answer it would collect is this one.
         cancelRunRetry(workflowID);
+        goneCell(workflowID).value = true;
       } else {
         scheduleRunRetry(workflowID, cause, failed);
       }
@@ -953,6 +958,7 @@ export function forgetRun(workflowID: string): void {
   stepEnds.delete(workflowID);
   stepStarts.delete(workflowID);
   controlCells.delete(workflowID);
+  goneCells.delete(workflowID);
   launchedBy.delete(workflowID);
   frameLabels.delete(workflowID);
   resumedBy.delete(workflowID);
@@ -979,6 +985,23 @@ function controlCell(workflowID: string): Signal<RunControlsResponse | undefined
     controlCells.set(workflowID, c);
   }
   return c;
+}
+
+const goneCells = new Map<string, Signal<boolean>>();
+
+function goneCell(workflowID: string): Signal<boolean> {
+  let c = goneCells.get(workflowID);
+  if (c === undefined) {
+    c = signal(false);
+    goneCells.set(workflowID, c);
+  }
+  return c;
+}
+
+/** Subscribe to whether the server answered this run's last read with 404, as it does for a run
+ *  that was deleted. A later read that describes the run clears it. */
+export function runGone(workflowID: string): boolean {
+  return goneCell(workflowID).value;
 }
 
 /** Subscribe to what a run offers. */

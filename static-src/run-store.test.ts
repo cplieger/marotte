@@ -1527,6 +1527,42 @@ describe("the retry ladder behind a run read that produced nothing", () => {
     expect(fetches).toHaveLength(3);
   });
 
+  it("marks a run the server answers 404 for as gone, until a read answers or the run is forgotten", async () => {
+    responses = [undefined, { workflowId: "r1", status: "completed" }, undefined];
+    failStatuses = [404, 404];
+    const seen: boolean[] = [];
+    const stop = effect(() => {
+      seen.push(store.runGone("r1"));
+    });
+
+    store.invalidateRun("r1");
+    await settle();
+    expect(store.runGone("r1")).toBe(true);
+    // Subscribed: a card's effect re-runs when the run turns out to be gone.
+    expect(seen).toEqual([false, true]);
+
+    store.invalidateRun("r1");
+    await settle();
+    expect(store.runGone("r1")).toBe(false);
+
+    store.invalidateRun("r1");
+    await settle();
+    expect(store.runGone("r1")).toBe(true);
+    stop();
+    store.forgetRun("r1");
+    expect(store.runGone("r1")).toBe(false);
+  });
+
+  it("does not call a run gone for a failure that is not a 404", async () => {
+    vi.useFakeTimers();
+    responses = [undefined];
+    failStatuses = [502];
+
+    store.invalidateRun("r1");
+    await settle();
+    expect(store.runGone("r1")).toBe(false);
+  });
+
   it("is dropped with the run, so a rung cannot fetch for a card nothing renders", async () => {
     vi.useFakeTimers();
     responses = [undefined];
