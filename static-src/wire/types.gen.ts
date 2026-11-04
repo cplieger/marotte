@@ -204,7 +204,7 @@ export interface AgentLoadError {
  * AgentNoticePayload is the payload for type="agent_notice": a progress notice a workflow step
  * or subagent reported into the session that launched it. KAS decides this by sniffing the text
  * for a `[notification/<severity>]` prefix and delivers it through the steering buffer, and
- * marotte refuses to SEND that shape, so a notice here is never the user's words. Severity
+ * marotte refuses a user's text in that shape, so a notice here is never the user's words. Severity
  * (info/success/warning/error) is why this is its own event rather than a field on a steer: a
  * consumer never has to decide whose voice a message is in. There is no id — a notice has no
  * later state to address.
