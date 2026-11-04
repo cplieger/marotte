@@ -408,13 +408,16 @@ func TestStopChatRuns_TheStopHoldEndsWithTheLastStop(t *testing.T) {
 			r.br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", marotte.RunStatusCancelled, ""))
 		}},
 		{name: "two_runs_one_confirmed", chat: "c1", arrange: arrangeTwoRuns, end: endTwoRunsInTurn},
-		{name: "delete_fallback", chat: "c1", window: 200 * time.Millisecond, arrange: refuseCancel,
+		{
+			name: "delete_fallback", chat: "c1", window: 200 * time.Millisecond, arrange: refuseCancel,
 			check: func(t *testing.T, r *holdRig) {
 				if holdsKey(t, r.cs, "c1", runKey) {
 					t.Error("the deleted run's mark was not released")
 				}
-			}},
-		{name: "delete_failed", chat: "c1", window: 200 * time.Millisecond,
+			},
+		},
+		{
+			name: "delete_failed", chat: "c1", window: 200 * time.Millisecond,
 			arrange: func(t *testing.T, r *holdRig) {
 				refuseCancel(t, r)
 				r.br.setCallErr(methodKiroWorkflowDelete, errors.New("kas gone"))
@@ -423,7 +426,8 @@ func TestStopChatRuns_TheStopHoldEndsWithTheLastStop(t *testing.T) {
 				if !holdsKey(t, r.cs, "c1", runKey) {
 					t.Error("a run whose delete failed lost the mark that keeps its chat by time")
 				}
-			}},
+			},
+		},
 		{name: "reopen_drop", chat: "c1", arrange: refuseCancel, end: func(_ *testing.T, r *holdRig) {
 			r.reopened.Store(true)
 		}, check: func(t *testing.T, r *holdRig) {
