@@ -97,7 +97,7 @@ Every setting, with what each one checks, is in [Configuration](docs/configurati
 
 ## Security
 
-marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and reads and writes files under `/workspace` and any [additional directory](docs/configuration.md#folders-the-agent-can-use-beyond-workspace) you add, and the Kiro sign-in in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page gives the agent your Kiro account. It does not protect marotte itself.
+marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and reads and writes files under `/workspace` and any [additional directory](docs/configuration.md#folders-the-agent-can-use-beyond-workspace) you add. They can also use the Kiro sign-in in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page gives the agent your Kiro account. It does not protect marotte itself.
 
 Set `ALLOWED_HOSTS` on any server that stays up. marotte then answers only at the addresses you list, so another website cannot use your browser to reach it.
 
