@@ -173,17 +173,24 @@ func (s *Store) writeKASConfigWith(ctx context.Context, doc *kasDoc, servers []*
 }
 
 // renderServersKey is the `mcpServers` member a write puts in KAS's file: servers rendered, plus
-// each entry of file (the member as read) that s.held names and no server renders, as the file has
-// it. That keeps an unreadable store entry's last declaration until the user fixes or deletes it.
+// each entry of file (the member as read) whose nameKey s.held names and no rendered server has, as
+// the file has it. That keeps an unreadable store entry's last declaration until the user fixes or
+// deletes it. nameKey, not the exact key, because heldNameErr refuses by nameKey.
 func (s *Store) renderServersKey(servers []*Server, file json.RawMessage, policy kasRenderPolicy) (json.RawMessage, error) {
 	rendered := renderKASServers(servers, policy)
 	out := make(map[string]any, len(rendered))
+	owned := make(map[string]bool, len(rendered))
 	for name := range rendered {
 		out[name] = rendered[name]
+		owned[nameKey(name)] = true
 	}
 	if len(s.held) > 0 {
+		held := make(map[string]bool, len(s.held))
+		for name := range s.held {
+			held[nameKey(name)] = true
+		}
 		for name, entry := range objectOrEmpty(file) {
-			if _, own := rendered[name]; !own && s.held[name] {
+			if key := nameKey(name); held[key] && !owned[key] {
 				out[name] = entry
 			}
 		}

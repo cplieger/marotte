@@ -38,7 +38,7 @@ type file struct {
 
 const fileVersion = 1
 
-// marshalRecord is the record's bytes: the servers, then the entries load could not read, verbatim.
+// marshalRecord is the record's bytes: the servers, then the entries load could not read, with the same value.
 func (s *Store) marshalRecord() ([]byte, error) {
 	entries := make([]json.RawMessage, 0, len(s.servers)+len(s.unreadable))
 	for _, sv := range s.servers {

@@ -265,6 +265,70 @@ func TestNames_AHeldNameIsRefused(t *testing.T) {
 	}
 }
 
+func TestNames_AnOrphanKeyIsRefusedBeforeTheFirstReadableKASFile(t *testing.T) {
+	record := `{"version":1,"servers":[
+{"id":"aaaa","name":"one","transport":"stdio","command":"c1","enabled":true},
+{"id":"bbbb","name":5,"transport":"stdio","command":"cb","enabled":true}]}`
+	for _, tc := range []struct {
+		do   func(t *testing.T, s *Store) error
+		name string
+	}{
+		{name: "create", do: func(t *testing.T, s *Store) error {
+			_, err := s.Create(t.Context(), &Server{Name: "orphan", Transport: TransportStdio, Command: "new", Enabled: true})
+			return err
+		}},
+		{name: "rename", do: func(t *testing.T, s *Store) error {
+			_, err := s.update(t.Context(), "aaaa", &Server{Name: "orphan", Transport: TransportStdio, Command: "c1", Enabled: true})
+			return err
+		}},
+		{name: "import", do: func(t *testing.T, s *Store) error {
+			_, err := s.importServers(t.Context(), []*Server{{Name: "orphan", Transport: TransportStdio, Command: "new", Enabled: true}})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, kas := seedStoreDir(t, record, "# not json\n")
+			captureSlog(t)
+			s := openSeeded(t, dir, kas)
+			writeKASFile(t, kas, `{"mcpServers":{"one":{"command":"c1"},"orphan":`+badKASEntry+`}}`)
+
+			if err := tc.do(t, s); !errors.Is(err, errNameConflict) {
+				t.Errorf("%s under the orphan key = %v, want errNameConflict", tc.name, err)
+			}
+			if got := kasServerKeys(t, kas); !sameJSONValue(got["orphan"], json.RawMessage(badKASEntry)) {
+				t.Errorf("kas mcpServers = %s, want the orphan unchanged", readKAS(t, kas)[kasServerKey])
+			}
+		})
+	}
+}
+
+// renderKASServers writes a key as the server's name, so only a hand edit makes the two spellings differ.
+func TestHeal_AHeldKeyMatchesItsEntryByNameKey(t *testing.T) {
+	for _, tc := range []struct{ entry, fileKey string }{
+		{entry: "bad", fileKey: "BAD"},
+		{entry: "my-server", fileKey: "my_server"},
+	} {
+		t.Run(tc.fileKey, func(t *testing.T) {
+			record := `{"version":1,"servers":[
+{"id":"aaaa","name":"one","transport":"stdio","command":"c1","enabled":true},
+{"id":"bbbb","name":"` + tc.entry + `","transport":"stdio","command":"cb","args":"x","enabled":true}]}`
+			dir, kas := seedStoreDir(t, record, `{"mcpServers":{"one":{"command":"c1"},"`+tc.fileKey+`":`+badKASEntry+`}}`)
+			captureSlog(t)
+			s := openSeeded(t, dir, kas)
+
+			if _, err := s.HealKASConfig(t.Context(), "poll"); err != nil {
+				t.Fatalf("HealKASConfig: %v", err)
+			}
+			if got := kasServerKeys(t, kas); !sameJSONValue(got[tc.fileKey], json.RawMessage(badKASEntry)) {
+				t.Errorf("kas mcpServers after heal = %s, want %s kept", readKAS(t, kas)[kasServerKey], tc.fileKey)
+			}
+			if _, err := s.Create(t.Context(), &Server{Name: tc.fileKey, Transport: TransportStdio, Command: "new", Enabled: true}); !errors.Is(err, errNameConflict) {
+				t.Errorf("Create(%q) = %v, want errNameConflict", tc.fileKey, err)
+			}
+		})
+	}
+}
+
 func TestDelete_AReadableServerSharingAnUnreadableEntrysNameLeavesKAS(t *testing.T) {
 	record := `{"version":1,"servers":[
 {"id":"aaaa","name":"one","transport":"stdio","command":"c1","enabled":true},

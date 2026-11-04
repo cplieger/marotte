@@ -114,9 +114,10 @@ func heldName(entry json.RawMessage) (string, bool) {
 }
 
 // holdOrphans holds every key of file, the mcpServers member of the first KAS file readKASDoc reads
-// after boot, that no server load read and no current server owns, since an unreadable entry whose
-// name does not read may own any of them. No save lands before that read (persist reads KAS's file
-// first), so a key of a server deleted since boot is never held. A key added later is not held.
+// after boot, that no server load read and no server stored at that read owns: an unreadable entry
+// whose name does not read may own any of them. No save lands before that read (persist reads KAS's
+// file first), so a server deleted since boot is never held; heldNameErr takes the snapshot before a
+// new name joins s.servers. A key added to KAS's file later is not held.
 func (s *Store) holdOrphans(file json.RawMessage) {
 	current := s.serverKeys()
 	for name := range objectOrEmpty(file) {
@@ -129,7 +130,14 @@ func (s *Store) holdOrphans(file json.RawMessage) {
 
 // heldNameErr refuses a name whose KAS key an unreadable entry may own: a server under it would
 // take the key over, and its delete would then leave the key in KAS's file (renderServersKey).
+// MUST be called on the write turn before name joins s.servers: a pending orphan snapshot is taken
+// here, or the new server would own the key it is checked against.
 func (s *Store) heldNameErr(name string) error {
+	if s.orphanCheck != nil {
+		if _, _, err := s.readKASDoc(); err != nil {
+			return err
+		}
+	}
 	key := nameKey(name)
 	for held := range s.held {
 		if nameKey(held) == key {
