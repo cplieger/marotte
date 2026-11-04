@@ -1272,8 +1272,11 @@
   inline-size: 100%;
 }
 
+/* The glyph is wider than a row's status square; the margins pull its centre onto the square's
+   column and give the width back on the other side, so the mark and count do not move. */
 .run-bar-chev {
   display: grid;
+  margin-inline: calc((var(--dot-size) - 1rem) / 2) calc((1rem - var(--dot-size)) / 2);
   place-items: center;
   flex-shrink: 0;
   color: var(--c-text-control);
