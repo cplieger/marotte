@@ -17,12 +17,13 @@ import (
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
-// sweepRig is a runtime whose run logs live under cfgDir and whose KAS run state lives under sessionsDir.
+// sweepRig is a runtime over workDir whose run logs live under cfgDir and whose KAS run state lives under sessionsDir.
 type sweepRig struct {
 	h           *Runtime
 	rig         *deleteRig
 	cfgDir      string
 	sessionsDir string
+	workDir     string
 }
 
 func newSweepRig(t *testing.T) *sweepRig {
@@ -32,11 +33,12 @@ func newSweepRig(t *testing.T) *sweepRig {
 		t.Fatalf("Setup: tabs.NewStore: %v", err)
 	}
 	sessionsDir := filepath.Join(t.TempDir(), "sessions")
-	h, rig := newEngineRigOver(t, map[string]json.RawMessage{methodKiroWorkflowList: purgeRuns(t)}, nil, nil, st,
-		WithSessionReaper(kirosession.New(sessionsDir, testReaperWorkDir), nil))
+	workDir := t.TempDir()
+	h, rig := newEngineRigAt(t, workDir, map[string]json.RawMessage{methodKiroWorkflowList: purgeRuns(t)}, nil, nil, st,
+		WithSessionReaper(kirosession.New(sessionsDir, workDir), nil))
 	cfgDir := t.TempDir()
 	h.runs.useLog(newRunLog(cfgDir))
-	return &sweepRig{h: h, rig: rig, cfgDir: cfgDir, sessionsDir: sessionsDir}
+	return &sweepRig{h: h, rig: rig, cfgDir: cfgDir, sessionsDir: sessionsDir, workDir: workDir}
 }
 
 // orphanLog writes a run log for wf whose last write was age ago.
@@ -68,7 +70,19 @@ func (s *sweepRig) age(t *testing.T, wf string, age time.Duration) {
 // kasRunState makes KAS's run-state directory for wf in bucket.
 func (s *sweepRig) kasRunState(t *testing.T, bucket, wf string) {
 	t.Helper()
-	dir := filepath.Join(s.sessionsDir, bucket, "workflows", wf)
+	mkdirAll(t, filepath.Join(s.bucketRuns(bucket), wf))
+}
+
+// bucketRuns is KAS's run-state base in the session store's bucket.
+func (s *sweepRig) bucketRuns(bucket string) string {
+	return filepath.Join(s.sessionsDir, bucket, "workflows")
+}
+
+// workspaceRuns is KAS's run-state base inside the workspace.
+func (s *sweepRig) workspaceRuns() string { return filepath.Join(s.workDir, ".kiro", "workflows") }
+
+func mkdirAll(t *testing.T, dir string) {
+	t.Helper()
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("Setup: mkdir %s: %v", dir, err)
 	}
@@ -136,6 +150,13 @@ func TestSweepOrphanRunLogs_KeepsALogWhoseRunIsListedOrOnDisk(t *testing.T) {
 				s.kasRunState(t, "wsbucket", "wf_kept")
 			},
 		},
+		{
+			name: "state in the workspace's run base",
+			setup: func(t *testing.T, s *sweepRig) {
+				t.Helper()
+				mkdirAll(t, filepath.Join(s.workspaceRuns(), "wf_kept"))
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newSweepRig(t)
@@ -189,33 +210,84 @@ func TestSweepOrphanRunLogs_AFailedOrPartialListRemovesNothing(t *testing.T) {
 }
 
 func TestSweepOrphanRunLogs_AnUnreadableKASStoreRemovesNothing(t *testing.T) {
-	s := newSweepRig(t)
-	s.orphanLog(t, "wf_orphan", twentyDays)
-	bucket := filepath.Join(s.sessionsDir, "wsbucket")
-	if err := os.MkdirAll(bucket, 0o750); err != nil {
-		t.Fatalf("Setup: mkdir %s: %v", bucket, err)
-	}
-	runsDir := filepath.Join(bucket, "workflows")
-	if err := os.WriteFile(runsDir, nil, 0o600); err != nil {
-		t.Fatalf("Setup: write %s: %v", runsDir, err)
-	}
+	for _, tc := range []struct {
+		runsDir func(s *sweepRig) string
+		name    string
+	}{
+		{name: "a session store bucket", runsDir: func(s *sweepRig) string { return s.bucketRuns("wsbucket") }},
+		{name: "the workspace's run base", runsDir: (*sweepRig).workspaceRuns},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSweepRig(t)
+			s.orphanLog(t, "wf_orphan", twentyDays)
+			runsDir := tc.runsDir(s)
+			mkdirAll(t, filepath.Dir(runsDir))
+			if err := os.WriteFile(runsDir, nil, 0o600); err != nil {
+				t.Fatalf("Setup: write %s: %v", runsDir, err)
+			}
 
-	sweepOrphanLogs(t, s.h, fourteenDays)
+			sweepOrphanLogs(t, s.h, fourteenDays)
+
+			if got := s.logs(t); !slices.Equal(got, []string{"wf_orphan"}) {
+				t.Fatalf("sweep(14d) with an unlistable run base left %v, want [wf_orphan]", got)
+			}
+
+			if err := os.Remove(runsDir); err != nil {
+				t.Fatalf("Setup: remove %s: %v", runsDir, err)
+			}
+			mkdirAll(t, runsDir)
+			sweepOrphanLogs(t, s.h, fourteenDays)
+
+			if got := s.logs(t); len(got) != 0 {
+				t.Errorf("sweep(14d) with a readable run base left %v, want none", got)
+			}
+		})
+	}
+}
+
+func TestSweepOrphanRunLogs_AnUnreadableLeaseFileRemovesNothing(t *testing.T) {
+	s := newSweepRig(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, runlease.FileName), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("Setup: write runs.json: %v", err)
+	}
+	s.h.runs.leases, _ = runlease.NewStore(dir)
+	s.orphanLog(t, "wf_orphan", twentyDays)
+
+	res := sweepOrphanLogs(t, s.h, fourteenDays)
 
 	if got := s.logs(t); !slices.Equal(got, []string{"wf_orphan"}) {
-		t.Fatalf("sweep(14d) with an unlistable KAS store left %v, want [wf_orphan]", got)
+		t.Errorf("sweep(14d) with the lease file unread left %v, want [wf_orphan]: an unread lease may name its run", got)
+	}
+	if res.Purged != 0 || res.Kept != 1 {
+		t.Errorf("sweep(14d) with the lease file unread = purged %d kept %d, want purged 0 kept 1", res.Purged, res.Kept)
+	}
+}
+
+// Whatever wakes the sweep sooner, a pass that removed logs holds the next removal runPurgePace off.
+func TestSweepOrphanRunLogs_APassWithinThePaceRemovesNothing(t *testing.T) {
+	s := newSweepRig(t)
+	s.orphanLog(t, "wf_first", twentyDays)
+	s.h.SweepOrphanRunLogs(t.Context(), fourteenDays)
+	removed := time.Now()
+	s.orphanLog(t, "wf_second", twentyDays)
+
+	second := s.h.SweepOrphanRunLogs(t.Context(), fourteenDays)
+
+	if got := s.logs(t); !slices.Equal(got, []string{"wf_second"}) {
+		t.Fatalf("two back-to-back sweeps left %v, want [wf_second]: the second is inside the pace", got)
+	}
+	if second.Purged != 0 || second.Kept != 1 {
+		t.Errorf("pass 2 = purged %d kept %d, want purged 0 kept 1", second.Purged, second.Kept)
+	}
+	if due := removed.Add(time.Minute); second.NextDeadline.After(due) || second.NextDeadline.Before(due.Add(-5*time.Second)) {
+		t.Errorf("pass 2 NextDeadline = %v, want a minute after the first removal, about %v", second.NextDeadline, due)
 	}
 
-	if err := os.Remove(runsDir); err != nil {
-		t.Fatalf("Setup: remove %s: %v", runsDir, err)
-	}
-	if err := os.Mkdir(runsDir, 0o750); err != nil {
-		t.Fatalf("Setup: mkdir %s: %v", runsDir, err)
-	}
 	sweepOrphanLogs(t, s.h, fourteenDays)
 
 	if got := s.logs(t); len(got) != 0 {
-		t.Errorf("sweep(14d) with a readable KAS store left %v, want none", got)
+		t.Errorf("a sweep after the pace left %v, want none", got)
 	}
 }
 

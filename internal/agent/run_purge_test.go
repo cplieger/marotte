@@ -65,6 +65,15 @@ func newEngineRigOver(
 	scan func(context.Context, chat.OwnerScan) chat.OwnerScan, st *tabs.Store, opts ...Option,
 ) (*Runtime, *deleteRig) {
 	t.Helper()
+	return newEngineRigAt(t, testReaperWorkDir, results, rpcErrs, scan, st, opts...)
+}
+
+// newEngineRigAt is newEngineRigOver with workDir as the workspace.
+func newEngineRigAt(
+	t *testing.T, workDir string, results map[string]json.RawMessage, rpcErrs map[string]*marotte.RPCError,
+	scan func(context.Context, chat.OwnerScan) chat.OwnerScan, st *tabs.Store, opts ...Option,
+) (*Runtime, *deleteRig) {
+	t.Helper()
 	rig := &deleteRig{results: map[string]json.RawMessage{methodKiroWorkflowDelete: json.RawMessage(`{}`)}, rpcErrs: rpcErrs}
 	maps.Copy(rig.results, results)
 	if _, scripted := results[methodKiroWorkflowInspect]; !scripted {
@@ -80,7 +89,7 @@ func newRigOver(
 	t.Helper()
 	cs := newTestChatStore()
 	cs.ownerScan = scan
-	h := newRuntimeOn(t.Context(), testReaperWorkDir, rig.engine(), cs, append([]Option{WithTabs(st)}, opts...)...)
+	h := newRuntimeOn(t.Context(), workDir, rig.engine(), cs, append([]Option{WithTabs(st)}, opts...)...)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	return h, rig
@@ -796,7 +805,7 @@ func TestPurgeFinishedRuns_DeletesOnlyFinishedUnclaimedRunsPastTheWindow(t *test
 
 	var res RunPurgeResult
 	for range 3 {
-		res = h.PurgeFinishedRuns(t.Context(), unclaimed)
+		res = runFinishedPurge(t, h, unclaimed)
 	}
 
 	if got, want := deletedRunIDs(rig), []string{"wf_old_done", "wf_old_failed"}; !slices.Equal(got, want) {
@@ -1254,5 +1263,34 @@ func TestPurgeFinishedRuns_SkipsARunWhoseDeleteJustFailed(t *testing.T) {
 
 	if got := deleteCalls(rig); !slices.Equal(got, []string{"wf_stuck", "wf_next"}) {
 		t.Errorf("two passes tried to delete %v, want [wf_stuck wf_next]: a run whose delete just failed waits its turn", got)
+	}
+}
+
+// Whatever wakes the purge sooner, a second delete waits runPurgePace after the first.
+func TestPurgeFinishedRuns_APassWithinThePaceOfADeleteDeletesNothing(t *testing.T) {
+	h, rig := newPurgeRig(t, purgeRuns(t), []string{"sess_chat"}, true)
+	serveRuns(rig, nil,
+		purgeRow("wf_30d", "completed", "sess_chat", daysAgo(30)),
+		purgeRow("wf_20d", "completed", "sess_host", daysAgo(20)),
+	)
+	h.PurgeFinishedRuns(t.Context(), fourteenDays)
+	deleted := time.Now()
+
+	second := h.PurgeFinishedRuns(t.Context(), fourteenDays)
+
+	if got := deleteCalls(rig); !slices.Equal(got, []string{"wf_30d"}) {
+		t.Fatalf("two back-to-back passes deleted %v, want only [wf_30d]: the second is inside the pace", got)
+	}
+	if second.Purged != 0 || second.Kept != 1 {
+		t.Errorf("pass 2 = purged %d kept %d, want purged 0 kept 1", second.Purged, second.Kept)
+	}
+	if due := deleted.Add(time.Minute); second.NextDeadline.After(due) || second.NextDeadline.Before(due.Add(-5*time.Second)) {
+		t.Errorf("pass 2 NextDeadline = %v, want a minute after the first delete, about %v", second.NextDeadline, due)
+	}
+
+	runFinishedPurge(t, h, fourteenDays)
+
+	if got := deleteCalls(rig); !slices.Equal(got, []string{"wf_30d", "wf_20d"}) {
+		t.Errorf("a pass after the pace deleted %v in all, want [wf_30d wf_20d]", got)
 	}
 }

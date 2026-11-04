@@ -40,9 +40,32 @@ func (res *RunPurgeResult) keep(until time.Time) {
 	}
 }
 
-// runPurgePace is the wait between two run deletes. Each delete rewrites KAS's session index once per step session
-// (about 5.5 s of KAS main-thread time for a 238-step run), so one delete a minute keeps those rewrites paced.
+// runPurgePace is the least gap between two run deletes, and between two sweep passes that remove logs, whatever
+// wakes the passes sooner. Each delete rewrites KAS's session index once per step session (about 5.5 s of KAS
+// main-thread time for a 238-step run), so one delete a minute keeps those rewrites paced.
 const runPurgePace = time.Minute
+
+// deletePacer holds when a retention pass last reached a delete. The zero value is ready.
+type deletePacer struct {
+	last time.Time
+	mu   sync.Mutex
+}
+
+func (d *deletePacer) mark(at time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.last = at
+}
+
+// next is when the next delete may run, zero when it may run at now.
+func (d *deletePacer) next(now time.Time) time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if due := d.last.Add(runPurgePace); now.Before(due) {
+		return due
+	}
+	return time.Time{}
+}
 
 // runPurgeFailBackoff is how long a run whose delete failed waits before the purge tries it again, so one failing
 // delete cannot take every pass's single delete.
@@ -51,11 +74,11 @@ const runPurgeFailBackoff = time.Hour
 // ReattributeRuns is Runs.reattributeRuns, a retention side pass.
 func (rt *Runtime) ReattributeRuns(ctx context.Context) { rt.runs.reattributeRuns(ctx) }
 
-// PurgeFinishedRuns deletes, oldest first and at most one per pass, finished runs older than p.Window (from last
-// update) with no retry in flight, judged on the list and again on a fresh read before the delete, whether or not a
-// chat claims them; with p.ChatRuns false a claimed run is left to its chat. Shown, live or paused runs, unreadable
-// ages, runs naming no valid launching session and runs whose launching chat is in teardown are kept, and nothing
-// is deleted while the tab arrangement is unread or a chat file is.
+// PurgeFinishedRuns deletes, oldest first and at most one per runPurgePace, finished runs older than p.Window (from
+// last update) with no retry in flight, judged on the list and again on a fresh read before the delete, whether or not
+// a chat claims them; with p.ChatRuns false a claimed run is left to its chat. Shown, live or paused runs, unreadable
+// ages, runs naming no valid launching session and runs whose launching chat is in teardown are kept, and nothing is
+// deleted while the tab arrangement is unread or a chat file is.
 func (rt *Runtime) PurgeFinishedRuns(ctx context.Context, p RunRetention) RunPurgeResult {
 	if !p.Enabled {
 		return RunPurgeResult{}
@@ -72,13 +95,14 @@ func (rt *Runtime) PurgeFinishedRuns(ctx context.Context, p RunRetention) RunPur
 		slog.Warn("run purge: run list unavailable, purging nothing this pass", "error", err)
 		return RunPurgeResult{}
 	}
-	// After the run list, so a chat created between the reads still claims its run.
+	// After the run list, so a chat created between the reads counts as its run's owner.
 	scan := rt.chatStore.SessionOwners(ctx)
 	if !scan.Complete {
 		slog.Warn("run purge: a chat file could not be read, purging nothing this pass")
 		return RunPurgeResult{}
 	}
-	pass := finishedRunPass{p: p, now: time.Now()}
+	now := time.Now()
+	pass := finishedRunPass{p: p, now: now, waitUntil: rt.runs.purgePace.next(now)}
 	for _, r := range oldestFinishedFirst(runs) {
 		rt.purgeStep(ctx, &pass, r, len(scan.Owners.Of(r.ParentSessionID)) > 0)
 	}
@@ -88,17 +112,17 @@ func (rt *Runtime) PurgeFinishedRuns(ctx context.Context, p RunRetention) RunPur
 
 // finishedRunPass is one PurgeFinishedRuns pass's state across its candidates.
 type finishedRunPass struct {
-	now         time.Time
+	now time.Time
+	// waitUntil is when the next delete may run, zero while this pass may still reach one.
+	waitUntil   time.Time
 	unreadAside string
 	unparented  []string
 	res         RunPurgeResult
 	p           RunRetention
 	deferred    int
-	attempted   bool
 }
 
-// purgeStep takes one finished run's list row: kept, skipped, deferred to the next pass once this pass reached a
-// delete, or tried.
+// purgeStep takes one finished run's list row: kept, skipped, deferred while a delete is runPurgePace away, or tried.
 func (rt *Runtime) purgeStep(ctx context.Context, pass *finishedRunPass, r *kasWorkflowRun, owned bool) {
 	switch {
 	case !ids.ValidSessionID(r.ParentSessionID):
@@ -107,15 +131,14 @@ func (rt *Runtime) purgeStep(ctx context.Context, pass *finishedRunPass, r *kasW
 		pass.res.Kept++
 		return
 	case owned && !pass.p.ChatRuns:
-		// A candidate filter only: admission re-reads under the membership lock.
 		return
-	case pass.attempted:
+	case !pass.waitUntil.IsZero():
 		if why, until := rt.runs.purgeKeep(r.WorkflowID, listedRead(r), pass.p.Window, pass.now); why != "" {
 			pass.res.keep(until)
 			return
 		}
 		pass.deferred++
-		pass.res.keep(pass.now.Add(runPurgePace))
+		pass.res.keep(pass.waitUntil)
 		return
 	}
 	if failedAt, ok := rt.runs.purgeFailed.recent(r.WorkflowID, pass.now); ok {
@@ -125,7 +148,11 @@ func (rt *Runtime) purgeStep(ctx context.Context, pass *finishedRunPass, r *kasW
 		return
 	}
 	tried, refused := rt.purgeCandidate(ctx, r, pass.p.Window, pass.now, owned, &pass.res)
-	pass.attempted = tried
+	if tried {
+		at := time.Now()
+		rt.runs.purgePace.mark(at)
+		pass.waitUntil = at.Add(runPurgePace)
+	}
 	if unread, ok := errors.AsType[*command.ArrangementUnreadError](refused); ok {
 		pass.unreadAside = unread.Aside
 	}

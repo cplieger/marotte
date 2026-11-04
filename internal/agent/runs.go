@@ -64,7 +64,9 @@ type Runs struct {
 	life runLifecycle
 	// purgeFailed holds the runs whose finished-run purge delete failed recently (run_purge.go).
 	purgeFailed purgeFailures
-	// logSweep is the orphaned run-log sweep's poison set (run_log_sweep.go).
+	// purgePace is when the finished-run purge last reached a delete (run_purge.go).
+	purgePace deletePacer
+	// logSweep is the orphaned run-log sweep's poison set and pace (run_log_sweep.go).
 	logSweep logSweepState
 	// recorded is the keep-state reconcile's runs/ attribution, which RunsParentedBy reads (run_owner.go).
 	recorded recordedRuns

@@ -6,17 +6,20 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 )
 
-// runFinishedPurge runs one finished-run purge pass under p.
+// runFinishedPurge runs one finished-run purge pass under p, as runPurgePace after the last delete.
 func runFinishedPurge(t *testing.T, h *Runtime, p RunRetention) RunPurgeResult {
 	t.Helper()
+	h.runs.purgePace.mark(time.Time{})
 	return h.PurgeFinishedRuns(t.Context(), p)
 }
 
-// sweepOrphanLogs runs one orphaned run-log sweep pass under p.
+// sweepOrphanLogs runs one orphaned run-log sweep pass under p, as runPurgePace after the last removing pass.
 func sweepOrphanLogs(t *testing.T, h *Runtime, p RunRetention) RunPurgeResult {
 	t.Helper()
+	h.runs.logSweep.pace.mark(time.Time{})
 	return h.SweepOrphanRunLogs(t.Context(), p)
 }
 

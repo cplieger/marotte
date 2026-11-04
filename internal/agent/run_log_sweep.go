@@ -20,13 +20,15 @@ import (
 // its first step opens a log, and a list or disk read can race a run that young.
 const orphanRunLogGuard = 10 * time.Minute
 
-// orphanRunLogCap is the removals one sweep pass attempts; the rest wait runPurgePace for the next pass.
+// orphanRunLogCap is the removals one sweep pass attempts; the rest wait runPurgePace.
 const orphanRunLogCap = 50
 
 // logSweepState is the sweep's process-lifetime memory. The zero value is ready.
 type logSweepState struct {
 	// poisoned holds the logs whose removal failed; later passes skip them until restart.
 	poisoned map[string]struct{}
+	// pace is when a pass last attempted a removal.
+	pace deletePacer
 	// unwired warns once that the sweep has no run logs or no KAS store to read.
 	unwired sync.Once
 	mu      sync.Mutex
@@ -57,26 +59,28 @@ type orphanLog struct {
 
 // logSweepTally is one pass's counts, for its completion line and its result.
 type logSweepTally struct {
+	// wait is when the deferred logs' pass may remove them.
+	wait                                                                         time.Time
 	bytes                                                                        int64
 	removed, inList, onDisk, young, held, unreadable, poisoned, deferred, errors int
 }
 
-func (t *logSweepTally) result(now time.Time) RunPurgeResult {
+func (t *logSweepTally) result() RunPurgeResult {
 	res := RunPurgeResult{
 		Purged: t.removed,
 		Kept:   t.inList + t.onDisk + t.young + t.held + t.unreadable + t.poisoned + t.deferred,
 		Errors: t.errors,
 	}
 	if t.deferred > 0 {
-		res.NextDeadline = now.Add(runPurgePace)
+		res.NextDeadline = t.wait
 	}
 	return res
 }
 
-// SweepOrphanRunLogs removes, oldest first and at most orphanRunLogCap a pass, the run logs under the config dir's
-// runs/ older than p.Window (and orphanRunLogGuard) whose run is absent from a complete workflow/list and from KAS's
-// run state on disk. A failed or partial list, an unreadable KAS store or lease file removes nothing; a log marotte
-// leases or has a step open in is kept; a log whose removal fails is skipped until restart.
+// SweepOrphanRunLogs removes, oldest first and at most orphanRunLogCap per runPurgePace, the run logs under the
+// config dir's runs/ older than p.Window (and orphanRunLogGuard) whose run is absent from a complete workflow/list and
+// from KAS's run state on disk. A failed or partial list, an unreadable KAS store or lease file removes nothing; a log
+// marotte leases or has a step open in is kept; a log whose removal fails is skipped until restart.
 func (rt *Runtime) SweepOrphanRunLogs(ctx context.Context, p RunRetention) RunPurgeResult {
 	if !p.Enabled {
 		return RunPurgeResult{}
@@ -104,19 +108,20 @@ func (rt *Runtime) SweepOrphanRunLogs(ctx context.Context, p RunRetention) RunPu
 	candidates, total := rt.orphanLogCandidates(now, max(p.Window, orphanRunLogGuard), &t)
 	slog.Info("run log sweep: started", "run_logs", total, "candidates", len(candidates), "window", p.Window)
 	if len(candidates) == 0 {
-		return t.result(now)
+		return t.result()
 	}
 	absent, err := rt.runsAbsent(ctx, &t)
 	if err != nil {
 		slog.Warn("run log sweep: removing nothing this pass", "error", err)
-		return t.result(now)
+		return t.result()
 	}
+	wait := rs.logSweep.pace.next(now)
 	attempts := 0
 	for _, c := range candidates {
 		if !absent(c.id) {
 			continue
 		}
-		if attempts == orphanRunLogCap {
+		if !wait.IsZero() || attempts == orphanRunLogCap {
 			t.deferred++
 			continue
 		}
@@ -133,7 +138,13 @@ func (rt *Runtime) SweepOrphanRunLogs(ctx context.Context, p RunRetention) RunPu
 		slog.Info("run log sweep: removed an orphaned run log", "workflow_id", c.id,
 			"age", now.Sub(c.modified).Round(time.Second), "bytes", c.bytes)
 	}
-	return t.result(now)
+	if attempts > 0 {
+		at := time.Now()
+		rs.logSweep.pace.mark(at)
+		wait = at.Add(runPurgePace)
+	}
+	t.wait = wait
+	return t.result()
 }
 
 // orphanLogCandidates lists the run logs old enough to sweep, oldest first, counting the ones it keeps into t, and
@@ -180,8 +191,8 @@ func (rt *Runtime) orphanLogCandidates(now time.Time, minAge time.Duration, t *l
 	return out, len(ids)
 }
 
-// runsAbsent reads KAS's run list, then its run state on disk, and answers whether a run is absent from both, counting
-// each present run it is asked about into t. Any read that cannot prove absence is an error.
+// runsAbsent reads KAS's run list, then its run state on disk, and answers whether a run is absent from all of them,
+// counting each present run it is asked about into t. Any read that cannot prove absence is an error.
 func (rt *Runtime) runsAbsent(ctx context.Context, t *logSweepTally) (func(workflowID string) bool, error) {
 	runs, err := rt.runs.listRaw(ctx)
 	if err != nil {
@@ -199,17 +210,36 @@ func (rt *Runtime) runsAbsent(ctx context.Context, t *logSweepTally) (func(workf
 	if err != nil {
 		return nil, fmt.Errorf("KAS's run state could not be listed: %w", err)
 	}
+	inWorkspace, err := workspaceRunStates(rt.lifecycle.workDir)
+	if err != nil {
+		return nil, fmt.Errorf("the workspace's run state could not be listed: %w", err)
+	}
 	return func(workflowID string) bool {
 		if _, ok := listed[workflowID]; ok {
 			t.inList++
 			return false
 		}
-		if _, ok := onDisk[workflowID]; ok {
+		_, inStore := onDisk[workflowID]
+		if _, ok := inWorkspace[workflowID]; ok || inStore {
 			t.onDisk++
 			return false
 		}
 		return true
 	}, nil
+}
+
+// workspaceRunStates names every entry of workDir's .kiro/workflows: KAS still finds a run's state there by id for
+// inspect, retry and delete, though its list scans only the session store. Recipes there never share a run's id.
+func workspaceRunStates(workDir string) (map[string]struct{}, error) {
+	entries, err := os.ReadDir(filepath.Join(workDir, ".kiro", "workflows"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	out := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
+		out[e.Name()] = struct{}{}
+	}
+	return out, nil
 }
 
 // lastWrite is a run log's age source: the later of its entries file's and its directory's modification time, since
