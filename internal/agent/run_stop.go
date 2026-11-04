@@ -152,7 +152,6 @@ func withHolder(holders []marotte.ChatID, chatID marotte.ChatID) []marotte.ChatI
 	return append(slices.Clone(holders), chatID)
 }
 
-// attemptCancel sends one cancel of the stop's run.
 func (rs *Runs) attemptCancel(ctx context.Context, j *runStopJob) {
 	j.attempt++
 	if err := rs.cancelAs(ctx, j.workflowID, userStop(stopWhyTabClosed)); err != nil {
