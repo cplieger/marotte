@@ -79,12 +79,19 @@ func newEngineRigAt(
 	if _, scripted := results[methodKiroWorkflowInspect]; !scripted {
 		rig.answer = inspectFromList(results[methodKiroWorkflowList])
 	}
-	return newRigOver(t, rig, scan, st, opts...)
+	return newRigAt(t, workDir, rig, scan, st, opts...)
 }
 
-// newRigOver is a runtime over rig's engine, a real chat store scanned through scan, and the tab store st, with opts.
-func newRigOver(
-	t *testing.T, rig *deleteRig, scan func(context.Context, chat.OwnerScan) chat.OwnerScan, st *tabs.Store, opts ...Option,
+// newRigOver is a runtime over rig's engine, a real chat store scanned through scan, and the tab store st.
+func newRigOver(t *testing.T, rig *deleteRig, scan func(context.Context, chat.OwnerScan) chat.OwnerScan, st *tabs.Store) (*Runtime, *deleteRig) {
+	t.Helper()
+	return newRigAt(t, testReaperWorkDir, rig, scan, st)
+}
+
+// newRigAt is newRigOver with workDir as the workspace, with opts.
+func newRigAt(
+	t *testing.T, workDir string, rig *deleteRig, scan func(context.Context, chat.OwnerScan) chat.OwnerScan,
+	st *tabs.Store, opts ...Option,
 ) (*Runtime, *deleteRig) {
 	t.Helper()
 	cs := newTestChatStore()
@@ -1151,6 +1158,14 @@ func TestPurgeFinishedRuns_KeepsWhatEachExemptionNames(t *testing.T) {
 			setup: func(t *testing.T, h *Runtime) {
 				t.Helper()
 				h.chatStore.(*testChatStore).tearDown("sess_kept")
+			},
+		},
+		{
+			name: "a retry in flight",
+			row:  purgeRow("wf_kept", "failed", "sess_kept", daysAgo(20)),
+			setup: func(t *testing.T, h *Runtime) {
+				t.Helper()
+				h.runs.retries.mark("wf_kept", time.Now())
 			},
 		},
 	} {
