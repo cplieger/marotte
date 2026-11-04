@@ -521,7 +521,7 @@ func TestCloseTab_TheDeleteGradeRunsPastTheAnswer(t *testing.T) {
 	t.Cleanup(release)
 	tornDown := make(chan []string, 1)
 	mem := newMembership(&membershipDeps{
-		Chats: store, Tabs: st, Bus: &tabBus{}, Teardown: &recordingTeardown{},
+		Chats: withKeep(store), Tabs: st, Bus: &tabBus{}, Teardown: &recordingTeardown{},
 		DeleteChat: func(_ context.Context, _ marotte.ChatID, chain []string) {
 			<-gate
 			tornDown <- chain
@@ -536,7 +536,7 @@ func TestCloseTab_TheDeleteGradeRunsPastTheAnswer(t *testing.T) {
 
 	answered := make(chan error, 1)
 	go func() {
-		_, _, cErr := mem.closeTab(t.Context(), root.Subject.ID, "op-close")
+		_, _, cErr := mem.closeTab(t.Context(), root.Subject.ID, "op-close", true)
 		answered <- cErr
 	}()
 	select {

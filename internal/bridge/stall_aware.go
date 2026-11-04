@@ -24,9 +24,11 @@ var stallExtendCeiling = 120 * time.Second
 // Stalled reports whether the engine is in an event-loop stall (kirodotdev/Kiro#12261): it read no frame for
 // stallQuiet, and node's CPU advanced across stallSample, for which Stalled blocks. An ended engine, or a CPU probe
 // that cannot read, is never stalled.
-func (e *Engine) Stalled() bool {
+func (e *Engine) Stalled() bool { return e.stalled(stallQuiet, stallSample) }
+
+func (e *Engine) stalled(quiet, sample time.Duration) bool {
 	last := e.lastFrame.Load()
-	if last != 0 && time.Since(time.Unix(0, last)) < stallQuiet {
+	if last != 0 && time.Since(time.Unix(0, last)) < quiet {
 		return false
 	}
 	// Notes node's group while it is unknown, as during initialize; Stalled never runs under writeMu.
@@ -35,10 +37,10 @@ func (e *Engine) Stalled() bool {
 	if !ok {
 		return false
 	}
-	sample := time.NewTimer(stallSample)
-	defer sample.Stop()
+	gap := time.NewTimer(sample)
+	defer gap.Stop()
 	select {
-	case <-sample.C:
+	case <-gap.C:
 	case <-e.done:
 		return false
 	}
@@ -50,7 +52,10 @@ func (e *Engine) Stalled() bool {
 // Stalled waits for the stall to end, re-checking every stallRecheck, up to d+stallExtendCeiling. Its Err after an
 // expiry is context.DeadlineExceeded, as is that of every context derived from it.
 func (e *Engine) StallAware(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
-	c := &stallCtx{parent: ctx, ceiling: time.Now().Add(d + stallExtendCeiling), done: make(chan struct{})}
+	c := &stallCtx{
+		parent: ctx, ceiling: time.Now().Add(d + stallExtendCeiling), done: make(chan struct{}),
+		quiet: stallQuiet, sample: stallSample, recheck: stallRecheck,
+	}
 	cancel := func() { c.end(context.Canceled) }
 	if err := ctx.Err(); err != nil {
 		c.err = err
@@ -68,11 +73,11 @@ func (e *Engine) extendWhileStalled(c *stallCtx) {
 	if c.Err() != nil {
 		return
 	}
-	if time.Now().Before(c.ceiling) && e.Stalled() {
+	if time.Now().Before(c.ceiling) && e.stalled(c.quiet, c.sample) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if c.err == nil {
-			c.timer = time.AfterFunc(min(stallRecheck, time.Until(c.ceiling)), func() { e.extendWhileStalled(c) })
+			c.timer = time.AfterFunc(min(c.recheck, time.Until(c.ceiling)), func() { e.extendWhileStalled(c) })
 		}
 		return
 	}
@@ -83,12 +88,14 @@ func (e *Engine) extendWhileStalled(c *stallCtx) {
 // report context.Canceled on a cancel, where callers of an expired call test for context.DeadlineExceeded.
 type stallCtx struct {
 	parent     context.Context
-	ceiling    time.Time
 	err        error // guarded by mu
 	done       chan struct{}
 	timer      *time.Timer // guarded by mu
 	stopParent func() bool // guarded by mu
-	mu         sync.Mutex
+	ceiling    time.Time
+	// The tunables read when the context was made: its timer goroutines can outlive the caller's cancel.
+	quiet, sample, recheck time.Duration
+	mu                     sync.Mutex
 }
 
 func (c *stallCtx) end(err error) {

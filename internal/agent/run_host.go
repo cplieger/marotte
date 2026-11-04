@@ -104,6 +104,7 @@ func (rs *Runs) launchAs(
 		return "", "", gErr
 	}
 	defer func() { a.settle(id) }()
+	budgetEnd := time.Now().Add(launchTimeout)
 	cctx, cancel := rs.engine.stallAware(ctx, launchTimeout)
 	defer cancel()
 
@@ -151,9 +152,9 @@ func (rs *Runs) launchAs(
 		return "", "", fmt.Errorf("workflow %s already has a host session", wfID)
 	}
 	// The run exists: a caller that stops waiting now must not leave it half launched, its row naming a run that
-	// nothing tracks, so the rest keeps the launch's budget and drops the caller's cancel.
-	deadline, _ := cctx.Deadline()
-	rctx, rcancel := context.WithDeadline(context.WithoutCancel(cctx), deadline)
+	// nothing tracks, so the rest keeps the launch's budget and drops the caller's cancel. A stall-aware context's
+	// Deadline is its extension ceiling, not its budget, so the budget's end is carried over instead.
+	rctx, rcancel := rs.engine.stallAware(context.WithoutCancel(ctx), time.Until(budgetEnd))
 	defer rcancel()
 	sb.setIdle()
 	sb.settled.settle(nil)
@@ -465,18 +466,7 @@ func (rs *Runs) retry(
 	}
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
-	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
-		rs.settleMissedEnd(cctx, &l, aff.status)
-	}
-	minted := false
-	if l, held := rs.lease(workflowID); held {
-		// A manual or agent lease is the one this origin would grant; the run under it is a new one all the same.
-		rs.restartLife(cctx, workflowID)
-		rs.recordKeepChats(cctx, &l, holders)
-	} else {
-		rs.grantRetryLease(cctx, workflowID, &origin, holders)
-		minted = true
-	}
+	minted := rs.takeRetryLease(cctx, workflowID, &origin, holders, aff)
 	rs.markRunAlive(cctx, workflowID, holders)
 	host, err := rs.ensureResident(cctx, workflowID)
 	if err != nil {
@@ -509,6 +499,24 @@ func (rs *Runs) retry(
 		"workflow_id", workflowID, "recipe", recipe,
 		"retried_nodes", len(out.RetriedNodeIDs), "status", out.Status)
 	return out, nil
+}
+
+// takeRetryLease settles a held schedule lease's missed end and restarts its life, or grants a fresh lease, and
+// reports whether it granted one.
+func (rs *Runs) takeRetryLease(
+	ctx context.Context, workflowID string, origin *runOrigin, holders []marotte.ChatID, aff *runAffordance,
+) (minted bool) {
+	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
+		rs.settleMissedEnd(ctx, &l, aff.status)
+	}
+	if l, held := rs.lease(workflowID); held {
+		// A manual or agent lease is the one this origin would grant; the run under it is a new one all the same.
+		rs.restartLife(ctx, workflowID)
+		rs.recordKeepChats(ctx, &l, holders)
+		return false
+	}
+	rs.grantRetryLease(ctx, workflowID, origin, holders)
+	return true
 }
 
 // retryCall issues the verb and decodes its report, through runCallErr so an `error` member is not read as success.

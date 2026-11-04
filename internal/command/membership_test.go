@@ -1310,7 +1310,7 @@ func TestDeleteChatAndCloseTabs_AnswersBeforeTheTeardownEnds(t *testing.T) {
 		t.Fatalf("open tab store: %v", err)
 	}
 	td := &recordingTeardown{}
-	mem := newMembership(&membershipDeps{Chats: store, Tabs: st, Bus: &tabBus{}, Teardown: td, Detach: detachOnGoroutine})
+	mem := newMembership(&membershipDeps{Chats: withKeep(store), Tabs: st, Bus: &tabBus{}, Teardown: td, Detach: detachOnGoroutine})
 	opened := createChat(t, mem, "op-a")
 	chatID := marotte.ChatID(opened.Chat.ID)
 	gate := make(chan struct{})
