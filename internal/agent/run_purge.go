@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -12,7 +13,8 @@ import (
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
-// RunPurgeResult reports one parentless-run purge pass; NextDeadline is when the earliest age-kept run becomes purgeable, zero for none.
+// RunPurgeResult reports one parentless-run purge pass; NextDeadline is when the earliest keep that lapses by itself
+// (a run's age, a retry in flight) lapses, zero for none.
 type RunPurgeResult struct {
 	NextDeadline time.Time
 	Purged       int
@@ -23,10 +25,10 @@ type RunPurgeResult struct {
 // ReattributeRuns is Runs.reattributeRuns, a retention side pass.
 func (rt *Runtime) ReattributeRuns(ctx context.Context) { rt.runs.reattributeRuns(ctx) }
 
-// PurgeParentlessRuns deletes finished runs no chat claims once older than window (from last update); zero
-// deletes them all. Shown, live or paused runs, unreadable ages, runs naming no valid launching session and runs
-// a re-read before the delete does not find finished are kept, and nothing is deleted while the tab arrangement is
-// unread; a chat-launched run goes with its chat.
+// PurgeParentlessRuns deletes finished runs no chat claims once older than window (from last update) with no retry
+// in flight, judged on the list and again on a fresh read before each delete; zero window deletes them all. Shown,
+// live or paused runs, unreadable ages and runs naming no valid launching session are kept, and nothing is deleted
+// while the tab arrangement is unread; a chat-launched run goes with its chat.
 func (rt *Runtime) PurgeParentlessRuns(ctx context.Context, window time.Duration) RunPurgeResult {
 	// The purge scheduler outlives Shutdown; once draining, the next boot's pass purges.
 	release, ok := rt.lifecycle.enterUnlessDraining()
@@ -81,18 +83,12 @@ func (rt *Runtime) PurgeParentlessRuns(ctx context.Context, window time.Duration
 	return res
 }
 
-// purgeCandidate deletes one unclaimed finished run once past window, answering admission's refusal, if any.
+// purgeCandidate deletes one unclaimed finished run that purgeKeep finds purgeable on its list row and again under the
+// delete's hold, answering admission's refusal, if any.
 func (rt *Runtime) purgeCandidate(ctx context.Context, r *kasWorkflowRun, window time.Duration, now time.Time, res *RunPurgeResult) (refused error) {
-	updated := parseKASTime(r.UpdatedAt)
-	if updated <= 0 {
-		res.Kept++
-		return nil
-	}
-	if due := time.UnixMilli(updated).Add(window); due.After(now) {
-		res.Kept++
-		if res.NextDeadline.IsZero() || due.Before(res.NextDeadline) {
-			res.NextDeadline = due
-		}
+	listed := purgeRead{status: marotte.RunStatus(r.Status), updated: parseKASTime(r.UpdatedAt)}
+	if why, until := rt.runs.purgeKeep(r.WorkflowID, listed, window, now); why != "" {
+		res.keep(until)
 		return nil
 	}
 	done, refused := rt.admitRunPurge(ctx, r.WorkflowID, r.ParentSessionID)
@@ -100,7 +96,7 @@ func (rt *Runtime) purgeCandidate(ctx context.Context, r *kasWorkflowRun, window
 		res.Kept++
 		return refused
 	}
-	deleted, err := rt.runs.deleteIfFinished(ctx, r.WorkflowID)
+	deleted, until, err := rt.runs.deleteIfPurgeable(ctx, r.WorkflowID, window)
 	done()
 	switch {
 	case err != nil:
@@ -109,56 +105,142 @@ func (rt *Runtime) purgeCandidate(ctx context.Context, r *kasWorkflowRun, window
 	case deleted:
 		res.Purged++
 	default:
-		res.Kept++
+		res.keep(until)
 	}
 	return nil
 }
 
-// deleteIfFinished deletes a run the list showed finished only when, under the delete's hold that marotte's retry is
-// admitted through, an inspect still finds it finished and no drive of it is unsettled (runMutations.drivePending).
-// A run KAS no longer finds is torn down here, since no later list names it; any other answer keeps the run, logged
-// with why. Another KAS client's retry does not pass the hold.
-func (rs *Runs) deleteIfFinished(ctx context.Context, workflowID string) (deleted bool, err error) {
+// keep counts a kept run and folds the instant its keep lapses by itself, zero for never, into NextDeadline.
+func (res *RunPurgeResult) keep(until time.Time) {
+	res.Kept++
+	if !until.IsZero() && (res.NextDeadline.IsZero() || until.Before(res.NextDeadline)) {
+		res.NextDeadline = until
+	}
+}
+
+// purgeRead is one read of a run, from KAS's list or its inspect, as purgeKeep judges it.
+type purgeRead struct {
+	status marotte.RunStatus
+	// updated is the run's last activity in epoch millis (the list's updatedAt, workflow.State.UpdatedAt), 0 unreadable.
+	updated int64
+}
+
+// purgeKeep is the purge's one eligibility rule: a run is purgeable once finished, older than window by its own last
+// activity, and with no retry in flight. It answers why the run is kept, "" for purgeable, and when that reason lapses
+// by itself, zero for never.
+func (rs *Runs) purgeKeep(workflowID string, r purgeRead, window time.Duration, now time.Time) (why string, until time.Time) {
+	switch {
+	case !r.status.Terminal():
+		return "it is not finished", time.Time{}
+	case r.updated <= 0:
+		return "its last activity is unreadable", time.Time{}
+	}
+	last := time.UnixMilli(r.updated)
+	if due := last.Add(window); due.After(now) {
+		return "it was active within the retention window", due
+	}
+	if until, ok := rs.retries.inFlight(workflowID, last, now); ok {
+		return "a retry marotte sent has not shown taking effect", until
+	}
+	return "", time.Time{}
+}
+
+// deleteIfPurgeable deletes a run its list row showed purgeable only when, under the delete's hold that marotte's
+// retry is admitted through, purgeKeep finds it purgeable again on a fresh inspect; until is when a keep lapses. A run
+// KAS no longer finds is torn down here, since no later list names it; any other answer keeps the run, logged with
+// why. Another KAS client's retry does not pass the hold.
+func (rs *Runs) deleteIfPurgeable(ctx context.Context, workflowID string, window time.Duration) (deleted bool, until time.Time, err error) {
 	d, err := rs.life.beginDelete(ctx, workflowID)
 	if err != nil {
-		return false, err
+		return false, time.Time{}, err
 	}
-	status, err := rs.inspectStatus(ctx, workflowID)
+	read, err := rs.inspectPurgeRead(ctx, workflowID)
 	switch {
 	case workflowNotFound(err):
 		slog.Info("run purge: KAS no longer knows a run it listed finished, dropping marotte's record of it",
 			"workflow_id", workflowID)
 		rs.teardownDeleted(ctx, workflowID)
 		d.settle()
-		return true, nil
+		return true, time.Time{}, nil
 	case err != nil:
 		slog.Warn("run purge: could not re-read a finished run before deleting it, keeping it",
 			"workflow_id", workflowID, "error", err)
-	case !status.Terminal():
-		slog.Info("run purge: a run listed finished is no longer finished, keeping it",
-			"workflow_id", workflowID, "status", status)
-	case rs.mutations.drivePending(workflowID):
-		slog.Info("run purge: a write that drives a finished run is not settled yet, keeping it",
-			"workflow_id", workflowID)
-	default:
-		err = rs.deleteHeld(ctx, d, runStop{})
-		return err == nil, err
+		d.settle()
+		return false, time.Time{}, nil
 	}
+	why, until := rs.purgeKeep(workflowID, read, window, time.Now())
+	if why == "" {
+		err = rs.deleteHeld(ctx, d, runStop{})
+		if workflowNotFound(err) {
+			return true, time.Time{}, nil
+		}
+		return err == nil, time.Time{}, err
+	}
+	slog.Info("run purge: a fresh read no longer finds a listed run purgeable, keeping it",
+		"workflow_id", workflowID, "reason", why)
 	d.settle()
-	return false, nil
+	return false, until, nil
 }
 
-// inspectStatus is a run's status as KAS's inspect reports it, refusing a reply with no state or about another run.
-func (rs *Runs) inspectStatus(ctx context.Context, workflowID string) (marotte.RunStatus, error) {
+// inspectPurgeRead is a run's status and last activity as KAS's inspect reports them, refusing a reply with no state
+// or about another run.
+func (rs *Runs) inspectPurgeRead(ctx context.Context, workflowID string) (purgeRead, error) {
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
-		return "", err
+		return purgeRead{}, err
 	}
 	in, err := workflow.DecodeInspect(workflowID, raw)
 	if err != nil {
-		return "", err
+		return purgeRead{}, err
 	}
-	return marotte.RunStatus(in.State.Status), nil
+	return purgeRead{status: marotte.RunStatus(in.State.Status), updated: parseKASTime(in.State.UpdatedAt())}, nil
+}
+
+// retryInFlightBound is how long a retry marotte sent keeps its run from the purge while KAS shows no sign of it.
+// KAS loads the run from disk before it marks it running, under no deadline marotte knows, so the bound sits far past
+// retryTimeout: holding a finished run's delete that long costs at most one purge pass.
+const retryInFlightBound = 10 * time.Minute
+
+// retryMarks holds, per run, when marotte last sent it a retry KAS has not shown taking effect: the purge's "retry in
+// flight". Only the purge reads it, so quiescence and the interrupted snapshot never see it. The zero value is ready.
+type retryMarks struct {
+	at map[string]time.Time
+	mu sync.Mutex
+}
+
+// mark records a retry of workflowID about to be sent at now, to KAS's millisecond, so an end KAS stamps in the same
+// millisecond reads as after it.
+func (m *retryMarks) mark(workflowID string, now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.at == nil {
+		m.at = map[string]time.Time{}
+	}
+	m.at[workflowID] = time.UnixMilli(now.UnixMilli())
+}
+
+// clear drops workflowID's mark: KAS showed the retry's effect or refused it, or the run is gone.
+func (m *retryMarks) clear(workflowID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.at, workflowID)
+}
+
+// inFlight reports workflowID's mark while it is younger than retryInFlightBound at now and KAS shows no activity of
+// the run at or after it, with when it lapses; a lapsed or overtaken mark is dropped.
+func (m *retryMarks) inFlight(workflowID string, last, now time.Time) (until time.Time, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	at, ok := m.at[workflowID]
+	if !ok {
+		return time.Time{}, false
+	}
+	until = at.Add(retryInFlightBound)
+	if !last.Before(at) || !now.Before(until) {
+		delete(m.at, workflowID)
+		return time.Time{}, false
+	}
+	return until, true
 }
 
 func (rt *Runtime) admitRunPurge(ctx context.Context, workflowID, parentSessionID string) (done func(), refused error) {

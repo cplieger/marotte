@@ -20,8 +20,9 @@ type deleteRig struct {
 	rpcErrs map[string]*marotte.RPCError
 	// onCall runs inside the fake bridge's Call, before it answers, outside mu.
 	onCall func(method string, params map[string]any)
-	// answer, set before the rig's runtime is built, answers a call in place of results when it reports true.
-	answer func(method string, params map[string]any) (json.RawMessage, bool)
+	// answer, set before the rig's runtime is built, answers a call in place of results, delivering its frames first,
+	// when it reports true.
+	answer func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)
 	// blockOn, set before the rig's runtime is built, holds every bridge's call of a method open (fakeBridge.blockOn).
 	blockOn map[string]chan struct{}
 	calls   []rigCall
@@ -50,8 +51,8 @@ func (r *deleteRig) factory() engineSession {
 			r.onCall(method, params)
 		}
 		if r.answer != nil {
-			if res, ok := r.answer(method, params); ok {
-				return res, nil, true
+			if res, frames, ok := r.answer(method, params); ok {
+				return res, frames, true
 			}
 		}
 		return nil, nil, false

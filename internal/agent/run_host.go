@@ -292,7 +292,8 @@ func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop) e
 	return rs.deleteHeld(ctx, d, stop)
 }
 
-// deleteHeld sends the delete d holds its run closed for, and settles d once KAS's answer is known.
+// deleteHeld sends the delete d holds its run closed for, and settles d once KAS's answer is known. A run KAS no longer
+// finds is torn down all the same, and its not-found error returned.
 func (rs *Runs) deleteHeld(ctx context.Context, d *runDeletion, stop runStop) error {
 	workflowID := d.workflowID
 	var got kasVerdict
@@ -303,6 +304,10 @@ func (rs *Runs) deleteHeld(ctx context.Context, d *runDeletion, stop runStop) er
 	})
 	switch got {
 	case kasRefused:
+		if workflowNotFound(err) {
+			// No later list names the run, so nothing else would drop marotte's record of it.
+			rs.teardownDeleted(ctx, workflowID)
+		}
 		d.settle()
 		return err
 	case kasUnconfirmed:
@@ -387,9 +392,11 @@ func (rs *Runs) readBack(ctx context.Context, workflowID string) readBackVerdict
 	return runKept
 }
 
-// teardownDeleted drops everything marotte keeps about a run KAS deleted.
+// teardownDeleted drops everything marotte keeps about a run KAS deleted or no longer finds.
 func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string) {
 	rs.router.forgetWorkflow(workflowID)
+	rs.translate.ForgetRunSteps(workflowID)
+	rs.retries.clear(workflowID)
 	rs.deleteRunLog(ctx, workflowID)
 	rs.coord.closeBridge(ctx, runChatID(workflowID), marotte.TurnOutcomeInterrupted)
 	rs.forgetBounds(ctx, workflowID)
@@ -422,7 +429,8 @@ var retryTimeout = clientRequestBudget - 5*time.Second
 // clientRequestBudget is the timeout @cplieger/ui/fetch hard-wires into every apiAction.
 const clientRequestBudget = 30 * time.Second
 
-var errRetryRunDeleting = errors.New("this run is being deleted, so nothing was retried")
+var errRetryRunDeleting = errors.New("this run is being deleted or checked for deletion, so nothing was retried. " +
+	"Try again in a moment")
 
 // errRetrySlow reports a retry whose run's session did not load within retryTimeout; the REST layer answers 503.
 var errRetrySlow = errors.New(
@@ -534,7 +542,11 @@ func (rs *Runs) retryCall(
 	ctx context.Context, host *drivenHost, workflowID string,
 ) (marotte.RunRetriedResponse, error) {
 	none := marotte.RunRetriedResponse{}
+	rs.retries.mark(workflowID, time.Now())
 	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
+	if _, refused := errors.AsType[*marotte.RPCError](err); refused {
+		rs.retries.clear(workflowID)
+	}
 	if err != nil {
 		return none, fmt.Errorf("workflow retry: %w", rs.retryDeadlineErr(ctx, err))
 	}

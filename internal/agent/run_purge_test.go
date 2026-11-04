@@ -110,65 +110,97 @@ func deletedRunIDs(rig *deleteRig) []string {
 	return out
 }
 
-func inspectOf(workflowID string, status marotte.RunStatus) json.RawMessage {
-	raw, _ := json.Marshal(map[string]any{"workflowId": workflowID, "state": map[string]any{"status": status}})
+// inspectOf is KAS's inspect of a run whose state reads status and whose root ended at ended, the instant KAS's list
+// reports as the run's updatedAt; a zero ended records no time.
+func inspectOf(workflowID string, status marotte.RunStatus, ended time.Time) json.RawMessage {
+	state := map[string]any{"status": status}
+	if !ended.IsZero() {
+		state["root"] = map[string]any{"nodeId": "root", "endedAt": ended.UTC().Format(time.RFC3339Nano)}
+	}
+	raw, _ := json.Marshal(map[string]any{"workflowId": workflowID, "state": state})
 	return raw
 }
 
-// inspectFromList answers an inspect of a listed run with the status the list gives it.
-func inspectFromList(list json.RawMessage) func(string, map[string]any) (json.RawMessage, bool) {
+// inspectFromList answers an inspect of a listed run with the status and last activity the list gives it.
+func inspectFromList(list json.RawMessage) func(string, map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 	var rows struct {
 		Runs []struct {
 			WorkflowID string            `json:"workflowId"`
 			Status     marotte.RunStatus `json:"status"`
+			UpdatedAt  string            `json:"updatedAt"`
 		} `json:"runs"`
 	}
 	_ = json.Unmarshal(list, &rows)
-	return func(method string, params map[string]any) (json.RawMessage, bool) {
+	return func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method != methodKiroWorkflowInspect {
-			return nil, false
+			return nil, nil, false
 		}
 		id, _ := params[keyWorkflowID].(string)
 		for _, r := range rows.Runs {
 			if r.WorkflowID == id {
-				return inspectOf(id, r.Status), true
+				ended, _ := time.Parse(time.RFC3339, r.UpdatedAt)
+				return inspectOf(id, r.Status, ended), nil, true
 			}
 		}
-		return nil, false
+		return nil, nil, false
 	}
 }
 
-// purgedRun is one parentless run as KAS holds it: listed and inspected at its current status, which a retry sets
-// running before it answers. An unanswered retry is taken but never answered, and the run reads failed until KAS
-// applies it.
+// retryEffect is what KAS does with a retry of a purgedRun.
+type retryEffect uint8
+
+const (
+	// retryRevives sets the run running and delivers its run_start before KAS answers.
+	retryRevives retryEffect = iota
+	// retryFailsAgain re-drives the run, which fails again at once: KAS delivers its run_start and run_complete, then
+	// answers.
+	retryFailsAgain
+	// retryLost is a retry KAS takes and never answers or applies.
+	retryLost
+)
+
+// purgedRun is one parentless run as KAS holds it, listed and inspected as it stands, and retried as retried says.
 type purgedRun struct {
 	updated    time.Time
 	id, parent string
 	status     marotte.RunStatus
 	mu         sync.Mutex
-	unanswered bool
+	retried    retryEffect
 }
 
-func (k *purgedRun) answer(method string, params map[string]any) (json.RawMessage, bool) {
+func (k *purgedRun) answer(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	switch method {
 	case methodKiroWorkflowList:
 		raw, _ := json.Marshal(map[string]any{"runs": []map[string]string{purgeRow(k.id, string(k.status), k.parent, k.updated)}})
-		return raw, true
+		return raw, nil, true
 	case methodKiroWorkflowInspect:
 		if id, _ := params[keyWorkflowID].(string); id == k.id {
-			return inspectOf(k.id, k.status), true
+			return inspectOf(k.id, k.status, k.updated), nil, true
 		}
 	case methodKiroWorkflowRetry:
-		if k.unanswered {
-			return nil, false
-		}
-		k.status = marotte.RunStatusRunning
-		raw, _ := json.Marshal(map[string]any{"workflowId": k.id, "status": k.status, "retriedNodeIds": []string{"build"}})
-		return raw, true
+		return k.retry()
 	}
-	return nil, false
+	return nil, nil, false
+}
+
+// retry applies a retry under k.mu.
+func (k *purgedRun) retry() (json.RawMessage, []*marotte.RPCResponse, bool) {
+	frames := []*marotte.RPCResponse{
+		runNotif(methodWFRunStart, map[string]any{"workflowId": k.id, "workflowName": "build", "parentSessionId": k.parent}),
+	}
+	switch k.retried {
+	case retryLost:
+		return nil, nil, false
+	case retryRevives:
+		k.status = marotte.RunStatusRunning
+	case retryFailsAgain:
+		k.status, k.updated = marotte.RunStatusFailed, time.Now()
+		frames = append(frames, runNotif(methodWFRunComplete, map[string]any{"workflowId": k.id, "status": marotte.RunStatusFailed}))
+	}
+	raw, _ := json.Marshal(map[string]any{"workflowId": k.id, "status": marotte.RunStatusRunning, "retriedNodeIds": []string{"build"}})
+	return raw, frames, true
 }
 
 func (k *purgedRun) statusNow() marotte.RunStatus {
@@ -177,8 +209,8 @@ func (k *purgedRun) statusNow() marotte.RunStatus {
 	return k.status
 }
 
-// newPurgedRunRig is a purge rig over kas. Once arm is called, every engine call runs onCall and the first owner scan
-// runs during.
+// newPurgedRunRig is a purge rig over kas whose settle ceiling fires at once. Once arm is called, every engine call
+// runs onCall and the first owner scan runs during.
 func newPurgedRunRig(t *testing.T, kas *purgedRun, onCall func(string, map[string]any), during func(context.Context, *Runtime)) (h *Runtime, rig *deleteRig, arm func()) {
 	t.Helper()
 	st, err := tabs.NewStore(t.TempDir())
@@ -195,7 +227,7 @@ func newPurgedRunRig(t *testing.T, kas *purgedRun, onCall func(string, map[strin
 			}
 		},
 	}
-	if kas.unanswered {
+	if kas.retried == retryLost {
 		// Never closed: the retry's own deadline abandons the call.
 		rig.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: make(chan struct{})}
 	}
@@ -206,64 +238,190 @@ func newPurgedRunRig(t *testing.T, kas *purgedRun, onCall func(string, map[strin
 		return s
 	}, st)
 	settleBoot(t, h)
+	m := h.runs.mutations
+	m.mu.Lock()
+	m.ceiling = 10 * time.Millisecond
+	m.mu.Unlock()
 	return h, rig, func() { armed.Store(true) }
+}
+
+// waitDrivesSettled waits until no write driving a run is unsettled.
+func waitDrivesSettled(t *testing.T, h *Runtime) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !h.runs.mutations.empty() {
+		if time.Now().After(deadline) {
+			t.Fatal("Setup: a driving write stayed unsettled for 5s")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// retryDuringTheScan is a purge rig's during that retries kas's run, then waits until marotte's registry of unsettled
+// writes has settled the retry, so only what the purge reads can keep the run.
+func retryDuringTheScan(t *testing.T, kas *purgedRun, retryErr *error) func(context.Context, *Runtime) {
+	t.Helper()
+	return func(ctx context.Context, h *Runtime) {
+		_, *retryErr = h.runs.retry(ctx, kas.id, failedAffordance(h, kas.id))
+		waitDrivesSettled(t, h)
+	}
 }
 
 func failedAffordance(h *Runtime, workflowID string) *runAffordance {
 	return h.runs.affordance(workflowID, &runHead{Status: string(marotte.RunStatusFailed)})
 }
 
-// A retry landing between the purge's list and its delete makes the run live again, so the purge keeps it.
-func TestPurgeParentlessRuns_KeepsARunARetryRevivedAfterTheList(t *testing.T) {
-	kas := &purgedRun{id: "wf_1", parent: "sess_host", status: marotte.RunStatusFailed, updated: time.Now().Add(-time.Hour)}
-	var retryErr error
-	h, rig, arm := newPurgedRunRig(t, kas, nil, func(ctx context.Context, h *Runtime) {
-		_, retryErr = h.runs.retry(ctx, "wf_1", failedAffordance(h, "wf_1"))
-	})
-	arm()
-
-	res := h.PurgeParentlessRuns(t.Context(), 0)
-
-	if retryErr != nil {
-		t.Fatalf("Setup: the retry between the purge's list and its delete = %v, want nil", retryErr)
-	}
-	if got := kas.statusNow(); got != marotte.RunStatusRunning {
-		t.Fatalf("Setup: wf_1 is %q after the retry, want running", got)
-	}
-	if got := deletedRunIDs(rig); len(got) != 0 {
-		t.Errorf("PurgeParentlessRuns deleted %v, want nothing: the retry made wf_1 live after the purge listed it finished", got)
-	}
-	if res.Purged != 0 || res.Kept != 1 {
-		t.Errorf("PurgeParentlessRuns = purged %d kept %d, want purged 0 kept 1", res.Purged, res.Kept)
-	}
-}
-
-// KAS may still apply a retry whose answer marotte stopped waiting for, so the purge keeps a run whose retry is
-// unsettled even though it still reads failed.
-func TestPurgeParentlessRuns_KeepsARunWhoseRetryAnswerWasAbandoned(t *testing.T) {
+// shortRetryTimeout makes a lost retry give up within the test.
+func shortRetryTimeout(t *testing.T) {
+	t.Helper()
 	prev := retryTimeout
 	retryTimeout = 300 * time.Millisecond
 	t.Cleanup(func() { retryTimeout = prev })
+}
+
+// The purge judges a run on its list row and again, in full, on a fresh read under the delete's hold, so a retry
+// landing between the list and the delete decides the outcome as it would had the purge listed the run after it.
+func TestPurgeParentlessRuns_DeletesOnlyARunAFreshReadStillFindsPurgeable(t *testing.T) {
+	shortRetryTimeout(t)
+	const window = 24 * time.Hour
+	cases := []struct {
+		name         string
+		retried      retryEffect
+		retry        bool
+		answered     bool
+		deleted      bool
+		wantDeadline bool
+	}{
+		{name: "a retry revived it", retry: true, answered: true, retried: retryRevives},
+		{name: "a retry re-drove it and it failed again", retry: true, answered: true, retried: retryFailsAgain, wantDeadline: true},
+		{name: "a retry's answer was lost", retry: true, retried: retryLost, wantDeadline: true},
+		{name: "no retry", deleted: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kas := &purgedRun{
+				id: "wf_1", parent: "sess_host", status: marotte.RunStatusFailed, updated: time.Now().Add(-2 * window),
+				retried: tc.retried,
+			}
+			var retryErr error
+			var during func(context.Context, *Runtime)
+			wantVerbs := 0
+			if tc.retry {
+				during, wantVerbs = retryDuringTheScan(t, kas, &retryErr), 1
+			}
+			h, rig, arm := newPurgedRunRig(t, kas, nil, during)
+			arm()
+
+			res := h.PurgeParentlessRuns(t.Context(), window)
+
+			if got := len(rig.of(methodKiroWorkflowRetry)); got != wantVerbs || (retryErr == nil) != (tc.answered || !tc.retry) {
+				t.Fatalf("Setup: the retry sent %d verbs and answered %v, want %d verbs, answered %v", got, retryErr, wantVerbs, tc.answered)
+			}
+			var want []string
+			wantPurged, wantKept := 0, 1
+			if tc.deleted {
+				want, wantPurged, wantKept = []string{"wf_1"}, 1, 0
+			}
+			if got := deletedRunIDs(rig); !slices.Equal(got, want) {
+				t.Errorf("PurgeParentlessRuns deleted %v, want %v", got, want)
+			}
+			if res.Purged != wantPurged || res.Kept != wantKept {
+				t.Errorf("PurgeParentlessRuns = purged %d kept %d, want purged %d kept %d", res.Purged, res.Kept, wantPurged, wantKept)
+			}
+			if got := !res.NextDeadline.IsZero(); got != tc.wantDeadline {
+				t.Errorf("PurgeParentlessRuns.NextDeadline = %v, want one set %v: a keep that lapses by itself schedules the next pass",
+					res.NextDeadline, tc.wantDeadline)
+			}
+		})
+	}
+}
+
+// A lost retry keeps its run only for retryInFlightBound: past it, with KAS still showing the run unchanged, the
+// purge deletes the run.
+func TestPurgeParentlessRuns_PurgesARunOnceItsLostRetryLapses(t *testing.T) {
+	shortRetryTimeout(t)
+	const window = 24 * time.Hour
 	kas := &purgedRun{
-		id: "wf_1", parent: "sess_host", status: marotte.RunStatusFailed, updated: time.Now().Add(-time.Hour),
-		unanswered: true,
+		id: "wf_1", parent: "sess_host", status: marotte.RunStatusFailed, updated: time.Now().Add(-2 * window),
+		retried: retryLost,
 	}
 	var retryErr error
-	h, rig, arm := newPurgedRunRig(t, kas, nil, func(ctx context.Context, h *Runtime) {
-		_, retryErr = h.runs.retry(ctx, "wf_1", failedAffordance(h, "wf_1"))
-	})
+	h, rig, arm := newPurgedRunRig(t, kas, nil, retryDuringTheScan(t, kas, &retryErr))
 	arm()
-
-	res := h.PurgeParentlessRuns(t.Context(), 0)
-
-	if got := rig.of(methodKiroWorkflowRetry); len(got) != 1 || retryErr == nil {
-		t.Fatalf("Setup: the retry sent %d verbs and answered %v, want one verb whose answer never came", len(got), retryErr)
+	if first := h.PurgeParentlessRuns(t.Context(), window); first.Kept != 1 || retryErr == nil {
+		t.Fatalf("Setup: the pass with the retry lost = kept %d, retry answered %v; want kept 1 and no answer", first.Kept, retryErr)
 	}
-	if got := deletedRunIDs(rig); len(got) != 0 {
-		t.Errorf("PurgeParentlessRuns deleted %v, want nothing: KAS may still apply wf_1's abandoned retry", got)
+	lapseRetryMarks(h)
+
+	res := h.PurgeParentlessRuns(t.Context(), window)
+
+	if got := deletedRunIDs(rig); !slices.Equal(got, []string{"wf_1"}) {
+		t.Errorf("PurgeParentlessRuns past the lost retry's bound deleted %v, want [wf_1]", got)
 	}
-	if res.Purged != 0 || res.Kept != 1 {
-		t.Errorf("PurgeParentlessRuns = purged %d kept %d, want purged 0 kept 1", res.Purged, res.Kept)
+	if res.Purged != 1 || res.Kept != 0 {
+		t.Errorf("PurgeParentlessRuns past the lost retry's bound = purged %d kept %d, want purged 1 kept 0", res.Purged, res.Kept)
+	}
+}
+
+// lapseRetryMarks moves every retry mark past retryInFlightBound.
+func lapseRetryMarks(h *Runtime) {
+	m := &h.runs.retries
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for wf, at := range m.at {
+		m.at[wf] = at.Add(-retryInFlightBound)
+	}
+}
+
+// A retry mark keeps its run until KAS shows activity of the run at or after the send, to KAS's millisecond, or until
+// retryInFlightBound passes.
+func TestRetryMarks_HoldUntilTheRunMovesOrTheBoundPasses(t *testing.T) {
+	t.Parallel()
+	sentMilli := time.UnixMilli(1_800_000_000_000)
+	sent := sentMilli.Add(400 * time.Microsecond)
+	before := sent.Add(-time.Hour)
+	cases := map[string]struct {
+		last, now    time.Time
+		marked, want bool
+	}{
+		"no retry sent":                                {last: before, now: sent},
+		"KAS shows nothing since the send":             {marked: true, last: before, now: sentMilli.Add(retryInFlightBound - time.Millisecond), want: true},
+		"KAS shows activity in the send's millisecond": {marked: true, last: sentMilli, now: sent.Add(time.Second)},
+		"KAS shows activity after the send":            {marked: true, last: sent.Add(time.Second), now: sent.Add(2 * time.Second)},
+		"the bound passed":                             {marked: true, last: before, now: sentMilli.Add(retryInFlightBound)},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var m retryMarks
+			if tc.marked {
+				m.mark("wf_1", sent)
+			}
+
+			until, got := m.inFlight("wf_1", tc.last, tc.now)
+
+			if got != tc.want {
+				t.Errorf("inFlight = %v, want %v", got, tc.want)
+			}
+			if tc.want && !until.Equal(sentMilli.Add(retryInFlightBound)) {
+				t.Errorf("inFlight lapses at %v, want %v", until, sentMilli.Add(retryInFlightBound))
+			}
+		})
+	}
+}
+
+// Once KAS showed the run moving, the mark is gone: a later read of older activity does not bring it back.
+func TestRetryMarks_AnOvertakenMarkStaysGone(t *testing.T) {
+	t.Parallel()
+	sent := time.UnixMilli(1_800_000_000_000)
+	var m retryMarks
+	m.mark("wf_1", sent)
+	if _, ok := m.inFlight("wf_1", sent.Add(time.Second), sent.Add(time.Second)); ok {
+		t.Fatal("Setup: a mark KAS's activity overtook still reads in flight")
+	}
+
+	if _, ok := m.inFlight("wf_1", sent.Add(-time.Hour), sent.Add(time.Second)); ok {
+		t.Error("inFlight after the mark was overtaken = true, want false")
 	}
 }
 
@@ -298,21 +456,26 @@ func TestPurgeParentlessRuns_ARetryDuringTheDeleteIsRefused(t *testing.T) {
 	}
 }
 
-// Only an inspect that confirms the run finished lets the purge delete it.
-func TestPurgeParentlessRuns_KeepsARunItsReReadDoesNotConfirmFinished(t *testing.T) {
-	old := time.Now().Add(-30 * 24 * time.Hour)
+// Only a fresh read that finds the run finished and past the window by its own last activity lets the purge delete it.
+func TestPurgeParentlessRuns_KeepsARunItsReReadDoesNotFindPurgeable(t *testing.T) {
+	const window = 24 * time.Hour
+	old := time.Now().Add(-30 * window)
 	list := purgeRuns(t, purgeRow("wf_1", "completed", "sess_host", old))
 	cases := map[string]struct {
-		inspect json.RawMessage
-		rpcErr  *marotte.RPCError
+		inspect      json.RawMessage
+		rpcErr       *marotte.RPCError
+		wantDeadline bool
 	}{
-		"running now":           {inspect: inspectOf("wf_1", marotte.RunStatusRunning)},
-		"paused now":            {inspect: inspectOf("wf_1", marotte.RunStatusPaused)},
-		"an unknown status":     {inspect: inspectOf("wf_1", "rewinding")},
-		"no state":              {inspect: json.RawMessage(`{"workflowId":"wf_1"}`)},
-		"another run's state":   {inspect: inspectOf("wf_2", marotte.RunStatusCompleted)},
-		"an unreadable inspect": {rpcErr: &marotte.RPCError{Code: -32603, Message: "engine draining"}},
-		"an incomplete search":  {rpcErr: incompleteNotFoundErr()},
+		"running now":                 {inspect: inspectOf("wf_1", marotte.RunStatusRunning, old)},
+		"paused now":                  {inspect: inspectOf("wf_1", marotte.RunStatusPaused, old)},
+		"an unknown status":           {inspect: inspectOf("wf_1", "rewinding", old)},
+		"active within the window":    {inspect: inspectOf("wf_1", marotte.RunStatusCompleted, time.Now()), wantDeadline: true},
+		"no last activity":            {inspect: inspectOf("wf_1", marotte.RunStatusCompleted, time.Time{})},
+		"an unparsable last activity": {inspect: json.RawMessage(`{"workflowId":"wf_1","state":{"status":"completed","root":{"endedAt":"yesterday"}}}`)},
+		"no state":                    {inspect: json.RawMessage(`{"workflowId":"wf_1"}`)},
+		"another run's state":         {inspect: inspectOf("wf_2", marotte.RunStatusCompleted, old)},
+		"an unreadable inspect":       {rpcErr: &marotte.RPCError{Code: -32603, Message: "engine draining"}},
+		"an incomplete search":        {rpcErr: incompleteNotFoundErr()},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -325,49 +488,60 @@ func TestPurgeParentlessRuns_KeepsARunItsReReadDoesNotConfirmFinished(t *testing
 			}
 			h, rig := newEngineRig(t, results, rpcErrs, nil)
 
-			res := h.PurgeParentlessRuns(t.Context(), 0)
+			res := h.PurgeParentlessRuns(t.Context(), window)
 
 			if got := deletedRunIDs(rig); len(got) != 0 {
-				t.Errorf("PurgeParentlessRuns deleted %v, want nothing: the re-read did not confirm wf_1 finished", got)
+				t.Errorf("PurgeParentlessRuns deleted %v, want nothing: the re-read did not find wf_1 purgeable", got)
 			}
 			if res.Purged != 0 || res.Kept != 1 || res.Errors != 0 {
 				t.Errorf("PurgeParentlessRuns = purged %d kept %d errors %d, want purged 0 kept 1 errors 0",
 					res.Purged, res.Kept, res.Errors)
 			}
+			if got := !res.NextDeadline.IsZero(); got != tc.wantDeadline {
+				t.Errorf("PurgeParentlessRuns.NextDeadline = %v, want one set %v", res.NextDeadline, tc.wantDeadline)
+			}
 		})
 	}
 }
 
-// A run KAS no longer finds on the re-read leaves nothing to delete there, and no later list names it, so the
-// purge drops marotte's own record of it there and then.
+// A run KAS no longer finds, on the re-read or on the delete itself, leaves nothing to delete there, and no later list
+// names it, so the purge drops everything marotte keeps about it there and then.
 func TestPurgeParentlessRuns_DropsTheRecordOfARunKASNoLongerFinds(t *testing.T) {
 	list := purgeRuns(t, purgeRow("wf_1", "completed", "sess_host", time.Now().Add(-30*24*time.Hour)))
-	h, rig := newEngineRig(t, map[string]json.RawMessage{methodKiroWorkflowList: list},
-		map[string]*marotte.RPCError{methodKiroWorkflowInspect: workflowNotFoundErr()}, nil)
-	h.runs.useLog(newRunLog(t.TempDir()))
-	dir, err := h.runs.log.dir("wf_1")
-	if err != nil {
-		t.Fatalf("Setup: run directory: %v", err)
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
-	h.runs.router.seedSteps("wf_1", []string{"sess_step"})
+	for name, method := range map[string]string{
+		"on the re-read": methodKiroWorkflowInspect,
+		"on the delete":  methodKiroWorkflowDelete,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _ := newEngineRig(t, map[string]json.RawMessage{methodKiroWorkflowList: list},
+				map[string]*marotte.RPCError{method: workflowNotFoundErr()}, nil)
+			h.runs.useLog(newRunLog(t.TempDir()))
+			dir, err := h.runs.log.dir("wf_1")
+			if err != nil {
+				t.Fatalf("Setup: run directory: %v", err)
+			}
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatalf("Setup: %v", err)
+			}
+			h.runs.router.seedSteps("wf_1", []string{"sess_step"})
+			h.translator.RecordStepSession("sess_step", "wf_1", "build", "build")
 
-	res := h.PurgeParentlessRuns(t.Context(), 0)
+			res := h.PurgeParentlessRuns(t.Context(), 0)
 
-	if got := deletedRunIDs(rig); len(got) != 0 {
-		t.Errorf("PurgeParentlessRuns deleted %v in KAS, want nothing: KAS no longer has wf_1", got)
-	}
-	if res.Purged != 1 || res.Kept != 0 || res.Errors != 0 {
-		t.Errorf("PurgeParentlessRuns = purged %d kept %d errors %d, want purged 1 kept 0 errors 0",
-			res.Purged, res.Kept, res.Errors)
-	}
-	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("wf_1's run directory after the purge: stat = %v, want it removed", err)
-	}
-	if wf, ok := h.runs.router.StepRun("sess_step"); ok {
-		t.Errorf("the router still routes sess_step to %q, want wf_1's rows dropped", wf)
+			if res.Purged != 1 || res.Kept != 0 || res.Errors != 0 {
+				t.Errorf("PurgeParentlessRuns = purged %d kept %d errors %d, want purged 1 kept 0 errors 0",
+					res.Purged, res.Kept, res.Errors)
+			}
+			if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("wf_1's run directory after the purge: stat = %v, want it removed", err)
+			}
+			if wf, ok := h.runs.router.StepRun("sess_step"); ok {
+				t.Errorf("the router still routes sess_step to %q, want wf_1's rows dropped", wf)
+			}
+			if got := h.translator.StepAttribution("wf_1", "sess_step", nil).NodePath; got != "" {
+				t.Errorf("the translator still places sess_step at %q, want wf_1's step sessions forgotten", got)
+			}
+		})
 	}
 }
 

@@ -575,7 +575,6 @@ func (b *fakeBridge) setCallResult(method string, res json.RawMessage) {
 	b.callResults[method] = res
 }
 
-// setCallErr re-arms a transport failure and setCallRPCErr an in-band refusal, under the mutex.
 // setBlockOn holds every later call of method open until gate closes or the call's ctx ends, for a bridge already in use.
 func (b *fakeBridge) setBlockOn(method string, gate chan struct{}) {
 	b.mu.Lock()
@@ -587,6 +586,7 @@ func (b *fakeBridge) setBlockOn(method string, gate chan struct{}) {
 	b.blockOn[method] = gate
 }
 
+// setCallErr re-arms a transport failure and setCallRPCErr an in-band refusal, under the mutex.
 func (b *fakeBridge) setCallErr(method string, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

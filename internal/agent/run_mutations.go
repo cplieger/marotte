@@ -249,19 +249,6 @@ func (m *runMutations) ceilingFired(e *runMutation) {
 	m.settle(e)
 }
 
-// drivePending reports a write driving workflowID's run whose effect is unobserved: one whose answer was lost stays
-// pending until the ceiling's inspect settles it, whatever status that inspect reads.
-func (m *runMutations) drivePending(workflowID string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for e := range m.entries {
-		if !e.done && e.kind == mutationDrive && e.workflowID == workflowID {
-			return true
-		}
-	}
-	return false
-}
-
 // empty reports no mutation in flight or unsettled.
 func (m *runMutations) empty() bool { return m.live.Load() == 0 }
 
