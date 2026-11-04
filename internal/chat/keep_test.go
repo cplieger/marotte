@@ -612,7 +612,7 @@ func TestOpenTurn_AFailedLogOpenHoldsNoTurnAndStampsNoUse(t *testing.T) {
 	seedChat(t, s, "c1")
 	ageChat(t, s, "c1", 48*time.Hour)
 	before := readChat(t, s, "c1").UpdatedAt
-	if err := os.Mkdir(filepath.Join(s.dir, "c1", entriesFileName), 0o700); err != nil {
+	if err := os.Mkdir(filepath.Join(s.dir, "c1", EntriesFileName), 0o700); err != nil {
 		t.Fatalf("make the log unreadable: %v", err)
 	}
 	if _, err := s.OpenTurn(t.Context(), "c1", &TurnSpec{Source: marotte.TurnOpenNameWireTurnStart}, nil); err == nil {

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/slogx/capture"
 )
@@ -62,33 +63,36 @@ func writeConfig(t *testing.T, path, content string) {
 }
 
 // The run purge reads the same setting with a different zero: 0 purges a finished
-// parentless run at once, where for chats it purges nothing.
-func TestRunRetention_ReadsTheSharedSetting(t *testing.T) {
+// parentless run at once and leaves a living chat's runs, where for chats it purges
+// nothing; N days ages out every finished run, a chat's included.
+func TestRunRetention_MapsEverySetting(t *testing.T) {
 	cases := []struct {
 		desc, config string
-		window       time.Duration
-		purge        bool
+		want         agent.RunRetention
 	}{
-		{desc: "keep forever", config: `{"chat_retention_days":-1}`, purge: false},
-		{desc: "off", config: `{"chat_retention_days":0}`, window: 0, purge: true},
-		{desc: "days", config: `{"chat_retention_days":3}`, window: 3 * 24 * time.Hour, purge: true},
-		{desc: "unreadable", config: `{`, purge: false},
+		{desc: "keep forever", config: `{"chat_retention_days":-1}`, want: agent.RunRetention{}},
+		{desc: "off", config: `{"chat_retention_days":0}`, want: agent.RunRetention{Enabled: true}},
+		{
+			desc: "days", config: `{"chat_retention_days":14}`,
+			want: agent.RunRetention{Window: 14 * 24 * time.Hour, Enabled: true, ChatRuns: true},
+		},
+		{desc: "unreadable", config: `{`, want: agent.RunRetention{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
 			dir := t.TempDir()
 			writeConfig(t, filepath.Join(dir, settings.Filename), tc.config)
-			window, purge := runRetention(t.Context(), dir)
-			if purge != tc.purge || window != tc.window {
-				t.Errorf("runRetention(%s) = (%v, %v), want (%v, %v)", tc.config, window, purge, tc.window, tc.purge)
+			if got := runRetention(t.Context(), dir); got != tc.want {
+				t.Errorf("runRetention(%s) = %+v, want %+v", tc.config, got, tc.want)
 			}
 		})
 	}
 	t.Run("absent", func(t *testing.T) {
-		window, purge := runRetention(t.Context(), t.TempDir())
-		want := time.Duration(settings.DefaultChatRetentionDays) * 24 * time.Hour
-		if !purge || window != want {
-			t.Errorf("runRetention(no config.json) = (%v, %v), want (%v, true)", window, purge, want)
+		want := agent.RunRetention{
+			Window: time.Duration(settings.DefaultChatRetentionDays) * 24 * time.Hour, Enabled: true, ChatRuns: true,
+		}
+		if got := runRetention(t.Context(), t.TempDir()); got != want {
+			t.Errorf("runRetention(no config.json) = %+v, want %+v", got, want)
 		}
 	})
 }

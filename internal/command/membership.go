@@ -185,8 +185,8 @@ type Membership struct {
 	// every run that names a parent session.
 	sessions sessionClaims
 	// purgingRuns holds the runs AdmitRunPurge admitted and whose delete has not
-	// returned; OpenTab refuses them. purgingSessions counts those runs' parent
-	// sessions; CreateChatAndOpen refuses to bind one. Both guarded by mu.
+	// returned; OpenTab refuses them. purgingSessions counts the parent sessions of
+	// those no chat claimed; CreateChatAndOpen refuses to bind one. Both guarded by mu.
 	purgingRuns     map[string]struct{}
 	purgingSessions map[string]int
 	// detach is membershipDeps.Detach.
@@ -984,11 +984,12 @@ var errRunPurgeKept = errors.New("the run is shown, claimed or in a chat's teard
 
 // AdmitRunPurge answers whether the run purge may delete workflowID, launched from parentSessionID,
 // refusing with *ArrangementUnreadError while the tab arrangement is unread, and otherwise while a tab
-// shows the run, while any chat's chain holds that session or it is in a chat's retention teardown,
-// or when the chats cannot all be read. On nil both are marked purging until the caller runs done,
-// so OpenTab and CreateChatAndOpen refuse them. Checks and marks share mu, so nothing commits
+// shows the run or its session is in a chat's retention teardown. Unless owned (the purge ages out a
+// chat's runs too), it also refuses while any chat's chain holds that session or the chats cannot all
+// be read. On nil the run, and an unowned run's session, are marked purging until the caller runs
+// done, so OpenTab and CreateChatAndOpen refuse them. Checks and marks share mu, so nothing commits
 // between the decision and the delete.
-func (m *Membership) AdmitRunPurge(ctx context.Context, workflowID, parentSessionID string) (done func(), refused error) {
+func (m *Membership) AdmitRunPurge(ctx context.Context, workflowID, parentSessionID string, owned bool) (done func(), refused error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.tabs != nil {
@@ -996,19 +997,22 @@ func (m *Membership) AdmitRunPurge(ctx context.Context, workflowID, parentSessio
 			return nil, &ArrangementUnreadError{Aside: aside}
 		}
 	}
-	if m.runTabOpen(workflowID) || !m.sessionUnclaimed(ctx, parentSessionID) ||
+	if m.runTabOpen(workflowID) || (!owned && !m.sessionUnclaimed(ctx, parentSessionID)) ||
 		(parentSessionID != "" && m.chats.SessionInTeardown(parentSessionID)) {
 		return nil, errRunPurgeKept
 	}
 	m.purgingRuns[workflowID] = struct{}{}
-	if parentSessionID != "" {
+	// A claimed session is already bound, so a create binding it cannot make the run look claimed; marking it would
+	// only refuse a living chat's fork or resume.
+	markSession := !owned && parentSessionID != ""
+	if markSession {
 		m.purgingSessions[parentSessionID]++
 	}
 	return func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		delete(m.purgingRuns, workflowID)
-		if parentSessionID == "" {
+		if !markSession {
 			return
 		}
 		m.purgingSessions[parentSessionID]--

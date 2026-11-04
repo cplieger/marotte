@@ -133,12 +133,12 @@ func TestEntryLog_AMissingLogIsAChatOfZeroTurns(t *testing.T) {
 	case count != 0 || last != "":
 		t.Errorf("counters are (%d, %q), want (0, \"\")", count, last)
 	}
-	if _, err := os.Stat(filepath.Join(f.root, entriesFileName)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(f.root, EntriesFileName)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("stat of the log answered %v, want it absent until the first append", err)
 	}
 
 	turn := f.prompt("first")
-	if _, err := os.Stat(filepath.Join(f.root, entriesFileName)); err != nil {
+	if _, err := os.Stat(filepath.Join(f.root, EntriesFileName)); err != nil {
 		t.Errorf("the first turn open did not create the log: %v", err)
 	}
 	if got, _ := counters(f.log); got != 1 {
@@ -219,11 +219,11 @@ func TestEntryLog_ATornTailIsDroppedAndSeqContinues(t *testing.T) {
 	turn := f.prompt("hello")
 	f.append(turn, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "one"})
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
-	whole, err := os.ReadFile(filepath.Join(f.root, entriesFileName))
+	whole, err := os.ReadFile(filepath.Join(f.root, EntriesFileName))
 	if err != nil {
 		t.Fatalf("read the log: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(f.root, entriesFileName),
+	if err := os.WriteFile(filepath.Join(f.root, EntriesFileName),
 		append(whole, []byte(`{"id":"torn","turn":"`)...), fileMode); err != nil {
 		t.Fatalf("plant a torn tail: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestEntryLog_ATornTailIsDroppedAndSeqContinues(t *testing.T) {
 	if got := mustRange(t, f, turn); got[len(got)-1].Seq != 3 {
 		t.Errorf("the append after a dropped tail took seq %d, want 3", got[len(got)-1].Seq)
 	}
-	if got := fileHead(t, filepath.Join(f.root, entriesFileName), len(whole)); got != string(whole) {
+	if got := fileHead(t, filepath.Join(f.root, EntriesFileName), len(whole)); got != string(whole) {
 		t.Error("the surviving bytes are not the prefix that was there before the tail was planted")
 	}
 }
@@ -248,7 +248,7 @@ func TestEntryLog_AnUnreadableCompleteLineIsCopiedAsideAndDropped(t *testing.T) 
 	turn := f.prompt("hello")
 	f.append(turn, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "one"})
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
-	path := filepath.Join(f.root, entriesFileName)
+	path := filepath.Join(f.root, EntriesFileName)
 	whole, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read the log: %v", err)
@@ -271,7 +271,7 @@ func TestEntryLog_AnUnreadableCompleteLineIsCopiedAsideAndDropped(t *testing.T) 
 	if !bytes.HasPrefix(live, whole[:first]) || bytes.Contains(live, []byte("{not an entry}")) {
 		t.Errorf("the live log is %q, want the line before the corrupt one and nothing from it on", live)
 	}
-	aside, err := asidefile.Find(f.root, entriesFileName)
+	aside, err := asidefile.Find(f.root, EntriesFileName)
 	if err != nil || aside == "" {
 		t.Fatalf("no aside of the log: %q, %v", aside, err)
 	}
@@ -285,7 +285,7 @@ func TestEntryLog_AReadErrorFailsTheOpenAndKeepsTheLog(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("hello")
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
-	path := filepath.Join(f.root, entriesFileName)
+	path := filepath.Join(f.root, EntriesFileName)
 	whole, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read the log: %v", err)
@@ -301,7 +301,7 @@ func TestEntryLog_AReadErrorFailsTheOpenAndKeepsTheLog(t *testing.T) {
 	if got, _ := os.ReadFile(path); !bytes.Equal(got, whole) {
 		t.Errorf("a read error changed the log: %d bytes left of %d", len(got), len(whole))
 	}
-	if aside, _ := asidefile.Find(f.root, entriesFileName); aside != "" {
+	if aside, _ := asidefile.Find(f.root, EntriesFileName); aside != "" {
 		t.Errorf("a read error left an aside %q", aside)
 	}
 }
@@ -688,14 +688,14 @@ func TestEntryLog_AWriteErrorRefusesFurtherAppends(t *testing.T) {
 func TestEntryLog_ALineOverThePerEntryCapIsRefused(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("hello")
-	before := fileHead(t, filepath.Join(f.root, entriesFileName), 0)
+	before := fileHead(t, filepath.Join(f.root, EntriesFileName), 0)
 
 	oversize := entryOf(turn, "", "say-huge", marotte.EntryKindText,
 		marotte.EntryText{Text: strings.Repeat("x", maxEntryLineBytes+1)})
 	if err := f.log.Append(t.Context(), oversize); !errors.Is(err, errEntryLineTooLong) {
 		t.Fatalf("an oversize line answered %v, want the per-entry cap refusal", err)
 	}
-	if got := fileHead(t, filepath.Join(f.root, entriesFileName), 0); got != before {
+	if got := fileHead(t, filepath.Join(f.root, EntriesFileName), 0); got != before {
 		t.Error("the refused line changed the log")
 	}
 	f.append(turn, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "ordinary"})
@@ -804,7 +804,7 @@ func TestEntryLog_ARewriteMissingATurnOpenIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the whole log: %v", err)
 	}
-	path := filepath.Join(f.root, entriesFileName)
+	path := filepath.Join(f.root, EntriesFileName)
 	before := fileHead(t, path, 0)
 	// The counters are all a rewrite writes on the header.
 	turnCount := f.readHeader().TurnCount

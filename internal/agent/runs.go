@@ -62,6 +62,10 @@ type Runs struct {
 	unconfirmed unconfirmedSends
 	// life admits every step-session mutation against a Delete (run_lifecycle.go).
 	life runLifecycle
+	// purgeFailed holds the runs whose finished-run purge delete failed recently (run_purge.go).
+	purgeFailed purgeFailures
+	// logSweep is the orphaned run-log sweep's poison set (run_log_sweep.go).
+	logSweep logSweepState
 	// recorded is the keep-state reconcile's runs/ attribution, which RunsParentedBy reads (run_owner.go).
 	recorded recordedRuns
 	// marks throttles the run keep marks' progress refresh and keeps ended unattributed runs (run_keepstate.go).

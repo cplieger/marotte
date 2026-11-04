@@ -1321,11 +1321,15 @@ func isStatusRefusal(err error) bool {
 	return ok
 }
 
+// errRunListPartial is a workflow/list reply with no runs array: it proves no run absent, so it is no empty list.
+var errRunListPartial = errors.New("the run list reply carries no runs array")
+
 // listRaw lists runs with their raw parent session ids, for callers that scope by
-// session chain rather than by resolved chat.
+// session chain rather than by resolved chat. A reply with no runs array is errRunListPartial.
 func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
+	// workspacePaths is a required array (methodKiroWorkflowList).
 	raw, err := rs.engine.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
 		map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}})
 	if err != nil {
@@ -1335,7 +1339,10 @@ func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 	if err := json.Unmarshal(raw, &list); err != nil {
 		return nil, err
 	}
-	return list.Runs, nil
+	if list.Runs == nil {
+		return nil, errRunListPartial
+	}
+	return *list.Runs, nil
 }
 
 // deleteForSessions deletes every run these sessions launched, whatever its status: KAS refuses a session
