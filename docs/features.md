@@ -110,7 +110,7 @@ A schedule whose workflow file is gone stays on the **Workflows** panel, marked 
 
 If the agent engine is too busy to start a scheduled run, marotte tries again, waiting longer each time, up to 8 minutes between tries. Meanwhile the schedule's row says the run is waiting on the agent engine. If the schedule's next run time comes first, the row records the missed run as skipped because the engine was busy, and the next run starts on time.
 
-A workflow step's file tools reach the same folders as a chat's: `/workspace`, `/uploads` for reading, and the [additional directories](configuration.md#folders-the-agent-can-use-beyond-workspace) you grant. A step that reads another path, such as `/config/home/.kiro/sessions`, fails with `path escapes workspace`, so write that step to read the file with a shell command.
+A workflow step's file tools reach the same folders as a chat's: `/workspace`, `/uploads` for reading, and the [additional directories](configuration.md#folders-the-agent-can-use-beyond-workspace) you grant. A step can also read the edit snapshot kiro-cli writes for its own run when a workflow is edited mid-run. A step that reads any other path, such as another file under `/config/home/.kiro/sessions`, fails with `path escapes workspace`, so write that step to read the file with a shell command.
 
 A `command` or `background-process` watch runs its command outside any tool call, so no `PreToolUse` hook sees it. A hook that blocks a shell command, such as a `git push`, does not stop the same command in a watch's command line. Put a command a hook must check in a step instead.
 
