@@ -12,6 +12,10 @@ import (
 // own: with no settings sent there is no settings key.
 const settingsKey = "settings"
 
+// ClientName is the clientInfo.name marotte sends on initialize. kiro-cli keys its per-client default
+// acp engine on it.
+const ClientName = "marotte"
+
 // Capabilities returns the _meta.kiro map for the initialize handshake, ready
 // to sit under clientCapabilities._meta.kiro.
 //

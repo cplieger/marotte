@@ -161,7 +161,7 @@ func TestResolveEngine_CarriesTheIgnoreListResolver(t *testing.T) {
 		newTestChatStore(), WithConfigDir(dir))
 	t.Cleanup(func() { shutdownHub(t, h) })
 
-	opts := h.resolveEngine(t.Context(), "/fake/kiro-cli-chat").opts
+	opts := h.resolveEngine(t.Context(), "/fake/kiro-cli").opts
 	if opts.IgnoreFiles == nil {
 		t.Fatal("EngineOpts.IgnoreFiles = nil, so the engine starts enforcing nothing")
 	}

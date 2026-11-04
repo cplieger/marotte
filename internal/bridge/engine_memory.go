@@ -130,18 +130,18 @@ func (e *Engine) recordMemory(w *memWatch, pid int, m procMemory) {
 	}
 }
 
-// engineLeader returns the node engine's pid: the leader of a noted group that is the sidecar's own child. Groups are
-// noted again when none qualifies, since the engine may not have spawned yet at the first look.
+// engineLeader returns the node engine's pid: the leader of a noted group that is the kiro-cli process's own child.
+// Groups are noted again when none qualifies, since the engine may not have spawned yet at the first look.
 func (e *Engine) engineLeader() (int, bool) {
 	if e.cmd == nil || e.cmd.Process == nil {
 		return 0, false
 	}
-	sidecar := e.cmd.Process.Pid
-	if pid, ok := e.groupLedBy(sidecar); ok {
+	cli := e.cmd.Process.Pid
+	if pid, ok := e.groupLedBy(cli); ok {
 		return pid, true
 	}
 	e.noteEngineGroups()
-	return e.groupLedBy(sidecar)
+	return e.groupLedBy(cli)
 }
 
 func (e *Engine) groupLedBy(parent int) (int, bool) {

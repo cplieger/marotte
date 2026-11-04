@@ -153,7 +153,7 @@ func newEngineOwner(source EngineSource, lt *lifetime, hooks *engineHooks) *engi
 	}
 	o.since = o.now()
 	o.boot = o.since.UnixMilli()
-	o.unavailable = source.Installed() == nil && source.ChatPath() == ""
+	o.unavailable = source.Installed() == nil && source.CLIPath() == ""
 	if o.unavailable {
 		o.state = marotte.EngineDown
 	}
@@ -252,7 +252,7 @@ func (o *engineOwner) backoff(ctx context.Context, attempt int) bool {
 
 // spawn starts one generation. Start's failure is returned with its handle, which the caller reaps.
 func (o *engineOwner) spawn(ctx context.Context) (engineHandle, uint64, error) {
-	path := o.source.ChatPath()
+	path := o.source.CLIPath()
 	o.mu.Lock()
 	o.gen++
 	gen := o.gen
@@ -605,7 +605,7 @@ func (o *engineOwner) stop(ctx context.Context) error {
 
 // reconcile recomputes restart-pending against the running engine's spawn and restarts at once when quiescent.
 func (o *engineOwner) reconcile(ctx context.Context) {
-	path := o.source.ChatPath()
+	path := o.source.CLIPath()
 	o.mu.Lock()
 	spawned := o.spawnedWith
 	o.mu.Unlock()

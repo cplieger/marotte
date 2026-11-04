@@ -21,14 +21,14 @@ const maxNodeBinary = 512 << 20
 // nodeReleaseRe is the release URL every official node binary carries (process.release.sourceUrl).
 var nodeReleaseRe = regexp.MustCompile(`https://nodejs\.org/download/release/(v[0-9]+\.[0-9]+\.[0-9]+)/node-v`)
 
-// bundledNode is the node a kiro-cli-chat embeds: its version and sha256.
+// bundledNode is the node a kiro-cli binary embeds: its version and sha256.
 type bundledNode struct{ version, sha256 string }
 
-// embeddedNode reads the node out of the chat sidecar's bytes without running it: the zstd frame that decodes to an
+// embeddedNode reads the node out of the kiro-cli binary's bytes without running it: the zstd frame that decodes to an
 // ELF whose sha256 is the hash kiro-cli stores before KIRO_KAS_NODE_PATH (kasnode.EmbeddedNodeHash), the hash
 // marotte's launcher checks the extracted node against.
-func embeddedNode(chat []byte) (bundledNode, error) {
-	want, err := kasnode.EmbeddedNodeHash(bytes.NewReader(chat))
+func embeddedNode(cli []byte) (bundledNode, error) {
+	want, err := kasnode.EmbeddedNodeHash(bytes.NewReader(cli))
 	if err != nil {
 		return bundledNode{}, fmt.Errorf("no node sha256 before a %s string (%w): kiro-cli moved the hash or stopped reading the variable, so marotte's launcher cannot verify the node or name itself",
 			kasnode.NodePathVar, err)
@@ -39,12 +39,12 @@ func embeddedNode(chat []byte) (bundledNode, error) {
 	}
 	defer dec.Close()
 	for off := 0; ; off++ {
-		i := bytes.Index(chat[off:], zstdMagic)
+		i := bytes.Index(cli[off:], zstdMagic)
 		if i < 0 {
 			return bundledNode{}, fmt.Errorf("no embedded ELF frame has the sha256 %s stored before %s", want, kasnode.NodePathVar)
 		}
 		off += i
-		node, ok := decodeELF(dec, chat[off:])
+		node, ok := decodeELF(dec, cli[off:])
 		if !ok {
 			continue
 		}
@@ -103,7 +103,7 @@ On Node 24 or later drop --experimental-async-context-frame from kasnode.Flags: 
 	}
 }
 
-// TestEmbeddedNode pins the sidecar's node reader on built bytes.
+// TestEmbeddedNode pins the binary's node reader on built bytes.
 func TestEmbeddedNode(t *testing.T) {
 	enc, err := zstd.NewWriter(nil)
 	if err != nil {
@@ -114,11 +114,11 @@ func TestEmbeddedNode(t *testing.T) {
 	other := []byte("\x7fELF bun")
 	sum := sha256.Sum256(node)
 	hash := hex.EncodeToString(sum[:])
-	chat := func(parts ...string) []byte { return []byte(strings.Join(parts, "padding")) }
-	frames := []string{"\x7fELF chat", string(zstdMagic) + "stray", string(enc.EncodeAll(other, nil)), string(enc.EncodeAll(node, nil))}
+	cli := func(parts ...string) []byte { return []byte(strings.Join(parts, "padding")) }
+	frames := []string{"\x7fELF kiro-cli", string(zstdMagic) + "stray", string(enc.EncodeAll(other, nil)), string(enc.EncodeAll(node, nil))}
 
 	t.Run("the frame whose hash kiro-cli stores", func(t *testing.T) {
-		got, err := embeddedNode(chat(append(frames, hash+kasnode.NodePathVar+"KIRO_KAS_SERVER_PATH")...))
+		got, err := embeddedNode(cli(append(frames, hash+kasnode.NodePathVar+"KIRO_KAS_SERVER_PATH")...))
 		if err != nil || got != (bundledNode{version: "v22.23.4", sha256: hash}) {
 			t.Errorf("embeddedNode = %+v, %v; want v22.23.4 and its hash", got, err)
 		}
@@ -126,17 +126,17 @@ func TestEmbeddedNode(t *testing.T) {
 	otherSum := sha256.Sum256([]byte("not embedded"))
 	for _, tc := range []struct {
 		name string
-		chat []byte
+		cli  []byte
 	}{
-		{"no KIRO_KAS_NODE_PATH", chat(append(frames, hash+"KIRO_KAS_SERVER_PATH")...)},
-		{"a hash no frame has", chat(append(frames, hex.EncodeToString(otherSum[:])+kasnode.NodePathVar)...)},
-		{"a node with no release URL", chat(string(enc.EncodeAll(other, nil)), func() string {
+		{"no KIRO_KAS_NODE_PATH", cli(append(frames, hash+"KIRO_KAS_SERVER_PATH")...)},
+		{"a hash no frame has", cli(append(frames, hex.EncodeToString(otherSum[:])+kasnode.NodePathVar)...)},
+		{"a node with no release URL", cli(string(enc.EncodeAll(other, nil)), func() string {
 			s := sha256.Sum256(other)
 			return hex.EncodeToString(s[:]) + kasnode.NodePathVar
 		}())},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got, err := embeddedNode(tc.chat); err == nil {
+			if got, err := embeddedNode(tc.cli); err == nil {
 				t.Errorf("embeddedNode = %+v, nil; want an error", got)
 			}
 		})

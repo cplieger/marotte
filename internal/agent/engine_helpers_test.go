@@ -59,7 +59,7 @@ func fakeEngineOf(factory sessionFactory, lane *fakeBridge) *fakeEngineSource {
 	return &fakeEngineSource{factory: factory, lane: lane}
 }
 
-func (*fakeEngineSource) ChatPath() string              { return "/fake/kiro-cli-chat" }
+func (*fakeEngineSource) CLIPath() string               { return "/fake/kiro-cli" }
 func (*fakeEngineSource) Installed() <-chan struct{}    { return nil }
 func (*fakeEngineSource) Env() []string                 { return nil }
 func (*fakeEngineSource) EnvAllow() map[string]struct{} { return nil }
