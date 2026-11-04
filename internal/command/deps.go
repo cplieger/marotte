@@ -689,8 +689,9 @@ type SteerQueue interface {
 	EndOp(chatID marotte.ChatID, opID string) (reroute bool)
 	OnSteerJob(run func(SteerJob))
 	// SetSteerLead records the send-now arrow's row, sent first; undo takes it
-	// back when the stop could not be sent.
-	SetSteerLead(chatID marotte.ChatID, key string) (undo func())
+	// back when the stop could not be sent. waiting is false, and nothing is
+	// recorded, once no live row has the key: sent, read or removed.
+	SetSteerLead(chatID marotte.ChatID, key string) (undo func(), waiting bool)
 }
 
 // SteerJobs is the record as the close pipeline and the prompt's drain drive it.

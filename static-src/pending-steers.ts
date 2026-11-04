@@ -398,8 +398,14 @@ async function sendSteerNow(steerID: string): Promise<void> {
       ? "Stopping the turn and sending this message"
       : `Stopping the turn and sending ${String(waiting)} messages`,
   );
-  await cancelTurn.dispatch({ chatID, lead: steerID }).outcome;
+  const outcome = await cancelTurn.dispatch({ chatID, lead: steerID }).outcome;
+  if (outcome.status === "success" && outcome.value) {
+    announce(NOTHING_STOPPED);
+  }
 }
+
+/** Replaces a stop announcement the server's skip made false: the turn runs on. */
+const NOTHING_STOPPED = "The turn keeps running: the message already left the queue";
 
 /** The statuses that say the delete did not happen and will not: the row still stands, or the
  *  agent already has the words. Anything else (no reply, a 500) may have deleted it, so the
@@ -693,6 +699,9 @@ async function sendQueuedRowNow(messageID: string): Promise<void> {
     isBusy(chatID) ? "Stopping the turn and sending this follow-up" : "Sending this follow-up",
   );
   const outcome = await sendQueuedNow.dispatch({ chatID, messageID }).outcome;
+  if (outcome.status === "success" && outcome.value) {
+    announce(NOTHING_STOPPED);
+  }
   if (outcome.status === "error") {
     const status = outcome.error.status ?? 0;
     reportRefusal(

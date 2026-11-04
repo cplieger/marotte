@@ -290,6 +290,20 @@ func sendNow(t *testing.T, q *fakeQueue, d *cancelDeps, payload string) error {
 	return err
 }
 
+// answeredSkipped reports whether a command's answer carries the skipped flag the
+// client reads to take back a stop that stopped nothing.
+func answeredSkipped(t *testing.T, got any) bool {
+	t.Helper()
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Skipped bool `json:"skipped"`
+	}
+	return json.Unmarshal(raw, &body) == nil && body.Skipped
+}
+
 func queueOf(rows ...marotte.QueuedPrompt) *fakeQueue {
 	return &fakeQueue{chat: &marotte.Chat{ID: "c1", QueuedPrompts: rows}}
 }
@@ -307,8 +321,13 @@ func TestSendQueuedNow_MarksTheRowThenStopsTheRunningTurn(t *testing.T) {
 	d := newCancelDeps(b)
 	q := queueOf(marotte.QueuedPrompt{ID: "m-q1", Text: "a"}, marotte.QueuedPrompt{ID: "m-q2", Text: "b"}, marotte.QueuedPrompt{ID: "m-q3", Text: "c"})
 
-	if err := sendNow(t, q, d, `{"message_id":"m-q3"}`); err != nil {
+	cmd := &marotte.ClientCommand{Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(`{"message_id":"m-q3"}`)}
+	got, err := cmdSendQueuedNow(t.Context(), sendNowRoles(q, d), d, d, d, cmd)
+	if err != nil {
 		t.Fatalf("send_queued_now = %v", err)
+	}
+	if answeredSkipped(t, got) {
+		t.Errorf("answer = %v, want no skipped flag on a stop that stopped the turn", got)
 	}
 
 	if got := rowIDs(q.chat.QueuedPrompts); !slices.Equal(got, []string{"m-q3", "m-q1", "m-q2"}) {
@@ -374,17 +393,19 @@ func TestSendQueuedNow_AnEmptyIDIsBadRequest(t *testing.T) {
 	}
 }
 
-// stopOpensRow is a turn that closes on its own as the stop is requested, its drain
-// opening the marked row's turn.
-type stopOpensRow struct {
-	*cancelDeps
+// drainOpensRow is a turn that closed on its own after the mark, its drain opening
+// the marked row's turn under the steer lock, which the stop's next take waits out.
+type drainOpensRow struct {
+	*stubSteerQueue
 	q  *fakeQueue
 	id string
 }
 
-func (s stopOpensRow) RequestStop(chatID marotte.ChatID, cause marotte.TurnStopCause) *TurnStop {
-	s.q.sending = map[string]bool{s.id: true}
-	return s.cancelDeps.RequestStop(chatID, cause)
+func (s *drainOpensRow) LockSteerOps(ctx context.Context, chatID marotte.ChatID) (func(), error) {
+	if slices.ContainsFunc(s.q.chat.QueuedPrompts, func(r marotte.QueuedPrompt) bool { return r.ID == s.id && r.Next }) {
+		s.q.sending = map[string]bool{s.id: true}
+	}
+	return s.stubSteerQueue.LockSteerOps(ctx, chatID)
 }
 
 // The reader asked for that row to go next, and it went: stopping now would cancel it.
@@ -392,17 +413,23 @@ func TestSendQueuedNow_ARowWhoseTurnOpenedBeforeTheStopIsNotCancelled(t *testing
 	b := &cancelBridge{}
 	d := newCancelDeps(b)
 	q := queueOf(marotte.QueuedPrompt{ID: "m-q1", Text: "a"}, marotte.QueuedPrompt{ID: "m-q2", Text: "b"})
+	roles := sendNowRoles(q, d)
+	roles.queue = &drainOpensRow{stubSteerQueue: newStubSteerQueue(), q: q, id: "m-q2"}
 	cmd := &marotte.ClientCommand{Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(`{"message_id":"m-q2"}`)}
 
-	if _, err := cmdSendQueuedNow(t.Context(), sendNowRoles(q, d), d, d, stopOpensRow{d, q, "m-q2"}, cmd); err != nil {
+	got, err := cmdSendQueuedNow(t.Context(), roles, d, d, d, cmd)
+	if err != nil {
 		t.Fatalf("send_queued_now = %v, want success", err)
 	}
 
+	if !answeredSkipped(t, got) {
+		t.Errorf("answer = %v, want skipped, so the client takes back its stop", got)
+	}
 	if len(b.notified) != 0 || len(d.scopes) != 0 || d.killed != 0 {
 		t.Errorf("notifications = %v, permission scopes = %v, kills = %d; want nothing cancelled", b.notified, d.scopes, d.killed)
 	}
-	if !slices.Equal(d.stopSteps, []string{"request", "release"}) {
-		t.Errorf("stop steps = %q, want the stop requested and released with no grace armed", d.stopSteps)
+	if len(d.stopSteps) != 0 {
+		t.Errorf("stop steps = %q, want no stop requested, so the row's turn is not marked stopped", d.stopSteps)
 	}
 }
 

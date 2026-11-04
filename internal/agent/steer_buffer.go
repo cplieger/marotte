@@ -1068,13 +1068,13 @@ func (r *steerRecords) stepOpen(key marotte.ChatID) bool {
 }
 
 // setLead records the send-now arrow's row, sent first until it is sent or
-// terminal.
-func (r *steerRecords) setLead(chatID marotte.ChatID, key string) (undo func()) {
+// terminal; a key no live row has records nothing and answers waiting false.
+func (r *steerRecords) setLead(chatID marotte.ChatID, key string) (undo func(), waiting bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec := r.record(chatID, false)
-	if rec == nil || rec.gone || key == "" {
-		return func() {}
+	if rec == nil || rec.gone || key == "" || rec.row(key) == nil {
+		return func() {}, false
 	}
 	rec.lead = key
 	return func() {
@@ -1083,7 +1083,7 @@ func (r *steerRecords) setLead(chatID marotte.ChatID, key string) (undo func()) 
 		if rec.lead == key {
 			rec.lead = ""
 		}
-	}
+	}, true
 }
 
 // needsPostLoadClear: KAS may hold copies this record also holds, nothing bound is
