@@ -526,7 +526,7 @@ var writeStall = 30 * time.Second
 var stallProbeAfter = time.Second
 
 // writeStallCeiling caps how long one chunk may wait on an engine that burns CPU but never drains: a livelock. Equal to
-// replayBudget, the longest any one call may take. A var for tests.
+// replayBudget, the longest budget of any one call. A var for tests.
 var writeStallCeiling = 300 * time.Second
 
 // writeFrame serialises stdin writes, refuses each once the read loop exited (readerExited, loaded under writeMu so

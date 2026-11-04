@@ -2,7 +2,6 @@ package bridge
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -58,11 +57,3 @@ func (e *Engine) engineCPU() (uint64, bool) {
 	}
 	return readCPUTicks(pid)
 }
-
-// StallAware is context.WithTimeout(ctx, d) for a call to this engine.
-func (e *Engine) StallAware(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, d)
-}
-
-// Stalled reports whether the engine is silent but working.
-func (e *Engine) Stalled() bool { return false }

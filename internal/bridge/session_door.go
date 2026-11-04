@@ -165,8 +165,8 @@ func (s *Session) failDoor(phase string, err error) {
 // NewSession creates a session under an id it mints (ids.NewSessionID) and sends as `_meta.kiro.overrideSessionId`.
 // attach runs once the lane is registered and before session/new is written, so a consumer reads every frame KAS
 // sends for the session, the requests during creation included, which must be answered for the door to finish.
-// handshakeBudget bounds the door on top of ctx. A reply that comes after the door gave up is still acted on: the
-// session KAS created is closed and its files reaped, never leaked.
+// handshakeBudget bounds the door on top of ctx (StallAware). A reply that comes after the door gave up is still
+// acted on: the session KAS created is closed and its files reaped, never leaked.
 func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(*Session)) (*Session, error) {
 	if o.Model != "" && !validIdent(o.Model) {
 		return nil, fmt.Errorf("invalid model identifier: %q", o.Model)
@@ -180,7 +180,7 @@ func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach 
 	if attach != nil {
 		attach(s)
 	}
-	dctx, cancel := context.WithTimeout(ctx, handshakeBudget)
+	dctx, cancel := e.StallAware(ctx, handshakeBudget)
 	defer cancel()
 	start := time.Now()
 	params := withClientSteering(withSessionChoices(s.withSessionMeta(withAdditionalDirectories(map[string]any{
@@ -280,8 +280,8 @@ func (e *Engine) closeAndReap(id marotte.SessionID) {
 }
 
 // LoadSession loads o.SessionID with a lane registered under it first, attach running before the write as
-// NewSession's does. replayBudget bounds the door on top of ctx: KAS replays the transcript before the reply. A reply
-// that comes after the door gave up closes the session unless a newer handle for the id exists.
+// NewSession's does. replayBudget bounds the door on top of ctx (StallAware): KAS replays the transcript before the
+// reply. A reply that comes after the door gave up closes the session unless a newer handle for the id exists.
 func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(*Session)) (*Session, error) {
 	id := marotte.SessionID(o.SessionID)
 	if !ids.ValidSessionID(o.SessionID) {
@@ -297,7 +297,7 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 	if attach != nil {
 		attach(s)
 	}
-	dctx, cancel := context.WithTimeout(ctx, replayBudget)
+	dctx, cancel := e.StallAware(ctx, replayBudget)
 	defer cancel()
 	start := time.Now()
 	// CallAt: KAS replays the session as notifications before the result, so the caller needs its position.

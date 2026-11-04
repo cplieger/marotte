@@ -322,8 +322,8 @@ func handshakeTimeout(err error, phase string, budget time.Duration) error {
 }
 
 // Start launches the engine process and initializes the connection; no session verb runs here. ctx bounds the
-// handshake, capped by handshakeBudget; o.Lifetime bounds the process and is required. On an error the caller owns
-// the teardown: Stop, then wait on Done.
+// handshake, capped by handshakeBudget (StallAware); o.Lifetime bounds the process and is required. On an error the
+// caller owns the teardown: Stop, then wait on Done.
 func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 	if o.Lifetime == nil {
 		return errors.New("bridge: EngineOpts.Lifetime is required: it bounds the kiro-cli process, and every default for it is a process nothing can cancel")
@@ -352,7 +352,7 @@ func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 		return err
 	}
 	start := time.Now()
-	hctx, cancel := context.WithTimeout(ctx, handshakeBudget)
+	hctx, cancel := e.StallAware(ctx, handshakeBudget)
 	defer cancel()
 	e.resolveTerminalTimeout(hctx, o.TerminalTimeout)
 	if err := e.initialize(hctx); err != nil {
