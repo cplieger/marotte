@@ -155,7 +155,7 @@ func fired(t *testing.T) (*Store, Entry) {
 	if err := st.Put(t.Context(), &e); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if err := st.RecordStart(t.Context(), Run{ScheduleID: e.ID(), WorkflowID: "wf-1"}); err != nil {
+	if err := st.RecordStart(t.Context(), Run{ScheduleID: e.ID(), ScheduleLife: e.Life, WorkflowID: "wf-1"}); err != nil {
 		t.Fatalf("RecordStart: %v", err)
 	}
 	return st, e
@@ -167,7 +167,7 @@ func TestStore_RecordEndingFillsOnlyItsOwnStartedRun(t *testing.T) {
 	done := Outcome{Status: StatusCompleted}
 	t.Run("its own started run", func(t *testing.T) {
 		st, e := fired(t)
-		if err := st.RecordEnding(t.Context(), Run{ScheduleID: e.ID(), WorkflowID: "wf-1"}, done); err != nil {
+		if err := st.RecordEnding(t.Context(), Run{ScheduleID: e.ID(), ScheduleLife: e.Life, WorkflowID: "wf-1"}, done); err != nil {
 			t.Fatalf("RecordEnding: %v", err)
 		}
 		if got := st.List()[0]; got.LastStatus != StatusCompleted {
@@ -176,7 +176,7 @@ func TestStore_RecordEndingFillsOnlyItsOwnStartedRun(t *testing.T) {
 	})
 	t.Run("a failure already recorded", func(t *testing.T) {
 		st, e := fired(t)
-		run := Run{ScheduleID: e.ID(), WorkflowID: "wf-1"}
+		run := Run{ScheduleID: e.ID(), ScheduleLife: e.Life, WorkflowID: "wf-1"}
 		denial := Outcome{Status: StatusFailed, Reason: "needed approval for Write with nobody watching"}
 		if err := st.RecordOutcome(t.Context(), run, denial); err != nil {
 			t.Fatalf("RecordOutcome: %v", err)
@@ -190,7 +190,7 @@ func TestStore_RecordEndingFillsOnlyItsOwnStartedRun(t *testing.T) {
 	})
 	t.Run("another run", func(t *testing.T) {
 		st, e := fired(t)
-		if err := st.RecordEnding(t.Context(), Run{ScheduleID: e.ID(), WorkflowID: "wf-0"}, done); err != nil {
+		if err := st.RecordEnding(t.Context(), Run{ScheduleID: e.ID(), ScheduleLife: e.Life, WorkflowID: "wf-0"}, done); err != nil {
 			t.Fatalf("RecordEnding: %v", err)
 		}
 		if got := st.List()[0]; got.LastStatus != statusStarted {
@@ -204,7 +204,7 @@ func TestStore_RecordEndingFillsOnlyItsOwnStartedRun(t *testing.T) {
 func TestStore_RecordOutcomeIgnoresASupersededRun(t *testing.T) {
 	st, e := fired(t)
 	late := Outcome{Status: StatusUnknown, Reason: "no terminal signal"}
-	if err := st.RecordOutcome(t.Context(), Run{ScheduleID: e.ID(), WorkflowID: "wf-0"}, late); err != nil {
+	if err := st.RecordOutcome(t.Context(), Run{ScheduleID: e.ID(), ScheduleLife: e.Life, WorkflowID: "wf-0"}, late); err != nil {
 		t.Fatalf("RecordOutcome: %v", err)
 	}
 	if got := st.List()[0]; got.LastStatus != statusStarted {
@@ -216,13 +216,13 @@ func TestStore_RecordOutcomeIgnoresASupersededRun(t *testing.T) {
 // fire then advances the anchor and keeps that ending.
 func TestStore_RecordFireKeepsAnEndingItsRunRecordedFirst(t *testing.T) {
 	st, e := fired(t)
-	run := Run{ScheduleID: e.ID(), WorkflowID: "wf-1"}
+	run := Run{ScheduleID: e.ID(), ScheduleLife: e.Life, WorkflowID: "wf-1"}
 	fast := Outcome{Status: StatusFailed, Reason: "step build failed"}
 	if err := st.RecordEnding(t.Context(), run, fast); err != nil {
 		t.Fatalf("RecordEnding: %v", err)
 	}
 	due := at(2026, time.August, 4, 2, 0)
-	if err := st.recordFire(t.Context(), e.ID(), due, "wf-1", Outcome{Status: statusStarted}); err != nil {
+	if err := st.recordFire(t.Context(), e.Row(), due, "wf-1", Outcome{Status: statusStarted}); err != nil {
 		t.Fatalf("recordFire: %v", err)
 	}
 	got := st.List()[0]
@@ -245,7 +245,7 @@ func TestStore_KeepsTheRowsRunAcrossAReopenAndAnEdit(t *testing.T) {
 	if err := st.Put(t.Context(), &e); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	run := Run{ScheduleID: e.ID(), WorkflowID: "wf-1"}
+	run := Run{ScheduleID: e.ID(), ScheduleLife: e.Life, WorkflowID: "wf-1"}
 	if err := st.RecordStart(t.Context(), run); err != nil {
 		t.Fatalf("RecordStart: %v", err)
 	}

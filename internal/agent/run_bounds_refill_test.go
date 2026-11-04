@@ -141,7 +141,7 @@ func TestRefillDeadline_SwapsTheTimerForTheNewDeadline(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 	leased(t, h.runs, id)
 
 	h.runs.armDeadline(t.Context(), id)
@@ -379,7 +379,7 @@ func TestCancelExpiredRun_TellsAStallFromASpentBackstop(t *testing.T) {
 			h, _, br := newTestHub()
 			const id = "wf_1"
 			br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-			h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+			h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 			leased(t, h.runs, id)
 			h.runs.armDeadline(t.Context(), id)
 			if tc.banked != 0 || tc.stretchAge != 0 {
@@ -420,7 +420,7 @@ func TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline(t *
 		h, _, br := newTestHub()
 		id := "wf_" + strconv.Itoa(round)
 		br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-		h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+		h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 		st, err := runlease.NewStore(t.TempDir())
 		if err != nil {
 			t.Fatalf("round %d: NewStore: %v", round, err)

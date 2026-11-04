@@ -1,7 +1,7 @@
 // The Model and Effort selects on a workflow's Run and Schedule forms. A pure form over the catalog
 // its caller passes in, so either form and its test read the same rule.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join as joinKey } from "@cplieger/keyenc";
 import { effortLabel } from "./effort.js";
 import type { ModelInfo } from "./types.js";

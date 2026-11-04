@@ -133,6 +133,11 @@ var abandonableWriteSites = []durableSite{{
 	because: "session-chain bookkeeping — a lost detach leaves the refused id, whose next load KAS refuses again and detaches",
 }, {
 	file:    "internal/agent/bridge_coord.go",
+	fn:      "refreshForRetry",
+	calls:   []string{"Mutate"},
+	because: "the empty-turn retry's detach on its lease's context: a detach the chat's close cut keeps the id, so the reopen loads the session, and a shutdown ends the retry it was for",
+}, {
+	file:    "internal/agent/bridge_coord.go",
 	fn:      "persistNewSessionMetadata",
 	calls:   []string{"Mutate"},
 	because: "the new session's id and facts — no conversational record; a record that did not take them fails the generation, which reaps the session, and the next open runs again",
@@ -153,14 +158,24 @@ var abandonableWriteSites = []durableSite{{
 	because: "the wire bracket's turn_open on the frame's context, the same class as ReviseTurnBinding",
 }, {
 	file:    "internal/agent/queue_drain.go",
-	fn:      "AppendIfLive",
+	fn:      "appendLocked",
 	calls:   []string{"Mutate"},
-	because: "a queue_prompt on the REQUEST's context: a request that died never told the reader the row was queued, and the composer still holds the text",
+	because: "AppendIfLive's queue_prompt on the REQUEST's context: a request that died never told the reader the row was queued, and the composer still holds the text",
 }, {
 	file:    "internal/agent/queue_drain.go",
 	fn:      "Unqueue",
 	calls:   []string{"Mutate"},
 	because: "an unqueue_prompt on the REQUEST's context: a request that died never told the reader the row was discarded, and the dock still shows it",
+}, {
+	file:    "internal/agent/queue_drain.go",
+	fn:      "MarkNext",
+	calls:   []string{"Mutate"},
+	because: "a send_queued_now on the REQUEST's context: a request that died stopped nothing and sent nothing, and the row keeps its old place",
+}, {
+	file:    "internal/agent/queue_drain.go",
+	fn:      "ClearNext",
+	calls:   []string{"Mutate"},
+	because: "a send_queued_now's undo on the REQUEST's context: a lost clear leaves the row at the head marked, which the next drain sends first, where the reader asked it to go",
 }, {
 	file:    "internal/translate/streaming_content.go",
 	fn:      "appendSteerAck",
@@ -250,6 +265,11 @@ var inheritedWriteSites = []durableSite{{
 	calls:   []string{"Mutate"},
 	because: "the drain's context; its only write is a removal the store already owes, retried by the next mutation",
 }, {
+	file:    "internal/agent/queue_drain.go",
+	fn:      "NextMarkedRow",
+	calls:   []string{"Mutate"},
+	because: "the drain's context, or send_queued_now's request context on the idle path; its only write is a removal the store already owes, as NextUserRow",
+}, {
 	file:    "internal/agent/model_switch.go",
 	fn:      "clearPendingModel",
 	calls:   []string{"Mutate"},
@@ -321,7 +341,7 @@ func TestFinalizeTurn_EveryDurableWriteRunsDetached(t *testing.T) {
 				closerSwitch = node.Pos()
 			}
 		case *ast.CallExpr:
-			if sel, ok := node.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "awaitPosition" {
+			if sel, ok := node.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "awaitClosePosition" {
 				positionWait = node.Pos()
 			}
 		}
@@ -334,10 +354,10 @@ func TestFinalizeTurn_EveryDurableWriteRunsDetached(t *testing.T) {
 	}
 	seam := seams[0]
 	if !positionWait.IsValid() {
-		t.Fatal("finalizeTurn no longer calls awaitPosition, so the seam has nothing to sit below")
+		t.Fatal("finalizeTurn no longer calls awaitClosePosition, so the seam has nothing to sit below")
 	}
 	if positionWait > seam {
-		t.Errorf("awaitPosition at %s runs BELOW the seam at %s; ctx.Done() is its only timed escape, "+
+		t.Errorf("awaitClosePosition at %s runs BELOW the seam at %s; ctx.Done() is its only timed escape, "+
 			"so a wedged agent process now hangs the shutdown instead of losing one turn",
 			fset.Position(positionWait), fset.Position(seam))
 	}

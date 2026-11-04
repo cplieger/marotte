@@ -47,16 +47,17 @@ func askCoreHub(t *testing.T, workflowID string, reply json.RawMessage) (*Runtim
 	t.Cleanup(func() { shutdownHub(t, h) })
 	settleBoot(t, h)
 	leaseRun(t, h, runlease.Lease{WorkflowID: workflowID, ParentSessionID: testLaunchSession})
-	h.bridge.mgr.insert(runChatID(workflowID), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(workflowID), testBridge(br, bridgeIdle))
 	if reply != nil {
 		br.setCallResult(methodKiroWorkflowInspect, reply)
 	}
 	return h, br, fp
 }
 
-// askPush records every notification's subject and every retraction, from any goroutine.
+// askPush records every notification's subject and ask and every retraction, from any goroutine.
 type askPush struct {
 	sent, retracted []marotte.PushSubject
+	retractedAsks   []string
 	mu              sync.Mutex
 }
 
@@ -64,10 +65,11 @@ func (*askPush) HasSubscribers() bool                     { return true }
 func (*askPush) SetPreferences(map[marotte.PushKind]bool) {}
 func (*askPush) Preferences() map[marotte.PushKind]bool   { return nil }
 func (*askPush) Close()                                   {}
-func (p *askPush) Retract(subj marotte.PushSubject) {
+func (p *askPush) Retract(subj marotte.PushSubject, ask string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.retracted = append(p.retracted, subj)
+	p.retractedAsks = append(p.retractedAsks, ask)
 }
 
 func (p *askPush) Send(_ context.Context, n *marotte.NotificationPayload) {
@@ -110,6 +112,12 @@ func TestRunAsks_ACellLivesExactlyAsLongAsItsLease(t *testing.T) {
 	if !slices.Contains(retracted(fp), want) {
 		t.Errorf("retracted = %v, want the wait's own subject %v", retracted(fp), want)
 	}
+	fp.mu.Lock()
+	asks := slices.Clone(fp.retractedAsks)
+	fp.mu.Unlock()
+	if !slices.Contains(asks, r.asks[0].Position) {
+		t.Errorf("retracted asks = %v, want the wait's own position %q", asks, r.asks[0].Position)
+	}
 }
 
 // A cell rebuilt for the same run after its lease ended and came back must stamp newer snapshots
@@ -135,7 +143,7 @@ func TestRunAsks_SeqGrowsAcrossARebuiltCell(t *testing.T) {
 // A trigger racing the lease's release never leaves a cell behind it, in either order.
 func TestRunAsks_ACreateRacingTheEndLeavesNoCell(t *testing.T) {
 	for i := range 50 {
-		rs := &Runs{}
+		rs := &Runs{chats: newTestChatStore()}
 		if err := rs.leaseStore().Put(t.Context(), &runlease.Lease{WorkflowID: "wf_1", Origin: runlease.OriginManual}); err != nil {
 			t.Fatalf("Setup: lease: %v", err)
 		}
@@ -447,7 +455,7 @@ func TestRunAsks_VerbsOnARunWithNoCell(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, br := newTestHub()
-			h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+			h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 			status := cmp.Or(tc.status, marotte.RunStatusPaused)
 			steps := tc.steps
 			if steps == nil {

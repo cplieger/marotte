@@ -28,7 +28,7 @@ func newRemoteServer(t *testing.T, s *Store, transport Transport, rawURL string)
 }
 
 func TestUpdate_URLOriginChangeRefusesAPreservedHeader(t *testing.T) {
-	for _, transport := range []Transport{TransportHTTP, TransportSSE} {
+	for _, transport := range []Transport{transportHTTP, transportSSE} {
 		t.Run(string(transport), func(t *testing.T) {
 			s := newTestStore(t)
 			stored := newRemoteServer(t, s, transport, "https://old.example.com/mcp")
@@ -70,10 +70,10 @@ func TestUpdate_URLOriginChangeRefusesAPreservedHeader(t *testing.T) {
 // a PRESERVED secret, never a supplied one.
 func TestUpdate_URLOriginChangeAcceptsARetypedSecret(t *testing.T) {
 	s := newTestStore(t)
-	stored := newRemoteServer(t, s, TransportHTTP, "https://old.example.com/mcp")
+	stored := newRemoteServer(t, s, transportHTTP, "https://old.example.com/mcp")
 
 	if _, err := s.update(t.Context(), stored.ID, &Server{
-		Transport: TransportHTTP,
+		Transport: transportHTTP,
 		Name:      "hosted",
 		URL:       "https://new.example.com/mcp",
 		Headers:   []keyPair{{Name: "Authorization", Value: "Bearer new-origin-token"}},
@@ -99,10 +99,10 @@ func TestUpdate_SameOriginStillPreservesSecrets(t *testing.T) {
 	for name, next := range cases {
 		t.Run(name, func(t *testing.T) {
 			s := newTestStore(t)
-			stored := newRemoteServer(t, s, TransportHTTP, "https://old.example.com/mcp")
+			stored := newRemoteServer(t, s, transportHTTP, "https://old.example.com/mcp")
 
 			if _, err := s.update(t.Context(), stored.ID, &Server{
-				Transport: TransportHTTP,
+				Transport: transportHTTP,
 				Name:      "hosted",
 				URL:       next,
 				Headers:   []keyPair{{Name: "Authorization", Value: secretMask}},
@@ -127,14 +127,14 @@ func TestUpdate_SameOriginStillPreservesSecrets(t *testing.T) {
 func TestUpdate_OriginChangeWithNoStoredSecretIsAllowed(t *testing.T) {
 	s := newTestStore(t)
 	created, err := s.Create(t.Context(), &Server{
-		Transport: TransportHTTP, Name: "hosted",
+		Transport: transportHTTP, Name: "hosted",
 		URL: "https://old.example.com/mcp", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if _, err := s.update(t.Context(), created.ID, &Server{
-		Transport: TransportHTTP, Name: "hosted",
+		Transport: transportHTTP, Name: "hosted",
 		URL:     "https://new.example.com/mcp",
 		Headers: []keyPair{{Name: "X-Api-Key", Value: secretMask}},
 		Enabled: true,
@@ -150,10 +150,10 @@ func TestUpdate_OriginChangeWithNoStoredSecretIsAllowed(t *testing.T) {
 // rather than a 500 or a silent success.
 func TestHandleOne_PUT_URLOriginChangeIs400(t *testing.T) {
 	s, mux := newRoutedStore(t)
-	stored := newRemoteServer(t, s, TransportHTTP, "https://old.example.com/mcp")
+	stored := newRemoteServer(t, s, transportHTTP, "https://old.example.com/mcp")
 
 	rec := doJSON(t, mux, http.MethodPut, "/api/mcp/"+stored.ID.String(), &Server{
-		Transport: TransportHTTP,
+		Transport: transportHTTP,
 		Name:      "hosted",
 		URL:       "https://new.example.com/mcp",
 		Headers:   []keyPair{{Name: "Authorization", Value: secretMask}},

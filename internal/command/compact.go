@@ -57,7 +57,9 @@ func cmdCompact(ctx context.Context, bridges bridgeAccess, cmd *marotte.ClientCo
 		return nil, StatusError(http.StatusConflict, errNoBridge)
 	}
 
-	accepted, err := Compact(ctx, bridge)
+	cctx, cancel := bridges.CallBudget(ctx, engineChangeBudget)
+	defer cancel()
+	accepted, err := Compact(cctx, bridge)
 	if err != nil {
 		slog.Warn("compact: call failed", "chat", cmd.ChatID, keyError, err)
 		return nil, StatusError(http.StatusBadGateway, err)

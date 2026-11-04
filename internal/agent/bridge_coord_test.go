@@ -62,22 +62,32 @@ type recordingPush struct {
 	noSubs  atomic.Bool
 	subject marotte.PushSubject
 	title   string
-	// retracted records each Retract call's subject, in order.
-	retracted []marotte.PushSubject
+	// retracted records each Retract call's subject and ask, in order; asks records each Send's ask.
+	retracted []retraction
+	asks      []string
 	mu        sync.Mutex
+}
+
+// retraction is one Retract call.
+type retraction struct {
+	subject marotte.PushSubject
+	ask     string
 }
 
 func (p *recordingPush) HasSubscribers() bool                   { return !p.noSubs.Load() }
 func (*recordingPush) SetPreferences(map[marotte.PushKind]bool) {}
 func (*recordingPush) Preferences() map[marotte.PushKind]bool   { return nil }
 func (*recordingPush) Close()                                   {}
-func (p *recordingPush) Retract(subj marotte.PushSubject) {
+func (p *recordingPush) Retract(subj marotte.PushSubject, ask string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.retracted = append(p.retracted, subj)
+	p.retracted = append(p.retracted, retraction{subject: subj, ask: ask})
 }
 
 func (p *recordingPush) Send(_ context.Context, n *marotte.NotificationPayload) {
+	p.mu.Lock()
+	p.asks = append(p.asks, n.Ask)
+	p.mu.Unlock()
 	p.subject = n.PushSubject
 	p.title = n.Title
 	select {
@@ -168,7 +178,7 @@ func TestApplyModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := h.coord.applyModelSwitch(ctx, "c1", &effortDecision{to: "m-new", sent: "max"}); got != true {
+	if got := h.coord.switchedOK(ctx, "c1", &effortDecision{to: "m-new", sent: "max"}); got != true {
 		t.Errorf("ApplyModelSwitch(success) = %v, want true", got)
 	}
 	if got := br.lastEffort(); got != "max" {
@@ -186,7 +196,7 @@ func TestApplyModelSwitch_TouchesNoOpenTurn(t *testing.T) {
 	}
 	id, log := streamingPromptTurn(t, h, "c1", "the user's own reply, still streaming")
 
-	if got := h.coord.applyModelSwitch(ctx, "c1", &effortDecision{to: "m-new"}); !got {
+	if got := h.coord.switchedOK(ctx, "c1", &effortDecision{to: "m-new"}); !got {
 		t.Fatalf("ApplyModelSwitch = %v, want true", got)
 	}
 
@@ -207,7 +217,7 @@ func TestApplyModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := h.coord.applyModelSwitch(ctx, "c1", &effortDecision{to: "m-new"}); got != true {
+	if got := h.coord.switchedOK(ctx, "c1", &effortDecision{to: "m-new"}); got != true {
 		t.Errorf("ApplyModelSwitch(success) = %v, want true", got)
 	}
 	if got := br.lastEffort(); got != "" {
@@ -870,7 +880,7 @@ func TestLiveSessionIDs_CoversEveryResidentSession(t *testing.T) {
 
 	setSession := func(chatID marotte.ChatID, sessionID string) {
 		t.Helper()
-		sb, _ := h.bridge.mgr.orInsert(chatID)
+		sb, _ := h.bridge.mgr.orInsertNow(chatID)
 		fb := newFakeBridge()
 		fb.sessionID = sessionID
 		sb.attach(fb)
@@ -1055,7 +1065,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 	}{
 		{
 			name:        "close keeps the session on disk",
-			teardown:    func(h *Runtime, ctx context.Context, id marotte.ChatID) { h.CloseChatState(ctx, id) },
+			teardown:    func(h *Runtime, ctx context.Context, id marotte.ChatID) { h.CloseChatState(ctx, id, nil) },
 			wantSurvive: true,
 		},
 		{
@@ -1178,14 +1188,14 @@ func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// The first frame opens a turn and pays for the facts.
-	first := h.coord.TurnFoldTarget(ctx, chatID)
+	first := h.coord.foldTargetNow(ctx, chatID)
 	if first == nil {
 		t.Fatal("TurnFoldTarget opened no turn, so there is no fold path to measure")
 	}
 	before := cs.Gets.Load()
 
 	for range 20 {
-		if got := h.coord.TurnFoldTarget(ctx, chatID); got != first {
+		if got := h.coord.foldTargetNow(ctx, chatID); got != first {
 			t.Fatalf("a folded frame's target = %p, want the open turn %p", got, first)
 		}
 	}
@@ -1496,7 +1506,7 @@ func TestChatForACPSession_NamesTheResidentChat(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Setup: openBridge(%s): %v", chatID, err)
 		}
-		sessions[chatID] = string(sb.bridge.SessionID())
+		sessions[chatID] = string(sb.session().SessionID())
 	}
 	if sessions["c1"] == sessions["c2"] {
 		t.Fatalf("Setup: both chats share session %q", sessions["c1"])

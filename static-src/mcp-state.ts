@@ -11,7 +11,7 @@ import {
   type ReadonlySignal,
   type Signal,
   type Collection,
-} from "@cplieger/reactive";
+} from "@cplieger/ui";
 import {
   asObject,
   decodeArray,
@@ -22,7 +22,7 @@ import {
   reqNum,
   reqStr,
   type Decoder,
-} from "./validators.js";
+} from "./wire/validators.gen.js";
 
 const decodePromptInfo: Decoder<MCPPromptInfo> = (v) => {
   const o = asObject(v, "$.mcp.prompt");
@@ -193,9 +193,12 @@ const decodeServer: Decoder<Server> = (v) => {
   return out;
 };
 
-const decodeMCPServersResponseLocal: Decoder<{ servers: Server[] }> = (v) => {
+const decodeMCPServersResponseLocal: Decoder<{ servers: Server[]; unreadable: number }> = (v) => {
   const o = asObject(v, "$.mcp_servers");
-  return { servers: decodeArray(o["servers"], decodeServer, "$.mcp_servers.servers") };
+  return {
+    servers: decodeArray(o["servers"], decodeServer, "$.mcp_servers.servers"),
+    unreadable: optNum(o, "unreadable", "$.mcp_servers") ?? 0,
+  };
 };
 
 // SSE is the legacy HTTP+SSE remote transport, a first-class stored value sharing the url/headers form with http.
@@ -424,6 +427,9 @@ export const servers: Collection<Server> = createCollection<Server>((s) => s.id)
  */
 export const unconfiguredNames: Signal<string[]> = signal<string[]>([]);
 
+/** How many entries of marotte's record could not be read at boot, from GET /api/mcp. */
+export const unreadableEntries: Signal<number> = signal(0);
+
 /** Snapshot of the configured servers (non-reactive). */
 export function configuredServers(): Server[] {
   return servers.items();
@@ -493,6 +499,7 @@ class MCPStateController {
       return;
     }
     servers.setAll(d?.servers ?? []);
+    unreadableEntries.value = d?.unreadable ?? 0;
   }
 
   refetchStatus(): void {

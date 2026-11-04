@@ -3,8 +3,11 @@ package agent
 // Run host tests: the synthetic-id plumbing, the dispatch split and the teardown rules.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/translate"
@@ -186,7 +190,7 @@ func TestRunDispatch_PermissionKeyedToRunChat(t *testing.T) {
 // TestRunDispatch_UnknownRequestIsRefused pins that an unanswered A→C request wedges the step.
 func TestRunDispatch_UnknownRequestIsRefused(t *testing.T) {
 	h, _, br := newTestHub()
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 
 	id := int64(3)
 	msg := runNotif("_kiro/spec/getTaskStatuses", map[string]any{})
@@ -234,7 +238,7 @@ func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 	}
 }
 
-// TestLaunchRun_RefusesAnUnknownSource pins that the source is re-checked against a fresh listRecipes, so no arbitrary file can be launched.
+// TestLaunchRun_RefusesAnUnknownSource pins that the source is re-checked against listRecipes, so no arbitrary file can be launched.
 func TestLaunchRun_RefusesAnUnknownSource(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -257,7 +261,7 @@ func TestListRecipes_CarriesKASsValidationError(t *testing.T) {
 			{"name":"fix-and-review","source":"/w/fix-and-review.workflow.json","validationError":"Invalid workflow: include 'review' (./review-seats.workflow.json): recipe was not resolved"},
 			{"name":"publish","source":"bundled://publish"}]}`),
 	}
-	got, err := h.runs.listRecipes(t.Context())
+	got, err := h.runs.recipeList(t.Context())
 	if err != nil {
 		t.Fatalf("listRecipes: %v", err)
 	}
@@ -339,7 +343,7 @@ func TestListRecipes_KeysEachRecipeAsTheCapturedStandingKeysItsFile(t *testing.T
 	}
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowListRecipes: capture.ListRecipes}
-	recipes, err := h.runs.listRecipes(t.Context())
+	recipes, err := h.runs.recipeList(t.Context())
 	if err != nil {
 		t.Fatalf("listRecipes = %v", err)
 	}
@@ -445,11 +449,11 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 // TestBridgeManagerInsert_RefusesReplacement pins that inserting over a live entry would orphan its session.
 func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 	h, _, br := newTestHub()
-	first := &sharedBridge{bridge: br, state: bridgeIdle}
-	if !h.bridge.mgr.insert("run:wf_1", first) {
+	first := testBridge(br, bridgeIdle)
+	if !h.insertBridgeNow("run:wf_1", first) {
 		t.Fatal("first insert refused")
 	}
-	if h.bridge.mgr.insert("run:wf_1", &sharedBridge{bridge: br, state: bridgeIdle}) {
+	if h.insertBridgeNow("run:wf_1", testBridge(br, bridgeIdle)) {
 		t.Error("second insert over a live entry succeeded")
 	}
 	if got := h.bridge.mgr.get("run:wf_1"); got != first {
@@ -462,7 +466,7 @@ func TestRetry_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowRetry: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	// The run as the bounds left it: terminated, reason recorded, claim taken.
 	h.runs.claimTermination(id)
@@ -489,7 +493,7 @@ func TestRetry_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	h.runs.claimTermination(id)
 	h.runs.recordEnd(id, runEndOverran)
@@ -520,12 +524,11 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 	}
 	held := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: held}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-	// The real gate, which carries the recipe off KAS's run list.
-	aff := h.runs.affordance(t.Context(), id, "aborted")
-	if aff.origin.recipe != "nightly" {
-		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.origin.recipe)
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+	if o := h.runs.originOf(t.Context(), id); o.recipe != "nightly" {
+		t.Fatalf("Setup: the run list resolves recipe %q, want nightly", o.recipe)
 	}
+	aff := h.runs.affordance(id, &runHead{Status: "aborted"})
 
 	done := make(chan error, 1)
 	go func() {
@@ -584,11 +587,10 @@ func TestRetry_ALoadedHostRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	if h.bridge.mgr.get(runChatID(id)) != nil {
 		t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
 	}
-	// The gate's answer carries the name to the lease.
-	aff := h.runs.affordance(t.Context(), id, "aborted")
-	if aff.origin.recipe != "nightly" {
-		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.origin.recipe)
+	if o := h.runs.originOf(t.Context(), id); o.recipe != "nightly" {
+		t.Fatalf("Setup: the run list resolves recipe %q, want nightly", o.recipe)
 	}
+	aff := h.runs.affordance(id, &runHead{Status: "aborted"})
 
 	if _, err := h.runs.retry(t.Context(), id, aff); err != nil {
 		t.Fatalf("Retry: %v", err)
@@ -621,7 +623,7 @@ func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) 
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
 
-	_, err := h.runs.retry(t.Context(), id, h.runs.affordance(t.Context(), id, "aborted"))
+	_, err := h.runs.retry(t.Context(), id, h.runs.affordance(id, &runHead{Status: "aborted"}))
 	if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
 		t.Fatalf("Setup: the retry never reached KAS (err %v); calls were %v", err, br.callLog())
 	}
@@ -638,7 +640,7 @@ func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) 
 func TestCancelRun_LostClaimIssuesNoSecondCancel(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	// A bound got there first.
 	if !h.runs.claimTermination(id) {
@@ -662,7 +664,7 @@ func TestCancelRun_WinsTheClaimAndRecordsNothing(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 	h.runs.grantLease(t.Context(), id, "publish", manualLaunch(), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 
@@ -689,7 +691,7 @@ func TestCancelRun_FailedRPCHandsTheClaimBack(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("kas refused")}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	if err := h.runs.cancel(t.Context(), id, callerPage); err == nil {
 		t.Fatal("a refused cancel reported success")
@@ -738,7 +740,7 @@ func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			h, _, br := newTestHub()
-			h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+			h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 
 			id := int64(11)
 			msg := runNotif(c.method, c.params)
@@ -775,7 +777,7 @@ func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 func TestRunDispatch_TerminalCompletionClosesTheRunsHostSession(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	h.dispatch(t.Context(), runChatID(id), br,
 		runNotif(methodWFRunComplete, map[string]any{"workflowId": id, "status": "completed"}))
@@ -811,9 +813,9 @@ func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
 	}
 }
 
-// TestCancelForSessions_CancelsARunWhoseRecordIsGone pins cancels from captured chains (a retired session
-// included); CancelForChat on the deleted chat is the control.
-func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
+// TestStopChatRuns_CancelsARunOnAnySessionOfTheChain: a run launched from a retired session of the chain, or from a
+// tangent's only session, is the chat's too.
+func TestStopChatRuns_CancelsARunOnAnySessionOfTheChain(t *testing.T) {
 	cases := []struct {
 		name   string
 		chain  []string
@@ -824,7 +826,8 @@ func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h, _, br := newTestHub()
+			setStopTiming(t, time.Hour, time.Hour)
+			h, cs, br := newTestHub()
 			const id = "wf_1"
 			br.callResults = map[string]json.RawMessage{
 				methodKiroWorkflowList: kasRuns(t, map[string]any{
@@ -832,61 +835,48 @@ func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
 				}),
 				methodKiroWorkflowCancel: json.RawMessage(`{}`),
 			}
-			h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-			h.runs.grantLease(t.Context(), id, "publish", manualLaunch(), hostSec())
-			// No chat record exists.
+			h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+			cs.seed(t, "c1", func(c *marotte.Chat) {
+				for _, s := range tc.chain {
+					c.RecordSession(s)
+				}
+			})
 
-			h.runs.cancelForChat(t.Context(), "c-doomed", userStop(stopWhyTabClosed))
-			if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
-				t.Fatal("the record-reading CancelForChat cancelled a run for a chat with no record; the control is broken")
-			}
+			h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
 
-			h.runs.cancelForSessions(t.Context(), "c-doomed", tc.chain, userStop(stopWhyTabClosed))
 			if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
-				t.Errorf("the captured-chain cancel never went out; calls were %v", br.callLog())
+				t.Errorf("the run launched from %s was not cancelled; calls were %v", tc.parent, br.callLog())
 			}
 		})
 	}
 }
 
-// TestCancelForChat_ReportsARunListItCouldNotRead pins that the close proceeds regardless, so the line is the only record.
-func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
+// TestStopChatRuns_ReportsARunListItCouldNotRead pins that the close proceeds regardless, so the line is the only
+// record.
+func TestStopChatRuns_ReportsARunListItCouldNotRead(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
-	seed := func(t *testing.T, cs *testChatStore) {
-		t.Helper()
-		if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
-			c.Name = "A"
-			c.RecordSession("sess_owned")
-			return true
-		}); err != nil {
-			t.Fatalf("seed the chat: %v", err)
-		}
-	}
-	const wantLine = "close: run list unavailable, skipping run cancel"
+	const wantLine = "close: the run list could not be read; stopping only the runs marotte leases"
 
 	t.Run("an unreadable run list is reported", func(t *testing.T) {
 		logs := captureLogs(t)
 		h, cs, br := newTestHub()
-		seed(t, cs)
+		cs.seed(t, chatID, func(c *marotte.Chat) { c.RecordSession("sess_owned") })
 		br.callErrs = map[string]error{methodKiroWorkflowList: errors.New("kas gone")}
 
-		h.runs.cancelForChat(t.Context(), chatID, userStop(stopWhyTabClosed))
+		h.runs.stopChatRuns(t.Context(), chatID, &chat.Claim{})
 
 		if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
-			t.Errorf("a close that could not read the run list said nothing; want a line reading "+
-				"%q. Got: %s", wantLine, out)
+			t.Errorf("a close that could not read the run list said nothing; want a line reading %q. Got: %s", wantLine, out)
 		}
 	})
 
 	t.Run("an ordinary close is quiet about it", func(t *testing.T) {
 		logs := captureLogs(t)
 		h, cs, br := newTestHub()
-		seed(t, cs)
-		br.callResults = map[string]json.RawMessage{
-			methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
-		}
+		cs.seed(t, chatID, func(c *marotte.Chat) { c.RecordSession("sess_owned") })
+		br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`)}
 
-		h.runs.cancelForChat(t.Context(), chatID, userStop(stopWhyTabClosed))
+		h.runs.stopChatRuns(t.Context(), chatID, &chat.Claim{})
 
 		if out := logs.String(); strings.Contains(out, `"msg":"`+wantLine+`"`) {
 			t.Errorf("a close that read the run list fine reported it as unavailable: %s", out)
@@ -1040,4 +1030,30 @@ func TestLaunchRun_RefusesAHostSessionDoorWithNoSessionID(t *testing.T) {
 	if len(h.bridge.mgr.all()) != 0 {
 		t.Errorf("sessions registered after the refusal = %v, want none", h.bridge.mgr.all())
 	}
+}
+
+// TestHandleLaunch_AStalledEngineAnswersStillApplyingAndTheLaunchLands pins that a launch the engine has not answered
+// within the browser's budget is reported as still applying, and that the browser walking away does not abandon a
+// run KAS may already have created.
+func TestHandleLaunch_AStalledEngineAnswersStillApplyingAndTheLaunchLands(t *testing.T) {
+	answerBudgetOf(t, 50*time.Millisecond)
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
+		methodKiroWorkflowList:        json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowNew:         json.RawMessage(`{"workflowId":"wf_9"}`),
+		methodKiroWorkflowInvoke:      json.RawMessage(`{}`),
+	}
+	release := holdCall(t, br, methodKiroWorkflowNew)
+	reqCtx, walkAway := context.WithCancel(context.Background())
+	defer walkAway()
+	req := httptest.NewRequestWithContext(reqCtx, http.MethodPost, "/api/runs", strings.NewReader(`{"source":"bundled://publish"}`))
+
+	rec := answeredWithin(t, func(w http.ResponseWriter) { h.runRoutes.handleLaunch(w, req) })
+
+	assertStillApplying(t, rec)
+	walkAway()
+	release()
+	waitUntil(t, "the late launch's host registration", func() bool { return h.bridge.mgr.get("run:wf_9") != nil })
 }

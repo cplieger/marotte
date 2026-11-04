@@ -7,7 +7,7 @@ import (
 )
 
 // runLifecycle owns every step-session mutation of a run against the run's deletion. A message, an
-// answer, a steer or a clear-and-resubmit runs under a lease issued only while the run is open; a
+// answer, a steer, a clear-and-resubmit or a retry runs under a lease issued only while the run is open; a
 // Delete closes the run to new leases and waits, holding no lock, for the admitted ones to end before
 // KAS sees it. The zero value is ready.
 type runLifecycle struct {

@@ -69,6 +69,9 @@ type EngineOpts struct {
 	DisableTelemetry bool
 	// DebugLogs spawns KAS at its debug log level; the zero value leaves kiro-cli's default, info.
 	DebugLogs bool
+	// HighThroughput runs the agent server through marotte's node launcher (internal/kasnode) when its checks pass;
+	// the zero value is kiro-cli's stock launch.
+	HighThroughput bool
 }
 
 // EngineFeatures are the Agent-capabilities settings KAS reads per engine. InfraSafetyMonitor,

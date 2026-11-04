@@ -4,7 +4,7 @@
 
 import type * as PeleModule from "pele/lazy";
 import type { MountOptions, Mounted, RenderResult } from "pele/lazy";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { formDiagramLink } from "./link-guard.js";
 
 export type Pele = typeof PeleModule;

@@ -3,8 +3,8 @@
 // workflow knows — the status's verbs, what an empty step body means, and which of the run's own
 // log turns each step renders.
 
-import { el, effect, signal, touch } from "@cplieger/reactive";
-import { announce } from "@cplieger/ui-primitives/announce";
+import { batch, el, effect, signal, touch } from "@cplieger/ui";
+import { announce } from "@cplieger/ui/announce";
 import { join } from "@cplieger/keyenc";
 import { openRunTab, openTab, parentChatRef, tabIdFor } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks, runPendingAsks } from "./decision-dock.js";
@@ -46,7 +46,6 @@ import {
 } from "./run-step-transcript.js";
 import {
   invalidateRun,
-  invalidateRunControls,
   noteRunChat,
   runState,
   runChatID,
@@ -64,10 +63,12 @@ import { buildPath } from "./route-path.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_EXTERNAL } from "./icons.js";
 
-/** The run this view is currently showing, so an SSE invalidation knows whether it is about the
- *  run on screen. Cleared when the view loads a different one; a closed tab simply stops
- *  matching, because the next open reassigns it. */
+/** The run the one view effect paints, and the run the step reads and the decision dock address. */
 let shownRun = "";
+
+/** Bumped by every `showRun` and TOUCHED first in the view effect, before `paint`'s early
+ *  returns: the only read that re-points the effect whatever its last pass read. */
+const shownVersion = signal(0);
 
 /** Whether the shown run was launched by an AGENT, from the run's own state (`paint` sets it
  *  from `inspect`'s `parentSessionId`). It decides what the empty-step note says and whether the
@@ -101,7 +102,11 @@ export function showRun(workflowID: string): void {
   if (dock !== null) {
     mountRunDecisionDock(dock, () => shownRun);
   }
-  rerenderDocks();
+  // One batch, so the view effect repaints once for the two bumps it may read.
+  batch(() => {
+    shownVersion.value = shownVersion.peek() + 1;
+    rerenderDocks();
+  });
   mountBottomBar();
   // Before any read resolves: until this run's page publishes a step, Send and the step dock address
   // nothing rather than the run shown before.
@@ -112,17 +117,15 @@ export function showRun(workflowID: string): void {
   // This run's own page still holds the follower (a hidden box keeps its offset); another run's is
   // restored by the paint that mounts it.
   mountFollower();
-  // ONE effect for the life of the module, installed on the first show. It reads `shownRun` through
-  // the store, so a tab switch re-points it with no teardown: the previous run's cell simply stops
-  // being read. Installing one per show would leak a subscription per tab opened.
+  // ONE effect for the life of the module, installed on the first show. `shownVersion` re-points it
+  // with no teardown: the previous run's cell simply stops being read. Installing one per show
+  // would leak a subscription per tab opened.
   installViewEffect();
 }
 
 /** Refetch this run's state and its controls. A run tab's `refresh`. */
 export function refreshRun(workflowID: string): void {
   invalidateRun(workflowID);
-  // The affordance. `invalidateRunControls` owns the trigger list.
-  invalidateRunControls(workflowID);
   // NO chat refresh: a step's entries are the RUN's, so a chat's window cannot move this pane. The
   // step transcript's refresh is the step GET, armed by `armStepRead`.
 }
@@ -135,6 +138,7 @@ function installViewEffect(): void {
   }
   viewEffectInstalled = true;
   effect(() => {
+    touch(shownVersion);
     const id = shownRun;
     // Every entry of this run's log bumps its own log version, which is how a step's content
     // arrives. Read BEFORE the early returns so the effect stays subscribed on the passes that
@@ -364,6 +368,8 @@ function stepRefused(workflowID: string, message: string): void {
 /** The step transcript, LAZILY loaded — ONE stream now, because there is one source. */
 let stepStream: RunStepStream | undefined;
 let stepStreamLoading = false;
+/** The newest paint's nodes, which the stream's first apply projects once its chunk loads. */
+let streamNodes: readonly ExecNode[] = [];
 
 /** The cached "Open the conversation" anchor, per (run, chat). Cached because `detail.ts` guards
  *  its slot on element IDENTITY: `render` runs on every store invalidation, and re-seating a
@@ -391,11 +397,9 @@ function mountPage(
     controls: () => verbs.current(),
     notes: () => verbs.refusals(),
     onShowNode: armStepRead,
-    // A page still drawn while another run loads publishes nothing.
+    // Never another run's page: `showRun` repaints at once, and that paint drops this page.
     onSelect: (node) => {
-      if (workflowID === shownRun) {
-        pushStepTarget(workflowID, node);
-      }
+      pushStepTarget(workflowID, node);
     },
     follow: "newest",
   });
@@ -920,6 +924,7 @@ function projectStepTranscripts(
   nodes: readonly ExecNode[],
   turns: readonly [string, TurnState][],
 ): void {
+  streamNodes = nodes;
   const paints = leafPaints(nodes, turns, runStepEnds(workflowID));
   if (paints.size === 0) {
     return;
@@ -944,10 +949,10 @@ function projectStepTranscripts(
       const host = page;
       const stream = createRunStepStream((nodePath) => host.bodyFor(nodePath));
       stepStream = stream;
-      // RE-PROJECTED rather than replayed: the load is async, so the log may have grown past what
-      // was captured and the stale map would leave the tail to the next repaint. Outside the view
-      // effect, so `runTurns`' own touch registers nothing.
-      stream.apply(leafPaints(nodes, runTurns(workflowID), runStepEnds(workflowID)));
+      // RE-PROJECTED from the newest paint rather than replayed: the load is async, so the plan and
+      // the log may both have grown past what was captured, and a paint during the load projects
+      // nothing. Outside the view effect, so `runTurns`' own touch registers nothing.
+      stream.apply(leafPaints(streamNodes, runTurns(workflowID), runStepEnds(workflowID)));
     })
     .catch(() => {
       // The step transcript is an enhancement over a page already rendering the plan,

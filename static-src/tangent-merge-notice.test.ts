@@ -40,7 +40,7 @@ vi.mock("./chat.js", async (importOriginal) => ({
 const toast = await import("./toast.js");
 const store = await import("./store.js");
 const { resetActionFramework } = await import("./actions/__test-helpers__/action-test-setup.js");
-const { configureApi } = await import("@cplieger/actions");
+const { configureApi } = await import("@cplieger/ui/actions");
 const { mergeTangentChat, noteTangentMerged, noteTangentMergeFailed } =
   await import("./tangent-merge.js");
 const { reportFailure, _resetForTest: resetFailureNotices } = await import("./failure-notice.js");

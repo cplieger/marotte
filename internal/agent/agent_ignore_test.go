@@ -86,18 +86,8 @@ func TestSettingsWrite_SendsNoIgnoreListFromAnUnreadableDocument(t *testing.T) {
 	}
 }
 
-// TestSettingsWrite_TellsTheClientTheIgnoreListIsUnreadable pins the broadcast that
-// shows the reader why their edit did nothing.
-func TestSettingsWrite_TellsTheClientTheIgnoreListIsUnreadable(t *testing.T) {
-	dir := t.TempDir()
-	writeIgnoreFiles(t, dir, []string{".gitignore"})
-	h, _ := liveEngine(t, dir)
-
-	if err := os.WriteFile(filepath.Join(dir, settings.Filename), []byte("{not json"), 0o600); err != nil {
-		t.Fatalf("corrupt settings: %v", err)
-	}
-	h.ReconcileSessionSettings(t.Context())
-
+// policyErrors is every policy_error item h broadcast.
+func policyErrors(h *Runtime) []marotte.PolicyErrorItem {
 	var got []marotte.PolicyErrorItem
 	for _, e := range h.bus.fanout.Snapshot() {
 		var frame struct {
@@ -111,17 +101,58 @@ func TestSettingsWrite_TellsTheClientTheIgnoreListIsUnreadable(t *testing.T) {
 			got = append(got, frame.Payload.Errors...)
 		}
 	}
-	if len(got) != 1 {
-		t.Fatalf("broadcast %d policy_error items, want exactly 1: %v", len(got), got)
-	}
-	if got[0].Source != settings.Filename {
-		t.Errorf("policy error names source %q, want %q: the reader has to know WHICH document to fix", got[0].Source, settings.Filename)
-	}
-	if msg := got[0].Message; !strings.Contains(msg, "keeps enforcing its previous list") ||
-		!strings.Contains(msg, "enforces only "+settings.AgentIgnoreFloor) {
-		t.Errorf("policy error message %q does not name both outcomes: the running engine keeps its list, an engine "+
-			"restarted meanwhile enforces only %s", msg, settings.AgentIgnoreFloor)
-	}
+	return got
+}
+
+// The broadcast shows the reader why their edit did nothing, and what an engine started before the fix enforces.
+func TestSettingsWrite_TellsTheClientWhatARestartWouldEnforce(t *testing.T) {
+	const keeps = "keeps enforcing its previous list"
+	last := "enforces the last list marotte read"
+	floor := "enforces only " + settings.AgentIgnoreFloor
+	t.Run("an_unparseable_document_after_a_readable_list", func(t *testing.T) {
+		dir := t.TempDir()
+		writeIgnoreFiles(t, dir, []string{".gitignore"})
+		h, _ := liveEngine(t, dir)
+		rewriteConfigByHand(t, dir, "{not json")
+		h.ReconcileSessionSettings(t.Context())
+
+		got := policyErrors(h)
+		if len(got) != 1 {
+			t.Fatalf("broadcast %d policy_error items, want exactly 1: %v", len(got), got)
+		}
+		if got[0].Source != settings.Filename {
+			t.Errorf("policy error names source %q, want %q: the reader has to know WHICH document to fix", got[0].Source, settings.Filename)
+		}
+		if msg := got[0].Message; !strings.Contains(msg, keeps) || !strings.Contains(msg, last) {
+			t.Errorf("policy error message %q, want it to say the engine keeps its list and a restart starts on the last list read", msg)
+		}
+	})
+	t.Run("a_list_that_does_not_decode", func(t *testing.T) {
+		dir := t.TempDir()
+		h, _ := liveEngine(t, dir)
+		rewriteConfigByHand(t, dir, `{"agent_ignore_files":7}`)
+		h.ReconcileSessionSettings(t.Context())
+
+		got := policyErrors(h)
+		if len(got) != 1 || !strings.Contains(got[0].Message, keeps) || !strings.Contains(got[0].Message, floor) {
+			t.Errorf("policy errors = %v, want one saying a restart enforces only %s", got, settings.AgentIgnoreFloor)
+		}
+	})
+	t.Run("unparseable_then_mistyped_reports_each_answer", func(t *testing.T) {
+		dir := t.TempDir()
+		writeIgnoreFiles(t, dir, []string{".gitignore"})
+		h, _ := liveEngine(t, dir)
+		rewriteConfigByHand(t, dir, "{not json")
+		h.ReconcileSessionSettings(t.Context())
+		h.ReconcileSessionSettings(t.Context())
+		rewriteConfigByHand(t, dir, `{"agent_ignore_files":7}`)
+		h.ReconcileSessionSettings(t.Context())
+
+		got := policyErrors(h)
+		if len(got) != 2 || !strings.Contains(got[0].Message, last) || !strings.Contains(got[1].Message, floor) {
+			t.Errorf("policy errors = %v, want two: the last list, then only %s", got, settings.AgentIgnoreFloor)
+		}
+	})
 }
 
 // TestSpawnIgnoreFiles_AnEmptyDocumentStillCarriesTheFloor pins the engine spawn's fail mode,
@@ -145,12 +176,61 @@ func TestSpawnIgnoreFiles_AnEmptyDocumentStillCarriesTheFloor(t *testing.T) {
 					t.Fatalf("write settings: %v", err)
 				}
 			}
-			got := spawnIgnoreFiles(t.Context(), dir)
-			if want := []string{settings.AgentIgnoreFloor}; !slices.Equal(got, want) {
-				t.Errorf("spawnIgnoreFiles = %v, want %v", got, want)
+			var l lastReadable
+			doc, _ := l.read(t.Context(), dir, readConfigDocument)
+			if got, want := doc.engine.ignoreFiles, []string{settings.AgentIgnoreFloor}; !slices.Equal(got, want) {
+				t.Errorf("the spawn's ignore files = %v, want %v", got, want)
 			}
 		})
 	}
+}
+
+// spawnIgnoreRuntime is a runtime over a config directory holding body at boot, with no engine started.
+func spawnIgnoreRuntime(t *testing.T, body string) (*Runtime, string) {
+	t.Helper()
+	dir := writeSettings(t, body)
+	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil),
+		newTestChatStore(), WithConfigDir(dir))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	return h, dir
+}
+
+// The floor Warn fires only when the floor is what the spawn really sends. Serial: slog's default is process-global.
+func TestSpawnIgnoreFiles_LogsTheFloorOnlyWhenTheFloorIsSent(t *testing.T) {
+	const neverRead = "agent ignore files: config.json cannot be read and none was read since marotte started; this spawn enforces only the floor"
+	const invalid = "agent ignore files: the stored list does not decode; this spawn enforces only the floor"
+	floor := []string{settings.AgentIgnoreFloor}
+	t.Run("never_readable", func(t *testing.T) {
+		h, _ := spawnIgnoreRuntime(t, "{not json")
+		rec := capture.Default(t)
+		if got := h.spawnIgnoreFiles(t.Context()); !slices.Equal(got, floor) {
+			t.Errorf("spawnIgnoreFiles = %v, want %v", got, floor)
+		}
+		if n := rec.CountExact(neverRead); n != 1 {
+			t.Errorf("never-read floor Warn logged %d times, want 1: %v", n, rec.Messages())
+		}
+	})
+	t.Run("readable_then_broken", func(t *testing.T) {
+		h, dir := spawnIgnoreRuntime(t, `{"agent_ignore_files":[".gitignore"]}`)
+		rewriteConfigByHand(t, dir, "{not json")
+		rec := capture.Default(t)
+		if got, want := h.spawnIgnoreFiles(t.Context()), []string{settings.AgentIgnoreFloor, ".gitignore"}; !slices.Equal(got, want) {
+			t.Errorf("spawnIgnoreFiles = %v, want the last readable list %v", got, want)
+		}
+		if n := rec.CountExact(neverRead) + rec.CountExact(invalid); n != 0 {
+			t.Errorf("a floor Warn logged %d times for a spawn that sends the last readable list: %v", n, rec.Messages())
+		}
+	})
+	t.Run("a_list_that_does_not_decode", func(t *testing.T) {
+		h, _ := spawnIgnoreRuntime(t, `{"agent_ignore_files":7}`)
+		rec := capture.Default(t)
+		if got := h.spawnIgnoreFiles(t.Context()); !slices.Equal(got, floor) {
+			t.Errorf("spawnIgnoreFiles = %v, want %v", got, floor)
+		}
+		if n := rec.CountExact(invalid); n != 1 {
+			t.Errorf("invalid-list Warn logged %d times, want 1: %v", n, rec.Messages())
+		}
+	})
 }
 
 // The one engine build carries the ignore-list resolver, read at send time with the floor leading.
@@ -161,7 +241,7 @@ func TestResolveEngine_CarriesTheIgnoreListResolver(t *testing.T) {
 		newTestChatStore(), WithConfigDir(dir))
 	t.Cleanup(func() { shutdownHub(t, h) })
 
-	opts := h.resolveEngine(t.Context(), "/fake/kiro-cli-chat").opts
+	opts := h.resolveEngine(t.Context(), "/fake/kiro-cli").opts
 	if opts.IgnoreFiles == nil {
 		t.Fatal("EngineOpts.IgnoreFiles = nil, so the engine starts enforcing nothing")
 	}
@@ -171,53 +251,15 @@ func TestResolveEngine_CarriesTheIgnoreListResolver(t *testing.T) {
 	}
 }
 
-// TestSettingsReaders_LogNoUnreadableDocumentWhenTheirCtxEnded pins that a spawn or session door
-// whose ctx ended does not report config.json unreadable: the read never ran. The live case proves
-// each warning still fires over a broken file. Serial: slog's default is process-global.
-func TestSettingsReaders_LogNoUnreadableDocumentWhenTheirCtxEnded(t *testing.T) {
-	cancelled, cancel := context.WithCancel(t.Context())
-	cancel()
-	readers := []struct {
-		name string
-		msg  string
-		read func(ctx context.Context, dir string)
-	}{
-		{
-			name: "spawnIgnoreFiles",
-			msg:  "agent ignore files: settings unreadable; this spawn enforces only the floor",
-			read: func(ctx context.Context, dir string) { spawnIgnoreFiles(ctx, dir) },
-		},
-		{
-			name: "sessionDirs",
-			msg:  "additional directories not granted to agents: config unreadable",
-			read: func(ctx context.Context, dir string) {
-				(&lifetime{workDir: t.TempDir(), configDir: dir}).sessionDirs(ctx)
-			},
-		},
+// A session door over a config.json never readable since boot grants no additional directory and says why.
+// Serial: slog's default is process-global.
+func TestSessionDirs_ANeverReadableDocumentGrantsNothingAndLogs(t *testing.T) {
+	h, _ := spawnIgnoreRuntime(t, "{not json")
+	rec := capture.Default(t)
+	if got := h.readSessionSettings(t.Context()).AdditionalDirectories; len(got) != 0 {
+		t.Errorf("a door over a never-readable config.json granted %v, want none", got)
 	}
-	for _, r := range readers {
-		for _, tc := range []struct {
-			name    string
-			ctx     context.Context
-			wantLog int
-		}{
-			{"a cancelled ctx", cancelled, 0},
-			{"a live ctx", t.Context(), 1},
-		} {
-			t.Run(r.name+" with "+tc.name, func(t *testing.T) {
-				dir := t.TempDir()
-				if err := os.WriteFile(filepath.Join(dir, settings.Filename), []byte("{not json"), 0o600); err != nil {
-					t.Fatalf("write settings: %v", err)
-				}
-
-				rec := capture.Default(t)
-				r.read(tc.ctx, dir)
-
-				if n := rec.CountExact(r.msg); n != tc.wantLog {
-					t.Errorf("%s with %s logged %q %d times, want %d; messages: %v",
-						r.name, tc.name, r.msg, n, tc.wantLog, rec.Messages())
-				}
-			})
-		}
+	if n := rec.CountExact("additional directories not granted to agents: config unreadable"); n != 1 {
+		t.Errorf("the unreadable Warn logged %d times, want 1: %v", n, rec.Messages())
 	}
 }

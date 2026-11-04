@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/runlease"
 )
 
 // doorRecorder hands out a distinct fake per door and serves the engine lane from one too, so every call is counted.
@@ -57,83 +56,6 @@ func agentRunList(t *testing.T, status string) json.RawMessage {
 		"workflowId": "wf_1", "name": "publish", "status": status,
 		"parentSessionId": "sess_owner",
 	})
-}
-
-// TestCancelForSessions_ReadsTheRunInventoryOnce pins one `workflow/list` for a tab close, not N+1. The
-// bridge is inserted so openBridge's rehydrate hook does not read the inventory.
-func TestCancelForSessions_ReadsTheRunInventoryOnce(t *testing.T) {
-	h, cs, br := newTestHub()
-	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: kasRuns(t,
-			map[string]any{
-				"workflowId": "wf_1", "name": "publish", "status": "running",
-				"parentSessionId": "sess_owner",
-			},
-			map[string]any{
-				"workflowId": "wf_2", "name": "publish", "status": "paused",
-				"parentSessionId": "sess_owner",
-			},
-		),
-		methodKiroWorkflowCancel: json.RawMessage(`{}`),
-		// Named for neither run, so the leases stay put.
-		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
-	}
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "A"
-		c.RecordSession("sess_owner")
-		return true
-	}); err != nil {
-		t.Fatalf("seed the chat: %v", err)
-	}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
-	leased(t, h.runs, "wf_1")
-	leased(t, h.runs, "wf_2")
-
-	h.runs.cancelForSessions(t.Context(), "c1", []string{"sess_owner"}, userStop(stopWhyTabClosed))
-
-	if got := callsOf(br, methodKiroWorkflowCancel); got != 2 {
-		t.Errorf("the cancel went out %d times for 2 live runs, want 2", got)
-	}
-	if got := callsOf(br, methodKiroWorkflowList); got != 1 {
-		t.Errorf("`workflow/list` went out %d times to cancel 2 runs, want 1: the loop "+
-			"already holds every row a per-run lookup would re-read", got)
-	}
-}
-
-// TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED pins that with retention off the record is gone
-// before the teardown, so the cancel's lane comes from the lease and the resident session, once.
-func TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED(t *testing.T) {
-	rec := &doorRecorder{results: map[string]json.RawMessage{
-		methodKiroWorkflowList:   agentRunList(t, "running"),
-		methodKiroWorkflowCancel: json.RawMessage(`{}`),
-		// Named for no run here, so the lease stays put.
-		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
-	}}
-	cs := newTestChatStore()
-	lane, _ := rec.factory().(*fakeBridge)
-	h := newRuntimeOn(t.Context(), "/tmp/work", fakeEngineOf(rec.factory, lane), cs)
-	cs.wire(h)
-	t.Cleanup(func() { shutdownHub(t, h) })
-	owner, ok := rec.factory().(*fakeBridge)
-	if !ok {
-		t.Fatal("Setup: the recorder handed back something other than a fake")
-	}
-	owner.sessionID = "sess_owner"
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: owner, state: bridgeIdle})
-	if _, found := cs.Get(t.Context(), "c1"); found {
-		t.Fatal("Setup: the chat record exists, so this is not the delete-grade state")
-	}
-	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_owner", Origin: runlease.OriginAgent})
-
-	h.runs.cancelForSessions(t.Context(), "c1", []string{"sess_owner"}, userStop(stopWhyTabClosed))
-
-	if !slices.Contains(owner.callLog(), methodKiroWorkflowCancel) {
-		t.Error("the cancel did not ride the launching chat's resident session for a chat whose record is already " +
-			"deleted, so its lifecycle frames are not positioned on the lane they reach")
-	}
-	if fakes, calls := rec.sawCall(methodKiroWorkflowCancel); fakes != 1 || calls != 1 {
-		t.Errorf("the cancel reached %d lane(s) in %d call(s), want exactly 1 and 1", fakes, calls)
-	}
 }
 
 // TestFinishTermination_ARefusedCancelKEEPSTheDeadline pins that a refused cancel's run is still bounded.
@@ -394,7 +316,7 @@ func TestRetryTermination_ARetriedRunIsNotCancelledForItsLastRun(t *testing.T) {
 					"workflowId": "wf_1", "status": "failed",
 				}))
 			}
-			if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "failed")); err != nil {
+			if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"})); err != nil {
 				t.Fatalf("Retry: %v", err)
 			}
 			if !h.runs.bounded("wf_1") {

@@ -415,6 +415,19 @@ describe("describeOutcome", () => {
     ).toBe("last: by hand");
   });
 
+  // A slot the engine never answered was not a failure, so it does not read as one.
+  it("names a slot skipped for a busy engine as skipped, with its reason", () => {
+    expect(
+      describeOutcome(
+        view({
+          last_status: "skipped",
+          last_reason: "engine busy",
+          last_run_at: "2026-08-10T02:00:00+02:00",
+        }),
+      ),
+    ).toBe(`last skipped ${formatStamp("2026-08-10T02:00:00+02:00")}: engine busy`);
+  });
+
   it("drops the stamp when the server sent no last-run time", () => {
     expect(describeOutcome(view({ last_status: "started" }))).toBe("last started");
   });
@@ -456,6 +469,23 @@ describe("summaryLine", () => {
     expect(line.indexOf("Every day at 02:00")).toBeLessThan(line.indexOf("next "));
     expect(line.indexOf("next ")).toBeLessThan(line.indexOf("last failed"));
     expect(line).toContain("needed approval for fs_write");
+  });
+
+  // While a slot waits on the engine, the row says so between the next run and the last outcome,
+  // which stays the previous slot's until this one ends.
+  it("says a slot is waiting on the agent engine", () => {
+    const line = summaryLine(
+      view({
+        next_run_at: "2026-08-11T02:00:00+02:00",
+        waiting_for: "2026-08-10T02:00:00+02:00",
+        last_status: "completed",
+        last_run_at: "2026-08-09T02:00:00+02:00",
+      }),
+    );
+    const waiting = `the ${formatStamp("2026-08-10T02:00:00+02:00")} run is waiting on the agent engine`;
+    expect(line).toContain(waiting);
+    expect(line.indexOf("next ")).toBeLessThan(line.indexOf(waiting));
+    expect(line.indexOf(waiting)).toBeLessThan(line.indexOf("last completed"));
   });
 
   it("shows the outcome even when no next run resolved", () => {

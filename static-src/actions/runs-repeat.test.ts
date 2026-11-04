@@ -25,7 +25,7 @@ vi.mock("../run-store.js", async (importOriginal) => ({
   }),
 }));
 
-import { configure, configureApi } from "@cplieger/actions";
+import { configure, configureApi } from "@cplieger/ui/actions";
 import {
   cancelRun,
   endRunStep,

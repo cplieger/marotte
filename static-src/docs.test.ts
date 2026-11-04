@@ -86,7 +86,6 @@ vi.mock("./bus.js", () => ({
   decodeEnvelope: undefined,
   dispatch: undefined,
   emitBus: undefined,
-  registerSSEDecoder: undefined,
   onBus: vi.fn(() => () => undefined),
   onSSE: vi.fn(() => () => undefined),
 }));

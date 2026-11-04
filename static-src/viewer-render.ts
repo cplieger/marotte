@@ -4,7 +4,7 @@
 // the rendered region follows it. Each scroller ends the file with a tail one viewport less one
 // line tall, so a jump can put the last line at the top.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { RUN_CLASSES, type HighlightRuns } from "./highlight.js";
 import type { LineLocation, WholeRows } from "./viewer-rows.js";
 

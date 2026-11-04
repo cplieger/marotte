@@ -61,3 +61,9 @@ func errText(err error) string {
 	}
 	return rpcerr.Text(err)
 }
+
+// nopHold is a ChatHold for a fake whose test does not observe the life gate.
+type nopHold struct{}
+
+func (nopHold) Commit()  {}
+func (nopHold) Release() {}

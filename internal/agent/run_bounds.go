@@ -82,6 +82,9 @@ type runBoundsState struct {
 	terminating map[string]struct{}
 	// heals counts automatic resumes since the run last made progress (run_host.go healPaused).
 	heals map[string]int
+	// healWriteFailed names runs whose last claimed heal's resume write failed, so a budget those writes spent is
+	// logged as marotte's fault (healSpent). Cleared with heals.
+	healWriteFailed map[string]struct{}
 	// cancelRetries counts refused-cancel retries since the last progress, separate from heals so neither starves the other.
 	cancelRetries map[string]int
 	// armedAt is when each bounded run's current executing stretch began, mirroring Bounded(). The
@@ -237,14 +240,18 @@ func (rs *Runs) refillDeadline(ctx context.Context, workflowID string) bool {
 	})
 }
 
-// RunMadeProgress rolls a run's idle window forward. Satisfies translate.runBoundsAccess. Called per
-// tool-call frame, so the `bounded` pre-check keeps it one map read.
+// RunMadeProgress rolls a run's idle window forward and, at most once per chat.RunMarkRefresh, its keep marks.
+// Satisfies translate.runBoundsAccess. Called per tool-call frame, so the pre-checks keep it two map reads.
 func (rs *Runs) RunMadeProgress(workflowID string) {
-	if !rs.bounded(workflowID) {
+	refresh := rs.marks.due(workflowID, time.Now())
+	if !refresh && !rs.bounded(workflowID) {
 		return
 	}
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
+	if refresh {
+		rs.markLeaseAlive(ctx, workflowID)
+	}
 	rs.refillDeadline(ctx, workflowID)
 }
 
@@ -610,10 +617,39 @@ func (rs *Runs) refundHeal(workflowID string) {
 	}
 }
 
+// healHeadway gives a run's heal budget back on its steps' model output: the budget bounds resumes no work separates,
+// and a run streaming again after a throttle was not one. Called per model-output frame, so map deletes only.
+func (rs *Runs) healHeadway(workflowID string) {
+	rs.clearHeals(workflowID)
+}
+
 func (rs *Runs) clearHeals(workflowID string) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	delete(rs.bounds.heals, workflowID)
+	delete(rs.bounds.healWriteFailed, workflowID)
+}
+
+// noteHealWrite records whether a claimed heal's resume write failed.
+func (rs *Runs) noteHealWrite(workflowID string, failed bool) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if !failed {
+		delete(rs.bounds.healWriteFailed, workflowID)
+		return
+	}
+	if rs.bounds.healWriteFailed == nil {
+		rs.bounds.healWriteFailed = map[string]struct{}{}
+	}
+	rs.bounds.healWriteFailed[workflowID] = struct{}{}
+}
+
+// healWritesFailed reports whether the run's last claimed heal's resume write failed.
+func (rs *Runs) healWritesFailed(workflowID string) bool {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	_, failed := rs.bounds.healWriteFailed[workflowID]
+	return failed
 }
 
 // clearEnd forgets a run's recorded termination so a re-driven run is bounded again and its row
@@ -641,17 +677,18 @@ func (rs *Runs) clearEnd(workflowID string) {
 func (rs *Runs) restartLife(ctx context.Context, workflowID string) {
 	rs.disarmDeadline(ctx, workflowID)
 	rs.clearHeals(workflowID)
+	rs.endAutoResumeStop(ctx, workflowID)
 	rs.clearExecuted(workflowID)
 	rs.beginLife(workflowID)
 }
 
 // An already-hosted retry may still carry its old deadline; one after a terminal frame needs a new
 // lease, named from KAS's run list for the single-run rule. The slot stays zero.
-func (rs *Runs) rearmRetried(ctx context.Context, workflowID string, o *runOrigin) {
+func (rs *Runs) rearmRetried(ctx context.Context, workflowID string, o *runOrigin, holders []marotte.ChatID) {
 	rs.clearEnd(workflowID)
 	rs.disarmDeadline(ctx, workflowID)
 	if _, held := rs.lease(workflowID); !held {
-		rs.grantRetryLease(ctx, workflowID, o)
+		rs.grantRetryLease(ctx, workflowID, o, holders)
 	}
 	rs.armDeadline(ctx, workflowID)
 }
@@ -847,14 +884,15 @@ func runStartLaunch(chatID marotte.ChatID) launchOrigin {
 	return launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}
 }
 
-// `run_start` is the first sight of an agent-launched run, so its lease is minted here; it also
+// `run_start` is the first sight of an agent-launched run, so its keep facts and lease are written here; it also
 // re-arms a resumed run.
 func (rs *Runs) observeStart(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" {
-		if _, held := rs.lease(f.WorkflowID); !held {
-			rs.grantLease(ctx, f.WorkflowID, f.WorkflowName, runStartLaunch(chatID), nil)
-		}
+		rs.startRunMarks(ctx, chatID, &f)
 		rs.recordParentSession(ctx, f.WorkflowID, f.ParentSessionID)
+		// A start marotte's heal did not write (the TUI's, an orchestrator's) ends the stop too; a heal writes none of
+		// a stopped run.
+		rs.endAutoResumeStop(ctx, f.WorkflowID)
 		rs.armDeadline(ctx, f.WorkflowID)
 	}
 	rs.translate.HandleRunStart(ctx, chatID, msg)

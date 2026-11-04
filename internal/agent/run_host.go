@@ -10,11 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -48,8 +50,22 @@ func workflowIDOf(chatID marotte.ChatID) string {
 	return strings.TrimPrefix(string(chatID), runChatPrefix)
 }
 
-// launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`.
-const launchTimeout = 120 * time.Second
+// unanswered wraps a launch's err with errEngineSlow when the engine ran out of time or was not ready. Only for an
+// error returned before workflow/new is sent: after it, a run may exist and a retry could double it. ctx is the
+// caller's, so a launch its caller abandoned is not the engine's fault.
+func unanswered(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return err
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, marotte.ErrBridgeExited) {
+		return fmt.Errorf("%w: %w", errEngineSlow, err)
+	}
+	return err
+}
+
+// launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`, extended through an engine
+// stall (engineOwner.stallAware). A var so a test can shorten it.
+var launchTimeout = 120 * time.Second
 
 // launch starts one parentless attended run of the recipe and returns its workflow id and name.
 func (rs *Runs) launch(
@@ -59,9 +75,10 @@ func (rs *Runs) launch(
 }
 
 // LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window and backstop.
-// The sign-in gate's refusal wraps schedule.ErrNoRunCanStart.
+// The sign-in gate's refusal wraps schedule.ErrNoRunCanStart; an engine that did not answer before the run was
+// created wraps schedule.ErrEngineBusy.
 func (rs *Runs) LaunchScheduled(
-	ctx context.Context, source, scheduleID string, defaults marotte.RunDefaults, slotAt time.Time,
+	ctx context.Context, source string, row schedule.Row, defaults marotte.RunDefaults, slotAt time.Time,
 ) (id, name string, err error) {
 	// The schedule runner outlives Shutdown, so a launch is held on inflight and refused once draining.
 	release, ok := rs.lifecycle.enterUnlessDraining()
@@ -69,9 +86,12 @@ func (rs *Runs) LaunchScheduled(
 		return "", "", errRuntimeDraining
 	}
 	defer release()
-	id, name, err = rs.launchAs(ctx, source, nil, defaults, scheduledLaunch(scheduleID, slotAt))
-	if errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown) {
+	id, name, err = rs.launchAs(ctx, source, nil, defaults, scheduledLaunch(row, slotAt))
+	switch {
+	case errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown):
 		err = fmt.Errorf("%w: %w", schedule.ErrNoRunCanStart, err)
+	case errors.Is(err, errEngineSlow):
+		err = fmt.Errorf("%w: %w", schedule.ErrEngineBusy, err)
 	}
 	return id, name, err
 }
@@ -85,69 +105,89 @@ func (rs *Runs) launchAs(
 		return "", "", gErr
 	}
 	defer func() { a.settle(id) }()
-	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
+	budgetEnd := time.Now().Add(launchTimeout)
+	cctx, cancel := rs.engine.stallAware(ctx, launchTimeout)
 	defer cancel()
 
 	recipe, err := rs.launchRecipe(cctx, source, inputs)
 	if err != nil {
-		return "", "", err
+		return "", "", unanswered(ctx, err)
 	}
 	if o.origin == runlease.OriginManual && !isAgentSource(source) {
 		// A manual run yields to its recipe's next slot.
 		o.slotAt = rs.manualSlot(recipe.Source)
 	}
 	if bErr := rs.recipeIdle(cctx, recipe.Name); bErr != nil {
-		return "", "", bErr
+		return "", "", unanswered(ctx, bErr)
 	}
 
 	// The host session's presets are resolved once and recorded on the lease: a reload after a restart applies
 	// these, never the profile as it is then.
-	presets := securityPresets(cctx, rs.lifecycle.configDir)
-	sb := &sharedBridge{state: bridgeStarting, settled: newSessionSettle()}
+	settings := rs.doorSettings(cctx)
+	presets := settings.Presets
+	sb := newSharedBridge(runHostLife{ctx: rs.lifecycle.shutdownCtx})
 	var relay *hostRelay
 	door := &marotte.SessionOpts{
-		Role: marotte.SessionRoleHost, Presets: presets, AdditionalDirectories: rs.lifecycle.sessionDirs(cctx),
+		Role: marotte.SessionRoleHost, Presets: presets, AdditionalDirectories: settings.AdditionalDirectories,
 	}
 	if _, oErr := rs.engine.openSession(cctx, door,
-		func(s engineSession) {
+		func(s engineSession) error {
 			relay = newHostRelay(s, func(msg *marotte.RPCResponse) { rs.answerEarly(s, msg) })
 			sb.attach(relay)
+			return nil
 		}); oErr != nil {
-		return "", "", fmt.Errorf("%w: %w", errRunHostStart, oErr)
+		return "", "", unanswered(ctx, fmt.Errorf("%w: %w", errRunHostStart, oErr))
 	}
-	host := sb.current()
-	parent := host.SessionID()
+	parent := sb.SessionID()
 	if parent == "" {
-		rs.bridges.closeSession(host)
+		sb.closeOwned(rs.bridges.closeSession)
 		return "", "", fmt.Errorf("%w: the host session's door answered no session id", errRunHostStart)
 	}
-	wfID, err := rs.workflowNew(cctx, host, recipe.Source, inputs, defaults, parent, o.runLabel(recipe.Name))
+	var wfID string
+	err = sb.useRun(cctx, func(ctx context.Context, s engineSession) error {
+		var nErr error
+		wfID, nErr = rs.workflowNew(ctx, s, recipe.Source, inputs, defaults, parent, o.runLabel(recipe.Name))
+		return nErr
+	})
 	if err != nil {
-		rs.bridges.closeSession(host)
+		sb.closeOwned(rs.bridges.closeSession)
 		return "", "", err
 	}
 	if !rs.bridges.insert(runChatID(wfID), sb) {
-		rs.bridges.closeSession(host)
+		sb.closeOwned(rs.bridges.closeSession)
 		return "", "", fmt.Errorf("workflow %s already has a host session", wfID)
 	}
+	// The run exists: a caller that stops waiting now must not leave it half launched, its row naming a run that
+	// nothing tracks, so the rest keeps the launch's budget and drops the caller's cancel. A stall-aware context's
+	// Deadline is its extension ceiling, not its budget, so the budget's end is carried over instead.
+	rctx, rcancel := rs.engine.stallAware(context.WithoutCancel(ctx), time.Until(budgetEnd))
+	defer rcancel()
 	sb.setIdle()
 	sb.settled.settle(nil)
-	rs.coord.goForward(runChatID(wfID), host)
+	_ = sb.useRun(cctx, func(_ context.Context, s engineSession) error {
+		rs.coord.goRunForward(runChatID(wfID), s)
+		return nil
+	})
 	relay.begin()
 	// The run's envelope, before anything can execute (runlease.Lease).
-	rs.grantLease(cctx, wfID, recipe.Name, o, hostSecurityOf(presets))
-	rs.recordParentSession(cctx, wfID, string(parent))
+	rs.grantLease(rctx, wfID, recipe.Name, o, hostSecurityOf(presets))
+	rs.recordParentSession(rctx, wfID, string(parent))
 	// Visible to Route before invoke is written, so the run's first frame reaches the host's lane.
 	rs.router.registerOwner(wfID, parent)
-	if _, err := rs.write(cctx, a, sb, wfID, methodKiroWorkflowInvoke,
+	if _, err := rs.write(rctx, a, sb, wfID, methodKiroWorkflowInvoke,
 		map[string]any{keyWorkflowID: wfID}, mutationDrive); err != nil {
-		// Created but never started.
-		rs.releaseLease(cctx, wfID)
-		rs.coord.closeBridge(cctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
-		return "", "", fmt.Errorf("workflow invoke: %w", err)
+		// Created but never started; the row grantLease wrote names this run, so it gets the failure. The invoke may
+		// have ended on the launch's deadline, which would refuse these writes too.
+		err = fmt.Errorf("workflow invoke: %w", err)
+		fctx := durable.Context(rctx)
+		rs.recordScheduleOutcome(fctx, schedule.Run{ScheduleID: o.scheduleRow().ID, ScheduleLife: o.scheduleRow().Life, WorkflowID: wfID},
+			schedule.Outcome{Status: schedule.StatusFailed, Reason: schedule.ReasonText(err.Error())})
+		rs.releaseLease(fctx, wfID)
+		rs.coord.closeBridge(fctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
+		return wfID, recipe.Name, err
 	}
 	// After invoke, so a run that never started leaves no timer.
-	rs.armDeadline(cctx, wfID)
+	rs.armDeadline(rctx, wfID)
 	slog.Info("workflow run launched", "workflow_id", wfID, "recipe", recipe.Name)
 	return wfID, recipe.Name, nil
 }
@@ -259,13 +299,25 @@ func (rs *Runs) deleteAs(ctx context.Context, workflowID string, stop runStop) e
 	if err != nil {
 		return err
 	}
+	return rs.deleteHeld(ctx, d, stop)
+}
+
+// deleteHeld sends the delete d holds its run closed for, and settles d once KAS's answer is known. A run KAS no longer
+// finds is torn down all the same, and its not-found error returned.
+func (rs *Runs) deleteHeld(ctx context.Context, d *runDeletion, stop runStop) error {
+	workflowID := d.workflowID
 	var got kasVerdict
+	var err error
 	rs.stopSerialized(ctx, workflowID, func(sctx context.Context) bool {
 		got, err = rs.deleteCall(sctx, workflowID, stop)
 		return got != kasRefused
 	})
 	switch got {
 	case kasRefused:
+		if workflowNotFound(err) {
+			// No later list names the run, so nothing else would drop marotte's record of it.
+			rs.teardownDeleted(ctx, workflowID)
+		}
 		d.settle()
 		return err
 	case kasUnconfirmed:
@@ -291,9 +343,6 @@ func (rs *Runs) deleteCall(ctx context.Context, workflowID string, stop runStop)
 	defer release()
 	resp, err := h.Call(durable.Context(ctx), methodKiroWorkflowDelete, params)
 	err = runCallErr(resp, err)
-	if err == nil {
-		rs.router.forgetWorkflow(workflowID)
-	}
 	return verdictOf(err), err
 }
 
@@ -353,8 +402,11 @@ func (rs *Runs) readBack(ctx context.Context, workflowID string) readBackVerdict
 	return runKept
 }
 
-// teardownDeleted drops everything marotte keeps about a run KAS deleted.
+// teardownDeleted drops everything marotte keeps about a run KAS deleted or no longer finds.
 func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string) {
+	rs.router.forgetWorkflow(workflowID)
+	rs.translate.ForgetRunSteps(workflowID)
+	rs.retries.clear(workflowID)
 	rs.deleteRunLog(ctx, workflowID)
 	rs.coord.closeBridge(ctx, runChatID(workflowID), marotte.TurnOutcomeInterrupted)
 	rs.forgetBounds(ctx, workflowID)
@@ -384,12 +436,22 @@ func (rs *Runs) resume(ctx context.Context, workflowID string, caller controlCal
 // whether it released a lease it minted. It bounds the host session's load and the call. A var for tests.
 var retryTimeout = clientRequestBudget - 5*time.Second
 
-// clientRequestBudget is the timeout @cplieger/fetch hard-wires into every apiAction.
+// clientRequestBudget is the timeout @cplieger/ui/fetch hard-wires into every apiAction.
 const clientRequestBudget = 30 * time.Second
 
-// errRetrySlow reports a retry not handed off within retryTimeout; the REST layer answers 503.
+var errRetryRunDeleting = errors.New("this run is being deleted or checked for deletion, so nothing was retried. " +
+	"Try again in a moment")
+
+// errRetrySlow reports a retry whose run's session did not load within retryTimeout, so the verb was never sent;
+// the REST layer answers 503.
 var errRetrySlow = errors.New(
 	"the run's session did not load in time, so nothing was retried. Try again",
+)
+
+// errRetryOutcomeUnknown reports a retry verb sent and not answered within retryTimeout: KAS may be running it, so
+// the lease stays and the REST layer answers 504 still_applying.
+var errRetryOutcomeUnknown = errors.New(
+	"kiro-cli has not answered the retry yet and may still be running it. The run updates when it does",
 )
 
 // errRetryOutcomeUnreadable reports a retry KAS accepted whose report was unreadable. The run may be
@@ -406,31 +468,36 @@ type kasRetryOutcome struct {
 	RetriedNodeIDs []string `json:"retriedNodeIds"`
 }
 
-// retry resets a failed or aborted run's failed work and reports what it reset, hosted from the gate's own read of the run's origin.
+// retry resets a failed or aborted run's failed work and reports what it reset, hosted from one read of the run's origin.
 func (rs *Runs) retry(
 	ctx context.Context, workflowID string, aff *runAffordance,
 ) (out marotte.RunRetriedResponse, err error) {
 	if workflowID == "" {
 		return out, errors.New("missing workflow id")
 	}
+	// The purge re-reads a run under its delete hold and deletes on that answer, so no retry may run inside the hold.
+	lease, err := rs.life.admit(workflowID)
+	if err != nil {
+		return out, command.StatusError(http.StatusConflict, errRetryRunDeleting)
+	}
+	defer lease.end()
+	// Read before the verb and reused throughout: nothing can learn it once the run re-drives, and two reads can disagree.
+	origin := rs.originOf(ctx, workflowID)
 	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
 	defer cancel()
 
-	// Threaded from the gate: nothing here can learn it once the run re-drives.
-	recipe := aff.origin.recipe
+	recipe := origin.recipe
+	holders, launchers, err := rs.retryHolders(cctx, workflowID, &origin)
+	if err != nil {
+		return out, err
+	}
+	if refused := rs.refuseClosedLauncher(workflowID, launchers); refused != nil {
+		return out, refused
+	}
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
-	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
-		rs.settleMissedEnd(cctx, &l, aff.status)
-	}
-	minted := false
-	if _, held := rs.lease(workflowID); held {
-		// A manual or agent lease is the one the gate's origin would grant; the run under it is a new one all the same.
-		rs.restartLife(cctx, workflowID)
-	} else {
-		rs.grantRetryLease(cctx, workflowID, &aff.origin)
-		minted = true
-	}
+	minted := rs.leaseForRetry(cctx, workflowID, &origin, holders, aff)
+	rs.markRunAlive(cctx, workflowID, holders)
 	host, err := rs.ensureResident(cctx, workflowID)
 	if err != nil {
 		if minted {
@@ -443,9 +510,10 @@ func (rs *Runs) retry(
 		out, cErr = rs.retryCall(sctx, host, workflowID)
 		return cErr
 	})
-	if errors.Is(err, errRetryOutcomeUnreadable) {
-		// Only the report is lost; tearing down would kill the work mid-node.
-		rs.rearmRetried(cctx, workflowID, &aff.origin)
+	if errors.Is(err, errRetryOutcomeUnreadable) || errors.Is(err, errRetryOutcomeUnknown) {
+		// The retry may be running; tearing down would kill the work mid-node. cctx may be spent and the client may
+		// have left, so the re-arm's writes run detached.
+		rs.rearmRetried(durable.Context(ctx), workflowID, &origin, holders)
 		return out, err
 	}
 	if err != nil {
@@ -456,11 +524,28 @@ func (rs *Runs) retry(
 		return out, err
 	}
 	// Only on success: a refused retry re-drove nothing.
-	rs.rearmRetried(cctx, workflowID, &aff.origin)
+	rs.rearmRetried(cctx, workflowID, &origin, holders)
 	slog.Info("workflow run retried",
 		"workflow_id", workflowID, "recipe", recipe,
 		"retried_nodes", len(out.RetriedNodeIDs), "status", out.Status)
 	return out, nil
+}
+
+// leaseForRetry renews the run's lease for the retry, or grants one from origin, reporting whether it minted one.
+func (rs *Runs) leaseForRetry(
+	ctx context.Context, workflowID string, origin *runOrigin, holders []marotte.ChatID, aff *runAffordance,
+) (minted bool) {
+	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
+		rs.settleMissedEnd(ctx, &l, aff.status)
+	}
+	if l, held := rs.lease(workflowID); held {
+		// A manual or agent lease is the one this origin would grant; the run under it is a new one all the same.
+		rs.restartLife(ctx, workflowID)
+		rs.recordKeepChats(ctx, &l, holders)
+		return false
+	}
+	rs.grantRetryLease(ctx, workflowID, origin, holders)
+	return true
 }
 
 // retryCall issues the verb and decodes its report, through runCallErr so an `error` member is not read as success.
@@ -468,7 +553,13 @@ func (rs *Runs) retryCall(
 	ctx context.Context, host *drivenHost, workflowID string,
 ) (marotte.RunRetriedResponse, error) {
 	none := marotte.RunRetriedResponse{}
+	rs.retries.mark(workflowID, time.Now())
 	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
+	if err != nil && ctx.Err() == nil &&
+		(errors.Is(err, marotte.ErrReplyUndecoded) || errors.Is(err, marotte.ErrFrameTooLarge)) {
+		// An answer arrived and could not be read, so KAS may have taken the verb.
+		return none, fmt.Errorf("%w: %w", errRetryOutcomeUnreadable, err)
+	}
 	if err != nil {
 		return none, fmt.Errorf("workflow retry: %w", rs.retryDeadlineErr(ctx, err))
 	}
@@ -501,9 +592,10 @@ func (*Runs) retryResidencyErr(ctx context.Context, err error) error {
 	return fmt.Errorf("retry: load the run's session: %w", err)
 }
 
+// retryDeadlineErr labels a verb this call's deadline abandoned errRetryOutcomeUnknown, since KAS may still apply it.
 func (*Runs) retryDeadlineErr(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
-		return errRetrySlow
+		return fmt.Errorf("%w: %w", errRetryOutcomeUnknown, err)
 	}
 	return err
 }
@@ -650,10 +742,6 @@ type runOrigin struct {
 	err    error
 	parent runParent
 	recipe string
-	// pauseKind and pauseNodeID are kasWorkflowRun's, off the same read.
-	pauseKind    string
-	pauseNodeID  string
-	pausePending bool
 }
 
 // An ownerless parent is trusted only after a complete chat scan: loading a chat's session as a
@@ -672,7 +760,6 @@ func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
 	// WorkflowName is the recipe the single-run rule compares; Name is `runLabel ?? workflowName`.
 	o := runOrigin{
 		recipe: runs[i].WorkflowName, parent: runParent{session: runs[i].ParentSessionID},
-		pauseKind: runs[i].PauseKind, pauseNodeID: runs[i].PauseNodeID, pausePending: runs[i].PausePending,
 	}
 	if o.parent.session == "" {
 		o.err = fmt.Errorf("%w: the run inventory names no launching session", errLaunchSessionUnavailable)
@@ -791,9 +878,9 @@ func (rs *Runs) launchRecipe(ctx context.Context, source string, inputs map[stri
 
 func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Recipe, error) {
 	if source == "" {
-		return marotte.Recipe{}, errors.New("missing recipe source")
+		return marotte.Recipe{}, errMissingRecipeSource
 	}
-	recipes, err := rs.listRecipes(ctx)
+	recipes, err := rs.recipes.live(ctx, rs.lifecycle, rs.fetchRecipes)
 	if err != nil {
 		return marotte.Recipe{}, err
 	}
@@ -802,7 +889,7 @@ func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Reci
 			return r, nil
 		}
 	}
-	return marotte.Recipe{}, fmt.Errorf("unknown recipe source %q", source)
+	return marotte.Recipe{}, fmt.Errorf("%w %q", errUnknownRecipe, source)
 }
 
 // recipeIdle enforces the single-run rule (one live run per recipe, globally) against KAS's run list, the only source that sees runs
@@ -831,7 +918,7 @@ func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 		}
 		busy := &schedule.BusyError{WorkflowID: runs[i].WorkflowID}
 		if l, held := rs.lease(busy.WorkflowID); held {
-			busy.ScheduleID, busy.SlotAt = l.ScheduleID, l.SlotAt
+			busy.ScheduleID, busy.ScheduleLife, busy.SlotAt = l.ScheduleID, l.ScheduleLife, l.SlotAt
 		}
 		return busy
 	}
@@ -849,10 +936,15 @@ type kasRecipe struct {
 	BuiltIn         bool              `json:"builtIn"`
 }
 
-func (rs *Runs) listRecipes(ctx context.Context) ([]marotte.Recipe, error) {
-	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
-	defer cancel()
-	raw, err := rs.engine.rawCall(cctx, "workflow listRecipes call", methodKiroWorkflowListRecipes,
+// recipeList is the list a person opens: a fresh listing, or the held catalog once that listing outlasts
+// recipeListPatience.
+func (rs *Runs) recipeList(ctx context.Context) ([]marotte.Recipe, error) {
+	return rs.recipes.display(ctx, rs.lifecycle, rs.fetchRecipes, recipeListPatience)
+}
+
+// fetchRecipes walks KAS's whole catalog; KAS admits every recipe file on each call.
+func (rs *Runs) fetchRecipes(ctx context.Context) ([]marotte.Recipe, error) {
+	raw, err := rs.engine.rawCall(ctx, "workflow listRecipes call", methodKiroWorkflowListRecipes,
 		map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}})
 	if err != nil {
 		return nil, err
@@ -911,6 +1003,9 @@ func (rs *Runs) workflowNew(
 	}
 	resp, err := bridge.Call(ctx, methodKiroWorkflowNew, params)
 	if cErr := runCallErr(resp, err); cErr != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("workflow new: kiro-cli did not answer in time and may have created the run: %w", cErr)
+		}
 		return "", fmt.Errorf("workflow new: %w", cErr)
 	}
 	var res struct {
@@ -971,12 +1066,20 @@ func resumablePause(reason string, detail *pauseDetail) bool {
 var orphanResumeDelay = 165 * time.Second
 
 // resumeInterruptedRuns resumes the restart-paused runs this chat's session chain launched, and sweeps again after
-// orphanResumeDelay while KAS has not yet reconciled one; never resumeAll, which would undo deliberate pauses.
-func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID marotte.ChatID) {
-	if s := rs.resumeChainRuns(ctx, chatID); s.running || s.failed {
+// orphanResumeDelay while KAS has not yet reconciled one; never resumeAll, which would undo deliberate pauses. Each
+// later sweep is lc's work, so once the chat's life ended the sweeps stand down: its next open runs its own.
+func (rs *Runs) resumeInterruptedRuns(ctx context.Context, lc *chatLifecycle, chatID marotte.ChatID) {
+	if s := rs.resumeChainRuns(ctx, chatID, lc.endedNow); s.running || s.failed {
 		slog.Info("rehydrate: a run is still listed running, or the chat's runs could not be listed or resumed; sweeping again later",
 			"chat_id", chatID, "delay", orphanResumeDelay)
-		rs.retryResumeLater(func(ctx context.Context) bool { return rs.resumeChainRuns(ctx, chatID).failed },
+		begin := func() (context.Context, func(), bool) {
+			ctx, done, ok := lc.beginWork(workSweep)
+			if !ok {
+				slog.Debug("rehydrate: the chat closed; its later run sweeps stand down", "chat_id", chatID)
+			}
+			return ctx, done, ok
+		}
+		rs.retryResumeLater(begin, func(ctx context.Context) bool { return rs.resumeChainRuns(ctx, chatID, lc.endedNow).failed },
 			func(sweeps int) {
 				slog.Error("rehydrate: the chat's runs could not be listed or resumed by any sweep; the chat's next reopen tries again",
 					"chat_id", chatID, "sweeps", sweeps)
@@ -988,23 +1091,34 @@ func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID marotte.ChatID
 const maxResweeps = 5
 
 // retryResumeLater follows the caller's one try: it calls try after orphanResumeDelay, again while it reports a
-// failed resume, until maxResweeps tries in all, then spent with that count. A stopping runtime tries nothing more.
-func (rs *Runs) retryResumeLater(try func(context.Context) (failed bool), spent func(tries int)) {
-	var after func(done int)
-	after = func(done int) {
-		if done >= maxResweeps {
-			spent(done)
+// failed resume, until maxResweeps tries in all, then spent with that count. Each try runs on the context begin
+// answers and calls its done when it returns; a refused begin, or a stopping runtime, tries nothing more.
+func (rs *Runs) retryResumeLater(begin func() (context.Context, func(), bool), try func(context.Context) (failed bool), spent func(tries int)) {
+	var after func(tries int)
+	after = func(tries int) {
+		if tries >= maxResweeps {
+			spent(tries)
 			return
 		}
 		rs.lifecycle.afterUnlessDraining(orphanResumeDelay, func() {
-			hctx, cancel := rs.lifecycle.derivedContext()
-			defer cancel()
-			if try(hctx) {
-				after(done + 1)
+			ctx, done, ok := begin()
+			if !ok {
+				return
+			}
+			failed := try(ctx)
+			done()
+			if failed {
+				after(tries + 1)
 			}
 		})
 	}
 	after(1)
+}
+
+// runtimeSweep is a sweep outside any chat's life, on the runtime's lifetime: it always begins.
+func (rs *Runs) runtimeSweep() (context.Context, func(), bool) {
+	ctx, cancel := rs.lifecycle.derivedContext()
+	return ctx, cancel, true
 }
 
 // chainSweep is what one resume sweep left unreconciled: a run still listed running, which after an engine end KAS
@@ -1014,15 +1128,16 @@ type chainSweep struct {
 	failed  bool
 }
 
-// resumeChainRuns is one resume sweep of chatID's session chain.
-func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID) (s chainSweep) {
-	chat, ok := rs.chats.Get(ctx, chatID)
+// resumeChainRuns is one resume sweep of chatID's session chain, standing down before a resume once ended reports
+// the chat's life over.
+func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID, ended func() bool) (s chainSweep) {
+	rec, ok := rs.chats.Get(ctx, chatID)
 	if !ok {
 		return s
 	}
-	chain := make(map[string]bool, len(chat.PriorACPSessionIDs)+1)
-	chain[chat.ACPSessionID] = true
-	for _, id := range chat.PriorACPSessionIDs {
+	chain := make(map[string]bool, len(rec.PriorACPSessionIDs)+1)
+	chain[rec.ACPSessionID] = true
+	for _, id := range rec.PriorACPSessionIDs {
 		chain[id] = true
 	}
 
@@ -1039,6 +1154,9 @@ func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID) (s c
 		}
 		switch marotte.RunStatus(r.Status) {
 		case marotte.RunStatusPaused:
+			if ended() {
+				return s
+			}
 			if rs.resumeIfInterrupted(ctx, chatID, r.WorkflowID) == resumeFailed {
 				s.failed = true
 			}
@@ -1204,12 +1322,12 @@ type resumeOutcome int
 
 const (
 	resumeWritten resumeOutcome = iota + 1
-	// resumeSkipped: not a pause marotte resumes unasked, or the run's heal budget is spent and the run parked for
-	// the user, or ended when scheduled.
+	// resumeSkipped: not a pause marotte resumes unasked, or the run's heal budget is spent (recorded as marotte's
+	// stop, no pause written), or a scheduled run ended.
 	resumeSkipped
 	resumeHeld
-	// resumeFailed: the run could not be read, its session made resident, its resume written or, past its heal budget,
-	// its pause stamped for the user.
+	// resumeFailed: the run could not be read, its session made resident or its resume written, or a scheduled run
+	// past its heal budget could not be ended.
 	resumeFailed
 )
 
@@ -1234,11 +1352,15 @@ func isStatusRefusal(err error) bool {
 	return ok
 }
 
+// errRunListPartial is a workflow/list reply with no runs array: it proves no run absent, so it is no empty list.
+var errRunListPartial = errors.New("the run list reply carries no runs array")
+
 // listRaw lists runs with their raw parent session ids, for callers that scope by
-// session chain rather than by resolved chat.
+// session chain rather than by resolved chat. A reply with no runs array is errRunListPartial.
 func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
+	// workspacePaths is a required array (methodKiroWorkflowList).
 	raw, err := rs.engine.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
 		map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}})
 	if err != nil {
@@ -1248,45 +1370,10 @@ func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 	if err := json.Unmarshal(raw, &list); err != nil {
 		return nil, err
 	}
-	return list.Runs, nil
-}
-
-// cancelForChat cancels every live run this chat's sessions launched: closing the chat's session leaves them
-// running. Starts with a record read, so a deleted chat no-ops.
-func (rs *Runs) cancelForChat(ctx context.Context, chatID marotte.ChatID, stop runStop) {
-	chat, ok := rs.chats.Get(ctx, chatID)
-	if !ok {
-		return
+	if list.Runs == nil {
+		return nil, errRunListPartial
 	}
-	rs.cancelForSessions(ctx, chatID, chat.SessionChain(), stop)
-}
-
-// cancelForSessions cancels every live run these sessions launched, from a captured chain with no record
-// read, best-effort so a tab close never waits. One inventory read.
-func (rs *Runs) cancelForSessions(ctx context.Context, chatID marotte.ChatID, sessionChain []string, stop runStop) {
-	if len(sessionChain) == 0 {
-		return
-	}
-	chain := make(map[string]bool, len(sessionChain))
-	for _, id := range sessionChain {
-		chain[id] = true
-	}
-	runs, err := rs.listRaw(ctx)
-	if err != nil {
-		slog.Warn("close: run list unavailable, skipping run cancel", "chat_id", chatID, "error", err)
-		return
-	}
-	for i := range runs {
-		r := &runs[i]
-		if marotte.RunStatus(r.Status).Terminal() || !chain[r.ParentSessionID] {
-			continue
-		}
-		if cErr := rs.cancelAs(ctx, r.WorkflowID, stop); cErr != nil {
-			slog.Warn("close: run cancel failed", "workflow_id", r.WorkflowID, "chat_id", chatID, "error", cErr)
-			continue
-		}
-		slog.Info("close: cancelled chat's run", "workflow_id", r.WorkflowID, "chat_id", chatID)
-	}
+	return *list.Runs, nil
 }
 
 // deleteForSessions deletes every run these sessions launched, whatever its status: KAS refuses a session
@@ -1295,10 +1382,9 @@ func (rs *Runs) deleteForSessions(ctx context.Context, chatID marotte.ChatID, se
 	if len(sessionChain) == 0 {
 		return
 	}
-	chain := make(map[string]bool, len(sessionChain))
-	for _, id := range sessionChain {
-		chain[id] = true
-	}
+	// The same test RunHolders attributes every run keep fact by, so this deletes exactly the runs whose facts
+	// would have kept the chat.
+	owners := chat.OwnersOfChain(chatID, sessionChain)
 	runs, err := rs.listRaw(ctx)
 	if err != nil {
 		slog.Warn("delete: run list unavailable, skipping run delete", "chat_id", chatID, "error", err)
@@ -1306,7 +1392,7 @@ func (rs *Runs) deleteForSessions(ctx context.Context, chatID marotte.ChatID, se
 	}
 	for i := range runs {
 		r := &runs[i]
-		if !chain[r.ParentSessionID] {
+		if len(owners.Of(r.ParentSessionID)) == 0 {
 			continue
 		}
 		if dErr := rs.deleteAs(ctx, r.WorkflowID, stop); dErr != nil {

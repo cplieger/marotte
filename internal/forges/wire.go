@@ -20,18 +20,18 @@ type ForgeStatus string
 // The ForgeStatus values. Connected and retrying rows serve requests; the
 // others serve none.
 const (
-	ForgeConnected ForgeStatus = "connected"
-	// ForgeRetrying is a failure another check can outlive, checked again on the
+	forgeConnected ForgeStatus = "connected"
+	// forgeRetrying is a failure another check can outlive, checked again on the
 	// next background pass.
-	ForgeRetrying ForgeStatus = "retrying"
-	// ForgeRefused is the forge refusing the account, not the token: a Check
+	forgeRetrying ForgeStatus = "retrying"
+	// forgeRefused is the forge refusing the account, not the token: a Check
 	// revives it once fixed on the forge.
-	ForgeRefused ForgeStatus = "refused"
-	// ForgeReconnect is a token only a new sign-in revives.
-	ForgeReconnect ForgeStatus = "reconnect"
-	// ForgeUnusable is every row while marotte cannot use its forge
+	forgeRefused ForgeStatus = "refused"
+	// forgeReconnect is a token only a new sign-in revives.
+	forgeReconnect ForgeStatus = "reconnect"
+	// forgeUnusable is every row while marotte cannot use its forge
 	// persistence.
-	ForgeUnusable ForgeStatus = "unusable"
+	forgeUnusable ForgeStatus = "unusable"
 )
 
 // ForgeError is why a connection is not connected, in the error envelope's
@@ -335,8 +335,8 @@ type InventoryEntry struct {
 // InventoryList is every connected connection's entry, ordered by connection
 // id, and one forge_inventory stamp per entry in the same order.
 type InventoryList struct {
-	Entries []InventoryEntry        `json:"entries"`
-	Subject []*marotte.SubjectStamp `json:"subject"`
+	Entries []InventoryEntry       `json:"entries"`
+	Subject []marotte.SubjectStamp `json:"subject"`
 	// Viewing is a client showing the pull-request view, which holds the cycle
 	// at prPollInterval.
 	Viewing bool `json:"viewing"`

@@ -1,8 +1,8 @@
 // A bottom-bar region rather than a modal, so the transcript a decision is about stays readable; focus is not
 // trapped. The queue is per-chat, so a second ask never overwrites the first.
 
-import { el, signal, effect, touch } from "@cplieger/reactive";
-import { announce } from "@cplieger/ui-primitives/announce";
+import { el, signal, effect, touch } from "@cplieger/ui";
+import { announce } from "@cplieger/ui/announce";
 import { activeSession } from "./store.js";
 import { BUS_USER_INPUT_ANSWERED, emitBus } from "./bus.js";
 import { releaseClampsIn } from "./clamp-text.js";
@@ -380,6 +380,13 @@ export function dropTurnDecisions(chatID: string): void {
 export function hasPendingDecision(chatID: string): boolean {
   touch(queueVersion);
   return (queues.get(chatID)?.length ?? 0) > 0;
+}
+
+/** The server ask ids of this chat's unanswered decisions, as a close names them. Subscribes the
+ *  calling effect to the queue. */
+export function pendingDecisionIDs(chatID: string): string[] {
+  touch(queueVersion);
+  return (queues.get(chatID) ?? []).map((d) => String(d.requestID));
 }
 
 /**

@@ -42,9 +42,14 @@ func (rs *Runs) recordRunNotice(chatID marotte.ChatID, workflowID, label string)
 	rs.notices[chatID] = q
 }
 
+// noticeClearTimeout bounds clearStaleNotices' call, which the close pipeline's drain waits behind.
+const noticeClearTimeout = 30 * time.Second
+
 // clearStaleNotices closes KAS's gate: KAS skips its turn-end clear when a turn ends abnormally, leaving
-// a notice to ambush the next prompt. On a turn close with a notice held and the chat settled, it sends
-// `_session/steer/clear` on the chat's bridge; that also drops unread user steers.
+// a notice to ambush the next prompt. With a notice held and the chat settled, it sends
+// `_session/steer/clear` on the chat's bridge; that also drops unread user steers. It then waits, best-effort,
+// for the frames KAS wrote before the clear's reply to fold; a failed wait only logs, so the dropped rows may not
+// have folded yet when it returns.
 func (rs *Runs) clearStaleNotices(ctx context.Context, chatID marotte.ChatID) {
 	if !rs.holdsNotice(chatID) || rs.coord.turns.live(chatID) {
 		return
@@ -53,9 +58,16 @@ func (rs *Runs) clearStaleNotices(ctx context.Context, chatID marotte.ChatID) {
 	if sb == nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(ctx, noticeClearTimeout)
+	defer cancel()
 	params := map[string]any{marotte.KeySessionID: sb.SessionID()}
-	if _, err := sb.Call(ctx, marotte.MethodSessionSteerClear, params); err != nil {
+	_, seq, err := sb.CallAt(ctx, marotte.MethodSessionSteerClear, params)
+	if err != nil {
 		slog.Warn("run notice: boundary clear failed; the notice stays queued for the next prompt", "chat_id", chatID, "error", err)
+		return
+	}
+	if !rs.coord.turns.awaitPosition(ctx, chatID, seq) {
+		slog.Warn("run notice: the frames before the boundary clear's reply never folded", "chat_id", chatID)
 	}
 }
 

@@ -2,8 +2,8 @@
 // keeps from KAS's `available_commands_update` (already narrowed to what KAS resolves before the
 // model: saved prompts, steering docs, /goal) beside marotte's own verbs.
 
-import { el, signal } from "@cplieger/reactive";
-import { ask } from "@cplieger/ui-primitives/ask";
+import { el, signal } from "@cplieger/ui";
+import { ask } from "@cplieger/ui/ask";
 import { apiGetTyped } from "./api-client.js";
 import { onBus, onSSE, BUS_RECONCILE } from "./bus.js";
 import { $ } from "./dom.js";

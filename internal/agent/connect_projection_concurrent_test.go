@@ -24,7 +24,7 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 		id := marotte.ChatID(fmt.Sprintf("c-conc-%02d", i))
 		chatIDs = append(chatIDs, id)
 		knownChat[id] = true
-		rt.bridge.mgr.orInsert(id)
+		rt.bridge.mgr.orInsertNow(id)
 	}
 	knownRun := make(map[string]bool, fixtureRuns)
 	runIDs := make([]string, 0, fixtureRuns)
@@ -53,8 +53,8 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 					return
 				default:
 				}
-				if rt.coord.TryReserveTurn(id, marotte.TurnSourcePrompt) {
-					rt.coord.ReleaseTurnReservation(id)
+				if rt.coord.tryReserveNow(id, marotte.TurnSourcePrompt) {
+					rt.coord.releaseHeld(id)
 				}
 			}
 		})

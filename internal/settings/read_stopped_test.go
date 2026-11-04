@@ -17,7 +17,7 @@ func TestLoggingReaders_StayQuietWhenTheirCtxEnded(t *testing.T) {
 		read func(ctx context.Context, dir string)
 	}{
 		{"Field", func(ctx context.Context, dir string) { Field[string](ctx, dir, KeyMemoryMode) }},
-		{"FieldOr", func(ctx context.Context, dir string) { FieldOr(ctx, dir, KeyMemoryMode, "") }},
+		{"fieldOr", func(ctx context.Context, dir string) { fieldOr(ctx, dir, KeyMemoryMode, "") }},
 		{"FieldInto", func(ctx context.Context, dir string) {
 			var out string
 			FieldInto(ctx, dir, KeyMemoryMode, &out)

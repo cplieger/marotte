@@ -17,7 +17,7 @@ import { materializeTab, subagentRef, subjectForRoute } from "./tab-materialize.
 import { viewStale } from "./view-freshness.js";
 // A PATH-SPACE normaliser rather than a feature behaviour. router.ts refuses the same
 // import because a route table sits UNDER the feature line and this file does not.
-// Acyclic: files-shared.ts imports only @cplieger/reactive.
+// Acyclic: files-shared.ts imports only @cplieger/ui.
 import { normalizeDirPath } from "./files-shared.js";
 import {
   registerTabsTarget,
@@ -48,6 +48,7 @@ import {
   REORDER_STALE,
 } from "./actions/tabs.js";
 import { retryNetwork } from "./actions/index.js";
+import { CLOSE_IMPACT_CHANGED, serverImpactOf } from "./actions/close-impact.js";
 import { newOpID } from "./transport.js";
 import { join as joinKey } from "@cplieger/keyenc";
 import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
@@ -55,7 +56,7 @@ import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
 import { $ } from "./dom.js";
 import { swapViews } from "./view-swap.js";
-import { signal, effect, el } from "@cplieger/reactive";
+import { signal, effect, el } from "@cplieger/ui";
 import {
   attachDrag,
   dragOwnsStrip,
@@ -64,9 +65,8 @@ import {
   pointerDragActivation,
   setReorderCallback,
   setReprojectCallback,
-  setTapCallback,
 } from "./tabs-drag.js";
-import { announce } from "@cplieger/ui-primitives/announce";
+import { announce } from "@cplieger/ui/announce";
 import type { ViewportBox } from "./viewport-frame.js";
 import { viewportBox, viewportMoved } from "./viewport-frame.js";
 import { showContextMenu } from "./context-menu.js";
@@ -80,6 +80,7 @@ import { info, error as toastError } from "./toast.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
 import { setPageTitle, clearPageTitle } from "./page-title.js";
 import type { ClosingChat } from "./close-busy.js";
+import type { CloseImpact } from "./wire/types.gen.js";
 
 // --- Types ---
 
@@ -793,16 +794,35 @@ function subtreeRows(row: TabRow): TabRow[] {
   return out;
 }
 
+/** The chats a History delete of `ref` also closes: every chat row under a tab showing `ref`,
+ *  each once, with the name its row shows; `ref` itself is excluded. */
+export function descendantChatsOf(ref: string): ClosingChat[] {
+  const out = new Map<string, ClosingChat>();
+  for (const row of state.tabs) {
+    if (row.subject.kind !== "chat" || row.subject.ref !== ref) {
+      continue;
+    }
+    for (const r of subtreeRows(row)) {
+      if (r.subject.kind === "chat" && r.subject.ref !== ref && !out.has(r.subject.ref)) {
+        out.set(r.subject.ref, { ref: r.subject.ref, name: r.name });
+      }
+    }
+  }
+  return [...out.values()];
+}
+
 /** Asks whether a person's close may go ahead; `name` and `ref` are the closed tab's, `chats`
- *  every chat row in its subtree. A plain `true` lets the close run in the same task. INJECTED:
- *  the answer's sources import this module. */
+ *  every chat row in its subtree, `stale` a refused close's sent and server impacts to ask again
+ *  on. A plain `true` verdict lets the close run in the same task; `impact` is what the close
+ *  sends (none: unchecked). INJECTED: the answer's sources import this module. */
 type CloseGate = (
   name: string,
   ref: string,
   chats: readonly ClosingChat[],
-) => true | Promise<boolean>;
+  stale?: { readonly sent: CloseImpact; readonly server: CloseImpact },
+) => { readonly verdict: true | Promise<boolean>; readonly impact?: CloseImpact };
 
-const openGate: CloseGate = () => true;
+const openGate: CloseGate = () => ({ verdict: true });
 
 let closeGate = openGate;
 
@@ -944,15 +964,19 @@ function rollbackClose(c: CapturedClose): void {
  *  effects at the gesture, teardown on confirmation. A committed response feeds the pending-op
  *  machine, a DEFINITIVE error rolls back, a TIMEOUT moves to `verifying` with the removal applied.
  *  Closing an id that is not open is not an error: two devices can close one tab. */
-export async function closeTab(id: string): Promise<void> {
+export async function closeTab(id: string, impact?: CloseImpact): Promise<void> {
   const row = rowOfID(id);
   const opID = newOpID();
   markLocalOp(opID);
   if (row === undefined) {
     // Not in this projection: no pending op, just the dispatch. An unknown id is SUCCESS server-side,
-    // so a definitive error here is a real refusal.
-    const lone = await closeTabCommand.dispatch({ id, opID }).outcome;
-    if (lone.status === "error" && lone.error.code !== "timeout") {
+    // so a refusal here is a real one.
+    const lone = await closeTabCommand.dispatch({
+      id,
+      opID,
+      ...(impact === undefined ? {} : { impact }),
+    }).outcome;
+    if (lone.status === "error" && serverRefused(lone.error)) {
       notifyAboutRow(undefined, "Could not close that tab", "error");
     }
     return;
@@ -969,47 +993,83 @@ export async function closeTab(id: string): Promise<void> {
     },
   });
   applyGestureRemoval(captured);
-  const outcome = await closeTabCommand.dispatch({ id, opID }).outcome;
+  const outcome = await closeTabCommand.dispatch({
+    id,
+    opID,
+    ...(impact === undefined ? {} : { impact }),
+  }).outcome;
   if (outcome.status === "success" && outcome.value !== null) {
     removeCommitted(opID, outcome.value.closed, outcome.value.version);
     return;
   }
-  if (outcome.status === "error" && outcome.error.code !== "timeout") {
-    // The server ANSWERED an error: nothing committed, so the restore is
-    // honest — and the toast is this branch's, because the action itself stays
-    // quiet (its other failure shape is inconclusive and must not claim one).
+  if (outcome.status === "error" && outcome.error.code === CLOSE_IMPACT_CHANGED) {
+    // Another device changed what the close stops while the dialog was open: nothing committed,
+    // so the tab comes back with no toast and the person answers again.
     captured.refused = true;
-    notifyAboutRow(captured.rows[0], "Could not close that tab", "error");
-    opFailed(opID);
+    const server = serverImpactOf(outcome.error);
+    if (opFailed(opID)) {
+      if (impact === undefined || server === undefined) {
+        notifyAboutRow(captured.rows[0], "Could not close that tab", "error");
+      } else {
+        requestCloseTab(id, () => undefined, { sent: impact, server });
+      }
+    }
     return;
   }
-  // No answer — the definition-level CLOSE_CONFIRM_MS elapsed (or the dispatch
-  // was aborted): the machine verifies rather than guessing in either
-  // direction.
+  if (outcome.status === "error" && serverRefused(outcome.error)) {
+    // The server refused: the restore is honest only while the op is pending, because a frame naming it
+    // proves the close committed. The toast is this branch's: the action itself stays quiet.
+    captured.refused = true;
+    if (opFailed(opID)) {
+      notifyAboutRow(captured.rows[0], "Could not close that tab", "error");
+    }
+    return;
+  }
+  // No verdict: CLOSE_CONFIRM_MS elapsed, the request was lost, the dispatch was aborted or a retry found the
+  // first attempt still running. The machine verifies rather than guessing in either direction.
   opTimedOut(opID);
+}
+
+/** Whether an error is the server refusing the close. The transport's timeout, network and cancelled outcomes carry
+ *  status 0, and a close they cut off may have committed. Read after the `close_impact_changed` arm, the one 409 close_tab
+ *  answers itself; any other 409 is the idempotency layer's "request already in progress" for a retry whose first
+ *  attempt is still running, so the close verifies. */
+function serverRefused(error: { readonly status?: number }): boolean {
+  const status = error.status ?? 0;
+  return status > 0 && status !== 409;
 }
 
 /** A person's close (the ×, middle-click, Delete): the gate, then `beforeClose` and `closeTab`
  *  only if it lets the close go ahead. Remote closes and the singleton toggles call `closeTab`. */
-function requestCloseTab(id: string, beforeClose: () => void = () => undefined): void {
-  const proceed = (): void => {
-    beforeClose();
-    void closeTab(id);
-  };
+function requestCloseTab(
+  id: string,
+  beforeClose: () => void = () => undefined,
+  stale?: { readonly sent: CloseImpact; readonly server: CloseImpact },
+): void {
   const row = rowOfID(id);
-  const chats = (row === undefined ? [] : subtreeRows(row))
+  if (row === undefined) {
+    if (stale === undefined) {
+      beforeClose();
+      void closeTab(id);
+    }
+    return;
+  }
+  const chats = subtreeRows(row)
     .filter((r) => r.subject.kind === "chat")
     .map((r) => ({ ref: r.subject.ref, name: r.name }));
-  if (row === undefined || chats.length === 0) {
+  const asked =
+    chats.length === 0 && stale === undefined
+      ? { verdict: true as const, impact: { chats: [] } }
+      : closeGate(row.name, row.subject.kind === "chat" ? row.subject.ref : "", chats, stale);
+  const proceed = (): void => {
+    beforeClose();
+    void closeTab(id, asked.impact);
+  };
+  if (asked.verdict === true) {
     proceed();
     return;
   }
-  const verdict = closeGate(row.name, row.subject.kind === "chat" ? row.subject.ref : "", chats);
-  if (verdict === true) {
-    proceed();
-    return;
-  }
-  void verdict.then((ok) => {
+  void asked.verdict.then((ok) => {
     if (ok) {
       proceed();
     }
@@ -1096,9 +1156,6 @@ function publishReorder(order: readonly string[]): readonly string[] | null {
 
 setReorderCallback(publishReorder);
 setReprojectCallback(renderDOM);
-// A lifted hold's release goes to the list, which holds the pointer capture, so it
-// never reaches the row's own activation listener.
-setTapCallback(activateTab);
 
 /** Where the menu's Move up / Move down would take a tab: its group swapped with the
  *  adjacent group in the SAME pin partition. Null for a sub-tab (its position is its
@@ -1845,7 +1902,9 @@ function createTabEl(row: TabRow): HTMLElement {
   // A SPAN, not a button: `role="tab"` is Children Presentational in WAI-ARIA, so a button here is an
   // unnamed dead tab stop (axe `nested-interactive`). Keyboard close is the APG's Delete on the row.
   const close = el("span", { className: "tab-close", "aria-hidden": "true" }, iconEl(ICON_CLOSE));
-  close.addEventListener("pointerup", (e) => {
+  // On `click`, never `pointerup`: a tap's click is hit-tested after the release, so closing on the
+  // release handed the click to the row that slid under the finger.
+  close.addEventListener("click", (e) => {
     e.stopPropagation();
     // The row's own tap guard, read here for the same reason: a drag that happened
     // to start on the × is a scroll, and the × is the strip's one destructive
@@ -2071,8 +2130,8 @@ function beginTabRename(node: HTMLElement, id: string): void {
 
 // --- Tap vs drag ---
 //
-// `#tab-list` scrolls, and activation is a `pointerup`; a drag along an axis with nothing to scroll
-// starts no pan and so no cancel, and the release lands on the row. So the verdict is travelled
+// `#tab-list` scrolls, and activation is a `click`; a drag along an axis with nothing to scroll
+// starts no pan and so no cancel, and the click lands on the row. So the verdict is travelled
 // DISTANCE. ONE module-scope gesture (`isPrimary`), read by both activation and the ×; no
 // `pointercancel` reset, the next `pointerdown` clears it. The origin is RE-BASELINED when the
 // visual viewport moves (`viewport-frame.ts`): declaring a drag would refuse a real click.
@@ -2129,8 +2188,11 @@ function attachTapGuard(node: HTMLElement): void {
 function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean): void {
   attachTapGuard(node);
 
-  // Click to activate (any target outside .tab-close).
-  node.addEventListener("pointerup", (e) => {
+  // Click to activate (any target outside .tab-close). On `click`, never `pointerup`: activating
+  // closes the phone drawer, and a tap's click is hit-tested after the release, at the same point,
+  // so it would land on whatever the drawer uncovered. A lifted hold released in place still
+  // clicks its row.
+  node.addEventListener("click", (e) => {
     if (isDragHandled()) {
       return;
     }
@@ -2140,9 +2202,6 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
       return;
     }
     if ((e.target as HTMLElement).closest(".tab-close") !== null) {
-      return;
-    }
-    if (!e.isPrimary) {
       return;
     }
     activateTab(id);

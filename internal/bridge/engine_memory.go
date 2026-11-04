@@ -130,18 +130,18 @@ func (e *Engine) recordMemory(w *memWatch, pid int, m procMemory) {
 	}
 }
 
-// engineLeader returns the node engine's pid: the leader of a noted group that is the sidecar's own child. Groups are
-// noted again when none qualifies, since the engine may not have spawned yet at the first look.
+// engineLeader returns the node engine's pid: the leader of a noted group that is the kiro-cli process's own child.
+// Groups are noted again when none qualifies, since the engine may not have spawned yet at the first look.
 func (e *Engine) engineLeader() (int, bool) {
 	if e.cmd == nil || e.cmd.Process == nil {
 		return 0, false
 	}
-	sidecar := e.cmd.Process.Pid
-	if pid, ok := e.groupLedBy(sidecar); ok {
+	cli := e.cmd.Process.Pid
+	if pid, ok := e.groupLedBy(cli); ok {
 		return pid, true
 	}
 	e.noteEngineGroups()
-	return e.groupLedBy(sidecar)
+	return e.groupLedBy(cli)
 }
 
 func (e *Engine) groupLedBy(parent int) (int, bool) {
@@ -169,7 +169,7 @@ func (e *Engine) resolveHeapLimit(w *memWatch, pid int) {
 	w.probed = true
 	node, err := os.Readlink(filepath.Join(procRoot, strconv.Itoa(pid), "exe"))
 	if err == nil {
-		w.limitMiB, err = cachedHeapLimitMiB(e.lifecycleCtx, heapProbeKey{cli: e.cliPath, node: node, nodeOptions: nodeOptionsOf(e.cmd.Env)}, e.cmd.Env)
+		w.limitMiB, err = cachedHeapLimitMiB(e.lifecycleCtx, heapProbeKey{cli: e.cliPath, node: node, nodeOptions: nodeOptionsOf(e.cmd.Env), nodeArgs: strings.Join(e.nodeArgs, " ")}, e.nodeArgs, e.cmd.Env)
 	}
 	if err != nil {
 		slog.Warn("engine: the default heap limit is unknown, so no high-memory line will be logged",
@@ -187,9 +187,10 @@ func nodeOptionsOf(env []string) string {
 	return out
 }
 
-// heapProbeKey names what decides V8's default heap limit: the kiro-cli version, its node binary and NODE_OPTIONS.
+// heapProbeKey names what decides V8's default heap limit: the kiro-cli version, its node binary, NODE_OPTIONS and the
+// launcher's node flags (the semi-space size counts toward the limit).
 type heapProbeKey struct {
-	cli, node, nodeOptions string
+	cli, node, nodeOptions, nodeArgs string
 }
 
 var heapProbes = struct {
@@ -201,14 +202,14 @@ var heapProbes = struct {
 const heapProbeBudget = 10 * time.Second
 
 // cachedHeapLimitMiB returns the probed limit for key, probing under env on a miss. A failure is not cached.
-func cachedHeapLimitMiB(ctx context.Context, key heapProbeKey, env []string) (int, error) {
+func cachedHeapLimitMiB(ctx context.Context, key heapProbeKey, nodeArgs, env []string) (int, error) {
 	heapProbes.Lock()
 	n, ok := heapProbes.m[key]
 	heapProbes.Unlock()
 	if ok {
 		return n, nil
 	}
-	n, err := probeHeapLimitMiB(ctx, key.node, env)
+	n, err := probeHeapLimitMiB(ctx, key.node, nodeArgs, env)
 	if err != nil {
 		return 0, err
 	}
@@ -218,11 +219,12 @@ func cachedHeapLimitMiB(ctx context.Context, key heapProbeKey, env []string) (in
 	return n, nil
 }
 
-// probeHeapLimitMiB runs node under env and returns V8's heap_size_limit in MiB.
-func probeHeapLimitMiB(ctx context.Context, node string, env []string) (int, error) {
+// probeHeapLimitMiB runs node with nodeArgs under env and returns V8's heap_size_limit in MiB.
+func probeHeapLimitMiB(ctx context.Context, node string, nodeArgs, env []string) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, heapProbeBudget)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, node, "-p", "v8.getHeapStatistics().heap_size_limit")
+	args := append(slices.Clone(nodeArgs), "-p", "v8.getHeapStatistics().heap_size_limit")
+	cmd := exec.CommandContext(ctx, node, args...)
 	cmd.Env = env
 	out, err := cmd.Output()
 	if err != nil {

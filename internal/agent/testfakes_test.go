@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -49,9 +50,11 @@ type fakeBridge struct {
 	refuseAfterCall map[string]*marotte.RPCError
 	// failAfterCall is the transport failing after onCall ran: the words were written, then the reply was lost.
 	failAfterCall map[string]error
-	sessionID     string
-	modelID       string
-	effort        string
+	// refuseCancelled refuses a Call whose ctx is already done, unwritten, as the engine's request does.
+	refuseCancelled bool
+	sessionID       string
+	modelID         string
+	effort          string
 	// observedEffort is the level the SESSION reported, not the one asked for.
 	observedEffort   string
 	thinking         string
@@ -68,6 +71,8 @@ type fakeBridge struct {
 	notifies              []string
 	// wire is every request and notification in write order (writeRequest, Notify).
 	wire []string
+	// abandonedAt is, per blocked method whose caller gave up, how many frames the wire held when it did.
+	abandonedAt map[string]int
 	// notifyParams holds each Notify's params as JSON, index-aligned with notifies.
 	notifyParams            []string
 	contentCollectionWrites []string
@@ -80,6 +85,10 @@ type fakeBridge struct {
 	stopGate chan struct{}
 	// closeErr refuses every Close, leaving the session open.
 	closeErr error
+	// onCloseStart runs as Close is entered, before stopGate.
+	onCloseStart func()
+	// onCloseReturn runs as Close returns, with its error.
+	onCloseReturn func(error)
 	// onStart runs at the top of the door, so a test can change the world while a session opens.
 	onStart func()
 	// startErr fails every door.
@@ -105,11 +114,19 @@ type fakeBridge struct {
 	responses    map[int64]fakeResponse
 	// setModelFailures fails the next N SetModel calls.
 	setModelFailures int
+	// setModelGate holds SetModel, after it is recorded, until it closes or the caller gives up.
+	setModelGate chan struct{}
 	// supervisedApplied is whether the session took `autopilot: off`, set by Start from opts.Supervised as the real bridge does.
 	supervisedApplied bool
 	// supervisedAssertFails makes Start refuse the assert, the fail-open a test observes.
-	supervisedAssertFails    bool
-	stopped                  bool
+	supervisedAssertFails bool
+	stopped               bool
+	// released is set by Release, which closes the stream at once and confirms the close once stopGate opens.
+	released bool
+	// onRelease runs once Release closed the stream, as a forward\'s exit follows it; nil for none.
+	onRelease func()
+	// beforeRelease runs in Release before the stream ends, so its delivered frames are queued at the release.
+	beforeRelease            func()
 	contentCollectionApplied bool
 	contentCollectionKnown   bool
 	// streamClosed guards the channel close apart from stopped, so endStream ends the stream without claiming a close.
@@ -236,10 +253,16 @@ func (b *fakeBridge) isClosed() bool {
 }
 
 // Close is session/close: the frame stream ends and the session is no longer open. closeErr refuses it.
-func (b *fakeBridge) Close(ctx context.Context) error {
+func (b *fakeBridge) Close(ctx context.Context) (err error) {
 	b.mu.Lock()
-	gate, refusal := b.stopGate, b.closeErr
+	gate, refusal, returned, started := b.stopGate, b.closeErr, b.onCloseReturn, b.onCloseStart
 	b.mu.Unlock()
+	if started != nil {
+		started()
+	}
+	if returned != nil {
+		defer func() { returned(err) }()
+	}
 	if gate != nil {
 		select {
 		case <-gate:
@@ -252,6 +275,45 @@ func (b *fakeBridge) Close(ctx context.Context) error {
 	}
 	b.end()
 	return nil
+}
+
+// Release is bridge.Session.Release: the stream ends at the call and the close is confirmed once stopGate opens,
+// with nothing returned to the caller. closeErr does not reopen a released session.
+func (b *fakeBridge) Release() {
+	b.mu.Lock()
+	if b.released {
+		b.mu.Unlock()
+		return
+	}
+	b.released = true
+	gate, hook, before := b.stopGate, b.onRelease, b.beforeRelease
+	b.mu.Unlock()
+	if before != nil {
+		before()
+	}
+	b.endStream()
+	if hook != nil {
+		hook()
+	}
+	confirm := func() {
+		b.mu.Lock()
+		b.stopped = true
+		b.mu.Unlock()
+	}
+	if gate == nil {
+		confirm()
+		return
+	}
+	go func() {
+		<-gate
+		confirm()
+	}()
+}
+
+func (b *fakeBridge) Released() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.released
 }
 
 // end closes the session's stream as an engine end does: no session/close is written.
@@ -270,7 +332,7 @@ func (b *fakeBridge) end() {
 func (b *fakeBridge) Open() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.started && !b.stopped
+	return b.started && !b.stopped && !b.released
 }
 
 // endStream ends the frame stream without marking the bridge stopped.
@@ -312,6 +374,12 @@ func (b *fakeBridge) PromptAt(ctx context.Context, params any, commit func() err
 func (b *fakeBridge) callScript(
 	ctx context.Context, method string, params any, deliver func(*marotte.RPCResponse), commit func() error,
 ) (*marotte.RPCResponse, error) {
+	b.mu.Lock()
+	refuse := b.refuseCancelled
+	b.mu.Unlock()
+	if err := ctx.Err(); refuse && err != nil {
+		return nil, err
+	}
 	if err := b.writeRequest(ctx, method, commit); err != nil {
 		return nil, err
 	}
@@ -337,6 +405,10 @@ func (b *fakeBridge) callScript(
 		return &marotte.RPCResponse{Error: rpcErr}, nil
 	}
 	res := json.RawMessage(`{"stopReason":"end_turn"}`)
+	if method == methodKiroWorkflowList {
+		// KAS lists no runs as an empty array; a reply without one is a partial list (errRunListPartial).
+		res = json.RawMessage(`{"runs":[]}`)
+	}
 	if r, ok := b.callResults[method]; ok {
 		res = r
 	}
@@ -375,6 +447,12 @@ func (b *fakeBridge) callScript(
 		select {
 		case <-blocker:
 		case <-ctx.Done():
+			b.mu.Lock()
+			if b.abandonedAt == nil {
+				b.abandonedAt = map[string]int{}
+			}
+			b.abandonedAt[method] = len(b.wire)
+			b.mu.Unlock()
 			return nil, ctx.Err()
 		}
 	}
@@ -566,6 +644,17 @@ func (b *fakeBridge) setCallResult(method string, res json.RawMessage) {
 	b.callResults[method] = res
 }
 
+// setBlockOn holds every later call of method open until gate closes or the call's ctx ends, for a bridge already in use.
+func (b *fakeBridge) setBlockOn(method string, gate chan struct{}) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.blockOn = maps.Clone(b.blockOn)
+	if b.blockOn == nil {
+		b.blockOn = map[string]chan struct{}{}
+	}
+	b.blockOn[method] = gate
+}
+
 // setCallErr re-arms a transport failure and setCallRPCErr an in-band refusal, under the mutex.
 func (b *fakeBridge) setCallErr(method string, err error) {
 	b.mu.Lock()
@@ -592,6 +681,18 @@ func (b *fakeBridge) setNotifyErr(method string, err error) {
 	b.notifyErrs[method] = err
 }
 
+// setRefuseAfterCall makes this bridge's later calls of method refuse in band with err; a call already in progress is
+// unaffected.
+func (b *fakeBridge) setRefuseAfterCall(method string, err *marotte.RPCError) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refuseAfterCall = maps.Clone(b.refuseAfterCall)
+	if b.refuseAfterCall == nil {
+		b.refuseAfterCall = map[string]*marotte.RPCError{}
+	}
+	b.refuseAfterCall[method] = err
+}
+
 func (b *fakeBridge) setCallRPCErr(method string, err *marotte.RPCError) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -599,6 +700,13 @@ func (b *fakeBridge) setCallRPCErr(method string, err *marotte.RPCError) {
 		b.callRPCErrs = map[string]*marotte.RPCError{}
 	}
 	b.callRPCErrs[method] = err
+}
+
+// setOnCall installs a call hook under the mutex, for a bridge whose background readers already call.
+func (b *fakeBridge) setOnCall(hook func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.onCall = hook
 }
 
 // setStartGate parks every later Start until the returned channel closes.
@@ -693,10 +801,20 @@ func (b *fakeBridge) Models() []marotte.SessionModel {
 	return b.models
 }
 
-func (b *fakeBridge) SetModel(_ context.Context, modelID string) error {
+func (b *fakeBridge) SetModel(ctx context.Context, modelID string) error {
+	b.mu.Lock()
+	gate := b.setModelGate
+	b.calls = append(b.calls, "session/set_config_option")
+	b.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.calls = append(b.calls, "session/set_config_option")
 	// Fail the next N swaps.
 	if b.setModelFailures > 0 {
 		b.setModelFailures--
@@ -758,8 +876,40 @@ func (b *fakeBridge) NotifCh() <-chan marotte.Notification {
 
 type testChatStore struct {
 	*chat.Store
+	// ownerScan, when set, rewrites every SessionOwners answer, for a test about a scan's timing or completeness.
+	ownerScan func(ctx context.Context, scan chat.OwnerScan) chat.OwnerScan
+	// onGet, when set, runs before every Get, for a test that lands a write inside a caller's read.
+	onGet atomic.Pointer[func(id marotte.ChatID)]
 	// Gets counts Get calls, for a test about how often the store is read.
 	Gets atomic.Int64
+	// tornDown names sessions SessionInTeardown reports in teardown besides the store's own, set through tearDown.
+	tornDown   map[string]bool
+	tornDownMu sync.Mutex
+}
+
+// tearDown makes SessionInTeardown report sessionID, as a chat's retention teardown in progress does.
+func (s *testChatStore) tearDown(sessionID string) {
+	s.tornDownMu.Lock()
+	defer s.tornDownMu.Unlock()
+	if s.tornDown == nil {
+		s.tornDown = map[string]bool{}
+	}
+	s.tornDown[sessionID] = true
+}
+
+func (s *testChatStore) SessionInTeardown(sessionID string) bool {
+	s.tornDownMu.Lock()
+	torn := s.tornDown[sessionID]
+	s.tornDownMu.Unlock()
+	return torn || s.Store.SessionInTeardown(sessionID)
+}
+
+func (s *testChatStore) SessionOwners(ctx context.Context) chat.OwnerScan {
+	scan := s.Store.SessionOwners(ctx)
+	if s.ownerScan != nil {
+		return s.ownerScan(ctx, scan)
+	}
+	return scan
 }
 
 // testChatRoot holds every test hub's chat directory, created and removed by TestMain.
@@ -786,6 +936,9 @@ func (s *testChatStore) wire(h *Runtime) {
 
 func (s *testChatStore) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
 	s.Gets.Add(1)
+	if hook := s.onGet.Load(); hook != nil {
+		(*hook)(id)
+	}
 	return s.Store.Get(ctx, id)
 }
 
@@ -804,5 +957,5 @@ func (s *testChatStore) seed(tb testing.TB, id marotte.ChatID, fill func(c *maro
 
 // Forward runs one session's forward loop in the caller, taking the chat's forward attachment first.
 func (bc *bridgeCoordinator) Forward(chatID marotte.ChatID, bridge engineSession) {
-	bc.forwardAt(chatID, bridge, bc.turns.attachForward(chatID))
+	bc.forwardAt(chatID, bridge, bc.turns.attachForwardNow(chatID))
 }

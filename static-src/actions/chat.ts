@@ -15,6 +15,7 @@ import { THINKING_OFF, thinkingIsOff } from "../effort.js";
 import { getCachedModels } from "../picker.js";
 import { join as joinKey } from "@cplieger/keyenc";
 import { errorAbout, successAbout } from "./subject.js";
+import { mayStillApply, retryUnlessStill, stillOr } from "./still-applying.js";
 
 import type { AttachedFile } from "../attachments.js";
 import type {
@@ -51,6 +52,8 @@ import {
   restoreSteers,
 } from "../store.js";
 import { send as transportSend, type SendResult } from "../transport.js";
+import type { CloseImpact } from "../wire/types.gen.js";
+import { impactRefusal } from "./close-impact.js";
 
 const onChat = ({ chatID }: { readonly chatID: string }): string => chatID;
 
@@ -101,11 +104,7 @@ function chatFromReply(r: SendResult, signal: AbortSignal, what: string): Create
     if (signal.aborted || r.code === "cancelled") {
       throw new ActionError("cancelled", { code: "cancelled" });
     }
-    const errOpts: { status: number; code?: string } = { status: r.status };
-    if (r.code !== undefined) {
-      errOpts.code = r.code;
-    }
-    throw new ActionError(r.error ?? `send failed with status ${String(r.status)}`, errOpts);
+    throw refusalOf(r, `send failed with status ${String(r.status)}`);
   }
   const body = r.body;
   if (typeof body !== "object" || body === null || !("chat" in body)) {
@@ -132,15 +131,38 @@ function chatFromReply(r: SendResult, signal: AbortSignal, what: string): Create
 // The app's ONLY chat delete path. With retention off a close deletes a non-empty chat; with it
 // on the server keeps the chat until the purge window expires.
 
-export const deleteChat = transportAction<string, { session: Session; atIndex: number }>({
+export const deleteChat = defineAction<
+  { id: string; impact: CloseImpact },
+  undefined,
+  { session: Session; atIndex: number }
+>({
   name: "chat.delete",
   networkMode: "always",
-  scope: (id) => `chat:${id}`,
-  dedupe: true,
+  scope: ({ id }) => `chat:${id}`,
+  dedupe: ({ id }) => joinKey("chat.delete", id),
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  command: (id) => ({ type: "delete_chat", chat_id: id }),
-  optimistic: (id) => {
+  run: async ({ id, impact }, signal) => {
+    const r = await transportSend(
+      { type: "delete_chat", chat_id: id, payload: { impact } },
+      { signal, reportSendState: false },
+    );
+    if (r.ok) {
+      return undefined;
+    }
+    if (signal.aborted || r.code === "cancelled") {
+      throw new ActionError("cancelled", { code: "cancelled" });
+    }
+    const code = r.code ?? r.reason;
+    throw impactRefusal(
+      r,
+      new ActionError(r.error ?? `send failed with status ${String(r.status)}`, {
+        status: r.status,
+        ...(code === undefined ? {} : { code }),
+      }),
+    );
+  },
+  optimistic: ({ id }) => {
     const session = get(id);
     if (session === undefined) {
       return undefined;
@@ -151,12 +173,14 @@ export const deleteChat = transportAction<string, { session: Session; atIndex: n
   },
   // If the server deleted but the response timed out, rollback reinserts a
   // ghost session that a later SSE chat_deleted event removes.
-  rollback: (_id, op) => {
+  rollback: (_args, op) => {
     if (op !== undefined) {
       reinsertSession(op.session, op.atIndex);
     }
   },
-  error: errorAbout((id: string) => id, "Could not delete chat"),
+  // Its one dispatcher (history.ts deleteRow) toasts every failure but a stale confirm, which it
+  // asks again instead; a notification spec cannot stay quiet for one code.
+  error: false,
 });
 
 export const setSupervised = transportAction<
@@ -185,9 +209,12 @@ export const setSupervised = transportAction<
       setSupervisedMode(chatID, op.prev);
     }
   },
-  retryable: retryNetwork,
+  retryable: retryUnlessStill,
   retry: RETRY_STANDARD,
-  error: errorAbout(onChat, "Could not update supervised mode"),
+  error: errorAbout(
+    onChat,
+    stillOr("updating supervised mode", "Could not update supervised mode", "chat"),
+  ),
 });
 
 /** What Send means while a turn runs on this chat. It touches no turn: a switch
@@ -323,7 +350,7 @@ export const compactChat = transportAction<{ chatID: string }>({
     chat_id: chatID,
   }),
   success: successAbout(onChat, "Compacting the conversation…"),
-  error: errorAbout(onChat, "Compact failed"),
+  error: errorAbout(onChat, stillOr("starting the compaction", "Compact failed", "chat")),
 });
 
 /** A refused send as the ActionError a custom runner throws: the envelope's `reason` is its code,
@@ -533,6 +560,38 @@ export const unqueuePrompt = transportAction<{ chatID: string; messageID: string
   error: errorAbout(onChat, "Could not remove the follow-up"),
 });
 
+/** Sends one queued follow-up next: the server stops a running turn, whose close sends the row,
+ *  or sends it at once. No scope: like cancel, it must not queue behind an in-flight send.
+ *  `idempotencyKey`: a retry must not stop the turn the first attempt opened for this row.
+ *  `error: false`: the dock reports a refusal in the server's words. Resolves true when the
+ *  stop stopped nothing because the row's turn had already opened. */
+export const sendQueuedNow = defineAction<{ chatID: string; messageID: string }, boolean>({
+  name: "chat.send_queued_now",
+  networkMode: "always",
+  idempotencyKey: true,
+  dedupe: (args) => joinKey("chat.send_queued_now", args.chatID, args.messageID),
+  run: async ({ chatID, messageID }, signal, ctx) => {
+    const r = await transportSend(
+      {
+        type: "send_queued_now",
+        chat_id: chatID,
+        payload: { message_id: messageID },
+        ...(ctx?.idempotencyKey === undefined
+          ? {}
+          : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
+      },
+      { signal, reportSendState: false },
+    );
+    if (!r.ok) {
+      throw refusalOf(r, `send failed with status ${String(r.status)}`);
+    }
+    return stopSkipped(r);
+  },
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: false,
+});
+
 /** Drops every steer KAS still holds (`_session/steer/clear`) without cancelling the turn.
  *  Optimistic. Only CONFIRMED entries go: a `pending` one has no server id to address. */
 export const clearSteers = transportAction<
@@ -603,9 +662,9 @@ export const setMode = transportAction<{ chatID: string; modeID: string }, { pre
       setCurrentMode(chatID, op.prev);
     }
   },
-  retryable: retryNetwork,
+  retryable: retryUnlessStill,
   retry: RETRY_STANDARD,
-  error: errorAbout(onChat, "Could not switch mode"),
+  error: errorAbout(onChat, stillOr("switching mode", "Could not switch mode", "chat")),
 });
 
 /** The History picker's inventory, through the GENERATED decoder so an absent per-list verdict
@@ -635,7 +694,7 @@ export const forkChat = defineAction<
   name: "chat.fork",
   networkMode: "always",
   idempotencyKey: true,
-  retryable: retryNetwork,
+  retryable: retryUnlessStill,
   retry: RETRY_STANDARD,
   run: async ({ opID, parentChatID, title }, signal, ctx) => {
     const r = await transportSend(
@@ -654,26 +713,56 @@ export const forkChat = defineAction<
     );
     return chatFromReply(r, signal, "start a tangent");
   },
-  error: "Could not start a tangent",
+  error: (_args, err) =>
+    mayStillApply(err)
+      ? "Still starting the tangent; its tab appears when kiro-cli answers"
+      : `Could not start a tangent: ${err.message}`,
 });
 
-// No scope: cancel must not queue behind an in-flight sendPrompt. `lead` is the send-now arrow's
-// row, which the turn-end resend orders first.
+/** Whether a stop's answer says it stopped nothing (`responseSkipped`, internal/command). */
+function stopSkipped(r: SendResult): boolean {
+  const body = r.body;
+  return (
+    typeof body === "object" && body !== null && (body as { skipped?: unknown }).skipped === true
+  );
+}
 
-export const cancelTurn = transportAction<
+// run never sees optimistic's op; the dispatch hands both the same args object.
+const thinkingBeforeStop = new WeakMap<object, boolean>();
+
+// No scope: cancel must not queue behind an in-flight sendPrompt. `lead` is the send-now arrow's
+// row, which the turn-end resend orders first. Resolves true when the server stopped nothing,
+// which puts the optimistic idle back.
+
+export const cancelTurn = defineAction<
   { chatID: string; lead?: string },
+  boolean,
   { wasThinking: boolean }
 >({
   name: "chat.cancel_turn",
-  command: ({ chatID, lead }) => ({
-    type: "cancel",
-    chat_id: chatID,
-    ...(lead !== undefined && lead !== "" ? { payload: { lead } } : {}),
-  }),
-  optimistic: ({ chatID }) => {
-    const session = get(chatID);
-    const wasThinking = session?.thinking ?? false;
-    setThinking(chatID, false);
+  run: async (args, signal) => {
+    const { chatID, lead } = args;
+    const r = await transportSend(
+      {
+        type: "cancel",
+        chat_id: chatID,
+        ...(lead !== undefined && lead !== "" ? { payload: { lead } } : {}),
+      },
+      { signal, reportSendState: false },
+    );
+    if (!r.ok) {
+      throw refusalOf(r, `send failed with status ${String(r.status)}`);
+    }
+    const skipped = stopSkipped(r);
+    if (skipped) {
+      setThinking(chatID, thinkingBeforeStop.get(args) ?? false);
+    }
+    return skipped;
+  },
+  optimistic: (args) => {
+    const wasThinking = get(args.chatID)?.thinking ?? false;
+    thinkingBeforeStop.set(args, wasThinking);
+    setThinking(args.chatID, false);
     return { wasThinking };
   },
   rollback: ({ chatID }, op) => {
@@ -698,7 +787,7 @@ export const switchModel = defineAction<
   name: "chat.switch_model",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
-  retryable: retryNetwork,
+  retryable: retryUnlessStill,
   retry: RETRY_STANDARD,
   optimistic: ({ chatID, model, effort }) => {
     const session = get(chatID);
@@ -758,20 +847,17 @@ export const switchModel = defineAction<
       if (signal.aborted || r.code === "cancelled") {
         throw new ActionError("cancelled", { code: "cancelled" });
       }
-      const errOpts: { status: number; code?: string } = { status: r.status };
-      if (r.code !== undefined) {
-        errOpts.code = r.code;
-      }
-      throw new ActionError(r.error ?? `send failed with status ${String(r.status)}`, errOpts);
+      throw refusalOf(r, `send failed with status ${String(r.status)}`);
     }
     return true;
   },
-  error: errorAbout(onChat, "Could not switch model"),
+  error: errorAbout(onChat, stillOr("switching model", "Could not switch model", "chat")),
 });
 
 // The server acks at admission, so dispatch runs at the standard timeout; completion is SSE's.
-// Returns "sent", "queued" (plain 409), "starting" (409: the admission holder cannot take a
-// steer), "gone" (409 chat_not_found) or null. `error: false`: transport.send already toasts.
+// Returns "sent", "queued" (409 turn_live: a steerable turn), "starting" (409 starting, or any
+// other 409), "gone" (409 chat_not_found), "closed" (409 chat_closed) or null. `error: false`:
+// transport.send already toasts.
 
 interface SendPromptArgs {
   chatID: string;
@@ -785,7 +871,7 @@ interface SendPromptArgs {
 
 export const sendPrompt = defineAction<
   SendPromptArgs,
-  "sent" | "queued" | "starting" | "gone",
+  "sent" | "queued" | "starting" | "gone" | "closed",
   { chatID: string }
 >({
   name: "chat.send_prompt",
@@ -826,20 +912,25 @@ export const sendPrompt = defineAction<
       return "sent";
     }
     if (r.status === 409) {
-      if (r.reason === "starting") {
-        // Returned as a VALUE, so the framework's rollback never runs: undo here, or the user's retry
-        // becomes a steer.
-        setThinking(chatID, false);
-        return "starting";
+      if (r.reason === "turn_live") {
+        // A steerable turn is in flight; caller (submit.ts) converts to a steer.
+        return "queued";
       }
-      if (r.reason === "chat_not_found") {
-        // A tombstoned chat: there is no turn to steer into and no record to prompt, so this is
-        // neither "queued" nor a transport failure. Keyed on the reason, never the error text.
-        setThinking(chatID, false);
-        return "gone";
+      // Every other arm is returned as a VALUE, so the framework's rollback never runs: undo here.
+      // Keyed on the reason, never the error text.
+      setThinking(chatID, false);
+      switch (r.reason) {
+        case "chat_not_found":
+          // A tombstoned chat: there is no turn to steer into and no record to prompt.
+          return "gone";
+        case "chat_closed":
+          // The chat's close committed after this send began: the reopened chat never runs it.
+          return "closed";
+        case "starting":
+        default:
+          // An unknown 409, or one with no reason, is a refusal, never a steer.
+          return "starting";
       }
-      // A steerable turn is in flight; caller (submit.ts) converts to a steer.
-      return "queued";
     }
     throw new ActionError(r.error ?? "send failed", {
       status: r.status,

@@ -139,11 +139,13 @@ func TestRunWork_AnUnadmittedSendIsRefusedAtTheEngine(t *testing.T) {
 // guardedSession pass them through; every other method of either interface must be declared on its guard.
 var knownUnguarded = map[string][]string{
 	"guardedEngine": {
-		"Done", "EngineNotifCh", "Exit", "KASLogDir", "RefreshContentCollection", "Respond", "Start", "StartLive", "Stop",
+		"Done", "EngineNotifCh", "Exit", "KASLogDir", "RefreshContentCollection", "Respond", "StallAware", "Stalled", "Start", "StartLive",
+		"Stop",
 	},
 	"guardedSession": {
 		"AutoCompactionDisabled", "Catalog", "Close", "CurrentMode", "EnsureEffort", "EnsureThinking", "ModelID", "Models",
-		"Modes", "NotifCh", "ObserveEffort", "ObserveThinking", "Open", "Respond", "SessionID", "SessionLoadSeq",
+		"Modes", "NotifCh", "ObserveEffort", "ObserveThinking", "Open", "Release", "Released", "Respond", "SessionID",
+		"SessionLoadSeq",
 		"SessionTitle", "SessionTitleSetByUser", "SetModel", "SummarizationThreshold", "SupervisedApplied",
 	},
 }

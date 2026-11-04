@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -62,7 +64,7 @@ func executingLease(t *testing.T, h *Runtime, wf string) {
 // KAS reads its log level only from the spawn environment, so a Debug logs move reaches it at the next engine.
 func TestSettings_DebugLogsMoveIsAnEngineRestartReason(t *testing.T) {
 	h, dir, src := restartFixture(t)
-	if off := h.resolveEngine(t.Context(), "/fake/kiro-cli-chat").opts; off.DebugLogs {
+	if off := h.resolveEngine(t.Context(), "/fake/kiro-cli").opts; off.DebugLogs {
 		t.Fatal("EngineOpts.DebugLogs = true with no debug_logs saved, want false")
 	}
 	executingLease(t, h, "wf_1")
@@ -71,7 +73,7 @@ func TestSettings_DebugLogsMoveIsAnEngineRestartReason(t *testing.T) {
 	if st := h.engine.status(); !st.Restart.Pending || !slices.Equal(st.Restart.Reasons, []marotte.EngineReason{"debug_logs"}) {
 		t.Errorf("status = %+v, want a restart pending for debug_logs", st.Restart)
 	}
-	on := h.resolveEngine(t.Context(), "/fake/kiro-cli-chat").opts
+	on := h.resolveEngine(t.Context(), "/fake/kiro-cli").opts
 	if !on.DebugLogs {
 		t.Error("EngineOpts.DebugLogs = false after debug_logs was saved true")
 	}
@@ -128,10 +130,10 @@ func TestEngineRestart_AutoNeverFiresWhileAnyQuiescenceTermHolds(t *testing.T) {
 			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("Setup: OpenBridge: %v", err)
 			}
-			if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+			if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 				t.Fatal("Setup: the reservation was refused")
 			}
-			return func() { h.coord.ReleaseTurnReservation("c1") }
+			return func() { h.coord.releaseHeld("c1") }
 		}},
 		{name: "an executing run", hold: func(t *testing.T, h *Runtime) func() {
 			executingLease(t, h, "wf_1")
@@ -216,7 +218,7 @@ func TestEngineRestart_IdleChatsKeepRecordsAndLoadLazily(t *testing.T) {
 	recorded := string(first.SessionID())
 	h.engine.requestRestart(restartCause{Kind: restartConfirmed})
 	waitReady(t, h.engine, 2)
-	if sb := h.bridge.mgr.get("c1"); sb != nil && sb.startedPastOpen() && sb.current().Open() {
+	if sb := h.bridge.mgr.get("c1"); sb != nil && sb.startedPastOpen() && sb.session().Open() {
 		t.Error("the idle chat holds an open session on the new engine before anything asked for one")
 	}
 	again, err := h.coord.openBridge(t.Context(), "c1", "")
@@ -238,7 +240,7 @@ func TestEngineRestart_ConfirmedSnapshotsFirstAndWritesNoCancel(t *testing.T) {
 	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 		t.Fatal("Setup: the reservation was refused")
 	}
 	var cancels []string
@@ -249,7 +251,7 @@ func TestEngineRestart_ConfirmedSnapshotsFirstAndWritesNoCancel(t *testing.T) {
 
 	h.engine.requestRestart(restartCause{Kind: restartConfirmed, Reasons: []marotte.EngineReason{reasonHeap}})
 	waitReady(t, h.engine, 2)
-	h.coord.ReleaseTurnReservation("c1")
+	h.coord.releaseHeld("c1")
 	if len(cancels) != 0 {
 		t.Errorf("session/cancel frames written before the reap = %v, want none", cancels)
 	}
@@ -368,7 +370,7 @@ func TestRetryResumeLater_TriesMaxResweepsTimesInAll(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	var later atomic.Int32
 	spent := make(chan int, 1)
-	h.runs.retryResumeLater(func(context.Context) bool {
+	h.runs.retryResumeLater(h.runs.runtimeSweep, func(context.Context) bool {
 		later.Add(1)
 		return true
 	}, func(tries int) { spent <- tries })
@@ -390,7 +392,7 @@ func TestRetryResumeLater_AStoppedRuntimeTriesNothing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		var tries atomic.Int32
-		h.runs.retryResumeLater(func(context.Context) bool {
+		h.runs.retryResumeLater(h.runs.runtimeSweep, func(context.Context) bool {
 			tries.Add(1)
 			return true
 		}, func(int) {})
@@ -423,7 +425,7 @@ func TestEngineRestart_ChatParentedRunGetsExactlyOneResume(t *testing.T) {
 
 	heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 	heal(t.Context(), parkChat, runNotif(methodWFPaused, map[string]any{"workflowId": id, "pauseReason": stalePauseReason}))
-	h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	h.runs.resumeInterruptedRuns(t.Context(), h.coord.turns.testLifecycle(parkChat), parkChat)
 
 	awaitResumes(t, resumes, 1)
 }
@@ -518,4 +520,76 @@ func TestEngineExit_SnapshotIsTakenBeforeLateFrames(t *testing.T) {
 	if !slices.Contains(set.runs, "wf_1") {
 		t.Errorf("resume set = %v, want the run started before the exit", set.runs)
 	}
+}
+
+func TestUnreadableConfig_AConfirmedRestartWithAQueueIsRefusedUntilConfigReads(t *testing.T) {
+	h, dir, src := restartFixture(t)
+	executingLease(t, h, "wf_1")
+	pendRestart(t, h, dir, 1024)
+	rewriteConfigByHand(t, dir, `{"engine_heap_mib":`)
+	post := func() int {
+		rec := httptest.NewRecorder()
+		h.handleEngineRestart(rec, httptest.NewRequest(http.MethodPost, "/api/engine/restart", nil))
+		return rec.Code
+	}
+
+	if code := post(); code != http.StatusConflict {
+		t.Errorf("Restart now with a queue over an unreadable config.json = %d, want 409", code)
+	}
+	assertNoRestart(t, src, "config.json cannot be read and a reason is queued")
+
+	rewriteConfigByHand(t, dir, `{"engine_heap_mib":1024}`)
+	if code := post(); code != http.StatusAccepted {
+		t.Fatalf("Restart now after the repair = %d, want 202", code)
+	}
+	assertOneRestart(t, h, src)
+	if opts, _ := spawnOf(src.current()); opts == nil || opts.HeapMiB != 1024 {
+		t.Errorf("generation 2 started on %+v, want the repaired heap 1024", opts)
+	}
+	if h.engine.restartPending() {
+		t.Errorf("reasons after the restart = %v, want none", h.engine.status().Restart.Reasons)
+	}
+}
+
+// Restart now on a down engine wakes its respawn even with a queue over an unreadable config.json: the next
+// generation is a spawn, which starts on the last readable values.
+func TestUnreadableConfig_ADownEngineIsWokenByRestartNow(t *testing.T) {
+	h, dir, src := restartFixture(t)
+	executingLease(t, h, "wf_1")
+	pendRestart(t, h, dir, 1024)
+	rewriteConfigByHand(t, dir, `{"engine_heap_mib":`)
+	h.ReconcileSessionSettings(t.Context())
+	slept, woke := make(chan struct{}, 1), make(chan struct{}, 1)
+	h.engine.sleep = func(ctx context.Context, _ time.Duration) bool {
+		slept <- struct{}{}
+		<-ctx.Done()
+		woke <- struct{}{}
+		return false
+	}
+	src.mu.Lock()
+	src.startErr = errors.New("initialize failed")
+	src.mu.Unlock()
+	src.current().crash()
+	select {
+	case <-slept:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Setup: the supervisor never backed off after the failed Start")
+	}
+	if !h.engine.restartPending() {
+		t.Fatal("Setup: no reason is queued on the down engine")
+	}
+
+	rec := httptest.NewRecorder()
+	h.handleEngineRestart(rec, httptest.NewRequest(http.MethodPost, "/api/engine/restart", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("Restart now on a down engine = %d, want 202", rec.Code)
+	}
+	select {
+	case <-woke:
+	case <-time.After(5 * time.Second):
+		t.Error("Restart now did not wake the backoff")
+	}
+	src.mu.Lock()
+	src.startErr = nil
+	src.mu.Unlock()
 }

@@ -90,7 +90,7 @@ export type SteerOrigin = "user" | "agent" | "parent" | "step";
 
 export type SteerReason = "restart" | "boundary";
 
-export type SteerRowState = "queued" | "unsent" | "removed";
+export type SteerRowState = "queued" | "delivering" | "unsent" | "removed";
 
 export type SteerState = "read" | "dropped";
 
@@ -262,8 +262,8 @@ export interface Caller {
  * verdict nothing answered arrives as "unknown" rather than as an absent key.
  */
 export interface Capabilities {
-  connection: Record<string, Affordance>;
-  grant: Record<string, Affordance>;
+  connection: { [key: string]: Affordance };
+  grant: { [key: string]: Affordance };
   /** Account is the sign-in the answer was read through. */
   account: string;
 }
@@ -278,7 +278,7 @@ export interface CatalogInfo {
  * from; Generated its compile timestamp (RFC 3339 UTC). Both are
  * informational pass-throughs of the catalog document.
  */
-  refs?: Record<string, string>;
+  refs?: { [key: string]: string };
   generated?: string;
   /**
  * Source is where the live catalog came from: baked (the image
@@ -366,6 +366,20 @@ export interface ChatHeader {
   tangent?: boolean;
 }
 
+/**
+ * ChatWork names what closing one chat stops, every item by its id: a count could not tell the reply a dialog
+ * named from another device's new reply in the same chat.
+ */
+export interface ChatWork {
+  ref: string;
+  /** Turns are open turn ids, prompt message ids, and "res:<n>" ids naming a prompt admitted with no turn yet. */
+  turns: string[];
+  asks: string[];
+  runs: string[];
+  steers: string[];
+  queued: string[];
+}
+
 /** Check is one commit-status context. */
 export interface Check {
   name: string;
@@ -381,6 +395,14 @@ export interface CloneRepo {
   forge_id: string;
   /** RepoID is the canonical id of the clone's repository on that connection. */
   repo_id: string;
+}
+
+/**
+ * CloseImpact is the work a close stops, one entry per chat tab it takes. delete_chat carries it too, for the
+ * chats under the deleted chat's tabs.
+ */
+export interface CloseImpact {
+  chats: ChatWork[];
 }
 
 /**
@@ -445,7 +467,7 @@ export interface ConfigStanding {
  * shown whether or not the row also has a standing.
  */
 export interface ConfigStandingResponse {
-  load_errors: Record<string, AgentLoadError>;
+  load_errors: { [key: string]: AgentLoadError };
   standing: ConfigStanding[];
 }
 
@@ -670,19 +692,19 @@ export interface EffectiveSettings {
  * One level for the whole app cannot express that: a pick on any chat retracts
  * every other model's remembered level (settings.KeyLastEffortByModel).
  */
-  last_effort_by_model: Record<string, string>;
+  last_effort_by_model: { [key: string]: string };
   /**
  * KiroDefaults is what an UNSET three-state setting resolves to in kiro-cli, keyed by the
  * marotte setting key; a key is absent while that is unknown, and never present for a key the
  * user has set.
  */
-  kiro_defaults: Record<string, KiroDefault>;
+  kiro_defaults: { [key: string]: KiroDefault };
   /**
  * AdditionalDirectoriesRefused maps each AdditionalDirectories entry that
  * settings.AgentDirs.Assess refuses at this GET to its reason; it is never stored, and an
  * entry absent from it is granted.
  */
-  additional_directories_refused: Record<string, string>;
+  additional_directories_refused: { [key: string]: string };
   /**
  * Theme is "", "dark", "light" or "system". The empty string is a REAL value
  * meaning nothing has been chosen, which the client resolves to the OS
@@ -816,6 +838,8 @@ export interface EffectiveSettings {
   supervised_default: boolean;
   scheduled_auto_approve: boolean;
   debug_logs: boolean;
+  /** HighThroughput starts the agent engine with the high throughput Node.js flags, default on. */
+  high_throughput_optimizations: boolean;
   /**
  * ModelFallback defaults off, matching kiro-cli: on, KAS may retry a turn its model refused or
  * could not serve on the next model of its fallback chain, or record why it declined to, except a
@@ -873,7 +897,7 @@ export interface ElicitationRequestSchema {
   type?: string;
   title?: string;
   description?: string;
-  properties?: Record<string, ElicitationPropertySchema>;
+  properties?: { [key: string]: ElicitationPropertySchema };
   required?: string[];
 }
 
@@ -910,6 +934,11 @@ export interface EngineExit {
 export interface EngineRestart {
   reasons: string[];
   pending: boolean;
+  /**
+ * ConfigUnreadable: config.json could not be read at the last look, so no queued reason applies until it can;
+ * Reasons stay queued.
+ */
+  config_unreadable: boolean;
 }
 
 /** EngineStatus is GET /api/engine's answer and the engine_status event's payload. */
@@ -1215,11 +1244,13 @@ export interface EntryToolCall {
   kind: ToolKind;
   status: ToolStatus;
   output?: string;
+  tool_name?: string;
   agent_subtask_id?: string;
   workflow_id?: string;
   terminal_id?: string;
   source_path?: string;
   checkpoint?: ToolCheckpoint;
+  mcp?: MCPToolIdentity;
   disclosed?: ToolDisclosed;
   denial?: ToolDenial;
   truncated?: ToolTruncation;
@@ -1285,7 +1316,7 @@ export interface EntryTurnBind {
  * and a closed enum would make such a chat undecodable; Outcome is derived, so closed.
  */
 export interface EntryTurnClose {
-  changed_files?: Record<string, FileChange>;
+  changed_files?: { [key: string]: FileChange };
   refusal?: RefusalInfo;
   /** ContextBreakdown is KAS's measure of the turn's last model request. */
   context_breakdown?: ContextBreakdown;
@@ -1453,7 +1484,7 @@ export interface FileRead {
 
 /** FileRefusal is the error body of the viewer routes that a client branches on. */
 export interface FileRefusal {
-  /** Content is the disk text behind a refused save, present only for ContentText. */
+  /** Content is the disk text behind a refused save, present only for contentText. */
   content?: string;
   size?: number;
   error: string;
@@ -1629,7 +1660,7 @@ export interface GovernanceStatePayload {
  * locked control renders read-only with the lock's value, and the server sends that
  * value whatever the stored setting says. Absent means nothing is locked.
  */
-  locks?: Record<string, GovernanceLock>;
+  locks?: { [key: string]: GovernanceLock };
   /** MCPRegistry is present only while the organization restricts MCP to its registry. */
   mcp_registry?: GovernanceMCPRegistry;
   /**
@@ -1850,7 +1881,7 @@ export interface JobResponse {
  */
 export interface JobsResponse {
   active?: Job;
-  recent: Job[];
+  recent: (Job | null)[];
 }
 
 /**
@@ -2043,7 +2074,7 @@ export interface MCPSignInOpenPayload {
   url: string;
 }
 
-/** MCPToolIdentity names the verified MCP server and tool behind a permission request. */
+/** MCPToolIdentity names the MCP server and tool behind a tool call or a permission request. */
 export interface MCPToolIdentity {
   server_name: string;
   tool_name: string;
@@ -2548,7 +2579,8 @@ export interface ProbeResult {
  * QueuedPrompt is one follow-up waiting for a turn to end. A row with Resends is CARRIED,
  * written at shutdown from unread steers. Held marks a row a previous process queued; it is
  * never sent automatically. A list holds at most one carried row, and it is held. Label is the
- * row's PromptCommand.DisplayText.
+ * row's PromptCommand.DisplayText. Next marks the row send_queued_now chose: the next drain sends
+ * it first, even after a stop.
  */
 export interface QueuedPrompt {
   /** Caller is set on a row an API caller queued. */
@@ -2559,6 +2591,7 @@ export interface QueuedPrompt {
   attachments?: Attachment[];
   resends?: string[];
   held?: boolean;
+  next?: boolean;
 }
 
 /**
@@ -2567,7 +2600,7 @@ export interface QueuedPrompt {
  */
 export interface Recipe {
   /** Inputs maps input name → declared type (`string`, `prompt`, `file`). */
-  inputs?: Record<string, string>;
+  inputs?: { [key: string]: string };
   name: string;
   description?: string;
   /**
@@ -2859,25 +2892,16 @@ export interface RunAsksPayload {
 }
 
 /**
- * RunControlsResponse is GET /api/runs/{id}/controls's reply: what may be done to
- * one run, and why not for the rest.
- * //
- * Its own route rather than a field on GET /api/runs/{id}, a verbatim KAS
- * passthrough. Only the server sees all three inputs: a client's SSE-fed cache of
- * which chat launched the run is empty after a reload.
+ * RunControlsResponse is what may be done to one run, and why not for the rest:
+ * GET /api/runs/{id}/controls's reply and the `controls` key of GET /api/runs/{id},
+ * decided from the same inspect read as the state beside it.
  */
 export interface RunControlsResponse {
   /**
  * Refused maps a verb this run does not offer to the one sentence a reader
  * needs, and carries only a verb whose absence would otherwise be unexplained.
  */
-  refused?: Record<string, string>;
-  /**
- * ParentChatID names the chat whose agent launched the run, empty for a
- * parentless one. Read from the chat store here rather than from an event-fed
- * client cache, which is empty after a reload.
- */
-  parent_chat_id: string;
+  refused?: { [key: string]: string };
   /**
  * PauseNodeID is the repeat a maxIterations pause stopped at; the extend and
  * finish_loop verbs send it back. Empty for every other run.
@@ -2932,7 +2956,7 @@ export interface RunFinishedPayload {
  * a path.
  */
 export interface RunLaunchRequest {
-  inputs?: Record<string, string>;
+  inputs?: { [key: string]: string };
   source: string;
   /** Model and Effort are the run's step defaults (RunDefaults); empty sends none. */
   model?: string;
@@ -3457,7 +3481,7 @@ export interface Spec {
  * a key and every reader looks one up by it — the ETag digests the entries
  * in a fixed order and the client indexes by the segment's role.
  */
-  approvals?: Record<string, SpecApproval>;
+  approvals?: { [key: string]: SpecApproval };
   /**
  * Dir is the workspace-relative directory, ".kiro/specs/<name>" or
  * "<repo>/.kiro/specs/<name>", and is the spec tab's Ref.
@@ -3667,7 +3691,7 @@ export interface SteeringIssue {
  * document's path in KiroDoc.Path's spelling (absolute, leading "/" dropped).
  */
 export interface SteeringIssuesResponse {
-  issues: Record<string, SteeringIssue[]>;
+  issues: { [key: string]: SteeringIssue[] };
 }
 
 /**
@@ -3748,6 +3772,11 @@ export interface TabSubject {
  */
   parent: string;
   /**
+ * LaunchChats names, on a run tab, the chats holding its run-tab keep fact, so its close knows whose facts it
+ * releases without an engine read. It only grows.
+ */
+  launch_chats?: string[];
+  /**
  * Seen is the read position the reader last acknowledged for a chat or run tab, 0 for none;
  * only ack_tab moves it, never backward.
  */
@@ -3764,6 +3793,11 @@ export interface TabSubject {
  * open, so the authority cannot change under a reader.
  */
   owns: boolean;
+  /**
+ * LaunchResolved is true on every run tab whose holders were resolved at open; false only on a tab that predates
+ * LaunchChats, which the keep-state reconcile resolves.
+ */
+  launch_resolved?: boolean;
 }
 
 /**
@@ -3883,6 +3917,11 @@ export interface ToolCall {
   status: ToolStatus;
   output?: string;
   /**
+ * ToolName is the built-in tool's id (`update_workflow`, `web_search`) when the translator
+ * could name one the transcript distinguishes, else empty. Fixed at the create frame.
+ */
+  tool_name?: string;
+  /**
  * AgentSubtaskID is _meta.kiro.agentSubtaskId on a subagent's tool_call; it links
  * the card to its nested deltas, which carry the same id.
  */
@@ -3909,6 +3948,8 @@ export interface ToolCall {
  * wrote a file. Pointers sit ahead of the slices for govet fieldalignment.
  */
   checkpoint?: ToolCheckpoint;
+  /** MCP is KAS's MCP server and tool for this call, nil for any other tool. */
+  mcp?: MCPToolIdentity;
   /**
  * Disclosed names the skill or steering doc a `disclose_context` call loaded
  * (_meta.kiro.disclosedContext), the only signal that its body reached the model.

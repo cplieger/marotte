@@ -7,7 +7,7 @@
 // superseded (the only silent route) and by `autoCollapseGroup` live. A user click takes over.
 // A failed member folds like any other; the header's mark and count carry the failure.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
@@ -15,7 +15,7 @@ import { outcomeIcon } from "./icons.js";
 import { setUserScrolledUp } from "./scroll.js";
 import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
-import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
+import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
 
 const CLS_COLLAPSED = "tool-group-collapsed";
 const CLS_AUTO_COLLAPSED = "tool-group-auto-collapsed";

@@ -20,17 +20,18 @@ func TestStore_RoundTripsALeaseAcrossARestart(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	slot := time.Date(2026, 8, 1, 4, 0, 0, 0, time.UTC)
-	absentAt := time.Date(2026, 8, 1, 3, 30, 0, 0, time.UTC)
 	want := Lease{
 		StartedAt:     time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC),
 		Deadline:      slot,
 		SlotAt:        slot,
-		FirstAbsentAt: absentAt,
 		WorkflowID:    "wf_1",
 		Recipe:        "publish",
 		Origin:        OriginScheduled,
 		ScheduleID:    "sched-1",
+		KeepChats:     []string{"chat-a", "chat-b"},
+		FirstAbsentAt: slot.Add(-time.Hour),
 		Unattended:    true,
+		Unattributed:  true,
 	}
 	if err := s.Put(t.Context(), &want); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -56,8 +57,12 @@ func TestStore_RoundTripsALeaseAcrossARestart(t *testing.T) {
 	if !got.StartedAt.Equal(want.StartedAt) {
 		t.Errorf("StartedAt = %v, want %v", got.StartedAt, want.StartedAt)
 	}
-	if !got.FirstAbsentAt.Equal(absentAt) {
-		t.Errorf("FirstAbsentAt = %v, want %v; the continuous-absence clock did not survive restart", got.FirstAbsentAt, absentAt)
+	if !slices.Equal(got.KeepChats, want.KeepChats) || !got.Unattributed {
+		t.Errorf("keep/unattributed = %v/%v, want %v/true; a restart lost the run's keep holders",
+			got.KeepChats, got.Unattributed, want.KeepChats)
+	}
+	if !got.FirstAbsentAt.Equal(want.FirstAbsentAt) {
+		t.Errorf("FirstAbsentAt = %v, want %v; the continuous-absence clock did not survive restart", got.FirstAbsentAt, want.FirstAbsentAt)
 	}
 	// The DEADLINE must NOT survive: it was set by a dead process.
 	if got.Bounded() {
@@ -212,29 +217,38 @@ func TestStore_RefusesALeaseItCouldNotActOn(t *testing.T) {
 	}
 }
 
-// TestStore_DropsUnusableLeasesOnLoad is the read-side rule: a hand-edited or partial record
-// must not become a sweep candidate.
-func TestStore_DropsUnusableLeasesOnLoad(t *testing.T) {
+// TestStore_ALeaseItCannotActOnMovesTheFileAside: a hand-edited or partial record is not a sweep candidate, and
+// dropping it alone would let the next write erase its keep holders, so the whole file goes aside.
+func TestStore_ALeaseItCannotActOnMovesTheFileAside(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	body := `{"version":1,"leases":[` +
-		`{"workflow_id":"wf_good","origin":"manual","recipe":"publish"},` +
-		`{"workflow_id":"","origin":"manual"},` +
-		`{"workflow_id":"wf_unknown_origin","origin":"tui"}` +
-		`]}`
-	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(body), 0o600); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	s, err := NewStore(dir)
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	held := s.List()
-	if len(held) != 1 || held[0].WorkflowID != "wf_good" {
-		t.Fatalf("held %+v, want only wf_good", held)
-	}
-	if _, ok := s.Get("wf_unknown_origin"); ok {
-		t.Error("a lease with an unknown origin loaded, and the sweep can now reach it")
+	for name, bad := range map[string]string{
+		"an empty workflow id":  `{"workflow_id":"","origin":"manual"}`,
+		"a path as workflow id": `{"workflow_id":"../x","origin":"manual"}`,
+		"an unknown origin":     `{"workflow_id":"wf_unknown_origin","origin":"tui"}`,
+		"no origin":             `{"workflow_id":"wf_no_origin"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			body := `{"version":1,"leases":[{"workflow_id":"wf_good","origin":"manual","keep_chats":["c-a"]},` + bad + `]}`
+			if err := os.WriteFile(filepath.Join(dir, FileName), []byte(body), 0o600); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			s, err := NewStore(dir)
+			if err == nil {
+				t.Error("NewStore over a lease it cannot act on = nil error, want a diagnostic")
+			}
+			if got := s.List(); len(got) != 0 {
+				t.Errorf("held %+v, want none from a file moved aside", got)
+			}
+			if s.Unread() == "" {
+				t.Fatal("Unread() is empty, want the aside")
+			}
+			kept, err := os.ReadFile(s.Unread())
+			if err != nil || string(kept) != body {
+				t.Errorf("the aside holds %q (%v), want the file unchanged", kept, err)
+			}
+		})
 	}
 }
 
@@ -267,6 +281,54 @@ func TestStore_SetFirstAbsentAtTracksContinuousAbsence(t *testing.T) {
 
 	if err := s.SetFirstAbsentAt(t.Context(), "wf_gone", absentAt); !errors.Is(err, ErrNotFound) {
 		t.Errorf("SetFirstAbsentAt(wf_gone) = %v, want ErrNotFound", err)
+	}
+}
+
+// TestStore_SetDeadlineIsTheReArm: every start re-stamps, every pause parks, and a lease
+// TestStore_KeepChatsOnlyGrow: SetKeepChats unions its holders; a call naming fewer removes none.
+func TestStore_KeepChatsOnlyGrow(t *testing.T) {
+	t.Parallel()
+	s := NewMemory()
+	if err := s.Put(t.Context(), &Lease{WorkflowID: "wf_1", Origin: OriginAgent, KeepChats: []string{"c2"}}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	steps := []struct {
+		name string
+		do   func() error
+		want []string
+	}{
+		{"add", func() error { return s.SetKeepChats(t.Context(), "wf_1", []string{"c1"}) }, []string{"c1", "c2"}},
+		{"fewer", func() error { return s.SetKeepChats(t.Context(), "wf_1", nil) }, []string{"c1", "c2"}},
+	}
+	for _, st := range steps {
+		if err := st.do(); err != nil {
+			t.Fatalf("%s: %v", st.name, err)
+		}
+		if got, _ := s.Get("wf_1"); !slices.Equal(got.KeepChats, st.want) {
+			t.Errorf("%s: KeepChats = %v, want %v", st.name, got.KeepChats, st.want)
+		}
+	}
+	if err := s.SetKeepChats(t.Context(), "wf_gone", []string{"c1"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetKeepChats(wf_gone) = %v, want ErrNotFound", err)
+	}
+}
+
+// TestNewStore_DropsAnInvalidKeepHolder: a holder naming no chat is dropped on load.
+func TestNewStore_DropsAnInvalidKeepHolder(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	raw := `{"version":1,"leases":[{"workflow_id":"wf_1","origin":"agent","recipe":"r",` +
+		`"keep_chats":["ok-1","../x"]}]}`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	got, ok := s.Get("wf_1")
+	if !ok || !slices.Equal(got.KeepChats, []string{"ok-1"}) {
+		t.Fatalf("lease = %+v, %v, want KeepChats [ok-1]", got, ok)
 	}
 }
 
@@ -439,11 +501,11 @@ func TestStore_ListStampedPairsTheSetWithItsVersion(t *testing.T) {
 	if _, v := s.ListStamped(); v != "2" {
 		t.Errorf("after an unchanged SetDeadline: version = %q, want \"2\" (nothing moved)", v)
 	}
-	if err := s.SetFirstAbsentAt(ctx, "wf_1", time.Now()); err != nil {
-		t.Fatalf("SetFirstAbsentAt: %v", err)
+	if err := s.SetKeepChats(ctx, "wf_1", []string{"c1"}); err != nil {
+		t.Fatalf("SetKeepChats: %v", err)
 	}
 	if _, v := s.ListStamped(); v != "3" {
-		t.Errorf("after SetFirstAbsentAt: version = %q, want \"3\"", v)
+		t.Errorf("after SetKeepChats: version = %q, want \"3\"", v)
 	}
 	if err := s.Release(ctx, "wf_1"); err != nil {
 		t.Fatalf("Release: %v", err)

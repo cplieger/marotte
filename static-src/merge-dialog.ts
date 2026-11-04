@@ -1,8 +1,8 @@
 // The confirmation step of Merge and Merge-when-green, offering the repository's merge methods. Default: the last
 // pick (`last_merge_method`, cross-device) where offered, else the first listed; a changed pick persists on confirm.
 
-import { createDialog, type DialogController } from "@cplieger/ui-primitives/dialog";
-import { computed, effect, el } from "@cplieger/reactive";
+import { createDialog, type DialogController } from "@cplieger/ui/dialog";
+import { computed, effect, el } from "@cplieger/ui";
 
 import { loadSettings } from "./persist.js";
 import { patchAppSettings } from "./actions/settings.js";

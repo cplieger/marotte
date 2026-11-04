@@ -64,10 +64,22 @@ type App struct {
 	stopPRPoller func()
 	// stopForgeKeeper stops the forge credential keeper and waits for its goroutine.
 	stopForgeKeeper func()
+	// stopForges ends the forge reads that run behind their callers, and waits.
+	stopForges func()
+	// stopGitScans ends the git status scans that run behind their answers, and waits.
+	stopGitScans func()
+	// stopMCPCallbacks ends the MCP store's change callbacks, and waits.
+	stopMCPCallbacks func()
+	// stopForgeSteering ends the forge steering syncs and waits for them.
+	stopForgeSteering func()
+	// stopScheduleRunner stops the schedule runner and waits for its goroutine.
+	stopScheduleRunner func()
 	// stopKASHeal stops the KAS MCP file heal loop and waits for its goroutine.
 	stopKASHeal func()
 	// stopToolsSteering waits for the boot's environment.md regeneration, which reads the tools engine.
 	stopToolsSteering func()
+	// stopKeepState stops the keep-state reconcile and waits: a round in flight reads KAS over the agent engine.
+	stopKeepState func()
 	// stopApp ends the app's LIFETIME: what every process-bound component is parented on.
 	stopApp func()
 	// waitSignIn waits for the sign-in vault's goroutines, which end with the app's lifetime.
@@ -188,7 +200,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// or the sweep outlives App.Shutdown; backgrounded because a boot must not wait.
 	stopOrphanSweep := startOrphanSweep(appCtx, h.Runs().BootSweep, h.EngineReady())
 
-	startScheduleRunner(appCtx, scheduleStore, h.Runs())
+	stopScheduleRunner := startScheduleRunner(appCtx, scheduleStore, h.Runs())
 
 	mcpRegistry := mcp.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(appCtx, mcpStore)
@@ -224,7 +236,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	forgesManager := forges.NewManager(cfg.ConfigDir, forgeNotify.notify)
 	forgesManager.Load(ctx)
 
-	tools, err := wireToolsEngine(appCtx, cfg, h, githubTokenFor(forgesManager))
+	tools, err := wireToolsEngine(cfg, h, githubTokenFor(forgesManager))
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +265,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		forges.WithInventoryPush(versions, h), forges.WithViewers(presence))
 	forgesHTTP.SetPoller(prPoller)
 	forgeSteer := forgeNotify.wire(appCtx, prPoller, forgesManager, steer)
-	go forgeSteer.sync()
+	forgeSteer.kick()
 	stopPRPoller := runBackground(ctx, "pr status poller", prPoller.Run)
 	stopForgeKeeper := runBackground(ctx, "forge credential keeper", forges.NewKeeper(forgesManager).Run)
 
@@ -262,32 +274,17 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, err
 	}
 
-	retention := func() time.Duration { return chatRetention(ctx, cfg.ConfigDir) }
-	purgeScheduler := chat.NewPurgeScheduler(chatStore, retention, func(pctx context.Context) archive.PurgeResult {
-		window, purge := runRetention(pctx, cfg.ConfigDir)
-		if !purge {
-			return archive.PurgeResult{}
-		}
-		r := h.PurgeParentlessRuns(pctx, window)
-		return archive.PurgeResult{NextDeadline: r.NextDeadline, Purged: r.Purged, Kept: r.Kept, Errors: r.Errors}
-	})
-	// The purge scans the directory live chats live in, so this predicate keeps an old-but-open
-	// conversation out of it.
-	chat.WithLive(h.HasResidentSession)(chatStore)
-	chat.WithOpenTab(h.Membership().HasOpenTab)(chatStore)
-	// Not retention predicates: the transcript GET reads both. Injected post-construction because
-	// the store cannot import the agent.
+	// The transcript GET reads both. Injected post-construction because the store cannot import
+	// the agent.
 	chat.WithLiveTurn(h.TurnLive)(chatStore)
 	chat.WithOpenTurns(h.OpenTurns)(chatStore)
-	chat.WithOnPurge(heldUnlessDraining(h.HoldUnlessDraining, func(id marotte.ChatID, sessionChain []string) {
-		// After the per-chat record lock is released, keeping the lock order acyclic.
-		// RetentionClose reaps the chain itself, so no second reap here.
-		h.Membership().RetentionClose(appCtx, id, sessionChain)
-	}))(chatStore)
-	// An exempt chat contributes no wake-up deadline, so closing its tab must trigger
-	// a pass; without this the purge noticed up to an hour later.
-	h.Membership().SetRetentionWake(purgeScheduler.Trigger)
+	purgeScheduler, startKeepState, err := wireRetention(appCtx, cfg, chatStore, h,
+		retentionStores{tabs: tabStore, leases: leaseStore, reaper: sessionReaper})
+	if err != nil {
+		return nil, err
+	}
 	purgeScheduler.Start(appCtx)
+	stopKeepState := startKeepState()
 
 	previewSigner, err := preview.NewSigner()
 	if err != nil {
@@ -336,21 +333,27 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	built = true
 	return &App{
-		Runtime:           h,
-		Server:            srv,
-		purgeScheduler:    purgeScheduler,
-		mcpPrewarm:        mcpPrewarm,
-		tools:             tools,
-		stopKiro:          kiro.stop,
-		stopOrphanSweep:   stopOrphanSweep,
-		stopKiroSeed:      stopKiroSeed,
-		stopPRPoller:      stopPRPoller,
-		stopForgeKeeper:   stopForgeKeeper,
-		stopKASHeal:       stopKASHeal,
-		stopToolsSteering: stopToolsSteering,
-		stopApp:           stopApp,
-		waitSignIn:        vault.Wait,
-		roots:             roots,
+		Runtime:            h,
+		Server:             srv,
+		purgeScheduler:     purgeScheduler,
+		mcpPrewarm:         mcpPrewarm,
+		tools:              tools,
+		stopKiro:           kiro.stop,
+		stopOrphanSweep:    stopOrphanSweep,
+		stopKiroSeed:       stopKiroSeed,
+		stopPRPoller:       stopPRPoller,
+		stopForgeKeeper:    stopForgeKeeper,
+		stopForges:         func() { shutdownWithin("forge reads", forgesManager.Shutdown) },
+		stopGitScans:       func() { shutdownWithin("git status scans", gitHandler.Shutdown) },
+		stopMCPCallbacks:   func() { shutdownWithin("mcp change callbacks", mcpStore.Shutdown) },
+		stopForgeSteering:  forgeSteer.close,
+		stopScheduleRunner: stopScheduleRunner,
+		stopKASHeal:        stopKASHeal,
+		stopToolsSteering:  stopToolsSteering,
+		stopKeepState:      stopKeepState,
+		stopApp:            stopApp,
+		waitSignIn:         vault.Wait,
+		roots:              roots,
 	}, nil
 }
 
@@ -374,15 +377,24 @@ func (a *App) Run() error {
 func (a *App) Shutdown() {
 	callIfSet(a.stopPRPoller)
 	callIfSet(a.stopForgeKeeper)
+	// Before the runtime's teardown: a fill that stores a repository page notifies the hub.
+	callIfSet(a.stopForges)
+	callIfSet(a.stopGitScans)
 	callIfSet(a.stopKASHeal)
+	// Before the runtime's teardown: a sweep in flight launches its run through the runtime.
+	callIfSet(a.stopScheduleRunner)
 	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the agent engine the
 	// runtime teardown is about to stop, so the reverse order leaves one mid-inspect.
 	callIfSet(a.stopOrphanSweep)
+	callIfSet(a.stopKeepState)
 	callIfSet(a.stopKiroSeed)
 	callIfSet(a.stopKiro)
 	if a.purgeScheduler != nil {
 		a.purgeScheduler.Stop()
 	}
+	// Before the prewarm stop: a callback in flight may still queue an install, which that stop
+	// then cancels and waits for.
+	callIfSet(a.stopMCPCallbacks)
 	if a.mcpPrewarm != nil {
 		a.mcpPrewarm.Stop()
 	}
@@ -392,6 +404,9 @@ func (a *App) Shutdown() {
 	a.shutdownHub()
 	// After the runtime's teardown, which may still call the vault: a renewal's save lands before exit.
 	callIfSet(a.waitSignIn)
+	// With stopToolsSteering and for its reason: a sync's Generate queues behind the boot
+	// regeneration and reads the engine Close ends.
+	callIfSet(a.stopForgeSteering)
 	// Last: the boot regeneration may wait in Inventory, which takes no ctx (each probe keeps
 	// toolbelt's own 10s timeout), so the wait can outlast a stop and must not hold back the two
 	// above. A job event after the hub's teardown is dropped.
@@ -458,22 +473,22 @@ func chatRetention(ctx context.Context, configDir string) time.Duration {
 	return time.Duration(days) * 24 * time.Hour
 }
 
-// runRetention resolves how the purge treats a finished parentless run: purge is
-// false for keep-forever and for a config.json that is present and unreadable, a
-// zero window purges once no tab shows the run, and N days purges N days after
-// its last update. An absent key takes the default, as chatRetention does.
-func runRetention(ctx context.Context, configDir string) (window time.Duration, purge bool) {
+// runRetention resolves how the run purge and the run-log sweep treat finished runs: disabled for
+// keep-forever and for a config.json that is present and unreadable; a zero window purges an
+// unclaimed run once no tab shows it and leaves a chat's runs to the chat; N days ages out every
+// finished run N days after its last update. An absent key takes the default, as chatRetention does.
+func runRetention(ctx context.Context, configDir string) agent.RunRetention {
 	days, ok, err := settings.FieldStrict[int](ctx, configDir, settings.KeyChatRetentionDays)
 	if err != nil {
-		return 0, false
+		return agent.RunRetention{}
 	}
 	if !ok {
 		days = settings.DefaultChatRetentionDays
 	}
 	if days < 0 {
-		return 0, false
+		return agent.RunRetention{}
 	}
-	return time.Duration(days) * 24 * time.Hour, true
+	return agent.RunRetention{Window: time.Duration(days) * 24 * time.Hour, Enabled: true, ChatRuns: days > 0}
 }
 
 // sweepStaleTemps removes orphan temps left by SIGKILL between CreateTemp and Rename, sparing
@@ -528,14 +543,14 @@ func (n *forgeNotifier) notify(ctx context.Context, c forges.Change) {
 		return
 	}
 	if c.ReposListed {
-		go n.steer.sync()
+		n.steer.kick()
 		return
 	}
 	if c.AccountChanged {
 		n.poller.DropInventory(c.ID)
 	}
 	n.hub.Broadcast(ctx, marotte.NewEvent(marotte.EventForgesChanged, "", marotte.ForgesChangedPayload{}))
-	go n.steer.sync()
+	n.steer.kick()
 }
 
 // wire makes n notify poller and a steering sync over m that renders into steer,
@@ -545,7 +560,7 @@ func (n *forgeNotifier) notify(ctx context.Context, c forges.Change) {
 func (n *forgeNotifier) wire(appCtx context.Context, poller *forges.PRStatusPoller, m *forges.Manager,
 	steer *steering.Generator,
 ) *forgeSteering {
-	s := &forgeSteering{appCtx: appCtx, m: m, generate: steer.Generate}
+	s := newForgeSteering(appCtx, m, steer.Generate)
 	n.poller, n.steer = poller, s
 	steer.SetForgeSnapshot(func() steering.ForgeSnapshot { return forgeSnapshot(appCtx, m) })
 	return s
@@ -553,29 +568,67 @@ func (n *forgeNotifier) wire(appCtx context.Context, poller *forges.PRStatusPoll
 
 // forgeSteering regenerates the steering file when its forge section moved.
 type forgeSteering struct {
-	// appCtx is the app's lifetime: sync runs behind context-free callers and
-	// must not outlive the process.
-	appCtx   context.Context
+	// lifetime is a child of the app's, which close also ends: sync runs behind
+	// context-free callers and must not outlive the process. gate orders each
+	// kick's syncs.Add before close's end, so none is added once Wait may run.
+	lifetime context.Context
+	end      context.CancelFunc
 	m        *forges.Manager
 	generate func(context.Context) error
 	last     steering.ForgeSnapshot
+	syncs    sync.WaitGroup
+	gate     sync.Mutex
 	mu       sync.Mutex
+}
+
+func newForgeSteering(appCtx context.Context, m *forges.Manager, generate func(context.Context) error) *forgeSteering {
+	lifetime, end := context.WithCancel(appCtx)
+	return &forgeSteering{lifetime: lifetime, end: end, m: m, generate: generate}
+}
+
+// kick runs sync behind the caller, unless close has begun.
+func (s *forgeSteering) kick() {
+	s.gate.Lock()
+	defer s.gate.Unlock()
+	if s.lifetime.Err() != nil {
+		return
+	}
+	s.syncs.Go(s.sync)
+}
+
+// close cancels the syncs kick started, refuses any later kick, and waits for
+// those in flight with no bound: a sync waits out a Generate that holds its lock
+// past the cancel.
+func (s *forgeSteering) close() {
+	s.gate.Lock()
+	s.end()
+	s.gate.Unlock()
+	s.syncs.Wait()
+}
+
+// shutdownWithin runs a component's Shutdown bounded by backgroundStopGrace, and logs when the
+// grace runs out; what names the work it ends.
+func shutdownWithin(what string, shutdown func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), backgroundStopGrace)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		slog.Warn("background work did not stop within the shutdown grace", "work", what, "grace", backgroundStopGrace, "error", err)
+	}
 }
 
 // sync regenerates the steering file when the snapshot it renders moved. A
 // repository page the snapshot found missing or stale is read behind it, and
-// its arrival syncs again (forgeNotifier.notify). Callers run it in their own
-// goroutine.
+// its arrival syncs again (forgeNotifier.notify).
 func (s *forgeSteering) sync() {
 	// Taken under mu, so last is never replaced by a snapshot older than it.
 	s.mu.Lock()
-	snap := forgeSnapshot(s.appCtx, s.m)
+	snap := forgeSnapshot(s.lifetime, s.m)
 	changed := !reflect.DeepEqual(s.last, snap)
 	s.last = snap
 	s.mu.Unlock()
 	// Generate scans the workspace, so an unmoved snapshot skips it.
 	if changed {
-		regenerateSteering(s.appCtx, s.generate)
+		regenerateSteering(s.lifetime, s.generate)
 	}
 }
 
@@ -600,11 +653,11 @@ func forgeSnapshot(ctx context.Context, m *forges.Manager) steering.ForgeSnapsho
 
 // wireToolsEngine starts the tools engine in its slot. An error is a failure the boot stops on;
 // a survivable one leaves the slot down with its reason.
-func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
+func wireToolsEngine(cfg *Config, h *agent.Runtime,
 	githubToken func(context.Context) (string, error),
 ) (*toolsSlot, error) {
 	tools := newToolsSlot(filepath.Join(cfg.ConfigDir, toolsManifestName), func() (*toolbelt.Engine, error) {
-		return buildToolsEngine(appCtx, cfg, h, githubToken)
+		return buildToolsEngine(cfg, h, githubToken)
 	})
 	if err := tools.start(); err != nil {
 		return nil, err
@@ -614,7 +667,7 @@ func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 
 // A failed enqueue only logs, since installed tools persist on the volume. A toolbelt.New failure
 // is returned as is, for the slot to classify. githubToken is the engine's only GitHub credential.
-func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
+func buildToolsEngine(cfg *Config, h *agent.Runtime,
 	githubToken func(context.Context) (string, error),
 ) (*toolbelt.Engine, error) {
 	toolsDir, err := cfg.Tools.use()
@@ -645,9 +698,7 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 			// Async because a job callback fires under the queue lock and must not
 			// block; the call itself is idempotent.
 			if j != nil && j.State == toolbelt.JobDone {
-				// The app's lifetime, not Background: this goroutine writes lsp.json,
-				// and a Background parent let SIGTERM abandon it mid-write.
-				go h.EnsureCodeIntelligence(appCtx)
+				h.KickCodeIntelligence()
 			}
 		},
 		OnJobOutput: func(jobID string, lines []string) {
@@ -680,8 +731,7 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	if _, rerr := toolsEngine.RefreshCatalog(); rerr != nil {
 		slog.Warn("tools: boot catalog refresh not enqueued", "error", rerr)
 	}
-	// The app's lifetime, not Background — see the OnJobChanged spawn above.
-	go h.EnsureCodeIntelligence(appCtx)
+	h.KickCodeIntelligence()
 	return toolsEngine, nil
 }
 
@@ -821,6 +871,9 @@ func openTabStore(dir string) *tabs.Store {
 	if err != nil {
 		slog.Warn("tab arrangement starting empty", "error", err)
 	}
+	if aside := st.Unread(); aside != "" {
+		slog.Warn("tab arrangement unread: the run purge deletes no run until the aside is removed or restored", "aside", aside)
+	}
 	return st
 }
 
@@ -834,9 +887,9 @@ func openSpecApprovalStore(dir string) *specapproval.Store {
 	return st
 }
 
-// heldUnlessDraining wraps the store's purge callback so closeChain runs held on the runtime's in-flight wait
+// heldUnlessDraining wraps the purge's OnPurge so closeChain runs held on the runtime's in-flight wait
 // (hold): the purge scheduler outlives the runtime's Shutdown. Skipped once Shutdown began; the next boot's
-// orphan-session sweep, parentless-run purge and tab prune reap what the chain left.
+// orphan-session sweep, finished-run purge and tab prune reap what the chain left.
 func heldUnlessDraining(hold func() (release func(), ok bool),
 	closeChain func(marotte.ChatID, []string),
 ) func(marotte.ChatID, []string) {
@@ -851,7 +904,8 @@ func heldUnlessDraining(hold func() (release func(), ok bool),
 }
 
 // pruneTabs is the tab set's one-shot LOAD-TIME crash recovery for a crash between the
-// coordinator's two writes. Only CHAT tabs are checked against the chat store; a missing file is no
+// coordinator's two writes. Only CHAT tabs are checked against the chat store, and only a record
+// that is plainly absent drops its tab: an unreadable one may still exist. A missing file is no
 // reason to close an editor, run or singleton tab. It then opens each remaining chat tab's log, so
 // its read position is projected from the first request.
 func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
@@ -862,8 +916,12 @@ func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
 		if t.Kind != marotte.TabKindChat {
 			return true
 		}
-		_, ok := chats.Get(ctx, marotte.ChatID(t.Ref))
-		return ok
+		_, found, err := chats.Lookup(ctx, marotte.ChatID(t.Ref))
+		if err != nil {
+			slog.Warn("tab prune kept a chat tab whose record could not be read", "chat_id", logsafe.Field(t.Ref), "error", err)
+			return true
+		}
+		return found
 	})
 	switch {
 	case err != nil:
@@ -891,6 +949,9 @@ func openRunLeaseStore(dir string) *runlease.Store {
 	if err != nil {
 		slog.Warn("run leases starting empty; runs from before this boot will not be swept", "error", err)
 	}
+	if aside := st.Unread(); aside != "" {
+		slog.Warn("run leases unread: no chat from before this boot is purged until the aside is removed or restored", "aside", aside)
+	}
 	return st
 }
 
@@ -912,13 +973,13 @@ func startOrphanSweep(ctx context.Context, sweep func(context.Context) bool,
 	})
 }
 
-// The runner reuses Runtime.Launch, so a scheduled run needs no host chat. ctx must be the APP
-// lifetime: Runner.Run's only exit is its ctx.Done arm, and Build's context never ends.
-func startScheduleRunner(ctx context.Context, st *schedule.Store, l schedule.Launcher) {
+// The runner reuses Runtime.Launch, so a scheduled run needs no host chat. A nil store
+// starts nothing and returns a nil stop.
+func startScheduleRunner(ctx context.Context, st *schedule.Store, l schedule.Launcher) (stop func()) {
 	if st == nil {
-		return
+		return nil
 	}
-	go schedule.NewRunner(st, l).Run(ctx)
+	return runBackground(ctx, "schedule runner", schedule.NewRunner(st, l).Run)
 }
 
 // newPRStatusPoller builds the CI-flip notifier that fills the pull-request inventory. git answers

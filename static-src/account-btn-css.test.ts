@@ -1,7 +1,7 @@
 // The merged identity control: the sidebar footer's mark and address are ONE
 // `<button id="account-btn">`, the status popup's trigger. Pinned at every pointer tier:
 // its box matches the REAL logout button's (never `--footer-ctl-h`'s arithmetic), it
-// clears the hit floor because chrome is stripped by named declarations rather than
+// reaches the hit floor as a target because chrome is stripped by named declarations rather than
 // `all: unset`, nothing moved on the inline axis, and its hover is `.icon-btn`'s value
 // gated on `any-hover`. The pointer tiers are a `data-pointer` attribute, so forcing it
 // is how a case reaches them; coarse-wide is the tier width-keyed rules cannot see.
@@ -165,23 +165,32 @@ describe("the merged control's box", () => {
     }
   });
 
-  it.each(TIERS)("clears the app-wide hit floor at the %s tier", (name, apply) => {
-    // `.account-btn`'s (0,1,0) `min-block-size` outranks the floor's zero-specificity rule,
-    // so the floor holds by VALUE (`--footer-ctl-h` is a `max()` over it).
+  it.each(TIERS)("reaches the app-wide hit floor as a target at the %s tier", (name, apply) => {
+    // The box paints at the pair's size; the target is the shared expander's, so a press
+    // 1px inside the floor's band, centred on the box, still reaches each control.
     apply();
-    const { btn } = mountFooter();
+    const { btn, logout } = mountFooter();
     const floor = tokenPx("--hit-floor");
     expect(floor, "the tier declares a floor").toBeGreaterThan(0);
-    const h = btn.getBoundingClientRect().height;
-    expect(h, `${name}: ${h}px against a ${floor}px floor`).toBeGreaterThanOrEqual(floor);
+    for (const el of [btn, logout]) {
+      const b = el.getBoundingClientRect();
+      const cy = b.top + b.height / 2;
+      const x = b.left + b.width / 2;
+      for (const y of [cy - floor / 2 + 1, cy + floor / 2 - 1]) {
+        const hit = document.elementFromPoint(x, y);
+        expect(el.contains(hit), `${name}: ${el.id} at ${String(y - cy)}px`).toBe(true);
+      }
+    }
   });
 
-  it("keeps the band at 52px while the coarse floor lifts both controls to 44", () => {
-    // What `min-height` on the band is FOR: it holds two 44px controls without growing.
+  it("paints both controls at the mouse size on the coarse tier, in a 52px band", () => {
+    // The finger's 44px lives in the target, not the box (Apple HIG: the hit region).
+    document.documentElement.dataset["pointer"] = "fine";
+    const fine = mountFooter();
+    const want = [fine.logout, fine.btn].map((e) => e.getBoundingClientRect().height);
     document.documentElement.dataset["pointer"] = "coarse";
     const { footer, btn, logout } = mountFooter();
-    expect(logout.getBoundingClientRect().height, "the floor applies").toBeCloseTo(44, 0);
-    expect(btn.getBoundingClientRect().height).toBeCloseTo(44, 0);
+    expect([logout, btn].map((e) => e.getBoundingClientRect().height)).toEqual(want);
     expect(footer.getBoundingClientRect().height).toBeCloseTo(52, 0);
   });
 

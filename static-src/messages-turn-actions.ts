@@ -14,7 +14,7 @@ import { blockquote } from "./message-quote.js";
 import { getActiveId } from "./store.js";
 import { copyClipboard } from "./actions/messages.js";
 import { buildPath } from "./route-path.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 
 // ---------------------------------------------------------------------------
 // Module state

@@ -62,7 +62,7 @@ func newCompactRig(pct int, kasAutoOff bool) *compactRig {
 			defer r.mu.Unlock()
 			return r.live
 		},
-		bridgeOf: func(marotte.ChatID) engineSession { return r.bridge },
+		bridgeOf: func(marotte.ChatID) *sharedBridge { return testBridge(r.bridge, bridgeIdle) },
 		usage: func(context.Context, marotte.ChatID) (marotte.Usage, bool) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
@@ -149,7 +149,7 @@ func TestPreSendCompact_OnlyWhereMarotteIsTheCompactor(t *testing.T) {
 			r := newCompactRig(tc.pct, tc.kasAutoOff)
 			r.enabled = tc.enabled
 			r.reading(95)
-			r.ac.preSend(t.Context(), "c1")
+			r.ac.preSend(t.Context(), "c1", nil)
 			if got := r.count(); got != tc.want {
 				t.Errorf("preSend made %d compact calls, want %d", got, tc.want)
 			}
@@ -159,12 +159,36 @@ func TestPreSendCompact_OnlyWhereMarotteIsTheCompactor(t *testing.T) {
 	t.Run("twice with no turn between", func(t *testing.T) {
 		r := newCompactRig(85, true)
 		r.reading(95)
-		r.ac.preSend(t.Context(), "c1")
-		r.ac.preSend(t.Context(), "c1")
+		r.ac.preSend(t.Context(), "c1", nil)
+		r.ac.preSend(t.Context(), "c1", nil)
 		if got := r.count(); got != 1 {
 			t.Errorf("two sends with no turn between made %d compact calls, want 1: the reading is pre-compaction until the next turn", got)
 		}
 	})
+}
+
+// A prompt of a closed life holds its own entry; the reopened chat's entry, over the threshold, is not its to compact.
+func TestPreSendCompact_AnOldPromptNeverCompactsTheReopenedSession(t *testing.T) {
+	r := newCompactRig(85, true)
+	reopened := testBridge(r.bridge, bridgeIdle)
+	r.ac.bridgeOf = func(marotte.ChatID) *sharedBridge { return reopened }
+	r.reading(95)
+
+	r.ac.preSend(t.Context(), "c1", testBridge(newFakeBridge(), bridgeIdle))
+	if got := r.count(); got != 0 {
+		t.Errorf("the old prompt made %d compact calls on the reopened session, want 0", got)
+	}
+	r.ac.mu.Lock()
+	st := r.ac.chats["c1"]
+	r.ac.mu.Unlock()
+	if st != nil {
+		t.Errorf("the old prompt left auto-compact state %+v, want none: the state is the reopened life's", st)
+	}
+
+	r.ac.preSend(t.Context(), "c1", reopened)
+	if got := r.count(); got != 1 {
+		t.Errorf("the reopened chat's own prompt made %d compact calls, want 1", got)
+	}
 }
 
 func TestPreSendCompact_AwaitsInFlightAndIsBounded(t *testing.T) {
@@ -180,7 +204,7 @@ func TestPreSendCompact_AwaitsInFlightAndIsBounded(t *testing.T) {
 		waitFor(t, func() bool { return r.count() == 1 })
 		sent := make(chan struct{})
 		go func() {
-			r.ac.preSend(context.Background(), "c1")
+			r.ac.preSend(context.Background(), "c1", nil)
 			close(sent)
 		}()
 		select {
@@ -212,7 +236,7 @@ func TestPreSendCompact_AwaitsInFlightAndIsBounded(t *testing.T) {
 		}
 		sent := make(chan struct{})
 		go func() {
-			r.ac.preSend(context.Background(), "c1")
+			r.ac.preSend(context.Background(), "c1", nil)
 			close(sent)
 		}()
 		<-entered
@@ -245,7 +269,7 @@ func TestPreSendCompact_AwaitsInFlightAndIsBounded(t *testing.T) {
 		t.Cleanup(func() { close(r.block) })
 		r.reading(95)
 		start := time.Now()
-		r.ac.preSend(t.Context(), "c1")
+		r.ac.preSend(t.Context(), "c1", nil)
 		if elapsed := time.Since(start); elapsed > 2*time.Second {
 			t.Errorf("preSend held the prompt %s against a %s budget", elapsed, autoCompactPreSendBudget)
 		}
@@ -279,7 +303,7 @@ func TestAfterTurnClose_Order(t *testing.T) {
 		return inner(ctx, b)
 	}
 	bc := &bridgeCoordinator{
-		turns:             newTurnRegistry(),
+		turns:             newTurnRegistry(nopTurnRecords{}),
 		lifecycle:         &lifetime{shutdownCtx: t.Context()},
 		applyPendingModel: func(context.Context, marotte.ChatID) { record("model") },
 		autoCompact:       r.ac,
@@ -289,7 +313,7 @@ func TestAfterTurnClose_Order(t *testing.T) {
 		},
 		drainAfterClose: func(context.Context, marotte.ChatID, command.CloseFacts, command.EndFacts) { record("drain") },
 	}
-	bc.afterTurnClose(t.Context(), "c1", closeFacts{outcome: marotte.TurnOutcomeCompleted})
+	bc.afterTurnClose(t.Context(), bc.turns.testLifecycle("c1"), closeFacts{outcome: marotte.TurnOutcomeCompleted})
 	if want := []string{"resolve", "model", "compact", "drain"}; !slices.Equal(order, want) {
 		t.Errorf("afterTurnClose order = %v, want %v", order, want)
 	}
@@ -321,16 +345,16 @@ func writeCompactionSetting(t *testing.T, dir string, enabled bool, pct int) {
 }
 
 func TestAutoCompactionPolicy_ReadsTheSettingAndFailsToTheDefault(t *testing.T) {
-	if enabled, pct := autoCompactionPolicy(t.Context(), t.TempDir()); !enabled || pct != 80 {
+	if enabled, pct := autoCompactionPolicy(settings.Document{}); !enabled || pct != 80 {
 		t.Errorf("autoCompactionPolicy with no config.json = (%v, %d), want (true, 80)", enabled, pct)
 	}
 	dir := t.TempDir()
 	writeCompactionSetting(t, dir, false, 85)
-	if enabled, pct := autoCompactionPolicy(t.Context(), dir); enabled || pct != 85 {
+	if enabled, pct := autoCompactionPolicy(docAt(t, dir)); enabled || pct != 85 {
 		t.Errorf("autoCompactionPolicy(stored false, 85) = (%v, %d), want (false, 85)", enabled, pct)
 	}
 	writeCompactionSetting(t, dir, true, 83)
-	if _, pct := autoCompactionPolicy(t.Context(), dir); pct != 80 {
+	if _, pct := autoCompactionPolicy(docAt(t, dir)); pct != 80 {
 		t.Errorf("autoCompactionPolicy(stored 83) pct = %d, want 80", pct)
 	}
 	for _, tc := range []struct {
@@ -392,5 +416,17 @@ func TestChatDoor_SendsTheCompactionPolicyAndAnObserverDoorDoesNot(t *testing.T)
 	}
 	if chat != 1 || observer < 1 {
 		t.Errorf("chat doors = %d, observer doors = %d; want one chat door and at least one observer door", chat, observer)
+	}
+}
+
+// marotte's own compaction follows the same document as KAS's switch at the door: the last readable one.
+func TestUnreadableConfig_MarottesCompactorKeepsTheLastReadablePolicy(t *testing.T) {
+	dir := writeSettings(t, `{"auto_compaction_enabled":false,"auto_compact_pct":90}`)
+	h := reopenFixtureIn(t, dir, nil)
+	settleBoot(t, h)
+	rewriteConfigByHand(t, dir, `{"auto_compaction_enabled":`)
+
+	if on, pct := h.coord.autoCompact.policy(t.Context()); on || pct != 90 {
+		t.Errorf("compaction policy over an unreadable config.json = (%v, %d), want the last readable (false, 90)", on, pct)
 	}
 }

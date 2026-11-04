@@ -1,4 +1,4 @@
-import { effect, el, signal, touch } from "@cplieger/reactive";
+import { effect, el, signal, touch } from "@cplieger/ui";
 import { exfilShaped, isSafeUrl } from "./utils-url.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
 

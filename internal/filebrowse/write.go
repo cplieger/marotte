@@ -96,7 +96,7 @@ func decodeWriteBody(w http.ResponseWriter, r *http.Request, l loc) (writeBody, 
 			slog.Warn("filebrowse: write body too large",
 				"path", logsafe.Field(l.abs), "limit", writeBodyLimit, "error", logsafe.Field(maxErr.Error()))
 			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				FileRefusal{Error: "file too large", Code: RefusalTooLarge})
+				FileRefusal{Error: "file too large", Code: refusalTooLarge})
 			return writeBody{}, false
 		}
 		httpreply.BadRequest(w, "invalid json")
@@ -105,14 +105,14 @@ func decodeWriteBody(w http.ResponseWriter, r *http.Request, l loc) (writeBody, 
 	if body.FileID != nil {
 		if _, err := parseFileID(*body.FileID); err != nil {
 			webhttp.WriteJSONStatus(w, http.StatusBadRequest,
-				FileRefusal{Error: errInvalidFileID.Error(), Code: RefusalInvalidFileID})
+				FileRefusal{Error: errInvalidFileID.Error(), Code: refusalInvalidFileID})
 			return writeBody{}, false
 		}
 	}
 	if len(body.Content) > WholeFileMax {
 		size := int64(len(body.Content))
 		webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-			FileRefusal{Error: "file too large", Code: RefusalTooLarge, Size: &size})
+			FileRefusal{Error: "file too large", Code: refusalTooLarge, Size: &size})
 		return writeBody{}, false
 	}
 	return body, true
@@ -176,7 +176,7 @@ func staleWriteAllowed(w http.ResponseWriter, r *http.Request, l loc, parent *os
 		if tl, ok := errors.AsType[*tooLargeError](err); ok {
 			size := tl.size
 			webhttp.WriteJSONStatus(w, http.StatusConflict, FileRefusal{
-				Error: errStaleWrite, Code: RefusalChanged, ContentKind: ContentTooLarge, Size: &size,
+				Error: errStaleWrite, Code: refusalChanged, ContentKind: contentTooLarge, Size: &size,
 			})
 			return false
 		}
@@ -197,15 +197,15 @@ func staleWriteAllowed(w http.ResponseWriter, r *http.Request, l loc, parent *os
 // UTF-8 would arrive as U+FFFD, which the client could then save over the real bytes.
 func staleRefusal(current []byte, id string) FileRefusal {
 	size := int64(len(current))
-	out := FileRefusal{Error: errStaleWrite, Code: RefusalChanged, FileID: id, Size: &size}
+	out := FileRefusal{Error: errStaleWrite, Code: refusalChanged, FileID: id, Size: &size}
 	switch {
 	case looksBinary(current):
-		out.ContentKind = ContentBinary
+		out.ContentKind = contentBinary
 	case !utf8.Valid(current):
-		out.ContentKind = ContentNotUTF8
+		out.ContentKind = contentNotUTF8
 	default:
 		text := string(current)
-		out.ContentKind, out.Content = ContentText, &text
+		out.ContentKind, out.Content = contentText, &text
 	}
 	return out
 }

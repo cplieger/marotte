@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -63,14 +64,14 @@ func seedChatParentedRun(t *testing.T, openChat bool, nodes ...string) (*Runtime
 
 func gateAnswer(t *testing.T, h *Runtime, workflowID string) *runAffordance {
 	t.Helper()
-	aff := h.runs.affordance(t.Context(), workflowID, "aborted")
-	if aff.origin.parent.chat != "c1" {
-		t.Fatalf("Setup: the gate resolved parent %q, want the launching chat c1", aff.origin.parent.chat)
+	o := h.runs.originOf(t.Context(), workflowID)
+	if o.parent.chat != "c1" {
+		t.Fatalf("Setup: the run list resolves parent %q, want the launching chat c1", o.parent.chat)
 	}
-	if aff.origin.recipe != "publish" {
-		t.Fatalf("Setup: the gate resolved recipe %q, want publish off KAS's run list", aff.origin.recipe)
+	if o.recipe != "publish" {
+		t.Fatalf("Setup: the run list resolves recipe %q, want publish", o.recipe)
 	}
-	return aff
+	return h.runs.affordance(workflowID, &runHead{Status: "aborted"})
 }
 
 // TestHandleRetry_AnswersTheOutcomeRatherThanOk pins that the reply carries KAS's status and reset node ids.
@@ -281,6 +282,81 @@ func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *te
 	}
 }
 
+// A retry verb KAS read but did not answer within retryTimeout may still run, so the reply says it is still applying
+// rather than that nothing was retried, and the run keeps the lease the retry minted for its deadline.
+func TestHandleRetry_AVerbLeftUnansweredKeepsItsLeaseAndIsStillApplying(t *testing.T) {
+	h, br := seedChatParentedRun(t, true, "final-verify")
+	br.setBlockOn(methodKiroWorkflowRetry, make(chan struct{}))
+	prev := retryTimeout
+	retryTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { retryTimeout = prev })
+
+	rec := httptest.NewRecorder()
+	h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+
+	if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
+		t.Fatalf("Setup: the verb never reached KAS; calls were %v", br.callLog())
+	}
+	assertStillApplying(t, rec)
+	if body := rec.Body.String(); strings.Contains(body, "nothing was retried") {
+		t.Errorf("the reply = %s, want no claim that nothing was retried: the verb reached KAS", body)
+	}
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Error("the unanswered retry released the lease it minted, so a retry KAS applies runs with no deadline")
+	}
+	if !h.runs.bounded("wf_1") {
+		t.Error("the run was not re-armed, so nothing bounds a retry KAS may be running")
+	}
+}
+
+// An answer to the retry verb that arrived but could not be read may hide a retry KAS took, so the run keeps the
+// lease the retry minted and is re-armed; a -32700 KAS itself sends is a refusal and gives the lease back.
+func TestHandleRetry_AnAnswerThatCouldNotBeReadKeepsItsLease(t *testing.T) {
+	unreadable := map[string]error{
+		"an undecoded answer": fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded,
+			&marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "marotte could not decode kiro-cli's answer"}),
+		"an oversize answer": &marotte.TransportError{Err: marotte.ErrFrameTooLarge},
+	}
+	for name, callErr := range unreadable {
+		t.Run(name, func(t *testing.T) {
+			h, br := seedChatParentedRun(t, true, "final-verify")
+			br.setCallErr(methodKiroWorkflowRetry, callErr)
+
+			rec := httptest.NewRecorder()
+			h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+
+			if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "Refresh") {
+				t.Errorf("the retry = %d %s, want %d sending the reader to a refresh",
+					rec.Code, rec.Body.String(), http.StatusBadGateway)
+			}
+			if _, held := h.runs.lease("wf_1"); !held {
+				t.Error("the lease the retry minted was released, so a retry KAS took runs with no deadline")
+			}
+			if !h.runs.bounded("wf_1") {
+				t.Error("the run was not re-armed, so nothing bounds a retry KAS may be running")
+			}
+			if !retryMarked(h, "wf_1") {
+				t.Error("the run's retry mark was dropped, so the purge may delete a run KAS just retried")
+			}
+		})
+	}
+
+	t.Run("a parse error KAS itself sends", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true, "final-verify")
+		br.setCallRPCErr(methodKiroWorkflowRetry, &marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "Parse error"})
+
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+
+		if rec.Code != http.StatusConflict {
+			t.Errorf("KAS's parse-error refusal = %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
+		}
+		if _, held := h.runs.lease("wf_1"); held {
+			t.Error("the lease minted for a retry KAS refused was not given back")
+		}
+	})
+}
+
 // TestHandleRetry_RefusesWhatTheAffordanceRefuses pins that the gate is server-side.
 func TestHandleRetry_RefusesWhatTheAffordanceRefuses(t *testing.T) {
 	t.Run("a completed run is refused, naming its status", func(t *testing.T) {
@@ -412,27 +488,38 @@ func TestHandleRetry_AnUnreadableOutcomeTellsTheReaderToRefresh(t *testing.T) {
 	}
 }
 
-// TestRetry_UsesTheParentTheGateResolved pins that the verb uses the gate's answer, since a second read can lose
-// the parent and load a second host for a live run. Asserted as a mechanism: background listing makes counts unstable.
-func TestRetry_UsesTheParentTheGateResolved(t *testing.T) {
+// TestRetry_KeepsTheParentItReadBeforeTheVerb pins that Retry hosts the run from its one read of the run's origin,
+// since a second read can lose the parent and load a second host for a live run. Asserted as a mechanism: background
+// listing makes counts unstable.
+func TestRetry_KeepsTheParentItReadBeforeTheVerb(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
-	// Resolved while the inventory carries the parent.
 	aff := gateAnswer(t, h, "wf_1")
-	// A later read: same run, no parent session.
-	br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{
-		"workflowId": "wf_1", "name": "publish", "status": "aborted",
-	}))
+	// Once the verb is sent, the inventory forgets the run's parent session.
+	br.mu.Lock()
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method == methodKiroWorkflowRetry {
+			br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{
+				"workflowId": "wf_1", "name": "publish", "status": "aborted",
+			}))
+		}
+		return nil, nil, false
+	}
+	br.mu.Unlock()
 
 	starts := br.startCount()
 	if _, err := h.runs.retry(t.Context(), "wf_1", aff); err != nil {
 		t.Fatalf("Retry = %v, want nil: the verb re-asked and got a different answer", err)
 	}
 	if got := br.startCount() - starts; got != 0 {
-		t.Errorf("%d session doors opened although the gate had already resolved the run's launching session", got)
+		t.Errorf("%d session doors opened although Retry had already resolved the run's launching session", got)
 	}
 	if sb := h.bridge.mgr.get(runChatID("wf_1")); sb != nil {
 		t.Error("a host session was registered under the run's synthetic id for a run its " +
 			"launching chat already hosts")
+	}
+	l, held := h.runs.lease("wf_1")
+	if !held || l.ParentSessionID != "sess_owned" {
+		t.Errorf("lease = %+v (held %v), want the parent session read before the verb", l, held)
 	}
 }
 
@@ -470,8 +557,11 @@ func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
 	}
 	h.runs.bounds.executed["wf_1"] = runBackstop
 	h.runs.mu.Unlock()
+	if err := h.runs.stopAutoResume(t.Context(), "wf_1"); err != nil {
+		t.Fatalf("stopAutoResume: %v", err)
+	}
 
-	if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "failed")); err != nil {
+	if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"})); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 
@@ -480,5 +570,8 @@ func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
 	}
 	if h.runs.backstopSpent("wf_1") {
 		t.Error("the retried run's backstop reads spent: it inherited its last run's executing time")
+	}
+	if h.runs.autoResumeStopped("wf_1") {
+		t.Error("the retried run reads stopped before any run_start: it inherited its last run's auto-resume stop")
 	}
 }

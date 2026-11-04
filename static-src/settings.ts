@@ -16,7 +16,7 @@ import type { KiroDefault } from "./wire/types.gen.js";
 import { cacheTheme, cachedTheme } from "./device-view.js";
 import type { ThemeChoice } from "./device-view.js";
 import { applyThemeChoice, initThemeToggle } from "./theme.js";
-import type { ThemeStorage } from "@cplieger/ui-primitives/theme";
+import type { ThemeStorage } from "@cplieger/ui/theme";
 import { initSettingsTabs } from "./settings-tabs.js";
 import type { IdentityVerdict } from "./identity.js";
 import { initPermissionsUI, initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
@@ -27,7 +27,7 @@ import { apiGet } from "./api-client.js";
 import { loadVersions, getVersions } from "./versions.js";
 import { openConfigFile } from "./editor-openers.js";
 import { $ } from "./dom.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { initNotificationToggles } from "./settings-notifications.js";
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
@@ -151,7 +151,7 @@ function setTheme(choice: ThemeChoice): void {
   });
 }
 
-/** The adapter @cplieger/ui-primitives' createTheme persists through. Built here and INJECTED
+/** The adapter @cplieger/ui/theme's createTheme persists through. Built here and INJECTED
  *  into initThemeToggle rather than reached from theme.ts, because this module already imports
  *  that one — a reverse import would be a cycle, and the direction is the reason this is a
  *  parameter. */
@@ -1017,13 +1017,15 @@ function initAutoCompactionControls(): void {
 }
 
 // Each writes one /api/settings boolean, never the kiro-cli settings endpoint. The MCP wait switch
-// lives on Settings > Tools; the other two on General.
+// lives on Settings > Tools; the others on General.
 const panelSwitches: readonly {
-  key: "debug_logs" | "guard_payload_links" | "mcp_wait_for_ready";
+  key:
+    "debug_logs" | "guard_payload_links" | "high_throughput_optimizations" | "mcp_wait_for_ready";
   inputID: string;
 }[] = [
   { key: "guard_payload_links", inputID: "flag-guard-payload-links" },
   { key: "debug_logs", inputID: "flag-debug-logs" },
+  { key: "high_throughput_optimizations", inputID: "flag-high-throughput" },
   { key: "mcp_wait_for_ready", inputID: "mcp-wait-for-ready" },
 ];
 

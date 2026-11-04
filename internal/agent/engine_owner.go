@@ -30,10 +30,18 @@ const (
 )
 
 // engineSpec is what one spawn resolves: the options and the fingerprint of everything in them that is not live.
+// source says whether the options came from config.json, its last readable generation or the defaults.
 type engineSpec struct {
 	opts        *marotte.EngineOpts
 	fingerprint map[marotte.EngineReason]string
+	source      docSource
 }
+
+// errRestartHeld: a confirmed restart would apply queued reasons while config.json cannot be read.
+var errRestartHeld = errors.New("engine restart held: config.json cannot be read")
+
+// errRestartRunning: a restart is already running, or shutdown began.
+var errRestartRunning = errors.New("engine restart already running")
 
 type restartKind int
 
@@ -73,6 +81,10 @@ type engineHooks struct {
 	// and was reaped.
 	ready func(gen uint64)
 	ended func(gen uint64)
+	// configReadable reads config.json through the configDoc owner and reports whether it reads; configHeld is that
+	// owner's last verdict, true while it cannot be read, with no I/O. Nil means readable and not held.
+	configReadable func(ctx context.Context) bool
+	configHeld     func() bool
 }
 
 // engineBusy is what a restart now would interrupt, and whether anything else holds quiescence.
@@ -119,8 +131,12 @@ type engineOwner struct {
 	oomKill  func() (uint64, bool)
 	now      func() time.Time
 	state    marotte.EngineState
-	// reasons is the last computed restart-pending set; nil when none.
-	reasons     []marotte.EngineReason
+	// reasons is diffReasons(spawnedWith, latest), nil while spawnedWith is; written only with either, under mu.
+	reasons []marotte.EngineReason
+	// latest is the newest resolve's fingerprint and latestHeld whether its values were not config.json's; both are
+	// written together by every resolve, under resolveLock and mu, so they describe the newest resolve in lock order.
+	latest      map[marotte.EngineReason]string
+	resolveLock surfaceLock
 	liveLock    surfaceLock
 	live        engineLive
 	oomBaseline oomBaseline
@@ -135,6 +151,11 @@ type engineOwner struct {
 	statusMu sync.Mutex
 	// unavailable: no kiro-cli at construction and no managed install to wait for, so the engine never starts.
 	unavailable bool
+	latestHeld  bool
+	// recovering is set while the one recovery reconcile poke launched is in flight.
+	recovering bool
+	// heldPublished is the config verdict the last publish carried.
+	heldPublished bool
 }
 
 func newEngineOwner(source EngineSource, lt *lifetime, hooks *engineHooks) *engineOwner {
@@ -153,7 +174,7 @@ func newEngineOwner(source EngineSource, lt *lifetime, hooks *engineHooks) *engi
 	}
 	o.since = o.now()
 	o.boot = o.since.UnixMilli()
-	o.unavailable = source.Installed() == nil && source.ChatPath() == ""
+	o.unavailable = source.Installed() == nil && source.CLIPath() == ""
 	if o.unavailable {
 		o.state = marotte.EngineDown
 	}
@@ -252,7 +273,7 @@ func (o *engineOwner) backoff(ctx context.Context, attempt int) bool {
 
 // spawn starts one generation. Start's failure is returned with its handle, which the caller reaps.
 func (o *engineOwner) spawn(ctx context.Context) (engineHandle, uint64, error) {
-	path := o.source.ChatPath()
+	path := o.source.CLIPath()
 	o.mu.Lock()
 	o.gen++
 	gen := o.gen
@@ -265,7 +286,19 @@ func (o *engineOwner) spawn(ctx context.Context) (engineHandle, uint64, error) {
 	if o.hooks.spawned != nil {
 		o.hooks.spawned()
 	}
+	o.resolveLock.lock(context.WithoutCancel(ctx))
 	spec := o.hooks.resolve(ctx, path)
+	o.mu.Lock()
+	o.storeResolveLocked(&spec)
+	o.mu.Unlock()
+	o.resolveLock.unlock()
+	if spec.source != fromDocument {
+		from := "last readable"
+		if spec.source == fromDefaults {
+			from = "defaults"
+		}
+		slog.Warn("engine starting while config.json cannot be read", "generation", gen, "settings", from)
+	}
 	opts := o.hooks.options(gen)
 	var h engineHandle
 	if sp, ok := o.source.(engineSpawner); ok {
@@ -286,8 +319,10 @@ func (o *engineOwner) spawn(ctx context.Context) (engineHandle, uint64, error) {
 	o.mu.Lock()
 	o.engine = h
 	o.retired = make(chan struct{})
+	// A resolve during Start stored after this spawn's, so its reason stays queued.
 	o.spawnedWith = spec.fingerprint
-	o.reasons = nil
+	o.reasons = diffReasons(o.spawnedWith, o.latest)
+	queued := len(o.reasons) > 0
 	o.startErr = nil
 	o.state = marotte.EngineReady
 	o.since = o.now()
@@ -310,7 +345,22 @@ func (o *engineOwner) spawn(ctx context.Context) (engineHandle, uint64, error) {
 			o.lt.goUnlessDraining(func() { o.hooks.resume(o.lt.shutdownCtx, set) })
 		}
 	}
+	// Unguarded on held: onExit records a set for every ended generation, and poke's own door and busy checks see a
+	// resumed run.
+	if queued {
+		o.lt.goUnlessDraining(o.poke)
+	}
 	return h, gen, nil
+}
+
+// storeResolveLocked records spec as the newest resolve and re-diffs the queue against it. o.mu and resolveLock must
+// be held.
+func (o *engineOwner) storeResolveLocked(spec *engineSpec) {
+	o.latest = spec.fingerprint
+	o.latestHeld = spec.source != fromDocument
+	if o.spawnedWith != nil {
+		o.reasons = diffReasons(o.spawnedWith, o.latest)
+	}
 }
 
 // startFailed reaps a generation whose Start failed; the gate stays closed and callers keep waiting.
@@ -543,7 +593,7 @@ func (o *engineOwner) releaseDoor() {
 }
 
 // openSession creates a session on the engine under an id it mints; see engineHandle.NewSession for attach.
-func (o *engineOwner) openSession(ctx context.Context, so *marotte.SessionOpts, attach func(engineSession)) (engineSession, error) {
+func (o *engineOwner) openSession(ctx context.Context, so *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error) {
 	h, _, release, err := o.acquire(ctx)
 	if err != nil {
 		return nil, err
@@ -553,14 +603,14 @@ func (o *engineOwner) openSession(ctx context.Context, so *marotte.SessionOpts, 
 }
 
 // loadSession loads so.SessionID on the engine.
-func (o *engineOwner) loadSession(ctx context.Context, so *marotte.SessionOpts, attach func(engineSession)) error {
+func (o *engineOwner) loadSession(ctx context.Context, so *marotte.SessionOpts, attach func(engineSession) error) error {
 	_, _, err := o.loadSessionAfter(ctx, 0, so, attach)
 	return err
 }
 
 // loadSessionAfter loads so.SessionID on a generation later than after, reporting the generation it ran on.
 func (o *engineOwner) loadSessionAfter(
-	ctx context.Context, after uint64, so *marotte.SessionOpts, attach func(engineSession),
+	ctx context.Context, after uint64, so *marotte.SessionOpts, attach func(engineSession) error,
 ) (session engineSession, gen uint64, err error) {
 	h, gen, release, err := o.acquireAfter(ctx, after)
 	if err != nil {
@@ -592,6 +642,15 @@ func (o *engineOwner) current() (h engineHandle, gen uint64) {
 	return o.engine, o.gen
 }
 
+// stallAware bounds an engine call by d, extended through a stall of the ready engine (bridge.Engine.StallAware);
+// with no engine ready it is a plain timeout.
+func (o *engineOwner) stallAware(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if h, _ := o.current(); h != nil {
+		return h.StallAware(ctx, d)
+	}
+	return context.WithTimeout(ctx, d)
+}
+
 // stop ends the engine at shutdown and waits for its reap, bounded by ctx; the supervisor sees draining and stops.
 func (o *engineOwner) stop(ctx context.Context) error {
 	o.mu.Lock()
@@ -603,25 +662,42 @@ func (o *engineOwner) stop(ctx context.Context) error {
 	return awaitBounded(ctx, "agent engine teardown", h.Stop)
 }
 
-// reconcile recomputes restart-pending against the running engine's spawn and restarts at once when quiescent.
+// reconcile is refresh, then poke: it restarts at once when quiescent and config.json reads.
 func (o *engineOwner) reconcile(ctx context.Context) {
-	path := o.source.ChatPath()
-	o.mu.Lock()
-	spawned := o.spawnedWith
-	o.mu.Unlock()
-	if spawned == nil || o.hooks.resolve == nil {
-		return
+	o.refresh(ctx)
+	o.poke()
+}
+
+// refresh resolves under resolveLock and stores the result as the newest resolve, so two refreshes, or a refresh and
+// a spawn's resolve, never store out of order; it never restarts. It reports whether the stored values were not
+// config.json's (the queue was computed held). The lock is taken past ctx's end, so a caller re-reads before deciding.
+func (o *engineOwner) refresh(ctx context.Context) (held bool) {
+	if o.hooks.resolve == nil {
+		return o.configHeld()
 	}
-	now := o.hooks.resolve(ctx, path).fingerprint
-	reasons := diffReasons(spawned, now)
+	rctx := context.WithoutCancel(ctx)
+	o.resolveLock.lock(rctx)
+	spec := o.hooks.resolve(rctx, o.source.CLIPath())
+	configHeld := o.configHeld()
 	o.mu.Lock()
-	changed := !slices.Equal(o.reasons, reasons)
-	o.reasons = reasons
+	before := o.reasons
+	o.storeResolveLocked(&spec)
+	held = o.latestHeld
+	changed := !slices.Equal(before, o.reasons) || o.heldPublished != configHeld
 	o.mu.Unlock()
+	o.resolveLock.unlock()
 	if changed {
 		o.publish()
 	}
-	o.poke()
+	return held
+}
+
+func (o *engineOwner) configHeld() bool {
+	return o.hooks.configHeld != nil && o.hooks.configHeld()
+}
+
+func (o *engineOwner) configReadable(ctx context.Context) bool {
+	return o.hooks.configReadable == nil || o.hooks.configReadable(ctx)
 }
 
 // diffReasons is every key whose value differs, in a stable order.
@@ -640,8 +716,57 @@ func diffReasons(spawned, now map[marotte.EngineReason]string) []marotte.EngineR
 	return out
 }
 
-// poke is the edge-triggered quiescence check: every edge that can end the last running thing calls it.
+// poke is the edge-triggered quiescence check: every edge that can end the last running thing calls it. While
+// config.json cannot be read, or the queue was computed while it could not, it recovers instead of applying.
 func (o *engineOwner) poke() {
+	configHeld := o.configHeld()
+	o.mu.Lock()
+	held := configHeld || o.latestHeld
+	o.mu.Unlock()
+	if held {
+		o.recover()
+		return
+	}
+	o.apply()
+}
+
+// recover re-reads config.json; once it reads, it launches one reconcile off the caller, whose refresh re-diffs the
+// queue on the repaired values before its poke applies anything. At most one runs: recovering is cleared by that
+// reconcile, or at once when the launch is refused.
+func (o *engineOwner) recover() {
+	if !o.configReadable(o.lt.shutdownCtx) {
+		o.mu.Lock()
+		pending := len(o.reasons) > 0
+		o.mu.Unlock()
+		if pending {
+			o.publish()
+		}
+		return
+	}
+	o.mu.Lock()
+	if o.recovering {
+		o.mu.Unlock()
+		return
+	}
+	o.recovering = true
+	o.mu.Unlock()
+	if !o.lt.goUnlessDraining(func() {
+		o.reconcile(o.lt.shutdownCtx)
+		o.clearRecovering()
+	}) {
+		o.clearRecovering()
+	}
+}
+
+func (o *engineOwner) clearRecovering() {
+	o.mu.Lock()
+	o.recovering = false
+	o.mu.Unlock()
+}
+
+// apply requests an automatic restart for a pending queue on a ready, quiescent engine. Its config.json probe catches
+// a file that broke since the last read before restart closes the gate.
+func (o *engineOwner) apply() {
 	o.mu.Lock()
 	pending := len(o.reasons) > 0
 	ready := o.state == marotte.EngineReady
@@ -655,6 +780,10 @@ func (o *engineOwner) poke() {
 		return
 	}
 	if busy := o.busyNow(); !busy.quiet() {
+		o.publish()
+		return
+	}
+	if !o.configReadable(o.lt.shutdownCtx) {
 		o.publish()
 		return
 	}
@@ -726,6 +855,12 @@ func (o *engineOwner) restart(cause *restartCause) {
 		o.cancelRestart()
 		return
 	}
+	reasons, ok := o.reread(cause.Kind)
+	if !ok {
+		o.cancelRestart()
+		return
+	}
+	cause.Reasons = reasons
 	if o.hooks.interrupt != nil {
 		set := o.hooks.interrupt(gen, nil)
 		o.mu.Lock()
@@ -741,7 +876,21 @@ func (o *engineOwner) restart(cause *restartCause) {
 	<-done
 }
 
-// cancelRestart reopens the gate of an automatic restart whose premise no longer holds.
+// reread is every restart's last check: it refreshes and decides on the queue it re-diffed, so none applies while
+// config.json cannot be read and none applies as computed while it could not. ok is false for a restart to cancel: held
+// with a queue, or automatic and held or with the queue now empty.
+func (o *engineOwner) reread(kind restartKind) (reasons []marotte.EngineReason, ok bool) {
+	held := o.refresh(o.lt.shutdownCtx)
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	queued := len(o.reasons) > 0
+	if (held && (kind == restartAuto || queued)) || (kind == restartAuto && !queued) {
+		return nil, false
+	}
+	return slices.Clone(o.reasons), true
+}
+
+// cancelRestart reopens the gate of a restart whose premise no longer holds; the queued reasons stay.
 func (o *engineOwner) cancelRestart() {
 	o.mu.Lock()
 	o.state = marotte.EngineReady
@@ -764,6 +913,32 @@ func (o *engineOwner) doorsIdleLocked() <-chan struct{} {
 	return o.doorsIdle
 }
 
+// confirmRestart admits the person's restart. A ready engine first re-reads config.json (refresh), so a repaired file
+// releases the hold and the restart applies the queue on the repaired values; over an unreadable file a queue is
+// refused with errRestartHeld. A down or starting engine only has its respawn woken.
+func (o *engineOwner) confirmRestart(ctx context.Context) error {
+	o.mu.Lock()
+	ready := o.state == marotte.EngineReady
+	o.mu.Unlock()
+	if ready {
+		o.refresh(ctx)
+	}
+	configHeld := o.configHeld()
+	o.mu.Lock()
+	held := configHeld || o.latestHeld
+	ready = o.state == marotte.EngineReady
+	queued := len(o.reasons) > 0
+	reasons := slices.Clone(o.reasons)
+	o.mu.Unlock()
+	if ready && held && queued {
+		return errRestartHeld
+	}
+	if !o.requestRestart(restartCause{Kind: restartConfirmed, Reasons: reasons}) {
+		return errRestartRunning
+	}
+	return nil
+}
+
 // engineInterruptCause is the text an interrupted turn records for an engine end.
 func engineInterruptCause(cause *restartCause) string {
 	if cause == nil {
@@ -784,6 +959,7 @@ func (o *engineOwner) status() marotte.EngineStatus {
 	o.statusMu.Lock()
 	defer o.statusMu.Unlock()
 	busy := o.busyNow()
+	held := o.configHeld()
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.statusSeq++
@@ -791,7 +967,7 @@ func (o *engineOwner) status() marotte.EngineStatus {
 		Version: marotte.EngineStatusVersion{BootMS: o.boot, Seq: o.statusSeq},
 		State:   o.state,
 		Since:   o.since,
-		Restart: marotte.EngineRestart{Pending: len(o.reasons) > 0, Reasons: slices.Clone(o.reasons)},
+		Restart: marotte.EngineRestart{Pending: len(o.reasons) > 0, Reasons: slices.Clone(o.reasons), ConfigUnreadable: held},
 		Busy:    marotte.EngineBusy{Turns: busy.turns, Runs: busy.runs},
 	}
 	if st.Restart.Reasons == nil {
@@ -813,6 +989,9 @@ func (o *engineOwner) status() marotte.EngineStatus {
 func (o *engineOwner) publish() {
 	if o.hooks.publish != nil {
 		st := o.status()
+		o.mu.Lock()
+		o.heldPublished = st.Restart.ConfigUnreadable
+		o.mu.Unlock()
 		o.hooks.publish(&st)
 	}
 }

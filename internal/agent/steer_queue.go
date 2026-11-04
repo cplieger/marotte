@@ -36,12 +36,12 @@ func (q steerQueue) AwaitReadLoop(ctx context.Context, chatID marotte.ChatID, se
 		}
 		chatID = t.host
 	}
-	return q.coord.turns.awaitPosition(ctx, chatID, "", seq)
+	return q.coord.turns.awaitPosition(ctx, chatID, seq)
 }
 
 func (q steerQueue) OnSteerJob(run func(command.SteerJob)) { q.recs.runJob = run }
 
-func (q steerQueue) SetSteerLead(chatID marotte.ChatID, key string) func() {
+func (q steerQueue) SetSteerLead(chatID marotte.ChatID, key string) (func(), bool) {
 	return q.recs.setLead(chatID, key)
 }
 
@@ -269,10 +269,32 @@ func (rec *steerRecord) removePlanLocked(key string) (w *dockRow, rule rowRule, 
 		return nil, rUnhandled, command.SteerRefuseSettling
 	}
 	rule = rowRuleFor(w.state, deleteEvent(w.state))
-	if rule == rResubmit && len(rec.others) > 0 {
+	switch {
+	case rule == rResubmit && rec.clearRaces():
+		return nil, rUnhandled, command.SteerRefuseSettling
+	case rule == rResubmit && len(rec.others) > 0:
 		return nil, rUnhandled, command.SteerRefuseAgentRows
 	}
 	return w, rule, ""
+}
+
+// delivering: KAS holds w while a turn end is unsettled, so its continuation reads it or its boundary drops it.
+// It matches removePlanLocked's settling refusal, so a row the dock offers a delete for is one the server takes.
+func (rec *steerRecord) delivering(w *dockRow) bool {
+	return w.state.inKAS() && rec.clearRaces()
+}
+
+func (rec *steerRecord) endOwned(w *dockRow) bool {
+	return w.owner != "" && slices.ContainsFunc(rec.ends, func(e pendingEnd) bool { return e.owner == w.owner })
+}
+
+// clearRaces: a clear now would empty the buffer under a continuation KAS may run for a turn end, which then
+// answers KAS's hidden "Additional input arrived" prompt with nothing after it. It holds from the end's fold to
+// KAS's idle report, and past a continuation's bind until KAS no longer holds any row it held at the end or the bind.
+func (rec *steerRecord) clearRaces() bool {
+	races := rec.settling || slices.ContainsFunc(rec.endHeld, rec.inKASNow)
+	rec.live(func(w *dockRow) { races = races || (w.state.inKAS() && rec.endOwned(w)) })
+	return races
 }
 
 func (rec *steerRecord) beginRemoveLocked(key, opID string, fx *steerFx) (needsClear bool, refuse string) {
@@ -471,11 +493,16 @@ func (rec *steerRecord) takeUnread(owner string) []*dockRow {
 	return unread
 }
 
-// BeginDiscard makes every row the op's, a job's included.
-func (q steerQueue) BeginDiscard(chatID marotte.ChatID, opID string) (needsClear bool) {
+// BeginDiscard makes every row the op's, a job's included; it refuses while a clear would race a turn end's
+// continuation.
+func (q steerQueue) BeginDiscard(chatID marotte.ChatID, opID string) (needsClear bool, refuse string) {
 	q.do(chatID, func(rec *steerRecord, fx *steerFx) {
 		userInKAS := false
 		rec.live(func(w *dockRow) { userInKAS = userInKAS || w.state.inKAS() })
+		if (userInKAS || len(rec.others) > 0) && rec.clearRaces() {
+			refuse = command.SteerRefuseSettling
+			return
+		}
 		rec.op, rec.opTarget, rec.opEnd, rec.opEndStale, rec.opChannel = opID, "", nil, false, rec.channel
 		rec.live(func(w *dockRow) { w.owner = opID })
 		needsClear = userInKAS || len(rec.others) > 0
@@ -483,7 +510,7 @@ func (q steerQueue) BeginDiscard(chatID marotte.ChatID, opID string) (needsClear
 			rec.discardLocked(opID, fx)
 		}
 	})
-	return needsClear
+	return needsClear, refuse
 }
 
 // DiscardCleared: a row read before the clear landed keeps its read entry; the rest

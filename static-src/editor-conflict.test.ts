@@ -4,7 +4,7 @@
 // reaches the `$` registry and a `FileState`.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { signal, computed } from "@cplieger/reactive";
+import { signal, computed } from "@cplieger/ui";
 import type { FileState } from "./editor-types.js";
 
 // The `$` registry throws on a missing element, and this one is read on every call.

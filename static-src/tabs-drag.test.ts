@@ -1,8 +1,7 @@
 // The strip's reorder drag: what may START one, every path that ENDS one, and the preview. A LAYOUT
 // SHIFT under a still pointer must not read as travel (the move is dispatched explicitly: Pointer
 // Events requires only boundary events for it). `visualViewport` is a fake recording listeners;
-// every gesture states `buttons`. The harness's `reorder`/`reproject`/`tap` stand in for the
-// projection.
+// every gesture states `buttons`. The harness's `reorder`/`reproject` stand in for the projection.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import {
@@ -10,7 +9,6 @@ import {
   dragOwnsStrip,
   setReorderCallback,
   setReprojectCallback,
-  setTapCallback,
   attachDrag,
   pointerDragActivation,
   exceedsSlop,
@@ -25,10 +23,10 @@ import {
   REORDER_SETTLE_MS,
   REORDER_SLOT_FADE_MS,
 } from "./tabs-drag.js";
-import { announce } from "@cplieger/ui-primitives/announce";
+import { announce } from "@cplieger/ui/announce";
 import shellCss from "./css/10-shell-app.css?raw";
 
-vi.mock("@cplieger/ui-primitives/announce", () => ({ announce: vi.fn() }));
+vi.mock("@cplieger/ui/announce", () => ({ announce: vi.fn() }));
 
 const MOUSE_SLOP = MOUSE_DRAG.slopPx;
 const TOUCH_HOLD = TOUCH_DRAG.holdMs;
@@ -114,7 +112,6 @@ let rows: Record<string, HTMLElement>;
 let committed: string[];
 let reorder: ReturnType<typeof vi.fn>;
 let reproject: ReturnType<typeof vi.fn>;
-let tap: ReturnType<typeof vi.fn>;
 let vv: FakeViewport;
 
 /** Four rows: three top-level plus `a`'s sub-tab, so the fold that a drag applies
@@ -205,10 +202,8 @@ beforeEach(() => {
     return order;
   });
   reproject = vi.fn(harnessReproject);
-  tap = vi.fn();
   setReorderCallback(reorder as unknown as (order: string[]) => readonly string[] | null);
   setReprojectCallback(reproject as unknown as () => void);
-  setTapCallback(tap as unknown as (tabID: string) => void);
   // Keyboard DOWN: the steady frame every case but the dismissal one starts from.
   vv = fakeViewport(700, 0);
   vi.stubGlobal("visualViewport", vv);
@@ -527,37 +522,29 @@ describe("the touch hold", () => {
     expect(ghost()).toBeNull();
   });
 
-  // A slow tap lifts the row; letting go without travel is still the tap. The lift
-  // put the pointer capture on the list, so the browser sends that release to the
-  // LIST, which is not on the row's propagation path.
-  it("activates the row when a lifted hold is released without travel", () => {
-    const row = rows["b"] as HTMLElement;
-    const rowRelease = vi.fn();
-    row.addEventListener("pointerup", rowRelease);
-    row.dispatchEvent(ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }));
-    vi.advanceTimersByTime(TOUCH_HOLD);
-    expect(ghost()).not.toBeNull();
-    list.dispatchEvent(ptr("pointerup", { clientY: mid(row) + TOUCH_SLOP, pointerType: "touch" }));
+  // A slow tap lifts the row; letting go without travel is still the tap, which the row's own click
+  // activates (`tabs-tap.touch.test.ts` taps for real). The lift put the pointer capture on the list,
+  // so the release reaches the list, or the row when the capture never took; either way the drag
+  // ends quietly and suppresses no click.
+  it.each(["list", "row"] as const)(
+    "ends a lifted hold released on the %s without travel and leaves its click alone",
+    (on) => {
+      const row = rows["b"] as HTMLElement;
+      row.dispatchEvent(
+        ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }),
+      );
+      vi.advanceTimersByTime(TOUCH_HOLD);
+      expect(ghost()).not.toBeNull();
+      (on === "list" ? list : row).dispatchEvent(
+        ptr("pointerup", { clientY: mid(row) + TOUCH_SLOP, pointerType: "touch" }),
+      );
 
-    expect(rowRelease, "the release never reached the row").not.toHaveBeenCalled();
-    expect(tap.mock.calls).toEqual([["b"]]);
-    expectStripQuiet(START);
-    expect(reorder).not.toHaveBeenCalled();
-    expect(isDragHandled()).toBe(false);
-  });
-
-  // With no capture the release lands on the row, whose own listener activates it;
-  // the drag asking too would activate the tab twice.
-  it("leaves a tap released on the row itself to the row", () => {
-    const row = rows["b"] as HTMLElement;
-    row.dispatchEvent(ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }));
-    vi.advanceTimersByTime(TOUCH_HOLD);
-    row.dispatchEvent(ptr("pointerup", { clientY: mid(row) + TOUCH_SLOP, pointerType: "touch" }));
-
-    expect(tap).not.toHaveBeenCalled();
-    expectStripQuiet(START);
-    expect(isDragHandled()).toBe(false);
-  });
+      expect(ghost()).toBeNull();
+      expectStripQuiet(START);
+      expect(reorder).not.toHaveBeenCalled();
+      expect(isDragHandled()).toBe(false);
+    },
+  );
 
   it("commits a lifted hold that travelled", () => {
     const row = rows["b"] as HTMLElement;

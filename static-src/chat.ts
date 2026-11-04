@@ -17,7 +17,7 @@ import {
   transcriptStale,
 } from "./store.js";
 import { loadList, loadMessages, loadOlderTurns, confirmChatExists } from "./store-load.js";
-import { effect, el, touch } from "@cplieger/reactive";
+import { effect, el, touch } from "@cplieger/ui";
 import type { ChatHeader } from "./types.js";
 import { ensureBound } from "./banner-stack.js";
 import {
@@ -37,7 +37,7 @@ import { hasPendingDecision, dropDecisions } from "./decision-dock.js";
 import { forgetDeferredCue } from "./agent-finished-cue.js";
 import { submitLabelled, submitPrompt } from "./submit.js";
 import { chatSkeleton, paintPlaceholder } from "./skeleton.js";
-import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
+import { skeletonTiming } from "@cplieger/ui/skeleton";
 import {
   mountChatView,
   setLoadMore,

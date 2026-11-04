@@ -536,6 +536,9 @@
    aligned left with the question rather than stretched across the row. */
 .dock-ask-more {
   align-self: flex-start;
+  /* A bezel-less text control, so its box can be the target at no visible cost; an expander
+     would overhang the question region's end and give it a scroll it does not need. */
+  min-block-size: var(--row-tap-sm);
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
   background: none;
@@ -715,12 +718,17 @@
   overflow-y: auto;
 }
 
+/* A row holds its Keep box's and its diff's targets inside the list's scroll clip,
+   so the next row's stay clear and the clip cuts neither. */
 .dock-file-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
+  min-block-size: var(--row-tap-sm);
   gap: var(--sp-2);
   padding: var(--sp-1) var(--sp-2);
+  padding-inline: max(var(--sp-2), calc((var(--hit-floor) - 1rem) / 2))
+    max(var(--sp-2), calc((var(--hit-floor) - var(--ctl-h-sm)) / 2));
   border-radius: var(--r);
   background: var(--c-bg-primary);
   transition:
@@ -860,9 +868,9 @@
 
 .steer-row {
   /* ONE owner of the control's size, read by the button that takes it and by the
-     column that reserves room for it. The painted button IS the target, so it is
-     the tier's hit floor: 24px fine, 44px coarse. */
-  --steer-act-size: var(--hit-floor);
+     column that reserves room for it. The button paints at 24px on every tier and
+     the column reserves its target's height, so the shared expander fits the row. */
+  --steer-act-size: var(--ctl-h-sm);
 
   /* state | message | actions. minmax(0, 1fr) on the middle track is what lets
      the clamp below actually clamp: an auto track would size to the text and
@@ -898,16 +906,17 @@
   }
 }
 
-/* Sending: not in KAS's buffer yet, so the row is subordinate to a confirmed
-   one. The ink is CHOSEN (`--c-text-aside`) rather than dimmed with an opacity,
-   because an opacity multiplies the measured contrast and is invisible to the
-   contrast gates. */
-.steer-row[data-state="sending"] {
+/* Sending (not in KAS's buffer yet) and delivering (the agent is reading or
+   dropping it as its turn ends): no control can address the row, so it is
+   subordinate to one that waits. The ink is CHOSEN (`--c-text-aside`) rather than dimmed with an
+   opacity, because an opacity multiplies the measured contrast and is invisible
+   to the contrast gates. */
+.steer-row:is([data-state="sending"], [data-state="delivering"]) {
   background: var(--c-bg-secondary);
 }
 
-.steer-row[data-state="sending"] .steer-state,
-.steer-row[data-state="sending"] .steer-text {
+.steer-row:is([data-state="sending"], [data-state="delivering"]) .steer-state,
+.steer-row:is([data-state="sending"], [data-state="delivering"]) .steer-text {
   color: var(--c-text-aside);
 }
 
@@ -977,34 +986,19 @@
 
 /* --- Actions column ----------------------------------------------------- */
 
-/* PRESENT IN BOTH STATES, AND EMPTY WHILE SENDING, because this column is what
-   sets the row's height: a control is floored to `--hit-floor`, so a column that
-   arrived with its buttons took the row from 34px to 42px on a mouse and to 62px
-   on a phone. The bar grows UPWARD, so that landed as the transcript jumping by
-   the same amount, in the same frame the row was still fading in.
-
-   So the box is reserved and only its CONTENTS change, for a reason this rule owns
-   rather than borrows: a row that changes the transcript's height also moves
-   `#messages`' `scrollHeight`, which is what the turn map reads to decide
-   whether it has anywhere to navigate.
-
-   THE CROSS-REFERENCE THAT USED TO SIT HERE IS GONE. It cited `.turn-elapsed`
-   (29-turns.css) as a rule already following this, and that stopped being true: the
-   box it reserved was the one under an `opacity` hover reveal, and the reveal is
-   deleted — the duration is painted unconditionally now, so the slot is simply
-   present or absent. This rule is the reference for the technique.
-
-   Reserving the WIDTH is deliberately not attempted: the column holds two controls
-   or three depending on how many messages are unread (send-now and Discard always,
-   Edit only for a lone unread message), so there is no single width to hold open,
-   and holding one open would spend a phone row's message space on a control that is
-   not there yet. */
+/* PRESENT IN BOTH STATES, AND EMPTY WHILE SENDING, because this column sets the
+   row's height: it reserves its controls' `--hit-floor` target, so a column arriving
+   with its buttons would grow the row, and the bar grows UPWARD, jumping the
+   transcript and moving the `scrollHeight` the turn map reads. So the box is reserved
+   and only its CONTENTS change. The WIDTH is not reserved: the column holds two or
+   three controls depending on how many messages are unread, so there is no single
+   width to hold open. */
 .steer-actions {
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: var(--sp-1);
-  min-block-size: var(--steer-act-size);
+  gap: max(var(--sp-1), var(--tap-gap-sm));
+  min-block-size: max(var(--steer-act-size), var(--hit-floor));
 }
 
 .steer-act {
@@ -1106,6 +1100,10 @@
      leading above a cap and below a descender. */
   --run-air: 0.5rem;
 
+  /* The gap between runs, and under an open fold row. Under a finger each row is already the
+     44px floor, so the rows abut. */
+  --run-row-gap: max(0px, var(--sp-05) - var(--hit-grow));
+
   &:has(> .run-bar.hidden) {
     display: none;
   }
@@ -1118,7 +1116,7 @@
   flex-shrink: 0;
 
   &:has(> [aria-expanded="true"]) {
-    margin-block-end: var(--sp-05);
+    margin-block-end: var(--run-row-gap);
   }
 }
 
@@ -1135,7 +1133,7 @@
     [glyph] auto [title] fit-content(18rem) [state] auto [progress] auto
     [bar] minmax(3rem, 1fr) [clock] auto [end];
   align-content: start;
-  gap: var(--sp-05) var(--sp-2);
+  gap: var(--run-row-gap) var(--sp-2);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1161,13 +1159,12 @@
 }
 
 /* A row's control: a line of the box, inset and rounded at the box's concentric
-   corner, so its hover never meets a neighbour. NO `min-height`: the
-   zero-specificity floor in 61-mcp-tools.css already gives every `button`
-   `--hit-floor`, and a class-level declaration here would BEAT it (0,1,0 against
-   0,0,0), the `.send-btn` precedent that file records. Its summary is the dock
-   head's own painter (`.ev-sum`, 31-exec-view.css), laid into the row's columns. */
+   corner, so its hover never meets a neighbour. The row is the target, so it takes
+   the hit floor. Its summary is the dock head's own painter (`.ev-sum`,
+   31-exec-view.css), laid into the row's columns. */
 .run-bar-open {
   position: relative;
+  min-block-size: var(--row-tap-sm);
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: subgrid;
@@ -1299,6 +1296,12 @@
    the title and the clock, line two the state and the progress, each in shared
    columns; the bar is a band along the row's bottom edge. */
 @container run-dock (width < 30rem) {
+  /* The fold row paints under the floor here, and its target needs the gap below it. */
+  .run-bar-fold,
+  .run-bar {
+    --run-row-gap: var(--sp-05);
+  }
+
   .run-bar {
     grid-template-columns:
       [glyph] auto [title state] auto [progress] minmax(0, 1fr)
@@ -1361,10 +1364,13 @@
   }
 
   /* Painted at 2 * air plus the ink, not at the hit floor: the ::after reaches up into the box's
-     padding, border and the stack gap, stopping short of the stack member above, and 2px down over
-     the row gap; the first row stacks above it. */
+     padding, border and the stack gap, stopping short of the stack member above, and down over
+     the row gap; the first row stacks above it. The box keeps what the floor needs past those
+     two reaches. */
   .run-bar-toggle {
-    min-block-size: 0;
+    min-block-size: calc(
+      var(--hit-floor) - var(--run-row-gap) - var(--stack-in) - var(--stack-gap)
+    );
     padding-block: calc(var(--run-air) - 1.5px) calc(var(--run-air) - 0.5px);
 
     &::after {
@@ -1375,11 +1381,11 @@
           -1 *
             clamp(
               0px,
-              calc(var(--hit-floor) - 100% - var(--sp-05)),
+              calc(var(--hit-floor) - 100% - var(--run-row-gap)),
               calc(var(--stack-in) + var(--stack-gap))
             )
         )
-        calc(-1 * clamp(0px, calc(var(--hit-floor) - 100%), var(--sp-05)));
+        calc(-1 * clamp(0px, calc(var(--hit-floor) - 100%), var(--run-row-gap)));
     }
   }
 }

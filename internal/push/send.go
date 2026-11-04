@@ -39,16 +39,20 @@ func (s *Service) Send(ctx context.Context, sent *marotte.NotificationPayload) {
 			"bytes", len(n.Title)+len(n.Body), "cap", pushBodyCap)
 		n = fit
 	}
-	subs := s.preflightSend(n.Kind, n.PushSubject)
-	if subs == nil {
-		return
-	}
 	payload, err := json.Marshal(n)
 	if err != nil {
 		slog.Error("push: marshal payload", "error", err)
 		return
 	}
-	s.fanOut(ctx, s.absent(subs, n.Kind, n.PushSubject, payload), payload, n.Kind)
+	subs, debounced := s.preflightSend(n.Kind, n.PushSubject)
+	if debounced {
+		s.joinHeld(n.Kind, n.PushSubject, n.Ask, payload)
+		return
+	}
+	if subs == nil {
+		return
+	}
+	s.fanOut(ctx, s.absent(subs, n.Kind, n.PushSubject, n.Ask, payload), payload, n.Kind)
 }
 
 // absent is the send filter: subscriptions whose profile is not receiving the event on a
@@ -56,7 +60,7 @@ func (s *Service) Send(ctx context.Context, sent *marotte.NotificationPayload) {
 // A subscription with no presence row is sent: a tag mismatch costs one notification too
 // many, never one too few.
 func (s *Service) absent(
-	subs []marotte.PushSubscription, kind marotte.PushKind, subject marotte.PushSubject, payload []byte,
+	subs []marotte.PushSubscription, kind marotte.PushKind, subject marotte.PushSubject, ask string, payload []byte,
 ) []marotte.PushSubscription {
 	if s.presence == nil {
 		return subs
@@ -72,7 +76,7 @@ func (s *Service) absent(
 			counter.Add(1)
 		}
 		slog.Debug("push: suppressed, profile present", "kind", string(kind), "tag", tag)
-		s.holdForLater(sub, kind, subject, payload)
+		s.holdForLater(sub, kind, subject, ask, payload)
 	}
 	return out
 }
@@ -341,36 +345,39 @@ func parseRetryAfter(h string) time.Duration {
 }
 
 // preflightSend evaluates every pre-send gate and stamps the debounce under one mu hold
-// (closing the decide/record TOCTOU), and returns the subscriber snapshot, or nil to drop.
-func (s *Service) preflightSend(notifyType marotte.PushKind, subject marotte.PushSubject) []marotte.PushSubscription {
+// (closing the decide/record TOCTOU), and returns the subscriber snapshot, or nil to drop;
+// debounced reports a drop by the quiet window alone.
+func (s *Service) preflightSend(
+	notifyType marotte.PushKind, subject marotte.PushSubject,
+) (subs []marotte.PushSubscription, debounced bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.healthy {
-		return nil
+		return nil, false
 	}
 	if !notifyType.Valid() {
 		slog.Warn("push: unknown notification kind", "kind", string(notifyType))
-		return nil
+		return nil, false
 	}
 	enabled, known := s.prefs[notifyType]
 	if !known {
-		return nil
+		return nil, false
 	}
 	if !enabled {
-		return nil
+		return nil, false
 	}
 	key := debounceKey(notifyType, subject)
 	if last, ok := s.lastPush[key]; ok && time.Since(last) < pushDebounce {
 		slog.Debug("push: debounced", "kind", string(notifyType), "subject", key.subject)
-		return nil
+		return nil, true
 	}
 	s.pruneDebounceLocked()
 	s.lastPush[key] = time.Now()
-	subs := make([]marotte.PushSubscription, 0, len(s.subs))
+	subs = make([]marotte.PushSubscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		subs = append(subs, sub)
 	}
-	return subs
+	return subs, false
 }
 
 // pruneDebounceLocked drops entries whose window has expired. Caller holds mu.

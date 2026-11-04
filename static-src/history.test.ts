@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { signal } from "@cplieger/reactive";
+import { signal } from "@cplieger/ui";
 import type { PageFind } from "./find-registry.js";
 import type * as ModHistory from "./history.js";
 import { ICON_TAB_RUN, outcomeIcon } from "./icons.js";
@@ -31,9 +31,33 @@ const searchDispatch = vi.fn(async () => ({
   matched: 0,
   truncated: false,
 }));
-const deleteChatDispatch = vi.fn(async () => ({ ok: true }));
+type DeleteOutcome =
+  | { status: "success"; value: undefined }
+  | { status: "error"; error: { message: string; status?: number; code?: string; cause?: unknown } }
+  | { status: "cancelled" };
+/** A dispatch handle answering `outcome`, as the actions framework's does. */
+function deleteHandle(outcome: DeleteOutcome): Promise<null | undefined> & {
+  outcome: Promise<DeleteOutcome>;
+} {
+  return Object.assign(Promise.resolve(outcome.status === "success" ? undefined : null), {
+    outcome: Promise.resolve(outcome),
+  });
+}
+const deleted: DeleteOutcome = { status: "success", value: undefined };
+const deleteChatDispatch = vi.fn((_args: { id: string; impact: unknown }) => deleteHandle(deleted));
+const { actionNotice, deleteStopsWork, descendantChatsOf } = vi.hoisted(() => ({
+  actionNotice: vi.fn(),
+  deleteStopsWork: vi.fn(
+    (_chats: readonly { ref: string; name: string }[], _stale?: unknown) =>
+      ({ text: "", impact: { chats: [] as unknown[] } }) as {
+        text: string;
+        impact: { chats: unknown[] };
+      },
+  ),
+  descendantChatsOf: vi.fn((_ref: string): { ref: string; name: string }[] => []),
+}));
 const deleteRunDispatch = vi.fn(async () => ({ ok: true }));
-const confirmMock = vi.fn(async () => true);
+const confirmMock = vi.fn(async (_message: string, _label?: string, _variant?: string) => true);
 const closeTab = vi.fn();
 const setHistoryTab = vi.fn();
 const pushRoute = vi.fn();
@@ -56,7 +80,15 @@ vi.mock("./roles.js", () => ({
 }));
 vi.mock("./actions/index.js", () => ({
   registerCleanup: vi.fn(),
+  retryNetwork: (err: { code?: string }) => err.code === "network" || err.code === "timeout",
 }));
+vi.mock("./close-busy.js", () => ({ deleteStopsWork }));
+// The refusal's impact as the real reader answers it; actions/close-impact.test.ts pins the reader.
+vi.mock("./actions/close-impact.js", () => ({
+  serverImpactOf: (err: { code?: string; cause?: unknown }) =>
+    err.code === "close_impact_changed" ? err.cause : undefined,
+}));
+vi.mock("./notice-subject.js", () => ({ actionNotice }));
 vi.mock("./chat.js", () => ({ openPreviousSession, openChatTab }));
 // Unmocked it builds through actions/index.js, which this suite stubs to one symbol.
 vi.mock("./actions/chat-search.js", () => ({
@@ -80,13 +112,14 @@ const hasTab = vi.fn((_kind: string, _ref?: string) => false);
 // A signal, since the real `tabSetVersion` is a tracked read and the page re-derives its rows on it.
 const tabsVersion = signal(0);
 vi.mock("./tabs.js", () => ({
+  descendantChatsOf,
   hasTab,
   setHistoryTab,
   tabSetVersion: () => tabsVersion.value,
 }));
 // The pane switch pushes its URL; a forced switch (the router's) must not.
 vi.mock("./router.js", () => ({ pushRoute }));
-vi.mock("@cplieger/ui-primitives/skeleton", () => ({
+vi.mock("@cplieger/ui/skeleton", () => ({
   // A spy: whether the arm fires is what the settled-empty case pins.
   skeletonTiming: skeletonTimingMock,
 }));
@@ -1408,7 +1441,10 @@ describe("history: the per-row delete", () => {
   beforeEach(() => {
     resetAll();
     confirmMock.mockResolvedValue(true);
-    deleteChatDispatch.mockResolvedValue({ ok: true });
+    deleteChatDispatch.mockImplementation(() => deleteHandle(deleted));
+    deleteStopsWork.mockImplementation(() => ({ text: "", impact: { chats: [] } }));
+    descendantChatsOf.mockImplementation(() => []);
+    actionNotice.mockClear();
     deleteRunDispatch.mockResolvedValue({ ok: true });
   });
 
@@ -1484,7 +1520,7 @@ describe("history: the per-row delete", () => {
     await render({ sessions: [ownedRow], runs: [] });
     document.querySelector<HTMLElement>("[data-history-delete]")!.click();
     await vi.waitFor(() => {
-      expect(deleteChatDispatch).toHaveBeenCalledWith("c-existing");
+      expect(deleteChatDispatch).toHaveBeenCalledWith({ id: "c-existing", impact: { chats: [] } });
     });
     // delete_chat also reaps the KAS session chain. The tab is the membership coordinator's: it closes tabs for a deleted
     // chat under the same lock, so a `close_tab` here would be a second close.
@@ -1571,7 +1607,9 @@ describe("history: the per-row delete", () => {
 
   it("leaves the row in place when the delete failed", async () => {
     // The action returns null on a non-2xx: a failed delete must not refresh, which would drop a row the server still holds.
-    deleteChatDispatch.mockResolvedValue(null as never);
+    deleteChatDispatch.mockImplementation(() =>
+      deleteHandle({ status: "error", error: { message: "boom", status: 500 } }),
+    );
     await render({ sessions: [ownedRow], runs: [] });
     const before = dispatch.mock.calls.length;
     document.querySelector<HTMLElement>("[data-history-delete]")!.click();
@@ -1581,6 +1619,108 @@ describe("history: the per-row delete", () => {
     expect(document.querySelector('[data-key="s:sess_owned"]')).not.toBeNull();
     expect(dispatch.mock.calls).toHaveLength(before);
     expect(closeTab).not.toHaveBeenCalled();
+  });
+  const busy = { chats: [{ ref: "d", turns: ["t1"], asks: [], runs: [], steers: [], queued: [] }] };
+  const stale = (impact: unknown): DeleteOutcome => ({
+    status: "error",
+    error: {
+      message: "what closing this tab stops changed; confirm again",
+      status: 409,
+      code: "close_impact_changed",
+      cause: impact,
+    },
+  });
+
+  async function clickDelete(): Promise<void> {
+    await render({ sessions: [ownedRow], runs: [] });
+    rowOf("s:sess_owned").querySelector<HTMLElement>("[data-history-delete]")!.click();
+  }
+
+  it("the confirm names a descendant chat's live reply and sends the impact it read", async () => {
+    descendantChatsOf.mockImplementation(() => [{ ref: "d", name: "Deploy notes" }]);
+    deleteStopsWork.mockImplementation(() => ({
+      text: "Closing its tabs also stops the reply in Deploy notes.",
+      impact: busy,
+    }));
+    await clickDelete();
+    await vi.waitFor(() => {
+      expect(deleteChatDispatch).toHaveBeenCalledWith({ id: "c-existing", impact: busy });
+    });
+    expect(descendantChatsOf).toHaveBeenCalledWith("c-existing");
+    expect(deleteStopsWork.mock.calls[0]?.[0]).toEqual([{ ref: "d", name: "Deploy notes" }]);
+    expect(confirmMock).toHaveBeenCalledWith(
+      'Delete this conversation? "Already open" and its stored history are removed for good. Closing its tabs also stops the reply in Deploy notes.',
+      "Delete",
+      "destructive",
+    );
+  });
+
+  it("an idle subtree keeps today's text and still sends the impact", async () => {
+    const idle = { chats: [{ ref: "d", turns: [], asks: [], runs: [], steers: [], queued: [] }] };
+    deleteStopsWork.mockImplementation(() => ({ text: "", impact: idle }));
+    await clickDelete();
+    await vi.waitFor(() => {
+      expect(deleteChatDispatch).toHaveBeenCalledWith({ id: "c-existing", impact: idle });
+    });
+    expect(confirmMock).toHaveBeenCalledWith(
+      'Delete this conversation? "Already open" and its stored history are removed for good.',
+      "Delete",
+      "destructive",
+    );
+  });
+
+  it("a stale confirm stages no toast, asks again naming the delete, and accept sends the merged impact", async () => {
+    const server = {
+      chats: [{ ref: "e", turns: [], asks: ["4"], runs: [], steers: [], queued: [] }],
+    };
+    const merged = { chats: [...busy.chats, ...server.chats] };
+    deleteStopsWork.mockImplementation((_chats, staleArg) =>
+      staleArg === undefined
+        ? { text: "", impact: busy }
+        : {
+            text: "Closing its tabs also cancels the question waiting for your answer in e.",
+            impact: merged,
+          },
+    );
+    deleteChatDispatch.mockImplementationOnce(() => deleteHandle(stale(server)));
+    await clickDelete();
+    await vi.waitFor(() => {
+      expect(deleteChatDispatch).toHaveBeenCalledTimes(2);
+    });
+    expect(deleteStopsWork.mock.calls[1]?.[1]).toEqual({ sent: busy, server });
+    expect(confirmMock.mock.calls[1]?.[0]).toBe(
+      'What deleting "Already open" also stops changed. Delete it? Closing its tabs also cancels the question waiting for your answer in e.',
+    );
+    expect(deleteChatDispatch.mock.calls[1]?.[0]).toEqual({ id: "c-existing", impact: merged });
+    expect(actionNotice).not.toHaveBeenCalled();
+  });
+
+  it("declining the second confirm deletes nothing more", async () => {
+    deleteChatDispatch.mockImplementationOnce(() => deleteHandle(stale({ chats: [] })));
+    confirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    await clickDelete();
+    await vi.waitFor(() => {
+      expect(confirmMock).toHaveBeenCalledTimes(2);
+    });
+    expect(deleteChatDispatch).toHaveBeenCalledTimes(1);
+    expect(actionNotice).not.toHaveBeenCalled();
+  });
+
+  it("any other refusal toasts once with dev's text", async () => {
+    deleteChatDispatch.mockImplementation(() =>
+      deleteHandle({ status: "error", error: { message: "boom", status: 500 } }),
+    );
+    await clickDelete();
+    await vi.waitFor(() => {
+      expect(actionNotice).toHaveBeenCalledTimes(1);
+    });
+    expect(actionNotice).toHaveBeenCalledWith(
+      "c-existing",
+      "Could not delete chat: boom",
+      "error",
+      undefined,
+    );
+    expect(confirmMock).toHaveBeenCalledTimes(1);
   });
 });
 

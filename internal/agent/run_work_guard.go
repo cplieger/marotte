@@ -105,12 +105,12 @@ func (g guardedEngine) Notify(ctx context.Context, method string, params any) er
 	return g.engineHandle.Notify(ctx, method, params)
 }
 
-func (g guardedEngine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession)) (engineSession, error) {
+func (g guardedEngine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error) {
 	s, err := g.engineHandle.NewSession(ctx, o, guardAttach(attach))
 	return guardSession(s), err
 }
 
-func (g guardedEngine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession)) (engineSession, error) {
+func (g guardedEngine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error) {
 	s, err := g.engineHandle.LoadSession(ctx, o, guardAttach(attach))
 	return guardSession(s), err
 }
@@ -125,11 +125,11 @@ func guardSession(s engineSession) engineSession {
 	return guardedSession{s}
 }
 
-func guardAttach(attach func(engineSession)) func(engineSession) {
+func guardAttach(attach func(engineSession) error) func(engineSession) error {
 	if attach == nil {
 		return nil
 	}
-	return func(s engineSession) { attach(guardSession(s)) }
+	return func(s engineSession) error { return attach(guardSession(s)) }
 }
 
 func (g guardedSession) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {

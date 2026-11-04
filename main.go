@@ -7,11 +7,13 @@ package main
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"log/slog"
 	"os"
 
 	"github.com/cplieger/marotte/internal/composition"
 	"github.com/cplieger/marotte/internal/forges"
+	"github.com/cplieger/marotte/internal/kasnode"
 	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/toolbelt/v3"
 )
@@ -28,6 +30,12 @@ func main() {
 
 // runMain is the startup sequence, split from main so deferred shutdown runs (os.Exit skips defers).
 func runMain() int {
+	// First: as the agent server's node launcher this process is replaced by node, and must log nothing on the way.
+	if _, ok := os.LookupEnv(kasnode.LaunchVar); ok {
+		err := kasnode.Exec(os.Environ(), os.Args)
+		fmt.Fprintf(os.Stderr, "marotte: cannot start the agent engine's node: %v\n", err)
+		return 127
+	}
 	// Ahead of ConfigFromEnv, whose warnings reach stderr: git shows a helper's stderr to the user.
 	if len(os.Args) > 1 && os.Args[1] == forges.HelperCommand {
 		return forges.RunCredentialHelper(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr)

@@ -2,7 +2,10 @@
 // delegate's card is minted only by its invocation `tool_call`, since its own entries carry its uuid as `lane`.
 // Position is `seq`: an entry that renders nothing does not break a prose run, one that renders ends it.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
+import { http, HttpResponse } from "msw";
+import { setupWorker } from "msw/browser";
+import { until } from "./__test-helpers__/until.js";
 import type { Turn } from "./turns.js";
 import type { Entry, EntryToolCall, EntryToolResult, OpenEntry } from "./wire/types.gen.js";
 
@@ -389,6 +392,32 @@ describe("a workflow run's card is its launch", () => {
     disposeAssistantBody(r.turnID);
     expect(mountedWindow(r.turnID)).toBeUndefined();
     expect(blockElement(r.turnID, 1)).toBeUndefined();
+  });
+});
+
+describe("a transcript card whose run the server no longer holds", () => {
+  const worker = setupWorker(
+    http.get("/api/runs/wf-deleted", () =>
+      HttpResponse.json({ error: "run not found" }, { status: 404 }),
+    ),
+  );
+
+  beforeAll(async () => {
+    await worker.start({ quiet: true });
+  });
+
+  afterAll(() => {
+    worker.stop();
+  });
+
+  it("shows deleted, not starting, and offers no link to the run", async () => {
+    const r = render(launch("t", 1, "wf-deleted"));
+    const runCard = blockElement(r.turnID, 1);
+    await until(() => runCard?.dataset["status"] === "deleted", "the card to read deleted", {
+      detail: () => String(runCard?.dataset["status"]),
+    });
+    expect(runCard?.querySelector(".run-ledger")?.textContent).toBe("This run was deleted");
+    expect(runCard?.querySelector(".run-open")?.classList.contains("hidden")).toBe(true);
   });
 });
 

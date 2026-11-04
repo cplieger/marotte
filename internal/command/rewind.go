@@ -43,6 +43,7 @@ func cmdRewindChat(
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
+	stamp := admission.LifeStamp()
 	var p marotte.RewindChatCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.MessageID == "" {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
@@ -55,10 +56,11 @@ func cmdRewindChat(
 	// Held until the record lands: a prompt admitted meanwhile opens a turn, which ends the restore
 	// window before KAS writes the files back. A non-prompt holder parks that prompt rather than
 	// turning it into a steer.
-	if !admission.TryReserveIdleTurn(cmd.ChatID, marotte.TurnSourceRevert) {
+	res, ok := admission.TryReserveIdleTurn(cmd.ChatID, marotte.TurnSourceRevert, stamp)
+	if !ok {
 		return nil, StatusError(http.StatusConflict, errRewindTurnOpen)
 	}
-	defer admission.ReleaseTurnReservation(cmd.ChatID)
+	defer admission.ReleaseTurnReservation(res)
 	target, found, err := chats.RewindTarget(ctx, cmd.ChatID, p.MessageID)
 	if err != nil {
 		slog.Error("rewind: resolve target", "chat", cmd.ChatID, keyError, err)
@@ -76,7 +78,9 @@ func cmdRewindChat(
 		return nil, err
 	}
 
-	result, status, err := revertToMessage(ctx, bridge, cmp.Or(target.KASMessageID, p.MessageID))
+	rctx, cancel := bridges.CallBudget(ctx, engineChangeBudget)
+	result, status, err := revertToMessage(rctx, bridge, cmp.Or(target.KASMessageID, p.MessageID))
+	cancel()
 	if err != nil {
 		slog.Warn("rewind: revert failed", "chat", cmd.ChatID, "status", status,
 			"kas_id_known", target.KASMessageID != "", keyError, err)

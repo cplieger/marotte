@@ -2,12 +2,14 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/settings"
 )
 
@@ -128,4 +130,108 @@ func TestRemovingTheSetting_RevokesAccessForNewSessions_AtTheDoor(t *testing.T) 
 	if opts := h.chatSessionOpts(t.Context(), &marotte.Chat{}, &sessionAsk{}, nil); len(opts.AdditionalDirectories) != 0 {
 		t.Errorf("a door after the removal carried %v, want none", opts.AdditionalDirectories)
 	}
+}
+
+// Every door opened while config.json cannot be read carries the last readable profile and directories.
+func TestUnreadableConfig_EverySessionDoorOpensOnTheLastReadableSettings(t *testing.T) {
+	want, _ := policyfile.ProfileFor(policyfile.ProfileUnrestricted)
+	// boot builds the runtime over a granted directory and the unrestricted profile, then breaks config.json.
+	boot := func(t *testing.T, src *fakeEngineSource) (*Runtime, agentRootsFixture) {
+		t.Helper()
+		f := newAgentRootsFixture(t)
+		writeSetting(t, f.config, settings.KeySecurityProfile, policyfile.ProfileUnrestricted)
+		cs := newTestChatStore()
+		h := newRuntimeOn(context.Background(), f.work, src, cs, WithConfigDir(f.config))
+		cs.wire(h)
+		t.Cleanup(func() { shutdownHub(t, h) })
+		settleBoot(t, h)
+		_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+		rewriteConfigByHand(t, f.config, `{"security_profile":`)
+		return h, f
+	}
+	checkDoor := func(t *testing.T, so *marotte.SessionOpts, f agentRootsFixture, door string) {
+		t.Helper()
+		if so == nil {
+			t.Fatalf("no %s door was opened", door)
+		}
+		if !slices.Equal(so.Presets, want.Presets) {
+			t.Errorf("the %s door carried presets %v, want the last readable profile's %v", door, so.Presets, want.Presets)
+		}
+		if !slices.Equal(so.AdditionalDirectories, []string{f.extra}) {
+			t.Errorf("the %s door carried directories %v, want [%s]", door, so.AdditionalDirectories, f.extra)
+		}
+	}
+	checkLease := func(t *testing.T, h *Runtime, wf string) {
+		t.Helper()
+		l, held := h.runs.lease(wf)
+		if !held {
+			t.Fatalf("no lease for %s", wf)
+		}
+		if presets, err := l.HostPresets(); err != nil || !slices.Equal(presets, want.Presets) {
+			t.Errorf("the lease's host presets = %v, %v, want the last readable profile's %v", presets, err, want.Presets)
+		}
+	}
+	shared := func() (*fakeEngineSource, *fakeBridge) {
+		br := newFakeBridge()
+		return fakeEngineOf(func() engineSession { return br }, br), br
+	}
+
+	for _, tc := range []struct{ name, session string }{{"a_new_chat", ""}, {"a_resumed_chat", "sess_resume_probe"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			src, _ := shared()
+			h, f := boot(t, src)
+			_, _ = h.chatStore.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.ACPSessionID = tc.session; return true })
+			sb, err := h.coord.openBridge(t.Context(), "c1", "")
+			if err != nil {
+				t.Fatalf("OpenBridge: %v", err)
+			}
+			checkDoor(t, fakeOf(sb).lastSessionOpts(), f, "chat")
+		})
+	}
+
+	t.Run("a_parentless_launch", func(t *testing.T) {
+		src, br := shared()
+		h, f := boot(t, src)
+		br.setCallResult(methodKiroWorkflowListRecipes, json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`))
+		br.setCallResult(methodKiroWorkflowList, json.RawMessage(`{"runs":[]}`))
+		br.setCallResult(methodKiroWorkflowNew, json.RawMessage(`{"workflowId":"wf_9"}`))
+		br.setCallResult(methodKiroWorkflowInvoke, json.RawMessage(`{}`))
+		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+			t.Fatalf("Launch: %v", err)
+		}
+		checkDoor(t, br.lastSessionOpts(), f, "host")
+		checkLease(t, h, "wf_9")
+	})
+
+	t.Run("a_host_reload", func(t *testing.T) {
+		src, br := shared()
+		h, f := boot(t, src)
+		leaseParentless(t, h, "wf_1", want.Presets...)
+		br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", ""))
+		if err := h.runs.resume(t.Context(), "wf_1", callerPage); err != nil {
+			t.Fatalf("resume: %v", err)
+		}
+		so := br.lastSessionOpts()
+		if so == nil || !slices.Equal(so.AdditionalDirectories, []string{f.extra}) {
+			t.Errorf("the host reload's door = %+v, want directories [%s]", so, f.extra)
+		}
+	})
+
+	t.Run("a_retry_lease", func(t *testing.T) {
+		src, _ := shared()
+		h, _ := boot(t, src)
+		h.runs.grantRetryLease(t.Context(), "wf_1", &runOrigin{recipe: "nightly"}, nil)
+		checkLease(t, h, "wf_1")
+	})
+
+	t.Run("an_observer_pass", func(t *testing.T) {
+		src, _ := shared()
+		observer := newFakeBridge()
+		src.observer = func() engineSession { return observer }
+		h, f := boot(t, src)
+		if err := h.observe(t.Context(), func(context.Context, engineSession) error { return nil }); err != nil {
+			t.Fatalf("observer pass: %v", err)
+		}
+		checkDoor(t, observer.lastSessionOpts(), f, "observer")
+	})
 }

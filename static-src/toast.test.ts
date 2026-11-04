@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mountLiveRegions } from "@cplieger/ui-primitives/announce";
+import { mountLiveRegions } from "@cplieger/ui/announce";
 
 import { info, success, error, jumpToast, notice, showToast, _resetForTest } from "./toast.js";
 
-// The marotte wrapper against ui-primitives' toast DOM contract (.uip-toast--<level>, announce())
+// The marotte wrapper against @cplieger/ui/toast's DOM contract (.uip-toast--<level>, announce())
 // and behaviour. State is reset with _resetForTest(), not resetModules(), which would strand the
 // module-level Escape listener.
 beforeEach(() => {

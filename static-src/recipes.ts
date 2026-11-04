@@ -1,7 +1,7 @@
 // The Workflows sub-tab of the configuration browser (/docs/workflows): the launchable recipes,
 // each with the app's ONE run affordance — Run ⇄ Cancel.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join as joinKey } from "@cplieger/keyenc";
 import { onBus, onSSE, BUS_CATALOG_MODELS, BUS_RUNS_CHANGED } from "./bus.js";
 import { reconcile } from "./reconcile.js";
@@ -15,7 +15,7 @@ import {
 } from "./run-defaults-picker.js";
 import { getCachedModels } from "./picker.js";
 import type { ScheduleSpec, ScheduleView } from "./schedule-types.js";
-import { createPopup } from "@cplieger/ui-primitives/popup";
+import { createPopup } from "@cplieger/ui/popup";
 import { openRunView } from "./run-view.js";
 import { loadSettings, refreshSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";

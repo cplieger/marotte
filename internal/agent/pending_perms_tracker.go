@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -324,6 +325,24 @@ func (t *pendingPermsTracker) clearForRun(workflowID string) {
 	t.clearLocked(func(evt marotte.ServerEvent) bool { return marotte.DecisionRunID(evt.Payload) == workflowID })
 }
 
+// idsForChat is the ask ids of chatID's unresolved asks, in ask order: the ids its cards carry.
+func (t *pendingPermsTracker) idsForChat(chatID marotte.ChatID) []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	ids := make([]int64, 0, len(t.asks))
+	for id, e := range t.asks {
+		if !e.claimed && e.ask.evt.ChatID == chatID {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = strconv.FormatInt(id, 10)
+	}
+	return out
+}
+
 // list snapshots the unresolved decisions, optionally for one chat: exactly what TakeIfPresent
 // still accepts. Order is the contract: ascending ask id, which is ask order.
 func (t *pendingPermsTracker) list(chatFilter marotte.ChatID) []marotte.ServerEvent {
@@ -380,9 +399,6 @@ func (b *bus) cancelPermission(ctx context.Context, chatID marotte.ChatID, id in
 			wErr = err
 		default:
 			return nil
-		}
-		if ctx.Err() != nil {
-			break
 		}
 	}
 	slog.Error("cancel: a permission card could not be answered, so the reply was not stopped",
@@ -507,5 +523,5 @@ func (b *bus) announceDecisionSettled(evt marotte.ServerEvent, askID int64, sett
 		Kind:      kind,
 		SettledBy: settledBy,
 	}))
-	b.retractPush(notice.AskSubject(evt.ChatID, marotte.DecisionRunID(evt.Payload)))
+	b.retractPush(notice.AskSubject(evt.ChatID, marotte.DecisionRunID(evt.Payload)), notice.AskKey(askID))
 }

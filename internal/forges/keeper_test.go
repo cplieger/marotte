@@ -100,7 +100,7 @@ func TestKeeper_RefreshesARotatingRecordBeforeExpiry(t *testing.T) {
 	if n := ts.refreshes.Load(); n != 1 {
 		t.Errorf("the forge saw %d refreshes during the pass, want 1", n)
 	}
-	if row := viewFor(t, m, rec.ID); row.Status != ForgeConnected {
+	if row := viewFor(t, m, rec.ID); row.Status != forgeConnected {
 		t.Errorf("row after a successful refresh = %+v, want connected", row)
 	}
 }
@@ -127,7 +127,7 @@ func TestKeeper_LeavesAStaticRecordAlone(t *testing.T) {
 	if got, _, err := store.Load(slotKey(rec.ID, 0)); err != nil || got.Token != "pat" || got.Usability != creds.UsabilityUnmarked {
 		t.Errorf("stored credential after the passes = token %q, usability %v (err %v); want pat, unmarked", got.Token, got.Usability, err)
 	}
-	if row := viewFor(t, m, rec.ID); row.Status != ForgeConnected || len(changes.all()) != 0 {
+	if row := viewFor(t, m, rec.ID); row.Status != forgeConnected || len(changes.all()) != 0 {
 		t.Errorf("row after the passes = %+v with %d changes announced, want it connected and nothing announced",
 			row, len(changes.all()))
 	}
@@ -146,7 +146,7 @@ func TestKeeper_FailedRefreshOfAnExpiredTokenRetries(t *testing.T) {
 	if n := ts.refreshes.Load(); n != 1 {
 		t.Fatalf("the pass sent %d refreshes for an expired token, want 1; the fixture is not exercising a failed refresh", n)
 	}
-	if row := viewFor(t, m, rec.ID); row.Status != ForgeRetrying {
+	if row := viewFor(t, m, rec.ID); row.Status != forgeRetrying {
 		t.Errorf("row after a refresh the forge failed without refusing = %+v, want retrying", row)
 	}
 	k.pass(t.Context())

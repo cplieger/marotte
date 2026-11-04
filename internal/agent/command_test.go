@@ -166,7 +166,7 @@ func TestCancel_NotifiesBridge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fb := unguarded(sb.bridge).(*fakeBridge)
+	fb := unguarded(sb.session()).(*fakeBridge)
 	fb.sessionID = "sess"
 
 	rec := postCmd(t, h, marotte.ClientCommand{Type: "cancel", ChatID: "c1"})
@@ -370,10 +370,10 @@ func TestPrompt_BusyReturns409(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 		t.Fatal("setup: the admission slot was already held")
 	}
-	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+	t.Cleanup(func() { h.coord.releaseHeld("c1") })
 	if !sb.TryAcquireForPrompt() {
 		t.Fatal("setup: the bridge slot was already held")
 	}

@@ -74,6 +74,25 @@ func graceClose(t *testing.T, h *Runtime, turnID string) {
 	})
 }
 
+// gateFirstClose parks the first close's publish until release closes, before its post-close pipeline starts, so
+// that pipeline's wait for KAS begins only after the test moved on (its closer then runs on its own goroutine).
+func gateFirstClose(h *Runtime) (entered, release chan struct{}) {
+	entered, release = make(chan struct{}), make(chan struct{})
+	var blocked atomic.Bool
+	closed := h.coord.onTurnClosed
+	h.coord.onTurnClosed = func(chatID marotte.ChatID, turnID string) {
+		// Not a sync.Once: a second caller parked on its mutex is not durably blocked, so synctest.Wait would hang.
+		if blocked.CompareAndSwap(false, true) {
+			close(entered)
+			<-release
+		}
+		if closed != nil {
+			closed(chatID, turnID)
+		}
+	}
+	return entered, release
+}
+
 // The recorded shape of the next turn's start: the cancel's grace closed the stopped turn while KAS still ran executions for the
 // session (its re-wake of the cleared notifications held it busy), and marotte sent the carried steer 6 ms later,
 // which KAS queued beside its re-wake and orphaned. The drain waits until KAS reports the session idle.
@@ -134,7 +153,7 @@ func TestAfterTurnClose_AGraceClosedPromptsDrainNeverFiresOnElapsedTime(t *testi
 		if n := drained.Load(); n != 0 {
 			t.Fatalf("drained %d times with KAS still reporting the session busy, want none", n)
 		}
-		if h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+		if h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 			t.Fatal("TryReserveTurn acquired with KAS still reporting the session busy, want refused")
 		}
 		if !strings.Contains(logs.String(), "the chat's prompts wait for it") {
@@ -160,7 +179,7 @@ func TestAfterTurnClose_TheForwardExitingEndsAGraceClosedPromptsWait(t *testing.
 		graceClose(t, h, turnID)
 		synctest.Wait()
 
-		lc := h.coord.turns.lifecycleFor("c1")
+		lc := h.coord.turns.testLifecycle("c1")
 		lc.mu.Lock()
 		gen := lc.fwdGen
 		lc.mu.Unlock()
@@ -189,7 +208,7 @@ func TestAfterTurnClose_ATeardownEndsAGraceClosedPromptsHoldWithoutADrain(t *tes
 		if n := drained.Load(); n != 0 {
 			t.Errorf("drained %d times after a teardown re-fenced the chat, want none", n)
 		}
-		lc := h.coord.turns.lifecycleFor("c1")
+		lc := h.coord.turns.testLifecycle("c1")
 		lc.mu.Lock()
 		state, gen := lc.kas.state, lc.fwdGen
 		lc.mu.Unlock()
@@ -198,7 +217,7 @@ func TestAfterTurnClose_ATeardownEndsAGraceClosedPromptsHoldWithoutADrain(t *tes
 		}
 
 		h.coord.turns.sealPosition("c1", gen)
-		if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+		if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 			t.Error("TryReserveTurn refused once the session's forward exited, want admitted")
 		}
 	})
@@ -347,10 +366,10 @@ func TestReserveTurnForPrompt_AKASHoldAnswersStartingAtTheBudget(t *testing.T) {
 		graceClose(t, h, turnID)
 		synctest.Wait()
 
-		if got := h.coord.ReserveTurnForPrompt(t.Context(), "c1", command.AdmissionWait); got != command.AdmissionStarting {
+		if got := h.coord.reserveForPromptNow(t.Context(), "c1", command.AdmissionWait); got != command.AdmissionStarting {
 			t.Errorf("ReserveTurnForPrompt during a KAS hold = %v, want AdmissionStarting", got)
 		}
-		if h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
+		if h.coord.tryReserveNow("c1", marotte.TurnSourceRevert) {
 			t.Error("TryReserveTurn(revert) during a KAS hold acquired, want refused")
 		}
 	})
@@ -383,6 +402,7 @@ func TestCmdPrompt_DuringAWireTurnsGraceCloseWaitsForKASToGoIdle(t *testing.T) {
 		defer shutdownHub(t, h)
 		countDrains(h)
 		seedChat(t, cs, "c1")
+		h.coord.turns.ensureTestLife("c1")
 		h.coord.WireTurnStart(t.Context(), "c1")
 		h.coord.WireTurnActivity("c1", true)
 		entered, release := make(chan struct{}), make(chan struct{})
@@ -532,6 +552,7 @@ func TestCmdPrompt_ARunReportedDuringAGraceCloseHoldsAdmission(t *testing.T) {
 		defer shutdownHub(t, h)
 		drained := countDrains(h)
 		seedChat(t, cs, "c1")
+		h.coord.turns.ensureTestLife("c1")
 		h.coord.WireTurnStart(t.Context(), "c1")
 		entered, release := make(chan struct{}), make(chan struct{})
 		var blocked atomic.Bool
@@ -550,8 +571,8 @@ func TestCmdPrompt_ARunReportedDuringAGraceCloseHoldsAdmission(t *testing.T) {
 
 		h.coord.WireTurnActivity("c1", true)
 		// Errorf: the close is parked on release, which a Fatal here would leave blocked.
-		if h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
-			h.coord.ReleaseTurnReservation("c1")
+		if h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
+			h.coord.releaseHeld("c1")
 			t.Error("TryReserveTurn acquired after KAS reported a run during the grace close, want refused")
 		}
 		done := make(chan *httptest.ResponseRecorder, 1)
@@ -603,8 +624,8 @@ func TestCmdPrompt_ARunReportedAfterTheHoldEndsHoldsAdmission(t *testing.T) {
 
 		h.coord.WireTurnActivity("c1", true)
 		// Errorf: the drain is parked on release, which a Fatal here would leave blocked.
-		if h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
-			h.coord.ReleaseTurnReservation("c1")
+		if h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
+			h.coord.releaseHeld("c1")
 			t.Error("TryReserveTurn acquired after KAS reported a run, want refused")
 		}
 		done := make(chan *httptest.ResponseRecorder, 1)
@@ -718,8 +739,8 @@ func TestAfterTurnClose_AWaitingPromptFollowsTheTurnEndCompaction(t *testing.T) 
 		compact := r.ac.compact
 		r.ac.compact = func(ctx context.Context, b command.CompactBridge) (bool, error) {
 			_, held := h.coord.AdmissionHolderSource("c1")
-			if !held && h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
-				h.coord.ReleaseTurnReservation("c1")
+			if !held && h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
+				h.coord.releaseHeld("c1")
 				held = true
 			}
 			admittedAtEntry.Store(held)
@@ -755,20 +776,10 @@ func TestAfterTurnClose_AnEarlierGraceClosesWaitLeavesALaterHoldInPlace(t *testi
 		h, _, _ := newTestHub()
 		defer shutdownHub(t, h)
 		countDrains(h)
-		entered, release := make(chan struct{}), make(chan struct{})
-		var blocked atomic.Bool
-		resolve := h.coord.resolveEnds
-		h.coord.resolveEnds = func(ctx context.Context, chatID marotte.ChatID, f command.TurnFence) command.EndFacts {
-			// Not a sync.Once: a second caller parked on its mutex is not durably blocked, so synctest.Wait would hang.
-			if blocked.CompareAndSwap(false, true) {
-				close(entered)
-				<-release
-			}
-			return resolve(ctx, chatID, f)
-		}
+		entered, release := gateFirstClose(h)
 		turnID, _ := h.stagePromptTurn(t, "c1")
 		h.coord.WireTurnActivity("c1", true)
-		graceClose(t, h, turnID)
+		go graceClose(t, h, turnID)
 		<-entered
 
 		h.coord.WireTurnStart(t.Context(), "c1")
@@ -777,13 +788,13 @@ func TestAfterTurnClose_AnEarlierGraceClosesWaitLeavesALaterHoldInPlace(t *testi
 		synctest.Wait()
 		close(release)
 		synctest.Wait()
-		if h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+		if h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 			t.Fatal("TryReserveTurn acquired with KAS still running the wire turn's cancelled execution, want refused")
 		}
 
 		h.coord.WireTurnActivity("c1", false)
 		synctest.Wait()
-		if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+		if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 			t.Error("TryReserveTurn refused once KAS reported the session idle, want the hold ended")
 		}
 	})
@@ -881,19 +892,10 @@ func wantHeldRowSentOnce(t *testing.T, h *Runtime, cs *testChatStore, prompted f
 func TestCmdQueuePrompt_AHeldRowSurvivesALaterGraceClosesHold(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, prompted := heldRowHub(t)
-		entered, release := make(chan struct{}), make(chan struct{})
-		var blocked atomic.Bool
-		resolve := h.coord.resolveEnds
-		h.coord.resolveEnds = func(ctx context.Context, chatID marotte.ChatID, f command.TurnFence) command.EndFacts {
-			if blocked.CompareAndSwap(false, true) {
-				close(entered)
-				<-release
-			}
-			return resolve(ctx, chatID, f)
-		}
+		entered, release := gateFirstClose(h)
 		turnID, _ := h.stagePromptTurn(t, "c1")
 		h.coord.WireTurnActivity("c1", true)
-		graceClose(t, h, turnID)
+		go graceClose(t, h, turnID)
 		<-entered
 		queueHeldRow(t, h)
 

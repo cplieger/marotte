@@ -96,6 +96,11 @@ func AskSubject(chatID marotte.ChatID, runID string) marotte.PushSubject {
 	return marotte.ChatSubject(chatID)
 }
 
+// AskKey is the NotificationPayload.Ask of a chat ask's notification, from its ask id: the one its retraction names.
+func AskKey(requestID int64) string {
+	return strconv.FormatInt(requestID, 10)
+}
+
 // TurnFinished is a chat turn that ended cleanly; focus is the agent's own description of
 // what it was doing.
 func TurnFinished(t Target, focus string) marotte.NotificationPayload {

@@ -1,4 +1,4 @@
-import { signal } from "@cplieger/reactive";
+import { signal } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { apiGetTypedOrError } from "./api-client.js";
 import { decodeRunStepTranscript } from "./wire/decoders.gen.js";

@@ -30,13 +30,13 @@ func TestEntryLogCrashLeavesEverySealedEntry(t *testing.T) {
 		h := NewEntryHeader(root)
 		written := writeUnterminatedLog(rt, ctx, root, h)
 
-		lines := readLogLines(rt, filepath.Join(root, entriesFileName))
+		lines := readLogLines(rt, filepath.Join(root, EntriesFileName))
 		if len(lines) != len(written) {
 			rt.Fatalf("the log holds %d lines for %d appended entries", len(lines), len(written))
 		}
 		durable := rapid.IntRange(1, len(lines)).Draw(rt, "durable_lines")
 		torn := rapid.Bool().Draw(rt, "torn_tail")
-		crash(rt, filepath.Join(root, entriesFileName), lines, durable, torn)
+		crash(rt, filepath.Join(root, EntriesFileName), lines, durable, torn)
 
 		lg, err := OpenEntryLog(ctx, root, h)
 		if err != nil {
@@ -49,7 +49,7 @@ func TestEntryLogCrashLeavesEverySealedEntry(t *testing.T) {
 			rt.Fatalf("read the surviving log: %v", err)
 		}
 		checkDurablePrefix(rt, survived.Entries, written[:durable])
-		checkFileEndsAtALineBoundary(rt, filepath.Join(root, entriesFileName))
+		checkFileEndsAtALineBoundary(rt, filepath.Join(root, EntriesFileName))
 		checkEveryTurnIsClosed(rt, survived.Entries)
 		checkReconcileSignalIsInTheLog(rt, lg)
 		checkSeqContinues(rt, ctx, lg, survived.Entries)
@@ -539,7 +539,7 @@ func (s *revertScene) highWater(window map[string]struct{}) uint64 {
 }
 
 func (s *revertScene) fileBytes() []byte {
-	data, err := os.ReadFile(filepath.Join(s.root, entriesFileName))
+	data, err := os.ReadFile(filepath.Join(s.root, EntriesFileName))
 	if err != nil {
 		s.rt.Fatalf("read the log: %v", err)
 	}
@@ -784,7 +784,7 @@ func (s *revertScene) checkStraddlerSurvivedWhole(when, turn string) {
 
 // checkNoSynthesizedCloser reads the file, not the index: a rewind leaves no closer anywhere.
 func (s *revertScene) checkNoSynthesizedCloser(when string) {
-	for _, line := range readLogLines(s.rt, filepath.Join(s.root, entriesFileName)) {
+	for _, line := range readLogLines(s.rt, filepath.Join(s.root, EntriesFileName)) {
 		var e marotte.Entry
 		if err := json.Unmarshal(line, &e); err != nil {
 			s.rt.Fatalf("%s: parse a log line: %v", when, err)

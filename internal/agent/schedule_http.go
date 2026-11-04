@@ -4,6 +4,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/webhttp/v4"
 )
@@ -19,6 +21,7 @@ import (
 type scheduleView struct {
 	NextRunAt  *time.Time    `json:"next_run_at,omitempty"`
 	LastRunAt  *time.Time    `json:"last_run_at,omitempty"`
+	WaitingFor *time.Time    `json:"waiting_for,omitempty"`
 	ID         string        `json:"id"`
 	Source     string        `json:"source"`
 	Name       string        `json:"name,omitempty"`
@@ -60,6 +63,10 @@ func scheduleViewOf(e *schedule.Entry) scheduleView {
 		t := e.LastRunAt
 		v.LastRunAt = &t
 	}
+	if !e.WaitingFor.IsZero() {
+		t := e.WaitingFor
+		v.WaitingFor = &t
+	}
 	if e.Enabled {
 		// schedule.NextRunFrom as the runner uses it, floored at now.
 		if next, err := schedule.NextRunFrom(e.Spec, e.Anchor, time.Now()); err == nil {
@@ -69,8 +76,8 @@ func scheduleViewOf(e *schedule.Entry) scheduleView {
 	return v
 }
 
-// handleSchedulePut serves POST /api/schedules: insert or replace. The source is validated against the live
-// recipe list, as in handleLaunch, so no arbitrary file can be scheduled, and the model pick as at launch.
+// handleSchedulePut serves POST /api/schedules: insert or replace. The source is validated against a live recipe
+// listing, as in handleLaunch, so no arbitrary file can be scheduled, and the model pick as at launch.
 func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Source  string        `json:"source"`
@@ -85,8 +92,16 @@ func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recipe, err := rr.runs.recipeBySource(r.Context(), req.Source)
-	if err != nil {
+	switch {
+	case err == nil:
+	case writeEngineSlow(w, err):
+		return
+	case errors.Is(err, errUnknownRecipe) || errors.Is(err, errMissingRecipeSource):
 		httpreply.BadRequest(w, "unknown recipe: "+req.Source)
+		return
+	default:
+		slog.Warn("schedule save: recipe list failed", "error", logsafe.Field(err.Error()), "detail", rpcerr.Details(err))
+		httpreply.InternalError(w, errors.New("recipe list unavailable"))
 		return
 	}
 	defaults := marotte.RunDefaults{Model: req.Model, Effort: req.Effort}

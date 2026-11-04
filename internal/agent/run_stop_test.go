@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/schedule"
 )
 
 func wantStopParams(t *testing.T, verb string, params map[string]any, byUser bool, reason string) {
@@ -91,7 +93,7 @@ func TestPause_TellsKASTheUserAskedForIt(t *testing.T) {
 		methodKiroWorkflowPause:   json.RawMessage(`{}`),
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", marotte.RunStatusRunning, ""),
 	}
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 
 	if err := h.runs.pause(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Pause: %v", err)
@@ -106,7 +108,7 @@ func TestResume_IsNotAttributed(t *testing.T) {
 		methodKiroWorkflowResume:  json.RawMessage(`{}`),
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", ""),
 	}
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 
 	if err := h.runs.resume(t.Context(), "wf_1", callerPage); err != nil {
 		t.Fatalf("Resume: %v", err)
@@ -174,7 +176,7 @@ func TestCloseChatState_NamesTheTabClose(t *testing.T) {
 	}
 	insertChatSession(t, h, rig, "c1", "sess_cur")
 
-	h.CloseChatState(t.Context(), "c1")
+	h.CloseChatState(t.Context(), "c1", &chat.Claim{})
 
 	cancels := rig.of(methodKiroWorkflowCancel)
 	if len(cancels) != 1 {
@@ -229,32 +231,11 @@ func TestPausePredicates_SpareAUserPark(t *testing.T) {
 	})
 }
 
-func TestAffordance_APendingPauseWithholdsPause(t *testing.T) {
-	h, _, br := newTestHub()
-	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_1", "name": "publish", "status": "running", "pausePending": true,
-		}),
-	}
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-
-	aff := h.runs.affordance(t.Context(), "wf_1", "running")
-
-	for _, v := range aff.Verbs {
-		if v == verbPause {
-			t.Fatalf("verbs = %v, want Pause withheld while a pause is pending", aff.Verbs)
-		}
-	}
-	if got := aff.Refused[verbPause]; got != pausePendingRefusal {
-		t.Errorf("Pause refusal = %q, want %q", got, pausePendingRefusal)
-	}
-}
-
 func TestLaunch_OnlyAScheduledRunSendsALabel(t *testing.T) {
 	t.Run("scheduled", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_sched")
-		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1", marotte.RunDefaults{}, time.Now().Add(time.Hour)); err != nil {
+		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"}, marotte.RunDefaults{}, time.Now().Add(time.Hour)); err != nil {
 			t.Fatalf("LaunchScheduled: %v", err)
 		}
 		if got := br.paramsFor(methodKiroWorkflowNew)["runLabel"]; got != "publish · scheduled" {

@@ -1,6 +1,6 @@
 // The OS file dialog behind both "Upload" buttons (the picker modal and the file browser).
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import * as toast from "./toast.js";
 
 /** The input whose dialog is open, so a dialog that answers neither `change` nor `cancel` leaves

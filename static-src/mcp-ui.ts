@@ -1,7 +1,7 @@
 // One bindList over `servers` (keyed by id), so a row element persists across changes and keeps toggle focus. Each
 // row's one effect reads its server, status and prewarm signals and patches the row surgically.
 
-import { el, bindList, effect, signal } from "@cplieger/reactive";
+import { el, bindList, effect, signal } from "@cplieger/ui";
 
 import { $, setControlBusy } from "./dom.js";
 import { reconcile } from "./reconcile.js";
@@ -24,6 +24,7 @@ import {
   type ServerDiscovery,
   servers,
   unconfiguredNames,
+  unreadableEntries,
   mcpState,
   standingFor,
   statusSignalFor,
@@ -98,6 +99,12 @@ function buildSectionScaffold(): void {
     className: "mcp-gov-disabled",
     hidden: true,
   }) as HTMLParagraphElement;
+  const unreadableMsg = el("p", {
+    className: "mcp-store-unreadable",
+    role: "status",
+    hidden: true,
+  });
+  registerCleanup(bindUnreadableNotice(unreadableMsg));
   const registryPanel = el("div", { className: "mcp-registry-panel hidden" }) as HTMLDivElement;
   bindRegistryPanel(registryPanel);
 
@@ -112,6 +119,7 @@ function buildSectionScaffold(): void {
     hint,
     actionRow,
     govDisabledMsg,
+    unreadableMsg,
     registryPanel,
     emptyMsg,
     sectionBody,
@@ -119,6 +127,22 @@ function buildSectionScaffold(): void {
   );
   bindServerList();
   bindForeignList();
+}
+
+/** Show how many saved servers the store could not read, hidden at none. Exported for testing. */
+export function bindUnreadableNotice(host: HTMLElement): () => void {
+  return effect(() => {
+    const n = unreadableEntries.value;
+    host.hidden = n === 0;
+    host.textContent = n === 0 ? "" : unreadableText(n);
+  });
+}
+
+/** The notice for n unreadable entries of marotte's mcp.json. */
+function unreadableText(n: number): string {
+  return n === 1
+    ? "1 saved integration could not be read from marotte's mcp.json in its config folder, so it is not listed here. Its entry stays in the file, and the agent keeps its last settings if it had them. Fix or delete the entry, and restart marotte right after editing the file, before changing anything in this section: a change here writes the entry back as it was first read, at the end of the list. The startup log gives its position in the list, and its name when that reads."
+    : `${String(n)} saved integrations could not be read from marotte's mcp.json in its config folder, so they are not listed here. Their entries stay in the file, and the agent keeps their last settings if it had them. Fix or delete the entries, and restart marotte right after editing the file, before changing anything in this section: a change here writes the entries back as they were first read, at the end of the list. The startup log gives each one's position in the list, and its name when that reads.`;
 }
 
 // Holds the section's elements, keeping applyMcpGovernance pure and testable.

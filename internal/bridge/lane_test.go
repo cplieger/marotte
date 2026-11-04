@@ -108,7 +108,7 @@ func TestSessionLane_OverflowRacesThePump(t *testing.T) {
 		k := newFakeKAS(t, overflowAnswers(&e))
 		e = k.e
 		var answered sync.Map
-		s := k.openedSession(func(s *Session) {
+		s := k.openedSession(func(s *Session) error {
 			go func() {
 				for n := range s.NotifCh() {
 					if n.Msg.ID != nil {
@@ -118,6 +118,7 @@ func TestSessionLane_OverflowRacesThePump(t *testing.T) {
 					time.Sleep(time.Microsecond)
 				}
 			}()
+			return nil
 		})
 		answers := overflowedRequests(t, k, s, 5*time.Millisecond)
 		for _, id := range []int64{501, 502} {

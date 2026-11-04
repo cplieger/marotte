@@ -77,7 +77,7 @@ func newNameVisitor(q nameQuery) *nameVisitor {
 func (v *nameVisitor) file(_ *walkDir, e *walkEntry) bool {
 	v.scanned++
 	if e.inFilter {
-		v.consider(e, MatchKindName)
+		v.consider(e, matchKindName)
 	}
 	return true
 }
@@ -87,7 +87,7 @@ func (v *nameVisitor) file(_ *walkDir, e *walkEntry) bool {
 func (v *nameVisitor) dir(_ *walkDir, e *walkEntry) bool {
 	v.scanned++
 	if e.inFilter && !v.query.empty() {
-		v.consider(e, MatchKindDir)
+		v.consider(e, matchKindDir)
 	}
 	return true
 }

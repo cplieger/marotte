@@ -57,7 +57,7 @@ import { buildPreviewCard, previewCardFolder, previewHrefPage } from "./preview-
 import { fileOpenRoute } from "./preview-page.js";
 import { latexToMathML } from "./mathml.js";
 import { followRoot } from "./workspace.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join as joinKey } from "@cplieger/keyenc";
 
 interface DomRendererData {

@@ -2,7 +2,7 @@
 // result, not persisted config.
 
 import { describe, it, expect } from "vitest";
-import { effect } from "@cplieger/reactive";
+import { effect } from "@cplieger/ui";
 import { mcpState, discoverySignalFor } from "./mcp-state.js";
 import type { MCPPromptInfo, MCPResourceInfo } from "./mcp-state.js";
 

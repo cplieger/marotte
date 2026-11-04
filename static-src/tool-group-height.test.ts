@@ -428,9 +428,10 @@ describe("a bare group renders as a plain tool card", { timeout: GROUP_TIMEOUT_M
       h(plainRow),
     );
     expect(h(badge), "and the badge is exactly the room this header leaves").toBe(badgeBoxPx());
+    expect(h(badgedRow), "the row is the finger's floor: it IS its target").toBe(hitFloorPx());
     expect(
-      h(badgedRow),
-      "which puts a lone badged card exactly ON its floor rather than lifted to it — the boundary",
-    ).toBe(badgeBoxPx() + 2 * parseFloat(getComputedStyle(badgedRow).paddingBlockStart));
+      h(badge) + 2 * parseFloat(getComputedStyle(badgedRow).paddingBlockStart),
+      "and the badge, at the mouse's size, leaves it room to spare",
+    ).toBeLessThan(h(badgedRow));
   });
 });

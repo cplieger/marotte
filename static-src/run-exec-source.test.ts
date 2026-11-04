@@ -748,6 +748,73 @@ describe("runToExec alert precedence", () => {
     expect(failed.alert?.text).toContain("Failed at a: exit 1");
   });
 
+  // KAS reads every pause marotte writes as the user's, so a run marotte stopped resuming carries
+  // marotte's own record of it and never names a person.
+  it("says marotte stopped resuming a run after repeated throttling", () => {
+    const run = runToExec(
+      stateWith(step("a", "paused"), {
+        status: "paused",
+        pauseReason:
+          "Model service error (service 5xx or throttling); resuming the run retries the step.",
+        pauseDetail: { class: "transient-error", code: "ClientThrottleError" },
+        autoResumeStoppedAt: "2026-11-04T09:00:00Z",
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.alert?.kind).toBe("paused");
+    expect(run.alert?.text).toContain(
+      "marotte stopped resuming this run after repeated model throttling",
+    );
+    expect(run.alert?.text).not.toContain("by you");
+    expect(run.alert?.text).not.toContain("paused by user");
+  });
+
+  // A gate pause's reason promises an automatic resume, which a stopped run no longer gets.
+  it("words the stop over marotte's own pause reason", () => {
+    const run = runToExec(
+      stateWith(step("a", "paused"), {
+        status: "paused",
+        stopInitiator: "user",
+        stopReason: "sign in to Kiro to continue; marotte resumes the run when you do",
+        autoResumeStoppedAt: "2026-11-04T09:00:00Z",
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.alert?.text).toContain("marotte stopped resuming this run after repeated pauses");
+    expect(run.alert?.text).not.toContain("marotte resumes the run");
+  });
+
+  it("does not name throttling behind another cause", () => {
+    const run = runToExec(
+      stateWith(step("a", "paused"), {
+        status: "paused",
+        pauseReason:
+          "Step interrupted (agent shutdown or connection reset); resuming the run retries the step.",
+        pauseDetail: { class: "transient-error", code: "EAI_AGAIN" },
+        autoResumeStoppedAt: "2026-11-04T09:00:00Z",
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.alert?.text).toContain("marotte stopped resuming this run after repeated pauses");
+    expect(run.alert?.text).not.toContain("throttling");
+  });
+
+  // The stop speaks only for the pause it was recorded on: a run running again shows no stop.
+  it("drops the stop once the run runs again", () => {
+    const run = runToExec(
+      stateWith(step("a", "running"), {
+        status: "running",
+        autoResumeStoppedAt: "2026-11-04T09:00:00Z",
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.alert).toBeUndefined();
+  });
+
   it("names the transient-error code behind a pause", () => {
     const run = runToExec(
       stateWith(step("a", "paused"), {

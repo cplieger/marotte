@@ -102,10 +102,12 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 		AcceptsRejectionReason: req.Meta.Kiro.ToolID != "" && req.Meta.Kiro.Type != approvalTypeTurn &&
 			slices.ContainsFunc(options, func(o marotte.PermissionOption) bool { return o.Kind == "reject_once" }),
 	})
-	t.bus.Broadcast(ctx, t.pendingPerms.PendingPermsAdd(reqID, evt, origin))
+	added := t.pendingPerms.PendingPermsAdd(reqID, evt, origin)
+	t.bus.Broadcast(ctx, added)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID, marotte.WorkingLabelPayload{Label: marotte.WorkingLabelApproval}))
 	n := notice.Permission(t.push.NoticeTarget(ctx, chatID, step.WorkflowID),
 		step.NodeID, title, len(files))
+	n.Ask = notice.AskKey(marotte.DecisionRequestID(added.Payload))
 	t.push.Notify(ctx, chatID, &n)
 }
 

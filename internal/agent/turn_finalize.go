@@ -105,7 +105,7 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	if t == nil {
 		// The wait precedes the claim: the claim makes folds wait, so the settle would block on itself. A failure's
 		// wait only orders the close after a queued turn_end; a dead ctx or gone forward still closes.
-		if tc.Seq > 0 && !bc.turns.awaitPosition(ctx, chatID, tc.Turn, tc.Seq) && tc.Closer != closerPromptFailure {
+		if tc.Seq > 0 && !bc.turns.awaitClosePosition(ctx, chatID, tc.Turn, tc.Seq) && tc.Closer != closerPromptFailure {
 			return false
 		}
 		var won bool
@@ -134,7 +134,7 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	result, outcome := bc.closeTurn(ctx, t, stop, reason, kind, tc.Closer)
 	cf := bc.closeFactsOf(t, tc.Closer, outcome)
 	bc.turns.finish(t, result)
-	bc.publishClose(ctx, t, cf)
+	bc.publishClose(t, cf)
 	return true
 }
 
@@ -152,19 +152,29 @@ func graceClosed(closer turnCloser, stop marotte.StopReason) bool {
 	return closer == closerCancelGrace || closer == closerPromptFailure && stop == marotte.StopReasonCancelled
 }
 
-func (bc *bridgeCoordinator) publishClose(ctx context.Context, t *activeTurn, cf closeFacts) {
+func (bc *bridgeCoordinator) publishClose(t *activeTurn, cf closeFacts) {
 	if bc.onTurnClosed != nil {
 		bc.onTurnClosed(t.Chat, t.ID)
 	}
 	bc.autoCompact.noteTurnClosed(t.Chat)
+	// The tail is the life's work: a turn closed once its life ended runs none.
+	lifeCtx, done, ok := t.lc.beginWork(workTail)
+	if !ok {
+		return
+	}
 	// Its own goroutine, on inflight so a drained prompt joins a held count instead of racing Shutdown's Wait. None
 	// once Shutdown began: a parked model pick lands at the next spawn, and the rest needs a live bridge.
-	after := func() { bc.afterTurnClose(ctx, t.Chat, cf) }
+	after := func() {
+		defer done()
+		bc.afterTurnClose(lifeCtx, t.lc, cf)
+	}
 	if bc.lifecycle == nil {
 		go after()
 		return
 	}
-	bc.lifecycle.goUnlessDraining(after)
+	if !bc.lifecycle.goUnlessDraining(after) {
+		done()
+	}
 }
 
 // engineAccount is a broken turn's sentence when the closer supplied none: the engine's latched display_error,
@@ -193,23 +203,32 @@ type closeFacts struct {
 	unattended bool
 }
 
-// afterTurnClose runs the between-turns follow-ups in order: steer ends, the wait for KAS to go idle (every later
-// step is a session call), a model switch (it changes the compaction's window), the compaction (a queued prompt
-// would abort it upstream), then the drain graded by the close's outcome. Nothing once shutdown began.
-func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, chatID marotte.ChatID, cf closeFacts) {
+// afterTurnClose runs the between-turns follow-ups in order: the wait for KAS to go idle (every later step is a
+// session call), the steer ends and stale run notices, a model switch (it changes the compaction's window), the
+// compaction (a queued prompt would abort it upstream), then the drain graded by the close's outcome. Nothing once
+// shutdown began. A turn_end is not KAS's boundary: KAS 2.37.1 continues the session/prompt while unread steering
+// remains, and a clear before its idle report empties the buffer under that continuation. So the steer settle
+// waits for idle and is skipped when a turn opens first, whose close resolves the end; a death settles at once.
+// ctx is lc's life context, and each step first checks the life still stands, so no step begins once it ended.
+func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, lc *chatLifecycle, cf closeFacts) {
+	chatID := lc.chatID
 	var ends command.EndFacts
-	if bc.resolveEnds != nil && !bc.draining() {
-		// A death drains its forwarder here, lock-free.
-		if cf.exit != nil {
-			waitForwarder(cf.exit)
-		}
-		// So a holder the resolve sees is another turn, not this close's prompt.
-		bc.settleAfterClose(bc.lifecycle.shutdownCtx, chatID, command.AdmissionWait)
-		ends = bc.resolveEnds(ctx, chatID, cf.fence)
+	if cf.exit != nil {
+		ends = bc.resolveCloseEnds(ctx, lc, cf)
 	}
-	afterStop, ok := bc.betweenTurns(ctx, chatID, cf)
-	if !ok || bc.drainAfterClose == nil || bc.draining() ||
-		!bc.settleAfterClose(bc.lifecycle.shutdownCtx, chatID, command.AdmissionWait) {
+	afterStop, ok := bc.betweenTurns(ctx, lc, cf, func() {
+		if bc.steerKASSettled != nil && !lc.endedNow() {
+			bc.steerKASSettled(chatID)
+		}
+		if cf.exit == nil {
+			ends = bc.resolveCloseEnds(ctx, lc, cf)
+		}
+		if bc.settleNotices != nil && !bc.draining() && !lc.endedNow() {
+			bc.settleNotices(ctx, chatID)
+		}
+	})
+	if !ok || bc.drainAfterClose == nil || bc.draining() || lc.endedNow() ||
+		!lc.settleAfterClose(ctx, command.AdmissionWait) {
 		return
 	}
 	bc.drainAfterClose(ctx, chatID, command.CloseFacts{
@@ -217,21 +236,46 @@ func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, chatID marotte.
 	}, ends)
 }
 
-// betweenTurns waits for KAS to go idle, applies a parked model and runs the turn-end compaction, then releases the
-// close's KAS hold if it started one (claimTurn), so a waiting prompt cannot reach the session before them; a release
-// refused because KAS reported a run meanwhile repeats the wait. It answers the rows queued under the hold, false when
-// the wait stood down (a turn opened, a teardown, shutdown), which ends the hold with no drain.
-func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, chatID marotte.ChatID, cf closeFacts) ([]string, bool) {
+// resolveCloseEnds settles the steer ends of the closed turn and older ones. Nothing once shutdown began.
+func (bc *bridgeCoordinator) resolveCloseEnds(ctx context.Context, lc *chatLifecycle, cf closeFacts) command.EndFacts {
+	if bc.resolveEnds == nil || bc.draining() || lc.endedNow() {
+		return command.EndFacts{}
+	}
+	// A death drains its forwarder here, lock-free.
+	if cf.exit != nil {
+		waitForwarder(cf.exit)
+	}
+	// So a holder the resolve sees is another turn, not this close's prompt.
+	lc.settleAfterClose(ctx, command.AdmissionWait)
+	if lc.endedNow() {
+		return command.EndFacts{}
+	}
+	return bc.resolveEnds(ctx, lc.chatID, cf.fence)
+}
+
+// betweenTurns waits for KAS to go idle, runs atIdle once, applies a parked model and runs the turn-end compaction,
+// then releases the close's KAS hold if it started one (claimTurn), so a waiting prompt cannot reach the session
+// before them; a release refused because KAS reported a run meanwhile repeats the wait. It answers the rows queued
+// under the hold, false when the wait stood down (a turn opened, a teardown, shutdown), which ends the hold with no
+// drain and skips atIdle.
+func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle, cf closeFacts, atIdle func()) ([]string, bool) {
+	chatID := lc.chatID
 	for {
-		if !bc.turns.awaitKASIdle(bc.lifecycle.shutdownCtx, chatID, cf.fence) {
-			bc.turns.kasStep(chatID, kasStandDownOwn, cf.fence.Seq)
+		if !lc.awaitKASIdle(ctx, cf.fence) {
+			lc.kasStep(kasStandDownOwn, cf.fence.Seq)
 			return nil, false
 		}
-		if bc.applyPendingModel != nil {
+		if atIdle != nil {
+			atIdle()
+			atIdle = nil
+		}
+		if bc.applyPendingModel != nil && !lc.endedNow() {
 			bc.applyPendingModel(ctx, chatID)
 		}
-		bc.autoCompact.afterTurn(ctx, chatID)
-		if drain, rows := bc.turns.kasStep(chatID, kasReleaseOwn, cf.fence.Seq); drain {
+		if !lc.endedNow() {
+			bc.autoCompact.afterTurn(ctx, chatID)
+		}
+		if drain, rows := lc.kasStep(kasReleaseOwn, cf.fence.Seq); drain {
 			return rows, true
 		}
 	}

@@ -47,3 +47,31 @@ func TestStepRecords_CarriesKASsCompletionSignal(t *testing.T) {
 		t.Error("StepRecords(nil) is not nil")
 	}
 }
+
+// TestStateUpdatedAt_FollowsKASsListDerivation pins the order KAS's `_kiro/workflow/list` builds a row's updatedAt
+// in from the state inspect returns: `root.endedAt ?? root.startedAt ?? createdAt`.
+func TestStateUpdatedAt_FollowsKASsListDerivation(t *testing.T) {
+	t.Parallel()
+	const created, started, ended = "2026-11-01T10:00:00.000Z", "2026-11-01T10:00:01.000Z", "2026-11-01T11:00:00.000Z"
+	for name, tc := range map[string]struct {
+		state string
+		want  string
+	}{
+		"an ended run":        {`{"createdAt":"` + created + `","root":{"startedAt":"` + started + `","endedAt":"` + ended + `"}}`, ended},
+		"a run never ended":   {`{"createdAt":"` + created + `","root":{"startedAt":"` + started + `"}}`, started},
+		"a root with no time": {`{"createdAt":"` + created + `","root":{"nodeId":"wf_1"}}`, created},
+		"no root":             {`{"createdAt":"` + created + `"}`, created},
+		"no time at all":      {`{"root":{"nodeId":"wf_1"}}`, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var s State
+			if err := json.Unmarshal([]byte(tc.state), &s); err != nil {
+				t.Fatal(err)
+			}
+			if got := s.UpdatedAt(); got != tc.want {
+				t.Errorf("UpdatedAt() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

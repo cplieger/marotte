@@ -1,12 +1,14 @@
 package git
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/pathinside/v2"
@@ -21,24 +23,51 @@ type Handler struct {
 	fetchFlight singleflight.Group
 	repoFlight  singleflight.Group
 	pullFlight  singleflight.Group
+	// lifetime is the status scans' own, ended only by Shutdown; scanMu orders each scan's
+	// scans.Go before Shutdown's cancel, so none is added once Wait may have begun.
+	lifetime    context.Context
+	end         context.CancelFunc
 	statusCache statusCache
 	workDir     string
+	scans       sync.WaitGroup
 	timeouts    gitTimeouts
 	// showMax caps the blob /api/git/show serves.
 	showMax int64
+	scanMu  sync.Mutex
 }
 
 // defaultShowMax is the show cap when no WithShowMax is given; the composition root passes
 // the viewer's own cap so the two cannot drift.
 const defaultShowMax = 2 << 20
 
-// NewHandler returns a Handler scoped to workDir.
+// NewHandler returns a Handler scoped to workDir. Shutdown ends the status scans it runs behind
+// its answers.
 func NewHandler(workDir string, opts ...Option) *Handler {
-	h := &Handler{workDir: workDir, timeouts: defaultTimeouts(), showMax: defaultShowMax}
+	lifetime, end := context.WithCancel(context.Background())
+	h := &Handler{workDir: workDir, timeouts: defaultTimeouts(), showMax: defaultShowMax, lifetime: lifetime, end: end}
 	for _, o := range opts {
 		o(h)
 	}
 	return h
+}
+
+// Shutdown cancels the status scans in flight, refuses any later one, and returns once those in
+// flight have, or with ctx's error when ctx ends first. It may be called more than once.
+func (h *Handler) Shutdown(ctx context.Context) error {
+	h.scanMu.Lock()
+	h.end()
+	h.scanMu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		h.scans.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("git: status scans still running: %w", ctx.Err())
+	}
 }
 
 // WithShowMax caps the blob /api/git/show serves at n bytes; a larger revision answers 413.

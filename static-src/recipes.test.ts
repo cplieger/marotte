@@ -63,7 +63,7 @@ vi.mock("./actions/schedules.js", () => ({
 
 const standing = vi.hoisted(() => ({ files: new Map<string, ConfigStanding>() }));
 vi.mock("./config-standing.js", async (importOriginal) => {
-  const { signal } = await import("@cplieger/reactive");
+  const { signal } = await import("@cplieger/ui");
   const view = signal({ files: standing.files, servers: new Map(), loadErrors: new Map() });
   return {
     ...(await importOriginal<typeof ConfigStandingModule>()),
@@ -979,7 +979,7 @@ describe("the Run form's plan", () => {
 
   it("scrolls a long plan in a box about eight rows tall, keyboard-reachable", async () => {
     const style = document.createElement("style");
-    style.textContent = `:root { --btn-h: 36px; }\n${loadCSS("28-docs.css")}\n${loadCSS("31-exec-view.css")}`;
+    style.textContent = `:root { --btn-h: 36px; --row-tap: 36px; }\n${loadCSS("28-docs.css")}\n${loadCSS("31-exec-view.css")}`;
     document.head.appendChild(style);
     try {
       const steps = Array.from({ length: 50 }, (_, i) => ({

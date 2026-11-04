@@ -1,5 +1,6 @@
 import { transportAction } from "./index.js";
 import { errorAbout } from "./subject.js";
+import { stillOr } from "./still-applying.js";
 import { loadMessages } from "../store-load.js";
 
 interface RewindArgs {
@@ -27,5 +28,8 @@ export const rewindChat = transportAction<RewindArgs>({
   onSuccess: (_result, { chatID }) => {
     void loadMessages(chatID);
   },
-  error: errorAbout(({ chatID }: RewindArgs) => chatID, "Could not rewind chat"),
+  error: errorAbout(
+    ({ chatID }: RewindArgs) => chatID,
+    stillOr("rewinding the chat", "Could not rewind chat", "chat"),
+  ),
 });

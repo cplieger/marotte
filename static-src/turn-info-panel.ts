@@ -2,7 +2,7 @@
 // key down to each list item's parts, so a live repaint replaces only what changed and keeps the
 // lists the reader opened and focus.
 
-import { el, reconcile } from "@cplieger/reactive";
+import { el, reconcile } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { chevronEl } from "./chevron.js";
 import { iconEl } from "./icon-el.js";

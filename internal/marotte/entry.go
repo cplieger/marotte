@@ -173,28 +173,30 @@ type EntryThinking struct {
 // initial value only; the settled value is the tool_result's. AgentSubtaskID is
 // the delegate uuid on a subagent invocation and the merge's pairing key for it.
 type EntryToolCall struct {
-	ID             string          `json:"id"`
-	Title          string          `json:"title"`
-	Kind           ToolKind        `json:"kind"`
-	Status         ToolStatus      `json:"status"`
-	Output         string          `json:"output,omitempty"`
-	AgentSubtaskID string          `json:"agent_subtask_id,omitempty"`
-	WorkflowID     string          `json:"workflow_id,omitempty"`
-	TerminalID     string          `json:"terminal_id,omitempty"`
-	SourcePath     string          `json:"source_path,omitempty"`
-	Checkpoint     *ToolCheckpoint `json:"checkpoint,omitempty"`
-	Disclosed      *ToolDisclosed  `json:"disclosed,omitempty"`
-	Denial         *ToolDenial     `json:"denial,omitempty"`
-	Truncated      *ToolTruncation `json:"truncated,omitempty"`
-	Input          json.RawMessage `json:"input,omitempty"`
-	Locations      []ToolLocation  `json:"locations,omitempty"`
-	Diffs          []ToolDiff      `json:"diffs,omitempty"`
-	OutputSpans    []TextSpan      `json:"output_spans,omitempty"`
-	Ts             int64           `json:"ts"`
-	DurationMs     int             `json:"duration_ms,omitempty"`
-	OutputBytes    int             `json:"output_bytes,omitempty"`
-	HasFull        bool            `json:"has_full,omitempty"`
-	Declined       bool            `json:"declined,omitempty"`
+	ID             string           `json:"id"`
+	Title          string           `json:"title"`
+	Kind           ToolKind         `json:"kind"`
+	Status         ToolStatus       `json:"status"`
+	Output         string           `json:"output,omitempty"`
+	ToolName       string           `json:"tool_name,omitempty"`
+	AgentSubtaskID string           `json:"agent_subtask_id,omitempty"`
+	WorkflowID     string           `json:"workflow_id,omitempty"`
+	TerminalID     string           `json:"terminal_id,omitempty"`
+	SourcePath     string           `json:"source_path,omitempty"`
+	Checkpoint     *ToolCheckpoint  `json:"checkpoint,omitempty"`
+	MCP            *MCPToolIdentity `json:"mcp,omitempty"`
+	Disclosed      *ToolDisclosed   `json:"disclosed,omitempty"`
+	Denial         *ToolDenial      `json:"denial,omitempty"`
+	Truncated      *ToolTruncation  `json:"truncated,omitempty"`
+	Input          json.RawMessage  `json:"input,omitempty"`
+	Locations      []ToolLocation   `json:"locations,omitempty"`
+	Diffs          []ToolDiff       `json:"diffs,omitempty"`
+	OutputSpans    []TextSpan       `json:"output_spans,omitempty"`
+	Ts             int64            `json:"ts"`
+	DurationMs     int              `json:"duration_ms,omitempty"`
+	OutputBytes    int              `json:"output_bytes,omitempty"`
+	HasFull        bool             `json:"has_full,omitempty"`
+	Declined       bool             `json:"declined,omitempty"`
 }
 
 // EntryToolResult is the tool_result payload: the settled value of every field a
@@ -444,8 +446,8 @@ type EntryReconciled struct {
 // turn's footer. StopReasonRaw is a plain string because KAS adds stop reasons (`tool_use`)
 // and a closed enum would make such a chat undecodable; Outcome is derived, so closed.
 type EntryTurnClose struct {
-	ChangedFiles map[string]*FileChange `json:"changed_files,omitempty"`
-	Refusal      *RefusalInfo           `json:"refusal,omitempty"`
+	ChangedFiles map[string]FileChange `json:"changed_files,omitempty"`
+	Refusal      *RefusalInfo          `json:"refusal,omitempty"`
 	// ContextBreakdown is KAS's measure of the turn's last model request.
 	ContextBreakdown *ContextBreakdown `json:"context_breakdown,omitempty"`
 	Outcome          TurnOutcome       `json:"outcome"`
@@ -593,11 +595,13 @@ func EntryToolCallOf(tc *ToolCall) EntryToolCall {
 		Kind:           tc.Kind,
 		Status:         tc.Status,
 		Output:         tc.Output,
+		ToolName:       tc.ToolName,
 		AgentSubtaskID: tc.AgentSubtaskID,
 		WorkflowID:     tc.WorkflowID,
 		TerminalID:     tc.TerminalID,
 		SourcePath:     tc.SourcePath,
 		Checkpoint:     tc.Checkpoint,
+		MCP:            tc.MCP,
 		Disclosed:      tc.Disclosed,
 		Denial:         tc.Denial,
 		Truncated:      tc.Truncated,
@@ -622,11 +626,13 @@ func ToolCallOfEntry(e *EntryToolCall) ToolCall {
 		Kind:           e.Kind,
 		Status:         e.Status,
 		Output:         e.Output,
+		ToolName:       e.ToolName,
 		AgentSubtaskID: e.AgentSubtaskID,
 		WorkflowID:     e.WorkflowID,
 		TerminalID:     e.TerminalID,
 		SourcePath:     e.SourcePath,
 		Checkpoint:     e.Checkpoint,
+		MCP:            e.MCP,
 		Disclosed:      e.Disclosed,
 		Denial:         e.Denial,
 		Truncated:      e.Truncated,

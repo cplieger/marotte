@@ -24,11 +24,15 @@ var (
 	// errQueueTooMany refuses an attachment list past MaxAttachments.
 	errQueueTooMany = errors.New("too many attachments on one queued message")
 	errQueueSending = errors.New("this follow-up is already being sent")
+	errQueueHeld    = errors.New("this follow-up was queued before the server restarted; edit it to send it")
 )
 
 // reasonSending is the 409 refusal class for an unqueue of a row a drain is
 // already sending.
 const reasonSending = "sending"
+
+// reasonHeld is the 409 refusal class for a send-now of a row no turn end sends.
+const reasonHeld = "held"
 
 // QueueAccess is the follow-up queue as the commands and the drain drive it. An
 // append sees the turn registry, so a live turn cannot close between "it is
@@ -50,6 +54,16 @@ type QueueAccess interface {
 	// Dequeue takes a sent row off the header once its turn is announced. A failed
 	// write is applied by the chat's next mutation.
 	Dequeue(ctx context.Context, chatID marotte.ChatID, id string) error
+	// MarkNext marks the row with id Next and moves it ahead of the other sendable
+	// rows, which keep their order. An id whose turn this process opened answers
+	// sending; a held or carried row answers held and is left alone.
+	MarkNext(ctx context.Context, chatID marotte.ChatID, id string) (found, sending, held bool, err error)
+	// ClearNext drops the row's Next mark, keeping the order.
+	ClearNext(ctx context.Context, chatID marotte.ChatID, id string) error
+	// Sending reports whether this process opened the row's turn.
+	Sending(chatID marotte.ChatID, id string) bool
+	// NextMarkedRow answers the Next row while it is unheld and its turn has not opened.
+	NextMarkedRow(ctx context.Context, chatID marotte.ChatID) (marotte.QueuedPrompt, bool, error)
 }
 
 // chatMutator is the one chatStore write the record-only queue and mode handlers
@@ -154,6 +168,83 @@ func cmdUnqueuePrompt(ctx context.Context, roles *promptRoles, cmd *marotte.Clie
 	return responseOK, nil
 }
 
+// cmdSendQueuedNow sends one queued row next (SendQueuedNowCommand). The mark and the
+// idle reservation share the steer lock with a drain's pick, so a drain either sends
+// this row or ran before the mark. A turn closing on its own between the mark and the
+// stop has its drain open this row, so the stop checks the row again before it is
+// requested (stopChatTurn) and stops nothing once its turn opened.
+func cmdSendQueuedNow(
+	ctx context.Context,
+	roles *promptRoles,
+	perms pendingPermAccess,
+	terms terminalAccess,
+	stops turnStopper,
+	cmd *marotte.ClientCommand,
+) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
+	}
+	var p marotte.SendQueuedNowCommand
+	if json.Unmarshal(cmd.Payload, &p) != nil || p.MessageID == "" {
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	stop, err := markQueuedNext(ctx, roles, cmd.ChatID, p.MessageID)
+	if !stop || err != nil {
+		return responseOrErr(err)
+	}
+	return stopChatTurn(ctx, roles.bridges, perms, terms, stops, roles.queue, cmd.ChatID, func() (func(), bool) {
+		if roles.followups.Sending(cmd.ChatID, p.MessageID) {
+			return nil, true
+		}
+		return func() {
+			if err := roles.followups.ClearNext(ctx, cmd.ChatID, p.MessageID); err != nil {
+				slog.Warn("send now: the follow-up stays marked next", "chat_id", cmd.ChatID, "message_id", p.MessageID, keyError, err)
+			}
+		}, false
+	})
+}
+
+// markQueuedNext marks the row next and, with no turn running, sends it at once.
+// stop reports a marked row whose turn the caller must stop.
+func markQueuedNext(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, id string) (stop bool, err error) {
+	// The send's intent begins here: a close that commits after this stamp refuses its reservation.
+	stamp := roles.admission.LifeStamp()
+	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
+	if err != nil {
+		return false, StatusError(http.StatusServiceUnavailable, err)
+	}
+	defer unlock()
+	found, sending, held, err := roles.followups.MarkNext(ctx, chatID, id)
+	switch {
+	case err != nil:
+		return false, StatusError(http.StatusInternalServerError, err)
+	case !found || sending:
+		return false, nil
+	case held:
+		return false, StatusErrorReason(http.StatusConflict, reasonHeld, errQueueHeld)
+	}
+	res, reserved := roles.admission.TryReserveIdleTurn(chatID, marotte.TurnSourcePrompt, stamp)
+	if !reserved {
+		return true, nil
+	}
+	row, ok, err := roles.followups.NextMarkedRow(ctx, chatID)
+	if err != nil || !ok {
+		roles.admission.ReleaseTurnReservation(res)
+		if err != nil {
+			return false, StatusError(http.StatusInternalServerError, err)
+		}
+		return false, nil
+	}
+	return false, launchQueuedRow(ctx, roles, res, TurnFence{}, &row)
+}
+
+func responseOrErr(err error) (any, error) {
+	if err != nil {
+		return nil, err
+	}
+	return responseOK, nil
+}
+
 // CloseFacts is what a winning close hands its drain: the closed turn's outcome
 // and the fence naming it.
 type CloseFacts struct {
@@ -169,9 +260,10 @@ type CloseFacts struct {
 }
 
 // drainAfterClose sends at most one prompt for a close, under the chat's steer lock from the pick
-// to launchPrompt's return: unread steers first (after a close leaving a live bridge or a drained
-// death), else one queued user row (after a clean or unattended close, or one of AfterStop, bridge
-// live). A pending end, a held slot, a newer turn or a shutdown sends nothing.
+// to launchPrompt's return: the row marked Next first, after any close leaving a live bridge (the
+// unread steers ride into its turn); then unread steers (after a close leaving a live bridge or a
+// drained death), else one queued user row (after a clean or unattended close, or one of AfterStop,
+// bridge live). A pending end, a held slot, a newer turn or a shutdown sends nothing.
 func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, cl CloseFacts, ends EndFacts) {
 	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
 	if err != nil {
@@ -181,14 +273,24 @@ func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 	if roles.lifecycle.Draining() || len(roles.jobs.Ends(chatID)) > 0 {
 		return
 	}
-	if !roles.admission.TryReserveTurnFenced(chatID, marotte.TurnSourcePrompt, cl.Fence) {
+	res, ok := roles.admission.TryReserveTurnFenced(chatID, marotte.TurnSourcePrompt, cl.Fence)
+	if !ok {
 		return
 	}
+	sendReserved(ctx, roles, res, cl, ends)
+}
+
+// sendReserved is drainAfterClose's pick, on the reservation it took, which it owns from here.
+func sendReserved(ctx context.Context, roles *promptRoles, res Reservation, cl CloseFacts, ends EndFacts) {
+	chatID := res.Chat
 	live := roles.bridges.BridgeLive(chatID)
+	if live && roles.followups != nil && sendMarkedRow(ctx, roles, res, cl.Fence) {
+		return
+	}
 	deathDrained := ends.Death && !ends.Undrained
 	if live || deathDrained {
 		if rows := roles.jobs.UnsentRows(chatID, deathDrained); len(rows) > 0 {
-			sendUnread(ctx, roles, chatID, rows, cl.Fence)
+			sendUnread(ctx, roles, res, rows, cl.Fence)
 			return
 		}
 	}
@@ -198,30 +300,58 @@ func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 		only = cl.AfterStop
 	}
 	if !live || (!clean && len(only) == 0) || roles.followups == nil {
-		roles.admission.ReleaseTurnReservation(chatID)
+		roles.admission.ReleaseTurnReservation(res)
 		return
 	}
-	sendNextUserRow(ctx, roles, chatID, cl.Fence, only)
+	sendNextUserRow(ctx, roles, res, cl.Fence, only)
+}
+
+// sendMarkedRow launches the row marked Next, reporting whether it took the
+// reservation's turn; with no such row, or one that cannot be read, the reservation
+// stays the caller's.
+func sendMarkedRow(ctx context.Context, roles *promptRoles, res Reservation, fence TurnFence) bool {
+	chatID := res.Chat
+	row, ok, err := roles.followups.NextMarkedRow(ctx, chatID)
+	if err != nil {
+		slog.Warn("the follow-up marked next could not be read; the drain goes on without it", "chat_id", chatID, keyError, err)
+	}
+	if err != nil || !ok {
+		return false
+	}
+	if err := launchQueuedRow(ctx, roles, res, fence, &row); err != nil {
+		logDrainRefused(chatID, row.ID, err)
+	}
+	return true
 }
 
 // No row, or one that cannot be read, releases it. only narrows the pick (NextUserRow).
-func sendNextUserRow(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, fence TurnFence, only []string) {
+func sendNextUserRow(ctx context.Context, roles *promptRoles, res Reservation, fence TurnFence, only []string) {
+	chatID := res.Chat
 	row, ok, err := roles.followups.NextUserRow(ctx, chatID, only)
 	if err != nil || !ok {
 		if err != nil {
 			slog.Warn("queued prompts could not be read; they stay queued", "chat_id", chatID, keyError, err)
 		}
-		roles.admission.ReleaseTurnReservation(chatID)
+		roles.admission.ReleaseTurnReservation(res)
 		return
 	}
+	if err := launchQueuedRow(ctx, roles, res, fence, &row); err != nil {
+		logDrainRefused(chatID, row.ID, err)
+	}
+}
+
+// launchQueuedRow opens row's turn on the caller's reservation, which it owns from here
+// (launchPrompt), and takes the row off the header once the turn is announced.
+func launchQueuedRow(ctx context.Context, roles *promptRoles, res Reservation, fence TurnFence, row *marotte.QueuedPrompt) error {
+	chatID := res.Chat
 	p := &marotte.PromptCommand{
 		Text: row.Text, MessageID: row.ID, DisplayText: row.Label, Attachments: row.Attachments, Caller: row.Caller,
 	}
-	if err := launchPrompt(ctx, roles, chatID, p, launch{dequeue: row.ID, fence: fence}); err != nil {
-		logDrainRefused(chatID, row.ID, err)
-		return
+	if err := launchPrompt(ctx, roles, chatID, p, &launch{res: res, dequeue: row.ID, fence: fence}); err != nil {
+		return err
 	}
 	slog.Info("queued prompt dispatched", "chat_id", chatID, "message_id", row.ID)
+	return nil
 }
 
 // sendUnread opens one prompt carrying the unread rows, joined by a blank line, and
@@ -229,7 +359,8 @@ func sendNextUserRow(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 // The words are the rows' own, so the prompt carries no DisplayText: a label would
 // replace them in the transcript and in KAS's replay. It is an API caller's only when
 // no row is the user's (SharedCaller).
-func sendUnread(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, rows []SteerRow, fence TurnFence) {
+func sendUnread(ctx context.Context, roles *promptRoles, res Reservation, rows []SteerRow, fence TurnFence) {
+	chatID := res.Chat
 	keys := make([]string, 0, len(rows))
 	texts := make([]string, 0, len(rows))
 	callers := make([]*marotte.Caller, 0, len(rows))
@@ -241,7 +372,7 @@ func sendUnread(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, 
 	p := &marotte.PromptCommand{
 		Text: strings.Join(texts, "\n\n"), MessageID: ids.NewMessageID(), Caller: marotte.SharedCaller(callers),
 	}
-	if err := launchPrompt(ctx, roles, chatID, p, launch{resends: keys, fence: fence}); err != nil {
+	if err := launchPrompt(ctx, roles, chatID, p, &launch{res: res, resends: keys, fence: fence}); err != nil {
 		logDrainRefused(chatID, p.MessageID, err)
 		return
 	}

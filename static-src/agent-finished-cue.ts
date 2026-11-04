@@ -5,7 +5,7 @@
 // re-fire is an effect over `chatSettled`'s tracked reads. Not persisted: after a reload
 // the reader is back, and a persisted cue would notify for work already seen.
 
-import { effect, signal, touch } from "@cplieger/reactive";
+import { effect, signal, touch } from "@cplieger/ui";
 import { chatSettled } from "./chat-settled.js";
 import { isAgentFinishedEnabled, notifyOffScreen } from "./notify.js";
 import type { NotificationPayload } from "./wire/types.gen.js";

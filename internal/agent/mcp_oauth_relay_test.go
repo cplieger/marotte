@@ -83,7 +83,7 @@ func newCallbackListener(t *testing.T, status int) *callbackListener {
 func stageFlow(t *testing.T, h *Runtime, server, listenerURL, state string) {
 	t.Helper()
 	h.mcpRegistry.RecordOAuth(t.Context(), server, marotte.MCPSource{})
-	if err := h.mcpRegistry.claimSignIn(server); err != nil {
+	if _, err := h.mcpRegistry.claimSignIn(server); err != nil {
 		t.Fatalf("claimSignIn(%s) = %v", server, err)
 	}
 	if got, ok := h.mcpRegistry.claimSignInURL(t.Context(), authURLFor(t, listenerURL, state)); !ok || got != server {

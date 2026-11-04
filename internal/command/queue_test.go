@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -50,6 +51,47 @@ func (q *fakeQueue) Dequeue(_ context.Context, _ marotte.ChatID, id string) erro
 	q.sending[id] = true
 	q.chat.QueuedPrompts = slices.DeleteFunc(q.chat.QueuedPrompts, func(r marotte.QueuedPrompt) bool { return r.ID == id })
 	return nil
+}
+
+func (q *fakeQueue) MarkNext(_ context.Context, _ marotte.ChatID, id string) (found, sending, held bool, err error) {
+	if q.sending[id] {
+		return true, true, false, nil
+	}
+	at := slices.IndexFunc(q.chat.QueuedPrompts, func(r marotte.QueuedPrompt) bool { return r.ID == id })
+	if at < 0 {
+		return false, false, false, nil
+	}
+	row := q.chat.QueuedPrompts[at]
+	if row.Held || row.Carried() {
+		return true, false, true, nil
+	}
+	rest := slices.Delete(q.chat.QueuedPrompts, at, at+1)
+	for i := range rest {
+		rest[i].Next = false
+	}
+	row.Next = true
+	q.chat.QueuedPrompts = slices.Insert(rest, 0, row)
+	return true, false, false, nil
+}
+
+func (q *fakeQueue) ClearNext(_ context.Context, _ marotte.ChatID, id string) error {
+	for i := range q.chat.QueuedPrompts {
+		if q.chat.QueuedPrompts[i].ID == id {
+			q.chat.QueuedPrompts[i].Next = false
+		}
+	}
+	return nil
+}
+
+func (q *fakeQueue) Sending(_ marotte.ChatID, id string) bool { return q.sending[id] }
+
+func (q *fakeQueue) NextMarkedRow(_ context.Context, _ marotte.ChatID) (marotte.QueuedPrompt, bool, error) {
+	for _, r := range q.chat.QueuedPrompts {
+		if r.Next && !r.Held && !r.Carried() && !q.sending[r.ID] {
+			return r, true, nil
+		}
+	}
+	return marotte.QueuedPrompt{}, false, nil
 }
 
 // unqueueRoles is the prompt roles an unqueue reads: the steer lock and the queue.
@@ -232,5 +274,181 @@ func TestQueuePrompt_ALabelledRowIsSentWithItsLabel(t *testing.T) {
 
 	if len(h.opened) != 1 || h.opened[0].Text != "the findings" || h.opened[0].Label != "Merging findings" {
 		t.Errorf("drained prompts = %+v, want the row sent with its text and label", h.opened)
+	}
+}
+
+// sendNowRoles is the prompt roles a send-now reads while a turn runs: the steer
+// lock, the queue, an admission slot a running turn holds, and d as the bridges.
+func sendNowRoles(q *fakeQueue, d *cancelDeps) *promptRoles {
+	return &promptRoles{queue: newStubSteerQueue(), followups: q, admission: lostSlot{&benchDeps{}}, bridges: d}
+}
+
+func sendNow(t *testing.T, q *fakeQueue, d *cancelDeps, payload string) error {
+	t.Helper()
+	cmd := &marotte.ClientCommand{Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(payload)}
+	_, err := cmdSendQueuedNow(t.Context(), sendNowRoles(q, d), d, d, d, cmd)
+	return err
+}
+
+// answeredSkipped reports whether a command's answer carries the skipped flag the
+// client reads to take back a stop that stopped nothing.
+func answeredSkipped(t *testing.T, got any) bool {
+	t.Helper()
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Skipped bool `json:"skipped"`
+	}
+	return json.Unmarshal(raw, &body) == nil && body.Skipped
+}
+
+func queueOf(rows ...marotte.QueuedPrompt) *fakeQueue {
+	return &fakeQueue{chat: &marotte.Chat{ID: "c1", QueuedPrompts: rows}}
+}
+
+func rowIDs(rows []marotte.QueuedPrompt) []string {
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.ID)
+	}
+	return ids
+}
+
+func TestSendQueuedNow_MarksTheRowThenStopsTheRunningTurn(t *testing.T) {
+	b := &cancelBridge{}
+	d := newCancelDeps(b)
+	q := queueOf(marotte.QueuedPrompt{ID: "m-q1", Text: "a"}, marotte.QueuedPrompt{ID: "m-q2", Text: "b"}, marotte.QueuedPrompt{ID: "m-q3", Text: "c"})
+
+	cmd := &marotte.ClientCommand{Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(`{"message_id":"m-q3"}`)}
+	got, err := cmdSendQueuedNow(t.Context(), sendNowRoles(q, d), d, d, d, cmd)
+	if err != nil {
+		t.Fatalf("send_queued_now = %v", err)
+	}
+	if answeredSkipped(t, got) {
+		t.Errorf("answer = %v, want no skipped flag on a stop that stopped the turn", got)
+	}
+
+	if got := rowIDs(q.chat.QueuedPrompts); !slices.Equal(got, []string{"m-q3", "m-q1", "m-q2"}) {
+		t.Errorf("queue = %v, want m-q3 first and the others in their order", got)
+	}
+	if !q.chat.QueuedPrompts[0].Next {
+		t.Error("m-q3 is not marked next, so the stopped close would not send it")
+	}
+	if len(b.notified) != 1 || b.notified[0] != marotte.MethodCancel {
+		t.Errorf("notifications = %v, want [%s]", b.notified, marotte.MethodCancel)
+	}
+	if d.killed != 1 {
+		t.Errorf("KillForTurn calls = %d, want the turn's terminals stopped as cancel stops them", d.killed)
+	}
+}
+
+func TestSendQueuedNow_AnUnknownOrSendingRowStopsNothing(t *testing.T) {
+	for _, tc := range []struct {
+		sending map[string]bool
+		name    string
+		id      string
+	}{
+		{name: "unknown", id: "m-gone"},
+		{name: "sending", id: "m-q1", sending: map[string]bool{"m-q1": true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &cancelBridge{}
+			d := newCancelDeps(b)
+			q := queueOf(marotte.QueuedPrompt{ID: "m-q1", Text: "a"})
+			q.sending = tc.sending
+
+			if err := sendNow(t, q, d, `{"message_id":"`+tc.id+`"}`); err != nil {
+				t.Errorf("send_queued_now(%s) = %v, want success", tc.id, err)
+			}
+			if len(b.notified) != 0 || len(d.scopes) != 0 {
+				t.Errorf("notifications = %v, permission scopes = %v; want nothing stopped", b.notified, d.scopes)
+			}
+		})
+	}
+}
+
+func TestSendQueuedNow_AHeldRowIsConflict(t *testing.T) {
+	b := &cancelBridge{}
+	d := newCancelDeps(b)
+	q := queueOf(marotte.QueuedPrompt{ID: "m-h", Text: "from before", Held: true})
+
+	err := sendNow(t, q, d, `{"message_id":"m-h"}`)
+
+	if statusOf(err) != http.StatusConflict || reasonOf(err) != reasonHeld {
+		t.Errorf("send_queued_now(held) = %d %q, want 409 %q", statusOf(err), reasonOf(err), reasonHeld)
+	}
+	if len(b.notified) != 0 {
+		t.Errorf("notifications = %v, want nothing stopped", b.notified)
+	}
+}
+
+func TestSendQueuedNow_AnEmptyIDIsBadRequest(t *testing.T) {
+	d := newCancelDeps(&cancelBridge{})
+	for _, payload := range []string{`{}`, `{"message_id":""}`, `not json`} {
+		if err := sendNow(t, queueOf(), d, payload); statusOf(err) != http.StatusBadRequest {
+			t.Errorf("send_queued_now(%s) status = %d, want 400", payload, statusOf(err))
+		}
+	}
+}
+
+// drainOpensRow is a turn that closed on its own after the mark, its drain opening
+// the marked row's turn under the steer lock, which the stop's next take waits out.
+type drainOpensRow struct {
+	*stubSteerQueue
+	q  *fakeQueue
+	id string
+}
+
+func (s *drainOpensRow) LockSteerOps(ctx context.Context, chatID marotte.ChatID) (func(), error) {
+	if slices.ContainsFunc(s.q.chat.QueuedPrompts, func(r marotte.QueuedPrompt) bool { return r.ID == s.id && r.Next }) {
+		s.q.sending = map[string]bool{s.id: true}
+	}
+	return s.stubSteerQueue.LockSteerOps(ctx, chatID)
+}
+
+// The reader asked for that row to go next, and it went: stopping now would cancel it.
+func TestSendQueuedNow_ARowWhoseTurnOpenedBeforeTheStopIsNotCancelled(t *testing.T) {
+	b := &cancelBridge{}
+	d := newCancelDeps(b)
+	q := queueOf(marotte.QueuedPrompt{ID: "m-q1", Text: "a"}, marotte.QueuedPrompt{ID: "m-q2", Text: "b"})
+	roles := sendNowRoles(q, d)
+	roles.queue = &drainOpensRow{stubSteerQueue: newStubSteerQueue(), q: q, id: "m-q2"}
+	cmd := &marotte.ClientCommand{Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(`{"message_id":"m-q2"}`)}
+
+	got, err := cmdSendQueuedNow(t.Context(), roles, d, d, d, cmd)
+	if err != nil {
+		t.Fatalf("send_queued_now = %v, want success", err)
+	}
+
+	if !answeredSkipped(t, got) {
+		t.Errorf("answer = %v, want skipped, so the client takes back its stop", got)
+	}
+	if len(b.notified) != 0 || len(d.scopes) != 0 || d.killed != 0 {
+		t.Errorf("notifications = %v, permission scopes = %v, kills = %d; want nothing cancelled", b.notified, d.scopes, d.killed)
+	}
+	if len(d.stopSteps) != 0 {
+		t.Errorf("stop steps = %q, want no stop requested, so the row's turn is not marked stopped", d.stopSteps)
+	}
+}
+
+// A cancel that never reached KAS ends no turn, so no close sends the row: its mark
+// goes, and the place the reader moved it to stays.
+func TestSendQueuedNow_AnUndeliveredCancelClearsTheMarkAndIsBadGateway(t *testing.T) {
+	d := newCancelDeps(&cancelBridge{})
+	d.err = fmt.Errorf("%w: write refused", ErrCancelNotDelivered)
+	q := queueOf(marotte.QueuedPrompt{ID: "m-q1", Text: "a"}, marotte.QueuedPrompt{ID: "m-q2", Text: "b"})
+
+	err := sendNow(t, q, d, `{"message_id":"m-q2"}`)
+
+	if statusOf(err) != http.StatusBadGateway {
+		t.Errorf("status = %d (%v), want 502", statusOf(err), err)
+	}
+	if got := rowIDs(q.chat.QueuedPrompts); !slices.Equal(got, []string{"m-q2", "m-q1"}) {
+		t.Errorf("queue = %v, want the moved order kept", got)
+	}
+	if slices.ContainsFunc(q.chat.QueuedPrompts, func(r marotte.QueuedPrompt) bool { return r.Next }) {
+		t.Errorf("queue = %+v, want no row left marked next", q.chat.QueuedPrompts)
 	}
 }

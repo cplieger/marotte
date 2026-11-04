@@ -12,7 +12,8 @@ import (
 	"github.com/cplieger/webhttp/v4"
 )
 
-// RegisterRoutes wires the MCP config endpoints: GET/POST /api/mcp (list masked, create), POST
+// RegisterRoutes wires the MCP config endpoints: GET/POST /api/mcp (list masked with the count of
+// record entries that could not be read as `unreadable`, create), POST
 // /api/mcp/import (every server of a pasted README block), and GET (masked), PUT (keeps "***"
 // values), PATCH ({"enabled": bool}) and DELETE on /api/mcp/{id}.
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
@@ -54,7 +55,7 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		webhttp.WriteJSON(w, map[string]any{"servers": s.list(r.Context())})
+		webhttp.WriteJSON(w, map[string]any{"servers": s.list(r.Context()), "unreadable": len(s.unreadable)})
 	case http.MethodPost:
 		var in Server
 		if !httpreply.DecodeJSON(w, r, &in) {

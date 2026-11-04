@@ -65,7 +65,7 @@ type AlwaysAllowBlock string
 // match this command, so a saved rule would be a permanent no-op in permissions.yaml.
 const AlwaysAllowBlockUnparseable AlwaysAllowBlock = "unparseable"
 
-// MCPToolIdentity names the verified MCP server and tool behind a permission request.
+// MCPToolIdentity names the MCP server and tool behind a tool call or a permission request.
 type MCPToolIdentity struct {
 	ServerName string `json:"server_name"`
 	ToolName   string `json:"tool_name"`
@@ -227,6 +227,20 @@ func DecisionRunID(payload any) string {
 		return p.RunID
 	default:
 		return ""
+	}
+}
+
+// DecisionRequestID is the ask id a *_needed payload carries, 0 for any other payload.
+func DecisionRequestID(payload any) int64 {
+	switch p := payload.(type) {
+	case PermissionNeededPayload:
+		return p.RequestID
+	case ElicitationNeededPayload:
+		return p.RequestID
+	case UserInputNeededPayload:
+		return p.RequestID
+	default:
+		return 0
 	}
 }
 
@@ -615,6 +629,14 @@ type HooksChangedPayload struct{}
 // and empty: the installed Powers moved, so the Powers tab refetches.
 type PowersChangedPayload struct{}
 
+// MemoriesChangedPayload is the payload for type="memories_changed", workspace-global and empty: a memory write
+// answered, so the Memories list refetches.
+type MemoriesChangedPayload struct{}
+
+// KnowledgeChangedPayload is the payload for type="knowledge_changed", workspace-global and empty: a knowledge
+// base change answered, so the Knowledge list refetches.
+type KnowledgeChangedPayload struct{}
+
 // RecipesChangedPayload is the payload for type="recipes_changed", workspace-global and
 // empty. The client refetches GET /api/recipes on receipt.
 type RecipesChangedPayload struct{}
@@ -683,13 +705,18 @@ type SteerQueuedPayload struct {
 }
 
 // SteerRowState is a dock row's state as the dock draws it. Every row that is or may
-// be in KAS, or whose fate a turn end has not decided, reads queued, so a row moving
+// be in KAS reads queued, or delivering while a turn end's continuation may read it, so a row moving
 // between the server's finer states repaints nothing.
 type SteerRowState string
 
 const (
 	// SteerRowQueued is a row waiting to be read.
 	SteerRowQueued SteerRowState = "queued"
+	// SteerRowDelivering is a row KAS holds while a turn end is unsettled: KAS's
+	// continuation of that turn reads it, or its boundary drops it and the chat's next
+	// prompt carries it. A delete now would clear the buffer under that read, so the
+	// server refuses one.
+	SteerRowDelivering SteerRowState = "delivering"
 	// SteerRowUnsent is an unread row the server holds with no turn to deliver it to:
 	// its session ended, its buffer was cleared with no turn running, or a turn-end resend
 	// failed. The chat's next prompt carries it; a server restart discards it.

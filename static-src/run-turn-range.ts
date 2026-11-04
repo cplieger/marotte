@@ -2,7 +2,7 @@
 
 import { join } from "@cplieger/keyenc";
 import { apiGetTyped } from "./api-client.js";
-import { asArray, asObject, type Decoder } from "./validators.js";
+import { asArray, asObject, type Decoder } from "./wire/validators.gen.js";
 import { decodeEntry, decodeOpenEntry } from "./wire/decoders.gen.js";
 import {
   adoptRunOpenEntries,

@@ -86,7 +86,7 @@ func messageHub(t *testing.T, run marotte.RunStatus, step marotte.RunNodeStatus)
 	t.Helper()
 	h, _, br := newTestHub()
 	h.runs.log = newRunLog(t.TempDir())
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	br.setCallResult(methodKiroWorkflowInspect, oneStepInspect(t, run, step, "sess_step"))
 	br.setCallResult(marotte.MethodSessionSteer, json.RawMessage(`{"queued":true}`))
 	h.runs.RunNodeStart(t.Context(), reviewStep("sess_step"), "")
@@ -484,7 +484,7 @@ func TestRemoveStepSteer_DeletesARowKASHolds(t *testing.T) {
 	br.setCallResult(marotte.MethodSessionSteerClear, json.RawMessage(`{"messageIds":["steer-m-7"]}`))
 	// The clear's reply lands at seq 3, and the host session's lane has folded that far: only the
 	// host session's position can release the barrier.
-	gen := h.coord.turns.attachForward(runChatID("wf_1")).gen
+	gen := h.coord.turns.attachForwardNow(runChatID("wf_1")).gen
 	br.mu.Lock()
 	br.deliveredSeq = 3
 	br.mu.Unlock()
@@ -703,7 +703,7 @@ func twoBranchHub(t *testing.T) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, _, br := newTestHub()
 	h.runs.log = newRunLog(t.TempDir())
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
 	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused,
 		askStepNode{id: "branch_a", status: "paused", session: "sess_a"}, parkedStep("branch_b", "sess_b")))

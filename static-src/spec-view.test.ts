@@ -1,7 +1,7 @@
 // Tests for spec-view.ts: the spec tab's page.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
-import { signal } from "@cplieger/reactive";
+import { signal } from "@cplieger/ui";
 import type { Spec, SpecDoc, SpecTaskNode } from "./wire/types.gen.js";
 import type * as StoreModule from "./store.js";
 import type * as ApiModule from "./api-client.js";
@@ -498,6 +498,18 @@ describe("dispatch", () => {
     view.applyResult(DIR, "L1", "gone");
     expect(body().querySelector(".spec-empty")?.textContent).toContain(DIR);
     expect(body().querySelector(".spec-run")).toBeNull();
+  });
+
+  it("renders closed as a failure line that says the chat was closed", async () => {
+    openParented();
+    m.replies = [reply(spec([tasksDoc([node("L1", "Pending one")])]))];
+    view.showSpec(DIR);
+    await settle();
+    view.applyResult(DIR, "L1", "closed");
+    expect(body().querySelector(".spec-failure")?.textContent).toBe(
+      "The chat was closed, so the prompt was not sent",
+    );
+    expect(body().querySelector(".spec-run")).not.toBeNull();
   });
 
   it("sends Run all to the parent chat", async () => {

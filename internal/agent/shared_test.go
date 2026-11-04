@@ -72,8 +72,10 @@ func awaitBoot(h *Runtime) error {
 // originOf is the bridge a frame for chatID arrives on in a test, which is what forwardAt passes:
 // the one registered under chatID now, or nil when none is.
 func (rt *Runtime) originOf(chatID marotte.ChatID) acpResponder {
+	// The test drives the frames its forward would, so the chat has the life a forward's attach creates.
+	rt.coord.turns.ensureTestLife(chatID)
 	if sb := rt.bridge.mgr.get(chatID); sb != nil {
-		return sb.current()
+		return sb.session()
 	}
 	return nil
 }
@@ -280,7 +282,7 @@ func quietLogs(b *testing.B) {
 
 func (rt *Runtime) stageWireTurn(tb testing.TB, chatID marotte.ChatID) *turnlog.Turn {
 	tb.Helper()
-	return rt.coord.TurnFoldTarget(tb.Context(), chatID)
+	return rt.coord.foldTargetNow(tb.Context(), chatID)
 }
 
 // stagePromptTurn opens a prompt turn and returns its id with its accumulator: an id-scoped closer given another id closes nothing.
@@ -292,7 +294,7 @@ func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID marotte.ChatID) (string
 // stagePromptTurnCalling is stagePromptTurn for a turn whose prompt call cancel trips.
 func (rt *Runtime) stagePromptTurnCalling(tb testing.TB, chatID marotte.ChatID, cancel context.CancelCauseFunc) (string, *turnlog.Turn) {
 	tb.Helper()
-	id, err := rt.coord.OpenTurn(tb.Context(), chatID, command.TurnOpen{
+	id, err := rt.coord.openTurnNow(tb.Context(), chatID, command.TurnOpen{
 		Source: marotte.TurnSourcePrompt,
 		Prompt: &marotte.EntryPrompt{ID: "m-" + string(chatID), Text: "prompt"},
 		Init:   func(c *marotte.Chat) { c.Name = "test chat" },
@@ -388,7 +390,7 @@ func newAgentInitiatedChunkMsg(text string) *marotte.RPCResponse {
 // waitForParkedSettle polls the registry until the settle is parked with no frame consumed, before the folder moves.
 func waitForParkedSettle(tb testing.TB, reg *turnRegistry, chatID marotte.ChatID, turnID string, want uint64) {
 	tb.Helper()
-	lc := reg.lifecycleFor(chatID)
+	lc := reg.testLifecycle(chatID)
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		lc.mu.Lock()

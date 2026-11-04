@@ -337,7 +337,7 @@ func TestShutdown_CancelsTheLifetimeAfterStoppingTheEngine(t *testing.T) {
 	if !awaitEngine(h) {
 		t.Fatal("the engine never became ready")
 	}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: newFakeBridge(), state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(newFakeBridge(), bridgeIdle))
 
 	shutdownHub(t, h)
 

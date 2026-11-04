@@ -2,7 +2,7 @@
 // Editor UI: the pane's surfaces, the read surface of each view, and the toolbar.
 // ---------------------------------------------------------------------------
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { $ } from "./dom.js";
 import { highlightRuns } from "./highlight.js";
 import { getActiveId } from "./store.js";

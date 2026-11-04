@@ -132,7 +132,7 @@ func TestScheduledRun_AFaultPastItsHealsEndsTheRun(t *testing.T) {
 					got, runEndUnattended, br.callLog())
 			}
 			if got := stateWrites(br.callLog()); slices.Contains(got, methodKiroWorkflowPause) {
-				t.Errorf("writes = %v, want no pause: a park for the user waits on nobody", got)
+				t.Errorf("writes = %v, want no pause: a scheduled run is ended, not left waiting on nobody", got)
 			}
 			heals := strconv.Itoa(maxAutoHeals) + " automatic resumes"
 			row := awaitEndedRow(t, st)
@@ -241,7 +241,7 @@ func TestManualRun_AStepQuestionStaysPaused(t *testing.T) {
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 		methodKiroWorkflowInspect: inspectPaused(t, gateRunID, stepQuestionReason),
 	}
-	h.bridge.mgr.insert(runChatID(gateRunID), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(gateRunID), testBridge(br, bridgeIdle))
 	h.runs.grantLease(t.Context(), gateRunID, "publish", launchOrigin{origin: runlease.OriginManual}, hostSec())
 	h.runs.armDeadline(t.Context(), gateRunID)
 
@@ -277,7 +277,7 @@ func TestBootSweep_EndsAScheduledRunLeftPausedOnAQuestion(t *testing.T) {
 // chat id, still reaches the heal: otherwise nothing resumes a transient fault and a scheduled run is ended for it.
 func TestParentlessRun_AFaultPauseIsResumedOnItsFrame(t *testing.T) {
 	for name, origin := range map[string]launchOrigin{
-		"scheduled": scheduledLaunch("s1", time.Now().Add(time.Hour)),
+		"scheduled": scheduledLaunch(schedule.Row{ID: "s1"}, time.Now().Add(time.Hour)),
 		"manual":    {origin: runlease.OriginManual},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -289,7 +289,7 @@ func TestParentlessRun_AFaultPauseIsResumedOnItsFrame(t *testing.T) {
 				methodKiroWorkflowInspect: inspectPaused(t, gateRunID, interruptedReason),
 				methodKiroWorkflowResume:  json.RawMessage(`{}`),
 			}
-			h.bridge.mgr.insert(runChatID(gateRunID), &sharedBridge{bridge: br, state: bridgeIdle})
+			h.insertBridgeNow(runChatID(gateRunID), testBridge(br, bridgeIdle))
 			h.runs.grantLease(t.Context(), gateRunID, "nightly", origin, hostSec())
 
 			heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})

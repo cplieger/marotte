@@ -1,8 +1,8 @@
-// The run's verbs as one row of buttons, drawn from the server's `GET /api/runs/{id}/controls`
-// answer (`run-store.ts` `runControls`) and rebuilt only when that answer moves. The run dock is
+// The run's verbs as one row of buttons, drawn from the server's answer on the run read
+// (`run-store.ts` `runControls`) and rebuilt only when that answer moves. The run dock is
 // its one surface. A paused step's own end verbs sit in its header (`buildStepEndView`).
 
-import { createRoot, el } from "@cplieger/reactive";
+import { createRoot, el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { bindLoadingState } from "./actions/index.js";
 import { confirm } from "./confirm.js";

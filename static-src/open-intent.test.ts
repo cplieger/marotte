@@ -188,7 +188,6 @@ vi.mock("./tabs-drag.js", () => ({
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
   setReprojectCallback: vi.fn(),
-  setTapCallback: vi.fn(),
   dragOwnsStrip: vi.fn(() => false),
   exceedsSlop: vi.fn(() => false),
   pointerDragActivation: vi.fn(() => ({ holdMs: 150, slopPx: 8 })),

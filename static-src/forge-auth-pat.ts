@@ -3,7 +3,7 @@ import { connectPAT, detectForge, type ConnectionOptions } from "./actions/forge
 import { withAsyncFeedback } from "./async-button.js";
 import type { ConnectionTarget } from "./forge-auth-connection.js";
 import { kindTitle } from "./forge-types.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 
 type PATHelp = { kind: "link"; url: string; label: string } | { kind: "text"; text: string };
 

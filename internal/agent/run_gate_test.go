@@ -306,7 +306,7 @@ func TestSignInGate_ABootWithNoSignInHoldsTheRunUntilTheSignIn(t *testing.T) {
 	g := newGateRun(t, t.TempDir())
 	resumes := countResumes(t, g.br, gateRunID)
 
-	g.h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	g.h.runs.resumeInterruptedRuns(t.Context(), g.h.coord.turns.testLifecycle(parkChat), parkChat)
 	awaitResumes(t, resumes, 0)
 
 	g.signIn(t)
@@ -322,7 +322,7 @@ func TestSignInGate_ALapsedSignInAtBootHoldsTheRun(t *testing.T) {
 	}
 	resumes := countResumes(t, g.br, gateRunID)
 
-	g.h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	g.h.runs.resumeInterruptedRuns(t.Context(), g.h.coord.turns.testLifecycle(parkChat), parkChat)
 	awaitResumes(t, resumes, 0)
 
 	g.signIn(t)
@@ -337,7 +337,7 @@ func TestSignInGate_APIKeyModePassesTheGate(t *testing.T) {
 		t.Errorf("admission with an API key = %v, want none", err)
 	}
 
-	g.h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	g.h.runs.resumeInterruptedRuns(t.Context(), g.h.coord.turns.testLifecycle(parkChat), parkChat)
 	awaitResumes(t, resumes, 1)
 }
 
@@ -431,7 +431,7 @@ func TestResume_EveryAutomaticResumerAtOnceResumesOnce(t *testing.T) {
 		return json.RawMessage(`{}`), nil, true
 	}
 	g.br.mu.Unlock()
-	g.h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	g.h.runs.resumeInterruptedRuns(t.Context(), g.h.coord.turns.testLifecycle(parkChat), parkChat)
 
 	heal := g.h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 	// Registered after the runtime's own listener, so the edge's resume has started when these do.
@@ -441,7 +441,7 @@ func TestResume_EveryAutomaticResumerAtOnceResumesOnce(t *testing.T) {
 		}
 		go heal(t.Context(), parkChat,
 			runNotif(methodWFPaused, map[string]any{"workflowId": gateRunID, "pauseReason": stalePauseReason}))
-		go g.h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+		go g.h.runs.resumeInterruptedRuns(t.Context(), g.h.coord.turns.testLifecycle(parkChat), parkChat)
 	})
 	g.signIn(t)
 
@@ -521,8 +521,8 @@ func watchChain(t *testing.T, br *fakeBridge, ids ...string) *chainRuns {
 	return c
 }
 
-// A run whose heal budget is spent stays paused for the user however its chat comes back: a sibling run's reopen
-// sweeps the chain and resumes only the sibling. The user's own resume needs no budget.
+// A run whose heal budget is spent stays paused however its chat comes back: a sibling run's reopen sweeps the chain
+// and resumes only the sibling. The user's own resume needs no budget.
 func TestHealBudget_ASpentRunIsNotResumedByItsChatsSweep(t *testing.T) {
 	h, br := agentRunOnChat(t, "wf_spent")
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -535,7 +535,7 @@ func TestHealBudget_ASpentRunIsNotResumedByItsChatsSweep(t *testing.T) {
 		h.runs.claimHeal("wf_spent")
 	}
 
-	h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	h.runs.resumeInterruptedRuns(t.Context(), h.coord.turns.testLifecycle(parkChat), parkChat)
 	waitUntil(t, "the sibling's resume", func() bool { return chain.count("wf_sibling") == 1 })
 	time.Sleep(quietWindow)
 	if n := chain.count("wf_spent"); n != 0 {
@@ -556,7 +556,7 @@ func TestSignInGate_ALaunchIsRefusedBeforeAnythingIsCreated(t *testing.T) {
 	if _, err := g.h.runs.admitRunWork(refuseClosed, gateRunID, ""); !errors.Is(err, errRunsNeedSignIn) {
 		t.Fatalf("admission signed out = %v, want the sign-in refusal", err)
 	}
-	if _, _, err := g.h.runs.LaunchScheduled(t.Context(), "bundled://demo", "s1", marotte.RunDefaults{}, time.Time{}); !errors.Is(err, errRunsNeedSignIn) || !errors.Is(err, schedule.ErrNoRunCanStart) {
+	if _, _, err := g.h.runs.LaunchScheduled(t.Context(), "bundled://demo", schedule.Row{ID: "s1"}, marotte.RunDefaults{}, time.Time{}); !errors.Is(err, errRunsNeedSignIn) || !errors.Is(err, schedule.ErrNoRunCanStart) {
 		t.Errorf("LaunchScheduled signed out = %v, want the sign-in refusal the schedule runner holds", err)
 	}
 	rec := httptest.NewRecorder()
@@ -571,7 +571,7 @@ func TestSignInGate_ALaunchIsRefusedBeforeAnythingIsCreated(t *testing.T) {
 	}
 
 	g.signIn(t)
-	if _, _, err := g.h.runs.LaunchScheduled(t.Context(), "bundled://no-such-recipe", "s1", marotte.RunDefaults{}, time.Time{}); err == nil || errors.Is(err, schedule.ErrNoRunCanStart) {
+	if _, _, err := g.h.runs.LaunchScheduled(t.Context(), "bundled://no-such-recipe", schedule.Row{ID: "s1"}, marotte.RunDefaults{}, time.Time{}); err == nil || errors.Is(err, schedule.ErrNoRunCanStart) {
 		t.Errorf("LaunchScheduled of a missing recipe signed in = %v, want a failure the schedule runner records", err)
 	}
 }

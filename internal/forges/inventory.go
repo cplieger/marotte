@@ -175,7 +175,7 @@ func (p *PRStatusPoller) inventoryFor(hs []readHandle) InventoryList {
 	for i := range hs {
 		ids[i] = hs[i].id
 	}
-	list := InventoryList{Entries: make([]InventoryEntry, 0, len(ids)), Subject: make([]*marotte.SubjectStamp, 0, len(ids))}
+	list := InventoryList{Entries: make([]InventoryEntry, 0, len(ids)), Subject: make([]marotte.SubjectStamp, 0, len(ids))}
 	missing := false
 	held := p.inv.lookup(ids)
 	for i := range held {
@@ -196,8 +196,8 @@ func (p *PRStatusPoller) inventoryFor(hs []readHandle) InventoryList {
 	return list
 }
 
-func (p *PRStatusPoller) restStamp(id, version string) *marotte.SubjectStamp {
-	stamp := marotte.NewSubjectStamp(string(subject.KindForgeInventory), id, version)
+func (p *PRStatusPoller) restStamp(id, version string) marotte.SubjectStamp {
+	stamp := marotte.SubjectStamp{Kind: string(subject.KindForgeInventory), Ref: id, Version: version}
 	if p.announce != nil {
 		stamp.Epoch = p.announce.Epoch()
 	}

@@ -39,7 +39,7 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	gen := h.coord.turns.attachForward(chatID).gen
+	gen := h.coord.turns.attachForwardNow(chatID).gen
 	epoch, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, epoch)
 
@@ -94,7 +94,7 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	gen := h.coord.turns.attachForward(chatID).gen
+	gen := h.coord.turns.attachForwardNow(chatID).gen
 	epoch, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, epoch)
 
@@ -166,7 +166,7 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
 	epoch, _ := streamingPromptTurn(t, h, chatID, "half an answer")
-	sb, _ := h.bridge.mgr.orInsert(chatID)
+	sb, _ := h.bridge.mgr.orInsertNow(chatID)
 	// A session past its door: one still opening has its door retire it.
 	sb.attach(br)
 	sb.setIdle()
@@ -209,13 +209,13 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 // The wait does not stop at the awaited turn's close: the empty-turn gate's later-turn read is only sound once the
 // folder has consumed everything before the response, or it re-sends an answered prompt.
 func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
-	r := newTurnRegistry()
+	r := newTurnRegistry(nopTurnRecords{})
 	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
-	gen := r.attachForward(chatID).gen
+	gen := r.attachForwardNow(chatID).gen
 
 	// Opened at the registry alone; the store append is not the subject.
-	lc := r.lifecycleFor(chatID)
+	lc := r.testLifecycle(chatID)
 	lc.mu.Lock()
 	turn := lc.openLocked(chatID, &marotte.Entry{ID: "t-1"}, marotte.TurnSourcePrompt, "", turnlog.Open("t-1", nil))
 	lc.mu.Unlock()
@@ -226,7 +226,7 @@ func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 	r.finish(claimed, marotte.TurnResult{Stop: marotte.StopReasonEndTurn})
 
 	reached := make(chan bool, 1)
-	go func() { reached <- r.awaitPosition(ctx, chatID, turn.ID, 5) }()
+	go func() { reached <- r.awaitClosePosition(ctx, chatID, turn.ID, 5) }()
 
 	select {
 	case got := <-reached:
@@ -249,7 +249,7 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	gen := h.coord.turns.attachForward(chatID).gen
+	gen := h.coord.turns.attachForwardNow(chatID).gen
 	preOpen, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, preOpen)
 
@@ -289,9 +289,9 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 // goroutine: the exit its teardown captured must still close when the goroutine ends, or the delete waits out
 // its whole drain budget.
 func TestAttachForward_ExitClosesAfterTheLifecycleWasForgotten(t *testing.T) {
-	r := newTurnRegistry()
+	r := newTurnRegistry(nopTurnRecords{})
 	const chatID marotte.ChatID = "c1"
-	att := r.attachForward(chatID)
+	att := r.attachForwardNow(chatID)
 	exit := r.forwardExit(chatID)
 	if exit == nil {
 		t.Fatal("forwardExit = nil right after an attach")

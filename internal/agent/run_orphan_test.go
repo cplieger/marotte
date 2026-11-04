@@ -18,6 +18,9 @@ import (
 // kasRuns builds a workflow/list reply, defaulting `workflowName` to `name` as the wire always carries both.
 func kasRuns(t *testing.T, rows ...map[string]any) json.RawMessage {
 	t.Helper()
+	if rows == nil {
+		rows = []map[string]any{}
+	}
 	for _, row := range rows {
 		if _, ok := row["workflowName"]; !ok {
 			row["workflowName"] = row["name"]
@@ -312,13 +315,13 @@ func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 		t.Fatalf("Put schedule: %v", err)
 	}
 	// The fire's grant: the row tracks wf_1, the only run whose outcome lands on it.
-	if err := st.RecordStart(t.Context(), schedule.Run{ScheduleID: entry.ID(), WorkflowID: "wf_1"}); err != nil {
+	if err := st.RecordStart(t.Context(), schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_1"}); err != nil {
 		t.Fatalf("RecordStart: %v", err)
 	}
 	h.runs.schedules = st
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "nightly", Origin: runlease.OriginScheduled,
-		ScheduleID: entry.ID(), Unattended: true,
+		ScheduleID: entry.ID(), ScheduleLife: entry.Life, Unattended: true,
 	}); err != nil {
 		t.Fatalf("Put lease: %v", err)
 	}
@@ -441,13 +444,13 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 		t.Fatalf("Put schedule: %v", err)
 	}
 	// The fire's grant: the row tracks wf_1, the only run whose outcome lands on it.
-	if err := st.RecordStart(t.Context(), schedule.Run{ScheduleID: entry.ID(), WorkflowID: "wf_1"}); err != nil {
+	if err := st.RecordStart(t.Context(), schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_1"}); err != nil {
 		t.Fatalf("RecordStart: %v", err)
 	}
 	h.runs.schedules = st
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginScheduled,
-		ScheduleID: entry.ID(), FirstAbsentAt: time.Now().Add(-6 * time.Hour),
+		ScheduleID: entry.ID(), ScheduleLife: entry.Life, FirstAbsentAt: time.Now().Add(-6 * time.Hour),
 	}); err != nil {
 		t.Fatalf("Put lease: %v", err)
 	}

@@ -1,6 +1,6 @@
 // Derives the send-button state from the global pieces of the world:
 
-import { signal, computed, effect } from "@cplieger/reactive";
+import { signal, computed, effect } from "@cplieger/ui";
 import { activeSession, watchBusy } from "./store.js";
 import { setSendState } from "./prompt-input.js";
 import type { SendState } from "./prompt-input.js";

@@ -526,7 +526,7 @@ func TestToolsRoot_ARejectedFolderIsOffAtEveryConsumer(t *testing.T) {
 			if ready, reason := kiro.ready(); ready || reason != pinstall.ReasonUnavailable {
 				t.Errorf("kiro-cli ready() = (%v, %s), want (false, %s)", ready, reason, pinstall.ReasonUnavailable)
 			}
-			if _, err := buildToolsEngine(t.Context(), cfg, testRuntime(t), nil); !errors.Is(err, errToolsDirUnusable) {
+			if _, err := buildToolsEngine(cfg, testRuntime(t), nil); !errors.Is(err, errToolsDirUnusable) {
 				t.Errorf("buildToolsEngine = %v, want errToolsDirUnusable", err)
 			}
 			for _, r := range ownedRoots(cfg) {

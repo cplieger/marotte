@@ -19,13 +19,13 @@ interface SendPromptOpts {
 }
 
 /** Every answer `sendPromptTo` gives; a caller's branch over it should be total. */
-export type SendPromptResult = "sent" | "queued" | "starting" | "gone" | "failed";
+export type SendPromptResult = "sent" | "queued" | "starting" | "gone" | "closed" | "failed";
 
 /**
- * Post a prompt to a chat once and report the outcome: "sent" on the admission ack,
- * "queued" on a plain 409 (a steerable turn), "starting" on reason "starting", "gone" on
- * reason "chat_not_found" (tombstoned, terminal), "failed" otherwise. What a busy chat
- * means is submit.ts's; user sends go through `submitPrompt`.
+ * Post a prompt to a chat once and report the outcome: "sent" on the admission ack, "queued"
+ * on a 409 with reason "turn_live" (a steerable turn), "gone" on "chat_not_found" (tombstoned,
+ * terminal), "closed" on "chat_closed" (the chat's close ended it), "starting" on any other 409,
+ * "failed" otherwise. What a busy chat means is submit.ts's; user sends go through `submitPrompt`.
  */
 export async function sendPromptTo(
   chatID: string,

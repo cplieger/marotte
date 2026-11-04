@@ -390,9 +390,8 @@
      resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
      close — so it measured the same on a finger as on a mouse while `.tab`
      beside it correctly went 36px to 44px. A floor, so a taller row keeps its
-     own height: measured, this moves desktop by at most 1px and gives every
-     list row a real 36px target on touch. */
-  min-block-size: var(--ctl-h-sm);
+     own height: 24px on a mouse, the 44px hit floor on touch. */
+  min-block-size: var(--row-tap-sm);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -455,7 +454,7 @@
 .forge-account-repo-actions {
   display: flex;
   align-items: center;
-  gap: var(--sp-1);
+  gap: max(var(--sp-1), var(--tap-gap));
   flex-shrink: 0;
 }
 
@@ -588,9 +587,11 @@
 }
 
 /* The add pane's "Connection options" disclosure. */
+/* A disclosure head between two fields: its box is its target. */
 .forge-options-summary {
   display: flex;
   align-items: center;
+  min-block-size: var(--row-tap-sm);
   gap: var(--sp-2);
   list-style: none;
   cursor: pointer;
@@ -723,7 +724,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-block-size: var(--btn-h);
+  min-block-size: var(--field-h);
   font-family: var(--font-mono);
   font-size: var(--fs-lg);
   font-weight: 700;
@@ -1469,7 +1470,7 @@ dd.governance-off {
 /* Inline dropdown used in Settings → Custom instructions (default
    agent picker). */
 .page-select {
-  min-block-size: var(--btn-h);
+  min-block-size: var(--field-h);
   width: 100%;
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--c-border);
@@ -1508,9 +1509,9 @@ dd.governance-off {
   gap: var(--sp-2);
 
   /* The row's height is the POINTER TIER's, not its tallest child's. A writable
-   * row carries a select and a remove button, both floored at --hit-floor
-   * (61-mcp-tools.css), while a read-only row is 12px mono spans that answer no
-   * tier at all — so the two variants of one row disagreed by ~10px on a mouse
+   * row carries a select floored at --hit-floor (61-mcp-tools.css) and a remove
+   * button whose 44px target is the shared expander, while a read-only row is 12px
+   * mono spans that answer no tier at all, so the two variants disagreed by ~10px on a mouse
    * and ~30px under a finger. Stated as the floor plus this row's own chrome
    * rather than as a second copy of the arithmetic; `border-box` (02-reset.css)
    * is what makes the padding and border below part of it. */
@@ -1597,28 +1598,12 @@ select.native-rule-effect:focus-visible {
 }
 
 /* LAYOUT AND THE RECEDE. The skin is `icon-btn` (10-shell-app.css), from
- * permissions-ui.ts; the fourteen declarations this replaced were a hand-rolled copy
- * of it. Four of them existed only because the mark was a `×` CHARACTER — the
- * `font-size`, the `line-height: 1` against `icon-btn`'s SVG-authored `line-height:
- * 0`, and the 1.5rem box that clamped it — and the mark is `ICON_CLOSE` now, so they
- * have nothing left to correct. The `--r-sm` note went with them: its premise was a
- * 24px box, and `icon-btn`'s own padding around a 12px glyph is 28px, which is `--r`'s
- * rung.
- *
- * THE RECEDE IS NOT DRIFT, it is this app's per-row remove affordance: `.chip-remove`
- * (18-pages.css) and `.mcp-pair-del` (60-mcp.css) both sit at `--c-text-tertiary` and
- * lift on hover, so a rule list of twenty rows does not read as twenty delete buttons.
- * Only the INK is stated here; `icon-btn` owns the hover FILL, where the copy this
- * replaced spelled its own `--c-hover` beside the shared class's `--c-bg-tertiary`.
- *
- * THE DENSITY AND THE RUNG ARE A PAIR, and `radius-nesting.test.ts` is what says so:
- * this class is in its 24px population beside `.tab-close`, `.shell-header-btn` and
- * `.turn-action-btn`, and the ladder reserves `--r-sm` for a 16-24px box while
- * `icon-btn` declares `--r` for its own 28px. So the padding keeps the box at the
- * floor's 24px in a list of twenty rows and the radius follows from that size — drop
- * either and the pair is wrong, which is what that test caught. `--sp-1` rather than
- * the sibling's hard `1.5rem`: a fixed box cannot follow the pointer tier, and the
- * floor still takes this to 44px under a finger. */
+ * permissions-ui.ts. The recede is this app's per-row remove affordance, as
+ * `.chip-remove` and `.mcp-pair-del` are: tertiary ink lifting on hover, so twenty
+ * rows do not read as twenty delete buttons; `icon-btn` owns the hover fill. THE
+ * DENSITY AND THE RUNG ARE A PAIR (`radius-nesting.test.ts`): `--sp-1` padding keeps
+ * the box at 24px beside `.tab-close` and `.turn-action-btn`, which is what earns
+ * `--r-sm`. The shared expander (61-mcp-tools.css) gives it the 44px target. */
 .native-rule-remove {
   margin-inline-start: auto;
   padding: var(--sp-1);
@@ -1687,11 +1672,9 @@ select.native-rule-effect:focus-visible {
   --rf-compact-w: 7rem;
 }
 
-/* `max()` for the reason `.rf-submit` below gives: the zero-specificity hit floor loses to this
-   rule, and the dense tier is 40px against a 44px floor on a coarse pointer. */
 .rf-select,
 .rf-input {
-  min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
+  min-block-size: var(--field-h-dense);
   padding-inline: var(--sp-2);
   font-size: var(--fs-sm); /* 12px, up from the chip surfaces' 11px */
   font-family: var(--font-sans);
@@ -1729,20 +1712,16 @@ select.native-rule-effect:focus-visible {
   outline-offset: var(--focus-offset-field);
 }
 
-/* Labeled submit button, not an icon pill. Takes the dense tier its fields
- * take, overriding .btn's --btn-h min-height.
+/* Labeled submit button, not an icon pill. Takes the dense tier, overriding .btn's
+ * --btn-h min-height.
  *
  * The dense-tier button pattern, copied whole from `.list-row .btn-small`
  * (14-tools.css), including the `padding-block: 0` — the base's own padding plus
- * the label's line box is 33px on its own, so the padding is what holds the fine
- * tier on 32 rather than letting the label push it a pixel over. `max()` AND NOT
- * A BARE TOKEN, because the universal hit-target floor scores zero
- * (61-mcp-tools.css) and so loses to this rule, and `--ctl-h-dense` is 2.5rem on
- * a coarse pointer — 40px beside the 44px controls in the same form. `block-size`
- * is DROPPED: a declared height clips the label at a larger user font, and the
- * floor can only lift a `min-*`. */
+ * the label's line box is 33px on its own, so the padding is what holds it on 32
+ * rather than letting the label push it a pixel over. `block-size` is DROPPED: a
+ * declared height clips the label at a larger user font. */
 .rule-form .rf-submit {
-  min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
+  min-block-size: var(--ctl-h-dense);
   padding-block: 0;
 
   /* Equal rank with the fields it submits, so it takes the peer rung rather than
@@ -1768,10 +1747,9 @@ select.native-rule-effect:focus-visible {
   }
 }
 
-/* Phone: single column. The heights need no answer here — the controls carry the
-   touch floor through `max(var(--ctl-h-dense), var(--hit-floor))` above, which
-   follows the POINTER tier rather than a width, so this breakpoint owns layout
-   only. */
+/* Phone: single column. The heights need no answer here: the fields carry the touch
+   floor through `--field-h-dense` above, which follows the POINTER tier rather than a
+   width, so this breakpoint owns layout only. */
 @media (width <= 40rem) {
   .rule-form[data-rule-form] {
     grid-template-columns: 1fr;

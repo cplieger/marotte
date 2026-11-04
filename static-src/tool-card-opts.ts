@@ -4,12 +4,17 @@
 
 import type { ToolStatus, ToolDiff, TextSpan, ToolCall } from "./types.js";
 import type { ToolDenial, ToolDisclosed, ToolInteraction, ToolOffload } from "./types.js";
+import type { MCPToolIdentity } from "./wire/types.gen.js";
 
 export interface BuildToolCardOpts {
   id: string;
   title: string;
   kind: string;
   status: ToolStatus;
+  /** The built-in tool's id the server named; absent when it named none. */
+  toolName?: string;
+  /** The MCP server and tool the server named. */
+  mcp?: MCPToolIdentity;
   input?: Record<string, unknown>;
   output?: string;
   /** Style spans for `output`, parsed server-side. */
@@ -58,6 +63,12 @@ export function toolCardOptsFor(tc: ToolCall, live: boolean, chatID = ""): Build
   };
   if (chatID !== "") {
     opts.chatID = chatID;
+  }
+  if (tc.tool_name !== undefined && tc.tool_name !== "") {
+    opts.toolName = tc.tool_name;
+  }
+  if (tc.mcp !== undefined) {
+    opts.mcp = tc.mcp;
   }
   if (tc.has_full === true) {
     opts.hasFull = true;

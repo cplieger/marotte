@@ -2,14 +2,17 @@ package composition
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/forges"
@@ -46,10 +49,7 @@ const (
 func countingSteering(t *testing.T, w *wiredForges) (*forgeSteering, *atomic.Int32) {
 	t.Helper()
 	generated := &atomic.Int32{}
-	s := &forgeSteering{
-		appCtx: context.WithoutCancel(t.Context()), m: w.m,
-		generate: func(context.Context) error { generated.Add(1); return nil },
-	}
+	s := testSteering(t, w.m, func(context.Context) error { generated.Add(1); return nil })
 	w.notifier.steer = s
 	return s, generated
 }
@@ -116,13 +116,15 @@ func TestForgeSteering_BootSyncWritesASavedConnectionToTheSteeringFile(t *testin
 	srv.Close()
 
 	notifier := &forgeNotifier{hub: &recordingHub{}}
-	m := forges.NewManager(w.dir, notifier.notify)
+	m := testForges(t, w.dir, notifier.notify)
 	m.Load(t.Context())
 	poller := forges.NewPRStatusPoller(forges.NewManagerPRSource(m, func(context.Context) []forges.RepoOrigin { return nil }),
 		quietNotifier{}, func() forges.Gate { return forges.Gate{} })
 	steer := steering.New(t.TempDir(), t.TempDir(), t.TempDir())
 
-	notifier.wire(context.WithoutCancel(t.Context()), poller, m, steer).sync()
+	s := notifier.wire(context.WithoutCancel(t.Context()), poller, m, steer)
+	t.Cleanup(s.close)
+	s.sync()
 
 	path := workspace.KiroSteeringPath("environment.md")
 	data, err := os.ReadFile(path)
@@ -173,4 +175,89 @@ func TestForgeNotify_AStoredRepoPageTellsNoTab(t *testing.T) {
 	if got := w.hub.count(); got != before {
 		t.Errorf("a stored repository page broadcast %d frames, want none", got-before)
 	}
+}
+
+// close ends a steering sync in flight, through its context, and returns only
+// once it has; a kick after it starts nothing.
+func TestForgeSteeringClose_EndsAndWaitsForASyncInFlight(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := testForges(t, t.TempDir(), func(context.Context, forges.Change) {})
+		var calls atomic.Int32
+		var ended error
+		s := testSteering(t, m, func(ctx context.Context) error {
+			calls.Add(1)
+			<-ctx.Done()
+			ended = ctx.Err()
+			return ctx.Err()
+		})
+		s.kick()
+		synctest.Wait()
+		if got := calls.Load(); got != 1 {
+			t.Fatalf("regenerations in flight before the stop = %d, want 1", got)
+		}
+
+		s.close()
+		if !errors.Is(ended, context.Canceled) {
+			t.Errorf("the sync's regeneration ended with %v when the stop returned, want context.Canceled", ended)
+		}
+		s.kick()
+		synctest.Wait()
+		if got := calls.Load(); got != 1 {
+			t.Errorf("regenerations after the stop = %d, want none beyond the first", got-1)
+		}
+	})
+}
+
+// A sync whose Generate ignores its context holds only its own stop: App.Shutdown
+// reaches the runtime teardown and the sign-in wait before it waits on the sync,
+// and the tools steering stop after it.
+func TestApp_ShutdownWaitsOnForgeSteeringOnlyAfterTheRuntimeTeardown(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := testForges(t, t.TempDir(), func(context.Context, forges.Change) {})
+		release := make(chan struct{})
+		s := testSteering(t, m, func(context.Context) error {
+			<-release
+			return nil
+		})
+		s.kick()
+		synctest.Wait()
+
+		var order []string
+		var mu sync.Mutex
+		step := func(name string) func() {
+			return func() {
+				mu.Lock()
+				order = append(order, name)
+				mu.Unlock()
+			}
+		}
+		app := &App{
+			stopScheduleRunner: step("schedule runner"),
+			stopKiro:           step("kiro"),
+			stopForges:         func() { shutdownWithin("forge reads", m.Shutdown) },
+			stopApp:            step("app"),
+			waitSignIn:         step("sign-in"),
+			stopForgeSteering:  func() { s.close(); step("forge steering")() },
+			stopToolsSteering:  step("tools steering"),
+		}
+		done := make(chan struct{})
+		go func() {
+			app.Shutdown()
+			close(done)
+		}()
+		synctest.Wait()
+		mu.Lock()
+		early := slices.Clone(order)
+		mu.Unlock()
+		if want := []string{"schedule runner", "kiro", "app", "sign-in"}; !slices.Equal(early, want) {
+			t.Errorf("stops run while a sync held its Generate = %v, want %v", early, want)
+		}
+
+		close(release)
+		<-done
+		want := []string{"schedule runner", "kiro", "app", "sign-in", "forge steering", "tools steering"}
+		if !slices.Equal(order, want) {
+			t.Errorf("App.Shutdown stop order = %v, want %v", order, want)
+		}
+	})
 }

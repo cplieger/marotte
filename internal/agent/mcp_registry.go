@@ -53,6 +53,9 @@ type lazySignIn struct {
 type signInSlot struct {
 	deadline time.Time
 	server   string
+	// attempt is the claim that took the slot: a sign-in that outlives its slot (a status freed it and a second Sign
+	// in took it) must not end the second one.
+	attempt uint64
 }
 
 // Origin "user" attaches it to marotte's own row; anything else gives it a read-only row. Shadows
@@ -97,7 +100,9 @@ type mcpRegistry struct {
 	now         func() time.Time
 	signIn      signInSlot
 	lazySignIns []*lazySignIn
-	mu          sync.RWMutex
+	// signIns counts the slot's claims, minting signInSlot.attempt.
+	signIns uint64
+	mu      sync.RWMutex
 }
 
 var _ signInURLClaimer = (*mcpRegistry)(nil)

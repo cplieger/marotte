@@ -23,9 +23,9 @@ func TestHandleShow_RefusesWhatTheDiffCannotShow(t *testing.T) {
 		wantCode int
 		wantKind ShowRefusalCode
 	}{
-		"over the cap": {content: strings.Repeat("x", 3<<20), wantCode: http.StatusRequestEntityTooLarge, wantKind: ShowTooLarge},
-		"binary":       {content: "PNG\x00\x01\x02", wantCode: http.StatusUnsupportedMediaType, wantKind: ShowBinary},
-		"not utf-8":    {content: "caf\xe9\n", wantCode: http.StatusUnsupportedMediaType, wantKind: ShowNotUTF8},
+		"over the cap": {content: strings.Repeat("x", 3<<20), wantCode: http.StatusRequestEntityTooLarge, wantKind: showTooLarge},
+		"binary":       {content: "PNG\x00\x01\x02", wantCode: http.StatusUnsupportedMediaType, wantKind: showBinary},
+		"not utf-8":    {content: "caf\xe9\n", wantCode: http.StatusUnsupportedMediaType, wantKind: showNotUTF8},
 	}
 	for name, tc := range cases {
 		t.Run(strings.ReplaceAll(name, " ", "_"), func(t *testing.T) {
@@ -33,7 +33,7 @@ func TestHandleShow_RefusesWhatTheDiffCannotShow(t *testing.T) {
 			dir := t.TempDir()
 			initFixtureRepo(t, dir)
 			writeCommit(t, dir, "blob.dat", tc.content, "add blob")
-			rec := showReq(t, NewHandler(dir, WithShowMax(2<<20)), "blob.dat")
+			rec := showReq(t, newTestHandler(t, dir, WithShowMax(2<<20)), "blob.dat")
 			var got struct {
 				Content *string         `json:"content"`
 				Error   string          `json:"error"`
@@ -56,7 +56,7 @@ func TestHandleShow_ServesABlobAtTheCap(t *testing.T) {
 	dir := t.TempDir()
 	initFixtureRepo(t, dir)
 	writeCommit(t, dir, "full.txt", strings.Repeat("y", 4096), "add")
-	rec := showReq(t, NewHandler(dir, WithShowMax(4096)), "full.txt")
+	rec := showReq(t, newTestHandler(t, dir, WithShowMax(4096)), "full.txt")
 	var got ShowResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)

@@ -59,6 +59,13 @@ func (d *storeDeps) SetAttachments(ctx context.Context, id marotte.ChatID, paths
 	return d.store.SetAttachments(ctx, id, paths)
 }
 
+func (d *storeDeps) List(ctx context.Context) []marotte.ChatHeader {
+	if l, ok := d.store.(headerLister); ok {
+		return l.List(ctx)
+	}
+	return nil
+}
+
 func (d *storeDeps) Delete(ctx context.Context, id marotte.ChatID) ([]string, error) {
 	return d.store.Delete(ctx, id)
 }

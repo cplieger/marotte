@@ -1,4 +1,4 @@
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { pollUntil } from "./actions/index.js";
 import { apiPostTyped } from "./api-client.js";
 import { withAsyncFeedback } from "./async-button.js";

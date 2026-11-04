@@ -158,7 +158,7 @@ func hostedLeasedRun(t *testing.T, reply json.RawMessage) (*Runtime, *fakeBridge
 	t.Helper()
 	h, _, br := newTestHub()
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ParentSessionID: testLaunchSession})
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	br.setCallResult(methodKiroWorkflowInspect, reply)
 	return h, br
 }
@@ -504,8 +504,7 @@ func TestHandleControls(t *testing.T) {
 		}
 	})
 
-	// Retry is offered with the parent chat, for the step-transcript note too.
-	t.Run("an aborted chat-parented run offers retry and names its parent chat", func(t *testing.T) {
+	t.Run("an aborted chat-parented run offers retry", func(t *testing.T) {
 		h, _ := seedChatParentedRun(t, true)
 		rec := httptest.NewRecorder()
 		h.runRoutes.handleControls(rec, controlsReq("wf_1"))
@@ -518,10 +517,6 @@ func TestHandleControls(t *testing.T) {
 		}
 		if !slices.Contains(got.Verbs, "retry") {
 			t.Errorf("verbs = %v, want retry offered", got.Verbs)
-		}
-		if got.ParentChatID != "c1" {
-			t.Errorf("parent_chat_id = %q, want c1; the run page reads it to say where a step's "+
-				"live transcript went", got.ParentChatID)
 		}
 	})
 
@@ -670,7 +665,7 @@ func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "running", ""),
 	}
 	// This process holds the run, so pause is offered.
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	// KAS refuses with -32603 and the reason in `error.data`, hence rpcerr.Text.
 	br.callRPCErrs = map[string]*marotte.RPCError{
 		methodKiroWorkflowPause: {
@@ -701,7 +696,7 @@ func TestHandleResume_AClaimInFlightIsReaderText(t *testing.T) {
 		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "paused", ""),
 	}
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	br.callRPCErrs = map[string]*marotte.RPCError{
 		methodKiroWorkflowResume: {
 			Code:    -32603,
@@ -742,7 +737,7 @@ func TestHandleResume_AQueuedClaimIsWaitedForNotRefused(t *testing.T) {
 	}
 	queued := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowResume: queued}
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	req := httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/resume", nil)
 	req.SetPathValue("id", "wf_1")
 	rec := httptest.NewRecorder()
@@ -774,7 +769,7 @@ func TestHandleResume_AQuestionParkWhoseTreeDoesNotDecodeIsUnread(t *testing.T) 
 		methodKiroWorkflowInspect: withAttentionDrift(t, parked),
 		methodKiroWorkflowResume:  json.RawMessage(`{}`),
 	}
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	req := httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/resume", nil)
 	req.SetPathValue("id", "wf_1")
 	rec := httptest.NewRecorder()

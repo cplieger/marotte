@@ -21,7 +21,7 @@ func TestForward_DischargesWaitingOnUserWhenTheAgentDies(t *testing.T) {
 		Status:      marotte.ChatStatusWaitingOnUser,
 		Description: "needs a decision",
 	})
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 
 	br.endStream()
 	h.coord.Forward("c1", br)
@@ -38,7 +38,7 @@ func TestForward_LeavesANonWaitingStatusAlone(t *testing.T) {
 		Status:      "in_progress",
 		Description: "working",
 	})
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 
 	br.endStream()
 	h.coord.Forward("c1", br)
@@ -62,7 +62,7 @@ func TestForward_BridgeExitedNamesSessionAndCause(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			if tc.registered {
-				h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+				h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 			}
 			logs := captureLogs(t)
 
@@ -116,7 +116,7 @@ func TestBridgeEnd_RetiresTheAsksItCarriedAsEnded(t *testing.T) {
 			if engineExited {
 				registered = br
 			}
-			h.bridge.mgr.insert("c1", &sharedBridge{bridge: registered, state: bridgeIdle})
+			h.insertBridgeNow("c1", testBridge(registered, bridgeIdle))
 			head := h.bus.fanout.Position().Head
 
 			br.endStream()
@@ -158,7 +158,7 @@ func TestBridgeEnd_RetiresTheAsksItCarriedAsEnded(t *testing.T) {
 // card is told it went because its session ended, exactly once.
 func TestChatTeardown_RetiresTheBridgesAsksAsEnded(t *testing.T) {
 	teardowns := map[string]func(h *Runtime){
-		"close":  func(h *Runtime) { h.CloseChatState(t.Context(), "c1") },
+		"close":  func(h *Runtime) { h.CloseChatState(t.Context(), "c1", nil) },
 		"delete": func(h *Runtime) { h.DeleteChatStateByChain(t.Context(), "c1", nil, command.RunStopTabClosed) },
 	}
 	for name, teardown := range teardowns {

@@ -22,6 +22,20 @@ When an automatic compaction fails, the reply can stay open with nothing more ar
 
 Reported in the Kiro Crew tracker as [kirodotdev/KiroCrew#3583](https://github.com/kirodotdev/KiroCrew/issues/3583), closed after Kiro Crew added a time limit in its own client. kiro-cli itself still leaves the reply open. After a failed compaction, marotte ends a reply that shows no new activity for 60 seconds and marks it interrupted.
 
+### Replies slow down when many chats and workflow steps run at once
+
+kiro-cli's agent engine runs every chat, workflow step and subagent on one JavaScript thread. On Node.js 22, which kiro-cli ships, garbage collection and the tracking of asynchronous code fill that thread when many of them run at once. Replies and workflow steps then slow down, starting a chat or a step can time out, and the engine can fall far behind. The engine's own log, `kiro.log`, falls behind under the same load.
+
+Reported as [kirodotdev/Kiro#12261](https://github.com/kirodotdev/Kiro/issues/12261), open, and the log delay as [kirodotdev/Kiro#12260](https://github.com/kirodotdev/Kiro/issues/12260), open. **High throughput optimizations**, under **Experimental features** in **Settings**, is on by default. It starts the engine's Node.js with `--experimental-async-context-frame` and `--max-semi-space-size=64`, which cut the time the thread spends on that work. [Configuration](configuration.md#high-throughput-optimizations) gives the measured effect.
+
+While the engine's thread stays busy, marotte waits up to 2 minutes before it restarts the engine, so one long stop does not end the replies in every chat. kiro-cli itself still ends the engine, and the replies in every chat, when a very long message, such as a large pasted prompt, is sent to it during a stop of more than 15 seconds. A change you make to a chat during the stop, such as a new mode or effort, shows as still applying instead of failed. The chat shows the change once kiro-cli applies it.
+
+### A command that finished can show as timed out
+
+When the engine's thread stops for longer than a command's time limit, and the command finishes during that stop, kiro-cli reports the command as timed out. In a chat, the agent is told that the command timed out and gets only part of its output. A workflow watch step that polls a command can drop a result the command printed in time, and the next step never receives it.
+
+Reported as [kirodotdev/Kiro#12269](https://github.com/kirodotdev/Kiro/issues/12269), open. marotte has no workaround, because kiro-cli decides the timeout before it reads that the command finished. Running fewer chats and workflow steps at once makes the stops in the entry above less frequent.
+
 ## Chats
 
 ### A chat is named with a sentence that is not a title
@@ -35,6 +49,12 @@ Reported as [kirodotdev/Kiro#11343](https://github.com/kirodotdev/Kiro/issues/11
 While a reply runs, deleting a message the agent has not read yet can leave the messages you send next unread until the reply ends.
 
 Reported as [kirodotdev/Kiro#11449](https://github.com/kirodotdev/Kiro/issues/11449), open. When you delete one waiting message, marotte clears them all and sends the ones you kept again as one message. It reaches the running reply when the agent has read none of your messages in that reply yet. Otherwise it waits, and marotte sends it as your next message once the reply ends.
+
+### Deleting or editing a waiting message as a reply ends can start an empty reply
+
+When a reply ends while a message you sent is still unread, kiro-cli continues the reply so the agent reads it. If you delete or edit a waiting message within a fraction of a second of the reply ending, kiro-cli can empty its queue after it has decided to continue. The agent then starts a reply with none of your messages in it.
+
+Reported as [kirodotdev/Kiro#12262](https://github.com/kirodotdev/Kiro/issues/12262), open. A fix needs kiro-cli to check for unread messages again before it continues, or to offer a way to withdraw one message without emptying the queue. Once marotte sees a reply end, it shows each message kiro-cli still holds as "Delivering", with no Edit or Delete. That lasts until the agent reads the message or kiro-cli drops it, and marotte refuses a delete sent during that time. A delete or edit that marotte sent just before it saw the reply end is not covered.
 
 ### A message sent just after a stop can run out of view
 
@@ -93,6 +113,12 @@ Reported as [kirodotdev/Kiro#11978](https://github.com/kirodotdev/Kiro/issues/11
 While the host is busy, a step that polls a command can fail even though the command printed a valid result. The error reads `exited 0 but its stdout is not a valid WatchPollResult`.
 
 Reported as [kirodotdev/Kiro#11985](https://github.com/kirodotdev/Kiro/issues/11985), open. marotte has no workaround. **Retry failed steps** on the run's tab starts the watch again.
+
+### A run paused for a model throttle can read "Workflow paused by user."
+
+kiro-cli accepts a request to pause a workflow run only on behalf of the user, and its run details do not say who paused a run. Any pause sent to a run kiro-cli paused for a model throttle therefore reads "Workflow paused by user.", though you paused nothing.
+
+Reported as [kirodotdev/Kiro#12274](https://github.com/kirodotdev/Kiro/issues/12274), open. When marotte stops resuming a run after repeated throttling, it sends no pause and records the stop itself: the run's tab reads "marotte stopped resuming this run after repeated model throttling" beside **Resume**. While your Kiro sign-in cannot be answered, marotte still pauses running runs, and that pause must name you, since kiro-cli accepts nothing else. The run's tab shows marotte's sign-in reason for it instead of saying you paused it.
 
 ## Agent terminals
 

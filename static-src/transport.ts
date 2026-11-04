@@ -1,6 +1,6 @@
 // Transport, client→server half: the command POST and the ids it mints (the SSE half is
 // `sse-adapter.ts`). The send button is the single error surface and the next Send is the retry. A
-// plain 409 busy becomes a steer; a 409 with `reason: "starting"` is a real failure.
+// 409's `reason` names its class; what each class means for a prompt is `actions/chat.ts`'s.
 
 import type { TabKind } from "./types.js";
 import { BUS_COMMAND_FAILED, emitBus } from "./bus.js";
@@ -101,6 +101,7 @@ type TypedCommand =
       };
     }
   | { type: "steer_remove"; chat_id: string; payload: { steer_id: string } }
+  | { type: "send_queued_now"; chat_id: string; payload: { message_id: string } }
   // Addresses a USER MESSAGE, not a turn ordinal: KAS's revertMultiple takes a
   // messageId and refuses a non-user one.
   | { type: "rewind_chat"; chat_id: string; payload: { message_id: string } }
@@ -140,14 +141,14 @@ export interface SendResult {
   status: number;
   /** Server error message, if any. */
   error?: string;
-  /** Machine-readable failure class from the error envelope's `reason` (internal/command writeErr),
-   *  so callers branch on a VALUE. Today only "starting": a 409 whose admission holder cannot take a
-   *  steer. */
+  /** Machine-readable failure class from the error envelope's `reason` (internal/command writeError),
+   *  so callers branch on a VALUE. */
   reason?: string;
   /** Structured error code for non-HTTP failures. */
   code?: string;
-  /** The undecoded success body, when it parsed as JSON: the only place a creating command learns
-   *  its server-minted chat id. The wire shape is the action's business. */
+  /** The undecoded body, when it parsed as JSON: a success's answer (a creating command's
+   *  server-minted chat id) or a failure's error envelope (a refusal's additive fields, such as
+   *  `impact`). The wire shape is the action's business. */
   body?: unknown;
 }
 
@@ -260,8 +261,10 @@ export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Pro
 
     let errMsg = `HTTP ${String(r.status)}`;
     let reason: string | undefined;
+    let body: unknown;
     try {
       const d: unknown = await r.json();
+      body = d;
       if (hasErrorString(d)) {
         errMsg = d.error;
       }
@@ -274,9 +277,8 @@ export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Pro
     } catch {
       /* non-JSON */
     }
-    // No failure toast for ANY 409: a plain one is a queue signal the caller
-    // converts to a steer, and a "starting" one IS a failure whose surface is
-    // the send-error face rather than a toast.
+    // No failure toast for ANY 409: its caller reads the reason, and a refusal's
+    // surface is the send-error face rather than a toast.
     const reportSendState = opts?.reportSendState ?? true;
     if (r.status !== 409 && reportSendState) {
       emitBus(BUS_COMMAND_FAILED, { chatID, chatName, message: errMsg });
@@ -286,6 +288,7 @@ export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Pro
       status: r.status,
       error: errMsg,
       ...(reason !== undefined ? { reason } : {}),
+      ...(body !== undefined ? { body } : {}),
     };
   } catch (e: unknown) {
     const err = e instanceof Error ? e : null;

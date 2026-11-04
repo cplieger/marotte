@@ -2,7 +2,7 @@
 // delegate's own entries.
 
 import type { Entry } from "./types.js";
-import { effect, touch } from "@cplieger/reactive";
+import { effect, touch } from "@cplieger/ui";
 import { get, messagesVersionOf } from "./store.js";
 import { laneSig } from "./store-signals.js";
 import { payloadOf } from "./turns.js";

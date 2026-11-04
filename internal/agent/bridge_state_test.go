@@ -10,7 +10,7 @@ import (
 // A record still in its door holds no session: every forward refuses rather than dereferencing it, and the command
 // layer sees no bridge.
 func TestSharedBridge_BeforeItsDoorAttachesEveryForwardRefuses(t *testing.T) {
-	sb := &sharedBridge{state: bridgeStarting, settled: newSessionSettle()}
+	sb := newSharedBridge(admitAllLife{})
 	ctx := t.Context()
 	if _, err := sb.Call(ctx, marotte.MethodPrompt, nil); !errors.Is(err, marotte.ErrSessionClosed) {
 		t.Errorf("Call before attach = %v, want ErrSessionClosed", err)
@@ -30,7 +30,7 @@ func TestSharedBridge_BeforeItsDoorAttachesEveryForwardRefuses(t *testing.T) {
 
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
-	h.bridge.mgr.insert("c1", sb)
+	h.insertBridgeNow("c1", sb)
 	if got := (bridgeRole{coord: h.coord}).Bridge("c1"); got != nil {
 		t.Errorf("Bridge for a record in its door = %v, want nil", got)
 	}

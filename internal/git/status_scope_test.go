@@ -56,7 +56,7 @@ func TestHandleStatusAll_ScopedReadRescansOnlyTheOwningRepo(t *testing.T) {
 	workDir := t.TempDir()
 	scanned := mkRepo(t, workDir, "scanned")
 	skipped := mkRepo(t, workDir, "skipped")
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{
 		repoRow("scanned"), repoRow("skipped"), repoRow("seeded"),
 	}, time.Now())
@@ -92,7 +92,7 @@ func TestHandleStatusAll_AScopedReadAnswersWithItsOwnScan(t *testing.T) {
 	skipNoGit(t)
 	workDir := t.TempDir()
 	repo := mkRepo(t, workDir, "one")
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{repoRow("one")}, time.Now())
 	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("Setup: write: %v", err)
@@ -160,7 +160,7 @@ func TestHandleStatusAll_AScopedMergeDoesNotFreshenTheSnapshot(t *testing.T) {
 	skipNoGit(t)
 	workDir := t.TempDir()
 	repo := mkRepo(t, workDir, "one")
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	old := time.Now().Add(-time.Minute)
 	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{repoRow("one")}, old)
 	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("x"), 0o600); err != nil {
@@ -187,7 +187,7 @@ func TestHandleStatusAll_AScopedMergeDoesNotFreshenTheSnapshot(t *testing.T) {
 func TestHandleStatusAll_AnUnownedPathScansNothing(t *testing.T) {
 	workDir := t.TempDir()
 	mkRepo(t, workDir, "one")
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{repoRow("seeded")}, time.Now())
 
 	got := getStatusAll(t, h, "?paths=nowhere/f.txt,../outside.txt")
@@ -208,7 +208,7 @@ func TestHandleStatusAll_AColdScopedReadScansTheWholeTree(t *testing.T) {
 	workDir := t.TempDir()
 	mkRepo(t, workDir, "one")
 	mkRepo(t, workDir, "two")
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 
 	got := getStatusAll(t, h, "?paths=one/f.txt")
 
@@ -402,7 +402,7 @@ func TestStatusAll_ColdWaitCoversTheWholeScan(t *testing.T) {
 			"time out while the scan still has time left, and it then answers an empty "+
 			"list that renders as \"no repositories\"", statusColdWait, statusScanBudget)
 	}
-	h := NewHandler(t.TempDir())
+	h := newTestHandler(t, t.TempDir())
 	if got := h.coldWait(nil, false); got != statusColdWait {
 		t.Errorf("coldWait(cold, poll) = %v, want %v", got, statusColdWait)
 	}
@@ -420,7 +420,7 @@ func TestStatusScope(t *testing.T) {
 			t.Fatalf("Setup: mkdir %s: %v", name, err)
 		}
 	}
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	warm := &statusSnapshot{at: time.Now()}
 
 	cases := []struct {
@@ -511,7 +511,7 @@ func TestStatusScope_CapsThePathCount(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(workDir, "last", ".git"), 0o750); err != nil {
 		t.Fatalf("Setup: mkdir: %v", err)
 	}
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 
 	query := "?paths="
 	for range statusPathsMax {

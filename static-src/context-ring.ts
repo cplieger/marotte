@@ -1,7 +1,7 @@
 // How the 16px context indicator is drawn, DOM-free. The band and the colour ramp share one compaction point T (a
 // percentage of the window); `compactionPoint` is its owner.
 
-import { signal } from "@cplieger/reactive";
+import { signal } from "@cplieger/ui";
 
 /**
  * The percentage at which KAS summarizes. Used only for a chat whose session never loaded: session/new and the usage

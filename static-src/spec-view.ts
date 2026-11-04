@@ -1,7 +1,7 @@
 // The spec tab's page: one Kiro spec's documents, tasks.md as a live checklist.
 
-import { effect, el, signal, touch } from "@cplieger/reactive";
-import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
+import { effect, el, signal, touch } from "@cplieger/ui";
+import { createDisclosure } from "@cplieger/ui/disclosure";
 import { apiGetConditional } from "./api-client.js";
 import { BUS_USER_INPUT_ANSWERED, onBus, onSSE } from "./bus.js";
 import { sendPromptTo, type SendPromptResult } from "./chat-commands.js";
@@ -749,6 +749,9 @@ export function applyResult(ref: string, id: string, result: SendPromptResult): 
     case "gone":
       st.gone = true;
       st.spec = null;
+      break;
+    case "closed":
+      st.failure = "The chat was closed, so the prompt was not sent";
       break;
     case "failed":
       st.failure = "The prompt could not be sent";

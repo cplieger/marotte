@@ -107,9 +107,19 @@ describe("initKnowledge", () => {
   });
 
   // knowledge_indexing names a per-agent store this list cannot read.
-  it("subscribes to no SSE at all", () => {
+  it("subscribes to knowledge_changed alone", () => {
     initKnowledge();
-    expect(vi.mocked(onSSE)).not.toHaveBeenCalled();
+    expect(vi.mocked(onSSE).mock.calls.map((c) => c[0])).toEqual(["knowledge_changed"]);
+  });
+
+  // knowledge_changed follows a change kiro-cli applied, late or from another device.
+  it("refetches the list on knowledge_changed", async () => {
+    initKnowledge();
+    mockGet.mockResolvedValue({ contexts: [{ name: "landed", id: "a", item_count: 2 }] });
+    const handler = vi.mocked(onSSE).mock.calls.find((c) => c[0] === "knowledge_changed")?.[1];
+    (handler as ((chatID: string) => void) | undefined)?.("");
+    await flush();
+    expect(list().textContent).toContain("landed");
   });
 
   it("toggles the add form open on + click", () => {
@@ -228,7 +238,11 @@ describe("loadKnowledge render", () => {
 
 describe("add flow", () => {
   /** Only `.outcome` is read: `error: false` keeps the failure off the toasts and the outcome carries the message. */
-  function addAnswers(outcome: { status: string; value?: unknown; error?: { message: string } }) {
+  function addAnswers(outcome: {
+    status: string;
+    value?: unknown;
+    error?: { message: string; code?: string };
+  }) {
     mockAdd.mockReturnValue(
       Object.assign(
         Promise.resolve(outcome.status === "success" ? (outcome.value ?? null) : null),
@@ -277,6 +291,22 @@ describe("add flow", () => {
     expect(vi.mocked(showToast)).not.toHaveBeenCalled();
     expect((document.getElementById("knowledge-add-form") as HTMLFormElement).hidden).toBe(false);
   });
+
+  // The server's 504 still_applying, and the browser's own timeout: the add may still land.
+  it.each(["still_applying", "timeout"])(
+    "says the add is still running when it answers %s",
+    async (code) => {
+      initKnowledge();
+      addAnswers({ status: "error", error: { message: "kiro-cli has not answered yet", code } });
+      (document.getElementById("knowledge-add-form") as HTMLFormElement).hidden = false;
+
+      submit("docs");
+      await flush();
+
+      expect(errorText()).toBe('Still adding "docs"; the list updates when it lands');
+      expect((document.getElementById("knowledge-add-form") as HTMLFormElement).hidden).toBe(false);
+    },
+  );
 
   it("clears a previous failure when the next attempt succeeds", async () => {
     initKnowledge();

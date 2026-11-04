@@ -34,7 +34,7 @@ interface TestSession {
 }
 
 vi.mock("./store.js", async (importOriginal) => {
-  const { signal } = (await vi.importActual("@cplieger/reactive")) as { signal: SignalFactory };
+  const { signal } = (await vi.importActual("@cplieger/ui")) as { signal: SignalFactory };
   const activeSession = signal<TestSession | undefined>(undefined);
   return {
     ...(await importOriginal<typeof Store>()),

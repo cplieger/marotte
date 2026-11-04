@@ -1,7 +1,7 @@
 // The one agent engine's status (GET /api/engine and the engine_status event), its banner, the confirmed restart,
 // and the restart hints on the engine-wide Settings rows.
 
-import { signal } from "@cplieger/reactive";
+import { signal } from "@cplieger/ui";
 import { apiGetTyped } from "./api-client.js";
 import { GLOBAL_BANNER, clearBannerCodes, showBanner } from "./banner-stack.js";
 import { confirm } from "./confirm.js";
@@ -38,6 +38,10 @@ const ENGINE_ROWS: ReadonlyMap<string, EngineRow> = new Map([
   ["telemetry.enabled", { label: "kiro-cli telemetry", controlID: "flag-telemetry" }],
   ["engine_heap_mib", { label: "Agent engine memory limit", controlID: "engine-heap-mib" }],
   ["debug_logs", { label: "Debug logs", controlID: "flag-debug-logs" }],
+  [
+    "high_throughput_optimizations",
+    { label: "High throughput optimizations", controlID: "flag-high-throughput" },
+  ],
 ]);
 
 /** The Settings row a restart reason names, or null for a reason with no row (a kiro-cli version, an account). */
@@ -47,8 +51,8 @@ export function reasonRow(reason: string): EngineRow | null {
 
 const LIST = new Intl.ListFormat("en-US", { type: "conjunction" });
 
-/** The pending banner's sentence for `reasons`. */
-export function restartPendingText(reasons: readonly string[]): string {
+/** The pending banner's sentence for `reasons`; `configUnreadable` says the restart waits for config.json. */
+export function restartPendingText(reasons: readonly string[], configUnreadable = false): string {
   const version = reasons.includes(REASON_KIRO_CLI_VERSION);
   const account = reasons.includes(REASON_ACCOUNT_SWITCH);
   const settings = reasons.filter(
@@ -69,7 +73,12 @@ export function restartPendingText(reasons: readonly string[]): string {
   if (account) {
     sentences.push("The new Kiro account applies after the agent engine restarts.");
   }
-  sentences.push("It restarts by itself when nothing is running.");
+  sentences.push(
+    configUnreadable
+      ? "config.json cannot be read, so the restart waits. After you fix the file, choose Restart now, or send a " +
+          "message or change a setting and it restarts by itself when nothing is running."
+      : "It restarts by itself when nothing is running.",
+  );
   return sentences.join(" ");
 }
 
@@ -178,12 +187,19 @@ function paintBanner(s: EngineStatus | null): void {
     clearBannerCodes(GLOBAL_BANNER, [PENDING_CODE]);
     return;
   }
-  showBanner(GLOBAL_BANNER, PENDING_CODE, restartPendingText(s.restart.reasons), "info", false, {
-    label: "Restart now",
-    onClick: () => {
-      void requestRestart();
+  showBanner(
+    GLOBAL_BANNER,
+    PENDING_CODE,
+    restartPendingText(s.restart.reasons, s.restart.config_unreadable),
+    "info",
+    false,
+    {
+      label: "Restart now",
+      onClick: () => {
+        void requestRestart();
+      },
     },
-  });
+  );
 }
 
 const HINT_CLASS = "engine-restart-hint";

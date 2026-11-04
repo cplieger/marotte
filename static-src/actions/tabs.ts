@@ -10,16 +10,19 @@
 import { join as joinKey } from "@cplieger/keyenc";
 
 import {
+  ActionError,
   defineAction,
   retryNetwork,
   RETRY_STANDARD,
   IDEMPOTENCY_COMMAND_FIELD,
   type ActionErrorLike,
 } from "./index.js";
-import type { ActionDefinition } from "@cplieger/actions";
+import type { ActionDefinition } from "@cplieger/ui/actions";
 import { send as transportSend, type SendResult } from "../transport.js";
 import type { TabKind, TabSubject } from "../types.js";
 import { decodeTabSubject } from "../wire/decoders.gen.js";
+import type { CloseImpact } from "../wire/types.gen.js";
+import { impactRefusal } from "./close-impact.js";
 
 /** What `open_tab` needs about the thing being opened. `ref` is empty for a
  *  singleton, whose identity is its kind. */
@@ -42,9 +45,10 @@ interface OpenTabReply {
   version: number;
 }
 
-/** The sentence a refused open reads as. At the product limit the refusal has a remedy. */
+/** The sentence a refused open reads as. At the product limit the refusal has a remedy. Keyed on the server's
+ *  reason, never on 409 alone: a run being purged and an idempotent retry still in progress answer 409 too. */
 export function openTabRefusal(err: ActionErrorLike): string {
-  return err.status === 409
+  return err.code === "tabs_full"
     ? "Close a tab first, because this workspace has too many open."
     : "Could not open that tab";
 }
@@ -103,6 +107,9 @@ export const openTabQuietCommand = defineAction({
 interface CloseTabArgs {
   id: string;
   opID: string;
+  /** What the person's confirm named; the server refuses the close when it stops more. A remote
+   *  close or a singleton toggle sends none and is unchecked. */
+  impact?: CloseImpact;
 }
 
 /** How long a close may stay unanswered before the pending-op machine VERIFIES by re-listing
@@ -124,11 +131,11 @@ export const closeTabCommand = defineAction<CloseTabArgs, CloseTabReply | null>(
   retry: RETRY_STANDARD,
   timeout: CLOSE_CONFIRM_MS,
   dedupe: (args) => joinKey("tabs.close", args.id),
-  run: async ({ id, opID }, signal, ctx) => {
+  run: async ({ id, opID, impact }, signal, ctx) => {
     const r = await transportSend(
       {
         type: "close_tab",
-        payload: { id, op_id: opID },
+        payload: { id, op_id: opID, ...(impact === undefined ? {} : { impact }) },
         ...(ctx?.idempotencyKey === undefined
           ? {}
           : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
@@ -136,7 +143,7 @@ export const closeTabCommand = defineAction<CloseTabArgs, CloseTabReply | null>(
       { signal, reportSendState: false },
     );
     if (!r.ok) {
-      throw sendFailure(r, "close that tab");
+      throw impactRefusal(r, sendFailure(r, "close that tab"));
     }
     const body = asObject(r.body);
     const closed = body?.["closed"];
@@ -312,9 +319,13 @@ function numberField(body: Record<string, unknown>, key: string): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-/** A transport failure as the framework's error surface reads it (a thrown Error with `status`). */
-function sendFailure(r: SendResult, what: string): Error & { status?: number } {
-  const err: Error & { status?: number } = new Error(r.error ?? `Could not ${what}`);
-  err.status = r.status;
-  return err;
+/** A failed send as the framework's error surface reads it: its status, and as its code either the transport's
+ *  failure class (`timeout`, `network`, `cancelled`) or the server's machine reason, so a caller tells a timeout
+ *  from a refusal and one refusal from another. */
+function sendFailure(r: SendResult, what: string): ActionError {
+  const code = r.code ?? r.reason;
+  return new ActionError(r.error ?? `Could not ${what}`, {
+    status: r.status,
+    ...(code !== undefined ? { code } : {}),
+  });
 }

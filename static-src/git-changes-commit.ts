@@ -1,7 +1,7 @@
 import { apiGet } from "./api-client.js";
 import { commit as commitAction } from "./actions/git-changes.js";
 import type { ActionOutcome } from "./actions/index.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { isSafeURL } from "./url-safety.js";
 import type { GitRepoStatus } from "./git-types.js";
 

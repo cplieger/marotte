@@ -87,7 +87,7 @@ import {
 import { _resetForTest as resetFreshness, observeStamp } from "./subject-versions.js";
 import type { ChatHeader, Session, ToolCall, ToolProgressPayload } from "./types.js";
 import type { Entry, EntryToolCall, EntryToolResult, TurnOutcome } from "./wire/types.gen.js";
-import { effect } from "@cplieger/reactive";
+import { effect } from "@cplieger/ui";
 
 function makeSession(chatID: string): Session {
   return {

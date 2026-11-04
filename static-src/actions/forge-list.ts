@@ -1,8 +1,8 @@
 // The one action that reads GET /api/forges (forge-store.ts's request), and its wire decoder.
 
 import { apiAction } from "./index.js";
-import type { Decoder } from "../validators.js";
-import { asObject, decodeArray } from "../validators.js";
+import type { Decoder } from "../wire/validators.gen.js";
+import { asObject, decodeArray } from "../wire/validators.gen.js";
 import { decodeConfiguredForge } from "../wire/decoders.gen.js";
 import type { ConfiguredForge, ForgeKind } from "../wire/types.gen.js";
 

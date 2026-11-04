@@ -146,22 +146,31 @@ func (*Handler) coldWait(snap *statusSnapshot, doFetch bool) time.Duration {
 }
 
 // refreshStatus starts a scan for key unless one is in flight and returns the channel that closes
-// when it publishes. `only` names the repositories to scan (nil = all); a scoped result is merged.
-// The scan is detached from the request.
+// when it publishes, nil once Shutdown has begun. `only` names the repositories to scan (nil =
+// all); a scoped result is merged. The scan keeps the request's values but not its cancellation,
+// and Shutdown ends it.
 func (h *Handler) refreshStatus(r *http.Request, key string, doFetch bool, only map[string]struct{}) chan struct{} {
+	h.scanMu.Lock()
+	defer h.scanMu.Unlock()
+	// Checked before claim: a claim this call then could not run would hold the slot forever.
+	if h.lifetime.Err() != nil {
+		return nil
+	}
 	done, started := h.statusCache.claim(key, only)
 	if !started {
 		return done
 	}
 	parent := context.WithoutCancel(r.Context())
-	go func() {
+	h.scans.Go(func() {
 		for scope, run := only, true; run; {
 			ctx, cancel := context.WithTimeout(parent, statusScanBudget)
+			stop := context.AfterFunc(h.lifetime, cancel)
 			rows := h.scanRepos(ctx, doFetch, scope)
+			stop()
 			cancel()
 			scope, run = h.statusCache.finish(key, rows)
 		}
-	}()
+	})
 	return done
 }
 
@@ -265,7 +274,7 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 			webhttp.WriteJSON(w, ShowResponse{Absent: true})
 		case errors.Is(err, errBlobTooLarge):
 			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				ShowRefusal{Error: "revision too large to diff", Code: ShowTooLarge})
+				ShowRefusal{Error: "revision too large to diff", Code: showTooLarge})
 		default:
 			slog.Warn("git show failed", "repo", logsafe.Field(dir), "ref", ref, "path", logsafe.Field(file), "error", logsafe.Field(err.Error()), "out", logField(stderr))
 			writeGitError(w, kindShowFailed, clientBlock(stderr))
@@ -277,10 +286,10 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case bytes.IndexByte(blob[:min(len(blob), binarySniffN)], 0) >= 0:
 		webhttp.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
-			ShowRefusal{Error: "binary revision", Code: ShowBinary})
+			ShowRefusal{Error: "binary revision", Code: showBinary})
 	case !utf8.Valid(blob):
 		webhttp.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
-			ShowRefusal{Error: "revision is not UTF-8 text", Code: ShowNotUTF8})
+			ShowRefusal{Error: "revision is not UTF-8 text", Code: showNotUTF8})
 	default:
 		webhttp.WriteJSON(w, ShowResponse{Content: string(blob)})
 	}
@@ -297,12 +306,12 @@ type ShowResponse struct {
 type ShowRefusalCode string
 
 const (
-	// ShowTooLarge is a revision over the show cap, answered 413.
-	ShowTooLarge ShowRefusalCode = "too_large"
-	// ShowBinary is a revision with a NUL in its first 8 KiB, answered 415.
-	ShowBinary ShowRefusalCode = "binary"
-	// ShowNotUTF8 is a revision that is not valid UTF-8, answered 415.
-	ShowNotUTF8 ShowRefusalCode = "not_utf8"
+	// showTooLarge is a revision over the show cap, answered 413.
+	showTooLarge ShowRefusalCode = "too_large"
+	// showBinary is a revision with a NUL in its first 8 KiB, answered 415.
+	showBinary ShowRefusalCode = "binary"
+	// showNotUTF8 is a revision that is not valid UTF-8, answered 415.
+	showNotUTF8 ShowRefusalCode = "not_utf8"
 )
 
 // ShowRefusal is a refused GET /api/git/show's body; it carries no content.

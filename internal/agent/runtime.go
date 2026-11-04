@@ -198,6 +198,9 @@ func (lt *lifetime) Draining() bool {
 	return lt.draining.Load()
 }
 
+// GoUnlessDraining is goUnlessDraining for the command layer's background work.
+func (lt *lifetime) GoUnlessDraining(fn func()) bool { return lt.goUnlessDraining(fn) }
+
 type bridges struct {
 	mgr *bridgeManager
 }
@@ -215,7 +218,7 @@ type bus struct {
 	// stageStatusDesc records a declared description on the open turn, for the agent_finished push.
 	stageStatusDesc func(marotte.ChatID, string)
 	// retractPush drops a held push whose ask was settled (bridgeCoordinator.RetractPush).
-	retractPush func(marotte.PushSubject)
+	retractPush func(subj marotte.PushSubject, ask string)
 	// legacyConnects and v3Connects count connects by wire generation; a legacy one (no SSE-Wire header) is an
 	// old bundle still running. Observability only.
 	legacyConnects atomic.Uint64
@@ -227,6 +230,8 @@ type bus struct {
 // Runtime is the central coordinator.
 type Runtime struct {
 	steerQueue steerQueue
+	// teardownHook runs between cleanupChatState's steps, so a test can park a teardown; nil in production.
+	teardownHook atomic.Pointer[func(step string)]
 
 	push      pushService
 	chatStore chatRecords
@@ -312,6 +317,8 @@ type Runtime struct {
 	acpArgs     []string
 	sessionSeen sessionBaseline
 	processLive processLive
+	// configDoc owns whether config.json reads and the values every spawn, restart decision and session door read.
+	configDoc lastReadable
 	// bootPass guards the boot observer pass (onEngineReady).
 	bootPass sync.Once
 	// sessionExportMu serializes session exports: KAS writes each to a fixed file name per process.
@@ -508,6 +515,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.engine = newEngineOwner(source, lc, &hooks)
 	runs.engine, runs.router = h.engine, h.router
 	runs.answerEarly = h.answerEarly
+	runs.doorSettings = h.readSessionSettings
 	bridgeP.mgr.closeSession = h.closeSession
 	runs.mutations.covered = func(wf string) bool { return runs.bounded(wf) || (runs.log != nil && runs.log.hasOpen(wf)) }
 	runs.mutations.executing = runs.bounded
@@ -547,7 +555,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.coord.reconcileSessions = func(ctx context.Context, deadline time.Time) {
 		h.reconcileSessionSettings(ctx, "session settings", deadline)
 	}
-	h.coord.autoCompact = newAutoCompactor(h.coord)
+	h.coord.autoCompact = newAutoCompactor(h.coord, h.compactionPolicy)
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
 	sseP.retractPush = h.coord.retractPush
 	// Built here because coord and the ignore matcher do not exist at the literal. Workspace-global: the
@@ -930,11 +938,21 @@ func (rt *Runtime) sweepSessionsOnce() {
 func (rt *Runtime) liveSessionIDs() []string {
 	var ids []string
 	for _, sb := range rt.bridge.mgr.all() {
-		if cur := sb.current(); cur != nil {
-			if id := string(cur.SessionID()); id != "" {
-				ids = append(ids, id)
-			}
+		if id := string(sb.SessionID()); id != "" {
+			ids = append(ids, id)
 		}
 	}
 	return ids
+}
+
+// configDocument is every config.json value a spawn, a restart decision or a session door reads, through the configDoc
+// owner. While config.json cannot be read it answers the last readable generation, or the defaults when none was.
+func (rt *Runtime) configDocument(ctx context.Context) (configDocument, docSource) {
+	return rt.configDoc.read(ctx, rt.lifecycle.configDir, readConfigDocument)
+}
+
+// compactionPolicy is marotte's own compactor's switch and point, from the same document a session door reads.
+func (rt *Runtime) compactionPolicy(ctx context.Context) (enabled bool, pct int) {
+	doc, _ := rt.configDocument(ctx)
+	return doc.session.autoCompactEnabled, doc.session.autoCompactPct
 }

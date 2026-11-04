@@ -95,7 +95,7 @@ func TestRead_OverTheCapIsTheTooLargeRefusal(t *testing.T) {
 	}
 	rec := getReq(t, h, "/api/file?path="+prefix+"/big.txt")
 	got := decodeJSON[FileRefusal](t, rec.Body.Bytes())
-	if rec.Code != http.StatusRequestEntityTooLarge || got.Code != RefusalTooLarge || got.Error != tooLargeSentence {
+	if rec.Code != http.StatusRequestEntityTooLarge || got.Code != refusalTooLarge || got.Error != tooLargeSentence {
 		t.Errorf("GET = %d %+v, want 413 too_large with %q", rec.Code, got, tooLargeSentence)
 	}
 }
@@ -174,7 +174,7 @@ func TestRead_HoldsTheFileStillOrRefuses(t *testing.T) {
 		setBeforeRead(t, func(*os.File) { appendTo(t, target, "more\n") })
 		rec := getReq(t, h, "/api/file?path="+prefix+"/log.txt")
 		got := decodeJSON[FileRefusal](t, rec.Body.Bytes())
-		if rec.Code != http.StatusConflict || got.Code != RefusalChanged {
+		if rec.Code != http.StatusConflict || got.Code != refusalChanged {
 			t.Errorf("GET = %d %+v, want 409 changed", rec.Code, got)
 		}
 	})

@@ -1,7 +1,7 @@
 // Renders command output into a <pre>: plain text plus the style spans the server parsed off it
 // (internal/ansitext).
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import type { TextSpan } from "./types.js";
 
 // Attribute bits, matching internal/ansitext and web-terminal-engine's WireRun.a so this app has

@@ -44,7 +44,9 @@ type Handler func(ctx context.Context, cmd *marotte.ClientCommand) (any, error)
 // statuses in different places (e.g. ErrChatNotFound is 409 from a prompt
 // but 404 from set_mode).
 type statusError struct {
-	err    error
+	err error
+	// impact is what a refused close stops, which its confirmation did not cover; nil elsewhere.
+	impact *marotte.CloseImpact
 	reason string
 	// currentHash is the hash a refused compare-and-swap found instead of the
 	// one that was claimed; empty elsewhere.
@@ -76,6 +78,12 @@ func StatusErrorReason(code int, reason string, err error) error {
 // so the client's confirmation can say which work the cut stops.
 func statusErrorRuns(code int, reason string, runs []LiveRunRef, err error) error {
 	return &statusError{code: code, reason: reason, runs: runs, err: err}
+}
+
+// statusErrorImpact is StatusErrorReason plus the server's impact a refused close answers, so the page can confirm
+// again on what the close would stop.
+func statusErrorImpact(code int, reason string, impact *marotte.CloseImpact, err error) error {
+	return &statusError{code: code, reason: reason, impact: impact, err: err}
 }
 
 // statusErrorCurrentHash is StatusErrorReason plus the hash a refused
@@ -124,7 +132,9 @@ type Dispatcher struct {
 	prompts *promptRoles
 	// merges is bound at registration, like prompts.
 	merges *tangentMerges
-	mu     sync.RWMutex
+	// changes is bound at registration, like prompts.
+	changes detachedChange
+	mu      sync.RWMutex
 }
 
 // New constructs a Dispatcher. A handler's own collaborators arrive at
@@ -133,11 +143,17 @@ func New() *Dispatcher {
 	return &Dispatcher{handlers: make(map[marotte.CommandType]Handler)}
 }
 
-// Register adds a handler for the given command type.
-func (d *Dispatcher) Register(t marotte.CommandType, h Handler) {
+// register adds a handler for the given command type.
+func (d *Dispatcher) register(t marotte.CommandType, h Handler) {
 	d.mu.Lock()
 	d.handlers[t] = h
 	d.mu.Unlock()
+}
+
+// RegisterChange adds a handler whose engine call can outlast its request: its request answers 504
+// still_applying once the answer budget RegisterDefaults bound passes, and the change lands when kiro-cli answers.
+func (d *Dispatcher) RegisterChange(t marotte.CommandType, h Handler) {
+	d.register(t, d.changes.wrap(t, h))
 }
 
 func (d *Dispatcher) handler(t marotte.CommandType) (Handler, bool) {
@@ -149,13 +165,13 @@ func (d *Dispatcher) handler(t marotte.CommandType) (Handler, bool) {
 
 // Run applies cmd through its registered handler in process, for a command that applies another's
 // effect as part of its own: no envelope, no idempotency replay, no answer discharge, and the
-// handler's response is dropped.
+// handler's response is dropped. A change runs inline: its outcome is the caller's.
 func (d *Dispatcher) Run(ctx context.Context, cmd *marotte.ClientCommand) error {
 	fn, ok := d.handler(cmd.Type)
 	if !ok {
 		return StatusError(http.StatusInternalServerError, errors.New("unknown command: "+string(cmd.Type)))
 	}
-	_, err := fn(ctx, cmd)
+	_, err := fn(inProcess(ctx), cmd)
 	return err
 }
 
@@ -179,7 +195,9 @@ func (d *Dispatcher) DrainAfterClose(ctx context.Context, chatID marotte.ChatID,
 }
 
 type errorResponse struct {
-	Error string `json:"error"`
+	// Impact is what a close refused with close_impact_changed would stop. See statusErrorImpact.
+	Impact *marotte.CloseImpact `json:"impact,omitempty"`
+	Error  string               `json:"error"`
 	// Reason is the machine-readable refusal class, additive; existing
 	// clients ignore it. See StatusErrorReason.
 	Reason string `json:"reason,omitempty"`
@@ -202,6 +220,7 @@ func writeError(w http.ResponseWriter, err error) {
 	if se, ok := errors.AsType[*statusError](err); ok {
 		resp.Reason = se.reason
 		resp.Runs = se.runs
+		resp.Impact = se.impact
 		resp.CurrentHash = se.currentHash
 	}
 	webhttp.WriteJSONStatus(w, statusOf(err), resp)

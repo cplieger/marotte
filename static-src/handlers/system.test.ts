@@ -26,7 +26,7 @@ import {
 import { settingsPayload } from "../__test-helpers__/settings.js";
 import { liveRunsForChat, registerLiveRunObserver, runChatID } from "../run-store.js";
 import type { Session } from "../types.js";
-import type { Entry, RunAsk, RunAsksPayload } from "../wire/types.gen.js";
+import type { Entry, RunAsk, RunAsksPayload, SteerQueuedPayload } from "../wire/types.gen.js";
 import { _resetRunAsksForTest, runAskPosition, runAsksOf } from "../run-asks.js";
 import { pushTargetTag, runAskTarget } from "../push-subject.js";
 // The two modules the factories below spread rather than replace. Type-only, so neither
@@ -164,7 +164,6 @@ vi.mock("../bus.js", async (importOriginal) => {
     // Undefined: present only so real-ESM linking succeeds.
     emitBus: undefined,
     lookupSSEDecoder: real.lookupSSEDecoder,
-    registerSSEDecoder: real.registerSSEDecoder,
     decodeEnvelope: real.decodeEnvelope,
     dispatch: vi.fn((evt: unknown) => {
       dispatched.push(evt);
@@ -250,6 +249,10 @@ function runAsksFrame(
 /** The tag a step question's banner carries, as the server's subject names it. */
 function askTag(workflowID: string, a: RunAsk): string {
   return pushTargetTag(runAskTarget(runAskPosition(workflowID, a)));
+}
+
+function steerRow(id: string): SteerQueuedPayload {
+  return { steer_id: id, text: "t", origin: "user", state: "queued" };
 }
 
 /** Open a turn in `chatID`'s resident log. LIVENESS IS THE LOG, so this is how a case
@@ -747,8 +750,8 @@ describe("pending_snapshot handler", () => {
     setSessions([makeSession("a")]);
     fireSSE("pending_snapshot", "", {
       items: [
-        { type: "permission_needed", chat_id: "a", payload: { request_id: 1 } },
-        { type: "steer_queued", chat_id: "a", payload: { id: "s1", text: "t" } },
+        { type: "permission_needed", chat_id: "a", payload: { request_id: 1, options: [] } },
+        { type: "steer_queued", chat_id: "a", payload: steerRow("s1") },
       ],
     });
     expect(dispatched.map((e) => (e as { type: string }).type)).toEqual([
@@ -761,7 +764,7 @@ describe("pending_snapshot handler", () => {
   it("drops one malformed item and keeps dispatching the rest", () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     fireSSE("pending_snapshot", "", {
-      items: [{ chat_id: "a" }, { type: "steer_queued", chat_id: "a", payload: { id: "s1" } }],
+      items: [{ chat_id: "a" }, { type: "steer_queued", chat_id: "a", payload: steerRow("s1") }],
     });
     expect(dispatched.map((e) => (e as { type: string }).type)).toEqual(["steer_queued"]);
     expect(errors).toHaveBeenCalledTimes(1);
@@ -800,7 +803,7 @@ describe("pending_snapshot handler", () => {
       });
       fireSSE("pending_snapshot", "", {
         items: [
-          { type: "permission_needed", chat_id: "b", payload: { request_id: 1 } },
+          { type: "permission_needed", chat_id: "b", payload: { request_id: 1, options: [] } },
           { type: "run_asks", chat_id: "c", payload: runAsksFrame("wf_2", [waiting], "c") },
         ],
       });
@@ -834,7 +837,7 @@ describe("pending_snapshot handler", () => {
           {
             type: "permission_needed",
             chat_id: "a",
-            payload: { request_id: 1, run_id: "wf_3", node_id: "review" },
+            payload: { request_id: 1, run_id: "wf_3", node_id: "review", options: [] },
           },
         ],
       });
@@ -1114,7 +1117,7 @@ describe("engine_status", () => {
       since: "2026-10-16T00:00:00Z",
       state: "restarting",
       busy: { turns: [], runs: [] },
-      restart: { pending: false, reasons: [] },
+      restart: { pending: false, reasons: [], config_unreadable: false },
     };
     fireSSE("engine_status", "", status);
     expect(mockAdoptEngineStatus).toHaveBeenCalledWith(status);

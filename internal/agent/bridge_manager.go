@@ -18,11 +18,13 @@ type bridgeManager struct {
 	revertStarting func(chatID marotte.ChatID, session string)
 	// closeSession ends a session the registry let go of, off the caller's path.
 	closeSession func(engineSession)
-	mu           sync.Mutex
+	// gates is the turn registry's life gate, which every door insert checks.
+	gates *chatGates
+	mu    sync.Mutex
 }
 
 func newBridgeManager() *bridgeManager {
-	return &bridgeManager{bridges: make(map[marotte.ChatID]*sharedBridge)}
+	return &bridgeManager{bridges: make(map[marotte.ChatID]*sharedBridge), gates: newChatGates()}
 }
 
 func (bm *bridgeManager) get(chatID marotte.ChatID) *sharedBridge {
@@ -31,18 +33,41 @@ func (bm *bridgeManager) get(chatID marotte.ChatID) *sharedBridge {
 	return bm.bridges[chatID]
 }
 
-// orInsert returns chatID's entry, or creates and inserts one with no session yet, returning (new, false). The
-// caller's own serialization lets it be returned unlocked.
-func (bm *bridgeManager) orInsert(chatID marotte.ChatID) (sb *sharedBridge, existed bool) {
+// orInsertAt returns chatID's entry for a door whose intent began at stamp, or creates and inserts one with no
+// session yet for life, returning (new, false). A close committed since stamp answers
+// marotte.ErrChatClosedDuringCall and a held one the channel to wait on, both inserting nothing, so a reopen never
+// attaches to a dying generation. The caller's own serialization lets the entry be returned unlocked.
+func (bm *bridgeManager) orInsertAt(
+	chatID marotte.ChatID, stamp uint64, life leaseLife,
+) (sb *sharedBridge, existed bool, wait <-chan struct{}, err error) {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	switch v, idle := bm.gates.admit(chatID, stamp); v {
+	case gateClosedSince:
+		return nil, false, nil, marotte.ErrChatClosedDuringCall
+	case gateWait:
+		return nil, false, idle, nil
+	case gateAdmitted:
+	}
+	if existing, ok := bm.bridges[chatID]; ok {
+		return existing, true, nil, nil
+	}
+	sb = newSharedBridge(life)
+	if notify := bm.revertStarting; notify != nil {
+		sb.revertStarting = func(session string) { notify(chatID, session) }
+	}
+	bm.bridges[chatID] = sb
+	return sb, false, nil, nil
+}
+
+// orInsertRun is orInsertAt for a run host's entry, which no close holds.
+func (bm *bridgeManager) orInsertRun(chatID marotte.ChatID, life leaseLife) (sb *sharedBridge, existed bool) {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	if existing, ok := bm.bridges[chatID]; ok {
 		return existing, true
 	}
-	sb = &sharedBridge{state: bridgeStarting, settled: newSessionSettle()}
-	if notify := bm.revertStarting; notify != nil {
-		sb.revertStarting = func(session string) { notify(chatID, session) }
-	}
+	sb = newSharedBridge(life)
 	bm.bridges[chatID] = sb
 	return sb, false
 }
@@ -99,19 +124,13 @@ func (bm *bridgeManager) carries(chatID marotte.ChatID, origin acpResponder) boo
 		return false
 	}
 	sb := bm.get(chatID)
-	if sb == nil {
-		return false
-	}
-	cur := sb.current()
-	return cur != nil && acpResponder(cur) == origin
+	return sb != nil && sb.holds(origin)
 }
 
-// close removes chatID's entry and closes its session.
+// close removes chatID's entry and releases its session (closeSession).
 func (bm *bridgeManager) close(chatID marotte.ChatID) {
 	if sb := bm.remove(chatID); sb != nil {
-		if s := sb.current(); s != nil {
-			bm.closeSession(s)
-		}
+		sb.closeOwned(bm.closeSession)
 	}
 }
 
@@ -156,19 +175,22 @@ func (bm *bridgeManager) hostsRun(chatID marotte.ChatID) bool {
 }
 
 // reloadClaim is claimReload's answer. busy is the claim another reload or release holds, which the caller waits
-// out before it asks again; otherwise due says whether the caller now owns session's close.
+// out before it asks again; otherwise due says whether the caller now owns the session's close, and dead whether
+// the session was already gone.
 type reloadClaim struct {
-	session engineSession
-	busy    <-chan struct{}
-	due     bool
+	busy <-chan struct{}
+	due  bool
+	dead bool
 	// stale: sb is no longer registered.
 	stale bool
 }
 
-// claimReload reports whether sb's session is due its reload: marked (or no longer open), its turn released the
-// prompt slot and its hosted runs closed their last step turn. A claimed entry stays registered while the caller
-// closes its session, and the forward's end leaves its removal to finishReload.
-func (bm *bridgeManager) claimReload(chatID marotte.ChatID, sb *sharedBridge) reloadClaim {
+// claimReload reports whether sb's session is due its reload: marked (or no longer open), not held, its turn released
+// the prompt slot and its hosted runs closed their last step turn. held is true while config.json cannot be read: a
+// marked open session keeps its session and its mark, and reloads at its first idle open once it reads again. A
+// claimed entry stays registered while the caller closes its session, and the forward's end leaves its removal to
+// finishReload.
+func (bm *bridgeManager) claimReload(chatID marotte.ChatID, sb *sharedBridge, held bool) reloadClaim {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	if bm.bridges[chatID] != sb {
@@ -179,30 +201,30 @@ func (bm *bridgeManager) claimReload(chatID marotte.ChatID, sb *sharedBridge) re
 	if sb.closeClaim != nil {
 		return reloadClaim{busy: sb.closeClaim}
 	}
-	dead := sb.bridge == nil || !sb.bridge.Open()
-	if !dead && (!sb.reload || sb.state != bridgeIdle || bm.hostsRun(chatID)) {
+	dead := sb.sessionDeadLocked()
+	if !dead && (!sb.reload || held || sb.state != bridgeIdle || bm.hostsRun(chatID)) {
 		return reloadClaim{}
 	}
 	sb.closeClaim = make(chan struct{})
-	return reloadClaim{session: sb.bridge, due: true}
+	return reloadClaim{due: true, dead: dead}
 }
 
 // claimRelease claims chatID's chat session for the release check: registered, open, idle, hosting no run step and
 // not already claimed. The caller ends the claim with finishReload, as a reload does.
-func (bm *bridgeManager) claimRelease(chatID marotte.ChatID) (*sharedBridge, engineSession, bool) {
+func (bm *bridgeManager) claimRelease(chatID marotte.ChatID) (*sharedBridge, bool) {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	sb := bm.bridges[chatID]
 	if sb == nil {
-		return nil, nil, false
+		return nil, false
 	}
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
-	if sb.closeClaim != nil || sb.bridge == nil || !sb.bridge.Open() || sb.state != bridgeIdle || bm.hostsRun(chatID) {
-		return nil, nil, false
+	if sb.closeClaim != nil || sb.sessionDeadLocked() || sb.state != bridgeIdle || bm.hostsRun(chatID) {
+		return nil, false
 	}
 	sb.closeClaim = make(chan struct{})
-	return sb, sb.bridge, true
+	return sb, true
 }
 
 // finishReload ends a claimed reload: a closed session's entry leaves the registry, so the next open loads the

@@ -101,7 +101,7 @@ vi.mock("./run-chat-steps.js", async (importOriginal) => ({
 }));
 
 vi.mock("./run-step-transcript.js", async (importOriginal) => {
-  const { signal } = await import("@cplieger/reactive");
+  const { signal } = await import("@cplieger/ui");
   return {
     ...(await importOriginal<typeof RunStepTranscript>()),
     stepTranscriptVersion: signal(0),
@@ -115,7 +115,6 @@ vi.mock("./run-step-transcript.js", async (importOriginal) => {
 import { openRunView, refreshRun, showRun } from "./run-view.js";
 import { runPendingAsks } from "./decision-dock.js";
 import { apiGetOrError } from "./api-client.js";
-import { stepTranscriptVersion } from "./run-step-transcript.js";
 import { beginStepMessage, recordStepSteerQueued } from "./run-step-steers.js";
 import { invalidateRun } from "./run-store.js";
 
@@ -213,8 +212,6 @@ describe("run view composer target", () => {
       throw new Error("the opener did not open a tab");
     }
     showRun(tab);
-    // Stands in for `rerenderDocks`, which re-runs the view effect for the newly shown run.
-    stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
     refreshRun(tab);
     await vi.waitFor(() => {
       expect(document.querySelector(".ev-d-title")?.textContent).toBe("review");
@@ -276,7 +273,6 @@ describe("run view composer target", () => {
       openRunView(ASK, "nightly");
       const tab = m.opened.at(-1)!;
       showRun(tab);
-      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
       refreshRun(tab);
       await vi.waitFor(() => {
         expect(document.querySelector("#run-exec-dock .ev-dock-ask-q")?.textContent).toBe(
@@ -330,7 +326,6 @@ describe("run view composer target", () => {
       );
       openRunView(ID, "nightly");
       showRun(m.opened.at(-1) ?? "");
-      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
       refreshRun(ID);
       await vi.waitFor(() => {
         expect(composerInput().placeholder).toBe("Message review\u2026");
@@ -361,26 +356,16 @@ describe("run view composer target", () => {
       expect(m.dispatched.filter((d) => d.startsWith("message:"))).toEqual([]);
     });
 
-    it("ignores a pick on the previous run's page while the new run loads", async () => {
+    it("takes the previous run's page down as soon as the new run is shown", async () => {
       await showLoaded();
       openRunView(LOADING, "other");
       showRun(LOADING);
-      pick(ID, "review");
-      // Still the loading run's own answer, not one built from the previous run's step.
-      expect(composerInput().placeholder).toBe("This run has no step to message yet");
-    });
-
-    it("takes the previous run's page down once the new run paints", async () => {
-      await showLoaded();
-      openRunView(LOADING, "other");
-      showRun(LOADING);
-      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
-      await vi.waitFor(() => {
-        expect(document.querySelector("[id='run-body'] .list-empty")?.textContent).toBe(
-          "Loading run\u2026",
-        );
-      });
+      expect(document.querySelector("[id='run-body'] .list-empty")?.textContent).toBe(
+        "Loading run\u2026",
+      );
       expect(document.querySelector(".ev-page")).toBeNull();
+      // No step of the previous run is left to pick.
+      expect(composerInput().placeholder).toBe("This run has no step to message yet");
     });
   });
 });
@@ -407,7 +392,6 @@ describe("run view refused Edit", () => {
     } satisfies RunInspectReply;
     openRunView(ID, "nightly");
     showRun(m.opened.at(-1) ?? "");
-    stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
     refreshRun(ID);
     await vi.waitFor(() => {
       pick(ID, "review");

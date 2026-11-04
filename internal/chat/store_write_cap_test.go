@@ -69,7 +69,7 @@ func logSize(t *testing.T, s *Store) int64 {
 	if err != nil {
 		t.Fatalf("pathFor: %v", err)
 	}
-	info, err := os.Stat(filepath.Join(dir, entriesFileName))
+	info, err := os.Stat(filepath.Join(dir, EntriesFileName))
 	if err != nil {
 		t.Fatalf("stat the log: %v", err)
 	}

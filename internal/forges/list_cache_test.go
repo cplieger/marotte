@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi"
-	"golang.org/x/sync/semaphore"
 )
 
 // countingFill records how often the cache reached through it, and answers a
@@ -44,7 +43,7 @@ func (f *countingFill) count() int {
 }
 
 func newTestCache(ttl time.Duration) *listCache[[]string] {
-	return newListCache[[]string](ttl, semaphore.NewWeighted(maxListFills))
+	return newListCache[[]string](ttl, newFillPool(maxListFills))
 }
 
 const testForge = "github:github.com"
@@ -370,7 +369,7 @@ func TestListCache_CancelledReadDoesNotBlock(t *testing.T) {
 func TestListCache_FillsAreBounded(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const limit = 3
-		c := newListCache[[]string](time.Hour, semaphore.NewWeighted(limit))
+		c := newListCache[[]string](time.Hour, newFillPool(limit))
 		release := make(chan struct{})
 		var live, peak atomic.Int64
 		fill := func(context.Context) ([]string, error) {

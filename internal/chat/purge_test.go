@@ -5,17 +5,26 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat/archive"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// purgeExpired runs one synchronous retention pass over the store.
+// purgeExpired runs one synchronous retention pass over the store, ending each teardown as composition's OnPurge does.
 func purgeExpired(ctx context.Context, s *Store, maxAge time.Duration) {
-	s.archiveSvc().Purge(ctx, maxAge)
+	archive.New(s, s.EndTeardown).Purge(ctx, maxAge)
+}
+
+func newScheduler(t *testing.T, s *Store, retention func() time.Duration) *archive.PurgeScheduler {
+	t.Helper()
+	p, err := NewPurgeScheduler(s, PurgeConfig{Retention: retention, OnPurge: s.EndTeardown})
+	if err != nil {
+		t.Fatalf("NewPurgeScheduler: %v", err)
+	}
+	return p
 }
 
 // waitForRetentionConsults polls until the scheduler consulted retention n times, proof a pass ran; a negative
@@ -62,7 +71,7 @@ func TestPurgeScheduler_TriggerWithZeroRetentionIsNoOp(t *testing.T) {
 		calls.Add(1)
 		return 0
 	}
-	p := NewPurgeScheduler(s, retention)
+	p := newScheduler(t, s, retention)
 	p.Start(t.Context())
 	defer p.Stop()
 
@@ -76,7 +85,7 @@ func TestPurgeScheduler_TriggerRunsPurgeWhenRetentionPositive(t *testing.T) {
 	chatPath := filepath.Join(s.dir, "c1", headerFileName)
 	ageChat(t, s, "c1", 48*time.Hour)
 
-	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
+	p := newScheduler(t, s, func() time.Duration { return 24 * time.Hour })
 	p.Start(t.Context())
 	defer p.Stop()
 
@@ -92,7 +101,7 @@ func TestPurgeScheduler_TriggerSchedulesForRemainingEntry(t *testing.T) {
 	chatPath := filepath.Join(s.dir, "c1", headerFileName)
 
 	retention, calls := countingRetention(24 * time.Hour)
-	p := NewPurgeScheduler(s, retention)
+	p := newScheduler(t, s, retention)
 	p.Start(t.Context())
 	defer p.Stop()
 
@@ -107,7 +116,7 @@ func TestPurgeScheduler_TriggerSchedulesForRemainingEntry(t *testing.T) {
 func TestPurgeScheduler_TriggerWithNoChatsIsNoOp(t *testing.T) {
 	s, _ := newTestStore(t)
 	retention, calls := countingRetention(24 * time.Hour)
-	p := NewPurgeScheduler(s, retention)
+	p := newScheduler(t, s, retention)
 	p.Start(t.Context())
 	defer p.Stop()
 
@@ -122,7 +131,7 @@ func TestPurgeScheduler_StopPreventsFutureTriggers(t *testing.T) {
 	chatPath := filepath.Join(s.dir, "c1", headerFileName)
 	ageChat(t, s, "c1", 48*time.Hour)
 
-	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
+	p := newScheduler(t, s, func() time.Duration { return 24 * time.Hour })
 	// Stop before Start: the goroutine never runs.
 	p.Stop()
 	p.Trigger()
@@ -141,7 +150,7 @@ func TestPurgeScheduler_StartInvokesTrigger(t *testing.T) {
 	chatPath := filepath.Join(s.dir, "c1", headerFileName)
 	ageChat(t, s, "c1", 48*time.Hour)
 
-	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
+	p := newScheduler(t, s, func() time.Duration { return 24 * time.Hour })
 	defer p.Stop()
 
 	p.Start(t.Context())
@@ -157,7 +166,7 @@ func TestPurgeScheduler_CollapsesConcurrentTriggers(t *testing.T) {
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	retention, calls := countingRetention(24 * time.Hour)
-	p := NewPurgeScheduler(s, retention)
+	p := newScheduler(t, s, retention)
 	p.Start(t.Context())
 	defer p.Stop()
 
@@ -180,7 +189,7 @@ func TestPurgeScheduler_ShortRetentionPurgesExpiredAndKeepsFresh(t *testing.T) {
 	_, _ = s.Mutate(t.Context(), "c2", func(c *marotte.Chat, _ bool) bool { c.Name = "B"; return true })
 	c2Path := filepath.Join(s.dir, "c2", headerFileName)
 
-	p := NewPurgeScheduler(s, func() time.Duration { return time.Second })
+	p := newScheduler(t, s, func() time.Duration { return time.Second })
 	p.Start(t.Context())
 	defer p.Stop()
 
@@ -206,7 +215,7 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		ageChat(t, s, "old1", 72*time.Hour)
 
 		retention := 24 * time.Hour
-		p := NewPurgeScheduler(s, func() time.Duration { return retention })
+		p := newScheduler(t, s, func() time.Duration { return retention })
 		p.Start(t.Context())
 		defer p.Stop()
 
@@ -222,7 +231,7 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		chatPath := filepath.Join(s.dir, "young1", headerFileName)
 
 		retention, calls := countingRetention(48 * time.Hour)
-		p := NewPurgeScheduler(s, retention)
+		p := newScheduler(t, s, retention)
 		p.Start(t.Context())
 		defer p.Stop()
 
@@ -242,7 +251,7 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		ageChat(t, s, "stop1", 72*time.Hour)
 
 		retention := 24 * time.Hour
-		p := NewPurgeScheduler(s, func() time.Duration { return retention })
+		p := newScheduler(t, s, func() time.Duration { return retention })
 		// Stop before Start: the goroutine never runs.
 		p.Stop()
 		p.Start(t.Context()) // Start after Stop should be a no-op.
@@ -264,7 +273,7 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		ageChat(t, s, "dup1", 72*time.Hour)
 
 		retention, calls := countingRetention(24 * time.Hour)
-		p := NewPurgeScheduler(s, retention)
+		p := newScheduler(t, s, retention)
 		p.Start(t.Context())
 		defer p.Stop()
 
@@ -281,8 +290,7 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 	})
 }
 
-// TestPurge_AgesFromUpdatedAtNotMtime pins that mtime moves without activity, so aging from it would never collect; UpdatedAt
-// is the activity record, mtime only the fallback for an unreadable chat.
+// TestPurge_AgesFromUpdatedAtNotMtime pins that mtime moves without activity, so aging from it would never collect.
 func TestPurge_AgesFromUpdatedAtNotMtime(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := t.Context()
@@ -310,44 +318,24 @@ func TestPurge_AgesFromUpdatedAtNotMtime(t *testing.T) {
 	}
 }
 
-// The store passes its purge hooks into the retention service; an unpassed hook would leave purged chats' sessions
-// unreaped and delete chats open in a live session.
-func TestPurgeExpired_WiresTheStoresHooksIntoTheService(t *testing.T) {
-	t.Run("on_purge_fires_for_a_purged_chat", func(t *testing.T) {
-		s, _ := newTestStore(t)
-		var mu sync.Mutex
-		var purged []marotte.ChatID
-		WithOnPurge(func(id marotte.ChatID, _ []string) {
-			mu.Lock()
-			purged = append(purged, id)
-			mu.Unlock()
-		})(s)
-		ctx := t.Context()
-		_, _ = s.Mutate(ctx, "gone", func(c *marotte.Chat, _ bool) bool { c.Name = "G"; return true })
-		ageChat(t, s, "gone", 72*time.Hour)
-
-		purgeExpired(ctx, s, 24*time.Hour)
-
-		mu.Lock()
-		defer mu.Unlock()
-		if len(purged) != 1 || purged[0] != "gone" {
-			t.Errorf("onPurge fired for %v, want [gone]", purged)
-		}
-	})
-
-	t.Run("a_live_chat_is_never_purged", func(t *testing.T) {
-		s, _ := newTestStore(t)
-		WithLive(func(id marotte.ChatID) bool { return id == "live" })(s)
-		ctx := t.Context()
-		_, _ = s.Mutate(ctx, "live", func(c *marotte.Chat, _ bool) bool { c.Name = "L"; return true })
-		ageChat(t, s, "live", 72*time.Hour)
-
-		purgeExpired(ctx, s, 24*time.Hour)
-
-		if _, err := os.Stat(filepath.Join(s.dir, "live", headerFileName)); err != nil {
-			t.Errorf("a chat the live predicate claims is open was purged: %v", err)
-		}
-	})
+func TestNewPurgeScheduler_RefusesAMissingHook(t *testing.T) {
+	s, _ := newTestStore(t)
+	retention := func() time.Duration { return time.Hour }
+	onPurge := func(marotte.ChatID, []string) {}
+	cases := map[string]PurgeConfig{
+		"no_retention": {OnPurge: onPurge},
+		"no_on_purge":  {Retention: retention},
+	}
+	for name, cfg := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NewPurgeScheduler(s, cfg); !errors.Is(err, archive.ErrMissingHook) {
+				t.Errorf("NewPurgeScheduler = %v, want archive.ErrMissingHook", err)
+			}
+		})
+	}
+	if _, err := NewPurgeScheduler(s, PurgeConfig{Retention: retention, OnPurge: onPurge}); err != nil {
+		t.Errorf("NewPurgeScheduler with both hooks = %v, want nil", err)
+	}
 }
 
 func TestPurge_TombstonesChatID(t *testing.T) {
@@ -358,14 +346,7 @@ func TestPurge_TombstonesChatID(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Mutate(setup) = %v, want nil", err)
 	}
-	c, ok := s.Get(t.Context(), "c-purged")
-	if !ok {
-		t.Fatal("Get(setup) did not find chat")
-	}
-	c.UpdatedAt = time.Now().Add(-2 * time.Hour).UnixMilli()
-	if err := s.writeHeader(t.Context(), "c-purged", c); err != nil {
-		t.Fatalf("writeHeader(setup) = %v, want nil", err)
-	}
+	ageChat(t, s, "c-purged", 2*time.Hour)
 
 	purgeExpired(t.Context(), s, time.Hour)
 

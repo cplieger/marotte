@@ -1,6 +1,6 @@
 // Key/value pair editor for env vars and headers.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { type KeyPair, SECRET_MASK } from "./mcp-state.js";
 import { ICON_CLOSE } from "./icons.js";
 

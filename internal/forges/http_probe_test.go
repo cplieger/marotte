@@ -42,7 +42,7 @@ func TestProbeRoute_AScopeRefusalRefusesTheRow(t *testing.T) {
 	}}
 	got := postProbe(t, repoRoutes(recordManager(t, core)))
 
-	if got.Forge.Status != ForgeRefused || got.Forge.Error == nil {
+	if got.Forge.Status != forgeRefused || got.Forge.Error == nil {
 		t.Fatalf("check over a scope refusal = %+v, want refused with its reason", got.Forge)
 	}
 	if e := got.Forge.Error; e.Code != forgeapi.CodeScopeInsufficient || e.Kind != "forbidden" {
@@ -58,7 +58,7 @@ func TestProbeRoute_ATemporaryFailureAnswersRetryingWithItsSentence(t *testing.T
 	core := &whoamiCore{err: &forgeapi.Error{Op: "Whoami", Kind: forgeapi.KindTransient, Message: "no route to host"}}
 	got := postProbe(t, repoRoutes(recordManager(t, core)))
 
-	if got.Forge.Status != ForgeRetrying || got.Forge.Error == nil || got.Forge.Error.Kind != "transient" {
+	if got.Forge.Status != forgeRetrying || got.Forge.Error == nil || got.Forge.Error.Kind != "transient" {
 		t.Fatalf("check over a dead network = %+v, want retrying with kind transient", got.Forge)
 	}
 	if got.Forge.Error.Message == "" {
@@ -74,7 +74,7 @@ func TestProbeRoute_ARateLimitNamesWhenItLifts(t *testing.T) {
 	got := postProbe(t, repoRoutes(recordManager(t, core)))
 
 	f := got.Forge
-	if f.Status != ForgeRetrying || f.Error == nil || f.Error.Kind != "rate_limited" || f.CheckedAt == 0 {
+	if f.Status != forgeRetrying || f.Error == nil || f.Error.Kind != "rate_limited" || f.CheckedAt == 0 {
 		t.Fatalf("row = %+v, want retrying, rate_limited and the check's time", f)
 	}
 	if wait := f.Error.RetryAt - f.CheckedAt; wait != 41200 {
@@ -90,7 +90,7 @@ func TestProbeRoute_ASuccessClearsTheCodedError(t *testing.T) {
 
 	core.err = nil
 	got := postProbe(t, mux)
-	if got.Forge.Status != ForgeConnected || got.Forge.Error != nil {
+	if got.Forge.Status != forgeConnected || got.Forge.Error != nil {
 		t.Errorf("check after the limit lifted = %+v, want connected with no error left from the refusal", got)
 	}
 }
@@ -116,7 +116,7 @@ func TestProbeRoute_ANonForgeFailureCarriesNoCode(t *testing.T) {
 	core := &whoamiCore{err: errNoClient}
 	got := postProbe(t, repoRoutes(recordManager(t, core)))
 
-	if f := got.Forge; f.Status != ForgeRetrying || f.Error == nil || f.Error.Code != "" || f.Error.Kind != "" || f.Error.Message == "" {
+	if f := got.Forge; f.Status != forgeRetrying || f.Error == nil || f.Error.Code != "" || f.Error.Kind != "" || f.Error.Message == "" {
 		t.Errorf("row after a failure that is not a forge refusal = %+v, want retrying with its sentence and no code or kind", f)
 	}
 }

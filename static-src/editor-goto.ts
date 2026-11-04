@@ -1,6 +1,6 @@
 // Go to line: the toolbar control, Ctrl+G, and the `#L<n>` deep link's past-the-end notice.
 
-import { effect } from "@cplieger/reactive";
+import { effect } from "@cplieger/ui";
 import { $ } from "./dom.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_CLOSE, ICON_GOTO_LINE } from "./icons.js";

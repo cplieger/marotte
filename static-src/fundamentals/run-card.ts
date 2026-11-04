@@ -8,8 +8,8 @@
 // `inspect` (`run-store.ts` fetches).
 
 import { join as joinKey } from "@cplieger/keyenc";
-import { el } from "@cplieger/reactive";
-import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
+import { el } from "@cplieger/ui";
+import { createDisclosure } from "@cplieger/ui/disclosure";
 import { STATE_WORD, paintStateMark, stateOf } from "../exec-view/status.js";
 import {
   counters,
@@ -30,7 +30,7 @@ import { kindGlyph } from "../exec-view/tree.js";
 import { paintLabel } from "../exec-view/label.js";
 import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
-import { ICON_TAB_RUN, ICON_EXTERNAL } from "../icons.js";
+import { ICON_TAB_RUN } from "../icons.js";
 import { buildPath } from "../route-path.js";
 import type { RunAsks } from "../run-asks.js";
 import { runToExec, type StepEnds } from "../run-exec-source.js";
@@ -46,6 +46,8 @@ const NO_ASKS: RunAsks = { count: 0, asked: [], label: "" };
 interface RunDetail {
   readonly plan?: unknown;
   readonly ends?: StepEnds;
+  /** The store's `runGone`: the server no longer holds the run, so there is nothing to open. */
+  readonly gone?: boolean;
 }
 
 /** A run's status as one word. `paused` reads "waiting": KAS pauses for a watch, a retry budget
@@ -202,7 +204,7 @@ export function buildRunCard(
     "a",
     { className: "run-open", href: runHref },
     "Open run",
-    el("span", { className: "run-open-icon", "aria-hidden": "true" }, iconEl(ICON_EXTERNAL)),
+    el("span", { className: "run-open-icon", "aria-hidden": "true" }, iconEl(ICON_TAB_RUN)),
   );
   open.addEventListener("click", (e) => {
     // A modified click is a deliberate escape from the app's own routing.
@@ -444,6 +446,10 @@ export function buildRunCard(
   }
 
   function renderFoot(state: RunState | undefined): void {
+    if (lastDetail.gone === true) {
+      ledger.textContent = "This run was deleted";
+      return;
+    }
     const c = counters(lastNodes);
     const bits: string[] = [];
     if (c.total > 0) {
@@ -518,7 +524,9 @@ export function buildRunCard(
     if (label !== "") {
       nameEl.textContent = label;
     }
-    root.dataset["status"] = state?.status ?? "starting";
+    const gone = detail.gone === true;
+    root.dataset["status"] = gone ? "deleted" : (state?.status ?? "starting");
+    open.classList.toggle("hidden", gone);
     // Second axis rather than a sixth `data-status` value: the run genuinely
     // IS running while a step's ask blocks it.
     if (asks.count > 0) {
@@ -528,7 +536,7 @@ export function buildRunCard(
     }
     // An ask outranks the run's own word: the run genuinely IS running while a step's
     // ask blocks it, so `data-status` keeps the status and this says what is wanted.
-    const word = asks.count > 0 ? "needs input" : runWord(state?.status);
+    const word = gone ? "deleted" : asks.count > 0 ? "needs input" : runWord(state?.status);
 
     count.paint(exec === undefined ? undefined : progressPhrase(exec));
 

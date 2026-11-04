@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const cssDir = join(here, "css");
 const vendorDirs = [
-  join(here, "node_modules", "@cplieger", "ui-primitives", "css"),
+  join(here, "node_modules", "@cplieger", "ui", "css"),
   join(here, "node_modules", "@cplieger", "web-terminal-ui", "css"),
 ];
 

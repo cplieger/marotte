@@ -3,7 +3,6 @@ package composition
 import (
 	"context"
 	"log/slog"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -18,8 +17,8 @@ import (
 // The layout facts marotte brings to the install: where the convenience symlinks go, and
 // what its own SHELL-era installer left on the volume.
 const (
-	// kiroLinkDir holds the non-authoritative convenience symlinks a shell resolves kiro-cli
-	// and its sidecars through. Co-owned by the toolbelt engine, which is why the legacy sweep
+	// kiroLinkDir holds the non-authoritative convenience symlink a shell resolves kiro-cli
+	// through. Co-owned by the toolbelt engine, which is why the legacy sweep
 	// names its targets.
 	kiroLinkDir = "bin"
 	// legacyStagePrefix prefixed the shell installer's staging trees, so a match is an
@@ -37,8 +36,6 @@ type kiroRuntime struct {
 	// cliPath resolves the active kiro-cli's absolute path, or "" when no version is
 	// active. Called per use, never captured.
 	cliPath func() string
-	// chatPath resolves the kiro-cli-chat sidecar the agent engine spawns, "" when none is.
-	chatPath func() string
 	// env is the environment overlay for a spawned kiro-cli, nil when there is none.
 	env func() []string
 	// ready is the /api/health verdict plus the library's TYPED reason, or nil when this
@@ -62,8 +59,7 @@ type kiroRuntime struct {
 // is no readiness gate, so /api/health reflects only that the listener is up.
 func unmanagedKiroRuntime() kiroRuntime {
 	return kiroRuntime{
-		cliPath:  func() string { return kirocli.Name },
-		chatPath: func() string { return kirocli.Name + "-chat" },
+		cliPath: func() string { return kirocli.Name },
 		// Non-nil on purpose: cliPath, env and stop are called unconditionally, so only
 		// ready and rescan may be nil, and their nil-ness is what MEANS "no manager".
 		env:  func() []string { return nil },
@@ -76,11 +72,10 @@ func unmanagedKiroRuntime() kiroRuntime {
 // fail one at a time — degraded, never fatal, so the repair paths stay alive (invariant 6).
 func unavailableKiroRuntime() kiroRuntime {
 	return kiroRuntime{
-		cliPath:  func() string { return "" },
-		chatPath: func() string { return "" },
-		env:      func() []string { return nil },
-		ready:    func() (bool, pinstall.Reason) { return false, pinstall.ReasonUnavailable },
-		stop:     func() {},
+		cliPath: func() string { return "" },
+		env:     func() []string { return nil },
+		ready:   func() (bool, pinstall.Reason) { return false, pinstall.ReasonUnavailable },
+		stop:    func() {},
 	}
 }
 
@@ -126,10 +121,9 @@ func managedKiroRuntime(ctx context.Context, mgr *pinstall.Manager) kiroRuntime 
 		}
 	}()
 	return kiroRuntime{
-		cliPath:  mgr.Path,
-		chatPath: func() string { return sidecarBeside(mgr.Path()) },
-		env:      mgr.PathEnv,
-		ready:    mgr.Ready,
+		cliPath: mgr.Path,
+		env:     mgr.PathEnv,
+		ready:   mgr.Ready,
 		rescan: func(rctx context.Context) (bool, error) {
 			ok, err := mgr.Rescan(rctx)
 			if ok {
@@ -170,13 +164,8 @@ func kiroInstallConfig(cfg *Config, root string) *pinstall.Config {
 		},
 		Root:    root,
 		LinkDir: kiroLinkDir,
-		// Require names the chat sidecar because it is the engine (sidecarBeside) and `kiro-cli
-		// settings` re-execs it by a plain PATH search, while `--version` is answered by the main
-		// binary: without this a sidecar-less directory reports READY and fails every engine start.
-		Require:  []string{kirocli.Name + "-chat"},
-		Optional: []string{kirocli.Name + "-term"},
-		Assert:   kiroSettings(),
-		Purge:    kiroLegacyPurge(),
+		Assert:  kiroSettings(),
+		Purge:   kiroLegacyPurge(),
 		// Untrusted stays unset: healBootModes has removed group and other write from this root before
 		// this runs, and pinstall's custody check judges the writers left, so Untrusted would only add
 		// a digest-verified reinstall at every start. TrustedUIDs is a fact about the volume's ACL,
@@ -221,14 +210,6 @@ func startKiroSettingsSeed(ctx context.Context, installed <-chan struct{}, seed 
 	})
 }
 
-// sidecarBeside is the kiro-cli-chat sidecar in the active version's directory, "" while none is active.
-func sidecarBeside(cliPath string) string {
-	if cliPath == "" {
-		return ""
-	}
-	return filepath.Join(filepath.Dir(cliPath), kirocli.Name+"-chat")
-}
-
 // engineSource is the agent engine's view of the kiro-cli runtime.
 type engineSource struct {
 	kiro  kiroRuntime
@@ -237,7 +218,7 @@ type engineSource struct {
 
 var _ agent.EngineSource = engineSource{}
 
-func (s engineSource) ChatPath() string              { return s.kiro.chatPath() }
+func (s engineSource) CLIPath() string               { return s.kiro.cliPath() }
 func (s engineSource) Installed() <-chan struct{}    { return s.kiro.installed }
 func (s engineSource) Env() []string                 { return s.kiro.env() }
 func (s engineSource) EnvAllow() map[string]struct{} { return s.allow }

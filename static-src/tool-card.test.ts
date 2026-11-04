@@ -205,7 +205,9 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
     // Success is the ROW's OWN glyph, tinted — not a general success mark. One
     // mark, and no badge beside it.
     const identity = okIcon?.querySelector("svg")?.outerHTML ?? "";
-    expect(identity).toBe((iconEl(toolIcon("execute", "executePwsh")) as HTMLElement).outerHTML);
+    expect(identity).toBe(
+      (iconEl(toolIcon({ kind: "execute", toolName: "" })) as HTMLElement).outerHTML,
+    );
     expect(identity).not.toBe((iconEl(outcomeIcon("ok")) as HTMLElement).outerHTML);
     expect(okIcon?.querySelectorAll("svg")).toHaveLength(1);
 
@@ -275,6 +277,7 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
     });
     applyOutcome(card, "aborted", "Open feature-pipeline", {
       kind: "other",
+      toolName: "",
       writesFile: false,
       filePath: "",
       fileBasename: "",
@@ -311,6 +314,7 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
     const icon = card.querySelector(".tool-icon");
     const info = {
       kind: "execute",
+      toolName: "",
       writesFile: false,
       filePath: "",
       fileBasename: "",
@@ -344,10 +348,11 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
     const icon = card.querySelector(".tool-icon");
     // Named off the icon registry, not read back off the card, which has already been
     // through applyOutcome once.
-    const identity = (iconEl(toolIcon("execute", "executePwsh")) as HTMLElement).outerHTML;
+    const identity = (iconEl(toolIcon({ kind: "execute", toolName: "" })) as HTMLElement).outerHTML;
     expect(icon?.querySelector("svg")?.outerHTML).toBe(identity);
     const info = {
       kind: "execute",
+      toolName: "",
       writesFile: false,
       filePath: "",
       fileBasename: "",
@@ -375,6 +380,7 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
     node.appendChild(icon);
     const info = {
       kind: "execute",
+      toolName: "",
       writesFile: false,
       filePath: "",
       fileBasename: "",

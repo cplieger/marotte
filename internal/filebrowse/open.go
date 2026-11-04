@@ -88,7 +88,7 @@ func writeOpenError(w http.ResponseWriter, abs string, err error) {
 func writeChanged(w http.ResponseWriter, id string) {
 	webhttp.WriteJSONStatus(w, http.StatusConflict, FileRefusal{
 		Error:  "This file is changing too fast to show. Download it instead.",
-		Code:   RefusalChanged,
+		Code:   refusalChanged,
 		FileID: id,
 	})
 }
