@@ -49,6 +49,11 @@ func readToolIdentityRows(t *testing.T) []toolIdentityRow {
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
 			t.Fatalf("decode %s row %d: %v", toolIdentityFrames, len(rows)+1, err)
 		}
+		switch r.Source {
+		case "kas-wire", "chat-log", "kas-bundle":
+		default:
+			t.Fatalf("%s row %q: source %q is not kas-wire, chat-log or kas-bundle", toolIdentityFrames, r.Name, r.Source)
+		}
 		rows = append(rows, r)
 	}
 	if err := sc.Err(); err != nil {

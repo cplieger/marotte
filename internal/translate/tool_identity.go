@@ -2,7 +2,6 @@ package translate
 
 import (
 	"encoding/json"
-	"maps"
 	"strings"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -42,16 +41,6 @@ var distinguishedBuiltins = func() map[string]bool {
 	}
 	return set
 }()
-
-// BuiltinToolTitles returns a copy of the display-title-to-tool-id table the translator reads.
-func BuiltinToolTitles() map[string]string {
-	return maps.Clone(builtinToolByTitle)
-}
-
-// BuiltinToolAliases returns a copy of the envelope-id-to-tool-id aliases the translator reads.
-func BuiltinToolAliases() map[string]string {
-	return maps.Clone(builtinToolAliases)
-}
 
 // callIdentity names the tool a create frame runs: an MCP server and tool, or the id of a
 // built-in the transcript distinguishes, or neither. An MCP call is never a built-in.
