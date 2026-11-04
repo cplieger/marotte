@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"slices"
 	"strings"
@@ -108,10 +107,10 @@ func (e *runMutation) unwritten() { e.m.settle(e) }
 
 // replied records the write's outcome; seq is the reply's position on lane, the lane the run's frames reach. An
 // in-band refusal changed nothing and settles at once; a write with no readable reply (its ctx ended, the engine
-// ended, or the answer could not be decoded) keeps the entry, under the ceiling from now.
+// ended, or the answer could not be read) keeps the entry, under the ceiling from now.
 func (e *runMutation) replied(resp *marotte.RPCResponse, err error, lane laneRef, seq uint64) {
 	m := e.m
-	if resp != nil && resp.Error != nil && !errors.Is(err, marotte.ErrReplyUndecoded) {
+	if resp != nil && resp.Error != nil && !marotte.ReplyUnread(err) {
 		m.settle(e)
 		return
 	}

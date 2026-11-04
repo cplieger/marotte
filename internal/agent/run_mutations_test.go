@@ -79,14 +79,20 @@ func TestRunMutations_UnwrittenAndRefusedSettleAtOnce(t *testing.T) {
 	}
 }
 
-// An answer that arrived but could not be decoded is no refusal: the write may have taken effect.
-func TestRunMutations_AnUndecodedReplyKeepsTheEntry(t *testing.T) {
-	f := newMutationFixture(time.Hour)
-	undecoded := &marotte.RPCResponse{Error: &marotte.RPCError{Code: marotte.RPCCodeParseError}}
-	f.m.enter("wf_1", mutationDrive, 1).replied(undecoded,
-		fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded, undecoded.Error), ownerLane, 0)
-	if f.m.empty() {
-		t.Error("an undecoded reply settled the entry as a refusal")
+// An answer that arrived but could not be read is no refusal: the write may have taken effect.
+func TestRunMutations_AnUnreadReplyKeepsTheEntry(t *testing.T) {
+	parseErr := &marotte.RPCError{Code: marotte.RPCCodeParseError}
+	for name, err := range map[string]error{
+		"an undecoded answer": fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded, parseErr),
+		"an oversize answer":  &marotte.TransportError{Err: marotte.ErrFrameTooLarge},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newMutationFixture(time.Hour)
+			f.m.enter("wf_1", mutationDrive, 1).replied(&marotte.RPCResponse{Error: parseErr}, err, ownerLane, 0)
+			if f.m.empty() {
+				t.Error("an unread reply settled the entry as a refusal")
+			}
+		})
 	}
 }
 
