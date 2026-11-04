@@ -209,10 +209,10 @@ func Field[T any](ctx context.Context, configDir, key string) (T, bool) {
 	return out, ok
 }
 
-// FieldOr is Field for a reader with a default: an absent key, or one that does not decode into T,
+// fieldOr is Field for a reader with a default: an absent key, or one that does not decode into T,
 // reads as def. readable is false only when config.json exists and could not be read or parsed, or
 // ctx ended first, so a live push can tell "the document says def" from "there is no answer".
-func FieldOr[T any](ctx context.Context, configDir, key string, def T) (value T, readable bool) {
+func fieldOr[T any](ctx context.Context, configDir, key string, def T) (value T, readable bool) {
 	out, ok, err := FieldStrict[T](ctx, configDir, key)
 	switch {
 	case errors.Is(err, errKeyParse):
