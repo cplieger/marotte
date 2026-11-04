@@ -21,6 +21,7 @@ type stubSteerQueue struct {
 	unsentRows []SteerRow
 	run        func(SteerJob)
 	removeRef  string
+	discardRef string
 	routeRef   string
 	flush      []SteerSend
 	jobRows    []SteerRow
@@ -36,6 +37,8 @@ type stubSteerQueue struct {
 	postLoad   bool
 	agentRows  bool
 	jobGone    bool
+	// leadGone makes SetSteerLead answer that no live row has the key.
+	leadGone bool
 	// unfolded makes every read-loop barrier fail.
 	unfolded bool
 }
@@ -123,9 +126,9 @@ func (q *stubSteerQueue) RemoveCleared(_ marotte.ChatID, _ string, cleared []str
 	return q.removeRes
 }
 
-func (q *stubSteerQueue) BeginDiscard(_ marotte.ChatID, _ string) bool {
+func (q *stubSteerQueue) BeginDiscard(_ marotte.ChatID, _ string) (needsClear bool, refuse string) {
 	q.log("begin-discard")
-	return q.needsClear
+	return q.needsClear, q.discardRef
 }
 
 func (q *stubSteerQueue) DiscardCleared(_ marotte.ChatID, _ string, landed bool) SteerOpResult {
@@ -224,9 +227,12 @@ func (q *stubSteerQueue) NextParked(marotte.ChatID, string) (string, string, boo
 	return key, "parked " + key, true
 }
 
-func (q *stubSteerQueue) SetSteerLead(_ marotte.ChatID, key string) func() {
+func (q *stubSteerQueue) SetSteerLead(_ marotte.ChatID, key string) (func(), bool) {
 	q.log("lead " + key)
-	return func() { q.log("lead-undone " + key) }
+	if q.leadGone {
+		return func() {}, false
+	}
+	return func() { q.log("lead-undone " + key) }, true
 }
 
 func steerRolesOf(host hostDouble, ledger *SteerLedger, q SteerQueue) *promptRoles {

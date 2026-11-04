@@ -224,11 +224,25 @@ interface RawRunInspect extends Omit<RunInspect, "state"> {
   read_position?: unknown;
   /** marotte's own key beside KAS's reply: the run's display name, "" when nothing names it. */
   display_name?: unknown;
+  /** marotte's own key beside KAS's reply: what may be done to the run, decided from this read's state. */
+  controls?: unknown;
 }
 
 /** The reply's read position, 0 for none or a value that is not a non-negative safe integer. */
 function readPositionOf(raw: unknown): number {
   return typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0 ? raw : 0;
+}
+
+/** The reply's verbs, or undefined for none or an answer this build cannot read, which draws no verb. */
+function controlsOf(raw: unknown): RunControlsResponse | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  try {
+    return decodeRunControlsResponse(raw);
+  } catch {
+    return undefined;
+  }
 }
 
 /** The reply's plan revision, or undefined for none or one this build cannot read. */
@@ -758,9 +772,6 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
   // re-asking.
   let failed = 0;
   const issued = executionsOf(workflowID).frames;
-  // A read before the cell holds any answer skips the controls: only a run tab holds them, and its
-  // open reads them itself.
-  const first = cell(workflowID).peek() === undefined;
   try {
     const r = await apiGetOrError<RawRunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
     const d = r.data;
@@ -772,9 +783,9 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
       stale.set(workflowID, stale.get(workflowID) ?? cause);
       answered = true;
     } else if (d?.state !== undefined) {
-      // The plan and the step ends BEFORE the state, because the state assignment is what wakes
-      // every reader: a subscriber that re-rendered between them would draw a repeat's bound from
-      // the previous plan.
+      // The plan, the step ends and the verbs BEFORE the state, because the state assignment is what
+      // wakes every reader: a subscriber that re-rendered between them would draw a repeat's bound
+      // from the previous plan, or the previous status's verbs beside this one.
       if (d.nodePlan === undefined) {
         plans.delete(workflowID);
       } else {
@@ -795,6 +806,7 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
       }
       stepEnds.set(workflowID, new Map(Object.entries(d.step_ends ?? {})));
       stepStarts.set(workflowID, starts);
+      controlCell(workflowID).value = controlsOf(d.controls);
       cell(workflowID).value = state;
       answered = true;
     } else {
@@ -831,9 +843,6 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
   if (next !== undefined) {
     stale.delete(workflowID);
     await fetchRun(workflowID, next);
-  } else if (!first && controlCells.has(workflowID)) {
-    // After the trailing read rather than beside it, so a burst costs one controls read.
-    invalidateRunControls(workflowID);
   }
 }
 
@@ -928,8 +937,6 @@ export function forgetRun(workflowID: string): void {
   stepEnds.delete(workflowID);
   stepStarts.delete(workflowID);
   controlCells.delete(workflowID);
-  controlsInFlight.delete(workflowID);
-  controlsStale.delete(workflowID);
   launchedBy.delete(workflowID);
   frameLabels.delete(workflowID);
   resumedBy.delete(workflowID);
@@ -944,11 +951,10 @@ export function runLabelOf(workflowID: string): string {
   return peekRunState(workflowID)?.displayName ?? frameLabels.get(workflowID) ?? "";
 }
 
-// What may be done to a run: `GET /api/runs/{id}/controls`.
+// What may be done to a run: the run read's `controls`, written with the state it was decided from, so
+// the verbs follow every state change through that read's coalescing and retry ladder.
 
 const controlCells = new Map<string, Signal<RunControlsResponse | undefined>>();
-const controlsInFlight = new Set<string>();
-const controlsStale = new Set<string>();
 
 function controlCell(workflowID: string): Signal<RunControlsResponse | undefined> {
   let c = controlCells.get(workflowID);
@@ -962,41 +968,6 @@ function controlCell(workflowID: string): Signal<RunControlsResponse | undefined
 /** Subscribe to what a run offers. */
 export function runControls(workflowID: string): RunControlsResponse | undefined {
   return controlCell(workflowID).value;
-}
-
-/** Re-read what a run offers. Never per repaint: a tab open (`run-view.ts`) and every settled
- *  state read after the first (`fetchRun`), since the verbs also rest on facts the state does not
- *  carry (`run_affordance.go` `runFacts`: hosting, a pending pause). Every copy of a run's
- *  controls reads this one cell. */
-export function invalidateRunControls(workflowID: string): void {
-  if (workflowID === "") {
-    return;
-  }
-  if (controlsInFlight.has(workflowID)) {
-    controlsStale.add(workflowID);
-    return;
-  }
-  void fetchRunControls(workflowID);
-}
-
-async function fetchRunControls(workflowID: string): Promise<void> {
-  // Claimed HERE rather than by the caller, so the trailing call below re-arms the guard with no
-  // window a coincident invalidation could slip a third request into.
-  controlsInFlight.add(workflowID);
-  try {
-    const d = await apiGetTyped(
-      `/api/runs/${encodeURIComponent(workflowID)}/controls`,
-      decodeRunControlsResponse,
-    );
-    if (d !== null) {
-      controlCell(workflowID).value = d;
-    }
-  } finally {
-    controlsInFlight.delete(workflowID);
-  }
-  if (controlsStale.delete(workflowID)) {
-    await fetchRunControls(workflowID);
-  }
 }
 
 /** A run's node plan, read WITHOUT subscribing. Untracked deliberately: every reader hands it to

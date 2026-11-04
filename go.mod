@@ -6,6 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cplieger/httpx/v5 v5.3.0-dev.1 // indirect
+	github.com/cplieger/jsoncap/v2 v2.1.0 // indirect
 	github.com/cplieger/scheduler/v4 v4.3.0 // indirect
 	github.com/cplieger/urlform v1.5.0 // indirect
 	github.com/creack/pty v1.1.24 // indirect
@@ -20,11 +21,10 @@ require (
 	github.com/cplieger/envx/v2 v2.1.0
 	github.com/cplieger/envx/yamlenv/v2 v2.3.0
 	github.com/cplieger/forgeapi v1.5.0-dev.2
-	github.com/cplieger/jsoncap/v2 v2.1.0
 	github.com/cplieger/keyenc v1.1.0
 	github.com/cplieger/keylock v1.1.0-dev.1
 	github.com/cplieger/pathinside/v2 v2.1.0
-	github.com/cplieger/pinstall/v3 v3.2.0-dev.1
+	github.com/cplieger/pinstall/v3 v3.2.0-dev.2
 	github.com/cplieger/runesafe/v3 v3.2.0
 	github.com/cplieger/slogx v1.8.0
 	github.com/cplieger/sse v1.5.0-dev.2

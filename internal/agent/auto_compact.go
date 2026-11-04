@@ -73,7 +73,7 @@ type autoCompactor struct {
 	mu       sync.Mutex
 }
 
-func newAutoCompactor(bc *bridgeCoordinator) *autoCompactor {
+func newAutoCompactor(bc *bridgeCoordinator, policy func(context.Context) (enabled bool, pct int)) *autoCompactor {
 	return &autoCompactor{
 		chats: map[marotte.ChatID]*autoCompactState{},
 		live:  bc.turns.live,
@@ -93,9 +93,7 @@ func newAutoCompactor(bc *bridgeCoordinator) *autoCompactor {
 			}
 			return chat.Usage, true
 		},
-		policy: func(ctx context.Context) (bool, int) {
-			return autoCompactionPolicy(ctx, bc.lifecycle.configDir)
-		},
+		policy:  policy,
 		compact: command.Compact,
 	}
 }

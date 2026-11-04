@@ -50,9 +50,9 @@
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
       "sites": [
-        "internal/agent/bridge_coord.go:1519",
+        "internal/agent/bridge_coord.go:1512",
         "internal/agent/entry_merge.go:606",
-        "internal/agent/runtime.go:785"
+        "internal/agent/runtime.go:788"
       ]
     },
     {
@@ -62,7 +62,7 @@
       "label": "Workflow result",
       "sites": [
         "internal/agent/run_appender.go:121",
-        "internal/agent/run_bounds.go:485",
+        "internal/agent/run_bounds.go:489",
         "internal/agent/run_plan.go:116",
         "internal/translate/steering.go:130",
         "internal/translate/steering.go:272"
@@ -161,7 +161,7 @@
       "label": "Not read · the turn ended first",
       "sites": [
         "internal/agent/command_chat_ops.go:58",
-        "internal/agent/steer_buffer.go:365",
+        "internal/agent/steer_buffer.go:431",
         "internal/translate/steering.go:198"
       ]
     },
@@ -172,7 +172,7 @@
       "label": "Not read · the session restarted",
       "sites": [
         "internal/agent/entry_merge.go:606",
-        "internal/agent/runtime.go:779"
+        "internal/agent/runtime.go:782"
       ]
     },
     {
@@ -200,7 +200,7 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1519",
+      "site": "internal/agent/bridge_coord.go:1512",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
@@ -235,7 +235,7 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/run_bounds.go:485",
+      "site": "internal/agent/run_bounds.go:489",
       "form": "literal",
       "origin": "agent",
       "state": "read",
@@ -256,21 +256,21 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:779",
+      "site": "internal/agent/runtime.go:782",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/runtime.go:785",
+      "site": "internal/agent/runtime.go:788",
       "form": "mutation",
       "origin": "agent",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/steer_buffer.go:365",
+      "site": "internal/agent/steer_buffer.go:431",
       "form": "literal",
       "origin": "user",
       "state": "dropped",

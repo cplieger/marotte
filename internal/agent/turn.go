@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
@@ -169,6 +170,8 @@ type chatLifecycle struct {
 // closers append under the lifecycle mutex, so log and registry agree.
 type turnRegistry struct {
 	chats map[marotte.ChatID]*chatLifecycle
+	// records writes the chat's turn keep fact; required by newTurnRegistry.
+	records turnRecords
 	// onIdle runs, with no lock held, each time a chat leaves its last open turn or admission: an engine restart
 	// pending on quiescence re-checks there, and so does the chat's release check. Set once at construction.
 	onIdle func(marotte.ChatID)
@@ -183,8 +186,23 @@ type turnRegistry struct {
 	mu         sync.Mutex
 }
 
-func newTurnRegistry() *turnRegistry {
-	return &turnRegistry{chats: make(map[marotte.ChatID]*chatLifecycle)}
+// turnRecords is the chat store as the turn registry writes the turn keep fact: held with the reservation, released
+// at the lifecycle's idle transition, both under the lifecycle mutex (lock order lifecycle.mu -> chat record lock).
+type turnRecords interface {
+	HoldTurn(ctx context.Context, chatID marotte.ChatID) error
+	EndTurn(ctx context.Context, chatID marotte.ChatID) (announce bool)
+	AnnounceHeader(ctx context.Context, chatID marotte.ChatID)
+}
+
+var _ turnRecords = (*chat.Store)(nil)
+
+// newTurnRegistry panics on a nil records: a registry that cannot write the turn fact would admit prompts the
+// retention purge cannot see.
+func newTurnRegistry(records turnRecords) *turnRegistry {
+	if records == nil {
+		panic("agent: newTurnRegistry needs the chat store's turn keep writes")
+	}
+	return &turnRegistry{chats: make(map[marotte.ChatID]*chatLifecycle), records: records}
 }
 
 func (r *turnRegistry) lifecycleFor(chatID marotte.ChatID) *chatLifecycle {
@@ -443,14 +461,19 @@ func (r *turnRegistry) finish(t *activeTurn, result marotte.TurnResult) {
 	lc := t.lc
 	lc.mu.Lock()
 	idle := lc.finishLocked(t, result)
+	announce := idle && r.records.EndTurn(context.Background(), t.Chat)
 	lc.mu.Unlock()
 	if idle {
-		r.idle(t.Chat)
+		r.idle(t.Chat, announce)
 	}
 }
 
-// idle reports a chat that left its last open turn or admission.
-func (r *turnRegistry) idle(chatID marotte.ChatID) {
+// idle reports a chat that left its last open turn or admission, after its caller released the turn fact under the
+// lifecycle mutex: released after the unlock, it could delete the fact the next turn's open just wrote.
+func (r *turnRegistry) idle(chatID marotte.ChatID, announce bool) {
+	if announce {
+		r.records.AnnounceHeader(context.Background(), chatID)
+	}
 	if r.onIdle != nil {
 		r.onIdle(chatID)
 	}

@@ -99,7 +99,7 @@ vi.mock("./actions/runs.js", async () => {
 
 import { openRunView, refreshRun, showRun } from "./run-view.js";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
-import { invalidateRun, invalidateRunControls } from "./run-store.js";
+import { invalidateRun } from "./run-store.js";
 
 async function drain(): Promise<void> {
   for (let i = 0; i < 12; i++) {
@@ -118,7 +118,7 @@ function abortedState(): unknown {
   return { workflowId: RUN, state: { workflowId: RUN, status: "aborted" } };
 }
 
-const RETRY_ONLY = { verbs: ["retry"], refused: {}, parent_chat_id: "" };
+const RETRY_ONLY = { verbs: ["retry"], refused: {} };
 
 /** The same verb, a different ANSWER: the server has added the sentence explaining why pause is
  *  not on offer. Retry still renders, so a case can watch the REPLACEMENT button while keeping
@@ -126,7 +126,6 @@ const RETRY_ONLY = { verbs: ["retry"], refused: {}, parent_chat_id: "" };
 const RETRY_PLUS_REFUSAL = {
   verbs: ["retry"],
   refused: { pause: "A pause is already requested; the run stops at the end of its current step." },
-  parent_chat_id: "",
 };
 
 /** Open the run, whose only verb is retry, and let its first paint settle. */
@@ -162,11 +161,12 @@ async function repaint(): Promise<void> {
   await drain();
 }
 
-/** Move the AFFORDANCE, which is the one thing that replaces the row: the store's controls cell
- *  is read inside the render pass, so a new answer wakes the same effect a state change does. */
+/** Move the AFFORDANCE, which is the one thing that replaces the row: a run read carrying new
+ *  verbs, which the render pass reads from the store's controls cell. */
 async function affordanceMoves(next: unknown): Promise<void> {
+  m.reply.current = abortedState();
   m.controls.current = next;
-  invalidateRunControls(RUN);
+  invalidateRun(RUN);
   await drain();
 }
 
@@ -181,16 +181,23 @@ function retryButton(body: HTMLElement): HTMLButtonElement {
 beforeEach(() => {
   m.opened.length = 0;
   m.settle.length = 0;
+  // The run read, carrying the run's verbs beside the state as the server splices them.
   vi.mocked(apiGetOrError).mockImplementation(() =>
     Promise.resolve(
       m.reply.current === undefined
         ? { ok: false, status: 0, data: null, error: "" }
-        : { ok: true, status: 200, data: m.reply.current, error: "" },
+        : {
+            ok: true,
+            status: 200,
+            data: {
+              ...(m.reply.current as object),
+              ...(m.controls.current === undefined ? {} : { controls: m.controls.current }),
+            },
+            error: "",
+          },
     ),
   );
-  vi.mocked(apiGetTyped).mockImplementation((_path, decode) =>
-    Promise.resolve(m.controls.current === undefined ? null : decode(m.controls.current)),
-  );
+  vi.mocked(apiGetTyped).mockResolvedValue(null);
 });
 
 afterEach(async () => {
@@ -222,7 +229,6 @@ describe("the control row's in-flight state", () => {
     await affordanceMoves({
       verbs: ["finish_loop"],
       refused: {},
-      parent_chat_id: "",
       pause_node_id: "loop-1",
     });
     const btn = retryButton(body);

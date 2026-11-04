@@ -7,8 +7,13 @@ package runlease
 
 import (
 	"errors"
+	"fmt"
+	"log/slog"
 	"slices"
 	"time"
+
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/logsafe"
 )
 
 // Origin says which launch produced the run: scheduled (bounded by its next slot and the
@@ -61,9 +66,13 @@ type Lease struct {
 	Origin Origin `json:"origin"`
 	// ScheduleID names the row that asked for the run. Set iff Origin is scheduled.
 	ScheduleID string `json:"schedule_id,omitempty"`
+	// KeepChats is every chat holding this run's keep fact, which each sign of life rewrites. It only grows.
+	KeepChats []string `json:"keep_chats,omitempty"`
 	// Unattended marks a run with nobody to answer a permission request, which arms
 	// the deny-fast floor. Distinct from the origin: who launched it vs who watches.
 	Unattended bool `json:"unattended"`
+	// Unattributed marks a live run whose launching chat could not be named, which keeps every chat until it is.
+	Unattributed bool `json:"unattributed,omitempty"`
 }
 
 // HostSecurity is what a parentless run's host session opens with.
@@ -88,11 +97,51 @@ func (l *Lease) HostPresets() ([]string, error) {
 // clone copies l, its host security included, so no caller shares the store's slice.
 func (l *Lease) clone() Lease {
 	out := *l
+	out.KeepChats = slices.Clone(l.KeepChats)
 	if out.Host != nil {
 		h := HostSecurity{Presets: slices.Clone(out.Host.Presets)}
 		out.Host = &h
 	}
 	return out
+}
+
+// addKeepChats unions add into KeepChats, sorted, and reports whether it grew.
+func (l *Lease) addKeepChats(add []string) bool {
+	merged := slices.Clone(l.KeepChats)
+	for _, id := range add {
+		if !slices.Contains(merged, id) {
+			merged = append(merged, id)
+		}
+	}
+	if len(merged) == len(l.KeepChats) {
+		return false
+	}
+	slices.Sort(merged)
+	l.KeepChats = merged
+	return true
+}
+
+// validKeepChats drops a holder id that could not name a chat, with a WARN.
+func validKeepChats(workflowID string, chats []string) []string {
+	return slices.DeleteFunc(chats, func(id string) bool {
+		if ids.ValidChatID(id) {
+			return false
+		}
+		slog.Warn("run lease: dropped a keep holder that names no chat", "workflow_id", workflowID, "holder", logsafe.Field(id))
+		return true
+	})
+}
+
+// check refuses a lease the store cannot act on, on Put and on load alike, so the store never writes
+// a lease its own load would refuse.
+func (l *Lease) check() error {
+	if !ids.ValidChatID(l.WorkflowID) {
+		return fmt.Errorf("lease workflow id %q is not a valid workflow id", logsafe.Field(l.WorkflowID))
+	}
+	if !l.Origin.valid() {
+		return fmt.Errorf("lease origin %q is not one of scheduled/manual/agent", l.Origin)
+	}
+	return nil
 }
 
 // Bounded reports whether marotte believes the run to be EXECUTING under a deadline it set.

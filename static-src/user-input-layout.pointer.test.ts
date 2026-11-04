@@ -258,8 +258,20 @@ function hitFloor(): number {
   return document.documentElement.dataset["pointer"] === "coarse" ? 44 : 24;
 }
 
+/** A button paints at its own size; its target is the floor, centred on it. */
+function reachesFloor(el: HTMLElement, label: string): void {
+  const r = el.getBoundingClientRect();
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  for (const dy of [1 - hitFloor() / 2, hitFloor() / 2 - 1]) {
+    const hit = document.elementFromPoint(cx, cy + dy);
+    expect(el.contains(hit), `${label}'s target at ${String(dy)}px`).toBe(true);
+  }
+}
+
 /** The card's controls (every option, the answer box, Send and Skip) whole inside the card and inside
- *  one visual band with the box holding the typing, each button at the hit floor, every option inside
+ *  one visual band with the box holding the typing, each button's target at the hit floor, every option
+ *  row at it and inside
  *  its region's box (a described one once the region scrolls to it) with its content inside its own
  *  border, and the question region's top in the band. */
 function inOneBand(card: HTMLElement, vv: number): void {
@@ -282,7 +294,7 @@ function inOneBand(card: HTMLElement, vv: number): void {
     inside(el, c, `${label} inside the card`);
     within(el, band.top, band.bottom, `${label} inside the visible band`);
     if (el.tagName === "BUTTON") {
-      atFloor(el, label);
+      reachesFloor(el, label);
     }
   }
   const region = card.querySelector<HTMLElement>(".user-input-options")!;
@@ -343,10 +355,7 @@ function opensAtItsAnswer(card: HTMLElement, vv: number): void {
     within(el, band.top, band.bottom, `${label} inside the visible band`);
   }
   for (const el of actions) {
-    expect(
-      el.getBoundingClientRect().height,
-      `${el.textContent} at the hit floor`,
-    ).toBeGreaterThanOrEqual(hitFloor() - 0.5);
+    reachesFloor(el, String(el.textContent));
   }
   card.scrollTop = 0;
 }
@@ -1073,7 +1082,8 @@ describe("a waiting question and the composer", () => {
     const draft = await mountDocked("chat", 375, 667);
     const stack = queueSteers("chat", 2);
     draft.focus();
-    paintViewportHeight(343, 1);
+    // Short enough that the card, its 36px Send and Skip included, leaves the steer row to give.
+    paintViewportHeight(335, 1);
     const card = await pushQuestion("chat", {
       request_id: 1,
       question: LOOP_QUESTION,
@@ -1082,7 +1092,7 @@ describe("a waiting question and the composer", () => {
     await expect
       .poll(() => card.parentElement!.dataset["dockPhase"], { message: "the tray settled" })
       .toBeUndefined();
-    paintViewportHeight(343, 1);
+    paintViewportHeight(335, 1);
     await settle();
     const row = (): number => stack.firstElementChild!.getBoundingClientRect().height;
     const floor = (): number => Number.parseFloat(getComputedStyle(stack).minBlockSize);

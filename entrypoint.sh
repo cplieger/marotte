@@ -35,11 +35,11 @@ fi
 # Keep them bare double-quoted literals under their `# renovate:` anchors: the
 # shared custom datasource matches exactly this shape (tests/shell/pins_export_test.sh).
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.37.1"
-KIRO_CLI_SHA256="b4049000d5a7b684947306eb9f9a480cab3a3ab2ff42584c293d05bde4d314a1"
+KIRO_CLI_VERSION="3.0.0"
+KIRO_CLI_SHA256="83dd96e00a75937958096da0436703562bc8c841bef66bde00a4caa5494d8be8"
 # The `# kiro-cli <version>` trailer is Renovate's anchor for this digest.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="e589bd8d8b845bb193b9f36f2ee263fe8aef7dbb19aff03ce44c5076ce6ab0c1" # kiro-cli 2.37.1
+KIRO_CLI_SHA256_ARM64="e7965abd104a432ebdf2acdb24659c96d70397695699156186915eb333142df6" # kiro-cli 3.0.0
 
 # Without the export the server sees no pins and turns its readiness gate off,
 # reporting healthy while installing nothing.

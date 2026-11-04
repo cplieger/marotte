@@ -101,11 +101,12 @@ const PAINTED: Record<Tier, Record<string, [number, number]>> = {
     steerAct: [24, 24],
     tabClose: [24, 24],
   },
+  // A finger's 44px is each control's target, never its box: the coarse tier paints the mouse's.
   coarse: {
-    segBar: [-1, 44],
-    iconBtn: [44, 44],
-    shellBtn: [44, 44],
-    steerAct: [44, 44],
+    segBar: [-1, 40],
+    iconBtn: [32, 32],
+    shellBtn: [24, 24],
+    steerAct: [24, 24],
     tabClose: [24, 24],
   },
 };
@@ -116,7 +117,7 @@ function painted(els: Controls): Record<string, [number, number]> {
   );
 }
 
-describe("a control's painted box follows the tier", () => {
+describe("a control's painted box is the same at every tier", () => {
   it.each(["fine", "coarse"] as const)("at the %s tier", async (tier) => {
     document.documentElement.dataset["pointer"] = tier;
     const els = mount();
@@ -235,13 +236,14 @@ describe("a size keyed on the tier, not the width", () => {
     },
   );
 
-  it("gives the coarse tier the finger's sizes on a wide screen", async () => {
+  it("grows only the row, not the controls in it, for the coarse tier on a wide screen", async () => {
     await page.viewport(1180, 820);
     document.documentElement.dataset["pointer"] = "fine";
     const fine = sizes(mountRows());
     host.remove();
     document.documentElement.dataset["pointer"] = "coarse";
     const coarse = sizes(mountRows());
-    expect(coarse.map((v, i) => v > (fine[i] ?? Infinity))).toEqual([true, true, true, true]);
+    expect(coarse.map((v, i) => v > (fine[i] ?? Infinity))).toEqual([true, false, false, false]);
+    expect(coarse.slice(1)).toEqual(fine.slice(1));
   });
 });

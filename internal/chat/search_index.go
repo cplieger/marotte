@@ -12,7 +12,7 @@ import (
 // The cross-chat candidate index: one Bloom filter per chat over the rune trigrams of what the scan searches
 // (entrySegments spans plus the title, via textsearch.Fold). It prunes, never decides: no false negatives, and a
 // saturated filter admits all. In memory: the first reading query builds it, appends extend it under the chat lock,
-// and a rewind, rewrite, run_named, header write or Remove drops it.
+// and a rewind, rewrite, run_named, header write or remove drops it.
 
 const (
 	// filterBytes is one chat's filter, and so the index's cost per chat.

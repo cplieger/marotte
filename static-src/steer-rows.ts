@@ -85,6 +85,7 @@ export function foldSteerFrame(
     ...(prev?.kas !== undefined && { kas: prev.kas }),
     ...(prev?.compacted === true && { compacted: true as const }),
     ...(frame.state === "unsent" && { unsent: true as const }),
+    ...(frame.state === "delivering" && { delivering: true as const }),
     ...(frame.state === "unsent" && frame.awaitsPrompt === true && { awaitsPrompt: true as const }),
     ...(frame.caller !== undefined && { caller: frame.caller }),
   };

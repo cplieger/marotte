@@ -248,7 +248,7 @@ func TestExecCLIRunner_RunStdoutCapped_LogsCapturedStderr(t *testing.T) {
 	})
 }
 
-// TestExecCLIRunner_DeadlineKillsTheWholeGroup: `settings` forks kiro-cli-chat, so the fake CLI
+// TestExecCLIRunner_DeadlineKillsTheWholeGroup: a kiro-cli call can fork, so the fake CLI
 // forks a child that holds the output pipe; the deadline must end the call and the child.
 func TestExecCLIRunner_DeadlineKillsTheWholeGroup(t *testing.T) {
 	sh, err := exec.LookPath("sh")

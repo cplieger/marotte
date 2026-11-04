@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"context"
-
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 )
@@ -13,89 +11,88 @@ import (
 // knowledgeEnabled reports whether a session gets the knowledge index in msg0 and KAS's
 // Knowledge tool. On by default (settings.Default() matches) so existing installs keep it. It
 // gates the agent only, never `_kiro/knowledge` or the panel.
-func knowledgeEnabled(ctx context.Context, configDir string) bool {
+func knowledgeEnabled(d settings.Document) bool {
 	var b bool
-	if !settings.FieldInto(ctx, configDir, settings.KeyKnowledgeEnabled, &b) {
+	if !d.Into(settings.KeyKnowledgeEnabled, &b) {
 		return true
 	}
 	return b
 }
 
-// An absent, unreadable or unrecognised value takes settings.DefaultMemoryMode.
-func memoryPreference(ctx context.Context, configDir string) marotte.MemoryPreference {
+// An absent, invalid or unrecognised value takes settings.DefaultMemoryMode.
+func memoryPreference(d settings.Document) marotte.MemoryPreference {
 	mode := settings.DefaultMemoryMode
 	var v string
-	if settings.FieldInto(ctx, configDir, settings.KeyMemoryMode, &v) {
+	if d.Into(settings.KeyMemoryMode, &v) {
 		mode = v
 	}
 	return settings.MemoryPreferenceFor(mode)
 }
 
-// sessionFeatures resolves the Agent-capabilities settings a session door sends KAS; an absent or
-// invalid value takes its default, and an administrator lock wins.
-func sessionFeatures(ctx context.Context, configDir string, locks map[string]marotte.GovernanceLock) marotte.SessionFeatures {
+// sessionFeatures resolves the stored Agent-capabilities settings a session door sends KAS; an absent or invalid value
+// takes its default. readSessionSettings applies the administrator locks.
+func sessionFeatures(d settings.Document) marotte.SessionFeatures {
 	var f marotte.SessionFeatures
 	// An unset value is the default, off: ask-first is read only while planning is on.
-	if plan := settingString(ctx, configDir, settings.KeySpecPlanning, settings.ValidSpecPlanning); plan != "" && plan != settings.SpecPlanningOff {
+	if plan := settingString(d, settings.KeySpecPlanning, settings.ValidSpecPlanning); plan != "" && plan != settings.SpecPlanningOff {
 		f.SpecPlan = plan
-		f.SpecAskClarification = settingBool(ctx, configDir, settings.KeySpecPlanningAskFirst)
+		f.SpecAskClarification = settingBool(d, settings.KeySpecPlanningAskFirst)
 	}
 	f.Workflows = settings.DefaultWorkflowsEnabled
 	var workflows bool
-	if settings.FieldInto(ctx, configDir, settings.KeyWorkflowsEnabled, &workflows) {
+	if d.Into(settings.KeyWorkflowsEnabled, &workflows) {
 		f.Workflows = workflows
 	}
-	f.Workflows = lockedBool(locks, marotte.LockWorkflows, f.Workflows)
-	f.WorkValidation = settingString(ctx, configDir, settings.KeyWorkValidation, settings.ValidFeatureChoice)
+	f.WorkValidation = settingString(d, settings.KeyWorkValidation, settings.ValidFeatureChoice)
 	return f
 }
 
 // engineFeatures resolves the Agent-capabilities settings the engine is spawned with.
-func engineFeatures(ctx context.Context, configDir string) marotte.EngineFeatures {
+func engineFeatures(d settings.Document) marotte.EngineFeatures {
 	return marotte.EngineFeatures{
-		SteeringReminders:        settingBool(ctx, configDir, settings.KeySteeringReminders),
-		InfraSafetyMonitor:       settingString(ctx, configDir, settings.KeyCloudFormationSafety, settings.ValidFeatureChoice),
-		AutoRouting:              settingString(ctx, configDir, settings.KeyAutoRouting, settings.ValidFeatureChoice),
-		AutoDelegation:           settingString(ctx, configDir, settings.KeyAutoDelegation, settings.ValidFeatureChoice),
-		ModelFallback:            settingBool(ctx, configDir, settings.KeyModelFallback),
-		TerminalCommandTimeoutMs: terminalCommandTimeoutMs(ctx, configDir),
+		SteeringReminders:        settingBool(d, settings.KeySteeringReminders),
+		InfraSafetyMonitor:       settingString(d, settings.KeyCloudFormationSafety, settings.ValidFeatureChoice),
+		AutoRouting:              settingString(d, settings.KeyAutoRouting, settings.ValidFeatureChoice),
+		AutoDelegation:           settingString(d, settings.KeyAutoDelegation, settings.ValidFeatureChoice),
+		ModelFallback:            settingBool(d, settings.KeyModelFallback),
+		TerminalCommandTimeoutMs: terminalCommandTimeoutMs(d),
 	}
 }
 
 // terminalCommandTimeoutMs reads the shell tool's default timeout; 0 is unset.
-func terminalCommandTimeoutMs(ctx context.Context, configDir string) int {
+func terminalCommandTimeoutMs(d settings.Document) int {
 	var ms int
-	if settings.FieldInto(ctx, configDir, settings.KeyTerminalCommandTimeoutMs, &ms) && settings.ValidTerminalCommandTimeoutMs(ms) {
+	if d.Into(settings.KeyTerminalCommandTimeoutMs, &ms) && settings.ValidTerminalCommandTimeoutMs(ms) {
 		return ms
 	}
 	return 0
 }
 
 // settingBool reads a default-false bool setting.
-func settingBool(ctx context.Context, configDir, key string) bool {
+func settingBool(d settings.Document, key string) bool {
 	var b bool
-	return settings.FieldInto(ctx, configDir, key, &b) && b
+	return d.Into(key, &b) && b
 }
 
-// settingString reads a string setting, the zero value for absent, unreadable or invalid; every
-// caller's zero value is its default.
-func settingString(ctx context.Context, configDir, key string, valid func(string) bool) string {
+// settingString reads a string setting, the zero value for absent or invalid; every caller's zero value is its
+// default.
+func settingString(d settings.Document, key string, valid func(string) bool) string {
 	var v string
-	if settings.FieldInto(ctx, configDir, key, &v) && valid(v) {
+	if d.Into(key, &v) && valid(v) {
 		return v
 	}
 	return ""
 }
 
 // Invalid values read as the defaults (on, 80).
-func autoCompactionPolicy(ctx context.Context, configDir string) (enabled bool, pct int) {
+func autoCompactionPolicy(d settings.Document) (enabled bool, pct int) {
 	enabled, pct = settings.DefaultAutoCompactionEnabled, settings.DefaultAutoCompactPct
 	var b bool
-	if settings.FieldInto(ctx, configDir, settings.KeyAutoCompactionEnabled, &b) {
+	if d.Into(settings.KeyAutoCompactionEnabled, &b) {
 		enabled = b
 	}
 	var p int
-	if settings.FieldInto(ctx, configDir, settings.KeyAutoCompactPct, &p) && settings.ValidAutoCompactPct(p) {
+	if d.Into(settings.KeyAutoCompactPct, &p) && settings.ValidAutoCompactPct(p) {
 		pct = p
 	}
 	return enabled, pct

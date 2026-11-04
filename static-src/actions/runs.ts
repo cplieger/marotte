@@ -64,7 +64,7 @@ export const launchRun = apiAction<RunLaunchRequest, RunLaunchedResponse>({
 });
 
 /** A verb's success can move what the run offers with no frame to say so (a landed Pause only
- *  sets `pausePending`), so the run is re-read and its verbs behind it (`invalidateRunControls`). */
+ *  sets `pausePending`), so the run is re-read, which carries its verbs. */
 function rereadAfterVerb(workflowID: string): void {
   invalidateRun(workflowID);
 }

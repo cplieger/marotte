@@ -69,10 +69,10 @@ function members(selector: string): string[] {
 describe("the height's declarations, read from source", () => {
   const css = loadCSS("15-input.css");
 
-  it("declares one control height for the box, and it takes ONE rung on touch", () => {
+  it("declares one control height for the box, the same on every tier", () => {
     const form = ruleContaining(css, '[id="prompt-form"]', "top");
-    // The painted box takes one rung up on coarse (`--ctl-h-sm`: 32 mouse, 36 finger) and stops short of the target floor.
-    expect(form.body).toMatch(/--composer-ctl-h:\s*max\(2rem,\s*var\(--ctl-h-sm\)\)/);
+    // The painted box is 32 under a mouse and a finger; the target grows, never the box.
+    expect(form.body).toMatch(/--composer-ctl-h:\s*2rem;/);
     // The floor must not be read here, or the painted box takes the 44px target's measure ("grown buttons look empty").
     expect(form.body).not.toMatch(/--composer-ctl-h:[^;]*--hit-floor/);
     // One declaration, so no second selector re-decides the tier.
@@ -133,9 +133,6 @@ describe("the height's declarations, read from source", () => {
       .filter((r) => /padding(-inline)?:[^;]*var\(--sp-/.test(r.body))
       .map((r) => r.selector);
     expect(rePadders, "no rule re-pads either control off a spacing token").toEqual([]);
-    expect(own, "physical, or the floor's own min-width wins by source order").toMatch(
-      /min-width:\s*0/,
-    );
     const widthWriters = allRules(css)
       .filter((r) => /\.send-btn/.test(r.selector) && /min-width:\s*var\(--btn-h\)/.test(r.body))
       .map((r) => r.selector);
@@ -212,7 +209,7 @@ describe("the composer, measured at real viewport sizes", () => {
   it("matches the two rows on a touch DESKTOP, which is the case a width query cannot reach", async () => {
     // Wide coarse: a width query cannot see the tier, so the textarea could sit over a taller pill row.
     const { textarea, band, control } = await bandsAt(1440, 900, "coarse");
-    expect(control, "one rung up on a coarse pointer, still short of the 44px floor").toBe(36);
+    expect(control, "the mouse's box, the 44px living in the target").toBe(32);
     expect(textarea).toBe(44);
     expect(band).toBe(44);
   });
@@ -467,8 +464,17 @@ describe("the attachment chip's declarations, read from source", () => {
     expect(writers, "one padding writer, on no width axis").toEqual([".attachment-row"]);
   });
 
-  it("opts both chip buttons out of the floor PHYSICALLY and grows their target instead", () => {
-    for (const selector of [".attachment-open", ".attachment-close"]) {
+  it("opts the chip's open button out of the floor PHYSICALLY and grows their targets instead", () => {
+    // The × declares a 24px square, the paint floor itself, so only the open button needs the opt-out.
+    const close = ruleContaining(css, ".attachment-close", "top");
+    expect(declaration(close.body, "inline-size"), "the × is a declared square").toBe(
+      "var(--close-box)",
+    );
+    expect(declaration(close.body, "block-size")).toBe("var(--close-box)");
+    expect(declaration(close.body, "position"), "the ×'s expander's containing block").toBe(
+      "relative",
+    );
+    for (const selector of [".attachment-open"]) {
       const rule = ruleContaining(css, selector, "top");
       const brace = rule.body.indexOf("{");
       const own = brace === -1 ? rule.body : rule.body.slice(0, brace);
@@ -482,9 +488,7 @@ describe("the attachment chip's declarations, read from source", () => {
     }
     const expander = ruleContaining(css, ".attachment-open::after", "top");
     expect(expander.selector).toContain(".attachment-close::after");
-    expect(declaration(expander.body, "inset-block")).toBe(
-      "min(0px, calc((100% - var(--hit-floor)) / 2))",
-    );
+    expect(declaration(expander.body, "inset-block")).toBe("var(--hit-inset)");
     // Block only: an inline expander on the `×` would put a destructive target over the filename's last characters.
     expect(
       declaration(expander.body, "inset-inline"),
@@ -544,13 +548,13 @@ describe("the attachment chip, measured at real viewport sizes", () => {
   it("matches the chip to the pill row's controls on a phone, which is the reported defect", async () => {
     const { chip, control, floor } = await chipsAt(390, 844, "coarse");
     expect(floor, "the coarse floor, in px").toBe(44);
-    expect(chip, "a 50.78px chip before the fix").toBe(36);
+    expect(chip, "a 50.78px chip before the fix").toBe(32);
     expect(chip).toBe(control);
   });
 
   it("matches it on a touch DESKTOP, the tier a width query cannot see", async () => {
     const { chip, control } = await chipsAt(1440, 900, "coarse");
-    expect(chip).toBe(36);
+    expect(chip).toBe(32);
     expect(chip).toBe(control);
   });
 

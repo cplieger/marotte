@@ -256,9 +256,6 @@ type kasWorkflowRun struct {
 	StartedAt string `json:"startedAt"`
 	// ParentSessionID is the launching session, how the run is attributed.
 	ParentSessionID string `json:"parentSessionId"`
-	// PauseKind is "maxIterations" for a repeat at its cap, and PauseNodeID names it; only paused runs carry them.
-	PauseKind   string `json:"pauseKind"`
-	PauseNodeID string `json:"pauseNodeId"`
 	// PausePending is a pause asked for and not yet landed.
 	PausePending bool `json:"pausePending"`
 }

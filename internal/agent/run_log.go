@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/translate"
@@ -102,6 +104,27 @@ func (r *runLog) dir(workflowID string) (string, error) {
 		return "", errRunIDInvalid
 	}
 	return filepath.Join(r.root, workflowID), nil
+}
+
+// recorded lists the workflow ids with a directory under the root; a missing root is none. A name runLog.dir would
+// refuse is skipped.
+func (r *runLog) recorded() ([]string, error) {
+	entries, err := os.ReadDir(r.root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list run records: %w", err)
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() || !ids.ValidChatID(e.Name()) {
+			slog.Debug("run records: skipped an entry that names no run", "name", logsafe.Field(e.Name()))
+			continue
+		}
+		out = append(out, e.Name())
+	}
+	return out, nil
 }
 
 // A deleted run answers errRunLogRemoved until restart.

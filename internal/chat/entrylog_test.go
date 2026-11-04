@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/marotte/internal/asidefile"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -236,6 +238,71 @@ func TestEntryLog_ATornTailIsDroppedAndSeqContinues(t *testing.T) {
 	}
 	if got := fileHead(t, filepath.Join(f.root, entriesFileName), len(whole)); got != string(whole) {
 		t.Error("the surviving bytes are not the prefix that was there before the tail was planted")
+	}
+}
+
+// A complete line that cannot be read is corruption, not a torn write: the log is copied aside whole, the open
+// succeeds on the prefix before the line, and the entries after it survive in the aside.
+func TestEntryLog_AnUnreadableCompleteLineIsCopiedAsideAndDropped(t *testing.T) {
+	f := newLogFixture(t)
+	turn := f.prompt("hello")
+	f.append(turn, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "one"})
+	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
+	path := filepath.Join(f.root, entriesFileName)
+	whole, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the log: %v", err)
+	}
+	first := bytes.IndexByte(whole, '\n') + 1
+	corrupt := slices.Concat(whole[:first], []byte("{not an entry}\n"), whole[first:])
+	if err := os.WriteFile(path, corrupt, fileMode); err != nil {
+		t.Fatalf("plant a corrupt line: %v", err)
+	}
+
+	if err := f.log.Close(); err != nil {
+		t.Fatalf("close log: %v", err)
+	}
+	lg, err := OpenEntryLog(t.Context(), f.root, f.header)
+	if err != nil {
+		t.Fatalf("the open over a corrupt complete line failed: %v; want it to heal", err)
+	}
+	_ = lg.Close()
+	live, _ := os.ReadFile(path)
+	if !bytes.HasPrefix(live, whole[:first]) || bytes.Contains(live, []byte("{not an entry}")) {
+		t.Errorf("the live log is %q, want the line before the corrupt one and nothing from it on", live)
+	}
+	aside, err := asidefile.Find(f.root, entriesFileName)
+	if err != nil || aside == "" {
+		t.Fatalf("no aside of the log: %q, %v", aside, err)
+	}
+	if got, _ := os.ReadFile(aside); !bytes.Equal(got, corrupt) {
+		t.Errorf("the aside holds %d bytes, want the original %d", len(got), len(corrupt))
+	}
+}
+
+// A read error is not corruption the open can see past: the open fails and the log stays whole.
+func TestEntryLog_AReadErrorFailsTheOpenAndKeepsTheLog(t *testing.T) {
+	f := newLogFixture(t)
+	turn := f.prompt("hello")
+	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
+	path := filepath.Join(f.root, entriesFileName)
+	whole, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the log: %v", err)
+	}
+	if err := f.log.Close(); err != nil {
+		t.Fatalf("close log: %v", err)
+	}
+	l := &EntryLog{root: f.root, header: f.header}
+	readErr := errors.New("EIO")
+	if err := l.unreadableLineLocked(int64(len(whole)/2), readErr, readErr); !errors.Is(err, readErr) {
+		t.Errorf("unreadableLineLocked on a read error = %v, want it refused with the read error", err)
+	}
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, whole) {
+		t.Errorf("a read error changed the log: %d bytes left of %d", len(got), len(whole))
+	}
+	if aside, _ := asidefile.Find(f.root, entriesFileName); aside != "" {
+		t.Errorf("a read error left an aside %q", aside)
 	}
 }
 

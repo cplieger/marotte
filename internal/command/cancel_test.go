@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -142,7 +143,7 @@ func TestCloseTeardown_UndeliveredAnswerStillTearsDown(t *testing.T) {
 	d := newCancelDeps(b)
 	d.err = fmt.Errorf("%w: write refused", ErrCancelNotDelivered)
 
-	closeChatTeardown(t.Context(), d, d, d, d, "c1")
+	closeChatTeardown(t.Context(), d, d, d, d, "c1", &chat.Claim{})
 
 	if len(d.scopes) != 1 || d.scopes[0] != ScopeChatAndRuns {
 		t.Errorf("permission scopes = %v, want [ScopeChatAndRuns]", d.scopes)
@@ -179,7 +180,7 @@ func TestCloseTeardown_AnswersChatAndStepAsksBeforeSessionCancel(t *testing.T) {
 	notifiedAtAnswers := -1
 	d.onCancel = func() { notifiedAtAnswers = len(b.notified) }
 
-	closeChatTeardown(t.Context(), d, d, d, d, "c1")
+	closeChatTeardown(t.Context(), d, d, d, d, "c1", &chat.Claim{})
 
 	assertAnswersBeforeCancel(t, d, b, notifiedAtAnswers)
 	if len(d.closed) != 1 {
@@ -212,7 +213,7 @@ func TestStop_RecordsItsIssuersCause(t *testing.T) {
 			}
 		}},
 		{name: "a tab close", want: marotte.TurnStopTeardown, run: func(t *testing.T, d *cancelDeps) {
-			closeChatTeardown(t.Context(), d, d, d, d, "c1")
+			closeChatTeardown(t.Context(), d, d, d, d, "c1", &chat.Claim{})
 		}},
 		{name: "a chat delete", want: marotte.TurnStopTeardown, run: func(t *testing.T, d *cancelDeps) {
 			deleteChatTeardown(t.Context(), d, d, d, d, "c1", []string{"sess-1"})

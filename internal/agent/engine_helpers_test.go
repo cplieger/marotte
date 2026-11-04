@@ -40,6 +40,10 @@ type fakeEngineSource struct {
 	callGate func(ctx context.Context, method string, resp *marotte.RPCResponse, err error) (*marotte.RPCResponse, error)
 	// withheld counts lane frames toward the position and never delivers them: a wedged engine lane.
 	withheld bool
+	// cliPath is what CLIPath answers; empty is the default path.
+	cliPath string
+	// exitHook stands in for the runtime's exit hook on a source with no runtime (an owner fixture).
+	exitHook func(gen uint64)
 	rt       *Runtime
 	engines  []*fakeEngine
 	mu       sync.Mutex
@@ -59,13 +63,28 @@ func fakeEngineOf(factory sessionFactory, lane *fakeBridge) *fakeEngineSource {
 	return &fakeEngineSource{factory: factory, lane: lane}
 }
 
-func (*fakeEngineSource) ChatPath() string              { return "/fake/kiro-cli-chat" }
+func (s *fakeEngineSource) CLIPath() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cliPath == "" {
+		return "/fake/kiro-cli"
+	}
+	return s.cliPath
+}
+
 func (*fakeEngineSource) Installed() <-chan struct{}    { return nil }
 func (*fakeEngineSource) Env() []string                 { return nil }
 func (*fakeEngineSource) EnvAllow() map[string]struct{} { return nil }
 
-func (s *fakeEngineSource) spawnEngine(gen uint64, _ string, _ ...bridge.Option) engineHandle {
-	e := &fakeEngine{src: s, gen: gen, done: make(chan struct{}), notifCh: make(chan marotte.Notification, 16)}
+// setCLIPath moves the kiro-cli the next spawn runs, as an install of a new version does.
+func (s *fakeEngineSource) setCLIPath(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cliPath = path
+}
+
+func (s *fakeEngineSource) spawnEngine(gen uint64, path string, _ ...bridge.Option) engineHandle {
+	e := &fakeEngine{src: s, gen: gen, path: path, done: make(chan struct{}), notifCh: make(chan marotte.Notification, 16)}
 	s.mu.Lock()
 	s.engines = append(s.engines, e)
 	s.mu.Unlock()
@@ -123,6 +142,7 @@ func (s *fakeEngineSource) generations() int {
 type fakeEngine struct {
 	src      *fakeEngineSource
 	opts     *marotte.EngineOpts
+	path     string
 	done     chan struct{}
 	notifCh  chan marotte.Notification
 	sessions []engineSession
@@ -198,10 +218,13 @@ func (e *fakeEngine) crash() { e.end(bridge.ExitInfo{}) }
 func (e *fakeEngine) end(info bridge.ExitInfo) {
 	e.stopOnce.Do(func() {
 		e.src.mu.Lock()
-		rt := e.src.rt
+		rt, hook := e.src.rt, e.src.exitHook
 		e.src.mu.Unlock()
-		if rt != nil {
+		switch {
+		case rt != nil:
 			rt.engine.onExit(e.gen)
+		case hook != nil:
+			hook(e.gen)
 		}
 		e.mu.Lock()
 		e.exit = info

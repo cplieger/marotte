@@ -709,7 +709,7 @@ func TestSteerRecords_ADeletedRowLeavesNoEntry(t *testing.T) {
 		s.bind()
 		s.steer("steer-a", "first")
 		s.steer("steer-b", "second")
-		if needs := s.q.BeginDiscard(s.chat, "op-d"); !needs {
+		if needs, _ := s.q.BeginDiscard(s.chat, "op-d"); !needs {
 			t.Fatal("discard of rows KAS holds needs no clear")
 		}
 		s.clearKAS()
@@ -720,7 +720,7 @@ func TestSteerRecords_ADeletedRowLeavesNoEntry(t *testing.T) {
 	t.Run("by Discard all with nothing in KAS", func(t *testing.T) {
 		s := newSteerHarness(t)
 		s.q.RouteSteer(s.chat, "steer-a", "first", nil, command.SteerHolder{Held: true, PromptClass: true})
-		if needs := s.q.BeginDiscard(s.chat, "op-d"); needs {
+		if needs, _ := s.q.BeginDiscard(s.chat, "op-d"); needs {
 			t.Fatal("BeginDiscard = true, want an immediate discard")
 		}
 		wantGoneUnnoted(t, s, "steer-a")
@@ -783,7 +783,7 @@ func TestSteerRecords_ATurnEndingUnderTheOpRecordsTheEndWithItsLead(t *testing.T
 	s.steer("steer-b", "second")
 	op := "op-steer-a"
 	s.q.BeginRemove(s.chat, "steer-a", op)
-	undo := s.q.SetSteerLead(s.chat, "steer-b")
+	undo, _ := s.q.SetSteerLead(s.chat, "steer-b")
 	defer undo()
 	s.endTurn()
 
@@ -881,7 +881,7 @@ func TestSteerRecords_ATurnEndingUnderADiscardLeavesALaterRowToItsEnd(t *testing
 	s := newSteerHarness(t)
 	s.steer("steer-a", "a")
 	const op = "op-discard"
-	if needs := s.q.BeginDiscard(s.chat, op); !needs {
+	if needs, _ := s.q.BeginDiscard(s.chat, op); !needs {
 		t.Fatal("BeginDiscard = false, want a clear")
 	}
 	if _, refuse := s.q.RouteSteer(s.chat, "steer-b", "b", nil,
@@ -950,7 +950,7 @@ func TestSteerRecords_ResolvedRowsStayUntilDelivered(t *testing.T) {
 	s.bind()
 	s.steer("steer-a", "first")
 	s.steer("steer-b", "second")
-	undo := s.q.SetSteerLead(s.chat, "steer-b")
+	undo, _ := s.q.SetSteerLead(s.chat, "steer-b")
 	defer undo()
 	s.endTurn()
 	ends := s.q.Ends(s.chat)
@@ -986,6 +986,30 @@ func TestSteerRecords_ResolvedRowsStayUntilDelivered(t *testing.T) {
 		if _, live := s.state(k); live {
 			t.Errorf("row %s is still held after its prompt opened", k)
 		}
+	}
+}
+
+// The send-now arrow's row leads only while it waits in the dock: once the prompt carrying it opened, or the
+// agent read it, the arrow has nothing left to send first.
+func TestSteerRecords_ALeadIsWaitingOnlyWhileItsRowIsInTheDock(t *testing.T) {
+	s := newSteerHarness(t)
+	s.bind()
+	s.steer("steer-a", "first")
+	s.steer("steer-b", "second")
+	readInjected(s, s.kasID("steer-a"))
+
+	if _, waiting := s.q.SetSteerLead(s.chat, "steer-b"); !waiting {
+		t.Error("SetSteerLead(steer-b) answered not waiting, want the dock row led")
+	}
+	if _, waiting := s.q.SetSteerLead(s.chat, "steer-a"); waiting {
+		t.Error("SetSteerLead(steer-a) answered waiting, want the row the agent read not led")
+	}
+	s.q.Delivered(s.chat, []string{"steer-b"})
+	if _, waiting := s.q.SetSteerLead(s.chat, "steer-b"); waiting {
+		t.Error("SetSteerLead(steer-b) answered waiting after its prompt opened, want nothing led")
+	}
+	if _, waiting := s.q.SetSteerLead(s.chat, "steer-z"); waiting {
+		t.Error("SetSteerLead(steer-z) answered waiting for a key no row has")
 	}
 }
 
@@ -1078,7 +1102,7 @@ func TestSteerRecords_DiscardLeavesARowReadBeforeTheClearRead(t *testing.T) {
 	s.bind()
 	s.steer("steer-a", "first")
 	s.steer("steer-b", "second")
-	if !s.q.BeginDiscard(s.chat, "op-d") {
+	if needs, _ := s.q.BeginDiscard(s.chat, "op-d"); !needs {
 		t.Fatal("discard of rows KAS holds needs no clear")
 	}
 	s.recs.SteerRead(s.chat, s.kasID("steer-a"))

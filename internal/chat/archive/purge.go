@@ -5,20 +5,13 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/parallel"
-	"github.com/cplieger/marotte/internal/subject"
 )
-
-type purgeEntry struct {
-	name string
-	path string
-}
 
 type purgeOutcome int
 
@@ -30,17 +23,18 @@ const (
 )
 
 // PurgeResult reports one pass; the scheduler times its next wake-up from it. NextDeadline is the
-// earliest instant a chat kept ON AGE becomes purgeable, zero when none. An exempt chat contributes
-// none: its age deadline is already past, so a timer aimed at it would spin.
+// earliest instant a chat kept ON AGE becomes purgeable, zero when none. A chat kept by a keep fact
+// contributes none: its age deadline is already past, so a timer aimed at it would spin. KeptBy counts
+// the chats past retention each reason kept.
 type PurgeResult struct {
 	NextDeadline time.Time
+	KeptBy       map[string]int
 	Purged       int
 	Kept         int
 	Errors       int
 }
 
-// Purge deletes chats whose last activity is older than maxAge. Live and expired chats share the
-// main directory; only the age test and the exemptions separate them.
+// Purge deletes the chats PurgeIdle finds idle for longer than maxAge.
 func (s *Service) Purge(ctx context.Context, maxAge time.Duration) PurgeResult {
 	dir := s.store.Dir()
 	entries, err := os.ReadDir(dir)
@@ -51,23 +45,18 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) PurgeResult {
 		}
 		return PurgeResult{}
 	}
-	valid := collectPurgeEntries(entries, dir)
-	if len(valid) == 0 {
-		return PurgeResult{}
-	}
-
+	valid := collectPurgeEntries(entries)
 	cutoff := time.Now().Add(-maxAge)
 	const maxWorkers = 8
 	// Per-index slots, reduced serially below, so the fan-out needs no lock.
-	outcomes := make([]purgeOutcome, len(valid))
-	deadlines := make([]time.Time, len(valid))
-	parallel.Bounded(ctx, valid, maxWorkers, func(i int, entry purgeEntry) {
-		outcomes[i], deadlines[i] = s.purgeOne(ctx, entry, cutoff, maxAge)
+	verdicts := make([]purgeOneResult, len(valid))
+	parallel.Bounded(ctx, valid, maxWorkers, func(i int, id marotte.ChatID) {
+		verdicts[i] = s.purgeOne(ctx, id, cutoff)
 	})
 
-	var res PurgeResult
-	for i, outcome := range outcomes {
-		switch outcome {
+	res := PurgeResult{KeptBy: make(map[string]int, len(keptByKinds))}
+	for _, v := range verdicts {
+		switch v.outcome {
 		case purgePurged:
 			res.Purged++
 		case purgeKept:
@@ -76,7 +65,10 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) PurgeResult {
 			res.Errors++
 		case purgeSkipped:
 		}
-		if d := deadlines[i]; !d.IsZero() && (res.NextDeadline.IsZero() || d.Before(res.NextDeadline)) {
+		if v.keptBy != "" {
+			res.KeptBy[v.keptBy]++
+		}
+		if d := v.deadline; !d.IsZero() && (res.NextDeadline.IsZero() || d.Before(res.NextDeadline)) {
 			res.NextDeadline = d
 		}
 	}
@@ -84,86 +76,50 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) PurgeResult {
 	return res
 }
 
-// The path is the header inside, whose mtime is the age fallback for a chat that cannot be read.
-func collectPurgeEntries(entries []os.DirEntry, dir string) []purgeEntry {
-	var valid []purgeEntry
+func collectPurgeEntries(entries []os.DirEntry) []marotte.ChatID {
+	var valid []marotte.ChatID
 	for _, e := range entries {
 		if !e.IsDir() || !ids.ValidChatID(e.Name()) {
 			continue
 		}
-		valid = append(valid, purgeEntry{name: e.Name(), path: filepath.Join(dir, e.Name(), headerFileName)})
+		valid = append(valid, marotte.ChatID(e.Name()))
 	}
 	return valid
 }
 
-// purgeOne removes a single chat when its last activity is older than cutoff. The deadline is
-// non-zero only for a chat kept by age. Holds the per-chat mutex across stat+remove so a concurrent
-// mutate cannot race the delete.
-func (s *Service) purgeOne(ctx context.Context, entry purgeEntry, cutoff time.Time, maxAge time.Duration) (purgeOutcome, time.Time) {
-	if s.isLive != nil && s.isLive(marotte.ChatID(entry.name)) {
-		return purgeKept, time.Time{}
-	}
-	// Checked BEFORE the record lock: the coordinator's operation lock precedes a chat record lock
-	// everywhere else.
-	if s.hasOpenTab != nil && s.hasOpenTab(marotte.ChatID(entry.name)) {
-		return purgeKept, time.Time{}
-	}
-	m := s.store.Lock(marotte.ChatID(entry.name))
-	m.Lock()
-	info, err := os.Stat(entry.path)
-	if err != nil {
-		m.Unlock()
-		if errors.Is(err, os.ErrNotExist) {
-			return purgeSkipped, time.Time{}
-		}
-		slog.Warn("chat purge: stat", "name", entry.name, "error", err)
-		return purgeErr, time.Time{}
-	}
-	// Capture the chain BEFORE the remove: onPurge fires once the file is gone and
-	// the session ids are no longer readable.
-	refTime, chain, drafting := s.purgeReferenceTime(entry, info.ModTime())
-	// Store.SetDraft does not stamp UpdatedAt, so a draft is invisible to the age test.
-	if drafting {
-		m.Unlock()
-		return purgeKept, time.Time{}
-	}
-	if !refTime.Before(cutoff) {
-		m.Unlock()
-		return purgeKept, refTime.Add(maxAge)
-	}
-	chatsVersion, err := s.store.Remove(marotte.ChatID(entry.name))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		m.Unlock()
-		slog.Warn("chat purge: remove", "chat_id", entry.name, "error", err)
-		return purgeErr, time.Time{}
-	}
-	m.Unlock()
-	if s.broadcast != nil {
-		chatID := marotte.ChatID(entry.name)
-		frame := marotte.NewEvent(marotte.EventChatDeleted, chatID, marotte.ChatDeletedPayload{ID: entry.name})
-		frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
-		s.broadcast(ctx, frame)
-	}
-	if s.onPurge != nil {
-		s.onPurge(marotte.ChatID(entry.name), chain)
-	}
-	return purgePurged, time.Time{}
+type purgeOneResult struct {
+	deadline time.Time
+	keptBy   string
+	outcome  purgeOutcome
 }
 
-// Caller holds the per-chat mutex. Falls back to the file mtime only for an unreadable chat: mtime
-// moves for reasons that are not activity.
-func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime time.Time, sessionChain []string, drafting bool) {
-	h, err := s.store.LoadRetentionHeader(marotte.ChatID(entry.name))
+// purgeOne asks the store for one chat's verdict; the decision and the removal are the store's, under its record lock.
+// onPurge runs after that lock is released.
+func (s *Service) purgeOne(ctx context.Context, chatID marotte.ChatID, cutoff time.Time) purgeOneResult {
+	v, err := s.store.PurgeIdle(ctx, chatID, cutoff)
 	if err != nil {
-		return mtime, nil, false
+		slog.Warn("chat purge: the chat could not be read; kept", "chat_id", chatID, "error", err)
+		return purgeOneResult{outcome: purgeErr}
 	}
-	if h.UpdatedAt <= 0 {
-		return mtime, h.SessionChain, h.Drafting
+	switch v.Outcome {
+	case PurgePurged:
+		s.onPurge(chatID, v.SessionChain)
+		return purgeOneResult{outcome: purgePurged}
+	case PurgeKept:
+		return purgeOneResult{outcome: purgeKept, deadline: v.Deadline, keptBy: v.KeptBy}
+	case PurgeAbsent:
 	}
-	return time.UnixMilli(h.UpdatedAt), h.SessionChain, h.Drafting
+	return purgeOneResult{outcome: purgeSkipped}
 }
 
+// logPurgeResult logs the pass and its count line. The count line is logged on every pass, zeros included, because it
+// is the series an alert rule reads.
 func logPurgeResult(res PurgeResult, maxAge time.Duration) {
+	counts := make([]any, 0, 2*len(keptByKinds))
+	for _, k := range keptByKinds {
+		counts = append(counts, k, res.KeptBy[k])
+	}
+	slog.Info("chat purge: chats past retention kept by a keep fact", counts...)
 	if res.Errors > 0 {
 		slog.Warn("chat purge: pass complete with errors",
 			"purged", res.Purged, "kept", res.Kept, "errors", res.Errors,
@@ -270,7 +226,7 @@ func stopTimer(t *time.Timer) {
 	}
 }
 
-// A pass is one projected read plus at most one unlink per chat, so overrunning it means the
+// A pass is one header read plus at most one unlink per chat, so overrunning it means the
 // filesystem is wedged and re-evaluating beats waiting.
 const purgeBudget = 5 * time.Minute
 
@@ -305,8 +261,8 @@ const (
 )
 
 // armWait is how long the loop sleeps before its next pass. Two rules keep it
-// from spinning: the wake-up comes from the PASS, never from the directory (an
-// exempt chat's mtime-derived deadline is permanently past), and an idle pass
+// from spinning: the wake-up comes from the PASS, never from the directory (a
+// chat kept by a keep fact has an age deadline already past), and an idle pass
 // backs off, since only an unobserved change can answer it differently.
 func (p *PurgeScheduler) armWait(retention time.Duration, res PurgeResult) time.Duration {
 	if !res.NextDeadline.IsZero() {
@@ -331,6 +287,15 @@ func mergePurgeResults(a, b PurgeResult) PurgeResult {
 		Purged: a.Purged + b.Purged,
 		Kept:   a.Kept + b.Kept,
 		Errors: a.Errors + b.Errors,
+	}
+	if len(a.KeptBy)+len(b.KeptBy) > 0 {
+		out.KeptBy = make(map[string]int, len(a.KeptBy)+len(b.KeptBy))
+		for k, n := range a.KeptBy {
+			out.KeptBy[k] += n
+		}
+		for k, n := range b.KeptBy {
+			out.KeptBy[k] += n
+		}
 	}
 	switch {
 	case a.NextDeadline.IsZero():

@@ -309,7 +309,8 @@
 }
 
 /* A target inside the label's sentence: WCAG 2.5.8's inline exception, as for a prose link
- * (61-mcp-tools.css), or the coarse floor makes the one-line label 44px tall. */
+ * (61-mcp-tools.css), or the paint floor makes the one-line label 24px tall. Its
+ * `overflow: hidden` clips the shared expander. */
 button.turn-wake-run,
 button.turn-wake-row-run {
   min-height: 0;
@@ -406,9 +407,9 @@ button.turn-wake-row-run:focus-visible {
   /* THE BAND IS THE ROW'S OWN: `--ctl-h-dense` floored by `--hit-floor` (32 on a mouse,
      44 on a coarse pointer), a declared height because block padding cannot follow the
      tier. Every control paints at `--ctl-h-sm` centred in it (4px of air above and below
-     on both tiers). `--footer-inset` is the inline air: more than the card's 5px corner
-     radius, so a control's corner sits clear of the arc and its own `--r-sm` needs no
-     concentric radius. */
+     on a mouse, 10px, its target's reach, on a coarse pointer). `--footer-inset` is the
+     inline air: more than the card's 5px corner radius, so a control's corner sits
+     clear of the arc and its own `--r-sm` needs no concentric radius. */
   --footer-inset: var(--sp-2);
 
   /* Row 1's TRACK, never the box's floor, which stops binding row 1 once the info panel opens
@@ -459,7 +460,8 @@ button.turn-wake-row-run:focus-visible {
   grid-column: 4;
   grid-row: 1;
   justify-self: end;
-  margin-inline-start: var(--sp-2);
+  /* Far enough from the last action that their two targets meet. */
+  margin-inline-start: max(var(--sp-2), var(--tap-gap-sm));
 }
 
 /* THE TURN'S LEAD FACT, inside the trigger so one press box covers the `i`, the outcome
@@ -864,6 +866,9 @@ button.turn-wake-row-run:focus-visible {
 
 /* A TEXT control, so accent ink on hover. */
 .turn-info-link {
+  /* Static, against the shared expander's `relative` (61-mcp-tools.css): the `::after`
+     below stretches over the list row, its containing block. */
+  position: static;
   padding: 0;
   border: 0;
   background: none;
@@ -1310,9 +1315,8 @@ button.turn-wake-row-run:focus-visible {
 /* A bare hit target holding the shared `.disclosure-chevron` (chevron.ts). The rotation
    is on the GLYPH rather than the button, so the focus ring below stays axis-aligned. */
 /* The box is hit area, not ink: the glyph inside stays `--chev-size`. This and the action
-   buttons at the row's other end both read `--ctl-h-sm`, so the pair cannot separate. On a
-   coarse pointer the universal hit floor lifts both to `--hit-floor`, which is what makes
-   the row taller on a finger than on a mouse. */
+   buttons at the row's other end both read `--ctl-h-sm`, so the pair cannot separate; the
+   shared expander (61-mcp-tools.css) holds both targets at `--hit-floor`. */
 .turn-fold-toggle {
   width: var(--ctl-h-sm);
   height: var(--ctl-h-sm);

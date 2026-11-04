@@ -533,6 +533,38 @@ export const unqueuePrompt = transportAction<{ chatID: string; messageID: string
   error: errorAbout(onChat, "Could not remove the follow-up"),
 });
 
+/** Sends one queued follow-up next: the server stops a running turn, whose close sends the row,
+ *  or sends it at once. No scope: like cancel, it must not queue behind an in-flight send.
+ *  `idempotencyKey`: a retry must not stop the turn the first attempt opened for this row.
+ *  `error: false`: the dock reports a refusal in the server's words. Resolves true when the
+ *  stop stopped nothing because the row's turn had already opened. */
+export const sendQueuedNow = defineAction<{ chatID: string; messageID: string }, boolean>({
+  name: "chat.send_queued_now",
+  networkMode: "always",
+  idempotencyKey: true,
+  dedupe: (args) => joinKey("chat.send_queued_now", args.chatID, args.messageID),
+  run: async ({ chatID, messageID }, signal, ctx) => {
+    const r = await transportSend(
+      {
+        type: "send_queued_now",
+        chat_id: chatID,
+        payload: { message_id: messageID },
+        ...(ctx?.idempotencyKey === undefined
+          ? {}
+          : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
+      },
+      { signal, reportSendState: false },
+    );
+    if (!r.ok) {
+      throw refusalOf(r, `send failed with status ${String(r.status)}`);
+    }
+    return stopSkipped(r);
+  },
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: false,
+});
+
 /** Drops every steer KAS still holds (`_session/steer/clear`) without cancelling the turn.
  *  Optimistic. Only CONFIRMED entries go: a `pending` one has no server id to address. */
 export const clearSteers = transportAction<
@@ -657,23 +689,50 @@ export const forkChat = defineAction<
   error: "Could not start a tangent",
 });
 
-// No scope: cancel must not queue behind an in-flight sendPrompt. `lead` is the send-now arrow's
-// row, which the turn-end resend orders first.
+/** Whether a stop's answer says it stopped nothing (`responseSkipped`, internal/command). */
+function stopSkipped(r: SendResult): boolean {
+  const body = r.body;
+  return (
+    typeof body === "object" && body !== null && (body as { skipped?: unknown }).skipped === true
+  );
+}
 
-export const cancelTurn = transportAction<
+// run never sees optimistic's op; the dispatch hands both the same args object.
+const thinkingBeforeStop = new WeakMap<object, boolean>();
+
+// No scope: cancel must not queue behind an in-flight sendPrompt. `lead` is the send-now arrow's
+// row, which the turn-end resend orders first. Resolves true when the server stopped nothing,
+// which puts the optimistic idle back.
+
+export const cancelTurn = defineAction<
   { chatID: string; lead?: string },
+  boolean,
   { wasThinking: boolean }
 >({
   name: "chat.cancel_turn",
-  command: ({ chatID, lead }) => ({
-    type: "cancel",
-    chat_id: chatID,
-    ...(lead !== undefined && lead !== "" ? { payload: { lead } } : {}),
-  }),
-  optimistic: ({ chatID }) => {
-    const session = get(chatID);
-    const wasThinking = session?.thinking ?? false;
-    setThinking(chatID, false);
+  run: async (args, signal) => {
+    const { chatID, lead } = args;
+    const r = await transportSend(
+      {
+        type: "cancel",
+        chat_id: chatID,
+        ...(lead !== undefined && lead !== "" ? { payload: { lead } } : {}),
+      },
+      { signal, reportSendState: false },
+    );
+    if (!r.ok) {
+      throw refusalOf(r, `send failed with status ${String(r.status)}`);
+    }
+    const skipped = stopSkipped(r);
+    if (skipped) {
+      setThinking(chatID, thinkingBeforeStop.get(args) ?? false);
+    }
+    return skipped;
+  },
+  optimistic: (args) => {
+    const wasThinking = get(args.chatID)?.thinking ?? false;
+    thinkingBeforeStop.set(args, wasThinking);
+    setThinking(args.chatID, false);
     return { wasThinking };
   },
   rollback: ({ chatID }, op) => {

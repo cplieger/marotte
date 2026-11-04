@@ -279,7 +279,7 @@ func TestAfterTurnClose_Order(t *testing.T) {
 		return inner(ctx, b)
 	}
 	bc := &bridgeCoordinator{
-		turns:             newTurnRegistry(),
+		turns:             newTurnRegistry(nopTurnRecords{}),
 		lifecycle:         &lifetime{shutdownCtx: t.Context()},
 		applyPendingModel: func(context.Context, marotte.ChatID) { record("model") },
 		autoCompact:       r.ac,
@@ -321,16 +321,16 @@ func writeCompactionSetting(t *testing.T, dir string, enabled bool, pct int) {
 }
 
 func TestAutoCompactionPolicy_ReadsTheSettingAndFailsToTheDefault(t *testing.T) {
-	if enabled, pct := autoCompactionPolicy(t.Context(), t.TempDir()); !enabled || pct != 80 {
+	if enabled, pct := autoCompactionPolicy(settings.Document{}); !enabled || pct != 80 {
 		t.Errorf("autoCompactionPolicy with no config.json = (%v, %d), want (true, 80)", enabled, pct)
 	}
 	dir := t.TempDir()
 	writeCompactionSetting(t, dir, false, 85)
-	if enabled, pct := autoCompactionPolicy(t.Context(), dir); enabled || pct != 85 {
+	if enabled, pct := autoCompactionPolicy(docAt(t, dir)); enabled || pct != 85 {
 		t.Errorf("autoCompactionPolicy(stored false, 85) = (%v, %d), want (false, 85)", enabled, pct)
 	}
 	writeCompactionSetting(t, dir, true, 83)
-	if _, pct := autoCompactionPolicy(t.Context(), dir); pct != 80 {
+	if _, pct := autoCompactionPolicy(docAt(t, dir)); pct != 80 {
 		t.Errorf("autoCompactionPolicy(stored 83) pct = %d, want 80", pct)
 	}
 	for _, tc := range []struct {
@@ -392,5 +392,17 @@ func TestChatDoor_SendsTheCompactionPolicyAndAnObserverDoorDoesNot(t *testing.T)
 	}
 	if chat != 1 || observer < 1 {
 		t.Errorf("chat doors = %d, observer doors = %d; want one chat door and at least one observer door", chat, observer)
+	}
+}
+
+// marotte's own compaction follows the same document as KAS's switch at the door: the last readable one.
+func TestUnreadableConfig_MarottesCompactorKeepsTheLastReadablePolicy(t *testing.T) {
+	dir := writeSettings(t, `{"auto_compaction_enabled":false,"auto_compact_pct":90}`)
+	h := reopenFixtureIn(t, dir, nil)
+	settleBoot(t, h)
+	rewriteConfigByHand(t, dir, `{"auto_compaction_enabled":`)
+
+	if on, pct := h.coord.autoCompact.policy(t.Context()); on || pct != 90 {
+		t.Errorf("compaction policy over an unreadable config.json = (%v, %d), want the last readable (false, 90)", on, pct)
 	}
 }

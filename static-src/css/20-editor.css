@@ -24,9 +24,9 @@
 .web-path {
   flex: 1 1 0;
   min-width: 0;
-  min-block-size: var(--btn-h);
+  min-block-size: var(--field-h);
   padding: 0 var(--sp-3);
-  line-height: calc(var(--btn-h) - 2px);
+  line-height: calc(var(--field-h) - 2px);
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);

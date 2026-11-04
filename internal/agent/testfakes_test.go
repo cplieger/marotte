@@ -609,6 +609,13 @@ func (b *fakeBridge) setCallRPCErr(method string, err *marotte.RPCError) {
 	b.callRPCErrs[method] = err
 }
 
+// setOnCall installs a call hook under the mutex, for a bridge whose background readers already call.
+func (b *fakeBridge) setOnCall(hook func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.onCall = hook
+}
+
 // setStartGate parks every later Start until the returned channel closes.
 func (b *fakeBridge) setStartGate(gate chan struct{}) {
 	b.mu.Lock()
@@ -766,8 +773,20 @@ func (b *fakeBridge) NotifCh() <-chan marotte.Notification {
 
 type testChatStore struct {
 	*chat.Store
+	// ownerScan, when set, rewrites every SessionOwners answer, for a test about a scan's timing or completeness.
+	ownerScan func(ctx context.Context, scan chat.OwnerScan) chat.OwnerScan
+	// onGet, when set, runs before every Get, for a test that lands a write inside a caller's read.
+	onGet atomic.Pointer[func(id marotte.ChatID)]
 	// Gets counts Get calls, for a test about how often the store is read.
 	Gets atomic.Int64
+}
+
+func (s *testChatStore) SessionOwners(ctx context.Context) chat.OwnerScan {
+	scan := s.Store.SessionOwners(ctx)
+	if s.ownerScan != nil {
+		return s.ownerScan(ctx, scan)
+	}
+	return scan
 }
 
 // testChatRoot holds every test hub's chat directory, created and removed by TestMain.
@@ -794,6 +813,9 @@ func (s *testChatStore) wire(h *Runtime) {
 
 func (s *testChatStore) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
 	s.Gets.Add(1)
+	if hook := s.onGet.Load(); hook != nil {
+		(*hook)(id)
+	}
 	return s.Store.Get(ctx, id)
 }
 

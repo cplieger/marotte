@@ -394,19 +394,22 @@ const FINE = {
   rewindChrome: 36,
   glyphs: { actions: 3, size: 16 },
 } as const;
+// On a phone the controls paint at the mouse's 24px, centred in the 44px band their targets fill
+// ((44 - 24) / 2 = 10px above and below), the glyphs at the mouse's 16px, and Rewind sits 20px from
+// the `…` so their two 44px targets meet.
 const COARSE = {
   band: 44,
-  ledger: { x: 8, y: 4, h: 36 },
-  info: { x: 12, y: 12, w: 20, h: 20 },
-  mark: { x: 40, y: 18, w: 8, h: 8 },
+  ledger: { x: 8, y: 10, h: 24 },
+  info: { x: 12, y: 14, w: 16, h: 16 },
+  mark: { x: 36, y: 18, w: 8, h: 8 },
   ledgerGap: 8,
-  actions: [["More turn actions", { y: 4, w: 36, h: 36 }]],
+  actions: [["More turn actions", { y: 10, w: 24, h: 24 }]],
   actionGaps: [],
-  rewind: ["Rewind to this point", { y: 4, w: 36, h: 36 }],
-  rewindGap: 8,
+  rewind: ["Rewind to this point", { y: 10, w: 24, h: 24 }],
+  rewindGap: 20,
   end: 8,
-  rewindChrome: 36,
-  glyphs: { actions: 0, size: 20 },
+  rewindChrome: 24,
+  glyphs: { actions: 0, size: 16 },
 } as const;
 const PIN = { 1280: FINE, 390: COARSE, 320: COARSE } as const;
 /** The footer's width in each frame, which no glyph decides. */

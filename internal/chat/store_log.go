@@ -104,7 +104,9 @@ func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *
 // OpenTurn appends a turn_open to the chat's log and answers the entry, whose ID is
 // the turn id every later entry carries. init writes the header for a chat that has
 // none yet, so the record exists before the log's first line; a chat with no header
-// and no init is ErrChatNotFound, and a recently deleted id is ErrTombstoned.
+// and no init is ErrChatNotFound, a recently deleted id is ErrTombstoned, and one whose purge teardown still runs is
+// ErrInTeardown. The open writes the turn keep fact and stamps UpdatedAt; a failure of that write pends the fact and
+// does not fail the open.
 func (s *Store) OpenTurn(ctx context.Context, chatID marotte.ChatID, spec *TurnSpec, init func(c *marotte.Chat)) (*marotte.Entry, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -116,11 +118,8 @@ func (s *Store) OpenTurn(ctx context.Context, chatID marotte.ChatID, spec *TurnS
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
-		if s.isTombstoned(chatID) {
-			return nil, ErrTombstoned
-		}
-		if init == nil {
-			return nil, fmt.Errorf("%w: %s", ErrChatNotFound, chatID)
+		if absent := s.absentErr(chatID); init == nil || !errors.Is(absent, ErrChatNotFound) {
+			return nil, absent
 		}
 		if _, err := s.mutateLocked(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 			if exists {
@@ -140,6 +139,9 @@ func (s *Store) OpenTurn(ctx context.Context, chatID marotte.ChatID, spec *TurnS
 	if err != nil {
 		return nil, err
 	}
+	// After the open, so a failed one leaves no turn fact: a wire turn has no EndTurn to release it. The record lock
+	// spans both, so no purge sees the turn without its fact.
+	s.openTurnFactLocked(ctx, chatID)
 	s.index.extend(chatID, opened)
 	return opened, nil
 }

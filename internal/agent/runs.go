@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cplieger/keylock"
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
@@ -44,6 +45,8 @@ type Runs struct {
 	mutations *runMutations
 	// answerEarly answers a request a new host session's door sent before its run's lane was known.
 	answerEarly func(s engineSession, msg *marotte.RPCResponse)
+	// doorSettings is a host door's inputs (Runtime.readSessionSettings).
+	doorSettings func(context.Context) sessionSettings
 	// servedModels is GET /api/config-template's model list (Runtime.servedModels), for checkRunDefaults.
 	servedModels func(context.Context) ([]marotte.SessionModel, bool)
 	// runEnded asks the retention purge for a pass when a run ends.
@@ -60,6 +63,10 @@ type Runs struct {
 	unconfirmed unconfirmedSends
 	// life admits every step-session mutation against a Delete (run_lifecycle.go).
 	life runLifecycle
+	// recorded is the keep-state reconcile's runs/ attribution, which RunsParentedBy reads (run_owner.go).
+	recorded recordedRuns
+	// marks throttles the run keep marks' progress refresh and keeps ended unattributed runs (run_keepstate.go).
+	marks runMarks
 	// sweep pauses the running runs while the gate is closed (run_gate.go).
 	sweep gateSweep
 	// hosts serializes, per run, making its launching session resident (ensureResident). hosts, resumes and
@@ -78,11 +85,19 @@ type Runs struct {
 	mu              sync.Mutex
 }
 
-// runChatReader is the chat store as the run surface uses it: session chains and the chat owning a run's parent session.
+// runChatReader is the chat store as the run surface uses it: session chains, the chat owning a run's parent session,
+// and the run keep facts.
 type runChatReader interface {
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
-	// ListComplete also reports whether every chat was read, needed to prove a launch session parentless.
-	ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool)
+	Lookup(ctx context.Context, id marotte.ChatID) (c *marotte.Chat, found bool, err error)
+	// SessionOwners is one fresh owner scan, the attribution every run keep fact and the purge teardown share.
+	SessionOwners(ctx context.Context) chat.OwnerScan
+	HoldOrPend(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
+	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
+	EndStop(ctx context.Context, claim *chat.Claim)
+	HoldUnattributed(workflowID string)
+	ClearUnattributed(workflowID string)
+	SessionInTeardown(sessionID string) bool
 }
 
 // useLog installs the run record.

@@ -87,6 +87,7 @@ func wireForges(t *testing.T) *wiredForges {
 	notifier := &forgeNotifier{hub: hub}
 	dir := t.TempDir()
 	m := forges.NewManager(dir, notifier.notify)
+	t.Cleanup(m.Close)
 	m.Load(t.Context())
 	poller := forges.NewPRStatusPoller(forges.NewManagerPRSource(m, func(context.Context) []forges.RepoOrigin { return nil }),
 		quietNotifier{}, func() forges.Gate { return forges.Gate{} })
@@ -182,6 +183,7 @@ func TestForgeNotify_ASignInDropsTheInventoryBeforeTheBroadcast(t *testing.T) {
 	poller := forges.NewPRStatusPoller(nil, quietNotifier{}, func() forges.Gate { return forges.Gate{} },
 		forges.WithInventoryPush(versions, hub))
 	m := forges.NewManager(t.TempDir(), func(context.Context, forges.Change) {})
+	t.Cleanup(m.Close)
 	n := &forgeNotifier{hub: hub, poller: poller, steer: quietSteering(t, m)}
 	before, _ := versions.Current(subject.KindForgeInventory, "github:github.com")
 

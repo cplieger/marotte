@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -379,6 +380,22 @@ func TestCmdSteerClear_AClearWithNoReplyIsAGatewayError(t *testing.T) {
 	}
 }
 
+// A discard the record refuses (a clear would race a turn end's continuation) sends no clear.
+func TestCmdSteerClear_ARefusedDiscardSendsNoClear(t *testing.T) {
+	b := newSteerBridge()
+	q := clearingQueue()
+	q.discardRef = SteerRefuseSettling
+
+	_, err := cmdSteerClear(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), clearReq("c1"))
+
+	if statusOf(err) != http.StatusConflict || reasonOf(err) != SteerRefuseSettling {
+		t.Errorf("status = %d reason %q, want 409 settling (body %s)", statusOf(err), reasonOf(err), errText(err))
+	}
+	if got := b.methods(); len(got) != 0 {
+		t.Errorf("calls = %v, want none", got)
+	}
+}
+
 // Nothing KAS may hold means nothing to clear: the discard costs no RPC.
 func TestCmdSteerClear_NothingInKASCostsNoClear(t *testing.T) {
 	b := newSteerBridge()
@@ -632,8 +649,8 @@ func TestCmdCancel_TheLeadIsSetBeforeTheCancelAndUndoneIfItFails(t *testing.T) {
 		name      string
 		want      []string
 	}{
-		{name: "the cancel lands", want: []string{"lead steer-a"}},
-		{name: "the cancel fails", notifyErr: errors.New("pipe closed"), want: []string{"lead steer-a", "lead-undone steer-a"}},
+		{name: "the cancel lands", want: []string{"lock", "lead steer-a", "unlock"}},
+		{name: "the cancel fails", notifyErr: errors.New("pipe closed"), want: []string{"lock", "lead steer-a", "unlock", "lead-undone steer-a"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := newSteerBridge()
@@ -650,7 +667,7 @@ func TestCmdCancel_TheLeadIsSetBeforeTheCancelAndUndoneIfItFails(t *testing.T) {
 			if got := q.callLog(); !slices.Equal(got, tc.want) {
 				t.Errorf("record calls = %v, want %v", got, tc.want)
 			}
-			if len(order) != 1 || order[0] != marotte.MethodCancel+" after lead steer-a" {
+			if len(order) != 1 || order[0] != marotte.MethodCancel+" after lock,lead steer-a,unlock" {
 				t.Errorf("wire = %v, want the cancel after the lead was set", order)
 			}
 		})
@@ -665,8 +682,8 @@ func TestCmdCancel_InTheSessionDoorWindowTheLeadIsStillSet(t *testing.T) {
 		name    string
 		want    []string
 	}{
-		{name: "the stop lands", want: []string{"lead steer-a"}},
-		{name: "an answer is not delivered", permErr: ErrCancelNotDelivered, want: []string{"lead steer-a", "lead-undone steer-a"}},
+		{name: "the stop lands", want: []string{"lock", "lead steer-a", "unlock"}},
+		{name: "an answer is not delivered", permErr: ErrCancelNotDelivered, want: []string{"lock", "lead steer-a", "unlock", "lead-undone steer-a"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := newCancelDeps(nil)
@@ -683,6 +700,31 @@ func TestCmdCancel_InTheSessionDoorWindowTheLeadIsStillSet(t *testing.T) {
 	}
 }
 
+// The arrow's row has left the dock (its turn's close already sent it) by the time the stop holds the steer lock: the
+// stop requests nothing, so the turn carrying that row is neither cancelled nor marked stopped.
+func TestCmdCancel_ALeadNoLongerWaitingStopsNothing(t *testing.T) {
+	b := &cancelBridge{}
+	d := newCancelDeps(b)
+	q := newStubSteerQueue()
+	q.leadGone = true
+	cmd := &marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-a"}`)}
+
+	got, err := cmdCancel(t.Context(), d, d, d, d, q, cmd)
+	if err != nil {
+		t.Fatalf("CmdCancel = %v, want success", err)
+	}
+
+	if !answeredSkipped(t, got) {
+		t.Errorf("answer = %v, want skipped, so the client takes back its stop", got)
+	}
+	if len(b.notified) != 0 || len(d.scopes) != 0 || d.killed != 0 {
+		t.Errorf("notifications = %v, permission scopes = %v, kills = %d; want nothing cancelled", b.notified, d.scopes, d.killed)
+	}
+	if len(d.stopSteps) != 0 {
+		t.Errorf("stop steps = %q, want no stop requested", d.stopSteps)
+	}
+}
+
 // orderTeardown records the teardown's steps into a log the bridge shares.
 type orderTeardown struct {
 	log *[]string
@@ -692,7 +734,7 @@ func (o orderTeardown) BeginChatTeardown(_ marotte.ChatID, keep bool) {
 	*o.log = append(*o.log, "begin keep="+strconv.FormatBool(keep))
 }
 
-func (o orderTeardown) CloseChatState(context.Context, marotte.ChatID) {
+func (o orderTeardown) CloseChatState(context.Context, marotte.ChatID, *chat.Claim) {
 	*o.log = append(*o.log, "close")
 }
 
@@ -714,7 +756,7 @@ func TestChatTeardown_TheSteerRecordGoesBeforeTheCancel(t *testing.T) {
 		want []string
 	}{
 		{name: "close", run: func(ctx context.Context, h hostDouble, td chatTeardown) {
-			closeChatTeardown(ctx, h, h, h, td, "c1")
+			closeChatTeardown(ctx, h, h, h, td, "c1", &chat.Claim{})
 		}, want: []string{"begin keep=true", marotte.MethodCancel, "close"}},
 		{name: "delete", run: func(ctx context.Context, h hostDouble, td chatTeardown) {
 			deleteChatTeardown(ctx, h, h, h, td, "c1", []string{"sess-1"})

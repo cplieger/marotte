@@ -165,10 +165,12 @@ type reloadClaim struct {
 	stale bool
 }
 
-// claimReload reports whether sb's session is due its reload: marked (or no longer open), its turn released the
-// prompt slot and its hosted runs closed their last step turn. A claimed entry stays registered while the caller
-// closes its session, and the forward's end leaves its removal to finishReload.
-func (bm *bridgeManager) claimReload(chatID marotte.ChatID, sb *sharedBridge) reloadClaim {
+// claimReload reports whether sb's session is due its reload: marked (or no longer open), not held, its turn released
+// the prompt slot and its hosted runs closed their last step turn. held is true while config.json cannot be read: a
+// marked open session keeps its session and its mark, and reloads at its first idle open once it reads again. A
+// claimed entry stays registered while the caller closes its session, and the forward's end leaves its removal to
+// finishReload.
+func (bm *bridgeManager) claimReload(chatID marotte.ChatID, sb *sharedBridge, held bool) reloadClaim {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	if bm.bridges[chatID] != sb {
@@ -180,7 +182,7 @@ func (bm *bridgeManager) claimReload(chatID marotte.ChatID, sb *sharedBridge) re
 		return reloadClaim{busy: sb.closeClaim}
 	}
 	dead := sb.bridge == nil || !sb.bridge.Open()
-	if !dead && (!sb.reload || sb.state != bridgeIdle || bm.hostsRun(chatID)) {
+	if !dead && (!sb.reload || held || sb.state != bridgeIdle || bm.hostsRun(chatID)) {
 		return reloadClaim{}
 	}
 	sb.closeClaim = make(chan struct{})

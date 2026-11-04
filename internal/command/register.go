@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"github.com/cplieger/keylock"
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 )
@@ -17,8 +18,8 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		Tabs:     r.Tabs,
 		Bus:      r.Bus,
 		Teardown: r.Teardown,
-		CloseChat: func(ctx context.Context, chatID marotte.ChatID) {
-			closeChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID)
+		CloseChat: func(ctx context.Context, chatID marotte.ChatID, stop *chat.Claim) {
+			closeChatTeardown(ctx, r.Bridges, r.Perms, r.Stops, r.Teardown, chatID, stop)
 		},
 		// The delete grade, for a chat the close already erased: everything
 		// travels on the captured chain, since the record is gone by now.
@@ -39,6 +40,8 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		Sessions: r.Sessions,
 	})
 
+	// The handlers take the narrower chatStore; only the coordinator writes keep facts.
+	var chats chatStore = r.Chats
 	d.Register(marotte.CmdCreateChat, bind1(mem, cmdCreateChat))
 	d.Register(marotte.CmdResumeSession, bind2(mem, r.StepSessions, cmdResumeSession))
 	d.Register(marotte.CmdCompact, bind1(r.Bridges, cmdCompact))
@@ -52,26 +55,26 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 
 	d.Register(marotte.CmdApproveSpecPhase, bind3(r.SpecApprovals, r.Workspace, r.Bus, cmdApproveSpecPhase))
 
-	d.Register(marotte.CmdSetDraft, bind2(r.Chats, r.Bus, cmdSetDraft))
-	d.Register(marotte.CmdSetAttachments, bind2(r.Chats, r.Bus, cmdSetAttachments))
+	d.Register(marotte.CmdSetDraft, bind2(chats, r.Bus, cmdSetDraft))
+	d.Register(marotte.CmdSetAttachments, bind2(chats, r.Bus, cmdSetAttachments))
 	d.Register(marotte.CmdDeleteChat, bind1(mem, cmdDeleteChat))
 
 	d.Register(marotte.CmdPermissionResponse, bind2(r.Perms, r.Profiles, cmdPermission))
 	d.Register(marotte.CmdElicitationResponse, bind1(r.Perms, cmdElicitationResponse))
 	d.Register(marotte.CmdUserInputResponse, bind1(r.Perms, cmdUserInputResponse))
-	d.Register(marotte.CmdRewindChat, bind5(r.Bridges, r.Chats, r.Admission, r.RunCutter, r.Bus, cmdRewindChat))
+	d.Register(marotte.CmdRewindChat, bind5(r.Bridges, chats, r.Admission, r.RunCutter, r.Bus, cmdRewindChat))
 	configLocks := keylock.New(cmp.Compare[marotte.ChatID])
-	d.Register(marotte.CmdSetEffort, bind6(r.Bridges, r.Chats, r.Bus, r.Workspace, r.Effort, configLocks, cmdSetEffort))
-	d.Register(marotte.CmdSetThinking, bind3(r.Bridges, r.Chats, configLocks, cmdSetThinking))
-	d.Register(marotte.CmdSetMode, bind4(r.Bridges, r.Chats, r.Bus, r.Modes, cmdSetMode))
-	d.Register(marotte.CmdSetSupervisedMode, bind2(r.Bridges, r.Chats, cmdSetSupervisedMode))
+	d.Register(marotte.CmdSetEffort, bind6(r.Bridges, chats, r.Bus, r.Workspace, r.Effort, configLocks, cmdSetEffort))
+	d.Register(marotte.CmdSetThinking, bind3(r.Bridges, chats, configLocks, cmdSetThinking))
+	d.Register(marotte.CmdSetMode, bind4(r.Bridges, chats, r.Bus, r.Modes, cmdSetMode))
+	d.Register(marotte.CmdSetSupervisedMode, bind2(r.Bridges, chats, cmdSetSupervisedMode))
 
 	d.Register(marotte.CmdCancel, bind5(r.Bridges, r.Perms, r.Terminals, r.Stops, r.SteerQueue, cmdCancel))
-	d.Register(marotte.CmdForkChat, bind4(r.Bridges, r.Chats, r.Workspace, mem, cmdForkChat))
+	d.Register(marotte.CmdForkChat, bind4(r.Bridges, chats, r.Workspace, mem, cmdForkChat))
 
 	d.Register(marotte.CmdQueuePrompt, bind1(r.Queue, cmdQueuePrompt))
 	d.Register(marotte.CmdSetInterruptMode, bind1[chatMutator](r.Chats, cmdSetInterruptMode))
-	d.Register(marotte.CmdRenameChat, bind2(r.Chats, r.Renamer, cmdRenameChat))
+	d.Register(marotte.CmdRenameChat, bind2(chats, r.Renamer, cmdRenameChat))
 
 	prompt := &promptRoles{
 		bridges:     r.Bridges,
@@ -92,6 +95,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.prompts = prompt
 	d.Register(marotte.CmdPrompt, bind1(prompt, cmdPrompt))
 	d.Register(marotte.CmdUnqueuePrompt, bind1(prompt, cmdUnqueuePrompt))
+	d.Register(marotte.CmdSendQueuedNow, bind4(prompt, r.Perms, r.Terminals, r.Stops, cmdSendQueuedNow))
 	d.merges = newTangentMerges(prompt, mem, r.Loader)
 	d.Register(marotte.CmdMergeTangent, bind2(r.Tangents, d.merges, cmdMergeTangent))
 	d.Register(marotte.CmdSteer, bind1(prompt, cmdSteer))

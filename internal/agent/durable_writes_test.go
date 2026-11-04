@@ -162,6 +162,16 @@ var abandonableWriteSites = []durableSite{{
 	calls:   []string{"Mutate"},
 	because: "an unqueue_prompt on the REQUEST's context: a request that died never told the reader the row was discarded, and the dock still shows it",
 }, {
+	file:    "internal/agent/queue_drain.go",
+	fn:      "MarkNext",
+	calls:   []string{"Mutate"},
+	because: "a send_queued_now on the REQUEST's context: a request that died stopped nothing and sent nothing, and the row keeps its old place",
+}, {
+	file:    "internal/agent/queue_drain.go",
+	fn:      "ClearNext",
+	calls:   []string{"Mutate"},
+	because: "a send_queued_now's undo on the REQUEST's context: a lost clear leaves the row at the head marked, which the next drain sends first, where the reader asked it to go",
+}, {
 	file:    "internal/translate/streaming_content.go",
 	fn:      "appendSteerAck",
 	calls:   []string{"appendBetweenTurns"},
@@ -249,6 +259,11 @@ var inheritedWriteSites = []durableSite{{
 	fn:      "NextUserRow",
 	calls:   []string{"Mutate"},
 	because: "the drain's context; its only write is a removal the store already owes, retried by the next mutation",
+}, {
+	file:    "internal/agent/queue_drain.go",
+	fn:      "NextMarkedRow",
+	calls:   []string{"Mutate"},
+	because: "the drain's context, or send_queued_now's request context on the idle path; its only write is a removal the store already owes, as NextUserRow",
 }, {
 	file:    "internal/agent/model_switch.go",
 	fn:      "clearPendingModel",

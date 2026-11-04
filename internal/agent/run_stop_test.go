@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -174,7 +175,7 @@ func TestCloseChatState_NamesTheTabClose(t *testing.T) {
 	}
 	insertChatSession(t, h, rig, "c1", "sess_cur")
 
-	h.CloseChatState(t.Context(), "c1")
+	h.CloseChatState(t.Context(), "c1", &chat.Claim{})
 
 	cancels := rig.of(methodKiroWorkflowCancel)
 	if len(cancels) != 1 {
@@ -227,27 +228,6 @@ func TestPausePredicates_SpareAUserPark(t *testing.T) {
 			t.Error("restartPaused refused a restart-paused run nobody parked")
 		}
 	})
-}
-
-func TestAffordance_APendingPauseWithholdsPause(t *testing.T) {
-	h, _, br := newTestHub()
-	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_1", "name": "publish", "status": "running", "pausePending": true,
-		}),
-	}
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-
-	aff := h.runs.affordance(t.Context(), "wf_1", "running")
-
-	for _, v := range aff.Verbs {
-		if v == verbPause {
-			t.Fatalf("verbs = %v, want Pause withheld while a pause is pending", aff.Verbs)
-		}
-	}
-	if got := aff.Refused[verbPause]; got != pausePendingRefusal {
-		t.Errorf("Pause refusal = %q, want %q", got, pausePendingRefusal)
-	}
 }
 
 func TestLaunch_OnlyAScheduledRunSendsALabel(t *testing.T) {

@@ -11,6 +11,8 @@ const OWNS_ITS_CLICK =
 
 /** Make every part of `row` activate `control`, except a nested control and a click that ends a selection in the row. */
 export function wireRowToggle(row: HTMLElement, control: HTMLElement): void {
+  // A press target with no role or tab stop: the tag lets a hit test find it.
+  row.dataset["rowToggle"] = "";
   row.addEventListener("click", (e: Event) => {
     const target = e.target;
     if (!(target instanceof Element)) {

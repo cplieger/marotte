@@ -18,6 +18,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp/prewarm"
 	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/toolbelt/v3"
@@ -259,9 +260,16 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	purgeScheduler, err := chat.NewPurgeScheduler(chatStore, chat.PurgeConfig{
+		Retention: func() time.Duration { return 0 },
+		OnPurge:   func(marotte.ChatID, []string) {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	app := &App{
 		Runtime:        agent.New(t.Context(), t.TempDir(), nil, chatStore),
-		purgeScheduler: chat.NewPurgeScheduler(chatStore, func() time.Duration { return 0 }),
+		purgeScheduler: purgeScheduler,
 		mcpPrewarm:     prewarm.NewRunner(t.Context(), nil),
 		tools:          tools,
 		stopKiro:       func() {},

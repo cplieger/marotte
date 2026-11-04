@@ -89,6 +89,87 @@ func (bc *bridgeCoordinator) NextUserRow(ctx context.Context, chatID marotte.Cha
 	return row, found, err
 }
 
+// NextMarkedRow answers the row MarkNext chose while it is unheld and its turn has not opened.
+func (bc *bridgeCoordinator) NextMarkedRow(ctx context.Context, chatID marotte.ChatID) (marotte.QueuedPrompt, bool, error) {
+	var row marotte.QueuedPrompt
+	found := false
+	_, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		for i := range c.QueuedPrompts {
+			q := &c.QueuedPrompts[i]
+			if q.Next && !q.Held && !q.Carried() && !bc.chatStore.Opened(chatID, q.ID) {
+				row, found = *q, true
+				break
+			}
+		}
+		return false
+	})
+	return row, found, err
+}
+
+// MarkNext marks the row with id as the next to send and moves it ahead of every other sendable
+// row, which keep their order. An id whose turn this process opened answers sending; a held or
+// carried row answers held and is left as it is. The caller holds the steer lock.
+func (bc *bridgeCoordinator) MarkNext(ctx context.Context, chatID marotte.ChatID, id string) (found, sending, held bool, err error) {
+	if bc.chatStore.Opened(chatID, id) {
+		return true, true, false, nil
+	}
+	sendable := func(q *marotte.QueuedPrompt) bool {
+		return !q.Held && !q.Carried() && !bc.chatStore.Opened(chatID, q.ID)
+	}
+	_, err = bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+		at := -1
+		if exists {
+			at = slices.IndexFunc(c.QueuedPrompts, func(q marotte.QueuedPrompt) bool { return q.ID == id })
+		}
+		if at < 0 {
+			return false
+		}
+		found = true
+		row := c.QueuedPrompts[at]
+		if !sendable(&row) {
+			held = true
+			return false
+		}
+		rest := slices.Delete(c.QueuedPrompts, at, at+1)
+		for i := range rest {
+			rest[i].Next = false
+		}
+		head := slices.IndexFunc(rest, func(q marotte.QueuedPrompt) bool { return sendable(&q) })
+		if head < 0 {
+			head = len(rest)
+		}
+		row.Next = true
+		c.QueuedPrompts = slices.Insert(rest, head, row)
+		return true
+	})
+	return found, sending, held, err
+}
+
+// Sending reports whether this process opened the turn of the queued row id.
+func (bc *bridgeCoordinator) Sending(chatID marotte.ChatID, id string) bool {
+	return bc.chatStore.Opened(chatID, id)
+}
+
+// ClearNext drops the mark MarkNext set on the row with id, leaving the order as it is.
+func (bc *bridgeCoordinator) ClearNext(ctx context.Context, chatID marotte.ChatID, id string) error {
+	_, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		for i := range c.QueuedPrompts {
+			if q := &c.QueuedPrompts[i]; q.ID == id && q.Next {
+				q.Next = false
+				return true
+			}
+		}
+		return false
+	})
+	return err
+}
+
 // Dequeue takes a sent row off the header, after its turn_opened frame.
 func (bc *bridgeCoordinator) Dequeue(ctx context.Context, chatID marotte.ChatID, id string) error {
 	return bc.chatStore.Dequeue(durable.Context(ctx), chatID, id)

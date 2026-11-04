@@ -31,7 +31,7 @@ func leased(t *testing.T, h *Runs, workflowID string) {
 // firing after its test (the floor is minutes) would cancel through a nil one and crash the package.
 func boundsRuns(t *testing.T) *Runs {
 	t.Helper()
-	h := &Runs{}
+	h := &Runs{chats: newTestChatStore()}
 	t.Cleanup(func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -792,7 +792,7 @@ func TestRearmRetriedRun_GivesAFreshClock(t *testing.T) {
 	h.armDeadline(t.Context(), id)
 	before, _ := h.lease(id)
 
-	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "publish"})
+	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "publish"}, nil)
 
 	after, held := h.lease(id)
 	if !held || !after.Bounded() {
@@ -811,7 +811,7 @@ func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testi
 	h := hub.runs
 	const id = "wf_1"
 
-	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "nightly"})
+	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "nightly"}, nil)
 
 	l, held := h.lease(id)
 	if !held {
@@ -835,7 +835,7 @@ func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testi
 	if l.Unattended {
 		t.Error("a retried run was marked unattended; the user clicked Retry and can answer")
 	}
-	if presets, err := l.HostPresets(); err != nil || !slices.Equal(presets, securityPresets(t.Context(), hub.lifecycle.configDir)) {
+	if presets, err := l.HostPresets(); err != nil || !slices.Equal(presets, hub.readSessionSettings(t.Context()).Presets) {
 		t.Errorf("host presets = %v, %v; want the profile's presets now, recorded so its host session can reload", presets, err)
 	}
 }
@@ -1019,7 +1019,7 @@ func TestObserveComplete_ForgetsStepSessionsOnlyOnATerminalStatus(t *testing.T) 
 		t.Run(tc.status, func(t *testing.T) {
 			t.Parallel()
 			rec := &recordingRunTranslator{}
-			rs := &Runs{translate: rec}
+			rs := &Runs{chats: newTestChatStore(), translate: rec}
 
 			rs.observeComplete(t.Context(), "c-1", runNotif(methodWFRunComplete, map[string]any{
 				"workflowId": "wf_1", "status": tc.status,

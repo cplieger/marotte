@@ -494,9 +494,15 @@ type Chat struct {
 	QueuedPrompts []QueuedPrompt `json:"queued_prompts,omitempty"`
 	// TangentMerges are this tangent's merge operations; internal/command owns their lifecycle.
 	TangentMerges []TangentMerge `json:"tangent_merges,omitempty"`
-	Usage         Usage          `json:"usage"`
-	CreatedAt     int64          `json:"created_at"`
-	UpdatedAt     int64          `json:"updated_at"`
+	// Keep holds every fact that keeps this chat out of the retention purge, by holder key. Server-internal:
+	// Header copies none of it. Only internal/chat's keep primitives write it.
+	Keep      map[string]KeepFact `json:"keep,omitempty"`
+	Usage     Usage               `json:"usage"`
+	CreatedAt int64               `json:"created_at"`
+	UpdatedAt int64               `json:"updated_at"`
+	// KeepFilledAt is the Unix ms at which a create or the first keep-state reconcile wrote this record's keep
+	// facts; zero on a record that predates them. The purge ages a chat from the later of this and UpdatedAt.
+	KeepFilledAt int64 `json:"keep_filled_at,omitempty"`
 	// TurnCount is the newest turn_open's n, the counter windows are read against.
 	TurnCount      int  `json:"turn_count"`
 	SupervisedMode bool `json:"supervised_mode,omitempty"`
@@ -537,7 +543,8 @@ func CarryCost(text string) int { return len(text) + len(carrySeparator) }
 // QueuedPrompt is one follow-up waiting for a turn to end. A row with Resends is CARRIED,
 // written at shutdown from unread steers. Held marks a row a previous process queued; it is
 // never sent automatically. A list holds at most one carried row, and it is held. Label is the
-// row's PromptCommand.DisplayText.
+// row's PromptCommand.DisplayText. Next marks the row send_queued_now chose: the next drain sends
+// it first, even after a stop.
 type QueuedPrompt struct {
 	// Caller is set on a row an API caller queued.
 	Caller      *Caller      `json:"caller,omitempty"`
@@ -547,6 +554,7 @@ type QueuedPrompt struct {
 	Attachments []Attachment `json:"attachments,omitempty"`
 	Resends     []string     `json:"resends,omitempty"`
 	Held        bool         `json:"held,omitempty"`
+	Next        bool         `json:"next,omitempty"`
 }
 
 // Carried reports whether the row resends dropped steers.

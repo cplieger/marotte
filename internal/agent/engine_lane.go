@@ -290,10 +290,8 @@ func (rt *Runtime) answerEarly(s engineSession, msg *marotte.RPCResponse) {
 // observe runs fn on an observer pass carrying the profile's current presets and additional directories
 // (engineOwner.observe).
 func (rt *Runtime) observe(ctx context.Context, fn func(ctx context.Context, s engineSession) error) error {
-	door := &marotte.SessionOpts{
-		Presets:               securityPresets(ctx, rt.lifecycle.configDir),
-		AdditionalDirectories: rt.lifecycle.sessionDirs(ctx),
-	}
+	s := rt.readSessionSettings(ctx)
+	door := &marotte.SessionOpts{Presets: s.Presets, AdditionalDirectories: s.AdditionalDirectories}
 	return rt.engine.observe(ctx, door, rt.observerForward, fn)
 }
 

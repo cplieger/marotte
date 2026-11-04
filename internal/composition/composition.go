@@ -64,10 +64,14 @@ type App struct {
 	stopPRPoller func()
 	// stopForgeKeeper stops the forge credential keeper and waits for its goroutine.
 	stopForgeKeeper func()
+	// closeForges ends the forge listing fills in flight and waits for them.
+	closeForges func()
 	// stopKASHeal stops the KAS MCP file heal loop and waits for its goroutine.
 	stopKASHeal func()
 	// stopToolsSteering waits for the boot's environment.md regeneration, which reads the tools engine.
 	stopToolsSteering func()
+	// stopKeepState stops the keep-state reconcile and waits: a round in flight reads KAS over the agent engine.
+	stopKeepState func()
 	// stopApp ends the app's LIFETIME: what every process-bound component is parented on.
 	stopApp func()
 	// waitSignIn waits for the sign-in vault's goroutines, which end with the app's lifetime.
@@ -262,32 +266,17 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, err
 	}
 
-	retention := func() time.Duration { return chatRetention(ctx, cfg.ConfigDir) }
-	purgeScheduler := chat.NewPurgeScheduler(chatStore, retention, func(pctx context.Context) archive.PurgeResult {
-		window, purge := runRetention(pctx, cfg.ConfigDir)
-		if !purge {
-			return archive.PurgeResult{}
-		}
-		r := h.PurgeParentlessRuns(pctx, window)
-		return archive.PurgeResult{NextDeadline: r.NextDeadline, Purged: r.Purged, Kept: r.Kept, Errors: r.Errors}
-	})
-	// The purge scans the directory live chats live in, so this predicate keeps an old-but-open
-	// conversation out of it.
-	chat.WithLive(h.HasResidentSession)(chatStore)
-	chat.WithOpenTab(h.Membership().HasOpenTab)(chatStore)
-	// Not retention predicates: the transcript GET reads both. Injected post-construction because
-	// the store cannot import the agent.
+	// The transcript GET reads both. Injected post-construction because the store cannot import
+	// the agent.
 	chat.WithLiveTurn(h.TurnLive)(chatStore)
 	chat.WithOpenTurns(h.OpenTurns)(chatStore)
-	chat.WithOnPurge(heldUnlessDraining(h.HoldUnlessDraining, func(id marotte.ChatID, sessionChain []string) {
-		// After the per-chat record lock is released, keeping the lock order acyclic.
-		// RetentionClose reaps the chain itself, so no second reap here.
-		h.Membership().RetentionClose(appCtx, id, sessionChain)
-	}))(chatStore)
-	// An exempt chat contributes no wake-up deadline, so closing its tab must trigger
-	// a pass; without this the purge noticed up to an hour later.
-	h.Membership().SetRetentionWake(purgeScheduler.Trigger)
+	purgeScheduler, startKeepState, err := wireRetention(appCtx, cfg, chatStore, h,
+		retentionStores{tabs: tabStore, leases: leaseStore, reaper: sessionReaper})
+	if err != nil {
+		return nil, err
+	}
 	purgeScheduler.Start(appCtx)
+	stopKeepState := startKeepState()
 
 	previewSigner, err := preview.NewSigner()
 	if err != nil {
@@ -346,8 +335,10 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopKiroSeed:      stopKiroSeed,
 		stopPRPoller:      stopPRPoller,
 		stopForgeKeeper:   stopForgeKeeper,
+		closeForges:       forgesManager.Close,
 		stopKASHeal:       stopKASHeal,
 		stopToolsSteering: stopToolsSteering,
+		stopKeepState:     stopKeepState,
 		stopApp:           stopApp,
 		waitSignIn:        vault.Wait,
 		roots:             roots,
@@ -374,10 +365,13 @@ func (a *App) Run() error {
 func (a *App) Shutdown() {
 	callIfSet(a.stopPRPoller)
 	callIfSet(a.stopForgeKeeper)
+	// Before the runtime's teardown: a fill that stores a repository page notifies the hub.
+	callIfSet(a.closeForges)
 	callIfSet(a.stopKASHeal)
 	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the agent engine the
 	// runtime teardown is about to stop, so the reverse order leaves one mid-inspect.
 	callIfSet(a.stopOrphanSweep)
+	callIfSet(a.stopKeepState)
 	callIfSet(a.stopKiroSeed)
 	callIfSet(a.stopKiro)
 	if a.purgeScheduler != nil {
@@ -821,6 +815,9 @@ func openTabStore(dir string) *tabs.Store {
 	if err != nil {
 		slog.Warn("tab arrangement starting empty", "error", err)
 	}
+	if aside := st.Unread(); aside != "" {
+		slog.Warn("tab arrangement unread: the run purge deletes no run until the aside is removed or restored", "aside", aside)
+	}
 	return st
 }
 
@@ -834,7 +831,7 @@ func openSpecApprovalStore(dir string) *specapproval.Store {
 	return st
 }
 
-// heldUnlessDraining wraps the store's purge callback so closeChain runs held on the runtime's in-flight wait
+// heldUnlessDraining wraps the purge's OnPurge so closeChain runs held on the runtime's in-flight wait
 // (hold): the purge scheduler outlives the runtime's Shutdown. Skipped once Shutdown began; the next boot's
 // orphan-session sweep, parentless-run purge and tab prune reap what the chain left.
 func heldUnlessDraining(hold func() (release func(), ok bool),
@@ -851,7 +848,8 @@ func heldUnlessDraining(hold func() (release func(), ok bool),
 }
 
 // pruneTabs is the tab set's one-shot LOAD-TIME crash recovery for a crash between the
-// coordinator's two writes. Only CHAT tabs are checked against the chat store; a missing file is no
+// coordinator's two writes. Only CHAT tabs are checked against the chat store, and only a record
+// that is plainly absent drops its tab: an unreadable one may still exist. A missing file is no
 // reason to close an editor, run or singleton tab. It then opens each remaining chat tab's log, so
 // its read position is projected from the first request.
 func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
@@ -862,8 +860,12 @@ func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
 		if t.Kind != marotte.TabKindChat {
 			return true
 		}
-		_, ok := chats.Get(ctx, marotte.ChatID(t.Ref))
-		return ok
+		_, found, err := chats.Lookup(ctx, marotte.ChatID(t.Ref))
+		if err != nil {
+			slog.Warn("tab prune kept a chat tab whose record could not be read", "chat_id", logsafe.Field(t.Ref), "error", err)
+			return true
+		}
+		return found
 	})
 	switch {
 	case err != nil:
@@ -890,6 +892,9 @@ func openRunLeaseStore(dir string) *runlease.Store {
 	st, err := runlease.NewStore(dir)
 	if err != nil {
 		slog.Warn("run leases starting empty; runs from before this boot will not be swept", "error", err)
+	}
+	if aside := st.Unread(); aside != "" {
+		slog.Warn("run leases unread: no chat from before this boot is purged until the aside is removed or restored", "aside", aside)
 	}
 	return st
 }

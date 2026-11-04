@@ -176,10 +176,26 @@ describe("the row's own inset and control heights", () => {
     expect(btn?.getBoundingClientRect().height).toBe(32);
   });
 
-  it("grows those controls to the touch floor rather than the dense token on coarse", () => {
+  it("paints those controls at the dense token on coarse too, with a 44px target", () => {
+    host.style.top = "0";
     mountList("--row-h-2", "coarse");
-    const btn = host.querySelector<HTMLElement>('[data-key="f"] .entry-delete');
-    expect(btn?.getBoundingClientRect().height).toBe(44);
+    const btn = host.querySelector<HTMLElement>('[data-key="f"] .entry-delete') as HTMLElement;
+    const r = btn.getBoundingClientRect();
+    expect(r.height).toBe(32);
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    for (const [x, y] of [
+      [cx, cy - 21],
+      [cx, cy + 21],
+      [cx - 21, cy],
+      [cx + 21, cy],
+    ] as const) {
+      const hit = document.elementFromPoint(x, y);
+      expect(
+        btn.contains(hit),
+        `${String(x - cx)},${String(y - cy)} reached ${hit?.className ?? "null"}`,
+      ).toBe(true);
+    }
   });
 
   it("holds a text action to the same tier as the icon beside it", () => {
@@ -348,16 +364,27 @@ describe("a switch in the actions slot", () => {
     host.appendChild(list);
     const label = host.querySelector<HTMLElement>(".toggle-inline") as HTMLElement;
     const box = label.getBoundingClientRect();
-    expect([box.width, box.height]).toEqual([44, 44]);
+    const cx = box.left + box.width / 2;
+    const cy = box.top + box.height / 2;
     const track = (label.querySelector(".toggle-slider") as HTMLElement).getBoundingClientRect();
-    expect(track.left + track.width / 2).toBeCloseTo(box.left + box.width / 2, 1);
-    // The input is the box.
-    expect(document.elementFromPoint(box.left + 2, box.top + 2)).toBe(label.querySelector("input"));
-    expect(document.elementFromPoint(box.left + 22, box.top + 22)).toBe(
-      label.querySelector("input"),
-    );
-    const beside = document.elementFromPoint(box.left - 16, box.top + box.height / 2);
-    expect(beside?.closest(".toggle")).toBeNull();
+    expect(track.left + track.width / 2).toBeCloseTo(cx, 1);
+    // The switch paints its own box; its target is the 44px square centred on it, every corner of
+    // which reaches the label or its input.
+    for (const [dx, dy] of [
+      [-21, -21],
+      [21, -21],
+      [-21, 21],
+      [21, 21],
+      [0, 0],
+    ] as const) {
+      const hit = document.elementFromPoint(cx + dx, cy + dy);
+      expect(label.contains(hit), `${String(dx)},${String(dy)}`).toBe(true);
+    }
+    // The row's open control ends before the target starts, and keeps its own last pixel.
+    const open = host.querySelector<HTMLElement>(".entry-open")!.getBoundingClientRect();
+    expect(open.right).toBeLessThanOrEqual(cx - 22 + 0.5);
+    const beside = document.elementFromPoint(open.right - 1, cy);
+    expect(beside?.closest(".toggle"), `beside reached ${beside?.className ?? "null"}`).toBeNull();
     expect(beside?.closest(".entry-open")).not.toBeNull();
   });
 

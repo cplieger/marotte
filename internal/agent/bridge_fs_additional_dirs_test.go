@@ -206,7 +206,7 @@ func TestAdditionalDirectory_ConfigDirectoryCanNeverBeAdded(t *testing.T) {
 	if dir, err := termCwd(t, h, br, f.config); err == nil {
 		t.Errorf("a shell started in the config directory, in %q", dir)
 	}
-	if got := h.lifecycle.sessionDirs(t.Context()); len(got) != 0 {
+	if got := h.readSessionSettings(t.Context()).AdditionalDirectories; len(got) != 0 {
 		t.Errorf("a session door would carry %v, want none", got)
 	}
 }

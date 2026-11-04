@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workspace"
 )
@@ -101,11 +102,10 @@ type sessionLoader interface {
 // ErrChatGone reports a chat whose record no longer exists; a bridge open wraps it.
 var ErrChatGone = errors.New("chat not found")
 
-// sessionClaims reports whether any chat's session chain holds sessionID, from a
-// read that sees every record written before the call. complete is false when a
-// chat file that exists could not be read.
+// sessionClaims names every session's owning chats, from a read that sees every record written
+// before the call; the scan says which records it could not read.
 type sessionClaims interface {
-	SessionClaimed(ctx context.Context, sessionID string) (claimed, complete bool)
+	SessionOwners(ctx context.Context) chat.OwnerScan
 }
 
 // stepSessions answers whether a KAS session is a workflow step's, read from KAS's session list.
@@ -192,10 +192,11 @@ type chatTeardown interface {
 	// first, so a bridge opened once this runs answers ErrChatGone; the run and session
 	// deletes are driven from the session chain the removed record held.
 	DeleteChatStateByChain(ctx context.Context, chatID marotte.ChatID, sessionChain []string, cause RunStopCause)
-	// CloseChatState is the close path: cancel the chat's runs and drop the
-	// in-memory state, but leave the runs and the durable KAS session on disk
-	// so the chat can be reopened and so History can still list it.
-	CloseChatState(ctx context.Context, chatID marotte.ChatID)
+	// CloseChatState is the close path: drop the in-memory state, but leave the
+	// durable KAS session on disk so the chat can be reopened and so History can
+	// still list it. A person's close passes its stop hold, and the chat's runs are
+	// stopped under it.
+	CloseChatState(ctx context.Context, chatID marotte.ChatID, stop *chat.Claim)
 	// BeginChatTeardown marks the chat as going away BEFORE the teardown's cancel,
 	// so the turn end that cancel causes resends nothing. keep is a close, whose
 	// record survives and keeps a note per unread steer. Idempotent.
@@ -432,6 +433,9 @@ const (
 	// reports with no steerable turn. Answered as 409 with the additive
 	// `reason: "starting"`, which hands the text back.
 	AdmissionStarting
+	// AdmissionChatGone is a chat whose record was deleted or whose purge teardown
+	// still runs: nothing was reserved. Answered as 409 `reason: "chat_not_found"`.
+	AdmissionChatGone
 )
 
 // turnAdmission is the chat's admission slot as the command handlers hold it:
@@ -672,8 +676,9 @@ type SteerQueue interface {
 	BeginRemove(chatID marotte.ChatID, key, opID string) (needsClear bool, refuse string)
 	// RemoveCleared re-reads after the delete's clear (landed false: no reply).
 	RemoveCleared(chatID marotte.ChatID, opID string, cleared []string, landed bool) SteerOpResult
-	// BeginDiscard decides a Discard all; needsClear is false when nothing is in KAS.
-	BeginDiscard(chatID marotte.ChatID, opID string) (needsClear bool)
+	// BeginDiscard decides a Discard all; needsClear is false when nothing is in KAS, and refuse names why a
+	// clear may not run now (SteerRefuseSettling).
+	BeginDiscard(chatID marotte.ChatID, opID string) (needsClear bool, refuse string)
 	// DiscardCleared re-reads after the discard's clear, or settles it with none.
 	DiscardCleared(chatID marotte.ChatID, opID string, landed bool) SteerOpResult
 	OpSent(chatID marotte.ChatID, opID string, s SteerSend, queued bool, err error)
@@ -684,8 +689,9 @@ type SteerQueue interface {
 	EndOp(chatID marotte.ChatID, opID string) (reroute bool)
 	OnSteerJob(run func(SteerJob))
 	// SetSteerLead records the send-now arrow's row, sent first; undo takes it
-	// back when the stop could not be sent.
-	SetSteerLead(chatID marotte.ChatID, key string) (undo func())
+	// back when the stop could not be sent. waiting is false, and nothing is
+	// recorded, once no live row has the key: sent, read or removed.
+	SetSteerLead(chatID marotte.ChatID, key string) (undo func(), waiting bool)
 }
 
 // SteerJobs is the record as the close pipeline and the prompt's drain drive it.
@@ -785,7 +791,7 @@ type Roles struct {
 	// Chats is the chat store directly, not through a getter on a wider composite —
 	// that composite would need to carry Broadcast and the run surface too, which is
 	// how a host becomes the one thing that qualifies.
-	Chats chatStore
+	Chats membershipChats
 	// Sessions answers whether a chat already claims a KAS session, read fresh
 	// so the run purge can decide under the membership lock.
 	Sessions  sessionClaims

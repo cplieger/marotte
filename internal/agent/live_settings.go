@@ -18,45 +18,34 @@ type liveSettings struct {
 	notifications     map[marotte.PushKind]bool
 	ignoreFiles       []string
 	terminalTimeoutMs int
-	// readable is false over an unparseable document, whose readers all answer their defaults, or one that never
-	// held still across a read: nothing is pushed.
+	// readable is false over a document that cannot be read or parsed: nothing is pushed.
 	readable        bool
 	ignoreReadable  bool
 	mcpWaitForReady bool
 	debugLogs       bool
 }
 
-// liveReadAttempts bounds the re-reads of a document a writer keeps replacing; a shell redirect settles in one.
-const liveReadAttempts = 3
-
-// readLiveSettings takes every field from one generation of config.json: the field readers each consult the
-// cache, so a write landing between two of them would otherwise mix two documents.
-func readLiveSettings(ctx context.Context, configDir string, fields func(context.Context, string) liveSettings) liveSettings {
-	// sessionFingerprint owns why the reads drop the caller's cancellation.
-	ctx = context.WithoutCancel(ctx)
-	var now liveSettings
-	for range liveReadAttempts {
-		before, readable := settings.Generation(ctx, configDir)
-		now = fields(ctx, configDir)
-		if after, _ := settings.Generation(ctx, configDir); after == before {
-			now.readable = readable
-			return now
-		}
+// readLiveSettings takes every field from one parsed generation of config.json (readSnapshot); over an unreadable one
+// it decodes nothing.
+func readLiveSettings(ctx context.Context, configDir string, fields func(settings.Document) liveSettings) liveSettings {
+	doc, _, readable := readSnapshot(ctx, configDir)
+	if !readable {
+		return liveSettings{}
 	}
-	now.readable = false
+	now := fields(doc)
+	now.readable = true
 	return now
 }
 
-func readLiveFields(ctx context.Context, configDir string) liveSettings {
-	files, ignoreErr := readAgentIgnoreFiles(ctx, configDir)
-	mcpWait, _ := settings.MCPWaitForReady(ctx, configDir)
+func readLiveFields(d settings.Document) liveSettings {
+	files, ignoreErr := readAgentIgnoreFiles(d)
 	return liveSettings{
 		ignoreFiles:       files,
 		ignoreReadable:    ignoreErr == nil,
-		terminalTimeoutMs: terminalCommandTimeoutMs(ctx, configDir),
-		mcpWaitForReady:   mcpWait,
-		debugLogs:         settings.DebugLogs(ctx, configDir),
-		notifications:     push.ResolvePreferences(ctx, configDir),
+		terminalTimeoutMs: terminalCommandTimeoutMs(d),
+		mcpWaitForReady:   settings.MCPWaitForReadyIn(d),
+		debugLogs:         settings.DebugLogsIn(d),
+		notifications:     push.ResolvePreferences(d),
 	}
 }
 
@@ -150,10 +139,9 @@ func notifyLive(ctx context.Context, h engineHandle, method string, params any) 
 // so a value applied before the runtime existed, or never applied, is compared as it stands.
 type processLive struct {
 	lock surfaceLock
-	// ignoreUnreadable is the last sync's verdict; unreadableReported is set once that spell was reported, so it is
-	// reported once, not at every use.
-	ignoreUnreadable   bool
-	unreadableReported bool
+	// reported is what the unreadable ignore list report last said, so a spell is reported once per answer, not at
+	// every use; ignoreReportNone while the list reads.
+	reported ignoreReport
 }
 
 // syncProcessLive gives up once ignorePushTimeout or ctx's deadline passes, whichever is first, across the lock wait and
@@ -211,11 +199,9 @@ func warnIfLockWaitTimedOut(ctx context.Context, msg string) {
 // noteIgnoreReadable runs under processLive.lock.
 func (rt *Runtime) noteIgnoreReadable(ctx context.Context, readable bool) {
 	p := &rt.processLive
-	p.ignoreUnreadable = !readable
 	if readable {
-		p.unreadableReported = false
+		p.reported = ignoreReportNone
+		return
 	}
-	if p.ignoreUnreadable && !p.unreadableReported {
-		p.unreadableReported = rt.reportIgnoreFilesUnreadable(ctx)
-	}
+	p.reported = rt.reportIgnoreFilesUnreadable(ctx, p.reported)
 }

@@ -5,7 +5,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -14,6 +13,8 @@ import (
 	"unicode/utf16"
 
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
@@ -43,15 +44,16 @@ func retryLaunch(o *runOrigin) launchOrigin {
 	return launchOrigin{origin: runlease.OriginAgent, chatID: string(o.parent.chat)}
 }
 
-// grantRetryLease leases a retried run from its gate's origin, parent session included: the retry's run_start finds
+// grantRetryLease leases a retried run from Retry's read of its origin, parent session included: the retry's run_start finds
 // the lease held and adds no chat to it. A parentless retry is a new launch decision, so its host session reloads
 // with the profile's presets as they are now, recorded here.
-func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOrigin) {
+func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOrigin, holders []marotte.ChatID) {
 	var host *runlease.HostSecurity
 	if o.parent.chat == "" {
-		host = hostSecurityOf(securityPresets(ctx, rs.lifecycle.configDir))
+		host = hostSecurityOf(rs.doorSettings(ctx).Presets)
 	}
-	rs.grantLease(ctx, workflowID, o.recipe, retryLaunch(o), host)
+	lo := retryLaunch(o)
+	rs.grantKeeping(ctx, workflowID, o.recipe, &lo, host, &leaseKeep{chats: chatIDs(holders)})
 	rs.recordParentSession(ctx, workflowID, o.parent.session)
 }
 
@@ -141,12 +143,27 @@ func (rs *Runs) leaseStore() *runlease.Store {
 	return rs.leases
 }
 
-// grantLease records a run's envelope between `new` and `invoke`, before anything executes. Unattended
-// only for a scheduled run. A persist failure is logged: the in-memory lease still bounds the run.
-// grantLease records a run marotte put on the wire; host is a parentless launch's host-session security input, nil
-// for a chat-parented run.
+// grantLease records a run marotte put on the wire, between `new` and `invoke`, before anything executes; host is a
+// parentless launch's host-session security input, nil for a chat-parented run. Unattended only for a scheduled run.
+// A persist failure is logged: the in-memory lease still bounds the run.
 func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o launchOrigin, host *runlease.HostSecurity) {
-	if workflowID == "" {
+	rs.grantKeeping(ctx, workflowID, recipe, &o, host, nil)
+}
+
+// leaseKeep is what a grant records of the run's keep facts.
+type leaseKeep struct {
+	// chats hold the run's keep fact, recorded as the lease's KeepChats.
+	chats []string
+	// unattributed records a run whose launching chat could not be named (observeStart).
+	unattributed bool
+}
+
+// grantKeeping is grantLease recording keep, the run's keep holders, on the lease; nil records none.
+func (rs *Runs) grantKeeping(
+	ctx context.Context, workflowID, recipe string, o *launchOrigin, host *runlease.HostSecurity, keep *leaseKeep,
+) {
+	if !ids.ValidChatID(workflowID) {
+		slog.Warn("run lease not granted: the workflow id is not a plain name", "workflow_id", logsafe.Field(workflowID))
 		return
 	}
 	l := runlease.Lease{
@@ -159,6 +176,9 @@ func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o lau
 		ScheduleID: o.scheduleID,
 		Unattended: o.origin == runlease.OriginScheduled,
 		Host:       host,
+	}
+	if keep != nil {
+		l.KeepChats, l.Unattributed = keep.chats, keep.unattributed
 	}
 	if err := rs.leaseStore().Put(ctx, &l); err != nil {
 		slog.Error("run lease not persisted; this run's envelope will not survive a restart",
@@ -181,6 +201,10 @@ func (rs *Runs) releaseLease(ctx context.Context, workflowID string) {
 	if err := rs.leaseStore().Release(ctx, workflowID); err != nil {
 		slog.Warn("run lease not released on disk", "workflow_id", workflowID, "error", err)
 	}
+	if held && l.Unattributed {
+		rs.marks.handOff(workflowID, l.ParentSessionID)
+	}
+	rs.marks.forget(workflowID)
 	rs.endLife(workflowID)
 	rs.endAsks(ctx, workflowID)
 	rs.quietEdge()
@@ -262,20 +286,4 @@ func (rs *Runs) CancelRun(ctx context.Context, workflowID string) error {
 		case <-tick.C:
 		}
 	}
-}
-
-// RunChat answers which chat launched a run (command.runOwner). A live run answers from its lease; an
-// ended one, whose lease is released, from KAS's run inventory through the chats' session chains, an
-// engine read. "" with a nil error is verified: the inventory lists no such run, it names no
-// launching session, or no chat holds that session. An unreadable inventory or an incomplete chat
-// scan (originOf's errRunHostStart) is the error, so the caller can refuse rather than guess.
-func (rs *Runs) RunChat(ctx context.Context, workflowID string) (marotte.ChatID, error) {
-	if l, held := rs.lease(workflowID); held {
-		return marotte.ChatID(l.ChatID), nil
-	}
-	o := rs.originOf(ctx, workflowID)
-	if errors.Is(o.err, errRunHostStart) {
-		return "", o.err
-	}
-	return o.parent.chat, nil
 }

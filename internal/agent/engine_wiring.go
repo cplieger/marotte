@@ -37,6 +37,11 @@ func (rt *Runtime) engineHooks() engineHooks {
 		publish:   rt.publishEngineStatus,
 		ready:     rt.onEngineReady,
 		ended:     rt.onEngineEnded,
+		configReadable: func(ctx context.Context) bool {
+			_, src := rt.configDocument(ctx)
+			return src == fromDocument
+		},
+		configHeld: rt.configDoc.held,
 	}
 }
 

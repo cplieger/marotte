@@ -115,15 +115,10 @@
 
 /* The LEADING dot (a chat tab, where the role glyph used to be) holds the KIND
    GLYPH'S slot so a chat row's name lines up with a settings or files row's.
-   Without it a mixed strip has two text origins, which is exactly the
-   misalignment the active tab's reserved border exists to avoid one rung up.
-
-   --icon-ui, never a literal: that token is 1rem on a fine pointer and 1.125rem
-   on a coarse one, so the 0.875rem this used to say was 2px short of the glyph on
-   every desktop and 4px on every touch device — an alignment the rule claimed and
-   did not have. Keyed on position rather than a class: if anything is ever
-   inserted ahead of it the dot is no longer the leading element and the rule
-   correctly stops applying. */
+   Without it a mixed strip has two text origins. --icon-ui, never a literal, so
+   the slot follows the glyph wherever the token moves. Keyed on position rather
+   than a class: if anything is ever inserted ahead of it the dot is no longer
+   the leading element and the rule correctly stops applying. */
 .tab-status-dot:first-child {
   margin-inline: calc((var(--icon-ui) - var(--dot-size)) / 2);
 }
@@ -953,8 +948,10 @@
 }
 
 .tab-context-item {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
+  min-block-size: var(--row-tap-sm);
   padding: var(--sp-1) var(--sp-3);
   border: none;
   background: none;

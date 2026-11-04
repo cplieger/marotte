@@ -130,7 +130,7 @@
 }
 
 .spec-run-in-select {
-  min-block-size: var(--ctl-h-dense);
+  min-block-size: var(--field-h-dense);
   padding-inline: var(--sp-2);
   border-radius: var(--r);
   border: 1px solid var(--c-border);
@@ -269,14 +269,14 @@
 
 /* Collapse toggle: a CSS-drawn chevron that rotates on collapse. */
 /* The spacer matches the toggle's FLOORED box, or a leaf row's text sits at a
-   different inset from a parent row's on the coarse tier. */
+   different inset from a parent row's. */
 .spec-toggle,
 .spec-toggle-spacer {
   flex-shrink: 0;
   width: var(--icon-ui);
   height: var(--icon-ui);
-  min-width: var(--hit-floor);
-  min-height: var(--hit-floor);
+  min-width: var(--paint-floor);
+  min-height: var(--paint-floor);
 }
 
 .spec-toggle {
@@ -413,6 +413,6 @@
 
 /* --- Touch ----------------------------------------------------------------- */
 
-:where([data-pointer="coarse"]) .spec-node-row {
-  padding-block: var(--sp-2);
+.spec-node-row {
+  min-block-size: var(--row-tap-sm);
 }

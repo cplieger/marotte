@@ -54,6 +54,10 @@ type steerRecord struct {
 	lead      string
 	rows      []dockRow
 	others    []marotte.SteerQueuedPayload
+	// endHeld are the rows KAS held as a turn end's window ran: the agent rows at the end, and every row KAS holds
+	// when a continuation binds. That continuation still runs for them, so no clear may race it until each is read
+	// or gone (prune drops it).
+	endHeld []wireKey
 	// ends are the turn ends whose rows wait for a close pipeline or a starting
 	// prompt, oldest first.
 	ends []pendingEnd
@@ -67,7 +71,10 @@ type steerRecord struct {
 	opChannel channelState
 	// reinject: a dead bridge's KAS log may hold rows no clear names, which the next
 	// session/load queues again.
-	reinject   bool
+	reinject bool
+	// settling: set when the own turn's end folds, cleared when a turn binds or KAS reports idle; KAS may be
+	// deciding a continuation meanwhile. clearRaces is the clear refusal.
+	settling   bool
 	gone       bool
 	flushing   bool
 	opEndStale bool
@@ -152,10 +159,10 @@ func (r *steerRecords) step(chatID marotte.ChatID, create bool, fn func(rec *ste
 		r.mu.Unlock()
 		return false
 	}
-	awaited := rec.awaitsPrompt()
+	before := rec.wires()
 	fn(rec, fx)
 	rec.prune()
-	rec.stampAwaits(fx, awaited)
+	rec.reframe(fx, before)
 	if fx.changed || len(fx.frames) > 0 || len(fx.notes) > 0 {
 		mintPending(&r.versions)
 	}
@@ -231,6 +238,16 @@ func (rec *steerRecord) prune() {
 	if rec.lead != "" && rec.row(rec.lead) == nil {
 		rec.lead = ""
 	}
+	rec.endHeld = slices.DeleteFunc(rec.endHeld, func(k wireKey) bool { return !rec.inKASNow(k) })
+}
+
+// inKASNow: KAS still holds k's row; a read, a clear naming it, an eviction or a retirement ends that.
+func (rec *steerRecord) inKASNow(k wireKey) bool {
+	if k.agent {
+		return slices.ContainsFunc(rec.others, func(o marotte.SteerQueuedPayload) bool { return o.SteerID == k.id })
+	}
+	w := rec.row(k.id)
+	return w != nil && w.state.inKAS()
 }
 
 // awaitsPrompt: no clean turn close sends the unsent rows as a prompt of their own, because UnsentRows
@@ -244,23 +261,76 @@ func (rec *steerRecord) absorbed(turnID string) {
 	}
 }
 
-// stampAwaits writes awaitsPrompt onto the step's unsent frames. A step that moved it re-frames
-// every unsent row, since no row's own state changed.
-func (rec *steerRecord) stampAwaits(fx *steerFx, was bool) {
-	now := rec.awaitsPrompt()
-	if now != was {
-		rec.live(func(w *dockRow) {
-			framed := slices.ContainsFunc(fx.frames, func(f marotte.SteerQueuedPayload) bool { return f.SteerID == w.key })
-			if w.state == rowUnsent && !framed {
-				fx.frames = append(fx.frames, rowFrame(w))
-			}
-		})
+// rowWire is what a live row's frame tells a client: a step that moves it owes the row a frame.
+type rowWire struct {
+	state  marotte.SteerRowState
+	awaits bool
+}
+
+// wireKey keeps an agent row's id apart from a user row's key.
+type wireKey struct {
+	id    string
+	agent bool
+}
+
+func (rec *steerRecord) wires() map[wireKey]rowWire {
+	out := make(map[wireKey]rowWire, len(rec.rows)+len(rec.others))
+	rec.live(func(w *dockRow) {
+		f := rec.frameOf(w)
+		out[wireKey{id: w.key}] = rowWire{f.State, f.AwaitsPrompt}
+	})
+	for i := range rec.others {
+		out[wireKey{id: rec.others[i].SteerID, agent: true}] = rowWire{state: rec.otherFrame(&rec.others[i]).State}
 	}
-	for i := range fx.frames {
-		if fx.frames[i].State == marotte.SteerRowUnsent {
-			fx.frames[i].AwaitsPrompt = now
+	return out
+}
+
+// reframe is the one owner of a live row's wire state: a row frame the step queued takes the row as the step left
+// it, and a row whose wire state moved with no frame of its own gets one. delivering and awaitsPrompt follow the
+// record (a turn end, KAS going idle, a prompt opening), so a row can move with no change of its own. A new agent
+// row is not framed here: SteerWaiting answers its frame for the caller to broadcast.
+func (rec *steerRecord) reframe(fx *steerFx, before map[wireKey]rowWire) {
+	rec.live(func(w *dockRow) {
+		now := rec.frameOf(w)
+		framed := false
+		for i := range fx.frames {
+			if f := &fx.frames[i]; f.SteerID == w.key && len(f.Replaces) == 0 {
+				f.State, f.AwaitsPrompt = now.State, now.AwaitsPrompt
+				framed = true
+			}
+		}
+		if was, ok := before[wireKey{id: w.key}]; !framed && (!ok || was != (rowWire{now.State, now.AwaitsPrompt})) {
+			fx.frames = append(fx.frames, now)
+		}
+	})
+	for i := range rec.others {
+		now := rec.otherFrame(&rec.others[i])
+		if was, ok := before[wireKey{id: now.SteerID, agent: true}]; ok && was.state != now.State {
+			fx.frames = append(fx.frames, now)
 		}
 	}
+}
+
+// otherFrame is an agent row's frame as the record reads it: delivering while a clear would race a turn end.
+func (rec *steerRecord) otherFrame(in *marotte.SteerQueuedPayload) marotte.SteerQueuedPayload {
+	o := *in
+	o.State = marotte.SteerRowQueued
+	if rec.clearRaces() {
+		o.State = marotte.SteerRowDelivering
+	}
+	return o
+}
+
+// frameOf is w's frame as the record reads it, the record-wide delivering and awaitsPrompt included.
+func (rec *steerRecord) frameOf(w *dockRow) marotte.SteerQueuedPayload {
+	f := rowFrame(w)
+	switch {
+	case rec.delivering(w):
+		f.State = marotte.SteerRowDelivering
+	case f.State == marotte.SteerRowUnsent:
+		f.AwaitsPrompt = rec.awaitsPrompt()
+	}
+	return f
 }
 
 // names reports whether turnID is the turn this record knows as starting or bound,
@@ -306,6 +376,7 @@ func (rec *steerRecord) unownedWaiting() []*dockRow {
 	return out
 }
 
+// rowFrame is w's frame from its own state; frameOf adds what the record decides.
 func rowFrame(w *dockRow) marotte.SteerQueuedPayload {
 	state := marotte.SteerRowQueued
 	switch w.state {
@@ -337,14 +408,9 @@ func joinSteers(texts []string) string { return strings.Join(texts, "\n\n") }
 
 func freshSteerID() string { return marotte.SteerIDFor(ids.NewMessageID()) }
 
-// setState owes a row frame only when the WIRE state moves: every state but
-// unsent reads queued, so a row moving between them repaints nothing.
+// setState moves a live row; the step's reframe owes its frame only when the WIRE state moves.
 func setState(w *dockRow, s rowState, fx *steerFx) {
-	was := w.state == rowUnsent
 	w.state = s
-	if was != (s == rowUnsent) {
-		fx.frames = append(fx.frames, rowFrame(w))
-	}
 	fx.changed = true
 }
 
@@ -400,6 +466,7 @@ func (r *steerRecords) SteerWaiting(chatID marotte.ChatID, in *marotte.SteerQueu
 			rec.others = rec.others[1:]
 		}
 		rec.others = append(rec.others, p)
+		p = rec.otherFrame(&p)
 		fx.changed = true
 	})
 	return p, other
@@ -574,7 +641,7 @@ func (r *steerRecords) takeAgentRows(chatID marotte.ChatID) []string {
 	for i := range rec.others {
 		out = append(out, rec.others[i].SteerID)
 	}
-	rec.others = nil
+	rec.others, rec.endHeld = nil, nil
 	mintPending(&r.versions)
 	return out
 }
@@ -606,7 +673,40 @@ func (r *steerRecords) turnBound(chatID marotte.ChatID, turnID string) {
 		rec.channel = chanOpen
 		rec.probe = ""
 		rec.starting = ""
+		if rec.settling {
+			rec.holdAtBind()
+		}
+		rec.settling = false
 		rec.absorbed(turnID)
+	})
+}
+
+// holdAtBind keeps the window open for every row KAS holds when a turn binds inside it: KAS admits no prompt
+// while busy, so that turn is the end's continuation, and a row KAS took after the end folded may be its reason.
+func (rec *steerRecord) holdAtBind() {
+	hold := func(k wireKey) {
+		if !slices.Contains(rec.endHeld, k) {
+			rec.endHeld = append(rec.endHeld, k)
+		}
+	}
+	rec.live(func(w *dockRow) {
+		if w.state.inKAS() && !rec.endOwned(w) {
+			hold(wireKey{id: w.key})
+		}
+	})
+	for i := range rec.others {
+		hold(wireKey{id: rec.others[i].SteerID, agent: true})
+	}
+}
+
+// kasSettled clears settling and endHeld when KAS reports idle; the end's rows stay guarded until resolveEnds drops
+// the end.
+func (r *steerRecords) kasSettled(chatID marotte.ChatID) {
+	r.step(chatID, false, func(rec *steerRecord, fx *steerFx) {
+		if rec.settling || len(rec.endHeld) > 0 {
+			rec.settling, rec.endHeld = false, nil
+			fx.changed = true
+		}
 	})
 }
 
@@ -619,8 +719,8 @@ func (r *steerRecords) turnRevised(chatID marotte.ChatID, turnID string) {
 }
 
 // turnEnded hands the closing turn's un-owned rows to a pending end, which the
-// close's pipeline (or the next starting prompt) resolves; a row an op owns
-// records the end for the op.
+// close's pipeline resolves once KAS is idle (else a continuation's close, or the
+// next starting prompt); a row an op owns records the end for the op.
 func (r *steerRecords) turnEnded(chatID marotte.ChatID, end command.SteerTurnEnd) {
 	r.step(chatID, false, func(rec *steerRecord, fx *steerFx) {
 		rec.endLocked(r, end, false, fx)
@@ -637,14 +737,14 @@ func (rec *steerRecord) endLocked(r *steerRecords, end command.SteerTurnEnd, sta
 	}
 	own := end.TurnID != "" && end.TurnID == rec.turnID
 	unbound := rec.channel == chanNone && end.Source.PromptClass()
-	ev := evTurnEnd
-	if end.BridgeDeath {
-		ev = evTurnDeath
-	}
+	ev := endEvent(end)
 	if end.TurnID != "" && end.TurnID == rec.starting {
 		rec.starting = ""
 	}
 	collected := rec.collectEnded(end, own, unbound, ev, stale)
+	if !stale && !end.BridgeDeath && (own || unbound) {
+		rec.openEndWindow()
+	}
 	if own && channelRule(rec.channel, ev) == cNone {
 		rec.turnID = ""
 		rec.channel = chanNone
@@ -660,6 +760,21 @@ func (rec *steerRecord) endLocked(r *steerRecords, end command.SteerTurnEnd, sta
 	default:
 		r.pendEndLocked(rec, collected, end, fx)
 	}
+}
+
+func (rec *steerRecord) openEndWindow() {
+	rec.settling = true
+	rec.endHeld = rec.endHeld[:0]
+	for i := range rec.others {
+		rec.endHeld = append(rec.endHeld, wireKey{id: rec.others[i].SteerID, agent: true})
+	}
+}
+
+func endEvent(end command.SteerTurnEnd) steerEvent {
+	if end.BridgeDeath {
+		return evTurnDeath
+	}
+	return evTurnEnd
 }
 
 // Whatever the channel. A row an op owns records the end for that op, whose EndOp retires it the same way.
@@ -781,7 +896,7 @@ func (r *steerRecords) beginTeardown(chatID marotte.ChatID, exit <-chan struct{}
 			unread = append(unread, marotte.SteerQueuedPayload{SteerID: w.key, Text: w.text, Origin: marotte.SteerOriginUser, Caller: w.caller})
 		}
 	})
-	rec.rows, rec.ends = nil, nil
+	rec.rows, rec.ends, rec.endHeld, rec.settling = nil, nil, nil, false
 	rec.op, rec.opEnd, rec.opEndStale, rec.lead, rec.reinject, rec.starting, rec.absorbing = "", nil, false, "", false, "", ""
 	rec.channel, rec.turnID, rec.probe = chanNone, "", ""
 	rec.exit, rec.gone = exit, true
@@ -824,7 +939,7 @@ func (r *steerRecords) shutdownTake(chatID marotte.ChatID) []shutdownRow {
 	for i := range rec.others {
 		out = append(out, shutdownRow{Key: rec.others[i].SteerID, Agent: true})
 	}
-	rec.rows, rec.others, rec.ends = nil, nil, nil
+	rec.rows, rec.others, rec.ends, rec.endHeld, rec.settling = nil, nil, nil, nil, false
 	rec.op, rec.opEnd, rec.opEndStale, rec.lead, rec.starting, rec.absorbing = "", nil, false, "", "", ""
 	rec.channel, rec.turnID, rec.probe, rec.gone = chanNone, "", "", true
 	mintPending(&r.versions)
@@ -898,9 +1013,7 @@ func (r *steerRecords) appendReplay(out []marotte.ServerEvent, rec *steerRecord,
 	batches := map[string][]*dockRow{}
 	var order []string
 	rec.live(func(w *dockRow) {
-		f := rowFrame(w)
-		f.AwaitsPrompt = f.State == marotte.SteerRowUnsent && rec.awaitsPrompt()
-		add(f)
+		add(rec.frameOf(w))
 		if w.kasID != "" && w.kasID != w.key {
 			if _, seen := batches[w.kasID]; !seen {
 				order = append(order, w.kasID)
@@ -912,7 +1025,7 @@ func (r *steerRecords) appendReplay(out []marotte.ServerEvent, rec *steerRecord,
 		add(batchFrame(kas, batches[kas]))
 	}
 	for i := range rec.others {
-		add(rec.others[i])
+		add(rec.otherFrame(&rec.others[i]))
 	}
 	return out
 }
@@ -955,13 +1068,13 @@ func (r *steerRecords) stepOpen(key marotte.ChatID) bool {
 }
 
 // setLead records the send-now arrow's row, sent first until it is sent or
-// terminal.
-func (r *steerRecords) setLead(chatID marotte.ChatID, key string) (undo func()) {
+// terminal; a key no live row has records nothing and answers waiting false.
+func (r *steerRecords) setLead(chatID marotte.ChatID, key string) (undo func(), waiting bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec := r.record(chatID, false)
-	if rec == nil || rec.gone || key == "" {
-		return func() {}
+	if rec == nil || rec.gone || key == "" || rec.row(key) == nil {
+		return func() {}, false
 	}
 	rec.lead = key
 	return func() {
@@ -970,7 +1083,7 @@ func (r *steerRecords) setLead(chatID marotte.ChatID, key string) (undo func()) 
 		if rec.lead == key {
 			rec.lead = ""
 		}
-	}
+	}, true
 }
 
 // needsPostLoadClear: KAS may hold copies this record also holds, nothing bound is

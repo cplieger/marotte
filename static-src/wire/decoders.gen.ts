@@ -43,7 +43,7 @@ const SLASH_COMMAND_KINDS = ["steering", "prompt", "goal"] as const;
 const SPEC_DOC_ROLES = ["requirements", "design", "tasks", "other"] as const;
 const STEER_ORIGINS = ["user", "agent", "parent", "step"] as const;
 const STEER_REASONS = ["restart", "boundary"] as const;
-const STEER_ROW_STATES = ["queued", "unsent", "removed"] as const;
+const STEER_ROW_STATES = ["queued", "delivering", "unsent", "removed"] as const;
 const STEER_STATES = ["read", "dropped"] as const;
 const TAB_KINDS = ["chat", "editor", "run", "subagent", "settings", "git", "files", "history", "docs", "spec", "web"] as const;
 const TOOL_KINDS = ["execute", "shell", "read", "search", "fetch", "edit", "think", "hook", "write", "delete", "move", "command", "browser", "switch_mode", "mcp", "other"] as const;
@@ -844,6 +844,7 @@ export const decodeEngineRestart: Decoder<EngineRestart> = (v) => {
   const out: EngineRestart = {
     reasons: own(o, "reasons") === null ? [] : decodeArray(own(o, "reasons"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.engine_restart.reasons"),
     pending: reqBool(o, "pending", "$.engine_restart"),
+    config_unreadable: reqBool(o, "config_unreadable", "$.engine_restart"),
   };
   return out;
 };
@@ -2878,6 +2879,10 @@ export const decodeQueuedPrompt: Decoder<QueuedPrompt> = (v) => {
     const $v = own(o, "held");
     if ($v !== undefined && $v !== null) out.held = reqBool(o, "held", "$.queued_prompt");
   }
+  {
+    const $v = own(o, "next");
+    if ($v !== undefined && $v !== null) out.next = reqBool(o, "next", "$.queued_prompt");
+  }
   return out;
 };
 
@@ -3332,7 +3337,6 @@ export const decodeRunAsksPayload: Decoder<RunAsksPayload> = (v) => {
 export const decodeRunControlsResponse: Decoder<RunControlsResponse> = (v) => {
   const o = asObject(v, "$.run_controls_response");
   const out: RunControlsResponse = {
-    parent_chat_id: reqStr(o, "parent_chat_id", "$.run_controls_response"),
     verbs: own(o, "verbs") === null ? [] : decodeArray(own(o, "verbs"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.run_controls_response.verbs"),
   };
   {
@@ -4141,8 +4145,16 @@ export const decodeTabSubject: Decoder<TabSubject> = (v) => {
     owns: reqBool(o, "owns", "$.tab_subject"),
   };
   {
+    const $v = own(o, "launch_chats");
+    if ($v !== undefined && $v !== null) out.launch_chats = own(o, "launch_chats") === null ? [] : decodeArray(own(o, "launch_chats"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.tab_subject.launch_chats");
+  }
+  {
     const $v = own(o, "seen");
     if ($v !== undefined && $v !== null) out.seen = reqNum(o, "seen", "$.tab_subject");
+  }
+  {
+    const $v = own(o, "launch_resolved");
+    if ($v !== undefined && $v !== null) out.launch_resolved = reqBool(o, "launch_resolved", "$.tab_subject");
   }
   return out;
 };

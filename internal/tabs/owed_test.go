@@ -1,0 +1,230 @@
+package tabs
+
+import (
+	"fmt"
+	"slices"
+	"testing"
+
+	"github.com/cplieger/marotte/internal/marotte"
+)
+
+func owedRefs(owed []OwedRelease) []string {
+	out := make([]string, 0, len(owed))
+	for _, e := range owed {
+		out = append(out, e.Ref)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func TestClose_OwesTheTabReleaseOfEveryClosedChat(t *testing.T) {
+	s, dir := newTestStore(t)
+	parent := mustOpen(t, s, chatSpec("c-parent"))
+	mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-fork", Parent: parent.ID})
+	mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: "/w/a.ts", Parent: parent.ID})
+	mustOpen(t, s, chatSpec("c-other"))
+
+	_, owed, version, err := s.Close(t.Context(), parent.ID)
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := owedRefs(owed); !slices.Equal(got, []string{"c-fork", "c-parent"}) {
+		t.Errorf("Close(parent) owed %v, want the parent and the fork, never the editor or the open chat", got)
+	}
+	for _, e := range owed {
+		if e.ID == "" || e.ClosedAt == 0 || e.Kind != marotte.TabKindChat {
+			t.Errorf("owed entry %+v, want an id, a close time and the chat kind", e)
+		}
+	}
+	doc := onDisk(t, dir)
+	if got := owedRefs(doc.Owed); !slices.Equal(got, []string{"c-fork", "c-parent"}) || doc.Version != version {
+		t.Errorf("tabs.json owed %v at version %d, want both entries in the close's own write (version %d)", got, doc.Version, version)
+	}
+
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if got := owedRefs(reopened.Owed()); !slices.Equal(got, []string{"c-fork", "c-parent"}) {
+		t.Errorf("Owed() after a restart = %v, want the entries the close wrote", got)
+	}
+}
+
+func TestSettle_RemovesOnlyTheNamedEntriesAndBumpsNoVersion(t *testing.T) {
+	s, dir := newTestStore(t)
+	a := mustOpen(t, s, chatSpec("c-a"))
+	b := mustOpen(t, s, chatSpec("c-b"))
+	_, owedA, _, err := s.Close(t.Context(), a.ID)
+	if err != nil {
+		t.Fatalf("close a: %v", err)
+	}
+	if _, _, _, err := s.Close(t.Context(), b.ID); err != nil {
+		t.Fatalf("close b: %v", err)
+	}
+	_, before := s.List()
+
+	if err := s.Settle(t.Context(), []string{owedA[0].ID}); err != nil {
+		t.Fatalf("Settle: %v", err)
+	}
+	if got := owedRefs(s.Owed()); !slices.Equal(got, []string{"c-b"}) {
+		t.Errorf("Owed() after settling a = %v, want only b", got)
+	}
+	if _, after := s.List(); after != before {
+		t.Errorf("Settle moved the version %d -> %d, want no bump: the client renders none of it", before, after)
+	}
+	if got := owedRefs(onDisk(t, dir).Owed); !slices.Equal(got, []string{"c-b"}) {
+		t.Errorf("tabs.json owed %v after Settle, want only b", got)
+	}
+}
+
+func TestNewStore_DropsInvalidOwedEntriesAndCapsTheList(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []OwedRelease
+		want []string
+	}{
+		{name: "valid entry kept", in: []OwedRelease{{ID: "e1", Kind: marotte.TabKindChat, Ref: "c-a"}}, want: []string{"c-a"}},
+		{name: "empty id dropped", in: []OwedRelease{{Kind: marotte.TabKindChat, Ref: "c-a"}}, want: []string{}},
+		{name: "invalid ref dropped", in: []OwedRelease{{ID: "e1", Kind: marotte.TabKindChat, Ref: "../x"}}, want: []string{}},
+		{name: "invalid holder dropped", in: []OwedRelease{{ID: "e1", Kind: marotte.TabKindRun, Ref: "wf-1", Holders: []string{"c/x"}}}, want: []string{}},
+		{name: "other kind dropped", in: []OwedRelease{{ID: "e1", Kind: marotte.TabKindEditor, Ref: "c-a"}}, want: []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeDoc(t, dir, file{Owed: tc.in})
+			s, err := NewStore(dir)
+			if err != nil {
+				t.Fatalf("NewStore: %v", err)
+			}
+			if got := owedRefs(s.Owed()); !slices.Equal(got, tc.want) {
+				t.Errorf("Owed() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("cap drops the oldest", func(t *testing.T) {
+		dir := t.TempDir()
+		in := make([]OwedRelease, 0, maxOwed+2)
+		for i := range maxOwed + 2 {
+			in = append(in, OwedRelease{ID: fmt.Sprintf("e%d", i), Kind: marotte.TabKindChat, Ref: fmt.Sprintf("c-%d", i)})
+		}
+		writeDoc(t, dir, file{Owed: in})
+		s, err := NewStore(dir)
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		owed := s.Owed()
+		if len(owed) != maxOwed || owed[0].ID != "e2" {
+			t.Errorf("Owed() = %d entries starting at %q, want %d starting at e2", len(owed), owed[0].ID, maxOwed)
+		}
+	})
+}
+
+func TestClose_OwesARunTabsReleaseOnEachOfItsHolders(t *testing.T) {
+	s, dir := newTestStore(t)
+	parent := mustOpen(t, s, chatSpec("c-launcher"))
+	mustOpen(t, s, marotte.OpenTab{
+		Kind: marotte.TabKindRun, Ref: "wf_1", Parent: parent.ID,
+		Launch: &marotte.RunLaunch{Chats: []string{"c-launcher", "c-shared"}},
+	})
+	mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_parentless", Parent: parent.ID, Launch: &marotte.RunLaunch{}})
+
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	open, _ := reopened.List()
+	if i := indexOfSubject(open, marotte.TabKindRun, "wf_1"); i < 0 ||
+		!slices.Equal(open[i].LaunchChats, []string{"c-launcher", "c-shared"}) || !open[i].LaunchResolved {
+		t.Fatalf("run tab after a restart = %+v, want its holders and LaunchResolved persisted", open)
+	}
+
+	_, owed, _, err := reopened.Close(t.Context(), parent.ID)
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	var run []OwedRelease
+	for _, e := range owed {
+		if e.Kind == marotte.TabKindRun {
+			run = append(run, e)
+		}
+	}
+	if len(run) != 1 || run[0].Ref != "wf_1" || !slices.Equal(run[0].Holders, []string{"c-launcher", "c-shared"}) {
+		t.Errorf("Close owed run entries %+v, want one for wf_1 naming both holders and none for the parentless run", run)
+	}
+}
+
+func TestSanitize_KeepsOnlyARunTabsValidHolders(t *testing.T) {
+	got := sanitize([]marotte.TabSubject{
+		{ID: "a", Kind: marotte.TabKindRun, Ref: "wf_1", LaunchChats: []string{"c-ok", "../etc", ""}, LaunchResolved: true},
+		{ID: "b", Kind: marotte.TabKindChat, Ref: "c-1", LaunchChats: []string{"c-ok"}, LaunchResolved: true},
+	})
+	if len(got) != 2 || !slices.Equal(got[0].LaunchChats, []string{"c-ok"}) || !got[0].LaunchResolved {
+		t.Errorf("sanitize(run) = %+v, want only c-ok kept", got)
+	}
+	if len(got) == 2 && (got[1].LaunchChats != nil || got[1].LaunchResolved) {
+		t.Errorf("sanitize(chat) = %+v, want no launch fields on a chat tab", got[1])
+	}
+}
+
+func TestSetLaunchChats_GrowsTheHoldersAndResolvesWithoutABump(t *testing.T) {
+	s, dir := newTestStore(t)
+	run := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"})
+	if run.LaunchResolved {
+		t.Fatalf("Setup: a run tab opened with no launch is resolved: %+v", run)
+	}
+	_, before := s.List()
+
+	if err := s.SetLaunchChats(t.Context(), run.ID, []string{"c-b", "c-a"}, true); err != nil {
+		t.Fatalf("SetLaunchChats: %v", err)
+	}
+	if err := s.SetLaunchChats(t.Context(), run.ID, []string{"c-a"}, false); err != nil {
+		t.Fatalf("SetLaunchChats with fewer holders: %v", err)
+	}
+
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	open, after := reopened.List()
+	if len(open) != 1 || !slices.Equal(open[0].LaunchChats, []string{"c-a", "c-b"}) || !open[0].LaunchResolved {
+		t.Errorf("run tab after a restart = %+v, want both holders kept and the tab still resolved", open)
+	}
+	if after != before {
+		t.Errorf("SetLaunchChats moved the version %d -> %d, want no bump: the client renders neither field", before, after)
+	}
+}
+
+func TestSetLaunchChats_RefusesAnythingButAnOpenRunTab(t *testing.T) {
+	s, _ := newTestStore(t)
+	chat := mustOpen(t, s, chatSpec("c-a"))
+	run := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"})
+	for name, tc := range map[string]struct {
+		id    string
+		chats []string
+	}{
+		"chat tab":     {id: chat.ID, chats: []string{"c-a"}},
+		"closed tab":   {id: "t-gone", chats: []string{"c-a"}},
+		"invalid chat": {id: run.ID, chats: []string{"../x"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := s.SetLaunchChats(t.Context(), tc.id, tc.chats, true); err == nil {
+				t.Errorf("SetLaunchChats(%q, %v) = nil, want a refusal", tc.id, tc.chats)
+			}
+		})
+	}
+	if open, _ := s.List(); open[indexOfSubject(open, marotte.TabKindRun, "wf_1")].LaunchResolved {
+		t.Error("a refused SetLaunchChats resolved the run tab")
+	}
+}
+
+func TestList_ACallersEditOfLaunchChatsDoesNotReachTheStore(t *testing.T) {
+	s, _ := newTestStore(t)
+	mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1", Launch: &marotte.RunLaunch{Chats: []string{"c-a"}}})
+	open, _ := s.List()
+	open[0].LaunchChats[0] = "c-forged"
+	if again, _ := s.List(); again[0].LaunchChats[0] != "c-a" {
+		t.Errorf("LaunchChats after editing a listed copy = %v, want [c-a]", again[0].LaunchChats)
+	}
+}

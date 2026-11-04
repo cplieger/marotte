@@ -16,10 +16,10 @@ export interface QueuedSlot {
 
 /** Mirrors the server's drain (`drainAfterClose`, `NextUserRow`): one prompt per turn end, the
  *  unsent steers together ahead of the first user row that is not held, carried or opened, unless
- *  the server marks them `awaitsPrompt` or no turn runs: then a prompt's start carries them. A sent
- *  steer is counted as read inside its turn. `opened`
- *  answers whether a turn for the row's id has opened, which the header shows until the server's
- *  dequeue lands. `next` is the wait a row queued now would get. */
+ *  the server marks them `awaitsPrompt`, no turn runs, or a row is marked `next` (the send-now
+ *  arrow's): then a prompt's start carries them. A sent steer is counted as read inside its turn.
+ *  `opened` answers whether a turn for the row's id has opened, which the header shows until the
+ *  server's dequeue lands. The returned `next` is the wait a row queued now would get. */
 function drainSlots(
   steers: readonly PendingSteer[],
   queued: readonly QueuedPrompt[],
@@ -27,7 +27,11 @@ function drainSlots(
   opened: (id: string) => boolean,
 ): { rows: QueuedSlot[]; next: number } {
   const unreadTurn = steers.some((s) => s.unsent === true && s.awaitsPrompt !== true);
-  let ahead = running && unreadTurn ? 1 : 0;
+  const marked = queued.some(
+    (row) =>
+      row.next === true && row.held !== true && (row.resends ?? []).length === 0 && !opened(row.id),
+  );
+  let ahead = running && unreadTurn && !marked ? 1 : 0;
   const rows = queued.map((row): QueuedSlot => {
     if (opened(row.id)) {
       return { row, wait: { kind: "sent" } };

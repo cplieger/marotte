@@ -57,7 +57,7 @@ function status(over: Partial<EngineStatus> = {}): EngineStatus {
     since: "2026-10-16T00:00:00Z",
     state: "ready",
     busy: { turns: [], runs: [] },
-    restart: { pending: false, reasons: [] },
+    restart: { pending: false, reasons: [], config_unreadable: false },
     ...over,
   };
 }
@@ -89,7 +89,11 @@ beforeEach(() => {
 
 describe("engine banner", () => {
   it("shows the pending banner with Restart now only while a restart is pending", () => {
-    adoptEngineStatus(status({ restart: { pending: true, reasons: ["knowledge_enabled"] } }));
+    adoptEngineStatus(
+      status({
+        restart: { pending: true, reasons: ["knowledge_enabled"], config_unreadable: false },
+      }),
+    );
     expect(shownCodes()).toEqual(["engine_restart_pending"]);
     const [chatID, , message, , dismissible, link] = mockedShow.mock.calls[0]!;
     expect(chatID).toBe("*");
@@ -105,9 +109,27 @@ describe("engine banner", () => {
     expect(mockedClear).toHaveBeenCalledWith("*", ["engine_restart_pending"]);
   });
 
+  it("keeps the pending banner and its Restart now while config.json cannot be read", () => {
+    adoptEngineStatus(
+      status({
+        restart: { pending: true, reasons: ["knowledge_enabled"], config_unreadable: true },
+      }),
+    );
+    expect(shownCodes()).toEqual(["engine_restart_pending"]);
+    const [, , message, , , link] = mockedShow.mock.calls[0]!;
+    expect(message).toContain("config.json cannot be read, so the restart waits.");
+    expect(message).toContain("Knowledge base search");
+    expect(link?.label).toBe("Restart now");
+  });
+
   for (const state of ["restarting", "down"] as const) {
     it(`says the engine is restarting, with no button, while ${state}`, () => {
-      adoptEngineStatus(status({ state, restart: { pending: true, reasons: ["auto_routing"] } }));
+      adoptEngineStatus(
+        status({
+          state,
+          restart: { pending: true, reasons: ["auto_routing"], config_unreadable: false },
+        }),
+      );
       expect(mockedShow).toHaveBeenCalledTimes(1);
       const [, code, message, , dismissible, link] = mockedShow.mock.calls[0]!;
       expect(code).toBe(state === "down" ? "engine_down" : "engine_restarting");
@@ -125,7 +147,7 @@ describe("engine banner", () => {
 });
 
 describe("status ordering", () => {
-  const pending = { pending: true, reasons: ["knowledge_enabled"] };
+  const pending = { pending: true, reasons: ["knowledge_enabled"], config_unreadable: false };
 
   it("keeps a pending banner when an older GET answer lands after the event", () => {
     const olderGet = status();
@@ -285,6 +307,16 @@ describe("Settings Restart now", () => {
     });
   }
 
+  it("stays offered while ready with config.json unreadable: the click is what re-reads it", () => {
+    adoptEngineStatus(
+      status({
+        state: "ready",
+        restart: { pending: true, reasons: ["engine_heap_mib"], config_unreadable: true },
+      }),
+    );
+    expect(btn.disabled).toBe(false);
+  });
+
   it("opens the confirmation when pressed", async () => {
     mockGet.mockResolvedValue(status());
     mockConfirm.mockResolvedValueOnce(false);
@@ -322,6 +354,17 @@ describe("restart reasons", () => {
     ).toBe(
       "Some settings apply after the agent engine restarts: Model fallback and Smart helper models. " +
         "A new kiro-cli version applies after the agent engine restarts. It restarts by itself when nothing is running.",
+    );
+  });
+
+  it("say the restart waits while config.json cannot be read, keeping the reason sentences", () => {
+    expect(restartPendingText(["account_switch"], true)).toBe(
+      "The new Kiro account applies after the agent engine restarts. config.json cannot be read, so the restart " +
+        "waits. After you fix the file, choose Restart now, or send a message or change a setting and it restarts by " +
+        "itself when nothing is running.",
+    );
+    expect(restartPendingText(["account_switch"], false)).toBe(
+      restartPendingText(["account_switch"]),
     );
   });
 
@@ -495,7 +538,9 @@ describe("engine-wide Settings rows", () => {
   });
 
   it("shows the inline Restart now only on the rows whose change is pending", () => {
-    paintEngineRows(status({ restart: { pending: true, reasons: ["auto_routing"] } }));
+    paintEngineRows(
+      status({ restart: { pending: true, reasons: ["auto_routing"], config_unreadable: false } }),
+    );
     const visible = (id: string): boolean =>
       document
         .querySelector(`#${id}-engine-hint .engine-restart-now`)
@@ -504,7 +549,10 @@ describe("engine-wide Settings rows", () => {
     expect(visible("flag-knowledge")).toBe(false);
 
     paintEngineRows(
-      status({ state: "restarting", restart: { pending: true, reasons: ["auto_routing"] } }),
+      status({
+        state: "restarting",
+        restart: { pending: true, reasons: ["auto_routing"], config_unreadable: false },
+      }),
     );
     expect(visible("auto-routing"), "no button while a restart is under way").toBe(false);
 
@@ -513,7 +561,9 @@ describe("engine-wide Settings rows", () => {
   });
 
   it("confirms before restarting from a row", async () => {
-    paintEngineRows(status({ restart: { pending: true, reasons: ["auto_routing"] } }));
+    paintEngineRows(
+      status({ restart: { pending: true, reasons: ["auto_routing"], config_unreadable: false } }),
+    );
     mockGet.mockResolvedValueOnce(status());
     mockConfirm.mockResolvedValueOnce(true);
     document

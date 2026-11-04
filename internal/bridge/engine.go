@@ -92,7 +92,7 @@ const (
 // only by Exit, after Done.
 type ExitInfo struct {
 	Reason exitReason
-	// SidecarExit is the kiro-cli-chat process's own status ("exit_code=N" or "signal=NAME"); its node child's status
+	// SidecarExit is the kiro-cli acp process's own status ("exit_code=N" or "signal=NAME"); its node child's status
 	// never reaches marotte, so it names no cause.
 	SidecarExit string
 	Uptime      time.Duration
@@ -220,7 +220,7 @@ func WithDetachHandler(fn func(DetachedSession)) Option { return func(e *Engine)
 // WithGeneration labels this engine's log lines with the owner's spawn count.
 func WithGeneration(gen uint64) Option { return func(e *Engine) { e.generation = gen } }
 
-// NewEngine returns an engine that runs the kiro-cli-chat sidecar at cliPath; call Start next. Its engine lane exists
+// NewEngine returns an engine that runs `acp` on the kiro-cli at cliPath; call Start next. Its engine lane exists
 // from here on, so a consumer can attach before Start writes initialize.
 func NewEngine(cliPath, workDir string, opts ...Option) *Engine {
 	e := &Engine{
@@ -433,7 +433,7 @@ func (e *Engine) initialize(ctx context.Context) error {
 			"_meta":       map[string]any{metaKeyKiro: kiroMeta},
 		},
 		"clientInfo": map[string]any{
-			"name": "marotte", "title": "Marotte for Kiro", "version": version.Build,
+			"name": kascap.ClientName, "title": "Marotte for Kiro", "version": version.Build,
 		},
 	})
 	if err != nil {

@@ -48,7 +48,7 @@ export const arbSlashCommandKind: fc.Arbitrary<SlashCommandKind> = fc.constantFr
 export const arbSpecDocRole: fc.Arbitrary<SpecDocRole> = fc.constantFrom("requirements", "design", "tasks", "other");
 export const arbSteerOrigin: fc.Arbitrary<SteerOrigin> = fc.constantFrom("user", "agent", "parent", "step");
 export const arbSteerReason: fc.Arbitrary<SteerReason> = fc.constantFrom("restart", "boundary");
-export const arbSteerRowState: fc.Arbitrary<SteerRowState> = fc.constantFrom("queued", "unsent", "removed");
+export const arbSteerRowState: fc.Arbitrary<SteerRowState> = fc.constantFrom("queued", "delivering", "unsent", "removed");
 export const arbSteerState: fc.Arbitrary<SteerState> = fc.constantFrom("read", "dropped");
 export const arbStopReason: fc.Arbitrary<StopReason> = fc.constantFrom("end_turn", "cancelled", "interrupted", "refusal", "unknown", "error", "content_filtered", "max_tokens", "max_turn_requests", "tool_use", "unterminated");
 export const arbTabKind: fc.Arbitrary<TabKind> = fc.constantFrom("chat", "editor", "run", "subagent", "settings", "git", "files", "history", "docs", "spec", "web");
@@ -760,8 +760,9 @@ const arbModel = fc.letrec<{
     {
       reasons: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       pending: fc.boolean(),
+      config_unreadable: fc.boolean(),
     },
-    { requiredKeys: ["reasons", "pending"] },
+    { requiredKeys: ["reasons", "pending", "config_unreadable"] },
   ),
   EngineStatus: fc.record(
     {
@@ -1857,6 +1858,7 @@ const arbModel = fc.letrec<{
       attachments: fc.array(tie("Attachment"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       resends: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       held: fc.boolean(),
+      next: fc.boolean(),
     },
     { requiredKeys: ["id", "text"] },
   ),
@@ -2080,11 +2082,10 @@ const arbModel = fc.letrec<{
   RunControlsResponse: fc.record(
     {
       refused: fc.dictionary(fc.string(), fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
-      parent_chat_id: fc.string(),
       pause_node_id: fc.string(),
       verbs: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
     },
-    { requiredKeys: ["parent_chat_id", "verbs"] },
+    { requiredKeys: ["verbs"] },
   ),
   RunExtendRequest: fc.record(
     {
@@ -2564,9 +2565,11 @@ const arbModel = fc.letrec<{
       kind: arbTabKind,
       ref: fc.string(),
       parent: fc.string(),
+      launch_chats: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       seen: fc.double({ noNaN: true, noDefaultInfinity: true }),
       pinned: fc.boolean(),
       owns: fc.boolean(),
+      launch_resolved: fc.boolean(),
     },
     { requiredKeys: ["id", "kind", "ref", "parent", "pinned", "owns"] },
   ),

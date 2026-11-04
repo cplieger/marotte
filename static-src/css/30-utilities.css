@@ -207,27 +207,6 @@
   align-self: stretch;
 }
 
-/* THE RESERVED FOLD SLOT TAKES THE HIT FLOOR, because the real control is a BUTTON
- * and the placeholder is a div wearing its class.
- *
- * `.turn-fold-toggle` sizes on `--ctl-h-sm` (29-turns.css), and the app-wide hit
- * floor (61-mcp-tools.css) lifts it to `--hit-floor` through
- * `:where(a[href], button, select, summary)` — which a `<div>` matches on none of
- * its arms. The two tokens are equal on a fine pointer and differ by 0.5rem on a
- * coarse one, so the reserved slot rendered 8px narrower and shorter than the
- * control it stands in for on touch ONLY, offsetting the `#N` bar beside it. That
- * is the one geometry this standard exists to eliminate: wear the real element's
- * class and match its box.
- *
- * PHYSICAL `min-width`/`min-height` to match the floor's own spelling, not the
- * logical pair — one property per axis, so the two cannot disagree about which
- * axis they bound. Specificity is (0,2,0) against the floor's zero, so this wins
- * wherever it applies and the floor still answers for the real button. */
-.turn-skel .turn-fold-toggle {
-  min-width: var(--hit-floor);
-  min-height: var(--hit-floor);
-}
-
 .skeleton-line {
   height: 0.75rem;
   border-radius: var(--r-sm);
@@ -237,7 +216,7 @@
    `.tab`'s box — same min-height, same radius, same row gap — so adopting the
    tab set replaces the placeholder without moving the strip. */
 .skeleton-tab-row {
-  height: var(--btn-h);
+  height: var(--row-tap);
   border-radius: var(--r);
 }
 

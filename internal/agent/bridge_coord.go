@@ -51,6 +51,8 @@ type bridgeCoordinator struct {
 	sessionOpts func(ctx context.Context, rec *marotte.Chat, ask *sessionAsk, steering []marotte.ClientSteeringDoc) *marotte.SessionOpts
 	// syncLive pushes the engine each live setting it has not confirmed.
 	syncLive func(context.Context)
+	// configHeld is the configDoc owner's verdict, which holds a marked session (bridgeManager.claimReload).
+	configHeld func() bool
 	// replayProjection is the session/load replay lifecycle; nil in tests without a load.
 	replayProjection replayProjector
 	// onSessionRehydrated fires after a successful session/load, off the session-open path, to heal paused runs.
@@ -72,10 +74,11 @@ type bridgeCoordinator struct {
 	applyPendingModel func(context.Context, marotte.ChatID) `wiring:"optional"`
 	// autoCompact is the compaction policy's turn-end and pre-send triggers.
 	autoCompact *autoCompactor `wiring:"optional"`
-	// resolveEnds and drainAfterClose are first and last in afterTurnClose; the drain is last
-	// because a prompt mid-compaction aborts it upstream.
+	// resolveEnds and drainAfterClose are afterTurnClose's; it owns their order.
 	resolveEnds     func(context.Context, marotte.ChatID, command.TurnFence) command.EndFacts   `wiring:"optional"`
 	drainAfterClose func(context.Context, marotte.ChatID, command.CloseFacts, command.EndFacts) `wiring:"optional"`
+	// settleNotices clears a run notice KAS's boundary left queued, once KAS is idle. Nil in tests.
+	settleNotices func(context.Context, marotte.ChatID) `wiring:"optional"`
 	// runs lets the death closer close every open step turn of the runs this bridge hosted.
 	runs *runLog `wiring:"optional"`
 	// Before closeHostedRuns closes the run turns, so the not-read notes land inside them.
@@ -90,6 +93,7 @@ type bridgeCoordinator struct {
 	steerTurnBound   func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerTurnRevised func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerBridgeGone  func(marotte.ChatID)                       `wiring:"optional"`
+	steerKASSettled  func(marotte.ChatID)                       `wiring:"optional"`
 	// chatHasLiveRun keeps pushTurnOutcome from claiming the work is over while a launched run continues. Nil means none.
 	chatHasLiveRun func(marotte.ChatID) bool `wiring:"optional"`
 	// chatHasTab reports an open tab on the chat; it answers true when no tab set is wired, so nothing is released.
@@ -110,7 +114,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		bridge:         h.bridge,
 		chatStore:      h.chatStore,
 		catalog:        h.catalog,
-		turns:          newTurnRegistry(),
+		turns:          newTurnRegistry(h.chatStore),
 		broadcast:      h.bus.Broadcast,
 		translateEvent: h.translateACPEvent,
 		// Read per call: agentTerms is built after the coordinator.
@@ -123,6 +127,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		engine:      h.engine,
 		sessionOpts: h.chatSessionOpts,
 		syncLive:    func(ctx context.Context) { h.engine.syncLive(ctx, h.liveSettings) },
+		configHeld:  h.configDoc.held,
 		// h implements replayProjector (load_projection.go).
 		replayProjection: h.replay,
 		chatHasLiveRun: func(chatID marotte.ChatID) bool {
@@ -143,17 +148,8 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 			defer cancel()
 			h.runs.resumeInterruptedRuns(ctx, chatID)
 		},
-		reapSession: func(sessionID string) { h.reapSessions([]string{sessionID}) },
-		onTurnClosed: func(chatID marotte.ChatID, turnID string) {
-			h.agentTerms.closeTurn(chatID, turnID)
-			// Its own goroutine: a bridge Call has no deadline and a closer must not wait on one. Gated, since a
-			// closer need not run on inflight; Shutdown stops every bridge, so a refused clear has nothing to clear.
-			h.lifecycle.goUnlessDraining(func() {
-				ctx, cancel := h.lifecycle.derivedContext()
-				defer cancel()
-				h.runs.clearStaleNotices(ctx, chatID)
-			})
-		},
+		reapSession:      func(sessionID string) { h.reapSessions([]string{sessionID}) },
+		onTurnClosed:     func(chatID marotte.ChatID, turnID string) { h.agentTerms.closeTurn(chatID, turnID) },
 		dischargeWaiting: h.DischargeWaiting,
 		endAsks:          h.bus.endAsksOf,
 		observeLaneFrame: func(origin acpResponder, seq uint64, msg *marotte.RPCResponse) {
@@ -167,6 +163,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		drainAfterClose: func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
 			h.dispatcher.DrainAfterClose(ctx, chatID, cl, ends)
 		},
+		settleNotices:    h.runs.clearStaleNotices,
 		runs:             h.runs.log,
 		endHostedSteers:  h.runs.endHostedSteers,
 		takeAgentSteers:  h.bus.steers.takeAgentRows,
@@ -176,6 +173,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		steerTurnBound:   h.bus.steers.turnBound,
 		steerTurnRevised: h.bus.steers.turnRevised,
 		steerBridgeGone:  h.bus.steers.bridgeGone,
+		steerKASSettled:  h.bus.steers.kasSettled,
 	}
 }
 
@@ -225,7 +223,7 @@ func (bc *bridgeCoordinator) openBridgeBy(ctx context.Context, chatID marotte.Ch
 // open, and the next door waits for the close to settle. A session another reload or a release is closing is
 // waited out, then the caller asks again, so no open hands out a session being closed.
 func (bc *bridgeCoordinator) reloadIfMarked(ctx context.Context, chatID marotte.ChatID, sb *sharedBridge) (reopen bool, err error) {
-	claim := bc.bridge.mgr.claimReload(chatID, sb)
+	claim := bc.bridge.mgr.claimReload(chatID, sb, bc.configHeld())
 	session := claim.session
 	switch {
 	case claim.busy != nil:
@@ -884,11 +882,6 @@ func (bc *bridgeCoordinator) renderChatSteering(ctx context.Context) []marotte.C
 // bridgeFor returns the bridge for chatID, or nil.
 func (bc *bridgeCoordinator) bridgeFor(chatID marotte.ChatID) *sharedBridge {
 	return bc.bridge.mgr.get(chatID)
-}
-
-// HasResidentSession reports whether a chat has a resident session; retention never purges such a chat (archive.WithLiveChats).
-func (rt *Runtime) HasResidentSession(chatID marotte.ChatID) bool {
-	return rt.bridge.mgr.get(chatID) != nil
 }
 
 // TurnLive reports whether the reader must treat the chat as running: its own turn, an

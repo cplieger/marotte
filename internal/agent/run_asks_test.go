@@ -135,7 +135,7 @@ func TestRunAsks_SeqGrowsAcrossARebuiltCell(t *testing.T) {
 // A trigger racing the lease's release never leaves a cell behind it, in either order.
 func TestRunAsks_ACreateRacingTheEndLeavesNoCell(t *testing.T) {
 	for i := range 50 {
-		rs := &Runs{}
+		rs := &Runs{chats: newTestChatStore()}
 		if err := rs.leaseStore().Put(t.Context(), &runlease.Lease{WorkflowID: "wf_1", Origin: runlease.OriginManual}); err != nil {
 			t.Fatalf("Setup: lease: %v", err)
 		}

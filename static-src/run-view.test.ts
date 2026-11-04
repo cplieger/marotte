@@ -48,7 +48,6 @@ interface OpenedTab {
 interface ControlsReply {
   verbs: string[];
   refused?: Record<string, string>;
-  parent_chat_id: string;
   pause_node_id?: string;
 }
 
@@ -164,7 +163,6 @@ vi.mock("./run-store.js", async (importOriginal) => {
     // Spied so the split can be pinned by CALL rather than by request count, and delegating so
     // every case above keeps the real store's behaviour.
     invalidateRun: vi.fn(actual.invalidateRun),
-    invalidateRunControls: vi.fn(actual.invalidateRunControls),
     runChatID: vi.fn(() => m.runChat.current),
     noteRunChat: vi.fn((_workflowID: string, chatID: string) => {
       if (chatID !== "") {
@@ -285,13 +283,7 @@ import { stepTranscriptVersion } from "./run-step-transcript.js";
 // The REAL invalidation (the run-store mock overrides only its launching-chat memory), so a case
 // can drive a second fetch of the SAME run: that is how a step settling under the reader's cursor
 // reaches the page in production.
-import {
-  appendRunEntry,
-  forgetRun,
-  invalidateRun,
-  invalidateRunControls,
-  openRunTurn,
-} from "./run-store.js";
+import { appendRunEntry, forgetRun, invalidateRun, openRunTurn } from "./run-store.js";
 // The REAL router: a zero-import leaf, so no mock, and taking the node from the PARSER rather than
 // a literal is what makes the fragment case below cover the
 import { parseRoute } from "./route-path.js";
@@ -301,11 +293,11 @@ import type { Entry } from "./types.js";
  *  verbs" — but it is a FIXTURE of the server's answer, not a reimplementation of its table: the
  *  table itself is pinned in Go, over all three of its inputs. */
 const CONTROLS_FOR: Record<string, ControlsReply> = {
-  running: { verbs: ["pause", "cancel"], parent_chat_id: "" },
-  paused: { verbs: ["resume", "cancel"], parent_chat_id: "" },
-  completed: { verbs: [], parent_chat_id: "" },
-  failed: { verbs: ["retry"], parent_chat_id: "" },
-  aborted: { verbs: ["retry"], parent_chat_id: "" },
+  running: { verbs: ["pause", "cancel"] },
+  paused: { verbs: ["resume", "cancel"] },
+  completed: { verbs: [] },
+  failed: { verbs: ["retry"] },
+  aborted: { verbs: ["retry"] },
 };
 
 async function paint(
@@ -313,8 +305,7 @@ async function paint(
   status: string,
   opts: {
     controls?: ControlsReply;
-    /** Answer the affordance fetch with nothing, which is what a failed fetch and the moment
-     *  before the first one resolves both look like to the store. */
+    /** A run read that carries no verbs, which draws none. */
     noControls?: boolean;
     /** Defaults to `wf_1`, which `beforeEach` forgets. */
     id?: string;
@@ -351,9 +342,7 @@ async function paint(
   };
   m.reply.current = reply;
   m.controls.current =
-    opts.noControls === true
-      ? undefined
-      : (opts.controls ?? CONTROLS_FOR[status] ?? { verbs: [], parent_chat_id: "" });
+    opts.noControls === true ? undefined : (opts.controls ?? CONTROLS_FOR[status] ?? { verbs: [] });
 
   // The run view as `static/index.html` lays it out: the scrolling body, then the bottom bar's
   // run dock and decision dock. `body` is the whole view, so a case reads either half.
@@ -379,8 +368,7 @@ async function paint(
   // The pair `activateTabQuietly` runs: the activation points the view, the refresh fetches.
   // `showRun` issues nothing of its own.
   refreshRun(tab.id);
-  // Two fetches settle before the row is right — the state and the affordance — so drain enough
-  // microtasks for both promise chains without reaching for fake timers.
+  // Drain enough microtasks for the run read's promise chain without reaching for fake timers.
   for (let i = 0; i < 12; i++) {
     await Promise.resolve();
   }
@@ -468,19 +456,25 @@ beforeEach(() => {
   // `runs/<workflowId>/entries.jsonl`, so nothing here writes a chat window and there is none to
   // clear.
   m.controls.current = undefined;
+  // The run read, carrying the run's verbs as the server splices them beside the state; the store
+  // decodes them with the generated decoder.
   vi.mocked(apiGetOrError).mockImplementation(() =>
     Promise.resolve(
       m.reply.current === undefined
         ? { ok: false, status: 0, data: null, error: "" }
-        : { ok: true, status: 200, data: m.reply.current, error: "" },
+        : {
+            ok: true,
+            status: 200,
+            data: {
+              ...(m.reply.current as object),
+              ...(m.controls.current === undefined ? {} : { controls: m.controls.current }),
+            },
+            error: "",
+          },
     ),
   );
-  // The affordance endpoint, the only typed GET this graph makes. Decoded FOR REAL by the caller's
-  // own generated decoder, so a fixture with the wrong shape fails here rather than reaching the
-  // row. `null` is what a failed fetch produces.
-  vi.mocked(apiGetTyped).mockImplementation((_path, decode) =>
-    Promise.resolve(m.controls.current === undefined ? null : decode(m.controls.current)),
-  );
+  // Every other typed GET this graph makes answers as a failed fetch.
+  vi.mocked(apiGetTyped).mockResolvedValue(null);
   // `showRun` paints the shown run's cached state at once, so a case must not inherit the last
   // case's `wf_1`.
   forgetRun("wf_1");
@@ -498,7 +492,7 @@ describe("run view controls", () => {
   // The server offers retry and the page draws it.
   it("offers retry on an aborted CHAT-PARENTED run", async () => {
     const painted = await paint(openRunView, "aborted", {
-      controls: { verbs: ["retry"], parent_chat_id: "c-launcher" },
+      controls: { verbs: ["retry"] },
     });
     expect(painted.labels).toEqual(["Retry failed steps"]);
   });
@@ -517,7 +511,6 @@ describe("run view controls", () => {
       controls: {
         verbs: ["cancel"],
         refused: { pause: 'This run is driven by an agent in "Findings cleanup"' },
-        parent_chat_id: "c-launcher",
       },
     });
     // A partly-refused row keeps its buttons: the sentence is for a row with none.
@@ -529,7 +522,6 @@ describe("run view controls", () => {
         refused: {
           pause: "A pause is already requested; the run stops at the end of its current step.",
         },
-        parent_chat_id: "",
       },
     });
     expect(stuck.labels).toEqual([]);
@@ -602,7 +594,6 @@ describe("run view controls", () => {
       controls: {
         verbs: ["extend", "finish_loop", "cancel"],
         pause_node_id: "loop-1",
-        parent_chat_id: "",
       },
     });
     expect(painted.labels).toEqual(["Add passes", "End this loop", "Cancel"]);
@@ -623,7 +614,7 @@ describe("run view controls", () => {
 
   it("refuses an out-of-range count without sending", async () => {
     const painted = await paint(openRunView, "paused", {
-      controls: { verbs: ["extend"], pause_node_id: "loop-1", parent_chat_id: "" },
+      controls: { verbs: ["extend"], pause_node_id: "loop-1" },
     });
     const count = painted.body.querySelector<HTMLInputElement>(".run-extend-count");
     if (count === null) {
@@ -636,10 +627,10 @@ describe("run view controls", () => {
 
   it("re-addresses the repeat controls when the paused node changes", async () => {
     const painted = await paint(openRunView, "paused", {
-      controls: { verbs: ["finish_loop"], pause_node_id: "loop-1", parent_chat_id: "" },
+      controls: { verbs: ["finish_loop"], pause_node_id: "loop-1" },
     });
-    m.controls.current = { verbs: ["finish_loop"], pause_node_id: "loop-2", parent_chat_id: "" };
-    invalidateRunControls("wf_1");
+    m.controls.current = { verbs: ["finish_loop"], pause_node_id: "loop-2" };
+    invalidateRun("wf_1");
     for (let i = 0; i < 12; i++) {
       await Promise.resolve();
     }
@@ -692,13 +683,22 @@ describe("run view controls", () => {
       }
       document.documentElement.setAttribute("data-pointer", "coarse");
       for (const face of faces) {
+        // The mouse's square under a finger too; the coarse 44px is the target around it.
         const box = face.btn.getBoundingClientRect();
-        expect(box.width, `${face.name ?? ""} under the coarse hit floor`).toBeGreaterThanOrEqual(
-          44,
-        );
-        expect(box.height, `${face.name ?? ""} under the coarse hit floor`).toBeGreaterThanOrEqual(
-          44,
-        );
+        expect(box.width, `${face.name ?? ""} is not square`).toBeCloseTo(box.height, 0);
+        const cx = box.left + box.width / 2;
+        const cy = box.top + box.height / 2;
+        for (const [dx, dy] of [
+          [-21, 0],
+          [21, 0],
+          [0, -21],
+          [0, 21],
+        ] as const) {
+          const hit = document.elementFromPoint(cx + dx, cy + dy);
+          expect(face.btn.contains(hit), `${face.name ?? ""} at ${String(dx)},${String(dy)}`).toBe(
+            true,
+          );
+        }
       }
     } finally {
       document.documentElement.removeAttribute("data-pointer");
@@ -729,7 +729,7 @@ describe("run view controls", () => {
 
   it("draws no repeat control when the server named no paused node", async () => {
     const painted = await paint(openRunView, "paused", {
-      controls: { verbs: ["extend", "finish_loop", "cancel"], parent_chat_id: "" },
+      controls: { verbs: ["extend", "finish_loop", "cancel"] },
     });
     expect(painted.labels).toEqual(["Cancel"]);
   });
@@ -905,7 +905,6 @@ describe("the run dock", () => {
         controls: {
           verbs: ["extend", "finish_loop", "cancel"],
           pause_node_id: "loop-1",
-          parent_chat_id: "",
         },
       });
       expectPause("Waiting: Repeat 'loop-1' reached maxIterations.");
@@ -994,7 +993,6 @@ describe("the run dock", () => {
           refused: {
             pause: "A pause is already requested; the run stops at the end of its current step.",
           },
-          parent_chat_id: "",
         },
       });
       expect(
@@ -1621,6 +1619,10 @@ describe("run view structure", () => {
   // Every node carries its own timestamps, so the execution's shape over time is on the wire and no
   // surface had ever drawn it. One lane per leaf.
   it("draws a lane per leaf on the timeline", async () => {
+    // A live run's window ends at the browser's now, so the stamps sit just before it: fixed dates
+    // shrink b's offset below the bar's 0.001% precision as the calendar moves on.
+    const at = (secondsAgo: number): string =>
+      new Date(Date.now() - secondsAgo * 1000).toISOString();
     const { body } = await paint(openRunView, "running", {
       root: {
         nodeId: "wf_1",
@@ -1631,16 +1633,16 @@ describe("run view structure", () => {
             nodeId: "a",
             type: "step",
             status: "completed",
-            startedAt: "2026-08-26T18:00:00Z",
-            endedAt: "2026-08-26T18:01:00Z",
+            startedAt: at(120),
+            endedAt: at(60),
             children: [],
           },
           {
             nodeId: "b",
             type: "step",
             status: "completed",
-            startedAt: "2026-08-26T18:00:30Z",
-            endedAt: "2026-08-26T18:02:00Z",
+            startedAt: at(90),
+            endedAt: at(0),
             children: [],
           },
         ],
@@ -2719,17 +2721,12 @@ describe("showRun and refreshRun", () => {
     showRun("wf_show");
 
     expect(invalidateRun).not.toHaveBeenCalled();
-    expect(invalidateRunControls).not.toHaveBeenCalled();
   });
 
-  it("refreshRun invalidates the run and then its controls", () => {
+  it("refreshRun invalidates the run, whose read carries its controls", () => {
     refreshRun("wf_refresh");
 
     expect(invalidateRun).toHaveBeenCalledWith("wf_refresh");
-    expect(invalidateRunControls).toHaveBeenCalledWith("wf_refresh");
-    const runOrder = vi.mocked(invalidateRun).mock.invocationCallOrder[0] ?? 0;
-    const controlsOrder = vi.mocked(invalidateRunControls).mock.invocationCallOrder[0] ?? 0;
-    expect(runOrder).toBeLessThan(controlsOrder);
   });
 });
 
