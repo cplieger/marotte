@@ -319,6 +319,11 @@ type gatedBridgeAccess struct {
 
 func (g *gatedBridgeAccess) Bridge(id marotte.ChatID) Bridge   { return g.inner.Bridge(id) }
 func (g *gatedBridgeAccess) BridgeLive(id marotte.ChatID) bool { return g.inner.BridgeLive(id) }
+
+func (g *gatedBridgeAccess) CallBudget(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return g.inner.CallBudget(ctx, d)
+}
+
 func (g *gatedBridgeAccess) CloseBridge(ctx context.Context, id marotte.ChatID, outcome marotte.TurnOutcome) {
 	g.inner.CloseBridge(ctx, id, outcome)
 }

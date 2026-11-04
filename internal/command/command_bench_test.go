@@ -97,6 +97,10 @@ func (*benchDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, e
 // follow the bridge it holds.
 func (*benchDeps) BridgeLive(marotte.ChatID) bool { return true }
 
+func (*benchDeps) CallBudget(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, d)
+}
+
 func (*benchDeps) CloseBridge(context.Context, marotte.ChatID, marotte.TurnOutcome) {}
 
 func (*benchDeps) ClearPendingInputAsks(marotte.ChatID, CancelScope) {}

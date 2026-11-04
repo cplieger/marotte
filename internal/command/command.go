@@ -124,7 +124,9 @@ type Dispatcher struct {
 	prompts *promptRoles
 	// merges is bound at registration, like prompts.
 	merges *tangentMerges
-	mu     sync.RWMutex
+	// changes is bound at registration, like prompts.
+	changes detachedChange
+	mu      sync.RWMutex
 }
 
 // New constructs a Dispatcher. A handler's own collaborators arrive at
@@ -140,6 +142,12 @@ func (d *Dispatcher) Register(t marotte.CommandType, h Handler) {
 	d.mu.Unlock()
 }
 
+// RegisterChange adds a handler whose engine call can outlast its request: its request answers 504
+// still_applying once the answer budget RegisterDefaults bound passes, and the change lands when kiro-cli answers.
+func (d *Dispatcher) RegisterChange(t marotte.CommandType, h Handler) {
+	d.Register(t, d.changes.wrap(t, h))
+}
+
 func (d *Dispatcher) handler(t marotte.CommandType) (Handler, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -149,13 +157,13 @@ func (d *Dispatcher) handler(t marotte.CommandType) (Handler, bool) {
 
 // Run applies cmd through its registered handler in process, for a command that applies another's
 // effect as part of its own: no envelope, no idempotency replay, no answer discharge, and the
-// handler's response is dropped.
+// handler's response is dropped. A change runs inline: its outcome is the caller's.
 func (d *Dispatcher) Run(ctx context.Context, cmd *marotte.ClientCommand) error {
 	fn, ok := d.handler(cmd.Type)
 	if !ok {
 		return StatusError(http.StatusInternalServerError, errors.New("unknown command: "+string(cmd.Type)))
 	}
-	_, err := fn(ctx, cmd)
+	_, err := fn(inProcess(ctx), cmd)
 	return err
 }
 

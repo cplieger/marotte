@@ -98,7 +98,9 @@ func applySessionConfig(
 	if bridge == nil {
 		return nil
 	}
-	_, err := bridge.Call(ctx, method, sessionParams(bridge, params))
+	cctx, cancel := bridges.CallBudget(ctx, engineChangeBudget)
+	defer cancel()
+	_, err := bridge.Call(cctx, method, sessionParams(bridge, params))
 	switch {
 	case err == nil:
 		return nil

@@ -89,6 +89,8 @@ type bridgeAccess interface {
 	// CloseBridge closes every turn the session hosted with outcome, then closes the
 	// session: `cancelled` for a stop the reader asked for, `interrupted` otherwise.
 	CloseBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome)
+	// CallBudget bounds one engine call by d, extended while the engine is in an event-loop stall.
+	CallBudget(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc)
 }
 
 // sessionLoader opens a chat's bridge and answers nil once the chat's log holds KAS's account of
@@ -851,9 +853,12 @@ type Roles struct {
 	Tangents TangentAccess
 	// StepSessions refuses resuming a workflow step's session as a chat. Nil checks nothing.
 	StepSessions stepSessions
-	// Workspace is last for fieldalignment (a trailing length word stops
-	// the leading-pointer count early).
+	// Workspace and AnswerBudget are last for fieldalignment (trailing
+	// non-pointer words stop the leading-pointer count early).
 	Workspace Workspace
+	// AnswerBudget is how long a session change's request waits on kiro-cli before it answers still_applying;
+	// zero waits for the change on the request.
+	AnswerBudget time.Duration
 }
 
 // promptRoles holds the prompt path's collaborators. It is built once at
