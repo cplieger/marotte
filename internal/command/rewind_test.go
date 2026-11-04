@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
@@ -713,6 +714,13 @@ func (a *slotAdmission) tryReserveIdleOld(chatID marotte.ChatID, source marotte.
 	return a.tryReserveOld(chatID, source)
 }
 
+func (a *slotAdmission) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if a.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
 func (a *slotAdmission) releaseOld(marotte.ChatID) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -784,6 +792,10 @@ func TestCmdRewindChat_ReleasesTheAdmissionSlotWhenKASRefuses(t *testing.T) {
 type lostSlot struct{ *benchDeps }
 
 func (lostSlot) tryReserveIdleOld(marotte.ChatID, marotte.TurnOpenSource) bool { return false }
+
+func (lostSlot) ReserveIdleTurn(context.Context, marotte.ChatID, marotte.TurnOpenSource, uint64, time.Duration) (IdleAdmission, Reservation) {
+	return IdleTurnOpen, Reservation{}
+}
 
 func TestCmdRewindChat_RefusedWhenAPromptTakesTheSlotFirst(t *testing.T) {
 	store := seedRewindChat(t, false)

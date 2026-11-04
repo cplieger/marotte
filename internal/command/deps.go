@@ -465,6 +465,22 @@ const (
 	AdmissionChatGone
 )
 
+// IdleAdmission is ReserveIdleTurn's answer.
+type IdleAdmission int
+
+const (
+	// IdleAcquired means the caller holds the chat's admission slot, with no turn open.
+	IdleAcquired IdleAdmission = iota
+	// IdleTurnOpen is a turn running in the chat, refused at once.
+	IdleTurnOpen
+	// IdleHeld is a holder that opened no running turn and kept the slot past the wait.
+	IdleHeld
+	// IdleClosed is a close of the chat committed after the caller's stamp: nothing was reserved.
+	IdleClosed
+	// IdleChatGone is a chat whose record was deleted or whose purge teardown still runs: nothing was reserved.
+	IdleChatGone
+)
+
 // turnAdmission is the chat's admission slot as the command handlers hold it:
 // a bare per-chat reservation decided before any turn exists, plus the read
 // that says who holds it. Separate from turnOutcomeAccess because the steer reads
@@ -484,6 +500,10 @@ type turnAdmission interface {
 	// TryReserveIdleTurn is TryReserveTurn that also refuses while a turn is open
 	// without a reservation (a wire turn), checked in the same acquisition.
 	TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (Reservation, bool)
+	// ReserveIdleTurn is TryReserveIdleTurn that waits up to wait for a holder that is not a running turn (a bare
+	// reservation, a closing turn, kiro-cli not admitting yet, a held close); a running turn answers IdleTurnOpen at
+	// once. The Reservation is the zero one unless the answer is IdleAcquired.
+	ReserveIdleTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation)
 	// TryReserveTurnFenced is TryReserveTurn for a close's drain: it also refuses
 	// once the fence no longer holds, sparing a reservation the open would refuse.
 	TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool)

@@ -109,6 +109,43 @@ func (r *turnRegistry) tryReserveIdle(chatID marotte.ChatID, source marotte.Turn
 	return a.res, a.res.Token != 0
 }
 
+// idleLook is one look at an idle reservation: the reservation taken, or why not and what to wait on.
+type idleLook struct {
+	// changed is the lifecycle's next-change channel, gate the close hold's idle channel; either may be nil.
+	changed, gate         <-chan struct{}
+	res                   command.Reservation
+	running, closed, gone bool
+}
+
+// reserveIdleOrRunning is tryReserveIdle that, on a refusal, reports whether a running turn or a close refused it,
+// with the channels to park on, in one acquisition. A closing turn is not running: it lets go within its close.
+func (r *turnRegistry) reserveIdleOrRunning(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) idleLook {
+	lc, gate, err := r.admitLife(chatID, stamp)
+	switch {
+	case err != nil:
+		return idleLook{closed: true}
+	case lc == nil:
+		return idleLook{gate: gate}
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if _, held := lc.holderSourceLocked(); !held {
+		a := r.reserveLocked(lc, source, stamp, "")
+		switch {
+		case a.res.Token != 0:
+			return idleLook{res: a.res}
+		case a.gone:
+			return idleLook{gone: true}
+		case a.verdict == gateClosedSince:
+			return idleLook{closed: true}
+		case a.verdict == gateWait:
+			return idleLook{gate: a.idle, changed: lc.changed}
+		}
+	}
+	running := (lc.pending != nil && !lc.pending.finalizing) || (lc.own != nil && !lc.own.finalizing)
+	return idleLook{running: running, changed: lc.changed}
+}
+
 // promptHolder names the prompt-class turn holding admission: the bracket-owed one, else a non-finalizing own one.
 func (r *turnRegistry) promptHolder(chatID marotte.ChatID) (string, bool) {
 	lc, ok := r.lookup(chatID)
@@ -229,6 +266,39 @@ func (bc *bridgeCoordinator) TryReserveTurn(chatID marotte.ChatID, source marott
 // TryReserveIdleTurn takes the admission slot iff no turn is open and nothing holds it, never waiting.
 func (bc *bridgeCoordinator) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
 	return bc.turns.tryReserveIdle(chatID, source, stamp)
+}
+
+// ReserveIdleTurn takes the admission slot for a caller whose intent began at stamp once nothing holds it and no turn
+// is open, waiting up to wait for a holder that is not a running turn or for a held close; one waiter acquires per
+// wake. A running turn answers IdleTurnOpen at once, a close committed since stamp IdleClosed, a dead ctx IdleHeld.
+func (bc *bridgeCoordinator) ReserveIdleTurn(
+	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration,
+) (command.IdleAdmission, command.Reservation) {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	for expired := false; ; {
+		a := bc.turns.reserveIdleOrRunning(chatID, source, stamp)
+		switch {
+		case a.res.Token != 0:
+			return command.IdleAcquired, a.res
+		case a.gone:
+			return command.IdleChatGone, command.Reservation{}
+		case a.closed:
+			return command.IdleClosed, command.Reservation{}
+		case a.running:
+			return command.IdleTurnOpen, command.Reservation{}
+		case expired:
+			return command.IdleHeld, command.Reservation{}
+		}
+		select {
+		case <-a.changed:
+		case <-a.gate:
+		case <-timer.C:
+			expired = true
+		case <-ctx.Done():
+			return command.IdleHeld, command.Reservation{}
+		}
+	}
 }
 
 // TryReserveTurnFenced is TryReserveTurn for a close's drain, refused once a turn

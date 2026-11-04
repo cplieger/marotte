@@ -174,6 +174,13 @@ func (d *benchDeps) tryReserveIdleOld(marotte.ChatID, marotte.TurnOpenSource) bo
 	return !d.holderOpen
 }
 
+func (d *benchDeps) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, _ marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if d.holderOpen {
+		return IdleTurnOpen, Reservation{}
+	}
+	return IdleAcquired, testReservation(chatID, true)
+}
+
 func (*benchDeps) tryReserveFencedOld(marotte.ChatID, marotte.TurnOpenSource, TurnFence) bool {
 	return true
 }
