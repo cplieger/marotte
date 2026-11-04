@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -83,8 +84,8 @@ func TestLoad_OneUnreadableEntryAmongThreeLoadsTheOtherTwo(t *testing.T) {
 	if unreadable != 1 {
 		t.Errorf("unreadable = %d, want 1", unreadable)
 	}
-	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "index=1") {
-		t.Errorf("no WARN naming entry index 1:\n%s", logs.String())
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "position=2 name=bad") {
+		t.Errorf("no WARN naming the second entry, bad:\n%s", logs.String())
 	}
 	siblings := corruptSiblings(t, dir)
 	if len(siblings) != 1 {
@@ -154,7 +155,7 @@ func TestHeal_KeepsAnUnreadableEntrysLastKASDeclaration(t *testing.T) {
 }
 
 // An entry whose name does not read holds every key KAS's file had at boot that no readable
-// server renders, and nothing a later delete removes.
+// server has, and nothing a later delete removes.
 func TestHeal_ANamelessUnreadableEntryHoldsTheBootOrphans(t *testing.T) {
 	record := `{"version":1,"servers":[
 {"id":"aaaa","name":"one","transport":"stdio","command":"c1","enabled":true},
@@ -186,6 +187,120 @@ func TestHeal_ANamelessUnreadableEntryHoldsTheBootOrphans(t *testing.T) {
 	}
 	if _, ok := kasServerKeys(t, kas)["later"]; ok {
 		t.Errorf("a key added after boot was held: %s", readKAS(t, kas)[kasServerKey])
+	}
+}
+
+// The first KAS file marotte can read after a boot over an unreadable one is the snapshot, and a
+// delete that is the first read still removes its own server.
+func TestHeal_ANamelessEntryHoldsTheOrphansOfTheFirstReadableKASFile(t *testing.T) {
+	record := `{"version":1,"servers":[
+{"id":"aaaa","name":"one","transport":"stdio","command":"c1","enabled":true},
+{"id":"cccc","name":"two","transport":"stdio","command":"c2","enabled":true},
+{"id":"bbbb","name":5,"transport":"stdio","command":"cb","enabled":true}]}`
+	dir, kas := seedStoreDir(t, record, "# not json\n")
+	captureSlog(t)
+	s := openSeeded(t, dir, kas)
+
+	writeKASFile(t, kas, `{"mcpServers":{"one":{"command":"c1"},"two":{"command":"c2"},"orphan":`+badKASEntry+`}}`)
+	if err := s.delete(t.Context(), "cccc"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	got := kasServerKeys(t, kas)
+	if _, ok := got["two"]; ok {
+		t.Errorf("the deleted server stayed in KAS's file: %s", readKAS(t, kas)[kasServerKey])
+	}
+	if !sameJSONValue(got["orphan"], json.RawMessage(badKASEntry)) {
+		t.Errorf("kas mcpServers = %s, want the orphan held", readKAS(t, kas)[kasServerKey])
+	}
+
+	writeKASFile(t, kas, `{"mcpServers":{"one":{"command":"c1"},"orphan":`+badKASEntry+`,"later":{"command":"l"}}}`)
+	if _, err := s.HealKASConfig(t.Context(), "poll"); err != nil {
+		t.Fatalf("HealKASConfig: %v", err)
+	}
+	got = kasServerKeys(t, kas)
+	if _, ok := got["later"]; ok {
+		t.Errorf("a key added after the snapshot was held: %s", readKAS(t, kas)[kasServerKey])
+	}
+	if _, ok := got["orphan"]; !ok {
+		t.Errorf("the heal dropped the held orphan: %s", readKAS(t, kas)[kasServerKey])
+	}
+}
+
+// A server under a held name would take the held KAS key over, and its delete would then leave
+// the key in KAS's file.
+func TestNames_AHeldNameIsRefused(t *testing.T) {
+	stdio := func(name, command string) *Server {
+		return &Server{Name: name, Transport: TransportStdio, Command: command, Enabled: true}
+	}
+	for _, tc := range []struct {
+		do   func(t *testing.T, s *Store) error
+		name string
+	}{
+		{name: "create", do: func(t *testing.T, s *Store) error {
+			_, err := s.Create(t.Context(), stdio("BAD", "new"))
+			return err
+		}},
+		{name: "rename", do: func(t *testing.T, s *Store) error {
+			_, err := s.update(t.Context(), "aaaa", stdio("bad", "c1"))
+			return err
+		}},
+		{name: "import", do: func(t *testing.T, s *Store) error {
+			_, err := s.importServers(t.Context(), []*Server{stdio("bad", "new")})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, kas := seedStoreDir(t, partialRecord,
+				`{"mcpServers":{"one":{"command":"c1"},"bad":`+badKASEntry+`,"two":{"command":"c2"}}}`)
+			captureSlog(t)
+			s := openSeeded(t, dir, kas)
+
+			if err := tc.do(t, s); !errors.Is(err, errNameConflict) {
+				t.Errorf("%s under a held name = %v, want errNameConflict", tc.name, err)
+			}
+			if got := kasServerKeys(t, kas); !sameJSONValue(got["bad"], json.RawMessage(badKASEntry)) {
+				t.Errorf("kas mcpServers = %s, want bad's last declaration unchanged", readKAS(t, kas)[kasServerKey])
+			}
+		})
+	}
+}
+
+func TestDelete_AReadableServerSharingAnUnreadableEntrysNameLeavesKAS(t *testing.T) {
+	record := `{"version":1,"servers":[
+{"id":"aaaa","name":"one","transport":"stdio","command":"c1","enabled":true},
+{"id":"bbbb","name":"one","transport":"stdio","command":"cb","args":"x","enabled":true},
+{"id":"cccc","name":"two","transport":"stdio","command":"c2","enabled":true}]}`
+	dir, kas := seedStoreDir(t, record, `{"mcpServers":{"one":{"command":"c1"},"two":{"command":"c2"}}}`)
+	captureSlog(t)
+	s := openSeeded(t, dir, kas)
+
+	if err := s.delete(t.Context(), "aaaa"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, ok := kasServerKeys(t, kas)["one"]; ok {
+		t.Errorf("the deleted server stayed in KAS's file: %s", readKAS(t, kas)[kasServerKey])
+	}
+}
+
+func TestLoad_AnIdenticalCopyAsideIsNotRepeated(t *testing.T) {
+	dir, kas := seedStoreDir(t, partialRecord, "")
+	for name, body := range map[string]string{
+		"mcp.json.corrupt.20000101-000000.1": `{"version":1,"servers":[]}`,
+		"mcp.json.corrupt.20000101-000000.2": partialRecord,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logs := captureSlog(t)
+	openSeeded(t, dir, kas)
+	openSeeded(t, dir, kas)
+
+	if siblings := corruptSiblings(t, dir); len(siblings) != 2 {
+		t.Errorf("corrupt siblings = %v, want only the two seeded copies", siblings)
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("a boot over an existing copy logged an error:\n%s", logs.String())
 	}
 }
 

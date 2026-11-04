@@ -144,16 +144,13 @@ func pairsRecord(in []keyPair) map[string]string {
 
 // bootReconcile renders the server set into KAS's config file before New returns. An existing file
 // it cannot read is left as it is and the write fails with ErrKASUnreadable.
-func (s *Store) bootReconcile(ctx context.Context, holdOrphans bool) error {
+func (s *Store) bootReconcile(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	doc, _, err := s.readKASDoc()
 	if err != nil {
 		return err
-	}
-	if holdOrphans {
-		s.holdBootOrphans(doc.members[kasServerKey])
 	}
 	policy, _ := s.renderPolicy(ctx)
 	return s.writeKASConfigWith(ctx, doc, s.servers, policy)
@@ -353,11 +350,14 @@ const kasUnreadableHint = "marotte could not read ~/.kiro/settings/mcp.json, so 
 // the file holds no document (only whitespace or JSON null, after an optional UTF-8 BOM), so the
 // caller puts marotte's own key back. A file that cannot be stat'd, read or parsed, or is over
 // kasFileMaxBytes, returns ErrKASUnreadable. MUST be called on the write turn, or before New
-// returns: it records the last refusal.
+// returns: it records the last refusal and takes the holdOrphans snapshot.
 func (s *Store) readKASDoc() (doc *kasDoc, fresh bool, err error) {
 	info, err := os.Stat(s.kasPath)
 	if errors.Is(err, os.ErrNotExist) {
 		s.kasRefused = ""
+		if s.orphanCheck != nil {
+			s.holdOrphans(nil)
+		}
 		return &kasDoc{members: map[string]json.RawMessage{}}, false, nil
 	}
 	if err != nil {
@@ -375,6 +375,9 @@ func (s *Store) readKASDoc() (doc *kasDoc, fresh bool, err error) {
 		return nil, false, s.refuseKAS(info, err)
 	}
 	s.kasRefused = ""
+	if s.orphanCheck != nil {
+		s.holdOrphans(doc.members[kasServerKey])
+	}
 	return doc, fresh, nil
 }
 

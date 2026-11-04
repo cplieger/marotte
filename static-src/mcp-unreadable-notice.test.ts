@@ -15,6 +15,10 @@ describe("the unreadable-record notice", () => {
     unreadableEntries.value = 1;
     expect(host.hidden).toBe(false);
     expect(host.textContent).toMatch(/^1 saved integration could not be read/);
+    expect(host.textContent).toContain(
+      "restart marotte right after editing the file, before changing anything in this section",
+    );
+    expect(host.textContent).toContain("the agent keeps its last settings if it had them");
 
     unreadableEntries.value = 3;
     expect(host.textContent).toMatch(/^3 saved integrations could not be read/);

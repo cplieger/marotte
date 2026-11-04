@@ -15,11 +15,12 @@ import (
 	"github.com/tailscale/hujson"
 )
 
-// kasMaxDepth is encoding/json's nesting limit. hujson recurses once per level with no limit of its
-// own, and a deep enough file overflows the goroutine stack, a fatal error no recover catches.
+// kasMaxDepth is encoding/json's nesting limit (maxNestingDepth in
+// https://go.dev/src/encoding/json/scanner.go). hujson recurses once per level with no limit of its
+// own (https://github.com/tailscale/hujson/blob/b80ff77dac4f/parse.go), and a deep enough file
+// overflows the goroutine stack, a fatal error no recover catches.
 const kasMaxDepth = 10000
 
-// kasIndent is one level of the indentation marotte writes.
 const kasIndent = "  "
 
 // kasDoc is KAS's config file as read: members holds each top-level member as KAS reads it (the

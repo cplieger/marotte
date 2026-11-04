@@ -122,15 +122,20 @@ type Store struct {
 	// while the store is alive.
 	waitForReady func(context.Context) (waitForReady, readable bool)
 	// held names the KAS mcpServers keys the unreadable record entries may own (renderServersKey).
-	// It and unreadable are set before New returns and never change, so they are read without mu.
-	held    map[string]bool
-	path    string
-	kasPath string
+	// It and orphanCheck are written by load and on the write turn (holdOrphans), and read only on
+	// it or before New returns, so without mu.
+	held map[string]bool
+	// orphanCheck is non-nil while an unreadable entry whose name does not read waits for the
+	// first readable KAS file (holdOrphans): the nameKey of every server load read.
+	orphanCheck map[string]bool
+	path        string
+	kasPath     string
 	// kasRefused keys the last KAS file state readKASDoc refused, so a retry over it is not
 	// reported again; written on the write turn.
 	kasRefused string
 	servers    []*Server
-	// unreadable are the record's entries load could not decode, which persist writes back.
+	// unreadable are the record's entries load could not decode, which persist writes back. Set
+	// before New returns and never changed, so read without mu.
 	unreadable []json.RawMessage
 	callbacks  sync.WaitGroup
 	// mu guards servers and onChange; a writer of servers holds it only alongside the turn.
@@ -166,15 +171,14 @@ func New(ctx context.Context, configDir string, onChange func(context.Context), 
 	for _, opt := range opts {
 		opt(s)
 	}
-	nameless, err := s.load()
-	if err != nil {
+	if err := s.load(); err != nil {
 		end()
 		return nil, err
 	}
 	// Boot reconcile, before anything can race on the store. A failure must not stop the server:
 	// the user needs the UI to fix the path or disk, and a stale KAS file keeps the previous set.
 	// readKASDoc has already reported an ErrKASUnreadable refusal.
-	if err := s.bootReconcile(ctx, nameless); err != nil && !errors.Is(err, ErrKASUnreadable) {
+	if err := s.bootReconcile(ctx); err != nil && !errors.Is(err, ErrKASUnreadable) {
 		slog.Error("mcp: initial kas config write failed; the agent may use a stale server set",
 			"path", s.kasPath, "error", err)
 	}

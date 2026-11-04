@@ -1,33 +1,36 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cplieger/marotte/internal/filemode"
+	"github.com/cplieger/marotte/internal/logsafe"
 )
 
-// entryError is one record entry load could not decode.
 type entryError struct {
-	err   error
-	index int
+	err      error
+	position int
 }
 
 // load reads the record. A file that does not decode as the record's envelope, or whose every
 // entry is unreadable, is moved aside and the store starts empty. Otherwise each unreadable entry
-// is logged by index and kept for persist, and the file is copied aside. nameless reports an
-// unreadable entry whose name does not read (holdBootOrphans).
-func (s *Store) load() (nameless bool, err error) {
+// is logged by its 1-based position and kept for persist, the file is copied aside, and the KAS
+// keys the entries may own are held (held, orphanCheck).
+func (s *Store) load() error {
 	raw, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("read mcp.json: %w", err)
+		return fmt.Errorf("read mcp.json: %w", err)
 	}
 	// mcp.json holds plaintext API keys, so its 0600 is the whole protection; EnforceFile reports a
 	// filesystem that stores wider and refuses a symlink. Warn-and-continue, so a reshaped /config
@@ -38,35 +41,47 @@ func (s *Store) load() (nameless bool, err error) {
 	}
 	data, empty := decodeUserJSON(raw)
 	if empty {
-		return false, nil
+		return nil
 	}
 	var f file
 	if uErr := json.Unmarshal(data, &f); uErr != nil {
 		s.moveAside(uErr)
-		return false, nil
+		return nil
 	}
 	servers, unreadable, errs := decodeEntries(f.Servers)
 	if len(servers) == 0 && len(unreadable) > 0 {
-		s.moveAside(fmt.Errorf("entry %d: %w", errs[0].index, errs[0].err))
-		return false, nil
+		s.moveAside(fmt.Errorf("entry at position %d: %w", errs[0].position, errs[0].err))
+		return nil
 	}
 	s.servers = servers
 	if len(unreadable) == 0 {
-		return false, nil
+		return nil
 	}
 	s.unreadable = unreadable
 	s.held = make(map[string]bool, len(unreadable))
+	owned := s.serverKeys()
 	for i, entry := range unreadable {
+		name, named := heldName(entry)
 		slog.Warn("mcp: an mcp.json entry is unreadable; it stays in the file and out of the server list until it is fixed",
-			"path", s.path, "index", errs[i].index, "error", errs[i].err)
-		if name, ok := heldName(entry); ok {
+			"path", s.path, "position", errs[i].position, "name", logsafe.Field(name), "error", errs[i].err)
+		switch {
+		case !named:
+			s.orphanCheck = owned
+		case !owned[nameKey(name)]:
 			s.held[name] = true
-		} else {
-			nameless = true
 		}
 	}
 	s.copyAside(raw)
-	return nameless, nil
+	return nil
+}
+
+// serverKeys is the nameKey of every stored server.
+func (s *Store) serverKeys() map[string]bool {
+	keys := make(map[string]bool, len(s.servers))
+	for _, sv := range s.servers {
+		keys[nameKey(sv.Name)] = true
+	}
+	return keys
 }
 
 // decodeEntries decodes each record entry on its own; unreadable and errs are index-aligned.
@@ -80,7 +95,7 @@ func decodeEntries(entries []json.RawMessage) (servers []*Server, unreadable []j
 		}
 		if err != nil {
 			unreadable = append(unreadable, entry)
-			errs = append(errs, entryError{index: i, err: err})
+			errs = append(errs, entryError{position: i + 1, err: err})
 			continue
 		}
 		servers = append(servers, &sv)
@@ -98,16 +113,31 @@ func heldName(entry json.RawMessage) (string, bool) {
 	return name, true
 }
 
-// holdBootOrphans holds every key of KAS's mcpServers member at boot that no readable server
-// renders, since an unreadable entry whose name does not read may own any of them. A key added or
-// a server deleted after boot is not held.
-func (s *Store) holdBootOrphans(file json.RawMessage) {
-	rendered := renderKASServers(s.servers, kasRenderPolicy{})
+// holdOrphans holds every key of file, the mcpServers member of the first KAS file readKASDoc reads
+// after boot, that no server load read and no current server owns, since an unreadable entry whose
+// name does not read may own any of them. No save lands before that read (persist reads KAS's file
+// first), so a key of a server deleted since boot is never held. A key added later is not held.
+func (s *Store) holdOrphans(file json.RawMessage) {
+	current := s.serverKeys()
 	for name := range objectOrEmpty(file) {
-		if _, own := rendered[name]; !own {
+		if key := nameKey(name); !s.orphanCheck[key] && !current[key] {
 			s.held[name] = true
 		}
 	}
+	s.orphanCheck = nil
+}
+
+// heldNameErr refuses a name whose KAS key an unreadable entry may own: a server under it would
+// take the key over, and its delete would then leave the key in KAS's file (renderServersKey).
+func (s *Store) heldNameErr(name string) error {
+	key := nameKey(name)
+	for held := range s.held {
+		if nameKey(held) == key {
+			return fmt.Errorf("%w: %q may belong to an entry of marotte's mcp.json that could not be read. Fix or delete that entry in the file, then restart marotte",
+				errNameConflict, held)
+		}
+	}
+	return nil
 }
 
 func (s *Store) asidePath() string {
@@ -126,8 +156,14 @@ func (s *Store) moveAside(cause error) {
 		"from", s.path, "to", aside, "parse_error", cause)
 }
 
-// copyAside keeps the record as read before a persist re-indents its unreadable entries.
+// copyAside keeps the record as read before a persist re-indents its unreadable entries, once:
+// every copy holds the API keys, so a boot over an unchanged record makes no new one.
 func (s *Store) copyAside(raw []byte) {
+	if existing, ok := s.identicalAside(raw); ok {
+		slog.Warn("mcp: mcp.json has unreadable entries; a copy of it is already aside",
+			"path", s.path, "copy", existing, "unreadable", len(s.unreadable))
+		return
+	}
 	aside := s.asidePath()
 	f, err := os.OpenFile(aside, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err == nil {
@@ -146,4 +182,26 @@ func (s *Store) copyAside(raw []byte) {
 	}
 	slog.Warn("mcp: mcp.json has unreadable entries; copied it aside",
 		"from", s.path, "to", aside, "unreadable", len(s.unreadable))
+}
+
+// identicalAside returns a regular mcp.json.corrupt.* sibling whose bytes equal raw.
+func (s *Store) identicalAside(raw []byte) (string, bool) {
+	dir, base := filepath.Split(s.path)
+	entries, err := os.ReadDir(filepath.Clean(dir))
+	if err != nil {
+		return "", false
+	}
+	for _, e := range entries {
+		if !e.Type().IsRegular() || !strings.HasPrefix(e.Name(), base+".corrupt.") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		if info, iErr := e.Info(); iErr != nil || info.Size() != int64(len(raw)) {
+			continue
+		}
+		if got, rErr := os.ReadFile(path); rErr == nil && bytes.Equal(got, raw) {
+			return path, true
+		}
+	}
+	return "", false
 }

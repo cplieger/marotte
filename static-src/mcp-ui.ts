@@ -141,8 +141,8 @@ export function bindUnreadableNotice(host: HTMLElement): () => void {
 /** The notice for n unreadable entries of marotte's mcp.json. */
 function unreadableText(n: number): string {
   return n === 1
-    ? "1 saved integration could not be read from marotte's mcp.json in its config folder, so it is not listed here. Its entry stays in the file and the agent keeps its last settings. Fix or delete the entry in the file, then restart marotte. The log names it by its position in the list."
-    : `${String(n)} saved integrations could not be read from marotte's mcp.json in its config folder, so they are not listed here. Their entries stay in the file and the agent keeps their last settings. Fix or delete the entries in the file, then restart marotte. The log names each by its position in the list.`;
+    ? "1 saved integration could not be read from marotte's mcp.json in its config folder, so it is not listed here. Its entry stays in the file, and the agent keeps its last settings if it had them. Fix or delete the entry, and restart marotte right after editing the file, before changing anything in this section: a change here writes the entry back as it was first read, at the end of the list. The startup log gives its position in the list, and its name when that reads."
+    : `${String(n)} saved integrations could not be read from marotte's mcp.json in its config folder, so they are not listed here. Their entries stay in the file, and the agent keeps their last settings if it had them. Fix or delete the entries, and restart marotte right after editing the file, before changing anything in this section: a change here writes the entries back as they were first read, at the end of the list. The startup log gives each one's position in the list, and its name when that reads.`;
 }
 
 // Holds the section's elements, keeping applyMcpGovernance pure and testable.
