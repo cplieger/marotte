@@ -4,7 +4,14 @@ import { join } from "@cplieger/keyenc";
 
 import type { Session, ChatHeader, TurnState } from "./types.js";
 import { apiGetTyped, apiGetTypedOrError } from "./api-client.js";
-import { asArray, asObject, decodeArray, optBool, reqBool, type Decoder } from "./validators.js";
+import {
+  asArray,
+  asObject,
+  decodeArray,
+  optBool,
+  reqBool,
+  type Decoder,
+} from "./wire/validators.gen.js";
 import {
   decodeChatHeader,
   decodeEntry,

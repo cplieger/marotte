@@ -34,7 +34,7 @@ func (rs *Runs) stepTranscript(ctx context.Context, workflowID, nodePath string)
 	out := marotte.RunStepTranscript{
 		Entries:     []marotte.Entry{},
 		OpenEntries: []marotte.OpenEntry{},
-		Subject:     []*marotte.SubjectStamp{},
+		Subject:     []marotte.SubjectStamp{},
 		WorkflowID:  workflowID,
 		NodePath:    nodePath,
 		State:       marotte.RunStepTranscriptUnavailable,
@@ -141,7 +141,7 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]tran
 
 // turnRange reads one step turn's tail from the run's log for a `run_turn` repair. No replay fallback (a replay
 // has no turn ids), so found-or-not; false for a run with no log.
-func (rs *Runs) turnRange(ctx context.Context, workflowID, turn string, from uint64) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []*marotte.SubjectStamp, found bool, err error) {
+func (rs *Runs) turnRange(ctx context.Context, workflowID, turn string, from uint64) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []marotte.SubjectStamp, found bool, err error) {
 	if rs.log == nil {
 		return nil, nil, nil, false, nil
 	}

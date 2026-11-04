@@ -1,16 +1,12 @@
-// Property test verifying wire registry completeness: every registered event
-// name decodes its own encoded output without loss.
+// Property test verifying the generated event table's completeness: every listed event
+// name resolves to its generated decoder, and decoding keeps output valid JSON.
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
-import { registerAllSSEDecoders } from "./registry.gen.js";
 import { lookupSSEDecoder } from "../bus.js";
 import * as decoders from "./decoders.gen.js";
 
-// Register all decoders so lookupSSEDecoder works.
-registerAllSSEDecoders();
-
-// A registration removed from both the Go binding and registry.gen.ts passes the drift gate, so
+// An event removed from both the Go registry and events.gen.ts passes the drift gate, so
 // this list is what notices it.
 const registeredEvents = [
   "agent_notice",
@@ -22,6 +18,7 @@ const registeredEvents = [
   "decision_settled",
   "draft_changed",
   "elicitation_needed",
+  "engine_status",
   "entry_appended",
   "entry_delta",
   "entry_opened",
@@ -29,6 +26,7 @@ const registeredEvents = [
   "error",
   "forge_inventory",
   "governance_state",
+  "knowledge_indexing",
   "mcp_connected",
   "mcp_disconnected",
   "mcp_failed",
@@ -46,11 +44,14 @@ const registeredEvents = [
   "run_started",
   "safety_properties",
   "safety_status",
+  "settings_updated",
   "spec_approved",
   "spec_changed",
   "status_snapshot",
   "steer_queued",
+  "system_notice",
   "tabs_changed",
+  "tangent_merged",
   "terminal_created",
   "terminal_exited",
   "terminal_output",
@@ -62,7 +63,7 @@ const registeredEvents = [
   "user_input_needed",
 ] as const;
 
-describe("wire registry completeness", () => {
+describe("wire event table completeness", () => {
   it("every registered event has a decoder via lookupSSEDecoder", () => {
     for (const eventName of registeredEvents) {
       const decoder = lookupSSEDecoder(eventName);
@@ -86,7 +87,7 @@ describe("wire registry completeness", () => {
   });
 
   it("registered decoders reject the empty object with a TypeError (never another error class)", () => {
-    // Exhaustive over registered events. An empty object must be rejected through validators.ts's
+    // Exhaustive over registered events. An empty object must be rejected through validators.gen.ts's
     // TypeError, not another crash; a payload with no required fields (whoami) may decode {}.
     for (const eventName of registeredEvents) {
       const decoder = lookupSSEDecoder(eventName);

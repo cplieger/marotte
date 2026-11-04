@@ -177,21 +177,21 @@ type RegistrySearchFailure struct {
 type RegistryFailureReason string
 
 const (
-	// ReasonRateLimited is an upstream 429: the query was fine, the
+	// reasonRateLimited is an upstream 429: the query was fine, the
 	// registry wants a pause before the next one.
-	ReasonRateLimited RegistryFailureReason = "rate_limited"
-	// ReasonRejected is any other upstream 4xx: the registry refused this
+	reasonRateLimited RegistryFailureReason = "rate_limited"
+	// reasonRejected is any other upstream 4xx: the registry refused this
 	// query, so retrying it unchanged will not help.
-	ReasonRejected RegistryFailureReason = "rejected"
-	// ReasonUnavailable is everything else: an upstream 5xx, a timeout, a
+	reasonRejected RegistryFailureReason = "rejected"
+	// reasonUnavailable is everything else: an upstream 5xx, a timeout, a
 	// refused redirect, or a 200 whose body is not a registry reply.
-	ReasonUnavailable RegistryFailureReason = "unavailable"
+	reasonUnavailable RegistryFailureReason = "unavailable"
 )
 
 const registryUnavailable = "registry unavailable"
 
 func classifyRegistryFailure(err error) RegistrySearchFailure {
-	f := RegistrySearchFailure{Error: registryUnavailable, Reason: ReasonUnavailable}
+	f := RegistrySearchFailure{Error: registryUnavailable, Reason: reasonUnavailable}
 	var up *upstreamStatusError
 	if !errors.As(err, &up) {
 		return f
@@ -199,9 +199,9 @@ func classifyRegistryFailure(err error) RegistrySearchFailure {
 	f.RetryAfter = up.retryAfter
 	switch {
 	case up.status == http.StatusTooManyRequests:
-		f.Reason = ReasonRateLimited
+		f.Reason = reasonRateLimited
 	case up.status >= 400 && up.status < 500:
-		f.Reason = ReasonRejected
+		f.Reason = reasonRejected
 	}
 	return f
 }
@@ -519,9 +519,9 @@ var supportedPackageTransports = map[string]bool{"stdio": true, "": true}
 
 // Only these remote types are surfaced to the UI.
 var supportedRemoteTypes = map[string]Transport{
-	"streamable-http":     TransportHTTP,
-	string(TransportHTTP): TransportHTTP,
-	string(TransportSSE):  TransportSSE,
+	"streamable-http":     transportHTTP,
+	string(transportHTTP): transportHTTP,
+	string(transportSSE):  transportSSE,
 }
 
 // registryWireResponse mirrors the upstream registry v0.1 search response. Only the fields marotte

@@ -5,13 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RevalidateContext, TabRevalidateContext, WorkerHost } from "@cplieger/sse";
 
-import {
-  BUS_PAGE_RESUMED,
-  BUS_RECONCILE,
-  onBus,
-  registerSSEDecoder,
-  type SSEPayloads,
-} from "./bus.js";
+import { BUS_PAGE_RESUMED, BUS_RECONCILE, onBus } from "./bus.js";
 import {
   adoptPushSubscription,
   init,
@@ -33,7 +27,6 @@ import {
 } from "./subject-versions.js";
 import type { ServerEvent, Session } from "./types.js";
 import { makeServerEvent } from "./__test-helpers__/model.js";
-import { registerAllSSEDecoders } from "./wire/registry.gen.js";
 import {
   EPOCH_A,
   EPOCH_B,
@@ -191,11 +184,6 @@ function readCounted(answer: (req: { body: string | null }) => Response): {
     reads: () => reads,
   };
 }
-
-// The wire's own decoders, so a frame in this file is refused exactly where production refuses it.
-// Without them `decodeEnvelope` passes every payload through untyped and an invalid fixture
-// would be IGNORED rather than refused.
-registerAllSSEDecoders();
 
 let scripted: ScriptedFetch;
 let seen: ServerEvent[];
@@ -468,9 +456,6 @@ describe("frames", () => {
   });
 
   it("observes nothing when the decoder rejects the frame, and asks the digest instead", async () => {
-    registerSSEDecoder("working_label", () => {
-      throw new TypeError("refused");
-    });
     // Something held, so the rejection's `revalidate("hello")` has a question to ask.
     observeStamp({ kind: "chats", ref: "", version: "1" });
     scripted.respond("/api/sync", digestAnswer([]));
@@ -483,9 +468,9 @@ describe("frames", () => {
       "the first /api/sync request",
     );
     conn?.frame({
-      type: "working_label",
+      type: "chat_deleted",
       chat_id: "c1",
-      payload: { label: 1 },
+      payload: { id: 1 },
       subject: { kind: "chats", ref: "", version: "2" },
     });
     await until(
@@ -495,7 +480,6 @@ describe("frames", () => {
     expect(seen).toEqual([]);
     expect(versionMap().snapshot().held).toEqual([{ kind: "chats", ref: "", version: "1" }]);
     expect(errors).toHaveBeenCalled();
-    registerSSEDecoder("working_label", (v) => v as SSEPayloads["working_label"]);
   });
 
   it("refuses an entry_appended frame carrying the retired message shape", async () => {

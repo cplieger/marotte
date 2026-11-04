@@ -25,6 +25,10 @@ import (
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
+// reasonTabsFull is the machine reason errTabsFull's 409 carries, so a client tells the tab limit from the other
+// 409s an open can meet (a run being purged, the idempotency layer's request already in progress).
+const reasonTabsFull = "tabs_full"
+
 // The coordinator's own refusals.
 var (
 	errTabsFull = errors.New("too many tabs are open. Close a tab first")
@@ -571,7 +575,7 @@ func (m *Membership) launcherTab(ctx context.Context, launcher marotte.ChatID) (
 	}
 	if open, _ := m.tabs.List(); len(open)+2 > tabs.MaxOpenTabs {
 		m.rollback(ctx, &claim)
-		return "", StatusError(http.StatusConflict, errTabsFull)
+		return "", StatusErrorReason(http.StatusConflict, reasonTabsFull, errTabsFull)
 	}
 	// No op_id: the client settles its pending open on the first frame naming
 	// the op, and that frame must be the run's.
@@ -1351,7 +1355,7 @@ func (m *Membership) reserveSlot(kind marotte.TabKind, ref string) error {
 		}
 	}
 	if len(open) >= tabs.MaxOpenTabs {
-		return StatusError(http.StatusConflict, errTabsFull)
+		return StatusErrorReason(http.StatusConflict, reasonTabsFull, errTabsFull)
 	}
 	return nil
 }
@@ -1414,7 +1418,7 @@ func (m *Membership) emit(ctx context.Context, p *marotte.TabsChangedPayload) {
 func tabStatus(err error) error {
 	switch {
 	case errors.Is(err, tabs.ErrTooMany):
-		return StatusError(http.StatusConflict, errTabsFull)
+		return StatusErrorReason(http.StatusConflict, reasonTabsFull, errTabsFull)
 	case errors.Is(err, tabs.ErrOrderMismatch):
 		// 409 rather than 400: the caller's view of the set is not the
 		// server's, a conflict to re-list from rather than a malformed body.

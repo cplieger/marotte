@@ -130,6 +130,7 @@ export interface SSEPayloads {
   readonly compaction_started: undefined;
   readonly working_label: { readonly label: string };
   // The generated wire types, so no payload shape is declared twice.
+  // deadset:ignore DS1004 -- no handler subscribes, but sseDecoders' mapped type indexes it
   readonly terminal_created: TerminalCreatedPayload;
   readonly terminal_output: TerminalOutputPayload;
   readonly terminal_exited: TerminalExitedPayload;
@@ -304,27 +305,20 @@ export const onBus = bus.on;
 /** Emit a typed bus event. */
 export const emitBus = bus.emit;
 
-// SSE payload decoder registry: transport.ts runs a registered decoder on each event's
-// payload, dropping the event when it throws. Unregistered events pass untyped.
+// SSE payload decoders: decodeEnvelope (sse-adapter.ts and the pending_snapshot handler) runs
+// an event's generated decoder, and its caller drops the event when it throws. An event with
+// no decoder passes untyped.
 
-import { type Decoder, asObject, reqStr } from "./validators.js";
+import { type Decoder, asObject, reqStr } from "./wire/validators.gen.js";
 import { decodeSubjectStamp } from "./wire/decoders.gen.js";
+import { EVENT_DECODERS, type EventName } from "./wire/events.gen.js";
 
-const sseDecoders = new Map<keyof SSEPayloads, Decoder<unknown>>();
+// The annotation makes tsc check each generated payload type against SSEPayloads.
+const sseDecoders: { readonly [K in EventName]: Decoder<SSEPayloads[K]> } = EVENT_DECODERS;
 
-/** Register a runtime decoder for the given SSE event type. The decoder
- *  is invoked on the parsed `payload` field before handlers fire.
- *  Calling twice for the same type replaces the prior registration. */
-export function registerSSEDecoder<K extends keyof SSEPayloads>(
-  type: K,
-  decoder: Decoder<SSEPayloads[K]>,
-): void {
-  sseDecoders.set(type, decoder);
-}
-
-/** Returns the registered decoder for `type`, or undefined if none. */
+/** Returns the generated decoder for `type`, or undefined if the event has none. */
 export function lookupSSEDecoder(type: string): Decoder<unknown> | undefined {
-  return sseDecoders.get(type as keyof SSEPayloads);
+  return Object.hasOwn(sseDecoders, type) ? sseDecoders[type as EventName] : undefined;
 }
 
 /**

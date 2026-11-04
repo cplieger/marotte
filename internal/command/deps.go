@@ -676,8 +676,9 @@ type SteerQueue interface {
 	BeginRemove(chatID marotte.ChatID, key, opID string) (needsClear bool, refuse string)
 	// RemoveCleared re-reads after the delete's clear (landed false: no reply).
 	RemoveCleared(chatID marotte.ChatID, opID string, cleared []string, landed bool) SteerOpResult
-	// BeginDiscard decides a Discard all; needsClear is false when nothing is in KAS.
-	BeginDiscard(chatID marotte.ChatID, opID string) (needsClear bool)
+	// BeginDiscard decides a Discard all; needsClear is false when nothing is in KAS, and refuse names why a
+	// clear may not run now (SteerRefuseSettling).
+	BeginDiscard(chatID marotte.ChatID, opID string) (needsClear bool, refuse string)
 	// DiscardCleared re-reads after the discard's clear, or settles it with none.
 	DiscardCleared(chatID marotte.ChatID, opID string, landed bool) SteerOpResult
 	OpSent(chatID marotte.ChatID, opID string, s SteerSend, queued bool, err error)

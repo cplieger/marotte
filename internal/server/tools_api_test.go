@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/cplieger/toolbelt/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 type switchableTools struct {
@@ -85,5 +87,40 @@ func TestToolsAPI_ServesAnEngineThatCameUpAfterTheRoutesWereMounted(t *testing.T
 	var inv toolbelt.Inventory
 	if err := json.Unmarshal(rec.Body.Bytes(), &inv); err != nil {
 		t.Errorf("GET /api/tools body %q is not an inventory: %v", rec.Body.String(), err)
+	}
+}
+
+// httpapi writes its error bodies with its own webhttp major, so a toolbelt on another major
+// than the access log's reads a context key Logging never set.
+func TestToolsAPI_AnErrorBodyServedThroughTheMiddlewareStackCarriesTheRequestID(t *testing.T) {
+	dir := t.TempDir()
+	engine, err := toolbelt.New(&toolbelt.Config{ConfigDir: dir, ToolsDir: filepath.Join(dir, "tools")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(engine.Close)
+	mux := http.NewServeMux()
+	api := &toolsAPI{src: &switchableTools{engine: engine}}
+	mux.Handle(toolsAPIPrefix+"/", api)
+	idem := newIdempotencyCache(idempotencyTTL)
+	t.Cleanup(idem.stop)
+	h := webhttp.Chain(mux, (&Server{}).middlewareStack(baseCSPPolicy, idem)...)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, toolsAPIPrefix+"/jobs/no-such-job/cancel", http.NoBody))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("POST cancel of an unknown job = %d %s, want 404", rec.Code, rec.Body.String())
+	}
+	var body webhttp.ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode %q: %v", rec.Body.String(), err)
+	}
+	logged := rec.Header().Get(webhttp.HeaderRequestID)
+	if logged == "" {
+		t.Fatalf("the response carries no %s header, so the access log minted no id", webhttp.HeaderRequestID)
+	}
+	if body.RequestID != logged {
+		t.Errorf("error body request_id = %q, want the access log's %q (body %s)", body.RequestID, logged, strings.TrimSpace(rec.Body.String()))
 	}
 }

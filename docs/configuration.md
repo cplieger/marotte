@@ -10,7 +10,7 @@ Variables go in the `environment:` block of `compose.yaml` and are read at start
 | --- | --- | --- |
 | `ALLOWED_HOSTS` | Hostnames and IPs you open marotte at, comma-separated. Any other address gets `403`. | _(unset)_ |
 | `TRUSTED_PROXIES` | Address ranges of your reverse proxy, so the logs record the real client address. | _(unset)_ |
-| `TRUSTED_INSTALL_UIDS` | User IDs that may write to the tools folder (`MAROTTE_TOOLS_DIR`) without marotte refusing to install kiro-cli. Only for shared or network volumes. | _(unset)_ |
+| `TRUSTED_INSTALL_UIDS` | User IDs that may write to the tools folder (`MAROTTE_TOOLS_DIR`, by default `/config/tools`) without marotte refusing to install kiro-cli. Only for shared or network volumes. | _(unset)_ |
 | `MAROTTE_BROWSE_ROOTS` | Extra folders the file browser shows, colon-separated absolute paths. | _(unset)_ |
 | `MAROTTE_ALLOW_AGENT_ENV` | Program-changing variables, such as `LD_PRELOAD`, the agent may set for its commands. | _(unset)_ |
 | `MAROTTE_ALLOW_BRIDGE_ENV` | Variable names that look like credentials but should still reach kiro-cli, comma-separated. | _(unset)_ |
@@ -93,6 +93,12 @@ marotte checks the engine's memory use once a minute. The first time it reaches 
 ## Debug logs
 
 **Debug logs** under **Experimental features** on the **General** tab in **Settings** writes more detailed logs for troubleshooting. marotte's own log, which `docker logs marotte` shows, switches at once. The agent engine's log, `kiro.log` in a folder per engine start under `/config/home/.kiro/logs/`, switches after the agent engine restarts. So does kiro-cli's own log, `/tmp/kiro-log/kiro-chat.log`, which then grows by about 11 KB at each engine start and about 1.4 MB a day while the engine is idle. The engine restarts by itself once no reply and no workflow is running.
+
+## High throughput optimizations
+
+**High throughput optimizations** under **Experimental features** on the **General** tab in **Settings** is on by default. It starts the agent engine's Node.js with `--experimental-async-context-frame` and `--max-semi-space-size=64`, which let one engine carry many chats and workflow steps at once. Under a load of 32 concurrent chats on an engine holding 4 GB of session state, the two flags raised throughput from about 3 to 10 prompts a second and cut the time spent in garbage collection from about 40% to 12%. Turn it off for kiro-cli's stock engine. A change applies after the agent engine restarts.
+
+The flags go on the command line of kiro-cli's own Node.js, not in `NODE_OPTIONS`, so the programs the agent runs never see them. marotte names its own binary in `KIRO_KAS_NODE_PATH`, and that binary starts kiro-cli's Node.js with the flags. It does so only when the Node.js kiro-cli extracted matches the one the running kiro-cli bundles and reports the version the flags were tested on, v22.23.4. Otherwise the engine starts without them, and marotte's log names why in one `starting without the high throughput optimizations` warning. After a kiro-cli version change that happens once, while kiro-cli extracts its new Node.js. If that Node.js is still v22.23.4, the next engine start uses the flags again. A `KIRO_KAS_NODE_PATH` you set yourself also turns them off.
 
 ## Variables the agent sets (`MAROTTE_ALLOW_AGENT_ENV`)
 

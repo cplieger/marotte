@@ -117,7 +117,11 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
     const conn = await opened();
     conn.frame({ type: "connected", payload: { busy_stated: false, live_runs_stated: false } });
     conn.frame({ type: "pending_snapshot", payload: { items: [] } });
-    conn.frame({ type: "permission_needed", chat_id: "chat-1", payload: { request_id: 1 } });
+    conn.frame({
+      type: "permission_needed",
+      chat_id: "chat-1",
+      payload: { request_id: 1, options: [] },
+    });
     await settle(conn);
     // Nothing has reached the store yet: this is the whole point.
     expect(seen).toEqual([]);

@@ -253,7 +253,7 @@ func hasWorkingLabel(events *[]marotte.ServerEvent) bool {
 
 // closedChangedFiles closes the chat's turn and returns the changed-files aggregate
 // its turn_close carries, the only read of what the tool calls tracked.
-func closedChangedFiles(t *testing.T, deps *baseDeps, chatID marotte.ChatID) map[string]*marotte.FileChange {
+func closedChangedFiles(t *testing.T, deps *baseDeps, chatID marotte.ChatID) map[string]marotte.FileChange {
 	t.Helper()
 	turn := deps.turns.chats[chatID]
 	if turn == nil {

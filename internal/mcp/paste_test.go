@@ -141,11 +141,11 @@ func TestImport_MultiServerBlockInstallsEveryEntry(t *testing.T) {
 	if byName["github"].Transport != TransportStdio {
 		t.Errorf("github transport = %q", byName["github"].Transport)
 	}
-	if byName["linear"].Transport != TransportHTTP {
+	if byName["linear"].Transport != transportHTTP {
 		t.Errorf("linear transport = %q, want http (streamable-http normalised)",
 			byName["linear"].Transport)
 	}
-	if byName["legacyish"].Transport != TransportSSE {
+	if byName["legacyish"].Transport != transportSSE {
 		t.Errorf("legacyish transport = %q, want sse", byName["legacyish"].Transport)
 	}
 	if h := byName["linear"].Headers; len(h) != 1 || h[0].Name != "Authorization" {
@@ -651,15 +651,15 @@ func TestTranslate_TransportInference(t *testing.T) {
 		wantErr string
 	}{
 		{name: "command implies stdio", body: `{"command":"srv"}`, want: TransportStdio},
-		{name: "url implies http", body: `{"url":"https://x/mcp"}`, want: TransportHTTP},
+		{name: "url implies http", body: `{"url":"https://x/mcp"}`, want: transportHTTP},
 		{
 			name: "streamable-http normalises to http",
-			body: `{"type":"streamable-http","url":"https://x/mcp"}`, want: TransportHTTP,
+			body: `{"type":"streamable-http","url":"https://x/mcp"}`, want: transportHTTP,
 		},
-		{name: "sse stays sse", body: `{"type":"sse","url":"https://x/mcp"}`, want: TransportSSE},
+		{name: "sse stays sse", body: `{"type":"sse","url":"https://x/mcp"}`, want: transportSSE},
 		{
 			name: "unrecognised type falls through to http, as KAS negotiates",
-			body: `{"type":"streamableHttp","url":"https://x/mcp"}`, want: TransportHTTP,
+			body: `{"type":"streamableHttp","url":"https://x/mcp"}`, want: transportHTTP,
 		},
 		{
 			name:    "both is ambiguous",

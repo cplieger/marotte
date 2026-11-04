@@ -218,7 +218,7 @@ func TestPATLogin_SavesAStaticRecordAndRegistersTheHelper(t *testing.T) {
 	if seen := wire.requests(); len(seen) != 1 || seen[0].Header.Get("Authorization") != "Bearer ghp_secret" {
 		t.Errorf("the forge saw %d requests, want the one identity read carrying the pasted token", len(seen))
 	}
-	if row := viewFor(t, h.m, "github:github.com"); row.Status != ForgeConnected || row.Username != "alice" ||
+	if row := viewFor(t, h.m, "github:github.com"); row.Status != forgeConnected || row.Username != "alice" ||
 		row.Account != recs[0].SignIn {
 		t.Errorf("row after the sign-in = %+v, want github.com connected as alice under the stored sign-in", row)
 	}

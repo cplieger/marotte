@@ -101,10 +101,8 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 		t.Fatalf("create version dir: %v", err)
 	}
 	script := "#!/bin/sh\ncase \"$1\" in --version) printf 'kiro-cli " + version + "\\n' ;; esac\nexit 0\n"
-	for _, name := range []string{"kiro-cli", "kiro-cli-chat"} {
-		if err := os.WriteFile(filepath.Join(versionDir, name), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
-			t.Fatalf("write fake %s: %v", name, err)
-		}
+	if err := os.WriteFile(filepath.Join(versionDir, "kiro-cli"), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
+		t.Fatalf("write fake kiro-cli: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(versionDir, ".complete"), []byte(version+"\n"), 0o600); err != nil {
 		t.Fatalf("write sentinel: %v", err)
@@ -145,47 +143,6 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 	env := kiro.env()
 	if len(env) != 1 || !strings.HasPrefix(env[0], "PATH="+versionDir+string(os.PathListSeparator)) {
 		t.Errorf("env() = %v, want a single PATH entry leading with %q", env, versionDir)
-	}
-}
-
-// TestStartKiroCLIRejectsASidecarLessVersionDirectory asserts that `--version` is answered by the main binary,
-// so a directory with no chat sidecar must not be adopted.
-func TestStartKiroCLIRejectsASidecarLessVersionDirectory(t *testing.T) {
-	const version = "9.9.9"
-	toolsDir := t.TempDir()
-	versionDir := filepath.Join(toolsDir, "kiro-cli-versions", version)
-	if err := os.MkdirAll(versionDir, 0o750); err != nil {
-		t.Fatalf("create version dir: %v", err)
-	}
-	script := "#!/bin/sh\ncase \"$1\" in --version) printf 'kiro-cli " + version + "\\n' ;; esac\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(versionDir, "kiro-cli"), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
-		t.Fatalf("write fake dispatcher: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(versionDir, ".complete"), []byte(version+"\n"), 0o600); err != nil {
-		t.Fatalf("write sentinel: %v", err)
-	}
-
-	cfg := Config{
-		KiroCLIVersion:     version,
-		KiroCLISHA256:      strings.Repeat("a", 64),
-		KiroCLISHA256ARM64: strings.Repeat("b", 64),
-		Tools:              toolsRoot{dir: toolsDir},
-	}
-	// Not t.Context(): the manager must outlive the t.Cleanup(kiro.stop) teardown, and t.Context()
-	// is cancelled before cleanups run.
-	kiro := startKiroCLI(context.Background(), &cfg)
-	t.Cleanup(kiro.stop)
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if ok, why := kiro.ready(); ok {
-			t.Fatalf("a sidecar-less version directory was adopted (readiness %v, reason %s); "+
-				"kiro-cli acp would fail at every chat spawn", ok, why)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if got := kiro.cliPath(); got != "" {
-		t.Errorf("cliPath() = %q, want empty: no version may be active", got)
 	}
 }
 
@@ -357,10 +314,8 @@ func stageKiroVersion(t *testing.T, toolsDir, version, extraShellCaseArms string
 		t.Fatalf("Setup: create version dir: %v", err)
 	}
 	script := "#!/bin/sh\ncase \"$1\" in\n--version) printf 'kiro-cli " + version + "\\n' ;;\n" + extraShellCaseArms + "esac\nexit 0\n"
-	for _, name := range []string{"kiro-cli", "kiro-cli-chat"} {
-		if err := os.WriteFile(filepath.Join(versionDir, name), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
-			t.Fatalf("Setup: write fake %s: %v", name, err)
-		}
+	if err := os.WriteFile(filepath.Join(versionDir, "kiro-cli"), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
+		t.Fatalf("Setup: write fake kiro-cli: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(versionDir, ".complete"), []byte(version+"\n"), 0o600); err != nil {
 		t.Fatalf("Setup: write sentinel: %v", err)

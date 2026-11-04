@@ -66,7 +66,7 @@
     position: absolute;
     inset-block: 0;
     inset-inline-start: 0;
-    inline-size: var(--hit-floor);
+    inline-size: var(--sidebar-reach);
   }
 
   &.dragging,
@@ -91,6 +91,10 @@ body.sidebar-resizing {
    expression's guard, both pinned by sidebar-width-css.test.ts: at or below it
    max <= min, so the handle could change nothing. The drawer width is inside. */
 @media (width <= calc(73.75rem + 1px)) {
+  :root {
+    --sidebar-reach: 0px;
+  }
+
   .sidebar-resize {
     display: none;
   }

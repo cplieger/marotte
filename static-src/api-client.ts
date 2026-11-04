@@ -9,8 +9,8 @@ import {
   type RequestOptions,
 } from "@cplieger/fetch";
 
-export type { Decoder } from "./validators.js";
-import type { Decoder } from "./validators.js";
+export type { Decoder } from "./wire/validators.gen.js";
+import type { Decoder } from "./wire/validators.gen.js";
 
 // No baseUrl or prepareHeaders: paths are same-origin and the server checks Origin instead
 // of a CSRF token (internal/server/security.go). An ISOLATED instance, so nothing else can
@@ -53,29 +53,6 @@ function collapse<T>(r: FetchResult<T>, method: string, path: string): T | null 
 /** GET `path` and return parsed JSON, or null on failure. */
 export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T | null> {
   return collapse(await fx.apiGetRaw<T>(path, reqOpts({}, signal)), "GET", path);
-}
-
-/** A collapsed GET plus the response headers. */
-export interface HeaderedGet<T> {
-  data: T | null;
-  headers: Headers | null;
-}
-
-/**
- * GET `path` and return the parsed body WITH the response headers, for a contract carried
- * in a header (the steering document's `ETag`, which the save's `If-Match` sends). `data`
- * is null on any failure, logged like `apiGet`'s.
- */
-export async function apiGetWithHeaders<T>(
-  path: string,
-  signal?: AbortSignal,
-): Promise<HeaderedGet<T>> {
-  const r = await fx.apiGetRaw<T>(path, reqOpts({}, signal));
-  if (r.ok) {
-    return { data: r.data ?? null, headers: r.headers };
-  }
-  logApiError(r, "GET", path);
-  return { data: null, headers: r.headers ?? null };
 }
 
 /** POST `body` as JSON to `path`, return parsed JSON response or null. */

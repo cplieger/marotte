@@ -898,16 +898,17 @@
   }
 }
 
-/* Sending: not in KAS's buffer yet, so the row is subordinate to a confirmed
-   one. The ink is CHOSEN (`--c-text-aside`) rather than dimmed with an opacity,
-   because an opacity multiplies the measured contrast and is invisible to the
-   contrast gates. */
-.steer-row[data-state="sending"] {
+/* Sending (not in KAS's buffer yet) and delivering (the agent is reading or
+   dropping it as its turn ends): no control can address the row, so it is
+   subordinate to one that waits. The ink is CHOSEN (`--c-text-aside`) rather than dimmed with an
+   opacity, because an opacity multiplies the measured contrast and is invisible
+   to the contrast gates. */
+.steer-row:is([data-state="sending"], [data-state="delivering"]) {
   background: var(--c-bg-secondary);
 }
 
-.steer-row[data-state="sending"] .steer-state,
-.steer-row[data-state="sending"] .steer-text {
+.steer-row:is([data-state="sending"], [data-state="delivering"]) .steer-state,
+.steer-row:is([data-state="sending"], [data-state="delivering"]) .steer-text {
   color: var(--c-text-aside);
 }
 

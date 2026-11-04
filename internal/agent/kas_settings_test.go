@@ -62,7 +62,7 @@ func TestEngineSpawn_ResolvesTelemetryUnderTheOrganizationLock(t *testing.T) {
 				h.config.SetGovernance(t.Context(), *tc.org)
 			}
 
-			if got := h.resolveEngine(t.Context(), "/fake/kiro-cli-chat").opts.DisableTelemetry; got != tc.want {
+			if got := h.resolveEngine(t.Context(), "/fake/kiro-cli").opts.DisableTelemetry; got != tc.want {
 				t.Errorf("engine spawn under cli.json %q, org lock set %v: DisableTelemetry = %v, want %v", tc.cliJSON, tc.org != nil, got, tc.want)
 			}
 		})
@@ -134,7 +134,7 @@ var _ EngineSource = (*engineProcessFake)(nil)
 func newEngineProcessFake(t *testing.T) *engineProcessFake {
 	t.Helper()
 	dir := t.TempDir()
-	script := filepath.Join(dir, "kiro-cli-chat")
+	script := filepath.Join(dir, "kiro-cli")
 	body := `#!/bin/sh
 env > "` + dir + `/env"
 while IFS= read -r line; do
@@ -158,7 +158,7 @@ done
 	return &engineProcessFake{installed: make(chan struct{}), dir: dir, script: script}
 }
 
-func (f *engineProcessFake) ChatPath() string            { return f.script }
+func (f *engineProcessFake) CLIPath() string             { return f.script }
 func (f *engineProcessFake) Installed() <-chan struct{}  { return f.installed }
 func (*engineProcessFake) Env() []string                 { return nil }
 func (*engineProcessFake) EnvAllow() map[string]struct{} { return nil }

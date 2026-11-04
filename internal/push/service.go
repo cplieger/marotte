@@ -29,6 +29,10 @@ const (
 
 	pushMaxAttempts = 3 // total tries for a retryable delivery failure
 
+	// pushClientTimeout stays above ssrf.SafeTransport's 13 s HTTP/2 PING window: under
+	// it, a send on a silent connection gives up first and the next send reuses the conn.
+	pushClientTimeout = 15 * time.Second
+
 	// debounceHighWater is when preflightSend prunes expired debounce entries: per-subject
 	// keys would otherwise grow one slot per chat and PR ever notified about.
 	debounceHighWater = 64
@@ -151,7 +155,7 @@ func New(ctx context.Context, configDir, subject string, opts ...Option) *Servic
 	pushTransport.MaxIdleConnsPerHost = 2
 	pushTransport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	s.client = &http.Client{
-		Timeout:   10 * time.Second,
+		Timeout:   pushClientTimeout,
 		Transport: pushTransport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {

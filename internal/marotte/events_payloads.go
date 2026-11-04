@@ -683,13 +683,18 @@ type SteerQueuedPayload struct {
 }
 
 // SteerRowState is a dock row's state as the dock draws it. Every row that is or may
-// be in KAS, or whose fate a turn end has not decided, reads queued, so a row moving
+// be in KAS reads queued, or delivering while a turn end's continuation may read it, so a row moving
 // between the server's finer states repaints nothing.
 type SteerRowState string
 
 const (
 	// SteerRowQueued is a row waiting to be read.
 	SteerRowQueued SteerRowState = "queued"
+	// SteerRowDelivering is a row KAS holds while a turn end is unsettled: KAS's
+	// continuation of that turn reads it, or its boundary drops it and the chat's next
+	// prompt carries it. A delete now would clear the buffer under that read, so the
+	// server refuses one.
+	SteerRowDelivering SteerRowState = "delivering"
 	// SteerRowUnsent is an unread row the server holds with no turn to deliver it to:
 	// its session ended, its buffer was cleared with no turn running, or a turn-end resend
 	// failed. The chat's next prompt carries it; a server restart discards it.

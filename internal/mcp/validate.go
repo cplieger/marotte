@@ -125,18 +125,18 @@ var oauthRedirectHosts = []string{"localhost", "127.0.0.1"}
 
 // Adding a new transport requires only a map entry, not a control-flow change. The init() below
 // validates that every known transport has a registered validator, preventing nil-call panics.
-// TransportSSE shares validateRemote with TransportHTTP: both are remote transports whose wire
+// transportSSE shares validateRemote with transportHTTP: both are remote transports whose wire
 // shape is url + headers (+ optional oauth), differing only in the ACP `type` discriminator emitted
 // at export time.
 var transportValidators = map[Transport]func(*Server) error{
 	TransportStdio:    validateStdio,
-	TransportHTTP:     validateRemote,
-	TransportSSE:      validateRemote,
-	TransportRegistry: validateRegistry,
+	transportHTTP:     validateRemote,
+	transportSSE:      validateRemote,
+	transportRegistry: validateRegistry,
 }
 
 func init() {
-	for _, t := range []Transport{TransportStdio, TransportHTTP, TransportSSE, TransportRegistry} {
+	for _, t := range []Transport{TransportStdio, transportHTTP, transportSSE, transportRegistry} {
 		if _, ok := transportValidators[t]; !ok {
 			panic("mcp: no validator registered for transport " + string(t))
 		}
@@ -517,7 +517,7 @@ func validateOAuthMetadataURL(raw string) error {
 }
 
 // schemeHTTP is the plain-HTTP URL scheme, which shares its spelling with
-// TransportHTTP but is a different vocabulary.
+// transportHTTP but is a different vocabulary.
 const schemeHTTP = "http"
 
 // validateOAuthRedirectURI mirrors KAS's three accepted redirectUri forms

@@ -3,7 +3,7 @@
 import { el } from "@cplieger/reactive";
 import { join as joinKey } from "@cplieger/keyenc";
 import { apiGetTypedOrError } from "./api-client.js";
-import { asObject, decodeArray, optStr, reqNum, reqStr } from "./validators.js";
+import { asObject, decodeArray, optStr, reqNum, reqStr } from "./wire/validators.gen.js";
 import { KEY_ATTR, reconcile } from "./reconcile.js";
 import { entryDetail, entryList, entryRow } from "./entry-row.js";
 import { iconEl } from "./icon-el.js";

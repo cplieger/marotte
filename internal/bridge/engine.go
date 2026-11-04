@@ -92,7 +92,7 @@ const (
 // only by Exit, after Done.
 type ExitInfo struct {
 	Reason exitReason
-	// SidecarExit is the kiro-cli-chat process's own status ("exit_code=N" or "signal=NAME"); its node child's status
+	// SidecarExit is the kiro-cli acp process's own status ("exit_code=N" or "signal=NAME"); its node child's status
 	// never reaches marotte, so it names no cause.
 	SidecarExit string
 	Uptime      time.Duration
@@ -159,6 +159,8 @@ type Engine struct {
 	// extraEnv is appended to the engine's environment so the active install directory leads PATH. Empty leaves the
 	// screened inherited env.
 	extraEnv []string
+	// nodeArgs are the node flags the launcher put on the agent server's argv (withKASNodeLauncher), nil without it.
+	nodeArgs []string
 	// startIgnoreFiles and startTerminalTimeoutMs are what Start left KAS holding (StartLive). Guarded by mu.
 	startIgnoreFiles []string
 	// engineGroups are the process groups below kiro-cli's own (noteEngineGroups). Guarded by mu.
@@ -190,6 +192,7 @@ type Engine struct {
 	contentCollectionApplied bool
 	contentCollectionKnown   bool
 	debugLogs                bool
+	highThroughput           bool
 }
 
 // Option configures an Engine at construction time.
@@ -217,7 +220,7 @@ func WithDetachHandler(fn func(DetachedSession)) Option { return func(e *Engine)
 // WithGeneration labels this engine's log lines with the owner's spawn count.
 func WithGeneration(gen uint64) Option { return func(e *Engine) { e.generation = gen } }
 
-// NewEngine returns an engine that runs the kiro-cli-chat sidecar at cliPath; call Start next. Its engine lane exists
+// NewEngine returns an engine that runs `acp` on the kiro-cli at cliPath; call Start next. Its engine lane exists
 // from here on, so a consumer can attach before Start writes initialize.
 func NewEngine(cliPath, workDir string, opts ...Option) *Engine {
 	e := &Engine{
@@ -327,6 +330,7 @@ func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 	e.authArgs = o.AuthArgs
 	e.heapMiB = o.HeapMiB
 	e.debugLogs = o.DebugLogs
+	e.highThroughput = o.HighThroughput
 	e.spawn = kascap.EngineSpawn{
 		InfraSafetyMonitor:       o.Features.InfraSafetyMonitor,
 		AutoRouting:              o.Features.AutoRouting,
@@ -429,7 +433,7 @@ func (e *Engine) initialize(ctx context.Context) error {
 			"_meta":       map[string]any{metaKeyKiro: kiroMeta},
 		},
 		"clientInfo": map[string]any{
-			"name": "marotte", "title": "Marotte for Kiro", "version": version.Build,
+			"name": kascap.ClientName, "title": "Marotte for Kiro", "version": version.Build,
 		},
 	})
 	if err != nil {

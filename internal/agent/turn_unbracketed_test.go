@@ -74,6 +74,25 @@ func graceClose(t *testing.T, h *Runtime, turnID string) {
 	})
 }
 
+// gateFirstClose parks the first close's publish until release closes, before its post-close pipeline starts, so
+// that pipeline's wait for KAS begins only after the test moved on (its closer then runs on its own goroutine).
+func gateFirstClose(h *Runtime) (entered, release chan struct{}) {
+	entered, release = make(chan struct{}), make(chan struct{})
+	var blocked atomic.Bool
+	closed := h.coord.onTurnClosed
+	h.coord.onTurnClosed = func(chatID marotte.ChatID, turnID string) {
+		// Not a sync.Once: a second caller parked on its mutex is not durably blocked, so synctest.Wait would hang.
+		if blocked.CompareAndSwap(false, true) {
+			close(entered)
+			<-release
+		}
+		if closed != nil {
+			closed(chatID, turnID)
+		}
+	}
+	return entered, release
+}
+
 // The recorded shape of the next turn's start: the cancel's grace closed the stopped turn while KAS still ran executions for the
 // session (its re-wake of the cleared notifications held it busy), and marotte sent the carried steer 6 ms later,
 // which KAS queued beside its re-wake and orphaned. The drain waits until KAS reports the session idle.
@@ -755,20 +774,10 @@ func TestAfterTurnClose_AnEarlierGraceClosesWaitLeavesALaterHoldInPlace(t *testi
 		h, _, _ := newTestHub()
 		defer shutdownHub(t, h)
 		countDrains(h)
-		entered, release := make(chan struct{}), make(chan struct{})
-		var blocked atomic.Bool
-		resolve := h.coord.resolveEnds
-		h.coord.resolveEnds = func(ctx context.Context, chatID marotte.ChatID, f command.TurnFence) command.EndFacts {
-			// Not a sync.Once: a second caller parked on its mutex is not durably blocked, so synctest.Wait would hang.
-			if blocked.CompareAndSwap(false, true) {
-				close(entered)
-				<-release
-			}
-			return resolve(ctx, chatID, f)
-		}
+		entered, release := gateFirstClose(h)
 		turnID, _ := h.stagePromptTurn(t, "c1")
 		h.coord.WireTurnActivity("c1", true)
-		graceClose(t, h, turnID)
+		go graceClose(t, h, turnID)
 		<-entered
 
 		h.coord.WireTurnStart(t.Context(), "c1")
@@ -881,19 +890,10 @@ func wantHeldRowSentOnce(t *testing.T, h *Runtime, cs *testChatStore, prompted f
 func TestCmdQueuePrompt_AHeldRowSurvivesALaterGraceClosesHold(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, prompted := heldRowHub(t)
-		entered, release := make(chan struct{}), make(chan struct{})
-		var blocked atomic.Bool
-		resolve := h.coord.resolveEnds
-		h.coord.resolveEnds = func(ctx context.Context, chatID marotte.ChatID, f command.TurnFence) command.EndFacts {
-			if blocked.CompareAndSwap(false, true) {
-				close(entered)
-				<-release
-			}
-			return resolve(ctx, chatID, f)
-		}
+		entered, release := gateFirstClose(h)
 		turnID, _ := h.stagePromptTurn(t, "c1")
 		h.coord.WireTurnActivity("c1", true)
-		graceClose(t, h, turnID)
+		go graceClose(t, h, turnID)
 		<-entered
 		queueHeldRow(t, h)
 

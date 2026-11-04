@@ -94,7 +94,7 @@ func newSeamEngine(t *testing.T) *seamEngine {
 	return e
 }
 
-func (e *seamEngine) ChatPath() string            { return e.script }
+func (e *seamEngine) CLIPath() string             { return e.script }
 func (*seamEngine) Installed() <-chan struct{}    { return nil }
 func (*seamEngine) Env() []string                 { return nil }
 func (*seamEngine) EnvAllow() map[string]struct{} { return nil }
@@ -265,7 +265,7 @@ func (e *seamEngine) called(t *testing.T, method, wf string) bool {
 // installingEngine is a managed install that never becomes active: the engine never starts.
 type installingEngine struct{}
 
-func (installingEngine) ChatPath() string              { return "" }
+func (installingEngine) CLIPath() string               { return "" }
 func (installingEngine) Installed() <-chan struct{}    { return make(chan struct{}) }
 func (installingEngine) Env() []string                 { return nil }
 func (installingEngine) EnvAllow() map[string]struct{} { return nil }

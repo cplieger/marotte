@@ -2,8 +2,8 @@
 // connection on kind and host, so a second account on the same host replaces the first.
 
 import { apiGetTyped, CancellableSlot } from "./api-client.js";
-import type { Decoder } from "./validators.js";
-import { asObject, decodeArray } from "./validators.js";
+import type { Decoder } from "./wire/validators.gen.js";
+import { asObject, decodeArray } from "./wire/validators.gen.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import {
   FORGE_ICONS,

@@ -155,8 +155,8 @@ function unnamedCauseVerdict(pr: GitPR): MergeVerdict {
   }
 }
 
-/** Why a verdict is missing: GitLab's list lacks the block reason, the Gitea
- *  family's the `mergeable` verdict, and a viewed cycle reads them. */
+/** Why a verdict is missing: GitHub's and GitLab's lists lack the block reason,
+ *  every family's the `mergeable` verdict, and a viewed cycle reads them. */
 function unreadVerdictReason(pr: GitPR): string {
   const reasons = [fillReason(pr, "merge_blocked"), fillReason(pr, "mergeable")];
   if (reasons.includes("not_on_list")) {

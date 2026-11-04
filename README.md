@@ -61,7 +61,7 @@ services:
 4. Open `http://<server>:9847`, where `<server>` is the address of the server on your network, for example `http://192.0.2.10:9847`.
 5. Sign in with your Kiro account when the page asks. Chats use that account's plan and credits, which the sidebar shows. The sign-in is marotte's own, so a `kiro-cli` you start in the terminal keeps a separate one.
 
-The first start downloads kiro-cli, about 530 MB, which can take a few minutes. The page, files, git and the terminal work in the meantime, and chats say kiro-cli is still installing. Amazon publishes kiro-cli under the AWS Customer Agreement. marotte downloads it instead of shipping it in the image, so starting the container means you accept that agreement.
+The first start downloads kiro-cli, about 140 MB, which can take a few minutes. The page, files, git and the terminal work in the meantime, and chats say kiro-cli is still installing. Amazon publishes kiro-cli under the AWS Customer Agreement. marotte downloads it instead of shipping it in the image, so starting the container means you accept that agreement.
 
 Run `docker logs marotte`. After the download you should see `msg=installed package=kiro-cli`. If you see `failed to create required directories`, step 2 was skipped.
 
@@ -97,7 +97,7 @@ Every setting, with what each one checks, is in [Configuration](docs/configurati
 
 ## Security
 
-marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and edits files under `/workspace`, and the Kiro sign-in in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page gives the agent your Kiro account. It does not protect marotte itself.
+marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and reads and writes files under `/workspace` and any [additional directory](docs/configuration.md#folders-the-agent-can-use-beyond-workspace) you add. They can also use the Kiro sign-in in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page gives the agent your Kiro account. It does not protect marotte itself.
 
 Set `ALLOWED_HOSTS` on any server that stays up. marotte then answers only at the addresses you list, so another website cannot use your browser to reach it.
 

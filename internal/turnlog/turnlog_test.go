@@ -622,8 +622,8 @@ func TestChangedFileAggregatesByPath(t *testing.T) {
 				t.Fatalf("ChangedFiles has %d paths, want %d: %v", len(footer.ChangedFiles), len(tc.want), footer.ChangedFiles)
 			}
 			for path, want := range tc.want {
-				got := footer.ChangedFiles[path]
-				if got == nil || *got != want {
+				got, ok := footer.ChangedFiles[path]
+				if !ok || got != want {
 					t.Errorf("ChangedFiles[%q] = %+v, want %+v", path, got, want)
 				}
 			}

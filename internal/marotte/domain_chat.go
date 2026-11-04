@@ -543,7 +543,8 @@ func CarryCost(text string) int { return len(text) + len(carrySeparator) }
 // QueuedPrompt is one follow-up waiting for a turn to end. A row with Resends is CARRIED,
 // written at shutdown from unread steers. Held marks a row a previous process queued; it is
 // never sent automatically. A list holds at most one carried row, and it is held. Label is the
-// row's PromptCommand.DisplayText.
+// row's PromptCommand.DisplayText. Next marks the row send_queued_now chose: the next drain sends
+// it first, even after a stop.
 type QueuedPrompt struct {
 	// Caller is set on a row an API caller queued.
 	Caller      *Caller      `json:"caller,omitempty"`
@@ -553,6 +554,7 @@ type QueuedPrompt struct {
 	Attachments []Attachment `json:"attachments,omitempty"`
 	Resends     []string     `json:"resends,omitempty"`
 	Held        bool         `json:"held,omitempty"`
+	Next        bool         `json:"next,omitempty"`
 }
 
 // Carried reports whether the row resends dropped steers.

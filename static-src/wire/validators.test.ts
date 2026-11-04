@@ -1,5 +1,5 @@
-// Table-driven tests for validators.ts. The generated per-shape decoders (wire/decoders.gen.ts) are
-// covered by wire/decoders.property.test.ts and every SSE and apiGetTyped call site.
+// Table-driven tests for validators.gen.ts. The generated per-shape decoders (decoders.gen.ts) are
+// covered by decoders.property.test.ts and every SSE and apiGetTyped call site.
 
 import { describe, it, expect } from "vitest";
 
@@ -15,7 +15,7 @@ import {
   reqOneOf,
   decodeArray,
   decodeRecord,
-} from "./validators.js";
+} from "./validators.gen.js";
 
 describe("helpers", () => {
   it("asObject rejects non-objects", () => {

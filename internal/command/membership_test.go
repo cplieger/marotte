@@ -255,6 +255,9 @@ func TestCreateChatAndOpen_AtTheLimitLeavesTheChatStoreUnchanged(t *testing.T) {
 	if !errors.Is(err, errTabsFull) {
 		t.Errorf("error = %v, want errTabsFull", err)
 	}
+	if _, reason, _ := StatusOf(err); reason != "tabs_full" {
+		t.Errorf("reason = %q, want %q: the client names the remedy only for the tab limit", reason, "tabs_full")
+	}
 	if got := storedChatIDs(t, store); len(got) != before {
 		t.Errorf("store holds %d chats, want the %d it held before: a refused create must not leave an orphan", len(got), before)
 	}
@@ -280,6 +283,9 @@ func TestOpenTab_AtTheLimitIsRefusedAndTheChatStoreIsUntouched(t *testing.T) {
 
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 at the limit (%s)", statusOf(err), errText(err))
+	}
+	if _, reason, _ := StatusOf(err); reason != "tabs_full" {
+		t.Errorf("reason = %q, want %q: the client names the remedy only for the tab limit", reason, "tabs_full")
 	}
 	if got := storedChatIDs(t, store); !slices.Equal(got, before) {
 		t.Errorf("chat store went from %v to %v; open_tab must never write a chat", before, got)
