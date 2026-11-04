@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -174,7 +175,7 @@ func TestCloseChatState_NamesTheTabClose(t *testing.T) {
 	}
 	insertChatSession(t, h, rig, "c1", "sess_cur")
 
-	h.CloseChatState(t.Context(), "c1")
+	h.CloseChatState(t.Context(), "c1", &chat.Claim{})
 
 	cancels := rig.of(methodKiroWorkflowCancel)
 	if len(cancels) != 1 {

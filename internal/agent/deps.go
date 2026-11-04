@@ -57,12 +57,25 @@ type bridgeChatRecords interface {
 
 type chatRecords interface {
 	bridgeChatRecords
+	turnRecords
 
 	List(ctx context.Context) []marotte.ChatHeader
-	// SessionClaimed is the membership coordinator's fresh chain read, passed on
+	// SessionOwners is the membership coordinator's fresh chain read, passed on
 	// as command.sessionClaims.
-	SessionClaimed(ctx context.Context, sessionID string) (claimed, complete bool)
-	ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool)
+	SessionOwners(ctx context.Context) chat.OwnerScan
+	// Hold, Rollback, Release, SwapTabForStop and ReconcileKeep are the keep-fact writes command.membershipChats
+	// passes on.
+	Hold(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
+	Rollback(ctx context.Context, claim *chat.Claim) error
+	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
+	SwapTabForStop(ctx context.Context, id marotte.ChatID) (chat.Claim, bool)
+	SessionInTeardown(sessionID string) bool
+	ReconcileKeep(ctx context.Context, id marotte.ChatID, fn func(r *chat.KeepRecord)) error
+	// HoldOrPend, EndStop and the unattributed marks are the run keep-fact writes (runChatReader).
+	HoldOrPend(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
+	EndStop(ctx context.Context, claim *chat.Claim)
+	HoldUnattributed(workflowID string)
+	ClearUnattributed(workflowID string)
 	// SetDraft and SetAttachments are passed on to the command dispatcher.
 	SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error)
 	SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error)

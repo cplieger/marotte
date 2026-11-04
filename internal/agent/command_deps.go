@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -56,10 +57,13 @@ func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID marotte.Ch
 	rt.reapSessions(sessionChain)
 }
 
-// CloseChatState tears down in-memory state without touching the KAS session, so a reopen session/loads it.
-func (rt *Runtime) CloseChatState(ctx context.Context, chatID marotte.ChatID) {
+// CloseChatState tears down in-memory state without touching the KAS session, so a reopen session/loads it, and
+// stops the chat's runs under stop, a person's close's stop hold, when it is set (Runs.stopChatRuns).
+func (rt *Runtime) CloseChatState(ctx context.Context, chatID marotte.ChatID, stop *chat.Claim) {
 	rt.beginSteerTeardown(ctx, chatID, true)
-	rt.runs.cancelForChat(ctx, chatID, userStop(stopWhyTabClosed))
+	if stop != nil {
+		rt.runs.stopChatRuns(ctx, chatID, stop)
+	}
 	rt.cleanupChatState(ctx, chatID)
 }
 

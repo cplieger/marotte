@@ -19,6 +19,8 @@ import (
 
 // launchableRecipe is the reply set a launch needs: one recipe, an empty run list, ids for new and invoke.
 func launchableRecipe(br *fakeBridge, workflowID string) {
+	br.mu.Lock()
+	defer br.mu.Unlock()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(
 			`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`,
@@ -353,7 +355,7 @@ func TestLiveRuns_NamesTheHeldLeasesAndNoOthers(t *testing.T) {
 // TestLeaseStore_FallsBackToMemory pins that a lease carries the run's clock, so there is no leases-off mode.
 func TestLeaseStore_FallsBackToMemory(t *testing.T) {
 	t.Parallel()
-	h := &Runs{}
+	h := &Runs{chats: newTestChatStore()}
 	h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 	if _, ok := h.lease("wf_1"); !ok {
 		t.Fatal("a runtime with no durable store lost the lease, so the run would be unbounded")
@@ -367,7 +369,7 @@ func TestGrantLease_ReportsAnEnvelopeItCouldNotPersist(t *testing.T) {
 
 	t.Run("a lease that could not be written is reported", func(t *testing.T) {
 		logs := captureLogs(t)
-		h := &Runs{leases: undurableLeaseStore(t)}
+		h := &Runs{chats: newTestChatStore(), leases: undurableLeaseStore(t)}
 
 		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
@@ -387,7 +389,7 @@ func TestGrantLease_ReportsAnEnvelopeItCouldNotPersist(t *testing.T) {
 
 	t.Run("an ordinary launch is quiet about it", func(t *testing.T) {
 		logs := captureLogs(t)
-		h := &Runs{}
+		h := &Runs{chats: newTestChatStore()}
 
 		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
@@ -403,7 +405,7 @@ func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
 
 	t.Run("a release that could not be written is reported", func(t *testing.T) {
 		logs := captureLogs(t)
-		h := &Runs{leases: undurableLeaseStore(t)}
+		h := &Runs{chats: newTestChatStore(), leases: undurableLeaseStore(t)}
 		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
 		h.releaseLease(t.Context(), "wf_1")
@@ -416,7 +418,7 @@ func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
 
 	t.Run("an ordinary release is quiet about it", func(t *testing.T) {
 		logs := captureLogs(t)
-		h := &Runs{}
+		h := &Runs{chats: newTestChatStore()}
 		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
 		h.releaseLease(t.Context(), "wf_1")

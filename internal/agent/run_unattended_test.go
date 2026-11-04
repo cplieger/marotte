@@ -31,7 +31,7 @@ func TestUnattendedBudget_MatchesTheDisclaimer(t *testing.T) {
 // TestIsScheduledRun_ReadsTheLeasesOrigin pins the `scheduled` flag's source: only the launch path can tell a
 // scheduled parentless run from a manual one, and the lease records it.
 func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
-	h := &Runs{}
+	h := &Runs{chats: newTestChatStore()}
 
 	if h.IsScheduled("wf_1") {
 		t.Error("an unknown run reported scheduled; a manual launch must never be marked")
@@ -59,7 +59,7 @@ func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
 }
 
 func TestRunLabel_RebuildsTheLaunchLabelFromTheLease(t *testing.T) {
-	h := &Runs{}
+	h := &Runs{chats: newTestChatStore()}
 	h.grantLease(t.Context(), "wf_manual", "publish", manualLaunch(), hostSec())
 	h.grantLease(t.Context(), "wf_sched", "publish", scheduledLaunch("sched-1", time.Time{}), hostSec())
 	if got := h.RunLabel("wf_sched"); got != "publish · scheduled" {
@@ -81,7 +81,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	h := &Runs{leases: store}
+	h := &Runs{chats: newTestChatStore(), leases: store}
 	h.grantLease(t.Context(), "wf_1", "nightly", scheduledLaunch("sched-1", time.Time{}), hostSec())
 
 	// The restart: a new store over the same directory, a runtime that launched nothing.
@@ -89,7 +89,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	after := &Runs{leases: reopened}
+	after := &Runs{chats: newTestChatStore(), leases: reopened}
 
 	l, held := after.lease("wf_1")
 	if !held {
@@ -109,7 +109,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 // TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk pins that the floor answers by request id, so an id-less ask must
 // not arm (it would dereference nothing); the ordinary handler still runs.
 func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
-	rs := &Runs{}
+	rs := &Runs{chats: newTestChatStore()}
 	rs.grantLease(t.Context(), "wf_1", "nightly",
 		scheduledLaunch("sched-1", time.Now().Add(30*time.Second)), hostSec())
 	if l, held := rs.lease("wf_1"); !held || !l.Unattended {

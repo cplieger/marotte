@@ -112,7 +112,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		bridge:         h.bridge,
 		chatStore:      h.chatStore,
 		catalog:        h.catalog,
-		turns:          newTurnRegistry(),
+		turns:          newTurnRegistry(h.chatStore),
 		broadcast:      h.bus.Broadcast,
 		translateEvent: h.translateACPEvent,
 		// Read per call: agentTerms is built after the coordinator.
@@ -879,11 +879,6 @@ func (bc *bridgeCoordinator) renderChatSteering(ctx context.Context) []marotte.C
 // bridgeFor returns the bridge for chatID, or nil.
 func (bc *bridgeCoordinator) bridgeFor(chatID marotte.ChatID) *sharedBridge {
 	return bc.bridge.mgr.get(chatID)
-}
-
-// HasResidentSession reports whether a chat has a resident session; retention never purges such a chat (archive.WithLiveChats).
-func (rt *Runtime) HasResidentSession(chatID marotte.ChatID) bool {
-	return rt.bridge.mgr.get(chatID) != nil
 }
 
 // TurnLive reports whether the reader must treat the chat as running: its own turn, an

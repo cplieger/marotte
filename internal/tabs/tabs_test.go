@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -126,7 +127,7 @@ func TestStore_RoundTripsAcrossProcesses(t *testing.T) {
 	if gotVersion != wantVersion {
 		t.Errorf("NewStore(...).List() version = %d, want %d", gotVersion, wantVersion)
 	}
-	if !slices.Equal(gotTabs, wantTabs) {
+	if !reflect.DeepEqual(gotTabs, wantTabs) {
 		t.Errorf("NewStore(...).List() tabs = %+v, want %+v", gotTabs, wantTabs)
 	}
 	if len(gotTabs) == 2 && (gotTabs[0].ID != a.ID || !gotTabs[1].Pinned) {
@@ -335,9 +336,10 @@ func TestStore_PersistFailureLeavesNothingBehind(t *testing.T) {
 		t.Fatalf("Setup: write %s: %v", dir, err)
 	}
 
+	// A path under a file holds no arrangement, so nothing is unread and writes resume once it is a directory.
 	s, err := NewStore(dir)
-	if err == nil {
-		t.Error("NewStore(dir that is a file) = nil error, want a diagnostic")
+	if err != nil || s.Unread() != "" {
+		t.Errorf("NewStore(dir that is a file) = %v with Unread() %q, want a first run", err, s.Unread())
 	}
 
 	_, _, version, err := s.Open(t.Context(), chatSpec("c-a"))

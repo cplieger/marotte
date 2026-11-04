@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -733,7 +734,7 @@ func (o orderTeardown) BeginChatTeardown(_ marotte.ChatID, keep bool) {
 	*o.log = append(*o.log, "begin keep="+strconv.FormatBool(keep))
 }
 
-func (o orderTeardown) CloseChatState(context.Context, marotte.ChatID) {
+func (o orderTeardown) CloseChatState(context.Context, marotte.ChatID, *chat.Claim) {
 	*o.log = append(*o.log, "close")
 }
 
@@ -755,7 +756,7 @@ func TestChatTeardown_TheSteerRecordGoesBeforeTheCancel(t *testing.T) {
 		want []string
 	}{
 		{name: "close", run: func(ctx context.Context, h hostDouble, td chatTeardown) {
-			closeChatTeardown(ctx, h, h, h, td, "c1")
+			closeChatTeardown(ctx, h, h, h, td, "c1", &chat.Claim{})
 		}, want: []string{"begin keep=true", marotte.MethodCancel, "close"}},
 		{name: "delete", run: func(ctx context.Context, h hostDouble, td chatTeardown) {
 			deleteChatTeardown(ctx, h, h, h, td, "c1", []string{"sess-1"})

@@ -174,8 +174,8 @@ func forkOutcomeOf(sessionID string, inherited bool) string {
 // sites (replay and fresh fork) so the record's shape cannot drift between
 // them. The tab hangs under the parent's tab, which is what makes a tangent
 // read as a tangent; a parent with no open tab promotes it to top level.
-func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marotte.Chat, sessionID string) ChatCreate {
-	return ChatCreate{
+func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marotte.Chat, sessionID string) *ChatCreate {
+	return &ChatCreate{
 		OpID:        p.OpID,
 		ChatID:      chatID,
 		RequireChat: p.ParentChatID,

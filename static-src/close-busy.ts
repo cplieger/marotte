@@ -1,10 +1,11 @@
-// What closing a tab stops: the server's close cancels the chat's reply, its questions, its
-// workflow runs and its unread queued messages, tangents included, with no undo. An idle close
-// asks nothing.
+// What closing a tab stops: the server's close cancels the chat's reply, its questions and its
+// unread queued messages, and stops its workflow runs, tangents included, with no undo. An idle
+// close asks nothing.
 
 import { chatOutstanding } from "./chat-settled.js";
 import { confirm } from "./confirm.js";
 import { sessionDrain } from "./queue-slots.js";
+import { liveRunIDsForChat, runLabelOf } from "./run-store.js";
 import { get } from "./store.js";
 
 /** One chat row the close takes with it: its ref and the name its tab shows. */
@@ -17,7 +18,8 @@ export interface ClosingChat {
 interface CloseImpact {
   readonly replies: readonly ClosingChat[];
   readonly asks: readonly ClosingChat[];
-  readonly runs: number;
+  /** Each run's name, "" for one whose name has not loaded. */
+  readonly runs: readonly string[];
   readonly queued: number;
 }
 
@@ -26,7 +28,7 @@ interface CloseImpact {
 function closeStopsWork(chats: readonly ClosingChat[]): CloseImpact {
   const replies: ClosingChat[] = [];
   const asks: ClosingChat[] = [];
-  let runs = 0;
+  const runs: string[] = [];
   let queued = 0;
   for (const chat of chats) {
     const outstanding = chatOutstanding(chat.ref);
@@ -36,7 +38,7 @@ function closeStopsWork(chats: readonly ClosingChat[]): CloseImpact {
     if (outstanding.asks) {
       asks.push(chat);
     }
-    runs += outstanding.runs;
+    runs.push(...liveRunIDsForChat(chat.ref).map(runLabelOf));
     const session = get(chat.ref);
     if (session !== undefined) {
       queued += (session.steers ?? []).length;
@@ -50,7 +52,7 @@ function isIdle(impact: CloseImpact): boolean {
   return (
     impact.replies.length === 0 &&
     impact.asks.length === 0 &&
-    impact.runs === 0 &&
+    impact.runs.length === 0 &&
     impact.queued === 0
   );
 }
@@ -64,6 +66,17 @@ function listOf(parts: readonly string[]): string {
     return parts.join(" and ");
   }
   return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1) ?? ""}`;
+}
+
+/** The runs term, naming each run whose name is known and counting the rest. */
+function runsText(runs: readonly string[]): string {
+  const named = runs.filter((n) => n !== "");
+  const unnamed = runs.length - named.length;
+  if (named.length === 0) {
+    return `stops ${count(unnamed, "workflow run", "workflow runs")}`;
+  }
+  const items = unnamed === 0 ? named : [...named, count(unnamed, "other", "others")];
+  return `stops the ${runs.length === 1 ? "workflow run" : "workflow runs"} ${listOf(items)}`;
 }
 
 /** A per-chat term: `bare` when the closed tab's own chat is the only one, else naming each. */
@@ -99,8 +112,8 @@ function closeImpactText(name: string, ref: string, impact: CloseImpact): string
       ),
     );
   }
-  if (impact.runs > 0) {
-    parts.push(`cancels ${count(impact.runs, "workflow run", "workflow runs")}`);
+  if (impact.runs.length > 0) {
+    parts.push(runsText(impact.runs));
   }
   if (impact.queued > 0) {
     parts.push(`drops ${count(impact.queued, "queued message", "queued messages")}`);

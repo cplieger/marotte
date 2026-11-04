@@ -231,12 +231,9 @@ func (rs *Runs) chatForSession(
 	if sessionID == "" {
 		return "", true
 	}
-	// Indexed: marotte.ChatHeader is 304 bytes (gocritic rangeValCopy).
-	headers, complete := rs.chats.ListComplete(ctx)
-	for i := range headers {
-		if slices.Contains(headers[i].SessionChain(), sessionID) {
-			return marotte.ChatID(headers[i].ID), complete
-		}
+	scan := rs.chats.SessionOwners(ctx)
+	if owners := scan.Owners.Of(sessionID); len(owners) > 0 {
+		return owners[0], scan.Complete
 	}
-	return "", complete
+	return "", scan.Complete
 }

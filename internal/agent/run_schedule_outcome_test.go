@@ -109,7 +109,7 @@ func TestLaunch_ARecipeBusyRefusalCarriesTheLiveRunsLease(t *testing.T) {
 		h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
 			"workflowId": "wf_1", "status": "failed",
 		}))
-		h.runs.grantRetryLease(t.Context(), "wf_1", &runOrigin{recipe: "nightly"})
+		h.runs.grantRetryLease(t.Context(), "wf_1", &runOrigin{recipe: "nightly"}, nil)
 		if busy := refusal(t, h, &entry); busy.ScheduleID != "" || !busy.SlotAt.IsZero() {
 			t.Errorf("the retried run's refusal carries (%q, %v), want no schedule and no slot", busy.ScheduleID, busy.SlotAt)
 		}

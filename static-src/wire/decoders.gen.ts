@@ -4144,8 +4144,16 @@ export const decodeTabSubject: Decoder<TabSubject> = (v) => {
     owns: reqBool(o, "owns", "$.tab_subject"),
   };
   {
+    const $v = own(o, "launch_chats");
+    if ($v !== undefined && $v !== null) out.launch_chats = own(o, "launch_chats") === null ? [] : decodeArray(own(o, "launch_chats"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.tab_subject.launch_chats");
+  }
+  {
     const $v = own(o, "seen");
     if ($v !== undefined && $v !== null) out.seen = reqNum(o, "seen", "$.tab_subject");
+  }
+  {
+    const $v = own(o, "launch_resolved");
+    if ($v !== undefined && $v !== null) out.launch_resolved = reqBool(o, "launch_resolved", "$.tab_subject");
   }
   return out;
 };

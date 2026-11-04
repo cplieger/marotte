@@ -29,7 +29,7 @@ func TestCreateChatAndOpen_ATangentsSubTabIsOwnedToo(t *testing.T) {
 	mem, _, _ := newTabbedMembership(t, store)
 
 	parent := createChat(t, mem, "op-parent")
-	tangent, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
+	tangent, err := mem.CreateChatAndOpen(t.Context(), &ChatCreate{
 		OpID:       "op-tangent",
 		Init:       func(c *marotte.Chat) { c.Name = marotte.DefaultChatName },
 		ParentChat: marotte.ChatID(parent.Chat.ID),

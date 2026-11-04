@@ -26,7 +26,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/marotte/internal/asidefile"
 	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -910,7 +912,7 @@ func firstLineOf(text string) string {
 	return string([]rune(line)[:firstLineMax]) + "\u2026"
 }
 
-// rescanLocked rebuilds the index in one pass, truncating an unreadable tail, then applies what the pass cannot
+// rescanLocked rebuilds the index in one pass, truncating a torn tail, then applies what the pass cannot
 // decide line by line: every turn_revert window, and reverting incomplete carriers.
 func (l *EntryLog) rescanLocked() error {
 	l.turns = make(map[string]*turnState)
@@ -960,8 +962,7 @@ func (l *EntryLog) scanFileLocked() error {
 			return nil
 		}
 		if err := l.observeLineLocked(line, off, rerr); err != nil {
-			// The first unreadable line ends the log: an O_APPEND line is whole or a torn tail.
-			return l.dropTailLocked(off, err)
+			return l.unreadableLineLocked(off, err, rerr)
 		}
 		off += int64(len(line))
 	}
@@ -976,6 +977,26 @@ func (l *EntryLog) observeLineLocked(line []byte, off int64, rerr error) error {
 		return err
 	}
 	return l.observeLocked(&e, off, off+int64(len(line)))
+}
+
+// unreadableLineLocked decides what an unreadable line at off costs. A write appends a whole line or tears its final
+// bytes, so only a final line with no newline is a torn tail and is dropped as it is. A read error refuses the open
+// and leaves the file, since nothing past off was read. A complete line that does not decode is corruption: the log
+// is copied aside before the truncation, so the entries after it survive outside the live log.
+func (l *EntryLog) unreadableLineLocked(off int64, err, rerr error) error {
+	switch {
+	case errors.Is(rerr, io.EOF):
+		return l.dropTailLocked(off, err)
+	case rerr != nil && !errors.Is(rerr, errEntryLineTooLong):
+		return fmt.Errorf("entry log: %s: unreadable at offset %d, left as it is: %w", l.path(), off, err)
+	}
+	aside, cerr := asidefile.Copy(l.path(), fileMode)
+	if cerr != nil {
+		return fmt.Errorf("entry log: %s: corrupt line at offset %d, copy aside: %w", l.path(), off, cerr)
+	}
+	slog.Warn("entry log: copied a log with a corrupt line aside before dropping from it",
+		"root", logsafe.Field(l.root), "offset", off, "aside", logsafe.Field(aside), "cause", logsafe.Field(err.Error()))
+	return l.dropTailLocked(off, err)
 }
 
 // Nothing past off was observed.

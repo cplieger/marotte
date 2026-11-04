@@ -237,14 +237,18 @@ func (rs *Runs) refillDeadline(ctx context.Context, workflowID string) bool {
 	})
 }
 
-// RunMadeProgress rolls a run's idle window forward. Satisfies translate.runBoundsAccess. Called per
-// tool-call frame, so the `bounded` pre-check keeps it one map read.
+// RunMadeProgress rolls a run's idle window forward and, at most once per chat.RunMarkRefresh, its keep marks.
+// Satisfies translate.runBoundsAccess. Called per tool-call frame, so the pre-checks keep it two map reads.
 func (rs *Runs) RunMadeProgress(workflowID string) {
-	if !rs.bounded(workflowID) {
+	refresh := rs.marks.due(workflowID, time.Now())
+	if !refresh && !rs.bounded(workflowID) {
 		return
 	}
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
+	if refresh {
+		rs.markLeaseAlive(ctx, workflowID)
+	}
 	rs.refillDeadline(ctx, workflowID)
 }
 
@@ -647,11 +651,11 @@ func (rs *Runs) restartLife(ctx context.Context, workflowID string) {
 
 // An already-hosted retry may still carry its old deadline; one after a terminal frame needs a new
 // lease, named from KAS's run list for the single-run rule. The slot stays zero.
-func (rs *Runs) rearmRetried(ctx context.Context, workflowID string, o *runOrigin) {
+func (rs *Runs) rearmRetried(ctx context.Context, workflowID string, o *runOrigin, holders []marotte.ChatID) {
 	rs.clearEnd(workflowID)
 	rs.disarmDeadline(ctx, workflowID)
 	if _, held := rs.lease(workflowID); !held {
-		rs.grantRetryLease(ctx, workflowID, o)
+		rs.grantRetryLease(ctx, workflowID, o, holders)
 	}
 	rs.armDeadline(ctx, workflowID)
 }
@@ -847,13 +851,11 @@ func runStartLaunch(chatID marotte.ChatID) launchOrigin {
 	return launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}
 }
 
-// `run_start` is the first sight of an agent-launched run, so its lease is minted here; it also
+// `run_start` is the first sight of an agent-launched run, so its keep facts and lease are written here; it also
 // re-arms a resumed run.
 func (rs *Runs) observeStart(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" {
-		if _, held := rs.lease(f.WorkflowID); !held {
-			rs.grantLease(ctx, f.WorkflowID, f.WorkflowName, runStartLaunch(chatID), nil)
-		}
+		rs.startRunMarks(ctx, chatID, &f)
 		rs.recordParentSession(ctx, f.WorkflowID, f.ParentSessionID)
 		rs.armDeadline(ctx, f.WorkflowID)
 	}

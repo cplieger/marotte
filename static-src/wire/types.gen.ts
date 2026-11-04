@@ -3743,6 +3743,11 @@ export interface TabSubject {
  */
   parent: string;
   /**
+ * LaunchChats names, on a run tab, the chats holding its run-tab keep fact, so its close knows whose facts it
+ * releases without an engine read. It only grows.
+ */
+  launch_chats?: string[];
+  /**
  * Seen is the read position the reader last acknowledged for a chat or run tab, 0 for none;
  * only ack_tab moves it, never backward.
  */
@@ -3759,6 +3764,11 @@ export interface TabSubject {
  * open, so the authority cannot change under a reader.
  */
   owns: boolean;
+  /**
+ * LaunchResolved is true on every run tab whose holders were resolved at open; false only on a tab that predates
+ * LaunchChats, which the keep-state reconcile resolves.
+ */
+  launch_resolved?: boolean;
 }
 
 /**

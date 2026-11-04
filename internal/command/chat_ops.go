@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
@@ -48,7 +49,7 @@ func cmdCreateChat(ctx context.Context, mem *Membership, cmd *marotte.ClientComm
 	if !validIdent(p.Model) || !validIdent(p.OpID) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	opened, err := mem.CreateChatAndOpen(ctx, ChatCreate{
+	opened, err := mem.CreateChatAndOpen(ctx, &ChatCreate{
 		OpID:   p.OpID,
 		ChatID: cmd.ChatID,
 		Init: func(c *marotte.Chat) {
@@ -195,17 +196,17 @@ func requestMarkedStop(ctx context.Context, stops turnStopper, queue SteerQueue,
 	return stops.RequestStop(chatID, marotte.TurnStopReader), undo, false
 }
 
-// closeChatTeardown is the tab-close teardown: the turn, the runs and the session go; the chat
-// RECORD stays. Ordering is the contract: the turn is cancelled first (graceful stop), then the
-// runs (durable state a closed session would only pause), then the session teardown, which flushes
-// the in-flight buffer and kills the chat's agent terminals. Input asks are left for that session's
-// end to retire as ended: a clear here would drop the cards without saying why.
-func closeChatTeardown(ctx context.Context, bridges bridgeAccess, perms permissionCanceller, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID) {
+// closeChatTeardown is the tab-close teardown: the turn and the session go, and the runs too when
+// stop carries a person's close's stop hold; the chat RECORD stays. Ordering is the contract: the turn
+// is cancelled first (graceful stop), then the runs, then the session teardown, which flushes the
+// in-flight buffer and kills the chat's agent terminals. Input asks are left for that session's end
+// to retire as ended: a clear here would drop the cards without saying why.
+func closeChatTeardown(ctx context.Context, bridges bridgeAccess, perms permissionCanceller, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID, stop *chat.Claim) {
 	slog.Info("chat tab closed; tearing down its session", "chat_id", chatID)
 	defer stops.ReleaseStop(stops.RequestStop(chatID, marotte.TurnStopTeardown))
 	teardown.BeginChatTeardown(chatID, true)
 	teardownCancel(ctx, bridges, perms, chatID)
-	teardown.CloseChatState(ctx, chatID)
+	teardown.CloseChatState(ctx, chatID, stop)
 }
 
 // deleteChatTeardown is closeChatTeardown's delete grade, for a chat the
