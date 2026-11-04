@@ -481,6 +481,9 @@ func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
 	}
 	h.runs.bounds.executed["wf_1"] = runBackstop
 	h.runs.mu.Unlock()
+	if err := h.runs.stopAutoResume(t.Context(), "wf_1"); err != nil {
+		t.Fatalf("stopAutoResume: %v", err)
+	}
 
 	if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"})); err != nil {
 		t.Fatalf("Retry: %v", err)
@@ -491,5 +494,8 @@ func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
 	}
 	if h.runs.backstopSpent("wf_1") {
 		t.Error("the retried run's backstop reads spent: it inherited its last run's executing time")
+	}
+	if h.runs.autoResumeStopped("wf_1") {
+		t.Error("the retried run reads stopped before any run_start: it inherited its last run's auto-resume stop")
 	}
 }

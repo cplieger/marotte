@@ -82,6 +82,9 @@ type runBoundsState struct {
 	terminating map[string]struct{}
 	// heals counts automatic resumes since the run last made progress (run_host.go healPaused).
 	heals map[string]int
+	// healWriteFailed names runs whose last claimed heal's resume write failed, so a budget those writes spent is
+	// logged as marotte's fault (healSpent). Cleared with heals.
+	healWriteFailed map[string]struct{}
 	// cancelRetries counts refused-cancel retries since the last progress, separate from heals so neither starves the other.
 	cancelRetries map[string]int
 	// armedAt is when each bounded run's current executing stretch began, mirroring Bounded(). The
@@ -614,10 +617,39 @@ func (rs *Runs) refundHeal(workflowID string) {
 	}
 }
 
+// healHeadway gives a run's heal budget back on its steps' model output: the budget bounds resumes no work separates,
+// and a run streaming again after a throttle was not one. Called per model-output frame, so map deletes only.
+func (rs *Runs) healHeadway(workflowID string) {
+	rs.clearHeals(workflowID)
+}
+
 func (rs *Runs) clearHeals(workflowID string) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	delete(rs.bounds.heals, workflowID)
+	delete(rs.bounds.healWriteFailed, workflowID)
+}
+
+// noteHealWrite records whether a claimed heal's resume write failed.
+func (rs *Runs) noteHealWrite(workflowID string, failed bool) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if !failed {
+		delete(rs.bounds.healWriteFailed, workflowID)
+		return
+	}
+	if rs.bounds.healWriteFailed == nil {
+		rs.bounds.healWriteFailed = map[string]struct{}{}
+	}
+	rs.bounds.healWriteFailed[workflowID] = struct{}{}
+}
+
+// healWritesFailed reports whether the run's last claimed heal's resume write failed.
+func (rs *Runs) healWritesFailed(workflowID string) bool {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	_, failed := rs.bounds.healWriteFailed[workflowID]
+	return failed
 }
 
 // clearEnd forgets a run's recorded termination so a re-driven run is bounded again and its row
@@ -645,6 +677,7 @@ func (rs *Runs) clearEnd(workflowID string) {
 func (rs *Runs) restartLife(ctx context.Context, workflowID string) {
 	rs.disarmDeadline(ctx, workflowID)
 	rs.clearHeals(workflowID)
+	rs.endAutoResumeStop(ctx, workflowID)
 	rs.clearExecuted(workflowID)
 	rs.beginLife(workflowID)
 }
@@ -857,6 +890,9 @@ func (rs *Runs) observeStart(ctx context.Context, chatID marotte.ChatID, msg *ma
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" {
 		rs.startRunMarks(ctx, chatID, &f)
 		rs.recordParentSession(ctx, f.WorkflowID, f.ParentSessionID)
+		// A start marotte's heal did not write (the TUI's, an orchestrator's) ends the stop too; a heal writes none of
+		// a stopped run.
+		rs.endAutoResumeStop(ctx, f.WorkflowID)
 		rs.armDeadline(ctx, f.WorkflowID)
 	}
 	rs.translate.HandleRunStart(ctx, chatID, msg)

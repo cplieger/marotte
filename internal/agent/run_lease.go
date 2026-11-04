@@ -257,6 +257,54 @@ func (rs *Runs) lease(workflowID string) (runlease.Lease, bool) {
 	return rs.leaseStore().Get(workflowID)
 }
 
+// autoResumeStopped reports whether marotte stopped resuming the run on its own (stopAutoResume).
+func (rs *Runs) autoResumeStopped(workflowID string) bool {
+	l, held := rs.lease(workflowID)
+	return held && !l.AutoResumeStoppedAt.IsZero()
+}
+
+// stopAutoResume records that marotte no longer resumes the paused run on its own, until a resume or pause it did
+// not write moves the run (endAutoResumeStop). The record lands after KAS's pause frame, so it is announced, also
+// on a failed write: the store keeps the stamp in memory, where the run read finds it.
+func (rs *Runs) stopAutoResume(ctx context.Context, workflowID string) error {
+	err := rs.leaseStore().SetAutoResumeStoppedAt(ctx, workflowID, time.Now())
+	rs.announcePaused(ctx, workflowID)
+	return err
+}
+
+// endAutoResumeStop drops a run's stop and the spent heal budget behind it, reporting whether it had one: the run
+// moved by someone else's hand, so its next involuntary pause is resumed again.
+func (rs *Runs) endAutoResumeStop(ctx context.Context, workflowID string) bool {
+	if !rs.autoResumeStopped(workflowID) {
+		return false
+	}
+	rs.clearHeals(workflowID)
+	if err := rs.leaseStore().SetAutoResumeStoppedAt(ctx, workflowID, time.Time{}); err != nil {
+		slog.Warn("a run marotte stopped resuming was moved, but the cleared stop was not recorded on disk",
+			"workflow_id", workflowID, "error", err)
+	}
+	return true
+}
+
+// announcePaused sends the paused run's chat a run-level `paused` frame, on which the run view reads the run again:
+// a change to marotte's own record of the run comes with no frame from KAS.
+func (rs *Runs) announcePaused(ctx context.Context, workflowID string) {
+	l, held := rs.lease(workflowID)
+	if !held {
+		return
+	}
+	rs.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunProgress, marotte.ChatID(l.ChatID),
+		marotte.RunProgressPayload{WorkflowID: workflowID, Kind: marotte.RunProgressPaused}))
+}
+
+// endAutoResumeStopAfter is endAutoResumeStop once a person's write succeeded, returning its error.
+func (rs *Runs) endAutoResumeStopAfter(ctx context.Context, workflowID string, err error) error {
+	if err == nil {
+		rs.endAutoResumeStop(ctx, workflowID)
+	}
+	return err
+}
+
 // rewindCancelWait bounds a rewind's wait for a cancelled run's lease; KAS stops at the next node
 // boundary, so it covers a tool call finishing. A var for tests.
 var rewindCancelWait = 20 * time.Second

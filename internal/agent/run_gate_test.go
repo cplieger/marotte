@@ -521,8 +521,8 @@ func watchChain(t *testing.T, br *fakeBridge, ids ...string) *chainRuns {
 	return c
 }
 
-// A run whose heal budget is spent stays paused for the user however its chat comes back: a sibling run's reopen
-// sweeps the chain and resumes only the sibling. The user's own resume needs no budget.
+// A run whose heal budget is spent stays paused however its chat comes back: a sibling run's reopen sweeps the chain
+// and resumes only the sibling. The user's own resume needs no budget.
 func TestHealBudget_ASpentRunIsNotResumedByItsChatsSweep(t *testing.T) {
 	h, br := agentRunOnChat(t, "wf_spent")
 	t.Cleanup(func() { shutdownHub(t, h) })

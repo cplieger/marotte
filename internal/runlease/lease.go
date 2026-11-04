@@ -47,6 +47,9 @@ type Lease struct {
 	SlotAt time.Time `json:"slot_at,omitzero"`
 	// FirstAbsentAt starts the continuous-absence clock. A listed run clears it.
 	FirstAbsentAt time.Time `json:"first_absent_at,omitzero"`
+	// AutoResumeStoppedAt is when marotte stopped resuming the run on its own after repeated involuntary pauses;
+	// zero while it still does. Recorded here, not as a KAS pause, because KAS attributes every pause to the user.
+	AutoResumeStoppedAt time.Time `json:"auto_resume_stopped_at,omitzero"`
 	// WorkflowID is KAS's id for the run, and the lease's key.
 	WorkflowID string `json:"workflow_id"`
 	// ChatID is the chat whose agent launched the run. Empty means "no chat to

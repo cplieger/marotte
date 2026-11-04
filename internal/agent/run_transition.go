@@ -72,7 +72,7 @@ const (
 	seenPausing
 	// seenGatePaused is the gate's own landed pause.
 	seenGatePaused
-	// seenPersonPaused is a person's pause, pending or landed, marotte's park for the user included.
+	// seenPersonPaused is a person's pause, pending or landed.
 	seenPersonPaused
 	// seenRestartPaused is paused because the run's owning process died.
 	seenRestartPaused
@@ -81,6 +81,9 @@ const (
 	seenAskPaused
 	// seenInvoluntary is paused for another cause marotte resumes unasked (resumablePause).
 	seenInvoluntary
+	// seenAutoStopped is a pause an automatic resume would take (healResume's row) on a run marotte stopped resuming
+	// on its own (Runs.stopAutoResume).
+	seenAutoStopped
 	// seenOtherPause is any other pause, such as a repeat at its cap.
 	seenOtherPause
 	// seenEnded is any other status.
@@ -118,25 +121,29 @@ const (
 var runTransitions = map[runWant]map[runSeen]runAction{
 	personPause: {
 		seenRunning: actPause, seenPausing: actPause, seenGatePaused: actPause,
-		seenRestartPaused: actPause, seenInvoluntary: actPause,
+		seenRestartPaused: actPause, seenInvoluntary: actPause, seenAutoStopped: actPause,
 	},
 	personResume: {
 		seenGatePaused: actResume, seenPersonPaused: actResume, seenRestartPaused: actResume,
-		seenInvoluntary: actResume, seenOtherPause: actResume,
+		seenInvoluntary: actResume, seenAutoStopped: actResume, seenOtherPause: actResume,
 	},
 	personFinish: {
 		seenGatePaused: actFinish, seenPersonPaused: actFinish, seenRestartPaused: actFinish,
-		seenAskPaused: actFinish, seenInvoluntary: actFinish, seenOtherPause: actFinish,
+		seenAskPaused: actFinish, seenInvoluntary: actFinish, seenAutoStopped: actFinish, seenOtherPause: actFinish,
 	},
 	personEnd: {
 		seenRunning: actEndStep, seenPausing: actEndStep, seenGatePaused: actEndStep, seenPersonPaused: actEndStep,
-		seenRestartPaused: actEndStep, seenAskPaused: actEndStep, seenInvoluntary: actEndStep, seenOtherPause: actEndStep,
+		seenRestartPaused: actEndStep, seenAskPaused: actEndStep, seenInvoluntary: actEndStep, seenAutoStopped: actEndStep,
+		seenOtherPause: actEndStep,
 	},
 	gatePause:    {seenRunning: actHoldPause},
 	gateFind:     {seenGatePaused: actKeepHold},
 	healResume:   {seenGatePaused: actHeal, seenRestartPaused: actHeal, seenInvoluntary: actHeal},
 	orphanCancel: {seenRestartPaused: actCancelOrphan},
-	pauseExpiry:  {seenRestartPaused: actEndUnattended, seenInvoluntary: actEndUnattended, seenOtherPause: actEndUnattended},
+	pauseExpiry: {
+		seenRestartPaused: actEndUnattended, seenInvoluntary: actEndUnattended, seenAutoStopped: actEndUnattended,
+		seenOtherPause: actEndUnattended,
+	},
 }
 
 // The refusals a person's request gets when the table changes nothing.
@@ -228,9 +235,16 @@ func (rs *Runs) carryOut(ctx context.Context, workflowID string, req *runRequest
 	case actPause:
 		params := map[string]any{keyWorkflowID: workflowID}
 		req.caller.stop().apply(params)
-		return rs.writePause(ctx, workflowID, params)
+		if err := rs.writePause(ctx, workflowID, params); err != nil {
+			return err
+		}
+		if rs.endAutoResumeStop(ctx, workflowID) {
+			// The run stays paused, and KAS's frame for this pause can reach the run view before the clear.
+			rs.announcePaused(ctx, workflowID)
+		}
+		return nil
 	case actResume:
-		return rs.resumeAsked(ctx, workflowID, req.resumeParams())
+		return rs.endAutoResumeStopAfter(ctx, workflowID, rs.resumeAsked(ctx, workflowID, req.resumeParams()))
 	case actHoldPause:
 		return rs.holdPause(ctx, workflowID)
 	case actHeal:
@@ -306,6 +320,9 @@ func (rs *Runs) readPauseState(ctx context.Context, workflowID string) pauseRead
 	}
 	tree, dErr := workflow.DecodeInspect(workflowID, raw)
 	r := pauseRead{tree: tree, res: res, seen: res.seen(asksOf(tree))}
+	if _, heals := runTransitions[healResume][r.seen]; heals && rs.autoResumeStopped(workflowID) {
+		r.seen = seenAutoStopped
+	}
 	if r.seen == seenUnreadable {
 		r.err = dErr
 	}
@@ -392,6 +409,8 @@ func (rs *Runs) holdPause(ctx context.Context, workflowID string) error {
 	if open {
 		return errGateOpened
 	}
+	// "user" though no person asked: KAS's pause takes no other initiator (kirodotdev/Kiro#12274), so the reason
+	// names marotte.
 	params := map[string]any{keyWorkflowID: workflowID, "initiator": initiatorUser, "reason": holdReasonFor(m.to)}
 	if err := rs.writePause(ctx, workflowID, params); err != nil {
 		return err
@@ -402,8 +421,8 @@ func (rs *Runs) holdPause(ctx context.Context, workflowID string) error {
 }
 
 // heal resumes a run under the gate's admission and the run's heal budget, holding it while the gate is closed and,
-// once the budget is spent, parking it for the user or ending a scheduled run, which has none. It reports whether a
-// heal stands after it.
+// once the budget is spent, stopping its automatic resumes or ending a scheduled run, which has nobody to resume it.
+// It reports whether a heal stands after it.
 func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest, r *pauseRead) (resumeOutcome, bool) {
 	charged := req.charged
 	a, aErr := rs.admitRunWork(holdClosed, workflowID, req.chatID)
@@ -423,6 +442,10 @@ func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest, r 
 		rs.refundHeal(workflowID)
 		claimed = false
 	}
+	if claimed {
+		// A claim another verb held past its TTL is that verb's write, not a failed one of marotte's.
+		rs.noteHealWrite(workflowID, wErr != nil && !errors.Is(wErr, workflow.ErrJustClaimed))
+	}
 	charged = charged || claimed
 	if wErr != nil {
 		return resumeFailed, charged
@@ -430,8 +453,13 @@ func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest, r 
 	return resumeWritten, charged
 }
 
+// healWritesSpentLog is healSpent's ERROR when marotte's own failed resume writes spent the budget.
+const healWritesSpentLog = "marotte's resumes of a paused run failed until its heal budget was spent; " +
+	"it stopped resuming it, so it waits for a resume by hand"
+
 // healSpent is heal past the run's budget: a scheduled run is ended, since nobody would resume it, and any other is
-// parked for the user.
+// left paused under marotte's own record that it stopped resuming it, with no pause written: KAS would attribute one
+// to the user. A run left paused stays so, since KAS resumes a paused run only when asked.
 func (rs *Runs) healSpent(
 	ctx context.Context, workflowID string, req *runRequest, attempts int, r *pauseRead,
 ) resumeOutcome {
@@ -441,22 +469,19 @@ func (rs *Runs) healSpent(
 		}
 		return resumeSkipped
 	}
-	slog.Warn("a run keeps pausing for a cause nobody chose; leaving it paused for a resume by hand",
-		"workflow_id", workflowID, "chat_id", req.chatID, "attempts", attempts)
-	if err := rs.parkForUser(ctx, workflowID); err != nil {
-		slog.Warn("a run marotte no longer resumes still reads as resuming automatically",
+	if rs.healWritesFailed(workflowID) {
+		slog.Error(healWritesSpentLog, "workflow_id", workflowID, "chat_id", req.chatID, "attempts", attempts)
+	} else {
+		slog.Warn("a run keeps pausing for a cause nobody chose; marotte stopped resuming it, so it waits for a resume by hand",
+			"workflow_id", workflowID, "chat_id", req.chatID, "attempts", attempts)
+	}
+	if err := rs.stopAutoResume(ctx, workflowID); err != nil {
+		// On a failed write the store keeps the stamp in memory, so only a restart loses it. With no lease, the spent
+		// budget alone stops this process's resumes.
+		slog.Warn("a run marotte stopped resuming could not be recorded as such",
 			"workflow_id", workflowID, "chat_id", req.chatID, "error", err)
-		return resumeFailed
 	}
 	return resumeSkipped
-}
-
-// parkForUser stamps a paused run marotte no longer resumes as the user's to resume: KAS keeps a pause asked of a
-// paused run that is not executing as its stopReason and starts nothing, so the run reads manualResumeReason instead
-// of a promise of an automatic resume, and reads as a person's pause from then on.
-func (rs *Runs) parkForUser(ctx context.Context, workflowID string) error {
-	return rs.writePause(ctx, workflowID,
-		map[string]any{keyWorkflowID: workflowID, "initiator": initiatorUser, "reason": manualResumeReason})
 }
 
 // writeHealResume writes the resume a admitted and settles a, reporting whether it may have reached KAS and its

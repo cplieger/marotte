@@ -230,6 +230,22 @@ describe("the reply's read position travels beside the state", () => {
   });
 });
 
+describe("the reply's auto_resume_stopped_at travels beside the state", () => {
+  it.each([
+    ["a timestamp", "2026-11-04T09:00:00Z", "2026-11-04T09:00:00Z"],
+    ["an empty string", "", undefined],
+    ["a number", 4, undefined],
+    ["nothing", undefined, undefined],
+  ])("reads %s as %s", async (_label, raw, want) => {
+    responses = [{ workflowId: "ars", status: "paused" }];
+    replyExtra = raw === undefined ? {} : { auto_resume_stopped_at: raw };
+    store.invalidateRun("ars");
+    await settle();
+    expect(store.peekRunState("ars")?.autoResumeStoppedAt).toBe(want);
+    store.forgetRun("ars");
+  });
+});
+
 // KAS restamps a node's `startedAt` each time it re-enters it, so after a pause and a resume its own
 // stamp would restart every clock on the run at zero. The run log's attempt start does not move.
 describe("a node's start is its attempt's, from the run log", () => {
