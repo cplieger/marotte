@@ -2445,7 +2445,7 @@ const dims = (b: Box): readonly [number, number] => [
 ];
 
 describe("every interactive element on the coarse tier", () => {
-  // The walk's inventory, which audit.md's table is generated from.
+  // Every walked target and its size, written out so a layout change can be read as a diff.
   const records: WalkRecord[] = [];
 
   afterAll(async () => {
