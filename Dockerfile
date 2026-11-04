@@ -67,14 +67,14 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
 
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/keyenc
-ARG CPLIEGER_KEYENC_VERSION=1.2.0-dev.1
+ARG CPLIEGER_KEYENC_VERSION=1.1.0
 RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/keyenc/-/keyenc-${CPLIEGER_KEYENC_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/keyenc --strip-components=1
 
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/sse
-ARG CPLIEGER_SSE_VERSION=1.3.0-dev.4
+ARG CPLIEGER_SSE_VERSION=1.2.1
 RUN mkdir -p static-src/node_modules/@cplieger/sse && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/sse/-/sse-${CPLIEGER_SSE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/sse --strip-components=1
