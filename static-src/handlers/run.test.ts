@@ -12,7 +12,6 @@ vi.mock("../run-store.js", () => ({
   // The affordance refetch a run's ENDING triggers: the verb set changes at exactly
   // that moment (a live run's Pause/Cancel becomes a failed run's Retry) and nothing
   // else in the frame stream says so.
-  invalidateRunControls: vi.fn(),
   invalidateCachedRuns: vi.fn(),
   noteRunChat: vi.fn(),
   noteRunLabel: vi.fn(),
@@ -58,7 +57,6 @@ import {
   applyRunDelta,
   applyRunProgress,
   invalidateRun,
-  invalidateRunControls,
   runStepEnds,
   noteRunChat,
   noteRunLabel,
@@ -80,7 +78,6 @@ import { closeRunAsksExcept, notifyOffScreen } from "../notify.js";
 import type { RunAsk } from "../wire/types.gen.js";
 
 const invalidate = vi.mocked(invalidateRun);
-const invalidateControls = vi.mocked(invalidateRunControls);
 const applyProgress = vi.mocked(applyRunProgress);
 const noteChat = vi.mocked(noteRunChat);
 const noteLabel = vi.mocked(noteRunLabel);
@@ -117,7 +114,6 @@ onBus(BUS_RUNS_CHANGED, () => {
 
 beforeEach(() => {
   invalidate.mockClear();
-  invalidateControls.mockClear();
   noteChat.mockClear();
   noteLive.mockClear();
   noteSettled.mockClear();
@@ -181,15 +177,13 @@ describe("run SSE handlers", () => {
   });
 
   // A resume's run_start moves the verb set as much as an ending does, and both reach it through
-  // the state re-read (`run-store.ts` refetches the verbs behind it), so no frame asks for the
-  // affordance itself.
-  it("re-reads the state on a start and an end, and leaves the affordance to that read", () => {
+  // the state re-read, which carries the verbs.
+  it("re-reads the state on a start and an end", () => {
     send("run_progress", { workflow_id: "wf_1", kind: "node_start", node_path: ["seq", "coder"] });
     send("run_started", { workflow_id: "wf_1", name: "x" });
     send("run_finished", { workflow_id: "wf_1", status: "failed", name: "x" });
 
     expect(invalidate).toHaveBeenLastCalledWith("wf_1");
-    expect(invalidateControls).not.toHaveBeenCalled();
   });
 
   // A notice for the run can arrive before its inspect read settles, so the label

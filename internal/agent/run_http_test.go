@@ -504,8 +504,7 @@ func TestHandleControls(t *testing.T) {
 		}
 	})
 
-	// Retry is offered with the parent chat, for the step-transcript note too.
-	t.Run("an aborted chat-parented run offers retry and names its parent chat", func(t *testing.T) {
+	t.Run("an aborted chat-parented run offers retry", func(t *testing.T) {
 		h, _ := seedChatParentedRun(t, true)
 		rec := httptest.NewRecorder()
 		h.runRoutes.handleControls(rec, controlsReq("wf_1"))
@@ -518,10 +517,6 @@ func TestHandleControls(t *testing.T) {
 		}
 		if !slices.Contains(got.Verbs, "retry") {
 			t.Errorf("verbs = %v, want retry offered", got.Verbs)
-		}
-		if got.ParentChatID != "c1" {
-			t.Errorf("parent_chat_id = %q, want c1; the run page reads it to say where a step's "+
-				"live transcript went", got.ParentChatID)
 		}
 	})
 

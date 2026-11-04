@@ -522,11 +522,10 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 	held := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: held}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-	// The real gate, which carries the recipe off KAS's run list.
-	aff := h.runs.affordance(t.Context(), id, "aborted")
-	if aff.origin.recipe != "nightly" {
-		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.origin.recipe)
+	if o := h.runs.originOf(t.Context(), id); o.recipe != "nightly" {
+		t.Fatalf("Setup: the run list resolves recipe %q, want nightly", o.recipe)
 	}
+	aff := h.runs.affordance(id, &runHead{Status: "aborted"})
 
 	done := make(chan error, 1)
 	go func() {
@@ -585,11 +584,10 @@ func TestRetry_ALoadedHostRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	if h.bridge.mgr.get(runChatID(id)) != nil {
 		t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
 	}
-	// The gate's answer carries the name to the lease.
-	aff := h.runs.affordance(t.Context(), id, "aborted")
-	if aff.origin.recipe != "nightly" {
-		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.origin.recipe)
+	if o := h.runs.originOf(t.Context(), id); o.recipe != "nightly" {
+		t.Fatalf("Setup: the run list resolves recipe %q, want nightly", o.recipe)
 	}
+	aff := h.runs.affordance(id, &runHead{Status: "aborted"})
 
 	if _, err := h.runs.retry(t.Context(), id, aff); err != nil {
 		t.Fatalf("Retry: %v", err)
@@ -622,7 +620,7 @@ func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) 
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
 
-	_, err := h.runs.retry(t.Context(), id, h.runs.affordance(t.Context(), id, "aborted"))
+	_, err := h.runs.retry(t.Context(), id, h.runs.affordance(id, &runHead{Status: "aborted"}))
 	if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
 		t.Fatalf("Setup: the retry never reached KAS (err %v); calls were %v", err, br.callLog())
 	}

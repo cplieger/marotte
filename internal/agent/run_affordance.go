@@ -1,10 +1,12 @@
 package agent
 
-// What may be done to one run: one server-side table over KAS's status and the run's pause. Retry is offered on
+// What may be done to one run: one server-side table over KAS's status and the run's pause, decided from one
+// inspect read so the verbs and the state a client shows come from the same answer. Retry is offered on
 // agent-parented runs too: kiro-cli's restore pass skips an aborted run, so nothing else recovers it.
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -71,8 +73,6 @@ var runStatusVerbs = map[marotte.RunStatus][]string{
 type runAffordance struct {
 	// Refused maps an unoffered verb to one sentence, only where its absence needs explaining.
 	Refused map[string]string
-	// origin is the gate's read of the run's origin, which Retry reuses: two reads can disagree.
-	origin runOrigin
 	// PauseNodeID is the repeat a maxIterations pause stopped at, "" otherwise; the
 	// extend and finish_loop verbs address it.
 	PauseNodeID string
@@ -143,18 +143,64 @@ func (f *runFacts) refusal(verb string) string {
 
 const pausePendingRefusal = "A pause is already requested; the run stops at the end of its current step."
 
-// affordance resolves the facts and answers what may be done. status is passed in so one decision
-// rests on one `inspect` read; it costs one `workflow/list` (originOf).
-func (rs *Runs) affordance(ctx context.Context, workflowID, status string) *runAffordance {
-	o := rs.originOf(ctx, workflowID)
-	f := runFacts{
-		status: status, pauseKind: o.pauseKind, pauseNodeID: o.pauseNodeID, pausePending: o.pausePending,
+// runHead is the part of an inspect state the verbs are decided from. KAS's `workflow/list` row derives
+// its pausePending, pauseKind and pauseNodeId from these same fields, and costs a read of every run.
+type runHead struct {
+	Status       string
+	PauseKind    string
+	PauseNodeID  string
+	PausePending bool
+}
+
+// headOf decodes the state's head from a raw inspect reply. Only the status can fail it: a pause field of
+// another shape leaves its fact unset, so a kiro-cli drift there still offers the status's verbs (Cancel).
+func headOf(raw json.RawMessage) (runHead, error) {
+	var res struct {
+		State struct {
+			Status       string          `json:"status"`
+			PausePending json.RawMessage `json:"pausePending"`
+			Pause        json.RawMessage `json:"pause"`
+		} `json:"state"`
 	}
-	f.asks = rs.cellAsks(workflowID)
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return runHead{}, err
+	}
+	st := &res.State
+	head := runHead{Status: st.Status}
+	switch string(st.PausePending) {
+	case "", "null", "false":
+	default:
+		head.PausePending = true
+	}
+	var pause struct {
+		Kind   string `json:"kind"`
+		NodeID string `json:"nodeId"`
+	}
+	if len(st.Pause) > 0 && json.Unmarshal(st.Pause, &pause) == nil {
+		head.PauseKind, head.PauseNodeID = pause.Kind, pause.NodeID
+	}
+	return head, nil
+}
+
+// affordance answers what may be done from one inspect read's head and the run's ask cell as its newest
+// run read left it (handleRun refreshes it through openRun just before).
+func (rs *Runs) affordance(workflowID string, head *runHead) *runAffordance {
+	f := runFacts{
+		status: head.Status, pausePending: head.PausePending, asks: rs.cellAsks(workflowID),
+		pauseKind: head.PauseKind, pauseNodeID: head.PauseNodeID,
+	}
 	aff := affordanceOf(&f)
-	aff.origin = o
-	aff.status = marotte.RunStatus(status)
+	aff.status = marotte.RunStatus(head.Status)
 	return &aff
+}
+
+// controls is the affordance as the wire answers it, on the run read and on GET /api/runs/{id}/controls.
+// Verbs is never null, so an unknown status reads as nothing offered.
+func (rs *Runs) controls(workflowID string, head *runHead) marotte.RunControlsResponse {
+	aff := rs.affordance(workflowID, head)
+	return marotte.RunControlsResponse{
+		Verbs: append([]string{}, aff.Verbs...), Refused: aff.Refused, PauseNodeID: aff.PauseNodeID,
+	}
 }
 
 // cellAsks is the ask state of the run's ask cell: asksNone with no cell or before its first read, and

@@ -20,8 +20,8 @@ github.com/cplieger/keylock v1.1.0-dev.1 h1:nDqacXo9OzmmZbn7V080ZTVkEtfnPAUa8LD9
 github.com/cplieger/keylock v1.1.0-dev.1/go.mod h1:e39neSBvUIELQRFr/DXlPZvDyZNqMvkvGL5QufU6Dxk=
 github.com/cplieger/pathinside/v2 v2.1.0 h1:yBnm859aLMKALi8bTIaYBy7t1osIqCSMIJo8PFqQohM=
 github.com/cplieger/pathinside/v2 v2.1.0/go.mod h1:sMHw6mQSFsGWsirWPQyQZ1+kqrAsXf9VcMUTUJsqm0w=
-github.com/cplieger/pinstall/v3 v3.2.0-dev.1 h1:AhA8SZ8mq8J+VBHUexg3FbdH3LfgYPXy6FbSsN4toAU=
-github.com/cplieger/pinstall/v3 v3.2.0-dev.1/go.mod h1:5sZy0OMEgmG7fmWaM2m+9WJSkZ1o15w61Wrp71+4sZ8=
+github.com/cplieger/pinstall/v3 v3.2.0-dev.2 h1:zFCFR02XIUgQWKsXsVCgsRlx4YsHzewkuL2bjEMhuPc=
+github.com/cplieger/pinstall/v3 v3.2.0-dev.2/go.mod h1:5sZy0OMEgmG7fmWaM2m+9WJSkZ1o15w61Wrp71+4sZ8=
 github.com/cplieger/runesafe/v3 v3.2.0 h1:YoMExOkKrhIqks3FEGU0S26ZohRyHJpGbOjmEO6FpSA=
 github.com/cplieger/runesafe/v3 v3.2.0/go.mod h1:5XDABx7qgrlEAYnvKiXdak6rRQ5Zac6MyuQcksZUdEc=
 github.com/cplieger/scheduler/v4 v4.3.0 h1:rqMnpHHLQA/hxcQ6dV2X11vxdgPu7Pc2gIBNAeJ20j4=

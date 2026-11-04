@@ -64,7 +64,6 @@ import {
   pointerDragActivation,
   setReorderCallback,
   setReprojectCallback,
-  setTapCallback,
 } from "./tabs-drag.js";
 import { announce } from "@cplieger/ui-primitives/announce";
 import type { ViewportBox } from "./viewport-frame.js";
@@ -1103,9 +1102,6 @@ function publishReorder(order: readonly string[]): readonly string[] | null {
 
 setReorderCallback(publishReorder);
 setReprojectCallback(renderDOM);
-// A lifted hold's release goes to the list, which holds the pointer capture, so it
-// never reaches the row's own activation listener.
-setTapCallback(activateTab);
 
 /** Where the menu's Move up / Move down would take a tab: its group swapped with the
  *  adjacent group in the SAME pin partition. Null for a sub-tab (its position is its
@@ -1852,7 +1848,9 @@ function createTabEl(row: TabRow): HTMLElement {
   // A SPAN, not a button: `role="tab"` is Children Presentational in WAI-ARIA, so a button here is an
   // unnamed dead tab stop (axe `nested-interactive`). Keyboard close is the APG's Delete on the row.
   const close = el("span", { className: "tab-close", "aria-hidden": "true" }, iconEl(ICON_CLOSE));
-  close.addEventListener("pointerup", (e) => {
+  // On `click`, never `pointerup`: a tap's click is hit-tested after the release, so closing on the
+  // release handed the click to the row that slid under the finger.
+  close.addEventListener("click", (e) => {
     e.stopPropagation();
     // The row's own tap guard, read here for the same reason: a drag that happened
     // to start on the × is a scroll, and the × is the strip's one destructive
@@ -2078,8 +2076,8 @@ function beginTabRename(node: HTMLElement, id: string): void {
 
 // --- Tap vs drag ---
 //
-// `#tab-list` scrolls, and activation is a `pointerup`; a drag along an axis with nothing to scroll
-// starts no pan and so no cancel, and the release lands on the row. So the verdict is travelled
+// `#tab-list` scrolls, and activation is a `click`; a drag along an axis with nothing to scroll
+// starts no pan and so no cancel, and the click lands on the row. So the verdict is travelled
 // DISTANCE. ONE module-scope gesture (`isPrimary`), read by both activation and the ×; no
 // `pointercancel` reset, the next `pointerdown` clears it. The origin is RE-BASELINED when the
 // visual viewport moves (`viewport-frame.ts`): declaring a drag would refuse a real click.
@@ -2136,8 +2134,11 @@ function attachTapGuard(node: HTMLElement): void {
 function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean): void {
   attachTapGuard(node);
 
-  // Click to activate (any target outside .tab-close).
-  node.addEventListener("pointerup", (e) => {
+  // Click to activate (any target outside .tab-close). On `click`, never `pointerup`: activating
+  // closes the phone drawer, and a tap's click is hit-tested after the release, at the same point,
+  // so it would land on whatever the drawer uncovered. A lifted hold released in place still
+  // clicks its row.
+  node.addEventListener("click", (e) => {
     if (isDragHandled()) {
       return;
     }
@@ -2147,9 +2148,6 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
       return;
     }
     if ((e.target as HTMLElement).closest(".tab-close") !== null) {
-      return;
-    }
-    if (!e.isPrimary) {
       return;
     }
     activateTab(id);

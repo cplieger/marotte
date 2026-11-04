@@ -128,7 +128,6 @@ onSSE("run_finished", (chatID, p) => {
   }
   // Deliberately NOT opened: a run that finished before anyone looked has
   // nothing live to watch. History is the door to a finished run.
-  // The verbs are re-read behind this (`run-store.ts` `invalidateRunControls`).
   invalidateRun(p.workflow_id);
   emitBus(BUS_RUNS_CHANGED);
   announcedStarts.delete(p.workflow_id);

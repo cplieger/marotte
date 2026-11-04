@@ -46,7 +46,6 @@ import {
 } from "./run-step-transcript.js";
 import {
   invalidateRun,
-  invalidateRunControls,
   noteRunChat,
   runState,
   runChatID,
@@ -127,8 +126,6 @@ export function showRun(workflowID: string): void {
 /** Refetch this run's state and its controls. A run tab's `refresh`. */
 export function refreshRun(workflowID: string): void {
   invalidateRun(workflowID);
-  // The affordance. `invalidateRunControls` owns the trigger list.
-  invalidateRunControls(workflowID);
   // NO chat refresh: a step's entries are the RUN's, so a chat's window cannot move this pane. The
   // step transcript's refresh is the step GET, armed by `armStepRead`.
 }

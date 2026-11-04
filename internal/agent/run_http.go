@@ -69,12 +69,17 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		pending = read.in.Pending
 	}
 	plan := rr.runs.servedPlan(id, pending)
-	out, err := withRunExtras(raw, &runExtras{
+	extras := &runExtras{
 		asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan, readPosition: position,
 		displayName: rr.runs.runName(id),
-	})
+	}
+	if head, hErr := headOf(raw); hErr == nil && head.Status != "" {
+		c := rr.runs.controls(id, &head)
+		extras.controls = &c
+	}
+	out, err := withRunExtras(raw, extras)
 	if err != nil {
-		slog.Warn("workflow inspect: the reply could not carry the run's open asks, step ends, step starts and plan update",
+		slog.Warn("workflow inspect: the reply could not carry the run's open asks, step ends, step starts, plan update and controls",
 			"workflow_id", logsafe.Field(id), "error", err)
 		httpreply.WriteRawJSON(w, raw)
 		return
@@ -152,6 +157,7 @@ type runExtras struct {
 	ends          map[string]marotte.RunStepEnd
 	starts        map[string]marotte.RunStepStart
 	plan          *marotte.RunPlanUpdate
+	controls      *marotte.RunControlsResponse
 	displayName   string
 	asks          []marotte.RunAsk
 	readPosition  uint64
@@ -209,13 +215,14 @@ func (rs *Runs) RunReadBound(ctx context.Context, workflowID string) (uint64, er
 // keys survive and nested values stay byte-identical: `open_asks`, `step_ends` and `step_starts`, never
 // null because an agent could not tell "none" from "unsupported", `asks_reachable`, false when
 // `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), `display_name`
-// (Runs.runName, "" when nothing names the run), and `plan_update` when servedPlan answers one.
+// (Runs.runName, "" when nothing names the run), `plan_update` when servedPlan answers one, and `controls`
+// (Runs.controls) when the reply's state carries a status.
 func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, err
 	}
-	asks, ends, starts, plan := x.asks, x.ends, x.starts, x.plan
+	asks, ends, starts := x.asks, x.ends, x.starts
 	if asks == nil {
 		asks = []marotte.RunAsk{}
 	}
@@ -252,12 +259,25 @@ func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
 	if obj["display_name"], err = json.Marshal(x.displayName); err != nil {
 		return nil, err
 	}
-	if plan != nil {
-		if obj["plan_update"], err = json.Marshal(plan); err != nil {
-			return nil, err
-		}
+	if err := withOptionalExtras(obj, x); err != nil {
+		return nil, err
 	}
 	return json.Marshal(obj)
+}
+
+// withOptionalExtras sets withRunExtras's keys that only a present value writes.
+func withOptionalExtras(obj map[string]json.RawMessage, x *runExtras) (err error) {
+	if x.plan != nil {
+		if obj["plan_update"], err = json.Marshal(x.plan); err != nil {
+			return err
+		}
+	}
+	if x.controls != nil {
+		if obj["controls"], err = json.Marshal(x.controls); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // handleStepTranscript serves GET /api/runs/{id}/steps/{path}: one step's transcript, {path} one
@@ -398,25 +418,18 @@ func (rs *Runs) liveRunRowsStamped() ([]marotte.LiveRun, *marotte.SubjectStamp) 
 	return out, marotte.NewSubjectStamp(string(subject.KindRuns), "", version)
 }
 
-// status reads one run's current status, "" for an unknown run (the caller's 404): control decisions use the status as of now.
-func (rr *runRoutes) status(ctx context.Context, workflowID string) (string, error) {
+// head reads one run's current state head, a zero head (status "") for an unknown run (the caller's 404): control
+// decisions use the state as of now.
+func (rr *runRoutes) head(ctx context.Context, workflowID string) (runHead, error) {
 	raw, err := rr.runs.rawInspect(ctx, workflowID)
 	if err != nil {
 		// Both mean no status to gate on.
 		if errors.Is(err, workflow.ErrUnknownMethod) || workflowNotFound(err) {
-			return "", nil
+			return runHead{}, nil
 		}
-		return "", err
+		return runHead{}, err
 	}
-	var res struct {
-		State struct {
-			Status string `json:"status"`
-		} `json:"state"`
-	}
-	if uErr := json.Unmarshal(raw, &res); uErr != nil {
-		return "", uErr
-	}
-	return res.State.Status, nil
+	return headOf(raw)
 }
 
 // handleRecipes: GET /api/recipes → the launchable recipe list, bundled + workspace.
@@ -471,7 +484,7 @@ func (rr *runRoutes) handleCancel(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleControls serves GET /api/runs/{id}/controls: what may be done and why not
-// (marotte.RunControlsResponse). Its own route so the passthrough stays verbatim.
+// (marotte.RunControlsResponse), the `controls` the run read carries, for a caller that wants no more.
 func (rr *runRoutes) handleControls(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -482,24 +495,18 @@ func (rr *runRoutes) handleControls(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	status, err := rr.status(r.Context(), id)
+	head, err := rr.head(r.Context(), id)
 	if err != nil {
 		slog.Warn("run controls: status read failed",
 			"workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
 		httpreply.InternalError(w, errors.New("run controls unavailable"))
 		return
 	}
-	if status == "" {
+	if head.Status == "" {
 		httpreply.NotFound(w, "run not found")
 		return
 	}
-	aff := rr.runs.affordance(r.Context(), id, status)
-	webhttp.WriteJSON(w, marotte.RunControlsResponse{
-		Verbs:        aff.Verbs,
-		Refused:      aff.Refused,
-		ParentChatID: string(aff.origin.parent.chat),
-		PauseNodeID:  aff.PauseNodeID,
-	})
+	webhttp.WriteJSON(w, rr.runs.controls(id, &head))
 }
 
 func (rr *runRoutes) handleExtend(w http.ResponseWriter, r *http.Request) {
@@ -587,7 +594,6 @@ func (rr *runRoutes) handleRetry(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// The gate's answer carries the parent chat the verb needs.
 	out, err := rr.runs.retry(r.Context(), id, aff)
 	if err != nil {
 		rr.writeControlErr(w, verbRetry, id, err)
@@ -797,18 +803,19 @@ const verbDelete = "delete"
 func (rr *runRoutes) permits(
 	w http.ResponseWriter, r *http.Request, verb, id string,
 ) (*runAffordance, bool) {
-	status, err := rr.status(r.Context(), id)
+	head, err := rr.head(r.Context(), id)
 	if err != nil {
 		slog.Warn("run control: status read failed",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
 		httpreply.InternalError(w, errors.New(verb+" failed"))
 		return nil, false
 	}
+	status := head.Status
 	if status == "" {
 		httpreply.NotFound(w, "run not found")
 		return nil, false
 	}
-	aff := rr.runs.affordance(r.Context(), id, status)
+	aff := rr.runs.affordance(id, &head)
 	if aff.permits(verb) {
 		return aff, true
 	}
@@ -912,7 +919,8 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 		return
 	}
 	if len(verb.from) > 0 {
-		status, err := rr.status(r.Context(), id)
+		head, err := rr.head(r.Context(), id)
+		status := head.Status
 		if err != nil {
 			slog.Warn("run control: status read failed",
 				"verb", verb.name, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))

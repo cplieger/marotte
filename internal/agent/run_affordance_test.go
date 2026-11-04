@@ -62,7 +62,7 @@ func TestAffordance_ResumeIsOfferedOnAPausedNonResidentRun(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
-	got := h.runs.affordance(t.Context(), "wf_1", string(marotte.RunStatusPaused))
+	got := h.runs.affordance("wf_1", &runHead{Status: string(marotte.RunStatusPaused)})
 	if !got.permits(verbResume) {
 		t.Errorf("affordance verbs = %v, want resume offered", got.Verbs)
 	}
