@@ -49,8 +49,21 @@ func workflowIDOf(chatID marotte.ChatID) string {
 	return strings.TrimPrefix(string(chatID), runChatPrefix)
 }
 
-// launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`.
-const launchTimeout = 120 * time.Second
+// unanswered wraps a launch's err with errEngineSlow when the engine ran out of time or was not ready. Only for an
+// error returned before workflow/new is sent: after it, a run may exist and a retry could double it. ctx is the
+// caller's, so a launch its caller abandoned is not the engine's fault.
+func unanswered(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return err
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, marotte.ErrBridgeExited) {
+		return fmt.Errorf("%w: %w", errEngineSlow, err)
+	}
+	return err
+}
+
+// launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`. A var so a test can shorten it.
+var launchTimeout = 120 * time.Second
 
 // launch starts one parentless attended run of the recipe and returns its workflow id and name.
 func (rs *Runs) launch(
@@ -60,7 +73,8 @@ func (rs *Runs) launch(
 }
 
 // LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window and backstop.
-// The sign-in gate's refusal wraps schedule.ErrNoRunCanStart.
+// The sign-in gate's refusal wraps schedule.ErrNoRunCanStart; an engine that did not answer before the run was
+// created wraps schedule.ErrEngineBusy.
 func (rs *Runs) LaunchScheduled(
 	ctx context.Context, source, scheduleID string, defaults marotte.RunDefaults, slotAt time.Time,
 ) (id, name string, err error) {
@@ -71,8 +85,11 @@ func (rs *Runs) LaunchScheduled(
 	}
 	defer release()
 	id, name, err = rs.launchAs(ctx, source, nil, defaults, scheduledLaunch(scheduleID, slotAt))
-	if errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown) {
+	switch {
+	case errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown):
 		err = fmt.Errorf("%w: %w", schedule.ErrNoRunCanStart, err)
+	case errors.Is(err, errEngineSlow):
+		err = fmt.Errorf("%w: %w", schedule.ErrEngineBusy, err)
 	}
 	return id, name, err
 }
@@ -91,14 +108,14 @@ func (rs *Runs) launchAs(
 
 	recipe, err := rs.launchRecipe(cctx, source, inputs)
 	if err != nil {
-		return "", "", err
+		return "", "", unanswered(ctx, err)
 	}
 	if o.origin == runlease.OriginManual && !isAgentSource(source) {
 		// A manual run yields to its recipe's next slot.
 		o.slotAt = rs.manualSlot(recipe.Source)
 	}
 	if bErr := rs.recipeIdle(cctx, recipe.Name); bErr != nil {
-		return "", "", bErr
+		return "", "", unanswered(ctx, bErr)
 	}
 
 	// The host session's presets are resolved once and recorded on the lease: a reload after a restart applies
@@ -115,7 +132,7 @@ func (rs *Runs) launchAs(
 			relay = newHostRelay(s, func(msg *marotte.RPCResponse) { rs.answerEarly(s, msg) })
 			sb.attach(relay)
 		}); oErr != nil {
-		return "", "", fmt.Errorf("%w: %w", errRunHostStart, oErr)
+		return "", "", unanswered(ctx, fmt.Errorf("%w: %w", errRunHostStart, oErr))
 	}
 	host := sb.current()
 	parent := host.SessionID()
@@ -132,24 +149,34 @@ func (rs *Runs) launchAs(
 		rs.bridges.closeSession(host)
 		return "", "", fmt.Errorf("workflow %s already has a host session", wfID)
 	}
+	// The run exists: a caller that stops waiting now must not leave it half launched, its row naming a run that
+	// nothing tracks, so the rest keeps the launch's budget and drops the caller's cancel.
+	deadline, _ := cctx.Deadline()
+	rctx, rcancel := context.WithDeadline(context.WithoutCancel(cctx), deadline)
+	defer rcancel()
 	sb.setIdle()
 	sb.settled.settle(nil)
 	rs.coord.goForward(runChatID(wfID), host)
 	relay.begin()
 	// The run's envelope, before anything can execute (runlease.Lease).
-	rs.grantLease(cctx, wfID, recipe.Name, o, hostSecurityOf(presets))
-	rs.recordParentSession(cctx, wfID, string(parent))
+	rs.grantLease(rctx, wfID, recipe.Name, o, hostSecurityOf(presets))
+	rs.recordParentSession(rctx, wfID, string(parent))
 	// Visible to Route before invoke is written, so the run's first frame reaches the host's lane.
 	rs.router.registerOwner(wfID, parent)
-	if _, err := rs.write(cctx, a, sb, wfID, methodKiroWorkflowInvoke,
+	if _, err := rs.write(rctx, a, sb, wfID, methodKiroWorkflowInvoke,
 		map[string]any{keyWorkflowID: wfID}, mutationDrive); err != nil {
-		// Created but never started.
-		rs.releaseLease(cctx, wfID)
-		rs.coord.closeBridge(cctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
-		return "", "", fmt.Errorf("workflow invoke: %w", err)
+		// Created but never started; the row grantLease wrote names this run, so it gets the failure. The invoke may
+		// have ended on the launch's deadline, which would refuse these writes too.
+		err = fmt.Errorf("workflow invoke: %w", err)
+		fctx := durable.Context(rctx)
+		rs.recordScheduleOutcome(fctx, schedule.Run{ScheduleID: o.scheduleID, WorkflowID: wfID},
+			schedule.Outcome{Status: schedule.StatusFailed, Reason: rowText(err.Error())})
+		rs.releaseLease(fctx, wfID)
+		rs.coord.closeBridge(fctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
+		return wfID, recipe.Name, err
 	}
 	// After invoke, so a run that never started leaves no timer.
-	rs.armDeadline(cctx, wfID)
+	rs.armDeadline(rctx, wfID)
 	slog.Info("workflow run launched", "workflow_id", wfID, "recipe", recipe.Name)
 	return wfID, recipe.Name, nil
 }
@@ -798,9 +825,9 @@ func (rs *Runs) launchRecipe(ctx context.Context, source string, inputs map[stri
 
 func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Recipe, error) {
 	if source == "" {
-		return marotte.Recipe{}, errors.New("missing recipe source")
+		return marotte.Recipe{}, errMissingRecipeSource
 	}
-	recipes, err := rs.listRecipes(ctx)
+	recipes, err := rs.recipes.live(ctx, rs.lifecycle, rs.fetchRecipes)
 	if err != nil {
 		return marotte.Recipe{}, err
 	}
@@ -809,7 +836,7 @@ func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Reci
 			return r, nil
 		}
 	}
-	return marotte.Recipe{}, fmt.Errorf("unknown recipe source %q", source)
+	return marotte.Recipe{}, fmt.Errorf("%w %q", errUnknownRecipe, source)
 }
 
 // recipeIdle enforces the single-run rule (one live run per recipe, globally) against KAS's run list, the only source that sees runs
@@ -856,10 +883,15 @@ type kasRecipe struct {
 	BuiltIn         bool              `json:"builtIn"`
 }
 
-func (rs *Runs) listRecipes(ctx context.Context) ([]marotte.Recipe, error) {
-	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
-	defer cancel()
-	raw, err := rs.engine.rawCall(cctx, "workflow listRecipes call", methodKiroWorkflowListRecipes,
+// recipeList is the list a person opens: a fresh listing, or the held catalog once that listing outlasts
+// recipeListPatience.
+func (rs *Runs) recipeList(ctx context.Context) ([]marotte.Recipe, error) {
+	return rs.recipes.display(ctx, rs.lifecycle, rs.fetchRecipes, recipeListPatience)
+}
+
+// fetchRecipes walks KAS's whole catalog; KAS admits every recipe file on each call.
+func (rs *Runs) fetchRecipes(ctx context.Context) ([]marotte.Recipe, error) {
+	raw, err := rs.engine.rawCall(ctx, "workflow listRecipes call", methodKiroWorkflowListRecipes,
 		map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}})
 	if err != nil {
 		return nil, err

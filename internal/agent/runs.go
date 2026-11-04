@@ -36,6 +36,8 @@ type Runs struct {
 	notices map[marotte.ChatID][]runNotice
 	// plans holds each run's newest plan revision (run_plan.go), under mu.
 	plans runPlans
+	// recipes shares one listRecipes call among its readers and holds the last answer for GET /api/recipes alone.
+	recipes recipeCatalog
 	// engine is the one agent engine every read and stop is an engine call on; router routes the run's frames.
 	engine *engineOwner
 	router *engineRouter
@@ -105,7 +107,7 @@ func (rs *Runs) useLog(l *runLog) {
 
 // scheduleRun names the schedule row a lease's run reports to; ScheduleID is "" for an unscheduled run.
 func scheduleRun(l *runlease.Lease) schedule.Run {
-	return schedule.Run{ScheduleID: l.ScheduleID, WorkflowID: l.WorkflowID}
+	return schedule.Run{StartedAt: l.StartedAt, ScheduleID: l.ScheduleID, WorkflowID: l.WorkflowID}
 }
 
 // recordScheduleOutcome overwrites run's outcome on its row (schedule.Store.RecordOutcome). No schedule or
