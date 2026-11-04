@@ -346,6 +346,10 @@ func (b *fakeBridge) callScript(
 		return &marotte.RPCResponse{Error: rpcErr}, nil
 	}
 	res := json.RawMessage(`{"stopReason":"end_turn"}`)
+	if method == methodKiroWorkflowList {
+		// KAS lists no runs as an empty array; a reply without one is a partial list (errRunListPartial).
+		res = json.RawMessage(`{"runs":[]}`)
+	}
 	if r, ok := b.callResults[method]; ok {
 		res = r
 	}
@@ -803,6 +807,26 @@ type testChatStore struct {
 	onGet atomic.Pointer[func(id marotte.ChatID)]
 	// Gets counts Get calls, for a test about how often the store is read.
 	Gets atomic.Int64
+	// tornDown names sessions SessionInTeardown reports in teardown besides the store's own, set through tearDown.
+	tornDown   map[string]bool
+	tornDownMu sync.Mutex
+}
+
+// tearDown makes SessionInTeardown report sessionID, as a chat's retention teardown in progress does.
+func (s *testChatStore) tearDown(sessionID string) {
+	s.tornDownMu.Lock()
+	defer s.tornDownMu.Unlock()
+	if s.tornDown == nil {
+		s.tornDown = map[string]bool{}
+	}
+	s.tornDown[sessionID] = true
+}
+
+func (s *testChatStore) SessionInTeardown(sessionID string) bool {
+	s.tornDownMu.Lock()
+	torn := s.tornDown[sessionID]
+	s.tornDownMu.Unlock()
+	return torn || s.Store.SessionInTeardown(sessionID)
 }
 
 func (s *testChatStore) SessionOwners(ctx context.Context) chat.OwnerScan {

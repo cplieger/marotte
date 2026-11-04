@@ -524,7 +524,7 @@ func TestRevert_WindowReadsOnePreadPerRange(t *testing.T) {
 	revertRecord(f, e, d, d, 4)
 
 	want := map[string]struct{}{a: {}, b: {}, e: {}}
-	budget := bytesOfTurns(t, filepath.Join(f.root, entriesFileName), want)
+	budget := bytesOfTurns(t, filepath.Join(f.root, EntriesFileName), want)
 
 	var counted *countingReaderAt
 	restore := readEntries
@@ -680,7 +680,7 @@ func TestRevert_AnIncompleteCarrierIsRevertedAtEitherInterruptionPoint(t *testin
 			}
 
 			// The line whose sync failed never reached the device; the next open reads the durable prefix.
-			if err := os.Truncate(filepath.Join(f.root, entriesFileName), durable); err != nil {
+			if err := os.Truncate(filepath.Join(f.root, EntriesFileName), durable); err != nil {
 				t.Fatalf("drop the unsynced tail: %v", err)
 			}
 			f.reopen()

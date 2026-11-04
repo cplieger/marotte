@@ -15,7 +15,7 @@ Conversations stay in sync across devices, so a chat open on a phone and a deskt
 - Closing a chat tab that still has work running asks first and names what stops: the reply, a question waiting for you, its workflow runs and its queued messages. Closing an idle chat does not ask.
 - **Output style** in **Settings** lists the response styles kiro-cli offers, such as Concise, Explanatory or Learning, each with kiro-cli's description. A new style applies from your next message on.
 
-You can also search inside a chat, export a chat, search across chats, and browse past conversations and workflow runs in **History**. Settings decides how long closed chats are kept.
+You can also search inside a chat, export a chat, search across chats, and browse past conversations and workflow runs in **History**. Settings decides how long closed chats are kept. With **Days kept** above 0, finished workflow runs are deleted that many days after they last ran, even while their chat stays open.
 
 ## Agent control
 

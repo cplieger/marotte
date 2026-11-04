@@ -32,9 +32,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// entriesFileName is the log; headerFileName the record beside it, on chat roots only.
+// EntriesFileName is the log; headerFileName the record beside it, on chat roots only.
 const (
-	entriesFileName = "entries.jsonl"
+	EntriesFileName = "entries.jsonl"
 	headerFileName  = "chat.json"
 )
 
@@ -230,7 +230,7 @@ func OpenEntryLog(ctx context.Context, root string, h LogHeader, opts ...EntryLo
 	return l, nil
 }
 
-func (l *EntryLog) path() string { return filepath.Join(l.root, entriesFileName) }
+func (l *EntryLog) path() string { return filepath.Join(l.root, EntriesFileName) }
 
 // Close releases the write descriptor; the log stays readable and a later append reopens it.
 func (l *EntryLog) Close() error {

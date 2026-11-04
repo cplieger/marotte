@@ -557,7 +557,7 @@ func TestCloseTab_ARunTabCloseWakesRetention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenTab(run) = %v", err)
 	}
-	if _, err := mem.AdmitRunPurge(t.Context(), "wf_1", ""); err == nil {
+	if _, err := mem.AdmitRunPurge(t.Context(), "wf_1", "", false); err == nil {
 		t.Fatal("AdmitRunPurge(wf_1) admitted with its tab open, want a refusal")
 	}
 
@@ -567,7 +567,7 @@ func TestCloseTab_ARunTabCloseWakesRetention(t *testing.T) {
 	if wakes != 1 {
 		t.Errorf("retention was woken %d times by a run-tab close, want 1", wakes)
 	}
-	done, err := mem.AdmitRunPurge(t.Context(), "wf_1", "")
+	done, err := mem.AdmitRunPurge(t.Context(), "wf_1", "", false)
 	if err != nil {
 		t.Fatalf("AdmitRunPurge(wf_1) refused after its tab closed: %v, want it admitted", err)
 	}
@@ -583,7 +583,7 @@ func TestOpenTab_ARunBeingPurgedIsRefusedUntilThePurgeIsDone(t *testing.T) {
 	}
 	mem := newMembership(&membershipDeps{Chats: withKeep(testsupport.NewInMemoryChatStore()), Tabs: st, Bus: &tabBus{}, Runs: &fakeRunOwner{}})
 	spec := marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}
-	done, err := mem.AdmitRunPurge(t.Context(), "wf_1", "")
+	done, err := mem.AdmitRunPurge(t.Context(), "wf_1", "", false)
 	if err != nil {
 		t.Fatalf("AdmitRunPurge(wf_1) refused with no tab open: %v, want it admitted", err)
 	}
@@ -634,10 +634,10 @@ func TestAdmitRunPurge_ARunWhoseSessionAChatClaimsIsSpared(t *testing.T) {
 		t.Fatalf("Setup: CreateChatAndOpen(resume sess_run) = %v", err)
 	}
 
-	if _, err := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_run"); err == nil {
+	if _, err := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_run", false); err == nil {
 		t.Error("AdmitRunPurge(wf_1, sess_run) admitted while a chat claims sess_run, want a refusal")
 	}
-	done, err := mem.AdmitRunPurge(t.Context(), "wf_2", "sess_other")
+	done, err := mem.AdmitRunPurge(t.Context(), "wf_2", "sess_other", false)
 	if err != nil {
 		t.Fatalf("AdmitRunPurge(wf_2, sess_other) refused with no chat claiming it: %v, want it admitted", err)
 	}
@@ -654,7 +654,7 @@ func TestAdmitRunPurge_AnUnverifiableClaimSparesTheRun(t *testing.T) {
 		}),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_run"); err == nil {
+			if _, err := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_run", false); err == nil {
 				t.Error("AdmitRunPurge(wf_1, sess_run) admitted, want a refusal: the claim was not ruled out")
 			}
 		})
@@ -665,7 +665,7 @@ func TestAdmitRunPurge_AnUnverifiableClaimSparesTheRun(t *testing.T) {
 // refused while the delete is in flight and lands once the purge reports done.
 func TestCreateChatAndOpen_BindingAPurgingRunsSessionIsRefusedUntilDone(t *testing.T) {
 	mem := newClaimsMembership(t, nil)
-	done, err := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_run")
+	done, err := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_run", false)
 	if err != nil {
 		t.Fatalf("AdmitRunPurge(wf_1, sess_run) refused with nothing claiming it: %v, want it admitted", err)
 	}
@@ -685,6 +685,28 @@ func TestCreateChatAndOpen_BindingAPurgingRunsSessionIsRefusedUntilDone(t *testi
 	}
 	if got := opened.Chat.ACPSessionID; got != "sess_run" {
 		t.Errorf("the retried resume bound %q, want sess_run", got)
+	}
+}
+
+// An owned purge ages out a living chat's run: the claim no longer spares it, the run tab is still refused during the
+// delete, and the chat's session stays free to fork or resume.
+func TestAdmitRunPurge_AnOwnedRunIsAdmittedWithoutHoldingItsChatsSession(t *testing.T) {
+	mem := newClaimsMembership(t, nil)
+	if _, err := mem.CreateChatAndOpen(t.Context(), resumeCreate("op-resume", "sess_run")); err != nil {
+		t.Fatalf("Setup: CreateChatAndOpen(resume sess_run) = %v", err)
+	}
+
+	done, err := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_run", true)
+	if err != nil {
+		t.Fatalf("AdmitRunPurge(wf_1, sess_run, owned) = %v, want it admitted: a chat's finished run ages out", err)
+	}
+	defer done()
+
+	if _, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}, "op-tab"); !errors.Is(err, errRunPurging) {
+		t.Errorf("OpenTab(wf_1) during its owned purge = %v, want %v", err, errRunPurging)
+	}
+	if _, err := mem.CreateChatAndOpen(t.Context(), resumeCreate("op-again", "sess_run")); err != nil {
+		t.Errorf("CreateChatAndOpen(resume sess_run) during an owned purge = %v, want nil: the session is not held", err)
 	}
 }
 

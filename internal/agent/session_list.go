@@ -239,8 +239,9 @@ func parseKASTime(s string) int64 {
 
 // Runs come from _kiro/workflow/list, not session/list, whose workflow rows are step sessions always reading idle.
 
+// kasWorkflowRuns is a workflow/list reply; a nil Runs is a reply with no runs array, which lists nothing.
 type kasWorkflowRuns struct {
-	Runs []kasWorkflowRun `json:"runs"`
+	Runs *[]kasWorkflowRun `json:"runs"`
 }
 
 type kasWorkflowRun struct {
@@ -271,20 +272,11 @@ func (r *kasWorkflowRun) displayName() string {
 }
 
 func (rs *Runs) list(ctx context.Context, claimed map[string]marotte.ChatID) ([]marotte.WorkflowRun, error) {
-	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
-	defer cancel()
-
-	// workspacePaths is a required array (methodKiroWorkflowList).
-	raw, err := rs.engine.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
-		map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}})
+	runs, err := rs.listRaw(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var list kasWorkflowRuns
-	if uErr := json.Unmarshal(raw, &list); uErr != nil {
-		return nil, uErr
-	}
-	return rs.toWire(claimed, list.Runs), nil
+	return rs.toWire(claimed, runs), nil
 }
 
 // toWire maps the run inventory to wire rows, dropping what does not belong in history.

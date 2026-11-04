@@ -473,22 +473,22 @@ func chatRetention(ctx context.Context, configDir string) time.Duration {
 	return time.Duration(days) * 24 * time.Hour
 }
 
-// runRetention resolves how the purge treats a finished parentless run: purge is
-// false for keep-forever and for a config.json that is present and unreadable, a
-// zero window purges once no tab shows the run, and N days purges N days after
-// its last update. An absent key takes the default, as chatRetention does.
-func runRetention(ctx context.Context, configDir string) (window time.Duration, purge bool) {
+// runRetention resolves how the run purge and the run-log sweep treat finished runs: disabled for
+// keep-forever and for a config.json that is present and unreadable; a zero window purges an
+// unclaimed run once no tab shows it and leaves a chat's runs to the chat; N days ages out every
+// finished run N days after its last update. An absent key takes the default, as chatRetention does.
+func runRetention(ctx context.Context, configDir string) agent.RunRetention {
 	days, ok, err := settings.FieldStrict[int](ctx, configDir, settings.KeyChatRetentionDays)
 	if err != nil {
-		return 0, false
+		return agent.RunRetention{}
 	}
 	if !ok {
 		days = settings.DefaultChatRetentionDays
 	}
 	if days < 0 {
-		return 0, false
+		return agent.RunRetention{}
 	}
-	return time.Duration(days) * 24 * time.Hour, true
+	return agent.RunRetention{Window: time.Duration(days) * 24 * time.Hour, Enabled: true, ChatRuns: days > 0}
 }
 
 // sweepStaleTemps removes orphan temps left by SIGKILL between CreateTemp and Rename, sparing
@@ -889,7 +889,7 @@ func openSpecApprovalStore(dir string) *specapproval.Store {
 
 // heldUnlessDraining wraps the purge's OnPurge so closeChain runs held on the runtime's in-flight wait
 // (hold): the purge scheduler outlives the runtime's Shutdown. Skipped once Shutdown began; the next boot's
-// orphan-session sweep, parentless-run purge and tab prune reap what the chain left.
+// orphan-session sweep, finished-run purge and tab prune reap what the chain left.
 func heldUnlessDraining(hold func() (release func(), ok bool),
 	closeChain func(marotte.ChatID, []string),
 ) func(marotte.ChatID, []string) {

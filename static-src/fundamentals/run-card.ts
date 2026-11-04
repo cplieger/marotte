@@ -46,6 +46,8 @@ const NO_ASKS: RunAsks = { count: 0, asked: [], label: "" };
 interface RunDetail {
   readonly plan?: unknown;
   readonly ends?: StepEnds;
+  /** The store's `runGone`: the server no longer holds the run, so there is nothing to open. */
+  readonly gone?: boolean;
 }
 
 /** A run's status as one word. `paused` reads "waiting": KAS pauses for a watch, a retry budget
@@ -444,6 +446,10 @@ export function buildRunCard(
   }
 
   function renderFoot(state: RunState | undefined): void {
+    if (lastDetail.gone === true) {
+      ledger.textContent = "This run was deleted";
+      return;
+    }
     const c = counters(lastNodes);
     const bits: string[] = [];
     if (c.total > 0) {
@@ -518,7 +524,9 @@ export function buildRunCard(
     if (label !== "") {
       nameEl.textContent = label;
     }
-    root.dataset["status"] = state?.status ?? "starting";
+    const gone = detail.gone === true;
+    root.dataset["status"] = gone ? "deleted" : (state?.status ?? "starting");
+    open.classList.toggle("hidden", gone);
     // Second axis rather than a sixth `data-status` value: the run genuinely
     // IS running while a step's ask blocks it.
     if (asks.count > 0) {
@@ -528,7 +536,7 @@ export function buildRunCard(
     }
     // An ask outranks the run's own word: the run genuinely IS running while a step's
     // ask blocks it, so `data-status` keeps the status and this says what is wanted.
-    const word = asks.count > 0 ? "needs input" : runWord(state?.status);
+    const word = gone ? "deleted" : asks.count > 0 ? "needs input" : runWord(state?.status);
 
     count.paint(exec === undefined ? undefined : progressPhrase(exec));
 
