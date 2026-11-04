@@ -80,7 +80,7 @@
 
   & .seg {
     flex: none;
-    min-inline-size: var(--hit-floor);
+    min-inline-size: var(--paint-floor);
   }
 }
 

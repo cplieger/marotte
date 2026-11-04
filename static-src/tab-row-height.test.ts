@@ -1,6 +1,6 @@
-// On a phone a chat tab and the New chat button are the same box. A child painting its own
-// `--btn-h` box STACKS on `.tab`'s min-height, padding and border (rows reached 62px), so the ×
-// grows its TARGET through an `::after`. Two claims that pull apart: the ROW must not grow and
+// On a phone a chat tab is a 44px row and the New chat button above it a 36px control on the same
+// edges. A child painting its own `--btn-h` box STACKS on `.tab`'s min-height, padding and border
+// (rows reached 62px), so the × grows its TARGET through an `::after`. Two claims that pull apart: the ROW must not grow and
 // the × must stay finger-reachable. Real layout in an IFRAME (the page viewport is pinned), with
 // `data-pointer="coarse"` stated explicitly.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -97,19 +97,19 @@ afterAll(() => {
 describe("a chat tab against the New chat button", () => {
   it("is on the phone tier the rules are written for", () => {
     // The premise, stated rather than assumed: every rule under test sits behind
-    // `width <= 48rem`, and the 44px control tier behind `[data-pointer="coarse"]`.
+    // `width <= 48rem`, and the 44px hit floor behind `[data-pointer="coarse"]`.
     expect(doc.defaultView?.innerWidth).toBeLessThanOrEqual(768);
-    expect(getComputedStyle(doc.documentElement).getPropertyValue("--btn-h").trim()).toBe(
+    expect(getComputedStyle(doc.documentElement).getPropertyValue("--hit-floor").trim()).toBe(
       "2.75rem",
     );
   });
 
-  it("measures the same HEIGHT", () => {
+  it("paints the tab at the floor and the button at the mouse's size", () => {
+    // The tab IS its target, so its fill grows to the finger's 44px; the button is a control in
+    // the row above, drawn at 36 with its 44px target invisible around it.
     const { btn, tab } = mountSidebar();
-    const bh = btn.getBoundingClientRect().height;
-    const th = tab.getBoundingClientRect().height;
-    expect(bh).toBeCloseTo(44, 0);
-    expect(th, `a tab is ${th}px against the New chat button's ${bh}px`).toBeCloseTo(bh, 0);
+    expect(tab.getBoundingClientRect().height).toBeCloseTo(44, 0);
+    expect(btn.getBoundingClientRect().height).toBeCloseTo(36, 0);
   });
 
   it("measures the same WIDTH, on the same left and right edges", () => {

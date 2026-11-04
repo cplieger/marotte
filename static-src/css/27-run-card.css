@@ -14,7 +14,7 @@
      `--subagent-content` (14-tools.css), the same shape. Under-stating an OPEN card
      is the right error: the container grows rather than shrinking under a reader.
      `block-heights.ts` shadows the resolved values. */
-  --run-card-content: calc(var(--btn-h) + max(var(--hit-floor), var(--ctl-h-dense)) + 1px);
+  --run-card-content: calc(var(--row-tap) + max(var(--hit-floor), var(--ctl-h-dense)) + 1px);
 
   content-visibility: auto;
   contain-intrinsic-size: auto var(--run-card-content);
@@ -74,7 +74,7 @@
      `.subagent-header` / `.tool-header` in 14-tools.css read. A box header takes a
      declared control-height tier; leaving it to the identity row's line box is
      what made sibling cards in one transcript disagree by a few pixels. */
-  min-height: var(--btn-h);
+  min-height: var(--row-tap);
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
@@ -206,7 +206,8 @@
 .run-steps {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+  /* A coarse step head is 44px, so its own height spaces the steps. */
+  gap: max(var(--sp-05), var(--sp-1) - var(--hit-grow));
   min-width: 0;
 }
 
@@ -217,7 +218,7 @@
 .run-group {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+  gap: max(var(--sp-05), var(--sp-1) - var(--hit-grow));
   min-width: 0;
 }
 
@@ -264,7 +265,7 @@
 .run-group-body {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+  gap: max(var(--sp-05), var(--sp-1) - var(--hit-grow));
   min-width: 0;
   margin-inline-start: calc(var(--sp-2) + 1px + 0.5rem);
   padding-inline-start: calc(var(--sp-2) + 0.5rem);
@@ -325,7 +326,7 @@
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-1) var(--sp-2);
-  min-height: var(--btn-h);
+  min-height: var(--row-tap);
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
@@ -548,15 +549,15 @@
    Foot — the outcome, and the way out
    -------------------------------------------------------------------------- */
 
-/* Outside the disclosure, so a collapsed card still states its result. No block
-   padding: the row IS `.run-open`'s hit box. Box rung with a rule, like every
-   nested foot. */
+/* Outside the disclosure, so a collapsed card still states its result. The block
+   padding is `.run-open`'s expander reach, so the card's clip leaves its target whole.
+   Box rung with a rule, like every nested foot. */
 .run-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-3);
-  padding-block: 0;
+  padding-block: max(0px, calc(var(--tap-gap-dense) / 2));
   padding-inline: var(--sp-3);
   border-block-start: 1px solid var(--c-border);
   font-size: var(--fs-xs);
@@ -579,14 +580,12 @@
   color: var(--c-text-secondary);
   text-decoration: none;
 
-  /* The hit target is the APP-WIDE FLOOR's (61-mcp-tools.css), 24px fine and 44px
-     coarse; a (0,1,0) height here would beat that zero-specificity floor. The
-     `padding-inline` is the hover wash's inset, not the target. The foot has no
-     block padding, so THE BAND IS THIS BOX: the dense control height floored by the
-     target, matching every other card foot. Its hover wash lands flush in the card's
-     bottom trailing corner, which the card's own clip rounds: a child flush inside
-     a clipping parent takes no radius of its own. */
-  min-height: max(var(--hit-floor), var(--ctl-h-dense));
+  /* The hit target is the shared expander (61-mcp-tools.css). The `padding-inline`
+     is the hover wash's inset, not the target. On a mouse the foot has no block
+     padding, so its hover wash lands flush in the card's bottom trailing corner,
+     which the card's own clip rounds: a child flush inside a clipping parent takes no
+     radius of its own. */
+  min-height: var(--ctl-h-dense);
   padding-inline: var(--sp-1);
   border-radius: var(--r-sm);
   transition:

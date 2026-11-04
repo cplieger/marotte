@@ -88,9 +88,8 @@
  * (`.code-actions`, 13-messages.css) holds the same buttons, so it shares the gap. */
 .turn-actions-buttons,
 .code-actions {
-  /* Wide enough that two neighbours' expanders (below) meet rather than overlap: the
-     floor less the paint, so 2px on a mouse and 8px under a finger. */
-  --action-gap: max(0.125rem, var(--hit-floor) - var(--ctl-h-sm));
+  /* Wide enough that two neighbours' expanders meet rather than overlap. */
+  --action-gap: max(0.125rem, var(--tap-gap-sm));
 }
 
 .turn-actions-buttons {
@@ -131,18 +130,15 @@
 
 /* THE TURN FOOTER'S CONTROL BOX for the action buttons, the ledger trigger and
    Rewind, and the code block's header buttons: ONE definition, so they cannot drift.
-   The paint leaves the hit floor so each control keeps air on every side in the band
-   (29-turns.css); the expander restores the target on each short axis, `min(0px, …)`
-   never shrinking a wider box. The menu rows below put their own floor back.
+   The paint stays under the hit floor so each control keeps air on every side in the
+   band (29-turns.css); the shared expander below holds the target. The menu rows
+   below put their own floor back.
    `box-shadow` is in the transition because 03-base.css's press wash is an inset
    shadow, which otherwise appears and leaves in one frame. */
 .turn-action-btn,
 .turn-ledger-summary,
 .turn-rewind,
 .code-act-btn {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
   height: var(--ctl-h-sm);
   border: none;
   background: transparent;
@@ -153,13 +149,6 @@
     background var(--dur-micro) var(--ease-standard),
     box-shadow var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
-
-  &::after {
-    content: "";
-    position: absolute;
-    inset-block: min(0px, calc((var(--hit-floor) - 100%) / -2));
-    inset-inline: min(0px, calc((var(--hit-floor) - 100%) / -2));
-  }
 }
 
 /* NO resting `opacity`. It was 0.6, and it COMPOUNDED with the row's own 0.7 for
@@ -468,38 +457,51 @@
   background: var(--c-accent);
 }
 
-/* THE HIT-TARGET FLOOR over every interactive element: `--hit-floor` (01-tokens.css) is
- * 24px fine (WCAG 2.5.8) and 44px coarse (WCAG 2.5.5). `:where()` scores zero, so it sets
- * only `min-*` and any class's own `min-*` beats it; the properties stay PHYSICAL because
- * a logical one would cascade by order instead. A link is a target; prose links are
- * exempt below. A small control grows a `::after` expander instead, and `all: unset`
- * escapes the floor entirely. A widened icon button must centre its glyph. Split in
- * three only for stylelint's `selector-max-attribute`; edit all three together. */
-:where(a[href], button, select, summary) {
-  min-width: var(--hit-floor);
-  min-height: var(--hit-floor);
-}
-
-:where([role="button"], input:not([type="hidden"])) {
-  min-width: var(--hit-floor);
-  min-height: var(--hit-floor);
-}
-
+/* THE HIT-TARGET FLOOR. A control PAINTS at its own size, floored at `--paint-floor`
+ * (WCAG 2.5.8), and its TARGET is `--hit-floor` (Apple HIG's 44pt on coarse) through
+ * the `::after` expander, which `--hit-inset` grows only on an axis the box is short.
+ * `isolation` makes the host a stacking context, so the `z-index: -1` expander sits
+ * under the host's content and never covers a control nested inside it. `:where()`
+ * scores zero, so a class's own `min-*`, `position` or `::after` wins; the `min-*` stay
+ * PHYSICAL because a logical one would cascade by order instead. Split only for
+ * stylelint's `selector-max-attribute`; edit the arms together. */
+:where(a[href], button, summary, [role="button"]),
 :where([tabindex]:not([tabindex="-1"])) {
+  position: relative;
+  isolation: isolate;
+  min-width: var(--paint-floor);
+  min-height: var(--paint-floor);
+}
+
+:where(a[href], button, summary, [role="button"])::after,
+:where([tabindex]:not([tabindex="-1"]))::after,
+:where(label.toggle)::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: var(--hit-inset);
+}
+
+/* A switch's label is its target: its checkbox is hidden at 0x0. It keeps its painted size. */
+:where(label.toggle) {
+  isolation: isolate;
+}
+
+/* A separator's target is shaped, reaching past its seam on one side (its own `::before`). */
+:where([role="separator"])::after {
+  content: none;
+}
+
+/* A field has no pseudo-element to carry an expander, so its box is the target. */
+:where(select, input:not([type="hidden"])) {
   min-width: var(--hit-floor);
   min-height: var(--hit-floor);
 }
 
-/* A NATIVE CHECKBOX OR RADIO PAINTS AT ITS OWN DECLARED SIZE, so the floor grows
- * the MARK rather than the target. Measured before this rule: a 16px box
- * rendering 24x24 on a mouse and 44x44 under a finger, in Settings >
- * Permissions, the composer's chat-options menu and every task list in the transcript.
- * 44px is Apple HIG's minimum TARGET and WCAG 2.5.5's, never a minimum control,
- * so the box keeps its size and the expander carries the target.
- *
- * A control whose own LABEL already clears the floor may drop the expander,
- * because a target that overhangs its row reaches into its neighbour's: the
- * composer's chat-options menu is the one such case (15-input.css). */
+/* A NATIVE CHECKBOX OR RADIO PAINTS AT ITS DECLARED SIZE and the centred expander carries
+ * its target. Where that expander would reach a neighbour, the row is the target and the
+ * box drops it: a switch (18-pages.css), a chat option (15-input.css), a question's
+ * sub-option (14-tools.css). A task mark in prose is the inline case further down. */
 input[type="checkbox"],
 input[type="radio"] {
   min-width: 0;
@@ -509,8 +511,14 @@ input[type="radio"] {
   &::after {
     content: "";
     position: absolute;
-    inset: calc((var(--hit-floor) - 100%) / -2);
+    inset: var(--hit-inset);
   }
+}
+
+/* A checkbox whose label is a line of its own: on touch the label row is the target, and
+   the box's centred expander stays inside it. */
+:where(.sched-enabled, .pr-dialog-check, .diff-pane-ws-toggle) {
+  min-block-size: var(--row-tap-line);
 }
 
 /* 02-reset.css owns the checkbox's 1rem and its `flex-shrink: 0`. A radio keeps the
@@ -527,10 +535,20 @@ input[type="radio"] {
  * prose is that case — floor it and every inline citation in the transcript
  * becomes a 24px-tall box that breaks the paragraph's leading. Scoped to real
  * prose containers rather than to every `a`, so a link STYLED as a button still
- * gets its floor. */
-:where(p, li, td, dd, blockquote, .msg-body, .message) :where(a[href]) {
+ * gets its floor, a `.btn-small` link in a list row included. */
+:where(p, li, td, dd, blockquote, .msg-body, .message) :where(a[href]:not(.btn-small)) {
   min-width: 0;
   min-height: 0;
+
+  &::after {
+    content: none;
+  }
+}
+
+/* A task-list mark sits on its text line, the same inline case: an expander would cover
+   the next line's mark. The class outranks the checkbox expander above. */
+.message input[type="checkbox"]::after {
+  content: none;
 }
 
 /* THE TEXT-ENTRY FLOOR, and it is 16px because iOS says so rather than because

@@ -101,14 +101,18 @@ describe("the bottom stack", () => {
     }
   });
 
-  // 12 - 1px border - the row's 4px inset: a visibly rounded control, on a mouse and under a finger.
-  for (const pointer of ["fine", "coarse"] as const) {
-    it(`rounds the composer's controls at the concentric 7px on a ${pointer} pointer`, () => {
+  // 12 - 1px border - the row's inset: 4px on a mouse, and on a finger the 6px the 32px controls'
+  // targets reach past their box ((44 - 32) / 2).
+  for (const [pointer, radius] of [
+    ["fine", "7px"],
+    ["coarse", "5px"],
+  ] as const) {
+    it(`rounds the composer's controls at the concentric ${radius} on a ${pointer} pointer`, () => {
       document.documentElement.dataset["pointer"] = pointer;
       try {
         for (const sel of ["[data-pill]", "[data-send]", "[data-chip]"]) {
           const el = bars[0]!.querySelector<HTMLElement>(sel)!;
-          expect(getComputedStyle(el).borderTopLeftRadius, sel).toBe("7px");
+          expect(getComputedStyle(el).borderTopLeftRadius, sel).toBe(radius);
         }
       } finally {
         delete document.documentElement.dataset["pointer"];

@@ -208,10 +208,11 @@ describe("a PR row's title link", () => {
     // An expander is admissible only while it steals nothing from the neighbour.
     const nextLink = titleOf(second!);
     const nb = nextLink.getBoundingClientRect();
+    // Inside its own box the press lands on the link's text, which activates the link.
     expect(
-      document.elementFromPoint(nb.left + nb.width / 2, nb.top + nb.height / 2),
+      nextLink.contains(document.elementFromPoint(nb.left + nb.width / 2, nb.top + nb.height / 2)),
       `${tier}: the next row's title is still its own target`,
-    ).toBe(nextLink);
+    ).toBe(true);
     for (const [i, row] of [first, second].entries()) {
       const merge = row!.querySelector<HTMLButtonElement>(".git-pr-row-actions .btn-small");
       const mb = merge!.getBoundingClientRect();

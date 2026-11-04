@@ -107,6 +107,7 @@
   align-items: center;
   gap: var(--sp-2);
   width: 100%;
+  min-block-size: var(--row-tap);
   padding: var(--sp-3) var(--sp-4);
   background: transparent;
   border: 0;
@@ -691,6 +692,7 @@
 .git-file-path {
   flex: 1;
   min-width: 0;
+  min-block-size: var(--row-tap-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -802,6 +804,7 @@
 }
 
 .git-recent-commits-summary {
+  min-block-size: var(--row-tap-sm);
   cursor: pointer;
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
@@ -962,27 +965,14 @@
   min-width: 0;
 }
 
-/* The title is a standalone row label rather than a citation in a sentence, so
-   WCAG 2.5.8's inline exception does not reach it — but the hit floor's own prose
-   carve-out DOES, through the enclosing `<li class="git-pr-row">`
-   (`61-mcp-tools.css`), which zeroed the floor and left the link at its 17px line
-   box on both tiers. The TARGET takes the floor back through the expander idiom,
-   `inset` off `--hit-floor` so it follows the pointer tier with no second
-   declaration, and vertical only (`inset-inline: 0`) because the link already
-   spans the whole title column and widening it would reach into the actions.
-
-   Measured 24.5px fine / 44.5px coarse, with the row's own height UNCHANGED (64px
-   fine, 122px at 390px coarse), which is what makes it a target change rather than
-   a layout one — `min-height` here would have grown every row instead.
-
-   RESIDUAL: coarse extends 13px below the box, over the top of
-   `.git-pr-row-sub`. Nothing there is a control (the chips are spans), so no
-   target is stolen; the cost is the CI chip's own `data-tooltip` hover, which
-   keeps 13.5px of its 19px. */
+/* The title is a standalone row label, not a citation in a sentence, but the prose
+   carve-out (61-mcp-tools.css) reaches it through the enclosing `<li>` and drops its
+   expander, which this rule (0,1,2) puts back, on the BLOCK axis only: the link spans
+   the whole title column, and an inline reach would cover the actions. On a coarse
+   pointer it reaches 13px over `.git-pr-row-sub`, whose chips are spans, not targets. */
 a.git-pr-row-title::after {
   content: "";
-  position: absolute;
-  inset-block: calc((var(--hit-floor) - 100%) / -2);
+  inset-block: var(--hit-inset);
   inset-inline: 0;
 }
 
@@ -1081,34 +1071,16 @@ a.git-pr-row-title:hover {
   }
 }
 
-/* The PRs tab's labelled buttons take the dense tier rather than --btn-h. At
-   36px a Merge button was 90% of the height of the action cluster it sits in and
-   the + New PR pill was 84% of its section header — measured against 36px, which
-   is what these buttons were when that reading was taken; the pattern below puts
-   them on 32 on a fine pointer and on the touch floor on a coarse one, so the
-   proportion argument holds a rung tighter than it was measured at.
-
-   The dense-tier button pattern, copied whole from `.list-row .btn-small`
-   (14-tools.css), including the `padding-block: 0` — the base's own padding plus
-   the label's line box is 33px on its own, so the padding is what holds the fine
-   tier on 32. `max()` AND NOT A BARE TOKEN, because the universal hit-target
-   floor scores zero (61-mcp-tools.css) and so loses to this rule, and
-   `--ctl-h-dense` is 2.5rem on a coarse pointer — which is exactly the 40px
-   these buttons used to render beside a 44px sibling in the same cluster.
-   `block-size` is DROPPED: a declared height clips the label at a larger user
-   font, and the floor can only lift a `min-*`. */
+/* The PRs tab's labelled buttons take the dense tier rather than --btn-h: at 36px a
+   Merge button was 90% of its action cluster's height and the + New PR pill 84% of
+   its section header. 32px on every tier; the shared expander supplies the 44px touch
+   target. The pattern of `.list-row .btn-small` (14-tools.css): `padding-block: 0`
+   holds it on 32, since the base's padding plus the label's line box is 33px. No
+   `block-size`: a declared height clips the label at a larger user font. */
 .git-repo-section-header-row > .btn-small,
 .git-pr-row-actions .btn-small {
-  min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
+  min-block-size: var(--ctl-h-dense);
   padding-block: 0;
-}
-
-/* A 44px touch target in a header whose own height is a 43px toggle leaves the
-   pill wall-to-wall (measured: 0px above, 1px below). The inset goes on the
-   BUTTON rather than as padding on the header, so the toggle's hover fill still
-   reaches the section's top edge. */
-:where([data-pointer="coarse"]) .git-repo-section-header-row > .btn-small {
-  margin-block: var(--sp-1);
 }
 
 @media (width <= 48rem) {

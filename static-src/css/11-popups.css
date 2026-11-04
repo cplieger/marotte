@@ -47,9 +47,8 @@
      resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
      close — so it measured the same on a finger as on a mouse while `.tab`
      beside it correctly went 36px to 44px. A floor, so a taller row keeps its
-     own height: measured, this moves desktop by at most 1px and gives every
-     list row a real 36px target on touch. */
-  min-block-size: var(--ctl-h-sm);
+     own height: 24px on a mouse, the 44px hit floor on touch. */
+  min-block-size: var(--row-tap-sm);
   display: flex;
   justify-content: space-between;
   align-items: center;
