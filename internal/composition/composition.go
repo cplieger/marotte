@@ -64,6 +64,8 @@ type App struct {
 	stopPRPoller func()
 	// stopForgeKeeper stops the forge credential keeper and waits for its goroutine.
 	stopForgeKeeper func()
+	// closeForges ends the forge listing fills in flight and waits for them.
+	closeForges func()
 	// stopKASHeal stops the KAS MCP file heal loop and waits for its goroutine.
 	stopKASHeal func()
 	// stopToolsSteering waits for the boot's environment.md regeneration, which reads the tools engine.
@@ -333,6 +335,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopKiroSeed:      stopKiroSeed,
 		stopPRPoller:      stopPRPoller,
 		stopForgeKeeper:   stopForgeKeeper,
+		closeForges:       forgesManager.Close,
 		stopKASHeal:       stopKASHeal,
 		stopToolsSteering: stopToolsSteering,
 		stopKeepState:     stopKeepState,
@@ -362,6 +365,8 @@ func (a *App) Run() error {
 func (a *App) Shutdown() {
 	callIfSet(a.stopPRPoller)
 	callIfSet(a.stopForgeKeeper)
+	// Before the runtime's teardown: a fill that stores a repository page notifies the hub.
+	callIfSet(a.closeForges)
 	callIfSet(a.stopKASHeal)
 	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the agent engine the
 	// runtime teardown is about to stop, so the reverse order leaves one mid-inspect.

@@ -108,6 +108,7 @@ func newManager(t *testing.T, configDir string, core forgeapi.Core) (*Manager, *
 	t.Helper()
 	log := &changeLog{}
 	m := NewManager(configDir, log.notify)
+	t.Cleanup(m.Close)
 	m.executable = func() (string, error) { return testHelperBin, nil }
 	if core != nil {
 		m.newCore = func(*connectionSpec, []forgeapi.Option) (forgeapi.Core, error) { return core, nil }
