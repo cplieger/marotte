@@ -45,7 +45,7 @@ func (res *RunPurgeResult) keep(until time.Time) {
 // main-thread time for a 238-step run), so one delete a minute keeps those rewrites paced.
 const runPurgePace = time.Minute
 
-// deletePacer holds when a retention pass last reached a delete. The zero value is ready.
+// deletePacer holds when a retention pass last sent a delete. The zero value is ready.
 type deletePacer struct {
 	last time.Time
 	mu   sync.Mutex
@@ -147,8 +147,8 @@ func (rt *Runtime) purgeStep(ctx context.Context, pass *finishedRunPass, r *kasW
 		pass.res.keep(failedAt.Add(runPurgeFailBackoff))
 		return
 	}
-	tried, refused := rt.purgeCandidate(ctx, r, pass.p.Window, pass.now, owned, &pass.res)
-	if tried {
+	spent, refused := rt.purgeCandidate(ctx, r, pass.p.Window, pass.now, owned, &pass.res)
+	if spent {
 		at := time.Now()
 		rt.runs.purgePace.mark(at)
 		pass.waitUntil = at.Add(runPurgePace)
@@ -199,11 +199,11 @@ func listedRead(r *kasWorkflowRun) purgeRead {
 }
 
 // purgeCandidate deletes one finished run that purgeKeep finds purgeable on its list row and again under the delete's
-// hold, owned when a chat claims its launching session. It answers whether it reached the delete's hold, and
-// admission's refusal, if any.
+// hold, owned when a chat claims its launching session. It answers whether it sent the delete or dropped a run KAS no
+// longer knows (a keep on the re-read sends none), and admission's refusal, if any.
 func (rt *Runtime) purgeCandidate(
 	ctx context.Context, r *kasWorkflowRun, window time.Duration, now time.Time, owned bool, res *RunPurgeResult,
-) (attempted bool, refused error) {
+) (spent bool, refused error) {
 	if why, until := rt.runs.purgeKeep(r.WorkflowID, listedRead(r), window, now); why != "" {
 		res.keep(until)
 		return false, nil
@@ -227,6 +227,7 @@ func (rt *Runtime) purgeCandidate(
 			"updated_at", r.UpdatedAt)
 	default:
 		res.keep(until)
+		return false, nil
 	}
 	return true, nil
 }

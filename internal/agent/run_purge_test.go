@@ -1309,3 +1309,33 @@ func TestPurgeFinishedRuns_APassWithinThePaceOfADeleteDeletesNothing(t *testing.
 		t.Errorf("a pass after the pace deleted %v in all, want [wf_30d wf_20d]", got)
 	}
 }
+
+// A run a fresh read keeps sent no delete, so the same pass goes on to the next run.
+func TestPurgeFinishedRuns_ARunKeptOnTheReReadLeavesThePassItsDelete(t *testing.T) {
+	h, rig := newPurgeRig(t, purgeRuns(t), []string{"sess_chat"}, true)
+	list := purgeRuns(t,
+		purgeRow("wf_revived", "failed", "sess_chat", daysAgo(30)),
+		purgeRow("wf_old", "completed", "sess_chat", daysAgo(20)),
+	)
+	rig.setAnswer(func(method string, params map[string]any) (json.RawMessage, bool, error) {
+		id, _ := params[keyWorkflowID].(string)
+		switch {
+		case method == methodKiroWorkflowList:
+			return list, true, nil
+		case method == methodKiroWorkflowInspect && id == "wf_revived":
+			return inspectOf(id, marotte.RunStatusRunning, time.Now()), true, nil
+		case method == methodKiroWorkflowInspect:
+			return inspectOf(id, marotte.RunStatusCompleted, daysAgo(20)), true, nil
+		}
+		return nil, false, nil
+	})
+
+	res := runFinishedPurge(t, h, fourteenDays)
+
+	if got := deleteCalls(rig); !slices.Equal(got, []string{"wf_old"}) {
+		t.Errorf("one pass deleted %v, want [wf_old]: wf_revived runs again, so its keep spent no delete", got)
+	}
+	if res.Purged != 1 {
+		t.Errorf("pass Purged = %d, want 1", res.Purged)
+	}
+}
