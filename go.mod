@@ -35,6 +35,7 @@ require (
 	github.com/cplieger/wiregen/v4 v4.0.0-dev.4
 	github.com/evanw/esbuild v0.28.2
 	github.com/klauspost/compress v1.20.3
+	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/image v0.47.0
 	golang.org/x/net v0.62.0

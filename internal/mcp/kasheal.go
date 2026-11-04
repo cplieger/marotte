@@ -40,11 +40,11 @@ func (s *Store) healKASLocked(ctx context.Context, trigger string) (bool, error)
 		return false, err
 	}
 	policy, _ := s.renderPolicy(ctx)
-	wanted, err := renderServersKey(s.servers, policy)
+	fileServers := doc.members[kasServerKey]
+	wanted, err := s.renderServersKey(s.servers, fileServers, policy)
 	if err != nil {
 		return false, err
 	}
-	fileServers := doc[kasServerKey]
 	if sameJSONValue(fileServers, wanted) {
 		return false, nil
 	}
@@ -53,7 +53,6 @@ func (s *Store) healKASLocked(ctx context.Context, trigger string) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	delete(doc, kasServerKey)
 	if err := s.writeKASConfigWith(ctx, doc, s.servers, policy); err != nil {
 		return false, err
 	}
@@ -76,7 +75,7 @@ func (s *Store) isPendingWaitRender(file json.RawMessage, policy kasRenderPolicy
 	if !last.known || last.waitForReady == policy.waitAll {
 		return false
 	}
-	prev, err := renderServersKey(s.servers, kasRenderPolicy{waitAll: last.waitForReady})
+	prev, err := s.renderServersKey(s.servers, file, kasRenderPolicy{waitAll: last.waitForReady})
 	return err == nil && sameJSONValue(file, prev)
 }
 
