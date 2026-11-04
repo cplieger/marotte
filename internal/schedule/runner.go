@@ -49,7 +49,8 @@ func (b *BusyError) boundBy(scheduleID string, due time.Time) bool {
 
 // Launcher starts one workflow run on behalf of a schedule. scheduleID lets the host
 // attribute the run's outcome to the row. slotAt is an input to the run's bound; zero means
-// no slot. An error wrapping ErrNoRunCanStart or ErrEngineBusy started nothing.
+// no slot. An error with no id names no run, as with ErrNoRunCanStart and ErrEngineBusy always. An id
+// with an error names a run created but not started, whose failure the host recorded on the row.
 type Launcher interface {
 	LaunchScheduled(
 		ctx context.Context, source, scheduleID string, defaults marotte.RunDefaults, slotAt time.Time,
@@ -127,7 +128,8 @@ type slotEvent int
 const (
 	// slotBackingOff: the slot waits on the engine and its retry is not due yet.
 	slotBackingOff slotEvent = iota
-	// slotLaunched: the run started.
+	// slotLaunched: the launch created a run, or the row already names one started for this slot by a launch
+	// whose record never landed.
 	slotLaunched
 	// slotEngineBusy: the engine did not answer before the run was created.
 	slotEngineBusy
@@ -137,7 +139,7 @@ const (
 	slotBoundBusy
 	// slotFailed: any other launch error.
 	slotFailed
-	// slotCancelled: the runner's context ended during the launch, which started nothing.
+	// slotCancelled: the runner's context ended during a launch that returned no run id; the row stays as it was.
 	slotCancelled
 	// slotGraceExpired: never launched inside its grace, while marotte was down or the sign-in gate held it.
 	slotGraceExpired
@@ -173,16 +175,19 @@ func (r *Runner) judge(ctx context.Context, e *Entry, start time.Time) {
 			return
 		}
 		turn := r.reach(ctx, e, due, start, now)
-		r.settle(ctx, e, &turn)
-		if turn.event != slotOvertaken {
+		if r.settle(ctx, e, &turn) != nil || turn.event != slotOvertaken {
 			return
 		}
-		next, nErr := nextRun(e.Spec, due)
-		if nErr != nil {
+		// Re-read: the sweep's copy predates every launch before this one, and the user may have edited,
+		// disabled or deleted the schedule since.
+		row, ok := r.store.get(e.ID())
+		if !ok || !row.Enabled {
 			return
 		}
-		e.Anchor, e.WaitingFor = due, time.Time{}
-		due = next
+		*e = row
+		if due, err = NextRunFrom(e.Spec, e.Anchor, time.Time{}); err != nil {
+			return
+		}
 	}
 }
 
@@ -190,6 +195,9 @@ func (r *Runner) judge(ctx context.Context, e *Entry, start time.Time) {
 func (r *Runner) reach(ctx context.Context, e *Entry, due, start, now time.Time) slotTurn {
 	turn := slotTurn{due: due, at: now}
 	switch {
+	case e.LastRunID != "" && !e.LastRunAt.Before(due):
+		turn.event, turn.runID = slotLaunched, e.LastRunID
+		return turn
 	case e.WaitingFor.Equal(due):
 		if !now.Before(r.waitBound(e.Spec, due)) {
 			turn.event = slotOvertaken
@@ -240,10 +248,9 @@ func (r *Runner) launch(ctx context.Context, e *Entry, due time.Time) slotTurn {
 	turn := slotTurn{due: due, at: r.now(), err: err, runID: runID, name: name}
 	busy, isBusy := errors.AsType[*BusyError](err)
 	switch {
-	case err == nil:
+	case err == nil || runID != "":
 		turn.event = slotLaunched
 	case ctx.Err() != nil:
-		// A shutdown, not the engine or the recipe: the slot is left for the next start.
 		turn.event = slotCancelled
 	case errors.Is(err, ErrEngineBusy):
 		turn.event = slotEngineBusy
@@ -258,19 +265,19 @@ func (r *Runner) launch(ctx context.Context, e *Entry, due time.Time) slotTurn {
 }
 
 // settle is the one writer of a slot's state: the row (recordFire, skipTo, skipFailed, skipBusy, setWaiting) and the
-// runner's held and retry memory. The row writes ignore ctx's cancel: a run that started during a shutdown must
-// still be recorded, or the next start launches its slot again.
-func (r *Runner) settle(ctx context.Context, e *Entry, t *slotTurn) {
+// runner's held and retry memory, returning the row write's error. The row writes ignore ctx's cancel: a run that
+// started during a shutdown must still be recorded, or the next start launches its slot again.
+func (r *Runner) settle(ctx context.Context, e *Entry, t *slotTurn) error {
 	id := e.ID()
 	wctx := context.WithoutCancel(ctx)
 	var err error
 	switch t.event {
 	case slotBackingOff:
-		return
+		return nil
 	case slotCancelled:
 		slog.Info("schedule slot left for the next start: the runner stopped during its launch",
 			"id", id, "due", t.due, "error", t.err)
-		return
+		return nil
 	case slotEngineBusy:
 		delete(r.held, id)
 		step := r.backOff(id, t.due, t.at)
@@ -302,12 +309,19 @@ func (r *Runner) settle(ctx context.Context, e *Entry, t *slotTurn) {
 		err = r.store.recordFire(wctx, id, t.due, "", Outcome{Status: StatusFailed, Reason: t.err.Error()})
 	case slotLaunched:
 		r.forget(id)
-		slog.Info("scheduled run started", "id", id, "run_id", t.runID, "recipe", t.name, "due", t.due)
-		err = r.store.recordFire(wctx, id, t.due, t.runID, Outcome{Status: statusStarted})
+		o := Outcome{Status: statusStarted}
+		if t.err != nil {
+			o = Outcome{Status: StatusFailed, Reason: t.err.Error()}
+			slog.Warn("scheduled run did not start", "id", id, "source", e.Source, "error", t.err, "run_id", t.runID)
+		} else {
+			slog.Info("scheduled run started", "id", id, "run_id", t.runID, "recipe", t.name, "due", t.due)
+		}
+		err = r.store.recordFire(wctx, id, t.due, t.runID, o)
 	}
 	if err != nil {
 		slog.Error("schedule record failed", "id", id, "error", err)
 	}
+	return err
 }
 
 // forget drops the runner's memory of the schedule's slot once its launch had an answer that ends it.

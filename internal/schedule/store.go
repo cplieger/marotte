@@ -58,8 +58,9 @@ type Entry struct {
 	// back to creation so a new schedule does not immediately fire for every
 	// slot since the epoch.
 	Anchor time.Time `json:"anchor"`
-	// LastRunAt, LastStatus and LastReason are for display only; the run's own
-	// record is the durable history.
+	// LastRunAt, LastStatus and LastReason are for display; the run's own record is the durable history.
+	// LastRunAt is the last slot's due time, or its run's start (RecordStart) until the runner records the slot:
+	// a run started at or after a due slot is that slot's launch (Runner.reach).
 	LastRunAt  time.Time `json:"last_run_at,omitzero"`
 	Source     string    `json:"source"`
 	Name       string    `json:"name,omitempty"`
@@ -86,6 +87,8 @@ func (e *Entry) ID() string {
 
 // Run names one launch of a schedule: the row and the workflow run its fire started.
 type Run struct {
+	// StartedAt is when the run was created, which RecordStart writes as LastRunAt; zero leaves LastRunAt as it was.
+	StartedAt  time.Time
 	ScheduleID string
 	WorkflowID string
 }
@@ -153,6 +156,14 @@ func (s *Store) List() []Entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.sortedLocked()
+}
+
+// get returns the schedule id names, false when none does.
+func (s *Store) get(id string) (Entry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[id]
+	return e, ok
 }
 
 func (s *Store) sortedLocked() []Entry {
@@ -292,6 +303,9 @@ func (s *Store) setWaiting(ctx context.Context, id string, due time.Time) error 
 func (s *Store) RecordStart(ctx context.Context, run Run) error {
 	return s.recordRun(ctx, run, func(e *Entry) bool {
 		e.LastRunID, e.LastStatus, e.LastReason = run.WorkflowID, statusStarted, ""
+		if !run.StartedAt.IsZero() {
+			e.LastRunAt = run.StartedAt
+		}
 		return true
 	})
 }

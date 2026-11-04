@@ -147,24 +147,32 @@ func (rs *Runs) launchAs(
 		rs.bridges.closeSession(host)
 		return "", "", fmt.Errorf("workflow %s already has a host session", wfID)
 	}
+	// The run exists: a caller that stops waiting now must not leave it half launched, its row naming a run that
+	// nothing tracks, so the rest keeps the launch's budget and drops the caller's cancel.
+	deadline, _ := cctx.Deadline()
+	rctx, rcancel := context.WithDeadline(context.WithoutCancel(cctx), deadline)
+	defer rcancel()
 	sb.setIdle()
 	sb.settled.settle(nil)
 	rs.coord.goForward(runChatID(wfID), host)
 	relay.begin()
 	// The run's envelope, before anything can execute (runlease.Lease).
-	rs.grantLease(cctx, wfID, recipe.Name, o, hostSecurityOf(presets))
-	rs.recordParentSession(cctx, wfID, string(parent))
+	rs.grantLease(rctx, wfID, recipe.Name, o, hostSecurityOf(presets))
+	rs.recordParentSession(rctx, wfID, string(parent))
 	// Visible to Route before invoke is written, so the run's first frame reaches the host's lane.
 	rs.router.registerOwner(wfID, parent)
-	if _, err := rs.write(cctx, a, sb, wfID, methodKiroWorkflowInvoke,
+	if _, err := rs.write(rctx, a, sb, wfID, methodKiroWorkflowInvoke,
 		map[string]any{keyWorkflowID: wfID}, mutationDrive); err != nil {
-		// Created but never started.
-		rs.releaseLease(cctx, wfID)
-		rs.coord.closeBridge(cctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
-		return "", "", fmt.Errorf("workflow invoke: %w", err)
+		// Created but never started; the row grantLease wrote names this run, so it gets the failure.
+		err = fmt.Errorf("workflow invoke: %w", err)
+		rs.recordScheduleOutcome(rctx, schedule.Run{ScheduleID: o.scheduleID, WorkflowID: wfID},
+			schedule.Outcome{Status: schedule.StatusFailed, Reason: rowText(err.Error())})
+		rs.releaseLease(rctx, wfID)
+		rs.coord.closeBridge(rctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
+		return wfID, recipe.Name, err
 	}
 	// After invoke, so a run that never started leaves no timer.
-	rs.armDeadline(cctx, wfID)
+	rs.armDeadline(rctx, wfID)
 	slog.Info("workflow run launched", "workflow_id", wfID, "recipe", recipe.Name)
 	return wfID, recipe.Name, nil
 }

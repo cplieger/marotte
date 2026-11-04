@@ -76,8 +76,8 @@ func scheduleViewOf(e *schedule.Entry) scheduleView {
 	return v
 }
 
-// handleSchedulePut serves POST /api/schedules: insert or replace. The source is validated against the recipe
-// catalog, as in handleLaunch, so no arbitrary file can be scheduled, and the model pick as at launch.
+// handleSchedulePut serves POST /api/schedules: insert or replace. The source is validated against a live recipe
+// listing, as in handleLaunch, so no arbitrary file can be scheduled, and the model pick as at launch.
 func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Source  string        `json:"source"`

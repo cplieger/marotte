@@ -43,6 +43,8 @@ type fakeLauncher struct {
 	err      error
 	// during runs inside each launch, so a test can move the runner's clock while the launch holds the sweep.
 	during func(source string)
+	// failID is the run id a failing launch returns: a run it created but did not start.
+	failID string
 }
 
 func (f *fakeLauncher) LaunchScheduled(
@@ -58,7 +60,7 @@ func (f *fakeLauncher) LaunchScheduled(
 	f.schedules = append(f.schedules, scheduleID)
 	f.deadlines = append(f.deadlines, deadline)
 	if f.err != nil {
-		return "", "", f.err
+		return f.failID, "", f.err
 	}
 	return "wf-1", "recipe", nil
 }

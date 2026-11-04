@@ -218,9 +218,18 @@ func TestRecipeCatalog_AListingOverlappingAChangeIsNeitherHeldNorJoined(t *testi
 	}
 }
 
-// A listing that runs out of time is the engine being busy: every route reading it answers 503 with a Retry-After,
-// never a 400 that blames the user's input or a bare 500.
-func TestRecipeRoutes_AListingDeadlineAnswers503WithARetryHint(t *testing.T) {
+// unansweredListings are the listing failures that mean the engine did not answer, not that it refused.
+var unansweredListings = []struct {
+	fail error
+	name string
+}{
+	{name: "past its deadline", fail: fmt.Errorf("engine call: %w", context.DeadlineExceeded)},
+	{name: "the engine exited", fail: fmt.Errorf("%w: the agent engine failed to start", marotte.ErrBridgeExited)},
+}
+
+// A listing the engine does not answer, past its deadline or because it exited, is the engine being busy: every
+// route reading it answers 503 with a Retry-After, never a 400 that blames the user's input or a bare 500.
+func TestRecipeRoutes_AnUnansweredListingAnswers503WithARetryHint(t *testing.T) {
 	routes := []struct {
 		name, method, target, body string
 	}{
@@ -232,30 +241,36 @@ func TestRecipeRoutes_AListingDeadlineAnswers503WithARetryHint(t *testing.T) {
 		},
 	}
 	for _, rt := range routes {
-		t.Run(rt.name, func(t *testing.T) {
-			_, br, mux := runDefaultsHub(t)
-			br.callErrs = map[string]error{
-				methodKiroWorkflowListRecipes: fmt.Errorf("engine call: %w", context.DeadlineExceeded),
-			}
-			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(rt.method, rt.target, nil)
-			if rt.body != "" {
-				req = httptest.NewRequest(rt.method, rt.target, strings.NewReader(rt.body))
-			}
-			mux.ServeHTTP(rec, req)
-			if rec.Code != http.StatusServiceUnavailable {
-				t.Errorf("status = %d %s, want 503", rec.Code, rec.Body.String())
-			}
-			if got := rec.Header().Get("Retry-After"); got == "" {
-				t.Error("no Retry-After header")
-			}
-			var body struct {
-				Code string `json:"code"`
-			}
-			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Code != "recipe_list_slow" {
-				t.Errorf("body = %s, want code recipe_list_slow", rec.Body.String())
-			}
-		})
+		for _, lf := range unansweredListings {
+			t.Run(rt.name+", "+lf.name, func(t *testing.T) {
+				_, br, mux := runDefaultsHub(t)
+				br.callErrs = map[string]error{methodKiroWorkflowListRecipes: lf.fail}
+				answersRetryLater(t, mux, rt.method, rt.target, rt.body)
+			})
+		}
+	}
+}
+
+// answersRetryLater asserts the route answers 503 recipe_list_slow with a Retry-After.
+func answersRetryLater(t *testing.T, mux *http.ServeMux, method, target, body string) {
+	t.Helper()
+	req := httptest.NewRequest(method, target, nil)
+	if body != "" {
+		req = httptest.NewRequest(method, target, strings.NewReader(body))
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("%s %s = %d %s, want 503", method, target, rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Retry-After"); got == "" {
+		t.Errorf("%s %s: no Retry-After header", method, target)
+	}
+	var reply struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &reply); err != nil || reply.Code != "recipe_list_slow" {
+		t.Errorf("%s %s body = %s, want code recipe_list_slow", method, target, rec.Body.String())
 	}
 }
 
@@ -374,6 +389,23 @@ func TestRecipesRoute_AnswersTheHeldCatalogWhileAListingIsSlow(t *testing.T) {
 		t.Errorf("GET /api/recipes = %d %s, want the held catalog's one recipe", rec.Code, rec.Body.String())
 	}
 	close(release)
+}
+
+// A listing the engine did not answer shows the held catalog on the recipe list a person opens, whichever way it
+// went unanswered.
+func TestRecipesRoute_AnswersTheHeldCatalogWhenAListingGoesUnanswered(t *testing.T) {
+	for _, lf := range unansweredListings {
+		t.Run(lf.name, func(t *testing.T) {
+			h, br, mux := runDefaultsHub(t)
+			holdCatalog(t, h)
+			br.callErrs = map[string]error{methodKiroWorkflowListRecipes: lf.fail}
+			rec := getRecipes(mux)
+			var body marotte.RecipesResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK || len(body.Recipes) != 1 {
+				t.Errorf("GET /api/recipes = %d %s, want the held catalog's one recipe", rec.Code, rec.Body.String())
+			}
+		})
+	}
 }
 
 // A schedule save tells a source the catalog lacks (400) from a catalog it could not read (500).

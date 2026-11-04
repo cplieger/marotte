@@ -223,6 +223,70 @@ func TestLaunchRun_ReleasesTheLeaseWhenInvokeFails(t *testing.T) {
 	}
 }
 
+// nightlyLaunch is a scheduled hub whose launch of bundled://nightly creates wf_1.
+func nightlyLaunch(t *testing.T) (*Runtime, *fakeBridge, *schedule.Store, schedule.Entry) {
+	t.Helper()
+	h, br, st, entry := scheduledHub(t)
+	launchableRecipe(br, "wf_1")
+	br.callResults[methodKiroWorkflowListRecipes] = json.RawMessage(
+		`{"recipes":[{"name":"nightly","source":"bundled://nightly"}]}`,
+	)
+	return h, br, st, entry
+}
+
+// A scheduled launch whose caller stops waiting once workflow/new has answered still starts the run and names it: the
+// row already reads that run, and a launch reported as nothing would let the next start fire the slot again.
+func TestLaunchScheduled_ACallerCancelOnceTheRunExistsStillLaunchesIt(t *testing.T) {
+	h, br, st, entry := nightlyLaunch(t)
+	br.refuseCancelled = true
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method == methodKiroWorkflowNew {
+			cancel()
+		}
+		return nil, nil, false
+	}
+	before := time.Now()
+
+	id, _, err := h.runs.LaunchScheduled(ctx, entry.Source, entry.ID(), marotte.RunDefaults{}, before.Add(time.Hour))
+	if id != "wf_1" || err != nil {
+		t.Errorf("LaunchScheduled = %q, %v; want wf_1 started", id, err)
+	}
+	if !slices.Contains(br.wireLog(), methodKiroWorkflowInvoke) {
+		t.Error("the created run was never invoked")
+	}
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Error("the created run's lease was released")
+	}
+	row := st.List()[0]
+	if row.LastRunID != "wf_1" || row.LastStatus != "started" || row.LastRunAt.Before(before) {
+		t.Errorf("row = %+v, want wf_1 started at or after %v", row, before)
+	}
+}
+
+// A run created but never invoked is named with its failure, so the runner records the slot it tried as failed with
+// that run rather than as a launch that created nothing.
+func TestLaunchScheduled_AFailedInvokeNamesTheRunWithItsFailure(t *testing.T) {
+	h, br, st, entry := nightlyLaunch(t)
+	delete(br.callResults, methodKiroWorkflowInvoke)
+	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errHoldFault}
+
+	id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.ID(), marotte.RunDefaults{},
+		time.Now().Add(time.Hour))
+	if id != "wf_1" || !errors.Is(err, errHoldFault) {
+		t.Errorf("LaunchScheduled = %q, %v; want wf_1 with the invoke failure", id, err)
+	}
+	if _, held := h.runs.lease("wf_1"); held {
+		t.Error("the lease of a run that never started survived its failed launch")
+	}
+	row := st.List()[0]
+	if row.LastRunID != "wf_1" || row.LastStatus != schedule.StatusFailed ||
+		!strings.Contains(row.LastReason, errHoldFault.Error()) {
+		t.Errorf("row = %+v, want wf_1 failed with %q", row, errHoldFault)
+	}
+}
+
 // TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun pins that the one site every origin reaches, including an
 // agent run with no bridge of its own.
 func TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun(t *testing.T) {

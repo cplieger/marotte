@@ -49,9 +49,11 @@ type fakeBridge struct {
 	refuseAfterCall map[string]*marotte.RPCError
 	// failAfterCall is the transport failing after onCall ran: the words were written, then the reply was lost.
 	failAfterCall map[string]error
-	sessionID     string
-	modelID       string
-	effort        string
+	// refuseCancelled refuses a Call whose ctx is already done, unwritten, as the engine's request does.
+	refuseCancelled bool
+	sessionID       string
+	modelID         string
+	effort          string
 	// observedEffort is the level the SESSION reported, not the one asked for.
 	observedEffort   string
 	thinking         string
@@ -312,6 +314,12 @@ func (b *fakeBridge) PromptAt(ctx context.Context, params any, commit func() err
 func (b *fakeBridge) callScript(
 	ctx context.Context, method string, params any, deliver func(*marotte.RPCResponse), commit func() error,
 ) (*marotte.RPCResponse, error) {
+	b.mu.Lock()
+	refuse := b.refuseCancelled
+	b.mu.Unlock()
+	if err := ctx.Err(); refuse && err != nil {
+		return nil, err
+	}
 	if err := b.writeRequest(ctx, method, commit); err != nil {
 		return nil, err
 	}

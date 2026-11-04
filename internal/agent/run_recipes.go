@@ -22,7 +22,8 @@ const engineSlowRetryAfter = 10
 var recipeListPatience = 5 * time.Second
 
 var (
-	// errRecipeListSlow is a listing that ran past its deadline: the engine is busy, not refusing.
+	// errRecipeListSlow is a listing the engine did not answer, past its deadline or because it exited: retryable,
+	// not a refusal.
 	errRecipeListSlow = errors.New("the recipe list is still loading, try again in a few seconds")
 	// errEngineSlow is a launch the engine did not answer in time before the run was created (unanswered).
 	errEngineSlow          = errors.New("the agent engine is busy, try again in a few seconds")
@@ -150,7 +151,7 @@ func (c *recipeCatalog) run(
 }
 
 func classifyRecipeListErr(err error) error {
-	if errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, marotte.ErrBridgeExited) {
 		return fmt.Errorf("%w: %w", errRecipeListSlow, err)
 	}
 	return err
@@ -170,7 +171,6 @@ func writeEngineSlow(w http.ResponseWriter, err error) bool {
 	return true
 }
 
-// writeTryLater answers 503 with a Retry-After and the machine reason code.
 func writeTryLater(w http.ResponseWriter, reason, code string) {
 	w.Header().Set("Retry-After", strconv.Itoa(engineSlowRetryAfter))
 	webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSONWithCode(reason, code))
