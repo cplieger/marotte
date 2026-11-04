@@ -376,7 +376,7 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 	// The door's call keeps the reply's lane position: KAS replays the session as notifications before the result.
 	resp, seq, err := s.doorCall(dctx, methodSessionLoad, "load", withClientSteering(s.withSessionMeta(withAdditionalDirectories(map[string]any{
 		marotte.KeySessionID: id, "cwd": e.workDir, "mcpServers": []any{},
-	}, o)), o), e.lateSessionLoad(s))
+	}, o)), o), lateSessionLoad(s))
 	if err != nil {
 		return nil, handshakeTimeout(err, "session resume", replayBudget)
 	}
@@ -404,7 +404,7 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 
 // lateSessionLoad settles the kept handle of an abandoned session/load from kiro-cli's answer: a result is released,
 // an error reply loaded nothing.
-func (e *Engine) lateSessionLoad(s *Session) func(*marotte.RPCResponse) {
+func lateSessionLoad(s *Session) func(*marotte.RPCResponse) {
 	return func(resp *marotte.RPCResponse) {
 		<-s.gaveUp
 		if resp.Error != nil {

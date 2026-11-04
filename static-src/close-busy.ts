@@ -19,7 +19,7 @@ export interface ClosingChat {
 
 /** A gate's answer: the dialog's verdict (a plain `true` when nothing is stopped) and the impact
  *  the close sends, read in the same pass as the dialog's text. */
-export interface CloseConfirm {
+interface CloseConfirm {
   readonly verdict: true | Promise<boolean>;
   readonly impact: CloseImpact;
 }

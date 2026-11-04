@@ -224,7 +224,7 @@ func (rt *Runtime) onEngineEnded(gen uint64) {
 }
 
 // closeSession releases a session the registry let go of; bridge.Session.Release owns every outcome after it.
-func (rt *Runtime) closeSession(s engineSession) { s.Release() }
+func (*Runtime) closeSession(s engineSession) { s.Release() }
 
 // onSignInChange applies a committed sign-in edge: the engine fingerprint holds the pending account, and the first
 // sign-in reloads resident sessions at their next idle open, so their model lists follow the account.

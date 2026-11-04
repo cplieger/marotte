@@ -817,9 +817,9 @@ func (r lostSlot) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnO
 
 func (r *slotAdmission) ReleaseTurnReservation(res Reservation) { r.releaseOld(res.Chat) }
 
-func (r *slotAdmission) LifeStamp() uint64 { return 0 }
+func (*slotAdmission) LifeStamp() uint64 { return 0 }
 
-func (r *slotAdmission) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) {
+func (*slotAdmission) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) {
 	return false, nil
 }
 

@@ -110,11 +110,12 @@ func (bc *bridgeCoordinator) foldTargetNow(ctx context.Context, chatID marotte.C
 }
 
 // openTurnNow is the Runtime's OpenTurn on a chat whose life a test creates first.
-func (rt *Runtime) openTurnNow(ctx context.Context, chatID marotte.ChatID, open command.TurnOpen) (string, error) {
+func (rt *Runtime) openTurnNow(ctx context.Context, chatID marotte.ChatID, open command.TurnOpen) error {
 	if _, ok := rt.coord.turns.lookup(chatID); !ok {
 		rt.coord.turns.testLifecycle(chatID)
 	}
-	return rt.OpenTurn(ctx, chatID, open)
+	_, err := rt.OpenTurn(ctx, chatID, open)
+	return err
 }
 
 // ensureTestLife gives chatID the lifecycle an admitted caller or a forward's attach creates, unless it has one.
@@ -133,4 +134,12 @@ func (r *turnRegistry) ensureTestLife(chatID marotte.ChatID) {
 func (rt *Runtime) insertBridgeNow(chatID marotte.ChatID, sb *sharedBridge) bool {
 	rt.coord.turns.ensureTestLife(chatID)
 	return rt.bridge.mgr.insert(chatID, sb)
+}
+
+// held reports whether a close of chatID is being decided or torn down.
+func (g *chatGates) held(chatID marotte.ChatID) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	st := g.chats[chatID]
+	return st != nil && st.holds > 0
 }

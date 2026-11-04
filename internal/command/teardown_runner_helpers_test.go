@@ -20,7 +20,7 @@ type fakeLife struct {
 	draining atomic.Bool
 }
 
-func (l *fakeLife) TurnContext(ctx context.Context) (context.Context, context.CancelFunc) {
+func (*fakeLife) TurnContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(ctx))
 }
 func (*fakeLife) InflightAdd(int)  {}

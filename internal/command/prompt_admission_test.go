@@ -321,8 +321,8 @@ type gatedBridgeAccess struct {
 
 func (g *gatedBridgeAccess) Bridge(id marotte.ChatID) Bridge { return g.inner.Bridge(id) }
 
-func (g *gatedBridgeAccess) BridgeLive(id marotte.ChatID) bool                                   { return g.inner.BridgeLive(id) }
-func (g *gatedBridgeAccess) closeBridgeOld(context.Context, marotte.ChatID, marotte.TurnOutcome) {}
+func (g *gatedBridgeAccess) BridgeLive(id marotte.ChatID) bool                                 { return g.inner.BridgeLive(id) }
+func (*gatedBridgeAccess) closeBridgeOld(context.Context, marotte.ChatID, marotte.TurnOutcome) {}
 
 func (g *gatedBridgeAccess) CallBudget(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
 	return g.inner.CallBudget(ctx, d)
@@ -649,9 +649,9 @@ func (r *scriptedAdmission) TryReserveTurnFenced(chatID marotte.ChatID, source m
 
 func (r *scriptedAdmission) ReleaseTurnReservation(res Reservation) { r.releaseOld(res.Chat) }
 
-func (r *scriptedAdmission) LifeStamp() uint64 { return 0 }
+func (*scriptedAdmission) LifeStamp() uint64 { return 0 }
 
-func (r *scriptedAdmission) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) {
+func (*scriptedAdmission) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) {
 	return false, nil
 }
 

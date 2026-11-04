@@ -399,9 +399,9 @@ func (r *benchDeps) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.T
 
 func (r *benchDeps) ReleaseTurnReservation(res Reservation) { r.releaseOld(res.Chat) }
 
-func (r *benchDeps) LifeStamp() uint64 { return 0 }
+func (*benchDeps) LifeStamp() uint64 { return 0 }
 
-func (r *benchDeps) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) { return false, nil }
+func (*benchDeps) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) { return false, nil }
 
 func (r *benchDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
 	return r.OpenBridge(ctx, chatID, model)

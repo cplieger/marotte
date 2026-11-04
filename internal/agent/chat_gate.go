@@ -122,14 +122,6 @@ func (g *chatGates) admit(chatID marotte.ChatID, stamp uint64) (verdict gateVerd
 	return gateAdmitted, nil
 }
 
-// held reports whether a close of chatID is being decided or torn down.
-func (g *chatGates) held(chatID marotte.ChatID) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	st := g.chats[chatID]
-	return st != nil && st.holds > 0
-}
-
 // awaitNoClose waits until no close of chatID is held, reporting whether it waited; a ctx end answers the ctx's
 // error. It admits nothing: the caller takes its stamp after it and reserves, which meets a later hold itself.
 func (g *chatGates) awaitNoClose(ctx context.Context, chatID marotte.ChatID) (bool, error) {

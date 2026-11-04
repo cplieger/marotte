@@ -357,9 +357,9 @@ func (r *recoveryOutcome) TryReserveTurnFenced(chatID marotte.ChatID, source mar
 
 func (r *recoveryOutcome) ReleaseTurnReservation(res Reservation) { r.releaseOld(res.Chat) }
 
-func (r *recoveryOutcome) LifeStamp() uint64 { return 0 }
+func (*recoveryOutcome) LifeStamp() uint64 { return 0 }
 
-func (r *recoveryOutcome) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) {
+func (*recoveryOutcome) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) {
 	return false, nil
 }
 
