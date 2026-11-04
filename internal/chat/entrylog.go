@@ -995,7 +995,7 @@ func (l *EntryLog) unreadableLineLocked(off int64, err, rerr error) error {
 		return fmt.Errorf("entry log: %s: corrupt line at offset %d, copy aside: %w", l.path(), off, cerr)
 	}
 	slog.Warn("entry log: copied a log with a corrupt line aside before dropping from it",
-		"root", l.root, "offset", off, "aside", logsafe.Field(aside), "cause", logsafe.Field(err.Error()))
+		"root", logsafe.Field(l.root), "offset", off, "aside", logsafe.Field(aside), "cause", logsafe.Field(err.Error()))
 	return l.dropTailLocked(off, err)
 }
 
