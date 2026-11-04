@@ -1279,6 +1279,13 @@
   color: var(--c-text-control);
 }
 
+/* The chevron is wider than a row's status square; the margins pull its centre onto the square's
+   column and give the width back on the other side, so the mark and count do not move. */
+.run-bar-chev > .disclosure-chevron {
+  margin-inline: calc((var(--dot-size) - var(--chev-size)) / 2)
+    calc((var(--chev-size) - var(--dot-size)) / 2);
+}
+
 .run-bar-toggle[aria-expanded="true"] .disclosure-chevron {
   --chev-turn: 0deg;
 }

@@ -1,7 +1,7 @@
 // The run bar box's vertical balance, measured on rendered ink: the gap from the border to the first
 // ink equals the gap from the last ink to the border, the fold row sits as far from the first run as
 // two runs sit from each other, and the fold row's touch target reaches the hit floor without
-// reaching the first run's.
+// reaching the first run's. The fold row's chevron and the runs' status squares form one column.
 
 import { describe, it, expect, afterEach } from "vitest";
 import { page as browser } from "vitest/browser";
@@ -480,6 +480,35 @@ describe("the fold row's reach", () => {
           `the toggle at x=${String(Math.round(x))}`,
         ).toBe(true);
       }
+    });
+  }
+});
+
+describe("the fold row's chevron", () => {
+  for (const [w, h, tier, boxWidth] of [
+    [1280, 800, "fine", 1000],
+    [390, 844, "coarse", 374],
+    [360, 740, "coarse", 344],
+  ] as const) {
+    it(`shares a column with the runs' status squares at ${String(w)}px`, async () => {
+      await browser.viewport(w, h);
+      style = mountAppCSS();
+      if (tier === "coarse") {
+        document.documentElement.setAttribute("data-pointer", tier);
+      }
+      const { toggle, rows } = mount(4, true, boxWidth);
+      await settle();
+      const centreX = (el: Element | null | undefined): number => {
+        expect(el, "an element to centre").toBeTruthy();
+        const r = el!.getBoundingClientRect();
+        return (r.left + r.right) / 2;
+      };
+      const chevron = centreX(toggle!.querySelector(".disclosure-chevron > svg"));
+      const square = centreX(rows[0]!.querySelector(".run-bar-glyph"));
+      expect(
+        Math.abs(chevron - square),
+        `chevron centre x ${chevron.toFixed(2)}, square centre x ${square.toFixed(2)}`,
+      ).toBeLessThanOrEqual(0.5);
     });
   }
 });
