@@ -90,6 +90,22 @@ func TestRespondFSRead_AStepReadsItsRunsEditSnapshot(t *testing.T) {
 			t.Errorf("read of its run's replaced file = %q, %v; want the file", got, err)
 		}
 	})
+	t.Run("a KIRO_HOME reached through a link", func(t *testing.T) {
+		f := newSnapshotFixture(t)
+		linked := filepath.Join(canonDir(t, t.TempDir()), "home")
+		if err := os.Symlink(filepath.Dir(f.home), linked); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", linked)
+		rel, err := filepath.Rel(f.home, f.runA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := f.read(t, "sess_step_a", filepath.Join(linked, ".kiro", rel, "edit-snapshot-r1.md"), nil)
+		if err != nil || got != "line one\nline two\nline three\n" {
+			t.Errorf("read through a linked home = %q, %v; want the snapshot", got, err)
+		}
+	})
 	t.Run("a stat of the snapshot", func(t *testing.T) {
 		f := newSnapshotFixture(t)
 		f.h.inbound.respondKiroFSStat(t.Context(), "c1", f.h.originOf("c1"),
@@ -151,6 +167,31 @@ func TestRespondFSRead_TheSnapshotGrantGoesNoFurther(t *testing.T) {
 			}
 		})
 	}
+	t.Run("its run's directory linking to another run's", func(t *testing.T) {
+		f := newSnapshotFixture(t)
+		if err := os.RemoveAll(f.runA); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(f.runB, f.runA); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := f.read(t, "sess_step_a", filepath.Join(f.runA, "edit-snapshot-r1.md"), nil); err == nil {
+			t.Errorf("read through a linked run directory = %q, want refused", got)
+		}
+	})
+	t.Run("a directory above the run linking elsewhere", func(t *testing.T) {
+		f := newSnapshotFixture(t)
+		workflows := filepath.Dir(f.runA)
+		if err := os.RemoveAll(workflows); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(f.home, "sessions", "0000000000000000", "workflows"), workflows); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := f.read(t, "sess_step_a", filepath.Join(f.runA, "edit-snapshot-r1.md"), nil); err == nil {
+			t.Errorf("read through a linked workflows directory = %q, want refused", got)
+		}
+	})
 	t.Run("a write over the snapshot", func(t *testing.T) {
 		f := newSnapshotFixture(t)
 		snap := filepath.Join(f.runA, "edit-snapshot-r1.md")
