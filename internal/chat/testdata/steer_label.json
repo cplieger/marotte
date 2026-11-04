@@ -160,7 +160,7 @@
       "reason": "boundary",
       "label": "Not read · the turn ended first",
       "sites": [
-        "internal/agent/command_chat_ops.go:58",
+        "internal/agent/command_chat_ops.go:59",
         "internal/agent/steer_buffer.go:431",
         "internal/translate/steering.go:198"
       ]
@@ -207,7 +207,7 @@
       "reason": "restart"
     },
     {
-      "site": "internal/agent/command_chat_ops.go:58",
+      "site": "internal/agent/command_chat_ops.go:59",
       "form": "literal",
       "origin": "user",
       "state": "dropped",

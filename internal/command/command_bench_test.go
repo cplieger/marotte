@@ -303,7 +303,7 @@ func TestBenchDeps_Contract(t *testing.T) {
 // Replay cost belongs to the header middleware.
 func BenchmarkDispatcherServeHTTP(b *testing.B) {
 	d := New()
-	d.Register("create_chat", func(context.Context, *marotte.ClientCommand) (any, error) {
+	d.register("create_chat", func(context.Context, *marotte.ClientCommand) (any, error) {
 		return responseOK, nil
 	})
 

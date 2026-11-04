@@ -135,8 +135,8 @@ func New() *Dispatcher {
 	return &Dispatcher{handlers: make(map[marotte.CommandType]Handler)}
 }
 
-// Register adds a handler for the given command type.
-func (d *Dispatcher) Register(t marotte.CommandType, h Handler) {
+// register adds a handler for the given command type.
+func (d *Dispatcher) register(t marotte.CommandType, h Handler) {
 	d.mu.Lock()
 	d.handlers[t] = h
 	d.mu.Unlock()
@@ -145,7 +145,7 @@ func (d *Dispatcher) Register(t marotte.CommandType, h Handler) {
 // RegisterChange adds a handler whose engine call can outlast its request: its request answers 504
 // still_applying once the answer budget RegisterDefaults bound passes, and the change lands when kiro-cli answers.
 func (d *Dispatcher) RegisterChange(t marotte.CommandType, h Handler) {
-	d.Register(t, d.changes.wrap(t, h))
+	d.register(t, d.changes.wrap(t, h))
 }
 
 func (d *Dispatcher) handler(t marotte.CommandType) (Handler, bool) {
