@@ -95,8 +95,9 @@ func cmdDeleteChat(ctx context.Context, mem *Membership, cmd *marotte.ClientComm
 }
 
 // cmdCancel cancels the active turn, if any. The turn's end leaves its unread
-// steers for the next send; a payload lead names the row the reader wants first. It
-// never waits on the steer lock, so a stop never queues behind a delete.
+// steers for the next send; a payload lead names the row the reader wants first,
+// and a lead no longer waiting in the dock stops nothing. A plain stop never waits
+// on the steer lock, so it never queues behind a delete.
 func cmdCancel(
 	ctx context.Context,
 	bridges bridgeAccess,
@@ -111,38 +112,44 @@ func cmdCancel(
 	if len(cmd.Payload) > 0 && json.Unmarshal(cmd.Payload, &p) != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
+	if queue == nil || p.Lead == "" {
+		return stopChatTurn(ctx, bridges, perms, terms, stops, nil, cmd.ChatID, nil)
+	}
 	// The lead is steer-queue state: a stop in the session-door window (no bridge
 	// yet) still ends an admitted turn, whose hand-on sends the lead first.
-	return stopChatTurn(ctx, bridges, perms, terms, stops, cmd.ChatID, func() (func(), bool) {
-		if queue != nil && p.Lead != "" {
-			return queue.SetSteerLead(cmd.ChatID, p.Lead), false
-		}
-		return func() {}, false
+	return stopChatTurn(ctx, bridges, perms, terms, stops, queue, cmd.ChatID, func() (func(), bool) {
+		undo, waiting := queue.SetSteerLead(cmd.ChatID, p.Lead)
+		return undo, !waiting
 	})
 }
 
-// stopChatTurn is a reader's stop of the chat's turn. mark records what the stop's
-// close sends first, after the stop is requested and before the cancel is sent; its
-// undo runs when the cancel was not delivered (502) or the session ended instead. A
-// mark answering skip ends the stop there: nothing is cancelled and the answer is OK.
+// stopMark records what a stop's close sends first. Its undo runs when the cancel
+// was not delivered (502) or the session ended instead; skip ends the stop with
+// nothing requested, cancelled or held, answered responseSkipped.
+type stopMark func() (undo func(), skip bool)
+
+// responseSkipped tells the client its stop stopped nothing, so its optimistic idle
+// and stop announcement must go; never mutated.
+var responseSkipped = map[string]bool{"ok": true, "skipped": true}
+
+// stopChatTurn is a reader's stop of the chat's turn; a nil mark is a plain stop.
 func stopChatTurn(
 	ctx context.Context,
 	bridges bridgeAccess,
 	perms pendingPermAccess,
 	terms terminalAccess,
 	stops turnStopper,
+	queue SteerQueue,
 	chatID marotte.ChatID,
-	mark func() (undo func(), skip bool),
+	mark stopMark,
 ) (any, error) {
-	// First, before any signal; every later step acts on the turns captured here.
-	stop := stops.RequestStop(chatID, marotte.TurnStopReader)
+	stop, undo, skip := requestMarkedStop(ctx, stops, queue, chatID, mark)
+	if skip {
+		return responseSkipped, nil
+	}
 	defer stops.ReleaseStop(stop)
 
 	sb := bridges.Bridge(chatID)
-	undo, skip := mark()
-	if skip {
-		return responseOK, nil
-	}
 	err := cancelSession(ctx, perms, sb, chatID, ScopeChatSession)
 	if errors.Is(err, ErrCancelNotDelivered) {
 		undo()
@@ -166,6 +173,26 @@ func stopChatTurn(
 		slog.Debug("cancel: no live turn to arm a grace budget against", "chat_id", chatID)
 	}
 	return responseOK, nil
+}
+
+// requestMarkedStop requests the stop before any signal, so every later step acts on
+// the turns captured here. A mark and the request run under the steer lock, which a
+// drain holds from its pick until the turn it opens is announced: a skip must come
+// before the request, whose capture and stop count would otherwise still stop that
+// turn (its write, its empty-turn retry), and a turn opened after the capture is not
+// its target. A lock the request's context cannot take leaves mark unlocked. The wait
+// is behind any holder, a delete too: a stop past an unfinished drain could cancel its resend.
+func requestMarkedStop(ctx context.Context, stops turnStopper, queue SteerQueue, chatID marotte.ChatID, mark stopMark) (stop *TurnStop, undo func(), skip bool) {
+	if mark == nil {
+		return stops.RequestStop(chatID, marotte.TurnStopReader), func() {}, false
+	}
+	if unlock, err := queue.LockSteerOps(ctx, chatID); err == nil {
+		defer unlock()
+	}
+	if undo, skip = mark(); skip {
+		return nil, nil, true
+	}
+	return stops.RequestStop(chatID, marotte.TurnStopReader), undo, false
 }
 
 // closeChatTeardown is the tab-close teardown: the turn, the runs and the session go; the chat
