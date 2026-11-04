@@ -498,6 +498,12 @@ func writeLaunchErr(w http.ResponseWriter, source string, err error) {
 		return
 	}
 	slog.Warn("run launch failed", "source", logsafe.Field(source), "error", err, "detail", rpcerr.Details(err))
+	for _, lost := range []error{errLaunchUnconfirmed, errLaunchNewUnconfirmed} {
+		if errors.Is(err, lost) {
+			webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(lost.Error()))
+			return
+		}
+	}
 	if writeEngineSlow(w, err) {
 		return
 	}
@@ -860,6 +866,9 @@ const runClaimInFlightText = "Another action on this run is already under way. R
 const deleteUnconfirmedText = "The delete was sent, but its answer was lost. " +
 	"The run takes no messages until marotte confirms whether it is gone."
 
+const controlUnreadText = "The run control was sent but its answer could not be read. " +
+	"Refresh the run to see where it is."
+
 // writeControlErr answers a verb that reached KAS and failed: a refusal forwards KAS's actionable sentence;
 // InternalError is for faults that are not the reader's.
 func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err error) {
@@ -905,6 +914,10 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		slog.Info("run control refused: another claim on the run is in flight",
 			"verb", verb, "workflow_id", logsafe.Field(id), "detail", rpcerr.Details(err))
 		httpreply.Conflict(w, runClaimInFlightText)
+	case replyUnread(err):
+		slog.Warn("run control sent but its answer could not be read",
+			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
+		webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(controlUnreadText))
 	case isRPCRefusal(err):
 		// KAS's sentence names the reason, and the fix is often the reader's.
 		slog.Info("run control refused by the workflow engine",

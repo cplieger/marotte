@@ -257,3 +257,36 @@ func TestEndStep_AResumeWaitsForTheEnd(t *testing.T) {
 		}
 	})
 }
+
+// An end whose answer could not be read may have re-driven the run, so the run is bounded as an end that took; an
+// end KAS refused leaves it as it was.
+func TestEndStep_AnAnswerThatCouldNotBeReadBoundsTheRun(t *testing.T) {
+	cases := map[string]struct {
+		arm     func(br *fakeBridge)
+		bounded bool
+	}{
+		"an undecoded answer": {func(br *fakeBridge) { br.setCallErr(methodKiroWorkflowUpdate, undecodedReply()) }, true},
+		"an oversize answer": {func(br *fakeBridge) {
+			br.setCallErr(methodKiroWorkflowUpdate, &marotte.TransportError{Err: marotte.ErrFrameTooLarge})
+		}, true},
+		"a parse error KAS itself sends": {func(br *fakeBridge) {
+			br.setCallRPCErr(methodKiroWorkflowUpdate, &marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "Parse error"})
+		}, false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, br := endHub(t, stepEndTree(t, &stepEndCase{Run: "paused", Node: "paused", Type: stepNodeType}))
+			if h.runs.bounded("wf_1") {
+				t.Fatal("Setup: the paused run is already bounded")
+			}
+			c.arm(br)
+
+			if err := h.runs.endStep(t.Context(), "wf_1", targetPath, runStepCompleted); err == nil {
+				t.Fatal("end = nil, want the call's failure")
+			}
+			if got := h.runs.bounded("wf_1"); got != c.bounded {
+				t.Errorf("bounded after the end = %v, want %v", got, c.bounded)
+			}
+		})
+	}
+}

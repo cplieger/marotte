@@ -364,14 +364,19 @@ func (rs *Runs) writePause(ctx context.Context, workflowID string, params map[st
 	})
 }
 
-// sendResume writes every resume of a run, on its launching session, under the admission a.
+// sendResume writes every resume of a run, on its launching session, under the admission a. A resume whose answer
+// could not be read may have re-driven the run, so it arms the deadline as a resume that took; a caller arms on nil.
 func (rs *Runs) sendResume(ctx context.Context, a runAdmission, host *drivenHost, workflowID string, extra map[string]any) error {
 	params := map[string]any{keyWorkflowID: workflowID}
 	maps.Copy(params, extra)
-	return rs.controlSerialized(ctx, workflowID, func(cctx context.Context) error {
+	err := rs.controlSerialized(ctx, workflowID, func(cctx context.Context) error {
 		_, err := rs.write(cctx, a, host.sb, workflowID, methodKiroWorkflowResume, params, mutationDrive)
 		return err
 	})
+	if replyUnread(err) {
+		rs.armDeadline(ctx, workflowID)
+	}
+	return err
 }
 
 // resumeAsked is a person's resume, refused while the gate is closed.
@@ -443,8 +448,9 @@ func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest, r 
 		claimed = false
 	}
 	if claimed {
-		// A claim another verb held past its TTL is that verb's write, not a failed one of marotte's.
-		rs.noteHealWrite(workflowID, wErr != nil && !errors.Is(wErr, workflow.ErrJustClaimed))
+		// A claim another verb held past its TTL is that verb's write, and an unread answer may have taken: neither is
+		// a failed one of marotte's.
+		rs.noteHealWrite(workflowID, wErr != nil && !errors.Is(wErr, workflow.ErrJustClaimed) && !replyUnread(wErr))
 	}
 	charged = charged || claimed
 	if wErr != nil {
@@ -505,6 +511,10 @@ func (rs *Runs) writeHealResume(ctx context.Context, a runAdmission, chatID maro
 		// KAS queues a second claim on one engine and refuses only after the first overstayed its claim TTL.
 		slog.Info("rehydrate: another verb held this run's claim past its TTL, so the heal left it to that one",
 			"workflow_id", workflowID, "chat_id", chatID)
+		return true, cErr
+	case replyUnread(cErr):
+		slog.Warn("rehydrate: the resume was sent but its answer could not be read",
+			"workflow_id", workflowID, "chat_id", chatID, "error", cErr)
 		return true, cErr
 	default:
 		slog.Warn("rehydrate: resume failed", "workflow_id", workflowID, "chat_id", chatID, "error", cErr)

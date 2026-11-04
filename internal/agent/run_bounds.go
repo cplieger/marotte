@@ -454,6 +454,9 @@ func (rs *Runs) finishTermination(
 		err = rs.cancelRPC(sctx, workflowID, stop)
 		return err == nil
 	})
+	if err != nil && replyUnread(err) && rs.readsTerminal(ctx, workflowID) {
+		err = nil
+	}
 	if err != nil {
 		rs.releaseTermination(workflowID)
 		rs.retryTermination(ctx, workflowID, reason, again)
@@ -467,6 +470,13 @@ func (rs *Runs) finishTermination(
 	rs.clearCancelRetries(workflowID)
 	rs.releaseIfOver(ctx, workflowID)
 	return nil
+}
+
+// readsTerminal reports one fresh read finding the run ended, so a cancel whose answer was unread is known to have
+// taken; an unreadable read is false.
+func (rs *Runs) readsTerminal(ctx context.Context, workflowID string) bool {
+	res, ok := rs.inspect(ctx, workflowID)
+	return ok && res.WorkflowID == workflowID && res.State.Status.Terminal()
 }
 
 var runEndNoteText = map[string]string{

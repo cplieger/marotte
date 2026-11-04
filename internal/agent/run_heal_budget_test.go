@@ -356,3 +356,17 @@ func TestHealBudget_AResumeByHandClearsTheStop(t *testing.T) {
 		t.Errorf("marotte wrote pauses %v", p)
 	}
 }
+
+// A heal's resume whose answer could not be read may have re-driven the run: it is bounded as a resume that took,
+// and the write is not counted among marotte's failed ones.
+func TestHealBudget_AResumeWhoseAnswerWasUnreadBoundsTheRun(t *testing.T) {
+	g := newThrottleRig(t, nil)
+	g.br.setCallErr(methodKiroWorkflowResume, undecodedReply())
+
+	g.throttled(t)
+
+	waitUntil(t, "the run bounded after its unread resume", func() bool { return g.h.runs.bounded(gateRunID) })
+	if g.h.runs.healWritesFailed(gateRunID) {
+		t.Error("an unread resume was counted as a failed write, so a budget it spends is blamed on marotte")
+	}
+}

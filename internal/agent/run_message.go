@@ -421,11 +421,16 @@ func verdictOf(err error) kasVerdict {
 	switch {
 	case err == nil:
 		return kasTook
-	case errors.Is(err, marotte.ErrBridgeExited), errors.Is(err, marotte.ErrFrameTooLarge),
-		errors.Is(err, marotte.ErrReplyUndecoded):
+	case errors.Is(err, marotte.ErrBridgeExited), replyUnread(err):
 		return kasUnconfirmed
 	}
 	return kasRefused
+}
+
+// replyUnread reports an answer that arrived but could not be read (undecoded or oversize), so KAS may have taken
+// the call. A -32700 KAS itself sends carries no ErrReplyUndecoded and stays a refusal.
+func replyUnread(err error) bool {
+	return errors.Is(err, marotte.ErrReplyUndecoded) || errors.Is(err, marotte.ErrFrameTooLarge)
 }
 
 // unconfirmedSends holds, per run, the message ids sendStepWords recorded as kasUnconfirmed and the

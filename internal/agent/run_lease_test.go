@@ -268,7 +268,7 @@ func TestLaunchScheduled_ACallerCancelOnceTheRunExistsStillLaunchesIt(t *testing
 }
 
 // Dropping the caller's cancel keeps the launch's deadline: an invoke the engine never answers ends at it, so the
-// schedule runner's sweep is not held until shutdown, and the row on disk names the run failed.
+// schedule runner's sweep is not held until shutdown. KAS may have started the run, so it keeps its lease and bound.
 func TestLaunchScheduled_ACallerCancelOnceTheRunExistsKeepsTheLaunchDeadline(t *testing.T) {
 	saved := launchTimeout
 	launchTimeout = 300 * time.Millisecond
@@ -312,15 +312,21 @@ func TestLaunchScheduled_ACallerCancelOnceTheRunExistsKeepsTheLaunchDeadline(t *
 	case <-time.After(10 * launchTimeout):
 		t.Fatal("LaunchScheduled outlived its launch deadline")
 	}
-	if got.id != "wf_1" || !errors.Is(got.err, context.DeadlineExceeded) {
-		t.Errorf("LaunchScheduled = %q, %v; want wf_1 with the launch deadline", got.id, got.err)
+	if got.id != "wf_1" || got.err != nil {
+		t.Errorf("LaunchScheduled = %q, %v; want wf_1 reported launched, its start unconfirmed", got.id, got.err)
+	}
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Error("the lease was released, so a run KAS may have started runs with no envelope")
+	}
+	if !h.runs.bounded("wf_1") {
+		t.Error("the run's deadline was not armed, so nothing bounds a run KAS may have started")
 	}
 	reopened, err := schedule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("reopen schedule.NewStore: %v", err)
 	}
-	if row := reopened.List()[0]; row.LastRunID != "wf_1" || row.LastStatus != schedule.StatusFailed {
-		t.Errorf("row on disk = %+v, want wf_1 failed", row)
+	if row := reopened.List()[0]; row.LastRunID != "wf_1" || row.LastStatus != "started" {
+		t.Errorf("row on disk = %+v, want wf_1 started, its ending left to the run", row)
 	}
 }
 
