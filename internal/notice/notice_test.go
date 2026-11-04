@@ -52,6 +52,14 @@ func TestBuilders_titleIsTheTabAndBodyIsPhraseThenDetail(t *testing.T) {
 			PushSubject: marotte.RunSubject("wf1"), Kind: marotte.PushKindPermission,
 			Title: "nightly · scheduled", Body: "Input required · reviewer",
 		}},
+		{"auto-resume stopped on throttling", AutoResumeStopped(run, true), marotte.NotificationPayload{
+			PushSubject: marotte.RunSubject("wf1"), Kind: marotte.PushKindRunOutcome,
+			Title: "nightly · scheduled", Body: "Workflow paused · marotte stopped resuming it after repeated model throttling",
+		}},
+		{"auto-resume stopped on another cause", AutoResumeStopped(run, false), marotte.NotificationPayload{
+			PushSubject: marotte.RunSubject("wf1"), Kind: marotte.PushKindRunOutcome,
+			Title: "nightly · scheduled", Body: "Workflow paused · marotte stopped resuming it after repeated pauses",
+		}},
 		{"pr flip", PRStatus(marotte.PRSubject("github:github.com", "r1", 7), "acme/web", 7, "Add login", true), marotte.NotificationPayload{
 			PushSubject: marotte.PRSubject("github:github.com", "r1", 7), Kind: marotte.PushKindPRStatus,
 			Title: "acme/web #7", Body: "Checks passed · Add login",

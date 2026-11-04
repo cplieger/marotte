@@ -557,7 +557,7 @@ func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
 	}
 	h.runs.bounds.executed["wf_1"] = runBackstop
 	h.runs.mu.Unlock()
-	if err := h.runs.stopAutoResume(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.stopAutoResume(t.Context(), "wf_1", true); err != nil {
 		t.Fatalf("stopAutoResume: %v", err)
 	}
 

@@ -475,7 +475,7 @@ func (rs *Runs) healSpent(
 		slog.Warn("a run keeps pausing for a cause nobody chose; marotte stopped resuming it, so it waits for a resume by hand",
 			"workflow_id", workflowID, "chat_id", req.chatID, "attempts", attempts)
 	}
-	if err := rs.stopAutoResume(ctx, workflowID); err != nil {
+	if err := rs.stopAutoResume(ctx, workflowID, throttledPause(r.res.State.PauseDetail)); err != nil {
 		// On a failed write the store keeps the stamp in memory, so only a restart loses it. With no lease, the spent
 		// budget alone stops this process's resumes.
 		slog.Warn("a run marotte stopped resuming could not be recorded as such",

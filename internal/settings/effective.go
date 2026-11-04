@@ -151,7 +151,6 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeyAutoCompactPct:        func(r json.RawMessage) error { return decodeAutoCompactPct(&out.AutoCompactPct, r) },
 		KeyChatRetentionDays:     func(r json.RawMessage) error { return decodeInto(&out.ChatRetentionDays, r) },
 		KeyTheme:                 func(r json.RawMessage) error { return decodeInto(&out.Theme, r) },
-		KeyFBPath:                func(r json.RawMessage) error { return decodeInto(&out.FBPath, r) },
 		KeyLastModel:             func(r json.RawMessage) error { return decodeInto(&out.LastModel, r) },
 		KeyLastEffortByModel:     func(r json.RawMessage) error { return decodeInto(&out.LastEffortByModel, r) },
 		KeyLastMergeMethod:       func(r json.RawMessage) error { return decodeInto(&out.LastMergeMethod, r) },

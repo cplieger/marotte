@@ -34,8 +34,6 @@ type EffectiveSettings struct {
 	// client's one-time paint-cache carry-across is reachable only while the
 	// server says nothing.
 	Theme string `json:"theme"`
-	// FBPath is the file-browser path to restore, "" to list the granted mounts.
-	FBPath string `json:"fb_path"`
 	// LastModel and LastEffortByModel are what a NEW chat opens on. Both are pure
 	// memory: the value in force for an existing chat lives on that chat's record.
 	LastModel string `json:"last_model"`

@@ -118,7 +118,7 @@ Reported as [kirodotdev/Kiro#11985](https://github.com/kirodotdev/Kiro/issues/11
 
 kiro-cli accepts a request to pause a workflow run only on behalf of the user, and its run details do not say who paused a run. Any pause sent to a run kiro-cli paused for a model throttle therefore reads "Workflow paused by user.", though you paused nothing.
 
-Reported as [kirodotdev/Kiro#12274](https://github.com/kirodotdev/Kiro/issues/12274), open. When marotte stops resuming a run after repeated throttling, it sends no pause and records the stop itself: the run's tab reads "marotte stopped resuming this run after repeated model throttling" beside **Resume**. While your Kiro sign-in cannot be answered, marotte still pauses running runs, and that pause must name you, since kiro-cli accepts nothing else. The run's tab shows marotte's sign-in reason for it instead of saying you paused it.
+Reported as [kirodotdev/Kiro#12274](https://github.com/kirodotdev/Kiro/issues/12274), open. When marotte stops resuming a run after repeated throttling, it sends no pause and records the stop itself: the run's tab reads "marotte stopped resuming this run after repeated model throttling" beside **Resume**, a **Workflow runs** notification says so, and the agent that started the run reads it on its next turn. While your Kiro sign-in cannot be answered, marotte still pauses running runs, and that pause must name you, since kiro-cli accepts nothing else. The run's tab shows marotte's sign-in reason for it instead of saying you paused it.
 
 ## Agent terminals
 

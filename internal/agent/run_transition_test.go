@@ -375,7 +375,7 @@ func TestRunTransitions_EveryRequestInEveryState(t *testing.T) {
 				br.setCallResult(methodKiroWorkflowUpdate, json.RawMessage(`{"updated":true}`))
 				st.set(t, br)
 				if st.stopped {
-					if err := h.runs.stopAutoResume(t.Context(), gateRunID); err != nil {
+					if err := h.runs.stopAutoResume(t.Context(), gateRunID, true); err != nil {
 						t.Fatalf("Setup: recording the stop: %v", err)
 					}
 				}

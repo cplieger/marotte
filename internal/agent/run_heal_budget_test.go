@@ -26,17 +26,19 @@ type throttleRig struct {
 	h      *Runtime
 	br     *fakeBridge
 	pauses []map[string]any
+	// steers are the `_session/steer` calls marotte wrote, on any session.
+	steers []map[string]any
 	// resumes counts a resume once the run reads running again, so a later throttle cannot be overwritten by it.
 	resumes atomic.Int32
 	mu      sync.Mutex
 }
 
-func newThrottleRig(t *testing.T, leases *runlease.Store) *throttleRig {
+func newThrottleRig(t *testing.T, leases *runlease.Store, opts ...Option) *throttleRig {
 	t.Helper()
 	prev := healBaseDelay
 	healBaseDelay = time.Millisecond
 	t.Cleanup(func() { healBaseDelay = prev })
-	h, br := agentRunOnChat(t, gateRunID)
+	h, br := agentRunOnChat(t, gateRunID, opts...)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if leases != nil {
 		h.runs.leases = leases
@@ -60,6 +62,11 @@ func newThrottleRig(t *testing.T, leases *runlease.Store) *throttleRig {
 			br.setCallResult(methodKiroWorkflowInspect, running)
 			g.resumes.Add(1)
 			return json.RawMessage(`{}`), nil, true
+		case marotte.MethodSessionSteer:
+			g.mu.Lock()
+			g.steers = append(g.steers, params)
+			g.mu.Unlock()
+			return json.RawMessage(`{"queued":true}`), nil, true
 		}
 		return nil, nil, false
 	}
@@ -99,6 +106,12 @@ func (g *throttleRig) streamed(t *testing.T) {
 func (g *throttleRig) metered(t *testing.T) {
 	t.Helper()
 	g.stepFrame(t, map[string]any{"sessionUpdate": "usage_update", "used": 10, "size": 1000})
+}
+
+func (g *throttleRig) steerParams() []map[string]any {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]map[string]any(nil), g.steers...)
 }
 
 func (g *throttleRig) pauseParams() []map[string]any {

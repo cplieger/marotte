@@ -713,8 +713,6 @@ export interface EffectiveSettings {
  * server says nothing.
  */
   theme: string;
-  /** FBPath is the file-browser path to restore, "" to list the granted mounts. */
-  fb_path: string;
   /**
  * LastModel and LastEffortByModel are what a NEW chat opens on. Both are pure
  * memory: the value in force for an existing chat lives on that chat's record.

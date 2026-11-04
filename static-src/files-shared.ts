@@ -100,7 +100,7 @@ export function parentPath(p: string): string {
 }
 
 /**
- * The one door into the path space for an outside path (persisted `fb_path`, a `/files/<path>` deep link, typed
+ * The one door into the path space for an outside path (a persisted tab ref, a `/files/<path>` deep link, typed
  * text), so `currentPath` is absolute by construction.
  */
 export function normalizeDirPath(raw: string): string {

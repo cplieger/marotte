@@ -171,7 +171,7 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 				marotte.PushKindPRStatus: true, marotte.PushKindRunOutcome: true,
 			}}},
 		},
-		{name: "an_unrelated_key", body: `{"fb_path":"/workspace/src"}`},
+		{name: "an_unrelated_key", body: `{"last_merge_method":"squash"}`},
 		{
 			name: "values_resolving_as_before",
 			body: `{"agent_ignore_files":[],"terminal_command_timeout_ms":500,"content_collection_enabled":false,` +

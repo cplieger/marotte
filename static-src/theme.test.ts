@@ -71,7 +71,7 @@ describe("initThemeToggle", () => {
     stubMatchMedia(true); // OS = dark, so "system" resolves dark
     localStorage.setItem(
       LS_UI_STATE_KEY,
-      JSON.stringify({ theme: "dark", shell_open: true, fb_path: "/x", tab_order: ["a", "b"] }),
+      JSON.stringify({ theme: "dark", shell_open: true, other_key: "/x", tab_order: ["a", "b"] }),
     );
     const btn = setupButton();
     initThemeToggle(cacheStorage);
@@ -82,7 +82,7 @@ describe("initThemeToggle", () => {
     expect(blob["theme"]).toBe("system");
     // Siblings survive the read-modify-write, which is the no-migration invariant.
     expect(blob["shell_open"]).toBe(true);
-    expect(blob["fb_path"]).toBe("/x");
+    expect(blob["other_key"]).toBe("/x");
     expect(blob["tab_order"]).toEqual(["a", "b"]);
 
     btn.click(); // system -> light

@@ -161,6 +161,16 @@ func RunEnded(t Target, status marotte.RunStatus, parent, stopReason, pauseKind 
 	return build(marotte.PushKindRunOutcome, t, phrase, detail), true
 }
 
+// AutoResumeStopped is marotte giving up resuming a paused run on its own after repeated pauses with no progress
+// between them; throttled names a model throttle, the cause a person can wait out, as the run view does.
+func AutoResumeStopped(t Target, throttled bool) marotte.NotificationPayload {
+	cause := "pauses"
+	if throttled {
+		cause = "model throttling"
+	}
+	return build(marotte.PushKindRunOutcome, t, "Workflow paused", "marotte stopped resuming it after repeated "+cause)
+}
+
 // PRStatus is a pull request's CI verdict settling green or red.
 func PRStatus(subject marotte.PushSubject, repo string, number int, prTitle string, passed bool) marotte.NotificationPayload {
 	phrase := phraseChecksFailed

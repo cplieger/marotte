@@ -95,9 +95,6 @@ vi.mock("./editor-openers.js", () => ({ openConfigFile: H.mockOpenConfigFile }))
 vi.mock("./git-tabs.js", () => ({
   getGitTab: undefined,
 }));
-vi.mock("./files.js", () => ({
-  noteDefaultBrowsePath: undefined,
-}));
 vi.mock("./editor-core.js", () => ({
   restoreEditorTabs: undefined,
 }));
