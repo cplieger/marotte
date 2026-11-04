@@ -103,11 +103,12 @@ func (rs *Runs) launchAs(
 
 	// The host session's presets are resolved once and recorded on the lease: a reload after a restart applies
 	// these, never the profile as it is then.
-	presets := securityPresets(cctx, rs.lifecycle.configDir)
+	settings := rs.doorSettings(cctx)
+	presets := settings.Presets
 	sb := &sharedBridge{state: bridgeStarting, settled: newSessionSettle()}
 	var relay *hostRelay
 	door := &marotte.SessionOpts{
-		Role: marotte.SessionRoleHost, Presets: presets, AdditionalDirectories: rs.lifecycle.sessionDirs(cctx),
+		Role: marotte.SessionRoleHost, Presets: presets, AdditionalDirectories: settings.AdditionalDirectories,
 	}
 	if _, oErr := rs.engine.openSession(cctx, door,
 		func(s engineSession) {

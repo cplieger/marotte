@@ -844,6 +844,7 @@ export const decodeEngineRestart: Decoder<EngineRestart> = (v) => {
   const out: EngineRestart = {
     reasons: own(o, "reasons") === null ? [] : decodeArray(own(o, "reasons"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.engine_restart.reasons"),
     pending: reqBool(o, "pending", "$.engine_restart"),
+    config_unreadable: reqBool(o, "config_unreadable", "$.engine_restart"),
   };
   return out;
 };

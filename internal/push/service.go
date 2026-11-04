@@ -322,32 +322,31 @@ func (s *Service) writeLoop() {
 }
 
 func (s *Service) loadPreferences(ctx context.Context) {
-	// Resolved without holding mu: settings.Field does disk I/O.
-	local := ResolvePreferences(ctx, s.dir)
+	// Read without holding mu: settings.Read does disk I/O. An unreadable file resolves every kind's default.
+	d, _, err := settings.Read(ctx, s.dir)
+	if err != nil && ctx.Err() == nil {
+		slog.Warn("settings: read config.json for notification preferences", "error", err)
+	}
+	local := ResolvePreferences(d)
 	s.mu.Lock()
 	s.prefs = local
 	s.mu.Unlock()
 }
 
-// ResolvePreferences resolves every registered kind's enabled flag from configDir's config.json:
-// the per-kind toggles, then the master switch. A missing or unparseable value takes the kind's
-// kindRegistry default.
-func ResolvePreferences(ctx context.Context, configDir string) map[marotte.PushKind]bool {
+// ResolvePreferences resolves every registered kind's enabled flag from d: the per-kind toggles,
+// then the master switch. A missing or undecodable value takes the kind's kindRegistry default.
+func ResolvePreferences(d settings.Document) map[marotte.PushKind]bool {
 	prefs := make(map[marotte.PushKind]bool, len(kindRegistry))
 	for _, kr := range kindRegistry {
 		if kr.SettingsKey == "" {
 			prefs[kr.Kind] = kr.DefaultOn
 			continue
 		}
-		if v, ok := settings.Field[bool](ctx, configDir, kr.SettingsKey); ok {
-			prefs[kr.Kind] = v
-		} else {
-			prefs[kr.Kind] = kr.DefaultOn
-		}
+		prefs[kr.Kind] = settings.LookupOr(d, kr.SettingsKey, kr.DefaultOn)
 	}
 	// The master switch is applied LAST so nothing re-widens it. Only an explicit false
 	// zeroes: its default is off while each kind has its own, so absent is not a decision.
-	if enabled, ok := settings.Field[bool](ctx, configDir, settings.KeyNotificationsEnabled); ok && !enabled {
+	if enabled := settings.LookupOr(d, settings.KeyNotificationsEnabled, true); !enabled {
 		for kind := range prefs {
 			prefs[kind] = false
 		}
