@@ -112,33 +112,45 @@ var (
 )
 
 // claimSignIn takes the engine's one sign-in slot for name, whose row must be waiting for sign-in: KAS's
-// startOAuth discards every credential the server holds. An expired slot is taken over.
-func (reg *mcpRegistry) claimSignIn(name string) error {
+// startOAuth discards every credential the server holds. An expired slot is taken over. The attempt it returns is
+// what the claimant's own release names (releaseAttempt, failSignIn).
+func (reg *mcpRegistry) claimSignIn(name string) (uint64, error) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 	if s := reg.signIn; s.server != "" && reg.now().Before(s.deadline) {
 		if s.server == name {
-			return errSignInInProgress
+			return 0, errSignInInProgress
 		}
-		return errSignInSlotTaken
+		return 0, errSignInSlotTaken
 	}
 	switch rec := reg.servers[name]; {
 	case rec == nil:
-		return errSignInNotNeeded
+		return 0, errSignInNotNeeded
 	case rec.State == mcpStateConnected:
-		return errSignInConnected
+		return 0, errSignInConnected
 	case rec.State == mcpStateSigningIn:
-		return errSignInInProgress
+		return 0, errSignInInProgress
 	case rec.State != mcpStateOAuth:
-		return errSignInNotNeeded
+		return 0, errSignInNotNeeded
 	}
-	reg.signIn = signInSlot{server: name, deadline: reg.now().Add(signInSlotTTL)}
-	return nil
+	reg.signIns++
+	reg.signIn = signInSlot{server: name, deadline: reg.now().Add(signInSlotTTL), attempt: reg.signIns}
+	return reg.signIns, nil
 }
 
+// releaseSignIn frees the slot on a status KAS reported for name, which ends whichever attempt holds it.
 func (reg *mcpRegistry) releaseSignIn(name string) {
 	reg.mu.Lock()
 	if reg.signIn.server == name {
+		reg.signIn = signInSlot{}
+	}
+	reg.mu.Unlock()
+}
+
+// releaseAttempt frees the slot only while attempt still holds it.
+func (reg *mcpRegistry) releaseAttempt(attempt uint64) {
+	reg.mu.Lock()
+	if reg.signIn.attempt == attempt {
 		reg.signIn = signInSlot{}
 	}
 	reg.mu.Unlock()
@@ -169,7 +181,8 @@ func (reg *mcpRegistry) claimSignInURL(ctx context.Context, url string) (string,
 // startSignIn claims the slot and sends resetServer {startOAuth} in the background: KAS answers within 60 s
 // whatever the connect does, so the answer is no verdict, and the slot ends with the server's next status.
 func (reg *mcpRegistry) startSignIn(name string) error {
-	if err := reg.claimSignIn(name); err != nil {
+	attempt, err := reg.claimSignIn(name)
+	if err != nil {
 		return err
 	}
 	started := reg.lifetime.goClaimed(func() func() {
@@ -179,17 +192,17 @@ func (reg *mcpRegistry) startSignIn(name string) error {
 		}
 		return func() {
 			defer release()
-			reg.sendSignIn(h, name)
+			reg.sendSignIn(h, attempt, name)
 		}
 	})
 	if !started {
-		reg.releaseSignIn(name)
+		reg.releaseAttempt(attempt)
 		return errMCPResetNoEngine
 	}
 	return nil
 }
 
-func (reg *mcpRegistry) sendSignIn(h engineHandle, name string) {
+func (reg *mcpRegistry) sendSignIn(h engineHandle, attempt uint64, name string) {
 	ctx, cancel := context.WithTimeout(reg.lifetime.shutdownCtx, mcpReconnectTimeout)
 	defer cancel()
 	resp, err := h.Call(ctx, methodV3MCPResetServer, map[string]any{keyServerName: name, keyStartOAuth: true})
@@ -200,14 +213,14 @@ func (reg *mcpRegistry) sendSignIn(h engineHandle, name string) {
 		return
 	}
 	slog.Warn("mcp sign-in: the engine refused or did not answer the reset", "server", name, "error", err)
-	reg.failSignIn(reg.lifetime.shutdownCtx, name, rpcerr.Text(err))
+	reg.failSignIn(reg.lifetime.shutdownCtx, attempt, name, rpcerr.Text(err))
 }
 
-// failSignIn frees a slot the engine never took and says why on the row. A slot already freed (the engine ended,
-// or the server reported) has its status, so nothing is recorded.
-func (reg *mcpRegistry) failSignIn(ctx context.Context, name, reason string) {
+// failSignIn frees attempt's slot, which the engine never took, and says why on name's row. A slot no longer
+// attempt's (the engine ended, the server reported, or a later Sign in took it) has its status, so nothing is recorded.
+func (reg *mcpRegistry) failSignIn(ctx context.Context, attempt uint64, name, reason string) {
 	reg.mu.Lock()
-	if reg.signIn.server != name {
+	if reg.signIn.attempt != attempt {
 		reg.mu.Unlock()
 		return
 	}

@@ -164,9 +164,9 @@ func TestSweep_SettlesEachSlotTransition(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			st, l, r := newFixture(t, due.Add(30*time.Second))
-			id := st.List()[0].ID()
+			sched := st.List()[0].Row()
 			recordWF2 := func(at time.Time) {
-				if err := st.RecordStart(t.Context(), Run{StartedAt: at, ScheduleID: id, WorkflowID: "wf-2"}); err != nil {
+				if err := st.RecordStart(t.Context(), Run{StartedAt: at, ScheduleID: sched.ID, ScheduleLife: sched.Life, WorkflowID: "wf-2"}); err != nil {
 					t.Fatalf("RecordStart: %v", err)
 				}
 			}
@@ -186,7 +186,7 @@ func TestSweep_SettlesEachSlotTransition(t *testing.T) {
 			case "started", "ended":
 				recordWF2(due.Add(30 * time.Second))
 				if tc.from == "ended" {
-					if err := st.RecordEnding(t.Context(), Run{ScheduleID: id, WorkflowID: "wf-2"},
+					if err := st.RecordEnding(t.Context(), Run{ScheduleID: sched.ID, ScheduleLife: sched.Life, WorkflowID: "wf-2"},
 						Outcome{Status: StatusCompleted}); err != nil {
 						t.Fatalf("RecordEnding: %v", err)
 					}
@@ -194,7 +194,7 @@ func TestSweep_SettlesEachSlotTransition(t *testing.T) {
 				// The process that launched wf-2 is gone: a fresh runner keeps no memory of the slot.
 				r = NewRunner(st, l)
 			case "previous run":
-				if err := st.RecordStart(t.Context(), Run{StartedAt: yesterday, ScheduleID: id, WorkflowID: "wf-0"}); err != nil {
+				if err := st.RecordStart(t.Context(), Run{StartedAt: yesterday, ScheduleID: sched.ID, ScheduleLife: sched.Life, WorkflowID: "wf-0"}); err != nil {
 					t.Fatalf("RecordStart: %v", err)
 				}
 			}
@@ -209,7 +209,13 @@ func TestSweep_SettlesEachSlotTransition(t *testing.T) {
 					cancel()
 				}
 			}
-			l.failWith(tc.launch)
+			launch := tc.launch
+			if b, ok := launch.(*BusyError); ok {
+				own := *b
+				own.ScheduleLife = sched.Life
+				launch = &own
+			}
+			l.failWith(launch)
 			l.failID = tc.failID
 			r.now = func() time.Time { return tc.clock }
 			r.sweep(ctx)
@@ -284,7 +290,7 @@ func TestSweep_AShutdownDuringALaunchRecordsWhatTheLaunchCreated(t *testing.T) {
 			defer cancel()
 			l.during = func(string) {
 				if tc.started {
-					run := Run{StartedAt: r.now(), ScheduleID: before.ID(), WorkflowID: "wf-2"}
+					run := Run{StartedAt: r.now(), ScheduleID: before.ID(), ScheduleLife: before.Life, WorkflowID: "wf-2"}
 					if err := st.RecordStart(t.Context(), run); err != nil {
 						t.Errorf("RecordStart: %v", err)
 					}

@@ -10,6 +10,7 @@ import (
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/schedule"
 )
 
 func wantStopParams(t *testing.T, verb string, params map[string]any, byUser bool, reason string) {
@@ -234,7 +235,7 @@ func TestLaunch_OnlyAScheduledRunSendsALabel(t *testing.T) {
 	t.Run("scheduled", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_sched")
-		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1", marotte.RunDefaults{}, time.Now().Add(time.Hour)); err != nil {
+		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"}, marotte.RunDefaults{}, time.Now().Add(time.Hour)); err != nil {
 			t.Fatalf("LaunchScheduled: %v", err)
 		}
 		if got := br.paramsFor(methodKiroWorkflowNew)["runLabel"]; got != "publish · scheduled" {

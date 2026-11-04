@@ -84,7 +84,8 @@ registerCleanup(() => {
   diffAbortCtrl.abort();
 });
 
-const recentlyPushed = new Set<string>();
+/** Each repo's newest successful push: its TTL timer clears the mark only while it is still that push's. */
+const recentlyPushed = new Map<string, symbol>();
 const RECENTLY_PUSHED_TTL_MS = 60_000;
 
 const commitMessages = new Map<string, string>();
@@ -733,8 +734,12 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       pressControl(pushBtn, r.repo, "push", async () => {
         const refusal = refusalOf(await push.dispatch({ repo: r.repo }).outcome, "push");
         if (refusal === null) {
-          recentlyPushed.add(r.repo);
+          const pushed = Symbol(r.repo);
+          recentlyPushed.set(r.repo, pushed);
           setTimeout(() => {
+            if (recentlyPushed.get(r.repo) !== pushed) {
+              return;
+            }
             recentlyPushed.delete(r.repo);
             paint();
           }, RECENTLY_PUSHED_TTL_MS);

@@ -56,13 +56,13 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 	})
 
 	t.Run("the backoff is capped", func(t *testing.T) {
-		_, l, r := newFixture(t, due.Add(30*time.Second))
+		st, l, r := newFixture(t, due.Add(30*time.Second))
 		l.failWith(busy)
 		for i := range 10 {
 			r.now = func() time.Time { return due.Add(time.Duration(i) * time.Hour) }
 			r.sweep(t.Context())
 		}
-		if b := r.retry[idOf("bundled://demo")]; b.step != busyRetryMax {
+		if b := r.retry[st.List()[0].Row()]; b.step != busyRetryMax {
 			t.Errorf("step = %v, want the cap %v", b.step, busyRetryMax)
 		}
 	})
@@ -114,7 +114,7 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 		if got := st.List()[0]; !got.WaitingFor.IsZero() {
 			t.Errorf("waiting for %v, want none on a disabled schedule", got.WaitingFor)
 		}
-		if _, ok := r.retry[e.ID()]; ok {
+		if _, ok := r.retry[e.Row()]; ok {
 			t.Error("a disabled schedule kept its backoff")
 		}
 	})
@@ -142,8 +142,11 @@ func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 				t.Fatalf("Put: %v", err)
 			}
 		}
-		for _, src := range waiting {
-			if err := st.setWaiting(t.Context(), idOf(src), due); err != nil {
+		for i := range entries {
+			if !slices.Contains(waiting, entries[i].Source) {
+				continue
+			}
+			if err := st.setWaiting(t.Context(), entries[i].Row(), due); err != nil {
 				t.Fatalf("setWaiting: %v", err)
 			}
 		}
@@ -280,8 +283,7 @@ func TestStore_PutKeepsAWaitOnlyForTheSameSlot(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			st, _, _ := newFixture(t, due)
-			id := st.List()[0].ID()
-			if err := st.setWaiting(t.Context(), id, due); err != nil {
+			if err := st.setWaiting(t.Context(), st.List()[0].Row(), due); err != nil {
 				t.Fatalf("setWaiting: %v", err)
 			}
 			e := Entry{Source: "bundled://demo", Spec: spec, Enabled: true}
@@ -311,7 +313,7 @@ func TestStore_KeepsAWaitAcrossAReopen(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	due := at(2026, time.August, 4, 2, 0)
-	if err := st.setWaiting(t.Context(), e.ID(), due); err != nil {
+	if err := st.setWaiting(t.Context(), e.Row(), due); err != nil {
 		t.Fatalf("setWaiting: %v", err)
 	}
 	again, err := NewStore(dir)
@@ -335,7 +337,7 @@ func TestSweep_AScheduleChangedMidSweepDoesNotLaunch(t *testing.T) {
 	}{
 		{name: "due", anchor: due, arrange: func(*testing.T, *Store, *Entry) {}},
 		{name: "waiting", anchor: yesterday, arrange: func(t *testing.T, st *Store, b *Entry) {
-			if err := st.setWaiting(t.Context(), b.ID(), due); err != nil {
+			if err := st.setWaiting(t.Context(), b.Row(), due); err != nil {
 				t.Fatalf("setWaiting: %v", err)
 			}
 		}},

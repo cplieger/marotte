@@ -54,9 +54,10 @@ func askCoreHub(t *testing.T, workflowID string, reply json.RawMessage) (*Runtim
 	return h, br, fp
 }
 
-// askPush records every notification's subject and every retraction, from any goroutine.
+// askPush records every notification's subject and ask and every retraction, from any goroutine.
 type askPush struct {
 	sent, retracted []marotte.PushSubject
+	retractedAsks   []string
 	mu              sync.Mutex
 }
 
@@ -64,10 +65,11 @@ func (*askPush) HasSubscribers() bool                     { return true }
 func (*askPush) SetPreferences(map[marotte.PushKind]bool) {}
 func (*askPush) Preferences() map[marotte.PushKind]bool   { return nil }
 func (*askPush) Close()                                   {}
-func (p *askPush) Retract(subj marotte.PushSubject) {
+func (p *askPush) Retract(subj marotte.PushSubject, ask string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.retracted = append(p.retracted, subj)
+	p.retractedAsks = append(p.retractedAsks, ask)
 }
 
 func (p *askPush) Send(_ context.Context, n *marotte.NotificationPayload) {
@@ -109,6 +111,12 @@ func TestRunAsks_ACellLivesExactlyAsLongAsItsLease(t *testing.T) {
 	want := marotte.RunAskSubject(r.asks[0].Position)
 	if !slices.Contains(retracted(fp), want) {
 		t.Errorf("retracted = %v, want the wait's own subject %v", retracted(fp), want)
+	}
+	fp.mu.Lock()
+	asks := slices.Clone(fp.retractedAsks)
+	fp.mu.Unlock()
+	if !slices.Contains(asks, r.asks[0].Position) {
+		t.Errorf("retracted asks = %v, want the wait's own position %q", asks, r.asks[0].Position)
 	}
 }
 

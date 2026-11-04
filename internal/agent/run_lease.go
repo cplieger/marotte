@@ -23,8 +23,9 @@ import (
 // A struct because the scheduled fields only make sense together.
 type launchOrigin struct {
 	// slotAt is this run's next slot, an input to the deadline; launch fills it for a manual run (manualSlot).
-	slotAt     time.Time
-	scheduleID string
+	slotAt time.Time
+	// row is the schedule row a scheduled run reports to, nil for any other.
+	row *schedule.Row
 	// chatID is the launching chat for an agent's run (runStartLaunch), empty for a parentless launch.
 	chatID string
 	origin runlease.Origin
@@ -65,8 +66,16 @@ func (rs *Runs) settleMissedEnd(ctx context.Context, l *runlease.Lease, status m
 }
 
 // scheduledLaunch carries the schedule row for outcomes and the slot the run may not outlive.
-func scheduledLaunch(scheduleID string, slotAt time.Time) launchOrigin {
-	return launchOrigin{origin: runlease.OriginScheduled, scheduleID: scheduleID, slotAt: slotAt}
+func scheduledLaunch(row schedule.Row, slotAt time.Time) launchOrigin {
+	return launchOrigin{origin: runlease.OriginScheduled, row: &row, slotAt: slotAt}
+}
+
+// scheduleRow is the row the run reports to, zero for an unscheduled run.
+func (o *launchOrigin) scheduleRow() schedule.Row {
+	if o.row == nil {
+		return schedule.Row{}
+	}
+	return *o.row
 }
 
 // runLabel is the label sent for a run, set only for a scheduled one so History shows which runs nobody started.
@@ -167,15 +176,16 @@ func (rs *Runs) grantKeeping(
 		return
 	}
 	l := runlease.Lease{
-		StartedAt:  time.Now(),
-		SlotAt:     o.slotAt,
-		WorkflowID: workflowID,
-		ChatID:     o.chatID,
-		Recipe:     recipe,
-		Origin:     o.origin,
-		ScheduleID: o.scheduleID,
-		Unattended: o.origin == runlease.OriginScheduled,
-		Host:       host,
+		StartedAt:    time.Now(),
+		SlotAt:       o.slotAt,
+		WorkflowID:   workflowID,
+		ChatID:       o.chatID,
+		Recipe:       recipe,
+		Origin:       o.origin,
+		ScheduleID:   o.scheduleRow().ID,
+		ScheduleLife: o.scheduleRow().Life,
+		Unattended:   o.origin == runlease.OriginScheduled,
+		Host:         host,
 	}
 	if keep != nil {
 		l.KeepChats, l.Unattributed = keep.chats, keep.unattributed

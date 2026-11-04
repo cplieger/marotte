@@ -76,7 +76,7 @@ func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 			const id = "wf_1"
 			o := manualLaunch()
 			if tc.slotIn != 0 {
-				o = scheduledLaunch("sched-1", time.Now().Add(tc.slotIn))
+				o = scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Now().Add(tc.slotIn))
 			}
 			h.grantLease(t.Context(), id, "publish", o, hostSec())
 			if tc.spent != 0 {
@@ -290,7 +290,7 @@ func TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite(t *testing.T) {
 	}
 	h.runs.schedules = st
 
-	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch("sched-gone", time.Now().Add(30*time.Second)), hostSec())
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(schedule.Row{ID: "sched-gone"}, time.Now().Add(30*time.Second)), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
 
@@ -517,7 +517,7 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	h.runs.schedules = st
 
 	// A slot INSIDE the floor, so the armed deadline lands later than SlotAt.
-	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(entry.ID(), time.Now().Add(30*time.Second)), hostSec())
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(entry.Row(), time.Now().Add(30*time.Second)), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
 	if !l.Deadline.After(l.SlotAt) {

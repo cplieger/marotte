@@ -230,6 +230,20 @@ func DecisionRunID(payload any) string {
 	}
 }
 
+// DecisionRequestID is the ask id a *_needed payload carries, 0 for any other payload.
+func DecisionRequestID(payload any) int64 {
+	switch p := payload.(type) {
+	case PermissionNeededPayload:
+		return p.RequestID
+	case ElicitationNeededPayload:
+		return p.RequestID
+	case UserInputNeededPayload:
+		return p.RequestID
+	default:
+		return 0
+	}
+}
+
 // ErrorCode identifies an SSE error event class.
 type ErrorCode string
 

@@ -1039,12 +1039,12 @@ func (bc *bridgeCoordinator) Notify(ctx context.Context, chatID marotte.ChatID, 
 	}
 }
 
-// retractPush drops any held ask push about subj: the ask was settled elsewhere.
-func (bc *bridgeCoordinator) retractPush(subj marotte.PushSubject) {
+// retractPush drops the held push about subj announcing ask: the ask was settled elsewhere.
+func (bc *bridgeCoordinator) retractPush(subj marotte.PushSubject, ask string) {
 	if bc.push == nil {
 		return
 	}
-	bc.push.Retract(subj)
+	bc.push.Retract(subj, ask)
 }
 
 // reportNoSubscribers logs once per episode that a notification had no subscriber; a

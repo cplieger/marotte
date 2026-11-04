@@ -556,7 +556,7 @@ func TestSignInGate_ALaunchIsRefusedBeforeAnythingIsCreated(t *testing.T) {
 	if _, err := g.h.runs.admitRunWork(refuseClosed, gateRunID, ""); !errors.Is(err, errRunsNeedSignIn) {
 		t.Fatalf("admission signed out = %v, want the sign-in refusal", err)
 	}
-	if _, _, err := g.h.runs.LaunchScheduled(t.Context(), "bundled://demo", "s1", marotte.RunDefaults{}, time.Time{}); !errors.Is(err, errRunsNeedSignIn) || !errors.Is(err, schedule.ErrNoRunCanStart) {
+	if _, _, err := g.h.runs.LaunchScheduled(t.Context(), "bundled://demo", schedule.Row{ID: "s1"}, marotte.RunDefaults{}, time.Time{}); !errors.Is(err, errRunsNeedSignIn) || !errors.Is(err, schedule.ErrNoRunCanStart) {
 		t.Errorf("LaunchScheduled signed out = %v, want the sign-in refusal the schedule runner holds", err)
 	}
 	rec := httptest.NewRecorder()
@@ -571,7 +571,7 @@ func TestSignInGate_ALaunchIsRefusedBeforeAnythingIsCreated(t *testing.T) {
 	}
 
 	g.signIn(t)
-	if _, _, err := g.h.runs.LaunchScheduled(t.Context(), "bundled://no-such-recipe", "s1", marotte.RunDefaults{}, time.Time{}); err == nil || errors.Is(err, schedule.ErrNoRunCanStart) {
+	if _, _, err := g.h.runs.LaunchScheduled(t.Context(), "bundled://no-such-recipe", schedule.Row{ID: "s1"}, marotte.RunDefaults{}, time.Time{}); err == nil || errors.Is(err, schedule.ErrNoRunCanStart) {
 		t.Errorf("LaunchScheduled of a missing recipe signed in = %v, want a failure the schedule runner records", err)
 	}
 }
