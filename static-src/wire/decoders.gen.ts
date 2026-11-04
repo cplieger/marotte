@@ -2878,6 +2878,10 @@ export const decodeQueuedPrompt: Decoder<QueuedPrompt> = (v) => {
     const $v = own(o, "held");
     if ($v !== undefined && $v !== null) out.held = reqBool(o, "held", "$.queued_prompt");
   }
+  {
+    const $v = own(o, "next");
+    if ($v !== undefined && $v !== null) out.next = reqBool(o, "next", "$.queued_prompt");
+  }
   return out;
 };
 

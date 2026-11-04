@@ -111,23 +111,44 @@ func cmdCancel(
 	if len(cmd.Payload) > 0 && json.Unmarshal(cmd.Payload, &p) != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	// First, before any signal; every later step acts on the turns captured here.
-	stop := stops.RequestStop(cmd.ChatID, marotte.TurnStopReader)
-	defer stops.ReleaseStop(stop)
-
 	// The lead is steer-queue state: a stop in the session-door window (no bridge
 	// yet) still ends an admitted turn, whose hand-on sends the lead first.
-	sb := bridges.Bridge(cmd.ChatID)
-	undoLead := func() {}
-	if queue != nil && p.Lead != "" {
-		undoLead = queue.SetSteerLead(cmd.ChatID, p.Lead)
+	return stopChatTurn(ctx, bridges, perms, terms, stops, cmd.ChatID, func() (func(), bool) {
+		if queue != nil && p.Lead != "" {
+			return queue.SetSteerLead(cmd.ChatID, p.Lead), false
+		}
+		return func() {}, false
+	})
+}
+
+// stopChatTurn is a reader's stop of the chat's turn. mark records what the stop's
+// close sends first, after the stop is requested and before the cancel is sent; its
+// undo runs when the cancel was not delivered (502) or the session ended instead. A
+// mark answering skip ends the stop there: nothing is cancelled and the answer is OK.
+func stopChatTurn(
+	ctx context.Context,
+	bridges bridgeAccess,
+	perms pendingPermAccess,
+	terms terminalAccess,
+	stops turnStopper,
+	chatID marotte.ChatID,
+	mark func() (undo func(), skip bool),
+) (any, error) {
+	// First, before any signal; every later step acts on the turns captured here.
+	stop := stops.RequestStop(chatID, marotte.TurnStopReader)
+	defer stops.ReleaseStop(stop)
+
+	sb := bridges.Bridge(chatID)
+	undo, skip := mark()
+	if skip {
+		return responseOK, nil
 	}
-	err := cancelSession(ctx, perms, sb, cmd.ChatID, ScopeChatSession)
+	err := cancelSession(ctx, perms, sb, chatID, ScopeChatSession)
 	if errors.Is(err, ErrCancelNotDelivered) {
-		undoLead()
+		undo()
 		return nil, StatusError(http.StatusBadGateway, errCancelNotDelivered)
 	}
-	perms.ClearPendingInputAsks(cmd.ChatID, ScopeChatSession)
+	perms.ClearPendingInputAsks(chatID, ScopeChatSession)
 	// Stopping the model does not stop the processes its turn already spawned.
 	terms.KillForTurn(stop.Own)
 	if stop.Call != stop.Own {
@@ -135,14 +156,14 @@ func cmdCancel(
 	}
 	if err != nil {
 		// The session ended, so its turn closes on the death fan-out.
-		undoLead()
-		slog.Error("cancel failed", "chat_id", cmd.ChatID, keyError, err)
+		undo()
+		slog.Error("cancel failed", "chat_id", chatID, keyError, err)
 		return responseOK, nil
 	}
 	// session/cancel is a notification nothing acks: a turn ends only when KAS answers or ends it, so the grace
 	// budget backstops each captured target (ArmStopGrace).
 	if !stops.ArmStopGrace(stop, CancelGrace) {
-		slog.Debug("cancel: no live turn to arm a grace budget against", "chat_id", cmd.ChatID)
+		slog.Debug("cancel: no live turn to arm a grace budget against", "chat_id", chatID)
 	}
 	return responseOK, nil
 }

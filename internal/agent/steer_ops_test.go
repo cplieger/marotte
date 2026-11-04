@@ -674,3 +674,115 @@ func TestQueuedReport_AQueuedStarterShowsItsWaitAndLeavesTheSteerSent(t *testing
 	}
 	s.mustState("steer-late", rowQueued)
 }
+
+// Send now on a queued row stops the turn, and the stop's close opens that row's turn ahead of the unread
+// steers and the other queued rows. The steers are not lost: they reach the agent no earlier than that turn.
+func TestSendQueuedNow_StopsTheTurnAndItsCloseSendsThatRowFirst(t *testing.T) {
+	s, cs, br := steerOpsHub(t)
+	s.recs.note = func(ctx context.Context, chatID marotte.ChatID, id string, steer *marotte.EntrySteer) {
+		s.h.coord.recordSteer(ctx, chatID, id, steer)
+	}
+	id, _ := s.h.stagePromptTurn(t, "c1")
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+	s.steer("steer-a", "use tabs")
+	seedQueue(t, cs, "c1",
+		marotte.QueuedPrompt{ID: "m-q1", Text: "first"},
+		marotte.QueuedPrompt{ID: "m-q2", Text: "second"},
+		marotte.QueuedPrompt{ID: "m-q3", Text: "third"},
+	)
+
+	rec := postCmd(t, s.h, marotte.ClientCommand{
+		Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(`{"message_id":"m-q3"}`),
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("send_queued_now = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if len(br.notified(marotte.MethodCancel)) == 0 {
+		t.Fatal("no session/cancel reached the bridge")
+	}
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), clearedMsg("steer-a"))
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("cancelled"))
+	s.h.coord.ReleaseTurn("c1", id)
+
+	resend := resendPrompt(t, cs)
+	if resend == nil || resend.Text != "use tabs" {
+		t.Fatalf("resend prompt = %+v, want the unread steer still sent", resend)
+	}
+	ids := promptIDs(t, cs, "c1")
+	if q3, r := slices.Index(ids, "m-q3"), slices.Index(ids, resend.ID); q3 < 0 || q3 > r {
+		t.Errorf("turns opened = %v, want m-q3 before the steer's resend %s", ids, resend.ID)
+	}
+	waitFor(t, func() bool {
+		rows := queuedRows(t, cs, "c1")
+		return len(rows) == 2 && rows[0].ID == "m-q1" && rows[1].ID == "m-q2"
+	})
+}
+
+// The unread steer goes into the marked row's turn ahead of its prompt, and KAS reads it there.
+func TestSendQueuedNow_TheUnreadSteerRidesIntoTheMarkedRowsTurn(t *testing.T) {
+	s, cs, br := steerOpsHub(t)
+	s.recs.note = func(ctx context.Context, chatID marotte.ChatID, id string, steer *marotte.EntrySteer) {
+		s.h.coord.recordSteer(ctx, chatID, id, steer)
+	}
+	id, _ := s.h.stagePromptTurn(t, "c1")
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+	s.steer("steer-a", "use tabs")
+	seedQueue(t, cs, "c1",
+		marotte.QueuedPrompt{ID: "m-q1", Text: "first"},
+		marotte.QueuedPrompt{ID: "m-q3", Text: "third"},
+	)
+	// The bridge records the call before it runs this hook, so the test waits on hooked, not on the call.
+	hooked := make(chan struct{})
+	var hookDone sync.Once
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method != marotte.MethodPrompt {
+			return nil, nil, false
+		}
+		s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+		s.h.translateACPEvent("c1", s.h.originOf("c1"), injectedMsg(s.kasID("steer-a"), "use tabs"))
+		hookDone.Do(func() { close(hooked) })
+		return json.RawMessage(`{"stopReason":"end_turn"}`), nil, true
+	}
+
+	rec := postCmd(t, s.h, marotte.ClientCommand{
+		Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(`{"message_id":"m-q3"}`),
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("send_queued_now = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), clearedMsg("steer-a"))
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("cancelled"))
+	s.h.coord.ReleaseTurn("c1", id)
+	select {
+	case <-hooked:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("no session/prompt answered within 2s; wire = %v, turns opened = %v", br.callLog(), promptIDs(t, cs, "c1"))
+	}
+
+	if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-c1", "m-q3"}) {
+		t.Fatalf("turns opened = %v, want m-q3's turn next", ids)
+	}
+	if calls := br.callLog(); !slices.Equal(calls, []string{marotte.MethodSessionSteer, marotte.MethodPrompt}) {
+		t.Errorf("wire = %v, want the steer sent into m-q3's turn before its prompt", calls)
+	}
+	q3Turn, readTurn := "", ""
+	for _, e := range logOf(t, cs, "c1") {
+		switch e.Kind {
+		case marotte.EntryKindTurnOpen:
+			var open marotte.EntryTurnOpen
+			decodePayload(t, e, &open)
+			if open.Prompt != nil && open.Prompt.ID == "m-q3" {
+				q3Turn = e.Turn
+			}
+		case marotte.EntryKindSteer:
+			var st marotte.EntrySteer
+			decodePayload(t, e, &st)
+			if st.State == marotte.SteerStateRead && slices.Contains(st.Resends, "steer-a") {
+				readTurn = e.Turn
+			}
+		}
+	}
+	if readTurn == "" || readTurn != q3Turn {
+		t.Errorf("steer-a read in turn %q, want m-q3's turn %q", readTurn, q3Turn)
+	}
+}
