@@ -628,6 +628,7 @@ describe("the near-view observer", () => {
     const kept = rowWithBox(incoming).box;
     h.messagesEl.appendChild(incoming);
     h.scroll.attach({ el: incoming, scrollTop: 0, readingState: "following" });
+    h.scroll.applyPendingRestore();
     expect([h.near.targets.size, h.near.targets.has(kept)]).toEqual([1, true]);
   });
 

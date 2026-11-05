@@ -102,6 +102,8 @@ export class ScrollController {
   private viewEl: HTMLElement;
   /** Whether `viewEl` came from `attach`: only an attached view holds the clamp floor. */
   private attached = false;
+  /** What `attach` recorded and `applyPendingRestore` has not landed yet (null = none). */
+  private pendingRestore: ViewAttachHandle | null = null;
 
   private state: ReadingState = "following";
   private readonly gesture: GestureTracker;
@@ -1109,18 +1111,31 @@ export class ScrollController {
 
   // ---- attach and detach ----
 
-  /** Hand the scroller to a transcript view and restore its saved state; a fresh view attaches with
-   *  `{scrollTop: 0, readingState: "following"}`. */
+  /** Hand the scroller to a transcript view and take its saved reading state, reading no layout. Its scroll position
+   *  lands in `applyPendingRestore`, which the caller runs after its last DOM write of the task. A fresh view attaches
+   *  with `{scrollTop: 0, readingState: "following"}`. */
   attach(handle: ViewAttachHandle): void {
     this.dropMotion();
     this.clearFloor();
     this.observeView(handle.el);
     this.attached = true;
     this.setState(handle.readingState);
+    this.pendingRestore = handle;
+  }
+
+  /** Land the attached view on its saved position. Its scroll write is the one layout it forces, so it runs after
+   *  every DOM write of the task and every read here follows it; the attach listeners run last, at the restored
+   *  position. A no-op with none pending. */
+  applyPendingRestore(): void {
+    const handle = this.pendingRestore;
+    if (handle === null) {
+      return;
+    }
+    this.pendingRestore = null;
     this.writeTop(handle.scrollTop);
     const saved = handle.anchor;
     if (
-      handle.readingState === "reading" &&
+      this.state === "reading" &&
       saved !== undefined &&
       resolveAnchor(handle.el, saved) !== null
     ) {
@@ -1148,6 +1163,7 @@ export class ScrollController {
       readingState: this.state,
       ...(anchor === null ? {} : { anchor }),
     };
+    this.pendingRestore = null;
     this.deferred = [];
     this.dropMotion();
     this.cancelScrollbarWidth();
@@ -1648,7 +1664,7 @@ function register<T>(list: T[], cb: T): () => void {
 /** A second scroll-follow over another transcript-shaped view, with the chat's reading rules: it follows the live
  *  edge until the reader scrolls up, and `resumeBtn` takes them back. */
 export interface FollowScroller {
-  /** Hand the scroller to a view with the state it was parked in. */
+  /** Hand the scroller to a view with the state it was parked in, landing it at once. */
   attach(handle: ViewAttachHandle): void;
   /** Take the scroller from the current view and return the state to park it with. */
   detach(): ViewScrollState;
@@ -1665,6 +1681,7 @@ export function createFollowScroller(
   return {
     attach: (handle) => {
       c.attach(handle);
+      c.applyPendingRestore();
     },
     detach: () => c.detach(),
   };

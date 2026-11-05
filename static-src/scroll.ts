@@ -33,9 +33,15 @@ export function scrollableBy(): number {
 export function pressHold(): void {
   getInstance().pressHold();
 }
-/** Hand the scroller to a transcript view (unpark / fresh view). */
+/** Hand the scroller to a transcript view (unpark / fresh view); its position lands in
+ *  `applyPendingRestore`. */
 export function attach(handle: ViewAttachHandle): void {
   getInstance().attach(handle);
+}
+/** Land the attached view on its saved position: after the task's last DOM write, since the
+ *  scroll write forces a layout. */
+export function applyPendingRestore(): void {
+  getInstance().applyPendingRestore();
 }
 /** Snapshot and release the current view's scroll state (park). */
 export function detach(): ViewScrollState {

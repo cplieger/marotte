@@ -65,6 +65,7 @@ async function floorScene(
     return c;
   });
   scroll.attach({ el: v, scrollTop: 0, readingState: "following" });
+  scroll.applyPendingRestore();
   v.append(...cards);
   await land();
   const gap = parseFloat(getComputedStyle(v).rowGap);
@@ -500,6 +501,7 @@ describe("a size change inside the owner's own observer callback", () => {
       const shrinker = document.createElement("div");
       shrinker.style.cssText = "height:700px;flex-shrink:0;";
       scroll.attach({ el: v, scrollTop: 0, readingState: "following" });
+      scroll.applyPendingRestore();
       v.append(top, row, gapper, shrinker);
       await land();
       await readAt(wrap, end(wrap) - 20);

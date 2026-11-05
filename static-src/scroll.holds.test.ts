@@ -169,6 +169,7 @@ describe("placeholders taking their real size under a follower", () => {
     let sampler: ResizeObserver | null = null;
     try {
       scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+      scroll.applyPendingRestore();
       view.append(...rows);
       sampler = new ResizeObserver(() => {
         gaps.push(wrap.scrollHeight - wrap.clientHeight - wrap.scrollTop);
@@ -188,6 +189,7 @@ describe("placeholders taking their real size under a follower", () => {
       sampler?.disconnect();
       scroll.detach();
       scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+      scroll.applyPendingRestore();
       wrap.id = "messagesWrap";
     }
   });

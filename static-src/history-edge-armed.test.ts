@@ -52,6 +52,7 @@ describe("the history edge after an attach", () => {
   it("asks for no older page across five frames of a view two viewports tall at the live edge", async () => {
     const s = scene(VIEWPORT_PX * 2);
     s.controller.attach({ el: s.view, scrollTop: VIEWPORT_PX, readingState: "following" });
+    s.controller.applyPendingRestore();
     const load = vi.fn();
     s.controller.setLoadMore(load, true);
     await frames(5);
@@ -61,6 +62,7 @@ describe("the history edge after an attach", () => {
   it("asks once the reader scrolls up", async () => {
     const s = scene(VIEWPORT_PX * 2);
     s.controller.attach({ el: s.view, scrollTop: VIEWPORT_PX, readingState: "following" });
+    s.controller.applyPendingRestore();
     const load = vi.fn();
     s.controller.setLoadMore(load, true);
     await frames(5);
@@ -75,6 +77,7 @@ describe("the history edge after an attach", () => {
   it("fills an underfilled window at attach", async () => {
     const s = scene(VIEWPORT_PX / 4);
     s.controller.attach({ el: s.view, scrollTop: 0, readingState: "following" });
+    s.controller.applyPendingRestore();
     const load = vi.fn();
     s.controller.setLoadMore(load, true);
     s.controller.fillViewport();

@@ -52,6 +52,7 @@ import {
   heldMutation,
   onContentResize,
   readingLineOffset,
+  applyPendingRestore,
 } from "./scroll.js";
 import type { ViewScrollState } from "./scroll-controller.js";
 import {
@@ -192,6 +193,9 @@ interface ChatView {
   /** Resume rebuilds them even if closed since: their binding effects were disposed, so they missed
    *  every update while parked. */
   pausedStreaming: Set<string>;
+  /** Where the reader was at park, read before the park's first write; the unpark pass plans from it, since its
+   *  scroll restore lands only after the pass's writes. */
+  parkedAt: ReaderPosition;
 }
 
 /** Resident views by chat id, iterated in LRU order: activation re-inserts, so the first parked one is evicted. */
@@ -253,6 +257,8 @@ function parkView(view: ChatView): void {
   if (focused !== null && view.el.contains(focused)) {
     $.promptInput.focus();
   }
+  // Both before the first write, at the layout the task started from.
+  view.parkedAt = readerPosition(lastTurns, openableOf(view.chatID, lastTurns));
   view.scroll = detachScroll();
   view.followBaseline = followBaseline;
   view.reachableEntries = reachableEntries;
@@ -295,6 +301,7 @@ function activateView(chatID: string): boolean {
       lastNewestTurnID: undefined,
       resumeLabel: "",
       pausedStreaming: new Set(),
+      parkedAt: AT_LIVE_EDGE,
     };
     messagesEl.appendChild(view.el);
   } else {
@@ -873,11 +880,43 @@ function spacerInView(): boolean {
   return false;
 }
 
+/** Where the reader is: the residency anchor, and off the live edge the ordinals each turn shows in the reader band
+ *  and the ordinals that cover it (`coverBand`). */
+interface ReaderPosition {
+  readonly anchor: ResidencyAnchor | undefined;
+  readonly seen: ReadonlyMap<string, EntryRange>;
+  readonly covered: ReadonlyMap<string, EntryRange>;
+}
+
+const AT_LIVE_EDGE: ReaderPosition = { anchor: undefined, seen: new Map(), covered: new Map() };
+
+/** Reads only, so a caller can take it before its first write. */
+function readerPosition(turns: readonly Turn[], openable: readonly Turn[]): ReaderPosition {
+  const anchor = residencyAnchor(openable);
+  if (anchor === undefined) {
+    return AT_LIVE_EDGE;
+  }
+  const band = readerBand();
+  const seen = new Map<string, EntryRange>();
+  for (const t of turns) {
+    const range = seenRange(t.id, band);
+    if (range !== undefined) {
+      seen.set(t.id, range);
+    }
+  }
+  return { anchor, seen, covered: coverBand(openable, band) };
+}
+
+/** The turns the window grows over: a folded body holds zero height. A store predicate, never `data-folded`. */
+function openableOf(chatID: string, turns: readonly Turn[]): Turn[] {
+  return turns.filter((t, i) => isTurnOpen(chatID, t, i, turns.length) || !turnFoldHides(t));
+}
+
 function computeFoldPlan(
   chatID: string,
   turns: readonly Turn[],
   openable: readonly Turn[],
-  anchor: ResidencyAnchor | undefined,
+  reader: ReaderPosition,
   growOnly = false,
 ): void {
   foldPlan.clear();
@@ -891,10 +930,7 @@ function computeFoldPlan(
     ownedRuns.set(owner.turn, `${ownedRuns.get(owner.turn) ?? ""}${run}=${owner.entry};`);
   }
   // The transcript's root lane; `planResidency` takes no default.
-  const window = planResidency(openable, anchor, "");
-  const band = anchor === undefined ? undefined : readerBand();
-  // Following covers too: a fold flush or a mount's animation can bring a spacer into a view at the live edge.
-  const covered = band === undefined ? undefined : coverBand(openable, band);
+  const window = planResidency(openable, reader.anchor, "");
   for (const [i, t] of turns.entries()) {
     turnByID.set(t.id, t);
     const hides = turnFoldHides(t);
@@ -908,8 +944,8 @@ function computeFoldPlan(
     const merged =
       grown === undefined ? asked : asked === undefined || covers(grown, asked) ? grown : asked;
     // Residency never takes what the reader can see: an ordinal mounted in the band stays, whatever the budget.
-    const seen = band === undefined ? undefined : seenRange(t.id, band);
-    const cover = covered?.get(t.id);
+    const seen = reader.seen.get(t.id);
+    const cover = reader.covered.get(t.id);
     // A pass no reader move asked for only fills: it keeps every mounted ordinal, and the next reader pass trims.
     const held = growOnly ? mountedWindow(t.id) : undefined;
     const kept = [seen, cover, held].reduce<EntryRange | undefined>(
@@ -969,7 +1005,8 @@ function demandRange(chatID: string, t: Turn): EntryRange | undefined {
 /** The latest projection per turn id; the fold toggle reads it, since its closure holds the build-time turn. */
 const turnByID = new Map<string, Turn>();
 
-/** The last full pass's projection, which `windowPass` re-filters per scroll frame. */
+/** The last full pass's projection, the active view's, which `windowPass` re-filters per scroll frame and
+ *  `parkView` reads the reader's position over. */
 let lastTurns: readonly Turn[] = [];
 
 /**
@@ -1147,10 +1184,11 @@ function paint(): void {
   const isChatSwitch = lastPaintedId !== session.id;
   let unparked = false;
   if (isChatSwitch) {
-    pruneDeadViews();
+    // Park first: its reads must precede every write of the task, and pruning disposes views.
     if (activeView !== null && activeView.chatID !== session.id) {
       parkView(activeView);
     }
+    pruneDeadViews();
     unparked = activateView(session.id);
   }
   // What the flushed version was for, untracked by design. A chat switch is always the full pass.
@@ -1196,14 +1234,14 @@ function paint(): void {
     }
   }
   const turns = projectTurns(session);
-  // The turns the window grows over: a folded body holds zero height. A store predicate, never `data-folded`.
-  const openable = turns.filter(
-    (t, i) => isTurnOpen(session.id, t, i, turns.length) || !turnFoldHides(t),
-  );
+  const openable = openableOf(session.id, turns);
   lastTurns = turns;
-  const anchor = residencyAnchor(openable);
-  clearArrivedPin(session.id, anchor);
-  computeFoldPlan(session.id, turns, openable, anchor);
+  // An unparked view is read at its park: its restore lands after this pass's writes, so a read here would force a
+  // layout at a position the reader is not at.
+  const reader =
+    unparked && activeView !== null ? activeView.parkedAt : readerPosition(turns, openable);
+  clearArrivedPin(session.id, reader.anchor);
+  computeFoldPlan(session.id, turns, openable, reader);
   paintMountedCards = false;
   paintSyncEntries = PAINT_SYNC_ENTRIES;
   const root = paintRoot();
@@ -1226,6 +1264,10 @@ function paint(): void {
   if (unparked && activeView !== null) {
     // The DOM is at the store's state; now the paused effects come back.
     resumeView(activeView, session);
+  }
+  if (isChatSwitch) {
+    // After the pass's last write: the restore's scroll write is the one layout the switch forces.
+    applyPendingRestore();
   }
   // The one releaser for content: an empty turn list is a chat still loading, unless the window is
   // the server's answer or the chat has nothing to load.
@@ -1321,15 +1363,13 @@ function windowPass(trigger: PassTrigger = "scroll"): void {
   if (trigger !== "live-edge" && (coldBuilds.size > 0 || turnBodyBuilds.size > 0)) {
     return;
   }
-  const openable = turns.filter(
-    (t, i) => isTurnOpen(session.id, t, i, turns.length) || !turnFoldHides(t),
-  );
+  const openable = openableOf(session.id, turns);
   // Rows that came out shorter than their price can leave a spacer in view after one pass; each re-plan measures
   // them, so a few converge.
   for (let pass = 0; pass < WINDOW_PASS_ROUNDS; pass++) {
-    const anchor = residencyAnchor(openable);
-    clearArrivedPin(session.id, anchor);
-    computeFoldPlan(session.id, turns, openable, anchor, trigger === "cover");
+    const reader = readerPosition(turns, openable);
+    clearArrivedPin(session.id, reader.anchor);
+    computeFoldPlan(session.id, turns, openable, reader, trigger === "cover");
     if (planSignature() === appliedPlan) {
       if (pass === 0) {
         return; // the common case for a scroll that stays inside the overscan

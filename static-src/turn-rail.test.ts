@@ -388,6 +388,9 @@ describe("which chat the map belongs to", () => {
     await loadTurnRail("c-a");
 
     pointTurnRail("c-b");
+    // A re-point writes nothing in its own task, ahead of the outgoing view's park reads; it renders in a frame.
+    expect(markers()).toEqual(["1", "2"]);
+    await frames();
 
     expect(markers()).toEqual([]);
     // `data-shown` is what the stylesheet keys the map's display on.
@@ -777,10 +780,12 @@ describe("the map's record gates the activation fetch", () => {
     expect(markers()).toEqual(["1", "2"]);
 
     pointTurnRail("c-b");
+    await frames();
     expect(markers()).toEqual([]);
 
     vi.mocked(apiGet).mockClear();
     await loadTurnRail("c-a");
+    await frames();
     expect(markers()).toEqual(["1", "2"]);
     expect(apiGet).not.toHaveBeenCalled();
   });
@@ -833,6 +838,7 @@ describe("the map's record gates the activation fetch", () => {
 
     vi.mocked(apiGet).mockClear();
     await loadTurnRail("c-a");
+    await frames();
     expect(markers()).toEqual(["1", "2"]);
     expect(apiGet).not.toHaveBeenCalled();
   });
@@ -863,6 +869,7 @@ describe("the map's record gates the activation fetch", () => {
     setSessions([session("c-b", 0)]);
     pointTurnRail("c-b");
     pointTurnRail("c-a");
+    await frames();
     expect(markers()).toEqual([]);
   });
 });

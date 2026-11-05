@@ -269,8 +269,9 @@ export function pointTurnRail(id: string): void {
   mergedFrom = [];
   residentCards = [];
   setTurns();
-  render();
-  repick();
+  // In a frame: the activation's paint renders the rail anyway, and a write here would come before the outgoing
+  // view's park reads, forcing a layout.
+  scheduleRailRender();
 }
 
 /** The activation entry: point the map at the chat, then fetch its index only when
@@ -375,9 +376,9 @@ function repick(): void {
   schedulePick();
 }
 
-/** Defer the resize-driven render one frame, behind a single slot. NEVER inside the track's own
- *  resize delivery: a render there that resized an observed box would make the engine report
- *  "ResizeObserver loop completed with undelivered notifications". Other renders stay sync. */
+/** Defer a render one frame, behind a single slot: the resize-driven one, and a re-point's. NEVER render inside the
+ *  track's own resize delivery: a render there that resized an observed box would make the engine report
+ *  "ResizeObserver loop completed with undelivered notifications". */
 function scheduleRailRender(): void {
   if (renderFrame !== 0) {
     return;
