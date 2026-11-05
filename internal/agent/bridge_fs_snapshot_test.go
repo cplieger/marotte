@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
@@ -116,6 +117,18 @@ func TestRespondFSRead_AStepReadsItsRunsEditSnapshot(t *testing.T) {
 		<-f.br.done
 		if body, ok := f.br.response.result.(kiroStatBody); f.br.response.err != nil || !ok || body.Type != fsTypeFile {
 			t.Errorf("stat of its run's snapshot = %+v, %v; want a file", f.br.response.result, f.br.response.err)
+		}
+	})
+	t.Run("a snapshot never written", func(t *testing.T) {
+		f := newSnapshotFixture(t)
+		missing := filepath.Join(f.runA, "edit-snapshot-r9.md")
+		if got, err := f.read(t, "sess_step_a", missing, nil); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("read of an unwritten snapshot = %q, %v; want not found", got, err)
+		}
+		f.h.inbound.respondKiroFSStat(t.Context(), "c1", f.h.originOf("c1"), fsMsg(t, methodKiroFSStat, "sess_step_a", missing, nil))
+		<-f.br.done
+		if !errors.Is(f.br.response.err, os.ErrNotExist) {
+			t.Errorf("stat of an unwritten snapshot = %+v, %v; want not found", f.br.response.result, f.br.response.err)
 		}
 	})
 }
