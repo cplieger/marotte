@@ -36,12 +36,12 @@ github.com/cplieger/go/wiregen v1.0.0-dev.1 h1:HMj6QFtV+VBJNirptoH+Ubj9xJYhIu+Xz
 github.com/cplieger/go/wiregen v1.0.0-dev.1/go.mod h1:C/EEexWujaDKU0DHccT19wgW/vfU2C7ueTWAPl87v/I=
 github.com/cplieger/go/yamlenv v1.0.0-dev.1 h1:KA0t52zn3GJRWu4RnUaTx64QzSwsJjRsTnB6floeJCM=
 github.com/cplieger/go/yamlenv v1.0.0-dev.1/go.mod h1:rpijBJ7LqjTnmwWZpxX2O/htMilzJZOnMc6o1z7fOlc=
-github.com/cplieger/pinstall/v3 v3.3.0-dev.1 h1:mM6dje3ZSH+G7A59znzHZ4+VKwM1Sgs9kdRiIgxxY5U=
-github.com/cplieger/pinstall/v3 v3.3.0-dev.1/go.mod h1:L1FaHl218KQKGHBrhh7sMB91ABD0YoeAMmY4yhQJkj4=
+github.com/cplieger/pinstall/v3 v3.3.0-dev.2 h1:Vi0nfbO4gp5hKNYRMjLH3w2Iy+/uFmSfWIUENsu4WlE=
+github.com/cplieger/pinstall/v3 v3.3.0-dev.2/go.mod h1:L1FaHl218KQKGHBrhh7sMB91ABD0YoeAMmY4yhQJkj4=
 github.com/cplieger/toolbelt/v3 v3.15.0-dev.2 h1:fqyOcQsgRSzOipGQKjLLisBJEdvqMuji6gzYcwVXdAI=
 github.com/cplieger/toolbelt/v3 v3.15.0-dev.2/go.mod h1:tY3+11BpK7PrFSNDWlG6ZCx4j1+ctxsGpW/VFJBLMBk=
-github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.2 h1:SLsZUtWjb/XRy9OvVTtoQiX5e1YC8vHBbvf19g0cD/k=
-github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.2/go.mod h1:9uZwFofHysDAWBdTCEJxpmB3mkxNnlXrpv1es6BielQ=
+github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.4 h1:hxoqFfA+tbltlbQLJ5HM47eRjbaZ/CpADJJLEy3KQZI=
+github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.4/go.mod h1:9uZwFofHysDAWBdTCEJxpmB3mkxNnlXrpv1es6BielQ=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
 github.com/evanw/esbuild v0.28.2 h1:A2uETn4jrQTcXaT/shwTDTYBxDjl7fV7nXmUrJxfA2w=
