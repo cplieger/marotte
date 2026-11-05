@@ -1,7 +1,5 @@
-// Every time the UI paints follows the reader's browser languages: 24-hour under fr-FR, 12-hour
-// under en-US. Chromium's own Intl default tracks the browser's UI language, so a reader whose
-// preferred language is French on an English browser only gets 13:50 when a site reads
-// `navigator.languages`; each case below sets those and nothing else.
+// Every time the UI paints follows `navigator.languages`: 24-hour under fr-FR, 12-hour under en-US
+// (locale-time.ts owns why).
 
 import { describe, it, expect, afterEach } from "vitest";
 import { buildSteerNote } from "./fundamentals/steer-note.js";
@@ -9,7 +7,7 @@ import { buildTurnHeader } from "./fundamentals/turn-header.js";
 import { renderPanel } from "./turn-info-panel.js";
 import { absoluteTime, relativeTime } from "./relative-time.js";
 import { formatDate } from "./files-shared.js";
-import { formatStamp } from "./schedule-picker.js";
+import { describeSpec, formatStamp } from "./schedule-picker.js";
 import {
   restoreBrowserLanguages,
   setBrowserLanguages,
@@ -69,6 +67,7 @@ describe("under fr-FR", () => {
     expect(plain(shown[0])).toContain("13:50:17");
     expect(plain(shown[1])).toContain("13:50");
     expect(plain(shown[2])).toContain("13:50");
+    expect(shown[3]).toBe("30 août");
     for (const s of shown.slice(0, 3)) {
       expect(s).not.toMatch(TWELVE_HOUR);
     }
@@ -85,5 +84,23 @@ describe("under en-US", () => {
     expect(plain(absoluteTime(WHEN))).toContain("1:50:17 PM");
     expect(plain(formatDate(WHEN))).toContain("1:50 PM");
     expect(plain(formatStamp(iso))).toContain("1:50 PM");
+    expect(relativeTime(WHEN - 40 * 86_400_000, WHEN)).toBe("Aug 30");
+  });
+});
+
+describe("the schedule sentence", () => {
+  const daily = { freq: "daily", hour: 14, minute: 0 } as const;
+
+  it("reads 24-hour under fr-FR", () => {
+    setBrowserLanguages(["fr-FR"]);
+    expect(describeSpec(daily)).toBe("Every day at 14:00");
+  });
+
+  it("reads 12-hour under en-US", () => {
+    setBrowserLanguages(["en-US"]);
+    expect(plain(describeSpec(daily))).toBe("Every day at 2:00 PM");
+    expect(plain(describeSpec({ freq: "monthly", month_day: 3, hour: 3, minute: 5 }))).toBe(
+      "Monthly on the 3rd at 3:05 AM",
+    );
   });
 });

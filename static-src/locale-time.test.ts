@@ -22,7 +22,7 @@ describe("formatClock", () => {
     setBrowserLanguages(["fr-FR"]);
     expect(formatClock(WHEN)).toBe("13:50");
     expect(formatClock(WHEN, { seconds: true })).toBe("13:50:17");
-    expect(formatClock(MORNING)).toBe("9:05");
+    expect(formatClock(MORNING)).toBe("09:05");
   });
 
   it("reads 12-hour under en-US, with and without seconds", () => {
