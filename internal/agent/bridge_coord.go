@@ -69,8 +69,9 @@ type bridgeCoordinator struct {
 	reapSession func(sessionID string)
 	// dischargeWaiting drops a retained waiting_on_user claim when its agent dies. Nil in tests.
 	dischargeWaiting func(context.Context, marotte.ChatID)
-	// endAsks retires the unanswered asks an ended bridge carried: nothing can receive their answers.
-	endAsks func(origin acpResponder)
+	// endSession ends the searches and retires the unanswered asks an ended bridge carried: nothing can receive
+	// their answers.
+	endSession func(origin acpResponder)
 	// observeLaneFrame reports each frame a session's forward consumed to the run-mutation registry, which settles
 	// a host-session verb only once its lane read past the reply; forgetLane drops that position when the forward
 	// ends. Nil in tests.
@@ -161,7 +162,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		reapSession:         func(sessionID string) { h.reapSessions([]string{sessionID}) },
 		onTurnClosed:        func(chatID marotte.ChatID, turnID string) { h.agentTerms.closeTurn(chatID, turnID) },
 		dischargeWaiting:    h.DischargeWaiting,
-		endAsks:             h.bus.endAsksOf,
+		endSession:          h.bus.endSessionOf,
 		observeLaneFrame: func(origin acpResponder, seq uint64, msg *marotte.RPCResponse) {
 			h.runs.mutations.observeSessionFrame(laneRef{session: origin}, seq, msg, h.router.StepRun)
 		},
@@ -1181,7 +1182,7 @@ func (bc *bridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge engineSessi
 		bc.forgetLane(bridge)
 	}
 	// For every end, before the death closer, whose turn close would drop the cards without saying why.
-	bc.endAsks(bridge)
+	bc.endSession(bridge)
 
 	// Still registered means the session ended on its own (the engine ended, or its lane overflowed), so this closer
 	// owns the open turn.

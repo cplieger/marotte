@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -107,37 +108,86 @@ func TestKiroSearch_NoRipgrepAnswersEmpty(t *testing.T) {
 }
 
 // A turn cancel ends the chat's running search, which still answers with what it found.
-// stageBlockingRipgrep stages an rg that prints textMatchEvent, then creates the returned file
-// and blocks: a search seen at that file is tracked and has its match in the pipe.
-func stageBlockingRipgrep(t *testing.T) string {
+// stageBlockingRipgrep stages an rg that prints textMatchEvent, starts a child that would outlive
+// the search, writes the child's pid to pids and a line to ready, then waits: a search with a line
+// in ready is tracked and has its match in the pipe.
+func stageBlockingRipgrep(t *testing.T) (ready, pids string) {
 	t.Helper()
-	ready := filepath.Join(t.TempDir(), "ready")
+	dir := t.TempDir()
+	ready, pids = filepath.Join(dir, "ready"), filepath.Join(dir, "pids")
 	stageRipgrep(t, `printf '%s\n' '`+textMatchEvent+`'
-/bin/touch `+ready+`
-/bin/sleep 60`)
-	return ready
+/bin/sleep 60 &
+echo $! >> `+pids+`
+echo x >> `+ready+`
+wait`)
+	return ready, pids
 }
 
-func awaitFile(t *testing.T, path string) {
+// awaitLines waits until path holds n lines.
+func awaitLines(t *testing.T, path string, n int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if _, err := os.Stat(path); err == nil {
+		raw, _ := os.ReadFile(path)
+		if strings.Count(string(raw), "\n") >= n {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the search never started")
+			t.Fatalf("%d of %d searches started", strings.Count(string(raw), "\n"), n)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 }
 
+// startSearch runs one text_search from sessionID arriving on origin; the channel closes when it returns.
+func startSearch(t *testing.T, h *Runtime, origin acpResponder, sessionID string, id int64) <-chan struct{} {
+	t.Helper()
+	msg := kiroSearchMsg(t, id, methodKiroTextSearch, map[string]any{"sessionId": sessionID, "pattern": "func Run", "caseSensitive": false})
+	const chatID = "c1"
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.inbound.respondKiroSearch(t.Context(), chatID, origin, msg)
+	}()
+	return done
+}
+
+func awaitReturn(t *testing.T, done <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("%s did not end the search well before its deadline", what)
+	}
+}
+
+func awaitChildrenGone(t *testing.T, pids string) {
+	t.Helper()
+	raw, err := os.ReadFile(pids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for _, pid := range strings.Fields(string(raw)) {
+		for {
+			stat, err := os.ReadFile("/proc/" + pid + "/stat") // #nosec G304 -- pid from the test's own fake rg
+			_, state, _ := strings.Cut(string(stat), ") ")
+			if err != nil || strings.HasPrefix(state, "Z") {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("rg's child %s outlived the search", pid)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+}
+
 func TestKiroSearch_TurnCancelEndsTheSearch(t *testing.T) {
-	ready := stageBlockingRipgrep(t)
+	ready, _ := stageBlockingRipgrep(t)
 	h, br := hubForFSTest(t, t.TempDir())
-	msg := kiroSearchMsg(t, 1, methodKiroTextSearch, map[string]any{"sessionId": "s", "pattern": "func Run", "caseSensitive": false})
-	go h.inbound.respondKiroSearch(t.Context(), "c1", h.originOf("c1"), msg)
-	awaitFile(t, ready)
+	startSearch(t, h, h.originOf("c1"), "s", 1)
+	awaitLines(t, ready, 1)
 
 	start := time.Now()
 	if err := h.inbound.bus.CancelPendingAsks(t.Context(), "c1", command.ScopeChatSession); err != nil {
@@ -151,4 +201,57 @@ func TestKiroSearch_TurnCancelEndsTheSearch(t *testing.T) {
 	if want := `{"matches":[{"filePath":"repo/a.go","lineText":"func Run() {}","lineNumber":12,"isContext":false}]}`; err != nil || got != want {
 		t.Errorf("answer = (%s, %v), want (%s, nil)", got, err, want)
 	}
+}
+
+// A chat-parented run's step searches arrive on the chat's own session; a cancel of the chat's turn
+// alone leaves them running, and the run's end ends them.
+func TestKiroSearch_ChatCancelLeavesItsRunsSearches(t *testing.T) {
+	ready, _ := stageBlockingRipgrep(t)
+	h, _ := hubForFSTest(t, t.TempDir())
+	h.inbound.stepRun = func(id marotte.SessionID) (string, bool) { return "wf_1", id == "sess_step" }
+	chatSearch := startSearch(t, h, h.originOf("c1"), "sess_chat", 1)
+	stepSearch := startSearch(t, h, h.originOf("c1"), "sess_step", 2)
+	awaitLines(t, ready, 2)
+
+	if err := h.inbound.bus.CancelPendingAsks(t.Context(), "c1", command.ScopeChatSession); err != nil {
+		t.Fatal(err)
+	}
+	awaitReturn(t, chatSearch, "the chat's turn cancel")
+	select {
+	case <-stepSearch:
+		t.Fatal("the chat's turn cancel ended its run step's search")
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	h.inbound.bus.ClearPendingPermsForRun(t.Context(), "wf_1")
+	awaitReturn(t, stepSearch, "the run's end")
+}
+
+func TestKiroSearch_ChatAndRunsCancelEndsEverySearch(t *testing.T) {
+	ready, _ := stageBlockingRipgrep(t)
+	h, _ := hubForFSTest(t, t.TempDir())
+	h.inbound.stepRun = func(id marotte.SessionID) (string, bool) { return "wf_1", id == "sess_step" }
+	chatSearch := startSearch(t, h, h.originOf("c1"), "sess_chat", 1)
+	stepSearch := startSearch(t, h, h.originOf("c1"), "sess_step", 2)
+	awaitLines(t, ready, 2)
+
+	if err := h.inbound.bus.CancelPendingAsks(t.Context(), "c1", command.ScopeChatAndRuns); err != nil {
+		t.Fatal(err)
+	}
+	awaitReturn(t, chatSearch, "a cancel of the chat and its runs")
+	awaitReturn(t, stepSearch, "a cancel of the chat and its runs")
+}
+
+// Nothing can receive a search's answer once its session ends, so the search ends with it.
+func TestKiroSearch_SessionEndEndsTheSearch(t *testing.T) {
+	ready, pids := stageBlockingRipgrep(t)
+	h, br := hubForFSTest(t, t.TempDir())
+	// The session c1's forward runs on: the engine hands out every session guarded.
+	search := startSearch(t, h, guardSession(br), "sess_chat", 1)
+	awaitLines(t, ready, 1)
+
+	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
+
+	awaitReturn(t, search, "the session's end")
+	awaitChildrenGone(t, pids)
 }

@@ -25,8 +25,7 @@ var resolveRipgrep = func() (string, bool) { return systembin.Resolve("rg") }
 
 var ripgrepMissing sync.Once
 
-// kiroTextSearchParams is text_search's request; KAS 3.0.0 always sends caseSensitive. Its
-// sessionId is not decoded: the request arrives on the chat's own connection, which names it.
+// kiroTextSearchParams is text_search's request; KAS 3.0.0 always sends caseSensitive.
 type kiroTextSearchParams struct {
 	Pattern        string `json:"pattern"`
 	IncludePattern string `json:"includePattern"`
@@ -35,7 +34,6 @@ type kiroTextSearchParams struct {
 }
 
 // kiroFindFilesParams is find_files's request; exclude is absent unless the tool call set one.
-// Its sessionId is not decoded, as for text_search.
 type kiroFindFilesParams struct {
 	Pattern    string `json:"pattern"`
 	Exclude    string `json:"exclude"`
@@ -64,12 +62,21 @@ func (in *inbound) handleKiroSearchRequest(_ context.Context, chatID marotte.Cha
 	return true
 }
 
-// respondKiroSearch answers with the search's own context: a turn cancel ends the search, and the
-// answer still goes out on ctx.
+// respondKiroSearch answers with the search's own context, which searchCancels ends; the answer
+// still goes out on ctx.
 func (in *inbound) respondKiroSearch(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
-	searchCtx, release := in.bus.searches.track(ctx, chatID)
+	searchCtx, release := in.bus.searches.track(ctx, chatID, in.searchRun(chatID, sessionIDOfParams(msg.Params)), origin)
 	defer release()
 	in.answerKiroSearch(ctx, searchCtx, chatID, origin, msg)
+}
+
+// searchRun is the run whose step sent a search from sessionID, "" for the chat's own. A step of a
+// chat-parented run sends its requests on the chat's session, so the session id decides, not chatID.
+func (in *inbound) searchRun(chatID marotte.ChatID, sessionID marotte.SessionID) string {
+	if wf, ok := in.stepRun(sessionID); ok {
+		return wf
+	}
+	return workflowIDOf(chatID)
 }
 
 // answerKiroSearch never answers with an error, a malformed request and a panic included: KAS

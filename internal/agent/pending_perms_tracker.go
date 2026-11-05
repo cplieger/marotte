@@ -386,7 +386,7 @@ const cancelAttempts = 3
 // settles each moot; the take decides each race with a card answer.
 func (b *bus) CancelPendingAsks(ctx context.Context, chatID marotte.ChatID, scope command.CancelScope) error {
 	// Every turn cancel and teardown passes here before its session/cancel.
-	b.searches.cancelChat(chatID)
+	b.searches.cancelChat(chatID, scope)
 	for _, ref := range b.pendingPerms.askRefs(chatID, scope) {
 		if err := b.cancelAsk(ctx, chatID, ref); err != nil {
 			return err
@@ -440,6 +440,7 @@ func (b *bus) PendingPermsAdd(ctx context.Context, acpID int64, evt marotte.Serv
 // ClearPendingPermsForRun drops a run's unresolved decisions at its terminal transition with no announcement, and
 // answers each pending one its kind's cancel: KAS withdraws none of them, and JSON-RPC 2.0 owes each a response.
 func (b *bus) ClearPendingPermsForRun(ctx context.Context, workflowID string) {
+	b.searches.cancelRun(workflowID)
 	for _, ask := range b.pendingPerms.clearForRun(workflowID) {
 		if ask.origin == nil {
 			continue
@@ -489,6 +490,12 @@ func (b *bus) TakePendingPermissionOption(chatID marotte.ChatID, askID int64, op
 		return nil, pending, false
 	}
 	return &askReply{bus: b, ask: ask, id: askID, settledBy: settledBy}, true, true
+}
+
+// endSessionOf ends what an ended session carried: its running searches and its unanswered asks.
+func (b *bus) endSessionOf(origin acpResponder) {
+	b.searches.cancelOrigin(origin)
+	b.endAsksOf(origin)
 }
 
 // endAsksOf retires every ask that arrived on origin once that session ended, announcing each as
