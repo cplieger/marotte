@@ -4,6 +4,7 @@ import { el } from "@cplieger/ui";
 import { LAST_DAY, INTERVAL_BOUNDS } from "./schedule-types.js";
 import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./schedule-types.js";
 import type { RunDefaults, RunDefaultsPicker } from "./run-defaults-picker.js";
+import { formatClock, formatWeekdayStamp } from "./locale-time.js";
 
 const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 const WEEKDAY_NAMES = [
@@ -71,7 +72,7 @@ function ordinal(n: number): string {
  *  the user reads to decide whether the rule is right, so it is worth pinning independently of
  *  the DOM. */
 export function describeSpec(spec: ScheduleSpec): string {
-  const clock = `${two(spec.hour)}:${two(spec.minute)}`;
+  const clock = formatClock(new Date(2000, 0, 1, spec.hour, spec.minute).getTime());
   switch (spec.freq) {
     case "minutely": {
       const n = spec.interval ?? INTERVAL_BOUNDS.minutely.min;
@@ -117,13 +118,7 @@ export function formatStamp(iso: string | undefined): string {
   if (Number.isNaN(d.getTime())) {
     return "";
   }
-  return d.toLocaleString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatWeekdayStamp(d.getTime());
 }
 
 /** describeOutcome renders the row's last-run segment from `last_status`, `last_reason` and

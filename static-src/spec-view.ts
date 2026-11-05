@@ -23,6 +23,7 @@ import { swapViews } from "./view-swap.js";
 import { decodeSpec } from "./wire/decoders.gen.js";
 import type { Spec, SpecDoc, SpecDocRole, SpecTaskNode } from "./wire/types.gen.js";
 import { absPath } from "./workspace.js";
+import { formatFullStamp } from "./locale-time.js";
 
 /** Tree depth, read by css/32-spec.css to indent a row, its note and its detail. */
 const DEPTH_PROP = "--depth";
@@ -828,7 +829,7 @@ function approvalParts(seg: Segment, spec: Spec, approving: ReadonlySet<string>)
  *  the person who approved it. */
 function approvedAt(at: string): string {
   const ms = Date.parse(at);
-  return Number.isNaN(ms) ? "" : `Approved ${new Date(ms).toLocaleString()}`;
+  return Number.isNaN(ms) ? "" : `Approved ${formatFullStamp(ms)}`;
 }
 
 /** Record a sign-off on one phase, then RE-READ rather than patch the badge: the record's own

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   describeSpec,
   describeOutcome,
@@ -13,6 +13,16 @@ import {
 import { buildRunDefaultsPicker } from "./run-defaults-picker.js";
 import { LAST_DAY, INTERVAL_BOUNDS } from "./schedule-types.js";
 import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./schedule-types.js";
+import {
+  restoreBrowserLanguages,
+  setBrowserLanguages,
+} from "./__test-helpers__/browser-languages.js";
+
+// Clock expectations below are 24-hour, so every case reads under fr-FR; locale-times.test.ts pins en-US.
+beforeEach(() => {
+  setBrowserLanguages(["fr-FR"]);
+});
+afterEach(restoreBrowserLanguages);
 
 // The summary sentence is the only way a user can confirm the rule they built means what they
 // intended, so it is pinned independently of the DOM.

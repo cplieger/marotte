@@ -7,6 +7,7 @@ import { join } from "@cplieger/keyenc";
 import { chevronEl } from "./chevron.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_ARROW_RIGHT } from "./icons.js";
+import { formatClock } from "./locale-time.js";
 
 /** One entry of a disclosure's list. It keeps its node while its key holds; its parts are
  *  reconciled inside it. */
@@ -168,7 +169,7 @@ function writeValue(span: Element | null, v: PanelValue): void {
     t = el("time", {}) as HTMLTimeElement;
     span.replaceChildren(t);
   }
-  setText(t, when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }));
+  setText(t, formatClock(v.stamp));
   t.dateTime = when.toISOString();
 }
 

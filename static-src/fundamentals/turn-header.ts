@@ -20,6 +20,7 @@ import type { TurnOutcome } from "../turns.js";
 import { WAKE_FALLBACK_LINE, type WakeLine, type WakeRow, type WakeRun } from "../turn-wake.js";
 import { sentBy } from "../sent-by.js";
 import type { Caller } from "../types.js";
+import { formatClock } from "../locale-time.js";
 
 export interface TurnHeaderData {
   /** 1-based turn ordinal as rendered. */
@@ -131,10 +132,7 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   if (time !== null && d.ts > 0) {
     const when = new Date(d.ts);
     time.dateTime = when.toISOString();
-    time.textContent = when.toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    time.textContent = formatClock(d.ts);
   }
 
   // Ahead of the early return below, so a repaint cannot leave a pill row

@@ -7,16 +7,13 @@ import {
   settleWorkflowMessages,
   turnsInOrder,
 } from "./workflow-delivery.js";
+import { formatClock, formatFullStamp } from "./locale-time.js";
 
 const SENT = Date.UTC(2026, 9, 9, 12, 0, 5);
 const LATER = SENT + 5 * 60_000;
 
 function clock(ms: number): string {
-  return new Date(ms).toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  return formatClock(ms, { seconds: true });
 }
 
 function note(over: Partial<SteerNoteData>): HTMLElement {
@@ -63,7 +60,7 @@ describe("a workflow message's row", () => {
       "2026-10-09T12:00:55.000Z",
     ]);
     expect(stamps[0]?.textContent).not.toBe(stamps[1]?.textContent);
-    expect(stamps[1]?.dataset["tooltip"]).toBe(new Date(SENT + 50_000).toLocaleString());
+    expect(stamps[1]?.dataset["tooltip"]).toBe(formatFullStamp(SENT + 50_000));
   });
 
   it("says once that a message KAS cleared unread was not delivered", () => {

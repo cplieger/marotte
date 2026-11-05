@@ -10,6 +10,7 @@ import { ICON_SEND, ICON_TAB_RUN, workflowIcon } from "../icons.js";
 import { absoluteTime } from "../relative-time.js";
 import { sentBy } from "../sent-by.js";
 import type { Caller, SteerOrigin, SteerReason } from "../types.js";
+import { formatClock } from "../locale-time.js";
 
 export interface SteerNoteData {
   text: string;
@@ -238,11 +239,7 @@ function stamp(ms: number): HTMLElement {
   return el(
     "time",
     { datetime: new Date(ms).toISOString(), "data-tooltip": absoluteTime(ms) },
-    new Date(ms).toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    }),
+    formatClock(ms, { seconds: true }),
   );
 }
 
