@@ -248,7 +248,7 @@ const TERMINAL_ONLY = new Map<string, string>([
 
 /** A refused kiro-cli terminal command: its notice, and whether arguments followed the name, in
  *  which case the composer keeps the text so the typing is not lost. */
-export interface TerminalRefusal {
+interface TerminalRefusal {
   readonly notice: string;
   readonly keepText: boolean;
 }

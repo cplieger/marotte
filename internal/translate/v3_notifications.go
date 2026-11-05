@@ -152,8 +152,6 @@ type v3MCPResourceTemplate struct {
 }
 
 // MCPReportState is how one server stands in its session's _kiro/mcp/status frame.
-//
-//deadset:ignore DS1101 -- the type of MCPServerReport.State, whose values internal/agent compares
 type MCPReportState uint8
 
 const (
