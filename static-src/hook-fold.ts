@@ -42,8 +42,8 @@ export function hookQuiet(call: HookFacts): boolean {
   return call.status === "completed" && (call.output ?? "").trim() === "";
 }
 
-/** Whether a hook run is part of what the chat counts: every run while hook status shows, else only those that keep
- *  a row because they failed or printed. */
+/** Whether a hook run is part of what the chat counts: every run while hook status shows, else only those that failed
+ *  or printed. A quiet hook that a refused group keeps as a row is not counted: the ledger cannot see the group. */
 export function hookCounted(call: HookFacts, showStatus: boolean): boolean {
   return showStatus || !hookQuiet(call);
 }

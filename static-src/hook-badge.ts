@@ -48,7 +48,7 @@ interface HookEntry {
   runs: number;
 }
 
-/** The folded hooks grouped by name and hook file, in order of first appearance. */
+/** The folded hooks grouped by name, hook file and trigger, in order of first appearance. */
 function hookEntries(folded: readonly HTMLElement[]): HookEntry[] {
   const entries = new Map<string, HookEntry>();
   for (const card of folded) {
@@ -165,11 +165,13 @@ function toggleHookPopover(badge: HTMLElement, state: HookPopover): void {
     initialFocus: panel,
     returnFocus: badge,
     onClose: () => {
+      const ctl = state.ctl;
       panel.remove();
       if (state.panel === panel) {
         state.panel = null;
         state.ctl = null;
       }
+      ctl?.dispose();
     },
   });
   state.ctl.show();

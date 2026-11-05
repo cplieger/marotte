@@ -267,7 +267,6 @@
 
 /* The list the hooks badge opens: one row per hook, its run count, its name and its hook file's chip. */
 .tool-hook-popover {
-  z-index: 100;
   min-inline-size: 16rem;
   max-inline-size: min(28rem, calc(100vw - 1rem));
   max-block-size: 60dvh;
