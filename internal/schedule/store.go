@@ -89,7 +89,7 @@ type Entry struct {
 	// Model and Effort are sent at each fire as the run's marotte.RunDefaults; empty sends none.
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
-	// Inputs are the fixed inputs sent at each fire.
+	// Inputs are passed to the launcher at each fire; it sends only those the recipe declares.
 	Inputs  map[string]string `json:"inputs,omitempty"`
 	Spec    Spec              `json:"spec"`
 	Enabled bool              `json:"enabled"`

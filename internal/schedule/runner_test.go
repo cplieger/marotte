@@ -41,9 +41,8 @@ type fakeLauncher struct {
 	deadlines []time.Time
 	// defaults records the model and effort each launch carried.
 	defaults []marotte.RunDefaults
-	// inputs records the inputs map each launch carried.
-	inputs []map[string]string
-	err    error
+	inputs   []map[string]string
+	err      error
 	// during runs inside each launch, so a test can move the runner's clock while the launch holds the sweep.
 	during func(source string)
 	// failID is the run id a failing launch returns: a run it created but did not start.
@@ -156,7 +155,6 @@ func TestSweep_SendsTheSchedulesModelPick(t *testing.T) {
 	}
 }
 
-// A schedule's fixed inputs go out with each fire.
 func TestFirePassesInputs(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
 	st, l, r := newFixture(t, due.Add(30*time.Second))

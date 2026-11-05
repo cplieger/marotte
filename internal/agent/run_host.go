@@ -224,8 +224,6 @@ func (rs *Runs) invokeFailed(ctx context.Context, wfID, recipe string, o launchO
 	return err
 }
 
-// declaredInputs is the subset of inputs the recipe declares, and the sorted names it left out. An unattended
-// launch sends only the inputs its recipe opts into.
 func declaredInputs(inputs, declared map[string]string) (kept map[string]string, dropped []string) {
 	kept = make(map[string]string, len(inputs))
 	for k, v := range inputs {
