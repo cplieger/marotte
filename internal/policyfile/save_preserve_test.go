@@ -625,6 +625,57 @@ func TestSave_KeepsTheRulesOfATaggedNullJSONSibling(t *testing.T) {
 	}
 }
 
+// TestSave_RefusesAnEditThatWouldRetargetAnAlias pins that Save runs its read-back guard: dropping
+// the rule that defines an anchor leaves a later alias to an earlier anchor of the same name, and
+// the file Save would write reads that rule back with another capability. Save refuses and leaves
+// the file as it was.
+func TestSave_RefusesAnEditThatWouldRetargetAnAlias(t *testing.T) {
+	const before = "pre: &a fs_read\nrules:\n  - {capability: &a shell, effect: deny}\n  - {capability: *a, effect: allow}\n"
+	path := filepath.Join(t.TempDir(), filename)
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	f.Rules = f.Rules[1:]
+	if err := Save(t.Context(), path, f); err == nil || !strings.Contains(err.Error(), "would read back with other rules") {
+		t.Fatalf("Save = %v, want the other-rules refusal", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != before {
+		t.Errorf("file after the refused Save = %q (%v), want it unchanged", got, err)
+	}
+}
+
+// TestSave_CarriesAnExplicitTagFromTheJSONSibling pins that a tag written in permissions.json
+// stays in the permissions.yaml Save writes, and that the value reads back the same.
+func TestSave_CarriesAnExplicitTagFromTheJSONSibling(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, filename)
+	if err := os.WriteFile(filepath.Join(dir, jsonFilename), []byte(`{"x": !!str "true", "rules": []}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(yamlPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := Save(t.Context(), yamlPath, f); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := os.ReadFile(yamlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "x: !!str true\nrules: []\n"; string(got) != want {
+		t.Errorf("saved file = %q, want %q", got, want)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(got, &doc); err != nil || doc["x"] != "true" {
+		t.Errorf("x reads back as %#v (%v), want the string \"true\"", doc["x"], err)
+	}
+}
+
 // TestReadsBack_RefusesTextWithOtherRules pins Save's last guard: text that parses but holds
 // other rules than the ones Save was given is never written.
 func TestReadsBack_RefusesTextWithOtherRules(t *testing.T) {

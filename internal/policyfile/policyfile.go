@@ -420,8 +420,9 @@ func readsBack(data []byte, name string, rules []Rule) error {
 }
 
 // blockStyle clears every node's style but its explicit tag, so a document read from JSON writes
-// as block YAML; the encoder still quotes a string that would otherwise read as another type, and
-// an explicit tag stays (emptyRoot tells a tagged `!!null ”` root from an empty document by it).
+// as block YAML: an untagged string that would read as another type is quoted, a tagged one keeps
+// its tag, and emptyRoot tells a root tagged `!!null` with an empty value from an empty document
+// by it.
 func blockStyle(n *yaml.Node) {
 	n.Style &= yaml.TaggedStyle
 	for _, c := range n.Content {
