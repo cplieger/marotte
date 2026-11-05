@@ -19,12 +19,19 @@ var workspaceMethods = []string{
 	methodKiroConfigurationState, methodV3PolicyChanged, methodV3PolicyError, methodV3SteeringDocs, methodV3SystemNotify,
 }
 
-// countWorkspaceHandlers replaces every workspace handler with a counter of the frames it was handed.
+// countedSession is the session id of the frames countWorkspaceHandlers counts.
+const countedSession marotte.SessionID = "sess_any"
+
+// countWorkspaceHandlers replaces every workspace handler with a counter of the frames for countedSession it was
+// handed. An observer pass's door copy can still be in its pump when the hub's boot drain returns.
 func countWorkspaceHandlers(h *Runtime) func(method string) int {
 	var mu sync.Mutex
 	counts := map[string]int{}
 	for method := range h.workspaceHandlers {
-		h.workspaceHandlers[method] = func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
+		h.workspaceHandlers[method] = func(_ context.Context, _ marotte.ChatID, msg *marotte.RPCResponse) {
+			if sessionIDOfParams(msg.Params) != countedSession {
+				return
+			}
 			mu.Lock()
 			counts[method]++
 			mu.Unlock()
@@ -46,8 +53,6 @@ func TestWorkspaceNotifications_HandledOnceOnEveryLane(t *testing.T) {
 	}
 	count := countWorkspaceHandlers(h)
 	o := oneObserver(t, h)
-	// Only the frames the test delivers are counted, not the profile KAS sends at the observer's door.
-	o.noGovernance = true
 	lanes := []struct {
 		name    string
 		deliver func(msg *marotte.RPCResponse)
@@ -73,7 +78,7 @@ func TestWorkspaceNotifications_HandledOnceOnEveryLane(t *testing.T) {
 	}
 	for i, lane := range lanes {
 		for _, method := range workspaceMethods {
-			params, _ := json.Marshal(map[string]any{"sessionId": "sess_any"})
+			params, _ := json.Marshal(map[string]any{"sessionId": countedSession})
 			lane.deliver(&marotte.RPCResponse{Method: method, Params: params})
 			if got := count(method); got != i+1 {
 				t.Errorf("%s: %s handled %d times after %d lanes, want once per frame", lane.name, method, got, i+1)
