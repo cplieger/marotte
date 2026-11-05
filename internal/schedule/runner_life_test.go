@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/launchrule"
 )
 
 // A schedule deleted and added again for the same recipe has the same id. A launch the old row started, still in flight
@@ -33,7 +35,7 @@ func TestSweep_ARecreatedScheduleKeepsItsOwnRow(t *testing.T) {
 				if err := st.Delete(t.Context(), old.ID()); err != nil {
 					t.Errorf("Delete: %v", err)
 				}
-				reborn = Entry{Source: old.Source, Spec: Spec{Freq: freqHourly, Interval: 1}, Enabled: true}
+				reborn = Entry{Source: old.Source, Spec: launchrule.Spec{Freq: launchrule.FreqHourly, Interval: 1}, Enabled: true}
 				if err := st.Put(t.Context(), &reborn); err != nil {
 					t.Errorf("Put: %v", err)
 				}
@@ -72,7 +74,7 @@ func TestSweep_ARunOfThePredecessorHoldingTheRecipeFailsTheSlot(t *testing.T) {
 // the new schedule still does.
 func TestStore_ARunOfARecreatedScheduleLeavesItsSuccessorAlone(t *testing.T) {
 	st := mustStore(t)
-	old := Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true}
+	old := Entry{Source: "bundled://x", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Enabled: true}
 	if err := st.Put(t.Context(), &old); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -80,7 +82,7 @@ func TestStore_ARunOfARecreatedScheduleLeavesItsSuccessorAlone(t *testing.T) {
 	if err := st.Delete(t.Context(), old.ID()); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	reborn := Entry{Source: old.Source, Spec: Spec{Freq: freqHourly, Interval: 1}, Enabled: true}
+	reborn := Entry{Source: old.Source, Spec: launchrule.Spec{Freq: launchrule.FreqHourly, Interval: 1}, Enabled: true}
 	if err := st.Put(t.Context(), &reborn); err != nil {
 		t.Fatalf("Put (recreate): %v", err)
 	}
@@ -110,7 +112,7 @@ func TestStore_ARowKeepsItsLifeUntilItIsRecreated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	e := Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true, Life: "forged"}
+	e := Entry{Source: "bundled://x", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Enabled: true, Life: "forged"}
 	if err := st.Put(t.Context(), &e); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -122,7 +124,7 @@ func TestStore_ARowKeepsItsLifeUntilItIsRecreated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore (reopen): %v", err)
 	}
-	edit := Entry{Source: e.Source, Spec: Spec{Freq: FreqDaily, Hour: 4}, Enabled: true}
+	edit := Entry{Source: e.Source, Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 4}, Enabled: true}
 	if err := reopened.Put(t.Context(), &edit); err != nil {
 		t.Fatalf("Put (edit): %v", err)
 	}
@@ -132,7 +134,7 @@ func TestStore_ARowKeepsItsLifeUntilItIsRecreated(t *testing.T) {
 	if err := reopened.Delete(t.Context(), e.ID()); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	again := Entry{Source: e.Source, Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true}
+	again := Entry{Source: e.Source, Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Enabled: true}
 	if err := reopened.Put(t.Context(), &again); err != nil {
 		t.Fatalf("Put (recreate): %v", err)
 	}

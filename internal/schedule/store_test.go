@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/launchrule"
 )
 
 // TestNewStore_ReadsLegacyLastResult pins that a schedules.json written while the
@@ -47,7 +49,7 @@ func TestNewStore_ReadsLegacyLastResult(t *testing.T) {
 		}
 	}
 
-	extra := Entry{Source: "bundled://z", Spec: Spec{Freq: FreqDaily, Hour: 3}, Enabled: true}
+	extra := Entry{Source: "bundled://z", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 3}, Enabled: true}
 	if err := st.Put(t.Context(), &extra); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -76,7 +78,7 @@ func TestStore_KeepsTheModelPickAcrossAReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	e := Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 3}, Enabled: true, Model: "opus", Effort: "high"}
+	e := Entry{Source: "bundled://x", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 3}, Enabled: true, Model: "opus", Effort: "high"}
 	if err := st.Put(t.Context(), &e); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -107,7 +109,7 @@ func TestStore_IDIsOneStableSegmentPerRecipe(t *testing.T) {
 	}
 	ids := map[string]string{}
 	for _, src := range sources {
-		e := Entry{Source: src, Spec: Spec{Freq: FreqDaily, Hour: 3}}
+		e := Entry{Source: src, Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 3}}
 		if err := st.Put(t.Context(), &e); err != nil {
 			t.Fatalf("Put(%q): %v", src, err)
 		}
@@ -120,7 +122,7 @@ func TestStore_IDIsOneStableSegmentPerRecipe(t *testing.T) {
 		}
 		ids[id] = src
 	}
-	again := Entry{Source: sources[0], Spec: Spec{Freq: FreqDaily, Hour: 5}}
+	again := Entry{Source: sources[0], Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 5}}
 	if err := st.Put(t.Context(), &again); err != nil {
 		t.Fatalf("Put (edit): %v", err)
 	}
@@ -151,7 +153,7 @@ func TestStore_IDIsOneStableSegmentPerRecipe(t *testing.T) {
 func fired(t *testing.T) (*Store, Entry) {
 	t.Helper()
 	st := mustStore(t)
-	e := Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true}
+	e := Entry{Source: "bundled://x", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Enabled: true}
 	if err := st.Put(t.Context(), &e); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -241,7 +243,7 @@ func TestStore_KeepsTheRowsRunAcrossAReopenAndAnEdit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	e := Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true}
+	e := Entry{Source: "bundled://x", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Enabled: true}
 	if err := st.Put(t.Context(), &e); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -253,7 +255,7 @@ func TestStore_KeepsTheRowsRunAcrossAReopenAndAnEdit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore (reopen): %v", err)
 	}
-	edit := Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 4}, Enabled: true}
+	edit := Entry{Source: "bundled://x", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 4}, Enabled: true}
 	if err := reopened.Put(t.Context(), &edit); err != nil {
 		t.Fatalf("Put (edit): %v", err)
 	}

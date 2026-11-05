@@ -5,10 +5,15 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/cplieger/marotte/internal/launchrule"
 )
 
 // These tests drive Run in a synctest bubble so the PRODUCTION tickInterval is used and the
 // counts are exact; Run parks in a select, and a sweep's file I/O is transient.
+
+// minuteInterval is the minutely floor, so the schedule's step cannot be confused with the tick cadence.
+const minuteInterval = 5
 
 // anchorOffset selects whether a slot is already due at t=0.
 func bubbleFixture(t *testing.T, anchorOffset time.Duration) (*Store, *fakeLauncher, *Runner) {
@@ -18,9 +23,8 @@ func bubbleFixture(t *testing.T, anchorOffset time.Duration) (*Store, *fakeLaunc
 		t.Fatalf("NewStore: %v", err)
 	}
 	e := Entry{
-		Source: "bundled://demo",
-		// The floor interval, so the schedule's step cannot be confused with the tick cadence.
-		Spec:    Spec{Freq: FreqMinutely, Interval: minMinuteInterval},
+		Source:  "bundled://demo",
+		Spec:    launchrule.Spec{Freq: launchrule.FreqMinutely, Interval: minuteInterval},
 		Enabled: true,
 		Anchor:  time.Now().Add(anchorOffset),
 	}
@@ -66,13 +70,13 @@ func TestRun_FiresOncePerSlotAtTheTickCadence(t *testing.T) {
 		go r.Run(ctx)
 
 		const slots = 4
-		synctest.Sleep(slots * minMinuteInterval * time.Minute)
+		synctest.Sleep(slots * minuteInterval * time.Minute)
 		if got := l.launched(); got != slots {
 			t.Errorf("launches in %d minutes = %d, want %d (one per 5-minute slot, not one per tick)",
-				slots*minMinuteInterval, got, slots)
+				slots*minuteInterval, got, slots)
 		}
 		// The anchor sits on the slot, not the observing tick, or the schedule drifts.
-		wantAnchor := start.Add(slots * minMinuteInterval * time.Minute)
+		wantAnchor := start.Add(slots * minuteInterval * time.Minute)
 		if got := st.List()[0].Anchor; !got.Equal(wantAnchor) {
 			t.Errorf("anchor = %v, want the last slot %v", got, wantAnchor)
 		}

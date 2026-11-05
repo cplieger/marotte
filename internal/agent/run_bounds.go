@@ -36,7 +36,7 @@ const runBackstop = 36 * time.Hour
 // makes the stall tolerance [runIdleWindow - refillGranularity, runIdleWindow]; Store.SetDeadline stays exact.
 const refillGranularity = time.Minute
 
-// minRunBudget is the smallest executing budget the slot may yield, internal/schedule's
+// minRunBudget is the smallest executing budget the slot may yield, internal/launchrule's
 // minMinuteInterval: change them together. It must not lift the backstop.
 const minRunBudget = 5 * time.Minute
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
@@ -29,7 +30,7 @@ type scheduleView struct {
 	LastReason string        `json:"last_reason,omitempty"`
 	Model      string        `json:"model,omitempty"`
 	Effort     string        `json:"effort,omitempty"`
-	Spec       schedule.Spec `json:"spec"`
+	Spec       launchrule.Spec `json:"spec"`
 	Enabled    bool          `json:"enabled"`
 }
 
@@ -83,7 +84,7 @@ func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		Source  string        `json:"source"`
 		Model   string        `json:"model"`
 		Effort  string        `json:"effort"`
-		Spec    schedule.Spec `json:"spec"`
+		Spec    launchrule.Spec `json:"spec"`
 		Enabled bool          `json:"enabled"`
 	}
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)

@@ -18,6 +18,7 @@ import (
 
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/go/textsafe"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/sanitize"
 )
 
@@ -91,7 +92,7 @@ type Entry struct {
 	Effort string `json:"effort,omitempty"`
 	// Inputs are passed to the launcher at each fire; it sends only those the recipe declares.
 	Inputs  map[string]string `json:"inputs,omitempty"`
-	Spec    Spec              `json:"spec"`
+	Spec    launchrule.Spec   `json:"spec"`
 	Enabled bool              `json:"enabled"`
 }
 
@@ -206,7 +207,7 @@ func (s *Store) Put(ctx context.Context, e *Entry) error {
 	if e.Source == "" {
 		return errors.New("schedule source is required")
 	}
-	if err := e.Spec.validate(); err != nil {
+	if err := e.Spec.Validate(); err != nil {
 		return err
 	}
 	s.mu.Lock()

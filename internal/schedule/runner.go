@@ -7,6 +7,7 @@ import (
 	"maps"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -213,8 +214,8 @@ func (r *Runner) reach(ctx context.Context, e *Entry, due, start, now time.Time)
 }
 
 // waitBound is the schedule's next slot after due, which ends a wait on the engine; the grace when it has none.
-func (r *Runner) waitBound(s Spec, due time.Time) time.Time {
-	bound, err := nextRun(s, due)
+func (r *Runner) waitBound(s launchrule.Spec, due time.Time) time.Time {
+	bound, err := launchrule.NextRun(s, due)
 	if err != nil {
 		return due.Add(r.grace)
 	}
@@ -235,7 +236,7 @@ func (r *Runner) lateness(due, start time.Time) time.Duration {
 func (r *Runner) launch(ctx context.Context, e *Entry, due time.Time) slotTurn {
 	// Bound the run by the next slot after `due` (not now), so a late fire cannot extend the
 	// budget into it. An uncomputable slot degrades to the idle window, never to unbounded.
-	slotAt, dErr := nextRun(e.Spec, due)
+	slotAt, dErr := launchrule.NextRun(e.Spec, due)
 	if dErr != nil {
 		slog.Warn("schedule cannot name its next slot, so its run is bounded by its idle window alone",
 			"id", e.ID(), "source", e.Source, "error", dErr)

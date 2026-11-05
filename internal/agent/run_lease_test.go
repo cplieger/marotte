@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
@@ -104,7 +105,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 		t.Fatalf("schedule.NewStore: %v", err)
 	}
 	// Every 5 minutes, the schedule floor.
-	spec := schedule.Spec{Freq: schedule.FreqMinutely, Interval: 5}
+	spec := launchrule.Spec{Freq: launchrule.FreqMinutely, Interval: 5}
 	anchor := time.Now().Add(-time.Hour)
 	entry := schedule.Entry{
 		Source: "bundled://publish", Enabled: true, Spec: spec, Anchor: anchor,
@@ -167,11 +168,11 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 	for name, entry := range map[string]schedule.Entry{
 		"a DISABLED schedule for this very recipe": {
 			Source: "bundled://publish", Enabled: false,
-			Spec: schedule.Spec{Freq: schedule.FreqMinutely, Interval: 5},
+			Spec: launchrule.Spec{Freq: launchrule.FreqMinutely, Interval: 5},
 		},
 		"an enabled schedule for another recipe": {
 			Source: "bundled://other", Enabled: true,
-			Spec: schedule.Spec{Freq: schedule.FreqMinutely, Interval: 5},
+			Spec: launchrule.Spec{Freq: launchrule.FreqMinutely, Interval: 5},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -585,7 +586,7 @@ func TestManualSlot_NamesAScheduleWithNoNextSlot(t *testing.T) {
 // lease names the old row's life, so neither its start nor its ending lands on the new row.
 func TestLaunchScheduled_ARunOfARecreatedScheduleLeavesTheNewRowAlone(t *testing.T) {
 	h, br, st, entry := nightlyLaunch(t)
-	reborn := schedule.Entry{Source: entry.Source, Enabled: true, Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 5}}
+	reborn := schedule.Entry{Source: entry.Source, Enabled: true, Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 5}}
 	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method == methodKiroWorkflowNew {
 			if err := st.Delete(t.Context(), entry.ID()); err != nil {

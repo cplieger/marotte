@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/schedule"
 )
@@ -66,7 +67,7 @@ func TestLaunchScheduled_TellsABusyEngineFromAFailure(t *testing.T) {
 // The row's wait reaches the client as waiting_for, and only while there is one.
 func TestScheduleView_CarriesTheWaitOnTheEngine(t *testing.T) {
 	due := time.Date(2026, time.August, 4, 2, 0, 0, 0, time.UTC)
-	e := schedule.Entry{Source: "bundled://nightly", Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2}, Enabled: true}
+	e := schedule.Entry{Source: "bundled://nightly", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Enabled: true}
 	if v := scheduleViewOf(&e); v.WaitingFor != nil {
 		t.Errorf("waiting_for = %v on a row with no wait", *v.WaitingFor)
 	}

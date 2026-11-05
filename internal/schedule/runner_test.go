@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -99,7 +100,7 @@ func newFixture(t *testing.T, now time.Time) (*Store, *fakeLauncher, *Runner) {
 	}
 	e := Entry{
 		Source:  "bundled://demo",
-		Spec:    Spec{Freq: FreqDaily, Hour: 2, Minute: 0},
+		Spec:    launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2, Minute: 0},
 		Enabled: true,
 		Anchor:  at(2026, time.August, 3, 12, 0),
 	}
@@ -187,7 +188,7 @@ func TestSweep_BoundsTheRunByItsOwnInterval(t *testing.T) {
 	if len(slots) != 1 {
 		t.Fatalf("expected one launch, got %d", len(slots))
 	}
-	want, err := nextRun(st.List()[0].Spec, due)
+	want, err := launchrule.NextRun(st.List()[0].Spec, due)
 	if err != nil {
 		t.Fatalf("NextRun: %v", err)
 	}
@@ -216,7 +217,7 @@ func TestSweep_SkipsASlotMissedWhileOffline(t *testing.T) {
 	if !got.LastRunAt.IsZero() || got.LastStatus != "" {
 		t.Errorf("a skip must not record a run: LastRunAt = %v, LastStatus = %q", got.LastRunAt, got.LastStatus)
 	}
-	next, err := nextRun(got.Spec, got.Anchor)
+	next, err := launchrule.NextRun(got.Spec, got.Anchor)
 	if err != nil {
 		t.Fatalf("NextRun: %v", err)
 	}
@@ -592,14 +593,14 @@ func TestStore_RoundTripsAndRejects(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	ctx := t.Context()
-	if err := st.Put(ctx, &Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 1}, Enabled: true}); err != nil {
+	if err := st.Put(ctx, &Entry{Source: "bundled://x", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 1}, Enabled: true}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	// An invalid spec must never reach disk.
-	if err := st.Put(ctx, &Entry{Source: "bundled://y", Spec: Spec{Freq: "weekly"}}); err == nil {
+	if err := st.Put(ctx, &Entry{Source: "bundled://y", Spec: launchrule.Spec{Freq: "weekly"}}); err == nil {
 		t.Errorf("a weekly spec with no weekdays must be rejected")
 	}
-	if err := st.Put(ctx, &Entry{Spec: Spec{Freq: FreqDaily}}); err == nil {
+	if err := st.Put(ctx, &Entry{Spec: launchrule.Spec{Freq: launchrule.FreqDaily}}); err == nil {
 		t.Errorf("an empty source must be rejected")
 	}
 
@@ -634,7 +635,7 @@ func TestStore_PutPreservesHistory(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	ctx := t.Context()
-	e := Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 1}, Enabled: true}
+	e := Entry{Source: "bundled://x", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 1}, Enabled: true}
 	if err := st.Put(ctx, &e); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -643,7 +644,7 @@ func TestStore_PutPreservesHistory(t *testing.T) {
 		t.Fatalf("recordFire: %v", err)
 	}
 
-	edited := Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 5}, Enabled: true}
+	edited := Entry{Source: "bundled://x", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 5}, Enabled: true}
 	if err := st.Put(ctx, &edited); err != nil {
 		t.Fatalf("Put edit: %v", err)
 	}
@@ -682,7 +683,7 @@ func writeFile(dir, body string) error {
 func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 	st := mustStore(t)
 	ctx := t.Context()
-	e := Entry{Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true}
+	e := Entry{Source: "bundled://x", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Enabled: true}
 	if err := st.Put(ctx, &e); err != nil {
 		t.Fatalf("Put: %v", err)
 	}

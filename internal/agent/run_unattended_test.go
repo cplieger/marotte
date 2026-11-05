@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
@@ -489,7 +490,7 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 			if err != nil {
 				t.Fatalf("schedule.NewStore: %v", err)
 			}
-			entry := schedule.Entry{Source: "bundled://nightly", Enabled: true, Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2}}
+			entry := schedule.Entry{Source: "bundled://nightly", Enabled: true, Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}}
 			if pErr := st.Put(t.Context(), &entry); pErr != nil {
 				t.Fatalf("Put schedule: %v", pErr)
 			}
@@ -546,7 +547,7 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	}
 	entry := schedule.Entry{
 		Source: "bundled://nightly", Enabled: true,
-		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
+		Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
 	}
 	if pErr := st.Put(t.Context(), &entry); pErr != nil {
 		t.Fatalf("Put schedule: %v", pErr)
@@ -595,7 +596,7 @@ func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing
 	}
 	entry := schedule.Entry{
 		Source: "bundled://nightly", Enabled: true,
-		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
+		Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
 	}
 	if pErr := st.Put(t.Context(), &entry); pErr != nil {
 		t.Fatalf("Put schedule: %v", pErr)
@@ -646,7 +647,7 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 	}
 	entry := schedule.Entry{
 		Source: "bundled://nightly", Enabled: true,
-		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
+		Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
 	}
 	if pErr := st.Put(t.Context(), &entry); pErr != nil {
 		t.Fatalf("Put schedule: %v", pErr)

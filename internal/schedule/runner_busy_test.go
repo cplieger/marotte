@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/launchrule"
 )
 
 // A slot whose launch the engine did not answer keeps retrying, with backoff, until the schedule's next slot; the row
@@ -125,7 +127,7 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 	const launchTakes = 2 * time.Minute // the launch's own timeout, as a slow engine spends it
 	busy := fmt.Errorf("%w: %w", ErrEngineBusy, errors.New("workflow list call: context deadline exceeded"))
-	daily := func(h, m int) Spec { return Spec{Freq: FreqDaily, Hour: h, Minute: m} }
+	daily := func(h, m int) launchrule.Spec { return launchrule.Spec{Freq: launchrule.FreqDaily, Hour: h, Minute: m} }
 	yesterday := at(2026, time.August, 3, 12, 0)
 	due := at(2026, time.August, 4, 2, 0)
 
@@ -201,7 +203,7 @@ func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 	})
 
 	t.Run("a next slot passed during an earlier launch skips the wait", func(t *testing.T) {
-		hourly := Spec{Freq: freqHourly, Interval: 1, Minute: 0}
+		hourly := launchrule.Spec{Freq: launchrule.FreqHourly, Interval: 1, Minute: 0}
 		st, l, r := sweepFixture(t, at(2026, time.August, 4, 2, 59), []Entry{
 			{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
 			{Source: "bundled://b", Spec: hourly, Enabled: true, Anchor: at(2026, time.August, 4, 1, 30)},
@@ -220,7 +222,7 @@ func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 	// A wait its next slot overtakes late in a slow sweep hands that slot to the same sweep, so it cannot age past
 	// its grace behind the other schedules' launches.
 	t.Run("a next slot reached late in a slow sweep still fires", func(t *testing.T) {
-		hourly := Spec{Freq: freqHourly, Interval: 1, Minute: 0}
+		hourly := launchrule.Spec{Freq: launchrule.FreqHourly, Interval: 1, Minute: 0}
 		st, l, r := sweepFixture(t, at(2026, time.August, 4, 3, 0).Add(30*time.Second), []Entry{
 			{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
 			{Source: "bundled://b", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
@@ -277,9 +279,9 @@ func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 // An edit keeps the wait while it still names the row's due slot, and drops it once the edit moves the slot.
 func TestStore_PutKeepsAWaitOnlyForTheSameSlot(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
-	for name, spec := range map[string]Spec{
-		"same slot":  {Freq: FreqDaily, Hour: 2, Minute: 0},
-		"moved slot": {Freq: FreqDaily, Hour: 3, Minute: 0},
+	for name, spec := range map[string]launchrule.Spec{
+		"same slot":  {Freq: launchrule.FreqDaily, Hour: 2, Minute: 0},
+		"moved slot": {Freq: launchrule.FreqDaily, Hour: 3, Minute: 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			st, _, _ := newFixture(t, due)
@@ -306,7 +308,7 @@ func TestStore_KeepsAWaitAcrossAReopen(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	e := Entry{
-		Source: "bundled://demo", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true,
+		Source: "bundled://demo", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Enabled: true,
 		Anchor: at(2026, time.August, 3, 12, 0),
 	}
 	if err := st.Put(t.Context(), &e); err != nil {
@@ -366,8 +368,8 @@ func TestSweep_AScheduleChangedMidSweepDoesNotLaunch(t *testing.T) {
 				if err != nil {
 					t.Fatalf("NewStore: %v", err)
 				}
-				a := Entry{Source: "bundled://a", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true, Anchor: due}
-				b := Entry{Source: "bundled://b", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true, Anchor: state.anchor}
+				a := Entry{Source: "bundled://a", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Enabled: true, Anchor: due}
+				b := Entry{Source: "bundled://b", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Enabled: true, Anchor: state.anchor}
 				for _, e := range []*Entry{&a, &b} {
 					if err := st.Put(t.Context(), e); err != nil {
 						t.Fatalf("Put: %v", err)

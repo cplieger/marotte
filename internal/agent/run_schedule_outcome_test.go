@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
@@ -24,7 +25,7 @@ func scheduledHub(t *testing.T) (*Runtime, *fakeBridge, *schedule.Store, schedul
 	}
 	entry := schedule.Entry{
 		Source: "bundled://nightly", Enabled: true,
-		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
+		Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
 	}
 	if pErr := st.Put(t.Context(), &entry); pErr != nil {
 		t.Fatalf("Put schedule: %v", pErr)

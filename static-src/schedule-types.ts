@@ -1,13 +1,13 @@
 // Workflow-schedule wire types. Hand-declared beside the feature (the forge-types.ts precedent)
 // rather than generated: the schedule surface is three endpoints and one record.
 
-/** Recurrence frequency; mirrors internal/schedule.freq. */
+/** Recurrence frequency; mirrors internal/launchrule.Freq. */
 export type ScheduleFreq = "minutely" | "hourly" | "daily" | "weekly" | "monthly";
 
 /** MonthDay sentinel meaning "the last day of the month". */
 export const LAST_DAY = -1;
 
-/** Bounds on the `interval` step, per frequency, mirroring internal/schedule's minMinuteInterval
+/** Bounds on the `interval` step, per frequency, mirroring internal/launchrule's minMinuteInterval
  *  / maxMinuteInterval and its hourly range. The minute FLOOR is not cosmetic, and it is the
  *  reason this table exists at all: "every minute" is what a user types when they mean "often",
  *  and the server refuses it because four mechanisms misbehave there (the once-a-minute runner
@@ -18,7 +18,7 @@ export const INTERVAL_BOUNDS = {
   hourly: { min: 1, max: 24 },
 } as const;
 
-/** One recurrence rule; mirrors internal/schedule.Spec. */
+/** One recurrence rule; mirrors internal/launchrule.Spec. */
 export interface ScheduleSpec {
   freq: ScheduleFreq;
   /** Recurrence step in the unit its freq names: minutes for `minutely`, hours for `hourly`.

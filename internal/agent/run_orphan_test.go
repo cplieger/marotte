@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
@@ -309,7 +310,7 @@ func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 	}
 	entry := schedule.Entry{
 		Source: "bundled://nightly", Enabled: true,
-		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
+		Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
 	}
 	if err := st.Put(t.Context(), &entry); err != nil {
 		t.Fatalf("Put schedule: %v", err)
@@ -438,7 +439,7 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 	}
 	entry := schedule.Entry{
 		Source: "bundled://publish", Enabled: true,
-		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
+		Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
 	}
 	if err := st.Put(t.Context(), &entry); err != nil {
 		t.Fatalf("Put schedule: %v", err)
