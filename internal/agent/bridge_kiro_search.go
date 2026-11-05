@@ -25,21 +25,21 @@ var resolveRipgrep = func() (string, bool) { return systembin.Resolve("rg") }
 
 var ripgrepMissing sync.Once
 
-// kiroTextSearchParams is text_search's request; KAS 3.0.0 always sends caseSensitive.
+// kiroTextSearchParams is text_search's request; KAS 3.0.0 always sends caseSensitive. Its
+// sessionId is not decoded: the request arrives on the chat's own connection, which names it.
 type kiroTextSearchParams struct {
-	SessionID      marotte.SessionID `json:"sessionId"`
-	Pattern        string            `json:"pattern"`
-	IncludePattern string            `json:"includePattern"`
-	ExcludePattern string            `json:"excludePattern"`
-	CaseSensitive  bool              `json:"caseSensitive"`
+	Pattern        string `json:"pattern"`
+	IncludePattern string `json:"includePattern"`
+	ExcludePattern string `json:"excludePattern"`
+	CaseSensitive  bool   `json:"caseSensitive"`
 }
 
 // kiroFindFilesParams is find_files's request; exclude is absent unless the tool call set one.
+// Its sessionId is not decoded, as for text_search.
 type kiroFindFilesParams struct {
-	SessionID  marotte.SessionID `json:"sessionId"`
-	Pattern    string            `json:"pattern"`
-	Exclude    string            `json:"exclude"`
-	MaxResults int               `json:"maxResults"`
+	Pattern    string `json:"pattern"`
+	Exclude    string `json:"exclude"`
+	MaxResults int    `json:"maxResults"`
 }
 
 type kiroTextSearchBody struct {

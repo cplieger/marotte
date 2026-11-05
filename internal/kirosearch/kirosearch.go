@@ -26,10 +26,10 @@ import (
 	"github.com/cplieger/marotte/internal/procout"
 )
 
-// Deadline bounds one search across every root. Measured on a 1.18-million-file workspace (warm
+// defaultDeadline bounds one search across every root. Measured on a 1.18-million-file workspace (warm
 // cache): a full file listing took 1.2 s and an unscoped text search 24.5 s, against KAS's own 30 s
 // rg budget. 15 s returns every scoped search whole and an unscoped one partial.
-const Deadline = 15 * time.Second
+const defaultDeadline = 15 * time.Second
 
 // KAS 3.0.0's own caps (kGo, DGo, OGo and UZu in acp-server.js), so an answer holds what KAS's
 // own rg would have returned.
@@ -76,7 +76,7 @@ type FilesQuery struct {
 	MaxResults int
 }
 
-// Searcher runs the rg binary at Bin. An empty Bin finds nothing. A zero Deadline means Deadline.
+// Searcher runs the rg binary at Bin. An empty Bin finds nothing. A zero Deadline means 15 s.
 type Searcher struct {
 	Bin      string
 	Deadline time.Duration
@@ -86,7 +86,7 @@ func (s Searcher) deadline() time.Duration {
 	if s.Deadline > 0 {
 		return s.Deadline
 	}
-	return Deadline
+	return defaultDeadline
 }
 
 // Text searches roots for q.Pattern and returns the entries of the 100 files with the most matching
