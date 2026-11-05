@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { isSafeURL } from "./url-safety.js";
+import { isHttpURL } from "./url-safety.js";
 
-describe("isSafeURL", () => {
+describe("isHttpURL", () => {
   it("accepts http and https", () => {
-    expect(isSafeURL("https://auth.example.com/oauth?code=1")).toBe(true);
-    expect(isSafeURL("http://localhost:8080/callback")).toBe(true);
+    expect(isHttpURL("https://auth.example.com/oauth?code=1")).toBe(true);
+    expect(isHttpURL("http://localhost:8080/callback")).toBe(true);
     // URL parsing lowercases the scheme.
-    expect(isSafeURL("HTTPS://Example.com")).toBe(true);
+    expect(isHttpURL("HTTPS://Example.com")).toBe(true);
   });
 
   it("rejects non-http(s) schemes and unparseable input", () => {
@@ -20,7 +20,7 @@ describe("isSafeURL", () => {
       "not a url",
       "//example.com",
     ]) {
-      expect(isSafeURL(u), u).toBe(false);
+      expect(isHttpURL(u), u).toBe(false);
     }
   });
 });

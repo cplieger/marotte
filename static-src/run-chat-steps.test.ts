@@ -93,6 +93,7 @@ function paint(
       ts: 0,
       outcome: live ? "running" : "completed",
       rewindTo: undefined,
+      branchFrom: undefined,
     },
     live,
   };

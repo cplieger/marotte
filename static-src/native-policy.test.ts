@@ -74,6 +74,7 @@ const sampleView: PolicyView = {
   // Empty: this fixture has no relaxation checkbox (permissions-relax.test.ts owns it).
   profiles: [{ id: "guarded", presets: ["read-workspace"] }],
   profile: "guarded",
+  load_errors: [],
   rules: [
     {
       capability: "fs_write",
@@ -81,12 +82,14 @@ const sampleView: PolicyView = {
       match: ["**/.git/**"],
       scope: "kiro",
       source: "kiro-scope",
+      editable: false,
     },
     {
       capability: "shell",
       effect: "allow",
       scope: "user",
       source: "/home/u/.kiro/settings/permissions.yaml",
+      editable: true,
     },
     {
       capability: "fs_read",
@@ -94,6 +97,7 @@ const sampleView: PolicyView = {
       match: ["src/**"],
       scope: "workspace",
       source: "/home/u/.kiro/workspace-roots/ab/permissions.yaml",
+      editable: true,
     },
   ],
 };
@@ -312,6 +316,7 @@ describe("native policy editor", () => {
           match: ["sudo *"],
           scope: "workspace",
           source: "/w/permissions.yaml",
+          editable: true,
         },
       ],
     });
@@ -342,6 +347,7 @@ describe("native policy editor", () => {
           match: ["sudo *"],
           scope: "workspace",
           source: "/w/permissions.yaml",
+          editable: true,
         },
       ],
     });
@@ -374,5 +380,143 @@ describe("native policy editor", () => {
       resource: "/etc/hosts",
     });
     expect(byId("native-explain-result").textContent).toContain("Effect: ask");
+  });
+});
+
+describe("native policy rows the writer cannot edit", () => {
+  const userFile = "/home/u/.kiro/settings/permissions.yaml";
+
+  function loadRules(rules: PolicyView["rules"]): void {
+    mocks.apiGet.mockResolvedValue({ ...sampleView, rules });
+    initAndLoad();
+  }
+
+  it("renders a preset the user file references as a badge with no remove button", async () => {
+    loadRules([
+      {
+        capability: "shell",
+        effect: "allow",
+        scope: "user",
+        source: `preset:dev-shell in ${userFile}`,
+        editable: false,
+      },
+    ]);
+    await flush();
+
+    const row = policyRows()[0];
+    expect(row?.querySelector("select.native-rule-effect")).toBeNull();
+    expect(row?.querySelector("span.native-rule-effect")?.textContent).toBe("allow");
+    expect(row?.querySelector(".native-rule-remove")).toBeNull();
+  });
+
+  it("names the preset in the row's source and shortens only the path", async () => {
+    loadRules([
+      {
+        capability: "shell",
+        effect: "allow",
+        scope: "user",
+        source: `preset:dev-shell in ${userFile}`,
+        editable: false,
+      },
+    ]);
+    await flush();
+
+    expect(policyRows()[0]?.querySelector(".native-rule-src")?.textContent).toBe(
+      "preset:dev-shell in .../settings/permissions.yaml",
+    );
+  });
+
+  it("renders an evaluate rule as evaluate, never as allow", async () => {
+    loadRules([
+      { capability: "all", effect: "evaluate", scope: "user", source: userFile, editable: false },
+    ]);
+    await flush();
+
+    const row = policyRows()[0];
+    expect(row?.querySelector("select.native-rule-effect")).toBeNull();
+    expect(row?.querySelector("span.native-rule-effect")?.textContent).toBe("evaluate");
+  });
+});
+
+describe("native policy status line", () => {
+  it("shows the rules kiro-cli did not load", async () => {
+    mocks.apiGet.mockResolvedValue({
+      ...sampleView,
+      load_errors: [{ scope: "user", message: "unknown capability 'teleport'" }],
+    });
+    initAndLoad();
+    await flush();
+
+    const status = byId("native-policy-status");
+    expect(status.textContent).toContain("user: unknown capability 'teleport'");
+    expect(status.classList.contains("hidden")).toBe(false);
+    expect(status.classList.contains("native-policy-status-error")).toBe(false);
+  });
+
+  it("styles the status as an error when a load error is fatal", async () => {
+    mocks.apiGet.mockResolvedValue({
+      ...sampleView,
+      load_errors: [{ scope: "workspace", message: "parse error", fatal: true }],
+    });
+    initAndLoad();
+    await flush();
+
+    expect(byId("native-policy-status").classList.contains("native-policy-status-error")).toBe(
+      true,
+    );
+  });
+
+  it("names kiro-cli, not a chat session, when the live policy is unavailable", async () => {
+    mocks.apiGet.mockResolvedValue({ ...sampleView, available: false });
+    initAndLoad();
+    await flush();
+
+    const text = byId("native-policy-status").textContent;
+    expect(text).toContain("kiro-cli did not answer");
+    expect(text).not.toContain("session");
+  });
+
+  it("names kiro-cli when an explain gets no answer", async () => {
+    mocks.explainDispatch.mockResolvedValue(null);
+    initAndLoad();
+    await flush();
+
+    byId<HTMLSelectElement>("native-explain-capability").value = "fs_write";
+    byId<HTMLButtonElement>("native-explain-run").click();
+    await flush();
+
+    expect(byId("native-explain-result").textContent).toBe(
+      "Could not evaluate: kiro-cli did not answer.",
+    );
+  });
+});
+
+describe("native policy permissions_changed refetch", () => {
+  it("fetches nothing before the tab's first activation", async () => {
+    initNativePolicyUI();
+    mocks.sseHandlers.get("permissions_changed")?.("");
+    await flush();
+
+    expect(mocks.apiGet).not.toHaveBeenCalled();
+  });
+
+  it("coalesces a burst of frames during a pending fetch into one refetch", async () => {
+    let release: (v: PolicyView) => void = () => undefined;
+    mocks.apiGet.mockReturnValueOnce(
+      new Promise<PolicyView>((resolve) => {
+        release = resolve;
+      }),
+    );
+    initAndLoad();
+    for (let i = 0; i < 20; i++) {
+      mocks.sseHandlers.get("permissions_changed")?.("");
+    }
+    await flush();
+    expect(mocks.apiGet).toHaveBeenCalledTimes(1);
+
+    release(sampleView);
+    await flush();
+    await flush();
+    expect(mocks.apiGet).toHaveBeenCalledTimes(2);
   });
 });

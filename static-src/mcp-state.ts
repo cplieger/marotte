@@ -175,6 +175,10 @@ const decodeServer: Decoder<Server> = (v) => {
   if (timeoutMS !== undefined) {
     out.timeout_ms = timeoutMS;
   }
+  const versionNegotiation = optStr(o, "version_negotiation", p);
+  if (versionNegotiation !== undefined) {
+    out.version_negotiation = versionNegotiation as VersionNegotiation;
+  }
   if (Array.isArray(o["args"])) {
     out.args = (o["args"] as unknown[]).map((x) => String(x));
   }
@@ -205,6 +209,9 @@ const decodeMCPServersResponseLocal: Decoder<{ servers: Server[]; unreadable: nu
 export type { Transport } from "./wire/types.gen.js";
 import type { MCPOrigin, Transport } from "./wire/types.gen.js";
 
+/** KAS's per-server `versionNegotiation` enum. */
+type VersionNegotiation = "auto" | "legacy";
+
 export interface KeyPair {
   name: string;
   value: string;
@@ -224,6 +231,8 @@ export interface Server {
   /** KAS's per-server connect timeout in milliseconds; absent means KAS's
    *  own default. Imported from a pasted config; no form control edits it. */
   timeout_ms?: number;
+  /** KAS's per-server `versionNegotiation`, from a paste or the raw edit; absent means kiro-cli's `auto`. No form control edits it. */
+  version_negotiation?: VersionNegotiation;
   command?: string;
   args?: string[];
   env?: KeyPair[];
@@ -293,7 +302,8 @@ interface Provenance {
 export type RuntimeStatus = Provenance &
   (
     | { name: string; state: "connected" }
-    | { name: string; state: "needs_auth" }
+    /** `error` is why kiro-cli refused the last Sign in, absent when none was refused. */
+    | { name: string; state: "needs_auth"; error?: string }
     /** `oauth_url` is the consent page of the sign-in the user started. `relayed` rides the status wire, so a reload
      *  or second device does not offer the paste box for a spent code. */
     | { name: string; state: "signing_in"; oauth_url: string; relayed: boolean }
@@ -354,7 +364,9 @@ export function adaptStatus(w: WireRuntimeStatus): RuntimeStatus {
   const prov = adaptProvenance(w);
   switch (w.state) {
     case "needs_auth":
-      return { name: w.name, ...prov, state: "needs_auth" };
+      return w.error === undefined || w.error === ""
+        ? { name: w.name, ...prov, state: "needs_auth" }
+        : { name: w.name, ...prov, state: "needs_auth", error: w.error };
     case "signing_in":
       return {
         name: w.name,

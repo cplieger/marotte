@@ -27,6 +27,7 @@ function residentTurn(n: number, over: Partial<Turn> = {}): Turn {
     ts: n * 1000,
     outcome: "completed",
     rewindTo: undefined,
+    branchFrom: undefined,
     ...over,
   };
 }

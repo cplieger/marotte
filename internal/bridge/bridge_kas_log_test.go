@@ -30,15 +30,12 @@ func TestInitialize_DecodesKASLogging(t *testing.T) {
 
 func TestInitialize_MalformedKASLoggingKeepsTheHandshake(t *testing.T) {
 	b := NewEngine("/nonexistent", "/work")
-	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"agentCapabilities":{"_meta":{"kiro":{"logging":"nope","replayMarking":true}}}}`)}
+	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"agentCapabilities":{"_meta":{"kiro":{"logging":"nope"}}}}`)}
 	if _, err := driveSessionCall(t, b, resp, false, b.initialize); err != nil {
 		t.Fatalf("initialize = %v, want nil (a bad logging block is diagnostic only)", err)
 	}
 	if got := b.KASLogDir(); got != "" {
 		t.Errorf("KASLogDir() = %q, want empty", got)
-	}
-	if !b.agentKiro.Load().ReplayMarking {
-		t.Error("ReplayMarking = false, want the rest of the block decoded")
 	}
 }
 

@@ -193,12 +193,20 @@ type wakeLedger struct {
 }
 
 type sessionWakes struct {
-	filed  []string
-	before int
-	state  wakeState
+	// pausedFiled is the rows filed while paused: KAS buffers a message to a running step, so only
+	// these can have woken a resume.
+	pausedFiled map[string]struct{}
+	filed       []string
+	before      int
+	state       wakeState
 	// rewake is a reader's cancel that cleared a workflow message: KAS may re-deliver it by a
 	// send-message-wake with no new notify (rewakeWithInfo), whose waker no row names.
 	rewake bool
+	// A step session's resume is the wake no frame names: KAS wakes a paused step with a parent's
+	// message and stamps no reason on the step's frames (kiro-cli 2.37.1 driveExecution), so the
+	// pause, the node's next node_start and that turn_start are the evidence. paused runs from
+	// node_paused to node_start, resumed from there to the turn_start, and resume marks that turn.
+	paused, resumed, resume bool
 }
 
 func newWakeLedger() *wakeLedger { return &wakeLedger{by: make(map[string]*sessionWakes)} }
@@ -214,7 +222,7 @@ func (w *wakeLedger) entry(session string) *sessionWakes {
 
 // forgetIdle drops session's entry once it holds nothing a later call reads.
 func (w *wakeLedger) forgetIdle(session string, s *sessionWakes) {
-	if len(s.filed) == 0 && s.state == wakeDone && !s.rewake {
+	if len(s.filed) == 0 && s.state == wakeDone && !s.rewake && !s.paused && !s.resumed {
 		delete(w.by, session)
 	}
 }
@@ -228,23 +236,62 @@ func (w *wakeLedger) filed(session, id string) {
 	defer w.mu.Unlock()
 	s := w.entry(session)
 	s.filed = append(s.filed, id)
+	if s.paused {
+		if s.pausedFiled == nil {
+			s.pausedFiled = map[string]struct{}{}
+		}
+		s.pausedFiled[id] = struct{}{}
+	}
+}
+
+// nodePaused records that KAS paused the node step session runs.
+func (w *wakeLedger) nodePaused(session string) {
+	if session == "" {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	s := w.entry(session)
+	s.paused, s.resumed = true, false
+}
+
+// nodeStarted records session's node_start: after a pause, the session's next turn is its resume.
+func (w *wakeLedger) nodeStarted(session string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	s, ok := w.by[session]
+	if !ok || !s.paused {
+		return
+	}
+	s.paused, s.resumed = false, true
+}
+
+// forget drops session's entry: its run ended, so no later frame settles a row filed to it.
+func (w *wakeLedger) forget(session string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.by, session)
 }
 
 // turnStarted records session's turn_start: the rows filed so far are its candidate wakers, unless a
-// reader's cancel just cleared a message KAS may re-deliver in it.
-func (w *wakeLedger) turnStarted(session string) {
+// reader's cancel just cleared a message KAS may re-deliver in it. It reports a step's resume, whose
+// waker the caller settles at once, because none of the turn's frames names it.
+func (w *wakeLedger) turnStarted(session string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	s, ok := w.by[session]
 	if !ok {
-		return
+		return false
 	}
 	s.before, s.state = len(s.filed), wakeOpen
+	s.resume, s.resumed = s.resumed, false
 	if s.rewake || s.before == 0 {
 		s.state = wakeDone
 	}
 	s.rewake = false
+	resume := s.resume && s.state == wakeOpen
 	w.forgetIdle(session, s)
+	return resume
 }
 
 // cleared ends session's epoch: every row filed to it is settled. rewake marks a reader's cancel
@@ -253,7 +300,7 @@ func (w *wakeLedger) cleared(session string, rewake bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	s := w.entry(session)
-	s.filed, s.before, s.state, s.rewake = nil, 0, wakeDone, rewake
+	s.filed, s.before, s.state, s.rewake, s.pausedFiled = nil, 0, wakeDone, rewake, nil
 	w.forgetIdle(session, s)
 }
 
@@ -267,7 +314,9 @@ func (w *wakeLedger) candidates(session string, at wakeState) (map[string]struct
 	}
 	out := make(map[string]struct{}, s.before)
 	for _, id := range s.filed[:s.before] {
-		out[id] = struct{}{}
+		if _, whilePaused := s.pausedFiled[id]; whilePaused || !s.resume {
+			out[id] = struct{}{}
+		}
 	}
 	return out, true
 }
@@ -287,6 +336,11 @@ func (w *wakeLedger) resolve(session string, state wakeState, unsettled map[stri
 			if i < s.before {
 				before++
 			}
+		}
+	}
+	for id := range s.pausedFiled {
+		if _, ok := unsettled[id]; !ok {
+			delete(s.pausedFiled, id)
 		}
 	}
 	s.filed, s.before, s.state = kept, before, state

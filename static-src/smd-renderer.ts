@@ -44,7 +44,7 @@ import { CHROME_ATTR } from "./chrome-attr.js";
 import {
   decodeDestination,
   exfilShaped,
-  isSafeUrl,
+  isHttpMailtoOrRelativeURL,
   rewriteServedImageSrc,
   servedFileRoute,
   servedPath,
@@ -509,7 +509,7 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   if (attrName === "") {
     return;
   }
-  if ((attrName === "href" || attrName === "src") && !isSafeUrl(value)) {
+  if ((attrName === "href" || attrName === "src") && !isHttpMailtoOrRelativeURL(value)) {
     node.setAttribute(attrName, "#");
     return;
   }
@@ -546,7 +546,8 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
     return;
   }
   // An agent-written workspace path is a real file, not a URL the SPA can serve. Rewritten AFTER
-  // the safety gate so the rewrite can never launder a scheme isSafeUrl just rejected.
+  // the safety gate so the rewrite can never launder a scheme isHttpMailtoOrRelativeURL just
+  // rejected.
   if (attrName === "src" && node.tagName === "IMG") {
     // The FILE-ROLE swap, and it has to happen here rather than at add_token: the tag is chosen
     // when `![` opens and the path only arrives when `)` closes, so this is the first moment the

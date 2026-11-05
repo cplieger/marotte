@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -201,28 +202,143 @@ func TestKiroFSDeleteFile(t *testing.T) {
 	}
 }
 
-// TestKiroFSDeleteDirectoryRecurses mirrors KAS's NodeFileSystem (fs.rm recursive).
-func TestKiroFSDeleteDirectoryRecurses(t *testing.T) {
-	work := t.TempDir()
-	dir := filepath.Join(work, "tree")
-	if err := os.MkdirAll(filepath.Join(dir, "nested"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "nested", "f"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	h, br := hubForFSTest(t, work)
-	h.inbound.respondKiroFSDelete(t.Context(), "c1", h.originOf("c1"), kiroFSMsg(t, 1, methodKiroFSDelete, "tree"))
-	<-br.done
-	if br.response.err != nil {
-		t.Fatalf("err = %v, want nil", br.response.err)
-	}
-	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Errorf("stat err = %v, want ErrNotExist: the tree should be gone", err)
+// KAS's revert of a create whose file is already gone succeeds only on its not-found dialect.
+func TestKiroFSDeleteMissingPathSaysPathDoesNotExist(t *testing.T) {
+	for _, path := range []string{"ghost.txt", "nodir/ghost.txt"} {
+		err := deleteThrough(t, t.TempDir(), path)
+		if err == nil || !strings.HasPrefix(err.Error(), kasNotFoundPrefix) {
+			t.Errorf("delete(%s) err = %v, want a message starting %q", path, err, kasNotFoundPrefix)
+		}
 	}
 }
 
-// TestKiroFSDeleteRefusesWorkDirRoot pins the handler's one refusal.
+func deleteThrough(t *testing.T, work, path string) error {
+	t.Helper()
+	h, br := hubForFSTest(t, work)
+	h.inbound.respondKiroFSDelete(t.Context(), "c1", h.originOf("c1"), kiroFSMsg(t, 1, methodKiroFSDelete, path))
+	<-br.done
+	return br.response.err
+}
+
+// TestKiroFSDeleteRefusesDirectory pins the undo invariant: no snapshot can hold a directory.
+func TestKiroFSDeleteRefusesDirectory(t *testing.T) {
+	work := t.TempDir()
+	nested := filepath.Join(work, "tree", "nested", "f")
+	if err := os.MkdirAll(filepath.Dir(nested), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nested, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteThrough(t, work, "tree"); !errors.Is(err, errNoUndoDirectory) {
+		t.Errorf("err = %v, want errNoUndoDirectory", err)
+	}
+	if _, err := os.Stat(nested); err != nil {
+		t.Errorf("the refused tree lost its file: %v", err)
+	}
+}
+
+func TestKiroFSDeleteRefusesFileOverReadCap(t *testing.T) {
+	work := t.TempDir()
+	big := filepath.Join(work, "big.bin")
+	if err := os.WriteFile(big, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(big, fsReadCap+1); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteThrough(t, work, "big.bin"); !errors.Is(err, errNoUndoTooLarge) {
+		t.Errorf("err = %v, want errNoUndoTooLarge", err)
+	}
+	if _, err := os.Stat(big); err != nil {
+		t.Errorf("the refused file is gone: %v", err)
+	}
+}
+
+// TestKiroFSDeleteAtReadCapDeletes pins the boundary: fs/read_text_file serves exactly fsReadCap bytes.
+func TestKiroFSDeleteAtReadCapDeletes(t *testing.T) {
+	work := t.TempDir()
+	edge := filepath.Join(work, "edge.bin")
+	if err := os.WriteFile(edge, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(edge, fsReadCap); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteThrough(t, work, "edge.bin"); err != nil {
+		t.Fatalf("err = %v, want nil at exactly fsReadCap", err)
+	}
+	if _, err := os.Lstat(edge); !os.IsNotExist(err) {
+		t.Errorf("lstat err = %v, want ErrNotExist", err)
+	}
+}
+
+// TestKiroFSDeleteUnlinksLiveSymlinks pins that a delete removes the link KAS names, matching
+// KAS's own fs.rm, and never the file or directory it points at, inside the workspace or not.
+func TestKiroFSDeleteUnlinksLiveSymlinks(t *testing.T) {
+	work := t.TempDir()
+	outside := t.TempDir()
+	for _, f := range []string{filepath.Join(work, "dir", "f"), filepath.Join(work, "file"), filepath.Join(outside, "f")} {
+		if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct{ name, link, target, kept string }{
+		{"to a directory", "to-dir", filepath.Join(work, "dir"), filepath.Join(work, "dir", "f")},
+		{"to a file", "to-file", filepath.Join(work, "file"), filepath.Join(work, "file")},
+		{"out of the workspace", "to-outside", filepath.Join(outside, "f"), filepath.Join(outside, "f")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			link := filepath.Join(work, tc.link)
+			if err := os.Symlink(tc.target, link); err != nil {
+				t.Skipf("symlink unsupported: %v", err)
+			}
+			if err := deleteThrough(t, work, tc.link); err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+			if _, err := os.Lstat(link); !os.IsNotExist(err) {
+				t.Errorf("lstat(link) err = %v, want ErrNotExist", err)
+			}
+			if _, err := os.Stat(tc.kept); err != nil {
+				t.Errorf("the link's target lost its file: %v", err)
+			}
+		})
+	}
+}
+
+// TestKiroFSDeleteUnlinksDanglingSymlink pins that the guard judges the link, never a target.
+func TestKiroFSDeleteUnlinksDanglingSymlink(t *testing.T) {
+	work := t.TempDir()
+	link := filepath.Join(work, "link")
+	if err := os.Symlink(filepath.Join(work, "missing"), link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if err := deleteThrough(t, work, "link"); err != nil {
+		t.Fatalf("err = %v, want nil for a dangling symlink", err)
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Errorf("lstat(link) err = %v, want ErrNotExist", err)
+	}
+}
+
+func TestKiroFSDeleteUnlinksFIFO(t *testing.T) {
+	work := t.TempDir()
+	fifo := filepath.Join(work, "pipe")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("mkfifo unsupported here: %v", err)
+	}
+	if err := deleteThrough(t, work, "pipe"); err != nil {
+		t.Fatalf("err = %v, want nil for a FIFO", err)
+	}
+	if _, err := os.Lstat(fifo); !os.IsNotExist(err) {
+		t.Errorf("lstat err = %v, want ErrNotExist", err)
+	}
+}
+
+// TestKiroFSDeleteRefusesWorkDirRoot pins the refusal of a root itself.
 func TestKiroFSDeleteRefusesWorkDirRoot(t *testing.T) {
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "keep.txt"), []byte("x"), 0o600); err != nil {
@@ -231,7 +347,7 @@ func TestKiroFSDeleteRefusesWorkDirRoot(t *testing.T) {
 	h, br := hubForFSTest(t, work)
 	h.inbound.respondKiroFSDelete(t.Context(), "c1", h.originOf("c1"), kiroFSMsg(t, 1, methodKiroFSDelete, "."))
 	<-br.done
-	// The sentinel, not any error: without the guard os.RemoveAll refuses "." with EINVAL anyway.
+	// The sentinel, not any error: without the guard undoCopyRefusal refuses "." as a directory anyway.
 	if !errors.Is(br.response.err, errRefusedRootDelete) {
 		t.Fatalf("err = %v, want errRefusedRootDelete", br.response.err)
 	}

@@ -128,9 +128,9 @@ func mergeEntries(record []recordTurn, projected []translate.ProjectedTurn, sid 
 }
 
 // fillTimestamps gives each turn row with no timestamp one from its place in the merged log: a turn_open its own
-// turn's first, else every such row its predecessor's, else (at the head) the first after it. KAS replays turn
-// brackets and settled calls with no timestamp, so a turn inserted from the replay has no other time fact. A
-// reconciled record is the merge's own bookkeeping, not a turn row, and is left as written.
+// turn's first, else every such row its predecessor's, else (at the head) the first after it. KAS replays settled
+// calls with no timestamp, and a turn it closed on a recovered end gets its closer from the merge. A reconciled
+// record is the merge's own bookkeeping, not a turn row, and is left as written.
 func fillTimestamps(turns []mergedTurn) bool {
 	var f tsFill
 	for i := range turns {
@@ -414,11 +414,16 @@ func recordWatermark(ctx context.Context, h chat.EntryHeader, held string, entri
 }
 
 type turnKeys struct {
+	// tag pairs a record turn's id with the turn id its replayed turn_start echoed (ProjectedTurn.Tag). Unscoped: a
+	// marotte turn id names one turn.
+	tag string
+	// kasTurn is turn_open.kas_turn_id on both sides, KAS's own id for the turn.
+	kasTurn string
 	// prompt is rule one's key: the in-scope turn_bind's kas_message_id on the record side, the
 	// turn_open's prompt id on the projected side. Exact: KAS mints one id per prompt.
 	prompt string
-	// content is rule two's key: the first text, thinking or tool_call id, a subagent invocation
-	// keyed on its delegate uuid. Unscoped: a KAS uuid belongs to one session.
+	// content is rule two's key: the first text, thinking or tool_call id. Unscoped: a KAS uuid
+	// belongs to one session.
 	content string
 }
 
@@ -426,6 +431,8 @@ func pairTurns(record []recordTurn, projected []translate.ProjectedTurn, sid str
 	recKeys := recordTurnKeys(record, sid)
 	projKeys := projectedTurnKeys(projected)
 	recPartner, projPartner = make(map[int]int), make(map[int]int)
+	pairOnKey(recKeys, projKeys, recPartner, projPartner, func(k turnKeys) string { return k.tag })
+	pairOnKey(recKeys, projKeys, recPartner, projPartner, func(k turnKeys) string { return k.kasTurn })
 	pairOnKey(recKeys, projKeys, recPartner, projPartner, func(k turnKeys) string { return k.prompt })
 	pairOnKey(recKeys, projKeys, recPartner, projPartner, func(k turnKeys) string { return k.content })
 	return recPartner, projPartner
@@ -438,7 +445,10 @@ func recordTurnKeys(record []recordTurn, sid string) []turnKeys {
 		if record[i].Reverted {
 			continue
 		}
+		open, _ := turnOpenOf(record[i].Entries)
 		keys[i] = turnKeys{
+			tag:     record[i].Entries[0].Turn,
+			kasTurn: open.KASTurnID,
 			prompt:  boundPromptID(record[i].Entries, sid),
 			content: firstContentKey(record[i].Entries),
 		}
@@ -454,6 +464,8 @@ func projectedTurnKeys(projected []translate.ProjectedTurn) []turnKeys {
 		if open.Prompt != nil {
 			keys[j].prompt = open.Prompt.ID
 		}
+		keys[j].tag = projected[j].Tag
+		keys[j].kasTurn = open.KASTurnID
 		keys[j].content = firstContentKey(projected[j].Entries)
 	}
 	return keys
@@ -516,30 +528,17 @@ func boundPromptID(entries []marotte.Entry, sid string) string {
 	return ""
 }
 
-// firstContentKey is rule two's key: the first content id with a say's `#k` suffix removed, or
-// a subagent's delegate uuid (KAS suffixes `-sub-agent-start` on one side).
+// firstContentKey is rule two's key: the first content id with a say's `#k` suffix removed.
 func firstContentKey(entries []marotte.Entry) string {
 	for i := range entries {
 		switch entries[i].Kind {
 		case marotte.EntryKindText, marotte.EntryKindThinking:
 			return marotte.SayIDOf(entries[i].ID)
 		case marotte.EntryKindToolCall:
-			if key := invocationKey(&entries[i]); key != "" {
-				return key
-			}
 			return entries[i].ID
 		}
 	}
 	return ""
-}
-
-// Empty for an ordinary tool call.
-func invocationKey(e *marotte.Entry) string {
-	var call marotte.EntryToolCall
-	if json.Unmarshal(e.Payload, &call) != nil {
-		return ""
-	}
-	return call.AgentSubtaskID
 }
 
 // keptTurn is an unpaired record turn, emitted as a copy: renumber writes into its slice.
@@ -642,10 +641,8 @@ type recordEntryIndex struct {
 	byID map[string]int
 	// bySay holds every segment of a say in seq order: projected S pairs with every S and S#k,
 	// and the record's segment boundaries are never merged.
-	bySay map[string][]int
-	// byInvocation is each subagent invocation's delegate uuid.
-	byInvocation map[string]int
-	messages     *workflowMessageIndex
+	bySay    map[string][]int
+	messages *workflowMessageIndex
 	// notices is every model_routed and model_fallback in seq order, per kind: neither side's
 	// frame carries an id, so the n-th notice of a kind in a paired turn is the n-th on the other side.
 	notices map[marotte.EntryKind][]int
@@ -664,13 +661,12 @@ type workflowMessageIndex struct {
 
 func indexRecordEntries(entries []marotte.Entry) recordEntryIndex {
 	idx := recordEntryIndex{
-		byID:         make(map[string]int, len(entries)),
-		bySay:        make(map[string][]int),
-		byInvocation: make(map[string]int),
-		notices:      make(map[marotte.EntryKind][]int, 2),
-		messages:     &workflowMessageIndex{byWords: map[workflowMessageKey][]int{}, deliveredAs: map[string]string{}},
-		turnOpen:     -1,
-		turnClose:    -1,
+		byID:      make(map[string]int, len(entries)),
+		bySay:     make(map[string][]int),
+		notices:   make(map[marotte.EntryKind][]int, 2),
+		messages:  &workflowMessageIndex{byWords: map[workflowMessageKey][]int{}, deliveredAs: map[string]string{}},
+		turnOpen:  -1,
+		turnClose: -1,
 	}
 	for i := range entries {
 		idx.add(&entries[i], i)
@@ -699,12 +695,6 @@ func (idx *recordEntryIndex) add(e *marotte.Entry, i int) {
 	case marotte.EntryKindText, marotte.EntryKindThinking:
 		say := marotte.SayIDOf(e.ID)
 		idx.bySay[say] = append(idx.bySay[say], i)
-	case marotte.EntryKindToolCall:
-		if key := invocationKey(e); key != "" {
-			if _, dup := idx.byInvocation[key]; !dup {
-				idx.byInvocation[key] = i
-			}
-		}
 	}
 }
 
@@ -831,8 +821,6 @@ func pairEntries(rec, proj []marotte.Entry, idx recordEntryIndex) []entryPairing
 		claimed: make(map[int]bool, len(rec)),
 		pairing: make([]entryPairing, len(proj)),
 	}
-	// A result pairs through its call, whose twin is always known by then.
-	resultTwin := make(map[string]int, len(proj))
 	notices := make(map[marotte.EntryKind]int, 2)
 	for j := range proj {
 		e := &proj[j]
@@ -848,23 +836,6 @@ func pairEntries(rec, proj []marotte.Entry, idx recordEntryIndex) []entryPairing
 			c.claim(j, idx.turnClose)
 		case marotte.EntryKindText, marotte.EntryKindThinking:
 			c.claim(j, idx.bySay[marotte.SayIDOf(e.ID)]...)
-		case marotte.EntryKindToolCall:
-			key := invocationKey(e)
-			if key == "" {
-				c.claim(j, indexOr(idx.byID, e.ID))
-				break
-			}
-			i := indexOr(idx.byInvocation, key)
-			c.claim(j, i)
-			if i >= 0 {
-				resultTwin[marotte.ToolResultID(e.ID)] = indexOr(idx.byID, marotte.ToolResultID(rec[i].ID))
-			}
-		case marotte.EntryKindToolResult:
-			if i, through := resultTwin[e.ID]; through {
-				c.claim(j, i)
-				break
-			}
-			c.claim(j, indexOr(idx.byID, e.ID))
 		case marotte.EntryKindSteer:
 			c.claimFirst(j, idx.steerTwins(e))
 		default:
@@ -1094,11 +1065,11 @@ func unionTurnClose(out, proj *marotte.Entry) {
 		r.Refusal = p.Refusal
 	}
 	// The placeholder saw no completion frames.
-	r.Throughput = p.Throughput
 	r.RequestIDs = p.RequestIDs
 	r.Recoveries = p.Recoveries
 	r.Steering = p.Steering
 	r.ContextBreakdown = p.ContextBreakdown
+	r.FirstOutput = p.FirstOutput
 	setPayload(out, r)
 }
 

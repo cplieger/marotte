@@ -43,6 +43,26 @@ func TestPolicyList(t *testing.T) {
 	}
 }
 
+// _kiro/permissions/list returns rules only; the skipped rules come from the same pass's door.
+func TestPolicyListingReturnsTheDoorsErrors(t *testing.T) {
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br := oneObserver(t, h)
+	seedPolicy(br, `{"rules":[{"capability":"shell","effect":"ask","scope":"kiro","source":"kiro-scope"}]}`, `{}`)
+	br.policyErrors = []marotte.PolicyErrorItem{{Scope: "user", Message: "unknown capability 'teleport'"}}
+
+	rules, loadErrs, err := h.config.PolicyListing(t.Context(), "")
+	if err != nil {
+		t.Fatalf("PolicyListing: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Capability != "shell" {
+		t.Errorf("rules = %+v, want the one listed rule", rules)
+	}
+	if len(loadErrs) != 1 || loadErrs[0].Message != "unknown capability 'teleport'" || loadErrs[0].Scope != "user" {
+		t.Errorf("load errors = %+v, want the door's one skipped rule", loadErrs)
+	}
+}
+
 func TestPolicyListOmitsEmptyScope(t *testing.T) {
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })

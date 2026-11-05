@@ -1,10 +1,6 @@
 package agent
 
-import (
-	"sync"
-
-	"github.com/cplieger/marotte/internal/marotte"
-)
+import "sync"
 
 type bridgeState int
 
@@ -20,8 +16,6 @@ type sharedBridge struct {
 	leased engineSession
 	// life is the life the entry's leases are counted on (newSharedBridge).
 	life leaseLife
-	// revertStarting runs before a checkpoint revert with the session it reverts; nil on a run host.
-	revertStarting func(session string)
 	// settled is the generation's readiness from the session open's first instant: openBridge hands sb to
 	// no caller before it settles.
 	settled *sessionSettle
@@ -70,14 +64,6 @@ func (sb *sharedBridge) setIdle() {
 // The command layer's calls on an entry are leases (session_lease.go), so a command.Bridge holder can never close
 // the session or SetModel behind the state machine. Before its door attaches a session, every call refuses with
 // marotte.ErrSessionClosed and SessionID answers "".
-
-// beforeCall announces a checkpoint revert before it is sent, since KAS writes the files back
-// before it answers.
-func (sb *sharedBridge) beforeCall(method string, session marotte.SessionID) {
-	if method == marotte.MethodCheckpointRevertMultiple && sb.revertStarting != nil {
-		sb.revertStarting(string(session))
-	}
-}
 
 func (sb *sharedBridge) TryAcquireForPrompt() bool {
 	return sb.tryAcquireForPrompt()

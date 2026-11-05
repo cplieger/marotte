@@ -15,10 +15,11 @@ These flags are refused with a logged reason, because each one breaks the engine
 
 | Flag | Why it is refused |
 | --- | --- |
-| `--agent-engine` | marotte speaks only the v3 protocol |
+| `--agent-engine` | marotte speaks only the v3 protocol, and kiro-cli's other engines exit at startup |
 | `--auth-method`, `--authMethod` | marotte owns the Kiro sign-in and sets the sign-in method itself |
 | `--agent` | kiro-cli rejects it and exits at startup, so no chat could open. Pick the role per chat with the mode pill |
 | `--trust-all-tools`, `-a`, `--trust-tools` | kiro-cli rejects them and exits at startup, so no chat could open. Tool approval is the policy you edit on the **Permissions** tab in **Settings** |
 | `--model`, `--effort` | kiro-cli rejects both and exits at startup, so no chat could open. Pick them per chat in the composer |
+| `--login`, `--help`, `-h` | kiro-cli runs its own sign-in or prints its help, then exits instead of starting, so no chat could open. Sign in to Kiro on the page |
 
 Anything else you set is a starting value the page can still change. Flags are logged by count only, never by value, so a mistyped value cannot leak into the logs.

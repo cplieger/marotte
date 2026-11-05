@@ -518,3 +518,128 @@ func TestHandleSSE_OnlyAReconnectAppliesNotificationTogglesEditedWhileTheStreamW
 		})
 	}
 }
+
+func commandAsk(id int64, text string) marotte.ServerEvent {
+	return marotte.NewEvent(marotte.EventPermissionNeeded, "c1", marotte.PermissionNeededPayload{
+		RequestID: id, Command: &marotte.PermissionCommand{Text: text},
+	})
+}
+
+func marshalLen(t *testing.T, evt marotte.ServerEvent) int {
+	t.Helper()
+	data, err := json.Marshal(evt)
+	if err != nil {
+		t.Fatalf("Setup: marshal: %v", err)
+	}
+	return len(data) + 1
+}
+
+func askCommandOf(t *testing.T, item json.RawMessage) *marotte.PermissionCommand {
+	t.Helper()
+	var evt struct {
+		Payload marotte.PermissionNeededPayload `json:"payload"`
+	}
+	if err := json.Unmarshal(item, &evt); err != nil {
+		t.Fatalf("decode item: %v", err)
+	}
+	return evt.Payload.Command
+}
+
+func TestFitPendingItems_PastTheBudgetTheRemainingAsksLoseTheirCommandText(t *testing.T) {
+	text := strings.Repeat("x", 1000)
+	events := []marotte.ServerEvent{
+		commandAsk(1, text), commandAsk(2, text), commandAsk(3, text), commandAsk(4, text),
+		marotte.NewEvent(marotte.EventSteerQueued, "c1", marotte.SteerQueuedPayload{}),
+	}
+	slimAsk := marshalLen(t, marotte.NewEvent(marotte.EventPermissionNeeded, "c1", marotte.PermissionNeededPayload{
+		RequestID: 3, Command: &marotte.PermissionCommand{OmittedBytes: len(text)},
+	}))
+	budget := marshalLen(t, events[0]) + marshalLen(t, events[1]) + 2*slimAsk + marshalLen(t, events[4])
+
+	items := fitPendingItems(events, budget)
+	if len(items) != len(events) {
+		t.Fatalf("got %d items, want all %d: every one fits once its command text is dropped", len(items), len(events))
+	}
+	used := 0
+	for _, it := range items {
+		used += len(it) + 1
+	}
+	if used > budget {
+		t.Errorf("items take %d bytes, over the %d budget", used, budget)
+	}
+	for i, want := range []string{text, text, "", ""} {
+		c := askCommandOf(t, items[i])
+		if c == nil || c.Text != want {
+			t.Fatalf("ask %d lost its command, or kept the wrong text; want %d bytes", i+1, len(want))
+		}
+		if want == "" && c.OmittedBytes != len(text) {
+			t.Errorf("ask %d omitted_bytes = %d, want %d so the card states what it hides", i+1, c.OmittedBytes, len(text))
+		}
+	}
+	if !strings.Contains(string(items[4]), `"type":"steer_queued"`) {
+		t.Errorf("the steer did not survive the budget: %s", items[4])
+	}
+	if got := fitPendingItems(events, 1<<20); askCommandOf(t, got[3]).Text != text {
+		t.Error("a set within the budget lost command text")
+	}
+}
+
+func TestFitPendingItems_AnItemTooLargeEvenWithoutItsCommandIsLeftOut(t *testing.T) {
+	huge := marotte.NewEvent(marotte.EventPermissionNeeded, "c1", marotte.PermissionNeededPayload{
+		RequestID: 1, Title: strings.Repeat("t", 4000), Command: &marotte.PermissionCommand{Text: "ls"},
+	})
+	small := commandAsk(2, "pwd")
+	items := fitPendingItems([]marotte.ServerEvent{huge, small}, marshalLen(t, small)+100)
+	if len(items) != 1 || askCommandOf(t, items[0]).Text != "pwd" {
+		t.Fatalf("got %d items, want only the small ask, whole", len(items))
+	}
+}
+
+// A pending set larger than one frame still opens the stream: a refused connect frame would fail every reconnect while it stood.
+func TestHandleSSE_APendingSetOverOneFrameStillOpensTheStream(t *testing.T) {
+	h, _, _ := newTestHub()
+	const asks = 160
+	for i := range asks {
+		h.bus.pendingPerms.add(int64(i+1), marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+			marotte.PermissionNeededPayload{RequestID: int64(i + 1), Command: &marotte.PermissionCommand{
+				Text: strings.Repeat("h", 4<<10), Tail: strings.Repeat("t", 4<<10), OmittedBytes: 100,
+			}}), nil)
+	}
+
+	frames := connectFrames(t, h, false)
+	snap, ok := frameOfType(frames, marotte.EventPendingSnapshot)
+	if !ok {
+		t.Fatal("v3 connect wrote no pending_snapshot")
+	}
+	if _, ok := frameOfType(frames, marotte.EventStatusSnapshot); !ok {
+		t.Error("the stream stopped after pending_snapshot")
+	}
+	var payload marotte.PendingSnapshotPayload
+	if err := reencode(snap.Payload, &payload); err != nil {
+		t.Fatalf("decode pending_snapshot: %v", err)
+	}
+	if len(payload.Items) != asks {
+		t.Fatalf("pending_snapshot carries %d asks, want all %d", len(payload.Items), asks)
+	}
+	first, last := askCommandOf(t, payload.Items[0]), askCommandOf(t, payload.Items[asks-1])
+	if first.Text == "" {
+		t.Error("the first ask lost its command text, though the budget holds it")
+	}
+	if last.Text != "" || last.OmittedBytes != 8<<10+100 {
+		t.Errorf("the last ask's command = text %d bytes, omitted %d; want no text and %d omitted",
+			len(last.Text), last.OmittedBytes, 8<<10+100)
+	}
+}
+
+func TestHandleSSE_AFrameOverTheCapIsSkippedAndTheConnectGoesOn(t *testing.T) {
+	h, _, _ := newTestHub()
+	h.bus.pendingPerms.add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{RequestID: 1, Title: strings.Repeat("t", sse.MaxFrameBytes)}), nil)
+	h.bus.pendingPerms.add(2, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{RequestID: 2}), nil)
+
+	frames := connectFrames(t, h, true)
+	if n := countType(frames, marotte.EventPermissionNeeded); n != 1 {
+		t.Errorf("legacy connect replayed %d permission_needed frames, want the one that fits", n)
+	}
+}

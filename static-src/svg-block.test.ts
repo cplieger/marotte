@@ -1,9 +1,10 @@
 // The one inert SVG render path: a diagram appears through an ELEMENT given a `src`, never through
 // markup, so no renderer output passes through an HTML parser.
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import fc from "fast-check";
 import { renderSvgBlock } from "./svg-block.js";
 import { createMarkdownStream, renderMarkdownInto } from "./markdown.js";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 const SVG = '<svg viewBox="0 0 10 10"><rect width="10" height="10"/></svg>';
 
@@ -92,6 +93,60 @@ describe("renderSvgBlock", () => {
   });
 });
 
+describe("on the shipped stylesheet", () => {
+  let style: HTMLStyleElement;
+  let column: HTMLElement;
+
+  beforeAll(() => {
+    style = mountAppCSS();
+  });
+
+  afterAll(() => {
+    style.remove();
+  });
+
+  beforeEach(() => {
+    column = document.createElement("div");
+    column.className = "message assistant";
+    document.body.appendChild(column);
+  });
+
+  afterEach(() => {
+    column.remove();
+    document.documentElement.removeAttribute("data-theme");
+  });
+
+  /** WCAG relative luminance of a computed colour, read back as the painted sRGB pixel. */
+  function luminance(colour: string): number {
+    const c = document.createElement("canvas");
+    c.width = 1;
+    c.height = 1;
+    const ctx = c.getContext("2d");
+    if (ctx === null) {
+      throw new Error("no 2d context");
+    }
+    ctx.fillStyle = colour;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r = 0, g = 0, b = 0] = [...ctx.getImageData(0, 0, 1, 1).data.slice(0, 3)].map((n) => {
+      const v = n / 255;
+      return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+
+  // An agent's SVG drawn in black ink, the browser's default for an <img>'d SVG, must read on
+  // the diagram's backdrop whatever the app theme.
+  it.each(["dark", "light"])("backs a diagram with a surface black ink reads on (%s)", (theme) => {
+    document.documentElement.setAttribute("data-theme", theme);
+    const pre = fence("svg", SVG);
+    column.appendChild(pre.parentElement as HTMLElement);
+    const img = renderSvgBlock(pre)?.querySelector("img");
+    expect(img).not.toBeNull();
+    const contrast = (luminance(getComputedStyle(img as Element).backgroundColor) + 0.05) / 0.05;
+    expect(contrast).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
 describe("through the markdown renderer", () => {
   function render(md: string): HTMLElement {
     const host = document.createElement("div");
@@ -130,8 +185,8 @@ describe("through the markdown renderer", () => {
   });
 
   // The src must be assigned outside smd-renderer's set_attr funnel, which gates
-  // `src` through isSafeUrl — and isSafeUrl rejects `data:`, so a diagram routed
-  // through it would be rewritten to "#".
+  // `src` through isHttpMailtoOrRelativeURL, which rejects `data:`, so a diagram routed through
+  // it would be rewritten to "#".
   it("does not lose the src to the renderer's url gate", () => {
     const host = render("```svg\n" + SVG + "\n```\n");
     expect(host.querySelector("img")?.getAttribute("src")).not.toBe("#");

@@ -30,6 +30,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     auto_routing: "",
     auto_delegation: "",
     output_style: "default",
+    workflow_launch: "when-asked",
     terminal_command_timeout_ms: 0,
     engine_heap_mib: 0,
     mcp_wait_for_ready: false,

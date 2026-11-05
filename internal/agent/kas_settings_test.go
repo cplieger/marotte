@@ -3,14 +3,17 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 func withKiroTelemetry(t *testing.T, body string) string {
@@ -195,4 +198,107 @@ func (f *engineProcessFake) received(t *testing.T) (env []string, initialize ini
 	}
 	t.Fatalf("the engine received no initialize request")
 	return nil, initialize
+}
+
+func writeCompactionSetting(t *testing.T, dir string, enabled bool, pct int) {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{
+		settings.KeyAutoCompactionEnabled: enabled,
+		settings.KeyAutoCompactPct:        pct,
+	})
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), raw, 0o600); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+}
+
+func TestAutoCompactionPolicy_ReadsTheSettingAndFailsToTheDefault(t *testing.T) {
+	policy := func(dir string) (bool, int) {
+		t.Helper()
+		doc, _, err := settings.Read(t.Context(), dir)
+		if err != nil {
+			t.Fatalf("settings.Read(%s) = %v", dir, err)
+		}
+		return autoCompactionPolicy(doc)
+	}
+	if enabled, pct := policy(t.TempDir()); !enabled || pct != 80 {
+		t.Errorf("autoCompactionPolicy with no config.json = (%v, %d), want (true, 80)", enabled, pct)
+	}
+	dir := t.TempDir()
+	writeCompactionSetting(t, dir, false, 60)
+	if enabled, pct := policy(dir); enabled || pct != 60 {
+		t.Errorf("autoCompactionPolicy(stored false, 60) = (%v, %d), want (false, 60)", enabled, pct)
+	}
+	// KAS refuses a threshold above 80, so a stored 85 or 90 reads as the default.
+	for _, stored := range []int{83, 85, 90} {
+		writeCompactionSetting(t, dir, true, stored)
+		if _, pct := policy(dir); pct != 80 {
+			t.Errorf("autoCompactionPolicy(stored %d) pct = %d, want 80", stored, pct)
+		}
+	}
+}
+
+// TestChatDoor_SendsTheCompactionPolicyAndAnObserverDoorDoesNot pins that a chat's door carries the policy's threshold
+// and an observer pass keeps KAS's defaults.
+func TestChatDoor_SendsTheCompactionPolicyAndAnObserverDoorDoesNot(t *testing.T) {
+	for _, tc := range []struct {
+		enabled       bool
+		wantThreshold int
+	}{
+		{enabled: true, wantThreshold: 60},
+		{enabled: false, wantThreshold: 0},
+	} {
+		t.Run(fmt.Sprintf("auto_compaction_enabled=%v", tc.enabled), func(t *testing.T) {
+			dir := t.TempDir()
+			writeCompactionSetting(t, dir, tc.enabled, 60)
+			var mu sync.Mutex
+			var doors []*recordingStartBridge
+			record := func() engineSession {
+				rb := newRecordingStartBridge()
+				mu.Lock()
+				doors = append(doors, rb)
+				mu.Unlock()
+				return rb
+			}
+			src := fakeEngineOf(record, nil)
+			src.observer = record
+			cs := newTestChatStore()
+			h := newRuntimeOn(t.Context(), t.TempDir(), src, cs, WithConfigDir(dir))
+			cs.wire(h)
+			t.Cleanup(func() { shutdownHub(t, h) })
+			if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+				t.Fatalf("seed the chat: %v", err)
+			}
+			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+				t.Fatalf("OpenBridge: %v", err)
+			}
+			if err := h.engine.observe(t.Context(), nil, nil, func(context.Context, engineSession) error { return nil }); err != nil {
+				t.Fatalf("observer pass: %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			var chat, observer int
+			for _, rb := range doors {
+				switch o := rb.startOpts(); o.Role {
+				case marotte.SessionRoleChat:
+					if o.AutoCompactionThreshold != tc.wantThreshold || o.DisableAutoCompaction == tc.enabled {
+						t.Errorf("the chat's door sent threshold %d, disableAutoCompaction %v; want %d, %v",
+							o.AutoCompactionThreshold, o.DisableAutoCompaction, tc.wantThreshold, !tc.enabled)
+					}
+					chat++
+				case marotte.SessionRoleObserver:
+					if o.AutoCompactionThreshold != 0 || o.DisableAutoCompaction {
+						t.Errorf("an observer door sent threshold %d, disableAutoCompaction %v; want 0, false",
+							o.AutoCompactionThreshold, o.DisableAutoCompaction)
+					}
+					observer++
+				}
+			}
+			if chat != 1 || observer < 1 {
+				t.Errorf("chat doors = %d, observer doors = %d; want one chat door and at least one observer door", chat, observer)
+			}
+		})
+	}
 }

@@ -287,7 +287,7 @@ func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
 		<-release
 	})
 	// Any mutation signals the notifier, which debounces 100ms.
-	h.mcpRegistry.RecordConnected(t.Context(), "a", marotte.MCPSource{}, nil, nil, nil, nil)
+	reportMCP(t, h, "s1", connectedMCP("a", marotte.MCPSource{}))
 
 	select {
 	case <-entered:

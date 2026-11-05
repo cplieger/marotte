@@ -228,8 +228,8 @@ func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 	})
 }
 
-// TestHandleRun_GradesAFailedReadThreeWays pins that the client stops on 404 and retries otherwise, so each misgrade has a cost.
-func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
+// TestHandleRun_GradesAFailedReadTwoWays pins that the client stops on 404 and retries otherwise, so each misgrade has a cost.
+func TestHandleRun_GradesAFailedReadTwoWays(t *testing.T) {
 	tests := []struct {
 		name string
 		arm  func(br *fakeBridge)
@@ -242,14 +242,6 @@ func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
 				br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 			},
 			want: http.StatusNotFound,
-		},
-		{
-			// An engine without workflow verbs never will describe a run.
-			name: "the engine has no workflow verb",
-			arm: func(br *fakeBridge) {
-				br.setCallErr(methodKiroWorkflowInspect, workflow.ErrUnknownMethod)
-			},
-			want: http.StatusServiceUnavailable,
 		},
 		{
 			// Nothing reached the engine, so nothing was learned.
@@ -522,8 +514,7 @@ func TestHandleControls(t *testing.T) {
 
 	t.Run("an unreadable run is a 404 rather than an empty row", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
-		// rr.status reports "" for an engine without workflow verbs.
-		br.setCallErr(methodKiroWorkflowInspect, workflow.ErrUnknownMethod)
+		br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 		rec := httptest.NewRecorder()
 		h.runRoutes.handleControls(rec, controlsReq("wf_1"))
 		if rec.Code != http.StatusNotFound {

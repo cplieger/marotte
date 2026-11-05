@@ -184,6 +184,8 @@ import {
   subscribeTabCues,
   registerTabNotice,
   registerCloseGate,
+  claimNavigation,
+  navigationHeld,
   _resetForTest,
 } from "./tabs.js";
 // The REAL freshness leaf: `viewStale` is what the dispatcher spends, so a case
@@ -744,6 +746,48 @@ describe("activateTab", () => {
     await closeTab(chatID(close));
 
     expect(sidebar.classList.contains("open")).toBe(true);
+  });
+});
+
+// A late reply may take the view only while its claim holds: the user's own moves and later
+// requests supersede it, the app's hand-overs do not.
+describe("navigation claims", () => {
+  it("a user activation of another tab supersedes a claim", async () => {
+    await openChats("a", "b");
+    const ticket = claimNavigation();
+    activateTab(chatID("a"));
+    expect(navigationHeld(ticket)).toBe(false);
+  });
+
+  it("a same-tab activation leaves a claim held", async () => {
+    await openChats("a", "b");
+    const ticket = claimNavigation();
+    activateTab(chatID("b"));
+    expect(navigationHeld(ticket)).toBe(true);
+  });
+
+  it("a close handing the view to its successor leaves a claim held", async () => {
+    await openChats("a", "b");
+    const ticket = claimNavigation();
+    await closeTab(chatID("b"));
+    expect(getActiveTabId()).toBe(chatID("a"));
+    expect(navigationHeld(ticket)).toBe(true);
+  });
+
+  it("a later claim supersedes an earlier one", () => {
+    const first = claimNavigation();
+    const second = claimNavigation();
+    expect(navigationHeld(first)).toBe(false);
+    expect(navigationHeld(second)).toBe(true);
+  });
+
+  it("an open whose reply lands after the user moved lists the tab without activating it", async () => {
+    await openChats("a", "b");
+    const pending = openChat("c");
+    activateTab(chatID("a"));
+    await expect(pending).resolves.toBe("opened");
+    expect(hasTab("chat", "c")).toBe(true);
+    expect(getActiveTabId()).toBe(chatID("a"));
   });
 });
 

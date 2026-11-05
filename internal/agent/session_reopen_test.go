@@ -195,6 +195,50 @@ func TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn(t *testing.T) {
 	}
 }
 
+func TestWorkflowLaunch_ReopensOnlyWhileWorkflowsAreOn(t *testing.T) {
+	for _, tc := range []struct {
+		workflows bool
+		want      bool
+	}{
+		{workflows: false, want: false},
+		{workflows: true, want: true},
+	} {
+		t.Run(fmt.Sprintf("workflows_enabled=%v", tc.workflows), func(t *testing.T) {
+			h, configDir := reopenFixture(t)
+			writeSetting(t, configDir, settings.KeyWorkflowsEnabled, tc.workflows)
+
+			reopened := reloadsAfter(t, h, func() {
+				writeSetting(t, configDir, settings.KeyWorkflowLaunch, marotte.WorkflowLaunchLargeTasks)
+			})
+
+			if reopened != tc.want {
+				t.Errorf("workflows_enabled=%v: writing workflow_launch reopened = %v, want %v", tc.workflows, reopened, tc.want)
+			}
+		})
+	}
+}
+
+func TestAutoCompactPct_ReopensOnlyWhileTheSwitchIsOn(t *testing.T) {
+	for _, tc := range []struct {
+		enabled bool
+		want    bool
+	}{
+		{enabled: false, want: false},
+		{enabled: true, want: true},
+	} {
+		t.Run(fmt.Sprintf("auto_compaction_enabled=%v", tc.enabled), func(t *testing.T) {
+			h, configDir := reopenFixture(t)
+			writeSetting(t, configDir, settings.KeyAutoCompactionEnabled, tc.enabled)
+
+			reopened := reloadsAfter(t, h, func() { writeSetting(t, configDir, settings.KeyAutoCompactPct, 60) })
+
+			if reopened != tc.want {
+				t.Errorf("auto_compaction_enabled=%v: writing auto_compact_pct reopened = %v, want %v", tc.enabled, reopened, tc.want)
+			}
+		})
+	}
+}
+
 type settingReach string
 
 const (
@@ -215,6 +259,8 @@ var configWrites = []struct {
 	{key: settings.KeyMemoryMode, value: "learn", reach: reachReopen},
 	{key: settings.KeySecurityProfile, value: policyfile.ProfileTrusted, reach: reachReopen},
 	{key: settings.KeyWorkflowsEnabled, value: false, reach: reachReopen},
+	// Read only while workflows are on: TestWorkflowLaunch_ReopensOnlyWhileWorkflowsAreOn.
+	{key: settings.KeyWorkflowLaunch, value: marotte.WorkflowLaunchDelegateAll, reach: reachReopen},
 	{key: settings.KeySpecPlanning, value: settings.SpecPlanningQuick, reach: reachReopen},
 	// Read only while planning is on: TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn.
 	{key: settings.KeySpecPlanningAskFirst, value: true, reach: reachNoChat},
@@ -226,11 +272,9 @@ var configWrites = []struct {
 	{key: settings.KeyModelFallback, value: true, reach: reachEngine},
 	{key: settings.KeyKnowledgeEnabled, value: false, reach: reachEngine},
 	{key: settings.KeyAutoCompactionEnabled, value: false, reach: reachReopen},
-	// sessionDisablesAutoCompaction draws the session door at 80, so only a move across it reopens.
-	{key: settings.KeyAutoCompactPct, value: 60, reach: reachLive},
-	{key: settings.KeyAutoCompactPct, value: 85, reach: reachReopen},
-	{key: settings.KeyAutoCompactPct, from: 85, value: 90, reach: reachLive},
-	{key: settings.KeyAutoCompactPct, from: 85, value: 60, reach: reachReopen},
+	// The threshold rides the session door while the switch is on: TestAutoCompactPct_ReopensOnlyWhileTheSwitchIsOn.
+	{key: settings.KeyAutoCompactPct, value: 60, reach: reachReopen},
+	{key: settings.KeyAutoCompactPct, from: 60, value: 75, reach: reachReopen},
 	{key: settings.KeyTerminalCommandTimeoutMs, value: 300000, reach: reachLive},
 	{key: settings.KeyContentCollectionEnabled, value: true, reach: reachLive},
 	{key: settings.KeyAgentIgnoreFiles, value: []string{".gitignore"}, reach: reachLive},
@@ -362,15 +406,9 @@ func broadcastTypes(h *Runtime, since uint64) []marotte.EventType {
 			continue
 		}
 		var frame struct {
-			Type    marotte.EventType `json:"type"`
-			Payload struct {
-				Status string `json:"status"`
-			} `json:"payload"`
+			Type marotte.EventType `json:"type"`
 		}
 		if err := json.Unmarshal(e.Event.Data, &frame); err != nil {
-			continue
-		}
-		if frame.Type == marotte.EventPermissionsChanged && frame.Payload.Status != "success" {
 			continue
 		}
 		out = append(out, frame.Type)

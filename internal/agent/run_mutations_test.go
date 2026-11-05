@@ -70,7 +70,8 @@ func TestRunMutations_UnwrittenAndRefusedSettleAtOnce(t *testing.T) {
 	if !f.m.empty() {
 		t.Error("an unwritten verb left an entry")
 	}
-	f.m.enter("wf_1", mutationDrive, 1).replied(&marotte.RPCResponse{Error: &marotte.RPCError{Code: -32603}}, nil, ownerLane, 4)
+	refusal, refusalErr := refusedCall(&marotte.RPCError{Code: -32603})
+	f.m.enter("wf_1", mutationDrive, 1).replied(refusal, refusalErr, ownerLane, 4)
 	if !f.m.empty() {
 		t.Error("an in-band refusal left an entry: it changed nothing")
 	}

@@ -1,7 +1,8 @@
-// The boundary rows eight entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
+// The boundary rows nine entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
 // `makeEvent`, so the block renderer declares no event vocabulary.
 
 import type {
+  ContextResetCause,
   EntryModelFallback,
   KindedEntry,
   ModelSwitchReason,
@@ -24,18 +25,27 @@ type EventEntryKind =
   | "model_routed"
   | "model_fallback"
   | "mode_switched"
-  | "turn_revert";
+  | "turn_revert"
+  | "context_reset";
 
 /**
- * The eight entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
- * eight: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
+ * The nine entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
+ * nine: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
  */
 export type EventEntry = { [K in EventEntryKind]: KindedEntry<K> }[EventEntryKind];
 
-type BoundaryKind = "switched" | "compacted" | "failed" | "blocked" | "rewound";
+type BoundaryKind = "switched" | "compacted" | "failed" | "blocked" | "rewound" | "reset";
 
 /** Total over the cause by type, so a second `TurnRevertCause` cannot render another cause's sentence. */
 const REVERT_LABELS: Record<TurnRevertCause, string> = { rewind: "Rewound to here" };
+
+/** Total over the cause by type: each says why the agent no longer remembers the turns above the row. */
+const CONTEXT_RESET_LABELS: Record<ContextResetCause, string> = {
+  session_missing:
+    "Context reset · the agent had lost this chat's earlier turns, so a new session started",
+  load_failed: "Context reset · the agent could not reopen this chat, so a new session started",
+  empty_retry: "Context reset · an empty reply was retried in a new session",
+};
 
 /** The row one event entry draws, total over `EventEntry` by type: a new kind fails the type check. */
 export function buildEvent(e: EventEntry): HTMLElement {
@@ -62,6 +72,9 @@ export function buildEvent(e: EventEntry): HTMLElement {
     case "turn_revert": {
       // The simple form, never `compactionBreak`: a revert has no summary to disclose.
       return boundary("rewound", ICON_REWIND, REVERT_LABELS[e.payload.cause]);
+    }
+    case "context_reset": {
+      return boundary("reset", "\u21bb", CONTEXT_RESET_LABELS[e.payload.cause]);
     }
     case "compaction": {
       const summary = e.payload.summary;
@@ -101,7 +114,7 @@ export function buildEvent(e: EventEntry): HTMLElement {
 
 /**
  * `model_switched` has three triggers: a user's model switch (`from !== to`), an effort-only change (`from === to`)
- * and a switch KAS made (`reason` set). An empty `to` is a context reset and takes no tier.
+ * and a switch KAS made (`reason` set).
  */
 function switchedLabel(p: {
   readonly to: string;
@@ -109,9 +122,6 @@ function switchedLabel(p: {
   readonly effort?: string;
   readonly reason?: ModelSwitchReason;
 }): string {
-  if (p.to === "") {
-    return "Context reset";
-  }
   return p.reason === undefined ? switchedBase(p) : SWITCH_REASONS[p.reason](p);
 }
 
@@ -125,8 +135,8 @@ const SWITCH_REASONS: Record<
 
 /**
  * KAS's fallback notice: the cause from `trigger`, then a decline's reason (a non-empty `reason`, whatever `to`
- * holds) or the model the turn moved to, which a `session` scope keeps for the rest of the session. Model ids stay
- * raw, as `switchedLabel` shows them.
+ * holds) or the model the turn moved to, which a `session` scope keeps for the rest of the session; a retry on the
+ * same model (KAS re-asking Auto) names no target. Model ids stay raw, as `switchedLabel` shows them.
  */
 function fallbackLabel(p: EntryModelFallback): string {
   const cause = `${p.from} ${fallbackCause(p.trigger)}`;
@@ -139,9 +149,8 @@ function fallbackLabel(p: EntryModelFallback): string {
   if (to === "") {
     return cause;
   }
-  return p.scope === "session"
-    ? `${cause}, retried on ${to}, which now serves this session`
-    : `${cause}, retried on ${to}`;
+  const retried = to === p.from ? `${cause}, retried` : `${cause}, retried on ${to}`;
+  return p.scope === "session" ? `${retried}, which now serves this session` : retried;
 }
 
 /** KAS's `trigger` is open: a value it adds later reads as an unknown cause. */

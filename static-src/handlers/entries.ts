@@ -133,6 +133,7 @@ function afterAppend(chatID: string, entry: Entry): void {
     case "model_fallback":
     case "mode_switched":
     case "turn_revert":
+    case "context_reset":
     case "reconciled":
     case "turn_close":
       // `steer`'s dock row leaves inside `appendEntry`, in the same store update that seats

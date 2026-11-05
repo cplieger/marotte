@@ -86,15 +86,8 @@ type StepSession struct {
 	SessionID string
 	// Status is KAS's node status word, verbatim.
 	Status string
-	// CompletionSignal is the signal KAS recorded on the node, verbatim; "" for none.
-	CompletionSignal string
 	// Path is the node path from the root to this step in KAS's WIRE spelling (see pathSegment).
 	Path []string
-}
-
-// EndSignalled reports whether KAS recorded a success or an error signal on the step.
-func (s *StepSession) EndSignalled() bool {
-	return s.CompletionSignal == signalSuccess || s.CompletionSignal == signalError
 }
 
 // PathKey is a node path's one string identity: the run log's turn key, the step-transcript
@@ -124,9 +117,7 @@ func Steps(s *State) []StepSession {
 	var out []StepSession
 	for _, v := range nodes(s) {
 		if v.n.Type == "step" {
-			out = append(out, StepSession{
-				NodeID: v.n.NodeID, SessionID: v.n.SessionID, Status: v.n.Status, CompletionSignal: v.n.CompletionSignal, Path: v.path,
-			})
+			out = append(out, StepSession{NodeID: v.n.NodeID, SessionID: v.n.SessionID, Status: v.n.Status, Path: v.path})
 		}
 	}
 	return out
@@ -143,14 +134,6 @@ func pathSegment(n, parent *node) string {
 	return n.NodeID
 }
 
-// unknownMethodMarker is how KAS reports an unregistered `_kiro/workflow/*` name: a -32603
-// whose `error.data.details` holds this text, which no registered method produces.
-const unknownMethodMarker = "has no persistence classification"
-
-// ErrUnknownMethod means the verb does not exist on this KAS build: a permanent capability
-// answer, unlike a transient failure. Callers ask errors.Is.
-var ErrUnknownMethod = errors.New("workflow verb not registered on this kiro-cli build")
-
 // The refusal KAS's run-claim gate throws as a plain Error: a -32603 whose `error.data.details` is the sentence
 // (acp-server.js acquireRunOwnership and ensureRunOwnership, kiro-cli 2.27.0), shared by the load and mutate variants.
 const justClaimedMarker = "was just claimed by another process"
@@ -165,17 +148,8 @@ func Classify(err error) error {
 	if err == nil {
 		return nil
 	}
-	details := rpcerr.Details(err)
-	for _, c := range []struct {
-		sentinel error
-		marker   string
-	}{
-		{ErrUnknownMethod, unknownMethodMarker},
-		{ErrJustClaimed, justClaimedMarker},
-	} {
-		if strings.Contains(details, c.marker) {
-			return fmt.Errorf("%w: %w", c.sentinel, err)
-		}
+	if strings.Contains(rpcerr.Details(err), justClaimedMarker) {
+		return fmt.Errorf("%w: %w", ErrJustClaimed, err)
 	}
 	return err
 }

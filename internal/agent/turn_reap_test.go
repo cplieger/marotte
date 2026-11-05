@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
 )
@@ -232,5 +234,61 @@ func TestCompactionReap_AStallAfterTheTurnSpokeGetsAFreshCeiling(t *testing.T) {
 	})
 	if pctx.Err() == nil {
 		t.Error("the second stall's ceiling did not end the silent turn")
+	}
+}
+
+// A wake turn has no prompt call to cancel and its closers never read a claimed cause, so the reap neither arms
+// nor claims one there.
+func TestCompactionReap_AWakeTurnIsNotArmed(t *testing.T) {
+	h, cs, _ := newTestHub()
+	seedChat(t, cs, "c1")
+	turnID := h.stageWireTurn(t, "c1").ID()
+	logs := captureLogs(t)
+	synctest.Test(t, func(t *testing.T) {
+		h.coord.CompactionFailed("c1", turnID, "compaction failed")
+		time.Sleep(compactionFailedTurnBudget)
+		synctest.Wait()
+	})
+
+	lc, ok := h.coord.turns.lookup("c1")
+	if !ok {
+		t.Fatal("the chat has no lifecycle")
+	}
+	lc.mu.Lock()
+	turn := lc.own
+	lc.mu.Unlock()
+	if turn == nil || turn.ID != turnID {
+		t.Fatalf("own turn = %v, want the wake turn %q still open", turn, turnID)
+	}
+	if got := h.coord.turns.interruptCause(turn); got != "" {
+		t.Errorf("interrupt cause = %q, want none claimed on a turn with no prompt call", got)
+	}
+	if strings.Contains(logs.String(), "interrupting it") {
+		t.Error("the reap logged an interrupt on a turn it cannot interrupt")
+	}
+}
+
+// A prompt call that returned inside the budget leaves the expiry nothing to cancel: it claims no cause.
+func TestCompactionReap_AnExpiryAfterThePromptCallEndedClaimsNothing(t *testing.T) {
+	h, turnID, _, pctx := newCompactionReapFixture(t)
+	synctest.Test(t, func(t *testing.T) {
+		h.coord.CompactionFailed("c1", turnID, "compaction failed")
+		h.coord.EndPromptCall(command.TurnRef{Chat: "c1", Turn: turnID})
+		time.Sleep(compactionFailedTurnBudget)
+		synctest.Wait()
+	})
+
+	if pctx.Err() != nil {
+		t.Error("the expiry cancelled a prompt call that had already returned")
+	}
+	lc, ok := h.coord.turns.lookup("c1")
+	if !ok {
+		t.Fatal("the chat has no lifecycle")
+	}
+	lc.mu.Lock()
+	turn := lc.own
+	lc.mu.Unlock()
+	if got := h.coord.turns.interruptCause(turn); got != "" {
+		t.Errorf("interrupt cause = %q, want none claimed after the prompt call ended", got)
 	}
 }

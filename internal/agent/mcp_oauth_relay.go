@@ -122,7 +122,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 	}
 	// Reserve, then derive everything from the reservation: a new status or sign-in can replace the record
 	// meanwhile, and a code validated against attempt A must never replay under B.
-	attempt, err := reg.beginOAuthRelay(body.Server, state)
+	attempt, err := reg.beginOAuthRelay(req.Context(), body.Server, state)
 	if err != nil {
 		httpreply.Conflict(w, err.Error())
 		return

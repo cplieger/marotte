@@ -72,6 +72,7 @@ describe("menuEntries", () => {
   it("lists marotte's verbs, then the catalog with a verb-named entry hidden", () => {
     const names = menuEntries(CATALOG).map((e) => `${e.kind}:${e.name}`);
     expect(names).toEqual([
+      "marotte:clear",
       "marotte:compact",
       "marotte:drop",
       "marotte:memories",
@@ -112,7 +113,7 @@ describe("matchEntries", () => {
 
 describe("entryEnabled", () => {
   it("greys only server-resolved rows while a turn runs", () => {
-    const [verb, , , , , , prompt] = menuEntries(CATALOG);
+    const [verb, , , , , , , prompt] = menuEntries(CATALOG);
     expect(verb && entryEnabled(verb, true)).toBe(true);
     expect(prompt && entryEnabled(prompt, true)).toBe(false);
     expect(prompt && entryEnabled(prompt, false)).toBe(true);
@@ -453,7 +454,7 @@ describe("the # context menu", () => {
 
   function servePool(servers: unknown[]): void {
     mockApiGetTyped.mockImplementation((path: string) =>
-      Promise.resolve(path === "/api/mcp/pool" ? servers : null),
+      Promise.resolve(path.startsWith("/api/mcp/pool?") ? servers : null),
     );
   }
 
@@ -461,18 +462,19 @@ describe("the # context menu", () => {
     return { name, resources, resource_templates: templates };
   }
 
-  it("lists the engine's one pool, read with no chat in the request", async () => {
+  it("lists the active chat's pool, read with the chat in the request", async () => {
+    mockGetActiveId.mockReturnValue("c-1");
     servePool([poolServer("gh", [{ name: "readme", uri: "gh://readme" }])]);
     type("#mcp:");
     await vi.waitFor(() => {
       expect(rowNames()).toEqual(["readme"]);
     });
-    expect(mockApiGetTyped.mock.calls.map(([p]) => p)).toEqual(["/api/mcp/pool"]);
+    expect(mockApiGetTyped.mock.calls.map(([p]) => p)).toEqual(["/api/mcp/pool?chat_id=c-1"]);
     press("Enter");
     expect(input.value).toBe("#[[mcp:gh:gh://readme]] ");
   });
 
-  it("lists the engine pool when no chat is active, since the pool is not a chat's", async () => {
+  it("lists every session's pool when no chat is active", async () => {
     mockGetActiveId.mockReturnValue("");
     servePool([poolServer("gh", [{ name: "readme", uri: "gh://readme" }])]);
     type("#mcp:");
@@ -567,7 +569,7 @@ describe("the # context menu", () => {
     });
   });
 
-  it("re-reads an open #mcp: list when the engine's pool changes", async () => {
+  it("re-reads an open #mcp: list when a pool changes", async () => {
     servePool([poolServer("gh", [{ name: "readme", uri: "gh://readme" }])]);
     type("#mcp:");
     await vi.waitFor(() => {
@@ -605,10 +607,11 @@ describe("the # context menu", () => {
     expect(rowNames()).toEqual(["home"]);
   });
 
-  it("keeps an open #mcp: list and reads nothing when another chat becomes active", async () => {
+  it("reads the newly active chat's pool after a tab switch, never the previous chat's rows", async () => {
     onTestFinished(() => {
       setActive("");
     });
+    mockGetActiveId.mockReturnValue("c-1");
     setActive("c-1");
     servePool([poolServer("gh", [{ name: "readme", uri: "gh://readme" }])]);
     type("#mcp:");
@@ -619,9 +622,13 @@ describe("the # context menu", () => {
     servePool([poolServer("wiki", [{ name: "home", uri: "wiki://home" }])]);
     setActive("c-2");
     type("#mcp:");
-    await new Promise((r) => setTimeout(r, 0));
-    expect(rowNames()).toEqual(["readme"]);
-    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(rowNames()).toEqual(["home"]);
+    });
+    expect(mockApiGetTyped.mock.calls.map(([p]) => p)).toEqual([
+      "/api/mcp/pool?chat_id=c-1",
+      "/api/mcp/pool?chat_id=c-2",
+    ]);
   });
 
   function searchCalls(): number {

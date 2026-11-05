@@ -8,10 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"net/url"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 const methodKiroShellType = "_kiro/terminal/shell_type"
@@ -46,8 +46,8 @@ func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, origin acpRes
 	if msg.Params != nil {
 		_ = json.Unmarshal(msg.Params, &p)
 	}
-	if !isSafeExternalURL(p.URL) {
-		slog.Warn("v3 openExternalUrl: rejecting unsafe scheme")
+	if !translate.IsWebURL(p.URL) {
+		slog.Warn("v3 openExternalUrl: rejecting a link that is not a web address")
 		in.respondBridge(ctx, "", origin, msg, nil, &marotte.RPCError{
 			Code:    -32602,
 			Message: "openExternalUrl: only http/https URLs are allowed",
@@ -71,17 +71,6 @@ func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, origin acpRes
 	slog.Info("v3 openExternalUrl: showing a sign-in no Sign in started on every page")
 	in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
 	in.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventOpenExternalURL, "", marotte.OpenExternalURLPayload{URL: p.URL, ExpiresAt: expires}))
-}
-
-func isSafeExternalURL(u string) bool {
-	if u == "" {
-		return false
-	}
-	parsed, err := url.Parse(u)
-	if err != nil {
-		return false
-	}
-	return parsed.Scheme == "http" || parsed.Scheme == "https"
 }
 
 func kiroShellTypeResult() map[string]any {

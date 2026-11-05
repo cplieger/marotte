@@ -91,6 +91,7 @@ function turnWith(status: ToolStatus): Turn {
     ts: 1,
     outcome: "running",
     rewindTo: undefined,
+    branchFrom: undefined,
   };
 }
 

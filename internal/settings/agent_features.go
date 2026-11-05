@@ -49,12 +49,18 @@ const (
 	defaultAutoRouting              = FeatureFollowKiro
 	defaultAutoDelegation           = FeatureFollowKiro
 	defaultModelFallback            = false
+	DefaultWorkflowLaunch           = marotte.WorkflowLaunchWhenAsked
 	defaultTerminalCommandTimeoutMs = 0
 )
 
 // ValidSpecPlanning reports whether v is one of the three spec-planning values.
 func ValidSpecPlanning(v string) bool {
 	return v == SpecPlanningOff || v == SpecPlanningQuick || v == specPlanningFull
+}
+
+// ValidWorkflowLaunch reports whether v is one of KAS's workflowLaunch values.
+func ValidWorkflowLaunch(v string) bool {
+	return v == marotte.WorkflowLaunchWhenAsked || v == marotte.WorkflowLaunchLargeTasks || v == marotte.WorkflowLaunchDelegateAll
 }
 
 // ValidFeatureChoice reports whether v is a follow-kiro-cli choice.
@@ -138,6 +144,10 @@ var agentPatchChecks = map[string]func(json.RawMessage) error{
 	KeyOutputStyle: func(r json.RawMessage) error {
 		var v string
 		return decodeChecked(&v, r, KeyOutputStyle, ValidOutputStyle)
+	},
+	KeyWorkflowLaunch: func(r json.RawMessage) error {
+		var v string
+		return decodeChecked(&v, r, KeyWorkflowLaunch, ValidWorkflowLaunch)
 	},
 	KeyTerminalCommandTimeoutMs: func(r json.RawMessage) error {
 		var v int

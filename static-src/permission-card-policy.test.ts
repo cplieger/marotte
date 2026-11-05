@@ -78,3 +78,21 @@ describe("the permission card's policy pointer", () => {
     expect(pointer(card)).toBeNull();
   });
 });
+
+describe("the safety check's line on the card", () => {
+  it("says why Kiro's safety check handed the call to a person", () => {
+    const card = buildPermissionCard(
+      "chat-1",
+      ask({ classifier_note: "Kiro's safety check flagged this" }),
+      vi.fn(),
+    );
+    expect(card.querySelector(".approval-classifier")?.textContent).toBe(
+      "Kiro's safety check flagged this",
+    );
+  });
+
+  it("is absent on an ask the safety check did not touch", () => {
+    const card = buildPermissionCard("chat-1", ask(), vi.fn());
+    expect(card.querySelector(".approval-classifier")).toBeNull();
+  });
+});

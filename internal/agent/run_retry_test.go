@@ -14,7 +14,6 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // retryReply builds `_kiro/workflow/retry`'s own reply shape:
@@ -399,8 +398,7 @@ func TestHandleRetry_RefusesWhatTheAffordanceRefuses(t *testing.T) {
 
 	t.Run("a run KAS does not know is a 404", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
-		// No workflow verb: "" status, not a fault.
-		br.setCallErr(methodKiroWorkflowInspect, workflow.ErrUnknownMethod)
+		br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 		rec := httptest.NewRecorder()
 		h.runRoutes.handleRetry(rec, retryReq("wf_1"))
 		if rec.Code != http.StatusNotFound {

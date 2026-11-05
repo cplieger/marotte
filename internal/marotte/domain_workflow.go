@@ -418,13 +418,10 @@ type RecipesResponse struct {
 type LiveRun struct {
 	WorkflowID string `json:"workflow_id"`
 	ChatID     string `json:"chat_id"`
-	// Executing reports whether THIS PROCESS holds a deadline for the run. NOT
-	// `status` and none of KAS's five, because serving one would mean an `inspect` per
-	// lease on the client's boot path (runlease.Lease.Deadline owns the answer).
-	//
-	// It can read false while KAS says running — a lease read back from disk is
-	// parked, and `set_step_status` advances a step without re-arming — and both are
-	// accepted: the client corrects itself on the run's next progress frame.
+	// Executing reports whether THIS PROCESS holds a deadline for the run (runlease.Lease.Deadline),
+	// not KAS's status, which would cost a `_kiro/workflow/list` call on every client connect. It can
+	// read false while KAS says running (a lease read back from disk is parked; `set_step_status`
+	// advances a step without re-arming); the client corrects itself on the run's next progress frame.
 	Executing bool `json:"executing"`
 }
 

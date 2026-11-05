@@ -152,8 +152,8 @@ func (st *Settings) SetGovernance(ctx context.Context, p marotte.GovernanceState
 	st.governance.markWarm()
 }
 
-// SetMCPRegistry caches the organization's MCP registry. Satisfies translate.governanceAccess.
-func (st *Settings) SetMCPRegistry(ctx context.Context, r *marotte.GovernanceMCPRegistry) {
+// setMCPRegistry caches the organization's MCP registry.
+func (st *Settings) setMCPRegistry(ctx context.Context, r *marotte.GovernanceMCPRegistry) {
 	st.publishGovernance(ctx, st.governance.setRegistry(r))
 }
 

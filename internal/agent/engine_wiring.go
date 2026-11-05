@@ -15,8 +15,9 @@ import (
 // engineHooks binds the engine owner to the runtime.
 func (rt *Runtime) engineHooks() engineHooks {
 	return engineHooks{
-		resolve: rt.resolveEngine,
-		spawned: rt.signin.engineSpawned,
+		resolve:           rt.resolveEngine,
+		spawned:           rt.signin.engineSpawned,
+		contentCollection: rt.contentCollection,
 		options: func(gen uint64) []bridge.Option {
 			return []bridge.Option{
 				bridge.WithGeneration(gen),

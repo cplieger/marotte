@@ -65,6 +65,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.EntryModelFallback](),
 	wiregen.TypeRef[marotte.EntryModeSwitched](),
 	wiregen.TypeRef[marotte.EntryTurnRevert](),
+	wiregen.TypeRef[marotte.EntryContextReset](),
 	wiregen.TypeRef[marotte.EntryReconciled](),
 	wiregen.TypeRef[marotte.MeteringItem](),
 	wiregen.TypeRef[marotte.Usage](),
@@ -80,7 +81,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.ApprovalFile](),
 	wiregen.TypeRef[marotte.PermissionWatch](),
 	wiregen.TypeRef[marotte.FileChange](),
-	wiregen.TypeRef[marotte.TurnThroughput](),
+	wiregen.TypeRef[marotte.TurnFirstOutput](),
 	wiregen.TypeRef[marotte.ContextPart](),
 	wiregen.TypeRef[marotte.ContextItem](),
 	wiregen.TypeRef[marotte.ContextMedia](),
@@ -124,6 +125,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.SpecApprovedPayload](),
 	wiregen.TypeRef[marotte.MCPToolIdentity](),
 	wiregen.TypeRef[marotte.PermissionConsent](),
+	wiregen.TypeRef[marotte.PermissionCommand](),
 	wiregen.TypeRef[marotte.PermissionNeededPayload](),
 	wiregen.TypeRef[marotte.ErrorPayload](),
 	wiregen.TypeRef[marotte.MCPConnectedPayload](),
@@ -134,6 +136,8 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.ChatDeletedPayload](),
 	wiregen.TypeRef[marotte.DraftChangedPayload](),
 	wiregen.TypeRef[marotte.ElicitationPropertySchema](),
+	wiregen.TypeRef[marotte.ElicitationEnumOption](),
+	wiregen.TypeRef[marotte.ElicitationItemsSchema](),
 	wiregen.TypeRef[marotte.ElicitationRequestSchema](),
 	wiregen.TypeRef[marotte.ElicitationNeededPayload](),
 	wiregen.TypeRef[marotte.UserInputSubOption](),
@@ -150,7 +154,6 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.PolicyView](),
 	wiregen.TypeRef[marotte.PolicyExplainResult](),
 	wiregen.TypeRef[marotte.PolicyErrorItem](),
-	wiregen.TypeRef[marotte.PermissionsChangedPayload](),
 	wiregen.TypeRef[marotte.PolicyErrorPayload](),
 	wiregen.TypeRef[marotte.SafetyProperty](),
 	wiregen.TypeRef[marotte.SafetyStatusPayload](),
@@ -184,6 +187,7 @@ var wireTypes = []wiregen.WireType{
 	// GET /api/sessions, so the History picker can tell "nothing to resume" from a failed read.
 	wiregen.TypeRef[marotte.ResumableSession](),
 	wiregen.TypeRef[marotte.WorkflowRun](),
+	wiregen.TypeRef[marotte.RunStanding](),
 	wiregen.TypeRef[marotte.SessionListResponse](),
 	wiregen.TypeRef[marotte.LiveRun](),
 	wiregen.TypeRef[marotte.LiveRunsResponse](),
@@ -317,6 +321,8 @@ var wireTypes = []wiregen.WireType{
 var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.ToolKind](),
 	wiregen.StringEnum[marotte.ToolStatus](),
+	// The denial block words each basis, so its Record must be total.
+	wiregen.StringEnum[marotte.DenialBasis](),
 	wiregen.StringEnum[marotte.PlanStatus](),
 	wiregen.StringEnum[marotte.StopReason](),
 	wiregen.StringEnum[marotte.ErrorCode](),
@@ -333,6 +339,8 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.EntryKind](),
 	// The revert's cause, keying the client's wording record.
 	wiregen.StringEnum[marotte.TurnRevertCause](),
+	// The reset row words each cause, keying the client's wording record.
+	wiregen.StringEnum[marotte.ContextResetCause](),
 	// The turn header words each wake reason and note, so both tables must be total.
 	wiregen.StringEnum[marotte.WakeReason](),
 	wiregen.StringEnum[marotte.WakeNote](),
@@ -361,6 +369,8 @@ var wireEnums = []wiregen.EnumRef{
 	// The client folds over both status vocabularies.
 	wiregen.StringEnum[marotte.RunStatus](),
 	wiregen.StringEnum[marotte.RunNodeStatus](),
+	// History words each standing, so the fold must be total.
+	wiregen.StringEnum[marotte.RunStandingKind](),
 	// The run composer words the delivery and each refusal, so both folds must be total.
 	wiregen.StringEnum[marotte.RunStepMessageVerb](),
 	wiregen.StringEnum[marotte.RunStepMessageRefusal](),
@@ -376,6 +386,7 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.DecisionKind](),
 	wiregen.StringEnum[marotte.SettledBy](),
 	wiregen.StringEnum[marotte.AlwaysAllowBlock](),
+	wiregen.StringEnum[marotte.RejectionNote](),
 	// One definition of the tab kinds; TabSubject.kind fails the decoder on an unknown one.
 	wiregen.StringEnum[marotte.TabKind](),
 	// The composer's placeholder and the chat-options menu's radio branch on it.
@@ -448,7 +459,6 @@ var wireEvents = []wiregen.Event{
 	{Name: "open_external_url", Data: wiregen.TypeRef[marotte.OpenExternalURLPayload]()},
 	{Name: "notification", Data: wiregen.TypeRef[marotte.NotificationPayload]()},
 	{Name: "permission_needed", Data: wiregen.TypeRef[marotte.PermissionNeededPayload]()},
-	{Name: "permissions_changed", Data: wiregen.TypeRef[marotte.PermissionsChangedPayload]()},
 	{Name: "policy_error", Data: wiregen.TypeRef[marotte.PolicyErrorPayload]()},
 	{Name: "run_started", Data: wiregen.TypeRef[marotte.RunStartedPayload]()},
 	{Name: "run_progress", Data: wiregen.TypeRef[marotte.RunProgressPayload]()},

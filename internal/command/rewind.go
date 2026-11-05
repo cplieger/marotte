@@ -82,7 +82,7 @@ func cmdRewindChat(
 		return nil, refused
 	}
 	defer admission.ReleaseTurnReservation(res)
-	target, found, err := chats.RewindTarget(ctx, cmd.ChatID, p.MessageID)
+	target, found, err := chats.PromptTarget(ctx, cmd.ChatID, p.MessageID)
 	if err != nil {
 		slog.Error("rewind: resolve target", "chat", cmd.ChatID, keyError, err)
 		return nil, StatusError(http.StatusInternalServerError, err)

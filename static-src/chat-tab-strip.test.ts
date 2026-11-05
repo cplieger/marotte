@@ -78,6 +78,8 @@ vi.mock("./messages.js", () => ({
 }));
 vi.mock("./attachments.js", () => ({
   addAttachment: vi.fn(),
+  addAttachmentTo: vi.fn(),
+  toAttached: vi.fn(),
   unownedAttachmentPaths: vi.fn(() => []),
 }));
 vi.mock("./composer-state.js", () => ({
@@ -88,7 +90,7 @@ vi.mock("./composer-state.js", () => ({
   flushComposerDraft: vi.fn(),
   dropComposerState: vi.fn(),
 }));
-vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));
+vi.mock("./session-context.js", () => ({ getLastModel: () => "auto" }));
 vi.mock("./dom.js", () => ({
   $: { messages: document.createElement("div"), promptInput: { focus: () => undefined } },
   // `paintPlaceholder` marks its host busy through this module; an absent export fails

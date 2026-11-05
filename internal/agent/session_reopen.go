@@ -25,7 +25,7 @@ func (rt *Runtime) markSessionsForReload(reason string) {
 func (rt *Runtime) SecurityProfileChanged(ctx context.Context) {
 	rt.reconcileSettingsWrite(ctx, "security profile")
 	rt.Broadcast(ctx, marotte.NewEvent(marotte.EventPermissionsChanged, "",
-		marotte.PermissionsChangedPayload{Status: "success"}))
+		marotte.PermissionsChangedPayload{}))
 }
 
 // EnsureCustomProfile runs Customize unless the profile already is Custom, so a rule an answer
@@ -42,7 +42,7 @@ func (rt *Runtime) EnsureCustomProfile(ctx context.Context) error {
 	if err != nil {
 		if errors.Is(err, securityprofile.ErrRestoreFailed) {
 			rt.Broadcast(ctx, marotte.NewEvent(marotte.EventPermissionsChanged, "",
-				marotte.PermissionsChangedPayload{Status: "failed"}))
+				marotte.PermissionsChangedPayload{}))
 		}
 		return err
 	}

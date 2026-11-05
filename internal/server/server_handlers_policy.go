@@ -23,7 +23,8 @@ import (
 // `ask`, only user and workspace scopes are writable, and widening needs an explicit confirm.
 
 // handlePolicyView serves GET /api/permissions via _kiro/permissions/list on an observer
-// session, degrading to the editable files (Available=false) when the engine does not answer.
+// session, with the load errors of that session's door, degrading to the editable files
+// (Available=false, no load errors) when the engine does not answer.
 func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	// Gated here, not on the pattern (see ListenAndServe).
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {
@@ -34,14 +35,16 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 		WritableScopes: []string{policyfile.ScopeUser, policyfile.ScopeWorkspace},
 		Profiles:       securityProfileCatalog(),
 		Profile:        s.activeProfile(r.Context()),
+		LoadErrors:     []marotte.PolicyErrorItem{},
 		Available:      true,
 	}
 	if s.policy != nil {
-		rules, err := s.policy.PolicyList(r.Context(), scope)
+		rules, loadErrs, err := s.policy.PolicyListing(r.Context(), scope)
 		if err == nil {
-			view.Rules = dedupePolicyRules(rules)
-			view.Capabilities = pickerCapabilities(view.Rules)
-			webhttp.WriteJSON(w, view)
+			if loadErrs != nil {
+				view.LoadErrors = loadErrs
+			}
+			writePolicyView(w, &view, rules)
 			return
 		}
 		slog.Warn("policy view: live list failed, falling back to file read", "error", logsafe.Field(err.Error()))
@@ -49,7 +52,15 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	// Fallback: read the editable files directly so the editor works even
 	// when the engine cannot answer (e.g. not signed in).
 	view.Available = false
-	view.Rules = dedupePolicyRules(s.policyRulesFromFiles(scope))
+	writePolicyView(w, &view, s.policyRulesFromFiles(scope))
+}
+
+func writePolicyView(w http.ResponseWriter, view *marotte.PolicyView, rules []marotte.PolicyRule) {
+	view.Rules = dedupePolicyRules(rules)
+	for i := range view.Rules {
+		r := &view.Rules[i]
+		r.Editable = policyfile.Editable(r.Scope, r.Source, r.Effect)
+	}
 	view.Capabilities = pickerCapabilities(view.Rules)
 	webhttp.WriteJSON(w, view)
 }
@@ -193,9 +204,10 @@ const capShell = "shell"
 // effectRank orders effects by strictness for the widening gate: moving a
 // rule to a lower rank grants the agent more than it had.
 var effectRank = map[string]int{
-	policyfile.EffectDeny:  2,
-	policyfile.EffectAsk:   1,
-	policyfile.EffectAllow: 0,
+	policyfile.EffectDeny:     3,
+	policyfile.EffectAsk:      2,
+	policyfile.EffectEvaluate: 1,
+	policyfile.EffectAllow:    0,
 }
 
 // Writes the scope's permissions.yaml; KAS hot-reloads and emits _kiro/policy/changed → the
@@ -319,7 +331,7 @@ func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		return
 	}
 	if !policyfile.ValidEffect(body.NewEffect) {
-		httpreply.BadRequest(w, "new_effect must be allow, deny, or ask")
+		httpreply.BadRequest(w, "new_effect must be allow, deny, ask, or evaluate")
 		return
 	}
 	if effectRank[body.NewEffect] < effectRank[body.Effect] && !body.Confirm {

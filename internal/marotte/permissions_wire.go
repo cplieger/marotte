@@ -36,7 +36,9 @@ func PermissionOutcomeWithFileDecisions(optionID string, decisions map[string]bo
 // user's note as `_meta.kiro.rejectionReason`, which KAS hands the model as
 // "The user rejected this tool call: <reason>". An empty reason sends no `_meta`:
 // KAS forwards "" verbatim as a dangling sentence. KAS reads the note only on a
-// reject_once answer, so the caller need not gate on the option's kind.
+// reject_once answer, so the caller need not gate on the option's kind. On a plan
+// approval KAS also keeps the note and gives it to the steps of the next approved
+// plan as the user's correction.
 func PermissionOutcomeWithRejectionReason(optionID, reason string) *PermissionOutcome {
 	out := PermissionOutcomeSelected(optionID)
 	if reason != "" {

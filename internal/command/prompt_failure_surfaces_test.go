@@ -34,6 +34,8 @@ type surfaceDeps struct {
 	// closedReason, when set, is the reason AwaitTurn reports the turn closed with:
 	// the engine's turn_end winning the close.
 	closedReason string
+	// closedEngineErrorType, when set, is the class of the display_error AwaitTurn reports latched on the turn.
+	closedEngineErrorType string
 	// startRefused makes StartTurn answer false, the cancelled-during-open path.
 	startRefused bool
 	// callErr, when set, fails the prompt Call itself.
@@ -71,8 +73,8 @@ func (d *surfaceDeps) AbandonInFlightTurn(_ context.Context, _ marotte.ChatID, t
 }
 
 func (d *surfaceDeps) AwaitTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error) {
-	if d.closedReason != "" {
-		return marotte.TurnResult{Turn: turnID, Reason: d.closedReason}, nil
+	if d.closedReason != "" || d.closedEngineErrorType != "" {
+		return marotte.TurnResult{Turn: turnID, Reason: d.closedReason, EngineErrorType: d.closedEngineErrorType}, nil
 	}
 	if d.startRefused {
 		// A live turn StartTurn refuses was taken by another closer, which the registry retains.
@@ -157,6 +159,164 @@ func TestReportPromptFailure_BroadcastsTheClosedReason(t *testing.T) {
 
 	if got := deps.onlyError(t).Message; got != deps.closedReason {
 		t.Errorf("error frame Message = %q, want the closed turn's reason %q", got, deps.closedReason)
+	}
+}
+
+// With a model pinned on the session, KAS asks for the token inside the execution: the
+// turn's display_error names the auth class and the prompt reply is a bare -32000 with
+// no data. The replies below are the probe's, on kiro-cli 2.37.0 and 2.32.0.
+func TestReportPromptFailure_AnEngineNamedAuthClassRoutesToSignIn(t *testing.T) {
+	const refusal = "Auth refresh callback failed: Not signed in to Kiro in marotte. Sign in from the account menu.: unauthenticated"
+	reply237 := &marotte.RPCError{Code: -32000, Message: "Authentication token is invalid: " + refusal}
+	reply232 := &marotte.RPCError{Code: -32000, Message: refusal}
+	cases := map[string]struct {
+		callErr     error
+		engineClass string
+		wantCode    marotte.ErrorCode
+		wantLatched bool
+	}{
+		"kiro-cli 2.37.0 credential absent": {
+			callErr: reply237, engineClass: "CredentialAbsentError",
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+		},
+		"kiro-cli 2.32.0 token expired": {
+			callErr: reply232, engineClass: "TokenExpiredError",
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+		},
+		"a throttle the turn named": {
+			callErr: reply237, engineClass: "ModelThrottleError",
+			wantCode: marotte.ErrCodePromptFailed, wantLatched: false,
+		},
+		"no class on the turn": {
+			callErr:  reply237,
+			wantCode: marotte.ErrCodePromptFailed, wantLatched: false,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			deps := newSurfaceDeps()
+			deps.closedEngineErrorType = tc.engineClass
+			readiness := new(AuthReadiness)
+			roles := promptRolesOf(deps)
+			roles.auth = readiness
+
+			reportPromptFailure(t.Context(), roles, "c1", "t-7", tc.callErr, 3, time.Second, false)
+
+			if got := deps.onlyError(t).Code; got != tc.wantCode {
+				t.Errorf("error code = %q, want %q", got, tc.wantCode)
+			}
+			if got := readiness.Unavailable(); got != tc.wantLatched {
+				t.Errorf("AuthReadiness.Unavailable() = %v, want %v", got, tc.wantLatched)
+			}
+		})
+	}
+}
+
+// providerReach answers ProviderUnreachable with its reason, down when it is non-empty.
+type providerReach string
+
+func (p providerReach) ProviderUnreachable() (string, bool) { return string(p), p != "" }
+
+// The unreachable refusal internal/signin/kiro words for KAS, which KAS still grades unauthenticated.
+const vaultUnreachable = "marotte could not reach the identity provider to renew the Kiro sign-in; it will try again."
+
+// unreachableCase is one failure graded while the vault does or does not hold the provider unreachable.
+type unreachableCase struct {
+	callErr     error
+	engineClass string
+	reach       providerReach
+	wantCode    marotte.ErrorCode
+	// wantVault: the frame carries the vault's reason off the card, else the card's own reason.
+	wantVault   bool
+	wantLatched bool
+}
+
+// unreachableCases are both auth shapes KAS reports, on the execution path and the catalog path, with the
+// controls that keep the vault's reason to them. failed is the path's non-auth code.
+func unreachableCases(failed marotte.ErrorCode) map[string]unreachableCase {
+	execReply := &marotte.RPCError{Code: -32000, Message: "Authentication token is invalid: Auth refresh callback failed: " + vaultUnreachable + ": transport"}
+	mapped := &marotte.RPCError{Code: -32603, Message: "Internal error", Data: []byte(`{"errorType":"ModelRegistryUnauthenticatedError"}`)}
+	return map[string]unreachableCase{
+		"the turn names a credential class while the provider is down": {
+			callErr: execReply, engineClass: "CredentialAbsentError", reach: vaultUnreachable,
+			wantCode: failed, wantVault: true,
+		},
+		"a mapped auth envelope while the provider is down": {
+			callErr: mapped, reach: vaultUnreachable,
+			wantCode: failed, wantVault: true,
+		},
+		"the turn names a credential class while the provider answers": {
+			callErr: execReply, engineClass: "CredentialAbsentError",
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+		},
+		"a throttle while the provider is down": {
+			callErr: execReply, engineClass: "ModelThrottleError", reach: vaultUnreachable,
+			wantCode: failed,
+		},
+	}
+}
+
+func checkUnreachableFrame(t *testing.T, got marotte.ErrorPayload, tc unreachableCase, cardReason string, latched bool) {
+	t.Helper()
+	if got.Code != tc.wantCode {
+		t.Errorf("error code = %q, want %q", got.Code, tc.wantCode)
+	}
+	wantMsg := cardReason
+	if tc.wantVault {
+		wantMsg = vaultUnreachable
+	}
+	if !strings.HasSuffix(got.Message, wantMsg) {
+		t.Errorf("Message = %q, want it to end with %q", got.Message, wantMsg)
+	}
+	if got.TurnScoped == tc.wantVault {
+		t.Errorf("TurnScoped = %v, want %v: the card carries KAS's sentence, not the vault's reason", got.TurnScoped, !tc.wantVault)
+	}
+	if latched != tc.wantLatched {
+		t.Errorf("AuthReadiness.Unavailable() = %v, want %v", latched, tc.wantLatched)
+	}
+}
+
+// KAS grades a credential ask the vault refused as unreachable as unauthenticated, but no sign-in fixes an outage
+// of the identity provider, so the vault's reason replaces the Sign in route and health stays signed in.
+func TestReportPromptFailure_AnUnreachableProviderIsNotASignInFailure(t *testing.T) {
+	const card = "Authentication failed. Please sign in again."
+	for name, tc := range unreachableCases(marotte.ErrCodePromptFailed) {
+		t.Run(name, func(t *testing.T) {
+			deps := newSurfaceDeps()
+			deps.closedReason = card
+			deps.closedEngineErrorType = tc.engineClass
+			readiness := new(AuthReadiness)
+			roles := promptRolesOf(deps)
+			roles.auth, roles.signIn = readiness, tc.reach
+
+			reportPromptFailure(t.Context(), roles, "c1", "t-7", tc.callErr, 3, time.Second, false)
+
+			checkUnreachableFrame(t, deps.onlyError(t), tc, card, readiness.Unavailable())
+		})
+	}
+}
+
+// The empty-turn retry grades an unreachable provider as its first attempt does.
+func TestRetryEmptyTurnPrompt_AnUnreachableProviderIsNotASignInFailure(t *testing.T) {
+	const card = "Authentication failed. Please sign in again."
+	for name, tc := range unreachableCases(marotte.ErrCodeRecoveryFailed) {
+		t.Run(name, func(t *testing.T) {
+			deps := newSurfaceDeps()
+			deps.callErr = tc.callErr
+			deps.closedReason = card
+			deps.closedEngineErrorType = tc.engineClass
+			readiness := new(AuthReadiness)
+			roles := promptRolesOf(deps)
+			roles.auth, roles.signIn = readiness, tc.reach
+
+			retryEmptyTurnPrompt(t.Context(), roles, testReservation("c1", true), "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+
+			got := deps.onlyError(t)
+			if !strings.HasPrefix(got.Message, "Retry prompt failed: ") {
+				t.Errorf("Message = %q, want the retry's prefix", got.Message)
+			}
+			checkUnreachableFrame(t, got, tc, card, readiness.Unavailable())
+		})
 	}
 }
 
@@ -250,6 +410,54 @@ func TestRetryEmptyTurnPrompt_MarksTheRetryFailureTurnScoped(t *testing.T) {
 	if !got.TurnScoped {
 		t.Error("TurnScoped = false, want true: the retry was a turn of its own and the " +
 			"abandon stamped this reason on it")
+	}
+}
+
+// A retry refused for sign-in has the first attempt's remedy: the Sign in route and
+// health's sign-in required. The reply is the probe's kiro-cli 2.37.0 execution-path one.
+func TestRetryEmptyTurnPrompt_AnAuthFailureRoutesToSignIn(t *testing.T) {
+	reply := &marotte.RPCError{Code: -32000, Message: "Authentication token is invalid: Auth refresh callback failed: Not signed in to Kiro in marotte. Sign in from the account menu.: unauthenticated"}
+	cases := map[string]struct {
+		callErr     error
+		engineClass string
+		wantCode    marotte.ErrorCode
+		wantLatched bool
+	}{
+		"the turn names a credential class": {
+			callErr: reply, engineClass: "CredentialAbsentError",
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+		},
+		"the reply is a mapped auth envelope": {
+			callErr:  &marotte.RPCError{Code: -32603, Message: "Internal error", Data: []byte(`{"errorType":"ModelRegistryUnauthenticatedError"}`)},
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+		},
+		"the turn names a throttle": {
+			callErr: reply, engineClass: "ModelThrottleError",
+			wantCode: marotte.ErrCodeRecoveryFailed, wantLatched: false,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			deps := newSurfaceDeps()
+			deps.callErr = tc.callErr
+			deps.closedEngineErrorType = tc.engineClass
+			readiness := new(AuthReadiness)
+			roles := promptRolesOf(deps)
+			roles.auth = readiness
+
+			retryEmptyTurnPrompt(t.Context(), roles, testReservation("c1", true), "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+
+			got := deps.onlyError(t)
+			if got.Code != tc.wantCode {
+				t.Errorf("error code = %q, want %q", got.Code, tc.wantCode)
+			}
+			if !got.TurnScoped {
+				t.Error("TurnScoped = false, want true: the retry's turn carries the reason")
+			}
+			if latched := readiness.Unavailable(); latched != tc.wantLatched {
+				t.Errorf("AuthReadiness.Unavailable() = %v, want %v", latched, tc.wantLatched)
+			}
+		})
 	}
 }
 

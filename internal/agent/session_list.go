@@ -257,8 +257,16 @@ type kasWorkflowRun struct {
 	StartedAt string `json:"startedAt"`
 	// ParentSessionID is the launching session, how the run is attributed.
 	ParentSessionID string `json:"parentSessionId"`
+	// PauseKind is "maxIterations" for a repeat at its cap, and PauseNodeID names it; only paused runs carry them.
+	// standingOf reads them; the run verbs read the same facts off an inspect (headOf).
+	PauseKind   string `json:"pauseKind"`
+	PauseNodeID string `json:"pauseNodeId"`
+	// CurrentNodeID and WaitingOnWatch ride only a running or paused row. The stepsCompleted and
+	// stepsTotal beside them count every pass and leave skipped steps out, so they are not read.
+	CurrentNodeID string `json:"currentNodeId"`
 	// PausePending is a pause asked for and not yet landed.
-	PausePending bool `json:"pausePending"`
+	PausePending   bool `json:"pausePending"`
+	WaitingOnWatch bool `json:"waitingOnWatch"`
 }
 
 // displayName is the run's marotte.RunDisplayName. KAS's Name is the workflowName when the run
@@ -301,6 +309,7 @@ func (rs *Runs) toWire(claimed map[string]marotte.ChatID, runs []kasWorkflowRun)
 			ParentChatID: parentChatID,
 			// KAS has no end-reason field, and bounds cancel like a person, so the deciding host supplies it.
 			EndReason: rs.endReason(r.WorkflowID),
+			Standing:  standingOf(r),
 		})
 	}
 	// Stable, or the list reshuffles between polls.
@@ -308,4 +317,22 @@ func (rs *Runs) toWire(claimed map[string]marotte.ChatID, runs []kasWorkflowRun)
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})
 	return out
+}
+
+// standingOf is where a live run stands, nil for a finished run or a row naming no node. The cap
+// arm comes first: KAS's currentNodeId skips a capped repeat and names the first pending leaf
+// after the loop.
+func standingOf(r *kasWorkflowRun) *marotte.RunStanding {
+	switch {
+	case marotte.RunStatus(r.Status).Terminal():
+		return nil
+	case r.PauseKind == pauseKindMaxIterations && r.PauseNodeID != "":
+		return &marotte.RunStanding{Node: r.PauseNodeID, Kind: marotte.RunStandingPassLimit}
+	case r.CurrentNodeID == "":
+		return nil
+	case r.WaitingOnWatch:
+		return &marotte.RunStanding{Node: r.CurrentNodeID, Kind: marotte.RunStandingWatch}
+	default:
+		return &marotte.RunStanding{Node: r.CurrentNodeID, Kind: marotte.RunStandingStep}
+	}
 }

@@ -112,6 +112,45 @@ func TestConfineAnyAbs_refusesEscapes(t *testing.T) {
 	}
 }
 
+// ConfineNameAnyAbs answers a final-component symlink as the link, wherever it points, while
+// an ancestor symlink is still resolved and still confined.
+func TestConfineNameAnyAbs_leavesTheFinalComponentUnresolved(t *testing.T) {
+	work, _, outside := twoRoots(t)
+	if err := os.Mkdir(filepath.Join(work, "dir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{
+		"in":      filepath.Join(work, "f.txt"),
+		"out":     outside,
+		"via-dir": filepath.Join(work, "dir"),
+	} {
+		if err := os.Symlink(target, filepath.Join(work, name)); err != nil {
+			t.Fatalf("symlink %s: %v", name, err)
+		}
+	}
+	for _, tc := range []struct{ name, in, wantRel string }{
+		{"a link inside", "in", "in"},
+		{"a link leaving the workspace", filepath.Join(work, "out"), "out"},
+		{"an ancestor link resolved", filepath.Join("via-dir", "x"), "dir/x"},
+		{"the workspace itself", work, "."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, rel, err := ConfineNameAnyAbs([]string{work}, tc.in)
+			if err != nil {
+				t.Fatalf("ConfineNameAnyAbs(%q) err = %v, want nil", tc.in, err)
+			}
+			if root != work || rel != tc.wantRel {
+				t.Errorf("ConfineNameAnyAbs(%q) = (%q, %q), want (%q, %q)", tc.in, root, rel, work, tc.wantRel)
+			}
+		})
+	}
+	for _, in := range []string{filepath.Join("out", "f.txt"), filepath.Join(work, "..", "elsewhere")} {
+		if root, rel, err := ConfineNameAnyAbs([]string{work}, in); err == nil {
+			t.Errorf("ConfineNameAnyAbs(%q) = (%q, %q, nil), want an error", in, root, rel)
+		}
+	}
+}
+
 // An empty second root is legal and INERT: pathinside.Root("") contains no path.
 func TestConfineAnyAbs_emptySecondRootIsInert(t *testing.T) {
 	work, _, outside := twoRoots(t)

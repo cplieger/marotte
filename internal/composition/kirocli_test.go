@@ -307,6 +307,57 @@ func TestManagedKiroRuntime_ActivationReachesTheSeed(t *testing.T) {
 	})
 }
 
+func TestEngineSource_ShareContent(t *testing.T) {
+	t.Run("writes_kiro_clis_switch_through_the_active_version", func(t *testing.T) {
+		const version = "9.9.9"
+		toolsDir := t.TempDir()
+		store := filepath.Join(t.TempDir(), "settings.log")
+		stageKiroVersion(t, toolsDir, version, "settings) [ $# -eq 3 ] && printf '%s=%s\\n' \"$2\" \"$3\" >>'"+store+"' ;;\n")
+		cfg := pinnedKiroConfig(toolsDir, version)
+		// Not t.Context(): the manager must outlive the t.Cleanup(kiro.stop) teardown.
+		kiro := startKiroCLI(context.Background(), &cfg)
+		t.Cleanup(kiro.stop)
+		select {
+		case <-kiro.installed:
+		case <-time.After(20 * time.Second):
+			t.Fatal("Setup: the staged version never became active")
+		}
+		src := engineSource{kiro: kiro}
+		for _, enabled := range []bool{false, true} {
+			if err := src.ShareContent(t.Context(), enabled); err != nil {
+				t.Fatalf("ShareContent(%v) = %v, want nil", enabled, err)
+			}
+		}
+		data, err := os.ReadFile(store)
+		if err != nil {
+			t.Fatalf("read store: %v", err)
+		}
+		var shared []string
+		for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+			if k, v, _ := strings.Cut(line, "="); k == shareContentSetting {
+				shared = append(shared, v)
+			}
+		}
+		if !slices.Equal(shared, []string{"false", "true"}) {
+			t.Errorf("kiro-cli %s writes = %q, want [false true]", shareContentSetting, shared)
+		}
+	})
+	t.Run("leaves_a_developers_own_kiro_cli_alone", func(t *testing.T) {
+		bin := t.TempDir()
+		marker := filepath.Join(t.TempDir(), "ran")
+		if err := os.WriteFile(filepath.Join(bin, "kiro-cli"), []byte("#!/bin/sh\n: >'"+marker+"'\n"), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
+			t.Fatalf("Setup: write fake kiro-cli: %v", err)
+		}
+		t.Setenv("PATH", bin)
+		if err := (engineSource{kiro: unmanagedKiroRuntime()}).ShareContent(t.Context(), false); err != nil {
+			t.Errorf("ShareContent on an unmanaged runtime = %v, want nil", err)
+		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Error("ShareContent ran the developer's own kiro-cli; an unmanaged runtime must write nothing")
+		}
+	})
+}
+
 func stageKiroVersion(t *testing.T, toolsDir, version, extraShellCaseArms string) {
 	t.Helper()
 	versionDir := filepath.Join(toolsDir, "kiro-cli-versions", version)

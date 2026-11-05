@@ -2,8 +2,9 @@
 // read the saved draft AFTER exitCycling() had zeroed it, so returning to the draft emptied the box
 // while Escape, which saved to a local first, worked.
 
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { signal } from "@cplieger/ui";
+import { createPopup } from "@cplieger/ui/popup";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { refreshContextUI } from "./context-ui.js";
 import { setSessions, setActive, setChatInterruptMode, openTurn } from "./store.js";
@@ -426,16 +427,130 @@ describe("the busy placeholder", () => {
 // Send never disables and nothing disables the composer: mid-turn the button becomes
 // Cancel (a `type="button"` click, so it cannot submit the form) and a failure keeps
 // both controls live so the reader can retry at once.
+describe("Escape mid-turn", () => {
+  /** Whether an Escape pressed in the composer went on to reach a document listener, where every
+   *  surface that closes on Escape listens. */
+  function reachesDocument(e: KeyboardEvent): boolean {
+    let reached = false;
+    const seen = (ev: Event): void => {
+      if (ev === e) {
+        reached = true;
+      }
+    };
+    document.addEventListener("keydown", seen);
+    input().dispatchEvent(e);
+    document.removeEventListener("keydown", seen);
+    return reached;
+  }
+
+  function escape(init: KeyboardEventInit = {}): KeyboardEvent {
+    return new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+  }
+
+  afterEach(() => {
+    for (const n of document.querySelectorAll("[data-escape-probe]")) {
+      n.remove();
+    }
+  });
+
+  it("cancels the running turn and spends the key", () => {
+    setSendState({ kind: "streaming" });
+    const e = escape();
+    expect(reachesDocument(e)).toBe(false);
+    expect(cancelled).toHaveBeenCalledOnce();
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("does nothing and lets the key through when no turn runs", () => {
+    const e = escape();
+    expect(reachesDocument(e)).toBe(true);
+    expect(cancelled).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("follows the button, so the Retry face does not cancel", () => {
+    setSendState({ kind: "error", reason: "The bridge exited." });
+    expect(reachesDocument(escape())).toBe(true);
+    expect(cancelled).not.toHaveBeenCalled();
+  });
+
+  it.each(["shiftKey", "ctrlKey", "altKey", "metaKey"] as const)(
+    "ignores a modified Escape (%s)",
+    (mod) => {
+      setSendState({ kind: "streaming" });
+      expect(reachesDocument(escape({ [mod]: true }))).toBe(true);
+      expect(cancelled).not.toHaveBeenCalled();
+    },
+  );
+
+  it("claims an auto-repeat without cancelling", () => {
+    setSendState({ kind: "streaming" });
+    const e = escape({ repeat: true });
+    expect(reachesDocument(e)).toBe(false);
+    expect(e.defaultPrevented).toBe(true);
+    expect(cancelled).not.toHaveBeenCalled();
+  });
+
+  it("leaves history recall first and cancels on the next press", () => {
+    type("half-written thought");
+    setSendState({ kind: "streaming" });
+    press("ArrowUp");
+    press("Escape");
+    expect(input().value).toBe("half-written thought");
+    expect(cancelled).not.toHaveBeenCalled();
+    press("Escape");
+    expect(cancelled).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    '<div class="uip-popup is-open"></div>',
+    '<div class="uip-popover is-open"></div>',
+    '<details class="turn-actions-more" open><summary>More</summary></details>',
+  ])("yields to an open surface (%s)", (markup) => {
+    document.body.insertAdjacentHTML("beforeend", markup);
+    document.body.lastElementChild?.setAttribute("data-escape-probe", "");
+    setSendState({ kind: "streaming" });
+    const e = escape();
+    expect(reachesDocument(e)).toBe(true);
+    expect(e.defaultPrevented).toBe(false);
+    expect(cancelled).not.toHaveBeenCalled();
+  });
+
+  it("yields to a real ui-primitives popup, which closes, then cancels on the next press", async () => {
+    const panel = document.createElement("div");
+    panel.setAttribute("data-escape-probe", "");
+    panel.hidden = true;
+    document.body.append(panel);
+    const popup = createPopup(panel);
+    setSendState({ kind: "streaming" });
+    popup.show();
+    // The library installs its document listeners one macrotask after show().
+    await new Promise((r) => setTimeout(r, 0));
+    press("Escape");
+    expect(popup.isOpen).toBe(false);
+    expect(cancelled).not.toHaveBeenCalled();
+    press("Escape");
+    expect(cancelled).toHaveBeenCalledOnce();
+    popup.dispose();
+  });
+});
+
 describe("the send button's state", () => {
   function sendBtn(): HTMLButtonElement {
     return document.getElementById("send-btn") as HTMLButtonElement;
   }
 
   it("is an enabled Cancel button mid-turn, with the textarea still enabled", () => {
-    expect.assertions(4);
+    expect.assertions(5);
     setSendState({ kind: "streaming" });
     expect(sendBtn().disabled).toBe(false);
     expect(sendBtn().getAttribute("aria-label")).toBe("Cancel this turn");
+    expect(sendBtn().getAttribute("data-tooltip")).toBe("Cancel this turn (Esc)");
     expect(sendBtn().type).toBe("button");
     expect(input().disabled).toBe(false);
   });
@@ -527,6 +642,7 @@ describe("the mid-turn Send", () => {
     expect(midTurn().hidden).toBe(false);
     press("Escape");
     expect(midTurn().hidden).toBe(true);
+    expect(cancelled).not.toHaveBeenCalled();
   });
 
   it("is hidden when idle and leaves when the turn ends, giving Send back to the one button", () => {

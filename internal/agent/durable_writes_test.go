@@ -67,6 +67,11 @@ var durableWriteSites = []durableSite{{
 	calls:   []string{"AppendBetweenTurns"},
 	because: "the mode_switched entry a landed mode switch leaves, which is on no KAS wire",
 }, {
+	file:    "internal/agent/bridge_coord.go",
+	fn:      "recordContextReset",
+	calls:   []string{"AppendBetweenTurns"},
+	because: "the context_reset entry telling the reader the agent forgot the turns above it, which is on no KAS wire",
+}, {
 	file:    "internal/agent/load_projection.go",
 	fn:      "swapProjectedTranscript",
 	calls:   []string{"swapMerged"},
@@ -128,12 +133,12 @@ var abandonableWriteSites = []durableSite{{
 	because: "session-chain bookkeeping — no conversational record, and the next session open records it again",
 }, {
 	file:    "internal/agent/bridge_coord.go",
-	fn:      "detachSession",
+	fn:      "retireSession",
 	calls:   []string{"Mutate"},
-	because: "session-chain bookkeeping — a lost detach leaves the refused id, whose next load KAS refuses again and detaches",
+	because: "session-chain bookkeeping — a lost retire leaves the id, whose next load is refused or restores nothing again and retires it",
 }, {
 	file:    "internal/agent/bridge_coord.go",
-	fn:      "refreshForRetry",
+	fn:      "detachRetried",
 	calls:   []string{"Mutate"},
 	because: "the empty-turn retry's detach on its lease's context: a detach the chat's close cut keeps the id, so the reopen loads the session, and a shutdown ends the retry it was for",
 }, {
@@ -141,11 +146,6 @@ var abandonableWriteSites = []durableSite{{
 	fn:      "persistNewSessionMetadata",
 	calls:   []string{"Mutate"},
 	because: "the new session's id and facts — no conversational record; a record that did not take them fails the generation, which reaps the session, and the next open runs again",
-}, {
-	file:    "internal/agent/bridge_coord.go",
-	fn:      "ReviseTurnBinding",
-	calls:   []string{"OpenTurn", "WriteCounters"},
-	because: "the agent's own turn_open on the frame's context: a bridge dying mid-frame has nothing to file under it, and the death closer closes what did open",
 }, {
 	file:    "internal/agent/turn_open.go",
 	fn:      "OpenTurn",
@@ -155,7 +155,7 @@ var abandonableWriteSites = []durableSite{{
 	file:    "internal/agent/turn_open.go",
 	fn:      "openWireTurn",
 	calls:   []string{"OpenTurn", "WriteCounters"},
-	because: "the wire bracket's turn_open on the frame's context, the same class as ReviseTurnBinding",
+	because: "the wire bracket's turn_open on the frame's context: a bridge dying mid-frame has nothing to file under it, and the death closer closes what did open",
 }, {
 	file:    "internal/agent/queue_drain.go",
 	fn:      "appendLocked",

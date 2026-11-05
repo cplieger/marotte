@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -690,5 +692,58 @@ func TestHandleSessionUpdate_CatalogFrameSurvivesALoad(t *testing.T) {
 	h, _, _ := newTestHub()
 	if !dispatchUpdate(t, h, marotte.ACPUpdateConfigOption, nil) {
 		t.Error("config_option_update was dropped; it is untagged by KAS and carries current session state")
+	}
+}
+
+// probeSeq makes each run's probe kinds novel to the process-wide census ledger, which this package cannot reset.
+var probeSeq atomic.Int64
+
+// TestSessionUpdateDoors_ReportAnUnnamedKind pins that every session/update door reports a kind marotte does not
+// name, the replay path before its gate included. Serial: it swaps slog's default.
+func TestSessionUpdateDoors_ReportAnUnnamedKind(t *testing.T) {
+	h, _, _ := newTestHub()
+	defer shutdownHub(t, h)
+	noSteps := func(marotte.SessionID) (string, bool) { return "", false }
+
+	doors := []struct {
+		name   string
+		replay bool
+		feed   func(msg *marotte.RPCResponse)
+	}{
+		{name: "chat door, live", feed: func(msg *marotte.RPCResponse) { h.handleSessionUpdate(t.Context(), "c1", msg) }},
+		{name: "chat door, replay with no load", replay: true, feed: func(msg *marotte.RPCResponse) {
+			h.handleSessionUpdate(t.Context(), "c1", msg)
+		}},
+		{name: "run host door", feed: func(msg *marotte.RPCResponse) { h.handleRunStepFrame(t.Context(), runChatID("wf_1"), msg) }},
+		{name: "engine lane", feed: func(msg *marotte.RPCResponse) { h.engineSessionUpdate(t.Context(), msg) }},
+		{name: "observer pass", feed: h.observerUpdate},
+		{name: "run mutation peek", feed: func(msg *marotte.RPCResponse) { frameWorkflow(msg, noSteps) }},
+	}
+	for _, door := range doors {
+		t.Run(door.name, func(t *testing.T) {
+			logs := captureLogs(t)
+			kind := "u20-probe-" + strconv.FormatInt(probeSeq.Add(1), 10)
+			update := map[string]any{"sessionUpdate": kind}
+			if door.replay {
+				update["_meta"] = map[string]any{"kiro": map[string]any{"replay": true}}
+			}
+			msg := &marotte.RPCResponse{
+				Method: marotte.MethodSessionUpdate,
+				Params: mustJSON(t, map[string]any{"sessionId": "sess-probe", "update": update}),
+			}
+
+			door.feed(msg)
+
+			reports := 0
+			for line := range strings.SplitSeq(logs.String(), "\n") {
+				if strings.Contains(line, "UNKNOWN session/update kind") && strings.Contains(line, `"kind":"`+kind+`"`) &&
+					strings.Contains(line, `"level":"WARN"`) {
+					reports++
+				}
+			}
+			if reports != 1 {
+				t.Errorf("kind %q reported %d times at Warn, want 1; log:\n%s", kind, reports, logs.String())
+			}
+		})
 	}
 }

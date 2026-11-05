@@ -119,6 +119,7 @@ function turnOf(turnID: string, body: Entry[]): Turn {
     ts: 1,
     outcome: "completed",
     rewindTo: undefined,
+    branchFrom: undefined,
   };
 }
 

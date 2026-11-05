@@ -4,7 +4,7 @@
 
 import { join } from "@cplieger/keyenc";
 import { STATE_WORD, inFlight, type ExecState } from "./status.js";
-import type { RunStepEndStatus, RunStepMessageVerb } from "../wire/types.gen.js";
+import type { RunStepMessageVerb } from "../wire/types.gen.js";
 
 /** What KIND of node this is. `group` is the catch-all, so an unseen source has a legal value. */
 export type ExecKind = "step" | "sequence" | "repeat" | "parallel" | "watch" | "group";
@@ -64,9 +64,6 @@ export interface ExecNode {
   /** Set where a person can end this paused step now, as the server's end route decides it from
    *  the same raw state; absent where it would refuse. */
   endable?: true;
-  /** A paused step's end the source has recorded but not applied yet, with the words that say when it
-   *  applies; the header shows them in place of the state word. */
-  pendingEnd?: { status: RunStepEndStatus; text: string };
   /** Whether this node can host a live transcript, so the pane can say "none here" rather than
    *  "none yet". */
   transcript?: boolean;

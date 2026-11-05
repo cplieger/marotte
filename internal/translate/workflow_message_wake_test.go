@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"maps"
 	"strings"
 	"testing"
 
@@ -53,6 +54,25 @@ func wakeChunk(t *testing.T, tr *Translator, reason string, attr FrameAttributio
 		"content": map[string]any{"type": "text", "text": "Picking it up."},
 		"_meta":   map[string]any{"kiro": map[string]any{"agentInitiated": true, "agentInitiatedReason": reason}},
 	}), false, attr)
+}
+
+// pauseStep is KAS's node_paused for the test step, here its pause awaiting a reply; extra rides the payload.
+func pauseStep(t *testing.T, tr *Translator, extra map[string]any) {
+	t.Helper()
+	p := map[string]any{
+		"workflowId": testWfRun, "nodeId": "review", "nodePath": []string{testWfRun, "review"},
+		"reason": "Awaiting next user message on step session.",
+	}
+	maps.Copy(p, extra)
+	tr.RunProgressHandler(marotte.RunProgressNodePaused)(t.Context(), testChat, notif("_kiro/workflow/node_paused", p))
+}
+
+// resumeStep is what a step's resume sends marotte, a parent's wake included: node_start again, then a turn_start.
+// No frame names the reason (kiro-cli 2.37.1 driveExecution persists it on the user row only).
+func resumeStep(t *testing.T, tr *Translator) {
+	t.Helper()
+	announceStep(t, tr)
+	turnStartOn(t, tr, testStepAttr())
 }
 
 // chatWake is the chat's engine turn for reason: its turn_start, then a content frame.
@@ -227,9 +247,9 @@ func TestWorkflowMessage_ASendMessageWakeAfterAReadersCancelSettlesNoLaterMessag
 func TestWorkflowMessage_AStepsBoundaryAfterAWokenAnswerClearsTheBufferedMessage(t *testing.T) {
 	deps, tr := messageDeps(t)
 	attr := testStepAttr()
+	pauseStep(t, tr, nil)
 	tr.HandleWorkflowMessage(t.Context(), testChat, workflowNotify("parent", testParent, testStep, "info", "the answer to your ask"))
-	turnStartOn(t, tr, attr)
-	wakeChunk(t, tr, "send-message-wake", attr)
+	resumeStep(t, tr)
 	tr.HandleWorkflowMessage(t.Context(), testChat, workflowNotify("parent", testParent, testStep, "info", "also check the tests"))
 	step := stepRows(t, deps)
 	if len(step) != 2 {
@@ -268,5 +288,118 @@ func TestWorkflowMessage_ACancelClearsAMessageKASBufferedWhileTheChatLookedIdle(
 	}
 	if d := chatLogStamps(t, deps)[rows[0].ID]; !clearedOnce(d) {
 		t.Errorf("B stamps = %+v, want one cleared at the stop", d)
+	}
+}
+
+// parentToStep files a parent's message to the test step.
+func parentToStep(t *testing.T, tr *Translator, text string) {
+	t.Helper()
+	tr.HandleWorkflowMessage(t.Context(), testChat, workflowNotify("parent", testParent, testStep, "info", text))
+}
+
+// stepStamps is the step log's settlements, keyed by the row each settles.
+func stepStamps(t *testing.T, deps *baseDeps) map[string][]marotte.EntrySteerDelivered {
+	t.Helper()
+	out := map[string][]marotte.EntrySteerDelivered{}
+	for _, d := range deliveredOf(t, deps.runEntries(testWfRun, testStepAttr().NodePath)) {
+		out[d.SteerID] = append(out[d.SteerID], d)
+	}
+	return out
+}
+
+// KAS buffers a parent's message to a running step and wakes a paused one with it, so a resume delivers only the
+// message filed during the pause; the one buffered before it waits for its take-up.
+func TestWorkflowMessage_AStepsResumeDeliversOnlyTheMessageFiledWhilePaused(t *testing.T) {
+	deps, tr := messageDeps(t)
+	parentToStep(t, tr, "buffered while running")
+	pauseStep(t, tr, nil)
+	parentToStep(t, tr, "the answer to your ask")
+	rows := stepRows(t, deps)
+	if len(rows) != 2 {
+		t.Fatalf("Setup: step rows = %+v, want two", rows)
+	}
+
+	resumeStep(t, tr)
+
+	stamps := stepStamps(t, deps)
+	if d := stamps[rows[0].ID]; len(d) != 0 {
+		t.Errorf("buffered message stamps = %+v, want none: only its take-up settles it", d)
+	}
+	if d := stamps[rows[1].ID]; !deliveredOnce(d) {
+		t.Errorf("answer stamps = %+v, want one delivered at the resume", d)
+	}
+	if d := chatLogStamps(t, deps)[rows[1].ID]; !deliveredOnce(d) {
+		t.Errorf("chat copy stamps = %+v, want the answer delivered there too", d)
+	}
+}
+
+// A retry-wait's node_paused leaves the node running, where KAS buffers a parent's message, so neither a later
+// node_start nor a turn_start delivers it.
+func TestWorkflowMessage_ARetryWaitIsNoPauseAStepResumesFrom(t *testing.T) {
+	deps, tr := messageDeps(t)
+	pauseStep(t, tr, map[string]any{"reason": "Waiting 30s to retry after a network error.", "kind": "retry-wait"})
+	parentToStep(t, tr, "also check the tests")
+
+	resumeStep(t, tr)
+
+	if s := stepStamps(t, deps); len(s) != 0 {
+		t.Errorf("step stamps = %+v, want none", s)
+	}
+}
+
+// A turn_start with no node_start after the pause is no resume and delivers nothing.
+func TestWorkflowMessage_APausedStepsTurnWithNoNodeStartSettlesNoMessage(t *testing.T) {
+	deps, tr := messageDeps(t)
+	pauseStep(t, tr, nil)
+	parentToStep(t, tr, "the answer to your ask")
+
+	turnStartOn(t, tr, testStepAttr())
+
+	if s := stepStamps(t, deps); len(s) != 0 {
+		t.Errorf("step stamps = %+v, want none", s)
+	}
+}
+
+// Two messages filed during one pause: KAS wakes the step with the first and buffers the second behind the pending
+// wake, so the resume delivers neither until the second's take-up leaves the first the only waker.
+func TestWorkflowMessage_AResumeWithTwoPausedMessagesWaitsForATakeUp(t *testing.T) {
+	deps, tr := messageDeps(t)
+	pauseStep(t, tr, nil)
+	parentToStep(t, tr, "first answer")
+	parentToStep(t, tr, "second thought")
+	rows := stepRows(t, deps)
+	if len(rows) != 2 {
+		t.Fatalf("Setup: step rows = %+v, want two", rows)
+	}
+
+	resumeStep(t, tr)
+	if s := stepStamps(t, deps); len(s) != 0 {
+		t.Fatalf("stamps at the resume = %+v, want none: either message can have woken the step", s)
+	}
+
+	tr.HandleSessionInfoUpdate(t.Context(), testChat, steerFrame(t, "steering_injected", map[string]any{
+		"messageId": "notify-2", "content": "[notification/info] second thought", "notificationSeverity": "info",
+	}), testStepAttr())
+
+	stamps := stepStamps(t, deps)
+	if d := stamps[rows[1].ID]; !deliveredOnce(d) || d[0].KASID != "notify-2" {
+		t.Errorf("second message stamps = %+v, want its take-up", d)
+	}
+	if d := stamps[rows[0].ID]; !deliveredOnce(d) {
+		t.Errorf("first message stamps = %+v, want one delivered: it alone can have woken the step", d)
+	}
+}
+
+// A run's end forgets its step sessions' pauses, so no later frame on the session settles a row filed during one.
+func TestWorkflowMessage_ARunsEndForgetsItsStepsPause(t *testing.T) {
+	deps, tr := messageDeps(t)
+	pauseStep(t, tr, nil)
+	parentToStep(t, tr, "the answer to your ask")
+	tr.ForgetRunSteps(testWfRun)
+
+	resumeStep(t, tr)
+
+	if s := stepStamps(t, deps); len(s) != 0 {
+		t.Errorf("step stamps = %+v, want none after the run ended", s)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/settings"
@@ -79,9 +80,8 @@ type bridgeCoordinator struct {
 	onTurnClosed func(marotte.ChatID, string)
 	// applyPendingModel is the pending_model idle arm, dispatched by every closer on its own goroutine. Nil in tests.
 	applyPendingModel func(context.Context, marotte.ChatID) `wiring:"optional"`
-	// autoCompact is the compaction policy's turn-end and pre-send triggers.
-	autoCompact *autoCompactor `wiring:"optional"`
-	// resolveEnds and drainAfterClose are afterTurnClose's; it owns their order.
+	// resolveEnds and drainAfterClose are first and last in afterTurnClose; the drain is last so a
+	// queued prompt cannot reach the session before betweenTurns' idle work.
 	resolveEnds     func(context.Context, marotte.ChatID, command.TurnFence) command.EndFacts   `wiring:"optional"`
 	drainAfterClose func(context.Context, marotte.ChatID, command.CloseFacts, command.EndFacts) `wiring:"optional"`
 	// settleNotices clears a run notice KAS's boundary left queued, once KAS is idle. Nil in tests.
@@ -98,7 +98,6 @@ type bridgeCoordinator struct {
 	steerTurnStarted func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerTurnOpened  func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerTurnBound   func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
-	steerTurnRevised func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerBridgeGone  func(marotte.ChatID)                       `wiring:"optional"`
 	steerKASSettled  func(marotte.ChatID)                       `wiring:"optional"`
 	// chatHasLiveRun keeps pushTurnOutcome from claiming the work is over while a launched run continues. Nil means none.
@@ -182,7 +181,6 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		steerTurnStarted: h.bus.steers.turnStarted,
 		steerTurnOpened:  h.bus.steers.turnOpened,
 		steerTurnBound:   h.bus.steers.turnBound,
-		steerTurnRevised: h.bus.steers.turnRevised,
 		steerBridgeGone:  h.bus.steers.bridgeGone,
 		steerKASSettled:  h.bus.steers.kasSettled,
 	}
@@ -435,7 +433,7 @@ func (bc *bridgeCoordinator) openGeneration(
 		loaded, err := bc.tryLoadSession(ctx, chatID, sb, so, held, stamp)
 		switch {
 		case loaded:
-			bc.settleResumed(ctx, lc, chatID, sb, err)
+			bc.settleResumed(ctx, lc, chatID, sb)
 			return
 		case err != nil:
 			bc.restoreUnservedModel(ctx, chatID, held)
@@ -495,14 +493,10 @@ func (bc *bridgeCoordinator) publishGeneration(ctx context.Context, chatID marot
 	return false
 }
 
-// settleResumed settles a generation that loaded its session, err being the replay's merge. Only
-// a published one resumes runs: a resume on a failed one would open the next one, which would fail
-// and resume again.
-func (bc *bridgeCoordinator) settleResumed(ctx context.Context, lc *chatLifecycle, chatID marotte.ChatID, sb *sharedBridge, err error) {
-	switch {
-	case err != nil:
-		bc.failGeneration(chatID, sb, err)
-	case bc.publishGeneration(ctx, chatID, sb) && bc.onSessionRehydrated != nil:
+// settleResumed publishes a generation that loaded its session. Only a published one resumes runs: a resume on a
+// failed one would open the next one, which would fail and resume again.
+func (bc *bridgeCoordinator) settleResumed(ctx context.Context, lc *chatLifecycle, chatID marotte.ChatID, sb *sharedBridge) {
+	if bc.publishGeneration(ctx, chatID, sb) && bc.onSessionRehydrated != nil {
 		bc.onSessionRehydrated(ctx, lc, chatID)
 	}
 }
@@ -666,7 +660,7 @@ func (bc *bridgeCoordinator) restoreUnservedModel(ctx context.Context, chatID ma
 
 // commitUnservedModel settles a held or load-dropped selection against the running model. The
 // effort survives only when the session runs the same model. An unknown running model writes no
-// entry: a model_switched with an empty To reads as a context reset.
+// entry: a model_switched with an empty To names no model.
 func (bc *bridgeCoordinator) commitUnservedModel(ctx context.Context, chatID marotte.ChatID, held unservedSelection, running marotte.ModelID) {
 	to := string(running)
 	if held.model == "" {
@@ -712,14 +706,16 @@ func (bc *bridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, cha
 	}))
 }
 
-// tryLoadSession loads so.SessionID for chatID. An error wraps ErrBridgeExited and keeps the chat's session for the
-// next open: the engine ended under the load and its one retry, or no engine became ready before ctx ended; one
-// wrapping ErrChatClosedDuringCall is the chat's close refusing the door's forward, which keeps it too. Every
-// other failure (a KAS refusal, the replay budget, an unavailable engine, a session still resident or closing)
-// returns loaded false with a nil error and detaches the chat, so the generation opens session/new.
+// tryLoadSession loads so.SessionID for chatID and reports loaded true only with a nil error, once the replay has
+// merged. An error keeps the chat's session for the next open: it wraps ErrBridgeExited when the engine ended under
+// the load and its one retry, under the replay, or before any engine became ready, wraps ErrChatClosedDuringCall
+// when the chat's close refused the door's forward, and otherwise is the replay's merge failing. A load KAS refuses
+// (the replay budget, an unavailable engine, a session still resident or closing included) and a load whose replay
+// restored none of the chat's turns (errReplayRestoredNothing) both return loaded false with a nil error after
+// retireSession, so the generation opens session/new.
 func (bc *bridgeCoordinator) tryLoadSession(
 	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, so *marotte.SessionOpts, held unservedSelection, stamp uint64,
-) (loaded bool, ready error) {
+) (loaded bool, err error) {
 	// Open the projection first: KAS replays inside the door. The forward attaches before the door writes; a failed
 	// load closed its session, and the generation still owns its entry (bridgeManager.removeIfBridge).
 	acpSessionID := so.SessionID
@@ -727,7 +723,7 @@ func (bc *bridgeCoordinator) tryLoadSession(
 	if bc.replayProjection != nil {
 		bc.replayProjection.OpenReplayProjection(ctx, chatID, acpSessionID, replayed)
 	}
-	session, gen, err := bc.loadOnEngine(ctx, chatID, sb, so, replayed, stamp)
+	session, gen, forwardDone, err := bc.loadOnEngine(ctx, chatID, sb, so, replayed, stamp)
 	err = closeCut(ctx, err)
 	if err != nil {
 		// A failed load must not keep a partial replay.
@@ -739,10 +735,24 @@ func (bc *bridgeCoordinator) tryLoadSession(
 		}
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
-		bc.detachSession(ctx, chatID)
+		bc.retireSession(ctx, chatID, marotte.ContextResetLoadFailed)
 		return false, nil
 	}
 	bc.markReplayLoaded(chatID, gen, session, replayed)
+	// The verdict comes before any fact is written from the session: a blank one must leave the record as the
+	// session/new replacing it finds it, or commitUnservedModel records an unserved model twice.
+	switch verdict := replayed.wait(bc.lifecycle.shutdownCtx); {
+	case errors.Is(verdict, errReplayRestoredNothing):
+		if closeErr := closeBlankLoad(ctx, session, forwardDone); closeErr != nil {
+			return false, closeErr
+		}
+		bc.retireSession(ctx, chatID, marotte.ContextResetSessionMissing)
+		return false, nil
+	case verdict != nil:
+		return false, verdict
+	case !session.Open():
+		return false, fmt.Errorf("%w: the session ended during its replay", marotte.ErrBridgeExited)
+	}
 	title := session.SessionTitle()
 	bc.catalog.setModes(session.Modes())
 	bc.catalog.SetModels(session.Models())
@@ -763,17 +773,36 @@ func (bc *bridgeCoordinator) tryLoadSession(
 	bc.commitUnservedModel(ctx, chatID, held, session.ModelID())
 	reassertUserName(ctx, chatID, session, renameTo)
 	sb.setIdle()
-	// The generation is ready only once its replay merged.
-	return true, replayed.wait(bc.lifecycle.shutdownCtx)
+	return true, nil
+}
+
+// closeBlankLoad closes the blank session a lost record's load produced (KAS keeps its blank record) and waits for
+// its forward to exit. It must run while the generation is still starting: the forward's exit then reads the close
+// as the generation's own, not as the session ending under the prompt's open turn (bridgeManager.removeIfBridge).
+func closeBlankLoad(
+	ctx context.Context, session engineSession, forwardDone <-chan struct{},
+) error {
+	if err := session.Close(ctx); err != nil && session.Open() {
+		return fmt.Errorf("close the blank session a lost record loaded: %w", err)
+	}
+	if forwardDone == nil {
+		return nil
+	}
+	select {
+	case <-forwardDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // loadOnEngine runs chatID's session/load and reports the forward attachment its lane position is comparable within
-// (replay_drain.go). A load the engine's end failed is still KAS's to load (design 4.5.3), so it runs again on the next
-// engine, once the first attempt's forward has folded what it replayed, into a fresh projection.
+// (replay_drain.go), and the channel that attachment's forward closes on exit. A load the engine's end failed is still
+// KAS's to load (design 4.5.3), so it runs again on the next engine, once the first attempt's forward has folded what
+// it replayed, into a fresh projection.
 func (bc *bridgeCoordinator) loadOnEngine(
 	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, so *marotte.SessionOpts, replayed *sessionSettle, stamp uint64,
-) (session engineSession, gen uint64, err error) {
-	var forwardDone <-chan struct{}
+) (session engineSession, gen uint64, forwardDone <-chan struct{}, err error) {
 	attach := func(s engineSession) error {
 		g, attachErr := bc.goForward(ctx, chatID, s, stamp)
 		if attachErr != nil {
@@ -786,7 +815,7 @@ func (bc *bridgeCoordinator) loadOnEngine(
 	}
 	session, engineGen, err := bc.engine.loadSessionAfter(ctx, 0, so, attach)
 	if !errors.Is(err, marotte.ErrBridgeExited) || engineGen == 0 {
-		return session, gen, err
+		return session, gen, forwardDone, err
 	}
 	slog.Info("the agent engine ended under a session load; loading again on the next engine",
 		"chat_id", chatID, "acp_session", so.SessionID, "generation", engineGen)
@@ -800,21 +829,45 @@ func (bc *bridgeCoordinator) loadOnEngine(
 		bc.replayProjection.OpenReplayProjection(ctx, chatID, so.SessionID, replayed)
 	}
 	session, _, err = bc.engine.loadSessionAfter(ctx, engineGen, so, attach)
-	return session, gen, err
+	return session, gen, forwardDone, err
 }
 
-// detachSession blanks chatID's session id after a load that failed other than by the engine's end, so the
-// generation opens session/new. The session stays in the chain: blanking the id is what makes the reaper sweep its
-// transcript.
-func (bc *bridgeCoordinator) detachSession(ctx context.Context, chatID marotte.ChatID) {
+// retireSession blanks chatID's session id so its next open runs session/new, then records the context reset. It is
+// the one place a chat leaves a session the agent no longer holds. RecordSession keeps the retired id in the chain,
+// so the reaper keeps its transcript.
+func (bc *bridgeCoordinator) retireSession(ctx context.Context, chatID marotte.ChatID, cause marotte.ContextResetCause) {
+	var retired string
 	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
-		if !ex {
+		if !ex || c.ACPSessionID == "" {
 			return false
 		}
+		retired = c.ACPSessionID
 		c.RecordSession("")
 		return true
 	}); err != nil {
 		slog.Error("clear stale acp_session_id", "chat_id", chatID, "error", err)
+		return
+	}
+	if retired != "" {
+		bc.recordContextReset(ctx, chatID, retired, cause)
+	}
+}
+
+// recordContextReset appends one context_reset with cause between turns when the chat still shows turns sessionID
+// was sent: the agent holds nothing above it. A chat holding none of them lost nothing it shows.
+func (bc *bridgeCoordinator) recordContextReset(ctx context.Context, chatID marotte.ChatID, sessionID string, cause marotte.ContextResetCause) {
+	ctx = durable.Context(ctx)
+	entries, err := bc.chatStore.All(ctx, chatID)
+	if err != nil {
+		slog.Error("context reset: read the chat's log", "chat_id", chatID, "error", err)
+		return
+	}
+	if !holdsTurnsOf(entries, nil, sessionID) {
+		return
+	}
+	if err := translate.AppendBetweenTurns(ctx, broadcastFunc(bc.broadcast), bc.chatStore, chatID,
+		marotte.EntryKindContextReset, "", marotte.EntryContextReset{Cause: cause}); err != nil {
+		slog.Error("context reset: record the entry between turns", "chat_id", chatID, "cause", cause, "error", err)
 	}
 }
 
@@ -854,9 +907,6 @@ func applyLoadedSessionFacts(c *marotte.Chat, facts acpSessionFacts, title strin
 	// An absent catalog keeps the previous set (ApplyServedModels is false for empty).
 	marotte.ApplyServedModels(c, facts.Catalog())
 	dropped = dropUnservedModel(c)
-	if v := facts.SummarizationThreshold(); v > 0 {
-		c.Usage.SummarizationThresholdPct = v
-	}
 	return reconcileUserName(c, title, facts.SessionTitleSetByUser()), dropped
 }
 
@@ -1043,10 +1093,9 @@ func awaitForwardExit(ctx context.Context, exit <-chan struct{}) bool {
 
 // refreshForRetry abandons the session that answered nothing, as one lease on the prompt's entry sb: release it (when
 // sb still holds it and nobody else owns its end), wait for its forward, close the turns it hosted `interrupted`, and
-// blank the record's session id while it still names that session; nothing else is written, since the empty turn
-// already closed `outcome: empty`. A context check precedes each step, and a step skipped for a cut answers the cut,
-// so a close that commits during it leaves the rest to its teardown. The detach is the line: a close committed before
-// the closure's check keeps the id, and one after it is ordered after the refresh.
+// detach the record from it (detachRetried). A context check precedes each step, and a step skipped for a cut answers
+// the cut, so a close that commits during it leaves the rest to its teardown. The detach is the line: a close
+// committed before the closure's check keeps the id, and one after it is ordered after the refresh.
 func (bc *bridgeCoordinator) refreshForRetry(ctx context.Context, chatID marotte.ChatID, sb *sharedBridge) error {
 	return sb.use(ctx, func(ctx context.Context, s engineSession) error {
 		cut := func() error { return fmt.Errorf("empty-turn refresh: %w", context.Cause(ctx)) }
@@ -1061,21 +1110,32 @@ func (bc *bridgeCoordinator) refreshForRetry(ctx context.Context, chatID marotte
 			}
 			bc.closeTurnOnBridgeDeath(ctx, chatID, marotte.TurnOutcomeInterrupted)
 		}
-		sessionID := string(s.SessionID())
-		_, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
-			if ctx.Err() != nil || !ex || c.ACPSessionID != sessionID {
-				return false
-			}
-			// Detach, don't forget: the abandoned session holds the chat's earlier transcript and must stay in
-			// the chain or the reaper sweeps it.
-			c.RecordSession("")
-			return true
-		})
+		err := bc.detachRetried(ctx, chatID, string(s.SessionID()))
 		if ctx.Err() != nil {
 			return cut()
 		}
 		return err
 	})
+}
+
+// detachRetried blanks the record's session id while it still names sessionID and ctx stands, then records the
+// empty_retry context reset when the chat shows turns that session was sent (recordContextReset).
+func (bc *bridgeCoordinator) detachRetried(ctx context.Context, chatID marotte.ChatID, sessionID string) error {
+	retired := false
+	_, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
+		if ctx.Err() != nil || !ex || c.ACPSessionID != sessionID {
+			return false
+		}
+		// Detach, don't forget: the abandoned session holds the chat's earlier transcript and must stay in the chain
+		// or the reaper sweeps it.
+		c.RecordSession("")
+		retired = true
+		return true
+	})
+	if err == nil && retired && ctx.Err() == nil {
+		bc.recordContextReset(ctx, chatID, sessionID, marotte.ContextResetEmptyRetry)
+	}
+	return err
 }
 
 type replayProjector interface {
@@ -1109,19 +1169,7 @@ func (bc *bridgeCoordinator) goRunForward(chatID marotte.ChatID, bridge engineSe
 // read-loop position against it.
 func (bc *bridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge engineSession, att forwardAttachment) {
 	gen := att.gen
-	ch := bridge.NotifCh()
-	// The generation keeps a straggler from the previous bridge off a restarted counter.
-	for n := range ch {
-		bc.recordPool(n.Msg)
-		bc.consumeFrame(chatID, bridge, gen, n)
-		if bc.observeLaneFrame != nil {
-			bc.observeLaneFrame(bridge, n.Seq, n.Msg)
-		}
-		// Settle a replay projection here: this goroutine folds the frames, so only its position is comparable (replay_drain.go).
-		if bc.replayProjection != nil {
-			bc.replayProjection.SettleReplayProjection(chatID, drainPoint{gen: gen, seq: n.Seq}, false)
-		}
-	}
+	bc.drainLane(chatID, bridge, gen)
 	// No frame can advance the position now: seal the settle so a load missing its trailing frames still completes.
 	if bc.replayProjection != nil {
 		bc.replayProjection.SettleReplayProjection(chatID, drainPoint{gen: gen}, true)
@@ -1158,16 +1206,27 @@ func (bc *bridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge engineSessi
 	// Last, for every end (tab close, reload, engine end): KAS's own dispose releases them on a session that is
 	// already closed, and no later session can see, read or stop them.
 	bc.releaseTerminals(chatID, bridge)
+	// A reload that reuses the session id may already serve it from a new bridge, whose view this must keep.
+	if sid := bridge.SessionID(); sid != "" {
+		if cur := bc.bridge.mgr.get(chatID); cur == nil || cur.SessionID() != sid {
+			bc.mcpRegistry.dropSession(bc.lifecycle.shutdownCtx, sid)
+		}
+	}
 	att.done()
 }
 
-// recordPool keeps the engine's MCP pool from any session's status copy.
-func (bc *bridgeCoordinator) recordPool(msg *marotte.RPCResponse) {
-	if msg == nil || msg.ID != nil || msg.Method != methodV3MCPStatus {
-		return
-	}
-	if pool, ok := translate.ReadMCPPool(msg); ok {
-		bc.mcpRegistry.setPool(pool)
+// drainLane consumes bridge's frames until its lane closes. The generation keeps a straggler from the previous
+// bridge off a restarted counter.
+func (bc *bridgeCoordinator) drainLane(chatID marotte.ChatID, bridge engineSession, gen uint64) {
+	for n := range bridge.NotifCh() {
+		bc.consumeFrame(chatID, bridge, gen, n)
+		if bc.observeLaneFrame != nil {
+			bc.observeLaneFrame(bridge, n.Seq, n.Msg)
+		}
+		// Settle a replay projection here: this goroutine folds the frames, so only its position is comparable (replay_drain.go).
+		if bc.replayProjection != nil {
+			bc.replayProjection.SettleReplayProjection(chatID, drainPoint{gen: gen, seq: n.Seq}, false)
+		}
 	}
 }
 
@@ -1320,6 +1379,37 @@ func (bc *bridgeCoordinator) repairEffort(ctx context.Context, chatID marotte.Ch
 	})
 }
 
+// healWorkflowLaunch hands the workflowLaunch value a chat's own config_option_update offers to its session, which
+// asserts the setting's value: the option first appears when a chat moves into a mode that offers it.
+func (bc *bridgeCoordinator) healWorkflowLaunch(next sessionUpdateHandler) sessionUpdateHandler {
+	return func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr translate.FrameAttribution) {
+		next(ctx, chatID, raw, attr)
+		if !attr.ChatOwned() {
+			return
+		}
+		reported, offered := marotte.WorkflowLaunchReported(raw)
+		if !offered {
+			return
+		}
+		sb := bc.bridgeFor(chatID)
+		if sb == nil {
+			return
+		}
+		bc.lifecycle.inflight.Go(func() {
+			hctx, cancel := bc.lifecycle.derivedContext()
+			defer cancel()
+			err := sb.use(hctx, func(ctx context.Context, s engineSession) error { return s.HealWorkflowLaunch(ctx, reported) })
+			switch {
+			case errors.Is(err, marotte.ErrChatClosedDuringCall):
+				slog.Debug("workflow use heal stood down: the chat closed", "chat_id", chatID)
+			case err != nil:
+				slog.Warn("workflow use not re-applied after the session reported another value",
+					"chat_id", chatID, "reported", logsafe.Field(reported), "error", err)
+			}
+		})
+	}
+}
+
 // healEffort wraps the config-option handler to re-assert the chosen level when a
 // config_option_update reports another: the turn that opened the session never reaches repairEffort, and
 // that is when KAS's first-prompt model pin moves the tier. Latched once per bridge: the
@@ -1463,7 +1553,7 @@ func (bc *bridgeCoordinator) EffortSeedable(model string, level marotte.EffortLe
 
 // PersistEffortChange records a reader-asked tier change as a model_switched entry with
 // From == To (marotte.EntryModelSwitched). Writes no header field. An empty model writes
-// nothing (the renderer reads an empty To as `Context reset`), nor does an unstarted chat.
+// nothing (a model_switched with an empty To names no model), nor does an unstarted chat.
 func (bc *bridgeCoordinator) PersistEffortChange(ctx context.Context, chatID marotte.ChatID, model string, level marotte.EffortLevel) {
 	if model == "" {
 		return
@@ -1565,14 +1655,13 @@ func (bc *bridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID mar
 	bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerPromptFailure, Stop: stop, Reason: reason, Kind: kind, Turn: turnID, Seq: seq})
 }
 
-// WireTurnStart handles the engine's turn_start bracket: it binds a pending prompt turn already sent, closes the
-// own turn the bracket supersedes (bindPending), or opens a wire_turn_start turn.
-// The bind is provisional; the first agentInitiated frame revises it (ReviseTurnBinding).
-func (bc *bridgeCoordinator) WireTurnStart(ctx context.Context, chatID marotte.ChatID) {
-	bound, lost := bc.turns.bindPending(ctx, chatID)
+// WireTurnStart handles the engine's turn_start bracket: it binds the sent prompt turn whose id the bracket's tag
+// echoes, closes the own turn the bracket supersedes (bindPending), or opens a wire_turn_start turn.
+func (bc *bridgeCoordinator) WireTurnStart(ctx context.Context, chatID marotte.ChatID, frame translate.TurnStartFrame) {
+	bound, lost := bc.turns.bindPending(ctx, chatID, frame.Tag)
 	for lost != nil {
 		bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerBracketLost, Turn: lost.ID, Claimed: lost})
-		bound, lost = bc.turns.bindPending(ctx, chatID)
+		bound, lost = bc.turns.bindPending(ctx, chatID, frame.Tag)
 	}
 	if bound != "" {
 		if bc.steerTurnBound != nil {
@@ -1580,7 +1669,7 @@ func (bc *bridgeCoordinator) WireTurnStart(ctx context.Context, chatID marotte.C
 		}
 		return
 	}
-	bc.openWireTurn(ctx, chatID, true)
+	bc.openWireTurn(ctx, chatID, frame.KASTurnID, true)
 }
 
 // WireTurnEnd handles the engine's turn_end bracket. It is a no-op, never a phantom turn, when no own turn is open
@@ -1595,7 +1684,7 @@ func (bc *bridgeCoordinator) TurnFoldTarget(ctx context.Context, chatID marotte.
 	if log, ok := bc.turns.foldTarget(chatID); ok {
 		return log
 	}
-	t := bc.openWireTurn(ctx, chatID, false)
+	t := bc.openWireTurn(ctx, chatID, "", false)
 	if t == nil {
 		return nil
 	}
@@ -1615,45 +1704,6 @@ func (bc *bridgeCoordinator) PromptTurn(chatID marotte.ChatID) (*turnlog.Turn, b
 // AppendBetweenTurns files a lane-less entry after the newest turn's close.
 func (bc *bridgeCoordinator) AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) ([]*marotte.Entry, error) {
 	return bc.chatStore.AppendBetweenTurns(ctx, chatID, e)
-}
-
-// ReviseTurnBinding acts on a frame proving the open turn is the agent's own
-// (`agentInitiated` rides content frames only): it opens the agent turn as own via
-// openLocked and drops the prompt's turn back to pending. Sealed entries stay put.
-func (bc *bridgeCoordinator) ReviseTurnBinding(ctx context.Context, chatID marotte.ChatID) {
-	var agent *activeTurn
-	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
-		pre := lc.revisableLocked()
-		if pre == nil {
-			return nil
-		}
-		opened, err := bc.chatStore.OpenTurn(ctx, chatID, &chat.TurnSpec{Source: marotte.TurnOpenNameWireTurnStart}, nil)
-		if err != nil {
-			return err
-		}
-		model := bc.turnOpenModel(ctx, chatID)
-		log := turnlog.Open(opened.ID, bc.chatStore.Sink(chatID))
-		if model != "" {
-			log.SetModel(model)
-		}
-		agent = lc.openLocked(chatID, opened, marotte.TurnSourceWireTurnStart, model, log)
-		lc.reviseLocked(pre, agent)
-		return nil
-	})
-	if err != nil {
-		slog.Warn("an agent-initiated frame could not open the agent's turn", "chat_id", chatID, "error", err)
-		return
-	}
-	if agent == nil {
-		return
-	}
-	if bc.steerTurnRevised != nil {
-		bc.steerTurnRevised(chatID, agent.ID)
-	}
-	bc.announceTurnOpened(ctx, chatID, agent)
-	if err := bc.chatStore.WriteCounters(ctx, chatID); err != nil {
-		slog.Warn("turn opened but the header's counters did not follow", "chat_id", chatID, "turn", agent.ID, "error", err)
-	}
 }
 
 // closeTurnOnBridgeDeath closes everything the session hosted: the chat's own and pending
@@ -1728,29 +1778,6 @@ func (bc *bridgeCoordinator) recordSteer(ctx context.Context, chatID marotte.Cha
 		marotte.EntryKindSteer, steerID, steer); err != nil {
 		slog.Warn("a steer was not recorded between turns", "chat_id", chatID, "steer", steerID, "error", err)
 	}
-}
-
-// InterruptTurn records why kiro-cli abandoned the named turn and trips that turn's own prompt call so the failure
-// path finalizes it; the cause is first-wins on that turn. The bridge stays alive. A turn that closed, or one with
-// no prompt call, is not a failure: no other turn is ever reached.
-func (bc *bridgeCoordinator) InterruptTurn(chatID marotte.ChatID, turnID, reason string) {
-	cancel, ok := bc.turns.interruptTurn(chatID, turnID, marotte.InterruptCause(reason))
-	if !ok {
-		slog.Debug("interrupt turn: the turn closed or another cause claimed it",
-			"chat_id", chatID, "turn", turnID, "reason", reason)
-		return
-	}
-	tripPromptCall(chatID, turnID, cancel)
-}
-
-// tripPromptCall cancels an interrupted turn's own prompt call; nil is a turn with none, which only records its cause.
-func tripPromptCall(chatID marotte.ChatID, turnID string, cancel context.CancelCauseFunc) {
-	if cancel == nil {
-		slog.Debug("interrupt turn: the turn has no prompt call", "chat_id", chatID, "turn", turnID)
-		return
-	}
-	// No cause, so the turn concludes `interrupted`.
-	cancel(nil)
 }
 
 func extractStopReason(resp *marotte.RPCResponse) marotte.StopReason {

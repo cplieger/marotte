@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -56,19 +57,19 @@ type fakeBridge struct {
 	modelID         string
 	effort          string
 	// observedEffort is the level the SESSION reported, not the one asked for.
-	observedEffort   string
-	thinking         string
-	observedThinking string
-	currentMode      string
-	// summarizationPct is 0 by default, a fresh bridge's answer for an omitted threshold.
-	summarizationPct      float64
+	observedEffort        string
+	thinking              string
+	observedThinking      string
+	currentMode           string
 	catalog               []marotte.SessionModel
 	modes                 []marotte.SessionMode
 	models                []marotte.SessionModel
 	sessionTitle          string
 	sessionTitleSetByUser bool
-	calls                 []string
-	notifies              []string
+	// policyErrors is what the door's _meta.policyErrors reported.
+	policyErrors []marotte.PolicyErrorItem
+	calls        []string
+	notifies     []string
 	// wire is every request and notification in write order (writeRequest, Notify).
 	wire []string
 	// abandonedAt is, per blocked method whose caller gave up, how many frames the wire held when it did.
@@ -76,6 +77,8 @@ type fakeBridge struct {
 	// notifyParams holds each Notify's params as JSON, index-aligned with notifies.
 	notifyParams            []string
 	contentCollectionWrites []string
+	// workflowLaunchHeals is every value HealWorkflowLaunch was handed, in call order.
+	workflowLaunchHeals []string
 	// sessionOpts records what the most recent door was handed, engineOpts the engine it opened on.
 	sessionOpts *marotte.SessionOpts
 	engineOpts  *marotte.EngineOpts
@@ -103,7 +106,11 @@ type fakeBridge struct {
 	// counts, until releaseWithheld delivers them: a load that answered before its replay was read.
 	withholdReplay int
 	withheld       []*marotte.RPCResponse
-	mu             sync.Mutex
+	// abandoned is the session/prompt whose ctx ended after its write, as the real session records it, until a wait
+	// spends it; unanswered stays for answerAbandonedPrompt.
+	abandoned  *fakeAbandonedPrompt
+	unanswered *fakeAbandonedPrompt
+	mu         sync.Mutex
 	// writeMu is the engine's write lock: one frame at a time, a request's commit inside it.
 	writeMu sync.Mutex
 	// sendMu orders a send against the close: a real bridge reads no frame once stopped.
@@ -459,7 +466,7 @@ func (b *fakeBridge) callScript(
 	}
 	if rpcErr, ok := b.callRPCErrs[method]; ok {
 		b.mu.Unlock()
-		return &marotte.RPCResponse{Error: rpcErr}, nil
+		return refusedCall(rpcErr)
 	}
 	res := json.RawMessage(`{"stopReason":"end_turn"}`)
 	if method == methodKiroWorkflowList {
@@ -494,7 +501,7 @@ func (b *fakeBridge) callScript(
 		}
 	}
 	if refusal != nil {
-		return &marotte.RPCResponse{Error: refusal}, nil
+		return refusedCall(refusal)
 	}
 	if failure != nil {
 		return nil, failure
@@ -510,6 +517,12 @@ func (b *fakeBridge) callScript(
 			}
 			b.abandonedAt[method] = len(b.wire)
 			b.mu.Unlock()
+			if method == marotte.MethodPrompt {
+				b.mu.Lock()
+				b.abandoned = &fakeAbandonedPrompt{done: make(chan struct{})}
+				b.unanswered = b.abandoned
+				b.mu.Unlock()
+			}
 			return nil, ctx.Err()
 		}
 	}
@@ -522,6 +535,15 @@ func (b *fakeBridge) callScript(
 		deliver(f)
 	}
 	return &marotte.RPCResponse{Result: res}, nil
+}
+
+// refusedCall answers an in-band refusal as the engine's Call does (bridge.replyOutcome): the response and an error
+// wrapping its RPCError.
+func refusedCall(rpcErr *marotte.RPCError) (*marotte.RPCResponse, error) {
+	if rpcErr.Code == marotte.RPCCodeSessionBusy {
+		return &marotte.RPCResponse{Error: rpcErr}, fmt.Errorf("ACP error %d: %w: %w", rpcErr.Code, marotte.ErrSessionBusy, rpcErr)
+	}
+	return &marotte.RPCResponse{Error: rpcErr}, fmt.Errorf("ACP error %d: %w", rpcErr.Code, rpcErr)
 }
 
 // deliver stamps the next sequence and pushes, as the real read loop does.
@@ -538,6 +560,42 @@ func (b *fakeBridge) deliver(msg *marotte.RPCResponse) {
 	ch := b.notifCh
 	b.mu.Unlock()
 	ch <- marotte.Notification{Msg: msg, Seq: seq}
+}
+
+type fakeAbandonedPrompt struct {
+	done chan struct{}
+	seq  uint64
+}
+
+// answerAbandonedPrompt is KAS answering the abandoned prompt now, at the position delivered so far.
+func (b *fakeBridge) answerAbandonedPrompt() {
+	b.mu.Lock()
+	p := b.unanswered
+	b.unanswered = nil
+	seq := b.deliveredSeq
+	b.mu.Unlock()
+	if p == nil {
+		panic("fakeBridge: no abandoned prompt to answer")
+	}
+	p.seq = seq
+	close(p.done)
+}
+
+// AwaitAbandonedPrompt mirrors bridge.Session's: the record is spent by the first wait.
+func (b *fakeBridge) AwaitAbandonedPrompt(ctx context.Context) (uint64, bool) {
+	b.mu.Lock()
+	p := b.abandoned
+	b.abandoned = nil
+	b.mu.Unlock()
+	if p == nil {
+		return 0, false
+	}
+	select {
+	case <-p.done:
+		return p.seq, true
+	case <-ctx.Done():
+		return 0, false
+	}
 }
 
 // CallAt is Call plus the read loop position at which the response arrived.
@@ -796,13 +854,6 @@ func (b *fakeBridge) SupervisedApplied() bool {
 	return b.supervisedApplied
 }
 
-// AutoCompactionDisabled mirrors the real session: the value the last door SENT.
-func (b *fakeBridge) AutoCompactionDisabled() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.sessionOpts != nil && b.sessionOpts.DisableAutoCompaction
-}
-
 func (b *fakeBridge) ModelID() marotte.ModelID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -829,11 +880,10 @@ func (b *fakeBridge) SessionTitleSetByUser() bool {
 	return b.sessionTitleSetByUser
 }
 
-// SummarizationThreshold returns whatever a test set; zero is a fresh bridge's answer.
-func (b *fakeBridge) SummarizationThreshold() float64 {
+func (b *fakeBridge) PolicyErrors() []marotte.PolicyErrorItem {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.summarizationPct
+	return slices.Clone(b.policyErrors)
 }
 
 // Modes and Models are nil by default, a fresh bridge's answer for omitted fields.
@@ -901,6 +951,13 @@ func (b *fakeBridge) EnsureThinking(_ context.Context, choice string) error {
 	b.mu.Lock()
 	b.thinking = choice
 	b.calls = append(b.calls, "session/set_config_option thinking")
+	b.mu.Unlock()
+	return nil
+}
+
+func (b *fakeBridge) HealWorkflowLaunch(_ context.Context, reported string) error {
+	b.mu.Lock()
+	b.workflowLaunchHeals = append(b.workflowLaunchHeals, reported)
 	b.mu.Unlock()
 	return nil
 }
@@ -1015,4 +1072,15 @@ func (s *testChatStore) seed(tb testing.TB, id marotte.ChatID, fill func(c *maro
 // Forward runs one session's forward loop in the caller, taking the chat's forward attachment first.
 func (bc *bridgeCoordinator) Forward(chatID marotte.ChatID, bridge engineSession) {
 	bc.forwardAt(chatID, bridge, bc.turns.attachForwardNow(chatID))
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not met within 5s")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

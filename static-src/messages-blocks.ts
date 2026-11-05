@@ -13,7 +13,7 @@ import type {
   FileChange,
 } from "./types.js";
 import type { Turn, TurnOutcome } from "./turns.js";
-import { closeOfBody, entryUnion, isSubagentFallback, payloadOf } from "./turns.js";
+import { closeOfBody, entryUnion, payloadOf } from "./turns.js";
 import type { EventEntry } from "./messages-events.js";
 import {
   effectiveRunID,
@@ -1930,10 +1930,8 @@ function placeEntry(st: TurnRender, e: Entry, live: boolean, idx: GroupIndex): v
     case "model_routed":
     case "model_fallback":
     case "mode_switched":
-    case "turn_revert": {
-      if (isSubagentFallback(e)) {
-        return;
-      }
+    case "turn_revert":
+    case "context_reset": {
       const row = cbs.makeEvent(u);
       stampEntry(st, row, seq);
       appendEntry(st, container, row);

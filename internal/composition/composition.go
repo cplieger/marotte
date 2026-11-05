@@ -247,7 +247,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	sensitive := filebrowse.NewSensitive(cfg.ConfigDir)
 	agentDirs := settings.AgentDirs{Workspace: cfg.WorkDir, Config: cfg.ConfigDir}
 	fileHandler, err := filebrowse.New(sensitive, cfg.BrowseRoots,
-		wireToolsManifestHook(tools, h),
+		toolsManifestSaveHook(tools),
 		filebrowse.WithLiveRoots(func(ctx context.Context) []string {
 			granted, _, _ := agentDirs.Granted(ctx)
 			return granted
@@ -319,7 +319,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithAuthUnavailable(authReadiness.Unavailable),
 		server.WithConfigDir(cfg.ConfigDir),
 		server.WithSensitive(sensitive),
-		server.WithKASNode(cfg.KASNodePath),
+		server.WithKASNode(func() string { return cfg.KASLookup.Find(kiro.version()).Node }),
 		server.WithTabs(tabStore),
 		server.WithSpecApprovals(approvalStore),
 		server.WithWorkDir(cfg.WorkDir),

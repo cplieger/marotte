@@ -22,8 +22,12 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// Always .yaml (first in KAS's POLICY_FILENAMES, so it wins over any sibling .json).
-const filename = "permissions.yaml"
+// KAS reads the .yaml unless it is missing or blank, then the .json sibling. marotte writes the
+// .yaml only, so Load falls back to the .json and the first Save carries its content over.
+const (
+	filename     = "permissions.yaml"
+	jsonFilename = "permissions.json"
+)
 
 // Limits guarding hand-edited / API-supplied rule payloads so a pathological
 // input can't bloat the file or the CLI argv. Real rules are far smaller.
@@ -44,9 +48,53 @@ type Rule struct {
 	Exclude    []string `yaml:"exclude,omitempty"`
 }
 
-// File is the whole permissions.yaml document.
+// File is the whole permissions document. Rules is the one key marotte edits; every other
+// top-level key (KAS's `policies`, the TUI's `workspaceTrusted`) is kept as read and written back
+// by Save, since dropping one silently narrows grants or re-asks for workspace trust.
 type File struct {
-	Rules []Rule `yaml:"rules"`
+	Rules []Rule
+	// rest holds the other top-level key and value nodes, in file order.
+	rest []*yaml.Node
+}
+
+const rulesKey = "rules"
+
+// UnmarshalYAML splits the top-level mapping into Rules and the keys File does not model.
+func (f *File) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.ScalarNode && n.Tag == "!!null" {
+		return nil
+	}
+	if n.Kind != yaml.MappingNode {
+		return errNotAMapping
+	}
+	seen := make(map[string]struct{}, len(n.Content)/2)
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		key, val := n.Content[i], n.Content[i+1]
+		if _, dup := seen[key.Value]; dup {
+			return fmt.Errorf("%w: %q", errDuplicateKey, key.Value)
+		}
+		seen[key.Value] = struct{}{}
+		if key.Value == rulesKey {
+			if err := val.Decode(&f.Rules); err != nil {
+				return err
+			}
+			continue
+		}
+		f.rest = append(f.rest, key, val)
+	}
+	return nil
+}
+
+// MarshalYAML writes rules first, then every kept key in the order Load read it.
+func (f *File) MarshalYAML() (any, error) {
+	var rules yaml.Node
+	if err := rules.Encode(f.Rules); err != nil {
+		return nil, err
+	}
+	out := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	out.Content = append(out.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: rulesKey}, &rules)
+	out.Content = append(out.Content, f.rest...)
+	return out, nil
 }
 
 // Scope names marotte can write. Kiro/administration are read-only
@@ -61,6 +109,9 @@ const (
 	EffectAllow = "allow"
 	EffectDeny  = "deny"
 	EffectAsk   = "ask"
+	// EffectEvaluate hands a call to KAS's trust classifier; KAS skips the rule unless the engine runs
+	// with KIRO_TRUST_CLASSIFIER_MODE=enforce.
+	EffectEvaluate = "evaluate"
 )
 
 // suggestedCapabilities seeds the UI picker, its only job: a hand-copied snapshot of KAS's internal
@@ -92,17 +143,19 @@ func Capabilities() []string {
 const maxCapabilityLen = 128
 
 // Errors surfaced to the HTTP edge. There is no "unknown capability" error: the vocabulary is
-// KAS's. KAS 2.18.0 skips such a rule non-fatally and reports it in _kiro/policy/changed's `errors`
-// array (not _kiro/policy/error, which is fatal-only); translate/policy.go carries it to
-// permissions_changed and the client renders it.
+// KAS's. KAS skips such a rule non-fatally and reports it at the session door
+// (_meta.policyErrors) and in _kiro/policy/changed; GET /api/permissions carries the door's
+// report as load_errors and the client renders it.
 var (
 	errInvalidScope    = errors.New("scope must be user or workspace")
-	errInvalidEffect   = errors.New("effect must be allow, deny, or ask")
+	errInvalidEffect   = errors.New("effect must be allow, deny, ask, or evaluate")
 	errCapabilityShape = errors.New("capability must be a non-empty token with no control characters")
 	errTooManyRules    = errors.New("policy file has too many rules")
 	errPatternTooLong  = errors.New("match/exclude pattern too long")
 	errPatternInvalid  = errors.New("match/exclude pattern contains invalid characters")
 	errPatternEmpty    = errors.New("match/exclude list has no non-empty pattern")
+	errNotAMapping     = errors.New("the document must be a mapping of keys")
+	errDuplicateKey    = errors.New("duplicate top-level key")
 )
 
 // ValidScope reports whether scope is writable by marotte.
@@ -110,9 +163,20 @@ func ValidScope(scope string) bool {
 	return scope == ScopeUser || scope == ScopeWorkspace
 }
 
-// ValidEffect reports whether effect is allow/deny/ask.
+// ValidEffect reports whether effect is allow/deny/ask/evaluate.
 func ValidEffect(effect string) bool {
-	return effect == EffectAllow || effect == EffectDeny || effect == EffectAsk
+	return effect == EffectAllow || effect == EffectDeny || effect == EffectAsk || effect == EffectEvaluate
+}
+
+// PresetSourcePrefix starts the source KAS stamps on a rule resolved from a preset:
+// `preset:<id>` at session scope, `preset:<id> in <file>` for a file's `policies:` entry.
+const PresetSourcePrefix = "preset:"
+
+// Editable reports whether marotte's rule writer can change or remove a live rule: a writable
+// scope, an effect the writer knows, and a rule written under `rules:` rather than resolved from
+// a preset the file references.
+func Editable(scope, source, effect string) bool {
+	return ValidScope(scope) && ValidEffect(effect) && !strings.HasPrefix(source, PresetSourcePrefix)
 }
 
 // Roots are the two filesystem roots a permissions.yaml path resolves against. A struct because a
@@ -143,27 +207,25 @@ func PathFor(scope string, roots Roots) (string, error) {
 	}
 }
 
-// Load reads and parses a permissions file; a missing file yields an empty File. Parse failures and
-// oversize files are errors, so a hand-authored file is never clobbered. Through
-// atomicfile.OpenRegular: a FIFO at the name (the agent can write $HOME/.kiro) would block
-// os.ReadFile forever, the size is checked off the descriptor before reading, and a final-component
-// symlink is refused as Save refuses it.
+// Load reads and parses the permissions file KAS would read for path: path itself, or its
+// permissions.json sibling when path is a missing or blank permissions.yaml. Nothing to read
+// yields an empty File. Parse failures and oversize files are errors, so a hand-authored file is
+// never clobbered.
 func Load(path string) (*File, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", filename, err)
 	}
-	fh, _, err := atomicfile.OpenRegular(abs)
+	data, err := readPolicy(abs)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return &File{Rules: []Rule{}}, nil
-		}
 		return nil, err
 	}
-	defer func() { _ = fh.Close() }()
-	data, err := atomicfile.ReadBoundedFile(context.Background(), fh, maxPolicyFileSize)
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", filename, err)
+	name := filepath.Base(abs)
+	if strings.TrimSpace(string(data)) == "" && name == filename {
+		name = jsonFilename
+		if data, err = readPolicy(filepath.Join(filepath.Dir(abs), name)); err != nil {
+			return nil, err
+		}
 	}
 	if strings.TrimSpace(string(data)) == "" {
 		return &File{Rules: []Rule{}}, nil
@@ -173,16 +235,36 @@ func Load(path string) (*File, error) {
 	// here and then be silently dropped by the next Save — silent rule
 	// loss in a security policy file.
 	if err := yamlenv.CheckSingleDocument(data); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", filename, err)
+		return nil, fmt.Errorf("parse %s: %w", name, err)
 	}
 	var f File
 	if err := yaml.Unmarshal(data, &f); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", filename, err)
+		return nil, fmt.Errorf("parse %s: %w", name, err)
 	}
 	if f.Rules == nil {
 		f.Rules = []Rule{}
 	}
 	return &f, nil
+}
+
+// readPolicy returns abs's bytes, nil for a missing file. Through atomicfile.OpenRegular: a FIFO
+// at the name (the agent can write $HOME/.kiro) would block os.ReadFile forever, the size is
+// checked off the descriptor before reading, and a final-component symlink is refused as Save
+// refuses it.
+func readPolicy(abs string) ([]byte, error) {
+	fh, _, err := atomicfile.OpenRegular(abs)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer func() { _ = fh.Close() }()
+	data, err := atomicfile.ReadBoundedFile(context.Background(), fh, maxPolicyFileSize)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", filepath.Base(abs), err)
+	}
+	return data, nil
 }
 
 // Save writes the file atomically (temp → fsync → rename → dir-fsync) via

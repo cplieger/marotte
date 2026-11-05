@@ -26,7 +26,7 @@ func turnEndedBesideASteer(t *testing.T) (*steerHarness, *testChatStore, *fakeBr
 		return clearReply(s.kasHolds()), nil, true
 	}
 	id, _ := s.h.stagePromptTurn(t, "c1")
-	send(t, s.h, newTurnStartMsg(), newActivityMsg(true))
+	send(t, s.h, newPromptTurnStartMsg(id), newActivityMsg(true))
 	s.steer("steer-a", "keep building")
 	send(t, s.h, newTurnEndMsg("end_turn"))
 	s.h.coord.ReleaseTurn("c1", id)
@@ -235,7 +235,7 @@ func TestSteerTurnEnd_ANoticeOnlyContinuationKeepsItsNoticeUntilItReadsIt(t *tes
 		}
 		discard := marotte.ClientCommand{Type: marotte.CmdSteerClear, ChatID: "c1"}
 		id, _ := s.h.stagePromptTurn(t, "c1")
-		send(t, s.h, newTurnStartMsg(), newActivityMsg(true))
+		send(t, s.h, newPromptTurnStartMsg(id), newActivityMsg(true))
 		s.recs.SteerWaiting("c1", &marotte.SteerQueuedPayload{SteerID: "notify-1", Text: "a run finished", Origin: marotte.SteerOriginAgent})
 		send(t, s.h, newTurnEndMsg("end_turn"))
 		s.h.coord.ReleaseTurn("c1", id)
@@ -277,7 +277,7 @@ func turnEndedWithNothingUnread(t *testing.T) (*steerHarness, *fakeBridge) {
 		return clearReply(s.kasHolds()), nil, true
 	}
 	id, _ := s.h.stagePromptTurn(t, "c1")
-	send(t, s.h, newTurnStartMsg(), newActivityMsg(true))
+	send(t, s.h, newPromptTurnStartMsg(id), newActivityMsg(true))
 	send(t, s.h, newTurnEndMsg("end_turn"))
 	s.h.coord.ReleaseTurn("c1", id)
 	synctest.Wait()

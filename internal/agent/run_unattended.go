@@ -138,10 +138,22 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acp
 			"chat_id", chatID, "tool", name.tool, "subject", name.subject)
 		approve = false
 	}
-	// Refuse with the advertised reject option; Cancelled only when none is offered.
+	// Kiro's safety check did not clear the call and handed it to a person; approving it blind defeats the check.
+	classifierAsk := classifierHandedAsk(msgParams)
+	if approve && classifierAsk {
+		slog.Warn("unattended auto-approve: refusing, Kiro's safety check handed the request to a person",
+			"chat_id", chatID, "tool", name.tool, "subject", name.subject)
+		approve = false
+	}
+	// Refuse with the advertised reject option; Cancelled only when none is offered. A plan approval's note is
+	// kept by KAS and handed to the steps of the creator's next approved plan as the user's correction, so the
+	// floor's machine text goes on no plan.
 	outcome := marotte.PermissionOutcomeCancelled()
 	if opt := optionIDByKind(msgParams, optionKindRejectOnce); opt != "" {
 		outcome = marotte.PermissionOutcomeWithRejectionReason(opt, unattendedRejectionReason)
+		if planApprovalAsk(msgParams) {
+			outcome = marotte.PermissionOutcomeSelected(opt)
+		}
 	}
 	verb := outcomeRefused
 	if approve {
@@ -180,19 +192,28 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acp
 	}
 
 	// Surface it on the schedule row, or the run fails silently every night.
-	label := name.label()
-	reason := "needed approval for " + label + " with nobody watching. Add a permission rule to allow it"
-	if label == "" {
-		reason = "needed an approval with nobody watching. Add a permission rule to allow it"
-	}
-	if adminAsk {
-		// No workspace or user rule outranks an administrator one, so the usual remedy would be false.
-		reason = "your organization requires a person to approve " + label + ", and nobody was watching"
-		if label == "" {
-			reason = "your organization requires a person to approve this, and nobody was watching"
-		}
-	}
+	reason := unattendedRefusalReason(name.label(), adminAsk, classifierAsk)
 	rs.recordScheduleOutcome(ctx, run, schedule.Outcome{Status: schedule.StatusFailed, Reason: reason})
+}
+
+// unattendedRefusalReason is the schedule row's reason for a refused ask on label (empty when the ask names
+// nothing).
+// An administrator ask gets no rule remedy: no workspace or user rule outranks an administrator one.
+func unattendedRefusalReason(label string, adminAsk, classifierAsk bool) string {
+	switch {
+	case adminAsk && label == "":
+		return "your organization requires a person to approve this, and nobody was watching"
+	case adminAsk:
+		return "your organization requires a person to approve " + label + ", and nobody was watching"
+	case classifierAsk && label == "":
+		return "Kiro's safety check asked a person to approve a request with nobody watching. Approve it in a chat, or add a permission rule to allow it"
+	case classifierAsk:
+		return "Kiro's safety check asked a person to approve " + label + " with nobody watching. Approve it in a chat, or add a permission rule to allow it"
+	case label == "":
+		return "needed an approval with nobody watching. Add a permission rule to allow it"
+	default:
+		return "needed approval for " + label + " with nobody watching. Add a permission rule to allow it"
+	}
 }
 
 // watchUnattendedPause ends a scheduled run unattendedPauseBudget after this pause, unless an arm since resumed it.
@@ -366,6 +387,30 @@ func adminConsentAsk(params json.RawMessage) bool {
 		} `json:"_meta"`
 	}
 	return json.Unmarshal(params, &p) == nil && p.Meta.Kiro.Consent.Scope == consentScopeAdministration
+}
+
+// classifierHandedAsk keys on _meta.kiro.trustClassifier's presence, not its reason's prose: a tripped
+// breaker and a too-large action both mean the safety check did not clear the call.
+func classifierHandedAsk(params json.RawMessage) bool {
+	var p struct {
+		Meta struct {
+			Kiro struct {
+				TrustClassifier json.RawMessage `json:"trustClassifier"`
+			} `json:"kiro"`
+		} `json:"_meta"`
+	}
+	return json.Unmarshal(params, &p) == nil && len(p.Meta.Kiro.TrustClassifier) > 0 && string(p.Meta.Kiro.TrustClassifier) != "null"
+}
+
+func planApprovalAsk(params json.RawMessage) bool {
+	var p struct {
+		Meta struct {
+			Kiro struct {
+				ToolID string `json:"toolId"`
+			} `json:"kiro"`
+		} `json:"_meta"`
+	}
+	return json.Unmarshal(params, &p) == nil && p.Meta.Kiro.ToolID == translate.ToolIDUpdateWorkflow
 }
 
 // Absent or unreadable is off.

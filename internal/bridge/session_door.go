@@ -68,22 +68,23 @@ type sessionConfigChoice struct {
 // sessionCreated is the session/new and session/load result. _meta is KAS's session metadata spread flat on the
 // result, not under `_meta.kiro`. session/load returns no `sessionId`.
 type sessionCreated struct {
-	Modes     *sessionModes     `json:"modes"`
-	SessionID marotte.SessionID `json:"sessionId"`
-	Meta      struct {
+	Modes         *sessionModes         `json:"modes"`
+	SessionID     marotte.SessionID     `json:"sessionId"`
+	ConfigOptions []sessionConfigOption `json:"configOptions"`
+	Meta          struct {
 		// WorkflowsEnabled is KAS's resolved settings.workflows. A pointer because absent differs from false, and the
 		// failure is silent: the agent loses workflowChatTools with no error.
 		WorkflowsEnabled *bool `json:"workflowsEnabled"`
-		// ContextUsage carries the session's summarization threshold. Pointers because absent differs from 0, and absent
-		// keeps the previous value.
+		// ContextUsage carries the summarization threshold KAS resolved, read only to check it against the door's.
 		ContextUsage *struct {
 			SummarizationThreshold *float64 `json:"summarizationThreshold"`
 		} `json:"contextUsage"`
 		Title string `json:"title"`
+		// PolicyErrors are the rules KAS skipped or failed to load; absent when there are none.
+		PolicyErrors []marotte.PolicyErrorItem `json:"policyErrors"`
 		// TitleSetByUser is KAS's latch that the title is the user's and agent titles stop.
 		TitleSetByUser bool `json:"titleSetByUser"`
 	} `json:"_meta"`
-	ConfigOptions []sessionConfigOption `json:"configOptions"`
 }
 
 // mcpServers is always `[]`: KAS reads the user's servers from its own hot-reloading file (internal/mcp/kasfile.go),
@@ -94,14 +95,16 @@ func validIdent(s string) bool { return ids.ValidIdent(s) }
 // sessionSpawnOf is o's session door input.
 func sessionSpawnOf(o *marotte.SessionOpts) kascap.SessionSpawn {
 	return kascap.SessionSpawn{
-		MemoryMode:            o.Memory.Mode,
-		MemoryReflection:      o.Memory.Reflection,
-		SpecPlan:              o.Features.SpecPlan,
-		SpecAskClarification:  o.Features.SpecAskClarification,
-		WorkValidation:        o.Features.WorkValidation,
-		Workflows:             o.Features.Workflows,
-		Presets:               slices.Clone(o.Presets),
-		DisableAutoCompaction: o.DisableAutoCompaction,
+		MemoryMode:              o.Memory.Mode,
+		MemoryReflection:        o.Memory.Reflection,
+		SpecPlan:                o.Features.SpecPlan,
+		SpecAskClarification:    o.Features.SpecAskClarification,
+		WorkValidation:          o.Features.WorkValidation,
+		Workflows:               o.Features.Workflows,
+		Presets:                 slices.Clone(o.Presets),
+		DisableAutoCompaction:   o.DisableAutoCompaction,
+		AutoCompactionThreshold: o.AutoCompactionThreshold,
+		ProfileAgentTurns:       o.Role == marotte.SessionRoleChat,
 	}
 }
 
@@ -120,15 +123,16 @@ func (e *Engine) newSessionHandle(ctx context.Context, id marotte.SessionID, o *
 		prev := e.sessions[id]
 		if prev == nil {
 			s := &Session{
-				engine:    e,
-				lane:      newLane(),
-				closeDone: make(chan struct{}),
-				held:      make(chan struct{}),
-				gaveUp:    make(chan struct{}),
-				id:        id,
-				role:      o.Role,
-				spawn:     sessionSpawnOf(o),
-				state:     stateOpening,
+				engine:             e,
+				lane:               newLane(),
+				closeDone:          make(chan struct{}),
+				held:               make(chan struct{}),
+				gaveUp:             make(chan struct{}),
+				id:                 id,
+				role:               o.Role,
+				spawn:              sessionSpawnOf(o),
+				state:              stateOpening,
+				workflowLaunchWant: o.Features.WorkflowLaunch,
 			}
 			e.sessions[id] = s
 			e.lanesMu.Unlock()
@@ -205,7 +209,11 @@ func logDoorFailure(s *Session, phase string, err error) {
 func (s *Session) doorCall(
 	ctx context.Context, method, phase string, params any, late func(*marotte.RPCResponse),
 ) (*marotte.RPCResponse, uint64, error) {
-	resp, seq, abandoned, err := s.engine.send(ctx, s.lane, s.id, method, params, late, nil)
+	var lateAt func(*marotte.RPCResponse, uint64)
+	if late != nil {
+		lateAt = func(resp *marotte.RPCResponse, _ uint64) { late(resp) }
+	}
+	resp, seq, abandoned, err := s.engine.request(ctx, s.lane, s.id, method, params, lateAt, nil)
 	if err == nil {
 		return resp, seq, nil
 	}
@@ -270,6 +278,7 @@ func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach 
 	s.mu.Lock()
 	s.applySessionResultLocked(&result, "")
 	s.mu.Unlock()
+	s.recordWorkflowLaunch(resp.Result)
 	// Model and level rode _meta.kiro, so these repair only on a mismatch.
 	s.applyInitialModel(dctx, o.Model)
 	s.settleServedModel(dctx)
@@ -277,6 +286,7 @@ func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach 
 	s.applyThinking(dctx, o.Thinking)
 	s.applyInitialEffort(dctx, o.Effort)
 	s.applySupervised(dctx, o.Supervised)
+	s.applyWorkflowLaunch(dctx)
 	s.applyContentCollection(dctx)
 	// Fail closed when the budget expired inside the appliers: they are best-effort, and an expiry would silently leave
 	// the session on the wrong mode or model, or in autopilot for a supervised chat.
@@ -386,6 +396,7 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 		return nil, handshakeTimeout(err, "session resume", replayBudget)
 	}
 	s.adoptLoadedSession(o.Model, resp)
+	s.recordWorkflowLaunch(resp.Result)
 	s.mu.Lock()
 	s.loadSeq = seq
 	s.mu.Unlock()
@@ -395,6 +406,8 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 	s.applyInitialEffort(dctx, o.Effort)
 	// KAS's fork copies no `autopilot`, so a supervised chat's tangent would run in autopilot. A no-op when unsupervised.
 	s.applySupervised(dctx, o.Supervised)
+	// A chat created in another mode, or under another setting, never had the value applied.
+	s.applyWorkflowLaunch(dctx)
 	// A loaded session keeps its memory mode, but reflection has a live setter.
 	s.applyMemoryReflection(dctx, o.Memory.Reflection)
 	s.applyContentCollection(dctx)
@@ -510,8 +523,9 @@ func withClientSteering(params map[string]any, o *marotte.SessionOpts) map[strin
 	return params
 }
 
-// applyContentCollection asserts the content-collection value on a session door either way: kiro-cli starts KAS
-// opted in. Logged at Error, not fatal.
+// applyContentCollection asserts the content-collection value on a session door either way: KAS starts opted
+// in when kiro-cli's own switch was not written (agent.ContentSharer) or the runtime is unmanaged. Logged at
+// Error, not fatal.
 func (s *Session) applyContentCollection(ctx context.Context) {
 	if enabled, err := s.engine.assertContentCollection(ctx, s.id); err != nil {
 		slog.Error("content collection not applied; model requests from the agent engine may be opted in to content collection",
@@ -596,6 +610,15 @@ func (s *Session) applySupervised(ctx context.Context, supervised bool) {
 	s.mu.Unlock()
 }
 
+// applyWorkflowLaunch asserts the door's workflowLaunch value where the result offers the option at another value;
+// best-effort.
+func (s *Session) applyWorkflowLaunch(ctx context.Context) {
+	if err := s.ensureWorkflowLaunch(ctx); err != nil {
+		slog.Warn("workflow use not applied; the session keeps its own value",
+			"session_id", s.id, "want", s.workflowLaunchWant, "error", err)
+	}
+}
+
 // applyMemoryReflection sets the memoryReflection option to the preference; best-effort.
 func (s *Session) applyMemoryReflection(ctx context.Context, on bool) {
 	value := marotte.ConfigValueAutopilotOff
@@ -653,7 +676,8 @@ func (s *Session) applySessionResultLocked(r *sessionCreated, fallbackModel stri
 	}
 	s.sessionTitle = r.Meta.Title
 	s.titleSetByUser = r.Meta.TitleSetByUser
-	s.applyContextUsageLocked(r)
+	s.policyErrors = r.Meta.PolicyErrors
+	s.reportThresholdDisagreement(r)
 	s.reportWorkflowsDisagreement(r.Meta.WorkflowsEnabled)
 	s.applyModelConfigOptionLocked(r.ConfigOptions)
 	if s.modelID == "" {
@@ -661,14 +685,21 @@ func (s *Session) applySessionResultLocked(r *sessionCreated, fallbackModel stri
 	}
 }
 
-// applyContextUsageLocked records the summarization threshold, keeping the previous value when absent.
-func (s *Session) applyContextUsageLocked(r *sessionCreated) {
-	if r.Meta.ContextUsage == nil {
+// reportThresholdDisagreement logs when the session's summarization threshold differs from the one the door sent.
+// KAS answers a threshold it did not take (no enabled: true, a renamed member) with a silent 80, so this log is the
+// only runtime signal.
+func (s *Session) reportThresholdDisagreement(r *sessionCreated) {
+	sent := s.spawn.AutoCompactionThreshold
+	if sent <= 0 || r.Meta.ContextUsage == nil || r.Meta.ContextUsage.SummarizationThreshold == nil {
 		return
 	}
-	if v := r.Meta.ContextUsage.SummarizationThreshold; v != nil && *v > 0 {
-		s.summarizationPct = *v
+	resolved := *r.Meta.ContextUsage.SummarizationThreshold
+	if resolved == float64(sent) {
+		return
 	}
+	slog.Warn("session resolved a compaction threshold other than the one marotte sent; "+
+		"the chat compacts at a point its setting did not choose",
+		"sent", sent, "resolved", resolved)
 }
 
 // reportWorkflowsDisagreement logs when the session resolved settings.workflows differently from the door's

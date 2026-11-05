@@ -21,8 +21,6 @@ vi.mock("./picker.js", () => ({
 // Every export, because Browser Mode links ESM for real.
 vi.mock("./session-context.js", () => ({
   getLastEffortFor: (model: string) => (model === "" ? "" : staged.seed),
-  getCurrentModel: () => "",
-  setCurrentModel: vi.fn(),
   getLastModel: () => "",
   setLastModel: vi.fn(),
   restoreLastModel: vi.fn(),

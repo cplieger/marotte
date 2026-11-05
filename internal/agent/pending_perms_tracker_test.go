@@ -108,38 +108,47 @@ func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 	}
 }
 
-// A Stop drops its chat's own input asks only: another chat's, a run step's and every permission ask stay.
-func TestPendingPermsTracker_ClearInputs_DropsOnlyThatChatsOwnInputAsks(t *testing.T) {
+// A Stop's cancel lists the chat's own unclaimed asks of every kind, in ask order; ScopeChatAndRuns adds its runs'
+// step asks. Another chat's ask and a claimed one are never listed.
+func TestPendingPermsTracker_AskRefs_ListsTheScopesUnclaimedAsksInAskOrder(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
 	add := func(chatID marotte.ChatID, typ marotte.EventType, payload any) int64 {
 		return requestIDOf(t, tracker.add(0, marotte.NewEvent(typ, chatID, payload), nil))
 	}
-	dropped := add("chat-1", marotte.EventElicitationNeeded, marotte.ElicitationNeededPayload{})
-	kept := []int64{
-		add("chat-1", marotte.EventPermissionNeeded, marotte.PermissionNeededPayload{}),
-		add("chat-1", marotte.EventUserInputNeeded, marotte.UserInputNeededPayload{RunID: "wf-1"}),
-		add("chat-2", marotte.EventElicitationNeeded, marotte.ElicitationNeededPayload{}),
+	elicitation := add("chat-1", marotte.EventElicitationNeeded, marotte.ElicitationNeededPayload{})
+	permission := add("chat-1", marotte.EventPermissionNeeded, marotte.PermissionNeededPayload{})
+	step := add("chat-1", marotte.EventUserInputNeeded, marotte.UserInputNeededPayload{RunID: "wf-1"})
+	add("chat-2", marotte.EventElicitationNeeded, marotte.ElicitationNeededPayload{})
+	claimed := add("chat-1", marotte.EventUserInputNeeded, marotte.UserInputNeededPayload{})
+	if _, ok := tracker.takeIfPresent("chat-1", claimed, marotte.DecisionKindUserInput); !ok {
+		t.Fatal("Setup: the take lost on a fresh ask")
 	}
 
-	tracker.clearInputs("chat-1", command.ScopeChatSession)
-
-	var got []int64
-	for _, evt := range tracker.list("") {
-		got = append(got, requestIDOf(t, evt))
-	}
-	if slices.Contains(got, dropped) {
-		t.Errorf("List = %v after clearInputs, want the chat's own elicitation %d gone", got, dropped)
-	}
-	for _, id := range kept {
-		if !slices.Contains(got, id) {
-			t.Errorf("List = %v after clearInputs, want %d kept", got, id)
-		}
+	for name, tc := range map[string]struct {
+		scope command.CancelScope
+		want  []askRef
+	}{
+		"chat session": {scope: command.ScopeChatSession, want: []askRef{
+			{kind: marotte.DecisionKindElicitation, id: elicitation},
+			{kind: marotte.DecisionKindPermission, id: permission},
+		}},
+		"chat and runs": {scope: command.ScopeChatAndRuns, want: []askRef{
+			{kind: marotte.DecisionKindElicitation, id: elicitation},
+			{kind: marotte.DecisionKindPermission, id: permission},
+			{kind: marotte.DecisionKindUserInput, id: step},
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := tracker.askRefs("chat-1", tc.scope); !slices.Equal(got, tc.want) {
+				t.Errorf("askRefs = %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }
 
 // An empty chat id is not a wildcard.
-func TestPendingPermsTracker_ClearInputs_EmptyChatIDClearsNothing(t *testing.T) {
+func TestPendingPermsTracker_AskRefs_EmptyChatIDListsNothing(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
 	for _, id := range []int64{1, 2} {
@@ -147,10 +156,8 @@ func TestPendingPermsTracker_ClearInputs_EmptyChatIDClearsNothing(t *testing.T) 
 			marotte.ElicitationNeededPayload{}), nil)
 	}
 
-	tracker.clearInputs("", command.ScopeChatAndRuns)
-
-	if got := len(tracker.list("")); got != 2 {
-		t.Errorf("List(\"\") holds %d asks after clearInputs(\"\"), want 2", got)
+	if got := tracker.askRefs("", command.ScopeChatAndRuns); len(got) != 0 {
+		t.Errorf("askRefs(\"\") = %+v, want none", got)
 	}
 }
 
@@ -247,6 +254,40 @@ func TestPendingPermsTracker_TakeIfPresent_RefusesAnotherKindsAsk(t *testing.T) 
 	}
 	if _, _, offered := tracker.takePermissionOption("chat-3", id, "allow_once"); !offered {
 		t.Error("the permission ask was not left pending for its own answer")
+	}
+}
+
+// The elicitation answer is validated against the ask's schema before the claim, so the read
+// must leave the ask claimable and must not hand back another kind's or a claimed ask.
+func TestPendingElicitation_ReadsWithoutClaiming(t *testing.T) {
+	t.Parallel()
+	b := &bus{pendingPerms: newPendingPermsTracker()}
+	schema := &marotte.ElicitationRequestSchema{Properties: map[string]marotte.ElicitationPropertySchema{"branch": {Type: "string"}}}
+	elicit := requestIDOf(t, b.pendingPerms.add(1, marotte.NewEvent(marotte.EventElicitationNeeded, "chat-1",
+		marotte.ElicitationNeededPayload{Mode: "form", RequestedSchema: schema}), nil))
+	perm := requestIDOf(t, b.pendingPerms.add(2, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
+		marotte.PermissionNeededPayload{}), nil))
+	claimed := requestIDOf(t, b.pendingPerms.add(3, marotte.NewEvent(marotte.EventElicitationNeeded, "chat-1",
+		marotte.ElicitationNeededPayload{Mode: "form"}), nil))
+	if _, ok := b.pendingPerms.takeIfPresent("chat-1", claimed, marotte.DecisionKindElicitation); !ok {
+		t.Fatal("setup: could not claim the third ask")
+	}
+
+	got, ok := b.PendingElicitation("chat-1", elicit)
+	if !ok || got.RequestedSchema == nil || got.RequestedSchema.Properties["branch"].Type != "string" {
+		t.Errorf("PendingElicitation(elicitation) = %+v, %v, want the ask with its schema", got, ok)
+	}
+	if _, ok := b.PendingElicitation("chat-2", elicit); ok {
+		t.Error("PendingElicitation returned another chat's ask")
+	}
+	if _, ok := b.pendingPerms.takeIfPresent("chat-1", elicit, marotte.DecisionKindElicitation); !ok {
+		t.Error("the read claimed the ask: TakePendingPerm on it failed")
+	}
+	if _, ok := b.PendingElicitation("chat-1", perm); ok {
+		t.Error("PendingElicitation returned a permission ask")
+	}
+	if _, ok := b.PendingElicitation("chat-1", claimed); ok {
+		t.Error("PendingElicitation returned a claimed ask")
 	}
 }
 

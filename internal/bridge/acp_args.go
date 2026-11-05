@@ -1,5 +1,6 @@
 // Operator-supplied kiro-cli launch flags (MAROTTE_KIRO_ACP_ARGS). marotte emits --agent-engine and the sign-in backend's --auth-method,
-// refuses every flag that conflicts with them or that kiro-cli rejects on v3, and passes -v and future flags.
+// refuses every flag that conflicts with them, that kiro-cli rejects on v3 or that makes it exit instead of serving,
+// and passes -v and future flags.
 
 package bridge
 
@@ -18,6 +19,9 @@ const (
 	flagTrustTools      = "--trust-tools"
 	flagModel           = "--model"
 	flagEffort          = "--effort"
+	flagLogin           = "--login"
+	flagHelp            = "--help"
+	flagHelpShort       = "-h"
 )
 
 var valueBearing = map[string]bool{
@@ -68,7 +72,7 @@ const v3Refused = "kiro-cli refuses this alongside --agent-engine=v3 and exits b
 func refuseReason(name string) (reason string, refused bool) {
 	switch name {
 	case flagAgentEngine:
-		return "marotte is v3-only on the wire; the v2 handlers were removed, so v1/v2 would stall session/new", true
+		return "marotte is v3-only on the wire, and a v1 or v2 engine refuses the sign-in's --auth-method and exits before initialize", true
 	case flagAuthMethod, flagAuthMethodAlias:
 		return "marotte owns the sign-in, so the backend's declaration sets the auth method", true
 	case flagModel, flagEffort:
@@ -77,6 +81,10 @@ func refuseReason(name string) (reason string, refused bool) {
 		return v3Refused + "pick the role per chat with the mode pill instead", true
 	case flagTrustAll, flagTrustAllShort, flagTrustTools:
 		return v3Refused + "tool authorization is kiro-cli's Cedar policy; edit permissions.yaml (Settings → Permissions) instead", true
+	case flagLogin:
+		return "kiro-cli runs an interactive login and exits instead of starting the agent engine; sign in on the page instead", true
+	case flagHelp, flagHelpShort:
+		return "kiro-cli prints its help and exits instead of starting the agent engine", true
 	default:
 		return "", false
 	}

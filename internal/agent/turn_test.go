@@ -32,8 +32,8 @@ func openTestTurn(t *testing.T, reg *turnRegistry, chatID marotte.ChatID) *activ
 	return lc.openLocked(chatID, &marotte.Entry{ID: id}, marotte.TurnSourcePrompt, "", turnlog.Open(id, nil))
 }
 
-// TestTurnRegistry_InterruptIsFirstWinsPerTurn pins that first-wins because Cancel and kiro-cli's tool-use filter both write
-// the cause; id-scoped because on the bridge turn A's cause once survived into turn B.
+// TestTurnRegistry_InterruptIsFirstWinsPerTurn pins that first-wins because an engine end, a shutdown and a compaction reap
+// all write the cause; id-scoped because on the bridge turn A's cause once survived into turn B.
 func TestTurnRegistry_InterruptIsFirstWinsPerTurn(t *testing.T) {
 	reg := newTurnRegistry(nopTurnRecords{})
 	turn := openTestTurn(t, reg, "c1")

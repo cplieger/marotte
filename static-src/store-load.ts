@@ -237,7 +237,8 @@ function mergeTurn(page: TurnState, held: TurnState): TurnState {
 /** Commit a page's turns into the session's window, and answer whether the page speaks for the
  *  window's LEFT EDGE, which decides whose `has_more` is the answer. A newest page keeps the
  *  resident turns older than its own oldest — pages already fetched that the answer says nothing
- *  about — anchored on that turn id rather than on a count, so no overlap replaces. */
+ *  about — anchored on that turn id rather than on a count, so no overlap replaces. It also keeps
+ *  every turn seated during the flight that it does not carry: those opened after the read. */
 function applyPage(
   session: Session,
   page: PageTurns,
@@ -258,16 +259,8 @@ function applyPage(
   }
   const held = session.turns;
   const oldest = page.order[0];
-  const newest = page.order[page.order.length - 1];
   const anchor = oldest === undefined ? -1 : session.turn_order.indexOf(oldest);
-  const tail = newest === undefined ? -1 : session.turn_order.indexOf(newest);
   const kept = anchor > 0 ? session.turn_order.slice(0, anchor) : [];
-  const arrived =
-    tail >= 0
-      ? session.turn_order
-          .slice(tail + 1)
-          .filter((id) => !page.turns.has(id) && !heldAtRequest.has(id))
-      : [];
   const turns = new Map<string, TurnState>();
   for (const id of kept) {
     const state = held.get(id);
@@ -283,6 +276,8 @@ function applyPage(
     const prev = held.get(id);
     turns.set(id, prev === undefined ? state : mergeTurn(state, prev));
   }
+  // Against the built map, not `page.turns`, so a kept older turn is not seated twice.
+  const arrived = session.turn_order.filter((id) => !turns.has(id) && !heldAtRequest.has(id));
   for (const id of arrived) {
     const state = held.get(id);
     if (state !== undefined) {
@@ -698,8 +693,9 @@ export async function loadMessages(
     // landed: a prepended older page mounts its cards fresh.
     republishWindowToolCalls(chatID, page.order);
   }
-  // Before the read below, so it sees the server's own count.
-  session.turn_count = d.chat.turn_count;
+  // Before the read below, so it sees the server's own count. The header is as old as the page, so
+  // it never lowers the count below a turn a frame seated during the flight.
+  session.turn_count = Math.max(d.chat.turn_count, newestOrdinal(session));
   session.read_position = replyReadPosition(chatID, mark, d.chat.read_position);
   if (pageStartsWindow) {
     session.has_more = d.has_more;
@@ -944,4 +940,15 @@ function turnOrdinal(state: TurnState): number {
   }
   const payload = open.payload as { n?: unknown };
   return typeof payload.n === "number" ? payload.n : Number.MAX_SAFE_INTEGER;
+}
+
+/** The newest resident turn's ordinal, 0 when there is none or it cannot be read. */
+function newestOrdinal(session: Session): number {
+  const id = session.turn_order[session.turn_order.length - 1];
+  const state = id === undefined ? undefined : session.turns.get(id);
+  if (state === undefined) {
+    return 0;
+  }
+  const n = turnOrdinal(state);
+  return n === Number.MAX_SAFE_INTEGER ? 0 : n;
 }

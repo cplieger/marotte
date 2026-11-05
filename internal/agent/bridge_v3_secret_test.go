@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -286,4 +288,76 @@ func TestEngineSpawn_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore(t *test
 				"hands it credentials that go nowhere")
 		}
 	})
+}
+
+// secretRequest is one `_kiro/secret/*` request on the engine lane.
+func secretRequest(t *testing.T, id int64, method string, params map[string]string) *marotte.RPCResponse {
+	t.Helper()
+	return &marotte.RPCResponse{Method: method, ID: &id, Params: rawParams(t, params)}
+}
+
+// gotSecret is the value the engine lane answered request id with, nil for null.
+func gotSecret(t *testing.T, src *fakeEngineSource, id int64) *string {
+	t.Helper()
+	r, ok := src.lane.responseTo(id)
+	if !ok {
+		t.Fatalf("request %d was never answered", id)
+	}
+	if r.err != nil {
+		t.Fatalf("request %d answered %v, want a value", id, r.err)
+	}
+	body, ok := r.result.(secretGetBody)
+	if !ok {
+		t.Fatalf("request %d answered %T, want secretGetBody", id, r.result)
+	}
+	return body.Value
+}
+
+// TestSecretSignInStateDiesWithTheEngineGeneration pins that the runtime's own store answers the engine and that a
+// verifier stored by one engine generation is gone for the next, while the grant survives.
+func TestSecretSignInStateDiesWithTheEngineGeneration(t *testing.T) {
+	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
+	cs := newTestChatStore()
+	h := newRuntimeOn(context.Background(), t.TempDir(), src, cs, WithConfigDir(t.TempDir()))
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	settleBoot(t, h)
+
+	const verifierKey = "kiro.mcp.2a0a3d1d4672ffaff77fcbe95f21be210e2e444f1b152fb537773dd72a3ddf3a.verifier"
+	first := src.current()
+	before := len(src.lane.answeredIDs())
+	h.engineFrame(first, secretRequest(t, 1, methodKiroSecretStore, map[string]string{"key": probeKey, "value": "grant"}))
+	h.engineFrame(first, secretRequest(t, 2, methodKiroSecretStore, map[string]string{"key": verifierKey, "value": "pkce"}))
+	awaitAnswers(t, src, before, 1, 2)
+	for _, id := range []int64{1, 2} {
+		if r, _ := src.lane.responseTo(id); r.err != nil {
+			t.Fatalf("store %d answered %v, want {}", id, r.err)
+		}
+	}
+	before = len(src.lane.answeredIDs())
+	h.engineFrame(first, secretRequest(t, 3, methodKiroSecretGet, map[string]string{"key": verifierKey}))
+	awaitAnswers(t, src, before, 3)
+	if v := gotSecret(t, src, 3); v == nil || *v != "pkce" {
+		t.Fatalf("the verifier within its generation = %v, want %q", v, "pkce")
+	}
+
+	rec := httptest.NewRecorder()
+	h.handleEngineRestart(rec, httptest.NewRequest(http.MethodPost, "/api/engine/restart", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("restart = %d, want 202", rec.Code)
+	}
+	waitGenerations(t, src, 2)
+	waitReady(t, h.engine, 2)
+
+	next := src.current()
+	before = len(src.lane.answeredIDs())
+	h.engineFrame(next, secretRequest(t, 4, methodKiroSecretGet, map[string]string{"key": verifierKey}))
+	h.engineFrame(next, secretRequest(t, 5, methodKiroSecretGet, map[string]string{"key": probeKey}))
+	awaitAnswers(t, src, before, 4, 5)
+	if v := gotSecret(t, src, 4); v != nil {
+		t.Errorf("the next generation was served the previous one's verifier %q, want null", *v)
+	}
+	if v := gotSecret(t, src, 5); v == nil || *v != "grant" {
+		t.Errorf("the grant after a restart = %v, want %q", v, "grant")
+	}
 }

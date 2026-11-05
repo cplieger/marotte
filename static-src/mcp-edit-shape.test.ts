@@ -170,6 +170,7 @@ describe("an edit round trip", () => {
         args: ["-y", "@modelcontextprotocol/server-github"],
         wait_for_ready: true,
         timeout_ms: 120000,
+        version_negotiation: "legacy",
       }),
     },
     {
@@ -179,10 +180,11 @@ describe("an edit round trip", () => {
         url: "https://example.com/mcp",
         wait_for_ready: true,
         timeout_ms: 120000,
+        version_negotiation: "legacy",
       }),
     },
   ] as const)(
-    "keeps a $mode server's pasted wait_for_ready and timeout_ms across a form save",
+    "keeps a $mode server's pasted wait_for_ready, timeout_ms and version_negotiation across a form save",
     async ({ mode, server }) => {
       const { setEditing, initModal, editModeFor } = await import("./mcp-panels.js");
       expect(editModeFor(server)).toBe(mode);
@@ -197,6 +199,7 @@ describe("an edit round trip", () => {
       // Update replaces the whole record, so a body without them clears them.
       expect(saved.calls[0]?.body.wait_for_ready).toBe(true);
       expect(saved.calls[0]?.body.timeout_ms).toBe(120000);
+      expect(saved.calls[0]?.body.version_negotiation).toBe("legacy");
     },
   );
 
@@ -223,13 +226,14 @@ describe("an edit round trip", () => {
     expect(saved.calls[0]?.body.oauth_scopes).toEqual(["read", "write"]);
   });
 
-  it("shows a stored wait_for_ready and timeout_ms in the raw box", async () => {
+  it("shows a stored wait_for_ready, timeout_ms and version_negotiation in the raw box", async () => {
     const { setEditing, initModal, editModeFor } = await import("./mcp-panels.js");
     const server = record({
       command: "uvx",
       args: ["mcp-server-git"],
       wait_for_ready: true,
       timeout_ms: 90000,
+      version_negotiation: "legacy",
     });
     setEditing({ id: server.id });
     initModal({ mode: editModeFor(server), server });
@@ -238,6 +242,7 @@ describe("an edit round trip", () => {
     const parsed = JSON.parse(box?.value ?? "{}") as Record<string, unknown>;
     expect(parsed["wait_for_ready"]).toBe(true);
     expect(parsed["timeout_ms"]).toBe(90000);
+    expect(parsed["version_negotiation"]).toBe("legacy");
   });
 
   it("leaves the paste template in the box when adding", async () => {

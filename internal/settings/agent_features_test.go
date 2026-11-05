@@ -51,6 +51,12 @@ func TestValidateAgentPatch_RefusesValuesTheUICannotProduce(t *testing.T) {
 		{name: "workflows string", key: KeyWorkflowsEnabled, raw: `"off"`, wantErr: true},
 		{name: "model fallback on", key: KeyModelFallback, raw: `true`},
 		{name: "model fallback string", key: KeyModelFallback, raw: `"on"`, wantErr: true},
+		{name: "workflow use when asked", key: KeyWorkflowLaunch, raw: `"when-asked"`},
+		{name: "workflow use large tasks", key: KeyWorkflowLaunch, raw: `"large-tasks"`},
+		{name: "workflow use delegate all", key: KeyWorkflowLaunch, raw: `"delegate-all"`},
+		{name: "workflow use unknown", key: KeyWorkflowLaunch, raw: `"sometimes"`, wantErr: true},
+		{name: "workflow use empty", key: KeyWorkflowLaunch, raw: `""`, wantErr: true},
+		{name: "workflow use bool", key: KeyWorkflowLaunch, raw: `true`, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,6 +91,7 @@ func TestEffective_AgentCapabilityDefaults(t *testing.T) {
 		{"OutputStyle", d.OutputStyle, defaultOutputStyle},
 		{"TerminalCommandTimeoutMs", d.TerminalCommandTimeoutMs, defaultTerminalCommandTimeoutMs},
 		{"ModelFallback", d.ModelFallback, defaultModelFallback},
+		{"WorkflowLaunch", d.WorkflowLaunch, DefaultWorkflowLaunch},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -108,6 +115,10 @@ func TestEffective_AgentCapabilityDefaultsAreKiroCLIs(t *testing.T) {
 	// kiro-cli ships the refusal and availability fallback flags off.
 	if defaultModelFallback {
 		t.Error("defaultModelFallback = true, want false")
+	}
+	// KAS's own workflowLaunch default for a new session.
+	if DefaultWorkflowLaunch != "when-asked" {
+		t.Errorf("DefaultWorkflowLaunch = %q, want when-asked", DefaultWorkflowLaunch)
 	}
 	if defaultOutputStyle != OutputStyleDefault || defaultTerminalCommandTimeoutMs != 0 {
 		t.Errorf("style/timeout defaults = (%q, %d), want (default, 0)", defaultOutputStyle, defaultTerminalCommandTimeoutMs)
@@ -157,7 +168,11 @@ func TestEffective_AStoredValueOutsideTheVocabularyReadsAsTheDefault(t *testing.
 		KeyAutoDelegation:           json.RawMessage(`"on"`),
 		KeyOutputStyle:              json.RawMessage(`"concise"`),
 		KeyTerminalCommandTimeoutMs: json.RawMessage(`500`),
+		KeyWorkflowLaunch:           json.RawMessage(`"sometimes"`),
 	})
+	if got.WorkflowLaunch != DefaultWorkflowLaunch {
+		t.Errorf("WorkflowLaunch = %q, want the default %q", got.WorkflowLaunch, DefaultWorkflowLaunch)
+	}
 	if got.SpecPlanning != SpecPlanningOff {
 		t.Errorf("SpecPlanning = %q, want the default off", got.SpecPlanning)
 	}
@@ -176,7 +191,7 @@ func TestEffective_AStoredValueOutsideTheVocabularyReadsAsTheDefault(t *testing.
 	if got.TerminalCommandTimeoutMs != 0 {
 		t.Errorf("TerminalCommandTimeoutMs = %d, want 0 for a value under KAS's floor", got.TerminalCommandTimeoutMs)
 	}
-	for _, k := range []string{KeySpecPlanning, KeyWorkValidation, KeyAutoRouting, KeyTerminalCommandTimeoutMs} {
+	for _, k := range []string{KeySpecPlanning, KeyWorkValidation, KeyAutoRouting, KeyTerminalCommandTimeoutMs, KeyWorkflowLaunch} {
 		if !slices.Contains(rejected, k) {
 			t.Errorf("rejected = %v, want it to name %s", rejected, k)
 		}

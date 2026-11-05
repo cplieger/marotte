@@ -82,7 +82,6 @@ vi.mock("./actions/chat.js", () => ({ switchModel: { dispatch: vi.fn() } }));
 vi.mock("./reconcile.js", () => ({ reconcile: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
 vi.mock("./session-context.js", () => ({
-  setCurrentModel: vi.fn(),
   setLastModel: vi.fn(),
   getLastEffortFor: (model: string) =>
     model !== "" && Object.hasOwn(lastEffortByModel, model) ? (lastEffortByModel[model] ?? "") : "",

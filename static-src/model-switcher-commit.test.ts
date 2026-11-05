@@ -66,7 +66,6 @@ vi.mock("./actions/chat.js", async (importOriginal) => ({
 }));
 vi.mock("./session-context.js", async (importOriginal) => ({
   ...(await importOriginal<typeof SessionContext>()),
-  setCurrentModel: vi.fn(),
   setLastModel: vi.fn(),
   getLastEffortFor: () => "",
 }));

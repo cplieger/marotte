@@ -49,6 +49,28 @@ describe("the server list decoder", () => {
     expect(servers.get("srv-w")?.timeout_ms).toBe(120000);
   });
 
+  it("keeps a record's version_negotiation", async () => {
+    wire.body = {
+      servers: [
+        {
+          id: "srv-vn",
+          name: "older",
+          transport: "stdio",
+          enabled: true,
+          created_at: 1,
+          updated_at: 2,
+          command: "npx",
+          version_negotiation: "legacy",
+        },
+      ],
+    };
+    mcpState.refetchServers();
+    await vi.waitFor(() => {
+      expect(servers.get("srv-vn")).toBeDefined();
+    });
+    expect(servers.get("srv-vn")?.version_negotiation).toBe("legacy");
+  });
+
   it("keeps a record's oauth metadata URL and redirect", async () => {
     // The raw-JSON box shows the decoded record, so a dropped field would also be cleared by a raw-edit save.
     wire.body = {

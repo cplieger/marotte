@@ -32,8 +32,9 @@ func TestFeatures_TakesValidValuesAndDefaultsTheRest(t *testing.T) {
 		SpecPlan:             settings.SpecPlanningQuick,
 		SpecAskClarification: true,
 		WorkValidation:       settings.FeatureOff,
-		// Absent: workflows default on.
-		Workflows: true,
+		// Absent: workflows default on, at kiro-cli's own workflow use.
+		Workflows:      true,
+		WorkflowLaunch: marotte.WorkflowLaunchWhenAsked,
 	}
 	if session != wantSession {
 		t.Errorf("sessionFeatures() = %+v, want %+v", session, wantSession)
@@ -63,6 +64,27 @@ func TestFeatures_WorkflowsFollowsTheToggle(t *testing.T) {
 		if got := sessionFeatures(docAt(t, dir)).Workflows; got != tc.want {
 			t.Errorf("sessionFeatures(%s).Workflows = %v, want %v", tc.body, got, tc.want)
 		}
+	}
+}
+
+func TestSessionFeatures_WorkflowLaunchFollowsTheSetting(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"absent", `{}`, marotte.WorkflowLaunchWhenAsked},
+		{"stored", `{"workflow_launch": "delegate-all"}`, marotte.WorkflowLaunchDelegateAll},
+		{"invalid", `{"workflow_launch": "sometimes"}`, marotte.WorkflowLaunchWhenAsked},
+		{"workflows off", `{"workflows_enabled": false, "workflow_launch": "large-tasks"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeAgentSettings(t, dir, tc.body)
+			if got := sessionFeatures(docAt(t, dir)).WorkflowLaunch; got != tc.want {
+				t.Errorf("sessionFeatures(%s).WorkflowLaunch = %q, want %q", tc.body, got, tc.want)
+			}
+		})
 	}
 }
 

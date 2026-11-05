@@ -44,7 +44,6 @@ import type {
   TurnClosedPayload,
   ToolProgressPayload,
   CodeReferencesPayload,
-  PermissionsChangedPayload,
   PolicyErrorPayload,
   SafetyStatusPayload,
   SafetyPropertiesPayload,
@@ -104,7 +103,7 @@ export interface SSEPayloads {
   readonly spec_changed: SpecChangedPayload;
   readonly spec_approved: SpecApprovedPayload;
   readonly permission_needed: PermissionNeeded;
-  readonly permissions_changed: PermissionsChangedPayload;
+  readonly permissions_changed: undefined;
   readonly policy_error: PolicyErrorPayload;
   readonly elicitation_needed: ElicitationNeededPayload;
   readonly user_input_needed: UserInputNeededPayload;

@@ -61,6 +61,11 @@ type sessionInfoKiroBlock struct {
 	// because turn_end is a nested object and turn_start a flat `true`.
 	TurnStart *bool         `json:"turnStart"`
 	TurnEnd   *turnEndBlock `json:"turnEnd"`
+	// UserMessageTag rides turn_start: the tag of the prompt the turn runs, absent on an agent-initiated
+	// turn. TurnID and ExecutionID are KAS's ids for the turn (Vpe: turnId, else executionId).
+	UserMessageTag string `json:"userMessageTag"`
+	TurnID         string `json:"turnId"`
+	ExecutionID    string `json:"executionId"`
 	// UserMessageID is KAS's record id for the user message just persisted
 	// (`user_message_id_assigned`), once per non-agent-initiated prompt, before the model
 	// runs. The only channel: the `user_message_chunk` echo never reaches a single-client
@@ -79,12 +84,13 @@ type sessionInfoKiroBlock struct {
 	// spread one too, read from their blocks instead.
 	Message string `json:"message"`
 	modelFallbackFields
-	// RequestIDs, Throughput and Recoveries ride turn_completion FLAT beside Kind.
-	RequestIDs []string        `json:"requestIds"`
-	Throughput *turnThroughput `json:"throughput"`
-	Recoveries []string        `json:"recoveries"`
+	// RequestIDs and Recoveries ride turn_completion FLAT beside Kind.
+	RequestIDs []string `json:"requestIds"`
+	Recoveries []string `json:"recoveries"`
 	// ContextBreakdown rides turn_completion when the prompt asked for it (contextBreakdownFrom).
 	ContextBreakdown json.RawMessage `json:"contextBreakdown"`
+	// TTFT is kind turn_timing's first-output stamps.
+	TTFT *acpTurnTiming `json:"ttft"`
 	// PromptTurnSummaries is KAS's per-turn metering record, emitted just before the
 	// session/prompt response returns.
 	PromptTurnSummaries []promptTurnSummary `json:"promptTurnSummaries"`
@@ -101,12 +107,20 @@ func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*sessionInfoKiroShadow)(b)); err != nil {
 		return err
 	}
-	// The live frame also spreads every event field flat beside its nested block; those of
-	// display_error and interaction_resolved are read from the block, and a plan approval's
-	// flat `_meta` (its workflowPlan) is declined unread.
+	// The live frame spreads every event field flat beside its nested block, so most flat members
+	// repeat one read from the block: display_error's and interaction_resolved's fields, turn_end's
+	// stopReason and stopDetails, focus_update's title, a summarization's conversationSummary and
+	// truncated, an interaction's consentRound (read on the permission request). A plan approval's
+	// flat `_meta` (its workflowPlan) is declined unread; a live bracket's timestamp and
+	// boundarySource add nothing, the boundary being observed at the frame's own time. A
+	// context_usage's summarizationThreshold is the one marotte sent at spawn, and its breakdown a
+	// token estimate coarser than turn_completion's contextBreakdown.
 	censusMeta("session_info_update._meta.kiro", data, reflect.TypeFor[sessionInfoKiroShadow](),
 		"errorType", "retryErrorType", "toolCallId", "outcome", "selectedOption",
-		"interactionType", "question", "options", "agentSubtaskId", "status", "_meta")
+		"interactionType", "question", "options", "agentSubtaskId", "status", "_meta",
+		"stopReason", "stopDetails", "timestamp", "boundarySource",
+		"title", "conversationSummary", "truncated", "summarizationThreshold", "breakdown",
+		"consentRound")
 	return nil
 }
 
@@ -142,8 +156,10 @@ type promptTurnSummary struct {
 const meteringUnitCredit = "credit"
 
 // turnStarted marks a turn_start in both wake pairings: the workflow-message waker's and the chat's run completions.
-func (t *Translator) turnStarted(sc steerScope) {
-	t.wakes.turnStarted(t.bufferSession(sc))
+func (t *Translator) turnStarted(ctx context.Context, sc steerScope) {
+	if t.wakes.turnStarted(t.bufferSession(sc)) {
+		t.settleWaker(ctx, sc, wakeOpen)
+	}
 	if sc.run == "" {
 		t.wakeMem.turnStarted(sc.key)
 	}
@@ -161,7 +177,7 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	// execution is running. A step session's buffer is the step's own, so its frames go to its run.
 	sc := frameSteerScope(chatID, attr)
 	if u.Meta.Kiro.TurnStart != nil {
-		t.turnStarted(sc)
+		t.turnStarted(ctx, sc)
 	}
 	if t.handleSteeringUpdate(ctx, sc, &u) {
 		return
@@ -176,44 +192,55 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 		t.handleStepFrame(ctx, chatID, attr, &u.Meta.Kiro)
 		return
 	}
-	if h := u.Meta.Kiro.Hook; h != nil {
+	t.handleChatInfo(ctx, chatID, &u.Meta.Kiro)
+}
+
+// handleChatInfo routes a chat's own frame to the first handler its _meta.kiro shape names, context usage last.
+func (t *Translator) handleChatInfo(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) {
+	if k.Kind == infoKindTurnTiming {
+		if turn, ok := t.turns.OwnTurn(chatID); ok {
+			turn.NoteFirstOutput(firstOutputFrom(k.TTFT))
+		}
+		return
+	}
+	if h := k.Hook; h != nil {
 		t.handleHookUpdate(ctx, chatID, h)
 		return
 	}
-	if d := u.Meta.Kiro.DisplayError; d != nil {
+	if d := k.DisplayError; d != nil {
 		t.handleDisplayError(chatID, d)
 		return
 	}
-	// After the gate: a step's answer prompts on the STEP's session, so its id must not be
-	// stamped onto the launching chat's newest prompt row.
-	if id := u.Meta.Kiro.UserMessageID; id != "" {
+	// Only past the caller's step gate: a step's answer prompts on the STEP's session, so its id
+	// must not be stamped onto the launching chat's newest prompt row.
+	if id := k.UserMessageID; id != "" {
 		t.handleUserMessageID(ctx, chatID, id)
 		return
 	}
-	if u.Meta.Kiro.Kind == infoKindQueued {
-		t.handleSlotQueued(ctx, chatID, u.Meta.Kiro.ActiveSessionID)
+	if k.Kind == infoKindQueued {
+		t.handleSlotQueued(ctx, chatID, k.ActiveSessionID)
 		return
 	}
-	if t.handleTurnEvent(ctx, chatID, &u.Meta.Kiro) {
+	if t.handleTurnEvent(ctx, chatID, k) {
 		return
 	}
 	// Adoption rules for an agent focus title are focus.go's.
-	if f := u.Meta.Kiro.Focus; f != nil {
-		t.handleFocusUpdate(ctx, chatID, f, u.Meta.Kiro.Activity)
+	if f := k.Focus; f != nil {
+		t.handleFocusUpdate(ctx, chatID, f, k.Activity)
 		return
 	}
-	if s := u.Meta.Kiro.Summarization; s != nil && s.Status != "" {
+	if s := k.Summarization; s != nil && s.Status != "" {
 		t.handleV3Summarization(ctx, chatID, s)
 		return
 	}
 	// The only v3 channel that reliably carries the turn's credit spend and duration;
 	// usage_update.cost never arrived on the live 2.12.1 wire. Present, not non-empty: a turn
 	// that metered nothing sends [] and still carries its request ids and recoveries.
-	if u.Meta.Kiro.PromptTurnSummaries != nil {
-		t.persistTurnSummary(ctx, chatID, &u.Meta.Kiro)
+	if k.PromptTurnSummaries != nil {
+		t.persistTurnSummary(ctx, chatID, k)
 		return
 	}
-	t.handleContextUsage(ctx, chatID, &u.Meta.Kiro)
+	t.handleContextUsage(ctx, chatID, k)
 }
 
 func (t *Translator) handleStepFrame(ctx context.Context, chatID marotte.ChatID, attr FrameAttribution, k *sessionInfoKiroBlock) {
@@ -304,7 +331,7 @@ func (t *Translator) handleTurnEvent(ctx context.Context, chatID marotte.ChatID,
 	switch {
 	case k.TurnStart != nil:
 		t.endSlotWait(ctx, chatID, true)
-		t.bracket.WireTurnStart(ctx, chatID)
+		t.bracket.WireTurnStart(ctx, chatID, TurnStartFrame{KASTurnID: cmp.Or(k.TurnID, k.ExecutionID), Tag: k.UserMessageTag})
 		return true
 	case k.TurnEnd != nil:
 		t.endSlotWait(ctx, chatID, false)
@@ -370,7 +397,8 @@ var knownSessionInfoKinds = map[string]struct{}{
 }
 
 // logUnconsumedInfoKind reports a session_info_update nothing in the cascade consumed: a
-// kind absent from knownSessionInfoKinds at Warn (a probable KAS addition), else Debug.
+// kind absent from knownSessionInfoKinds once per process at Warn (a probable KAS
+// addition), a known one at Debug on every frame.
 func logUnconsumedInfoKind(chatID marotte.ChatID, kind string) {
 	if kind == "" {
 		return
@@ -382,8 +410,7 @@ func logUnconsumedInfoKind(chatID marotte.ChatID, kind string) {
 			"chat_id", chatID, "kind", safe)
 		return
 	}
-	slog.Warn("session_info_update: UNKNOWN kind, dropped — KAS may have added a sub-kind",
-		"chat_id", chatID, "kind", safe)
+	censusInfoKind(chatID, safe)
 }
 
 func (t *Translator) handleV3Summarization(ctx context.Context, chatID marotte.ChatID, s *v3Summarization) {
@@ -415,7 +442,6 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID marotte.Chat
 		turn.NoteTurnCompletion(&turnlog.Completion{
 			RequestIDs:       boundedIDs(k.RequestIDs),
 			Recoveries:       boundedIDs(k.Recoveries),
-			Throughput:       k.Throughput.summary(),
 			ContextBreakdown: contextBreakdownFrom(k.ContextBreakdown),
 		})
 	}
@@ -493,13 +519,15 @@ func materialPctDelta(prev, next float64) bool {
 	return math.Abs(next-prev) >= contextPctEpsilon
 }
 
-// configOptionUpdate is the v3 config_option_update payload: the live model/mode/effort
-// catalog. On v3 session/new returns no models, so this populates the model picker.
+// configOptionUpdate is the v3 config_option_update payload: every config option the session
+// offers, the model catalog among them. On v3 session/new returns no models, so this populates
+// the model picker.
 type configOptionUpdate struct {
 	ConfigOptions []configOption `json:"configOptions"`
 }
 
-// ID is the configId ("model" | "mode" | "effortLevel"); a select's choices may be grouped.
+// ID is the configId (mode, model, effortLevel, thinking, autopilot, memoryReflection,
+// contentCollection, workflowLaunch, outputStyle); a select's choices may be grouped.
 type configOption struct {
 	ID           string          `json:"id"`
 	CurrentValue json.RawMessage `json:"currentValue"`

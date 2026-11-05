@@ -1,22 +1,14 @@
-// Session context: the ambient model the user is currently composing with, and the reasoning-effort
-// level they last picked. Separated from app.ts so multiple modules can read/write without going
-// through the orchestrator.
+// Session context: the model and the reasoning-effort levels the user last picked, which a new chat
+// opens with. Separated from app.ts so multiple modules can read/write without going through the
+// orchestrator.
 
 import { patchSettings } from "./persist.js";
 
 class SessionContextController {
-  private currentModel = "auto";
   private lastModelCache = "auto";
   /** A model with no entry has nothing for a new chat to open with and falls through to that model's
    *  own default tier. */
   private lastEffortByModel: Record<string, string> = {};
-
-  getCurrentModel(): string {
-    return this.currentModel;
-  }
-  setCurrentModel(id: string): void {
-    this.currentModel = id;
-  }
 
   getLastModel(): string {
     return this.lastModelCache;
@@ -48,13 +40,6 @@ class SessionContextController {
 }
 
 const instance = new SessionContextController();
-
-export function getCurrentModel(): string {
-  return instance.getCurrentModel();
-}
-export function setCurrentModel(id: string): void {
-  instance.setCurrentModel(id);
-}
 
 export function getLastModel(): string {
   return instance.getLastModel();

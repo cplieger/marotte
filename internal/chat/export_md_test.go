@@ -303,8 +303,7 @@ func TestRenderChatMarkdown_StatesTheCutARevertRecorded(t *testing.T) {
 	}
 }
 
-// One kind, two triggers: a model move, an effort-only change, or the context reset an empty target means, mirroring
-// the transcript row.
+// One kind, two triggers: a model move or an effort-only change, mirroring the transcript row.
 func TestRenderChatMarkdown_SaysWhichModelSwitchedTriggerFired(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -346,10 +345,11 @@ func TestRenderChatMarkdown_SaysWhichModelSwitchedTriggerFired(t *testing.T) {
 			want:    "**Event: model_switched** opus-5 → sonnet-5, switched by KAS: unavailable",
 		},
 		{
-			name:     "context_reset",
-			payload:  marotte.EntryModelSwitched{From: "sonnet-5", To: "", Effort: "high"},
-			want:     "**Event: model_switched** context reset",
-			unwanted: []string{"→", "high"},
+			// A reset is its own kind, so an empty target never reads as one.
+			name:     "empty_target",
+			payload:  marotte.EntryModelSwitched{From: "sonnet-5", To: ""},
+			want:     "**Event: model_switched**",
+			unwanted: []string{"context reset"},
 		},
 	}
 
@@ -369,6 +369,18 @@ func TestRenderChatMarkdown_SaysWhichModelSwitchedTriggerFired(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRenderChatMarkdown_NamesAContextResetsCause(t *testing.T) {
+	entries, _ := chatOf(openTurn("t-1", 1, nil).
+		add("", "reset-1", marotte.EntryKindContextReset,
+			marotte.EntryContextReset{Cause: marotte.ContextResetSessionMissing}))
+
+	md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Reset"}, entries)
+
+	if want := "**Event: context_reset** session_missing\n\n"; !strings.Contains(md, want) {
+		t.Errorf("renderChatMarkdown over a context_reset missing %q\n---\n%s", want, md)
 	}
 }
 

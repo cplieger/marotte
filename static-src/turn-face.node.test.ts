@@ -17,6 +17,7 @@ function oneTurn(body: readonly Entry[]): Turn {
     ts: 1,
     outcome: "completed",
     rewindTo: undefined,
+    branchFrom: undefined,
   };
 }
 
@@ -177,6 +178,58 @@ describe("turnLastMessage", () => {
       text("a-say#2", "tail"),
     ]);
     expect(turnLastMessage(t)).toEqual(["head", "tail"]);
+  });
+
+  const applied = sealed("model_fallback", {
+    from: "opus-5",
+    to: "sonnet-5",
+    scope: "session",
+    trigger: "refusal",
+  });
+
+  it("carries the refused text and its continuation across an applied fallback", () => {
+    const t = oneTurn([
+      call("c1"),
+      sealed("tool_result", {}, { id: "c1:result" }),
+      text("a-say", "Here is the first half"),
+      applied,
+      text("b-say", " and the second half."),
+    ]);
+    expect(turnLastMessage(t)).toEqual(["Here is the first half", "and the second half."]);
+  });
+
+  it.each([
+    ["no target", { from: "opus-5", trigger: "availability", reason: "noServedTarget" }],
+    ["neither a target nor a reason", { from: "opus-5", trigger: "refusal" }],
+    ["a target", { from: "opus-5", to: "sonnet-5", trigger: "refusal", reason: "chainExhausted" }],
+  ])("stops at a declined fallback naming %s, after which nothing continues", (_, payload) => {
+    const t = oneTurn([text("a-say", "a"), sealed("model_fallback", payload), text("b-say", "b")]);
+    expect(turnLastMessage(t)).toEqual(["b"]);
+  });
+
+  it("reaches over a sub-agent's model_fallback, which the body does not draw", () => {
+    const t = oneTurn([
+      text("a-say", "before"),
+      sealed("model_fallback", {
+        from: "opus-5",
+        trigger: "refusal",
+        reason: "chainExhausted",
+        subagent: true,
+      }),
+      text("b-say", "after"),
+    ]);
+    expect(turnLastMessage(t)).toEqual(["before", "after"]);
+  });
+
+  it("stops at the tool call when the refused attempt wrote no prose", () => {
+    const t = oneTurn([
+      text("a-say", "a"),
+      call("c1"),
+      sealed("tool_result", {}, { id: "c1:result" }),
+      applied,
+      text("b-say", "b"),
+    ]);
+    expect(turnLastMessage(t)).toEqual(["b"]);
   });
 });
 

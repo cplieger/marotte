@@ -109,6 +109,7 @@ function foldedGroup(): HTMLElement {
       ts: 1,
       outcome: "completed",
       rewindTo: undefined,
+      branchFrom: undefined,
     },
     CHAT_ID,
     false,

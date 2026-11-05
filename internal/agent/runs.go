@@ -48,6 +48,10 @@ type Runs struct {
 	doorSettings func(context.Context) sessionSettings
 	// servedModels is GET /api/config-template's model list (Runtime.servedModels), for checkRunDefaults.
 	servedModels func(context.Context) ([]marotte.SessionModel, bool)
+	// dropMCPSessions ends the MCP views of a deleted run's step sessions (mcpRegistry.dropSessions).
+	dropMCPSessions func(context.Context, []marotte.SessionID)
+	// resetFailedMCP re-attempts the failed MCP servers before a scheduled run (mcpRegistry.resetFailedForLaunch).
+	resetFailedMCP func(context.Context)
 	// runEnded asks the retention purge for a pass when a run ends.
 	runEnded  func() `wiring:"optional"`
 	lifecycle *lifetime
@@ -82,8 +86,6 @@ type Runs struct {
 	// resumes serializes, per run, every resume marotte writes, so an automatic one reads the run after any other.
 	resumes *keylock.Set[string]
 	bounds  runBoundsState
-	// signals watches for KAS applying a recorded step signal early (run_signal_tripwire.go).
-	signals signalTripwire
 	// gate holds run work while the engine's sign-in cannot be answered (run_gate.go).
 	gate runGate
 	// cancelRetryBase is the refused-cancel ladder's first wait (retryTermination), a field because untracked
@@ -184,7 +186,7 @@ type runBroadcaster interface {
 // Run-scoped because a step's ask is keyed to the launching chat.
 type runPermClaimer interface {
 	TakePendingPermOn(origin acpResponder, acpID int64, settledBy marotte.SettledBy) (command.AskReply, bool)
-	ClearPendingPermsForRun(workflowID string)
+	ClearPendingPermsForRun(ctx context.Context, workflowID string)
 }
 
 // Runs exposes the run surface to the composition root (orphan sweep, schedule.Launcher).

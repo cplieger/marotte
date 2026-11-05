@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"slices"
 
 	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/pathinside/v2"
 )
 
 // validateConfig performs fail-fast checks so a misconfiguration is a clear startup error naming
@@ -32,8 +35,36 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 	} else if !info.IsDir() {
 		errs = append(errs, fmt.Errorf("KIRO_WORK_DIR=%q: not a directory", cfg.WorkDir))
 	}
+	if err := checkWorkDirOutsideConfig(cfg.WorkDir, cfg.ConfigDir); err != nil {
+		errs = append(errs, err)
+	}
 
 	return errors.Join(errs...)
+}
+
+// checkWorkDirOutsideConfig refuses a workspace that is or contains the config directory, compared
+// as written and as resolved: agents write anywhere in the workspace, and the config directory
+// holds the settings that set their own permissions and the Kiro sign-in.
+func checkWorkDirOutsideConfig(workDir, configDir string) error {
+	for _, work := range spellings(workDir) {
+		if slices.ContainsFunc(spellings(configDir), pathinside.Root(work).Contains) {
+			return fmt.Errorf("KIRO_WORK_DIR=%q is or contains KIRO_CONFIG_DIR=%q, so agents could edit their own permission settings and the Kiro sign-in", workDir, configDir)
+		}
+	}
+	return nil
+}
+
+// spellings is dir cleaned and, when it resolves elsewhere, resolved; an empty dir yields nothing.
+func spellings(dir string) []string {
+	if dir == "" {
+		return nil
+	}
+	clean := filepath.Clean(dir)
+	out := []string{clean}
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil && resolved != clean {
+		out = append(out, resolved)
+	}
+	return out
 }
 
 // checkDirWritable verifies dir exists, is a directory and accepts a real write via

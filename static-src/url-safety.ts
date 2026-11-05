@@ -3,7 +3,7 @@
 // app scheme. The server applies the same check; this is the client-side second layer.
 
 /** Returns true when `url` parses and uses the http or https scheme. */
-export function isSafeURL(url: string): boolean {
+export function isHttpURL(url: string): boolean {
   try {
     const u = new URL(url);
     return u.protocol === "http:" || u.protocol === "https:";

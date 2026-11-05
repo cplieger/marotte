@@ -53,6 +53,7 @@ vi.mock("./wire/decoders.gen.js", () => ({ decodeWhoamiResponse: vi.fn() }));
 // governance.ts reaches the SSE bus and its decoders, which the partial decoder mock above does not
 // carry; the lock painter has its own suite.
 vi.mock("./governance.js", () => ({
+  onGovernanceChange: vi.fn(),
   paintSettingLocks: vi.fn(),
   writeSwitch: (input: HTMLInputElement, value: boolean) => {
     input.checked = value;
@@ -885,16 +886,23 @@ describe("the automatic-compaction switch and slider", () => {
   const range = (): HTMLInputElement =>
     document.getElementById("auto-compact-pct") as HTMLInputElement;
   const row = (): HTMLElement => document.getElementById("auto-compact-row") as HTMLElement;
-  const warning = (): HTMLElement => document.getElementById("auto-compact-warning") as HTMLElement;
 
   beforeEach(() => {
     document.body.innerHTML = `
       <input type="checkbox" id="flag-auto-compaction">
       <div id="auto-compact-row">
         <output id="auto-compact-pct-value"></output>
-        <input type="range" id="auto-compact-pct" min="50" max="90" step="5">
-        <p id="auto-compact-warning"></p>
+        <input type="range" id="auto-compact-pct" min="50" max="80" step="5">
       </div>`;
+  });
+
+  it("ships a slider that stops at KAS's maximum threshold, 80", async () => {
+    const { default: page } = await import("../static/index.html?raw");
+    const doc = new DOMParser().parseFromString(page, "text/html");
+    const shipped = doc.getElementById("auto-compact-pct");
+    expect(shipped?.getAttribute("max")).toBe("80");
+    expect(shipped?.hasAttribute("aria-describedby")).toBe(false);
+    expect(doc.getElementById("auto-compact-warning")).toBeNull();
   });
 
   it("hides the slider while the switch is off and publishes the policy", async () => {
@@ -905,14 +913,10 @@ describe("the automatic-compaction switch and slider", () => {
     expect(compactionPolicy.value).toEqual({ enabled: false, pct: 70 });
   });
 
-  it.each([
-    [80, true],
-    [85, false],
-  ])("at %i the warning hidden is %s", (pct, hidden) => {
-    applyGeneralPanel(settingsPayload({ auto_compaction_enabled: true, auto_compact_pct: pct }));
+  it("shows the slider at the stored value while the switch is on", () => {
+    applyGeneralPanel(settingsPayload({ auto_compaction_enabled: true, auto_compact_pct: 75 }));
     expect(row().classList.contains("hidden")).toBe(false);
-    expect(range().value).toBe(String(pct));
-    expect(warning().classList.contains("hidden")).toBe(hidden);
+    expect(range().value).toBe("75");
   });
 
   it("writes the value on change and not while dragging", async () => {
@@ -973,7 +977,59 @@ describe("the agent-capability selects and the shell timeout", () => {
       <select id="auto-routing"><option value="">Default</option><option value="on">On</option><option value="off">Off</option></select>
       <select id="auto-delegation"><option value="">Default</option><option value="on">On</option><option value="off">Off</option></select>
       <input type="checkbox" id="flag-cloudformation-safety">
+      <input type="checkbox" id="flag-workflows">
+      <div id="workflow-launch-row">
+        <select id="workflow-launch"><option value="when-asked">Only when asked</option><option value="large-tasks">Only for large tasks</option><option value="delegate-all">As much as possible</option></select>
+      </div>
       <input type="number" id="shell-command-timeout">`;
+  });
+
+  const workflowLaunchRow = (): HTMLElement =>
+    document.getElementById("workflow-launch-row") as HTMLElement;
+
+  it("paints the stored Workflow use and shows its row only while Workflows is on", () => {
+    applyGeneralPanel(
+      settingsPayload({ workflows_enabled: true, workflow_launch: "delegate-all" }),
+    );
+    expect(sel("workflow-launch").value).toBe("delegate-all");
+    expect(workflowLaunchRow().classList.contains("hidden")).toBe(false);
+    applyGeneralPanel(
+      settingsPayload({ workflows_enabled: false, workflow_launch: "large-tasks" }),
+    );
+    expect(sel("workflow-launch").value).toBe("large-tasks");
+    expect(workflowLaunchRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("hides the Workflow use row while a lock pins Workflows off", async () => {
+    const { paintSettingLocks } = await import("./governance.js");
+    vi.mocked(paintSettingLocks).mockImplementationOnce(() => {
+      box("flag-workflows").checked = false;
+    });
+    applyGeneralPanel(settingsPayload({ workflows_enabled: true }));
+    expect(workflowLaunchRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("stores a Workflow use choice and follows the Workflows switch as it flips", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ workflows_enabled: true }));
+    vi.mocked(patchSettings).mockClear();
+    sel("workflow-launch").value = "large-tasks";
+    sel("workflow-launch").dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ workflow_launch: "large-tasks" });
+    box("flag-workflows").checked = false;
+    box("flag-workflows").dispatchEvent(new Event("change"));
+    expect(workflowLaunchRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("repaints the Workflow use row when governance moves the Workflows switch", async () => {
+    const { onGovernanceChange } = await import("./governance.js");
+    vi.mocked(onGovernanceChange).mockClear();
+    initRetention(settingsPayload({ workflows_enabled: false }));
+    const repaint = vi.mocked(onGovernanceChange).mock.lastCall?.[0];
+    expect(repaint, "a governance listener").toBeDefined();
+    box("flag-workflows").checked = true;
+    repaint?.({} as Parameters<NonNullable<typeof repaint>>[0]);
+    expect(workflowLaunchRow().classList.contains("hidden")).toBe(false);
   });
 
   it("seeds every select and shows the ask-first row only while spec planning is on", () => {

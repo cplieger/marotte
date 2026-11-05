@@ -65,7 +65,20 @@ type AlwaysAllowBlock string
 // match this command, so a saved rule would be a permanent no-op in permissions.yaml.
 const AlwaysAllowBlockUnparseable AlwaysAllowBlock = "unparseable"
 
-// MCPToolIdentity names the MCP server and tool behind a tool call or a permission request.
+// RejectionNote names which note a permission card offers with its reject_once option.
+// KAS hands either note to the model as the user's reason; on a plan approval it also
+// keeps the note and gives it to the steps of the next approved plan as a correction.
+type RejectionNote string
+
+const (
+	// RejectionNoteReason is an ordinary tool approval's note: why the user denies the call.
+	RejectionNoteReason RejectionNote = "reason"
+	// RejectionNotePlanEdits is a workflow plan approval's note: the edits the user wants.
+	RejectionNotePlanEdits RejectionNote = "plan_edits"
+)
+
+// MCPToolIdentity names the MCP server and tool KAS reports behind a permission request or a
+// tool call; both halves are set or the value is nil.
 type MCPToolIdentity struct {
 	ServerName string `json:"server_name"`
 	ToolName   string `json:"tool_name"`
@@ -90,10 +103,17 @@ type PermissionNeededPayload struct {
 	// Consent names what this ask is about, present when KAS sent it; an always answer
 	// saves a rule for this capability.
 	Consent *PermissionConsent `json:"consent,omitempty"`
+	// Command is the command a shell, hook or watch ask would run, absent on any other ask.
+	Command *PermissionCommand `json:"command,omitempty"`
 	// AlwaysAllowBlocked names why the card must not offer to persist a rule for this
 	// command. Empty means the offer stands.
-	AlwaysAllowBlocked AlwaysAllowBlock   `json:"always_allow_blocked,omitempty"`
-	Options            []PermissionOption `json:"options"`
+	AlwaysAllowBlocked AlwaysAllowBlock `json:"always_allow_blocked,omitempty"`
+	// RejectionNote names the note the card offers with reject_once; empty means none.
+	RejectionNote RejectionNote `json:"rejection_note,omitempty"`
+	// ClassifierNote is _meta.kiro.trustClassifier's reason: Kiro's safety check did not clear the
+	// call and handed it to a person. Unattended runs refuse such an ask.
+	ClassifierNote string             `json:"classifier_note,omitempty"`
+	Options        []PermissionOption `json:"options"`
 	// Locations are the workspace-relative paths the tool call touches.
 	Locations []string `json:"locations,omitempty"`
 	// Files is the turn's staged file list, present ONLY on a turn approval. Such an
@@ -109,9 +129,6 @@ type PermissionNeededPayload struct {
 	// AdminRequired marks an ask raised by the administrator's rules, which a
 	// person must answer: the card says so, and unattended runs refuse it.
 	AdminRequired bool `json:"admin_required,omitempty"`
-	// AcceptsRejectionReason marks an ask whose deny can carry a note for the
-	// agent: the ordinary tool approval offering a reject_once option.
-	AcceptsRejectionReason bool `json:"accepts_rejection_reason,omitempty"`
 }
 
 // PermissionConsent is what one permission ask is about. A compound command asks once per
@@ -126,6 +143,15 @@ type PermissionConsent struct {
 	// Subject and Folder can differ from them (controls replaced, cut at 512 bytes).
 	Resource       string `json:"-"`
 	FolderResource string `json:"-"`
+}
+
+// PermissionCommand is the command an ask would run, display-treated with its line breaks
+// kept: whole in Text, or past the cap its head in Text and its tail in Tail, with
+// OmittedBytes left out between them.
+type PermissionCommand struct {
+	Text         string `json:"text"`
+	Tail         string `json:"tail,omitempty"`
+	OmittedBytes int    `json:"omitted_bytes,omitempty"`
 }
 
 // PermissionWatch names the workflow run and node a watch command belongs to.
@@ -179,7 +205,8 @@ const (
 	// SettledByMoot means NOBODY answered and nobody had to: the question stopped being
 	// answerable. User and unattended both ASSERT an answer, so retiring a discarded ask under
 	// one of them would tell the reader their question was decided. A request KAS withdrew
-	// itself (interaction_resolved, outcome cancelled) carries it.
+	// itself (interaction_resolved, outcome cancelled) carries it, and so does an ask a Stop
+	// or a tab close answered with its kind's cancel.
 	SettledByMoot SettledBy = "moot"
 	// SettledByEnded means nobody answered and nobody now can: the session the ask arrived on
 	// ended, and an answer may only go back on that session. Separate from moot because the
@@ -282,8 +309,8 @@ type ErrorPayload struct {
 	Message string    `json:"message"`
 	// OpID is the client-minted op_id of the command this failure ends, when it carried one.
 	OpID string `json:"op_id,omitempty"`
-	// TurnScoped reports that this failure finalized a turn whose entry log now carries
-	// the same text durably, so the reason is already in that turn's card. A property of the EMISSION,
+	// TurnScoped reports that a turn's entry log now carries this failure's text durably, so the
+	// reason is already in that turn's card; the turn need not have ended. A property of the EMISSION,
 	// not of the Code: the recovery's reopen failure shares ErrCodeRecoveryFailed with
 	// the retry turn's abandon and closes no turn, so no per-code answer fits. Absent
 	// means NO, the safe direction — report the failure rather than trust an inline row

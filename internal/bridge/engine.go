@@ -52,14 +52,7 @@ const (
 // KAS ignores, rather than rejects, a block one level off.
 const metaKeyKiro = "kiro"
 
-// agentKiroCapabilities is the part of the backend's initialize advertisement marotte reads.
-type agentKiroCapabilities struct {
-	Logging          kasLogging
-	ExtensionMethods []string
-	ReplayMarking    bool
-}
-
-// kasLogging is initialize's logging block. Only the log directory is read.
+// kasLogging is initialize's agentCapabilities._meta.kiro.logging block, the one part of the advertisement marotte reads.
 type kasLogging struct {
 	LogDir string `json:"logDir"`
 }
@@ -94,8 +87,8 @@ const (
 // only by Exit, after Done.
 type ExitInfo struct {
 	Reason exitReason
-	// SidecarExit is the kiro-cli acp process's own status ("exit_code=N" or "signal=NAME"); its node child's status
-	// never reaches marotte, so it names no cause.
+	// SidecarExit is the kiro-cli acp process's own status ("exit_code=N" or "signal=NAME"). A node child's exit code
+	// passes through; a node child killed by a signal shows as exit_code=1, the code the relay's own errors exit with.
 	SidecarExit string
 	// SidecarSignal is the signal that ended the kiro-cli process before marotte signalled it, from a signalled wait
 	// status or the 128+N exit kiro-cli makes of a signal it catches (SIGTERM is 143); 0 when none did.
@@ -107,7 +100,8 @@ type ExitInfo struct {
 	HeapLimitMiB int
 	// JSHeapOOM: the engine's stderr carried Node's "JavaScript heap out of memory" line.
 	JSHeapOOM bool
-	// RelayWriteTimeout: the engine's stderr carried the relay's 2-second write timeout line.
+	// RelayWriteTimeout: the engine's stderr carried the relay's line for ending the session on a write to the node
+	// engine that stopped making progress.
 	RelayWriteTimeout bool
 }
 
@@ -137,7 +131,7 @@ type Engine struct {
 	// stdin is the process's write end, published atomically: startProcess assigns it, writeFrame writes, teardown and
 	// cmd.Cancel close it, on different goroutines.
 	stdin      atomic.Pointer[stdinPipe]
-	agentKiro  atomic.Pointer[agentKiroCapabilities]
+	kasLog     atomic.Pointer[kasLogging]
 	stdout     *frameReader
 	onDetach   func(DetachedSession)
 	engineLane *lane
@@ -289,8 +283,8 @@ func (e *Engine) StartLive() (ignoreFiles []string, terminalTimeoutMs int) {
 
 // KASLogDir returns the log directory the backend advertised at initialize, or "".
 func (e *Engine) KASLogDir() string {
-	if p := e.agentKiro.Load(); p != nil {
-		return p.Logging.LogDir
+	if p := e.kasLog.Load(); p != nil {
+		return p.LogDir
 	}
 	return ""
 }
@@ -378,39 +372,22 @@ func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 	return nil
 }
 
-func decodeAgentKiroCapabilities(result json.RawMessage) (agentKiroCapabilities, error) {
+// decodeKASLogging returns the zero value for any result it cannot decode: the block is diagnostic, so a malformed
+// advertisement must not fail the handshake.
+func decodeKASLogging(result json.RawMessage) kasLogging {
 	var envelope struct {
 		AgentCapabilities struct {
 			Meta struct {
-				Kiro json.RawMessage `json:"kiro"`
+				Kiro struct {
+					Logging kasLogging `json:"logging"`
+				} `json:"kiro"`
 			} `json:"_meta"`
 		} `json:"agentCapabilities"`
 	}
-	if err := json.Unmarshal(result, &envelope); err != nil {
-		return agentKiroCapabilities{}, err
+	if json.Unmarshal(result, &envelope) != nil {
+		return kasLogging{}
 	}
-	kiro := envelope.AgentCapabilities.Meta.Kiro
-	if len(kiro) == 0 || string(kiro) == "null" {
-		return agentKiroCapabilities{}, nil
-	}
-	var typed struct {
-		Logging          json.RawMessage `json:"logging"`
-		ExtensionMethods []string        `json:"extensionMethods"`
-		ReplayMarking    bool            `json:"replayMarking"`
-	}
-	if err := json.Unmarshal(kiro, &typed); err != nil {
-		return agentKiroCapabilities{}, err
-	}
-	// Diagnostic only: a malformed block must not fail the handshake.
-	var logging kasLogging
-	if len(typed.Logging) > 0 && json.Unmarshal(typed.Logging, &logging) != nil {
-		logging = kasLogging{}
-	}
-	return agentKiroCapabilities{
-		Logging:          logging,
-		ExtensionMethods: typed.ExtensionMethods,
-		ReplayMarking:    typed.ReplayMarking,
-	}, nil
+	return envelope.AgentCapabilities.Meta.Kiro.Logging
 }
 
 func (e *Engine) initialize(ctx context.Context) error {
@@ -418,8 +395,9 @@ func (e *Engine) initialize(ctx context.Context) error {
 	// Declared in internal/kascap. This is the connection door; the session door is built from the same table.
 	kiroMeta := kascap.Capabilities(&e.spawn)
 
-	// fs and terminal route file access and command execution through marotte. elicitation makes kiro-cli forward an
-	// MCP server's elicitation/create; without it the tool call stalls.
+	// fs and terminal route file access and command execution through marotte. No elicitation key: it advertises ACP's
+	// standard elicitation/create, which marotte does not serve, and KAS sends _kiro/mcp/elicitation in both modes
+	// without reading it.
 	resp, err := e.Call(ctx, methodInitialize, map[string]any{
 		"protocolVersion": 1,
 		"clientCapabilities": map[string]any{
@@ -437,9 +415,8 @@ func (e *Engine) initialize(ctx context.Context) error {
 			},
 			// terminal routes agent shell commands through marotte's terminal/* handlers, which own the pid, argv and output.
 			// Registering a client tool in KAS's CORE_IO_TOOL_IDS flips hasClientIOTools and silently unbounds ExecuteBash.
-			"terminal":    true,
-			"elicitation": map[string]any{"form": map[string]any{}},
-			"_meta":       map[string]any{metaKeyKiro: kiroMeta},
+			"terminal": true,
+			"_meta":    map[string]any{metaKeyKiro: kiroMeta},
 		},
 		"clientInfo": map[string]any{
 			"name": kascap.ClientName, "title": "Marotte for Kiro", "version": version.Build,
@@ -448,18 +425,13 @@ func (e *Engine) initialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("initialize: %w", err)
 	}
-	caps, err := decodeAgentKiroCapabilities(resp.Result)
-	if err != nil {
-		return fmt.Errorf("initialize result: %w", err)
-	}
-	e.agentKiro.Store(&caps)
+	logging := decodeKASLogging(resp.Result)
+	e.kasLog.Store(&logging)
 	// The engine answered, so it exists, and the relay still links it.
 	e.noteEngineGroups()
 	slog.Debug("ACP initialize RPC completed",
 		"version", version.Build,
 		"elapsed_ms", time.Since(initStart).Milliseconds(),
-		"extension_methods", len(caps.ExtensionMethods),
-		"replay_marking", caps.ReplayMarking,
 	)
 	return nil
 }

@@ -13,7 +13,7 @@ import {
   decodeWhoamiResponse,
 } from "./wire/decoders.gen.js";
 import type { LoginOptions, LoginResponse, WhoamiResponse } from "./wire/types.gen.js";
-import { isSafeUrl } from "./utils-url.js";
+import { isHttpMailtoOrRelativeURL } from "./utils-url.js";
 
 const controllers = new Map<HTMLElement, ModalController>();
 /** Open order; closeTopModal closes the last. */
@@ -350,7 +350,7 @@ function loginStartError(httpStatus: number, error: string): string {
 
 function showDeviceCode(status: HTMLDivElement, d: LoginResponse): void {
   status.replaceChildren(`Code: ${d.code}`, el("br"));
-  if (isSafeUrl(d.url)) {
+  if (isHttpMailtoOrRelativeURL(d.url)) {
     const link = el(
       "a",
       { href: d.url, target: "_blank", rel: "noopener" },

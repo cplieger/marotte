@@ -68,9 +68,12 @@ type MCPPrewarmPayload struct {
 }
 
 // MCPOAuthPayload is the payload for type="mcp_oauth_needed", emitted when kiro-cli reports a server failed for
-// want of sign-in. It carries no URL: the user starts a sign-in from the server's row.
+// want of sign-in, and again when a Sign in kiro-cli refused leaves it waiting. It carries no URL: the user starts a
+// sign-in from the server's row.
 type MCPOAuthPayload struct {
 	Server string `json:"server"`
+	// Error is why kiro-cli refused the last Sign in, absent when none was refused.
+	Error string `json:"error,omitempty"`
 }
 
 // MCPSignInOpenPayload is the payload for type="mcp_sign_in_open": kiro-cli opened URL, the consent page of the

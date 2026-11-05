@@ -20,6 +20,7 @@ function turn(id: string, outcome: TurnOutcome = "completed"): Turn {
     ts: 0,
     outcome,
     rewindTo: undefined,
+    branchFrom: undefined,
   };
 }
 

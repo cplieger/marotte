@@ -273,6 +273,18 @@
   padding-inline-start: calc(0.75rem + var(--tool-chev-box) + var(--sp-2));
 }
 
+.tool-classifier-badge {
+  flex-shrink: 0;
+  padding: 0.0625rem var(--sp-2);
+  border: 1px solid color-mix(in srgb, var(--c-green) 35%, transparent);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--c-green);
+  background: color-mix(in srgb, var(--c-green) 14%, transparent);
+  white-space: nowrap;
+}
+
 /* A claim-only card has no output region, so its offload link joins the claim row. */
 .tool-summary > .tool-offload-link {
   margin: 0 0.75rem var(--sp-2) calc(0.75rem + var(--tool-chev-box) + var(--sp-2));
@@ -1344,6 +1356,13 @@ a.subagent-header {
   overflow-wrap: anywhere;
 }
 
+.approval-omitted {
+  display: block;
+  color: var(--c-text-tertiary);
+  font-style: italic;
+  margin-block: var(--sp-1);
+}
+
 .approval-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1497,8 +1516,36 @@ a.subagent-header {
   font-size: var(--fs-md);
 }
 
+.elicitation-origin {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.elicitation-origin-server {
+  color: var(--c-text-secondary);
+  font-weight: var(--fw-medium);
+}
+
+.elicitation-link {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.elicitation-link-host {
+  font-weight: 600;
+  color: var(--c-text-primary);
+}
+
+.elicitation-link-href {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  overflow-wrap: anywhere;
+}
+
 .elicitation-url {
   align-self: flex-start;
+  margin-block-start: var(--sp-1);
   text-decoration: none;
 }
 
@@ -1542,6 +1589,26 @@ a.subagent-header {
 
 .elicitation-input.elicitation-invalid {
   border-color: var(--c-red);
+}
+
+/* A multi-select's fieldset reads as one field; its red edge mirrors the input's. */
+.elicitation-choices {
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  min-inline-size: 0;
+}
+
+.elicitation-choices.elicitation-invalid {
+  border-color: var(--c-red);
+}
+
+.elicitation-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--c-text-primary);
 }
 
 .elicitation-checkbox {

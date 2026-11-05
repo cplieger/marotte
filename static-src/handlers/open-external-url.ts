@@ -5,14 +5,14 @@
 import { onSSE } from "../bus.js";
 import { clearBannerCodes, GLOBAL_BANNER, showBanner } from "../banner-stack.js";
 import { renderOAuthRelay } from "../mcp-ui.js";
-import { isSafeURL } from "../url-safety.js";
+import { isHttpURL } from "../url-safety.js";
 
 const CODE = "open_external_url";
 
 let expiry: ReturnType<typeof setTimeout> | undefined;
 
 onSSE("open_external_url", (_chatID, p) => {
-  if (typeof p.url !== "string" || !isSafeURL(p.url)) {
+  if (typeof p.url !== "string" || !isHttpURL(p.url)) {
     return;
   }
   // expires_at is when KAS's callback listener closes, and the link with it; a replayed event keeps it.

@@ -18,13 +18,13 @@ vi.mock("./transport.js", () => ({
   newOpID: vi.fn(() => "op-test"),
 }));
 
-vi.mock("./session-context.js", () => ({
-  getCurrentModel: () => "claude",
-}));
 import { sendPromptTo } from "./chat-commands.js";
+import { setModel, setSessions } from "./store.js";
+import { makeSession } from "./__test-helpers__/model.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  setSessions([makeSession({ id: "chat1", model: "claude" })]);
 });
 
 // sendPromptTo dispatches once and maps the result to sent/queued/starting/failed; what
@@ -58,12 +58,25 @@ describe("sendPromptTo", () => {
     expect(result).toBe("starting");
   });
 
-  it("forwards explicit opts (model + attachments) to the action", async () => {
+  it("forwards explicit attachments to the action", async () => {
     mockSendPromptDispatch.mockResolvedValue("sent");
     const att = [{ path: "foo.ts", name: "foo.ts" }];
-    await sendPromptTo("chat1", "hello", { model: "gpt-5.5", attachments: att });
+    await sendPromptTo("chat1", "hello", { attachments: att });
     expect(mockSendPromptDispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ model: "gpt-5.5", attachments: att }),
+      expect.objectContaining({ attachments: att }),
+    );
+  });
+
+  it("carries the target chat's own model, not one picked in another chat", async () => {
+    mockSendPromptDispatch.mockResolvedValue("sent");
+    setSessions([
+      makeSession({ id: "chat-a", model: "claude" }),
+      makeSession({ id: "chat-b", model: "gpt-5.5" }),
+    ]);
+    setModel("chat-a", "claude-opus");
+    await sendPromptTo("chat-b", "hello");
+    expect(mockSendPromptDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ chatID: "chat-b", model: "gpt-5.5" }),
     );
   });
 

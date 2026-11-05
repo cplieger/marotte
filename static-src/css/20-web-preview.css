@@ -45,7 +45,7 @@
     border: 0;
     inline-size: var(--web-frame-w, 100%);
     block-size: var(--web-frame-h, 100%);
-    background: var(--c-preview-canvas);
+    background: var(--c-foreign-canvas);
     transform: scale(var(--web-scale, 1));
     transform-origin: 0 0;
   }

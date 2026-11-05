@@ -14,8 +14,6 @@ type bridgeManager struct {
 	// hostsLiveRun reports whether the chat's session hosts an open step turn of a chat-parented
 	// run; such a session is busy to a reload, since steps never take the prompt slot. Nil: never busy.
 	hostsLiveRun func(marotte.ChatID) bool
-	// revertStarting is told of every checkpoint revert a chat's session sends. Nil: nobody listens.
-	revertStarting func(chatID marotte.ChatID, session string)
 	// closeSession ends a session the registry let go of, off the caller's path.
 	closeSession func(engineSession)
 	// gates is the turn registry's life gate, which every door insert checks.
@@ -53,9 +51,6 @@ func (bm *bridgeManager) orInsertAt(
 		return existing, true, nil, nil
 	}
 	sb = newSharedBridge(life)
-	if notify := bm.revertStarting; notify != nil {
-		sb.revertStarting = func(session string) { notify(chatID, session) }
-	}
 	bm.bridges[chatID] = sb
 	return sb, false, nil, nil
 }

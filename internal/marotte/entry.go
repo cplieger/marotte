@@ -35,6 +35,7 @@ const (
 	EntryKindModelFallback    EntryKind = "model_fallback"
 	EntryKindModeSwitched     EntryKind = "mode_switched"
 	EntryKindTurnRevert       EntryKind = "turn_revert"
+	EntryKindContextReset     EntryKind = "context_reset"
 	EntryKindReconciled       EntryKind = "reconciled"
 	EntryKindTurnClose        EntryKind = "turn_close"
 )
@@ -128,6 +129,8 @@ type EntryTurnOpen struct {
 	Run       string             `json:"run,omitempty"`
 	NodePath  string             `json:"node_path,omitempty"`
 	SessionID string             `json:"session_id,omitempty"`
+	// KASTurnID is KAS's id for the turn, from the bracket that opened a wire turn or from the replay.
+	KASTurnID string `json:"kas_turn_id,omitempty"`
 	// N is the transcript ordinal the appender assigns at open, from 1.
 	N uint64 `json:"n"`
 }
@@ -139,10 +142,10 @@ type EntryTurnBind struct {
 	SessionID    string `json:"session_id"`
 }
 
-// RewindTarget is what a rewind cuts at and what it tells KAS to revert to: the
-// turn the addressed prompt opened, and that turn's turn_bind id, "" when no bind
-// arrived.
-type RewindTarget struct {
+// PromptTarget is what a rewind or a branch addresses: the turn the prompt opened,
+// that turn's turn_bind id on the current session ("" when no bind arrived), and the
+// runs a rewind's cut would un-say.
+type PromptTarget struct {
 	Turn         string
 	KASMessageID string
 	// LaunchedRuns are the workflow ids the entries inside the cut launched: the
@@ -183,6 +186,7 @@ type EntryToolCall struct {
 	WorkflowID     string           `json:"workflow_id,omitempty"`
 	TerminalID     string           `json:"terminal_id,omitempty"`
 	SourcePath     string           `json:"source_path,omitempty"`
+	ClassifierNote string           `json:"classifier_note,omitempty"`
 	Checkpoint     *ToolCheckpoint  `json:"checkpoint,omitempty"`
 	MCP            *MCPToolIdentity `json:"mcp,omitempty"`
 	Disclosed      *ToolDisclosed   `json:"disclosed,omitempty"`
@@ -197,6 +201,8 @@ type EntryToolCall struct {
 	OutputBytes    int              `json:"output_bytes,omitempty"`
 	HasFull        bool             `json:"has_full,omitempty"`
 	Declined       bool             `json:"declined,omitempty"`
+	// ClassifierApproved and ClassifierNote are ToolCall's.
+	ClassifierApproved bool `json:"classifier_approved,omitempty"`
 }
 
 // EntryToolResult is the tool_result payload: the settled value of every field a
@@ -216,17 +222,20 @@ type EntryToolResult struct {
 	// Status is a closed enum because every value is marotte's own (aborted, or a
 	// normalised terminal status). The client validates it with reqOneOf, so a value
 	// copied verbatim off the wire would fail the whole window.
-	Status      ToolStatus     `json:"status"`
-	Output      string         `json:"output,omitempty"`
-	TerminalID  string         `json:"terminal_id,omitempty"`
-	WorkflowID  string         `json:"workflow_id,omitempty"`
-	OutputSpans []TextSpan     `json:"output_spans,omitempty"`
-	Diffs       []ToolDiff     `json:"diffs,omitempty"`
-	Locations   []ToolLocation `json:"locations,omitempty"`
-	DurationMs  int            `json:"duration_ms,omitempty"`
-	OutputBytes int            `json:"output_bytes,omitempty"`
-	HasFull     bool           `json:"has_full,omitempty"`
-	Declined    bool           `json:"declined,omitempty"`
+	Status         ToolStatus     `json:"status"`
+	Output         string         `json:"output,omitempty"`
+	TerminalID     string         `json:"terminal_id,omitempty"`
+	WorkflowID     string         `json:"workflow_id,omitempty"`
+	ClassifierNote string         `json:"classifier_note,omitempty"`
+	OutputSpans    []TextSpan     `json:"output_spans,omitempty"`
+	Diffs          []ToolDiff     `json:"diffs,omitempty"`
+	Locations      []ToolLocation `json:"locations,omitempty"`
+	DurationMs     int            `json:"duration_ms,omitempty"`
+	OutputBytes    int            `json:"output_bytes,omitempty"`
+	HasFull        bool           `json:"has_full,omitempty"`
+	Declined       bool           `json:"declined,omitempty"`
+	// ClassifierApproved and ClassifierNote are ToolCall's.
+	ClassifierApproved bool `json:"classifier_approved,omitempty"`
 }
 
 // SteerReason is why a steer was never read. A closed enum because the client's
@@ -434,6 +443,27 @@ type TurnRevertCause string
 // TurnRevertCauseRewind is the only cause: a rewind the reader asked for.
 const TurnRevertCauseRewind TurnRevertCause = "rewind"
 
+// EntryContextReset is the context_reset payload: the chat moved to a new engine session that
+// holds none of the turns above this entry, so the agent does not remember them.
+type EntryContextReset struct {
+	Cause ContextResetCause `json:"cause"`
+}
+
+// ContextResetCause is why the chat lost its engine session. The client's wording is total
+// over the type, so a new member cannot compile without wording of its own.
+type ContextResetCause string
+
+// ContextResetSessionMissing and the following constants are the valid ContextResetCause values.
+const (
+	// ContextResetSessionMissing: reopening the chat found the agent's record of its session
+	// gone, so the agent would have answered with no memory of the chat.
+	ContextResetSessionMissing ContextResetCause = "session_missing"
+	// ContextResetLoadFailed: the agent refused to reopen the chat's session.
+	ContextResetLoadFailed ContextResetCause = "load_failed"
+	// ContextResetEmptyRetry: a reply that came back empty was retried on a new session.
+	ContextResetEmptyRetry ContextResetCause = "empty_retry"
+)
+
 // EntryReconciled records that a merge looked and had nothing to add, the only fact that
 // stops a reconcile signal. EXACTLY ONE field is set: Turn for a per-turn signal (a
 // synthesized closer, an empty steer), Session for "this record adopted that history".
@@ -460,8 +490,8 @@ type EntryTurnClose struct {
 	// EngineErrorClass is the engine's error class for a broken turn, set only
 	// for a class rpcerr.KnownClass names: an unmapped error's class is minified.
 	EngineErrorClass string `json:"engine_error_class,omitempty"`
-	// Throughput is KAS's streaming estimate for the turn's model output.
-	Throughput *TurnThroughput `json:"throughput,omitempty"`
+	// FirstOutput is KAS's measure of the wait before the turn's first displayed output.
+	FirstOutput *TurnFirstOutput `json:"first_output,omitempty"`
 	// RequestIDs are the backend request ids of the turn's model calls.
 	RequestIDs []string `json:"request_ids,omitempty"`
 	// Recoveries are KAS's names for the turn's recoveries; an open vocabulary.
@@ -526,11 +556,13 @@ type ContextMedia struct {
 	Documents     int   `json:"documents"`
 }
 
-// TurnThroughput is KAS's estimate of a turn's streamed model output: tokens
-// estimated from characters, over the time chunks were actually arriving.
-type TurnThroughput struct {
-	EstimatedTokens   int64   `json:"estimated_tokens"`
-	ActiveStreamingMs float64 `json:"active_streaming_ms"`
+// TurnFirstOutput is the wait before a turn's first displayed output, in whole ms from KAS's
+// stamps: Total from the prompt's arrival, Setup until the first model request left, Model from
+// then to the model's first token. Setup and Model are 0 when KAS's stamps could not place them.
+type TurnFirstOutput struct {
+	TotalMs int64 `json:"total_ms"`
+	SetupMs int64 `json:"setup_ms,omitempty"`
+	ModelMs int64 `json:"model_ms,omitempty"`
 }
 
 // FailureKind names a turn failure with a reader-facing remedy. A registered
@@ -614,6 +646,9 @@ func EntryToolCallOf(tc *ToolCall) EntryToolCall {
 		OutputBytes:    tc.OutputBytes,
 		HasFull:        tc.HasFull,
 		Declined:       tc.Declined,
+
+		ClassifierApproved: tc.ClassifierApproved,
+		ClassifierNote:     tc.ClassifierNote,
 	}
 }
 
@@ -645,6 +680,9 @@ func ToolCallOfEntry(e *EntryToolCall) ToolCall {
 		OutputBytes:    e.OutputBytes,
 		HasFull:        e.HasFull,
 		Declined:       e.Declined,
+
+		ClassifierApproved: e.ClassifierApproved,
+		ClassifierNote:     e.ClassifierNote,
 	}
 }
 
@@ -671,5 +709,8 @@ func EntryToolResultOf(tc *ToolCall) EntryToolResult {
 		OutputBytes: tc.OutputBytes,
 		HasFull:     tc.HasFull,
 		Declined:    tc.Declined,
+
+		ClassifierApproved: tc.ClassifierApproved,
+		ClassifierNote:     tc.ClassifierNote,
 	}
 }

@@ -228,7 +228,7 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 		}
 	case marotte.EntryKindCompaction, marotte.EntryKindCompactionFailed,
 		marotte.EntryKindSafetyBlocked, marotte.EntryKindModelSwitched, marotte.EntryKindModelRouted,
-		marotte.EntryKindModelFallback, marotte.EntryKindModeSwitched:
+		marotte.EntryKindModelFallback, marotte.EntryKindModeSwitched, marotte.EntryKindContextReset:
 		writeEventMarkdown(b, e)
 	case marotte.EntryKindTurnClose:
 		writeTurnCloseEntry(b, e)
@@ -255,6 +255,8 @@ func writeEventMarkdown(b *strings.Builder, e *marotte.Entry) {
 		writeModelFallbackMarkdown(b, e)
 	case marotte.EntryKindModeSwitched:
 		writeModeSwitchedMarkdown(b, e)
+	case marotte.EntryKindContextReset:
+		writeContextResetMarkdown(b, e)
 	}
 }
 
@@ -404,6 +406,15 @@ func writeModelFallbackMarkdown(b *strings.Builder, e *marotte.Entry) {
 	fmt.Fprintf(b, "%s\n\n", line)
 }
 
+// writeContextResetMarkdown names the cause in its wire code, as the log stores it: the transcript's wording is the
+// client's.
+func writeContextResetMarkdown(b *strings.Builder, e *marotte.Entry) {
+	var p marotte.EntryContextReset
+	if decodePayload(e, &p) {
+		fmt.Fprintf(b, "**Event: context_reset** %s\n\n", oneLine(string(p.Cause)))
+	}
+}
+
 func writeModeSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {
 	var p marotte.EntryModeSwitched
 	if !decodePayload(e, &p) {
@@ -418,11 +429,8 @@ func writeModeSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {
 }
 
 // modelSwitchedDetail mirrors the transcript row: one kind, two triggers told apart by From == To
-// (marotte.EntryModelSwitched). An empty To is the context reset. The tier is the wire value, not a label.
+// (marotte.EntryModelSwitched). The tier is the wire value, not a label.
 func modelSwitchedDetail(p *marotte.EntryModelSwitched) string {
-	if p.To == "" {
-		return "context reset"
-	}
 	tier := oneLine(p.Effort)
 	if p.Unoffered != "" {
 		tier = strings.TrimPrefix(tier+"; ", "; ") + oneLine(p.Unoffered) + " is not offered"

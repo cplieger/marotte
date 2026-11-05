@@ -159,7 +159,6 @@ func stopChatTurn(
 		undo()
 		return nil, StatusError(http.StatusBadGateway, errCancelNotDelivered)
 	}
-	perms.ClearPendingInputAsks(chatID, ScopeChatSession)
 	// Stopping the model does not stop the processes its turn already spawned.
 	terms.KillForTurn(stop.Own)
 	if stop.Call != stop.Own {
@@ -203,9 +202,8 @@ func requestMarkedStop(ctx context.Context, stops turnStopper, queue SteerQueue,
 // stop carries a person's close's stop hold; the chat RECORD stays. Ordering is the contract: the
 // session's leases are waited for first, so the teardown is the session's only caller, then the turn
 // is cancelled (graceful stop), then the runs, then the session teardown, which flushes the in-flight
-// buffer and kills the chat's agent terminals. Input asks are left for that session's end to retire
-// as ended: a clear here would drop the cards without saying why.
-func closeChatTeardown(ctx context.Context, perms permissionCanceller, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID, stop *chat.Claim) {
+// buffer and kills the chat's agent terminals.
+func closeChatTeardown(ctx context.Context, perms askCanceller, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID, stop *chat.Claim) {
 	slog.Info("chat tab closed; tearing down its session", "chat_id", chatID)
 	defer stops.ReleaseStop(stops.RequestStop(chatID, marotte.TurnStopTeardown))
 	teardown.BeginChatTeardown(chatID, true)
@@ -220,7 +218,7 @@ func closeChatTeardown(ctx context.Context, perms permissionCanceller, stops tur
 // record's delete answered (a record-reading teardown would no-op on a
 // deleted chat). Mirrors closeChatTeardown so the two grades cannot drift.
 func deleteChatTeardown(
-	ctx context.Context, perms permissionCanceller, stops turnStopper, teardown chatTeardown,
+	ctx context.Context, perms askCanceller, stops turnStopper, teardown chatTeardown,
 	chatID marotte.ChatID, sessionChain []string, cause RunStopCause,
 ) {
 	defer stops.ReleaseStop(stops.RequestStop(chatID, marotte.TurnStopTeardown))
@@ -234,11 +232,11 @@ func deleteChatTeardown(
 // then the session's own cancel through the teardown's closer. A session still opening, closing or closed has no
 // turn on the wire, so it is nothing to cancel; any other failure is logged and the teardown continues, because the
 // session's release settles what is left.
-func teardownCancel(ctx context.Context, perms permissionCanceller, teardown chatTeardown, chatID marotte.ChatID) {
+func teardownCancel(ctx context.Context, perms askCanceller, teardown chatTeardown, chatID marotte.ChatID) {
 	// No deadline of its own, as cancelSession: each write is bounded by the bridge, which waits out an engine that
 	// reads late.
 	ctx = durable.Context(ctx)
-	err := perms.CancelPendingPermissions(ctx, chatID, ScopeChatAndRuns)
+	err := perms.CancelPendingAsks(ctx, chatID, ScopeChatAndRuns)
 	if err == nil {
 		err = teardown.TeardownCancel(ctx, chatID)
 	}

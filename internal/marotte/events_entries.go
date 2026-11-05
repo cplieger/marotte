@@ -91,6 +91,7 @@ type ToolProgressPayload struct {
 	TerminalID     string `json:"terminal_id,omitempty"`
 	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
 	WorkflowID     string `json:"workflow_id,omitempty"`
+	ClassifierNote string `json:"classifier_note,omitempty"`
 	// OutputSpans style the WHOLE output at absolute offsets, so they are sent entire
 	// whenever they change. Empty for output carrying no escape sequence.
 	OutputSpans []TextSpan `json:"output_spans,omitempty"`
@@ -108,6 +109,8 @@ type ToolProgressPayload struct {
 	// verdict. That is what makes `omitempty` on a bool correct here — the only value
 	// it ever sends is true.
 	Declined bool `json:"declined,omitempty"`
+	// ClassifierApproved is one-way like Declined; ClassifierNote is sent once, on the frame that sets it.
+	ClassifierApproved bool `json:"classifier_approved,omitempty"`
 }
 
 // TurnClosedPayload is the payload for type="turn_closed": the turn_close entry as

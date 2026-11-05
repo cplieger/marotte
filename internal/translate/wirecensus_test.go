@@ -6,7 +6,11 @@ package translate
 import (
 	"bytes"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -419,5 +423,214 @@ func BenchmarkCensusMeta(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		censusMeta("_meta.kiro", raw, typ, "preview")
+	}
+}
+
+// TestToolCall_CensusIsQuietOnKASIdentityKeys pins that serverName is read and toolOrigin
+// declined on a tool_call's _meta.kiro.
+func TestToolCall_CensusIsQuietOnKASIdentityKeys(t *testing.T) {
+	resetCensus(t)
+	var logbuf bytes.Buffer
+	captureSlog(t, &logbuf)
+	var tc acpToolCallWire
+	if err := json.Unmarshal(mustJSON(t, map[string]any{
+		"toolCallId": "tc", "title": "@probe/echo_text", "kind": "other",
+		"_meta": map[string]any{"kiro": map[string]any{"serverName": "probe", "toolOrigin": "default"}},
+	}), &tc); err != nil {
+		t.Fatalf("decode tool_call: %v", err)
+	}
+	if out := logbuf.String(); strings.Contains(out, "UNKNOWN _meta.kiro field") {
+		t.Errorf("a tool_call carrying KAS's identity keys reported a member: %s", out)
+	}
+}
+
+func updateParams(t *testing.T, kind string) json.RawMessage {
+	t.Helper()
+	return mustJSON(t, map[string]any{"sessionId": "s", "update": map[string]any{"sessionUpdate": kind}})
+}
+
+func TestCensusUpdateKind_ReportsAnUnnamedKindOnce(t *testing.T) {
+	resetCensus(t)
+	var logbuf bytes.Buffer
+	captureSlog(t, &logbuf)
+
+	for range 2 {
+		if _, base, ok := DecodeSessionUpdate(updateParams(t, "plan_update")); !ok || base.Kind != "plan_update" {
+			t.Fatalf("DecodeSessionUpdate(plan_update) = %q, %v; want the kind decoded", base.Kind, ok)
+		}
+	}
+
+	out := logbuf.String()
+	if n := strings.Count(out, "UNKNOWN session/update kind"); n != 1 {
+		t.Errorf("reported %d times for 2 identical frames, want 1: %s", n, out)
+	}
+	if !strings.Contains(out, "kind=plan_update") || !strings.Contains(out, "level=WARN") {
+		t.Errorf("the report is not a Warn naming the kind: %s", out)
+	}
+}
+
+// declaredUpdateKinds reads every ACPUpdateKind constant from its declaration, so a kind
+// added there without joining knownUpdateKinds fails here.
+func declaredUpdateKinds(t *testing.T) []string {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "../marotte/domain_chat.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse the ACPUpdateKind declaration: %v", err)
+	}
+	var kinds []string
+	ast.Inspect(file, func(node ast.Node) bool {
+		spec, ok := node.(*ast.ValueSpec)
+		if !ok || len(spec.Values) != 1 {
+			return true
+		}
+		if ident, isIdent := spec.Type.(*ast.Ident); !isIdent || ident.Name != "ACPUpdateKind" {
+			return true
+		}
+		lit, isLit := spec.Values[0].(*ast.BasicLit)
+		if !isLit || lit.Kind != token.STRING {
+			return true
+		}
+		kind, unquoteErr := strconv.Unquote(lit.Value)
+		if unquoteErr != nil {
+			t.Fatalf("decode ACPUpdateKind %s: %v", lit.Value, unquoteErr)
+		}
+		kinds = append(kinds, kind)
+		return true
+	})
+	if len(kinds) < 10 {
+		t.Fatalf("found %d ACPUpdateKind constants, want at least 10; the declaration moved", len(kinds))
+	}
+	return kinds
+}
+
+func TestCensusUpdateKind_NamedKindsAreQuiet(t *testing.T) {
+	resetCensus(t)
+	var logbuf bytes.Buffer
+	captureSlog(t, &logbuf)
+
+	// user_message_chunk is the live door's deliberate drop, so it arrives on every chat.
+	for _, kind := range append(declaredUpdateKinds(t), "user_message_chunk") {
+		if _, _, ok := DecodeSessionUpdate(updateParams(t, kind)); !ok {
+			t.Errorf("DecodeSessionUpdate(%q) refused a named kind", kind)
+		}
+	}
+	if out := logbuf.String(); strings.Contains(out, "wire census") {
+		t.Errorf("a named kind reached the census: %s", out)
+	}
+}
+
+func TestDecodeSessionUpdate_ReportsAnUndecodableFrameOnce(t *testing.T) {
+	resetCensus(t)
+	var logbuf bytes.Buffer
+	captureSlog(t, &logbuf)
+
+	frames := map[string]string{
+		undecodableEnvelope: `not json`,
+		undecodableUpdate:   `{"update":"x"}`,
+		undecodableKind:     `{"update":{}}`,
+	}
+	for range 2 {
+		for class, params := range frames {
+			if _, _, ok := DecodeSessionUpdate(json.RawMessage(params)); ok {
+				t.Errorf("DecodeSessionUpdate(%s) = ok, want the %s class refused", params, class)
+			}
+		}
+	}
+
+	out := logbuf.String()
+	for class := range frames {
+		if n := strings.Count(out, "part="+class+"\n"); n != 1 {
+			t.Errorf("class %s reported %d times for 2 frames, want 1: %s", class, n, out)
+		}
+	}
+	if n := strings.Count(out, "UNDECODABLE session/update frame"); n != len(frames) {
+		t.Errorf("logged %d undecodable reports, want %d: %s", n, len(frames), out)
+	}
+}
+
+func TestDecodeSessionUpdate_AnAbsentUpdateIsAnEnvelopeFault(t *testing.T) {
+	resetCensus(t)
+	var logbuf bytes.Buffer
+	captureSlog(t, &logbuf)
+
+	if _, _, ok := DecodeSessionUpdate(json.RawMessage(`{"sessionId":"s"}`)); ok {
+		t.Error("an envelope with no update decoded")
+	}
+	if out := logbuf.String(); !strings.Contains(out, "part="+undecodableEnvelope) {
+		t.Errorf("an absent update was not reported as an envelope fault: %s", out)
+	}
+}
+
+// A sanitized kind cannot forge a second record, and the cap bounds the line.
+func TestCensusUpdateKind_SanitizesTheKind(t *testing.T) {
+	resetCensus(t)
+	var logbuf bytes.Buffer
+	captureSlog(t, &logbuf)
+
+	kind := "evil\nlevel=ERROR msg=forged " + strings.Repeat("x", 200)
+	DecodeSessionUpdate(updateParams(t, kind))
+
+	out := logbuf.String()
+	if !strings.Contains(out, "UNKNOWN session/update kind") {
+		t.Fatalf("the kind was not reported at all: %s", out)
+	}
+	// slog's TextHandler escapes a raw newline itself; runesafe makes it a space.
+	if strings.Contains(out, `\n`) || strings.Count(out, "\n") != 1 {
+		t.Errorf("an unsanitized newline reached the log: %q", out)
+	}
+	_, logged, found := strings.Cut(strings.TrimSpace(out), "kind=")
+	if !found {
+		t.Fatalf("no kind attribute: %s", out)
+	}
+	if got, err := strconv.Unquote(logged); err == nil {
+		logged = got
+	}
+	// runesafe appends its "..." cut marker outside the cap.
+	if limit := maxCensusNameBytes + len("..."); len(logged) > limit {
+		t.Errorf("kind attribute is %d bytes, want at most %d: %q", len(logged), limit, logged)
+	}
+}
+
+func TestCensusUpdateKind_HonoursTheBudgetLatch(t *testing.T) {
+	resetCensus(t)
+	for i := range maxCensusKeys {
+		census.claim("filler-" + strconv.Itoa(i))
+	}
+	var logbuf bytes.Buffer
+	captureSlog(t, &logbuf)
+
+	DecodeSessionUpdate(updateParams(t, "latched_kind"))
+	DecodeSessionUpdate(updateParams(t, "latched_kind_2"))
+	DecodeSessionUpdate(json.RawMessage(`not json`))
+
+	out := logbuf.String()
+	if strings.Contains(out, "UNKNOWN") || strings.Contains(out, "UNDECODABLE") {
+		t.Errorf("a full ledger still reported: %s", out)
+	}
+	if !census.disabled() {
+		t.Error("the claim past the cap did not latch the ledger off")
+	}
+}
+
+// A sub-kind KAS emits per turn must not write one Warn per frame, while a known kind keeps its Debug trace.
+func TestLogUnconsumedInfoKind_WarnsOncePerUnknownKind(t *testing.T) {
+	resetCensus(t)
+	var logbuf bytes.Buffer
+	captureSlog(t, &logbuf)
+
+	for range 3 {
+		logUnconsumedInfoKind("c1", "quantum_entanglement_update")
+		logUnconsumedInfoKind("c1", "recap")
+	}
+
+	out := logbuf.String()
+	if n := strings.Count(out, "kind=quantum_entanglement_update"); n != 1 {
+		t.Errorf("an unknown kind was logged %d times for 3 frames, want 1: %s", n, out)
+	}
+	if !strings.Contains(out, "level=WARN") {
+		t.Errorf("the unknown kind was not reported at Warn: %s", out)
+	}
+	if n := strings.Count(out, "level=DEBUG msg=\"session_info_update: known kind"); n != 3 {
+		t.Errorf("a known kind logged %d Debug lines for 3 frames, want 3: %s", n, out)
 	}
 }

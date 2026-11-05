@@ -710,14 +710,6 @@ func (r *steerRecords) kasSettled(chatID marotte.ChatID) {
 	})
 }
 
-func (r *steerRecords) turnRevised(chatID marotte.ChatID, turnID string) {
-	r.step(chatID, false, func(rec *steerRecord, _ *steerFx) {
-		if channelRule(rec.channel, evRevise) == cKeep {
-			rec.turnID = turnID
-		}
-	})
-}
-
 // turnEnded hands the closing turn's un-owned rows to a pending end, which the
 // close's pipeline resolves once KAS is idle (else a continuation's close, or the
 // next starting prompt); a row an op owns records the end for the op.

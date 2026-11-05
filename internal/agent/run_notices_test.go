@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 func runComplete(workflowID, status string) *marotte.RPCResponse {
@@ -204,7 +205,7 @@ func TestTurnClosed_NoNoticeClearWhenATurnOpensBeforeKASIdle(t *testing.T) {
 			Closer: closerWireEnd, Stop: marotte.StopReasonEndTurn, Turn: turnID,
 		})
 		synctest.Wait()
-		h.coord.WireTurnStart(t.Context(), "c1")
+		h.coord.WireTurnStart(t.Context(), "c1", translate.TurnStartFrame{})
 		synctest.Wait()
 
 		if slices.Contains(br.callLog(), marotte.MethodSessionSteerClear) {
@@ -233,7 +234,7 @@ func TestTurnClosed_TheNoticeClearsDropIsCarriedByTheSameClose(t *testing.T) {
 			return clearReply(held), nil, true
 		}
 		id, _ := s.h.stagePromptTurn(t, "c1")
-		send(t, s.h, newTurnStartMsg(), newActivityMsg(true))
+		send(t, s.h, newPromptTurnStartMsg(id), newActivityMsg(true))
 		s.h.runs.observeComplete(t.Context(), "c1", runComplete("wf_1", "completed"))
 		s.recs.SteerWaiting("c1", &marotte.SteerQueuedPayload{SteerID: "notify-wf-1", Text: "wf_1 completed", Origin: marotte.SteerOriginAgent})
 		s.steer("steer-a", "keep building")

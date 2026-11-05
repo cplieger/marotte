@@ -169,64 +169,6 @@ if [ -d /config/kiro ] && [ "$KIRO_HOME" != /config/kiro ]; then
   rm -rf /config/kiro
 fi
 
-# Reclaim superseded kiro-cli agent-server runtimes: each version unpacks a
-# ~240 MB tree under <data-dir>/kas/<version>-<hash>/ at the engine's first launch,
-# and nothing removes the old ones. Unrelated to KAS session state. Data-dir
-# resolution mirrors kiro-cli's (XDG_DATA_HOME, else $HOME/.local/share). Warn,
-# never fail the boot. It stays here because it must run before the server can
-# unpack a new tree.
-prune_superseded_kas_runtimes() {
-  local data_home kas_dir kas_real entry name
-  data_home="${XDG_DATA_HOME:-}"
-  if [ -z "$data_home" ]; then
-    [ -n "${HOME:-}" ] || return 0
-    data_home="$HOME/.local/share"
-  fi
-  kas_dir="$data_home/kiro-cli/kas"
-  [ -d "$kas_dir" ] || return 0
-  # `-d` follows symlinks and the rm runs as root, so a planted symlink could
-  # redirect the sweep at an arbitrary tree. Refuse unless the store is a real
-  # directory resolving where it is named.
-  if [ -L "$data_home/kiro-cli" ] || [ -L "$kas_dir" ]; then
-    printf "WARNING: kiro-cli data dir or its kas store is a symlink; refusing to prune through it (%s)\n" "$(logfmt_value "$kas_dir")" >&2
-    return 0
-  fi
-  kas_real=$(realpath "$kas_dir" 2>/dev/null) || kas_real=""
-  case "$kas_real" in
-    "$data_home"/kiro-cli/kas) ;;
-    *)
-      printf "WARNING: kiro-cli kas store does not resolve inside the data dir; refusing to prune (%s -> %s)\n" \
-        "$(logfmt_value "$kas_dir")" "$(logfmt_value "${kas_real:-unknown}")" >&2
-      return 0
-      ;;
-  esac
-  for entry in "$kas_dir"/*; do
-    # An empty store leaves the glob unexpanded.
-    [ -e "$entry" ] || continue
-    name="${entry##*/}"
-    # Covers the tree and its sibling .lock; quoting keeps the version literal.
-    case "$name" in
-      "$KIRO_CLI_VERSION"-*) continue ;;
-    esac
-    # Only version-keyed entries are superseded runtimes: kas/ is kiro-cli's
-    # directory, so anything else is left in place and logged.
-    if [[ ! "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+- ]]; then
-      printf "Leaving unrecognized (non version-keyed) entry in the kiro-cli agent runtime store: %s\n" "$(logfmt_value "$name")"
-      continue
-    fi
-    if rm -rf "$entry"; then
-      printf "Pruned superseded kiro-cli agent runtime: %s (pin %s)\n" "$(logfmt_value "$name")" "$KIRO_CLI_VERSION"
-    else
-      printf "WARNING: failed to prune superseded kiro-cli agent runtime %s\n" "$(logfmt_value "$name")" >&2
-    fi
-  done
-  return 0
-}
-
-# Before the server starts, so a bump boot drops the old tree before the new one
-# unpacks and peak usage stays at one tree.
-prune_superseded_kas_runtimes
-
 # Older images left kiro-cli dispatchers in $HOME/.local/bin, which is on PATH and
 # on the volume, so a bare `kiro-cli` could resolve to an unpinned copy. It lives
 # here because it is outside $TOOLS, the server's tree. An unmatched glob returns 0,

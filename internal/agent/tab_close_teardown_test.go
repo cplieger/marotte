@@ -584,8 +584,7 @@ func TestCloseTab_ADeleteDuringABackgroundCloseRunsAfterIt(t *testing.T) {
 	}
 }
 
-// A turn the close ends starts no tail: the parked model pick stays parked, no session/set_config_option is sent and
-// the auto-compactor keeps no state for the closed chat.
+// A turn the close ends starts no tail: the parked model pick stays parked and no session/set_config_option is sent.
 func TestCloseTab_TheTeardownsOwnTurnCloseStartsNoTail(t *testing.T) {
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -616,12 +615,6 @@ func TestCloseTab_TheTeardownsOwnTurnCloseStartsNoTail(t *testing.T) {
 	}
 	if rec, _ := cs.Get(t.Context(), "c1"); rec.PendingModel != "next-model" {
 		t.Errorf("pending model = %q, want the pick still parked for the next life", rec.PendingModel)
-	}
-	h.coord.autoCompact.mu.Lock()
-	_, kept := h.coord.autoCompact.chats["c1"]
-	h.coord.autoCompact.mu.Unlock()
-	if kept {
-		t.Error("the auto-compactor kept state for the closed chat")
 	}
 }
 

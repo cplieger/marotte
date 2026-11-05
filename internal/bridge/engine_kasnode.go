@@ -6,12 +6,14 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/kasnode"
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
 // selfExecutable is the launcher KIRO_KAS_NODE_PATH names: marotte's own binary, which main re-executes as node
@@ -46,35 +48,47 @@ func (e *Engine) withKASNodeLauncher(env []string) (out, nodeArgs []string) {
 }
 
 // kasNodeLaunch returns the launcher and the node it runs, or why the launcher must not be used. The node must be
-// the one kiro-cli extracted for the active kiro-cli (node.sha256 and the hash embedded in the binary agree with
-// the file) and report kasnode.ValidatedNodeVersion: while KIRO_KAS_NODE_PATH is set kiro-cli extracts nothing, so a
-// bump that ships a new node would otherwise keep running the old one.
+// the one kiro-cli extracted for the active kiro-cli (the hash embedded in the binary agrees with the file, and so
+// does node.sha256 in the data dir, where it is the extraction marker) and report kasnode.ValidatedNodeVersion: in
+// the data dir kiro-cli extracts nothing while KIRO_KAS_NODE_PATH is set, so a bump that ships a new node would
+// otherwise keep running the old one. The node is found as kiro-cli finds it (workspace.KASLookup): the sole
+// complete entry under an absolute KIRO_RUNTIME_DIR, else the data dir. A start prunes the runtime dir to the
+// running version, so after a bump the sole entry is the old version's until that start, whose hash then fails.
 func (e *Engine) kasNodeLaunch(env []string) (launcher, node, reason string) {
 	if v, ok := envValue(env, kasnode.NodePathVar); ok {
 		return "", "", fmt.Sprintf("%s is already set to %q in marotte's environment", kasnode.NodePathVar, v)
 	}
-	dataHome, _ := envValue(env, "XDG_DATA_HOME")
-	home, _ := envValue(env, "HOME")
-	node = kasnode.EmbeddedNodePath(dataHome, home)
-	if node == "" {
-		return "", "", "neither HOME nor XDG_DATA_HOME is set, so kiro-cli's node cannot be located"
+	lookup := kasLookup(env)
+	dataNode := kasnode.EmbeddedNodePath(lookup.DataHome, lookup.Home)
+	if dataNode == "" && !filepath.IsAbs(lookup.RuntimeDir) {
+		return "", "", "neither KIRO_RUNTIME_DIR, HOME nor XDG_DATA_HOME is set, so kiro-cli's node cannot be located"
 	}
 	want, err := cliNodeHash(e.cliPath)
 	if err != nil {
 		return "", "", fmt.Sprintf("cannot read the node hash in %s: %v", e.cliPath, err)
 	}
-	recorded, err := os.ReadFile(node + ".sha256")
-	if err != nil {
-		return "", "", fmt.Sprintf("kiro-cli has not extracted its node yet (%v); the next engine start checks again", err)
+	node = lookup.Find("").Node
+	if node == "" {
+		return "", "", "kiro-cli has not extracted its node yet; the next engine start checks again"
+	}
+	// Only the data-dir node has a node.sha256; a runtime-dir entry is checked by its file hash alone.
+	recorded, hashes := want, ""
+	if node == dataNode {
+		b, readErr := os.ReadFile(node + ".sha256")
+		if readErr != nil {
+			return "", "", fmt.Sprintf("kiro-cli has not extracted its node yet (%v); the next engine start checks again", readErr)
+		}
+		recorded = strings.TrimSpace(string(b))
+		hashes = ", node.sha256 " + recorded
 	}
 	got, err := kasnode.FileSHA256(node)
 	if err != nil {
 		return "", "", fmt.Sprintf("cannot hash %s: %v", node, err)
 	}
-	if got != want || strings.TrimSpace(string(recorded)) != want {
-		return "", "", fmt.Sprintf("%s is not the node this kiro-cli bundles (file %s, node.sha256 %s, kiro-cli %s); "+
+	if got != want || recorded != want {
+		return "", "", fmt.Sprintf("%s is not the node this kiro-cli bundles (file %s%s, kiro-cli %s); "+
 			"kiro-cli extracts its own at this start and the next start checks again",
-			node, got, strings.TrimSpace(string(recorded)), want)
+			node, got, hashes, want)
 	}
 	version, err := nodeVersion(e.lifecycleCtx, node)
 	if err != nil {
@@ -124,6 +138,15 @@ func nodeVersion(ctx context.Context, node string) (string, error) {
 		return "", fmt.Errorf("%s --version failed: %w", node, err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// kasLookup is the lookup kiro-cli resolves its node from in env, the environment it is started with.
+func kasLookup(env []string) workspace.KASLookup {
+	var l workspace.KASLookup
+	l.RuntimeDir, _ = envValue(env, "KIRO_RUNTIME_DIR")
+	l.DataHome, _ = envValue(env, "XDG_DATA_HOME")
+	l.Home, _ = envValue(env, "HOME")
+	return l
 }
 
 // envValue is env's last value for name, as os/exec resolves a repeated key.

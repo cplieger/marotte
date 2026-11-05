@@ -40,7 +40,9 @@ type kasRunNode struct {
 	LoopID     string `json:"loopId"`
 	SessionID  string `json:"sessionId"`
 	Status     string `json:"status"`
-	Reason     string `json:"reason"`
+	// Reason is node_paused's text; node_complete names its own FailureReason.
+	Reason        string `json:"reason"`
+	FailureReason string `json:"failureReason"`
 	// Kind is set on `node_paused` only, and only to retryWaitKind.
 	Kind string `json:"kind"`
 	// Initiator and InitiatorReason attribute a run-level `paused`.
@@ -149,16 +151,19 @@ func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(conte
 			// permission ask still classifies.
 			if p.SessionID != "" {
 				t.steps.record(p.SessionID, p.WorkflowID, node, path)
+				t.wakes.nodeStarted(p.SessionID)
 			}
 			// The run turn's opening bracket; a path already open is a no-op on the log.
 			t.runs.RunNodeStart(ctx, &RunStep{RunID: p.WorkflowID, NodePath: path, SessionID: p.SessionID, Path: nodePathOf(p.NodePath, node)}, chatID)
 		case marotte.RunProgressNodeComplete:
 			t.wakeMem.nodeRunning(p.WorkflowID, node)
-			t.runs.RunNodeComplete(ctx, p.WorkflowID, nodePathOf(p.NodePath, node), p.Status, p.Reason)
+			t.runs.RunNodeComplete(ctx, p.WorkflowID, nodePathOf(p.NodePath, node), p.Status, p.FailureReason)
 		case marotte.RunProgressNodePaused:
 			if p.retryWait() {
 				t.wakeMem.retryWaited(p.WorkflowID, node)
 			} else {
+				// A retry-wait is not one: the node stays running, so KAS buffers a parent's message.
+				t.wakes.nodePaused(t.steps.sessionAt(p.WorkflowID, nodeKey(p.NodePath, node)))
 				t.wakeMem.nodePaused(p.WorkflowID, node)
 				t.runs.RunNodePaused(ctx, p.WorkflowID, nodePathOf(p.NodePath, node))
 			}
@@ -187,7 +192,7 @@ func runProgress(
 		// KAS's word is already the client tree's NodeState vocabulary.
 		out.Status = p.Status
 		out.EndedAt = stamp
-		out.FailureReason = p.Reason
+		out.FailureReason = p.FailureReason
 	case marotte.RunProgressNodePaused:
 		out.NodePath = nodePathOf(p.NodePath, node)
 		if p.retryWait() {

@@ -71,8 +71,8 @@ export function turnSpan(t: Turn): number {
 /**
  * Whether this view renders anything AT THIS ENTRY'S OWN POSITION; the budget and the price
  * must answer identically. `lane` is the VIEW's root; `folds` is that lane's `turnFolds`.
- * `turn_open`, `turn_close`, `tool_result`, `turn_bind`, `turn_wake`, `run_named` and `reconciled`
- * render elsewhere or nowhere.
+ * `turn_open`, `turn_close`, `tool_result`, `turn_bind`, `turn_wake`, `run_named`, `reconciled` and a
+ * sub-agent's `model_fallback` render elsewhere or nowhere.
  */
 export function entryRenders(e: Entry, lane: string, folds: TurnFolds): boolean {
   if (e.kind === "steer") {
@@ -105,6 +105,8 @@ export function entryRenders(e: Entry, lane: string, folds: TurnFolds): boolean 
       return folds.revert === e.seq;
     case "model_switched":
       return !folds.fellBack.has(e.seq);
+    case "model_fallback":
+      return !isSubagentFallback(e);
     default:
       return true;
   }

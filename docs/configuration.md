@@ -12,12 +12,12 @@ Variables go in the `environment:` block of `compose.yaml` and are read at start
 | `TRUSTED_PROXIES` | Address ranges of your reverse proxy, so the logs record the real client address. | _(unset)_ |
 | `TRUSTED_INSTALL_UIDS` | User IDs that may write to the tools folder (`MAROTTE_TOOLS_DIR`, by default `/config/tools`) without marotte refusing to install kiro-cli. Only for shared or network volumes. | _(unset)_ |
 | `MAROTTE_BROWSE_ROOTS` | Extra folders the file browser shows, colon-separated absolute paths. | _(unset)_ |
-| `MAROTTE_ALLOW_AGENT_ENV` | Program-changing variables, such as `LD_PRELOAD`, the agent may set for its commands. | _(unset)_ |
 | `MAROTTE_ALLOW_BRIDGE_ENV` | Variable names that look like credentials but should still reach kiro-cli, comma-separated. | _(unset)_ |
 | `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` flags for the agent engine. | _(unset)_ |
-| `KIRO_WORK_DIR` | Folder chats and the terminal start in. It must exist, or startup fails. Startup also fails when its path holds a backtick, a line break, a tab or another control or invisible character, because marotte writes it into the agent's instructions. | `/workspace` |
+| `KIRO_WORK_DIR` | Folder chats and the terminal start in. It must exist and must not be or contain `KIRO_CONFIG_DIR`, or startup fails. Startup also fails when its path holds a backtick, a line break, a tab or another control or invisible character, because marotte writes it into the agent's instructions. | `/workspace` |
 | `KIRO_CONFIG_DIR` | Folder for chats, the Kiro sign-in, settings and the tools list, and by default the installed tools. The container creates it when it is missing, and it must be writable. Its path follows the same character rule as `KIRO_WORK_DIR`, or startup fails. The home folder stays `/config/home` unless you also set `HOME`. Each marotte needs its own: a second one started on the same folder refuses to start. | `/config` |
 | `KIRO_HOME` | Where marotte and kiro-cli keep kiro-cli's own state: steering, settings, permissions and session files. A relative path, `/`, or a path that is `HOME` or holds `HOME` inside it is ignored with a warning at startup, as kiro-cli ignores it. kiro-cli's test for "inside" does not count a `HOME` whose path relative to `KIRO_HOME` starts with `..`, such as a `..home` folder directly below it, and marotte follows it. Each marotte needs its own: a second one started on the same folder refuses to start. | `$HOME/.kiro` |
+| `KIRO_RUNTIME_DIR` | Where kiro-cli unpacks the programs it runs on: node, its agent server and its terminal UI. kiro-cli keeps only the version it runs there and deletes the others each time it starts, so run any other kiro-cli version with this variable unset. It must be an absolute path. A relative one is ignored, and the programs go to kiro-cli's data folder under `HOME`. | `/config/home/.cache/kiro-cli-runtime` |
 | `MAROTTE_TOOLS_DIR` | Where the tools engine installs tools, on the persistent volume. Its `bin/` and `go/bin/` take the place of `/config/tools/bin` and `/config/tools/go/bin` on `PATH`, or go in front when you set a `PATH` without them, and `GOPATH` and `GOBIN` follow it unless you set them to another folder. When its path holds a colon, which `PATH` and `GOPATH` cannot carry, or a character `KIRO_WORK_DIR` refuses, marotte still starts but uses nothing in that folder: the tools engine stays off, kiro-cli is not installed, so chats stay unavailable, and the folder's `bin/` and `go/bin/`, spelled as you set them or as absolute paths, are removed from `PATH`, `GOPATH` and `GOBIN`, also from a `GOPATH` that lists other folders, which stay. Where the colon splits them into the image's system folders, such as `/usr/bin`, those stay. Settings > Tools and the server log name the variable and the character. Each marotte needs its own: a second one started on the same folder refuses to start. | `<KIRO_CONFIG_DIR>/tools` |
 | `MAROTTE_TOOL_CATALOG` | Tool catalog built into the image, used at first start and offline. | `/opt/marotte/tool-catalog.json` |
 | `MAROTTE_TOOL_CATALOG_URL` | Where catalog updates come from. Point it at a fork or a mirror. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest release |
@@ -74,7 +74,9 @@ A change reaches the agent's file tools, the folder a shell command may start in
 
 ## Agent-started workflow runs
 
-Whether the chat agent can start and manage workflow runs is a setting, not a variable: **Workflows** under **Agent capabilities** on the **General** tab in **Settings**, on by default. With it on, a request like "run the publish workflow" starts the run instead of describing it. On: the agent hands work to workflows that run in the background while you keep chatting. Off: it uses subagents instead and waits for each to finish before it continues. Runs you start yourself from **Workflows** on the `/docs` page work either way. A change reaches new chats, and an open chat picks it up at its next message.
+Whether the chat agent can start and manage workflow runs is a setting, not a variable: **Workflows** under **Agent capabilities** on the **General** tab in **Settings**, on by default. With it on, a request like "run the publish workflow" starts the run instead of describing it. On: the agent can start workflows that run in the background while you keep chatting. Off: it uses subagents instead and waits for each to finish before it continues. Runs you start yourself from **Workflows** on the `/docs` page work either way.
+
+**Workflow use**, below the switch and shown while it is on, says when the agent starts a workflow on its own. With **Only when asked**, the default, the agent does the work in the chat unless you ask for a workflow. With **Only for large tasks**, it starts one for multi-step work or work that would fill the chat's context. With **As much as possible**, it hands reading code, writing it, testing and review to workflows. A chat started on an older kiro-cli, one without this choice, keeps handing all work to workflows whatever you pick, because kiro-cli does not offer the choice on it. A change to either setting reaches new chats, and an open chat picks it up at its next message.
 
 When a loop in a run the agent started stops at its pass limit, kiro-cli tells the agent, which then asks you whether to give the loop more passes or end it.
 
@@ -99,19 +101,6 @@ marotte checks the engine's memory use once a minute. The first time it reaches 
 **High throughput optimizations** under **Experimental features** on the **General** tab in **Settings** is on by default. It starts the agent engine's Node.js with `--experimental-async-context-frame` and `--max-semi-space-size=64`, which let one engine carry many chats and workflow steps at once. Under a load of 32 concurrent chats on an engine holding 4 GB of session state, the two flags raised throughput from about 3 to 10 prompts a second and cut the time spent in garbage collection from about 40% to 12%. Turn it off for kiro-cli's stock engine. A change applies after the agent engine restarts.
 
 The flags go on the command line of kiro-cli's own Node.js, not in `NODE_OPTIONS`, so the programs the agent runs never see them. marotte names its own binary in `KIRO_KAS_NODE_PATH`, and that binary starts kiro-cli's Node.js with the flags. It does so only when the Node.js kiro-cli extracted matches the one the running kiro-cli bundles and reports the version the flags were tested on, v22.23.4. Otherwise the engine starts without them, and marotte's log names why in one `starting without the high throughput optimizations` warning. After a kiro-cli version change that happens once, while kiro-cli extracts its new Node.js. If that Node.js is still v22.23.4, the next engine start uses the flags again. A `KIRO_KAS_NODE_PATH` you set yourself also turns them off.
-
-## Variables the agent sets (`MAROTTE_ALLOW_AGENT_ENV`)
-
-When the agent runs a command, it can ask for environment variables to be set for it. Most are ordinary, such as `CGO_ENABLED`, `GOFLAGS` or `TERM`. A few change which program runs instead: `LD_PRELOAD`, `GIT_SSH_COMMAND` and `BASH_ENV` each redirect execution. marotte refuses those, because approving a command must approve that exact command, and the agent's variables take precedence over marotte's own. A harmless value is still accepted, so `GIT_PAGER=cat` keeps working. The refusal names the variable, so the agent can retry without it.
-
-If you need one, for example a profiler that preloads a library or a vendored `NODE_PATH`, name it. Separate several with commas. Only the names you list are allowed.
-
-```yaml
-environment:
-  MAROTTE_ALLOW_AGENT_ENV: "LD_PRELOAD,NODE_PATH"
-```
-
-This applies to what the agent asks for, not to variables you set on the container yourself.
 
 ## Credentials in the container environment (`MAROTTE_ALLOW_BRIDGE_ENV`)
 

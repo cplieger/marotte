@@ -163,6 +163,7 @@ const (
 	fieldOAuthClientMetadataURL = "oauth_client_metadata_url"
 	fieldOAuthRedirectURI       = "oauth_redirect_uri"
 	fieldOAuthScopes            = "oauth_scopes"
+	fieldVersionNegotiation     = "version_negotiation"
 )
 
 // fieldError is one validation failure, attributed to the wire field it
@@ -265,6 +266,10 @@ func validate(s *Server) error {
 	errs.merge(validateToolNames(fieldDisabledTools, s.DisabledTools))
 	if s.TimeoutMS < 0 || s.TimeoutMS > maxTimeoutMS {
 		errs.addf(fieldTimeoutMS, "timeout_ms must be between 0 and %d, got %d", maxTimeoutMS, s.TimeoutMS)
+	}
+	if !s.VersionNegotiation.valid() {
+		errs.addf(fieldVersionNegotiation, "version_negotiation must be %q or %q, got %q",
+			versionNegotiationAuto, versionNegotiationLegacy, s.VersionNegotiation)
 	}
 	return errs.join()
 }

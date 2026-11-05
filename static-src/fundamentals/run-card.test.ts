@@ -201,6 +201,50 @@ describe("a background-process watch's result", () => {
   });
 });
 
+describe("a github-pr watch's result", () => {
+  const payload = JSON.stringify(
+    {
+      url: "https://github.com/o/r/pull/7",
+      state: "OPEN",
+      newComments: [{ id: 1, author: { login: "rev" }, body: "nit", createdAt: "x" }],
+      newReviews: [],
+      excludedComments: [],
+      excludedReviews: [],
+      inlineComments: [],
+      excludedInlineComments: [],
+      inlineCommentsFetch: "ok",
+      backlog: { remaining: 0 },
+      headSha: "abc123",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "BLOCKED",
+      newFailedChecks: [{ name: "lint", workflowName: "ci", conclusion: "FAILURE" }],
+      passingCheckCount: 3,
+      pendingCheckCount: 0,
+    },
+    null,
+    2,
+  );
+
+  it("reads its wake on the row, with no capture line", () => {
+    const c = card();
+    c.render({
+      ...runOf("running", {
+        nodeId: "wait",
+        type: "watch",
+        status: "completed",
+        capturedOutput: payload,
+      }),
+      capturedOutputs: { wait: payload },
+    });
+    expect(c.root.querySelector(".run-step-meta")?.textContent).toBe(
+      "1 comment \u00b7 1 failed check",
+    );
+    expect(c.root.querySelector(".run-step-capture")).toBeNull();
+    const vals = [...c.root.querySelectorAll(".run-output-val")].map((e) => e.textContent);
+    expect(vals).toEqual(["1 comment \u00b7 1 failed check"]);
+  });
+});
+
 describe("a step's own state", () => {
   it("separates a paused step from a running one", () => {
     const c = card();

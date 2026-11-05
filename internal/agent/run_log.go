@@ -257,8 +257,8 @@ func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from ui
 	return entries, open, stamps, true, nil
 }
 
-// lastStepMessage is a step path's last words in its newest turn of the run's own record: the newest
-// send_message call's message, else the newest text. "" when the record holds neither or cannot be read.
+// lastStepMessage is a step path's last words (lastWords) in its newest turn of the run's own record, "" when the
+// record holds none or cannot be read.
 func (r *runLog) lastStepMessage(ctx context.Context, workflowID, nodePath string) string {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
@@ -285,29 +285,60 @@ func newestTurn(entries []marotte.Entry) []marotte.Entry {
 	return nil
 }
 
+// lastWords is a step turn's newest send_message message, else its trailing prose run: the step's own text
+// entries back to the nearest other entry, one paragraph each. An applied model_fallback stays inside the run,
+// because KAS continues the refused text on the fallback model; a sub-agent's fallback belongs to no step prose.
 func lastWords(turn []marotte.Entry) string {
-	var text string
+	var run []string
+	ended := false
 	for i := len(turn) - 1; i >= 0; i-- {
 		e := &turn[i]
-		switch e.Kind {
-		case marotte.EntryKindToolCall:
-			if m := sentMessage(e.Payload); m != "" {
-				return m
+		if m := sentMessage(e); m != "" {
+			return m
+		}
+		if ended {
+			continue
+		}
+		switch {
+		case e.Kind == marotte.EntryKindText && e.Lane == "":
+			if s := entryProse(e.Payload); s != "" {
+				run = append(run, s)
 			}
-		case marotte.EntryKindText:
-			var t marotte.EntryText
-			if text == "" && json.Unmarshal(e.Payload, &t) == nil {
-				text = strings.TrimSpace(t.Text)
-			}
+		case e.Kind == marotte.EntryKindModelFallback && fallbackInsideProse(e.Payload):
+		default:
+			ended = len(run) > 0
 		}
 	}
-	return text
+	slices.Reverse(run)
+	return strings.Join(run, "\n\n")
 }
 
-// sentMessage is a send_message call's message: an input holding both `message` and `severity`.
-func sentMessage(payload json.RawMessage) string {
+// fallbackInsideProse reports a model_fallback that leaves the step's prose run open: an applied one (a target and
+// no decline reason) or a sub-agent's.
+func fallbackInsideProse(payload json.RawMessage) bool {
+	var f marotte.EntryModelFallback
+	if json.Unmarshal(payload, &f) != nil {
+		return false
+	}
+	return f.Subagent || (f.To != "" && f.Reason == "")
+}
+
+// entryProse is a text entry's text, trimmed; "" when it does not decode.
+func entryProse(payload json.RawMessage) string {
+	var t marotte.EntryText
+	if json.Unmarshal(payload, &t) != nil {
+		return ""
+	}
+	return strings.TrimSpace(t.Text)
+}
+
+// sentMessage is a send_message call's message: a tool call whose input holds both `message` and `severity`.
+func sentMessage(e *marotte.Entry) string {
+	if e.Kind != marotte.EntryKindToolCall {
+		return ""
+	}
 	var call marotte.EntryToolCall
-	if json.Unmarshal(payload, &call) != nil || len(call.Input) == 0 {
+	if json.Unmarshal(e.Payload, &call) != nil || len(call.Input) == 0 {
 		return ""
 	}
 	var in struct {

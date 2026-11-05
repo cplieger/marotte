@@ -3,7 +3,6 @@
 // its one surface. A paused step's own end verbs sit in its header (`buildStepEndView`).
 
 import { createRoot, el } from "@cplieger/ui";
-import { join } from "@cplieger/keyenc";
 import { bindLoadingState } from "./actions/index.js";
 import { confirm } from "./confirm.js";
 import {
@@ -216,10 +215,7 @@ const STEP_END: Record<
   },
 };
 
-/** The end KAS already recorded goes first. */
-function endOrder(node: ExecNode): readonly RunStepEndStatus[] {
-  return node.pendingEnd?.status === "failed" ? ["failed", "completed"] : ["completed", "failed"];
-}
+const END_ORDER: readonly RunStepEndStatus[] = ["completed", "failed"];
 
 export function buildStepEndView(workflowID: string): StepEndView {
   let shown = "";
@@ -239,15 +235,14 @@ export function buildStepEndView(workflowID: string): StepEndView {
         drop();
         return null;
       }
-      const order = endOrder(node);
-      const key = join(node.path, ...order);
+      const key = node.path;
       if (row !== null && shown === key) {
         return row;
       }
       drop();
       shown = key;
       row = el("span", { className: "run-controls run-step-end" });
-      for (const status of order) {
+      for (const status of END_ORDER) {
         const end = STEP_END[status];
         const label = node.label;
         const btn = el(

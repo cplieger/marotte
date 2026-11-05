@@ -5,7 +5,7 @@ package agent
 // v3 (KAS) `_kiro/*` notification names; the unhandled ones are noopMethods.
 const (
 	methodV3MCPStatus            = "_kiro/mcp/status"                        // consolidated MCP server state (connected/failed/oauth)
-	methodV3MCPResetServer       = "_kiro/mcp/resetServer"                   // C→A request: reconnect a named server; {serverName, startOAuth?} → {success}
+	methodV3MCPResetServer       = "_kiro/mcp/resetServer"                   // C→A request: reconnect a server in one session; {sessionId, serverName, startOAuth?} → {success}
 	methodV3SessionsChanged      = "_kiro/sessions/changed"                  // session inventory diff (no client consumer on v3)
 	methodV3SpecPhaseCheckpoint  = "_kiro/spec/phaseCheckpoint"              // A→C notification: {sessionId, featureName, phase, artifactPath} per accepted in-process spec-document write (spec_checkpoint.go)
 	methodV3RateLimit            = "_kiro/error/rate_limit"                  // {sessionId, message}
@@ -94,7 +94,7 @@ const (
 	methodWFRunStart     = "_kiro/workflow/run_start"     // {workflowId, workflowName, inputs, nodeTree[], parentSessionId?}
 	methodWFRunComplete  = "_kiro/workflow/run_complete"  // {workflowId, status, finalState}
 	methodWFNodeStart    = "_kiro/workflow/node_start"    // {workflowId, nodeId, nodePath[], type, agentName?, sessionId?, iteration?, branchId?}
-	methodWFNodeComplete = "_kiro/workflow/node_complete" // {workflowId, nodeId, nodePath[], status, artifacts?, capturedOutput?}
+	methodWFNodeComplete = "_kiro/workflow/node_complete" // {workflowId, nodeId, nodePath[], status, artifacts?, capturedOutput?, failureReason?}
 	methodWFNodePaused   = "_kiro/workflow/node_paused"   // {workflowId, nodeId, nodePath[], reason} — note `reason`, not `pauseReason`
 	// The heal reads `pauseDetail` ({class, code, occurredAt}), not the reason prose KAS re-renders
 	// for parallel branches. Absent for an interruption, permanent failure or need-input park.

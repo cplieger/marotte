@@ -8,16 +8,16 @@ import { $ } from "./dom.js";
 import { activeSession } from "./store.js";
 import { LS_DISMISSED_BANNERS_KEY } from "./ls-keys.js";
 import { readPerChat, writePerChat } from "./per-chat-store.js";
-import { isSafeURL } from "./url-safety.js";
+import { isHttpURL } from "./url-safety.js";
 import { ICON_CLOSE } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { el, createCollection, bindList, computed } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import type { BannerLevel } from "./types.js";
 
-/** `href` is an EXTERNAL navigation: the server-supplied URL passes isSafeURL (http/https only) and
+/** `href` is an EXTERNAL navigation: the server-supplied URL passes isHttpURL (http/https only) and
  *  opens in a new tab. `onClick` is an IN-APP jump, a button with no URL, since a relative path
- *  would fail isSafeURL. `onClick` wins if both are set. */
+ *  would fail isHttpURL. `onClick` wins if both are set. */
 interface BannerLink {
   readonly label: string;
   readonly href?: string;
@@ -142,7 +142,7 @@ function buildBannerLink(link: BannerLink): HTMLElement | null {
     btn.addEventListener("click", link.onClick);
     return btn;
   }
-  if (link.href === undefined || !isSafeURL(link.href)) {
+  if (link.href === undefined || !isHttpURL(link.href)) {
     return null;
   }
   return el(

@@ -479,6 +479,9 @@ func classifyStderrLevel(line string) slog.Level {
 			return slog.LevelInfo
 		}
 	}
+	if isNodeProcessWarning(line) {
+		return slog.LevelWarn
+	}
 	// Word-boundary matching for unstructured lines.
 	low := strings.ToLower(line)
 	for _, rule := range stderrKeywordRules {
@@ -487,6 +490,34 @@ func classifyStderrLevel(line string) slog.Level {
 		}
 	}
 	return slog.LevelInfo
+}
+
+// isNodeProcessWarning reports a Node.js process warning, "(node:PID) [CODE] NameWarning: message" with the code
+// optional, which KAS relays under its own bracket tag, [ERROR] included, because Node writes it to stderr.
+func isNodeProcessWarning(line string) bool {
+	rest := line
+	if strings.HasPrefix(rest, "[") {
+		_, afterTag, ok := strings.Cut(rest, "] ")
+		if !ok {
+			return false
+		}
+		rest = afterTag
+	}
+	rest, ok := strings.CutPrefix(rest, "(node:")
+	if !ok {
+		return false
+	}
+	pid, rest, ok := strings.Cut(rest, ") ")
+	if !ok || pid == "" || strings.Trim(pid, "0123456789") != "" {
+		return false
+	}
+	if strings.HasPrefix(rest, "[") {
+		if _, rest, ok = strings.Cut(rest, "] "); !ok {
+			return false
+		}
+	}
+	name, _, ok := strings.Cut(rest, ": ")
+	return ok && strings.HasSuffix(name, "Warning") && !strings.Contains(name, " ")
 }
 
 // matchesKeyword reports whether keyword appears at a word boundary followed by a colon, bracket or separator, so

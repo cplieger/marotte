@@ -5,8 +5,9 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
 func TestWithHeapLimit(t *testing.T) {
@@ -93,12 +94,8 @@ func TestWithHeapLimit_ZeroReturnsTheInputUnparsed(t *testing.T) {
 // kasNode is the node binary kiro-cli unpacks for KAS, or "" when it is not installed here.
 func kasNode(t *testing.T) string {
 	t.Helper()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	p := filepath.Join(home, ".local", "share", "kiro-cli", "node")
-	if st, err := os.Stat(p); err != nil || st.Mode()&0o111 == 0 {
+	p := workspace.KASLookupFromEnv().Find(os.Getenv("KIRO_CLI_VERSION")).Node
+	if st, err := os.Stat(p); p == "" || err != nil || st.Mode()&0o111 == 0 {
 		return ""
 	}
 	return p

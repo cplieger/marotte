@@ -13,9 +13,9 @@ import { join } from "@cplieger/keyenc";
 import { onSSE } from "./bus.js";
 import { confirm } from "./confirm.js";
 import type { PolicyView, PolicyRule, SecurityProfile } from "./types.js";
-// `types.js` re-exports the Policy* shapes the panel renders and not this one, which only an
-// explain result carries.
-import type { PolicyRuleCore } from "./wire/types.gen.js";
+// `types.js` re-exports the Policy* shapes the panel renders and not these two, which only an
+// explain result and a view's load errors carry.
+import type { PolicyErrorItem, PolicyRuleCore } from "./wire/types.gen.js";
 
 /** One row of the policy table: a scope's heading, or one rule under it. */
 type PolicyEntry =
@@ -236,13 +236,22 @@ const controller = new PermissionsUIController();
 
 // NativePolicyController — the native (Cedar) policy VIEW + conservative file-writing editor.
 
-const NATIVE_SCOPE_ORDER = ["kiro", "administration", "user", "workspace", "agent", "session"];
+const NATIVE_SCOPE_ORDER = [
+  "kiro",
+  "administration",
+  "organization",
+  "user",
+  "workspace",
+  "agent",
+  "session",
+];
 const NATIVE_SCOPE_LABEL: Record<string, string> = {
   kiro: "Kiro built-in, read-only",
   administration: "Administration, read-only",
+  organization: "Organization, read-only",
   user: "User, global",
   workspace: "Workspace",
-  agent: "Agent, current mode, read-only",
+  agent: "Agent, default mode, read-only",
   session: "Session, runtime, read-only",
 };
 
@@ -274,6 +283,8 @@ function profileLabel(id: string): string {
       return "Read-only";
     case "trusted":
       return "Trusted";
+    case "delegated":
+      return "Approve for me";
     case "unrestricted":
       return "Unrestricted";
     case CUSTOM_PROFILE:
@@ -283,17 +294,20 @@ function profileLabel(id: string): string {
   }
 }
 
-/** Read-only names that it reads OUTSIDE the workspace. */
+/** Each rung names what it reaches with no prompt: Read-only, files OUTSIDE the workspace; a rung
+ *  that allows shell commands, any file through a redirect. */
 function profileDescription(id: string): string {
   switch (id) {
     case "guarded":
       return "Reads files in this workspace. Everything else asks.";
     case "read-only":
-      return "Also reads any file on this machine, runs read-only commands, and reaches the web. That includes files outside this workspace, so an SSH key or a sibling project is readable with no prompt. Every change asks.";
+      return "Also reads any file on this machine and reaches the web. That includes files outside this workspace, so an SSH key or a sibling project is readable with no prompt. Every shell command and every change asks.";
     case "trusted":
-      return "Also edits files in this workspace and runs everyday development commands. Destructive and irreversible ones still ask, including git push, reset and clean.";
+      return "Also edits files in this workspace and runs everyday development commands. Destructive and irreversible ones still ask, including git push, reset and clean. An allowed shell command can write any file through a redirect, including files outside this workspace and in .kiro/agents, with no prompt.";
+    case "delegated":
+      return "Grants what Trusted grants, and Kiro's safety check answers the requests no rule settles: it approves a request it judges safe, blocks one it judges unsafe, and asks you when it is unsure. A request a rule sends to you, such as a file-tool write to .git or .kiro/agents, still asks. Each check is a model call. An allowed shell command can write any file through a redirect, including files outside this workspace and in .kiro/agents, with no prompt.";
     case "unrestricted":
-      return "Never asks, including before installing a power. Kiro still protects its own settings and still asks before writing .git, .kiro/agents and .kiro/hooks.";
+      return "Never asks, including before installing a power. Kiro still protects its own settings and asks before its file tool writes .git, .kiro/agents and .kiro/hooks. A shell command can write any of these, Kiro's settings included, with no prompt.";
     case CUSTOM_PROFILE:
       return "Your own rules, edited in the table below. Nothing is granted that you do not add.";
     default:
@@ -312,17 +326,40 @@ function ruleSummary(r: PolicyRuleCore): string {
   return [`${r.capability} ${r.effect}`, ...globLabels(r)].join(" ");
 }
 
+function shortPath(path: string): string {
+  const parts = path.split("/");
+  return parts.length <= 2 ? path : ".../" + parts.slice(-2).join("/");
+}
+
+/** A preset a file references reads `preset:<id> in <file>`; the preset is the part that says
+ *  where the rule came from, so only the path is shortened. */
 function shortSource(src: string): string {
   if (src === "") {
     return "";
   }
-  const parts = src.split("/");
-  return parts.length <= 2 ? src : ".../" + parts.slice(-2).join("/");
+  const at = src.indexOf(" in ");
+  if (src.startsWith("preset:") && at >= 0) {
+    return src.slice(0, at) + " in " + shortPath(src.slice(at + " in ".length));
+  }
+  return shortPath(src);
+}
+
+/** The status line for the rules kiro-cli skipped, or "" when it skipped none. */
+function loadErrorsText(errors: readonly PolicyErrorItem[]): string {
+  const msgs = errors
+    .map((e) => (e.scope !== undefined && e.scope !== "" ? `${e.scope}: ${e.message}` : e.message))
+    .filter((m) => m !== "");
+  return msgs.length === 0 ? "" : "kiro-cli did not load part of the policy: " + msgs.join("; ");
 }
 
 class NativePolicyController {
   private writable = new Set<string>();
+  /** The load in flight, null when none is. */
   private ctrl: AbortController | null = null;
+  /** permissions_changed frames come in bursts of one per live session; until the panel has
+   *  loaded once they fetch nothing, and while a load is in flight they queue one more. */
+  private loaded = false;
+  private reloadQueued = false;
   /** Never local constants: the ladder decides what one click grants, and policyfile owns it. */
   private profiles: SecurityProfile[] = [];
   private activeProfile = "";
@@ -336,6 +373,7 @@ class NativePolicyController {
   private lastRules: PolicyRule[] = [];
 
   init(): void {
+    this.loaded = false;
     const addBtn = maybeEl<HTMLButtonElement>("native-rule-add");
     if (addBtn === null) {
       return; // permissions panel not present in this build
@@ -352,7 +390,7 @@ class NativePolicyController {
     registerCleanup(bindLoadingState("permissions.edit_native_rule", addBtn));
     registerCleanup(
       onSSE("permissions_changed", () => {
-        void this.load();
+        this.reloadOnChange();
       }),
     );
     registerCleanup(
@@ -371,18 +409,45 @@ class NativePolicyController {
 
   /** Fetch + render the policy view. Public for the lazy tab loader. */
   refresh(): void {
+    this.loaded = true;
     void this.load();
   }
 
   cancel(): void {
     this.ctrl?.abort();
     this.ctrl = null;
+    this.reloadQueued = false;
+  }
+
+  private reloadOnChange(): void {
+    if (!this.loaded) {
+      return;
+    }
+    if (this.ctrl !== null) {
+      this.reloadQueued = true;
+      return;
+    }
+    void this.load();
   }
 
   private async load(): Promise<void> {
     this.ctrl?.abort();
-    this.ctrl = new AbortController();
-    const { signal } = this.ctrl;
+    const ctrl = new AbortController();
+    this.ctrl = ctrl;
+    try {
+      await this.fetchAndRender(ctrl.signal);
+    } finally {
+      if (this.ctrl === ctrl) {
+        this.ctrl = null;
+        if (this.reloadQueued) {
+          this.reloadQueued = false;
+          void this.load();
+        }
+      }
+    }
+  }
+
+  private async fetchAndRender(signal: AbortSignal): Promise<void> {
     const data = await apiGet<PolicyView>("/api/permissions", signal);
     if (signal.aborted || data === null) {
       return;
@@ -398,10 +463,13 @@ class NativePolicyController {
     this.lastRules = data.rules;
     this.populateCapabilities(data.capabilities);
     if (data.available) {
-      this.showStatus("", false);
+      this.showStatus(
+        loadErrorsText(data.load_errors),
+        data.load_errors.some((e) => e.fatal === true),
+      );
     } else {
       this.showStatus(
-        "Live policy unavailable because no session is active. Showing your saved user and workspace rules only.",
+        "Live policy unavailable: kiro-cli did not answer. Showing your saved user and workspace rules only.",
         false,
       );
     }
@@ -533,9 +601,9 @@ class NativePolicyController {
     return confirm(
       `Allow every capability without asking? This includes "power", so a power you ` +
         `install runs its author's code at your privilege with no prompt. It does NOT ` +
-        `silence every prompt: Kiro still refuses writes to its own settings ` +
-        `directories and still asks before writing .git, .kiro/agents, .kiro/hooks ` +
-        `and .vscode.`,
+        `silence every prompt: Kiro still refuses file-tool writes to its own settings ` +
+        `directories and still asks before that tool writes .git, .kiro/agents, ` +
+        `.kiro/hooks and .vscode. A shell command can write any of them with no prompt.`,
       "Allow everything",
       "destructive",
     );
@@ -627,7 +695,7 @@ class NativePolicyController {
     ];
     // ONE flat keyed list over both element kinds — a scope's label and the rules under it — so a
     // row is preserved without each group boundary needing a container. A writable row holds a
-    // `<select>`, and this runs on every `permissions_changed` frame plus after every edit.
+    // `<select>`, and this runs on every `permissions_changed` refetch plus after every edit.
     const rows: PolicyEntry[] = [];
     for (const scope of order) {
       const grp = groups.get(scope);
@@ -669,7 +737,7 @@ class NativePolicyController {
 
   private ruleRow(r: PolicyRule): HTMLElement {
     const row = el("div", { className: `native-rule native-rule-${r.effect}` });
-    if (this.writable.has(r.scope)) {
+    if (r.editable) {
       row.append(this.effectSelect(r));
     } else {
       row.append(el("span", { className: `native-rule-effect eff-${r.effect}` }, r.effect));
@@ -687,7 +755,7 @@ class NativePolicyController {
       src.setAttribute("aria-label", `Defined in ${r.source}`);
     }
     row.append(src);
-    if (this.writable.has(r.scope)) {
+    if (r.editable) {
       const rm = el(
         "button",
         { type: "button", className: "icon-btn native-rule-remove" },
@@ -708,7 +776,7 @@ class NativePolicyController {
     const sel = el("select", {
       className: `native-rule-effect eff-${r.effect}`,
     }) as HTMLSelectElement;
-    for (const eff of ["allow", "ask", "deny"]) {
+    for (const eff of ["allow", "evaluate", "ask", "deny"]) {
       const opt = el("option", { value: eff }, eff) as HTMLOptionElement;
       opt.value = eff;
       opt.selected = eff === r.effect;
@@ -727,7 +795,7 @@ class NativePolicyController {
     if (next === r.effect) {
       return;
     }
-    const RANK: Record<string, number> = { deny: 2, ask: 1, allow: 0 };
+    const RANK: Record<string, number> = { deny: 3, ask: 2, evaluate: 1, allow: 0 };
     let confirmFlag = false;
     if ((RANK[next] ?? 0) < (RANK[r.effect] ?? 0)) {
       const ok = await confirm(
@@ -832,13 +900,15 @@ class NativePolicyController {
     }
     const res = await explainPolicy.dispatch({ capability, resource });
     if (res === null) {
-      out.textContent = "Could not evaluate. Check that a chat session is active.";
+      out.textContent = "Could not evaluate: kiro-cli did not answer.";
       return;
     }
     // The control is labelled "why?", so the matched RULE is the answer: a scope names only the
     // layer that decided, and the kiro layer holds dozens of globs the reader would then have to
     // find by eye.
-    const parts = [`Effect: ${res.effect}${res.is_explicit_ask ? " (explicit ask)" : ""}`];
+    const effect =
+      res.effect === "evaluate" ? "evaluate (Kiro's safety check decides)" : res.effect;
+    const parts = [`Effect: ${effect}${res.is_explicit_ask ? " (explicit ask)" : ""}`];
     if (res.matched_rule !== undefined) {
       parts.push(`rule: ${ruleSummary(res.matched_rule)}`);
     }

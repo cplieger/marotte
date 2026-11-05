@@ -29,6 +29,7 @@ const GROUPED_ROWS: readonly { readonly group: string; readonly row: SheetRow }[
     group: "Composer",
     row: { description: "New line, continuing a list item", chords: [["Shift", "Enter"]] },
   },
+  { group: "Composer", row: { description: "Cancel the running turn", chords: [["Esc"]] } },
   {
     group: "Composer",
     row: {

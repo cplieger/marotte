@@ -384,9 +384,29 @@ func newSessionInfoMsg(kiro map[string]any) *marotte.RPCResponse {
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
-// newTurnStartMsg pins that KAS brackets every turn, unprompted ones included.
+// newTurnStartMsg is the untagged bracket of a turn KAS started itself.
 func newTurnStartMsg() *marotte.RPCResponse {
 	return newSessionInfoMsg(map[string]any{"kind": "turn_start", "turnStart": true})
+}
+
+// promptTurnStartMsg is the turn_start KAS sends for the newest session/prompt, echoing its tag.
+func (b *fakeBridge) promptTurnStartMsg() *marotte.RPCResponse {
+	return newPromptTurnStartMsg(promptTagOf(b.paramsFor(marotte.MethodPrompt)))
+}
+
+// promptTagOf is a session/prompt's _meta.kiro.userMessageTag, "" when absent.
+func promptTagOf(params map[string]any) string {
+	meta, _ := params["_meta"].(map[string]any)
+	kiro, _ := meta["kiro"].(map[string]any)
+	tag, _ := kiro["userMessageTag"].(string)
+	return tag
+}
+
+// newPromptTurnStartMsg is the turn_start KAS sends for the prompt marotte tagged with turnID.
+func newPromptTurnStartMsg(turnID string) *marotte.RPCResponse {
+	return newSessionInfoMsg(map[string]any{
+		"kind": "turn_start", "turnStart": true, "userMessageTag": turnID, "turnId": "kas-" + turnID,
+	})
 }
 
 // newTurnEndMsg carries the outcome no local closer can know.
@@ -415,17 +435,6 @@ func newReplayedTurnEndMsg(stop string) *marotte.RPCResponse {
 			"kind":    "turn_end",
 			"turnEnd": map[string]any{"stopReason": stop},
 		}},
-	})
-	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
-	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
-}
-
-// newAgentInitiatedChunkMsg carries the one flag separating a prompted turn from an agent-initiated one, on content only.
-func newAgentInitiatedChunkMsg(text string) *marotte.RPCResponse {
-	update, _ := json.Marshal(map[string]any{
-		"sessionUpdate": "agent_message_chunk",
-		"content":       map[string]any{"type": "text", "text": text},
-		"_meta":         map[string]any{"kiro": map[string]any{"agentInitiated": true}},
 	})
 	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}

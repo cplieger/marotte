@@ -356,14 +356,22 @@ function lightenToolPayload(v: unknown): unknown {
     out.output = out.output.slice(0, SNAPSHOT_MAX_TOOL_OUTPUT);
   }
   if (out.input !== undefined) {
-    out.input = lightenInput(out.input);
+    const input = lightenInput(out.input);
+    if (input !== out.input) {
+      // A permission card reads this copy until the transcript refetch lands, and states the gap.
+      out.truncated = {
+        ...out.truncated,
+        input_bytes: out.truncated?.input_bytes ?? JSON.stringify(out.input).length,
+      };
+    }
+    out.input = input;
   }
   return out;
 }
 
 /**
  * Truncate a tool input's TOP-LEVEL string values, where a card's painted keys live; the
- * byte budget catches anything nested.
+ * byte budget catches anything nested. Returns `v` itself when nothing was cut.
  */
 function lightenInput(v: unknown): unknown {
   if (typeof v !== "object" || v === null || Array.isArray(v)) {
@@ -371,14 +379,17 @@ function lightenInput(v: unknown): unknown {
   }
   const src = v as Record<string, unknown>;
   const out: Record<string, unknown> = {};
+  let cut = false;
   for (const k of Object.keys(src)) {
     const val = src[k];
-    out[k] =
-      typeof val === "string" && val.length > SNAPSHOT_MAX_TOOL_INPUT
-        ? val.slice(0, SNAPSHOT_MAX_TOOL_INPUT)
-        : val;
+    if (typeof val === "string" && val.length > SNAPSHOT_MAX_TOOL_INPUT) {
+      out[k] = val.slice(0, SNAPSHOT_MAX_TOOL_INPUT);
+      cut = true;
+    } else {
+      out[k] = val;
+    }
   }
-  return out;
+  return cut ? out : v;
 }
 
 /**

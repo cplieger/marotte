@@ -91,7 +91,7 @@ type bridgeAccess interface {
 	BridgeLive(chatID marotte.ChatID) bool
 	// RefreshForRetry abandons the session sb holds after a turn that produced nothing: it releases the session,
 	// closes the turns it hosted `interrupted` and blanks the record's session id while it still names that session,
-	// so the next open starts session/new. An error wrapping marotte.ErrChatClosedDuringCall is the chat's close
+	// so the next open starts session/new, recording a context_reset when the chat shows turns that session held. An error wrapping marotte.ErrChatClosedDuringCall is the chat's close
 	// refusing or cutting it; the retry must not go on after any error.
 	RefreshForRetry(ctx context.Context, chatID marotte.ChatID, sb Bridge) error
 	// CallBudget bounds one engine call by d, extended while the engine is in an event-loop stall.
@@ -140,10 +140,10 @@ type chatStore interface {
 	// and turn_close when no turn survived the window and the log minted one to
 	// hold it.
 	Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record *marotte.Entry, minted []*marotte.Entry, err error)
-	// RewindTarget resolves the prompt id a rewind addresses to the turn that
+	// PromptTarget resolves the prompt id a rewind or a branch addresses to the turn that
 	// prompt opened and the id KAS holds the prompt under. False when no turn's
 	// prompt carries that id.
-	RewindTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error)
+	PromptTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.PromptTarget, bool, error)
 	// PromptReceipt reads what the log holds of one prompt id: opened, bound by KAS, and its words.
 	PromptReceipt(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.PromptReceipt, error)
 	// PromptAttachmentPaths is every attachment path on the log's prompts after the
@@ -224,22 +224,20 @@ type ChatHold interface {
 	Release()
 }
 
+// askCanceller answers a chat's pending asks ahead of a session/cancel.
+type askCanceller interface {
+	// CancelPendingAsks takes each pending ask of chatID in scope, in ask order, and answers it with its kind's
+	// cancel answer. An ask a card answer claimed first is skipped. It returns an error wrapping
+	// marotte.ErrBridgeExited when the session ended under an answer, and one wrapping ErrCancelNotDelivered when an
+	// answer failed on a live session after its retries; either stops before the next ask.
+	CancelPendingAsks(ctx context.Context, chatID marotte.ChatID, scope CancelScope) error
+}
+
 // pendingPermAccess provides the pending-permission bookkeeping handlers
 // need: an unanswered request is replayed to a reconnecting client, so
 // answering or abandoning one has to retire the entry.
-// permissionCanceller answers a chat's pending permission asks `cancelled` ahead of a session/cancel.
-type permissionCanceller interface {
-	// CancelPendingPermissions takes each pending permission ask of chatID in scope, in ask order, and answers it
-	// cancelled. An ask a card answer claimed first is skipped. It returns an error wrapping marotte.ErrBridgeExited
-	// when the session ended under an answer, and one wrapping ErrCancelNotDelivered when an answer failed on a live
-	// session after its retries; either stops before the next ask.
-	CancelPendingPermissions(ctx context.Context, chatID marotte.ChatID, scope CancelScope) error
-}
-
 type pendingPermAccess interface {
-	permissionCanceller
-	// ClearPendingInputAsks drops chatID's elicitation and user-input asks in scope, silently.
-	ClearPendingInputAsks(chatID marotte.ChatID, scope CancelScope)
+	askCanceller
 	// TakePendingPerm claims the request before its answer is sent, reporting false
 	// when another surface already answered it, its bridge ended, or it is not a
 	// kind ask of chatID's. settledBy travels with the claim because the delivered
@@ -251,6 +249,8 @@ type pendingPermAccess interface {
 	TakePendingPermissionOption(chatID marotte.ChatID, requestID int64, optionID string, settledBy marotte.SettledBy) (reply AskReply, pending, offered bool)
 	// PendingPermission reads an unanswered permission ask without claiming it.
 	PendingPermission(chatID marotte.ChatID, requestID int64) (marotte.PermissionNeededPayload, bool)
+	// PendingElicitation reads an unanswered elicitation ask without claiming it.
+	PendingElicitation(chatID marotte.ChatID, requestID int64) (marotte.ElicitationNeededPayload, bool)
 }
 
 // AnswerOutcome is how a claimed ask settled under its answer.
@@ -632,11 +632,11 @@ type promptSendGate interface {
 	AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) (commit func() error, err error)
 }
 
-// preSendCompactor is the compaction policy's before-a-send trigger. It returns
-// once the prompt may be sent, whatever the compaction did; it never refuses. It compacts only through sb, the
-// prompt's own bridge, so a prompt of an ended life never reaches another life's session.
-type preSendCompactor interface {
-	PreSendCompact(ctx context.Context, chatID marotte.ChatID, sb Bridge)
+// signInReach reads whether the identity provider, not the account, is why the engine's credential ask fails.
+type signInReach interface {
+	// ProviderUnreachable returns the vault's reason while the identity provider gives no usable renewal, an outage
+	// no sign-in fixes; false otherwise.
+	ProviderUnreachable() (reason string, ok bool)
 }
 
 // SteerRecorder is what the steer commands need of the steer ledger: record that
@@ -905,9 +905,9 @@ type Roles struct {
 	Status chatStatus
 	// AuthReadiness carries prompt authentication outcomes to readiness.
 	AuthReadiness *AuthReadiness
-	// Compactor runs the compaction policy before a prompt is sent. Nil sends
-	// with no pre-send check.
-	Compactor preSendCompactor
+	// SignIn tells an unreachable identity provider apart from a refused credential. Nil reads every
+	// credential failure as one a sign-in fixes.
+	SignIn signInReach
 	// SendGate holds each session/prompt a chat's prompt sends until the session may
 	// take it. Nil sends at once.
 	SendGate promptSendGate
@@ -944,8 +944,8 @@ type promptRoles struct {
 	queue       SteerQueue
 	jobs        SteerJobs
 	followups   QueueAccess
-	compactor   preSendCompactor
 	sendGate    promptSendGate
 	auth        *AuthReadiness
+	signIn      signInReach
 	workspace   Workspace // last for fieldalignment, as in Roles
 }

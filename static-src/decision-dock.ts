@@ -3,11 +3,11 @@
 
 import { el, signal, effect, touch } from "@cplieger/ui";
 import { announce } from "@cplieger/ui/announce";
-import { activeSession } from "./store.js";
+import { activeSession, messagesVersionOf } from "./store.js";
 import { BUS_USER_INPUT_ANSWERED, emitBus } from "./bus.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { forceReflow } from "./dom.js";
-import { buildPermissionCard, type PermissionAnswer } from "./permission.js";
+import { buildPermissionCard, refreshPermissionCard, type PermissionAnswer } from "./permission.js";
 import { buildElicitationCard } from "./elicitation.js";
 import { buildUserInputCard } from "./user-input.js";
 import { followBand } from "./dock-ask.js";
@@ -627,11 +627,19 @@ function renderHost(h: DockHost): void {
     return;
   }
 
+  // Tracked so a permission card's tool input, which can land after the card, refills in place.
+  if (head.kind === "permission") {
+    touch(messagesVersionOf(head.chatID));
+  }
+
   // A rebuild would discard the user's typing, so the same decision only re-states what can move in place. MUST NOT
   // start a phase.
   const key = decisionKey(head.chatID, head.kind, decisionIdentity(head));
   const rest = mine.slice(1);
   if (key === h.renderedKey) {
+    if (head.kind === "permission" && h.card !== null) {
+      refreshPermissionCard(h.card);
+    }
     paintRest(h, rest);
     return;
   }
@@ -970,8 +978,10 @@ function motionOff(): boolean {
  *  in document order. */
 function paintRest(h: DockHost, rest: readonly Decision[]): void {
   const row = h.el.querySelector(":scope > .dock-depth");
-  if (row !== null) {
-    row.textContent = rest.length === 0 ? "" : `${String(rest.length)} more waiting`;
+  const text = rest.length === 0 ? "" : `${String(rest.length)} more waiting`;
+  // Written only on a change: this repaints on every transcript bump, and each write wakes the floor's observer.
+  if (row !== null && row.textContent !== text) {
+    row.textContent = text;
     row.classList.toggle("hidden", rest.length === 0);
   }
 }

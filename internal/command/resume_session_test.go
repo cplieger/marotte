@@ -39,8 +39,8 @@ func (d *storeDeps) Revert(ctx context.Context, id marotte.ChatID, turn, kasMess
 	return d.store.Revert(ctx, id, turn, kasMessageID)
 }
 
-func (d *storeDeps) RewindTarget(ctx context.Context, id marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error) {
-	return d.store.RewindTarget(ctx, id, promptID)
+func (d *storeDeps) PromptTarget(ctx context.Context, id marotte.ChatID, promptID string) (marotte.PromptTarget, bool, error) {
+	return d.store.PromptTarget(ctx, id, promptID)
 }
 
 func (d *storeDeps) PromptAttachmentPaths(ctx context.Context, id marotte.ChatID, watermark string) ([]string, error) {

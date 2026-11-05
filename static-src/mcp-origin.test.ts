@@ -372,6 +372,23 @@ describe("sign-in follows the live report onto either row", () => {
     expect(signIn(row).button).toBeNull();
   });
 
+  it("keeps Sign in on a row whose last sign-in kiro-cli refused, and says why", async () => {
+    unconfiguredNames.value = [];
+    statusResponse.servers = [
+      { name: "theirs", state: "needs_auth", origin: "power", error: "listener busy" },
+    ];
+    mcpState.refetchStatus();
+    await settle();
+
+    expect(statusSignalFor("theirs").value).toMatchObject({
+      state: "needs_auth",
+      error: "listener busy",
+    });
+    const row = mountForeignRow("theirs");
+    expect(signIn(row).button).not.toBeNull();
+    expect(row.textContent).toContain("listener busy");
+  });
+
   it("offers Sign in on marotte's own row waiting for it", async () => {
     const s = configured("mine");
     servers.setAll([s]);
@@ -415,6 +432,18 @@ describe("the sign-in frames", () => {
       origin: "user",
       state: "needs_auth",
     });
+
+    dispatch({
+      type: "mcp_oauth_needed",
+      payload: { server: "frames", error: "listener busy" },
+    } as ServerEvent);
+    expect(statusSignalFor("frames").value).toEqual({
+      name: "frames",
+      origin: "user",
+      state: "needs_auth",
+      error: "listener busy",
+    });
+    expect(document.body.textContent).toContain('Signing in to "frames" failed: listener busy');
   });
 });
 
@@ -432,6 +461,12 @@ describe("renderForeignMeta", () => {
       expect(renderForeignMeta(status({ state } as Partial<RuntimeStatus>))).toContain(want);
     });
   }
+
+  it("says why kiro-cli refused the last sign-in", () => {
+    const text = renderForeignMeta(status({ state: "needs_auth", error: "listener busy" }));
+    expect(text).toContain("Sign-in failed");
+    expect(text).toContain("listener busy");
+  });
 
   it("surfaces the failure reason", () => {
     expect(renderForeignMeta(status({ state: "failed", error: "spawn ENOENT" }))).toContain(

@@ -61,7 +61,6 @@ vi.mock("./actions/chat.js", () => ({ switchModel: { dispatch: vi.fn() } }));
 // Real reconcile: the unkeyed notice must coexist with keyed option rows.
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
 vi.mock("./session-context.js", () => ({
-  setCurrentModel: vi.fn(),
   setLastModel: vi.fn(),
   getLastEffortFor: () => "",
 }));

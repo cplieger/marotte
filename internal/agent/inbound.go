@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"sync"
-
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/secretstore"
 	"github.com/cplieger/marotte/internal/spec"
@@ -19,7 +17,4 @@ type inbound struct {
 	signIns signInURLClaimer
 	// stepRun names the run a step session belongs to (engineRouter.StepRun).
 	stepRun func(marotte.SessionID) (string, bool)
-
-	writeHooks   map[string]WriteHook
-	writeHooksMu sync.Mutex
 }

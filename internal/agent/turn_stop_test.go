@@ -182,7 +182,7 @@ func TestCmdCancel_AStopOutlivingItsTurnLeavesTheNextPromptAlone(t *testing.T) {
 func TestCmdCancel_ASupersededPromptsUnansweredCallIsReleased(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br, first, _, prompted := interruptHub(t)
-		br.deliver(newTurnStartMsg())
+		br.deliver(br.promptTurnStartMsg())
 		br.deliver(newTurnStartMsg())
 		synctest.Wait()
 		if c, closed := closeOfTurn(t, logOf(t, cs, "c1"), first); !closed || c.Outcome == "" {
@@ -483,7 +483,7 @@ func TestRequestStop_AnAdmissionIsItsTargetOnlyWhenNothingElseRuns(t *testing.T)
 		}},
 		{name: "beside an open turn KAS started", admit: func(t *testing.T, h *Runtime) {
 			reservePrompt(t, h)
-			if h.coord.openWireTurn(t.Context(), "c1", false) == nil {
+			if h.coord.openWireTurn(t.Context(), "c1", "", false) == nil {
 				t.Fatal("Setup: the agent's turn did not open")
 			}
 		}},
@@ -605,7 +605,7 @@ func emptyRetryHub(t *testing.T, arm func(*fakeBridge)) (h *Runtime, cs *testCha
 	}
 	first := minted[0]
 	mu.Unlock()
-	first.deliver(newTurnStartMsg())
+	first.deliver(first.promptTurnStartMsg())
 	first.deliver(newTurnEndMsg("end_turn"))
 	close(answerFirst)
 	synctest.Wait()

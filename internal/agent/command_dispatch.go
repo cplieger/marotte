@@ -42,7 +42,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		SteerJobs:     rt.steerQueue,
 		Status:        rt,
 		AuthReadiness: rt.authReadiness,
-		Compactor:     rt,
+		SignIn:        rt,
 		SendGate:      rt.coord,
 		Renamer:       rt,
 		SpecApprovals: specApprovalsOrNil(rt.specApprovals),

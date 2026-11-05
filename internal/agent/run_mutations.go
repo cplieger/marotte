@@ -324,12 +324,8 @@ func frameWorkflow(msg *marotte.RPCResponse, steps func(marotte.SessionID) (stri
 	if msg.Method != marotte.MethodSessionUpdate || steps == nil {
 		return ""
 	}
-	var env translate.ACPSessionUpdateEnvelope
-	if json.Unmarshal(msg.Params, &env) != nil || env.Update == nil {
-		return ""
-	}
-	var base translate.ACPSessionUpdateBase
-	if json.Unmarshal(env.Update, &base) != nil || base.Edge() != translate.TurnEdgeStart {
+	env, base, ok := translate.DecodeSessionUpdate(msg.Params)
+	if !ok || base.Edge() != translate.TurnEdgeStart {
 		return ""
 	}
 	wf, _ := steps(marotte.SessionID(env.SessionID))

@@ -551,6 +551,54 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	}
 }
 
+// TestCancelExpiredRun_ARefusedSlotCancelLeavesTheScheduleRowUntouched pins that the row is written only once
+// the cancel lands: a refused one leaves the run executing, so a failed row would contradict it.
+func TestCancelExpiredRun_ARefusedSlotCancelLeavesTheScheduleRowUntouched(t *testing.T) {
+	h, _, br := newTestHub()
+	const id = "wf_1"
+	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner pid 979344 is live")}
+	h.bridge.mgr.insert(runChatID(id), testBridge(br, bridgeIdle))
+
+	st, err := schedule.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	entry := schedule.Entry{
+		Source: "bundled://nightly", Enabled: true,
+		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
+	}
+	if pErr := st.Put(t.Context(), &entry); pErr != nil {
+		t.Fatalf("Put schedule: %v", pErr)
+	}
+	h.runs.schedules = st
+
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(entry.Row(), time.Now().Add(30*time.Second)), hostSec())
+	h.runs.armDeadline(t.Context(), id)
+	l, _ := h.runs.lease(id)
+	before := st.List()
+	if len(before) != 1 || before[0].LastRunID != id {
+		t.Fatalf("the lease grant did not record the run's start on its row: %+v", before)
+	}
+
+	h.runs.cancelExpired(id, l.Deadline)
+
+	if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+		t.Fatal("the slot's cancel was never attempted, so the fixture cannot show a refusal")
+	}
+	if got := h.runs.endReason(id); got != "" {
+		t.Errorf("endReason = %q after a REFUSED cancel, want \"\"", got)
+	}
+	rows := st.List()
+	if len(rows) != 1 {
+		t.Fatalf("the schedule store holds %d rows", len(rows))
+	}
+	if rows[0].LastStatus != before[0].LastStatus || rows[0].LastReason != before[0].LastReason {
+		t.Errorf("the schedule row reads (%q, %q) after a REFUSED cancel, want it untouched at (%q, %q): "+
+			"it reports the run cancelled while KAS still runs it", rows[0].LastStatus, rows[0].LastReason,
+			before[0].LastStatus, before[0].LastReason)
+	}
+}
+
 // TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure pins that an alert rule reads logMsgRunOverran
 // as a schedule failing, so a manual run yielding must not log it.
 func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *testing.T) {

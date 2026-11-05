@@ -99,7 +99,8 @@ function ensureBound(): void {
   });
 }
 
-function toAttached(path: string): AttachedFile {
+/** The pill for a workspace-relative path, for a send that names its files instead of taking the row. */
+export function toAttached(path: string): AttachedFile {
   const parts = path.split("/");
   return { path, name: parts[parts.length - 1] ?? path };
 }

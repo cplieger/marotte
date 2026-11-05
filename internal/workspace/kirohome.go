@@ -1,4 +1,4 @@
-// Package workspace provides path helpers for kiro-cli's per-user state directory.
+// Package workspace provides path helpers for kiro-cli's directories.
 package workspace
 
 import (

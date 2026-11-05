@@ -570,9 +570,8 @@ button.turn-wake-row-run:focus-visible {
   border-block-start: 0;
 }
 
-/* The SEVERITY's fallback rather than dead code: no current `stopped` outcome reaches it,
-   but the base ink above is `--c-red`, so deleting this arm would make a `stopped` outcome
-   added later print a stop as a failure. */
+/* A completed turn cut off at a bound (`turnBoundText`) speaks in this ink: the base ink above
+   is `--c-red`, which would print a stop as a failure. */
 .turn-notice[data-severity="stopped"] {
   color: var(--c-yellow);
 }
@@ -739,7 +738,7 @@ button.turn-wake-row-run:focus-visible {
 /* One grid for the whole panel; every section, row list and row is a subgrid of it, so G (titles,
    chevrons), S (labels, paths) and V (values, open lists) hold across sections. The twist track is
    the closed row's `i` plus its gap, so S is the x where the closed row's fact starts. The label
-   floor fits the widest label ("Output (estimated)") so V sits at one x across a chat: labels are
+   floor fits the widest label ("Added this turn") so V sits at one x across a chat: labels are
    the builder's own words, never data. The footer's `--footer-inset` is already outside this grid
    area (`1 / -1`). */
 .turn-info-panel {

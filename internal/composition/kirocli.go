@@ -2,12 +2,18 @@ package composition
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/signin"
 	kirosignin "github.com/cplieger/marotte/internal/signin/kiro"
 	"github.com/cplieger/pinstall/v3"
@@ -36,6 +42,8 @@ type kiroRuntime struct {
 	// cliPath resolves the active kiro-cli's absolute path, or "" when no version is
 	// active. Called per use, never captured.
 	cliPath func() string
+	// version is the active kiro-cli version, "" when none is active or the install is unmanaged.
+	version func() string
 	// env is the environment overlay for a spawned kiro-cli, nil when there is none.
 	env func() []string
 	// ready is the /api/health verdict plus the library's TYPED reason, or nil when this
@@ -60,6 +68,7 @@ type kiroRuntime struct {
 func unmanagedKiroRuntime() kiroRuntime {
 	return kiroRuntime{
 		cliPath: func() string { return kirocli.Name },
+		version: func() string { return "" },
 		// Non-nil on purpose: cliPath, env and stop are called unconditionally, so only
 		// ready and rescan may be nil, and their nil-ness is what MEANS "no manager".
 		env:  func() []string { return nil },
@@ -73,6 +82,7 @@ func unmanagedKiroRuntime() kiroRuntime {
 func unavailableKiroRuntime() kiroRuntime {
 	return kiroRuntime{
 		cliPath: func() string { return "" },
+		version: func() string { return "" },
 		env:     func() []string { return nil },
 		ready:   func() (bool, pinstall.Reason) { return false, pinstall.ReasonUnavailable },
 		stop:    func() {},
@@ -122,6 +132,7 @@ func managedKiroRuntime(ctx context.Context, mgr *pinstall.Manager) kiroRuntime 
 	}()
 	return kiroRuntime{
 		cliPath: mgr.Path,
+		version: func() string { return activeVersion(mgr) },
 		env:     mgr.PathEnv,
 		ready:   mgr.Ready,
 		rescan: func(rctx context.Context) (bool, error) {
@@ -145,6 +156,14 @@ func managedKiroRuntime(ctx context.Context, mgr *pinstall.Manager) kiroRuntime 
 			}
 		},
 	}
+}
+
+// activeVersion is the version mgr runs, which is the retained predecessor after a failed install.
+func activeVersion(mgr *pinstall.Manager) string {
+	if st, ok := mgr.Active(); ok {
+		return st.ActiveVersion
+	}
+	return ""
 }
 
 // kiroStopGrace bounds how long shutdown waits for the background install to notice
@@ -216,12 +235,44 @@ type engineSource struct {
 	allow map[string]struct{}
 }
 
-var _ agent.EngineSource = engineSource{}
+var (
+	_ agent.EngineSource  = engineSource{}
+	_ agent.ContentSharer = engineSource{}
+)
 
 func (s engineSource) CLIPath() string               { return s.kiro.cliPath() }
 func (s engineSource) Installed() <-chan struct{}    { return s.kiro.installed }
 func (s engineSource) Env() []string                 { return s.kiro.env() }
 func (s engineSource) EnvAllow() map[string]struct{} { return s.allow }
+
+// shareContentSetting is the kiro-cli switch the relay derives its engine's KIRO_CONTENT_COLLECTION_ENABLED from at
+// spawn, overwriting any inherited value.
+const shareContentSetting = "codeWhisperer.shareCodeWhispererContentWithAWS"
+
+// shareContentTimeout bounds one `kiro-cli settings` write, which kiro-cli serializes under its own file lock.
+const shareContentTimeout = 5 * time.Second
+
+// ShareContent writes kiro-cli's content-collection switch. It writes nothing without a managed install, so a
+// developer's own kiro-cli settings stay untouched, or while no version is active: the spawn that follows writes it.
+func (s engineSource) ShareContent(ctx context.Context, enabled bool) error {
+	if s.kiro.installed == nil {
+		return nil
+	}
+	path := s.kiro.cliPath()
+	if path == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, shareContentTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "settings", shareContentSetting, strconv.FormatBool(enabled))
+	procgroup.OwnGroup(cmd, time.Second)
+	cmd.Env = append(os.Environ(), s.kiro.env()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("kiro-cli settings %s: %w (output %s)", shareContentSetting, err,
+			logsafe.Field(strings.TrimSpace(string(out))))
+	}
+	return nil
+}
 
 // engineBackend is the sign-in backend the agent engine runs.
 const engineBackend = kirosignin.ID

@@ -91,7 +91,6 @@ vi.mock("../session-context.js", () => ({
   setLastModel: undefined,
   restoreLastModel: vi.fn(),
   restoreLastEffort: vi.fn(),
-  setCurrentModel: undefined,
 }));
 vi.mock("../status.js", () => ({
   // Present-but-undefined, for the reason above.

@@ -1,4 +1,5 @@
-// The MCP elicitation form card's string fields: which native input a JSON-Schema `format` picks, and what it reads back.
+// The MCP elicitation card: the link it offers, the control each MCP primitive schema renders as, and what Submit
+// refuses or sends.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -103,7 +104,13 @@ describe("format: date-time reads back as RFC 3339", () => {
   });
 
   it("keeps the seconds a step-bearing control already supplied", () => {
-    const got = answer({ type: "string", format: "date-time" }, "2026-09-08T14:30:45")?.["when"];
+    const onSubmit = vi.fn<Submit>();
+    const card = mount(oneField({ type: "string", format: "date-time" }), onSubmit);
+    // A UA that offers seconds does so under a seconds step; the default 60 s step refuses them.
+    field(card).step = "1";
+    field(card).value = "2026-09-08T14:30:45";
+    submitBtn(card).click();
+    const got = onSubmit.mock.calls[0]?.[1]?.["when"];
     // Anchored on the literal local part: an unconditional `:00` append would satisfy an expectation built from `got`.
     expect(got).toMatch(/^2026-09-08T14:30:45(?:Z|[+-]\d{2}:\d{2})$/);
   });
@@ -138,33 +145,39 @@ describe("format: date needs no normalizing", () => {
   });
 });
 
+/** Submit with the field set to value: the content sent, or null when Submit refused it. */
+function submitted(
+  schema: ElicitationPropertySchema,
+  value: string,
+): Record<string, unknown> | null {
+  const onSubmit = vi.fn<Submit>();
+  const card = mount(oneField(schema), onSubmit);
+  field(card).value = value;
+  submitBtn(card).click();
+  return onSubmit.mock.calls[0]?.[1] ?? null;
+}
+
 describe("a stated constraint outranks the picker", () => {
-  // HTML applies `pattern`, `minLength` and `maxLength` to text-ish types only, so a date picker drops them silently.
+  // A date picker writes one fixed shape, which a pattern or a length may refuse.
   it("a date with a pattern becomes a text box that still enforces it", () => {
-    const card = mount(
-      oneField({ type: "string", format: "date", pattern: "^2026-" }),
-      vi.fn<Submit>(),
-    );
-    expect(typeOf(card)).toBe("text");
-    expect(field(card).pattern).toBe("^2026-");
+    const schema = { type: "string", format: "date", pattern: "^2026-" };
+    expect(typeOf(mount(oneField(schema), vi.fn<Submit>()))).toBe("text");
+    expect(submitted(schema, "2025-01-01")).toBeNull();
+    // JSON Schema's pattern is unanchored: the HTML attribute would refuse this whole-value mismatch.
+    expect(submitted(schema, "2026-01-01")).toEqual({ when: "2026-01-01" });
   });
 
   it("a date-time with a minLength becomes a text box that still enforces it", () => {
-    const card = mount(
-      oneField({ type: "string", format: "date-time", minLength: 16 }),
-      vi.fn<Submit>(),
-    );
-    expect(typeOf(card)).toBe("text");
-    expect(field(card).minLength).toBe(16);
+    const schema = { type: "string", format: "date-time", minLength: 16 };
+    expect(typeOf(mount(oneField(schema), vi.fn<Submit>()))).toBe("text");
+    expect(submitted(schema, "2026-09-08")).toBeNull();
   });
 
   it("a date with a maxLength becomes a text box that still enforces it", () => {
-    const card = mount(
-      oneField({ type: "string", format: "date", maxLength: 10 }),
-      vi.fn<Submit>(),
-    );
-    expect(typeOf(card)).toBe("text");
-    expect(field(card).maxLength).toBe(10);
+    const schema = { type: "string", format: "date", maxLength: 10 };
+    expect(typeOf(mount(oneField(schema), vi.fn<Submit>()))).toBe("text");
+    expect(submitted(schema, "2026-09-08T")).toBeNull();
+    expect(submitted(schema, "2026-09-08")).toEqual({ when: "2026-09-08" });
   });
 
   // `minLength: 0` constrains nothing; `maxLength: 0` forbids input.
@@ -173,23 +186,256 @@ describe("a stated constraint outranks the picker", () => {
     expect(typeOf(card)).toBe("date");
   });
 
-  // `email` and `uri` honour all three attributes, so they keep their native type.
   it("an email keeps its native type AND its pattern", () => {
-    const card = mount(
-      oneField({ type: "string", format: "email", pattern: ".+@example\\.com" }),
-      vi.fn<Submit>(),
-    );
-    expect(typeOf(card)).toBe("email");
-    expect(field(card).pattern).toBe(".+@example\\.com");
+    const schema = { type: "string", format: "email", pattern: "@example\\.com$" };
+    expect(typeOf(mount(oneField(schema), vi.fn<Submit>()))).toBe("email");
+    expect(submitted(schema, "a@other.org")).toBeNull();
+    expect(submitted(schema, "a@example.com")).toEqual({ when: "a@example.com" });
   });
 
   it("a uri keeps its native type AND its length bounds", () => {
+    const schema = { type: "string", format: "uri", minLength: 12, maxLength: 20 };
+    expect(typeOf(mount(oneField(schema), vi.fn<Submit>()))).toBe("url");
+    expect(submitted(schema, "https://a.b")).toBeNull();
+    expect(submitted(schema, "https://example.com/long")).toBeNull();
+    expect(submitted(schema, "https://ab.com")).toEqual({ when: "https://ab.com" });
+  });
+});
+
+function urlCard(url: string, onSubmit: Submit = vi.fn<Submit>()): HTMLElement {
+  return mount({ request_id: 1, mode: "url", message: "Connect your account", url }, onSubmit);
+}
+
+function buttonTexts(card: HTMLElement): string[] {
+  return [...card.querySelectorAll("button")].map((b) => b.textContent);
+}
+
+// MCP 2025-11-25 "Safe URL Handling": show the full URL and its domain before consent, open only a web link.
+describe("the URL card", () => {
+  it("shows the host and the full URL it opens", () => {
+    const card = urlCard("https://Example.com/connect?x=1");
+    expect(card.querySelector(".elicitation-link-host")?.textContent).toBe("example.com");
+    expect(card.querySelector(".elicitation-link-href")?.textContent).toBe(
+      "https://example.com/connect?x=1",
+    );
+    expect(card.querySelector("a")?.getAttribute("href")).toBe("https://example.com/connect?x=1");
+  });
+
+  it("shows an internationalised host in the punycode that tells a look-alike apart", () => {
+    const card = urlCard("https://ex\u0430mple.com/");
+    expect(card.querySelector(".elicitation-link-host")?.textContent).toBe("xn--exmple-4nf.com");
+  });
+
+  it("answers accept with no content on Done", () => {
+    const onSubmit = vi.fn<Submit>();
+    const card = urlCard("https://example.com/", onSubmit);
+    [...card.querySelectorAll("button")].find((b) => b.textContent === "Done")?.click();
+    expect(onSubmit).toHaveBeenCalledWith("accept");
+  });
+
+  it.each([
+    ["vscode://localhost/open"],
+    ["javascript://localhost/%0Aalert(1)"],
+    ["file:///etc/passwd"],
+    [""],
+  ])("never offers %s", (url) => {
+    const card = urlCard(url);
+    expect(card.querySelector("a[href]")).toBeNull();
+    expect(buttonTexts(card)).toEqual(["Decline"]);
+  });
+});
+
+// MCP 2025-11-25 Security Considerations: the client MUST show which server requests the input.
+describe("the card names the asking server", () => {
+  const github = { server_name: "github", tool_name: "create_issue" };
+
+  it.each([
+    ["a form", { ...oneField({ type: "string" }), mcp_tool: github }],
+    ["a link", { request_id: 1, mode: "url", url: "https://example.com/", mcp_tool: github }],
+  ] as const)("on %s", (_, p) => {
+    const card = mount(p, vi.fn<Submit>());
+    expect(card.querySelector(".elicitation-origin")?.textContent).toBe(
+      "from github MCP integration",
+    );
+    expect(card.querySelector(".elicitation-origin-server")?.textContent).toBe("github");
+  });
+
+  it("states no origin when the server sent none", () => {
+    const card = mount(oneField({ type: "string" }), vi.fn<Submit>());
+    expect(card.querySelector(".elicitation-origin")).toBeNull();
+  });
+});
+
+function form(
+  properties: Record<string, ElicitationPropertySchema>,
+  required: string[] = [],
+): ElicitationNeededPayload {
+  return {
+    request_id: 1,
+    mode: "form",
+    message: "Fill this in",
+    requested_schema: { properties, required },
+  };
+}
+
+describe("choice fields render as pickers", () => {
+  it("a titled single-select is a select of its consts, labelled by title", () => {
+    const onSubmit = vi.fn<Submit>();
     const card = mount(
-      oneField({ type: "string", format: "uri", minLength: 8, maxLength: 200 }),
+      form({
+        size: {
+          type: "string",
+          oneOf: [
+            { const: "s", title: "Small" },
+            { const: "l", title: "Large" },
+          ],
+        },
+      }),
+      onSubmit,
+    );
+    const sel = card.querySelector("select");
+    if (sel === null) {
+      throw new Error("no select rendered");
+    }
+    expect([...sel.options].slice(1).map((o) => [o.value, o.textContent])).toEqual([
+      ["s", "Small"],
+      ["l", "Large"],
+    ]);
+    sel.value = "l";
+    submitBtn(card).click();
+    expect(onSubmit).toHaveBeenCalledWith("accept", { size: "l" });
+  });
+
+  it("legacy enumNames label the enum values", () => {
+    const card = mount(
+      form({ c: { type: "string", enum: ["r", "g"], enumNames: ["Red", "Green"] } }),
       vi.fn<Submit>(),
     );
-    expect(typeOf(card)).toBe("url");
-    expect(field(card).minLength).toBe(8);
-    expect(field(card).maxLength).toBe(200);
+    const opts = [...(card.querySelector("select")?.options ?? [])].slice(1);
+    expect(opts.map((o) => [o.value, o.textContent])).toEqual([
+      ["r", "Red"],
+      ["g", "Green"],
+    ]);
+  });
+
+  it.each([
+    ["items.enum", { type: "string", enum: ["a", "b", "c"] }],
+    [
+      "items.anyOf",
+      {
+        anyOf: [
+          { const: "a", title: "A" },
+          { const: "b", title: "B" },
+          { const: "c", title: "C" },
+        ],
+      },
+    ],
+  ])("a multi-select over %s is one checkbox per option, sent as an array", (_name, items) => {
+    const onSubmit = vi.fn<Submit>();
+    const card = mount(form({ tags: { type: "array", items, default: ["a"] } }), onSubmit);
+    const boxes = [...card.querySelectorAll<HTMLInputElement>("fieldset input[type=checkbox]")];
+    expect(boxes.map((b) => [b.value, b.checked])).toEqual([
+      ["a", true],
+      ["b", false],
+      ["c", false],
+    ]);
+    boxes[2]?.click();
+    submitBtn(card).click();
+    expect(onSubmit).toHaveBeenCalledWith("accept", { tags: ["a", "c"] });
+  });
+
+  it("a multi-select's legend is no label, so clicking it checks nothing", () => {
+    const card = mount(form({ tags: { type: "array", items: { enum: ["a"] } } }), vi.fn<Submit>());
+    card.querySelector<HTMLElement>("legend")?.click();
+    expect(card.querySelector<HTMLInputElement>("input[type=checkbox]")?.checked).toBe(false);
+  });
+});
+
+describe("Submit refuses what the schema forbids", () => {
+  it.each<[string, ElicitationPropertySchema, string]>([
+    ["an email that is not one", { type: "string", format: "email" }, "not-an-email"],
+    ["a uri that is not one", { type: "string", format: "uri" }, "not a url"],
+    ["a pattern mismatch", { type: "string", pattern: "^2026-" }, "2025-01-01"],
+    ["an integer given a fraction", { type: "integer" }, "1.5"],
+    ["a number below its minimum", { type: "number", minimum: 5 }, "3"],
+    ["a number above its maximum", { type: "number", maximum: 5 }, "6"],
+    ["a value set below minLength", { type: "string", minLength: 3 }, "ab"],
+    [
+      "one astral rune against minLength 2, counted in code points",
+      { type: "string", minLength: 2 },
+      "\u{1F600}",
+    ],
+  ])("%s", (_name, schema, value) => {
+    expect(submitted(schema, value)).toBeNull();
+  });
+
+  it("marks and focuses the refused field, and an edit clears the mark", () => {
+    const card = mount(oneField({ type: "string", minLength: 3 }), vi.fn<Submit>());
+    const inp = field(card);
+    inp.value = "ab";
+    submitBtn(card).click();
+    expect(inp.classList.contains("elicitation-invalid")).toBe(true);
+    expect(document.activeElement).toBe(inp);
+    inp.value = "abc";
+    inp.dispatchEvent(new Event("input"));
+    expect(inp.classList.contains("elicitation-invalid")).toBe(false);
+    expect(inp.validationMessage).toBe("");
+  });
+
+  it("one astral rune fits maxLength 1", () => {
+    expect(submitted({ type: "string", maxLength: 1 }, "\u{1F600}")).toEqual({ when: "\u{1F600}" });
+  });
+
+  it("sends a number with a fraction, since a number has no step", () => {
+    expect(submitted({ type: "number" }, "2.5")).toEqual({ when: 2.5 });
+  });
+
+  it("sends an integer as a number", () => {
+    expect(submitted({ type: "integer" }, "3")).toEqual({ when: 3 });
+  });
+
+  it("refuses a multi-select below its minItems", () => {
+    const onSubmit = vi.fn<Submit>();
+    const card = mount(
+      form({ tags: { type: "array", items: { enum: ["a", "b"] }, minItems: 2 } }),
+      onSubmit,
+    );
+    card.querySelector<HTMLInputElement>("input[type=checkbox]")?.click();
+    submitBtn(card).click();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(card.querySelector("fieldset")?.classList.contains("elicitation-invalid")).toBe(true);
+  });
+
+  it("refuses a required multi-select with nothing checked", () => {
+    const onSubmit = vi.fn<Submit>();
+    const card = mount(
+      form({ tags: { type: "array", items: { enum: ["a"] } } }, ["tags"]),
+      onSubmit,
+    );
+    submitBtn(card).click();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("refuses a required field left empty", () => {
+    const onSubmit = vi.fn<Submit>();
+    const card = mount(oneField({ type: "string" }, true), onSubmit);
+    submitBtn(card).click();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("never requires a boolean, whose unchecked box is the answer false", () => {
+    const onSubmit = vi.fn<Submit>();
+    const card = mount(form({ ok: { type: "boolean" } }, ["ok"]), onSubmit);
+    submitBtn(card).click();
+    expect(onSubmit).toHaveBeenCalledWith("accept", { ok: false });
+  });
+});
+
+describe("required comes from the schema, not the label", () => {
+  it("a field titled with a trailing star but not required may stay empty", () => {
+    const onSubmit = vi.fn<Submit>();
+    const card = mount(oneField({ type: "string", title: "Rating *" }), onSubmit);
+    submitBtn(card).click();
+    expect(onSubmit).toHaveBeenCalledWith("accept", {});
   });
 });

@@ -148,6 +148,15 @@ func writeMemoryErr(w http.ResponseWriter, err error) {
 	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("memory request failed"))
 }
 
+// memoryGonePrefix opens KAS's refusal to delete an id its store no longer holds, which kiro-cli's own TUI
+// counts as deleted: another tab, the extraction subagent or the model's memory tool removed it first.
+const memoryGonePrefix = `no memory with id "`
+
+func memoryAlreadyGone(err error) bool {
+	_, ok := errors.AsType[*marotte.RPCError](err)
+	return ok && strings.HasPrefix(rpcerr.Text(err), memoryGonePrefix)
+}
+
 func (st *Settings) handleMemoryCollection(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -193,7 +202,8 @@ func (st *Settings) handleMemoryOne(w http.ResponseWriter, r *http.Request) {
 		})
 	case http.MethodDelete:
 		st.memoryWrite(w, r, "memory delete", func(ctx context.Context) engineReply {
-			if _, err := st.memoryCall(ctx, methodKiroMemoryDelete, map[string]any{"id": id}); err != nil {
+			_, err := st.memoryCall(ctx, methodKiroMemoryDelete, map[string]any{"id": id})
+			if err != nil && !memoryAlreadyGone(err) {
 				return memoryFailure(err)
 			}
 			return engineReply{write: webhttp.Ok, applied: true}

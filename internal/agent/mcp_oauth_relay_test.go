@@ -78,12 +78,12 @@ func newCallbackListener(t *testing.T, status int) *callbackListener {
 	return l
 }
 
-// stageFlow runs one sign-in attempt up to its consent page: the server waits for sign-in, the user presses Sign
-// in, and KAS opens the consent URL.
+// stageFlow runs one sign-in attempt up to its consent page: the server waits for sign-in in a session of its own (so
+// staging another server leaves it standing), the user presses Sign in, and KAS opens the consent URL.
 func stageFlow(t *testing.T, h *Runtime, server, listenerURL, state string) {
 	t.Helper()
-	h.mcpRegistry.RecordOAuth(t.Context(), server, marotte.MCPSource{})
-	if _, err := h.mcpRegistry.claimSignIn(server); err != nil {
+	reportMCP(t, h, marotte.SessionID("sess-"+server), oauthMCP(server, "https://provider.example/passive"))
+	if _, err := h.mcpRegistry.claimSignIn(t.Context(), server); err != nil {
 		t.Fatalf("claimSignIn(%s) = %v", server, err)
 	}
 	if got, ok := h.mcpRegistry.claimSignInURL(t.Context(), authURLFor(t, listenerURL, state)); !ok || got != server {
@@ -305,7 +305,7 @@ func TestOAuthRelay_RefusesWithNoFlowInFlight(t *testing.T) {
 			h := newHubWithMCPConfig(t, nil)
 			if server == "linear" {
 				// Connected, not awaiting authorization.
-				h.mcpRegistry.RecordConnected(t.Context(), server, marotte.MCPSource{}, nil, nil, nil, nil)
+				reportMCP(t, h, marotte.SessionID("sess-"+server), connectedMCP(server, marotte.MCPSource{}))
 			}
 			rec := postRelay(t, h, server, pastedFor(t, l.srv.URL, "c", "st"))
 			if rec.Code != http.StatusConflict {
@@ -328,7 +328,7 @@ func TestOAuthRelay_ALazySignInIsRelayedByItsState(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			l := newCallbackListener(t, http.StatusOK)
 			h := newHubWithMCPConfig(t, nil)
-			h.mcpRegistry.RecordConnected(t.Context(), "linear", marotte.MCPSource{}, nil, nil, nil, nil)
+			reportMCP(t, h, "s1", connectedMCP("linear", marotte.MCPSource{}))
 			h.mcpRegistry.anchorSignInURL(authURLFor(t, l.srv.URL, "st-lazy"))
 			pasted := pastedFor(t, l.srv.URL, "the-code", "st-lazy")
 

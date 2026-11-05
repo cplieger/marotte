@@ -72,14 +72,7 @@ var _ chatRecords = (*recStore)(nil)
 // whose MCP side effects they do not assert on.
 type nopMCPRecorder struct{}
 
-func (nopMCPRecorder) RecordConnected(context.Context, string, marotte.MCPSource, []string, []marotte.MCPPromptInfo, []marotte.MCPResourceInfo, []marotte.MCPResourceTemplateInfo) {
-}
-
-func (nopMCPRecorder) RecordOAuth(context.Context, string, marotte.MCPSource) {}
-
-func (nopMCPRecorder) RecordInitFailure(context.Context, string, marotte.MCPSource, string) {}
-
-func (nopMCPRecorder) RecordDisabled(context.Context, string, marotte.MCPSource) {}
+func (nopMCPRecorder) RecordSessionStatus(context.Context, marotte.SessionID, MCPSessionStatus) {}
 
 var _ mcpRecorder = nopMCPRecorder{}
 

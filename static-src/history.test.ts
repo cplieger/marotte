@@ -109,9 +109,12 @@ vi.mock("./decision-dock.js", () => ({
 }));
 // Keyed by `(kind, ref)`: ids are opaque and server-minted, so a chat id is not a tab id.
 const hasTab = vi.fn((_kind: string, _ref?: string) => false);
+// The chat the strip shows once an open resolves: the matched one, unless a test moved the reader.
+const activeChatRef = vi.fn(() => "c-redis");
 // A signal, since the real `tabSetVersion` is a tracked read and the page re-derives its rows on it.
 const tabsVersion = signal(0);
 vi.mock("./tabs.js", () => ({
+  activeChatRef,
   descendantChatsOf,
   hasTab,
   setHistoryTab,
@@ -1161,6 +1164,23 @@ describe("history: cross-chat search", () => {
     expect(openChatFindAt).not.toHaveBeenCalled();
   });
 
+  it("hands nothing to a find when the reader moved to another tab before the open resolved", async () => {
+    // The open left the view where the reader went, so a find there would search the wrong chat.
+    activeChatRef.mockReturnValueOnce("c-other");
+    const { table } = await search({
+      matches: [match()],
+      scanned: 3,
+      matched: 1,
+      truncated: false,
+    });
+    openBtn(table.querySelector("[data-search-chat]")!).click();
+    await vi.waitFor(() => {
+      expect(openChatTab).toHaveBeenCalledTimes(1);
+    });
+    await Promise.resolve();
+    expect(openChatFindAt).not.toHaveBeenCalled();
+  });
+
   // The shared grammar over one noun: "conversations" on both axes.
   it("states the cut and the scan's reach in the shared grammar", async () => {
     const { note } = await search({
@@ -1851,6 +1871,67 @@ describe("history: the row's subtitle and time", () => {
     });
     expect(sub("r:wf_1")).toBe("1m · from Rebuild the rail");
     expect(sub("r:wf_orphan")).toBe("");
+  });
+
+  it("states where a live run stands, and nothing once it ended", async () => {
+    await render({
+      sessions: [],
+      runs: [
+        { ...runAt("running"), workflow_id: "wf_step", standing: { node: "build", kind: "step" } },
+        { ...runAt("running"), workflow_id: "wf_watch", standing: { node: "ci", kind: "watch" } },
+        {
+          ...runAt("paused"),
+          workflow_id: "wf_cap",
+          standing: { node: "review", kind: "pass_limit" },
+        },
+        { ...runAt("completed"), workflow_id: "wf_done" },
+      ],
+    });
+    expect(sub("r:wf_step")).toBe("at build");
+    expect(sub("r:wf_watch")).toBe("waiting on ci");
+    expect(sub("r:wf_cap")).toBe("review reached its pass limit");
+    expect(sub("r:wf_done")).toBe("");
+  });
+
+  it("puts a live run's position after the recipe and before the launching chat", async () => {
+    await render({
+      sessions: [],
+      runs: [
+        {
+          ...runAt("running"),
+          name: "review-auth",
+          workflow_name: "code-review",
+          standing: { node: "build", kind: "step" },
+          parent_chat_id: "c-launcher",
+          parent_chat_name: "Rebuild the rail",
+        },
+      ],
+    });
+    expect(sub("r:wf_1")).toBe("code-review · at build · from Rebuild the rail");
+  });
+
+  it("states no duration for a live run, whose updated_at is its last start", async () => {
+    await render({
+      sessions: [],
+      runs: [
+        {
+          ...runAt("running"),
+          workflow_id: "wf_live",
+          created_at: 1000,
+          started_at: 1000,
+          updated_at: 901000,
+        },
+        {
+          ...runAt("paused"),
+          workflow_id: "wf_held",
+          created_at: 1000,
+          started_at: 1000,
+          updated_at: 901000,
+        },
+      ],
+    });
+    expect(sub("r:wf_live")).toBe("");
+    expect(sub("r:wf_held")).toBe("");
   });
 
   it("shows the time relative at a glance and absolute on demand", async () => {

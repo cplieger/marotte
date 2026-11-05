@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 	"testing"
@@ -19,7 +20,7 @@ type pendingCaptureDeps struct {
 
 const capturedAskBase = 9000
 
-func (d *pendingCaptureDeps) PendingPermsAdd(id int64, evt marotte.ServerEvent, origin AskOrigin) marotte.ServerEvent {
+func (d *pendingCaptureDeps) PendingPermsAdd(_ context.Context, id int64, evt marotte.ServerEvent, origin AskOrigin) (marotte.ServerEvent, bool) {
 	d.pendingAdds = append(d.pendingAdds, id)
 	d.pendingOrigins = append(d.pendingOrigins, origin)
 	askID := int64(capturedAskBase + len(d.pendingAdds))
@@ -34,7 +35,7 @@ func (d *pendingCaptureDeps) PendingPermsAdd(id int64, evt marotte.ServerEvent, 
 		p.RequestID = askID
 		evt.Payload = p
 	}
-	return evt
+	return evt, true
 }
 
 func userInputMsg(t *testing.T, id *int64, params map[string]any) *marotte.RPCResponse {

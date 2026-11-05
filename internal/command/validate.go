@@ -22,8 +22,9 @@ var (
 	errTooManyAttachments   = errors.New("too many attachments")
 	errBadAttachmentPath    = errors.New("attachment path is empty or too long")
 	errMissingMessageID     = errors.New("missing message_id")
-	errNoBridge             = errors.New("no bridge")
 	errRewindTargetNotFound = errors.New("rewind target is not a user message in this chat")
+	// Prose: the client appends it to "Compact failed: ".
+	errCompactNoBridge = errors.New("this chat's agent session could not be started, so the conversation was not compacted")
 	// Prose, not a code: the client appends the reason to "Couldn't rewind
 	// chat: ", so it reaches the user verbatim.
 	errRewindNoSession         = errors.New("this chat has no agent session yet, so there is nothing to roll back to")
@@ -40,21 +41,31 @@ var (
 	// id was dropped when the chat retired the session that minted it. One sentence serves
 	// all three — the remedy is identical and marotte cannot tell which it was.
 	errRewindNoAgentID = errors.New("marotte has no id for this turn in the agent's current session, so the agent may not be able to locate it. Turns sent from now on can be rewound")
-	errBusy            = errors.New("busy")
+	// Prose like the rewind refusals: the client shows a branch refusal verbatim.
+	errBranchTargetNotFound    = errors.New("this turn is not a message in this chat, so there is nothing to branch from")
+	errBranchNoSession         = errors.New("this chat has no agent session yet, so there is nothing to branch from")
+	errBranchSessionNotResumed = errors.New("this chat's original session could not be resumed, so there is nothing to branch from")
+	errBranchNoBridge          = errors.New("this chat's agent session could not be started, so the branch was not attempted")
+	errBranchNotReturned       = errors.New("the agent did not return the branched conversation, so no chat was opened")
+	// Appended to KAS's refusal of a branch point.
+	errBranchTurnUnknown = errors.New("the agent no longer holds this turn, because a compaction summarized it or it ran on an earlier agent session")
+	errBusy              = errors.New("busy")
 	// errAlreadyAnswered is the 409 for a decision another surface settled
 	// first. A code rather than prose: the client keys off it.
 	errAlreadyAnswered = errors.New("already_answered")
 	// errAnswerNotDelivered is the 502 for an answer the agent never received: the ask is
 	// pending again, so the client re-enables its card. A code, like errAlreadyAnswered.
 	errAnswerNotDelivered = errors.New("answer_not_delivered")
-	// errCancelNotDelivered is Stop's 502 when a permission card could not be answered, so no cancel was sent.
-	errCancelNotDelivered = errors.New("marotte could not close this reply's permission card, so the reply was not stopped. Press Stop again")
+	// errCancelNotDelivered is Stop's 502 when an open card could not be answered, so no cancel was sent.
+	errCancelNotDelivered = errors.New("marotte could not close this reply's open card, so the reply was not stopped. Press Stop again")
 	// errAskWithdrawn is the 410 for an answer that reached nobody because the ask settled
 	// first; the client leaves the card to that settlement. A code, like errAlreadyAnswered.
 	errAskWithdrawn = errors.New("ask_withdrawn")
 	// errPermissionOptionNotOffered rejects a choice absent from the request, without
 	// echoing either identifier.
 	errPermissionOptionNotOffered = errors.New("option_not_offered")
+	// errElicitationContentInvalid refuses a form answer the ask's schema forbids; the ask stays pending.
+	errElicitationContentInvalid = errors.New("elicitation_content_invalid")
 	// errRejectionReasonInvalid refuses a deny note over the cap or one paired
 	// with turn-approval decisions, which KAS would ignore.
 	errRejectionReasonInvalid = errors.New("rejection_reason_invalid")

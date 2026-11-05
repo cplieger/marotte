@@ -301,7 +301,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 		}
 	}()
 	waitForCall(t, first, marotte.MethodPrompt)
-	first.deliver(newTurnStartMsg())
+	first.deliver(first.promptTurnStartMsg())
 	first.deliver(newTurnEndMsg("end_turn"))
 	close(gate)
 

@@ -111,7 +111,10 @@ type TypedCommand =
   // dispatch, in a 5-minute cache.
   | { type: "create_chat"; payload: { op_id: string; name?: string; model?: string } }
   | { type: "resume_session"; payload: { op_id: string; session_id: string; name: string } }
-  | { type: "fork_chat"; payload: { op_id: string; parent_chat_id: string; title?: string } }
+  | {
+      type: "fork_chat";
+      payload: { op_id: string; parent_chat_id: string; title?: string; message_id?: string };
+    }
   // The four TAB mutations, with no `chat_id` because the open-tab set is
   // workspace-global; a chat tab names its chat in `ref` instead. `op_id` is echoed back
   // on the frame so a client can tell its own committed mutation from another device's.

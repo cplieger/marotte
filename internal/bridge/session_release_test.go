@@ -245,11 +245,12 @@ func TestSessionClose_ACallersContextEndTurnsIntoARelease(t *testing.T) {
 		t.Error("the lane stayed open after the caller left")
 	}
 	k.replyError(first.ID, -32000, "refused")
-	k.quiet(50 * time.Millisecond)
+	// The retry is written after the refusal is handled; a fixed quiet window could swallow it.
+	retry := k.nextMethod(methodSessionClose)
 	if s.Open() {
 		t.Fatal("a refusal reopened a session whose caller left")
 	}
-	k.reply(k.nextMethod(methodSessionClose).ID, map[string]any{})
+	k.reply(retry.ID, map[string]any{})
 	awaitSettled(t, s)
 }
 

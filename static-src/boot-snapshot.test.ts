@@ -607,6 +607,19 @@ describe("the record's byte budget", () => {
     expect((input?.command ?? "").length).toBeLessThanOrEqual(MAX_TOOL_OUTPUT);
   });
 
+  it("marks a trimmed input as cut, so an approval card reading the copy says so", () => {
+    oneOpenChat();
+    seedTurn("c1", "turn-1", 1, [
+      toolCallEntry("turn-1", 1, { input: { path: "a.md", content: "y".repeat(1_000) } }),
+      toolCallEntry("turn-1", 2, { input: { path: "b.md" } }),
+    ]);
+
+    const [cut, whole] = capturedWindow().entries.slice(-2).map(toolPayload);
+
+    expect(cut?.truncated?.input_bytes).toBeGreaterThan(1_000);
+    expect(whole?.truncated).toBeUndefined();
+  });
+
   it("carries an entry that holds no tool payload exactly as it arrived", () => {
     oneOpenChat();
     const reply = textEntry("turn-1", 1);

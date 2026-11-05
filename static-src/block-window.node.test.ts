@@ -109,6 +109,7 @@ function turn(id: string, body: readonly Entry[]): Turn {
     ts: 1,
     outcome: "completed",
     rewindTo: undefined,
+    branchFrom: undefined,
   };
 }
 
@@ -200,6 +201,14 @@ describe("entryRenders", () => {
     "mode_switched",
   ] as const)("draws a %s at its own position", (kind) => {
     expect(entryRenders(entry(1, kind), "", NO_FOLDS)).toBe(true);
+  });
+
+  it("refuses a sub-agent's model_fallback, which mounts no row", () => {
+    const sub = { from: "opus-5", to: "sonnet-5", trigger: "refusal", subagent: true };
+    expect(entryRenders(entry(1, "model_fallback", sub), "", NO_FOLDS)).toBe(false);
+    expect(
+      entryRenders(entry(1, "model_fallback", { ...sub, subagent: false }), "", NO_FOLDS),
+    ).toBe(true);
   });
 
   it("draws only the FIRST plan of the lane, every later one folding into its card", () => {

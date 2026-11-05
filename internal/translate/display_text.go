@@ -1,6 +1,10 @@
 package translate
 
-import "github.com/cplieger/runesafe/v3"
+import (
+	"strings"
+
+	"github.com/cplieger/runesafe/v3"
+)
 
 // maxDisplayTextBytes bounds one upstream string on its way to a banner, card or tooltip:
 // nothing on the wire bounds them. Above the widest legitimate value measured (303 bytes),
@@ -14,4 +18,17 @@ const maxDisplayTextBytes = 512
 // explicit direction marks lose them. Sibling: auth.identityText.
 func displayText(s string) string {
 	return runesafe.SanitizeSingleLineBounded(s, maxDisplayTextBytes)
+}
+
+// displayLines is displayText's multi-line twin for a decision surface that shows a command:
+// LF survives because a shell runs each line as its own command, so folding it would show
+// two commands as one. CR does not (the shell reads it as an ordinary character), so CRLF
+// becomes LF and every other unsafe rune a space. Uncapped: the caller bounds it.
+func displayLines(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && runesafe.IsUnsafeSingleLine(r) {
+			return ' '
+		}
+		return r
+	}, strings.ReplaceAll(s, "\r\n", "\n"))
 }

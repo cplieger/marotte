@@ -218,7 +218,6 @@ func (s *steerHarness) mustState(key string, want rowState) {
 // that changes here is a change to what the record does.
 var wantChannelRules = [nSteerEvents][nChannelStates]chanRule{
 	evBind:          {cOpen, cImpossible, cImpossible, cImpossible},
-	evRevise:        {cImpossible, cKeep, cKeep, cKeep},
 	evSteer:         {cKeep, cKeep, cProbing, cKeep},
 	evDeleteQueued:  {cKeep, cResubmit, cResubmit, cResubmit},
 	evDeleteWaiting: {cImpossible, cKeep, cImpossible, cOwed},
@@ -240,7 +239,6 @@ var wantChannelRules = [nSteerEvents][nChannelStates]chanRule{
 // states keep every event.
 var wantRowRules = [nSteerEvents][rowRead]rowRule{
 	evBind:          {rKeep, rKeep, rKeep, rKeep, rKeep, rKeep},
-	evRevise:        {rKeep, rKeep, rKeep, rKeep, rKeep, rKeep},
 	evSteer:         {rRoute, rKeep, rKeep, rRoute, rRoute, rKeep},
 	evDeleteQueued:  {rKeep, rResubmit, rResubmit, rJoinProbe, rJoinProbe, rKeep},
 	evDeleteWaiting: {rKeep, rKeep, rKeep, rDeleted, rKeep, rKeep},
@@ -308,14 +306,6 @@ func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
 			s.bind()
 			if jobs := s.spy.takeJobs(); len(jobs) != 1 || len(s.q.Ends(s.chat)) != 0 {
 				s.fatalf("jobs = %+v, want the discarded turn's rows settled with one flush", jobs)
-			}
-		}},
-		{name: "E0′ keeps the channel", key: "steer-a", row: rowQueued, channel: chanOpen, run: func(s *steerHarness) {
-			s.bind()
-			s.steer("steer-a", "a")
-			s.recs.turnRevised(s.chat, "t-other")
-			if s.turnID() != "t-other" {
-				s.fatalf("turn = %q, want t-other", s.turnID())
 			}
 		}},
 		{name: "E1 OPEN sends as itself", key: "steer-a", row: rowQueued, channel: chanOpen, run: func(s *steerHarness) {

@@ -128,12 +128,15 @@ func (rs *Runs) launchAs(
 		// A manual run yields to its recipe's next slot.
 		o.slotAt = rs.manualSlot(recipe.Source)
 	}
+	if bErr := rs.recipeIdle(cctx, recipe.Name); bErr != nil {
+		return "", "", unanswered(ctx, bErr)
+	}
 	var dropped []string
 	if o.origin == runlease.OriginScheduled {
 		inputs, dropped = declaredInputs(inputs, recipe.Inputs)
-	}
-	if bErr := rs.recipeIdle(cctx, recipe.Name); bErr != nil {
-		return "", "", unanswered(ctx, bErr)
+		// Before the door: KAS's reset reconnects unconditionally, so a reset after the host's acquire began a fresh
+		// connect would connect twice and close the good one.
+		rs.resetFailedMCP(cctx)
 	}
 
 	// The host session's presets are resolved once and recorded on the lease: a reload after a restart applies
@@ -390,8 +393,8 @@ func (rs *Runs) deleteCall(ctx context.Context, workflowID string, stop runStop)
 		return kasRefused, err
 	}
 	defer release()
-	resp, err := h.Call(durable.Context(ctx), methodKiroWorkflowDelete, params)
-	err = runCallErr(resp, err)
+	_, err = h.Call(durable.Context(ctx), methodKiroWorkflowDelete, params)
+	err = workflow.Classify(err)
 	return verdictOf(err), err
 }
 
@@ -453,7 +456,7 @@ func (rs *Runs) readBack(ctx context.Context, workflowID string) readBackVerdict
 
 // teardownDeleted drops everything marotte keeps about a run KAS deleted or no longer finds.
 func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string) {
-	rs.router.forgetWorkflow(workflowID)
+	rs.dropMCPSessions(ctx, rs.router.forgetWorkflow(workflowID))
 	rs.translate.ForgetRunSteps(workflowID)
 	rs.retries.clear(workflowID)
 	rs.deleteRunLog(ctx, workflowID)
@@ -597,7 +600,7 @@ func (rs *Runs) leaseForRetry(
 	return true
 }
 
-// retryCall issues the verb and decodes its report, through runCallErr so an `error` member is not read as success.
+// retryCall issues the verb and decodes its report.
 func (rs *Runs) retryCall(
 	ctx context.Context, host *drivenHost, workflowID string,
 ) (marotte.RunRetriedResponse, error) {
@@ -1053,7 +1056,7 @@ func (rs *Runs) workflowNew(
 		params["effortLevel"] = defaults.Effort
 	}
 	resp, err := bridge.Call(ctx, methodKiroWorkflowNew, params)
-	if cErr := runCallErr(resp, err); cErr != nil {
+	if cErr := workflow.Classify(err); cErr != nil {
 		if ctx.Err() != nil {
 			return "", fmt.Errorf("workflow new: kiro-cli did not answer in time and may have created the run: %w", cErr)
 		}
@@ -1066,13 +1069,6 @@ func (rs *Runs) workflowNew(
 		return "", fmt.Errorf("%w: workflow new: reply carried no workflowId", errLaunchNewUnconfirmed)
 	}
 	return res.WorkflowID, nil
-}
-
-func runCallErr(resp *marotte.RPCResponse, err error) error {
-	if err == nil && resp != nil && resp.Error != nil {
-		err = resp.Error
-	}
-	return workflow.Classify(err)
 }
 
 // stalePauseReason is KAS's STALE_RUNNING_PAUSE_REASON for a run whose owner died. A literal: only this reason licenses a cancel.

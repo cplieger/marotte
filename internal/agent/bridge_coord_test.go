@@ -600,7 +600,7 @@ func TestPersistEffortChange_FoldsTheTierIntoAnOpenTurn(t *testing.T) {
 	}
 }
 
-// A chat with no model writes nothing: an empty To renders as `Context reset`.
+// A chat with no model writes nothing: a model_switched with an empty To names no model.
 func TestPersistEffortChange_AChatWithNoModelWritesNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -922,31 +922,6 @@ func TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted(t *testing.T) {
 
 			if c.CurrentModeID != tc.wantMode {
 				t.Errorf("CurrentModeID = %q, want %q", c.CurrentModeID, tc.wantMode)
-			}
-		})
-	}
-}
-
-// TestApplyLoadedSessionFacts_KeepsSummarizationThreshold pins the same keep-on-absent rule for the threshold.
-func TestApplyLoadedSessionFacts_KeepsSummarizationThreshold(t *testing.T) {
-	cases := map[string]struct {
-		summarization, want float64
-	}{
-		"a silent result keeps the stored value": {want: 80},
-		"what the result carries is written":     {summarization: 85, want: 85},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			c := &marotte.Chat{Name: "A"}
-			c.Usage.SummarizationThresholdPct = 80
-			br := &fakeBridge{summarizationPct: tc.summarization}
-
-			_, _ = applyLoadedSessionFacts(c, br, "")
-
-			if c.Usage.SummarizationThresholdPct != tc.want {
-				t.Errorf("SummarizationThresholdPct = %v, want %v",
-					c.Usage.SummarizationThresholdPct, tc.want)
 			}
 		})
 	}

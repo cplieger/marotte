@@ -44,7 +44,7 @@ func TestEmptyTurnRetry_WaitsOutTheClosesDrain(t *testing.T) {
 		mu.Lock()
 		first := minted[0]
 		mu.Unlock()
-		first.deliver(newTurnStartMsg())
+		first.deliver(first.promptTurnStartMsg())
 		first.deliver(newTurnEndMsg("end_turn"))
 		// A holder that opens no turn, as the close's drain is while it looks for a queued prompt, taking the slot the
 		// moment the empty turn's prompt lets it go.

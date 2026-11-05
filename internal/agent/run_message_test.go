@@ -160,8 +160,10 @@ func TestMessageStep_ResumesAPausedStepWithALabelledPromptAndRecordsIt(t *testin
 	if kiro["displayText"] != "carry on" {
 		t.Errorf("_meta.kiro = %v, want displayText carrying the words", kiro)
 	}
-	if _, ok := kiro["contextBreakdown"]; ok {
-		t.Errorf("_meta.kiro = %v, want no contextBreakdown on a step's prompt", kiro)
+	for _, key := range []string{"contextBreakdown", "ttft"} {
+		if _, ok := kiro[key]; ok {
+			t.Errorf("_meta.kiro = %v, want no %s on a step's prompt", kiro, key)
+		}
 	}
 	got := stepSteersIn(t, h)
 	want := []marotte.EntrySteer{{Text: "carry on", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead}}
@@ -445,6 +447,41 @@ func TestStepSteer_ATurnEndLeavesUnreadRowsNotReadInTheStepsTurn(t *testing.T) {
 	}
 	if len(h.runs.steers.sessionsAt("wf_1", reviewPath)) != 0 {
 		t.Error("the finished step's target survived, want it forgotten")
+	}
+}
+
+// KAS continues a step whose execution ended with unread steering, so a step's turn_end is not the
+// end of its steering; only the node's own end is.
+func TestStepSteer_AStepsTurnEndKeepsItsSteeringOpenForTheContinuation(t *testing.T) {
+	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
+	update, _ := json.Marshal(map[string]any{
+		"sessionUpdate": "session_info_update",
+		"_meta": map[string]any{"kiro": map[string]any{
+			"kind":    "turn_end",
+			"turnEnd": map[string]any{"stopReason": "end_turn"},
+			"workflow": map[string]any{
+				"workflowId": "wf_1", "nodeId": "review", "nodePath": []any{"root", "review"}, "type": "step",
+			},
+		}},
+	})
+	params, _ := json.Marshal(map[string]any{"sessionId": "sess_step", "update": json.RawMessage(update)})
+	h.handleRunStepFrame(t.Context(), runChatID("wf_1"), &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params})
+
+	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-tail", "", nil)
+
+	if err != nil || out.Verb != marotte.RunStepMessageSteer {
+		t.Fatalf("MessageStep after the step's turn_end = %q, %v; want a steer", out.Verb, err)
+	}
+	if got := br.paramsFor(marotte.MethodSessionSteer)["sessionId"]; got != marotte.SessionID("sess_step") {
+		t.Errorf("_session/steer went to %v, want the step's session", got)
+	}
+	if !h.runs.steers.recs.stepOpen(marotte.StepSteerKey("sess_step")) {
+		t.Error("step open after its turn_end = false, want it still reading its buffer")
+	}
+	for _, s := range stepSteersIn(t, h) {
+		if s.Reason == marotte.SteerReasonBoundary {
+			t.Errorf("run log steer %+v marked not read before KAS's continuation could read it", s)
+		}
 	}
 }
 

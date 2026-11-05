@@ -102,6 +102,12 @@ describe("the row's meta line", () => {
     expect(
       renderMeta(
         server(),
+        status({ state: "needs_auth", error: "listener busy" } as Partial<RuntimeStatus>),
+      ),
+    ).toBe("Sign-in failed. listener busy · no credentials · https://ex/mcp");
+    expect(
+      renderMeta(
+        server(),
         status({ state: "signing_in", oauth_url: "", relayed: false } as Partial<RuntimeStatus>),
       ),
     ).toBe("Signing in · no credentials · https://ex/mcp");

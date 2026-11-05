@@ -2,7 +2,7 @@ import { apiGet } from "./api-client.js";
 import { commit as commitAction } from "./actions/git-changes.js";
 import type { ActionOutcome } from "./actions/index.js";
 import { el } from "@cplieger/ui";
-import { isSafeURL } from "./url-safety.js";
+import { isHttpURL } from "./url-safety.js";
 import type { GitRepoStatus } from "./git-types.js";
 
 type RepoStatus = GitRepoStatus;
@@ -12,7 +12,7 @@ type RepoStatus = GitRepoStatus;
  * scheme guard over a value built from a repository's origin remote, which marotte does not control.
  */
 function commitLinkHost(prefix: string): string {
-  if (prefix === "" || !isSafeURL(prefix)) {
+  if (prefix === "" || !isHttpURL(prefix)) {
     return "";
   }
   return new URL(prefix).host;

@@ -727,9 +727,8 @@
          thing stopping it claiming the full column. */
       max-width: 100%;
       height: auto;
-      /* A diagram authored for a light page on a dark surface is unreadable
-         otherwise, and the source is not ours to restyle. */
-      background: var(--c-bg-secondary);
+      /* The source is not ours to restyle, and its ink assumes a white page. */
+      background: var(--c-foreign-canvas);
       border: 1px solid var(--c-border);
       border-radius: var(--r);
       padding: var(--sp-2);

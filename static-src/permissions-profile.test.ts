@@ -48,6 +48,7 @@ const LADDER = [
   { id: "guarded", presets: ["read-workspace"] },
   { id: "read-only", presets: ["read-workspace", "read-all"] },
   { id: "trusted", presets: ["read-workspace", "read-all", "dev-shell"] },
+  { id: "delegated", presets: ["read-workspace", "read-all", "dev-shell", "approve-for-me"] },
   { id: "unrestricted", presets: ["allow-all"] },
   { id: "custom", presets: [] },
 ];
@@ -58,6 +59,7 @@ function userRule(capability: string): PolicyRule {
     effect: "allow",
     scope: "user",
     source: "/home/u/.kiro/settings/permissions.yaml",
+    editable: true,
   };
 }
 
@@ -69,6 +71,7 @@ function view(profile: string, rules: PolicyRule[] = []): PolicyView {
     profiles: LADDER,
     profile,
     rules,
+    load_errors: [],
   };
 }
 
@@ -265,12 +268,19 @@ describe("selecting a profile", () => {
   it("counts only rules in writable scopes as the user's own", async () => {
     await mount(
       view("custom", [
-        { capability: "fs_write", effect: "ask", scope: "kiro", source: "kiro-scope" },
+        {
+          capability: "fs_write",
+          effect: "ask",
+          scope: "kiro",
+          source: "kiro-scope",
+          editable: false,
+        },
         {
           capability: "fs_read",
           effect: "allow",
           scope: "session",
           source: "preset:read-workspace",
+          editable: false,
         },
       ]),
     );
@@ -289,6 +299,7 @@ describe("selecting a profile", () => {
     expect(message).toContain("power");
     expect(message).toContain("does NOT");
     expect(message).toContain(".git");
+    expect(message).toMatch(/shell command[^.]*no prompt/);
     expect(label).toBe("Allow everything");
     expect(profileCalls()).toEqual([{ profile: "unrestricted", seed: false }]);
   });
@@ -416,12 +427,47 @@ describe("what a profile description promises", () => {
     expect(desc).toContain("no prompt");
   });
 
+  // Read-only sends no shell preset, so a command asks. Claiming it runs "read-only commands" would
+  // invite a reader to expect `git status > file` or `git log --output=file` to pass unprompted.
+  it("says read-only asks before every shell command", async () => {
+    await mount(view("guarded"));
+    const desc = descriptionFor("read-only");
+    expect(desc).toMatch(/shell command[^.]*asks/i);
+    expect(desc).not.toContain("read-only commands");
+  });
+
+  // The id is marotte's; the label is upstream's name for the preset it adds.
+  it("names the delegated rung Approve for me and says the safety check answers its asks", async () => {
+    await mount(view("guarded"));
+    const label = radioFor("delegated").closest("label")?.querySelector("span")?.textContent ?? "";
+    expect(label).toBe("Approve for me");
+    const desc = descriptionFor("delegated");
+    expect(desc).toContain("Kiro's safety check");
+    expect(desc).toMatch(/asks you when it is unsure/);
+    expect(desc).toContain("model call");
+    expect(desc).toContain("the requests no rule settles");
+    expect(desc).toContain("a file-tool write to .git or .kiro/agents, still asks");
+  });
+
+  // KAS never checks a shell redirect's target against fs_write rules or Kiro's own protected paths,
+  // so on any rung that allows a shell command, that command can write anywhere unprompted.
+  it.each(["trusted", "delegated", "unrestricted"])(
+    "says %s lets a shell command write .kiro/agents with no prompt",
+    async (id) => {
+      await mount(view("guarded"));
+      const desc = descriptionFor(id);
+      expect(desc).toContain("shell");
+      expect(desc).toContain(".kiro/agents");
+      expect(desc).toContain("no prompt");
+    },
+  );
+
   // Every rung reaches workflow steps and subagents, a named rung through its presets and Custom
   // through its files, and no rung writes a rule to disk, so a description that singled one rung
   // out for either would push a reader up the ladder on a false premise.
   it("claims no step or subagent coverage and no durable rule on any rung", async () => {
     await mount(view("guarded"));
-    for (const id of ["guarded", "read-only", "trusted", "unrestricted", "custom"]) {
+    for (const id of ["guarded", "read-only", "trusted", "delegated", "unrestricted", "custom"]) {
       const desc = descriptionFor(id);
       expect(desc).not.toMatch(/workflow step/i);
       expect(desc).not.toContain("subagent");

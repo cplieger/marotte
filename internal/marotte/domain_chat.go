@@ -66,8 +66,8 @@ const (
 	ACPUpdateSessionInfo ACPUpdateKind = "session_info_update"
 	// ACPUpdateAvailableCommands carries KAS's slash-command catalog.
 	ACPUpdateAvailableCommands ACPUpdateKind = "available_commands_update"
-	// ACPUpdateConfigOption carries the live model/mode/effort catalog;
-	// ACPUpdateUsage carries context-window usage. Both v3-only.
+	// ACPUpdateConfigOption carries every config option the session offers, the model, mode and
+	// effort catalog among them; ACPUpdateUsage carries context-window usage. Both v3-only.
 	ACPUpdateConfigOption ACPUpdateKind = "config_option_update"
 	ACPUpdateUsage        ACPUpdateKind = "usage_update"
 )
@@ -97,6 +97,9 @@ type ToolCall struct {
 	// hook file), which a click opens. Not in Locations, whose readers treat a path as
 	// one the call touched.
 	SourcePath string `json:"source_path,omitempty"`
+	// ClassifierNote is _meta.kiro.trustClassifier's reason when the safety check handed the call
+	// to a person; one-way.
+	ClassifierNote string `json:"classifier_note,omitempty"`
 	// Checkpoint is KAS's snapshot mapping (_meta.kiro.checkpoint) for a call that
 	// wrote a file. Pointers sit ahead of the slices for govet fieldalignment.
 	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
@@ -105,8 +108,9 @@ type ToolCall struct {
 	// Disclosed names the skill or steering doc a `disclose_context` call loaded
 	// (_meta.kiro.disclosedContext), the only signal that its body reached the model.
 	Disclosed *ToolDisclosed `json:"disclosed,omitempty"`
-	// Denial is KAS's reason for a call the Cedar policy refused (_meta.kiro.policyDenial),
-	// so a refusal reads as one rather than as a tool failure.
+	// Denial is why Kiro's permission check refused the call: a rule's verdict
+	// (_meta.kiro.policyDenial) or a recognised rule-less refusal, so a refusal reads as
+	// one rather than as a tool failure.
 	Denial *ToolDenial `json:"denial,omitempty"`
 	// Offload is set once KAS offloaded the full output to a file; one-way.
 	Offload *ToolOffload `json:"offload,omitempty"`
@@ -133,6 +137,9 @@ type ToolCall struct {
 	// whether a call is over (`isToolDone`, the ToolFailed gates) must read it as over.
 	// The reason is the tool's own Output.
 	Declined bool `json:"declined,omitempty"`
+	// ClassifierApproved is _meta.kiro.trustClassifierApproved: Kiro's safety check let the call
+	// run with no ask. One-way.
+	ClassifierApproved bool `json:"classifier_approved,omitempty"`
 }
 
 // ToolTruncation is what the store DROPPED to bound one tool call on disk, each cut field
@@ -177,8 +184,9 @@ type TextSpan struct {
 	Attrs uint16 `json:"attrs"`
 }
 
-// ToolDisclosed identifies a skill or steering document loaded into context by
-// the agent's own `disclose_context` call. Type is "skill" or "steering".
+// ToolDisclosed identifies a skill or steering document loaded into context by a
+// `disclose_context` action the agent started, directly or through `load_resource`.
+// Type is "skill" or "steering".
 type ToolDisclosed struct {
 	Type        string `json:"type"`
 	DisplayName string `json:"display_name"`
@@ -211,10 +219,27 @@ type ToolDenial struct {
 	Resource   string          `json:"resource"`
 	Scope      string          `json:"scope"`
 	Source     string          `json:"source"`
+	// Basis says why a refusal names no rule; empty for a rule's denial.
+	Basis DenialBasis `json:"basis,omitempty"`
 }
 
-// ToolDenialRule is the Cedar rule that produced a denial. Effect is "deny" or
-// "ask" (an unanswered ask that timed out reaches here as a denial).
+// DenialBasis is why Kiro refused a call without naming a rule.
+type DenialBasis string
+
+// DenialUnparseable and the following constants are the DenialBasis values.
+const (
+	// DenialUnparseable is a shell command Kiro could not parse to check.
+	DenialUnparseable DenialBasis = "unparseable"
+	// DenialCedarUnavailable is Kiro's permission engine failing to load.
+	DenialCedarUnavailable DenialBasis = "cedar-unavailable"
+	// DenialNotLoaded is no permission policy loaded, so every call is refused.
+	DenialNotLoaded DenialBasis = "not-loaded"
+	// DenialPermissionsInvalid is a permissions file that failed to parse.
+	DenialPermissionsInvalid DenialBasis = "permissions-invalid"
+)
+
+// ToolDenialRule is the Cedar rule that produced a denial. Effect is "deny", "ask" (an
+// unanswered ask that timed out reaches here as a denial) or "evaluate" (a trust-classifier block).
 type ToolDenialRule struct {
 	Capability string   `json:"capability"`
 	Effect     string   `json:"effect"`
@@ -284,16 +309,14 @@ type PlanEntry struct {
 	Status   PlanStatus `json:"status"`
 }
 
-// Usage is a chat's last-known context and billing snapshot. SummarizationThresholdPct 0
-// means UNKNOWN, and the client applies its own fallback.
+// Usage is a chat's last-known context and billing snapshot.
 type Usage struct {
-	MeteringItems             []MeteringItem `json:"metering_items,omitempty"`
-	ContextPct                float64        `json:"context_pct"`
-	SummarizationThresholdPct float64        `json:"summarization_threshold_pct,omitempty"`
-	ContextSize               int            `json:"context_size"`
-	Credits                   float64        `json:"credits"`
-	LastTurnMs                float64        `json:"last_turn_ms"`
-	HasRealData               bool           `json:"has_real_data"`
+	MeteringItems []MeteringItem `json:"metering_items,omitempty"`
+	ContextPct    float64        `json:"context_pct"`
+	ContextSize   int            `json:"context_size"`
+	Credits       float64        `json:"credits"`
+	LastTurnMs    float64        `json:"last_turn_ms"`
+	HasRealData   bool           `json:"has_real_data"`
 }
 
 // MeteringItem is one usage dimension from kiro-cli's meteringUsage array.
@@ -793,7 +816,9 @@ type SessionListResponse struct {
 // _kiro/workflow/list, NOT session/list, whose workflow rows are STEP sessions that
 // report idle whatever the run did.
 type WorkflowRun struct {
-	WorkflowID string `json:"workflow_id"`
+	// Standing is where a running or paused run stands; absent on a finished run.
+	Standing   *RunStanding `json:"standing,omitempty"`
+	WorkflowID string       `json:"workflow_id"`
 	// Name is what to DISPLAY (RunDisplayName), not the recipe; "" when nothing names the run.
 	Name string `json:"name"`
 	// WorkflowName is the RECIPE, the only field a per-recipe decision may read:
@@ -813,4 +838,21 @@ type WorkflowRun struct {
 	UpdatedAt int64  `json:"updated_at"`
 	CreatedAt int64  `json:"created_at,omitempty"`
 	StartedAt int64  `json:"started_at,omitempty"`
+}
+
+// RunStandingKind says how to read a RunStanding's node.
+type RunStandingKind string
+
+// RunStandingKind values: the node is the step running, the watch polling, or the repeat at its cap.
+const (
+	RunStandingStep      RunStandingKind = "step"
+	RunStandingWatch     RunStandingKind = "watch"
+	RunStandingPassLimit RunStandingKind = "pass_limit"
+)
+
+// RunStanding is where a running or paused run stands, from KAS's list row. Node is a bare
+// node id; for pass_limit it is the repeat at its cap.
+type RunStanding struct {
+	Node string          `json:"node"`
+	Kind RunStandingKind `json:"kind"`
 }

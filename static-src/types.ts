@@ -21,6 +21,7 @@ export type {
   TurnRevertCause,
   // A message an API caller sent
   Caller,
+  ContextResetCause,
   // The entry log: one envelope type plus one payload type per kind
   Entry,
   OpenEntry,
@@ -44,7 +45,6 @@ export type {
   ToolDenial,
   ToolOffload,
   ToolInteraction,
-  TurnThroughput,
   MeteringItem,
   PermissionOption,
   PlanEntry,
@@ -80,6 +80,7 @@ export type {
   ElicitationNeededPayload,
   UserInputNeededPayload,
   UserInputOption,
+  ElicitationEnumOption,
   ElicitationPropertySchema,
   ErrorPayload,
   GovernanceFeatures,
@@ -94,7 +95,6 @@ export type {
   OpenExternalURLPayload,
   PermissionConsent,
   PermissionNeededPayload,
-  PermissionsChangedPayload,
   PolicyErrorPayload,
   SafetyStatusPayload,
   SafetyPropertiesPayload,
@@ -142,6 +142,7 @@ import type {
   Entry,
   EntryCompaction,
   EntryCompactionFailed,
+  EntryContextReset,
   EntryKind,
   EntryModeSwitched,
   EntryModelFallback,
@@ -201,6 +202,7 @@ export interface EntryPayload {
   model_fallback: EntryModelFallback;
   mode_switched: EntryModeSwitched;
   turn_revert: EntryTurnRevert;
+  context_reset: EntryContextReset;
   reconciled: EntryReconciled;
   turn_close: EntryTurnClose;
 }

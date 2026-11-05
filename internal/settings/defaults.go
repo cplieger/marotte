@@ -50,9 +50,10 @@ const (
 	KeyGuardPayloadLinks = "guard_payload_links"
 
 	// KeyContentCollectionEnabled lets model requests be used by AWS for service
-	// improvement. Default off. internal/agent asserts it on the engine at each spawn
-	// and pushes a change live, because KAS holds it per process and persists none
-	// of it; an organization's lock overrides it.
+	// improvement. Default off; an organization's lock overrides it. internal/agent
+	// writes it to kiro-cli's own switch before each engine spawn and on change (the
+	// relay starts KAS from that switch), and asserts it on every session door and
+	// pushes a change live (KAS holds it per process and persists none of it).
 	KeyContentCollectionEnabled = "content_collection_enabled"
 
 	// KeyMemoryMode is the Memory dropdown (memory.go's Memory* values), resolved per session door by
@@ -66,9 +67,8 @@ const (
 	KeyMCPWaitForReady = "mcp_wait_for_ready" //nolint:gosec // G101: a settings key ("MCPWait" reads as "pw"), not a credential
 
 	// KeyAutoCompactionEnabled and KeyAutoCompactPct are the chat compaction
-	// policy internal/agent's autoCompactionPolicy reads. The door value they
-	// imply is frozen by KAS per session, so a flip reaches a chat at its next
-	// session/load; the pct itself acts at once because marotte drives it.
+	// policy internal/agent's autoCompactionPolicy reads. Both ride the session
+	// door, so a change reaches a chat at its next session/load.
 	KeyAutoCompactionEnabled = "auto_compaction_enabled"
 	KeyAutoCompactPct        = "auto_compact_pct"
 
@@ -87,6 +87,9 @@ const (
 	KeyAutoRouting          = "auto_routing"
 	KeyAutoDelegation       = "auto_delegation"
 	KeyModelFallback        = "model_fallback_enabled"
+	// KeyWorkflowLaunch is asserted at the session doors as KAS's workflowLaunch option, and
+	// read only while KeyWorkflowsEnabled is on.
+	KeyWorkflowLaunch = "workflow_launch"
 
 	// KeyOutputStyle, a KAS output style id, rides each chat prompt as _meta.kiro.outputStyle.
 	// KeyTerminalCommandTimeoutMs is the shell tool's default timeout (0 = KAS's
@@ -155,6 +158,7 @@ var KnownKeys = map[string]struct{}{
 	KeyTerminalCommandTimeoutMs: {},
 	KeyWorkValidation:           {},
 	KeyWorkflowsEnabled:         {},
+	KeyWorkflowLaunch:           {},
 	KeyGuardPayloadLinks:        {},
 	KeyKnowledgeEnabled:         {},
 	KeyModelFallback:            {},

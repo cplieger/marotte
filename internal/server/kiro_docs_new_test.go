@@ -17,6 +17,7 @@ import (
 	"testing/fstest"
 
 	"github.com/cplieger/marotte/internal/filebrowse"
+	"github.com/cplieger/marotte/internal/workspace"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -27,22 +28,15 @@ func (noRoutes) RegisterRoutes(*http.ServeMux) {}
 // testKASNode prefers the node KAS runs on, so a verdict is the engine's that runs the hook; any
 // node otherwise, since every case here holds across V8 versions.
 var testKASNode = sync.OnceValue(func() string {
-	if p := os.Getenv("KIRO_KAS_NODE_PATH"); p != "" {
+	if p := workspace.KASLookupFromEnv().Find(os.Getenv("KIRO_CLI_VERSION")).Node; p != "" {
 		return p
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		if p := filepath.Join(home, ".local", "share", "kiro-cli", "node"); isRegularFile(p) {
-			return p
-		}
 	}
 	p, _ := exec.LookPath("node")
 	return p
 })
 
-func isRegularFile(p string) bool {
-	fi, err := os.Stat(p)
-	return err == nil && fi.Mode().IsRegular()
-}
+// fixedNode is a WithKASNode resolver that always answers path.
+func fixedNode(path string) func() string { return func() string { return path } }
 
 func requireKASNode(t *testing.T) {
 	t.Helper()
@@ -55,7 +49,7 @@ func docServer(workDir string, opts ...Option) *Server {
 	s := New(append([]Option{
 		WithWorkDir(workDir),
 		WithSensitive(filebrowse.NewSensitive(filepath.Join(workDir, "no-config"))),
-		WithKASNode(testKASNode()),
+		WithKASNode(testKASNode),
 	}, opts...)...)
 	s.staticFS = fstest.MapFS{"index.html": {Data: []byte("<!doctype html>")}}
 	s.agent = &fakeEngine{}
@@ -434,7 +428,7 @@ func TestHandleKiroDocNew_NoRuntimeNoMatcherCheck(t *testing.T) {
 	for name, node := range map[string]string{"unset": "", "absent": filepath.Join(t.TempDir(), "node")} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			rec := postKiroDocNew(t, docServer(dir, WithKASNode(node)), body)
+			rec := postKiroDocNew(t, docServer(dir, WithKASNode(fixedNode(node))), body)
 			if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "Open a chat, then try again.") {
 				t.Errorf("status = %d, body %s; want 503", rec.Code, rec.Body.String())
 			}
@@ -444,9 +438,26 @@ func TestHandleKiroDocNew_NoRuntimeNoMatcherCheck(t *testing.T) {
 		})
 	}
 	t.Run("not_needed_without_a_matcher", func(t *testing.T) {
-		createdPath(t, postKiroDocNew(t, docServer(t.TempDir(), WithKASNode("")),
+		createdPath(t, postKiroDocNew(t, docServer(t.TempDir(), WithKASNode(fixedNode(""))),
 			`{"category":"hook","name":"n","trigger":"PostFileSave","action":"command","content":"x"}`))
 	})
+}
+
+func TestKiroDocNew_ResolvesTheNodePerRequest(t *testing.T) {
+	const body = `{"category":"hook","name":"n","trigger":"PostFileSave","matcher":"x","action":"command","content":"x"}`
+	valid := fakeNode(t, `cat >/dev/null; printf valid`)
+	calls := 0
+	srv := docServer(t.TempDir(), WithKASNode(func() string {
+		calls++
+		if calls == 1 {
+			return ""
+		}
+		return valid
+	}))
+	if rec := postKiroDocNew(t, srv, body); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("first create, before the runtime exists: status = %d, want 503; body %s", rec.Code, rec.Body.String())
+	}
+	createdPath(t, postKiroDocNew(t, srv, body))
 }
 
 func TestKASRegExp_RunsWithoutTheServersNodeOptions(t *testing.T) {
@@ -486,7 +497,7 @@ func TestKASRegExp_AnswersOnlyAnExplicitVerdict(t *testing.T) {
 		})
 	}
 	t.Run("a_runtime_fault_is_a_500", func(t *testing.T) {
-		rec := postKiroDocNew(t, docServer(t.TempDir(), WithKASNode(fakeNode(t, `exit 3`))),
+		rec := postKiroDocNew(t, docServer(t.TempDir(), WithKASNode(fixedNode(fakeNode(t, `exit 3`)))),
 			`{"category":"hook","name":"n","trigger":"PostFileSave","matcher":"x","action":"command","content":"x"}`)
 		if rec.Code != http.StatusInternalServerError {
 			t.Errorf("status = %d, want 500; body %s", rec.Code, rec.Body.String())

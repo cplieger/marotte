@@ -57,6 +57,9 @@ type RunAppender interface {
 	// path whose turn already closed, where RunAppendAfterClosed files a late entry,
 	// and for an open the store refused.
 	RunFoldTarget(ctx context.Context, step *RunStep, chatID marotte.ChatID) (*turnlog.Turn, bool)
+	// RunOpenTurn returns the step path's open turn without opening one, for a read that
+	// must never start a turn.
+	RunOpenTurn(runID, nodePath string) (*turnlog.Turn, bool)
 	// RunAppendAfterClosed files an entry after the turn_close of the path's newest
 	// closed turn, the run log's between-turns rule.
 	RunAppendAfterClosed(ctx context.Context, runID, nodePath string, e *marotte.Entry) error
@@ -88,9 +91,9 @@ type RunAppender interface {
 // turnBoundary is the wire's own turn bracket, which KAS emits for every
 // turn, agent-initiated included.
 type turnBoundary interface {
-	// WireTurnStart binds the bracket to the pending pre-open, or closes a turn
+	// WireTurnStart binds the bracket to the pending prompt whose turn id it echoes, or closes a turn
 	// whose own end never arrived.
-	WireTurnStart(ctx context.Context, chatID marotte.ChatID)
+	WireTurnStart(ctx context.Context, chatID marotte.ChatID, frame TurnStartFrame)
 	// WireTurnEnd closes the chat's open turn with the wire's own outcome. A no-op when none is open or
 	// the open one is a prompt its turn_start has not bound. The wire carries no stop prose, so the failure reason is
 	// the outcome's own default.
@@ -98,9 +101,15 @@ type turnBoundary interface {
 	// WireTurnActivity carries KAS's own report of whether the chat's session runs a turn
 	// (focus_update's activity.turnActive), the backstop for a turn_end that never arrives.
 	WireTurnActivity(chatID marotte.ChatID, active bool)
-	// ReviseTurnBinding re-targets routing on an agent-initiated frame: a new
-	// wire_turn_start turn takes own and the prompt's turn drops back to pending.
-	ReviseTurnBinding(ctx context.Context, chatID marotte.ChatID)
+}
+
+// TurnStartFrame is what a live turn_start says about the turn it opens.
+type TurnStartFrame struct {
+	// KASTurnID is KAS's id for the turn.
+	KASTurnID string
+	// Tag is the userMessageTag of the prompt the turn runs: the marotte turn id a chat prompt sent,
+	// another value for a prompt marotte did not tag, empty for an agent-initiated turn.
+	Tag string
 }
 
 // lineRecorder records the changed lines a frame's diffs describe.
@@ -218,8 +227,9 @@ type Broadcaster interface {
 type pendingPermAdder interface {
 	// PendingPermsAdd records the ask KAS sent as acpID with the bridge it arrived on, which carries
 	// its answer and whose end retires it, and returns evt carrying the ask's own id: the request_id
-	// a client sees and echoes, since acpID restarts with every engine generation.
-	PendingPermsAdd(acpID int64, evt marotte.ServerEvent, origin AskOrigin) marotte.ServerEvent
+	// a client sees and echoes, since acpID restarts with every engine generation. False means it was
+	// answered at once, so there is no card to show.
+	PendingPermsAdd(ctx context.Context, acpID int64, evt marotte.ServerEvent, origin AskOrigin) (marotte.ServerEvent, bool)
 	// PendingPermsWithdraw retires the chat's ask for toolCallID, which KAS
 	// stopped waiting on, reporting whether one was open.
 	PendingPermsWithdraw(chatID marotte.ChatID, toolCallID string) bool
@@ -264,30 +274,21 @@ type terminalReader interface {
 	Output(terminalID string) (text string, spans []marotte.TextSpan, ok bool)
 }
 
-// governanceAccess is the runtime's governance cache: the account profile, the MCP
-// registry and the administrator rules it composes into the lock map.
+// governanceAccess is the runtime's governance cache: the account profile and the
+// administrator rules it composes into the lock map.
 type governanceAccess interface {
 	// SetGovernance replaces the cached account profile.
 	SetGovernance(ctx context.Context, state marotte.GovernanceStatePayload)
-	// SetMCPRegistry replaces the organization's MCP registry; nil means no registry.
-	SetMCPRegistry(ctx context.Context, registry *marotte.GovernanceMCPRegistry)
 	// PolicyChanged reports a policy notification's errors, so the administrator
 	// rules are read again and a fatal administration error fails them closed.
 	// reloaded marks a completed reload, whose errors are the whole set.
 	PolicyChanged(ctx context.Context, errs []marotte.PolicyErrorItem, reloaded bool)
 }
 
-// mcpRecorder groups MCP server state tracking methods.
+// mcpRecorder keeps each session's MCP view.
 type mcpRecorder interface {
-	// RecordConnected marks a server connected and replaces what it advertises
-	// (tools, prompts, resources, resource templates) wholesale; any may be nil.
-	RecordConnected(ctx context.Context, serverName string, src marotte.MCPSource, tools []string, prompts []marotte.MCPPromptInfo, resources []marotte.MCPResourceInfo, templates []marotte.MCPResourceTemplateInfo)
-	// RecordOAuth marks a server waiting for sign-in.
-	RecordOAuth(ctx context.Context, serverName string, src marotte.MCPSource)
-	RecordInitFailure(ctx context.Context, serverName string, src marotte.MCPSource, errMsg string)
-	// RecordDisabled reports a server KAS says is off. Never recorded for the
-	// entry marotte owns, so it cannot resurrect one the user switched off.
-	RecordDisabled(ctx context.Context, serverName string, src marotte.MCPSource)
+	// RecordSessionStatus replaces sessionID's view with its whole frame.
+	RecordSessionStatus(ctx context.Context, sessionID marotte.SessionID, status MCPSessionStatus)
 }
 
 // Translator holds the package's stateful translate logic, one field per role.
@@ -403,10 +404,8 @@ type runBoundsAccess interface {
 // turnInterruptAccess carries terminal signals that arrive without a response frame: detected
 // here, terminated on the host. Advisory; a compaction failure does not prove the turn ended.
 type turnInterruptAccess interface {
-	// CompactionFailed bounds the silence of the turn the failure was recorded in.
+	// CompactionFailed reports a failure recorded in turnID; the host decides whether that turn is bounded.
 	CompactionFailed(chatID marotte.ChatID, turnID, detail string)
-	// InterruptTurn acts on the named turn only, so a turn that replaced it is never reached.
-	InterruptTurn(chatID marotte.ChatID, turnID, reason string)
 }
 
 // turnMetering is the per-turn accounting a turn_completion frame writes, split

@@ -110,7 +110,7 @@ func TestUnreadSteerResend_ShowsTheUsersWordsLiveAndAfterReplay(t *testing.T) {
 			s, cs, br := steerOpsHub(t)
 			at := s.h.originOf("c1")
 			id, _ := s.h.stagePromptTurn(t, "c1")
-			s.h.translateACPEvent("c1", at, newTurnStartMsg())
+			s.h.translateACPEvent("c1", at, newPromptTurnStartMsg(id))
 			s.steer("steer-a", "first")
 			s.steer("steer-b", "second")
 			if tc.lead != "" {

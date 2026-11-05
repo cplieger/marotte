@@ -62,17 +62,19 @@ var sessionMatrix = []struct {
 	{"memory read write", SessionSpawn{MemoryMode: "read_write"}},
 	{"memory learn", SessionSpawn{MemoryMode: "read_write", MemoryReflection: true}},
 	{"auto compaction off", SessionSpawn{DisableAutoCompaction: true}},
+	{"compaction at 60", SessionSpawn{AutoCompactionThreshold: 60}},
 	{"spec planning quick", SessionSpawn{SpecPlan: "quick"}},
 	{"spec planning full, ask first", SessionSpawn{SpecPlan: "full", SpecAskClarification: true}},
 	{"work validation on", SessionSpawn{WorkValidation: "on"}},
 	{"work validation off", SessionSpawn{WorkValidation: "off"}},
 	{"workflows on", SessionSpawn{Workflows: true}},
+	{"a chat session", SessionSpawn{ProfileAgentTurns: true}},
 	{"every gate on", SessionSpawn{
 		OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000",
 		Presets:           []string{"read-workspace"},
 		MemoryMode:        "read_write", MemoryReflection: true,
 		DisableAutoCompaction: true, SpecPlan: "full", SpecAskClarification: true,
-		WorkValidation: "on", Workflows: true,
+		WorkValidation: "on", Workflows: true, AutoCompactionThreshold: 60, ProfileAgentTurns: true,
 	}},
 }
 
@@ -179,10 +181,10 @@ var promptMatrix = []struct {
 	name   string
 	prompt Prompt
 }{
-	{"default style", Prompt{}},
-	{"concise", Prompt{OutputStyle: "concise"}},
+	{"default style", Prompt{Tag: "t-0000000000000001"}},
+	{"concise", Prompt{OutputStyle: "concise", Tag: "t-0000000000000002"}},
 	{"step message", Prompt{StepMessage: "continue with the plan"}},
-	{"labelled chat prompt", Prompt{Label: "Merging findings from a tangent"}},
+	{"labelled chat prompt", Prompt{Label: "Merging findings from a tangent", Tag: "t-0000000000000003"}},
 }
 
 // TestPromptDoorDeclaresExactly pins the _meta.kiro payload session/prompt carries for every
@@ -263,11 +265,15 @@ func TestMemoryRow_FailsClosedAndNeverVetoes(t *testing.T) {
 	}
 }
 
-// TestChildEnv_PinsNoArmByDefault pins that a zero EngineSpawn writes no KIRO_* variable, so every arm
-// follows the experiment ramp unless a Settings control decides it.
+// classifierEnv is on every engine whatever the spawn: KAS reads it once per process, and it is inert
+// without an evaluate rule.
+const classifierEnv = "KIRO_TRUST_CLASSIFIER_MODE=enforce"
+
+// TestChildEnv_PinsNoArmByDefault pins that a zero EngineSpawn writes no KIRO_FEATURE_* or KIRO_DISABLE_*
+// variable, so every arm follows the experiment ramp unless a Settings control decides it.
 func TestChildEnv_PinsNoArmByDefault(t *testing.T) {
-	if got := ChildEnv(&EngineSpawn{}); len(got) != 0 {
-		t.Errorf("ChildEnv(&EngineSpawn{}) = %q, want nothing", got)
+	if got := ChildEnv(&EngineSpawn{}); !reflect.DeepEqual(got, []string{classifierEnv}) {
+		t.Errorf("ChildEnv(&EngineSpawn{}) = %q, want only %q", got, classifierEnv)
 	}
 	for _, tc := range engineMatrix {
 		for _, kv := range ChildEnv(&tc.spawn) {
@@ -278,6 +284,30 @@ func TestChildEnv_PinsNoArmByDefault(t *testing.T) {
 	}
 }
 
+// TestChildEnv_TrustClassifierEnforce pins the classifier gate on every engine: withheld, a profile's
+// approve-for-me preset and every evaluate rule are skipped with a warning.
+func TestChildEnv_TrustClassifierEnforce(t *testing.T) {
+	spawns := map[string]*EngineSpawn{"zero": {}}
+	for i := range engineMatrix {
+		spawns[engineMatrix[i].name] = &engineMatrix[i].spawn
+	}
+	for name, spawn := range spawns {
+		got := ChildEnv(spawn)
+		n := 0
+		for _, kv := range got {
+			if strings.HasPrefix(kv, "KIRO_TRUST_CLASSIFIER_MODE=") {
+				n++
+			}
+		}
+		if n != 1 || !strings.Contains(strings.Join(got, "\n"), classifierEnv) {
+			t.Errorf("engine %s: ChildEnv = %q, want %q exactly once", name, got, classifierEnv)
+		}
+	}
+	if OwnsEnv(classifierEnv) {
+		t.Errorf("OwnsEnv(%q) = true; no setting decides the gate", classifierEnv)
+	}
+}
+
 // TestChildEnv_AutoModelChoicesFollowTheirSwitches pins the two _CONFIG arms: unset withholds the
 // variable so the experiment decides, and each explicit choice writes the JSON KAS parses.
 func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
@@ -285,14 +315,16 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 		choice string
 		want   []string
 	}{
-		{"", []string{}},
+		{"", []string{classifierEnv}},
 		{"on", []string{
 			`KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}`,
 			`KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={"delegationEnabled":true}`,
+			classifierEnv,
 		}},
 		{"off", []string{
 			`KIRO_FEATURE_CASCADE_CONFIG={"cascadeEnabled":false}`,
 			`KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={"delegationEnabled":false}`,
+			classifierEnv,
 		}},
 	} {
 		got := ChildEnv(&EngineSpawn{AutoRouting: tc.choice, AutoDelegation: tc.choice})
@@ -300,8 +332,8 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 			t.Errorf("ChildEnv(AutoRouting=AutoDelegation=%q) = %q, want %q", tc.choice, got, tc.want)
 		}
 	}
-	if got := ChildEnv(&EngineSpawn{AutoRouting: "on"}); len(got) != 1 || got[0] != `KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}` {
-		t.Errorf("ChildEnv(AutoRouting=on alone) = %q, want only the cascade arm", got)
+	if got := ChildEnv(&EngineSpawn{AutoRouting: "on"}); len(got) != 2 || got[0] != `KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}` {
+		t.Errorf("ChildEnv(AutoRouting=on alone) = %q, want the cascade arm and the classifier gate", got)
 	}
 	for _, tc := range sessionMatrix {
 		if settings, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any); settings["cascade"] != nil {
@@ -317,10 +349,11 @@ func TestChildEnv_ModelFallbackSendsBothFlagsOnlyWhenOn(t *testing.T) {
 		want []string
 		on   bool
 	}{
-		{on: false, want: []string{}},
+		{on: false, want: []string{classifierEnv}},
 		{on: true, want: []string{
 			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
 			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
+			classifierEnv,
 		}},
 	} {
 		if got := ChildEnv(&EngineSpawn{ModelFallback: tc.on}); !reflect.DeepEqual(got, tc.want) {
@@ -405,5 +438,52 @@ func TestDisableAutoCompaction_ValueGatedOnSessionDoorOnly(t *testing.T) {
 		if _, present := connection["disableAutoCompaction"]; present {
 			t.Errorf("%s: Capabilities carries disableAutoCompaction; want it on the session door only", tc.name)
 		}
+	}
+}
+
+// TestCompactionThreshold_OnTheSessionDoorOnly pins the threshold row: KAS reads the threshold
+// only beside enabled: true, a zero value withholds the row (a sent 0 would compact before every
+// model call), and initialize never carries it.
+func TestCompactionThreshold_OnTheSessionDoorOnly(t *testing.T) {
+	settings, _ := SessionMeta(&SessionSpawn{AutoCompactionThreshold: 60})[settingsKey].(map[string]any)
+	want := map[string]any{enabledMember: true, "autoCompactionThreshold": 60}
+	if got := settings["compaction"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("SessionMeta(AutoCompactionThreshold=60) compaction = %#v, want %#v", got, want)
+	}
+	zero, _ := SessionMeta(&SessionSpawn{})[settingsKey].(map[string]any)
+	if got, present := zero["compaction"]; present {
+		t.Errorf("SessionMeta(AutoCompactionThreshold=0) compaction = %#v, want the key withheld", got)
+	}
+	for _, tc := range engineMatrix {
+		connection, _ := Capabilities(&tc.spawn)[settingsKey].(map[string]any)
+		if _, present := connection["compaction"]; present {
+			t.Errorf("%s: Capabilities carries compaction; want it on the session door only", tc.name)
+		}
+	}
+}
+
+// promptProfilingKeys are the session/prompt _meta.kiro keys KAS reads as a turn's profiling, the same three
+// automaticTurnProfiling declares for the turns KAS starts on its own.
+var promptProfilingKeys = []string{"ttft", "perf", "contextBreakdown"}
+
+// TestAutomaticTurnProfiling_MatchesAChatPrompt pins that a turn KAS starts on its own asks for what a typed chat
+// prompt asks for, so a change to one door's profiling cannot leave the other behind.
+func TestAutomaticTurnProfiling_MatchesAChatPrompt(t *testing.T) {
+	declared, ok := SessionMeta(&SessionSpawn{ProfileAgentTurns: true})["automaticTurnProfiling"].(map[string]any)
+	if !ok {
+		t.Fatal("a chat session's door carries no automaticTurnProfiling object")
+	}
+	prompt := PromptMeta(&Prompt{})
+	want := map[string]any{}
+	for _, k := range promptProfilingKeys {
+		if v, ok := prompt[k]; ok {
+			want[k] = v
+		}
+	}
+	if !reflect.DeepEqual(declared, want) {
+		t.Errorf("automaticTurnProfiling = %v, want a chat prompt's profiling %v", declared, want)
+	}
+	if got, ok := SessionMeta(&SessionSpawn{})["automaticTurnProfiling"]; ok {
+		t.Errorf("a session that is not a chat's declared automaticTurnProfiling = %v, want none", got)
 	}
 }

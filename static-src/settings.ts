@@ -34,8 +34,8 @@ import { logout, setEngineHeap, setKiroSetting } from "./actions/settings.js";
 import { runDiagnostics } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { initSteeringEditor, loadSteeringDoc } from "./settings-steering.js";
-import { DEFAULT_AUTO_COMPACT_PCT, compactionPolicy } from "./context-ring.js";
-import { paintSettingLocks, writeSwitch } from "./governance.js";
+import { compactionPolicy } from "./context-ring.js";
+import { onGovernanceChange, paintSettingLocks, writeSwitch } from "./governance.js";
 import { paintOutputStyle, paintOutputStyleHint } from "./output-style.js";
 
 // The kiro-cli settings endpoint does not go through persist.ts's settings state, so it keeps its own
@@ -723,10 +723,17 @@ const agentCapabilities: readonly {
  *  (settings.ValidSpecPlanning and its siblings). A value outside the list, from a newer build,
  *  leaves the control as it is. */
 const agentChoices: readonly {
-  key: "spec_planning";
+  key: "spec_planning" | "workflow_launch";
   selectID: string;
   values: readonly string[];
-}[] = [{ key: "spec_planning", selectID: "spec-planning", values: ["off", "quick", "full"] }];
+}[] = [
+  { key: "spec_planning", selectID: "spec-planning", values: ["off", "quick", "full"] },
+  {
+    key: "workflow_launch",
+    selectID: "workflow-launch",
+    values: ["when-asked", "large-tasks", "delegate-all"],
+  },
+];
 
 /** Unset ("") sends nothing, so kiro-cli's own rollout decides; it renders as off, kiro-cli's
  *  shipped default. A flip always stores "on" or "off", never "". */
@@ -798,6 +805,14 @@ function paintSpecPlanning(mode: string): void {
   document.getElementById("spec-planning-ask-row")?.classList.toggle("hidden", mode === "off");
 }
 
+/** Workflow use only means something while the Workflows switch shows on, a lock's value included. */
+function paintWorkflowLaunchRow(): void {
+  const workflows = document.getElementById("flag-workflows") as HTMLInputElement | null;
+  document
+    .getElementById("workflow-launch-row")
+    ?.classList.toggle("hidden", workflows?.checked !== true);
+}
+
 /** The Memory dropdown's values, mirroring settings.MemoryOff and its siblings. */
 const MEMORY_MODES = ["off", "read_only", "read_write", "learn"] as const;
 
@@ -834,6 +849,7 @@ function applyAgentCapabilities(s: EffectiveSettings): void {
   }
   applyAutoCompaction(s);
   paintSettingLocks();
+  paintWorkflowLaunchRow();
 }
 
 function paintMemory(s: EffectiveSettings): void {
@@ -885,9 +901,14 @@ function initAgentCapabilityControls(): void {
       continue;
     }
     input.addEventListener("change", () => {
-      void patchSettings({ [cap.key]: input.checked }, { el: input, key: cap.key, on: true });
+      paintWorkflowLaunchRow();
+      // The settled write may have repainted the switch.
+      void patchSettings({ [cap.key]: input.checked }, { el: input, key: cap.key, on: true }).then(
+        paintWorkflowLaunchRow,
+      );
     });
   }
+  onGovernanceChange(paintWorkflowLaunchRow);
   for (const sw of agentFeatureSwitches) {
     const input = document.getElementById(sw.inputID) as HTMLInputElement | null;
     input?.addEventListener("change", () => {
@@ -946,28 +967,24 @@ function autoCompactionEls(): {
   row: HTMLElement;
   range: HTMLInputElement;
   value: HTMLOutputElement;
-  warning: HTMLElement;
 } | null {
   const toggle = document.getElementById("flag-auto-compaction") as HTMLInputElement | null;
   const row = document.getElementById("auto-compact-row");
   const range = document.getElementById("auto-compact-pct") as HTMLInputElement | null;
   const value = document.getElementById("auto-compact-pct-value") as HTMLOutputElement | null;
-  const warning = document.getElementById("auto-compact-warning");
-  if (toggle === null || row === null || range === null || value === null || warning === null) {
+  if (toggle === null || row === null || range === null || value === null) {
     return null;
   }
-  return { toggle, row, range, value, warning };
+  return { toggle, row, range, value };
 }
 
-/** Show the slider row only while the switch is on, the value beside the range, and the warning
- *  only above the default. `.hidden` rather than `hidden`: `.section-option` declares `display:
- *  flex`. */
+/** Show the slider row only while the switch is on, and the value beside the range. `.hidden`
+ *  rather than `hidden`: `.section-option` declares `display: flex`. */
 function paintAutoCompaction(enabled: boolean, pct: number): void {
   const els = autoCompactionEls();
   if (els !== null) {
     els.row.classList.toggle("hidden", !enabled);
     els.value.textContent = `${String(pct)}%`;
-    els.warning.classList.toggle("hidden", pct <= DEFAULT_AUTO_COMPACT_PCT);
   }
   compactionPolicy.value = { enabled, pct };
 }
