@@ -438,6 +438,8 @@ describe("the hooks badge opens a popover of the folded hooks", () => {
     await userEvent.keyboard("{Escape}");
     await expect.poll(() => popoverPanel()).toBeNull();
     expect(document.activeElement).toBe(b);
+    expect(b.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(b.getAttribute("aria-expanded")).toBe("false");
     await userEvent.keyboard(" ");
     await expect.poll(() => popoverEntries()).toEqual([["2×", GUARD_A]]);
   });

@@ -74,11 +74,11 @@ function hookEntries(folded: readonly HTMLElement[]): HookEntry[] {
   return [...entries.values()];
 }
 
-/** What a hooks badge opens: the hooks it counts, and the popover while one is showing. */
+/** What a hooks badge opens: the hooks it counts and its popover, which lives as long as the badge. */
 interface HookPopover {
   folded: readonly HTMLElement[];
-  panel: HTMLElement | null;
-  ctl: PopoverController | null;
+  readonly panel: HTMLElement;
+  readonly ctl: PopoverController;
 }
 
 const popovers = new WeakMap<HTMLElement, HookPopover>();
@@ -90,7 +90,9 @@ export function syncHookBadge(group: HTMLElement, folded: readonly HTMLElement[]
   let badge = group.querySelector<HTMLElement>(":scope > .tool-group-hooks");
   if (folded.length === 0) {
     if (badge !== null) {
-      popovers.get(badge)?.ctl?.hide();
+      const state = popovers.get(badge);
+      state?.ctl.dispose();
+      state?.panel.remove();
       badge.remove();
     }
     group.classList.remove(CLS_HAS_HOOKS);
@@ -109,7 +111,7 @@ export function syncHookBadge(group: HTMLElement, folded: readonly HTMLElement[]
     visible.textContent = count;
   }
   badge.setAttribute("aria-label", `${count} ${kindNoun("hook", folded.length)} ran`);
-  if (state.panel !== null) {
+  if (state.ctl.isOpen) {
     renderHookList(state);
   }
 }
@@ -131,10 +133,26 @@ function mountBadge(group: HTMLElement): HTMLElement {
     ),
     el("span", { className: "tool-group-hooks-n", "aria-hidden": "true" }),
   );
-  const state: HookPopover = { folded: [], panel: null, ctl: null };
+  const panel = el("div", {
+    className: "tool-hook-popover",
+    role: "dialog",
+    "aria-label": "Hooks that ran",
+    tabindex: "-1",
+  });
+  const ctl = createPopover(badge, panel, {
+    placement: "bottom",
+    align: "end",
+    haspopup: "dialog",
+    initialFocus: panel,
+    returnFocus: badge,
+    onClose: () => {
+      panel.remove();
+    },
+  });
+  const state: HookPopover = { folded: [], panel, ctl };
   popovers.set(badge, state);
   badge.addEventListener("click", () => {
-    toggleHookPopover(badge, state);
+    toggleHookPopover(state);
   });
   const header = group.querySelector(":scope > .tool-group-header");
   if (header === null) {
@@ -145,58 +163,38 @@ function mountBadge(group: HTMLElement): HTMLElement {
   return badge;
 }
 
-function toggleHookPopover(badge: HTMLElement, state: HookPopover): void {
-  if (state.ctl?.isOpen === true) {
+function toggleHookPopover(state: HookPopover): void {
+  if (state.ctl.isOpen) {
     state.ctl.hide();
     return;
   }
-  const panel = el("div", {
-    className: "tool-hook-popover",
-    role: "dialog",
-    "aria-label": "Hooks that ran",
-    tabindex: "-1",
-  });
-  state.panel = panel;
+  delete state.panel.dataset["keys"];
   renderHookList(state);
-  state.ctl = createPopover(badge, panel, {
-    placement: "bottom",
-    align: "end",
-    haspopup: "dialog",
-    initialFocus: panel,
-    returnFocus: badge,
-    onClose: () => {
-      const ctl = state.ctl;
-      panel.remove();
-      if (state.panel === panel) {
-        state.panel = null;
-        state.ctl = null;
-      }
-      ctl?.dispose();
-    },
-  });
   state.ctl.show();
 }
 
 /** Rebuilt only when the entries change, so a focused chip keeps its focus. */
 function renderHookList(state: HookPopover): void {
-  const panel = state.panel;
-  if (panel === null) {
-    return;
-  }
   const entries = hookEntries(state.folded);
   const keys = entries.map((e) => join(e.key, String(e.runs))).join("\n");
-  if (panel.dataset["keys"] === keys) {
+  if (state.panel.dataset["keys"] === keys) {
     return;
   }
-  panel.dataset["keys"] = keys;
-  panel.replaceChildren(
+  state.panel.dataset["keys"] = keys;
+  state.panel.replaceChildren(
     el(
       "ul",
       { className: "tool-hook-list" },
-      ...entries.map((e) => hookItem(e, () => state.ctl?.hide())),
+      ...entries.map((e) =>
+        hookItem(e, () => {
+          state.ctl.hide();
+        }),
+      ),
     ),
   );
-  state.ctl?.reposition();
+  if (state.ctl.isOpen) {
+    state.ctl.reposition();
+  }
 }
 
 function hookItem(entry: HookEntry, close: () => void): HTMLElement {

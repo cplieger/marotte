@@ -1,5 +1,5 @@
 import { el } from "@cplieger/ui";
-import { createPopover, type PopoverController } from "@cplieger/ui/popover";
+import { createPopover } from "@cplieger/ui/popover";
 import { createDoc, type NewDocRequest } from "./actions/docs.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_PLUS_UI } from "./icons.js";
@@ -42,40 +42,36 @@ export function mountNewDocButton(
     iconEl(ICON_PLUS_UI),
   ) as HTMLButtonElement;
   let tab: NewDocTab | null = null;
-  let open: PopoverController | null = null;
+  const panel = el("div", { className: "docs-new-popover", role: "dialog" });
+  const ctl = createPopover(btn, panel, {
+    placement: "bottom",
+    align: "end",
+    offset: 4,
+    margin: 8,
+    haspopup: "dialog",
+    returnFocus: btn,
+    onClose: () => {
+      panel.remove();
+    },
+  });
 
   const close = (): void => {
-    open?.hide();
+    ctl.hide();
   };
 
   btn.addEventListener("click", () => {
-    if (open !== null) {
+    if (ctl.isOpen) {
       close();
       return;
     }
     if (tab === null) {
       return;
     }
-    const panel = el("div", { className: "docs-new-popover", role: "dialog" });
     panel.setAttribute("aria-label", NEW_LABEL[tab]);
     const built = buildForm(tab, { close, onCreated, startSpec });
-    panel.append(el("h2", { className: "docs-new-title" }, NEW_LABEL[tab]), built.form);
-    const ctl = createPopover(btn, panel, {
-      placement: "bottom",
-      align: "end",
-      offset: 4,
-      margin: 8,
-      haspopup: "dialog",
-      initialFocus: built.focus,
-      returnFocus: btn,
-      onClose: () => {
-        // Rebuilt per open, so a later open never shows the last attempt's values or error.
-        ctl.dispose();
-        panel.remove();
-        open = null;
-      },
-    });
-    open = ctl;
+    // Rebuilt per open, so a later open never shows the last attempt's values or error.
+    panel.replaceChildren(el("h2", { className: "docs-new-title" }, NEW_LABEL[tab]), built.form);
+    ctl.setOptions({ initialFocus: built.focus });
     ctl.show();
   });
 
