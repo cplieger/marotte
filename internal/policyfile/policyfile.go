@@ -295,8 +295,8 @@ func Save(ctx context.Context, path string, f *File) error {
 	}
 	// An edit that broke the document (an alias into a replaced rule) fails here, not at KAS's
 	// next reload.
-	if _, _, err = parse(data, filepath.Base(path)); err != nil {
-		return fmt.Errorf("refusing to write %s: %w", filepath.Base(path), err)
+	if err := readsBack(data, filepath.Base(path), f.Rules); err != nil {
+		return err
 	}
 	// WithMaxBytes mirrors Load's size guard: Save can never persist a
 	// policy file its own Load would reject as oversize.
@@ -403,10 +403,27 @@ func rulesNode(prev *yaml.Node, rules []Rule) (*yaml.Node, error) {
 	return value, nil
 }
 
-// blockStyle clears every node's style, so a document read from JSON writes as block YAML; the
-// encoder still quotes a string that would otherwise read as another type.
+// readsBack refuses data, the text Save is about to write to the file called name, unless it
+// parses and holds exactly rules: a file KAS would read with other rules is never written.
+func readsBack(data []byte, name string, rules []Rule) error {
+	_, back, err := parse(data, name)
+	if err != nil {
+		return fmt.Errorf("refusing to write %s: %w", name, err)
+	}
+	same := func(a, b Rule) bool {
+		return ruleKey(a.Capability, a.Effect, a.Match, a.Exclude) == ruleKey(b.Capability, b.Effect, b.Match, b.Exclude)
+	}
+	if !slices.EqualFunc(back.Rules, rules, same) {
+		return fmt.Errorf("refusing to write %s: it would read back with other rules", name)
+	}
+	return nil
+}
+
+// blockStyle clears every node's style but its explicit tag, so a document read from JSON writes
+// as block YAML; the encoder still quotes a string that would otherwise read as another type, and
+// an explicit tag stays (emptyRoot tells a tagged `!!null ”` root from an empty document by it).
 func blockStyle(n *yaml.Node) {
-	n.Style = 0
+	n.Style &= yaml.TaggedStyle
 	for _, c := range n.Content {
 		blockStyle(c)
 	}

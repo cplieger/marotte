@@ -437,6 +437,16 @@ func TestSave_DocumentShapes(t *testing.T) {
 			}
 		})
 	}
+	t.Run("a folded value another key holds keeps its value with no blank line after it", func(t *testing.T) {
+		got := saveOne(t, "note: >\n  a b\nrules: []\n", func(*File) {})
+		if want := "note: >\n    a b\nrules: []\n"; got != want {
+			t.Errorf("saved file = %q, want %q", got, want)
+		}
+		var doc map[string]any
+		if err := yaml.Unmarshal([]byte(got), &doc); err != nil || doc["note"] != "a b\n" {
+			t.Errorf("note reads back as %q (%v), want %q", doc["note"], err, "a b\n")
+		}
+	})
 	t.Run("a file with no rules key gains one after its other keys", func(t *testing.T) {
 		got := saveOne(t, "workspaceTrusted: true\n", addShell)
 		if got != "workspaceTrusted: true\nrules:\n    - capability: shell\n      effect: ask\n" {
@@ -574,6 +584,63 @@ note: "true"
 			}
 			if raw, err := os.ReadFile(jsonPath); err != nil || string(raw) != jsonSibling {
 				t.Errorf("the .json changed to %q (err %v), want it left as KAS's fallback", raw, err)
+			}
+		})
+	}
+}
+
+// TestSave_KeepsTheRulesOfATaggedNullJSONSibling pins a permissions.json whose root is an
+// explicitly tagged empty null: blockStyle keeps the tag, so the root takes the mapping path, and
+// the rule Save adds is the rule the new permissions.yaml reads back.
+func TestSave_KeepsTheRulesOfATaggedNullJSONSibling(t *testing.T) {
+	for _, root := range []string{
+		"!!null ''", `!!null ""`, "--- !!null ''", "&a !!null ''",
+		"!!null |", "!!null >-", "!<tag:yaml.org,2002:null> ''",
+	} {
+		t.Run(root, func(t *testing.T) {
+			dir := t.TempDir()
+			yamlPath := filepath.Join(dir, filename)
+			if err := os.WriteFile(filepath.Join(dir, jsonFilename), []byte(root+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			f, err := Load(yamlPath)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			want := Rule{Capability: "shell", Effect: EffectDeny}
+			if _, err := f.Upsert(&want); err != nil {
+				t.Fatal(err)
+			}
+			if err := Save(t.Context(), yamlPath, f); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			back, err := Load(yamlPath)
+			if err != nil {
+				t.Fatalf("Load after Save: %v", err)
+			}
+			if len(back.Rules) != 1 || back.Rules[0].Capability != want.Capability || back.Rules[0].Effect != want.Effect {
+				t.Errorf("rules read back = %+v, want [%+v]", back.Rules, want)
+			}
+		})
+	}
+}
+
+// TestReadsBack_RefusesTextWithOtherRules pins Save's last guard: text that parses but holds
+// other rules than the ones Save was given is never written.
+func TestReadsBack_RefusesTextWithOtherRules(t *testing.T) {
+	rules := []Rule{{Capability: "shell", Effect: EffectDeny}}
+	if err := readsBack([]byte("rules:\n    - capability: shell\n      effect: deny\n"), filename, rules); err != nil {
+		t.Fatalf("readsBack refused the text holding exactly the rules: %v", err)
+	}
+	for name, text := range map[string]string{
+		"no rules":       "rules: []\n",
+		"another effect": "rules: [{capability: shell, effect: ask}]\n",
+		"an extra rule":  "rules: [{capability: shell, effect: deny}, {capability: shell, effect: ask}]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := readsBack([]byte(text), filename, rules)
+			if err == nil || !strings.Contains(err.Error(), "would read back with other rules") {
+				t.Errorf("readsBack(%q) = %v, want the other-rules refusal", text, err)
 			}
 		})
 	}
