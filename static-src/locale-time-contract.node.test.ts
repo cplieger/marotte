@@ -13,7 +13,9 @@ const MODULE = "locale-time.ts";
 const SKIPPED_DIRS = new Set(["node_modules", "testdata", "__test-helpers__", "e2e-sse", "dist"]);
 
 /** Files that call `.toLocaleString(` on a number (a count or a byte total), never on a date. The
- *  allowlist is per file, so a date `.toLocaleString()` added to one of them passes unseen. */
+ *  allowlist is per file, so a date `.toLocaleString()` added to one of them passes unseen. The scan
+ *  is untyped, so it also misses a Date coerced to text (`${d}`, `String(d)`, `d.toString()`) and
+ *  `toISOString().slice(11, 16)`; `composer-paste.ts` legitimately slices an ISO string. */
 const NUMBER_FORMATTERS = new Set([
   "account-usage.ts",
   "context-breakdown.ts",
@@ -59,11 +61,26 @@ function nameOf(node: ts.Node): string | undefined {
   if (
     ts.isStringLiteral(node) &&
     ((ts.isPropertyAssignment(node.parent) && node.parent.name === node) ||
+      ts.isComputedPropertyName(node.parent) ||
       (ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node))
   ) {
     return node.text;
   }
   return undefined;
+}
+
+/** Whether a `DateTimeFormat` name is the one allowed shape: `new Intl.DateTimeFormat(navigator.languages, …)`.
+ *  A call without `new`, an alias or a destructured reference is none of it. */
+function isBrowserLanguagesConstruction(name: ts.Node): boolean {
+  const access = name.parent;
+  return (
+    ts.isPropertyAccessExpression(access) &&
+    access.name === name &&
+    access.expression.getText() === "Intl" &&
+    ts.isNewExpression(access.parent) &&
+    access.parent.expression === access &&
+    access.parent.arguments?.[0]?.getText() === "navigator.languages"
+  );
 }
 
 /** What a production file does that bypasses the shared formatter. Read off the AST, so a comment
@@ -79,14 +96,10 @@ function violations(file: string, source: string): string[] {
     if (name === "toLocaleString" && !NUMBER_FORMATTERS.has(file)) {
       found.push(`${file}: toLocaleString outside the number-formatting files`);
     }
-    if (
-      isModule &&
-      ts.isNewExpression(node) &&
-      node.expression.getText() === "Intl.DateTimeFormat"
-    ) {
-      if (node.arguments?.[0]?.getText() !== "navigator.languages") {
-        found.push(`${file}: DateTimeFormat does not take navigator.languages as its locale`);
-      }
+    if (isModule && name === "DateTimeFormat" && !isBrowserLanguagesConstruction(node)) {
+      found.push(
+        `${file}: DateTimeFormat is not \`new Intl.DateTimeFormat(navigator.languages, …)\``,
+      );
     }
     node.forEachChild(walk);
   };
@@ -150,6 +163,7 @@ describe("the scan", () => {
     ["a date through toLocaleString", "when.toLocaleString()"],
     ["a date string in English", "d.toDateString()"],
     ["a quoted option key", "const o = { 'hour12': true };"],
+    ["a computed option key", "const o = { ['hour12']: true };"],
     [
       "a call after a slash-star inside a string",
       'const p = "src/**"; /** x */ d.toLocaleTimeString();',
@@ -166,6 +180,11 @@ describe("the scan", () => {
     expect(
       violations(MODULE, "new Intl.DateTimeFormat(navigator.languages, { hour12: false })"),
     ).not.toEqual([]);
+    expect(violations(MODULE, "Intl.DateTimeFormat('en-US', o)")).not.toEqual([]);
+    expect(violations(MODULE, "Intl.DateTimeFormat(navigator.languages, o)")).not.toEqual([]);
+    expect(violations(MODULE, "const F = Intl.DateTimeFormat; new F('en-US', o)")).not.toEqual([]);
+    expect(violations(MODULE, "const { DateTimeFormat } = Intl;")).not.toEqual([]);
+    expect(violations(MODULE, "new Intl['DateTimeFormat']('en-US', o)")).not.toEqual([]);
     expect(violations(MODULE, "new Intl.DateTimeFormat(navigator.languages, o)")).toEqual([]);
   });
 

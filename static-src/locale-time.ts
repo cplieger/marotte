@@ -25,25 +25,19 @@ export function formatShortDate(ms: number, opts: { year?: boolean } = {}): stri
   });
 }
 
+// A stamp joins a date-only part to formatClock's clock: `hour: "numeric"` reads 9:05 in French
+// where the timeStyle clock reads 09:05, and `"2-digit"` would pad en-US to 09:05 AM.
+function stamp(ms: number, date: Intl.DateTimeFormatOptions, seconds: boolean): string {
+  const day = format(ms, date);
+  return day === "" ? "" : `${day}, ${formatClock(ms, { seconds })}`;
+}
+
 /** The numeric date and the clock with seconds, for a tooltip that must name the exact instant. */
 export function formatFullStamp(ms: number): string {
-  return format(ms, {
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  return stamp(ms, { year: "numeric", month: "numeric", day: "numeric" }, true);
 }
 
 /** Weekday, day, short month and clock. */
 export function formatWeekdayStamp(ms: number): string {
-  return format(ms, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return stamp(ms, { weekday: "short", day: "numeric", month: "short" }, false);
 }

@@ -60,6 +60,15 @@ describe("the date forms", () => {
     expect(plain(formatWeekdayStamp(WHEN))).toContain("1:50 PM");
   });
 
+  it("pad a morning hour as the plain clock does under fr-FR and not under en-US", () => {
+    setBrowserLanguages(["fr-FR"]);
+    expect(formatFullStamp(MORNING)).toMatch(/ 09:05:03$/);
+    expect(formatWeekdayStamp(MORNING)).toMatch(/ 09:05$/);
+    setBrowserLanguages(["en-US"]);
+    expect(plain(formatFullStamp(MORNING))).toMatch(/ 9:05:03 AM$/);
+    expect(plain(formatWeekdayStamp(MORNING))).toMatch(/ 9:05 AM$/);
+  });
+
   it("spells the short date in the reader's language, with the year only on request", () => {
     setBrowserLanguages(["en-US"]);
     expect(formatShortDate(WHEN)).toBe("Oct 9");
