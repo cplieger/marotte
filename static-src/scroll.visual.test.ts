@@ -255,7 +255,8 @@ class Recording {
     const ic = this.icons[0]?.ic as SVGSVGElement | undefined;
     expect(ic, "the premise: an icon is in view").toBeDefined();
     const was = ic!.style.translate;
-    ic!.style.translate = "0.5px 0.5px";
+    const [x = 0, y = 0] = was.split(" ").map((v) => parseFloat(v) || 0);
+    ic!.style.translate = `${String(x)}px ${String(y + 1)}px`;
     return () => {
       ic!.style.translate = was;
     };
@@ -641,15 +642,16 @@ describe("the transcript near its end", { timeout: 60000 }, () => {
       stillAtRest(rec);
     });
 
-    it("reports a planted half-pixel icon shift", async () => {
+    it("reports a planted 1px icon shift", async () => {
       const rec = await scenario(async (r) => {
         const undo = r.plantIconShift();
         await idle(6);
         undo();
       }, 30);
 
+      // An engine paints the move on its device grid: at DPR 1.5, 1 or 2 device pixels.
       expect(Math.max(...rec.iconRange()), "the detector caught the plant").toBeGreaterThanOrEqual(
-        0.4,
+        0.6,
       );
     });
 

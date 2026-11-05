@@ -563,15 +563,23 @@ export class ScrollController {
   /** Re-snap the icons a layout move under `from` carried: the near band's rows at or after it, and their turns' own
    *  header and footer icons. A row outside the band is never read; its icons are not painted. */
   private snapMoved(from: Element): void {
-    const rows = [...this.nearNow].filter(
-      (box) =>
-        from.contains(box) ||
-        (from.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+    const rows = this.inSnapReach(
+      [...this.nearNow].filter(
+        (box) =>
+          from.contains(box) ||
+          (from.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+      ),
     );
     if (rows.length > 0) {
-      snapIconsIn(rows, null);
-      snapIconsIn(this.cardsOf(rows), SKIPPABLE);
+      snapIconsIn(rows, this.cardsOf(rows), SKIPPABLE);
     }
+  }
+
+  /** The boxes whose top is above the scrollport's bottom edge plus one scrollport, which bounds the walk's cost by the
+   *  viewport. A row below keeps its last snap until a later delivery reaches it. */
+  private inSnapReach(boxes: Element[]): Element[] {
+    const limit = this.scrollEl.getBoundingClientRect().bottom + this.scrollEl.clientHeight;
+    return boxes.filter((box) => box.getBoundingClientRect().top <= limit);
   }
 
   private cardsOf(boxes: Iterable<Element>): Set<Element> {
@@ -1177,8 +1185,7 @@ export class ScrollController {
     this.correct();
     this.floorAfter(true);
     if (entering.length > 0) {
-      snapIconsIn(entering, null);
-      snapIconsIn(this.cardsOf(entering), SKIPPABLE);
+      snapIconsIn(entering, this.cardsOf(entering), SKIPPABLE);
     }
   }
 

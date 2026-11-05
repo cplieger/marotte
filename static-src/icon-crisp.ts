@@ -134,6 +134,8 @@ const staticScaled = new Set<SVGSVGElement>();
 
 /** Per-pass computed styles, so the containing-block walk reads each ancestor once. */
 type StyleMemo = Map<Element, CSSStyleDeclaration>;
+/** Per pass: the content offset an ancestor and those above it add, reached in flow. */
+type OffsetMemo = Map<Element, { x: number; y: number }>;
 
 function styleOf(el: Element, memo: StyleMemo): CSSStyleDeclaration {
   let cs = memo.get(el);
@@ -185,9 +187,11 @@ function stuck(box: Element, cs: CSSStyleDeclaration, scroller: Element, axis: "
 /** The scroll offsets that move `el` with its content: each scroller in its containing-block chain, less the axis a
  *  stuck sticky box pins to its nearest scroller. Added to a screen rect, it measures `el` in content space, where a
  *  scroll changes nothing, so no scroll leaves a snap stale. A top-layer box takes none. */
-function contentOffset(el: Element, memo: StyleMemo): { x: number; y: number } {
+function contentOffset(el: Element, memo: StyleMemo, above: OffsetMemo): { x: number; y: number } {
   let x = 0;
   let y = 0;
+  // From an ancestor entered in flow with no sticky box pending, the rest of the walk depends on that ancestor alone.
+  const entered: { a: Element; x: number; y: number }[] = [];
   const at: { mode: "flow" | "absolute" | "fixed" } = { mode: "flow" };
   const sticky: { box: Element; cs: CSSStyleDeclaration }[] = [];
   const settle = (box: Element, cs: CSSStyleDeclaration): void => {
@@ -204,6 +208,15 @@ function contentOffset(el: Element, memo: StyleMemo): { x: number; y: number } {
   }
   settle(el, styleOf(el, memo));
   for (let a = el.parentElement; a !== null; a = a.parentElement) {
+    if (at.mode === "flow" && sticky.length === 0) {
+      const known = above.get(a);
+      if (known !== undefined) {
+        x += known.x;
+        y += known.y;
+        break;
+      }
+      entered.push({ a, x, y });
+    }
     const cs = styleOf(a, memo);
     if (a.matches(":modal, :popover-open")) {
       break;
@@ -236,6 +249,9 @@ function contentOffset(el: Element, memo: StyleMemo): { x: number; y: number } {
     }
     settle(a, cs);
   }
+  for (const e of entered) {
+    above.set(e.a, { x: x - e.x, y: y - e.y });
+  }
   return { x, y };
 }
 
@@ -245,17 +261,22 @@ export function snapIcons(root: ParentNode = document): number {
   return snapWith(root.querySelectorAll<SVGSVGElement>(TIERS), currentMotion());
 }
 
-/** Snap every tier icon inside each of `boxes`, once per call, leaving out an icon whose nearest `skip` ancestor lies
- *  inside that box. Reads boxes and writes only `translate`; a no-op before `initIconCrisp`. */
-export function snapIconsIn(boxes: Iterable<Element>, skip: string | null): void {
+/** Snap, in one pass, every tier icon inside `rows` and every one inside `cards` whose nearest `skip` ancestor does not
+ *  lie inside that card. Reads boxes and writes only `translate`; a no-op before `initIconCrisp`. */
+export function snapIconsIn(rows: Iterable<Element>, cards: Iterable<Element>, skip: string): void {
   if (resize === undefined) {
     return;
   }
   const icons = new Set<SVGSVGElement>();
-  for (const box of boxes) {
+  for (const box of rows) {
     for (const ic of iconsIn(box)) {
-      const s = skip === null ? null : ic.closest(skip);
-      if (s === null || s === box || !box.contains(s)) {
+      icons.add(ic);
+    }
+  }
+  for (const card of cards) {
+    for (const ic of iconsIn(card)) {
+      const s = ic.closest(skip);
+      if (s === null || s === card || !card.contains(s)) {
         icons.add(ic);
       }
     }
@@ -279,6 +300,7 @@ function snapWith(icons: Iterable<SVGSVGElement>, motion: Motion): number {
   const work: { el: SVGSVGElement; sx: number; sy: number; tx: number; ty: number }[] = [];
   const dpr = window.devicePixelRatio;
   const memo: StyleMemo = new Map();
+  const above: OffsetMemo = new Map();
   for (const el of icons) {
     const movers = motion.movers.filter((m) => m.el.contains(el));
     if (movers.length > 0) {
@@ -305,7 +327,7 @@ function snapWith(icons: Iterable<SVGSVGElement>, motion: Motion): number {
       staticScaled.add(el);
       continue;
     }
-    const off = contentOffset(el, memo);
+    const off = contentOffset(el, memo, above);
     const phase = wantedDevicePhase(el, dpr);
     const prev = applied.get(el) ?? { sx: 0, sy: 0, tx: 0, ty: 0 };
     const sx = axisOffset(rect.x + off.x, prev.sx, scale, phase, dpr);
