@@ -24,9 +24,9 @@
 .web-path {
   flex: 1 1 0;
   min-width: 0;
-  min-block-size: var(--field-h);
+  min-block-size: var(--ctl-h);
   padding: 0 var(--sp-3);
-  line-height: calc(var(--field-h) - 2px);
+  line-height: calc(var(--ctl-h) - 2px);
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
@@ -230,9 +230,9 @@
   }
 }
 
-/* Equal rank with the field it submits (01-tokens.css "The FORM type scale"). */
+/* Equal rank with the field it submits, so it reads that field's rung. */
 .editor-goto .editor-goto-submit {
-  font-size: var(--fs-form-peer);
+  font-size: var(--fs-base);
 }
 
 /* Rendered-markdown read surface. It takes column 2 of `.editor-body`, whose

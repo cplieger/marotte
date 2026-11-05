@@ -318,8 +318,7 @@ describe("every popup answers one geometry", () => {
 });
 
 describe("no popup text is below the mobile floor on a coarse pointer", () => {
-  // 12px is the floor the app keeps under a finger; a caption reads `--fs-popup-meta`, which
-  // resolves one rung above it on the coarse tier.
+  // 12px is the floor the app keeps under a finger; a caption reads `--fs-popup-meta`.
   const FLOOR_PX = 12;
 
   it.each(POPUPS.map((p) => [p.name, p] as const))("%s", (_name, popup) => {
@@ -349,9 +348,9 @@ describe("no popup text is below the mobile floor on a coarse pointer", () => {
     ).toEqual([]);
   });
 
-  it("lifts BOTH rungs on the pointer tier, not on a width query", () => {
-    // This measures the tier at the test viewport's own width, which is 1280.
-    expect(window.innerWidth, "the lift must be readable at a desktop width").toBeGreaterThan(768);
+  it("keeps BOTH rungs at their mouse size on a finger: touch grows targets, never text", () => {
+    // At a desktop width, where only the pointer tier, never the width fallback, could move them.
+    expect(window.innerWidth).toBeGreaterThan(768);
 
     const card = mount(POPUPS[3] as Popup);
     const meta = card.querySelector<HTMLElement>(".pill-role-scope");
@@ -369,7 +368,7 @@ describe("no popup text is below the mobile floor on a coarse pointer", () => {
     };
 
     expect(fine).toEqual({ body: "13px", meta: "12px" });
-    expect(coarse).toEqual({ body: "14px", meta: "13px" });
+    expect(coarse).toEqual(fine);
   });
 
   it("keeps a caption UNDER its row, so it cannot outsize what it labels", () => {

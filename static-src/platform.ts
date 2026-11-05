@@ -1,13 +1,13 @@
 // Platform detection & iOS workarounds. Runs once at import time; everything is a static read after
 // that.
 
+import { isIOSFamily } from "./focus-zoom.js";
+
 export const isStandalone: boolean =
   (navigator as { standalone?: boolean }).standalone === true ||
   window.matchMedia("(display-mode: standalone)").matches;
 
-export const isIOS: boolean =
-  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+export const isIOS: boolean = isIOSFamily(navigator);
 
 // ---------------------------------------------------------------------------
 // guardDuplicateActivation — absorbs duplicated pointer→click dispatch of ONE

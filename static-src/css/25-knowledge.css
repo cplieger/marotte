@@ -37,10 +37,8 @@
   touch-action: manipulation;
 }
 
-/* The row's buttons share it with two fields the iOS text-entry floor puts at
-   16px on a coarse pointer (61-mcp-tools.css), so they take the form PEER rung
-   and match rather than sitting 4px under them (01-tokens.css "The FORM type
-   scale"). */
+/* The row's buttons share it with two fields at equal rank, so they take the
+   form peer rung (01-tokens.css "The FORM type scale"). */
 .knowledge-add-form .btn-small {
   font-size: var(--fs-form-peer);
 }

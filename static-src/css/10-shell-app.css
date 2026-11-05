@@ -545,8 +545,7 @@ body.sidebar-resizing {
  * `user-select: none` so the caret and a selection work; paired, because WebKit
  * inherits the prefixed form. Its box is its own line plus a hair, never the hit
  * floor, so the row keeps its height while renaming at both tiers: the row is
- * already the target, and the coarse tier's 16px text-entry floor (61-mcp-tools.css)
- * still fits inside a coarse row's content box. */
+ * already the target. */
 .tab-name-input {
   flex: 1;
   min-width: 0;

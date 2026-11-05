@@ -4,6 +4,7 @@
 
 import { createTheme } from "@cplieger/ui/theme";
 import { cachedTheme } from "./device-view.js";
+import { applyFocusZoomGuard } from "./focus-zoom.js";
 import { LS_UI_STATE_KEY, THEME_ATTRIBUTE } from "./ls-keys.js";
 import { applyStoredTier } from "./pointer-tier.js";
 import { applyStoredShellPanel } from "./shell-height.js";
@@ -33,6 +34,7 @@ export const PREPAINT_STEPS: readonly (() => void)[] = [
   applyStoredSidebarWidth,
   applyStoredTier,
   applyStoredShellPanel,
+  applyFocusZoomGuard,
 ];
 
 /** Run every step, each isolated from the others' failures. Logs nothing: a missing or corrupt

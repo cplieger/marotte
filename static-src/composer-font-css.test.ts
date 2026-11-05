@@ -1,6 +1,6 @@
-// The composer reads the transcript's own rung (`--fs-md`), except where the coarse-tier 16px iOS text-entry floor
-// (61-mcp-tools.css) wins. Source half: no literal and no `--fs-field` token. Measurement half: the sizes agree, and the
-// font moves the resting box by nothing, because padding is `--composer-rest-h` minus `1lh`.
+// The composer reads the transcript's own rung (`--fs-md`) on every pointer tier: touch grows targets, never text.
+// Source half: no literal and no `--fs-field` token. Measurement half: the sizes agree, and the font moves the resting
+// box by nothing, because padding is `--composer-rest-h` minus `1lh`.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 // `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` is a stub that throws.
@@ -112,26 +112,21 @@ describe("the composer, measured at real viewport sizes", () => {
     ["a desktop with no pointer tier resolved yet", 1280, 800, null],
   ])("computes the transcript's own size on %s", async (_label, w, h, pointer) => {
     const { input, prose } = await mountAt(w, h, pointer);
-    // Compared against the rendered transcript, not 14, so a `--fs-md` retune keeps the meaning. Coarse arms are
-    // excluded: the 16px iOS text-entry floor beats this control there (the page ships no `maximum-scale=1.0`,
-    // and `#prompt-input` has `autofocus`). The next case pins that side.
-    if (pointer === "coarse" || (pointer === null && w <= 768)) {
-      expect(fontPx(input), "the coarse floor is in force").toBe(16);
-      return;
-    }
+    // Compared against the rendered transcript, not 14, so a `--fs-md` retune keeps the meaning.
     expect(fontPx(input)).toBe(fontPx(prose));
   });
 
-  it("is 14px on a mouse today, so a retune of the rung is a visible change rather than a silent one", async () => {
-    // On a coarse pointer this control is 16px by platform requirement, so the rung is observable only on the fine tier.
-    const { input } = await mountAt(1280, 800, "fine");
-    expect(fontPx(input)).toBe(14);
-  });
-
-  it("is 16px on a finger, which is iOS's auto-zoom threshold rather than a rung", async () => {
-    const { input } = await mountAt(390, 844, "coarse");
-    expect(fontPx(input)).toBe(16);
-  });
+  it.each([
+    [1280, 800, "fine" as const],
+    [1024, 768, "coarse" as const],
+    [390, 844, "coarse" as const],
+  ])(
+    "is 14px at %ix%i on a %s pointer, so a retune of the rung is a visible change",
+    async (w, h, pointer) => {
+      const { input } = await mountAt(w, h, pointer);
+      expect(fontPx(input)).toBe(14);
+    },
+  );
 
   // composer-row-height-css.test.ts owns the box heights; this case is only that the font does not move the box.
   it.each([

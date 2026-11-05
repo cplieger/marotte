@@ -210,7 +210,10 @@ describe("the row's own inset and control heights", () => {
   it("shows a long description as exactly two lines", () => {
     // The body is a flex column, so a clamp admitting four lines is shrunk and clipped while the row still measures right.
     mountList("--row-h-3", "coarse");
-    expect(host.querySelector('[data-key="c"] .entry-sub-clamp')?.clientHeight).toBe(34);
+    const clamp = host.querySelector<HTMLElement>('[data-key="c"] .entry-sub-clamp');
+    expect(clamp, "the fixture must render a clamped description").not.toBeNull();
+    const line = Number.parseFloat(getComputedStyle(clamp as HTMLElement).lineHeight);
+    expect(clamp?.clientHeight).toBe(Math.round(2 * line));
   });
 
   it("takes the title's size from the item tier", () => {

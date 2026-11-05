@@ -747,9 +747,7 @@ label.toggle-inline:has(> .toggle) {
   width: 30rem;
 }
 
-/* Both read the form-label rung, which lifts on the coarse pointer because the
-   fields they name are floored to 16px there (01-tokens.css "The FORM type
-   scale"). `.tool-form-label-aux` carries no rule of its own and inherits this. */
+/* `.tool-form-label-aux` carries no rule of its own and inherits this. */
 .tool-form-label {
   display: flex;
   flex-direction: column;

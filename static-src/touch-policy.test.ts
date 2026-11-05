@@ -9,9 +9,10 @@ import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rul
 
 describe("pinch-zoom is enabled", () => {
   it("keeps `pinch-zoom` in the body's touch-action list", () => {
-    // Pinch-zoom is ON, with the viewport meta's `maximum-scale` gone (WCAG 1.4.4): the two travel
-    // together, or the meta change buys nothing. The layout mispositioning a pinch causes is an accepted
-    // cost. `pinch-zoom` does not bring back the 300ms delay `touch-action: manipulation` removes.
+    // Pinch-zoom is ON (WCAG 1.4.4): the shipped viewport meta states no scale limit, and the one
+    // focus-zoom.ts adds on iOS is ignored for a pinch there. The layout mispositioning a pinch
+    // causes is an accepted cost. `pinch-zoom` does not bring back the 300ms delay
+    // `touch-action: manipulation` removes.
     // Looked up in the `reset` layer, where 02-reset.css puts it.
     const reset = loadCSS("02-reset.css");
     const body = ruleContaining(reset, "body", "reset");
