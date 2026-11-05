@@ -823,10 +823,12 @@ func logRootIntegrityRefusal(err error) {
 	slog.Warn("tools engine disabled: marotte is running without the tools subsystem; "+
 		"Settings -> Tools says why",
 		"finding_count", len(refusal.Findings),
-		"hint", "the check reports only and never repairs: fix the paths above from inside the container "+
-			"(chown a dir another account owns; setfacl -b a dir with an ACL grant; chmod g-w,o-w a writable dir; "+
-			"replace a symlinked root with a real directory), or list the account in TRUSTED_INSTALL_UIDS, then "+
-			"save tools.json in Settings -> Tools or restart")
+		"hint", "the check reports only and never repairs. Fix each path above, then save tools.json in "+
+			"Settings -> Tools or restart: inside the container, chown a dir another account owns, chmod g-w,o-w "+
+			"a group- or world-writable dir, and replace a symlink or a non-directory with a real directory; on the "+
+			"host, strip an ACL grant (setfacl -b for a POSIX list, the host's NFSv4 ACL tool on ZFS or NFS; the "+
+			"image ships neither). A user you trust that owns or can write a dir can go in TRUSTED_INSTALL_UIDS "+
+			"instead, which only a restart reads; it never clears a group writer, a symlink or a non-directory")
 }
 
 // warnIfNoLSPEnabled nudges when no language server is enabled: kiro-cli scans PATH at
