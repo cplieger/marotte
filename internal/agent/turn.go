@@ -148,7 +148,7 @@ type chatLifecycle struct {
 	// nextSeq is the open sequence the newest record took; openLocked increments it
 	// before assigning, so the next record takes nextSeq+1.
 	nextSeq uint64
-	// leaseSeq names the newest lease in leaseCuts.
+	// leaseSeq is the last token beginLease issued; tokens start at 1.
 	leaseSeq uint64
 	// epoch names this lifecycle among the chat's; a fence from another epoch never holds. Re-minted when the life
 	// ends, so a surviving drain opens nothing.

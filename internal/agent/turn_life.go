@@ -10,10 +10,11 @@ import (
 )
 
 // A chatLifecycle is the chat's life. Every goroutine that works for the life (its session door, its forward, each
-// turn-close tail, each later rehydrate sweep, each session lease) is started through beginWork, which counts it and
-// refuses once the life ended. A close ends the life at its commit (ChatHold.Commit); the teardown then waits until
-// the count is zero (awaitQuiet) before it forgets any of the chat's state or releases the gate hold. With the gate
-// admitting no new life while a hold stands, no work of one life runs while another life of the chat exists.
+// turn-close tail, each later rehydrate sweep) is started through beginWork, and each session lease through beginLease;
+// both count it and refuse once the life ended. A close ends the life at its commit (ChatHold.Commit); the teardown
+// then waits until the count is zero (awaitQuiet) before it forgets any of the chat's state or releases the gate hold.
+// With the gate admitting no new life while a hold stands, no work of one life runs while another life of the chat
+// exists.
 
 // workKind names one kind of the life's work, counted apart so a stuck teardown names what it waits for.
 type workKind uint8
