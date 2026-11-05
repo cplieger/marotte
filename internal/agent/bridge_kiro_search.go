@@ -58,20 +58,22 @@ func (in *inbound) handleKiroSearchRequest(_ context.Context, chatID marotte.Cha
 	if msg.Method != methodKiroTextSearch && msg.Method != methodKiroFindFiles {
 		return false
 	}
-	in.lifetime.inflight.Go(func() {
-		ctx, cancel := in.lifetime.derivedContext()
-		defer cancel()
-		in.respondKiroSearch(ctx, chatID, origin, msg)
-	})
+	in.lifetime.inflight.Go(in.trackKiroSearch(chatID, origin, msg))
 	return true
 }
 
-// respondKiroSearch answers with the search's own context, which searchCancels ends; the answer
-// still goes out on ctx.
-func (in *inbound) respondKiroSearch(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
+// trackKiroSearch registers the search with searchCancels and returns the work that answers it. It
+// tracks before the work runs: a cancel or session end that lands before the work starts would
+// otherwise find nothing and leave rg running to its deadline. The search runs on its own context,
+// which searchCancels ends; the answer still goes out on the lifetime's.
+func (in *inbound) trackKiroSearch(chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) (work func()) {
+	ctx, cancel := in.lifetime.derivedContext()
 	searchCtx, release := in.bus.searches.track(ctx, chatID, in.searchRun(chatID, sessionIDOfParams(msg.Params)), origin)
-	defer release()
-	in.answerKiroSearch(ctx, searchCtx, chatID, origin, msg)
+	return func() {
+		defer cancel()
+		defer release()
+		in.answerKiroSearch(ctx, searchCtx, chatID, origin, msg)
+	}
 }
 
 // searchRun is the run whose step sent a search from sessionID, "" for the chat's own. A step of a

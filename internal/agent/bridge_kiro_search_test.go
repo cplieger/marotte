@@ -81,7 +81,7 @@ esac`)
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
-			h.inbound.respondKiroSearch(t.Context(), "c1", h.originOf("c1"), kiroSearchMsg(t, 1, tc.method, tc.params))
+			h.inbound.trackKiroSearch("c1", h.originOf("c1"), kiroSearchMsg(t, 1, tc.method, tc.params))()
 			got, err := awaitSearchAnswer(t, br)
 			if err != nil {
 				t.Fatalf("answer error = %v, want a result: KAS falls back to its walker on an error", err)
@@ -99,8 +99,8 @@ func TestKiroSearch_NoRipgrepAnswersEmpty(t *testing.T) {
 	t.Cleanup(func() { resolveRipgrep = prev })
 	h, br := hubForFSTest(t, t.TempDir())
 
-	h.inbound.respondKiroSearch(t.Context(), "c1", h.originOf("c1"),
-		kiroSearchMsg(t, 1, methodKiroFindFiles, map[string]any{"sessionId": "s", "pattern": "**/*x*", "maxResults": 11}))
+	h.inbound.trackKiroSearch("c1", h.originOf("c1"),
+		kiroSearchMsg(t, 1, methodKiroFindFiles, map[string]any{"sessionId": "s", "pattern": "**/*x*", "maxResults": 11}))()
 
 	if got, err := awaitSearchAnswer(t, br); err != nil || got != `{"files":[]}` {
 		t.Errorf("answer = (%s, %v), want {\"files\":[]}", got, err)
@@ -144,10 +144,11 @@ func startSearch(t *testing.T, h *Runtime, origin acpResponder, sessionID string
 	t.Helper()
 	msg := kiroSearchMsg(t, id, methodKiroTextSearch, map[string]any{"sessionId": sessionID, "pattern": "func Run", "caseSensitive": false})
 	const chatID = "c1"
+	search := h.inbound.trackKiroSearch(chatID, origin, msg)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		h.inbound.respondKiroSearch(t.Context(), chatID, origin, msg)
+		search()
 	}()
 	return done
 }
@@ -256,6 +257,29 @@ func TestKiroSearch_SessionEndEndsTheSearch(t *testing.T) {
 	awaitChildrenGone(t, pids)
 }
 
+// forwardAt ends the session as soon as its lane drains, which can be before the dispatched search's
+// goroutine has run.
+func TestKiroSearch_SessionEndRightAfterDispatchEndsTheSearch(t *testing.T) {
+	stageBlockingRipgrep(t)
+	h, br := hubForFSTest(t, t.TempDir())
+	origin := h.originOf("c1")
+	msg := kiroSearchMsg(t, 1, methodKiroTextSearch, map[string]any{"sessionId": "sess_chat", "pattern": "func Run", "caseSensitive": false})
+
+	start := time.Now()
+	if !h.inbound.handleKiroSearchRequest(t.Context(), "c1", origin, msg) {
+		t.Fatal("text_search was not handled")
+	}
+	h.coord.endSession(origin)
+	_, err := awaitSearchAnswer(t, br)
+
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("answer came %v after the session's end, want well before the search deadline", took)
+	}
+	if err != nil {
+		t.Errorf("answer error = %v, want a result: KAS falls back to its walker on an error", err)
+	}
+}
+
 // KAS resolves an answer's paths against the roots its session opened with, so a session opened
 // with a directory marotte no longer grants still has its paths written for those roots, and the
 // directory is not searched.
@@ -278,8 +302,8 @@ func TestKiroSearch_PathsFollowTheSessionsOwnRoots(t *testing.T) {
 printf '%s\n' '{"type":"match","data":{"path":{"text":"./notes/x.md"},"lines":{"text":"hit\n"},"line_number":1}}'`)
 	h, br := hubForFSTest(t, work)
 
-	h.inbound.respondKiroSearch(t.Context(), "c1", h.originOf("c1"),
-		kiroSearchMsg(t, 1, methodKiroTextSearch, map[string]any{"sessionId": "sess_old", "pattern": "hit", "caseSensitive": false}))
+	h.inbound.trackKiroSearch("c1", h.originOf("c1"),
+		kiroSearchMsg(t, 1, methodKiroTextSearch, map[string]any{"sessionId": "sess_old", "pattern": "hit", "caseSensitive": false}))()
 	got, err := awaitSearchAnswer(t, br)
 
 	// "notes/x.md" alone would name notes/x.md in KAS's second root.
