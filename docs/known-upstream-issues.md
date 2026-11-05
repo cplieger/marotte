@@ -76,7 +76,7 @@ Reported as [kirodotdev/Kiro#11369](https://github.com/kirodotdev/Kiro/issues/11
 
 ### A hook shows on its tool group, not on the call it checked
 
-A hook that checks a tool call, such as a guard that runs before every command, shows as a count on its tool group's header rather than on the command it ran for. Opening the group lists those hooks. When a call in the group is refused or fails, every hook in the group stays a row, because marotte cannot tell which hook refused it.
+A hook that checks a tool call, such as a guard that runs before every command, shows as a count on its tool group's header rather than on the command it ran for. Selecting the count opens a list of those hooks, each with how often it ran and when it fires. When a call in the group is refused or fails, every hook in the group stays a row, because marotte cannot tell which hook refused it.
 
 Reported as [kirodotdev/Kiro#12284](https://github.com/kirodotdev/Kiro/issues/12284), open. kiro-cli's report of a hook names neither the tool call it ran for nor whether it blocked that call. marotte will show each hook on its own call once kiro-cli names the call.
 

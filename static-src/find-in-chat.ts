@@ -1,7 +1,7 @@
 // Find in Chat (Ctrl-F / Cmd-F): a search overlay scoped to the active chat. A local DOM pass marks what is rendered;
 // the server's answer is the honest count and the step list, and stepping reveals hits the DOM cannot mark.
 
-import { foldedHookItem } from "./hook-fold.js";
+import { foldedHookBadge } from "./hook-badge.js";
 import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { createPopup } from "@cplieger/ui/popup";
@@ -394,6 +394,9 @@ const SIM_FLOOR = 0.3;
 /** Past the CSS animation, so the class strip is cleanup. */
 const FLASH_FALLBACK_MS = 2000;
 
+/** The notice for a hit on a folded hook, whose name the hooks badge lists. */
+const HOOK_BADGE_NOTICE = "listed under the hooks badge";
+
 /** Explains the partition once per answer, on the press that first crosses into phase 2. */
 const BOUNDARY_NOTICE = "the rest are in delegate pages and run tabs";
 
@@ -581,6 +584,11 @@ async function navigateToHit(hit: Hit): Promise<void> {
     return;
   }
   openDisclosureChain(target, hit);
+  if (target.classList.contains("tool-group-hooks")) {
+    selectContainer(target);
+    showHitNotice(HOOK_BADGE_NOTICE);
+    return;
+  }
   // A preview-less diff card loads its diff on open, so the text does not exist until the bulk lands.
   const arriving = awaitDeferredDiff(target, hit);
   if (arriving !== null) {
@@ -700,8 +708,8 @@ function entryElement(turnID: string, entryID: string): HTMLElement | null {
   if (stamped === null) {
     return null;
   }
-  // A folded hook's card is hidden; its row in the group's hook list carries the title.
-  const folded = foldedHookItem(stamped);
+  // A folded hook's card is hidden; its group's hooks badge stands for it.
+  const folded = foldedHookBadge(stamped);
   if (folded !== null) {
     return folded;
   }

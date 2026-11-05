@@ -16,6 +16,7 @@ const MEMBERS = [
   "a.run-step-head",
   ".run-open",
   ".tool-group-header",
+  ".tool-group-hooks",
   ".git-repo-section-header",
   ".git-repo-section-header-toggle",
   ".forge-account-repos-summary",
@@ -250,7 +251,7 @@ function runStep(): { clipper: HTMLElement; head: HTMLElement } {
   return { clipper: mount(clipper), head };
 }
 
-function toolGroup(): { clipper: HTMLElement; head: HTMLElement } {
+function toolGroup(): { clipper: HTMLElement; head: HTMLElement; hooks: HTMLElement } {
   const head = node("div", "tool-group-header", {
     role: "button",
     tabindex: "0",
@@ -259,9 +260,11 @@ function toolGroup(): { clipper: HTMLElement; head: HTMLElement } {
   head.append(node("span", "tool-icon"), span("tool-group-count", "Ran 3 commands"));
   const body = node("div", "tool-group-body");
   body.appendChild(node("div", "tool-call")).textContent = "a member card";
-  const clipper = node("div", "tool-group");
-  clipper.append(head, body);
-  return { clipper: mount(clipper), head };
+  const hooks = node("button", "tool-group-hooks", { type: "button", "aria-label": "2 hooks ran" });
+  hooks.append(glyph(), span("tool-group-hooks-n", "2"));
+  const clipper = node("div", "tool-group tool-group-has-hooks");
+  clipper.append(head, hooks, body);
+  return { clipper: mount(clipper), head, hooks };
 }
 
 /** `.code-head`'s row height, taller than its buttons, is what keeps them off the clip. */
@@ -654,6 +657,12 @@ describe("the ring is painted inside the card that clips it", () => {
     expectRingInside("tool group header", head, clipper);
   });
 
+  it("on a tool group's hooks badge, in the header row's last column", async () => {
+    const { clipper, hooks } = toolGroup();
+    await focusByTab(hooks);
+    expectRingInside("tool group hooks badge", hooks, clipper);
+  });
+
   it("on a git repo section's header", async () => {
     const { clipper, head } = gitRepoSection();
     await focusByTab(head);
@@ -701,6 +710,7 @@ describe("the inset band clears the content it now sits over", () => {
       ["run head", () => runCard().head],
       ["run step head", () => runStep().head],
       ["tool group header", () => toolGroup().head],
+      ["tool group hooks badge", () => toolGroup().hooks],
       ["git section header", () => gitRepoSection().head],
       ["prs section toggle", () => gitRepoSectionPRs().head],
       ["account repos summary", () => forgeAccountRow().summary],
