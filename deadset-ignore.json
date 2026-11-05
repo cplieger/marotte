@@ -1,12 +1,6 @@
 {
   "ignore": [
     {
-      "code": "DS1102",
-      "symbol": "go://github.com/cplieger/marotte/internal/server#KiroDoc.ReadOnly",
-      "path": "internal/server/kiro_docs.go",
-      "reason": "The web client decodes it (wire/decoders.gen.ts) and renders a read-only row (docs.ts); the provenance tests pin that no scanned row sets it. Kept here rather than as a directive because wire-codegen copies the field's doc comment into static-src/wire/types.gen.ts."
-    },
-    {
       "code": "DS1701",
       "symbol": "ts://marotte-web/package.json#stylelint:dev-dependency",
       "path": "static-src/package.json",
