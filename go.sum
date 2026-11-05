@@ -34,8 +34,8 @@ github.com/cplieger/go/urlform v1.0.0-dev.1 h1:tJo35Y4xIwM2IzGxK7DXcbVGb3y9lF8l7
 github.com/cplieger/go/urlform v1.0.0-dev.1/go.mod h1:za2vxWNMT4+X50qgurZEDBsrxhMlkntfh6XJnfxzYH8=
 github.com/cplieger/go/wiregen v1.0.0-dev.1 h1:HMj6QFtV+VBJNirptoH+Ubj9xJYhIu+XzyFd0cApqQY=
 github.com/cplieger/go/wiregen v1.0.0-dev.1/go.mod h1:C/EEexWujaDKU0DHccT19wgW/vfU2C7ueTWAPl87v/I=
-github.com/cplieger/go/yamlenv v1.0.0-dev.1 h1:KA0t52zn3GJRWu4RnUaTx64QzSwsJjRsTnB6floeJCM=
-github.com/cplieger/go/yamlenv v1.0.0-dev.1/go.mod h1:rpijBJ7LqjTnmwWZpxX2O/htMilzJZOnMc6o1z7fOlc=
+github.com/cplieger/go/yamlenv v1.0.0-dev.2 h1:YZriaF+FfG6ulLQx7fAyPZI7QvgsuML7KkB7lFwxEQ8=
+github.com/cplieger/go/yamlenv v1.0.0-dev.2/go.mod h1:bYTrNFzQ0qSpy0u51Bouc9yTNXuj0FfGppio02PiJBw=
 github.com/cplieger/pinstall/v3 v3.3.0-dev.2 h1:Vi0nfbO4gp5hKNYRMjLH3w2Iy+/uFmSfWIUENsu4WlE=
 github.com/cplieger/pinstall/v3 v3.3.0-dev.2/go.mod h1:L1FaHl218KQKGHBrhh7sMB91ABD0YoeAMmY4yhQJkj4=
 github.com/cplieger/toolbelt/v3 v3.15.0-dev.2 h1:fqyOcQsgRSzOipGQKjLLisBJEdvqMuji6gzYcwVXdAI=
