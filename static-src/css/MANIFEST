@@ -56,7 +56,6 @@
 # 10-shell-app.css's own reason — every rule in it is a base the page slices
 # (17-settings, 18-pages, 28-docs) override by coming later at equal specificity.
 11-page-lists.css
-11-popups.css
 12-chat.css
 12-tabs.css
 13-messages.css

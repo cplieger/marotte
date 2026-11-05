@@ -818,6 +818,10 @@
   position: absolute;
   bottom: calc(100% + var(--sp-1));
   left: var(--pill-inline-shift, 0);
+
+  /* One rung off the page, never --c-bg-elevated: the ramp steps away from the page, so in
+     light that is the deepest surface in the app and a menu on it reads darker than what it
+     floats over; in dark it costs ink (--c-text-secondary 4.561:1 there, 8.062:1 here). */
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
@@ -832,9 +836,7 @@
   padding: var(--card-inset);
 
   /* A FLOOR, not a width: a card whose content is wider still grows past it, so
-     one value cannot cramp any of the six. 14rem is within 4px of `.popup`'s own
-     13.75rem (11-popups.css), so both popup families answer "how narrow may a
-     menu be" with one figure. */
+     one value cannot cramp any of the six. */
   min-inline-size: 14rem;
 
   /* The cap needs the scroll: a card is an overlay anchored to the composer, and

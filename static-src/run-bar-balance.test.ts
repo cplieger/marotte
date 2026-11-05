@@ -418,6 +418,26 @@ describe("the run bar box's cap", () => {
     );
   });
 
+  it("rests a touch scroll on a row's start, so no row sits cut under the fold row", async () => {
+    await browser.viewport(1024, 768);
+    style = mountAppCSS();
+    document.documentElement.setAttribute("data-pointer", "coarse");
+    const { box, rows } = mount(14, true, 1000);
+    await settle();
+    const list = box.querySelector<HTMLElement>(".run-bar")!;
+    // `proximity` is the initial strictness, so the computed value drops it.
+    expect(getComputedStyle(list).scrollSnapType).toBe("y");
+    const pitch = rows[1]!.getBoundingClientRect().top - rows[0]!.getBoundingClientRect().top;
+    list.scrollTop = 2 * pitch + 6;
+    await settle();
+    const top = list.getBoundingClientRect().top;
+    const offsets = rows.map((r) => Math.abs(r.getBoundingClientRect().top - top));
+    expect(Math.min(...offsets), "a row starts on the list's top edge").toBeLessThanOrEqual(0.5);
+
+    document.documentElement.setAttribute("data-pointer", "fine");
+    expect(getComputedStyle(list).scrollSnapType, "a wheel scrolls freely").toBe("none");
+  });
+
   it("keeps the fold row in view while a long list scrolls", async () => {
     await browser.viewport(360, 740);
     style = mountAppCSS();

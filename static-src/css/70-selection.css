@@ -51,7 +51,6 @@
    and not a cleanup. `.tab` and `.seg` reserve theirs in their own files. */
 .pill-model-item,
 .pill-role-item,
-.popup-item,
 .ev-row-main,
 .ev-tl-lane,
 .git-branch-popover-row {
@@ -107,7 +106,6 @@
 .seg.active,
 .pill-model-item.active,
 .pill-role-item.active,
-.popup-item.active,
 .picker-btn.active,
 .fb-row.fb-row-selected,
 .repo-picker-chip-active,
@@ -163,7 +161,6 @@
   .seg.active:hover,
   .pill-model-item.active:hover,
   .pill-role-item.active:hover,
-  .popup-item.active:hover,
   .picker-btn.active:hover,
   .fb-row.fb-row-selected:hover,
   .repo-picker-chip-active:hover,
@@ -204,7 +201,6 @@
 .seg.active:active,
 .pill-model-item.active:active,
 .pill-role-item.active:active,
-.popup-item.active:active,
 .picker-btn.active:active,
 .repo-picker-chip-active:active,
 .repo-picker-row-selected:active,
@@ -283,7 +279,7 @@
 
    `color` on the rule above reaches the descendants that INHERIT it, and a
    row's quiet metadata does not: `.pill-model-meta`, `.pill-role-scope`,
-   `.popup-meta`, `.picker-meta`, `.fb-meta` and `.repo-picker-row-meta` each
+   `.picker-meta`, `.fb-meta` and `.repo-picker-row-meta` each
    declare their own `--c-text-tertiary` or `--c-text-secondary`, and an
    explicit declaration beats an inherited value
    however specific the ancestor is. So the consolidation coloured the row and
@@ -311,7 +307,6 @@
    here only has to beat its own base declaration, which it does. */
 .pill-model-item.active .pill-model-meta,
 .pill-role-item.active .pill-role-scope,
-.popup-item.active .popup-meta,
 .picker-btn.active .picker-meta,
 .fb-row.fb-row-selected .fb-icon,
 .fb-row.fb-row-selected .fb-meta,

@@ -1114,6 +1114,16 @@
   --run-stack: 1;
 }
 
+/* A fling over a capped list rests on a row's start, never with a row cut in half under the fold
+   row's edge. Touch only: a wheel's small steps would snap back. */
+:where(:root[data-pointer="coarse"]) .run-bar {
+  scroll-snap-type: y proximity;
+
+  & > li {
+    scroll-snap-align: start;
+  }
+}
+
 /* The fold row sits outside the list's clip so its touch target can reach up into the box's
    padding and the stack gap above, and it stays on screen while the list scrolls. The list's own
    row gap is restored below it while open. */

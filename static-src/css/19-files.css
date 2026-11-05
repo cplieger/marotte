@@ -331,10 +331,14 @@
 :where([data-pointer="coarse"]) {
   .fb-row,
   .fb-notice {
-    /* The leading inset keeps `.fb-check`'s expander inside the row's paint clip
-       (`content-visibility: auto`). */
     padding: var(--sp-3);
-    padding-inline-start: max(var(--sp-3), calc((var(--hit-floor) - 1rem) / 2));
+  }
+
+  /* The row's paint clip (`content-visibility: auto`) would cut a centred expander's start,
+     so the check reaches the row's inline padding before its box and the rest of the floor
+     after it, over the inert icon; the row and its name keep the mouse inset. */
+  .fb-row > .fb-check::after {
+    inset-inline: calc(-1 * var(--sp-3)) calc(var(--sp-3) + 100% - var(--hit-floor));
   }
 }
 

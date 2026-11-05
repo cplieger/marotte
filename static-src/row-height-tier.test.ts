@@ -6,7 +6,6 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 /** Repeated rows in a list. Each is floored. */
 const LIST_ROWS = [
-  ["popup-item", []],
   ["mcp-row", ["mcp-row-name"]],
   ["git-file-row", ["git-file-path"]],
   // The page-list row (History, and the configuration browser): its height is the `--row-h` tier
@@ -117,6 +116,32 @@ describe("a list row is floored only when it holds a control", () => {
     // A row with nothing to press needs no target, so it keeps the mouse tier's 24px floor.
     expect(getComputedStyle(plain).minBlockSize).toBe("24px");
     expect(plain.getBoundingClientRect().height, "a row with no control").toBeLessThan(44);
+  });
+
+  it("with no control keeps its name and trailing facts where a mouse puts them", () => {
+    // Settings > Tools' system rows ("Built into the image"): a name, then a source chip and a
+    // version that nothing taps, so touch spacing has nothing to separate.
+    const row = mountRow("list-row", ["list-row-name"]);
+    const actions = document.createElement("span");
+    actions.className = "list-row-actions";
+    for (const text of ["apt", "2.39.5"]) {
+      const meta = document.createElement("span");
+      meta.className = "list-row-meta";
+      meta.textContent = text;
+      actions.appendChild(meta);
+    }
+    row.appendChild(actions);
+    row.style.inlineSize = "400px";
+    const xs = (): number[] =>
+      [row.firstElementChild, ...actions.children].map((el) => el!.getBoundingClientRect().left);
+
+    document.documentElement.dataset["pointer"] = "fine";
+    const fine = xs();
+    document.documentElement.dataset["pointer"] = "coarse";
+    const coarse = xs();
+    coarse.forEach((x, i) => {
+      expect(x, `item ${String(i)} moves on touch`).toBeCloseTo(fine[i]!, 1);
+    });
   });
 });
 

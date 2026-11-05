@@ -133,4 +133,24 @@ describe("a file row", () => {
     expect(letter.right + reach).toBeLessThanOrEqual(row.right - 1);
     expect(letter.top, "centred on both lines").toBeGreaterThan(rect(r.name).top);
   });
+
+  it.each([1024, 390])(
+    "at %ipx keeps the check and name where a mouse puts them, the check's target inside the row",
+    (w) => {
+      const fineRow = mount(w, "fine", { meta: "" });
+      const fineName = rect(fineRow.name).left;
+      const fineCheck = rect(fineRow.row.querySelector(".fb-check") as Element).left;
+      const r = mount(w, "coarse", { meta: "" });
+      const check = r.row.querySelector(".fb-check") as HTMLElement;
+      expect(rect(r.name).left, "the name does not move on touch").toBeCloseTo(fineName, 1);
+      expect(rect(check).left, "the check does not move on touch").toBeCloseTo(fineCheck, 1);
+      // The expander is placed against the check's padding box, inside its border.
+      const after = getComputedStyle(check, "::after");
+      const start = rect(check).left + check.clientLeft + parseFloat(after.left);
+      expect(parseFloat(after.width), "the check's target is the hit floor").toBeCloseTo(44, 1);
+      expect(start, "and starts inside the row's paint clip").toBeGreaterThanOrEqual(
+        rect(r.row).left - 0.5,
+      );
+    },
+  );
 });

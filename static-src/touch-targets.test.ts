@@ -1840,11 +1840,12 @@ const NARROW: readonly { sel: string; sizes: readonly Size[]; axis: "inline" | "
   { sel: "#agent-dirs-chips .chip-remove", sizes: ALL, axis: "inline" },
 ];
 
-/** Shaped expanders, whose target is not centred on the box: the box grown by the `::after`'s
- *  used insets, which the press cases then hit-test like any other target. */
+/** Shaped expanders, whose target is not centred on the box: the padding box grown by the
+ *  `::after`'s used insets, which the press cases then hit-test like any other target. */
 const SHAPED = new Set([
   ".attachment-close",
   "#agent-dirs-chips .chip-remove",
+  "#fb-list .fb-check",
   "#fb-list .fb-git-clickable",
   "#run-bar-fold .run-bar-toggle",
   "a.git-pr-row-title",
@@ -1854,11 +1855,14 @@ const SHAPED = new Set([
 function shaped(el: HTMLElement, b: Box): Box {
   const cs = getComputedStyle(el, "::after");
   const out = (v: string): number => Math.max(0, -(parseFloat(v) || 0));
+  // An absolute `::after` is placed against its host's padding box, inside any border.
+  const left = b.left + el.clientLeft;
+  const top = b.top + el.clientTop;
   return {
-    left: Math.max(0, b.left - out(cs.left)),
-    right: Math.min(window.innerWidth, b.right + out(cs.right)),
-    top: Math.max(0, b.top - out(cs.top)),
-    bottom: Math.min(window.innerHeight, b.bottom + out(cs.bottom)),
+    left: Math.max(0, left - out(cs.left)),
+    right: Math.min(window.innerWidth, left + el.clientWidth + out(cs.right)),
+    top: Math.max(0, top - out(cs.top)),
+    bottom: Math.min(window.innerHeight, top + el.clientHeight + out(cs.bottom)),
   };
 }
 
