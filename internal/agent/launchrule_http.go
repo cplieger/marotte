@@ -167,6 +167,12 @@ func (rr *runRoutes) prepareRule(ctx context.Context, w http.ResponseWriter, rul
 		httpreply.BadRequest(w, err.Error())
 		return false
 	}
+	if prev != nil {
+		if err := launchrule.CheckEdit(prev, rule); err != nil {
+			httpreply.BadRequest(w, err.Error())
+			return false
+		}
+	}
 	recipe, err := rr.runs.recipeBySource(ctx, rule.Source)
 	switch {
 	case err == nil:

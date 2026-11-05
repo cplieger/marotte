@@ -130,7 +130,8 @@ func (s *Store) Create(ctx context.Context, in *Rule) (Rule, error) {
 // Replace validates in and stores it in place of the rule id names, keeping that id. An edit that changes an
 // event rule's connection, repo or kind starts its state over (cursor, queue, launched, superseded) and keeps its
 // status; while that would drop held events it is refused with a *DropError unless confirmDrop is their count.
-// ErrNotFound when no rule has the id; a refusal is a *ValidationError or *DropError and writes nothing.
+// A switch between a clock and an event is refused (CheckEdit). ErrNotFound when no rule has the id; a refusal is a
+// *ValidationError or *DropError and writes nothing.
 func (s *Store) Replace(ctx context.Context, id string, in *Rule, confirmDrop int) (Rule, error) {
 	r := in.clone()
 	if err := r.Normalize(); err != nil {
@@ -141,6 +142,9 @@ func (s *Store) Replace(ctx context.Context, id string, in *Rule, confirmDrop in
 	i := s.indexLocked(id)
 	if i < 0 {
 		return Rule{}, ErrNotFound
+	}
+	if err := CheckEdit(&s.rules[i], &r); err != nil {
+		return Rule{}, err
 	}
 	r.ID = id
 	rs := s.states[id]

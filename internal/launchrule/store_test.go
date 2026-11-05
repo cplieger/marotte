@@ -233,6 +233,33 @@ func TestEventSpecValidation(t *testing.T) {
 			}
 		})
 	}
+	for _, sw := range []struct {
+		name     string
+		from, to *Rule
+	}{
+		{"a clock rule turned into an event rule", clockRule("bundled://x"), eventRule("bundled://x", runSpec())},
+		{"an event rule turned into a clock rule", eventRule("bundled://x", runSpec()), clockRule("bundled://x")},
+	} {
+		t.Run(sw.name, func(t *testing.T) {
+			r, err := st.Create(t.Context(), sw.from)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			if err := st.WriteState(t.Context(), r.ID, &State{Status: Status{LastRunID: "wf-1"}}); err != nil {
+				t.Fatalf("WriteState: %v", err)
+			}
+			rules, state := readRules(t, dir), readFile(t, statePath(dir, r.ID))
+			_, err = st.Replace(t.Context(), r.ID, sw.to, 0)
+			const want = "A rule cannot change between a schedule and a forge event. Add a new rule and delete this one"
+			var ve *ValidationError
+			if !errors.As(err, &ve) || err.Error() != want {
+				t.Errorf("Replace error = %v, want a ValidationError %q", err, want)
+			}
+			if !bytes.Equal(rules, readRules(t, dir)) || !bytes.Equal(state, readFile(t, statePath(dir, r.ID))) {
+				t.Errorf("a refused switch changed %s or the rule's state file", rulesFileName)
+			}
+		})
+	}
 }
 
 func TestRuleValidation(t *testing.T) {

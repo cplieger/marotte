@@ -417,6 +417,44 @@ func TestRebaselineEditDropsHeldEvents(t *testing.T) {
 	})
 }
 
+func TestPutRefusesWhenBranchSwitch(t *testing.T) {
+	const clockBody = `{"source":"bundled://publish","enabled":true,"when":{"clock":{"freq":"daily","hour":3}}}`
+	clock := &launchrule.Rule{Source: "bundled://publish", Enabled: true, When: launchrule.When{
+		Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 3},
+	}}
+	for _, tc := range []struct {
+		name, body string
+		seed       *launchrule.Rule
+	}{
+		{"clock to event", runRuleBody, clock},
+		{"event to clock", clockBody, eventRuleOf("cplieger/animap-source")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			forge := &fakeEventRuleChecker{}
+			dir, st, mux := launchRuleHub(t, forge)
+			r, err := st.Create(t.Context(), tc.seed)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			rules, state := rulesFile(t, dir), ruleState(t, dir, r.ID)
+			rec := sendRoute(t, mux, http.MethodPut, "/api/launch-rules/"+r.ID, tc.body)
+			const want = "A rule cannot change between a schedule and a forge event. Add a new rule and delete this one"
+			if rec.Code != http.StatusBadRequest || errorText(t, rec) != want {
+				t.Errorf("PUT = %d %s, want 400 %q", rec.Code, rec.Body.String(), want)
+			}
+			if !bytes.Equal(rules, rulesFile(t, dir)) || !bytes.Equal(state, ruleState(t, dir, r.ID)) {
+				t.Errorf("a refused switch rewrote launch-rules.json or the rule's state file")
+			}
+			if forge.count() != 0 {
+				t.Errorf("a refused switch read the forge %d times", forge.count())
+			}
+			t.Run("no RuleChanged is delivered", func(t *testing.T) {
+				t.Skip("needs 5.4")
+			})
+		})
+	}
+}
+
 // anchorClockRule moves a clock rule's anchor off its creation time.
 func anchorClockRule(t *testing.T, st *launchrule.Store, row launchrule.Row, anchor time.Time) {
 	t.Helper()

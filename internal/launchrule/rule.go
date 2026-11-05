@@ -133,6 +133,15 @@ func (r *Rule) Normalize() error {
 	return checkInputs(r.Inputs, r.When.Event.Kind.eventInputs())
 }
 
+// CheckEdit refuses an edit of prev into next that no rule may make: a rule never changes between a clock and an
+// event, since its state file holds the one's row or the other's cursor and queue. A refusal is a *ValidationError.
+func CheckEdit(prev, next *Rule) error {
+	if (prev.When.Clock == nil) != (next.When.Clock == nil) {
+		return invalid("A rule cannot change between a schedule and a forge event. Add a new rule and delete this one")
+	}
+	return nil
+}
+
 // checkInputs refuses a malformed fixed input, and one named like an input the event sets, since the event's
 // value wins at launch and the operator's would never be sent.
 func checkInputs(inputs map[string]string, eventNames []string) error {
