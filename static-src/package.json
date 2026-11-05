@@ -44,7 +44,7 @@
   "dependencies": {
     "@cplieger/keyenc": "1.1.0",
     "@cplieger/sse": "1.2.1",
-    "@cplieger/ui": "1.1.0-dev.5",
+    "@cplieger/ui": "1.1.0-dev.6",
     "@cplieger/web-terminal-engine": "6.4.0",
     "@cplieger/web-terminal-ui": "8.6.0",
     "pele": "1.13.0"
