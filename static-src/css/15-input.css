@@ -855,8 +855,8 @@
   white-space: nowrap;
 
   /* A row's own text. A caption beside a row takes --fs-popup-meta, and nothing
-     inside a card names an --fs-* rung directly — which is what keeps a caption
-     added later from sitting at 11px under a finger. */
+     inside a card names an --fs-* rung directly, so a caption added later stays
+     one rung under its row (popup-parity.test.ts). */
   font-size: var(--fs-popup);
   color: var(--c-text-secondary);
   opacity: 0;
@@ -1003,7 +1003,7 @@
 
   /* Named rather than inherited: a <button> takes the UA's own font-size (Arial
      13.3333px in Chromium) and the reset deliberately passes only the family,
-     so a row that dropped this declaration would answer no tier. */
+     so a row that dropped this declaration would render at the UA's size. */
   font-size: var(--fs-popup);
   cursor: pointer;
   text-align: left;
@@ -1998,9 +1998,8 @@
      flipped for a single card would put the six out of step at exactly the width
      where the screen is smallest.
 
-     NO FONT SIZE HERE. A popup's type lift is `--fs-popup` / `--fs-popup-meta`
-     (01-tokens.css), on the POINTER tier — a width query cannot reach an iPad,
-     and a rule here would have to name each caption to lift it. */
+     NO FONT SIZE HERE: a popup's type is `--fs-popup` / `--fs-popup-meta`
+     (01-tokens.css), one size on every width and tier. */
   .pill-expand-content {
     max-inline-size: calc(100dvw - 2 * var(--sp-3));
 

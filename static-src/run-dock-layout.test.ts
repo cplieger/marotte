@@ -669,3 +669,60 @@ describe("the run dock head beside its verbs", () => {
     expect(box(note).top).toBeGreaterThanOrEqual(head.getBoundingClientRect().bottom - 0.5);
   });
 });
+
+describe("the run dock's step rows", () => {
+  /** The first step row of the closed dock over `fan()`, whose steps each report an activity. */
+  async function firstRow(w: number, h: number, tier: "fine" | "coarse"): Promise<HTMLElement> {
+    await browser.viewport(w, h);
+    document.documentElement.setAttribute("data-pointer", tier);
+    style = mountAppCSS();
+    const { byId } = mountRunView(h);
+    mountPage(byId, verbs(false)).render({
+      label: "nightly",
+      state: "running",
+      nodes: fan(),
+      live: true,
+    });
+    // A phone shows only the lead row; the others are `display: none`.
+    const row = [...byId("run-exec-dock").querySelectorAll<HTMLElement>(".ev-dock-row")].find(
+      (r) => r.getBoundingClientRect().height > 0,
+    );
+    expect(row, "a shown step row").toBeDefined();
+    return row!;
+  }
+  const part = (row: HTMLElement, sel: string): DOMRect =>
+    row.querySelector(sel)!.getBoundingClientRect();
+
+  for (const [w, h] of [
+    [1024, 768],
+    [820, 1180],
+  ] as const) {
+    it(`puts a step's activity under its name in touch mode, the clock on the first line, at ${String(w)}px`, async () => {
+      const row = await firstRow(w, h, "coarse");
+      const name = part(row, ".ev-dock-name");
+      const tail = part(row, ".ev-dock-tail");
+      expect(row.querySelector(".ev-dock-tail")?.textContent).toBe("Reading the diff");
+      expect(tail.top).toBeGreaterThanOrEqual(name.bottom - 0.5);
+      expect(tail.left).toBeCloseTo(name.left, 0);
+      expect(part(row, ".ev-dock-dur").bottom).toBeLessThanOrEqual(tail.top + 0.5);
+      expect(row.getBoundingClientRect().height).toBe(44);
+    });
+  }
+
+  it("keeps a step's activity beside its name with a mouse", async () => {
+    const row = await firstRow(1024, 768, "fine");
+    const name = part(row, ".ev-dock-name");
+    const tail = part(row, ".ev-dock-tail");
+    expect(tail.left).toBeGreaterThanOrEqual(name.right);
+    expect(tail.top).toBeLessThan(name.bottom);
+  });
+
+  for (const tier of ["fine", "coarse"] as const) {
+    it(`ends a step's clock on the row's gutter on a phone, ${tier} pointer`, async () => {
+      const row = await firstRow(390, 844, tier);
+      const gutter =
+        row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight);
+      expect(part(row, ".ev-dock-dur").right).toBeCloseTo(gutter, 0);
+    });
+  }
+});

@@ -1504,12 +1504,41 @@
   color: var(--c-text-tertiary);
 }
 
+/* Placed, not auto-placed: where the phone hides the activity, the clock would take its
+   empty track and end a gap short of the row's gutter. */
 .ev-dock-dur {
+  grid-column: dur;
   justify-self: end;
   white-space: nowrap;
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
   font-variant-numeric: tabular-nums;
+}
+
+/* Touch: a row is 44px under a finger, so the step's activity takes a second line under
+   its name rather than a column beside it, as a run bar row's facts do; the clock stays
+   on the first. An empty activity is a zero-height track, so that row's name stays
+   centred. The phone block below drops the activity and restates the columns. */
+:where(:root[data-pointer="coarse"]) {
+  & .ev-dock-rows {
+    grid-template-columns: [mark] auto [name] minmax(0, 1fr) [dur] auto [end];
+  }
+
+  & .ev-dock-row {
+    align-content: center;
+
+    & > .ev-state {
+      grid-area: 1 / mark / span 2;
+    }
+
+    & > .ev-dock-name {
+      grid-area: 1 / name;
+    }
+
+    & > .ev-dock-tail {
+      grid-area: 2 / name;
+    }
+  }
 }
 
 /* `+N`: the steps a one-row dock cannot show; it opens the panel on Steps. Shown

@@ -58,9 +58,8 @@
   background: none;
   color: var(--c-text-primary);
 
-  /* The shared popup rung (01-tokens.css), which is this value on a mouse and a
-     step up on a finger. Named rather than inherited because a <button> answers
-     the UA font-size, and the reset passes only the family. */
+  /* Named rather than inherited because a <button> answers the UA font-size, and
+     the reset passes only the family. */
   font-size: var(--fs-popup);
   cursor: pointer;
   border-radius: var(--menu-radius);
