@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
 	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/forges"
 )

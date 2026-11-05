@@ -15,7 +15,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // RepoOrigin is one workspace clone's origin as the caller resolved it: the git

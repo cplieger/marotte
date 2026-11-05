@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/creds"
+	"github.com/cplieger/forgeapi/v2/creds"
 )
 
 // refusingTokenServer is a TLS stand-in for github.com whose token endpoint

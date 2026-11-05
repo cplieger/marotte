@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
 )
 
 // credentialStoreDir is the library's credential store under the config
