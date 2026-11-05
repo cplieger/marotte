@@ -168,7 +168,7 @@ func awaitChildrenGone(t *testing.T, pids string) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for _, pid := range strings.Fields(string(raw)) {
+	for pid := range strings.FieldsSeq(string(raw)) {
 		for {
 			stat, err := os.ReadFile("/proc/" + pid + "/stat") // #nosec G304 -- pid from the test's own fake rg
 			_, state, _ := strings.Cut(string(stat), ") ")

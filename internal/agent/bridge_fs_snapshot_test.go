@@ -265,7 +265,8 @@ func TestRespondFSRead_AStepReadsItsSnapshotUnderAllItsRunsRoots(t *testing.T) {
 	for path, body := range map[string]string{
 		filepath.Join(run, "edit-snapshot-r1.md"): "run c's snapshot\n",
 		filepath.Join(sessions, workspace.SessionsBucket(f.work, extra), "sess_step_c", "session.json"): string(
-			mustJSON(t, map[string]any{"workspacePaths": []string{f.work, extra}})),
+			mustJSON(t, map[string]any{"workspacePaths": []string{f.work, extra}}),
+		),
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)

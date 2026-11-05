@@ -308,8 +308,8 @@ func (s Searcher) run(ctx context.Context, root string, args []string, line func
 	}
 	out := &io.LimitedReader{R: stdout, N: maxOutputBytes}
 	read := readLines(out, line)
-	capped := out.N <= 0
-	if read.stopped || read.err != nil || capped {
+	read.capped = out.N <= 0
+	if read.stopped || read.err != nil || read.capped {
 		// A full pipe would block rg forever once the reads stop, so the group is killed before Wait.
 		// After a natural EOF rg is exiting, and a kill then would turn a clean exit into a failure.
 		stop()
@@ -318,7 +318,16 @@ func (s Searcher) run(ctx context.Context, root string, args []string, line func
 	if read.skipped > 0 {
 		slog.Debug("search: skipped ripgrep output lines over the line cap", "root", root, "lines", read.skipped)
 	}
-	var exitErr *exec.ExitError
+	return exitRefusal(ctx, root, err, read, stderr.String())
+}
+
+// exitRefusal logs how rg's run ended, and returns its stderr when rg exited 2 having written no
+// line, so searched nothing.
+func exitRefusal(ctx context.Context, root string, err error, read readResult, stderr string) string {
+	code := -1
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+		code = exitErr.ExitCode()
+	}
 	switch {
 	case err == nil:
 	case ctx.Err() != nil:
@@ -326,16 +335,16 @@ func (s Searcher) run(ctx context.Context, root string, args []string, line func
 	case read.stopped:
 	case read.err != nil:
 		slog.Debug("search: reading ripgrep's output failed; returning what it found", "root", root, "error", read.err)
-	case capped:
+	case read.capped:
 		slog.Debug("search: ripgrep's output reached its cap; returning what it found", "root", root)
-	case errors.As(err, &exitErr) && exitErr.ExitCode() == 1:
-	case errors.As(err, &exitErr) && exitErr.ExitCode() == 2 && read.lines+read.skipped == 0:
-		return cmp.Or(stderr.String(), "(no stderr)")
-	case errors.As(err, &exitErr) && exitErr.ExitCode() == 2:
+	case code == 1:
+	case code == 2 && read.lines+read.skipped == 0:
+		return cmp.Or(stderr, "(no stderr)")
+	case code == 2:
 		// rg's exit 2 after output is "some paths were unreadable", with every other result valid.
 		// KAS's own rg path rejects it, which is the walker fallback this package replaces.
 		slog.Debug("search: ripgrep skipped unreadable paths; results kept", "root", root,
-			"errors", strings.Count(stderr.String(), "\n"))
+			"errors", strings.Count(stderr, "\n"))
 	default:
 		slog.Warn("search: ripgrep failed; returning what it found", "root", root, "error", err)
 	}
@@ -347,6 +356,7 @@ type readResult struct {
 	lines   int
 	skipped int
 	stopped bool
+	capped  bool
 }
 
 // readLines calls line with each line of r, without its '\n', until line returns false or r
@@ -355,17 +365,10 @@ func readLines(r io.Reader, line func([]byte) bool) readResult {
 	br := bufio.NewReaderSize(r, 64<<10)
 	var res readResult
 	var buf []byte
-	tooLong := false
 	for {
-		chunk, err := br.ReadSlice('\n')
-		if !tooLong && len(buf)+len(chunk) > maxLineBytes {
-			tooLong, buf = true, buf[:0]
-		} else if !tooLong {
-			buf = append(buf, chunk...)
-		}
-		if errors.Is(err, bufio.ErrBufferFull) {
-			continue
-		}
+		var tooLong bool
+		var err error
+		buf, tooLong, err = readLine(br, buf)
 		switch {
 		case tooLong:
 			res.skipped++
@@ -376,12 +379,28 @@ func readLines(r io.Reader, line func([]byte) bool) readResult {
 				return res
 			}
 		}
-		tooLong, buf = false, buf[:0]
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
 				res.err = err
 			}
 			return res
+		}
+	}
+}
+
+// readLine reads one line of br into buf, reporting tooLong, with buf emptied, for a line over
+// maxLineBytes.
+func readLine(br *bufio.Reader, buf []byte) (out []byte, tooLong bool, err error) {
+	buf = buf[:0]
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if !tooLong && len(buf)+len(chunk) > maxLineBytes {
+			tooLong, buf = true, buf[:0]
+		} else if !tooLong {
+			buf = append(buf, chunk...)
+		}
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			return buf, tooLong, err
 		}
 	}
 }
