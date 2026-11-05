@@ -44,6 +44,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     high_throughput_optimizations: true,
     settings_epoch: 0,
     settings_revision: 0,
+    hook_status_shown: true,
     ...overrides,
   };
 }

@@ -32,6 +32,7 @@ import { fetchCatalog } from "../session-catalog.js";
 import { adoptEngineStatus, reconcileEngineStatus } from "../engine-status.js";
 import { invalidateTurnRails } from "../turn-rail.js";
 import type { SSEPayloads } from "../bus.js";
+import { setHookStatusShown } from "../hook-fold.js";
 import type { ServerEvent } from "../types.js";
 import type { ConnectedPayload, RunAsksPayload } from "../wire/types.gen.js";
 
@@ -104,6 +105,7 @@ onSSE("settings_updated", (_chatID, p) => {
     restoreLastModel(s.last_model);
     restoreLastEffort(s.last_effort_by_model);
     adoptLinkGuard(s);
+    setHookStatusShown(s.hook_status_shown);
     // The paints below take the settings as shown, so a click not yet committed stays painted; the
     // behaviour above takes the server's, so a write that then fails leaves nothing applied.
     const shown = settingsAsShown() ?? s;

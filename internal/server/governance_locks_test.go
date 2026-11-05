@@ -295,6 +295,34 @@ func TestWriteKiroSetting_ReachesResidentSessionsWhenTheSwitchMoved(t *testing.T
 	}
 }
 
+// The effective settings carry hooks.showStatus, so its write tells every tab to reread them; another key does not.
+func TestWriteKiroSetting_AnnouncesTheHookStatusSwitch(t *testing.T) {
+	runner := &argsRunner{}
+	eng := &fakeEngine{}
+	s := &Server{cliRunner: runner, cliTimeouts: defaultCLITimeouts(), agent: eng, configDir: t.TempDir()}
+	settingsEvents := func() int {
+		n := 0
+		for _, e := range eng.events {
+			if e.Type == marotte.EventSettingsUpdated {
+				n++
+			}
+		}
+		return n
+	}
+	if rec := putKiroSetting(t, s, `{"key":"telemetry.enabled","value":"false"}`); rec.Code != http.StatusOK {
+		t.Fatalf("PUT telemetry = %d: %s", rec.Code, rec.Body)
+	}
+	if n := settingsEvents(); n != 0 {
+		t.Errorf("a telemetry write announced settings %d times, want 0", n)
+	}
+	if rec := putKiroSetting(t, s, `{"key":"hooks.showStatus","value":"false"}`); rec.Code != http.StatusOK {
+		t.Fatalf("PUT hooks.showStatus = %d: %s", rec.Code, rec.Body)
+	}
+	if n := settingsEvents(); n != 1 {
+		t.Errorf("a hooks.showStatus write announced settings %d times, want 1", n)
+	}
+}
+
 // Lifting a lock writes the user's own value back after the agent reconciled the lock change,
 // so the restore itself must reach resident sessions still on the organization's value.
 func TestApplyGovernanceLocks_ReachesResidentSessionsWhenALiftRestoresTheUserValue(t *testing.T) {

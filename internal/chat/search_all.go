@@ -124,7 +124,7 @@ func (s *Store) searchOneChat(ctx context.Context, ce chatEntry, query string, w
 		return chatScan{unread: true}
 	}
 	// Always case-insensitive: the question is asked from memory.
-	res, chars := searchEntries(entries, drawn, query, false)
+	res, chars := searchEntries(s.searchView(entries), drawn, query, false)
 	// A title naming the subject is a result even if the body never repeats it.
 	titles := titleHits(c.Name, query)
 	if res.Matched == 0 && titles == 0 {

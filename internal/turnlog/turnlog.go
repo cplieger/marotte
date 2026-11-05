@@ -194,7 +194,7 @@ func (t *Turn) HasCallSince(since int64) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, c := range t.calls {
-		if c.StartedTs >= since {
+		if c.StartedTs >= since && !c.Call.Status.Terminal() {
 			return true
 		}
 	}
@@ -631,8 +631,8 @@ func (t *Turn) ModeSwitched(ctx context.Context, p marotte.EntryModeSwitched) ([
 	return t.laneless(ctx, marotte.EntryKindModeSwitched, t.mintID(), p)
 }
 
-// Close ends the turn: every lane's open entry seals, every tool_call with no
-// result gets a tool_result{status: aborted} in its own lane, then the turn_close
+// Close ends the turn: every lane's open entry seals, every tool_call still in
+// flight gets a tool_result{status: aborted} in its own lane, then the turn_close
 // carries the aggregate. Idempotent by refusal — a second closer answers
 // ErrClosed and writes nothing.
 func (t *Turn) Close(ctx context.Context, c marotte.TurnConclusion) ([]Sealed, error) {
@@ -646,7 +646,13 @@ func (t *Turn) Close(ctx context.Context, c marotte.TurnConclusion) ([]Sealed, e
 		return sealed, err
 	}
 	for _, id := range slices.Clone(t.callOrder) {
-		key := t.calls[id].Lane
+		open := t.calls[id]
+		// Appended settled (a hook's card): an aborted result would overwrite its outcome.
+		if open.Call.Status.Terminal() {
+			t.settleCall(id)
+			continue
+		}
+		key := open.Lane
 		res := t.agg.facts.WithInteraction(id, &marotte.EntryToolResult{Status: marotte.ToolAborted})
 		s, aerr := t.append(ctx, key, marotte.EntryKindToolResult, marotte.ToolResultID(id), res, "")
 		if aerr != nil {

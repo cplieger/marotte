@@ -56,10 +56,12 @@ var errEntryLineTooLong = errors.New("chat: entry line exceeds the per-entry cap
 // errEntryLogFailed is the latch a write error leaves: every later append to this log is refused until restart.
 var errEntryLogFailed = errors.New("chat: entry log refused further appends after a write error")
 
-// entryCall is one open tool_call in the index: its entry id and its result's lane, fixed at create.
+// entryCall is one tool_call in the index: its entry id, its result's lane and whether it was appended settled
+// (a hook's card), all fixed at create.
 type entryCall struct {
-	id   string
-	lane string
+	id      string
+	lane    string
+	settled bool
 }
 
 type byteRange struct {
@@ -124,10 +126,14 @@ type turnState struct {
 	emptySteer bool
 }
 
-// unsettled are the turn's tool_calls with no tool_result, in open order, which a close aborts them in.
+// unsettled are the turn's tool_calls neither appended settled nor answered by a tool_result, in open order, which a
+// close aborts them in.
 func (st *turnState) unsettled() []entryCall {
 	var out []entryCall
 	for _, c := range st.calls {
+		if c.settled {
+			continue
+		}
 		if _, done := st.results[marotte.ToolResultID(c.id)]; !done {
 			out = append(out, c)
 		}
@@ -619,7 +625,7 @@ func (l *EntryLog) observeLocked(e *marotte.Entry, start, end int64) error {
 func (l *EntryLog) foldKindLocked(st *turnState, e *marotte.Entry, start int64) error {
 	switch e.Kind {
 	case marotte.EntryKindToolCall:
-		st.calls = append(st.calls, entryCall{id: e.ID, lane: e.Lane})
+		return foldToolCall(st, e)
 	case marotte.EntryKindToolResult:
 		st.results[e.ID] = struct{}{}
 	case marotte.EntryKindPlan:
@@ -754,6 +760,17 @@ func railLineOf(st *turnState, names map[string]string) string {
 		label += ": " + body
 	}
 	return firstLineOf(label)
+}
+
+func foldToolCall(st *turnState, e *marotte.Entry) error {
+	payload, err := decodeEntry[struct {
+		Status marotte.ToolStatus `json:"status"`
+	}](e)
+	if err != nil {
+		return err
+	}
+	st.calls = append(st.calls, entryCall{id: e.ID, lane: e.Lane, settled: payload.Status.Terminal()})
+	return nil
 }
 
 func foldSteer(st *turnState, e *marotte.Entry) error {
@@ -896,8 +913,16 @@ func drawnBy(e *marotte.Entry, plans int) bool {
 		return false
 	case marotte.EntryKindPlan:
 		return plans == 0
+	case marotte.EntryKindModelFallback:
+		return !subagentFallback(e)
 	}
 	return true
+}
+
+// subagentFallback is a sub-agent's model_fallback an earlier build recorded, which no reader draws.
+func subagentFallback(e *marotte.Entry) bool {
+	var p marotte.EntryModelFallback
+	return e.Kind == marotte.EntryKindModelFallback && json.Unmarshal(e.Payload, &p) == nil && p.Subagent
 }
 
 // firstLineMax caps first_line so the session index stays small on a long chat.

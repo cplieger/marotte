@@ -793,7 +793,7 @@ func (d *baseDeps) NoticeTarget(_ context.Context, chatID marotte.ChatID, runID 
 func (d *baseDeps) Notify(_ context.Context, _ marotte.ChatID, n *marotte.NotificationPayload) {
 	d.notices = append(d.notices, *n)
 }
-func (*baseDeps) IsHookStatusEnabled() bool { return false }
+func (*baseDeps) HookTrigger(string) (string, bool) { return "", false }
 
 // SetModels stands in for the workspace catalog holder, recording what the
 // translator published so a test can assert on the list without an agent

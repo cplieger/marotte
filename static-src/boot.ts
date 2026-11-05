@@ -73,6 +73,7 @@ import { requestRunTurnRange } from "./run-turn-range.js";
 import { chatTabFoldsRun } from "./chat-run-dots.js";
 import { subagentTabProjectsChat } from "./subagent-view.js";
 import { markBootDone } from "./view-swap.js";
+import { setHookStatusShown } from "./hook-fold.js";
 import { dropStoredShellPanel, releaseStoredShellPanel } from "./shell-height.js";
 import { restoreShell } from "./shell.js";
 import { applyShareTarget } from "./share-target.js";
@@ -150,6 +151,7 @@ function adoptSettings(settings: EffectiveSettings | null): void {
   restoreLastModel(settings.last_model);
   restoreLastEffort(settings.last_effort_by_model);
   adoptLinkGuard(settings);
+  setHookStatusShown(settings.hook_status_shown);
   // Where the server's choice replaces the pre-paint cache, and where that cache
   // is carried across if the server has none.
   adoptThemeFromSettings(settings);

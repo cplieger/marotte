@@ -22,6 +22,7 @@ import {
 } from "./tool-card.js";
 import { clearToolSilence, forgetToolSilence } from "./tool-silence.js";
 import { toolCardOptsFor } from "./tool-card-opts.js";
+import { stampHookCard } from "./hook-fold.js";
 import { windowOutput, windowSpans } from "./strings.js";
 import { renderOutput, appendOutput as appendOutputChunk } from "./output-render.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
@@ -553,6 +554,7 @@ export function mountToolCallCard(
     opts.detailsOpen = true;
   }
   const card = buildToolCard(opts);
+  stampHookCard(card, tc);
   const key = toolCallSigKey(chatID, tc.id);
   const slots = toolSlots.get(key) ?? [];
   toolSlots.set(key, slots);
@@ -604,6 +606,8 @@ export function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: st
   if (tc.output !== undefined && tc.output.trim() !== "") {
     applyOutputUpdate(el, tc.output, tc.output_spans ?? []);
   }
+  // Before the status, whose settle refreshes the group that reads these facts.
+  stampHookCard(el, tc);
   if (tc.diffs !== undefined && tc.diffs.length > 0) {
     applyDiffUpdate(el, tc.diffs);
   }

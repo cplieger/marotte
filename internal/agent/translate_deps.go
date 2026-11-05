@@ -71,7 +71,7 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 		Push:           rt.coord,
 		Sessions:       rt.coord,
 		Terminals:      rt.agentTerms,
-		HookStatus:     rt.hookStatus,
+		HookTriggers:   rt.hookTriggers,
 		Catalog:        rt.catalog,
 		Slash:          rt.slash,
 		SteeringIssues: rt.steeringIssues,

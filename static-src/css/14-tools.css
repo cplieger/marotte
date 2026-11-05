@@ -96,6 +96,11 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   overflow: hidden;
+
+  /* The `display` above beats the UA's `[hidden]`; a group whose every member is hidden is. */
+  &[hidden] {
+    display: none;
+  }
 }
 
 /* Cards live in the body region (a uip-disclosure-region: the primitive
@@ -162,10 +167,11 @@
   display: none;
 }
 
-/* No header, so the first row's hairline would be a stray line. This and the
+/* No header, so the one row's hairline would be a stray line. This and the
  * `padding-block` scoping above together make a bare group identical to a standalone
- * `.tool-call`; the chrome stays on the group, or a two-member group would have none. */
-.tool-group-bare > .tool-group-body > .tool-call:first-child {
+ * `.tool-call`; the chrome stays on the group, or a two-member group would have none.
+ * Every member, not `:first-child`: a hidden hook card may sit before the one row. */
+.tool-group-bare > .tool-group-body > .tool-call {
   border-top: 0;
 }
 
@@ -205,6 +211,67 @@
 .tool-group-header > .tool-group-count,
 .steer-group-header > .steer-group-count {
   padding-block: calc((var(--row-first-line) - 1lh) / 2);
+}
+
+/* The hooks folded out of the rows: the fish-hook glyph and their count, after the summary.
+   Text, not a control: the header row is the target. */
+.tool-group-header > .tool-group-hooks {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-inline-start: auto;
+  padding-block: calc((var(--row-first-line) - 1lh) / 2);
+  color: var(--c-text-tertiary);
+
+  & > .tool-group-hooks-icon {
+    display: inline-flex;
+  }
+
+  & svg {
+    display: block;
+    inline-size: var(--icon-ui);
+    block-size: var(--icon-ui);
+  }
+}
+
+/* The folded hooks, listed when the group is open: one row each, its name and its hook
+   file's chip, in the member rows' column. */
+.tool-hook-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid color-mix(in srgb, var(--c-border) 55%, transparent);
+}
+
+.tool-hook-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--row-tap-sm);
+  padding-block: var(--sp-1);
+  padding-inline: calc(0.75rem + var(--tool-chev-box) + var(--sp-2)) 0.75rem;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+
+  /* Read by `.tool-file-link`, which `.tool-header` otherwise declares it for. */
+  --tool-chev-box: 1.5rem;
+  --tool-badge-h: calc(var(--btn-h) - 2 * var(--sp-2));
+
+  & > .tool-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* A hook's name and its file chip shrink in proportion: at `.tool-title`'s zero basis a
+   phone row clips the name to "Hook fire…" while the chip keeps its whole width. */
+.tool-call[data-kind="hook"] .tool-header > .tool-title {
+  flex: 1 1 auto;
 }
 
 .tool-summary {

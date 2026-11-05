@@ -858,6 +858,12 @@ export interface EffectiveSettings {
  * to kiro-cli's experiment default.
  */
   model_fallback_enabled: boolean;
+  /**
+ * HookStatusShown is kiro-cli's hooks.showStatus as its settings file holds it, default on,
+ * which the transcript applies when it draws hook cards. Read-only here: the Experimental
+ * switch writes it through PUT /api/kiro-settings.
+ */
+  hook_status_shown: boolean;
 }
 
 /** ElicitationEnumOption is one titled choice: Const is the value answered, Title its label. */
@@ -1295,6 +1301,7 @@ export interface EntryToolCall {
   terminal_id?: string;
   source_path?: string;
   classifier_note?: string;
+  hook_trigger?: string;
   checkpoint?: ToolCheckpoint;
   mcp?: MCPToolIdentity;
   disclosed?: ToolDisclosed;
@@ -4028,6 +4035,11 @@ export interface ToolCall {
  * to a person; one-way.
  */
   classifier_note?: string;
+  /**
+ * HookTrigger is a hook card's canonical trigger (CanonicalHookTrigger), empty when
+ * the hook list did not name it.
+ */
+  hook_trigger?: string;
   /**
  * Checkpoint is KAS's snapshot mapping (_meta.kiro.checkpoint) for a call that
  * wrote a file. Pointers sit ahead of the slices for govet fieldalignment.

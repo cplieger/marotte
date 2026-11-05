@@ -1,6 +1,7 @@
 // Find in Chat (Ctrl-F / Cmd-F): a search overlay scoped to the active chat. A local DOM pass marks what is rendered;
 // the server's answer is the honest count and the step list, and stepping reveals hits the DOM cannot mark.
 
+import { foldedHookItem } from "./hook-fold.js";
 import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { createPopup } from "@cplieger/ui/popup";
@@ -698,6 +699,11 @@ function entryElement(turnID: string, entryID: string): HTMLElement | null {
     card.querySelector<HTMLElement>(`[data-entries~="${id}"]`);
   if (stamped === null) {
     return null;
+  }
+  // A folded hook's card is hidden; its row in the group's hook list carries the title.
+  const folded = foldedHookItem(stamped);
+  if (folded !== null) {
+    return folded;
   }
   // Both shapes answer with the bubble, which every consumer flashes, walks and jumps to.
   return stamped.querySelector<HTMLElement>(":scope > .message") ?? stamped;

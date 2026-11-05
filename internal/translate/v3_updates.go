@@ -204,7 +204,7 @@ func (t *Translator) handleChatInfo(ctx context.Context, chatID marotte.ChatID, 
 		return
 	}
 	if h := k.Hook; h != nil {
-		t.handleHookUpdate(ctx, chatID, h)
+		t.handleHookUpdate(ctx, chatID, h, k.subtask())
 		return
 	}
 	if d := k.DisplayError; d != nil {

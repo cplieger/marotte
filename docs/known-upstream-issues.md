@@ -68,11 +68,17 @@ The agent can hand work to subagents in a chat with **Workflows** switched off i
 
 Reported as [kirodotdev/Kiro#11240](https://github.com/kirodotdev/Kiro/issues/11240), open. marotte has no workaround. With **Workflows** on, the default, a chat in any other mode has no subagent tool, and this does not happen. In the cases above, wait for the reply to finish before you send guidance meant only for the main agent.
 
-### A failed hook shows as completed
+### A failed hook shows as completed, and what a hook prints never shows
 
-A hook whose command fails, or whose command does not exist, shows as completed on its card.
+A hook whose command fails, or whose command does not exist, shows as completed on its card. Anything a hook's command prints, such as instructions a `PostToolUse` hook gives the agent, is missing from the chat, so that hook counts as a passing hook.
 
-Reported as [kirodotdev/Kiro#11369](https://github.com/kirodotdev/Kiro/issues/11369), open. kiro-cli reports every hook command as completed, and marotte shows what it reports, so it cannot tell a failure today. It will turn the card red if a future kiro-cli release sends a failed status. To check a hook, run its command in the terminal.
+Reported as [kirodotdev/Kiro#11369](https://github.com/kirodotdev/Kiro/issues/11369), open. kiro-cli reports every hook command as completed and sends neither its output nor its exit code. marotte shows what it reports, so it cannot tell a failure or show the output today. It will turn the card red on a failed status or a non-zero exit code, and show the output as its own row, once a kiro-cli release sends them. To check a hook, run its command in the terminal.
+
+### A hook shows on its tool group, not on the call it checked
+
+A hook that checks a tool call, such as a guard that runs before every command, shows as a count on its tool group's header rather than on the command it ran for. Opening the group lists those hooks. When a call in the group is refused or fails, every hook in the group stays a row, because marotte cannot tell which hook refused it.
+
+Reported as [kirodotdev/Kiro#12284](https://github.com/kirodotdev/Kiro/issues/12284), open. kiro-cli's report of a hook names neither the tool call it ran for nor whether it blocked that call. marotte will show each hook on its own call once kiro-cli names the call.
 
 ## Skills
 

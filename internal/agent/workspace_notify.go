@@ -11,7 +11,8 @@ import (
 // dropped on another would be lost or not by which session KAS addressed; none may sit in chatHandlers or noopMethods.
 func (rt *Runtime) initWorkspaceHandlers() {
 	rt.workspaceHandlers = map[string]chatHandler{
-		methodKiroHooksDidChange: func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
+		methodKiroHooksDidChange: func(_ context.Context, _ marotte.ChatID, msg *marotte.RPCResponse) {
+			rt.hookTriggers.changed(msg.Params)
 			rt.config.broadcastHooksChanged()
 		},
 		methodV3Powers: func(ctx context.Context, _ marotte.ChatID, msg *marotte.RPCResponse) {

@@ -198,8 +198,8 @@ type Roles struct {
 	Sessions sessionResolver
 	// Terminals reads an agent terminal's rendered output.
 	Terminals terminalReader
-	// HookStatus reports whether hook status display is on.
-	HookStatus hookStatusReader
+	// HookTriggers names a hook's trigger by its KAS hook id.
+	HookTriggers hookTriggers
 	// Catalog is where a live config_option_update's model list lands.
 	Catalog modelCatalog
 	// Slash is the workspace slash-menu catalog; SteeringIssues KAS's steering
@@ -255,9 +255,10 @@ type sessionResolver interface {
 	ChatForACPSession(sessionID string) (marotte.ChatID, bool)
 }
 
-// hookStatusReader reports whether hook status display is enabled.
-type hookStatusReader interface {
-	IsHookStatusEnabled() bool
+// hookTriggers answers a hook's canonical trigger by its KAS hook id. It never blocks: a
+// hook it cannot name yet is a miss.
+type hookTriggers interface {
+	HookTrigger(hookID string) (trigger string, ok bool)
 }
 
 // modelCatalog is the workspace's model vocabulary, which a live
@@ -305,7 +306,7 @@ type Translator struct {
 	push           pusher
 	sessions       sessionResolver
 	terminals      terminalReader
-	hookStatus     hookStatusReader
+	hookTriggers   hookTriggers
 	catalog        modelCatalog
 	slash          SlashCatalog
 	steeringIssues SteeringIssues
@@ -341,7 +342,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		push:           r.Push,
 		sessions:       r.Sessions,
 		terminals:      r.Terminals,
-		hookStatus:     r.HookStatus,
+		hookTriggers:   r.HookTriggers,
 		catalog:        r.Catalog,
 		slash:          r.Slash,
 		steeringIssues: r.SteeringIssues,
