@@ -4,6 +4,7 @@
 import type { ResumableSession } from "./types.js";
 import {
   getActiveId,
+  getPaintedId,
   get,
   watchSession,
   setActive,
@@ -16,8 +17,15 @@ import {
   isEmptyChat,
   messagesVersionOf,
   transcriptStale,
+  markWindowStale,
 } from "./store.js";
-import { loadList, loadMessages, loadOlderTurns, confirmChatExists } from "./store-load.js";
+import {
+  loadList,
+  loadMessages,
+  loadOlderTurns,
+  confirmChatExists,
+  type PageLoad,
+} from "./store-load.js";
 import { effect, el, touch } from "@cplieger/ui";
 import type { ChatHeader } from "./types.js";
 import { ensureBound } from "./banner-stack.js";
@@ -32,6 +40,7 @@ import {
   renameTab,
   setTabStatus,
   openChatRefs,
+  refreshActiveView,
   type OpenTabOutcome,
   type TabDotStatus,
 } from "./tabs.js";
@@ -39,8 +48,6 @@ import { beginAdopt, adoptCommitted, opFailed } from "./tabs-sync.js";
 import { hasPendingDecision, dropDecisions } from "./decision-dock.js";
 import { forgetDeferredCue } from "./agent-finished-cue.js";
 import { submitLabelled, submitPrompt, type SubmitResult } from "./submit.js";
-import { chatSkeleton, paintPlaceholder } from "./skeleton.js";
-import { skeletonTiming } from "@cplieger/ui/skeleton";
 import {
   mountChatView,
   setLoadMore,
@@ -49,7 +56,9 @@ import {
   activeTranscriptView,
   transcriptViewFor,
   disposeChatView,
+  parkPaintedView,
 } from "./messages.js";
+import { dropCover, holdCover, moveFocusOffTranscript } from "./transcript-cover.js";
 import {
   addAttachment,
   addAttachmentTo,
@@ -67,22 +76,12 @@ import {
 import { getLastModel } from "./session-context.js";
 import { refreshContextUI } from "./context-ui.js";
 import { $ } from "./dom.js";
-import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { info } from "./toast.js";
 import { chatNotice, named, noticeSubject } from "./notice-subject.js";
 import { cancelTurn, createChat, forkChat, setMode, type CreatedChat } from "./actions/chat.js";
+import { ActionError } from "./actions/index.js";
+import { SWITCH_LOAD_MS } from "./tab-view.js";
 import { newOpID } from "./transport.js";
-
-// --- Bus: activate chat from other modules without importing chat.ts ---
-
-onBus(BUS_ACTIVATE_CHAT, (p) => {
-  selectChat(p.chatID);
-  showChatView(p.chatID);
-  refreshChatView(p.chatID);
-  if (p.then !== undefined) {
-    p.then();
-  }
-});
 
 // --- Chat tab registration ---
 
@@ -145,47 +144,83 @@ export function closeChatTab(id: string): void {
 
 /**
  * Bumped by every showChatView call, so a superseded activation of the SAME chat cannot
- * paint its retry box over a loaded transcript (`getActiveId() !== id` catches other chats).
+ * paint its retry box over a loaded transcript (the painted-chat check catches other chats).
  */
 let activationGen = 0;
 
-/**
- * Remove a previous activation's failure box; every activation clears it, since the
- * transcript repaint does not own it.
- */
+/** Remove every failure box under the transcript root: a box painted beside no view sits at the
+ *  root, and the transcript repaint owns neither. */
 function clearChatLoadError(): void {
-  for (const box of (activeTranscriptView() ?? $.messages).querySelectorAll(".load-error")) {
+  for (const box of $.messages.querySelectorAll(".load-error")) {
     box.remove();
   }
 }
 
-/**
- * The transcript's failure affordance, one Retry button for both failures (messages did not
- * load, or the record is not in the store). Retry re-activates and refetches.
- */
-function paintChatLoadError(message: string, id: string): void {
+/** The transcript's failure affordance: the message and one Retry button running `retry`. */
+function paintChatLoadError(message: string, retry: () => void): void {
   const box = el("div", { className: "load-error" }, el("span", {}, message));
   const btn = el("button", { type: "button", className: "btn-small" }, "Retry");
-  btn.addEventListener("click", () => {
-    selectChat(id);
-    showChatView(id);
-    refreshChatView(id); // the fetch the dispatcher would have supplied
-  });
+  btn.addEventListener("click", retry);
   box.appendChild(btn);
   (activeTranscriptView() ?? $.messages).appendChild(box);
 }
 
-/** One attempt per activation; the generation check makes fire-and-forget safe. */
+/** The one painter for a chat whose first page failed with nothing resident: the cover comes
+ *  down and, while the chat is the painted one, the Retry box goes up (a chat tab's
+ *  `onLoadFailed`). */
+export function showBlankLoadFailure(chatID: string): void {
+  dropCover();
+  if (getPaintedId() !== chatID) {
+    return;
+  }
+  clearChatLoadError();
+  paintChatLoadError("Failed to load messages.", () => {
+    void retryChatLoad(chatID);
+  });
+}
+
+/** The reader is still on `chatID` and it is still the mounted transcript. */
+function readerOn(chatID: string): boolean {
+  return getActiveId() === chatID && getPaintedId() === chatID;
+}
+
+/** The failure box's Retry: load the chat again in place, under the cover when nothing of it is
+ *  resident. A click inside the painted view, so no switch is involved. */
+async function retryChatLoad(chatID: string): Promise<void> {
+  // First: the click left focus on the Retry button the cover is about to make inert.
+  moveFocusOffTranscript();
+  clearChatLoadError();
+  markWindowStale(chatID);
+  if ((get(chatID)?.turn_order.length ?? 0) === 0) {
+    holdCover(chatID);
+  }
+  try {
+    await refreshChatView(chatID, AbortSignal.timeout(SWITCH_LOAD_MS));
+  } catch {
+    if (readerOn(chatID)) {
+      showBlankLoadFailure(chatID);
+    }
+  }
+}
+
+/** One store re-read per activation of a chat the store lacks; the generation check makes
+ *  fire-and-forget safe. */
 async function healMissingChat(id: string, gen: number): Promise<void> {
   if (!(await loadList())) {
     return;
   }
-  if (getActiveId() !== id || activationGen !== gen || get(id) === undefined) {
+  if (!readerOn(id) || activationGen !== gen || get(id) === undefined) {
     return;
   }
   selectChat(id);
   showChatView(id);
-  refreshChatView(id);
+  try {
+    await refreshChatView(id, AbortSignal.timeout(SWITCH_LOAD_MS));
+  } catch {
+    if (readerOn(id)) {
+      showBlankLoadFailure(id);
+    }
+  }
 }
 
 /**
@@ -208,7 +243,7 @@ export function selectChat(id: string): void {
 
 /**
  * Mount chat `id`'s transcript and point every per-chat view at it (a chat tab's `onShow`).
- * Fetches NOTHING: `refreshRow` calls `refreshChatView` right after.
+ * Fetches NOTHING but the missing-session re-read: the refresh owns the page.
  */
 export function showChatView(id: string): void {
   const gen = ++activationGen;
@@ -220,9 +255,14 @@ export function showChatView(id: string): void {
   clearChatLoadError();
   const session = get(id);
   if (session === undefined) {
-    // A tab naming a chat the store lacks means the store is stale: one re-read. The affordance
-    // paints FIRST so a failed re-read leaves something to act on.
-    paintChatLoadError("This conversation is not loaded yet.", id);
+    // A tab naming a chat the store lacks means the store is stale: one re-read. The box paints
+    // FIRST, alone, so a failed re-read leaves something to act on and no other chat's turns
+    // sit beside it; it is what the reader acts on, so the cover comes down.
+    parkPaintedView();
+    paintChatLoadError("This conversation is not loaded yet.", () => {
+      void healMissingChat(id, activationGen);
+    });
+    dropCover();
     void healMissingChat(id, gen);
     return;
   }
@@ -236,13 +276,15 @@ export function showChatView(id: string): void {
 }
 
 /**
- * Bring the chat's DATA up to date: `refreshRow` calls this after `showChatView`, and
- * that hook's four direct callers call it themselves.
+ * Bring chat `id`'s DATA up to date (a chat tab's `refresh`). Resolves once the view has
+ * something real to show; rejects with an `ActionError` only when nothing of the chat is
+ * resident and its first page did not land, painting nothing (the caller owns that failure).
+ * A failed refresh behind resident turns paints its own Retry box and resolves.
  */
-export function refreshChatView(id: string): void {
+export function refreshChatView(id: string, signal: AbortSignal): Promise<void> {
   const session = get(id);
   if (session === undefined) {
-    return; // healMissingChat is activation's, not refresh's
+    return Promise.resolve(); // showChatView painted the box and owns the re-read
   }
   // A refresh is not an activation and must not invalidate the one in flight, so it
   // reads the current generation rather than minting one.
@@ -253,51 +295,70 @@ export function refreshChatView(id: string): void {
     if (transcriptStale(session)) {
       seedEmptyChatDraft(id);
     }
-    return;
+    return Promise.resolve();
   }
   if (!transcriptStale(session)) {
     // The window is the server's answer and nothing has undermined it since, so
     // switching back costs ZERO fetches.
+    return Promise.resolve();
+  }
+  if (getPaintedId() === id) {
+    clearChatLoadError();
+  }
+  const load = loadMessages(id, undefined, signal);
+  if (session.turn_order.length > 0) {
+    void load.then((r) => {
+      if (r.kind === "loaded") {
+        afterPageLoad(id, gen);
+      } else if (r.kind === "failed" && getPaintedId() === id && activationGen === gen) {
+        paintChatLoadError("Failed to load messages.", () => {
+          void retryChatLoad(id);
+        });
+      }
+    });
+    return Promise.resolve();
+  }
+  return load.then((r) => {
+    if (r.kind !== "loaded") {
+      throw pageRefusal(r, signal);
+    }
+    afterPageLoad(id, gen);
+  });
+}
+
+/** The verdict of a first page that did not land, as the failure class its owner words. */
+function pageRefusal(r: Exclude<PageLoad, { kind: "loaded" }>, signal: AbortSignal): ActionError {
+  if (r.kind === "aborted") {
+    const reason: unknown = signal.reason;
+    return reason instanceof DOMException && reason.name === "TimeoutError"
+      ? new ActionError("timeout", { code: "timeout" })
+      : new ActionError("aborted", { code: "aborted" });
+  }
+  if (r.status === 404) {
+    return new ActionError("gone", { status: 404 });
+  }
+  if (r.status === 0) {
+    return new ActionError("network", { status: 0, code: "network" });
+  }
+  return new ActionError("load failed", { status: r.status });
+}
+
+/** What a landed newest page enables, for the chat still mounted by the same activation. */
+function afterPageLoad(id: string, gen: number): void {
+  if (activationGen !== gen) {
     return;
   }
-  // The failure box is not content, so it would sit over the placeholder; idempotent.
-  clearChatLoadError();
-  // `showSubagent` does not `setActive`, so `getActiveId() !== id` keeps a delegated refresh's
-  // shimmer out of another chat. Deferred 150ms on a cold transcript so a cached open never
-  // flashes.
-  const skeleton =
-    session.turn_order.length > 0 || getActiveId() !== id
-      ? null
-      : skeletonTiming(() =>
-          // Into the ACTIVE VIEW: the view's own column geometry positions the
-          // placeholder. The multiplexer fallback covers a fixture with no view.
-          paintPlaceholder(
-            activeTranscriptView() ?? $.messages,
-            chatSkeleton,
-            // The transcript container is shared with the load-more furniture and with
-            // messages.ts's drop-by-id half, so a placeholder here must not take it over.
-            { mount: "append" },
-          ),
-        );
-  void loadMessages(id).then((ok) => {
-    skeleton?.cancel();
-    if (getActiveId() !== id || activationGen !== gen) {
-      return;
-    }
-    if (!ok) {
-      paintChatLoadError("Failed to load messages.", id);
-      return;
-    }
-    // The chat's record is in now, so its stored draft can be adopted. Deliberately
-    // loses to a draft the user has started typing since the activation.
+  // The chat's record is in now, so its stored draft can be adopted. Deliberately
+  // loses to a draft the user has started typing since the activation.
+  if (getActiveId() === id) {
     seedComposerState(id);
-    const fresh = get(id);
-    if (fresh !== undefined) {
-      setupLoadMore(id);
-    }
-    // The session-wide rail is its own fetch, FORCED: the load just re-stamped the session fresh.
-    void loadTurnRail(id, { force: true });
-  });
+  }
+  if (getPaintedId() !== id || get(id) === undefined) {
+    return;
+  }
+  setupLoadMore(id);
+  // The session-wide rail is its own fetch, FORCED: the load just re-stamped the session fresh.
+  void loadTurnRail(id, { force: true });
 }
 
 /**
@@ -305,8 +366,8 @@ export function refreshChatView(id: string): void {
  * GET). Re-checked after the await: the seed writes the shared composer.
  */
 function seedEmptyChatDraft(id: string): void {
-  void loadMessages(id).then((ok) => {
-    if (ok && getActiveId() === id) {
+  void loadMessages(id).then((r) => {
+    if (r.kind === "loaded" && getActiveId() === id) {
       seedComposerState(id);
     }
   });
@@ -322,7 +383,7 @@ function setupLoadMore(chatID: string): void {
   stopLoadMore?.();
   stopLoadMore = effect(() => {
     touch(messagesVersionOf(chatID));
-    if (getActiveId() !== chatID) {
+    if (getPaintedId() !== chatID) {
       return;
     }
     const hasMore = get(chatID)?.has_more === true;
@@ -586,8 +647,10 @@ export async function openPreviousSession(
     // Required: a chat closed in this page is gone from the store while its file survives.
     await loadList();
   }
-  // AWAITED: opening the tab is a round trip. `openChatTab` already activates, so the
-  // explicit call below is the belt for a tab already open and active, where it refetches.
+  // A tab already open and active is not activated again, so only a refresh can bring it current.
+  const tabID = tabIdFor("chat", chatID);
+  const wasActive = tabID !== "" && getActiveTabId() === tabID;
+  // AWAITED: opening the tab is a round trip, and its activation is the one activation.
   const outcome = await openChatTab(chatID, get(chatID)?.name ?? row.title);
   if (outcome === "not-found") {
     // Retention is off and a close DELETED this conversation: said with activation skipped,
@@ -604,13 +667,10 @@ export async function openPreviousSession(
     // The framework's error surface has already spoken; the row stays.
     return "failed";
   }
-  if (tabIdFor("chat", chatID) !== getActiveTabId()) {
-    // The user moved to another tab while the open was in flight, so the view stays theirs.
-    return "opened";
+  // The user may have moved to another tab while the open was in flight; the view is then theirs.
+  if (wasActive && tabIdFor("chat", chatID) === getActiveTabId()) {
+    refreshActiveView();
   }
-  selectChat(chatID);
-  showChatView(chatID);
-  refreshChatView(chatID);
   return "opened";
 }
 

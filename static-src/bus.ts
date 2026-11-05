@@ -247,7 +247,6 @@ export const BUS_RECONCILE = "transport:reconcile" as const;
  */
 export const BUS_PAGE_RESUMED = "transport:resumed" as const;
 export const BUS_KEYS_ESCAPE = "keys:escape" as const;
-export const BUS_ACTIVATE_CHAT = "chat:activate" as const;
 /**
  * A workflow run appeared or ended, so run lists are stale. On the bus so the run handler
  * does not import the history page.
@@ -292,7 +291,6 @@ interface BusPayloads {
   readonly [BUS_RECONCILE]: { readonly cause: string; readonly signal: AbortSignal };
   readonly [BUS_PAGE_RESUMED]: undefined;
   readonly [BUS_KEYS_ESCAPE]: undefined;
-  readonly [BUS_ACTIVATE_CHAT]: { chatID: string; then?: () => void };
   readonly [BUS_RUNS_CHANGED]: undefined;
   readonly [BUS_TAB_CHANGED]: { to: string; kind: string | null };
   readonly [BUS_EDITOR_VIEW_CHANGED]: { path: string };

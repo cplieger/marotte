@@ -2,7 +2,6 @@
 // every refresh promise they start has an owner for its rejection. Real store; chat.ts's other
 // collaborators stubbed at the first hop.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type * as Skeleton from "./skeleton.js";
 
 const h = vi.hoisted(() => ({
   loadMessages: vi.fn(),
@@ -14,15 +13,23 @@ const h = vi.hoisted(() => ({
   pointTurnRail: vi.fn(),
 }));
 
-vi.mock("./store-load.js", () => ({
+vi.mock("./store-load.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   loadList: vi.fn(() => Promise.resolve(true)),
   loadMessages: h.loadMessages,
   loadOlderTurns: vi.fn(),
   confirmChatExists: vi.fn(),
 }));
-vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
-vi.mock("./chat-commands.js", () => ({ sendPromptTo: vi.fn() }));
-vi.mock("./tabs.js", () => ({
+vi.mock("./banner-stack.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ensureBound: vi.fn(),
+}));
+vi.mock("./chat-commands.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  sendPromptTo: vi.fn(),
+}));
+vi.mock("./tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   openTab: h.openTab,
   adoptSubject: vi.fn(),
   activateTab: h.activateTab,
@@ -33,20 +40,22 @@ vi.mock("./tabs.js", () => ({
   setTabStatus: vi.fn(),
   refreshActiveView: h.refreshActiveView,
 }));
-vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
-vi.mock("./decision-dock.js", () => ({
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock())),
+}));
+vi.mock("./decision-dock.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   hasPendingDecision: vi.fn(() => false),
   dropDecisions: vi.fn(),
 }));
-vi.mock("./skeleton.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof Skeleton>()),
-  chatSkeleton: vi.fn(() => document.createElement("div")),
+vi.mock("./picker.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  showModelPicker: vi.fn(),
+  hideModelPicker: vi.fn(),
 }));
-vi.mock("@cplieger/ui/skeleton", () => ({
-  skeletonTiming: vi.fn(() => ({ commit: vi.fn(), cancel: vi.fn() })),
-}));
-vi.mock("./picker.js", () => ({ showModelPicker: vi.fn(), hideModelPicker: vi.fn() }));
-vi.mock("./messages.js", () => ({
+vi.mock("./messages.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   mountChatView: vi.fn(),
   setLoadMore: vi.fn(),
   rebaseLoadMore: vi.fn(),
@@ -57,28 +66,52 @@ vi.mock("./messages.js", () => ({
   disposeChatView: vi.fn(),
   parkPaintedView: vi.fn(),
 }));
-vi.mock("./attachments.js", () => ({
+vi.mock("./attachments.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   addAttachment: vi.fn(),
   unownedAttachmentPaths: vi.fn(() => []),
 }));
-vi.mock("./composer-state.js", () =>
-  import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.composerStateMock()),
-);
-vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));
-vi.mock("./model-switcher.js", () => ({ applyLocalModel: vi.fn() }));
-vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
-vi.mock("./submit.js", () => ({ submitPrompt: vi.fn(), submitLabelled: vi.fn() }));
-vi.mock("./dom.js", () =>
-  import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.domMock()),
-);
-vi.mock("./retention.js", () => ({ isRetentionEnabled: vi.fn(() => false) }));
-vi.mock("./bus.js", () => ({
+vi.mock("./composer-state.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.composerStateMock())),
+}));
+vi.mock("./session-context.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  setCurrentModel: vi.fn(),
+  getLastModel: () => "auto",
+}));
+vi.mock("./model-switcher.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  applyLocalModel: vi.fn(),
+}));
+vi.mock("./context-ui.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  refreshContextUI: vi.fn(),
+}));
+vi.mock("./submit.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  submitPrompt: vi.fn(),
+  submitLabelled: vi.fn(),
+}));
+vi.mock("./dom.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.domMock())),
+}));
+vi.mock("./retention.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  isRetentionEnabled: vi.fn(() => false),
+}));
+vi.mock("./bus.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   onBus: vi.fn(),
   onSSE: undefined,
-  BUS_ACTIVATE_CHAT: "activate-chat",
 }));
-vi.mock("./transport.js", () => ({ newOpID: () => "op-test" }));
-vi.mock("./actions/chat.js", () => ({
+vi.mock("./transport.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  newOpID: () => "op-test",
+}));
+vi.mock("./actions/chat.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   deleteChat: { dispatch: vi.fn() },
   restoreChat: { dispatch: vi.fn() },
   setMode: { dispatch: vi.fn() },
@@ -89,18 +122,9 @@ vi.mock("./actions/chat.js", () => ({
 
 import * as store from "./store.js";
 import * as chat from "./chat.js";
-import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { makeSession } from "./__test-helpers__/model.js";
-import { coverUp, held, mountShell } from "./__test-helpers__/tab-switch-mocks.js";
+import { coverUp, mountShell } from "./__test-helpers__/tab-switch-mocks.js";
 import type { ResumableSession } from "./types.js";
-
-// Registered once, at chat.ts's import.
-const busHandler = vi.mocked(onBus).mock.calls.find(([name]) => name === BUS_ACTIVATE_CHAT)?.[1] as
-  ((p: { chatID: string; then?: () => void }) => void) | undefined;
-
-function setPainted(id: string): void {
-  (store as unknown as { setPainted?: (id: string) => void }).setPainted?.(id);
-}
 
 /** B known to the store with turns on the server and none resident: a blank view. */
 function blankB(): void {
@@ -109,7 +133,7 @@ function blankB(): void {
     { ...makeSession({ id: "b", name: "b" }), turn_count: 4, has_more: true },
   ]);
   store.setActive("b");
-  setPainted("b");
+  store.setPainted("b");
 }
 
 function boxes(): HTMLElement[] {
@@ -120,27 +144,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.loadMessages.mockResolvedValue({ kind: "loaded" });
   mountShell();
-});
-
-describe("the activate-chat bus event", () => {
-  it("runs its continuation after the activation, not inside the event", async () => {
-    blankB();
-    h.tabIdFor.mockImplementation((_kind, id) => `tb_${id}`);
-    const activation = held();
-    h.activateTab.mockReturnValueOnce(activation.promise);
-    const then = vi.fn();
-
-    expect(busHandler).toBeDefined();
-    busHandler?.({ chatID: "b", then });
-
-    expect(then, "the continuation ran inside the event").not.toHaveBeenCalled();
-    expect(h.activateTab).toHaveBeenCalledWith("tb_b");
-    expect(h.pointTurnRail, "the event showed the chat itself").not.toHaveBeenCalled();
-    activation.resolve();
-    await activation.promise;
-    await Promise.resolve();
-    expect(then).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe("openPreviousSession", () => {
@@ -159,10 +162,7 @@ describe("openPreviousSession", () => {
 describe("the load-error Retry", () => {
   it("repaints the box after a second failure and leaves no rejection unhandled", async () => {
     blankB();
-    const paint = (chat as unknown as { showBlankLoadFailure?: (id: string) => void })
-      .showBlankLoadFailure;
-    expect(typeof paint, "chat.showBlankLoadFailure").toBe("function");
-    paint?.("b");
+    chat.showBlankLoadFailure("b");
     expect(boxes()).toHaveLength(1);
     h.loadMessages.mockResolvedValue({ kind: "failed", status: 503 });
 

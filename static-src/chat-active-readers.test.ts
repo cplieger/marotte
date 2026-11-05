@@ -2,7 +2,6 @@
 // Everything chat.ts does for the reader (send, cancel, attach) must act on the active chat, the one
 // the strip and composer show. Real store; chat.ts's other collaborators are stubbed at the first hop.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type * as Skeleton from "./skeleton.js";
 
 const { submitPromptMock, cancelDispatch, activateTabMock, messagesEl } = vi.hoisted(() => ({
   submitPromptMock: vi.fn(),
@@ -11,39 +10,50 @@ const { submitPromptMock, cancelDispatch, activateTabMock, messagesEl } = vi.hoi
   messagesEl: document.createElement("div"),
 }));
 
-vi.mock("./store-load.js", () => ({
+vi.mock("./store-load.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   loadList: vi.fn(),
   loadMessages: vi.fn(),
   loadOlderTurns: vi.fn(),
   confirmChatExists: vi.fn(),
 }));
-vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
-vi.mock("./chat-commands.js", () => ({ sendPromptTo: vi.fn() }));
-vi.mock("./tabs.js", () => ({
+vi.mock("./banner-stack.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ensureBound: vi.fn(),
+}));
+vi.mock("./chat-commands.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  sendPromptTo: vi.fn(),
+}));
+vi.mock("./tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   openTab: vi.fn(() => Promise.resolve("opened")),
   adoptSubject: vi.fn(),
   activateTab: activateTabMock,
   // One tab per chat, `tb_<chat>`; the strip shows B's.
   tabIdFor: (_kind: string, id: string) => `tb_${id}`,
   openChatRefs: vi.fn(() => [] as string[]),
+  refreshActiveView: vi.fn(),
   getActiveTabId: () => "tb_b",
   renameTab: vi.fn(),
   setTabStatus: vi.fn(),
 }));
-vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
-vi.mock("./decision-dock.js", () => ({
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock())),
+}));
+vi.mock("./decision-dock.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   hasPendingDecision: vi.fn(() => false),
   dropDecisions: vi.fn(),
 }));
-vi.mock("./skeleton.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof Skeleton>()),
-  chatSkeleton: vi.fn(() => document.createElement("div")),
+vi.mock("./picker.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  showModelPicker: vi.fn(),
+  hideModelPicker: vi.fn(),
 }));
-vi.mock("@cplieger/ui/skeleton", () => ({
-  skeletonTiming: vi.fn(() => ({ commit: vi.fn(), cancel: vi.fn() })),
-}));
-vi.mock("./picker.js", () => ({ showModelPicker: vi.fn(), hideModelPicker: vi.fn() }));
-vi.mock("./messages.js", () => ({
+vi.mock("./messages.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   mountChatView: vi.fn(),
   setLoadMore: vi.fn(),
   rebaseLoadMore: vi.fn(),
@@ -54,11 +64,20 @@ vi.mock("./messages.js", () => ({
   disposeChatView: vi.fn(),
   parkPaintedView: vi.fn(),
 }));
-vi.mock("./attachments.js", () => ({
+vi.mock("./transcript-cover.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  dropCover: vi.fn(),
+  holdCover: vi.fn(),
+  releaseCover: vi.fn(),
+  moveFocusOffTranscript: vi.fn(),
+}));
+vi.mock("./attachments.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   addAttachment: vi.fn(),
   unownedAttachmentPaths: vi.fn(() => []),
 }));
-vi.mock("./composer-state.js", () => ({
+vi.mock("./composer-state.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   saveComposerState: vi.fn(),
   restoreComposerState: vi.fn(),
   retargetComposer: vi.fn(),
@@ -66,22 +85,50 @@ vi.mock("./composer-state.js", () => ({
   flushComposerDraft: vi.fn(),
   dropComposerState: vi.fn(),
 }));
-vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));
-vi.mock("./model-switcher.js", () => ({ applyLocalModel: vi.fn() }));
-vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
-vi.mock("./submit.js", () => ({ submitPrompt: submitPromptMock, submitLabelled: vi.fn() }));
-vi.mock("./dom.js", () => ({
-  $: { messages: messagesEl, promptInput: { focus: () => undefined } },
+vi.mock("./session-context.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  setCurrentModel: vi.fn(),
+  getLastModel: () => "auto",
+}));
+vi.mock("./model-switcher.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  applyLocalModel: vi.fn(),
+}));
+vi.mock("./context-ui.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  refreshContextUI: vi.fn(),
+}));
+vi.mock("./submit.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  submitPrompt: submitPromptMock,
+  submitLabelled: vi.fn(),
+}));
+vi.mock("./dom.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  // Total over the registry: a spread original module may read any element at import.
+  $: new Proxy(
+    { messages: messagesEl, promptInput: { focus: () => undefined } } as Record<string, unknown>,
+    {
+      get: (known, prop: string) => known[prop] ?? document.createElement("div"),
+    },
+  ),
   setBusy: vi.fn(),
 }));
-vi.mock("./retention.js", () => ({ isRetentionEnabled: vi.fn(() => false) }));
-vi.mock("./bus.js", () => ({
+vi.mock("./retention.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  isRetentionEnabled: vi.fn(() => false),
+}));
+vi.mock("./bus.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   onBus: vi.fn(),
   onSSE: undefined,
-  BUS_ACTIVATE_CHAT: "activate-chat",
 }));
-vi.mock("./transport.js", () => ({ newOpID: () => "op-test" }));
-vi.mock("./actions/chat.js", () => ({
+vi.mock("./transport.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  newOpID: () => "op-test",
+}));
+vi.mock("./actions/chat.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   deleteChat: { dispatch: vi.fn() },
   restoreChat: { dispatch: vi.fn() },
   setMode: { dispatch: vi.fn() },

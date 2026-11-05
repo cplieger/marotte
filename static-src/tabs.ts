@@ -12,7 +12,13 @@ import type { Route, SettingsTab, GitTab, DocsTab, HistoryTab } from "./route-pa
 // registered enum, so per-kind handling is TOTAL.
 import type { TabKind, TabSubject, TabsChangedPayload } from "./types.js";
 // The DOM-free per-kind tables live in tab-view.ts; this file owns the STORE and the DOM.
-import { TAB_ICONS, TAB_VIEWS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
+import {
+  TAB_ICONS,
+  TAB_VIEWS,
+  SWITCH_LOAD_MS,
+  type TabDotStatus,
+  type TabViewSpec,
+} from "./tab-view.js";
 import { materializeTab, subagentRef, subjectForRoute } from "./tab-materialize.js";
 import { viewStale } from "./view-freshness.js";
 // A PATH-SPACE normaliser rather than a feature behaviour. router.ts refuses the same
@@ -47,6 +53,7 @@ import {
   reorderTabsCommand,
   REORDER_STALE,
 } from "./actions/tabs.js";
+import { dropCover } from "./transcript-cover.js";
 import { retryNetwork } from "./actions/index.js";
 import { CLOSE_IMPACT_CHANGED, serverImpactOf } from "./actions/close-impact.js";
 import { newOpID } from "./transport.js";
@@ -555,11 +562,24 @@ function revealActiveView(): void {
 }
 
 /** THE one caller of `viewStale`, so all ten kinds are gated in one place and none can answer it by
- *  accident from its own `onShow`. */
-function refreshRow(row: TabRow): void {
+ *  accident from its own `onShow`. A fresh view resolves at once; the promise is the spec's
+ *  `refresh` contract. */
+function refreshRow(row: TabRow, signal: AbortSignal): Promise<void> {
   if (viewStale(row.subject.kind, row.subject.ref)) {
-    row.spec.refresh();
+    return row.spec.refresh(signal);
   }
+  return Promise.resolve();
+}
+
+/** Refresh `row` and own its failure: a view left blank paints its in-view failure while it is
+ *  still the active tab. */
+function refreshOwned(row: TabRow): void {
+  refreshRow(row, AbortSignal.timeout(SWITCH_LOAD_MS)).catch(() => {
+    if (state.active === row.subject.id) {
+      dropCover();
+      row.spec.onLoadFailed?.();
+    }
+  });
 }
 
 /** The active row's refresh, for the two invalidation triggers. A no-op on an
@@ -569,7 +589,7 @@ function refreshRow(row: TabRow): void {
 export function refreshActiveView(): void {
   const row = rowOfID(state.active);
   if (row !== undefined) {
-    refreshRow(row);
+    refreshOwned(row);
   }
 }
 
@@ -616,8 +636,9 @@ function activateTabQuietly(id: string): void {
   setActiveView(id);
   noteActivation(id);
   emit();
+  row.spec.onSelect?.();
   row.spec.onShow?.();
-  refreshRow(row);
+  refreshOwned(row);
   callbacks.onActivate?.(id);
 }
 

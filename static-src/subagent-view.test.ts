@@ -531,12 +531,13 @@ describe("demand for the mounted page", () => {
 
 describe("refreshSubagent delegates to the launching chat", () => {
   it("refreshes the launching chat and nothing else", () => {
-    vi.mocked(refreshChatView).mockImplementation(() => undefined);
+    vi.mocked(refreshChatView).mockImplementation(() => Promise.resolve());
+    const signal = new AbortController().signal;
 
-    refreshSubagent("c-launcher");
+    refreshSubagent("c-launcher", signal);
 
     expect(refreshChatView).toHaveBeenCalledTimes(1);
-    expect(refreshChatView).toHaveBeenCalledWith("c-launcher");
+    expect(refreshChatView).toHaveBeenCalledWith("c-launcher", signal);
     expect(vi.mocked(sliceSubagent)).not.toHaveBeenCalled();
   });
 
@@ -548,7 +549,7 @@ describe("refreshSubagent delegates to the launching chat", () => {
     );
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
-      refreshSubagent("c-launcher");
+      refreshSubagent("c-launcher", new AbortController().signal);
       await new Promise((r) => setTimeout(r, 0));
       // The spy records the promise's settlement, which marks it handled, so the owner is
       // witnessed by its log rather than by the absence of an unhandled rejection.

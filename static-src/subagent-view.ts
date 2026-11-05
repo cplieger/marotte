@@ -102,8 +102,10 @@ export function showSubagent(chatID: string, subtaskID: string): void {
 
 /** A subagent tab's `refresh`. The page is a projection of the launching chat's
  *  blocks, so its window is the only thing that can make it current. */
-export function refreshSubagent(chatID: string): void {
-  refreshChatView(chatID);
+export function refreshSubagent(chatID: string, signal: AbortSignal): void {
+  refreshChatView(chatID, signal).catch((e: unknown) => {
+    console.warn("subagent: the launching chat did not load", chatID, e);
+  });
 }
 
 /** Whether an open subagent tab still names `m`'s delegate, chat included (two chats can share a

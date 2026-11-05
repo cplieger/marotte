@@ -194,10 +194,12 @@ function registerOpeners(): void {
   };
   registerTabOpeners({
     chat: {
+      select: vi.fn(),
+      loadFailed: vi.fn(),
       show: (ref) => {
         record("chat", ref);
       },
-      refresh: vi.fn(),
+      refresh: vi.fn(() => Promise.resolve()),
       close: vi.fn(),
       dot: () => "",
     },

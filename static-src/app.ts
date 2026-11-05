@@ -78,6 +78,7 @@ import {
   showChatView,
   cancelActiveTurn,
   refreshChatView,
+  showBlankLoadFailure,
   closeChatTab,
   chatTabDot,
 } from "./chat.js";
@@ -163,11 +164,10 @@ function init(): void {
   // registering here keeps the factory out of a cycle.
   registerTabOpeners({
     chat: {
-      show: (id) => {
-        selectChat(id);
-        showChatView(id);
-      },
+      select: selectChat,
+      show: showChatView,
       refresh: refreshChatView,
+      loadFailed: showBlankLoadFailure,
       close: closeChatTab,
       dot: chatTabDot,
     },
@@ -182,7 +182,12 @@ function init(): void {
     },
     // No close half for the same reason: a subagent page is a projection of blocks the
     // chat store owns, so it starts nothing and can stop nothing.
-    subagent: { show: showSubagent, refresh: refreshSubagent },
+    subagent: {
+      show: showSubagent,
+      refresh: (chatID, _subtaskID, signal) => {
+        refreshSubagent(chatID, signal);
+      },
+    },
     // Lazily imported: the page module carries the markdown renderer and the task
     // tree, and a session that never opens a spec tab should not pay for either.
     spec: {

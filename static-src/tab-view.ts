@@ -53,6 +53,11 @@ export const TAB_ICONS: Readonly<Record<TabKind, string>> = {
   web: ICON_TAB_WEB,
 };
 
+/** How long a view's first content may take before its load counts as failed. Three times the
+ *  slowest first page measured on a throttled phone-class CPU (3.2 s), and under the 30 s fetch
+ *  default, so a dead network does not strand the reader on a skeleton. */
+export const SWITCH_LOAD_MS = 10_000;
+
 /** The activity dot's states: six from a chat's live state (`tabStatusFor`) and "dirty", the
  *  editor's unsaved mark (a tab is never both). Grammar and rationale: css/12-tabs.css. */
 export type TabDotStatus = "idle" | "working" | "waiting" | "input" | "failed" | "done" | "dirty";
@@ -71,11 +76,19 @@ export interface TabViewSpec {
   readonly view: string;
   /** The typed route; every tab needs a real one for the store's view/render/URL promise. */
   readonly route: Route;
-  /** Called when the tab becomes active. */
+  /** Called in the gesture that makes the tab active, before anything paints: moves what acts
+   *  for the reader to this tab and reads no layout. */
+  readonly onSelect?: (() => void) | undefined;
+  /** Called when the tab's view is shown. */
   readonly onShow?: (() => void) | undefined;
   /** Bring this view's DATA up to date. REQUIRED. Called only by tabs.ts `refreshRow` behind
-   *  `viewStale`; writes no projection state and pushes no route. */
-  readonly refresh: () => void;
+   *  `viewStale`; writes no projection state and pushes no route. Resolves once the view has
+   *  something real on screen (at once for a view whose loader paints its own placeholder and
+   *  error row); rejects with an `ActionError` only when the view would stay blank, painting
+   *  nothing, and should stop loading when `signal` aborts. */
+  readonly refresh: (signal: AbortSignal) => Promise<void>;
+  /** Paint the in-view failure for a refresh that rejected with no switch to revert. */
+  readonly onLoadFailed?: (() => void) | undefined;
   /** CLIENT-LOCAL teardown on close, identical on every device; the server's close does the rest.
    *  Deferred to the pending-op confirmation for this device's own close; immediate for a remote one. */
   readonly onClose?: (() => void) | undefined;

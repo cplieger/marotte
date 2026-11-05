@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 
 import { allRules, manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
-import { CHAT_SKELETON_ID, chatSkeleton, loadMoreSkeleton } from "./skeleton.js";
+import { chatSkeleton, loadMoreSkeleton } from "./skeleton.js";
 
 /** The five classes the bubble era owned, each deleted with its only consumer. */
 const DELETED = [
@@ -49,9 +49,8 @@ function cards(wrap: Element): Element[] {
 }
 
 describe("the rebuilt transcript placeholder", () => {
-  it("is a contents wrap carrying the id and the aria marker, over three cards", () => {
+  it("is a contents wrap carrying the aria marker, over three cards", () => {
     const wrap = chatSkeleton();
-    expect(wrap.id).toBe(CHAT_SKELETON_ID);
     expect(wrap.getAttribute("aria-hidden")).toBe("true");
     expect(wrap.classList.contains("skeleton-rows")).toBe(true);
     // Direct children, all of them cards: a wrap holding furniture beside the cards would be a

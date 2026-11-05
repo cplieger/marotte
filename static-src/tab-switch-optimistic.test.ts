@@ -4,43 +4,65 @@
 import { describe, it, expect, vi } from "vitest";
 import type * as TabsDrag from "./tabs-drag.js";
 
-vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
-vi.mock("./icons.js", () =>
-  import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.iconsMock()),
-);
-vi.mock("./device-view.js", () =>
-  import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.deviceViewMock()),
-);
-vi.mock("./dom.js", () =>
-  import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.domMock()),
-);
+vi.mock("./router.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  pushRoute: vi.fn(),
+}));
+vi.mock("./icons.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.iconsMock())),
+}));
+vi.mock("./device-view.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.deviceViewMock())),
+}));
+vi.mock("./dom.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.domMock())),
+}));
 vi.mock("./tabs-drag.js", async (importOriginal) => ({
   ...(await importOriginal<typeof TabsDrag>()),
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
 }));
-vi.mock("./store.js", async () => ({
+vi.mock("./store.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   ...(await import("./__test-helpers__/store-mock.js")).storeMock,
   ...(await import("./__test-helpers__/tab-switch-mocks.js")).storePointerOverrides(),
 }));
-vi.mock("./run-store.js", () => ({ runLabelOf: vi.fn(() => "") }));
-vi.mock("./composer-state.js", () =>
-  import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.composerStateMock()),
-);
-vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
-vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
-vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
-vi.mock("./transport.js", () =>
-  import("./__test-helpers__/tabs-server.js").then((m) => m.tabTransportMock()),
-);
-vi.mock("./api-client.js", () =>
-  import("./__test-helpers__/tabs-server.js").then((m) => ({
+vi.mock("./run-store.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  runLabelOf: vi.fn(() => ""),
+}));
+vi.mock("./composer-state.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.composerStateMock())),
+}));
+vi.mock("./context-menu.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  showContextMenu: vi.fn(),
+}));
+vi.mock("./chat-export.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  downloadChatExport: vi.fn(),
+}));
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock())),
+}));
+vi.mock("./transport.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tabs-server.js").then((m) => m.tabTransportMock())),
+}));
+vi.mock("./api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tabs-server.js").then((m) => ({
     apiBlobOrError: vi.fn(),
     apiGetTyped: m.tabListRead(),
     apiGet: vi.fn(() => Promise.resolve(null)),
-  })),
-);
+  }))),
+}));
 
 import { tabIdFor, getActiveTabId } from "./tabs.js";
 import { observeStamp } from "./subject-versions.js";

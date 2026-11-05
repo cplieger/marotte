@@ -237,7 +237,14 @@ beforeEach(() => {
   // channel: a spec's onClose is the factory's, so the editor's half arrives here
   // rather than as an argument at the door.
   registerTabOpeners({
-    chat: { show: vi.fn(), refresh: vi.fn(), close: vi.fn(), dot: () => "" },
+    chat: {
+      select: vi.fn(),
+      loadFailed: vi.fn(),
+      show: vi.fn(),
+      refresh: vi.fn(() => Promise.resolve()),
+      close: vi.fn(),
+      dot: () => "",
+    },
     editor: { show: activateFile, refresh: vi.fn(), close: closeEditorFile },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },

@@ -276,8 +276,10 @@ const seededDots = new Map<string, TabDotStatus>();
 function registerOpeners(): void {
   registerTabOpeners({
     chat: {
+      select: vi.fn(),
+      loadFailed: vi.fn(),
       show: vi.fn(),
-      refresh: vi.fn(),
+      refresh: vi.fn(() => Promise.resolve()),
       close: vi.fn(),
       dot: (chatID: string) => seededDots.get(chatID) ?? "",
     },

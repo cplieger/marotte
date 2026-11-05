@@ -297,10 +297,14 @@ let listController: AbortController | null = null;
  *  record (`abortReadsForRevert`). */
 const msgControllers = new Map<string, { controller: AbortController; newest: boolean }>();
 
-/** The load a revert re-issued in place of an aborted newest one, keyed by the aborted load's
- *  controller: its caller is answered with the re-issue's result, because an activation reads
- *  `false` as a failed open. */
-const reissuedLoads = new WeakMap<AbortController, Promise<boolean>>();
+/** The newest-page load that took over from an aborted one (a revert's re-issue, or a newer
+ *  `loadMessages` of the same chat), keyed by the aborted load's controller: its caller is
+ *  answered with that load's verdict, because an activation reads `aborted` as superseded and
+ *  would otherwise wait on a page nothing applies. */
+const reissuedLoads = new WeakMap<AbortController, Promise<PageLoad>>();
+
+const LOADED: PageLoad = { kind: "loaded" };
+const ABORTED: PageLoad = { kind: "aborted" };
 
 /** Forget a finished load's entry, but only its own: a load superseded by a newer one wakes
  *  after the newer one registered, and deleting by key alone would orphan the newer read. */
@@ -326,11 +330,12 @@ function reportLoadOutcome(
   chatID: string,
   outcome: "changed" | "unchanged" | "load_failed",
   path: string,
+  failure = "",
 ): void {
   loadOutcomes[outcome]++;
   const line = `chat_get: ${chatID} ${outcome} changed=${loadOutcomes.changed} unchanged=${loadOutcomes.unchanged} load_failed=${loadOutcomes.load_failed} proto=${readNextHopProtocol(path)}`;
   if (outcome === "load_failed") {
-    console.warn(line);
+    console.warn(`${line} ${failure}`);
   } else {
     console.debug(line);
   }
@@ -630,7 +635,7 @@ export function loadOlderTurns(chatID: string): Promise<boolean> {
     return Promise.resolve(false);
   }
   const page = loadMessages(chatID, oldest)
-    .then((ok) => ok && get(chatID)?.turn_order[0] !== oldest)
+    .then((r) => r.kind === "loaded" && get(chatID)?.turn_order[0] !== oldest)
     .finally(() => {
       olderInFlight.delete(chatID);
     });
@@ -638,14 +643,38 @@ export function loadOlderTurns(chatID: string): Promise<boolean> {
   return page;
 }
 
-export async function loadMessages(
+/** A page load's verdict: `aborted` when the caller's signal stopped it or nothing took its
+ *  place, `failed` with the HTTP status (0 when no answer came). */
+export type PageLoad =
+  | { readonly kind: "loaded" }
+  | { readonly kind: "aborted" }
+  | { readonly kind: "failed"; readonly status: number };
+
+/** Read one page of `chatID` into the store: the newest, or the one older than `beforeTurnID`. A
+ *  newest-page load superseded by a newer one answers that one's verdict. */
+export function loadMessages(
   chatID: string,
   beforeTurnID?: string,
   signal?: AbortSignal,
-): Promise<boolean> {
-  msgControllers.get(chatID)?.controller.abort();
+): Promise<PageLoad> {
+  const previous = msgControllers.get(chatID);
+  previous?.controller.abort();
   const controller = new AbortController();
-  msgControllers.set(chatID, { controller, newest: beforeTurnID === undefined });
+  const newest = beforeTurnID === undefined;
+  msgControllers.set(chatID, { controller, newest });
+  const load = fetchPage(chatID, controller, beforeTurnID, signal);
+  if (newest && previous?.newest === true) {
+    reissuedLoads.set(previous.controller, load);
+  }
+  return load;
+}
+
+async function fetchPage(
+  chatID: string,
+  controller: AbortController,
+  beforeTurnID: string | undefined,
+  signal: AbortSignal | undefined,
+): Promise<PageLoad> {
   const combined =
     signal === undefined ? controller.signal : AbortSignal.any([controller.signal, signal]);
   // No `limit`: a window is N TURNS and the count is the server's decision (it clamps and defaults
@@ -658,11 +687,13 @@ export async function loadMessages(
   const path = `/api/chats/${encodeURIComponent(chatID)}${query === "" ? "" : `?${query}`}`;
   const heldAtRequest = new Set(beforeTurnID === undefined ? (get(chatID)?.turn_order ?? []) : []);
   const mark = headerFrameMark();
-  const d = await apiGetTyped(path, decodeChatGetResponseLocal, combined);
+  const r = await apiGetTypedOrError(path, decodeChatGetResponseLocal, combined);
   if (combined.aborted) {
     releaseLoad(chatID, controller);
-    return reissuedLoads.get(controller) ?? false;
+    // The caller's own signal outranks a take-over: it asked to stop waiting.
+    return signal?.aborted === true ? ABORTED : (reissuedLoads.get(controller) ?? ABORTED);
   }
+  const d = r.ok ? r.data : null;
   if (d === null) {
     releaseLoad(chatID, controller);
     if (beforeTurnID === undefined) {
@@ -670,14 +701,17 @@ export async function loadMessages(
       if (failed !== undefined) {
         failed.residency = "load_failed";
       }
-      reportLoadOutcome(chatID, "load_failed", path);
+      reportLoadOutcome(chatID, "load_failed", path, `status=${String(r.status)} ${r.error}`);
+    } else {
+      console.warn("chat page: older page failed", path, r.status, r.error);
     }
-    return false;
+    return { kind: "failed", status: r.status };
   }
   const session = get(chatID);
   if (session === undefined) {
+    // The row left the store while the page was in flight: nothing is left to apply it to.
     releaseLoad(chatID, controller);
-    return false;
+    return ABORTED;
   }
   const page = buildPageTurns(d.entries, d.open_entries);
   // The byte comparison is the refetch-outcome measurement, bounded by the resident window.
@@ -750,7 +784,7 @@ export async function loadMessages(
       clearTurnState(chatID);
     }
   }
-  return true;
+  return LOADED;
 }
 
 /** The resident window as bytes, for the refetch-outcome measurement alone. Turn ids plus each

@@ -16,6 +16,7 @@ import {
   codeReferencesFor,
   liveRefusalFor,
   sessionBusy,
+  isEmptyChat,
 } from "./store.js";
 import { clearTurnSigs } from "./store-signals.js";
 import { BUS_FOLDS_CHANGED, onBus } from "./bus.js";
@@ -27,8 +28,8 @@ import { releaseClampsIn } from "./clamp-text.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { effect, el, touch } from "@cplieger/ui";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
-import { CHAT_SKELETON_ID } from "./skeleton.js";
-import { $, maybeEl } from "./dom.js";
+import { releaseCover } from "./transcript-cover.js";
+import { $ } from "./dom.js";
 import {
   followTargetChanged,
   getScrollEl,
@@ -1094,6 +1095,15 @@ function clearArrivedPin(chatID: string, anchor: ResidencyAnchor | undefined): v
 /** Whether the current full pass mounted a new card: born-folded cards queue nothing, so `fillViewport` needs this. */
 let paintMountedCards = false;
 
+/** Park the mounted view with no successor, so the next paint of any chat is a full chat-switch
+ *  pass; the transcript root is left empty for a box the caller paints there. */
+export function parkPaintedView(): void {
+  if (activeView !== null) {
+    parkView(activeView);
+  }
+  lastPaintedId = undefined;
+}
+
 function paint(): void {
   const session = getPainted();
   if (session === undefined) {
@@ -1102,10 +1112,7 @@ function paint(): void {
     if (getPaintedId() === "") {
       // Hide without disposing: the last-tab window can reopen this chat. Disposal belongs to close/delete.
       pruneDeadViews();
-      if (activeView !== null) {
-        parkView(activeView);
-      }
-      lastPaintedId = undefined;
+      parkPaintedView();
     }
     return;
   }
@@ -1172,14 +1179,6 @@ function paint(): void {
   paintMountedCards = false;
   paintSyncEntries = PAINT_SYNC_ENTRIES;
   const root = paintRoot();
-  // The placeholder never coexists with content, so it is dropped where content lands, scoped to this view. An empty
-  // turn list is a chat still loading; the load-more furniture mounts beside real turns.
-  if (turns.length > 0) {
-    const skel = maybeEl(CHAT_SKELETON_ID);
-    if (skel !== null && root.contains(skel)) {
-      skel.remove();
-    }
-  }
   beginCardPass(session);
   heldMutation(() => {
     reconcile(root, turns, turnSpec);
@@ -1199,6 +1198,11 @@ function paint(): void {
   if (unparked && activeView !== null) {
     // The DOM is at the store's state; now the paused effects come back.
     resumeView(activeView, session);
+  }
+  // The one releaser for content: an empty turn list is a chat still loading, unless the window is
+  // the server's answer or the chat has nothing to load.
+  if (cards.length > 0 || session.residency === "loaded" || isEmptyChat(session)) {
+    releaseCover(session.id);
   }
 }
 

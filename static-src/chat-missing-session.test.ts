@@ -3,41 +3,65 @@
 // reader acts on. Real store, renderer and cover; chat.ts's other collaborators stubbed.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Entry } from "./wire/types.gen.js";
+import type * as DecisionDock from "./decision-dock.js";
 
-vi.mock("./store-load.js", () => ({
+vi.mock("./store-load.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   // Never settles: the heal's re-read is not under test, the box it paints first is.
   loadList: vi.fn(() => new Promise(() => undefined)),
   loadMessages: vi.fn(() => Promise.resolve({ kind: "loaded" })),
   loadOlderTurns: vi.fn(),
   confirmChatExists: vi.fn(),
 }));
-vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
-vi.mock("./chat-commands.js", () => ({ sendPromptTo: vi.fn() }));
-vi.mock("./tabs.js", () => ({
-  openTab: vi.fn(() => Promise.resolve("opened")),
-  adoptSubject: vi.fn(),
-  activateTab: vi.fn(() => Promise.resolve()),
-  tabIdFor: vi.fn(() => ""),
-  openChatRefs: vi.fn(() => [] as string[]),
-  getActiveTabId: vi.fn(() => ""),
-  renameTab: vi.fn(),
-  setTabStatus: vi.fn(),
-  refreshActiveView: vi.fn(),
+vi.mock("./banner-stack.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ensureBound: vi.fn(),
 }));
-vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
-vi.mock("./decision-dock.js", () => ({
+vi.mock("./chat-commands.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  sendPromptTo: vi.fn(),
+}));
+vi.mock("./tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
+}));
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock())),
+}));
+vi.mock("./decision-dock.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof DecisionDock>()),
   hasPendingDecision: vi.fn(() => false),
   dropDecisions: vi.fn(),
 }));
-vi.mock("./composer-state.js", () =>
-  import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.composerStateMock()),
-);
-vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));
-vi.mock("./model-switcher.js", () => ({ applyLocalModel: vi.fn() }));
-vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
-vi.mock("./submit.js", () => ({ submitPrompt: vi.fn(), submitLabelled: vi.fn() }));
-vi.mock("./transport.js", () => ({ newOpID: () => "op-test" }));
-vi.mock("./actions/chat.js", () => ({
+vi.mock("./composer-state.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tab-switch-mocks.js").then((m) => m.composerStateMock())),
+}));
+vi.mock("./session-context.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  setCurrentModel: vi.fn(),
+  getLastModel: () => "auto",
+}));
+vi.mock("./model-switcher.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  applyLocalModel: vi.fn(),
+}));
+vi.mock("./context-ui.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  refreshContextUI: vi.fn(),
+}));
+vi.mock("./submit.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  submitPrompt: vi.fn(),
+  submitLabelled: vi.fn(),
+}));
+vi.mock("./transport.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  newOpID: () => "op-test",
+}));
+vi.mock("./actions/chat.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   deleteChat: { dispatch: vi.fn() },
   restoreChat: { dispatch: vi.fn() },
   setMode: { dispatch: vi.fn() },
@@ -86,10 +110,6 @@ const chat = await import("./chat.js");
 
 messages.mountChatView();
 
-function setPainted(id: string): void {
-  (store as unknown as { setPainted: (id: string) => void }).setPainted(id);
-}
-
 function withTurn(s: Session, reply: string): Session {
   const t = `${s.id}-t1`;
   const e = (at: number, kind: Entry["kind"], payload: unknown): Entry => ({
@@ -118,14 +138,14 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
-  setPainted("");
+  store.setPainted("");
 });
 
 describe("a tab naming a chat the store lacks", () => {
   it("shows the not-loaded box alone, with no other chat's transcript and no cover", async () => {
     store.setSessions([withTurn(makeSession({ id: "ms-a", name: "a" }), "text of a")]);
     store.setActive("ms-a");
-    setPainted("ms-a");
+    store.setPainted("ms-a");
     store.bumpMessages("ms-a", "load");
     await Promise.resolve();
     expect(messages.transcriptViewFor("ms-a")?.classList.contains("is-active")).toBe(true);
@@ -133,9 +153,7 @@ describe("a tab naming a chat the store lacks", () => {
     // The switch's gesture held the cover over A for the missing chat.
     store.setActive("ms-ghost");
     coverModule.holdCover("ms-ghost");
-    const show = (chat as unknown as { showChatView?: (id: string) => void }).showChatView;
-    expect(typeof show, "chat.showChatView").toBe("function");
-    show?.("ms-ghost");
+    chat.showChatView("ms-ghost");
     await Promise.resolve();
 
     const root = document.getElementById("messages");

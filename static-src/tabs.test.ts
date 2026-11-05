@@ -255,7 +255,7 @@ let openers: Openers;
 function registerOpeners(): void {
   openers = {
     chatShow: vi.fn<TabOpeners["chat"]["show"]>(),
-    chatRefresh: vi.fn<TabOpeners["chat"]["refresh"]>(),
+    chatRefresh: vi.fn<TabOpeners["chat"]["refresh"]>(() => Promise.resolve()),
     chatClose: vi.fn<TabOpeners["chat"]["close"]>(),
     editorShow: vi.fn<TabOpeners["editor"]["show"]>(),
     editorRefresh: vi.fn<TabOpeners["editor"]["refresh"]>(),
@@ -269,6 +269,8 @@ function registerOpeners(): void {
   };
   registerTabOpeners({
     chat: {
+      select: vi.fn(),
+      loadFailed: vi.fn(),
       show: openers.chatShow,
       refresh: openers.chatRefresh,
       close: openers.chatClose,

@@ -114,6 +114,39 @@
   height: 100%;
 }
 
+/* THE TRANSCRIPT COVER (transcript-cover.ts), out of flow over the scroller, so nothing moves
+ * under it. Opaque from its first frame, so the outgoing chat never shows through; above the
+ * turn map (z-index 4), whose markers name the outgoing chat, and below the banners and the
+ * resume control. Only the skeleton fades in, so a switch that settles in a frame or two
+ * flashes nothing. The release fades the whole cover out, taking no input from its first
+ * frame, and its `animationend` hides it. */
+.transcript-cover {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow: hidden;
+  background: var(--c-bg-primary);
+  padding-inline: max(var(--sp-4), env(safe-area-inset-left, 0))
+    max(var(--sp-4), env(safe-area-inset-right, 0));
+
+  &[data-state="released"] {
+    pointer-events: none;
+    animation: vk-fade-out var(--dur-exit) var(--ease-exit) forwards;
+  }
+}
+
+/* The transcript column's geometry (`.transcript-view`), newest card last at the foot. */
+.transcript-cover-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: var(--sp-3);
+  max-width: var(--content-max-w);
+  height: 100%;
+  margin: 0 auto;
+  animation: vk-fade-in var(--dur-micro) var(--ease-enter) backwards;
+}
+
 /* One resident chat view. Carries ALL the column declarations, so inter-turn
  * spacing, the centred cap and the flex-end geometry are per-view state that
  * parks and unparks with the chat. */

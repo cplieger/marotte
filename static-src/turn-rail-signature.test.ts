@@ -1,10 +1,24 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
+import type * as Keyenc from "@cplieger/keyenc";
 
 // The rail's render signature runs on every transcript paint, so its cost is a switch's cost:
 // keyenc is wrapped as a counting passthrough to see whether a render of an unchanged map hashes.
-const { joins } = vi.hoisted(() => ({ joins: { n: 0 } }));
+const { joins } = vi.hoisted(() => {
+  // The real scroll.js the spread below loads builds its controller over these at import.
+  for (const [id, tag] of [
+    ["messages-wrap", "div"],
+    ["messages", "div"],
+    ["scroll-bottom", "button"],
+  ] as const) {
+    const e = document.createElement(tag);
+    e.id = id;
+    e.hidden = true;
+    document.body.appendChild(e);
+  }
+  return { joins: { n: 0 } };
+});
 vi.mock("@cplieger/keyenc", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@cplieger/keyenc")>();
+  const real = await importOriginal<typeof Keyenc>();
   return {
     ...real,
     join: (...args: Parameters<typeof real.join>) => {
@@ -14,9 +28,10 @@ vi.mock("@cplieger/keyenc", async (importOriginal) => {
   };
 });
 // The rail's visibility gate and scroll reads; a transcript with room to scroll shows the map.
-vi.mock("./scroll.js", () => {
+vi.mock("./scroll.js", async (importOriginal) => {
   const el = document.createElement("div");
   return {
+    ...(await importOriginal<Record<string, unknown>>()),
     scrollableBy: () => 500,
     readingLineOffset: () => 0,
     atLiveEdgeNow: () => false,
@@ -30,12 +45,14 @@ vi.mock("./scroll.js", () => {
     onAttach: () => () => undefined,
   };
 });
-vi.mock("./api-client.js", () => ({
+vi.mock("./api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
   apiGetOrError: vi.fn(),
 }));
-vi.mock("./store-load.js", () => ({
+vi.mock("./store-load.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   loadOlderTurns: vi.fn(),
   loadList: vi.fn(),
 }));
