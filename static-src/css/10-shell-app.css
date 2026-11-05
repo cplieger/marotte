@@ -61,10 +61,12 @@
   min-width: 0;
   min-height: 0;
 
+  /* The reach starts below the header band: the title bar beside it is chrome nobody
+     scrolls, so its heading keeps the house inset instead of clearing the reach. */
   &::before {
     content: "";
     position: absolute;
-    inset-block: 0;
+    inset-block: calc(var(--sidebar-band-h) + env(safe-area-inset-top, 0px)) 0;
     inset-inline-start: 0;
     inline-size: var(--sidebar-reach);
   }
