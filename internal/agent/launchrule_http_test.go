@@ -40,8 +40,17 @@ func (f *fakeEventRuleChecker) count() int {
 // answered by forge, with the run routes mounted.
 func launchRuleHub(t *testing.T, forge *fakeEventRuleChecker) (dir string, st *launchrule.Store, mux *http.ServeMux) {
 	t.Helper()
+	return launchRuleHubListing(t, forge, "")
+}
+
+// launchRuleHubListing is launchRuleHub with the recipe listing replaced by listing when it is not empty.
+func launchRuleHubListing(t *testing.T, forge *fakeEventRuleChecker, listing string) (dir string, st *launchrule.Store, mux *http.ServeMux) {
+	t.Helper()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_rule")
+	if listing != "" {
+		br.setCallResult(methodKiroWorkflowListRecipes, json.RawMessage(listing))
+	}
 	dir = t.TempDir()
 	st, err := launchrule.NewStore(dir)
 	if err != nil {
@@ -257,6 +266,14 @@ func TestLaunchRuleRouteRefusesInvalidSpec(t *testing.T) {
 		{"a server field", clockPrefix + `{"freq":"daily","hour":2}},"status":{}}`, "status is written by the server"},
 		{"both a clock and an event", `{"source":"bundled://publish","when":{"clock":{"freq":"daily","hour":2},` +
 			`"event":{"connection":"github:github.com"}}}`, "exactly one of clock and event"},
+		{
+			"a clock input the recipe does not declare", clockPrefix + `{"freq":"daily","hour":2}},"inputs":{"tag":"v1"}}`,
+			"inputs.tag is not an input of publish",
+		},
+		{
+			"an event input the recipe does not declare", eventPrefix + `}},"inputs":{"tag":"v1"}}`,
+			"inputs.tag is not an input of publish",
+		},
 	} {
 		for _, method := range []string{http.MethodPost, http.MethodPut} {
 			t.Run(tc.name+" through "+method, func(t *testing.T) {
@@ -290,6 +307,32 @@ func TestLaunchRuleRouteRefusesInvalidSpec(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestLaunchRuleSaveChecksInputsAgainstTheRecipe(t *testing.T) {
+	const listing = `{"recipes":[{"name":"publish","source":"bundled://publish","inputs":{"tag":"string","notes":"prompt"}}]}`
+	const prefix = `{"source":"bundled://publish","enabled":true,"when":{"clock":{"freq":"daily","hour":2}},"inputs":`
+	t.Run("declared inputs are kept", func(t *testing.T) {
+		_, st, mux := launchRuleHubListing(t, &fakeEventRuleChecker{}, listing)
+		rec := sendRoute(t, mux, http.MethodPost, "/api/launch-rules", prefix+`{"tag":"v1","notes":"ship it"}}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("POST = %d %s, want 200", rec.Code, rec.Body.String())
+		}
+		rules := st.List()
+		if len(rules) != 1 || rules[0].Inputs["tag"] != "v1" || rules[0].Inputs["notes"] != "ship it" {
+			t.Errorf("stored rules = %+v, want one carrying tag=v1 and notes", rules)
+		}
+	})
+	t.Run("the first undeclared name in order is named", func(t *testing.T) {
+		dir, _, mux := launchRuleHubListing(t, &fakeEventRuleChecker{}, listing)
+		rec := sendRoute(t, mux, http.MethodPost, "/api/launch-rules", prefix+`{"zeta":"x","tag":"v1","alpha":"y"}}`)
+		if rec.Code != http.StatusBadRequest || errorText(t, rec) != "inputs.alpha is not an input of publish" {
+			t.Errorf("POST = %d %s, want 400 naming inputs.alpha", rec.Code, rec.Body.String())
+		}
+		if rulesFile(t, dir) != nil {
+			t.Errorf("a refused save wrote launch-rules.json")
+		}
+	})
 }
 
 func TestEventRuleSaveAnswersTheForgeCheck(t *testing.T) {

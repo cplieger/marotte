@@ -274,13 +274,13 @@ function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
           close();
           void openSettingsView("permissions");
         },
-        // The picker's flag is carried through rather than re-decided here: it was hardcoded true
-        // at both ends, so a paused schedule was unreachable even once the form could express it.
         // Closed only once saved: a refused pick leaves the reader's edits on the form beside the
-        // server's sentence.
+        // server's sentence. The rule is looked up at save, not at open: a list that lands while
+        // the form is open names the rule to replace, and a POST then would add a second one.
         onSave: (spec: ScheduleSpec, enabled: boolean, defaults: RunDefaults) => {
           void (async () => {
-            const id = view === undefined ? {} : { id: view.id };
+            const current = schedules.get(source);
+            const id = current === undefined ? {} : { id: current.id };
             if (
               (await saveSchedule.dispatch({ ...id, source, spec, enabled, ...defaults })) === null
             ) {
@@ -293,8 +293,9 @@ function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
         onRemove: () => {
           close();
           void (async () => {
-            if (view !== undefined) {
-              await deleteSchedule.dispatch(view.id);
+            const current = schedules.get(source);
+            if (current !== undefined) {
+              await deleteSchedule.dispatch(current.id);
             }
             await refreshSchedules();
           })();

@@ -1,6 +1,7 @@
 // Workflow-schedule actions over the clock rules of /api/launch-rules. The server owns the
 // recurrence math and next_run_at.
 
+import { join as joinKey } from "@cplieger/keyenc";
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import type {
   LaunchRulesResponse,
@@ -56,12 +57,14 @@ export const loadSchedules = apiAction<
 });
 
 /** Create a recipe's clock rule, or replace the one `id` names. A refused model pick shows the
- *  server's sentence. */
+ *  server's sentence. A create while one for the same recipe is in flight joins it, because a
+ *  second POST would mint a second rule the form never shows. */
 export const saveSchedule = apiAction<
   { id?: string; source: string; spec: ScheduleSpec; enabled: boolean } & RunDefaults,
   LaunchRuleView
 >({
   name: "schedules.save",
+  dedupe: (a) => (a.id === undefined ? joinKey("new", a.source) : joinKey("rule", a.id)),
   request: (a) => ({
     method: a.id === undefined ? "POST" : "PUT",
     path:

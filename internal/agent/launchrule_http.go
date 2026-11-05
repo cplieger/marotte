@@ -1,15 +1,15 @@
 package agent
 
-// Launch-rule REST behind the workflow rows' Schedule button: a recipe holds any number of rules, each saved whole.
-
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/cplieger/go/httpserver"
@@ -185,6 +185,12 @@ func (rr *runRoutes) prepareRule(ctx context.Context, w http.ResponseWriter, rul
 		slog.Warn("launch rule save: recipe list failed", "error", logsafe.Field(err.Error()), "detail", rpcerr.Details(err))
 		httpreply.InternalError(w, errors.New("recipe list unavailable"))
 		return false
+	}
+	for _, name := range slices.Sorted(maps.Keys(rule.Inputs)) {
+		if _, declared := recipe.Inputs[name]; !declared {
+			httpreply.BadRequest(w, "inputs."+name+" is not an input of "+recipe.Name)
+			return false
+		}
 	}
 	defaults := marotte.RunDefaults{Model: rule.Model, Effort: rule.Effort}
 	if err := rr.runs.checkRunDefaults(ctx, defaults); writeDefaultsErr(w, err) {

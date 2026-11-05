@@ -74,6 +74,33 @@ describe("saveSchedule", () => {
     ]);
   });
 
+  it("sends one POST for two saves of a recipe made before the first answers", async () => {
+    answer(view);
+    const args = { source: "bundled://nightly", spec: daily, enabled: true };
+    await Promise.all([saveSchedule.dispatch(args), saveSchedule.dispatch(args)]);
+    expect(calls()).toEqual([
+      {
+        url: "/api/launch-rules",
+        method: "POST",
+        body: { source: "bundled://nightly", enabled: true, when: { clock: daily } },
+      },
+    ]);
+  });
+
+  it("joins neither another recipe's create nor a replace to a create in flight", async () => {
+    mockFetch.mockImplementation(async () => new Response(JSON.stringify(view), { status: 200 }));
+    await Promise.all([
+      saveSchedule.dispatch({ source: "bundled://nightly", spec: daily, enabled: true }),
+      saveSchedule.dispatch({ source: "bundled://weekly", spec: daily, enabled: true }),
+      saveSchedule.dispatch({ id: "r1", source: "bundled://nightly", spec: daily, enabled: true }),
+    ]);
+    expect(calls().map((c) => [c.method, c.url])).toEqual([
+      ["POST", "/api/launch-rules"],
+      ["POST", "/api/launch-rules"],
+      ["PUT", "/api/launch-rules/r1"],
+    ]);
+  });
+
   it("encodes the id into the path", async () => {
     answer(view);
     await saveSchedule.dispatch({

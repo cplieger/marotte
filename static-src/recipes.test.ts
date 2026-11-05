@@ -816,6 +816,54 @@ describe("the Schedule form", () => {
     });
   });
 
+  it("replaces the clock rule a list landing after the form opened names", async () => {
+    vi.mocked(saveSchedule.dispatch).mockClear();
+    vi.mocked(loadSchedules.dispatch).mockClear();
+    recipesReply = { recipes: [recipe("nightly")] };
+    // A first panel whose list reads empty, so no rule is known when the second one opens its form.
+    const first = await render();
+    await vi.waitFor(() => {
+      expect(vi.mocked(loadSchedules.dispatch)).toHaveBeenCalledTimes(1);
+    });
+    await Promise.resolve();
+    first.remove();
+    let land: (r: SchedulesResponse) => void = () => undefined;
+    vi.mocked(loadSchedules.dispatch).mockImplementationOnce(
+      (() =>
+        new Promise<SchedulesResponse>((resolve) => {
+          land = resolve;
+        })) as unknown as typeof loadSchedules.dispatch,
+    );
+    const panel = await render();
+    await vi.waitFor(() => {
+      expect(vi.mocked(loadSchedules.dispatch)).toHaveBeenCalledTimes(2);
+    });
+    const btn = panel.querySelector<HTMLButtonElement>(".recipe-sched-btn");
+    expect(btn?.classList.contains("on")).toBe(false);
+    btn?.click();
+    land({
+      schedules: [
+        {
+          id: "r-late",
+          source: "bundled://nightly",
+          enabled: true,
+          spec: { freq: "daily", hour: 3, minute: 0 },
+        },
+      ],
+    });
+    await vi.waitFor(() => {
+      expect(panel.querySelector(".recipe-sched-btn.on")).not.toBeNull();
+    });
+    clickSave();
+    await vi.waitFor(() => {
+      expect(vi.mocked(saveSchedule.dispatch)).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(saveSchedule.dispatch).mock.calls[0]?.[0]).toMatchObject({
+      id: "r-late",
+      source: "bundled://nightly",
+    });
+  });
+
   it("sends no id for a recipe with no clock rule yet", async () => {
     vi.mocked(saveSchedule.dispatch).mockClear();
     await openSchedule();
