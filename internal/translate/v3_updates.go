@@ -186,8 +186,8 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	if t.handleAskInfo(chatID, &u.Meta.Kiro, attr) {
 		return
 	}
-	// A step's frame stops here: its model fallback and metering go to its run turn, and only its
-	// credits reach the chat.
+	// A step's frame stops here: its hooks, model fallback and metering go to its run turn, and
+	// only its credits reach the chat.
 	if attr.Step {
 		t.handleStepFrame(ctx, chatID, attr, &u.Meta.Kiro)
 		return
@@ -204,7 +204,7 @@ func (t *Translator) handleChatInfo(ctx context.Context, chatID marotte.ChatID, 
 		return
 	}
 	if h := k.Hook; h != nil {
-		t.handleHookUpdate(ctx, chatID, h, k.subtask())
+		t.handleHookUpdate(ctx, chatID, FrameAttribution{}, h, k.subtask())
 		return
 	}
 	if d := k.DisplayError; d != nil {
@@ -244,14 +244,18 @@ func (t *Translator) handleChatInfo(ctx context.Context, chatID marotte.ChatID, 
 }
 
 func (t *Translator) handleStepFrame(ctx context.Context, chatID marotte.ChatID, attr FrameAttribution, k *sessionInfoKiroBlock) {
+	if h := k.Hook; h != nil {
+		t.handleHookUpdate(ctx, chatID, attr, h, k.subtask())
+		return
+	}
 	if !t.stepModelFallback(ctx, chatID, attr, k) {
 		t.billStepMetering(ctx, chatID, attr, k)
 	}
 }
 
 // HandleStepInfoUpdate is the parentless run host session's reading of a step's
-// session_info_update: the run turn's metering and model fallback, the withdrawal of an ask
-// filed under `run:<id>`, and the step's own steering frames. It never reaches a chat header.
+// session_info_update: the run turn's hooks, metering and model fallback, the withdrawal of an
+// ask filed under `run:<id>`, and the step's own steering frames. It never reaches a chat header.
 func (t *Translator) HandleStepInfoUpdate(ctx context.Context, key marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
@@ -262,6 +266,10 @@ func (t *Translator) HandleStepInfoUpdate(ctx context.Context, key marotte.ChatI
 		return
 	}
 	if stepSteering(attr) && t.handleSteeringUpdate(ctx, stepSteerScope(attr), &u) {
+		return
+	}
+	if h := u.Meta.Kiro.Hook; h != nil {
+		t.handleHookUpdate(ctx, key, attr, h, u.Meta.Kiro.subtask())
 		return
 	}
 	if t.stepModelFallback(ctx, key, attr, &u.Meta.Kiro) {
