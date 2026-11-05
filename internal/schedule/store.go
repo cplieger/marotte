@@ -87,10 +87,12 @@ type Entry struct {
 	// added again is told from its predecessor only by Life; "" on a row written before rows carried one.
 	Life string `json:"life,omitempty"`
 	// Model and Effort are sent at each fire as the run's marotte.RunDefaults; empty sends none.
-	Model   string `json:"model,omitempty"`
-	Effort  string `json:"effort,omitempty"`
-	Spec    Spec   `json:"spec"`
-	Enabled bool   `json:"enabled"`
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+	// Inputs are the fixed inputs sent at each fire.
+	Inputs  map[string]string `json:"inputs,omitempty"`
+	Spec    Spec              `json:"spec"`
+	Enabled bool              `json:"enabled"`
 }
 
 // ID addresses the schedule: a digest of Source, so a recipe owns at most one row and the id

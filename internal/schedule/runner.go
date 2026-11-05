@@ -50,12 +50,14 @@ func (b *BusyError) boundBy(row Row, due time.Time) bool {
 }
 
 // Launcher starts one workflow run on behalf of a schedule. row lets the host
-// attribute the run's outcome to that life of the row. slotAt is an input to the run's bound; zero means
+// attribute the run's outcome to that life of the row. inputs are the schedule's fixed inputs. slotAt is an
+// input to the run's bound; zero means
 // no slot. An error with no id names no run, as with ErrNoRunCanStart and ErrEngineBusy always. An id
 // with an error names a run created but not started, whose failure the host recorded on the row.
 type Launcher interface {
 	LaunchScheduled(
-		ctx context.Context, source string, row Row, defaults marotte.RunDefaults, slotAt time.Time,
+		ctx context.Context, source string, row Row, inputs map[string]string, defaults marotte.RunDefaults,
+		slotAt time.Time,
 	) (id, name string, err error)
 }
 
@@ -239,7 +241,7 @@ func (r *Runner) launch(ctx context.Context, e *Entry, due time.Time) slotTurn {
 			"id", e.ID(), "source", e.Source, "error", dErr)
 		slotAt = time.Time{}
 	}
-	runID, name, err := r.launcher.LaunchScheduled(ctx, e.Source, e.Row(),
+	runID, name, err := r.launcher.LaunchScheduled(ctx, e.Source, e.Row(), e.Inputs,
 		marotte.RunDefaults{Model: e.Model, Effort: e.Effort}, slotAt)
 	turn := slotTurn{due: due, at: r.now(), err: err, runID: runID, name: name}
 	busy, isBusy := errors.AsType[*BusyError](err)

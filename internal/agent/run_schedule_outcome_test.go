@@ -51,7 +51,7 @@ func TestLaunch_ARecipeBusyRefusalNamesTheLiveRun(t *testing.T) {
 	})
 
 	_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"},
-		marotte.RunDefaults{}, time.Now().Add(time.Hour))
+		nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
 	var busy *schedule.BusyError
 	if !errors.As(err, &busy) || busy.WorkflowID != "wf_live" {
 		t.Fatalf("LaunchScheduled = %v, want a busy refusal naming wf_live", err)
@@ -87,7 +87,7 @@ func TestLaunch_ARecipeBusyRefusalCarriesTheLiveRunsLease(t *testing.T) {
 	refusal := func(t *testing.T, h *Runtime, entry *schedule.Entry) *schedule.BusyError {
 		t.Helper()
 		_, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(),
-			marotte.RunDefaults{}, time.Now().Add(25*time.Hour))
+			nil, marotte.RunDefaults{}, time.Now().Add(25*time.Hour))
 		busy, ok := errors.AsType[*schedule.BusyError](err)
 		if !ok || busy.WorkflowID != "wf_1" {
 			t.Fatalf("LaunchScheduled = %v, want a busy refusal naming wf_1", err)

@@ -72,7 +72,7 @@ func TestLaunch_AnEngineEndUnderInvokeKeepsTheRunOnlyIfWritten(t *testing.T) {
 		h, br, st, entry := nightlyLaunch(t)
 		br.setCallErr(methodKiroWorkflowInvoke, unwrittenExit())
 
-		id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), marotte.RunDefaults{},
+		id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), nil, marotte.RunDefaults{},
 			time.Now().Add(time.Hour))
 		if id != "wf_1" || err == nil {
 			t.Errorf("LaunchScheduled = %q, %v; want wf_1 failed", id, err)

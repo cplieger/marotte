@@ -113,7 +113,7 @@ var closedGateVerbs = []closedGateVerb{
 	{
 		name: "a scheduled launch", route: "schedule", want: gateRefuses,
 		call: func(ctx context.Context, t *testing.T, h *Runtime) error {
-			_, _, err := h.runs.LaunchScheduled(ctx, "bundled://demo", schedule.Row{ID: "s1"}, marotte.RunDefaults{}, time.Time{})
+			_, _, err := h.runs.LaunchScheduled(ctx, "bundled://demo", schedule.Row{ID: "s1"}, nil, marotte.RunDefaults{}, time.Time{})
 			if !errors.Is(err, schedule.ErrNoRunCanStart) {
 				t.Errorf("LaunchScheduled = %v, want it held by the schedule runner", err)
 			}

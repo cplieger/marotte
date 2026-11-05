@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,7 +19,9 @@ import (
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/slogx/capture"
 )
 
 type bufferedEvent struct {
@@ -1064,4 +1067,97 @@ func TestHandleLaunch_AStalledEngineAnswersStillApplyingAndTheLaunchLands(t *tes
 	walkAway()
 	release()
 	waitUntil(t, "the late launch's host registration", func() bool { return h.bridge.mgr.get("run:wf_9") != nil })
+}
+
+// declaringRecipe lists bundled://publish declaring lane and cap, with an idle run list and a launch that succeeds.
+func declaringRecipe(br *fakeBridge) {
+	br.mu.Lock()
+	defer br.mu.Unlock()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowListRecipes: json.RawMessage(
+			`{"recipes":[{"name":"publish","source":"bundled://publish","inputs":{"lane":"string","cap":"string"}}]}`,
+		),
+		methodKiroWorkflowList:   json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowNew:    json.RawMessage(`{"workflowId":"wf_9"}`),
+		methodKiroWorkflowInvoke: json.RawMessage(`{}`),
+	}
+}
+
+// sentInputs is the inputs object workflow/new carried.
+func sentInputs(t *testing.T, br *fakeBridge) map[string]any {
+	t.Helper()
+	params := br.paramsFor(methodKiroWorkflowNew)
+	if params == nil {
+		t.Fatal("no workflow/new was sent")
+	}
+	in, ok := params["inputs"].(map[string]any)
+	if !ok {
+		t.Fatalf("workflow/new inputs = %#v, want an object", params["inputs"])
+	}
+	return in
+}
+
+func TestScheduledLaunchDropsUndeclaredInputs(t *testing.T) {
+	h, _, br := newTestHub()
+	declaringRecipe(br)
+	rec := capture.Default(t)
+	inputs := map[string]string{"lane": "fast", "stray": "x", "other": "y"}
+	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"}, inputs,
+		marotte.RunDefaults{}, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("LaunchScheduled: %v", err)
+	}
+	if got, want := sentInputs(t, br), map[string]any{"lane": "fast"}; !maps.Equal(got, want) {
+		t.Errorf("workflow/new inputs = %v, want %v", got, want)
+	}
+	if got, ok := rec.AttrValueExact("workflow run launched", "dropped_inputs"); !ok || got != "other,stray" {
+		t.Errorf("launch line dropped_inputs = %q (logged %v), want other,stray", got, ok)
+	}
+	if len(inputs) != 3 {
+		t.Errorf("the caller's inputs = %v, want them untouched", inputs)
+	}
+}
+
+func TestScheduledLaunchSendsDeclaredInputs(t *testing.T) {
+	h, _, br := newTestHub()
+	declaringRecipe(br)
+	rec := capture.Default(t)
+	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"},
+		map[string]string{"lane": "fast", "cap": "3"}, marotte.RunDefaults{}, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("LaunchScheduled: %v", err)
+	}
+	if got, want := sentInputs(t, br), map[string]any{"lane": "fast", "cap": "3"}; !maps.Equal(got, want) {
+		t.Errorf("workflow/new inputs = %v, want %v", got, want)
+	}
+	if got, ok := rec.AttrValueExact("workflow run launched", "dropped_inputs"); ok {
+		t.Errorf("launch line dropped_inputs = %q, want the attribute absent when nothing was dropped", got)
+	}
+}
+
+// An agent:// source has no listed recipe, so no declared inputs: its prompt must still reach workflow/new.
+func TestAgentLaunchKeepsPrompt(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList:   json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowNew:    json.RawMessage(`{"workflowId":"wf_9"}`),
+		methodKiroWorkflowInvoke: json.RawMessage(`{}`),
+	}
+	if _, _, err := h.runs.launch(t.Context(), "agent://wf-coder", map[string]string{"prompt": "fix the build"},
+		marotte.RunDefaults{}); err != nil {
+		t.Fatalf("launch(agent://wf-coder): %v", err)
+	}
+	if got, want := sentInputs(t, br), map[string]any{"prompt": "fix the build"}; !maps.Equal(got, want) {
+		t.Errorf("workflow/new inputs = %v, want %v", got, want)
+	}
+}
+
+func TestManualLaunchInputsUnfiltered(t *testing.T) {
+	_, br, mux := runDefaultsHub(t)
+	declaringRecipe(br)
+	rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish","inputs":{"lane":"fast","stray":"x"}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/runs = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if got, want := sentInputs(t, br), map[string]any{"lane": "fast", "stray": "x"}; !maps.Equal(got, want) {
+		t.Errorf("workflow/new inputs = %v, want %v", got, want)
+	}
 }
