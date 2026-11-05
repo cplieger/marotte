@@ -187,7 +187,7 @@ func (s *Store) presetRulesInForce(ctx context.Context) ([]policyfile.Rule, erro
 	return out, nil
 }
 
-// restoreUserFile puts back the rules Load read, keeping f's other keys.
+// restoreUserFile puts back the rules Load read; Save keeps the file's other keys and comments.
 func restoreUserFile(ctx context.Context, path string, existed bool, f *policyfile.File, before []policyfile.Rule) error {
 	if !existed {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {

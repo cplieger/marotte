@@ -376,6 +376,31 @@ func TestSignatureOrderIndependent(t *testing.T) {
 	}
 }
 
+// KAS keys a rule by a JSON string of its fields, so a pattern holding a comma is its own rule.
+func TestSignatureTellsACommaPatternFromTwoPatterns(t *testing.T) {
+	pairs := map[string][2]Rule{
+		"match": {
+			{Capability: "shell", Effect: "deny", Match: []string{"a,b"}},
+			{Capability: "shell", Effect: "deny", Match: []string{"a", "b"}},
+		},
+		"exclude": {
+			{Capability: "shell", Effect: "deny", Exclude: []string{"a,b"}},
+			{Capability: "shell", Effect: "deny", Exclude: []string{"a", "b"}},
+		},
+		"match into exclude": {
+			{Capability: "shell", Effect: "deny", Match: []string{"a|x:b"}},
+			{Capability: "shell", Effect: "deny", Match: []string{"a"}, Exclude: []string{"b"}},
+		},
+	}
+	for name, p := range pairs {
+		t.Run(name, func(t *testing.T) {
+			if signature(&p[0]) == signature(&p[1]) {
+				t.Errorf("%+v and %+v share a signature", p[0], p[1])
+			}
+		})
+	}
+}
+
 // --- ReplaceEffect (in-place effect editing) ---
 
 func TestReplaceEffect(t *testing.T) {
