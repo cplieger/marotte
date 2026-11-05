@@ -293,10 +293,16 @@ func Save(ctx context.Context, path string, f *File) error {
 	if err != nil {
 		return err
 	}
-	// An edit that broke the document (an alias into a replaced rule) fails here, not at KAS's
+	// An edit that breaks the document (an alias into a dropped rule), would read back with other
+	// rules, or retargets any alias to an earlier anchor of the same name fails here, not at KAS's
 	// next reload.
 	if err := readsBack(data, filepath.Base(path), f.Rules); err != nil {
 		return err
+	}
+	if doc != nil {
+		if err := aliasesHold(doc); err != nil {
+			return fmt.Errorf("refusing to write %s: %w", filepath.Base(path), err)
+		}
 	}
 	// WithMaxBytes mirrors Load's size guard: Save can never persist a
 	// policy file its own Load would reject as oversize.
@@ -401,6 +407,32 @@ func rulesNode(prev *yaml.Node, rules []Rule) (*yaml.Node, error) {
 		}
 	}
 	return value, nil
+}
+
+// aliasesHold reports an alias in doc that would read back as another value: in document order,
+// each alias must name the anchored node it was parsed with, which a dropped rule holding that
+// anchor, or a reordered one, would change.
+func aliasesHold(doc *yaml.Node) error {
+	latest := map[string]*yaml.Node{}
+	var walk func(n *yaml.Node) error
+	walk = func(n *yaml.Node) error {
+		if n.Kind == yaml.AliasNode {
+			if latest[n.Value] != n.Alias {
+				return fmt.Errorf("the alias *%s would point at another value", n.Value)
+			}
+			return nil
+		}
+		if n.Anchor != "" {
+			latest[n.Anchor] = n
+		}
+		for _, c := range n.Content {
+			if err := walk(c); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return walk(doc)
 }
 
 // readsBack refuses data, the text Save is about to write to the file called name, unless it

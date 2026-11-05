@@ -648,6 +648,44 @@ func TestSave_RefusesAnEditThatWouldRetargetAnAlias(t *testing.T) {
 	}
 }
 
+// TestReadsBack_RefusesTheSameRulesInAnotherOrder pins that the guard compares the rules in
+// order: the first rule that matches decides, so two swapped rules are other rules.
+func TestReadsBack_RefusesTheSameRulesInAnotherOrder(t *testing.T) {
+	rules := []Rule{{Capability: "shell", Effect: EffectDeny}, {Capability: "write", Effect: EffectAllow}}
+	text := "rules: [{capability: write, effect: allow}, {capability: shell, effect: deny}]\n"
+	if err := readsBack([]byte(text), filename, rules); err == nil || !strings.Contains(err.Error(), "would read back with other rules") {
+		t.Errorf("readsBack(%q) = %v, want the other-rules refusal", text, err)
+	}
+}
+
+// TestSave_RefusesAnEditThatWouldRetargetAnotherKeysAlias pins the alias check on the keys Save
+// keeps: dropping the rule that defines an anchor would make workspaceTrusted, or a policies
+// entry, read the earlier anchor of the same name. Save refuses and leaves the file as it was.
+func TestSave_RefusesAnEditThatWouldRetargetAnotherKeysAlias(t *testing.T) {
+	for name, before := range map[string]string{
+		"workspaceTrusted": "pre: &t false\nrules:\n  - {capability: shell, effect: deny, match: [&t true]}\n  - {capability: write, effect: allow}\nworkspaceTrusted: *t\n",
+		"a policies entry": "pre: &a fs_read\nrules:\n  - {capability: &a shell, effect: deny}\n  - {capability: write, effect: allow}\npolicies:\n  allow: *a\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), filename)
+			if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			f, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			f.Rules = f.Rules[1:]
+			if err := Save(t.Context(), path, f); err == nil || !strings.Contains(err.Error(), "would point at another value") {
+				t.Fatalf("Save = %v, want the alias refusal", err)
+			}
+			if got, err := os.ReadFile(path); err != nil || string(got) != before {
+				t.Errorf("file after the refused Save = %q (%v), want it unchanged", got, err)
+			}
+		})
+	}
+}
+
 // TestSave_CarriesAnExplicitTagFromTheJSONSibling pins that a tag written in permissions.json
 // stays in the permissions.yaml Save writes, and that the value reads back the same.
 func TestSave_CarriesAnExplicitTagFromTheJSONSibling(t *testing.T) {
