@@ -83,10 +83,11 @@
 }
 
 .chat-toolbar {
-  --toolbar-gap: 0.125rem;
+  /* Wide enough on touch for neighbouring buttons' 44px targets to meet. */
+  --toolbar-gap: max(0.125rem, var(--tap-gap));
 
   /* The bar's rendered bottom edge, for the notice band (`.banner-stack`,
-     13-messages.css), which no token can place: below 344px of chat area the
+     13-messages.css), which no token can place: on a narrow phone the
      actions no longer fit a row and wrap, so the bar's height stops being
      `--titlebar-h` and becomes content-driven. The band reads this and then
      publishes its OWN bottom edge as `--notice-band` for the toast stack, so the
@@ -103,8 +104,8 @@
      which is `position: absolute`, so it leaves the flex line entirely. */
   justify-content: flex-end;
 
-  /* Seven 44px targets plus six 2px gaps is 320px against `width - 24px`, so
-     the phone row fits from 344px; below that the wrap is deliberate, since
+  /* On touch, seven 36px buttons plus six 8px gaps is 300px against `width - 24px`,
+     so the phone row fits from 324px; below that the wrap is deliberate, since
      without it the row overflows past `flex-end` off the start edge, out of
      reach. An in-flow heading costs one more gap, so `page-title.ts` measures
      the actions' rows too and clips the heading before the bar breaks for it.
@@ -133,11 +134,9 @@
   background: var(--c-bg-primary);
   border-block-end: 1px solid var(--c-border);
 
-  /* The one control group whose painted box grows with the tier: the box and its
-     active fill are the 44px target, so no expander reaches past them. */
   & .icon-btn {
-    min-width: max(var(--btn-h), var(--hit-floor));
-    min-height: max(var(--btn-h), var(--hit-floor));
+    min-width: var(--btn-h);
+    min-height: var(--btn-h);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -148,11 +147,6 @@
        the mobile rule zeroed. `--r-sm` is the rung for a control under 28px on
        the fine tier; see 01-tokens.css's ladder. */
     border-radius: var(--r-sm);
-
-    & > .ic-ui {
-      inline-size: var(--icon-toolbar);
-      block-size: var(--icon-toolbar);
-    }
   }
 
   & .mobile-only {
@@ -179,7 +173,7 @@
    `min-inline-size` because the rule above sets a floor of `--btn-h` that would
    otherwise hold the width open), the ink (`opacity`), and the GAP the item is
    still entitled to as a flex child — `gap` is drawn between items whatever their
-   width, so a zero-width button still costs 2px. `--toolbar-gap` is named once
+   width, so a zero-width button still costs a gap. `--toolbar-gap` is named once
    and consumed twice, by the `gap` above and by the negative margin here, so the
    two cannot drift.
 
@@ -198,7 +192,6 @@
    ========================================================================== */
 
 .chat-toolbar > .icon-btn {
-  overflow: hidden;
   transition:
     opacity var(--dur-exit) var(--ease-exit),
     inline-size var(--dur-exit) var(--ease-exit),
@@ -211,6 +204,8 @@
 }
 
 .chat-toolbar > .icon-btn.is-collapsed {
+  /* Only while collapsed: a clip on the open button would cut its expander. */
+  overflow: hidden;
   visibility: hidden;
   opacity: 0;
   inline-size: 0;

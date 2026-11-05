@@ -1090,8 +1090,7 @@ interface Surface {
   /** Controls inside a layout: painted at the mouse's size, the 44px target invisible around them.
    *  Each selector must match at least one rendered element, and every match is checked. */
   readonly controls: readonly string[];
-  /** Elements that are their own target: rows, fields and the header icons, whose box grows to
-   *  the floor. */
+  /** Elements that are their own target: rows and fields, whose box grows to the floor. */
   readonly rows?: readonly string[];
   /** Controls with no target of their own (a slider's thumb rides its track): painted size only. */
   readonly painted?: readonly string[];
@@ -1142,15 +1141,13 @@ const SURFACES: readonly Surface[] = [
     name: "the chat header",
     sizes: ALL,
     setup: () => undefined,
-    controls: [],
-    rows: HEADER_ICONS,
+    controls: HEADER_ICONS,
   },
   {
     name: "the phone header's menu",
     sizes: [390],
     setup: () => undefined,
-    controls: [],
-    rows: ["#menu-toggle"],
+    controls: ["#menu-toggle"],
   },
   {
     name: "the find bar",
@@ -2106,6 +2103,35 @@ describe.each(ALL)("the coarse tier at %ipx", (size) => {
       expect(drift, `\n${drift.join("\n")}\n`).toEqual([]);
     },
   );
+
+  it.each(cases.filter((s) => s.ownFineForm !== true).map((s) => [s.name, s] as const))(
+    "%s: each glyph inside a control or row draws at its mouse-tier size",
+    async (_name, s) => {
+      const glyphs = async (tier: "fine" | "coarse"): Promise<Map<string, string>> => {
+        await mountSurface(s, size, tier);
+        return new Map(
+          probesFor(s).flatMap((p) =>
+            [...p.el.querySelectorAll("svg")]
+              .filter((g) => g.checkVisibility())
+              .map((g, i) => {
+                const r = g.getBoundingClientRect();
+                return [
+                  `${p.label} svg[${String(i)}]`,
+                  `${r.width.toFixed(1)}x${r.height.toFixed(1)}`,
+                ] as const;
+              }),
+          ),
+        );
+      };
+      const fine = await glyphs("fine");
+      const coarse = await glyphs("coarse");
+      expect(coarse.size, "glyphs drawn on coarse").toBe(fine.size);
+      const grown = [...coarse]
+        .filter(([label, wh]) => fine.get(label) !== wh)
+        .map(([label, wh]) => `${label}: ${wh} coarse, ${String(fine.get(label))} fine`);
+      expect(grown, `\n${grown.join("\n")}\n`).toEqual([]);
+    },
+  );
 });
 
 describe("a run card's step pitch on the coarse tier", () => {
@@ -2165,14 +2191,15 @@ describe("a transcript's task list on the coarse tier", () => {
 });
 
 describe("the chat header's icons", () => {
+  // `--btn-h` is 2.25rem on every tier: touch grows their targets, never their boxes.
   it.each(ALL)(
-    "keep a 44px box on the coarse tier at %ipx, their mouse box on a fine one",
+    "paint their 36px mouse box on the coarse and the fine tier at %ipx",
     async (size) => {
       await page.viewport(...VIEWPORTS[size]);
       const header = SURFACES.find((s) => s.name === "the chat header")!;
       for (const [tier, want] of [
         ["fine", 36],
-        ["coarse", FLOOR],
+        ["coarse", 36],
       ] as const) {
         await mountSurface(header, size, tier);
         const sizes = probesFor(header).map(

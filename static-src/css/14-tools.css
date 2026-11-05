@@ -1400,9 +1400,6 @@ a.subagent-header {
  * is modified, as `.git-st-*` and VS Code's gitDecoration; the STATE ink, never --c-warning. */
 .git-badge {
   position: absolute;
-  /* These insets have to keep it INSIDE the button's box: the toolbar clips its
-     buttons (`.chat-toolbar > .icon-btn { overflow: hidden }`, 12-chat.css, for
-     the find-button collapse) and outscores any override on the button's id. */
   top: 0.25rem;
   right: 0.25rem;
   width: 0.4375rem;

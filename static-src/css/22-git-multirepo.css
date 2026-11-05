@@ -428,10 +428,8 @@
 .git-branch-popover-create {
   display: flex;
   gap: var(--sp-2);
-  /* stretch, not center: the field's own min-height sets the row height and
-   * the buttons then match it exactly. Centering left the input floating 2px
-   * clear of the button tops and bottoms. */
-  align-items: stretch;
+  /* Centred, not stretched: on touch the field is taller than the button's paint. */
+  align-items: center;
 }
 
 /* The action stays square beside the field, whatever the field wants. */

@@ -29,20 +29,16 @@
   --rail-foot: calc(var(--sp-3) + max(var(--ctl-h-sm), var(--hit-floor)) + var(--sp-2));
 }
 
-/* A FINGER'S RAIL, on a touch device or in touch mode: a 48px column is the press-and-drag band
- * and the step buttons' width, and 48px is their height and the resume control's target. Still
- * inside the 3.75rem gutter at 57.5rem. The resume control does not dock here, so the foot is
- * bare. Two rules, one value: a selector cannot OR an attribute with a media query. */
+/* A FINGER'S RAIL, on a touch device or in touch mode: the resume control does not dock, so the
+ * foot is bare. A touch device in mouse mode keeps the finger's 44px step buttons, which its own
+ * `--hit-floor` would not give. A selector cannot OR an attribute with a media query. */
 :root[data-pointer="coarse"] [id="messages-wrap-outer"] {
-  --rail-w: 3rem;
-  --rail-hit: 3rem;
   --rail-foot: var(--sp-3);
 }
 
 @media (any-pointer: coarse) {
   [id="messages-wrap-outer"] {
-    --rail-w: 3rem;
-    --rail-hit: 3rem;
+    --rail-hit: 2.75rem;
     --rail-foot: var(--sp-3);
   }
 }
@@ -1105,9 +1101,9 @@
   position: absolute;
 
   /* Two declarations, and the second is the exact one. `--below-chat-toolbar`
-   * describes a ONE-ROW bar, and the toolbar reaches two below 344px of chat
-   * area, where seven 44px targets no longer fit a row and the actions wrap
-   * (12-chat.css) — the token would leave this band over the second row of buttons.
+   * describes a ONE-ROW bar, and the toolbar reaches two below 324px of chat
+   * area on touch, where the seven buttons and their tap gaps no longer fit a row
+   * and wrap (12-chat.css) — the token would leave this band over the second row of buttons.
    * `anchor()` reads the real bottom edge. Its own fallback is the one-row edge, so
    * an engine with no anchor positioning drops the second declaration and keeps the
    * first. `.chat-toolbar` carries the `anchor-name` and is a SIBLING of the views
@@ -1408,7 +1404,7 @@
 }
 
 /* THE TARGET IS `--rail-hit`, the turn map's navigator target, rather than the shared
- * `--hit-floor`, so a finger gets 48px in every form. */
+ * `--hit-floor`, so a finger gets 44px in mouse mode too. */
 [id="scroll-bottom"]::after {
   inset-block: min(0px, calc((100% - var(--rail-hit)) / 2));
   inset-inline: min(0px, calc((100% - var(--rail-hit)) / 2));

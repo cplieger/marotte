@@ -476,7 +476,6 @@
     --row-tap-line: var(--hit-floor);
     --row-h-2: 3.75rem;
     --row-h-3: 4.75rem;
-    --icon-toolbar: 1.25rem;
   }
 
   /* NO-JS FALLBACK. A capability query cannot decide this tier: Chromium reports
@@ -489,7 +488,6 @@
       --row-tap-line: var(--hit-floor);
       --row-h-2: 3.75rem;
       --row-h-3: 4.75rem;
-      --icon-toolbar: 1.25rem;
     }
   }
 
@@ -506,9 +504,6 @@
     --titlebar-h: 3.25rem;
     --icon-inline: 0.75rem;
     --icon-ui: 1rem;
-    /* The chat header's glyph, one step up on touch, where the header icons keep a
-     * box at the floor (12-chat.css). */
-    --icon-toolbar: var(--icon-ui);
     --icon-lg: 1.5rem;
     --icon-hero: 3rem;
     /* ---- Status dots ------------------------------------------------------ *
