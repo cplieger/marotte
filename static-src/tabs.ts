@@ -52,9 +52,15 @@ import {
   reparentTabCommand,
   reorderTabsCommand,
   REORDER_STALE,
+  defineSwitchCommand,
+  switchRetryable,
+  type SwitchArgs,
+  type SwitchHooks,
+  type SwitchOp,
+  type SwitchVerdict,
 } from "./actions/tabs.js";
 import { dropCover, holdCover, moveFocusOffTranscript } from "./transcript-cover.js";
-import { ActionError, retryNetwork } from "./actions/index.js";
+import { ActionError, retryNetwork, type ActionErrorLike } from "./actions/index.js";
 import { CLOSE_IMPACT_CHANGED, serverImpactOf } from "./actions/close-impact.js";
 import { newOpID } from "./transport.js";
 import { join as joinKey } from "@cplieger/keyenc";
@@ -80,7 +86,7 @@ import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
 import { MAX_CHAT_NAME_UNITS, downloadKiroSession, renameChat } from "./actions/chat.js";
-import { get, getActiveId, getPaintedId, getSessions, setActive } from "./store.js";
+import { get, getActiveId, getPaintedId, getSessions, removeChat, setActive } from "./store.js";
 import { relativeTime } from "./relative-time.js";
 import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info, error as toastError } from "./toast.js";
@@ -599,6 +605,10 @@ interface ActivationRecord {
  *  newest. */
 let switchGen = 0;
 let currentActivation: ActivationRecord | null = null;
+/** The tab whose activation last settled: where a failed switch returns. */
+let settledActive = "";
+/** The chat whose view an activation last showed. */
+let shownChat = "";
 
 function recordOf(gen: number): ActivationRecord | undefined {
   return currentActivation?.gen === gen ? currentActivation : undefined;
@@ -621,13 +631,14 @@ function afterNextPaint(fn: () => void): void {
   });
 }
 
-/** Record `id` as visited once its activation's refresh resolved, only for the newest generation:
- *  a tab that never loaded is never the MRU head. */
+/** Record `id` as visited and as a failed switch's return target once its activation's refresh
+ *  resolved, only for the newest generation: a tab that never loaded is neither. */
 function settleActivation(gen: number, id: string): void {
   if (gen !== switchGen) {
     return;
   }
   noteActivation(id);
+  settledActive = id;
 }
 
 /** The chat row the composer should act for while a non-chat tab is shown: the painted chat's,
@@ -747,11 +758,16 @@ function runActivation(gen: number): void {
     return;
   }
   try {
-    // The painted chat's view is already mounted; showing it again would re-key its rail and
-    // clear what it painted. A Retry's fresh activation clears its own failure box.
-    const painted = row.subject.kind === "chat" && row.subject.ref === getPaintedId();
-    if (!painted || record.again) {
+    // A chat this file showed and that is still painted is mounted; showing it again would re-key
+    // its rail and clear what it painted. One painted only because `removeChat` moved the pointer
+    // onto it was never shown. A Retry's fresh activation clears its own failure box.
+    const chat = row.subject.kind === "chat" ? row.subject.ref : "";
+    const mounted = chat !== "" && chat === shownChat && chat === getPaintedId();
+    if (!mounted || record.again) {
       row.spec.onShow?.();
+      if (chat !== "") {
+        shownChat = chat;
+      }
     }
     record.refresh = refreshRow(row, record.controller.signal);
   } catch (e) {
@@ -842,7 +858,13 @@ export function activateTab(id: string): Promise<void> {
   if (id === state.active) {
     return currentActivation?.id === id ? currentActivation.done : Promise.resolve();
   }
-  return beginActivation(id, { quiet: false })?.done ?? Promise.resolve();
+  const row = rowOfID(id);
+  if (row === undefined) {
+    return Promise.resolve();
+  }
+  // The gesture half runs inside this call (the action's `optimistic`), so the record is current.
+  void switchCommand.dispatch({ to: id, subject: noticeSubjectOf(row) });
+  return currentActivation?.id === id ? currentActivation.done : Promise.resolve();
 }
 
 /** Activate a tab WITHOUT dismissing the drawer: the app moved the view, the reader did not (a
@@ -893,6 +915,185 @@ export function flushActivationForTest(): void {
   if (currentActivation !== null) {
     runActivation(currentActivation.gen);
   }
+}
+
+// --- The reader's switch (`tabs.switch`) ---
+
+/** Pauses between a failed load and its retry; two retries in all. */
+const SWITCH_BACKOFF_MS = [300, 600] as const;
+
+/** Each dispatch's generation, keyed by its args object: the framework hands `optimistic` and `run`
+ *  the same one. */
+const genOfArgs = new WeakMap<SwitchArgs, number>();
+
+function beginSwitch(args: SwitchArgs): SwitchOp {
+  const from = settledActive;
+  let record: ActivationRecord | undefined;
+  if (args.to !== state.active) {
+    record = beginActivation(args.to, { quiet: false });
+  } else if (currentActivation?.id === args.to && !currentActivation.failed) {
+    // A toast's Retry pressed after the reader came back to that tab: join its activation.
+    record = currentActivation;
+  } else {
+    // A toast's Retry on the failed tab the reader stayed on: load it again.
+    record = beginActivation(args.to, { quiet: false, again: true });
+  }
+  if (record === undefined) {
+    return { gen: switchGen, from }; // no row: `settle` finds no generation and answers superseded
+  }
+  genOfArgs.set(args, record.gen);
+  return { gen: record.gen, from };
+}
+
+/** Resolve or reject with `p`, or reject with `signal.reason` once `signal` aborts first. */
+function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  let onAbort = (): void => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = (): void => {
+      const reason: unknown = signal.reason;
+      reject(reason instanceof Error ? reason : new DOMException("aborted", "AbortError"));
+    };
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+  return Promise.race([p, aborted]).finally(() => {
+    signal.removeEventListener("abort", onAbort);
+  });
+}
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTimeout(reason: unknown): boolean {
+  return reason instanceof DOMException && reason.name === "TimeoutError";
+}
+
+const switchTimeout = (): ActionError => new ActionError("timeout", { code: "timeout" });
+
+/** The verdict of a switch: up to three loads of the target's view, re-checking after every wait
+ *  that the switch is still the newest and still the tab on screen, so one the reader left never
+ *  reverts or toasts. Attempt 1 is the activation half's own refresh; a retry re-runs only the
+ *  refresh, against the same record. */
+async function settleSwitch(args: SwitchArgs, signal: AbortSignal): Promise<SwitchVerdict> {
+  const gen = genOfArgs.get(args);
+  const live = (): boolean => gen === switchGen && state.active === args.to;
+  const rec = gen === undefined ? undefined : recordOf(gen);
+  if (rec === undefined || !live()) {
+    return "superseded";
+  }
+  for (let n = 1; ; n++) {
+    try {
+      let attempt: Promise<void>;
+      if (n === 1) {
+        await untilAborted(rec.done, signal);
+        if (!live() || rec.refresh === null) {
+          return "superseded";
+        }
+        attempt = rec.refresh;
+      } else {
+        const row = rowOfID(args.to);
+        if (row === undefined) {
+          return "superseded";
+        }
+        attempt = refreshRow(row, AbortSignal.any([signal, rec.controller.signal]));
+        rec.refresh = attempt;
+        watchRefresh(rec, row);
+      }
+      await untilAborted(attempt, signal);
+      return live() ? "shown" : "superseded";
+    } catch (e) {
+      if (!live()) {
+        return "superseded";
+      }
+      if (isTimeout(signal.reason)) {
+        throw switchTimeout();
+      }
+      if (signal.aborted) {
+        throw e; // the dispatch's own cancel: the framework records it as cancelled
+      }
+      if (!(e instanceof ActionError)) {
+        throw e;
+      }
+      if (e.code === "aborted") {
+        return "superseded"; // the record's controller: a newer activation took over
+      }
+      const backoff = SWITCH_BACKOFF_MS[n - 1];
+      if (backoff === undefined || !switchRetryable(e)) {
+        throw e;
+      }
+      try {
+        // Also cut short by a newer activation, so a superseded switch settles at once.
+        await untilAborted(pause(backoff), AbortSignal.any([signal, rec.controller.signal]));
+      } catch (cut) {
+        if (!live()) {
+          return "superseded";
+        }
+        if (isTimeout(signal.reason)) {
+          throw switchTimeout();
+        }
+        throw cut; // the dispatch's own cancel
+      }
+      if (!live()) {
+        return "superseded";
+      }
+    }
+  }
+}
+
+/** The tab a failed switch to `to` returns to: the last settled one, else the most recent open
+ *  one, else any; "" when `to` is the only tab left. Never a tab another device closed. */
+function revertTarget(to: string, from: string): string {
+  if (from !== to && hasRow(from)) {
+    return from;
+  }
+  return (
+    activationHistory.find((id) => id !== to && hasRow(id)) ??
+    state.tabs.find((t) => t.subject.id !== to)?.subject.id ??
+    ""
+  );
+}
+
+function revertSwitch(args: SwitchArgs, op: SwitchOp, err: ActionErrorLike): boolean {
+  if (op.gen !== switchGen || state.active !== args.to) {
+    return false;
+  }
+  const row = rowOfID(args.to);
+  const gone = err.status === 404;
+  const failedEl = elementOf(args.to);
+  const focusOnRow = failedEl !== null && document.activeElement === failedEl;
+  const target = revertTarget(args.to, op.from);
+  let stays = false;
+  if (target !== "") {
+    activateTabQuietly(target);
+    if (focusOnRow) {
+      elementOf(target)?.focus();
+    }
+  } else if (!gone && row !== undefined) {
+    // Nowhere to return to: stay, stop a load a timeout left running, and paint the in-view Retry.
+    currentActivation?.controller.abort();
+    showLoadFailure(row);
+    stays = true;
+  }
+  if (gone && row?.subject.kind === "chat") {
+    // Before the notice, so it resolves the chat as gone and offers no Open. A gone chat has
+    // nothing running to gate, so the close skips the person's close gate.
+    removeChat(row.subject.ref);
+    void closeTab(args.to);
+  }
+  return stays;
+}
+
+const switchHooks: SwitchHooks = { begin: beginSwitch, settle: settleSwitch, revert: revertSwitch };
+let switchCommand = defineSwitchCommand(switchHooks, SWITCH_LOAD_MS);
+
+/** Rebuild the switch action with a shorter bound; `null` restores `SWITCH_LOAD_MS`. */
+// deadset:ignore DS1004 -- test seam: the switch action's time bound
+export function setSwitchBoundForTest(ms: number | null): void {
+  switchCommand = defineSwitchCommand(switchHooks, ms ?? SWITCH_LOAD_MS);
 }
 
 // --- Mutations: every one is a dispatch ---
@@ -2743,6 +2944,8 @@ export function _resetForTest(): void {
   activationHistory.length = 0;
   navigationSeq = 0;
   currentActivation = null;
+  settledActive = "";
+  shownChat = "";
   lastAnnouncedTab = "";
   // Re-register the target: a test that reset tabs-sync dropped it.
   registerTabsTarget(target);

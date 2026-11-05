@@ -81,5 +81,6 @@ export function tabsMock(): Record<string, unknown> {
 
     _resetForTest: vi.fn(),
     flushActivationForTest: vi.fn(),
+    setSwitchBoundForTest: vi.fn(),
   };
 }

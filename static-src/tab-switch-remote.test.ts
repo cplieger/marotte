@@ -73,6 +73,7 @@ import {
   clickRow,
   coverUp,
   frame,
+  pointers,
   rowEl,
 } from "./__test-helpers__/tab-switch-mocks.js";
 
@@ -153,6 +154,21 @@ describe("a cross-device change mid-switch reconciles", () => {
     await activationRan();
     expect(getActiveTabId()).toBe(ids["b"]);
     expect(fx.chat.show).toHaveBeenCalledWith("b");
+    page.resolve();
+  });
+
+  it("still shows the target when the outgoing chat's removal moved the painted chat onto it", async () => {
+    const ids = await strip("a", "b");
+    const page = fx.chat.page("b");
+
+    clickRow(ids["b"] ?? "");
+    tabServer.closeRemotely(ids["a"] ?? "");
+    await settleTabs();
+    // The store's removeChat moves the painted pointer to the active chat when the painted one goes.
+    pointers.painted = "b";
+    await activationRan();
+
+    expect(fx.chat.show, "the activation skipped a chat it never showed").toHaveBeenCalledWith("b");
     page.resolve();
   });
 });

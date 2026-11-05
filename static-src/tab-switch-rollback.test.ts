@@ -92,6 +92,11 @@ function refuse(chatID: string, err: ActionError, times: number): void {
 const server503 = (): ActionError => new ActionError("load failed", { status: 503 });
 const network = (): ActionError => new ActionError("network", { status: 0, code: "network" });
 
+/** How many times `chatID`'s view was loaded; the restored tab's own refresh is not counted. */
+function loadsOf(chatID: string): number {
+  return fx.chat.refresh.mock.calls.filter(([id]) => id === chatID).length;
+}
+
 /** The switch's verdict has been reached: one notice raised. Back-offs total 900 ms. */
 async function refused(): Promise<void> {
   await until(() => fx.notices.length > 0, "the switch's refusal notice", { timeout: 5000 });
@@ -109,7 +114,7 @@ describe("a refused switch reverts with the toast", () => {
     clickRow(b);
     await refused();
 
-    expect(fx.chat.refresh, "the two retries ran").toHaveBeenCalledTimes(3);
+    expect(loadsOf("b"), "the two retries ran").toBe(3);
     expect(getActiveTabId()).toBe(a);
     expect(rowEl(b).classList.contains("active")).toBe(false);
     expect(pointers.active).toBe("a");
@@ -128,7 +133,7 @@ describe("a refused switch reverts with the toast", () => {
     notice?.retry?.onClick();
     await activationRan();
     expect(getActiveTabId(), "Retry switched to B again").toBe(b);
-    expect(fx.chat.refresh).toHaveBeenCalledTimes(4);
+    expect(loadsOf("b")).toBe(4);
   });
 
   it("words a network loss and offers Retry", async () => {
@@ -153,7 +158,7 @@ describe("a refused switch reverts with the toast", () => {
     await refused();
     await settleTabs();
 
-    expect(fx.chat.refresh, "a 404 was retried").toHaveBeenCalledTimes(1);
+    expect(loadsOf("b"), "a 404 was retried").toBe(1);
     expect(getActiveTabId()).toBe(ids["a"]);
     expect(fx.notices.map((n) => n.message)).toEqual(["This conversation no longer exists."]);
     expect(fx.notices[0]?.retry).toBeUndefined();
@@ -169,6 +174,7 @@ describe("a refused switch reverts with the toast", () => {
     activateTab(ids["a"] ?? "");
     await activationRan();
     refuse("b", server503(), 3);
+    const opensBefore = tabServer.sentOfType("open_tab").length;
 
     clickRow(ids["b"] ?? "");
     tabServer.closeRemotely(ids["a"] ?? "");
@@ -177,9 +183,7 @@ describe("a refused switch reverts with the toast", () => {
 
     expect(getActiveTabId()).toBe(ids["c"]);
     expect(hasTab("chat", "a"), "the revert reopened a tab another device closed").toBe(false);
-    expect(
-      tabServer.sentOfType("open_tab").filter((s) => JSON.stringify(s).includes('"a"')),
-    ).toEqual([]);
+    expect(tabServer.sentOfType("open_tab").slice(opensBefore)).toEqual([]);
   });
 
   it("stays on the only tab left, paints the in-view Retry, and Retry loads again", async () => {

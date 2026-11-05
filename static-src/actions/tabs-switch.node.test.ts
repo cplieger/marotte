@@ -13,7 +13,7 @@ import { resetActionFramework } from "@cplieger/ui/actions/testing";
 
 import { defineSwitchCommand, switchRefusal, type SwitchArgs, type SwitchHooks } from "./tabs.js";
 
-const ARGS: SwitchArgs = { to: "tb_b", subject: "chat:b", name: "Chat b" };
+const ARGS: SwitchArgs = { to: "tb_b", subject: "b" };
 
 interface Notified {
   readonly message: string;

@@ -65,26 +65,15 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 }));
 
 import { ActionError } from "@cplieger/ui/actions";
-import { getActiveTabId } from "./tabs.js";
-import * as tabsModule from "./tabs.js";
+import { getActiveTabId, setSwitchBoundForTest } from "./tabs.js";
 import { fx, installSwitchSuite, strip } from "./__test-helpers__/tab-switch-suite.js";
 import { until } from "./__test-helpers__/until.js";
 import { activationRan, clickRow, held, pointers } from "./__test-helpers__/tab-switch-mocks.js";
 
 installSwitchSuite();
 
-/** The bound on one switch, shortened for a case; the seam restores the default with `null`. */
-function bound(ms: number | null): void {
-  const seam = (tabsModule as unknown as { setSwitchBoundForTest?: (ms: number | null) => void })
-    .setSwitchBoundForTest;
-  expect(typeof seam, "tabs.setSwitchBoundForTest").toBe("function");
-  seam?.(ms);
-}
-
 afterEach(() => {
-  const seam = (tabsModule as unknown as { setSwitchBoundForTest?: (ms: number | null) => void })
-    .setSwitchBoundForTest;
-  seam?.(null);
+  setSwitchBoundForTest(null);
 });
 
 function refuseOnce(chatID: string): void {
@@ -118,7 +107,7 @@ describe("the switch's back-off", () => {
   });
 
   it("neither reverts nor toasts when the bound fires during the back-off of a switch already left", async () => {
-    bound(150);
+    setSwitchBoundForTest(150);
     const ids = await strip("a", "b", "c");
     refuseOnce("b");
 
@@ -132,7 +121,7 @@ describe("the switch's back-off", () => {
   });
 
   it("reverts once with the timeout sentence when the bound fires during the live switch's back-off", async () => {
-    bound(150);
+    setSwitchBoundForTest(150);
     const ids = await strip("a", "b");
     refuseOnce("b");
 
