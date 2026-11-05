@@ -15,27 +15,21 @@ import (
 )
 
 // scheduledHub is a hub with one daily schedule in a real store and a run bridge whose cancel lands.
-func scheduledHub(t *testing.T) (*Runtime, *fakeBridge, *schedule.Store, schedule.Entry) {
+func scheduledHub(t *testing.T) (*Runtime, *fakeBridge, *launchrule.Store, launchrule.Rule) {
 	t.Helper()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := schedule.Entry{
-		Source: "bundled://nightly", Enabled: true,
-		Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
-	}
-	if pErr := st.Put(t.Context(), &entry); pErr != nil {
-		t.Fatalf("Put schedule: %v", pErr)
-	}
-	h.runs.schedules = st
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	h.runs.launchRules = st
 	return h, br, st, entry
 }
 
 // launchScheduled leases workflowID as the schedule's fire, bounded by a slot an hour out.
-func launchScheduled(t *testing.T, h *Runtime, br *fakeBridge, entry *schedule.Entry, workflowID string) {
+func launchScheduled(t *testing.T, h *Runtime, br *fakeBridge, entry *launchrule.Rule, workflowID string) {
 	t.Helper()
 	h.insertBridgeNow(runChatID(workflowID), testBridge(br, bridgeIdle))
 	h.runs.grantLease(t.Context(), workflowID, "nightly",
@@ -51,7 +45,7 @@ func TestLaunch_ARecipeBusyRefusalNamesTheLiveRun(t *testing.T) {
 		"workflowId": "wf_live", "name": "publish", "status": "running",
 	})
 
-	_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"},
+	_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"},
 		nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
 	var busy *schedule.BusyError
 	if !errors.As(err, &busy) || busy.WorkflowID != "wf_live" {
@@ -73,7 +67,7 @@ func TestLaunch_ARecipeBusyRefusalNamesTheLiveRun(t *testing.T) {
 // that run at the slot. A person's retry reuses the scheduled run's workflow id under a manual lease, which no
 // schedule bounds, so its refusal names no schedule.
 func TestLaunch_ARecipeBusyRefusalCarriesTheLiveRunsLease(t *testing.T) {
-	busyHub := func(t *testing.T) (*Runtime, *schedule.Store, schedule.Entry) {
+	busyHub := func(t *testing.T) (*Runtime, *launchrule.Store, launchrule.Rule) {
 		t.Helper()
 		h, br, st, entry := scheduledHub(t)
 		br.callResults[methodKiroWorkflowListRecipes] = json.RawMessage(
@@ -85,7 +79,7 @@ func TestLaunch_ARecipeBusyRefusalCarriesTheLiveRunsLease(t *testing.T) {
 		launchScheduled(t, h, br, &entry, "wf_1")
 		return h, st, entry
 	}
-	refusal := func(t *testing.T, h *Runtime, entry *schedule.Entry) *schedule.BusyError {
+	refusal := func(t *testing.T, h *Runtime, entry *launchrule.Rule) *schedule.BusyError {
 		t.Helper()
 		_, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(),
 			nil, marotte.RunDefaults{}, time.Now().Add(25*time.Hour))
@@ -99,9 +93,9 @@ func TestLaunch_ARecipeBusyRefusalCarriesTheLiveRunsLease(t *testing.T) {
 	t.Run("the schedule's own run", func(t *testing.T) {
 		h, _, entry := busyHub(t)
 		l, _ := h.runs.lease("wf_1")
-		if busy := refusal(t, h, &entry); busy.ScheduleID != entry.ID() || !busy.SlotAt.Equal(l.SlotAt) {
+		if busy := refusal(t, h, &entry); busy.ScheduleID != entry.ID || !busy.SlotAt.Equal(l.SlotAt) {
 			t.Errorf("the refusal carries (%q, %v), want this schedule %q and its run's slot %v",
-				busy.ScheduleID, busy.SlotAt, entry.ID(), l.SlotAt)
+				busy.ScheduleID, busy.SlotAt, entry.ID, l.SlotAt)
 		}
 	})
 
@@ -139,7 +133,7 @@ func TestRetry_AScheduledRunWhoseEndWasMissedIsRetriedAsThePersons(t *testing.T)
 	if !held || l.Origin != runlease.OriginManual || l.ScheduleID != "" || l.Unattended || !l.SlotAt.IsZero() {
 		t.Errorf("the retried run's lease = %+v held %v, want the person's: manual, attended, no schedule, no slot", l, held)
 	}
-	if row := onlyRow(t, st); row.LastStatus != schedule.StatusFailed || row.LastReason != "the run failed" {
+	if row := onlyRow(t, st); row.LastStatus != launchrule.StatusFailed || row.LastReason != "the run failed" {
 		t.Errorf("the row reads (%q, %q), want (failed, the run failed): the scheduled run's own ending",
 			row.LastStatus, row.LastReason)
 	}
@@ -147,7 +141,7 @@ func TestRetry_AScheduledRunWhoseEndWasMissedIsRetriedAsThePersons(t *testing.T)
 
 // awaitEndedRow polls st until its one row no longer reads started: a stop stamps its end reason inside the cancel,
 // before its caller writes the row.
-func awaitEndedRow(t *testing.T, st *schedule.Store) schedule.Entry {
+func awaitEndedRow(t *testing.T, st *launchrule.Store) launchrule.Clock {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	row := onlyRow(t, st)
@@ -158,9 +152,9 @@ func awaitEndedRow(t *testing.T, st *schedule.Store) schedule.Entry {
 	return row
 }
 
-func onlyRow(t *testing.T, st *schedule.Store) schedule.Entry {
+func onlyRow(t *testing.T, st *launchrule.Store) launchrule.Clock {
 	t.Helper()
-	rows := st.List()
+	rows := st.Clocks()
 	if len(rows) != 1 {
 		t.Fatalf("the schedule store holds %d rows, want 1", len(rows))
 	}
@@ -216,10 +210,10 @@ func TestScheduledRun_ALongStopReasonIsCappedOnTheRow(t *testing.T) {
 	}))
 
 	row := onlyRow(t, st)
-	if len(row.LastReason) > schedule.MaxReasonBytes || !strings.HasPrefix(row.LastReason, "step build failed: x") ||
+	if len(row.LastReason) > launchrule.MaxReasonBytes || !strings.HasPrefix(row.LastReason, "step build failed: x") ||
 		!strings.HasSuffix(row.LastReason, "...") {
 		t.Errorf("a 4 KB stop reason reads %d bytes on the row (%.40q...), want at most %d, marked as cut",
-			len(row.LastReason), row.LastReason, schedule.MaxReasonBytes)
+			len(row.LastReason), row.LastReason, launchrule.MaxReasonBytes)
 	}
 }
 
@@ -282,7 +276,7 @@ func TestScheduledRun_ABoundStopSaysWhyOnTheRow(t *testing.T) {
 			}))
 
 			row := onlyRow(t, st)
-			if row.LastStatus != schedule.StatusFailed || !strings.Contains(row.LastReason, tc.wantReason) {
+			if row.LastStatus != launchrule.StatusFailed || !strings.Contains(row.LastReason, tc.wantReason) {
 				t.Errorf("a run stopped %s left the row reading (%q, %q), want failed naming %q",
 					name, row.LastStatus, row.LastReason, tc.wantReason)
 			}
@@ -302,7 +296,7 @@ func TestScheduledRun_ABoundStopRecordsOnlyOnceItsCancelLands(t *testing.T) {
 		"past the backstop": {time.Hour, true, "36 hours"},
 		"at its slot":       {-time.Minute, false, reasonOverran},
 	} {
-		expire := func(t *testing.T, h *Runtime, br *fakeBridge, entry *schedule.Entry) {
+		expire := func(t *testing.T, h *Runtime, br *fakeBridge, entry *launchrule.Rule) {
 			t.Helper()
 			const id = "wf_1"
 			leaseScheduledWithSlot(t, h, br, entry, id, tc.slotIn)
@@ -336,7 +330,7 @@ func TestScheduledRun_ABoundStopRecordsOnlyOnceItsCancelLands(t *testing.T) {
 
 			awaitCalls(t, br, methodKiroWorkflowCancel, 2, "the refused cancel was not retried")
 			row := awaitEndedRow(t, st)
-			if row.LastStatus != schedule.StatusFailed || !strings.Contains(row.LastReason, tc.wantReason) {
+			if row.LastStatus != launchrule.StatusFailed || !strings.Contains(row.LastReason, tc.wantReason) {
 				t.Errorf("the retried cancel left the row reading (%q, %q), want failed naming %q",
 					row.LastStatus, row.LastReason, tc.wantReason)
 			}
@@ -374,7 +368,7 @@ func TestScheduledRun_ABoundStopWhoseCancelIsNeverAcceptedSaysSo(t *testing.T) {
 
 			awaitCalls(t, br, methodKiroWorkflowCancel, 1+maxCancelRetries, "the refused cancel's ladder did not run")
 			row := awaitEndedRow(t, st)
-			if row.LastStatus != schedule.StatusFailed || !strings.Contains(row.LastReason, "may still be running") {
+			if row.LastStatus != launchrule.StatusFailed || !strings.Contains(row.LastReason, "may still be running") {
 				t.Errorf("after every cancel was refused the row reads (%q, %q), want failed saying the run may "+
 					"still be running", row.LastStatus, row.LastReason)
 			}
@@ -418,7 +412,7 @@ func TestScheduledRun_AReleaseWithoutAFrameRecordsTheEnding(t *testing.T) {
 
 		h.runs.releaseIfOver(t.Context(), id)
 
-		if row := onlyRow(t, st); row.LastStatus != schedule.StatusFailed || row.LastReason != "the run was aborted" {
+		if row := onlyRow(t, st); row.LastStatus != launchrule.StatusFailed || row.LastReason != "the run was aborted" {
 			t.Errorf("the row reads (%q, %q), want (failed, the run was aborted)", row.LastStatus, row.LastReason)
 		}
 	})

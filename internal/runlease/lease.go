@@ -67,10 +67,9 @@ type Lease struct {
 	// Recipe is the run's recipe NAME, which is what the single-run rule keys on.
 	Recipe string `json:"recipe"`
 	Origin Origin `json:"origin"`
-	// ScheduleID names the row that asked for the run, and ScheduleLife that row's life (schedule.Row): an outcome
-	// lands only on the row while it is that life. ScheduleID is set iff Origin is scheduled.
-	ScheduleID   string `json:"schedule_id,omitempty"`
-	ScheduleLife string `json:"schedule_life,omitempty"`
+	// ScheduleID names the clock rule that asked for the run, the only row its outcome lands on. Set iff Origin
+	// is scheduled.
+	ScheduleID string `json:"schedule_id,omitempty"`
 	// KeepChats is every chat holding this run's keep fact, which each sign of life rewrites. It only grows.
 	KeepChats []string `json:"keep_chats,omitempty"`
 	// Unattended marks a run with nobody to answer a permission request, which arms

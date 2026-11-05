@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/keyenc"
 )
 
 // stateDirName holds one state file per rule, <rule id>.json, beside the definitions file.
@@ -38,13 +38,21 @@ type State struct {
 type Status struct {
 	// Anchor is a clock rule's next-run origin: its creation, then its last fire or skip.
 	Anchor time.Time `json:"anchor,omitzero"`
+	// LastRunAt is a clock rule's last slot's due time, or its run's start (RecordStart) until the runner records
+	// that slot.
+	LastRunAt time.Time `json:"last_run_at,omitzero"`
+	// WaitingFor is a clock rule's due slot whose launch is retried until the agent engine answers; zero when none.
+	// It is persisted so a restart resumes the wait instead of skipping the slot as missed while offline.
+	WaitingFor time.Time `json:"waiting_for,omitzero"`
 	// LastMinted is an event rule's last label-gain instant minted.
 	LastMinted time.Time `json:"last_minted,omitzero"`
 	// FailingSince starts an event rule's 24-hour failure clock; zero when nothing is failing.
 	FailingSince time.Time `json:"failing_since,omitzero"`
 	// LastRunID is the only run whose outcome may land on the row.
-	LastRunID     string `json:"last_run_id,omitempty"`
-	BoundAbandons int    `json:"bound_abandons,omitempty"`
+	LastRunID     string        `json:"last_run_id,omitempty"`
+	LastStatus    OutcomeStatus `json:"last_status,omitempty"`
+	LastReason    string        `json:"last_reason,omitempty"`
+	BoundAbandons int           `json:"bound_abandons,omitempty"`
 }
 
 // Held is the number of events the rule holds.
@@ -68,6 +76,9 @@ type ruleState struct {
 	unreadable error
 	state      State
 	mu         sync.Mutex
+	// gone is set, under mu, once the rule is out of the definitions, so no write after it recreates the file
+	// Delete removes.
+	gone bool
 }
 
 // removeFile is a test seam for a state file removal that fails.
@@ -166,19 +177,27 @@ func (s *Store) WriteState(ctx context.Context, ruleID string, in *State) error 
 	}
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
+	if rs.gone {
+		return ErrNotFound
+	}
 	if rs.unreadable != nil {
 		return rs.unreadable
 	}
 	st := in.clone()
-	data, err := json.MarshalIndent(&st, "", "  ")
+	return s.writeStateLocked(ctx, ruleID, rs, &st)
+}
+
+// writeStateLocked writes st as the rule's state file and, once it lands, as rs's state; rs.mu is held.
+func (s *Store) writeStateLocked(ctx context.Context, ruleID string, rs *ruleState, st *State) error {
+	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode the state of launch rule %s: %w", ruleID, err)
 	}
-	if _, err := atomicfile.WriteFile(ctx, s.statePath(ruleID), data,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
+	if _, err := filesafe.WriteFile(ctx, s.statePath(ruleID), data,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("write the state of launch rule %s: %w", ruleID, err)
 	}
-	rs.state = st
+	rs.state = *st
 	return nil
 }
 

@@ -13,7 +13,6 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 )
 
 // kasRuns builds a workflow/list reply, defaulting `workflowName` to `name` as the wire always carries both.
@@ -304,38 +303,32 @@ func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 	}
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := schedule.Entry{
-		Source: "bundled://nightly", Enabled: true,
-		Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
-	}
-	if err := st.Put(t.Context(), &entry); err != nil {
-		t.Fatalf("Put schedule: %v", err)
-	}
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	// The fire's grant: the row tracks wf_1, the only run whose outcome lands on it.
-	if err := st.RecordStart(t.Context(), schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_1"}); err != nil {
+	if err := st.RecordStart(t.Context(), launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_1"}); err != nil {
 		t.Fatalf("RecordStart: %v", err)
 	}
-	h.runs.schedules = st
+	h.runs.launchRules = st
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "nightly", Origin: runlease.OriginScheduled,
-		ScheduleID: entry.ID(), ScheduleLife: entry.Life, Unattended: true,
+		ScheduleID: entry.ID, Unattended: true,
 	}); err != nil {
 		t.Fatalf("Put lease: %v", err)
 	}
 
 	h.runs.sweepOrphaned(t.Context())
 
-	rows := st.List()
+	rows := st.Clocks()
 	if len(rows) != 1 {
 		t.Fatalf("schedule rows = %d, want 1", len(rows))
 	}
-	if rows[0].LastStatus != schedule.StatusFailed || rows[0].LastReason != reasonOrphaned {
+	if rows[0].LastStatus != launchrule.StatusFailed || rows[0].LastReason != reasonOrphaned {
 		t.Errorf("schedule outcome = (%q, %q), want (%q, %q)",
-			rows[0].LastStatus, rows[0].LastReason, schedule.StatusFailed, reasonOrphaned)
+			rows[0].LastStatus, rows[0].LastReason, launchrule.StatusFailed, reasonOrphaned)
 	}
 }
 
@@ -433,25 +426,19 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
 	br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
 
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := schedule.Entry{
-		Source: "bundled://publish", Enabled: true,
-		Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
-	}
-	if err := st.Put(t.Context(), &entry); err != nil {
-		t.Fatalf("Put schedule: %v", err)
-	}
+	entry := putClockRule(t, st, "bundled://publish", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	// The fire's grant: the row tracks wf_1, the only run whose outcome lands on it.
-	if err := st.RecordStart(t.Context(), schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_1"}); err != nil {
+	if err := st.RecordStart(t.Context(), launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_1"}); err != nil {
 		t.Fatalf("RecordStart: %v", err)
 	}
-	h.runs.schedules = st
+	h.runs.launchRules = st
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginScheduled,
-		ScheduleID: entry.ID(), ScheduleLife: entry.Life, FirstAbsentAt: time.Now().Add(-6 * time.Hour),
+		ScheduleID: entry.ID, FirstAbsentAt: time.Now().Add(-6 * time.Hour),
 	}); err != nil {
 		t.Fatalf("Put lease: %v", err)
 	}
@@ -468,14 +455,14 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 		!strings.Contains(out, "no terminal signal was ever seen") {
 		t.Errorf("absence backstop log = %s, want WARN stating no terminal signal was seen", out)
 	}
-	rows := st.List()
+	rows := st.Clocks()
 	if len(rows) != 1 {
 		t.Fatalf("schedule rows = %d, want 1", len(rows))
 	}
 	const wantReason = "no terminal signal was seen and the run stayed absent for 6 hours"
-	if rows[0].LastStatus != schedule.StatusUnknown || rows[0].LastReason != wantReason {
+	if rows[0].LastStatus != launchrule.StatusUnknown || rows[0].LastReason != wantReason {
 		t.Errorf("schedule outcome = (%q, %q), want (%q, %q)",
-			rows[0].LastStatus, rows[0].LastReason, schedule.StatusUnknown, wantReason)
+			rows[0].LastStatus, rows[0].LastReason, launchrule.StatusUnknown, wantReason)
 	}
 }
 

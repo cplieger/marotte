@@ -17,10 +17,10 @@ import (
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/go/sse"
 	"github.com/cplieger/go/sse/ssetest"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/subject"
 )
 
@@ -373,11 +373,11 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 func newDrainGateHub(t *testing.T) *Runtime {
 	t.Helper()
 	h, _, _ := newTestHub()
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	h.runs.schedules = st
+	h.runs.launchRules = st
 	return h
 }
 

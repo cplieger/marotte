@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/schedule"
 )
 
 // runDefaultsHub is a hub whose live catalog offers opus (with tiers) and auto (none), with
@@ -24,11 +24,11 @@ func runDefaultsHub(t *testing.T) (*Runtime, *fakeBridge, *http.ServeMux) {
 		{ID: "opus", Name: "Opus", EffortTiers: []string{"low", "medium", "high"}},
 		{ID: "auto", Name: "Auto"},
 	})
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	h.runs.schedules = st
+	h.runs.launchRules = st
 	mux := http.NewServeMux()
 	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
 	return h, br, mux
@@ -191,7 +191,7 @@ func TestScheduleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
 		t.Errorf("POST /api/schedules with an unknown model = %d %s, want 400 naming it", rec.Code, rec.Body.String())
 	}
 
-	list := h.runs.schedules.List()
+	list := h.runs.launchRules.Clocks()
 	if len(list) != 1 || list[0].Model != "opus" || list[0].Effort != "high" {
 		t.Errorf("stored schedules = %+v, want the one opus/high row the refusal left alone", list)
 	}
@@ -201,7 +201,7 @@ func TestScheduleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
 func TestLaunchScheduled_SendsTheSchedulesPick(t *testing.T) {
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_sched")
-	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"},
+	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"},
 		nil, marotte.RunDefaults{Model: "opus", Effort: "low"}, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("LaunchScheduled: %v", err)
 	}

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/signin"
 )
 
@@ -73,7 +73,7 @@ func TestScheduledRun_APauseNobodyResumesEndsTheRun(t *testing.T) {
 			}
 			row := awaitEndedRow(t, st)
 			if tc.wantQuoted == "" {
-				if row.LastStatus != schedule.StatusFailed || row.LastReason != reasonPausedFault {
+				if row.LastStatus != launchrule.StatusFailed || row.LastReason != reasonPausedFault {
 					t.Errorf("the row reads (%q, %q), want (failed, %q)", row.LastStatus, row.LastReason, reasonPausedFault)
 				}
 				return
@@ -85,9 +85,9 @@ func TestScheduledRun_APauseNobodyResumesEndsTheRun(t *testing.T) {
 
 // checkPauseQuoted asserts the row says the run was cancelled with nobody watching and quotes KAS's pause reason,
 // the only text that says which pause it was.
-func checkPauseQuoted(t *testing.T, row *schedule.Entry, kasReason string) {
+func checkPauseQuoted(t *testing.T, row *launchrule.Clock, kasReason string) {
 	t.Helper()
-	if row.LastStatus != schedule.StatusFailed || !strings.Contains(row.LastReason, "nobody watching") ||
+	if row.LastStatus != launchrule.StatusFailed || !strings.Contains(row.LastReason, "nobody watching") ||
 		!strings.Contains(row.LastReason, kasReason) {
 		t.Errorf("the row reads (%q, %q), want failed, saying nobody was watching and quoting %q",
 			row.LastStatus, row.LastReason, kasReason)
@@ -136,7 +136,7 @@ func TestScheduledRun_AFaultPastItsHealsEndsTheRun(t *testing.T) {
 			}
 			heals := strconv.Itoa(maxAutoHeals) + " automatic resumes"
 			row := awaitEndedRow(t, st)
-			if row.LastStatus != schedule.StatusFailed || !strings.Contains(row.LastReason, heals) ||
+			if row.LastStatus != launchrule.StatusFailed || !strings.Contains(row.LastReason, heals) ||
 				strings.Contains(row.LastReason, pauseBudgetText) {
 				t.Errorf("the row reads (%q, %q), want failed naming %q and not the %s pause budget",
 					row.LastStatus, row.LastReason, heals, pauseBudgetText)
@@ -277,7 +277,7 @@ func TestBootSweep_EndsAScheduledRunLeftPausedOnAQuestion(t *testing.T) {
 // chat id, still reaches the heal: otherwise nothing resumes a transient fault and a scheduled run is ended for it.
 func TestParentlessRun_AFaultPauseIsResumedOnItsFrame(t *testing.T) {
 	for name, origin := range map[string]launchOrigin{
-		"scheduled": scheduledLaunch(schedule.Row{ID: "s1"}, time.Now().Add(time.Hour)),
+		"scheduled": scheduledLaunch(launchrule.Row{ID: "s1"}, time.Now().Add(time.Hour)),
 		"manual":    {origin: runlease.OriginManual},
 	} {
 		t.Run(name, func(t *testing.T) {

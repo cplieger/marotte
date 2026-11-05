@@ -25,11 +25,11 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 		l.failWith(nil)
 		r.now = func() time.Time { return due.Add(2 * time.Hour) }
 		r.sweep(t.Context())
-		got := st.List()[0]
+		got := st.Clocks()[0]
 		if n := l.launched(); n != 2 {
 			t.Errorf("launches = %d, want the waiting slot tried again", n)
 		}
-		if got.LastStatus != statusStarted || !got.Anchor.Equal(due) || !got.WaitingFor.IsZero() {
+		if got.LastStatus != launchrule.StatusStarted || !got.Anchor.Equal(due) || !got.WaitingFor.IsZero() {
 			t.Errorf("row = %+v, want the slot started at its due time and no wait left", got)
 		}
 		if _, _, slots := l.snap(); len(slots) != 2 || !slots[1].Equal(next) {
@@ -64,7 +64,7 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 			r.now = func() time.Time { return due.Add(time.Duration(i) * time.Hour) }
 			r.sweep(t.Context())
 		}
-		if b := r.retry[st.List()[0].Row()]; b.step != busyRetryMax {
+		if b := r.retry[st.Clocks()[0].Row()]; b.step != busyRetryMax {
 			t.Errorf("step = %v, want the cap %v", b.step, busyRetryMax)
 		}
 	})
@@ -84,7 +84,7 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 		if len(sources) != 2 || !slots[1].Equal(next.AddDate(0, 0, 1)) {
 			t.Errorf("bounds = %v, want the next slot launched in the same sweep, bounded by the one after it", slots)
 		}
-		if got := st.List()[0]; got.LastStatus != statusStarted || !got.Anchor.Equal(next) || !got.WaitingFor.IsZero() {
+		if got := st.Clocks()[0]; got.LastStatus != launchrule.StatusStarted || !got.Anchor.Equal(next) || !got.WaitingFor.IsZero() {
 			t.Errorf("row = %+v, want the next slot started on time", got)
 		}
 	})
@@ -98,7 +98,7 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 		reborn := NewRunner(st, l)
 		reborn.now = func() time.Time { return due.Add(3 * time.Hour) }
 		reborn.sweep(t.Context())
-		if got := st.List()[0]; got.LastStatus != statusStarted || !got.Anchor.Equal(due) {
+		if got := st.Clocks()[0]; got.LastStatus != launchrule.StatusStarted || !got.Anchor.Equal(due) {
 			t.Errorf("row = %+v, want the waiting slot fired after the restart", got)
 		}
 	})
@@ -107,13 +107,13 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 		st, l, r := newFixture(t, due.Add(30*time.Second))
 		l.failWith(busy)
 		r.sweep(t.Context())
-		e := st.List()[0]
+		e := st.Clocks()[0].Rule
 		e.Enabled = false
-		if err := st.Put(t.Context(), &e); err != nil {
-			t.Fatalf("Put: %v", err)
+		if _, err := st.Replace(t.Context(), e.ID, &e); err != nil {
+			t.Fatalf("Replace: %v", err)
 		}
 		r.sweep(t.Context())
-		if got := st.List()[0]; !got.WaitingFor.IsZero() {
+		if got := st.Clocks()[0]; !got.WaitingFor.IsZero() {
 			t.Errorf("waiting for %v, want none on a disabled schedule", got.WaitingFor)
 		}
 		if _, ok := r.retry[e.Row()]; ok {
@@ -133,23 +133,13 @@ func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 
 	// sweepFixture puts the entries, marks those named in waiting as waiting on their 02:00 slot, and makes a launch
 	// of a source named in slow advance the clock and come back busy.
-	sweepFixture := func(t *testing.T, start time.Time, entries []Entry, waiting, slow []string) (*Store, *fakeLauncher, *Runner) {
+	sweepFixture := func(t *testing.T, start time.Time, entries []clockSeed, waiting, slow []string) (*launchrule.Store, *fakeLauncher, *Runner) {
 		t.Helper()
-		st, err := NewStore(t.TempDir())
-		if err != nil {
-			t.Fatalf("NewStore: %v", err)
-		}
+		st := mustStore(t)
 		for i := range entries {
-			if err := st.Put(t.Context(), &entries[i]); err != nil {
-				t.Fatalf("Put: %v", err)
-			}
-		}
-		for i := range entries {
-			if !slices.Contains(waiting, entries[i].Source) {
-				continue
-			}
-			if err := st.setWaiting(t.Context(), entries[i].Row(), due); err != nil {
-				t.Fatalf("setWaiting: %v", err)
+			r := putClock(t, st, entries[i])
+			if slices.Contains(waiting, entries[i].Source) {
+				waitOn(t, st, r.Row(), due)
 			}
 		}
 		clock := start
@@ -176,18 +166,18 @@ func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 		}
 		return n
 	}
-	rowOf := func(st *Store, src string) Entry {
-		for _, e := range st.List() {
+	rowOf := func(st *launchrule.Store, src string) launchrule.Clock {
+		for _, e := range st.Clocks() {
 			if e.Source == src {
 				return e
 			}
 		}
-		return Entry{}
+		return launchrule.Clock{}
 	}
 
 	t.Run("the backoff counts from the launch's return", func(t *testing.T) {
 		_, l, r := sweepFixture(t, due.Add(30*time.Second),
-			[]Entry{{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday}},
+			[]clockSeed{{Source: "bundled://a", Spec: daily(2, 0), Anchor: yesterday}},
 			nil, []string{"bundled://a"})
 		r.sweep(t.Context())
 		r.sweep(t.Context()) // the ticker's buffered tick, at once
@@ -204,13 +194,13 @@ func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 
 	t.Run("a next slot passed during an earlier launch skips the wait", func(t *testing.T) {
 		hourly := launchrule.Spec{Freq: launchrule.FreqHourly, Interval: 1, Minute: 0}
-		st, l, r := sweepFixture(t, at(2026, time.August, 4, 2, 59), []Entry{
-			{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
-			{Source: "bundled://b", Spec: hourly, Enabled: true, Anchor: at(2026, time.August, 4, 1, 30)},
+		st, l, r := sweepFixture(t, at(2026, time.August, 4, 2, 59), []clockSeed{
+			{Source: "bundled://a", Spec: daily(2, 0), Anchor: yesterday},
+			{Source: "bundled://b", Spec: hourly, Anchor: at(2026, time.August, 4, 1, 30)},
 		}, []string{"bundled://a", "bundled://b"}, []string{"bundled://a", "bundled://b"})
 		r.sweep(t.Context())
 		got := rowOf(st, "bundled://b")
-		if got.LastStatus != StatusSkipped || got.LastReason != "engine busy" || !got.LastRunAt.Equal(due) {
+		if got.LastStatus != launchrule.StatusSkipped || got.LastReason != "engine busy" || !got.LastRunAt.Equal(due) {
 			t.Errorf("b = (%q, %q, %v), want its 02:00 slot skipped for the busy engine",
 				got.LastStatus, got.LastReason, got.LastRunAt)
 		}
@@ -223,50 +213,50 @@ func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 	// its grace behind the other schedules' launches.
 	t.Run("a next slot reached late in a slow sweep still fires", func(t *testing.T) {
 		hourly := launchrule.Spec{Freq: launchrule.FreqHourly, Interval: 1, Minute: 0}
-		st, l, r := sweepFixture(t, at(2026, time.August, 4, 3, 0).Add(30*time.Second), []Entry{
-			{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
-			{Source: "bundled://b", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
-			{Source: "bundled://c", Spec: hourly, Enabled: true, Anchor: at(2026, time.August, 4, 1, 30)},
+		st, l, r := sweepFixture(t, at(2026, time.August, 4, 3, 0).Add(30*time.Second), []clockSeed{
+			{Source: "bundled://a", Spec: daily(2, 0), Anchor: yesterday},
+			{Source: "bundled://b", Spec: daily(2, 0), Anchor: yesterday},
+			{Source: "bundled://c", Spec: hourly, Anchor: at(2026, time.August, 4, 1, 30)},
 		}, []string{"bundled://a", "bundled://b", "bundled://c"}, []string{"bundled://a", "bundled://b"})
 		r.sweep(t.Context()) // reaches c at 03:04:30, behind two slow launches
 		r.sweep(t.Context())
 		got := rowOf(st, "bundled://c")
-		if n := launchesOf(l, "bundled://c"); n != 1 || got.LastStatus != statusStarted ||
+		if n := launchesOf(l, "bundled://c"); n != 1 || got.LastStatus != launchrule.StatusStarted ||
 			!got.Anchor.Equal(at(2026, time.August, 4, 3, 0)) {
 			t.Errorf("c = %+v after %d launches, want its 03:00 slot started once, not missed while offline", got, n)
 		}
 	})
 
 	t.Run("a slot due while this sweep launches still fires", func(t *testing.T) {
-		st, l, r := sweepFixture(t, due.Add(30*time.Second), []Entry{
-			{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
-			{Source: "bundled://b", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
-			{Source: "bundled://c", Spec: daily(2, 1), Enabled: true, Anchor: yesterday},
+		st, l, r := sweepFixture(t, due.Add(30*time.Second), []clockSeed{
+			{Source: "bundled://a", Spec: daily(2, 0), Anchor: yesterday},
+			{Source: "bundled://b", Spec: daily(2, 0), Anchor: yesterday},
+			{Source: "bundled://c", Spec: daily(2, 1), Anchor: yesterday},
 		}, []string{"bundled://a", "bundled://b"}, []string{"bundled://a", "bundled://b"})
 		r.sweep(t.Context())
 		r.sweep(t.Context())
-		if got := rowOf(st, "bundled://c"); launchesOf(l, "bundled://c") != 1 || got.LastStatus != statusStarted {
+		if got := rowOf(st, "bundled://c"); launchesOf(l, "bundled://c") != 1 || got.LastStatus != launchrule.StatusStarted {
 			t.Errorf("c = %+v after %d launches, want its 02:01 slot started, not skipped as missed while offline",
 				got, launchesOf(l, "bundled://c"))
 		}
 	})
 
 	t.Run("a slot due after this sweep passed it fires on the next", func(t *testing.T) {
-		st, l, r := sweepFixture(t, due.Add(30*time.Second), []Entry{
-			{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
-			{Source: "bundled://b", Spec: daily(2, 3), Enabled: true, Anchor: yesterday},
-			{Source: "bundled://c", Spec: daily(2, 0), Enabled: true, Anchor: yesterday},
+		st, l, r := sweepFixture(t, due.Add(30*time.Second), []clockSeed{
+			{Source: "bundled://a", Spec: daily(2, 0), Anchor: yesterday},
+			{Source: "bundled://b", Spec: daily(2, 3), Anchor: yesterday},
+			{Source: "bundled://c", Spec: daily(2, 0), Anchor: yesterday},
 		}, []string{"bundled://a", "bundled://c"}, []string{"bundled://a", "bundled://c"})
 		r.sweep(t.Context()) // reaches b at 02:02:30, before its slot, and ends at 02:04:30
 		r.sweep(t.Context()) // reaches b at 02:06:30, behind a's retry
-		if got := rowOf(st, "bundled://b"); launchesOf(l, "bundled://b") != 1 || got.LastStatus != statusStarted {
+		if got := rowOf(st, "bundled://b"); launchesOf(l, "bundled://b") != 1 || got.LastStatus != launchrule.StatusStarted {
 			t.Errorf("b = %+v, want its 02:03 slot started: it fell due while the runner was still launching", got)
 		}
 	})
 
 	t.Run("a slot due while nothing swept is still missed", func(t *testing.T) {
 		st, l, r := sweepFixture(t, at(2026, time.August, 4, 1, 0),
-			[]Entry{{Source: "bundled://a", Spec: daily(2, 0), Enabled: true, Anchor: yesterday}}, nil, nil)
+			[]clockSeed{{Source: "bundled://a", Spec: daily(2, 0), Anchor: yesterday}}, nil, nil)
 		r.sweep(t.Context())
 		r.now = func() time.Time { return at(2026, time.August, 4, 5, 0) }
 		r.sweep(t.Context())
@@ -276,53 +266,24 @@ func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 	})
 }
 
-// An edit keeps the wait while it still names the row's due slot, and drops it once the edit moves the slot.
-func TestStore_PutKeepsAWaitOnlyForTheSameSlot(t *testing.T) {
-	due := at(2026, time.August, 4, 2, 0)
-	for name, spec := range map[string]launchrule.Spec{
-		"same slot":  {Freq: launchrule.FreqDaily, Hour: 2, Minute: 0},
-		"moved slot": {Freq: launchrule.FreqDaily, Hour: 3, Minute: 0},
-	} {
-		t.Run(name, func(t *testing.T) {
-			st, _, _ := newFixture(t, due)
-			if err := st.setWaiting(t.Context(), st.List()[0].Row(), due); err != nil {
-				t.Fatalf("setWaiting: %v", err)
-			}
-			e := Entry{Source: "bundled://demo", Spec: spec, Enabled: true}
-			if err := st.Put(t.Context(), &e); err != nil {
-				t.Fatalf("Put: %v", err)
-			}
-			got := st.List()[0].WaitingFor
-			if kept := got.Equal(due); kept != (name == "same slot") {
-				t.Errorf("waiting for %v after the edit (%s)", got, name)
-			}
-		})
-	}
-}
-
 // The wait is persisted, so a reopened store still knows the slot it waits on.
-func TestStore_KeepsAWaitAcrossAReopen(t *testing.T) {
+func TestWaitSurvivesAReopen(t *testing.T) {
 	dir := t.TempDir()
-	st, err := NewStore(dir)
+	st, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	e := Entry{
-		Source: "bundled://demo", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Enabled: true,
+	e := putClock(t, st, clockSeed{
+		Source: "bundled://demo", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
 		Anchor: at(2026, time.August, 3, 12, 0),
-	}
-	if err := st.Put(t.Context(), &e); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
+	})
 	due := at(2026, time.August, 4, 2, 0)
-	if err := st.setWaiting(t.Context(), e.Row(), due); err != nil {
-		t.Fatalf("setWaiting: %v", err)
-	}
-	again, err := NewStore(dir)
+	waitOn(t, st, e.Row(), due)
+	again, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	if got := again.List()[0].WaitingFor; !got.Equal(due) {
+	if got := again.Clocks()[0].WaitingFor; !got.Equal(due) {
 		t.Errorf("waiting for %v after a reopen, want %v", got, due)
 	}
 }
@@ -334,47 +295,37 @@ func TestSweep_AScheduleChangedMidSweepDoesNotLaunch(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
 	states := []struct {
 		anchor  time.Time
-		arrange func(t *testing.T, st *Store, b *Entry)
+		arrange func(t *testing.T, st *launchrule.Store, b *launchrule.Rule)
 		name    string
 	}{
-		{name: "due", anchor: due, arrange: func(*testing.T, *Store, *Entry) {}},
-		{name: "waiting", anchor: yesterday, arrange: func(t *testing.T, st *Store, b *Entry) {
-			if err := st.setWaiting(t.Context(), b.Row(), due); err != nil {
-				t.Fatalf("setWaiting: %v", err)
-			}
+		{name: "due", anchor: due, arrange: func(*testing.T, *launchrule.Store, *launchrule.Rule) {}},
+		{name: "waiting", anchor: yesterday, arrange: func(t *testing.T, st *launchrule.Store, b *launchrule.Rule) {
+			waitOn(t, st, b.Row(), due)
 		}},
 	}
 	changes := []struct {
-		change func(t *testing.T, st *Store, b *Entry)
+		change func(t *testing.T, st *launchrule.Store, b *launchrule.Rule)
 		name   string
 	}{
-		{name: "deleted", change: func(t *testing.T, st *Store, b *Entry) {
-			if err := st.Delete(t.Context(), b.ID()); err != nil {
+		{name: "deleted", change: func(t *testing.T, st *launchrule.Store, b *launchrule.Rule) {
+			if err := st.Delete(t.Context(), b.ID); err != nil {
 				t.Errorf("Delete: %v", err)
 			}
 		}},
-		{name: "disabled", change: func(t *testing.T, st *Store, b *Entry) {
+		{name: "disabled", change: func(t *testing.T, st *launchrule.Store, b *launchrule.Rule) {
 			off := *b
 			off.Enabled = false
-			if err := st.Put(t.Context(), &off); err != nil {
-				t.Errorf("Put: %v", err)
+			if _, err := st.Replace(t.Context(), b.ID, &off); err != nil {
+				t.Errorf("Replace: %v", err)
 			}
 		}},
 	}
 	for _, state := range states {
 		for _, tc := range changes {
 			t.Run(state.name+" "+tc.name, func(t *testing.T) {
-				st, err := NewStore(t.TempDir())
-				if err != nil {
-					t.Fatalf("NewStore: %v", err)
-				}
-				a := Entry{Source: "bundled://a", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Enabled: true, Anchor: due}
-				b := Entry{Source: "bundled://b", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Enabled: true, Anchor: state.anchor}
-				for _, e := range []*Entry{&a, &b} {
-					if err := st.Put(t.Context(), e); err != nil {
-						t.Fatalf("Put: %v", err)
-					}
-				}
+				st := mustStore(t)
+				a := putClock(t, st, clockSeed{Source: "bundled://a", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Anchor: due})
+				b := putClock(t, st, clockSeed{Source: "bundled://b", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Anchor: state.anchor})
 				state.arrange(t, st, &b)
 				l := &fakeLauncher{}
 				l.during = func(src string) {

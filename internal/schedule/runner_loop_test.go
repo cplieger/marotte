@@ -16,21 +16,14 @@ import (
 const minuteInterval = 5
 
 // anchorOffset selects whether a slot is already due at t=0.
-func bubbleFixture(t *testing.T, anchorOffset time.Duration) (*Store, *fakeLauncher, *Runner) {
+func bubbleFixture(t *testing.T, anchorOffset time.Duration) (*launchrule.Store, *fakeLauncher, *Runner) {
 	t.Helper()
-	st, err := NewStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	e := Entry{
-		Source:  "bundled://demo",
-		Spec:    launchrule.Spec{Freq: launchrule.FreqMinutely, Interval: minuteInterval},
-		Enabled: true,
-		Anchor:  time.Now().Add(anchorOffset),
-	}
-	if err := st.Put(t.Context(), &e); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
+	st := mustStore(t)
+	putClock(t, st, clockSeed{
+		Source: "bundled://demo",
+		Spec:   launchrule.Spec{Freq: launchrule.FreqMinutely, Interval: minuteInterval},
+		Anchor: time.Now().Add(anchorOffset),
+	})
 	l := &fakeLauncher{}
 	r := NewRunner(st, l)
 	return st, l, r
@@ -77,7 +70,7 @@ func TestRun_FiresOncePerSlotAtTheTickCadence(t *testing.T) {
 		}
 		// The anchor sits on the slot, not the observing tick, or the schedule drifts.
 		wantAnchor := start.Add(slots * minuteInterval * time.Minute)
-		if got := st.List()[0].Anchor; !got.Equal(wantAnchor) {
+		if got := st.Clocks()[0].Anchor; !got.Equal(wantAnchor) {
 			t.Errorf("anchor = %v, want the last slot %v", got, wantAnchor)
 		}
 		cancel()

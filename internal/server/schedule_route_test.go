@@ -5,18 +5,17 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/chat"
-	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/launchrule"
 )
 
 // TestScheduleDelete_ThroughTheRequestPathGuard drives the agent's real schedule routes behind
 // canonicalAPIPath with the id the list answered, escaped as the client's encodeURIComponent does.
-// The seeded row is one a recipe under /workspace wrote: its source is an absolute path.
+// One seeded rule is a recipe under /workspace: its source is an absolute path.
 func TestScheduleDelete_ThroughTheRequestPathGuard(t *testing.T) {
 	for name, source := range map[string]string{
 		"workspace recipe": "/workspace/.kiro/workflows/weekly-smoke.workflow.json",
@@ -24,21 +23,14 @@ func TestScheduleDelete_ThroughTheRequestPathGuard(t *testing.T) {
 		"dotted segments":  "/workspace/../workspace/./x.workflow.json",
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			row := []map[string]any{{
-				"id": source, "source": source, "anchor": "2026-01-01T00:00:00Z",
-				"spec": map[string]any{"freq": "daily", "hour": 3}, "enabled": false,
-			}}
-			data, err := json.Marshal(row)
+			st, err := launchrule.NewStore(t.TempDir())
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("launchrule.NewStore: %v", err)
 			}
-			if err := os.WriteFile(filepath.Join(dir, "schedules.json"), data, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			st, err := schedule.NewStore(dir)
-			if err != nil {
-				t.Fatalf("schedule.NewStore: %v", err)
+			if _, err := st.Create(t.Context(), &launchrule.Rule{
+				Source: source, When: launchrule.When{Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 3}},
+			}); err != nil {
+				t.Fatalf("Create: %v", err)
 			}
 			h := canonicalAPIPath(scheduleMux(t, st))
 
@@ -64,13 +56,13 @@ func TestScheduleDelete_ThroughTheRequestPathGuard(t *testing.T) {
 	}
 }
 
-func scheduleMux(t *testing.T, st *schedule.Store) *http.ServeMux {
+func scheduleMux(t *testing.T, st *launchrule.Store) *http.ServeMux {
 	t.Helper()
 	chats, err := chat.NewStore(filepath.Join(t.TempDir(), "chats"))
 	if err != nil {
 		t.Fatalf("chat store: %v", err)
 	}
-	rt := agent.New(t.Context(), t.TempDir(), nil, chats, agent.WithSchedules(st))
+	rt := agent.New(t.Context(), t.TempDir(), nil, chats, agent.WithLaunchRules(st))
 	t.Cleanup(func() {
 		if err := rt.Shutdown(context.Background()); err != nil {
 			t.Errorf("runtime shutdown: %v", err)

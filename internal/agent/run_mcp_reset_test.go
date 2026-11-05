@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/schedule"
 )
 
 // resetHub is a launchable hub whose MCP store enables names, with the engine ready.
@@ -33,7 +33,7 @@ func launchScheduledOK(t *testing.T, h *Runtime, br *fakeBridge) string {
 	t.Helper()
 	wf := fmt.Sprintf("wf_s%d", launchSeq.Add(1))
 	br.setCallResult(methodKiroWorkflowNew, json.RawMessage(`{"workflowId":"`+wf+`"}`))
-	id, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"}, nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
+	id, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"}, nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("LaunchScheduled: %v", err)
 	}

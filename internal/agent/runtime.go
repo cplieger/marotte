@@ -23,10 +23,10 @@ import (
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/kirosession"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/subject"
@@ -346,9 +346,9 @@ func WithGovernanceLocksHook(fn func(context.Context)) Option {
 	return func(h *Runtime) { h.locksHook = fn }
 }
 
-// WithSchedules wires the schedule store; absent, the schedule routes are not registered.
-func WithSchedules(st *schedule.Store) Option {
-	return func(h *Runtime) { h.runs.schedules = st }
+// WithLaunchRules wires the launch-rule store; absent, the schedule routes are not registered.
+func WithLaunchRules(st *launchrule.Store) Option {
+	return func(h *Runtime) { h.runs.launchRules = st }
 }
 
 // WithRunLeases wires the durable run-lease store. Absent falls back to memory (a lease carries the run's clock);

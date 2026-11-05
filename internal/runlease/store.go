@@ -17,12 +17,12 @@ import (
 	"github.com/cplieger/marotte/internal/asidefile"
 )
 
-// FileName is the store's file, beside schedules.json: a sibling so a malformed file
+// FileName is the store's file, beside launch-rules.json: a sibling so a malformed file
 // cannot disable both subsystems.
 const FileName = "runs.json"
 
 // version is the on-disk format version, and why the file's top-level value is an
-// OBJECT rather than the array schedules.json uses.
+// OBJECT rather than the array launch-rules.json uses.
 const version = 1
 
 // ErrNotFound means no lease owns the given workflow id.

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func clockRule(source string) *Rule {
@@ -620,4 +621,228 @@ func TestDeleteRuleRemovesStateFile(t *testing.T) {
 			t.Errorf("the next load left the deleted rule's state file: %v", err)
 		}
 	})
+}
+
+func TestClockRuleAnchorSurvivesReload(t *testing.T) {
+	dir := t.TempDir()
+	st := openStore(t, dir)
+	created := at(2026, time.August, 3, 12, 0)
+	st.now = func() time.Time { return created }
+	r, err := st.Create(t.Context(), clockRule("bundled://x"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := st.RecordStart(t.Context(), Run{ScheduleID: r.ID, WorkflowID: "wf-1"}); err != nil {
+		t.Fatalf("RecordStart: %v", err)
+	}
+	reloaded := openStore(t, dir)
+	reloaded.now = func() time.Time { return created.Add(48 * time.Hour) }
+	edit := clockRule("bundled://x")
+	edit.When.Clock.Hour = 4
+	if _, err := reloaded.Replace(t.Context(), r.ID, edit); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+	got, ok := openStore(t, dir).Clock(r.ID)
+	if !ok || got.Err != nil {
+		t.Fatalf("Clock(%s) = %+v, %v after a reload and an edit", r.ID, got, ok)
+	}
+	t.Run("the anchor is the creation time", func(t *testing.T) {
+		if !got.Anchor.Equal(created) {
+			t.Errorf("anchor = %v, want %v", got.Anchor, created)
+		}
+	})
+	t.Run("the run is kept", func(t *testing.T) {
+		if got.LastRunID != "wf-1" || got.LastStatus != StatusStarted {
+			t.Errorf("row = (%q, %q), want wf-1 started", got.LastRunID, got.LastStatus)
+		}
+	})
+	t.Run("the first slot follows the creation", func(t *testing.T) {
+		next, err := NextRun(*got.When.Clock, got.Anchor)
+		if want := at(2026, time.August, 4, 4, 0); err != nil || !next.Equal(want) {
+			t.Errorf("first slot = %v, %v, want %v", next, err, want)
+		}
+	})
+}
+
+// fired is a store holding one clock rule whose last fire launched run wf-1.
+func fired(t *testing.T) (*Store, Rule) {
+	t.Helper()
+	st := openStore(t, t.TempDir())
+	r, err := st.Create(t.Context(), clockRule("bundled://x"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := st.RecordStart(t.Context(), Run{ScheduleID: r.ID, WorkflowID: "wf-1"}); err != nil {
+		t.Fatalf("RecordStart: %v", err)
+	}
+	return st, r
+}
+
+func onlyClock(t *testing.T, st *Store) Clock {
+	t.Helper()
+	list := st.Clocks()
+	if len(list) != 1 {
+		t.Fatalf("Clocks() = %d rules, want 1", len(list))
+	}
+	return list[0]
+}
+
+func TestRecordOutcomeOnClockRuleStatus(t *testing.T) {
+	dir := t.TempDir()
+	st := openStore(t, dir)
+	a, err := st.Create(t.Context(), clockRule("bundled://a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.Create(t.Context(), clockRule("bundled://b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev, err := st.Create(t.Context(), eventRule("bundled://a", runSpec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bBefore := readFile(t, statePath(dir, b.ID))
+	rulesBefore := readRules(t, dir)
+	run := Run{ScheduleID: a.ID, WorkflowID: "wf-a"}
+	if err := st.RecordStart(t.Context(), run); err != nil {
+		t.Fatalf("RecordStart: %v", err)
+	}
+	denial := Outcome{Status: StatusFailed, Reason: "needed approval for Write with nobody watching"}
+	if err := st.RecordOutcome(t.Context(), run, denial); err != nil {
+		t.Fatalf("RecordOutcome: %v", err)
+	}
+	t.Run("the outcome lands on the rule's row", func(t *testing.T) {
+		got, _ := openStore(t, dir).Clock(a.ID)
+		if got.LastRunID != "wf-a" || got.LastStatus != denial.Status || got.LastReason != denial.Reason {
+			t.Errorf("row = (%q, %q, %q), want wf-a with the denial", got.LastRunID, got.LastStatus, got.LastReason)
+		}
+	})
+	t.Run("nowhere else", func(t *testing.T) {
+		if !bytes.Equal(bBefore, readFile(t, statePath(dir, b.ID))) {
+			t.Errorf("another clock rule's state file changed")
+		}
+		if !bytes.Equal(rulesBefore, readRules(t, dir)) {
+			t.Errorf("the definitions changed")
+		}
+		if _, err := os.Stat(statePath(dir, ev.ID)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the event rule got a state file: %v", err)
+		}
+	})
+	t.Run("an event rule has no clock row", func(t *testing.T) {
+		err := st.RecordStart(t.Context(), Run{ScheduleID: ev.ID, WorkflowID: "wf-e"})
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("RecordStart on an event rule = %v, want ErrNotFound", err)
+		}
+	})
+	t.Run("an unknown rule", func(t *testing.T) {
+		err := st.RecordOutcome(t.Context(), Run{ScheduleID: "gone", WorkflowID: "wf-1"}, denial)
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("RecordOutcome on an unknown rule = %v, want ErrNotFound", err)
+		}
+	})
+}
+
+// An ending fills the row of its own run while it reads started, and nothing else: a failure already on
+// the row (an unattended refusal, a bound stop) is the more useful reason, and a newer fire owns its row.
+func TestRecordEndingFillsOnlyItsOwnStartedRun(t *testing.T) {
+	done := Outcome{Status: StatusCompleted}
+	t.Run("its own started run", func(t *testing.T) {
+		st, r := fired(t)
+		if err := st.RecordEnding(t.Context(), Run{ScheduleID: r.ID, WorkflowID: "wf-1"}, done); err != nil {
+			t.Fatalf("RecordEnding: %v", err)
+		}
+		if got := onlyClock(t, st); got.LastStatus != StatusCompleted {
+			t.Errorf("row = (%q, %q), want completed", got.LastStatus, got.LastReason)
+		}
+	})
+	t.Run("a failure already recorded", func(t *testing.T) {
+		st, r := fired(t)
+		run := Run{ScheduleID: r.ID, WorkflowID: "wf-1"}
+		denial := Outcome{Status: StatusFailed, Reason: "needed approval for Write with nobody watching"}
+		if err := st.RecordOutcome(t.Context(), run, denial); err != nil {
+			t.Fatalf("RecordOutcome: %v", err)
+		}
+		if err := st.RecordEnding(t.Context(), run, done); err != nil {
+			t.Fatalf("RecordEnding: %v", err)
+		}
+		if got := onlyClock(t, st); got.LastStatus != denial.Status || got.LastReason != denial.Reason {
+			t.Errorf("row = (%q, %q), want the denial kept", got.LastStatus, got.LastReason)
+		}
+	})
+	t.Run("another run", func(t *testing.T) {
+		st, r := fired(t)
+		if err := st.RecordEnding(t.Context(), Run{ScheduleID: r.ID, WorkflowID: "wf-0"}, done); err != nil {
+			t.Fatalf("RecordEnding: %v", err)
+		}
+		if got := onlyClock(t, st); got.LastStatus != StatusStarted {
+			t.Errorf("row = (%q, %q), want wf-1's started kept", got.LastStatus, got.LastReason)
+		}
+	})
+}
+
+// A late outcome of a superseded run (a lease absent for hours, a sweep at boot) never lands on the row a
+// newer fire owns.
+func TestRecordOutcomeIgnoresASupersededRun(t *testing.T) {
+	st, r := fired(t)
+	late := Outcome{Status: StatusUnknown, Reason: "no terminal signal"}
+	if err := st.RecordOutcome(t.Context(), Run{ScheduleID: r.ID, WorkflowID: "wf-0"}, late); err != nil {
+		t.Fatalf("RecordOutcome: %v", err)
+	}
+	if got := onlyClock(t, st); got.LastStatus != StatusStarted {
+		t.Errorf("row = (%q, %q), want wf-1's started kept", got.LastStatus, got.LastReason)
+	}
+}
+
+// RecordStart stamps the run's creation as the row's last run, and leaves it when the run carries none.
+func TestRecordStartStampsTheRunsStart(t *testing.T) {
+	st, r := fired(t)
+	started := at(2026, time.August, 4, 2, 1)
+	if err := st.RecordStart(t.Context(), Run{ScheduleID: r.ID, WorkflowID: "wf-2", StartedAt: started}); err != nil {
+		t.Fatalf("RecordStart: %v", err)
+	}
+	if got := onlyClock(t, st); !got.LastRunAt.Equal(started) || got.LastRunID != "wf-2" {
+		t.Errorf("row = (%v, %q), want (%v, wf-2)", got.LastRunAt, got.LastRunID, started)
+	}
+	if err := st.RecordStart(t.Context(), Run{ScheduleID: r.ID, WorkflowID: "wf-3"}); err != nil {
+		t.Fatalf("RecordStart: %v", err)
+	}
+	if got := onlyClock(t, st); !got.LastRunAt.Equal(started) {
+		t.Errorf("last run = %v, want %v kept", got.LastRunAt, started)
+	}
+}
+
+// An edit keeps a wait on the engine only while the rule still waits for that same due slot.
+func TestEditKeepsTheWaitOnlyForTheSameSlot(t *testing.T) {
+	due := at(2026, time.August, 4, 2, 0)
+	for name, tc := range map[string]struct {
+		edit func(r *Rule)
+		keep bool
+	}{
+		"same spec":     {edit: func(*Rule) {}, keep: true},
+		"another hour":  {edit: func(r *Rule) { r.When.Clock.Hour = 5 }},
+		"disabled":      {edit: func(r *Rule) { r.Enabled = false }},
+		"another model": {edit: func(r *Rule) { r.Model = "opus" }, keep: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := openStore(t, t.TempDir())
+			st.now = func() time.Time { return at(2026, time.August, 3, 12, 0) }
+			r, err := st.Create(t.Context(), clockRule("bundled://x"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.UpdateClock(t.Context(), r.Row(), func(s *Status) bool { s.WaitingFor = due; return true }); err != nil {
+				t.Fatalf("UpdateClock: %v", err)
+			}
+			edit := r.clone()
+			tc.edit(&edit)
+			if _, err := st.Replace(t.Context(), r.ID, &edit); err != nil {
+				t.Fatalf("Replace: %v", err)
+			}
+			got, _ := st.Clock(r.ID)
+			if kept := got.WaitingFor.Equal(due); kept != tc.keep {
+				t.Errorf("waiting_for = %v after the edit, want kept %v", got.WaitingFor, tc.keep)
+			}
+		})
+	}
 }

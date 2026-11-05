@@ -3,6 +3,7 @@ package agent
 // Schedule REST behind the workflow rows' Schedule button: an upsert and a delete, since the client rewrites a schedule wholesale.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -35,7 +36,7 @@ type scheduleView struct {
 }
 
 func (rr *runRoutes) registerSchedule(mux *http.ServeMux, write func(string, http.HandlerFunc)) {
-	if rr.runs.schedules == nil {
+	if rr.runs.launchRules == nil {
 		return
 	}
 	mux.HandleFunc("GET /api/schedules", rr.handleScheduleList)
@@ -45,20 +46,24 @@ func (rr *runRoutes) registerSchedule(mux *http.ServeMux, write func(string, htt
 
 // handleScheduleList: GET /api/schedules → every schedule with its next run.
 func (rr *runRoutes) handleScheduleList(w http.ResponseWriter, _ *http.Request) {
-	entries := rr.runs.schedules.List()
-	out := make([]scheduleView, 0, len(entries))
-	for i := range entries {
-		out = append(out, scheduleViewOf(&entries[i]))
+	clocks := rr.runs.launchRules.Clocks()
+	out := make([]scheduleView, 0, len(clocks))
+	for i := range clocks {
+		out = append(out, scheduleViewOf(&clocks[i]))
 	}
 	httpserver.WriteJSON(w, map[string]any{"schedules": out})
 }
 
-// An uncomputable spec yields none, so the row still renders.
-func scheduleViewOf(e *schedule.Entry) scheduleView {
+// An uncomputable spec yields no next run, and an unreadable row its read error, so the row still renders.
+func scheduleViewOf(e *launchrule.Clock) scheduleView {
 	v := scheduleView{
-		Spec: e.Spec, ID: e.ID(), Source: e.Source, Name: e.Name,
+		Spec: *e.When.Clock, ID: e.ID, Source: e.Source, Name: e.Name,
 		LastStatus: string(e.LastStatus), LastReason: e.LastReason, Enabled: e.Enabled,
 		Model: e.Model, Effort: e.Effort,
+	}
+	if e.Err != nil {
+		v.LastStatus, v.LastReason = string(launchrule.StatusFailed), e.Err.Error()
+		return v
 	}
 	if !e.LastRunAt.IsZero() {
 		t := e.LastRunAt
@@ -70,15 +75,16 @@ func scheduleViewOf(e *schedule.Entry) scheduleView {
 	}
 	if e.Enabled {
 		// schedule.NextRunFrom as the runner uses it, floored at now.
-		if next, err := schedule.NextRunFrom(e.Spec, e.Anchor, time.Now()); err == nil {
+		if next, err := schedule.NextRunFrom(*e.When.Clock, e.Anchor, time.Now()); err == nil {
 			v.NextRunAt = &next
 		}
 	}
 	return v
 }
 
-// handleSchedulePut serves POST /api/schedules: insert or replace. The source is validated against a live recipe
-// listing, as in handleLaunch, so no arbitrary file can be scheduled, and the model pick as at launch.
+// handleSchedulePut serves POST /api/schedules: creates the source's clock rule, or replaces the one it has. The
+// source is validated against a live recipe listing, as in handleLaunch, so no arbitrary file can be scheduled, and
+// the model pick as at launch.
 func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Source  string          `json:"source"`
@@ -109,18 +115,51 @@ func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	if err := rr.runs.checkRunDefaults(r.Context(), defaults); writeDefaultsErr(w, err) {
 		return
 	}
-	entry := schedule.Entry{
+	rule := launchrule.Rule{
 		Source: recipe.Source, Name: recipe.Name,
 		Model: defaults.Model, Effort: defaults.Effort,
-		Spec: req.Spec, Enabled: req.Enabled,
+		When: launchrule.When{Clock: &req.Spec}, Enabled: req.Enabled,
 	}
-	if err := rr.runs.schedules.Put(r.Context(), &entry); err != nil {
-		httpreply.BadRequest(w, err.Error())
+	saved, saveErr := rr.saveClockRule(r.Context(), &rule)
+	if ve, ok := errors.AsType[*launchrule.ValidationError](saveErr); ok {
+		httpreply.BadRequest(w, ve.Error())
 		return
 	}
-	slog.Info("schedule saved", "id", entry.ID(), "recipe", logsafe.Field(recipe.Name),
-		"freq", logsafe.Field(string(entry.Spec.Freq)), "enabled", entry.Enabled)
-	httpserver.WriteJSON(w, scheduleViewOf(&entry))
+	if saveErr != nil {
+		httpreply.ServerError(w, "could not save schedule", saveErr)
+		return
+	}
+	slog.Info("schedule saved", "id", saved.ID, "recipe", logsafe.Field(recipe.Name),
+		"freq", logsafe.Field(string(saved.When.Clock.Freq)), "enabled", saved.Enabled)
+	httpserver.WriteJSON(w, scheduleViewOf(&saved))
+}
+
+// saveClockRule replaces the clock rule of rule's source, or creates one when the source has none.
+func (rr *runRoutes) saveClockRule(ctx context.Context, rule *launchrule.Rule) (launchrule.Clock, error) {
+	st := rr.runs.launchRules
+	id := ""
+	clocks := st.Clocks()
+	for i := range clocks {
+		if clocks[i].Source == rule.Source {
+			id = clocks[i].ID
+			break
+		}
+	}
+	var saved launchrule.Rule
+	var err error
+	if id == "" {
+		saved, err = st.Create(ctx, rule)
+	} else {
+		saved, err = st.Replace(ctx, id, rule)
+	}
+	if err != nil {
+		return launchrule.Clock{}, err
+	}
+	c, ok := st.Clock(saved.ID)
+	if !ok {
+		return launchrule.Clock{}, launchrule.ErrNotFound
+	}
+	return c, nil
 }
 
 // handleScheduleDelete: DELETE /api/schedules/{id}.
@@ -130,7 +169,7 @@ func (rr *runRoutes) handleScheduleDelete(w http.ResponseWriter, r *http.Request
 		httpreply.BadRequest(w, "schedule id is required")
 		return
 	}
-	if err := rr.runs.schedules.Delete(r.Context(), id); err != nil {
+	if err := rr.runs.launchRules.Delete(r.Context(), id); err != nil && !errors.Is(err, launchrule.ErrNotFound) {
 		httpreply.ServerError(w, "could not delete schedule", err)
 		return
 	}

@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/keyenc"
 )
 
 // Kind is the forge event an event rule watches for.
