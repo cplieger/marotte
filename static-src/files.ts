@@ -763,7 +763,7 @@ function repaintRows(): void {
 }
 
 /** @internal Test seam: the poll's repaint callback, without the poll. */
-// deadset:ignore DS1004 -- test seam: repaints the rendered file rows from the current git-status projection
+// deadset:ignore DS1102 -- test seam: repaints the rendered file rows from the current git-status projection
 export function _repaintRowsForTest(): void {
   repaintRows();
 }

@@ -42,7 +42,7 @@ type Declaration struct {
 
 // StatusKind is the arm of a Status.
 //
-//deadset:ignore DS1101 -- the type of Status.Kind and Change's edges, so a caller can name what it compares
+//deadset:ignore DS1501 -- the type of Status.Kind and Change's edges, so a caller can name what it compares
 type StatusKind string
 
 // The three arms of a Status.
@@ -78,7 +78,7 @@ type Status struct {
 
 // AttemptState is where a sign-in attempt stands.
 //
-//deadset:ignore DS1101 -- the type of Attempt.State, read through Status.SignIn
+//deadset:ignore DS1501 -- the type of Attempt.State, read through Status.SignIn
 type AttemptState string
 
 // The states of an Attempt. Every attempt leaves AttemptPending for exactly one of the others.
@@ -91,7 +91,7 @@ const (
 
 // Attempt is one sign-in attempt, the zero value when none was made since Open.
 //
-//deadset:ignore DS1101 -- the type of Status.SignIn
+//deadset:ignore DS1501 -- the type of Status.SignIn
 type Attempt struct {
 	State AttemptState
 	// Error is the user text of a failed attempt.

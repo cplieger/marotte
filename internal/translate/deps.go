@@ -279,6 +279,7 @@ type terminalReader interface {
 // administrator rules it composes into the lock map.
 type governanceAccess interface {
 	// SetGovernance replaces the cached account profile.
+	//deadset:ignore DS1102 -- the tests seed the profile through it; production caches it in agent.Settings.applyGovernance
 	SetGovernance(ctx context.Context, state marotte.GovernanceStatePayload)
 	// PolicyChanged reports a policy notification's errors, so the administrator
 	// rules are read again and a fatal administration error fails them closed.

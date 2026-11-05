@@ -163,7 +163,7 @@ export const themeStorage: ThemeStorage = {
 
 /** @internal Test seam: forget the loaded theme so one case's choice is not the
  *  answer in the next. */
-// deadset:ignore DS1004 -- test seam: resets the loaded theme choice
+// deadset:ignore DS1102 -- test seam: resets the loaded theme choice
 export function _resetThemeForTest(): void {
   themeChoice = null;
   themeLoaded = false;

@@ -139,7 +139,7 @@ export function showError(keys: SaveKeys): void {
 }
 
 /** @internal — test-only reset for module-level state. */
-// deadset:ignore DS1004 -- test seam: resets the per-slot save states and their timers
+// deadset:ignore DS1102 -- test seam: resets the per-slot save states and their timers
 export function _resetForTest(): void {
   for (const s of slotStates.values()) {
     clearTimers(s);

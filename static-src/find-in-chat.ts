@@ -1094,7 +1094,7 @@ export function handleFindHotkey(e: KeyboardEvent): void {
 }
 
 /** @internal Test seam: whether the search is open. */
-// deadset:ignore DS1004 -- test seam: observes whether the chat find bar is open
+// deadset:ignore DS1102 -- test seam: observes whether the chat find bar is open
 export function _isChatFindOpen(): boolean {
   return isOpen();
 }

@@ -372,7 +372,7 @@ export function initLive(): void {
 }
 
 /** @internal Test seam. */
-// deadset:ignore DS1004 -- test seam: resets the live-view machines and their polls
+// deadset:ignore DS1102 -- test seam: resets the live-view machines and their polls
 export function _resetLiveForTest(): void {
   for (const m of machines.values()) {
     stopPolling(m);

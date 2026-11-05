@@ -397,7 +397,7 @@ export function releaseClampsIn(root: HTMLElement): void {
 }
 
 /** Number of elements the shared observer watches. Test-only. */
-// deadset:ignore DS1004 -- test seam: observes the shared clamp observer's watched set
+// deadset:ignore DS1102 -- test seam: observes the shared clamp observer's watched set
 export function clampObservationCount(): number {
   return observed.size;
 }

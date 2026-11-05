@@ -497,7 +497,7 @@ async function run(name: string, verb: () => Promise<unknown>): Promise<void> {
   await refresh();
 }
 
-// deadset:ignore DS1004 -- test seam: resets the powers list, load states, filter and busy set
+// deadset:ignore DS1102 -- test seam: resets the powers list, load states, filter and busy set
 export function _resetPowersForTest(): void {
   powers = [];
   catalogState = "ready";

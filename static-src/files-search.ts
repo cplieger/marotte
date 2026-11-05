@@ -552,7 +552,7 @@ function resetToggles(): void {
 }
 
 /** @internal Test seam: whether the bar is open. */
-// deadset:ignore DS1004 -- test seam: observes whether the files search bar is open
+// deadset:ignore DS1102 -- test seam: observes whether the files search bar is open
 export function _isFilesSearchOpen(): boolean {
   return isOpen();
 }
@@ -618,13 +618,13 @@ export function toggleFilesSearch(): void {
 }
 
 /** @internal Test seam: the lazily-built search bar, once it exists. */
-// deadset:ignore DS1004 -- test seam: observes the lazily built search bar
+// deadset:ignore DS1102 -- test seam: observes the lazily built search bar
 export function _filesSearchBar(): HTMLElement | null {
   return document.getElementById("fb-search");
 }
 
 /** @internal Test seam: the results list, once it exists. */
-// deadset:ignore DS1004 -- test seam: observes the search results list
+// deadset:ignore DS1102 -- test seam: observes the search results list
 export function _filesSearchResults(): HTMLElement {
   return byId<HTMLDivElement>("fb-search-results");
 }

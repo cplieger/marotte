@@ -61,7 +61,7 @@ export function flushURLHighlight(): void {
 }
 
 /** Test-only: restore the module to its pre-boot state with a chosen target. */
-// deadset:ignore DS1004 -- test seam: sets the pending highlight target
+// deadset:ignore DS1102 -- test seam: sets the pending highlight target
 export function _setPendingTargetForTest(id: string | null): void {
   pendingTarget = id;
 }

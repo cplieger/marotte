@@ -339,7 +339,7 @@ function reconcileHolds(ids: readonly string[]): void {
  *  of it is module state, and the browser project's module registry is URL-keyed, so
  *  `vi.resetModules()` does not re-evaluate this file. Stopping the effect is the load-bearing
  *  half. */
-// deadset:ignore DS1004 -- test seam: resets the render effect, run clock holds and previous counts
+// deadset:ignore DS1102 -- test seam: resets the render effect, run clock holds and previous counts
 export function _resetRunBarForTest(): void {
   stopRender?.();
   stopRender = null;

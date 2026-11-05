@@ -115,7 +115,7 @@ export function forgetDeferredCue(chatID: string): void {
 
 /** Whether a cue is currently parked for `chatID`. Read by tests and by nothing in
  *  production: the release is an effect, so no caller polls. */
-// deadset:ignore DS1004 -- test seam: observes the parked-cue map
+// deadset:ignore DS1102 -- test seam: observes the parked-cue map
 export function hasDeferredCue(chatID: string): boolean {
   return deferred.has(chatID);
 }
@@ -140,7 +140,7 @@ export function installDeferredCueSubscriber(): () => void {
 }
 
 /** Reset every map. Exported for test isolation only. */
-// deadset:ignore DS1004 -- test seam: resets the parked cues, notify times and deferred version
+// deadset:ignore DS1102 -- test seam: resets the parked cues, notify times and deferred version
 export function _resetAgentFinishedCueForTest(): void {
   deferred.clear();
   lastNotifyMs.clear();

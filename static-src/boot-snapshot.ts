@@ -574,7 +574,7 @@ async function writeRecord(snap: BootSnapshot): Promise<void> {
  * Forget the pending write, capture effect and connection, for tests driving two boots. The
  * connection is DROPPED, not closed, keeping this reset synchronous.
  */
-// deadset:ignore DS1004 -- test seam: resets the pending save timer, capture and database handle
+// deadset:ignore DS1102 -- test seam: resets the pending save timer, capture and database handle
 export function _resetForTest(): void {
   clearTimeout(pending);
   pending = undefined;

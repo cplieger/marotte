@@ -95,7 +95,7 @@ function repaint(switches: readonly SettingsSwitch[]): void {
 }
 
 /** @internal Reset module state for tests. */
-// deadset:ignore DS1004 -- test seam: resets the settings state, the queue, its resolvers and switches, the debounce timer and the event count
+// deadset:ignore DS1102 -- test seam: resets the settings state, the queue, its resolvers and switches, the debounce timer and the event count
 export function __testResetTracking(): void {
   state = initialSettingsState;
   writeSeq = 0;

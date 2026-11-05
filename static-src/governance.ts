@@ -11,7 +11,7 @@ let current: GovernanceStatePayload | null = null;
 const listeners = new Set<(g: GovernanceStatePayload) => void>();
 
 /** The latest known governance state, or null before the first read. */
-// deadset:ignore DS1004 -- test seam: observes the held governance snapshot
+// deadset:ignore DS1102 -- test seam: observes the held governance snapshot
 export function currentGovernance(): GovernanceStatePayload | null {
   return current;
 }

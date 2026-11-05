@@ -131,7 +131,7 @@ export function relToWorkspace(abs: string): string {
 }
 
 /** @internal Test seam: how many surfaces are followed, collected ones included until a sweep drops them. */
-// deadset:ignore DS1004 -- test seam: observes the followed surface list
+// deadset:ignore DS1102 -- test seam: observes the followed surface list
 export function _followedCountForTest(): number {
   return dependents.length;
 }
@@ -139,7 +139,7 @@ export function _followedCountForTest(): number {
 /** @internal Test seam: reset the root and the additional directories between cases. Listeners are neither cleared (module wiring
  *  a test may assert) nor notified (the workspace did not move); followed surfaces are dropped with
  *  the case that rendered them. */
-// deadset:ignore DS1004 -- test seam: resets the workspace root and followed surfaces
+// deadset:ignore DS1102 -- test seam: resets the workspace root and followed surfaces
 export function _resetForTest(): void {
   root = "";
   additional = [];

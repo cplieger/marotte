@@ -41,7 +41,7 @@ function stillWaiting(workflowID: string, position: string): boolean {
 }
 
 /** Drop the registration. Test isolation only; production never unregisters. */
-// deadset:ignore DS1004 -- test seam: resets the registered notification opener
+// deadset:ignore DS1102 -- test seam: resets the registered notification opener
 export function _resetNotificationOpenerForTest(): void {
   opener = null;
 }

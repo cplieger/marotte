@@ -63,7 +63,7 @@ export function releaseScrollableTablesIn(root: HTMLElement): void {
 }
 
 /** Number of tables the shared observer watches. Test-only. */
-// deadset:ignore DS1004 -- test seam: observes the shared table observer's watched set
+// deadset:ignore DS1102 -- test seam: observes the shared table observer's watched set
 export function tableObservationCount(): number {
   return observed.size;
 }

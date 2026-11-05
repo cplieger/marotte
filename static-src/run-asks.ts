@@ -168,7 +168,7 @@ function askedStep(steps: readonly PlacedStep[], a: RunAskAddress): PlacedStep |
 }
 
 /** Reset the store between tests. */
-// deadset:ignore DS1004 -- test seam: resets the snapshots
+// deadset:ignore DS1102 -- test seam: resets the snapshots
 export function _resetRunAsksForTest(): void {
   snapshots.clear();
   version.value = 0;

@@ -9,7 +9,6 @@ package testsupport
 
 import (
 	"context"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -58,24 +57,6 @@ func (s *RecordingChatStore) Get(_ context.Context, id marotte.ChatID) (*marotte
 	return cloneChat(c), true
 }
 
-// List returns headers for all stored chats.
-func (s *RecordingChatStore) List(_ context.Context) []marotte.ChatHeader {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	hs := make([]marotte.ChatHeader, 0, len(s.Chats))
-	for _, c := range s.Chats {
-		hs = append(hs, c.Header())
-	}
-	return hs
-}
-
-// ChatVersion is the `chat` version the last write to id minted, "" before any
-// write. A test that needs to know which version a frame SHOULD carry reads it
-// here rather than re-deriving the fake's counter.
-func (s *RecordingChatStore) ChatVersion(id marotte.ChatID) string {
-	return s.versions.current(id)
-}
-
 // Mutate applies the mutate function to the chat with the given id, creating it if needed.
 func (s *RecordingChatStore) Mutate(_ context.Context, id marotte.ChatID, mutate func(*marotte.Chat, bool) bool) (string, error) {
 	s.mu.Lock()
@@ -101,58 +82,4 @@ func (s *RecordingChatStore) Mutate(_ context.Context, id marotte.ChatID, mutate
 		s.Bus.Broadcast(context.Background(), marotte.ServerEvent{Type: evt, ChatID: id, Payload: c.Header()})
 	}
 	return version, nil
-}
-
-// SetDraft stores the chat's draft without touching UpdatedAt and without broadcasting, as
-// (*chat.Store).SetDraft does. A no-op on an absent chat; it reports the state that landed,
-// nil for nothing.
-func (s *RecordingChatStore) SetDraft(_ context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c, ok := s.Chats[id]
-	if !ok || c.Draft == text {
-		return nil, nil
-	}
-	c.Draft = text
-	state := c.Composer()
-	state.Version = s.versions.bump(id)
-	return &state, nil
-}
-
-// SetAttachments stores the chat's staged attachment paths under the same
-// contract SetDraft holds: no UpdatedAt, no broadcast, no-op on an absent chat.
-func (s *RecordingChatStore) SetAttachments(_ context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c, ok := s.Chats[id]
-	if !ok {
-		return nil, nil
-	}
-	next := slices.Clone(paths)
-	if len(next) == 0 {
-		next = nil
-	}
-	if slices.Equal(c.Attachments, next) {
-		return nil, nil
-	}
-	c.Attachments = next
-	state := c.Composer()
-	state.Version = s.versions.bump(id)
-	return &state, nil
-}
-
-// Delete removes the chat with the given id, broadcasts a chat_deleted event and answers the
-// removed record's session chain.
-func (s *RecordingChatStore) Delete(_ context.Context, id marotte.ChatID) ([]string, error) {
-	s.mu.Lock()
-	var chain []string
-	if c, ok := s.Chats[id]; ok {
-		chain = c.SessionChain()
-	}
-	delete(s.Chats, id)
-	s.mu.Unlock()
-	if s.Bus != nil {
-		s.Bus.Broadcast(context.Background(), marotte.ServerEvent{Type: marotte.EventChatDeleted, ChatID: id, Payload: map[string]string{"id": string(id)}})
-	}
-	return chain, nil
 }

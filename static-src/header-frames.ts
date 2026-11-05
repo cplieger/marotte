@@ -23,7 +23,7 @@ export function framedSince(chatID: string, mark: number): boolean {
 }
 
 /** Test isolation only; production never resets. */
-// deadset:ignore DS1004 -- test seam: resets the frame order between cases
+// deadset:ignore DS1102 -- test seam: resets the frame order between cases
 export function _resetForTest(): void {
   frames = 0;
   newest.clear();

@@ -468,13 +468,13 @@ export function initSlashMenu(openPicker: () => void): void {
   loadSlashCatalog();
 }
 
-// deadset:ignore DS1004 -- test seam: seeds the slash command catalog without a fetch
+// deadset:ignore DS1102 -- test seam: seeds the slash command catalog without a fetch
 export function _setCatalogForTest(commands: readonly SlashCommand[]): void {
   catalog.value = commands;
   catalogReady = true;
 }
 
-// deadset:ignore DS1004 -- test seam: resets the slash command catalog
+// deadset:ignore DS1102 -- test seam: resets the slash command catalog
 export function _resetCatalogForTest(): void {
   catalog.value = [];
   catalogReady = false;

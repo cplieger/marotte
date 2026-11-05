@@ -48,6 +48,7 @@ type bridgeRPC interface {
 	// Notify sends a one-way notification to kiro-cli.
 	Notify(ctx context.Context, method string, params any) error
 	// Respond sends a permission response to kiro-cli.
+	//deadset:ignore DS1102 -- decision_answer_test.go's bridgeReply answers a claimed ask through Bridge; production answers through translate's bridge interface
 	Respond(ctx context.Context, requestID int64, result any, err error) error
 }
 
