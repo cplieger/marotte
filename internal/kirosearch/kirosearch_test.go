@@ -348,6 +348,61 @@ printf '%s\n' '`+matchLine("./b.go", "later", 2)+`'`)
 	}
 }
 
+// A directory named like a flag is still a path to rg.
+func TestFiles_RealRGReadsAFlagShapedDirectoryAsAPath(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"-h/a.go": "", "b.go": ""})
+
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{root}, FilesQuery{Pattern: "-h/**/*.go", MaxResults: 11})
+
+	if want := []string{"-h/a.go"}; !slices.Equal(got, want) {
+		t.Errorf("Files = %q, want %q", got, want)
+	}
+}
+
+// rg does not follow a symlink, so no file under a linked prefix can match.
+func TestText_IncludeThroughASymlinkRunsNoSearch(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"real/a.go": "x"})
+	if err := os.Symlink("real", filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	argsFile := filepath.Join(t.TempDir(), "args")
+	bin := fakeRG(t, `printf '%s\n' "$@" > `+argsFile)
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "x", IncludePattern: "link/**/*.go"})
+
+	if got == nil || len(got) != 0 {
+		t.Errorf("Text = %#v, want an empty non-nil slice", got)
+	}
+	if _, err := os.Stat(argsFile); err == nil {
+		t.Errorf("rg walked the root for a prefix it cannot enter")
+	}
+}
+
+// A workspace that is not a git repository still keeps its .gitignore'd files out, as KAS's rg does.
+func TestSearch_RealRGHonoursGitignoreOutsideARepository(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{".gitignore": "ignored/\n", "ignored/a.go": "hit\n", "kept/a.go": "hit\n"})
+	s := Searcher{Bin: bin}
+
+	t.Run("files", func(t *testing.T) {
+		got := s.Files(t.Context(), []string{root}, FilesQuery{Pattern: "**/*.go", MaxResults: 11})
+		if want := []string{"kept/a.go"}; !slices.Equal(got, want) {
+			t.Errorf("Files = %q, want %q", got, want)
+		}
+	})
+	t.Run("text", func(t *testing.T) {
+		got := s.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit"})
+		want := []Match{{FilePath: "kept/a.go", LineNumber: 1, LineText: "hit"}}
+		if !slices.Equal(got, want) {
+			t.Errorf("Text = %+v, want %+v", got, want)
+		}
+	})
+}
+
 // Expected values follow KAS 3.0.0's Rar and MJ (testdata kas-probe search-text.json pathForm).
 func TestDisplayPath(t *testing.T) {
 	roots := []string{"/w", "/d/notes"}

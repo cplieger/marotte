@@ -100,7 +100,7 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.deadline())
 	defer cancel()
-	args := []string{"--json", "--engine", "auto", "-C", "2", "--max-count", maxCountArg, "--max-filesize", "1M", "--hidden", "--glob", "!.git"}
+	args := []string{"--json", "--engine", "auto", "-C", "2", "--max-count", maxCountArg, "--max-filesize", "1M", "--hidden", "--no-require-git", "--glob", "!.git"}
 	if !q.CaseSensitive {
 		args = append(args, "--ignore-case")
 	}
@@ -233,7 +233,7 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.deadline())
 	defer cancel()
-	args := []string{"--files", "--max-depth", maxDepthArg, "--hidden", "--glob", "!.git"}
+	args := []string{"--files", "--max-depth", maxDepthArg, "--hidden", "--no-require-git", "--glob", "!.git"}
 	if q.Pattern != "" && q.Pattern != "**/*" {
 		args = append(args, "--glob", q.Pattern)
 	}
@@ -249,7 +249,7 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 			continue
 		}
 		wg.Go(func() {
-			perRoot[i] = s.filesRoot(ctx, root, append(slices.Clone(args), dir), limit)
+			perRoot[i] = s.filesRoot(ctx, root, append(slices.Clone(args), "--", dir), limit)
 		})
 	}
 	wg.Wait()
@@ -386,8 +386,8 @@ func readLines(r io.Reader, line func([]byte) bool) readResult {
 
 // scope is the directory, relative to root, rg searches for glob: the glob's leading literal
 // directories, so rg skips every other subtree (a --glob filters names but still descends every
-// directory). ok is false when that directory is absent, so no file under root can match. A
-// prefix reached through a symlink falls back to all of root, which rg walks without following it.
+// directory). ok is false when no file under root can match: the directory is absent, or reached
+// through a symlink, which rg does not follow. A prefix it cannot resolve falls back to all of root.
 func scope(root, glob string) (dir string, ok bool) {
 	if !strings.Contains(glob, "/") || strings.HasPrefix(glob, "/") {
 		return ".", true
@@ -411,8 +411,11 @@ func scope(root, glob string) (dir string, ok bool) {
 	}
 	resolved, err := filepath.EvalSymlinks(want)
 	realRoot, rootErr := filepath.EvalSymlinks(root)
-	if err != nil || rootErr != nil || resolved != filepath.Join(realRoot, rel) {
+	if err != nil || rootErr != nil {
 		return ".", true
+	}
+	if resolved != filepath.Join(realRoot, rel) {
+		return "", false
 	}
 	return rel, true
 }
