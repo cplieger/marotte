@@ -1096,6 +1096,9 @@ interface Surface {
   readonly painted?: readonly string[];
   /** The mouse tier draws a different control here, so no fine height is there to match. */
   readonly ownFineForm?: true;
+  /** Listed controls that stand in a column of rows: each paints at its mouse height plus what
+   *  `row` grows on coarse, so the column's rows change alike. */
+  readonly rowStep?: { readonly row: string; readonly controls: readonly string[] };
 }
 
 const HEADER_ICONS = [
@@ -1128,6 +1131,10 @@ const SURFACES: readonly Surface[] = [
       "#tab-list .tab-close",
     ],
     rows: ["#tab-list .tab"],
+    rowStep: {
+      row: "#tab-list .tab",
+      controls: ["#new-chat", "#history-btn", "#account-btn", "#logout-btn"],
+    },
   },
   {
     name: "the phone drawer's close",
@@ -2082,19 +2089,32 @@ describe.each(ALL)("the coarse tier at %ipx", (size) => {
     (s) => s.controls.length + (s.painted?.length ?? 0) > 0 && s.ownFineForm !== true,
   );
   it.each(painted.map((s) => [s.name, s] as const))(
-    "%s: each control paints at its mouse-tier height",
+    "%s: each control paints at its mouse-tier height, or grows with its column's rows",
     async (_name, s) => {
-      const heights = async (tier: "fine" | "coarse"): Promise<Map<string, number>> => {
+      const heights = async (
+        tier: "fine" | "coarse",
+      ): Promise<{ controls: Map<string, number>; row: number }> => {
         await mountSurface(s, size, tier);
-        return new Map(
-          probesFor(s, "controls").map((p) => [p.label, p.box.bottom - p.box.top] as const),
-        );
+        const row = s.rowStep === undefined ? 0 : q(s.rowStep.row).getBoundingClientRect().height;
+        return {
+          controls: new Map(
+            probesFor(s, "controls").map((p) => [p.label, p.box.bottom - p.box.top] as const),
+          ),
+          row,
+        };
       };
-      const fine = await heights("fine");
-      const coarse = await heights("coarse");
+      const { controls: fine, row: rowFine } = await heights("fine");
+      const { controls: coarse, row: rowCoarse } = await heights("coarse");
+      const stepped = new Set(s.rowStep?.controls);
+      const step = (label: string): number =>
+        stepped.has(label.replace(/\[\d+\]$/, "")) ? rowCoarse - rowFine : 0;
+      if (s.rowStep !== undefined) {
+        expect(rowCoarse - rowFine, `premise: ${s.rowStep.row} grows on coarse`).toBeGreaterThan(0);
+      }
       const drift = [...coarse]
         .filter(
-          ([label, h]) => Math.abs(h - (fine.get(label) ?? Number.NaN)) > 0.5 || !fine.has(label),
+          ([label, h]) =>
+            Math.abs(h - (fine.get(label) ?? Number.NaN) - step(label)) > 0.5 || !fine.has(label),
         )
         .map(
           ([label, h]) =>

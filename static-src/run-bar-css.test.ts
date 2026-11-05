@@ -187,8 +187,8 @@ describe("the run bar's geometry", () => {
       1,
     );
 
-    // The coarse tier is where the floor BINDS: 2.75rem is above the row's own box, so it is the
-    // thing deciding the rendered target. The tier is the pointer rather than a width
+    // The coarse tier is where the floor matters: 2.75rem is above a one-line row's box, so no
+    // row, its two lines included, is under it. The tier is the pointer rather than a width
     // (01-tokens.css), so `data-pointer` is how a test reaches it.
     const root = document.documentElement;
     const had = root.getAttribute("data-pointer");
@@ -196,7 +196,7 @@ describe("the run bar's geometry", () => {
     try {
       const floor = lengthPx(host, "var(--hit-floor)");
       expect(floor, "the coarse tier's floor is above the row's own height").toBeGreaterThan(27);
-      expect(btn.getBoundingClientRect().height).toBeCloseTo(floor, 1);
+      expect(btn.getBoundingClientRect().height).toBeGreaterThanOrEqual(floor - 0.05);
     } finally {
       if (had === null) {
         root.removeAttribute("data-pointer");
@@ -382,17 +382,35 @@ describe("the run bar's box", () => {
     host.remove();
   });
 
-  it("lays a phone row out as two lines, at or above the hit floor", () => {
-    document.documentElement.setAttribute("data-pointer", "coarse");
+  // Touch spends a 44px row's height on the phone's second line at every width.
+  it.each([360, 1000])(
+    "lays a touch row out as two lines at %ipx, at or above the hit floor",
+    (width) => {
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      try {
+        const bar = mountRows(RUNS.slice(0, 1), false, width);
+        const btn = bar.querySelector<HTMLElement>(".run-bar-open")!;
+        const title = btn.querySelector<HTMLElement>(".ev-sum-label")!.getBoundingClientRect();
+        const state = btn.querySelector<HTMLElement>(".ev-sum-state")!.getBoundingClientRect();
+        expect(state.top).toBeGreaterThanOrEqual(title.bottom - 1);
+        const height = btn.getBoundingClientRect().height;
+        expect(height).toBeGreaterThanOrEqual(lengthPx(host, "var(--hit-floor)"));
+        expect(height).toBeLessThanOrEqual(56);
+      } finally {
+        document.documentElement.removeAttribute("data-pointer");
+        host.remove();
+      }
+    },
+  );
+
+  it("keeps a wide mouse row on one line", () => {
+    document.documentElement.setAttribute("data-pointer", "fine");
     try {
-      const bar = mountRows(RUNS.slice(0, 1), false, 360);
+      const bar = mountRows(RUNS.slice(0, 1), false, 1000);
       const btn = bar.querySelector<HTMLElement>(".run-bar-open")!;
       const title = btn.querySelector<HTMLElement>(".ev-sum-label")!.getBoundingClientRect();
       const state = btn.querySelector<HTMLElement>(".ev-sum-state")!.getBoundingClientRect();
-      expect(state.top).toBeGreaterThanOrEqual(title.bottom - 1);
-      const height = btn.getBoundingClientRect().height;
-      expect(height).toBeGreaterThanOrEqual(lengthPx(host, "var(--hit-floor)"));
-      expect(height).toBeLessThanOrEqual(56);
+      expect(state.top).toBeLessThan(title.bottom - 1);
     } finally {
       document.documentElement.removeAttribute("data-pointer");
       host.remove();

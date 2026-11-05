@@ -1100,13 +1100,18 @@
      leading above a cap and below a descender. */
   --run-air: 0.5rem;
 
-  /* The gap between runs, and under an open fold row. Under a finger each row is already the
-     44px floor, so the rows abut. */
-  --run-row-gap: max(0px, var(--sp-05) - var(--hit-grow));
+  /* The gap between runs, and under an open fold row. */
+  --run-row-gap: var(--sp-05);
 
   &:has(> .run-bar.hidden) {
     display: none;
   }
+}
+
+/* Touch takes the two-line rows below at every width: a row is 44px under a finger, and one
+   padded line leaves that height empty. */
+:where(:root[data-pointer="coarse"]) .run-bar-host {
+  --run-stack: 1;
 }
 
 /* The fold row sits outside the list's clip so its touch target can reach up into the box's
@@ -1299,16 +1304,10 @@
   color: var(--c-text-primary);
 }
 
-/* A phone: two lines in a row, never under the hit floor's 44px. Line one is
+/* A phone, or touch: two lines in a row, never under the hit floor's 44px. Line one is
    the title and the clock, line two the state and the progress, each in shared
    columns; the bar is a band along the row's bottom edge. */
-@container run-dock (width < 30rem) {
-  /* The fold row paints under the floor here, and its target needs the gap below it. */
-  .run-bar-fold,
-  .run-bar {
-    --run-row-gap: var(--sp-05);
-  }
-
+@container run-dock (width < 30rem) or style(--run-stack: 1) {
   .run-bar {
     grid-template-columns:
       [glyph] auto [title state] auto [progress] minmax(0, 1fr)
