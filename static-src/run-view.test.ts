@@ -669,6 +669,51 @@ describe("run view controls", () => {
     }
   });
 
+  it("draws Pause, Resume and Cancel as one button class holding one filled glyph at one size", async () => {
+    const seen = new Map<
+      string,
+      { cls: string; svgCls: string | null; side: number; glyphH: number; filled: boolean }
+    >();
+    for (const status of ["running", "paused"]) {
+      const painted = await paint(openRunView, status);
+      for (const { name, btn } of verbFaces(painted.body)) {
+        const glyph = btn.querySelector<SVGSVGElement>(":scope > svg");
+        if (name === null || glyph === null) {
+          throw new Error(`no glyph on ${name ?? "a verb"}`);
+        }
+        const shapes = [...glyph.querySelectorAll<SVGGraphicsElement>("path, rect, polygon")];
+        const tops = shapes.map((s) => s.getBoundingClientRect().top);
+        const bottoms = shapes.map((s) => s.getBoundingClientRect().bottom);
+        seen.set(name, {
+          cls: [...btn.classList].filter((c) => c !== "is-danger").join(" "),
+          svgCls: glyph.getAttribute("class"),
+          side: glyph.getBoundingClientRect().width,
+          glyphH: Math.max(...bottoms) - Math.min(...tops),
+          filled: shapes.every((s) => {
+            const cs = getComputedStyle(s);
+            return cs.fill !== "none" && cs.stroke === "none";
+          }),
+        });
+      }
+    }
+    const faceOf = (n: string) => {
+      const face = seen.get(n);
+      if (face === undefined) {
+        throw new Error(`no ${n} button painted`);
+      }
+      return face;
+    };
+    const verbs = ["Pause", "Resume", "Cancel"].map((n) => [n, faceOf(n)] as const);
+    const pause = faceOf("Pause");
+    for (const [name, face] of verbs) {
+      expect(face.cls, `${name} button class`).toBe("icon-btn run-icon-btn");
+      expect(face.svgCls, `${name} icon tier`).toBe("ic-ui");
+      expect(face.side, `${name} icon size`).toBe(pause.side);
+      expect(face.filled, `${name} is a filled glyph`).toBe(true);
+      expect(Math.abs(face.glyphH - pause.glyphH), `${name} glyph height`).toBeLessThanOrEqual(1);
+    }
+  });
+
   it.each(ROWS)("draws each %s verb icon-only on a phone, named and square", async (status) => {
     try {
       await page.viewport(390, 844);
