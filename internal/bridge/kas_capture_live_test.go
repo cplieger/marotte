@@ -401,6 +401,8 @@ func (c *capture) resolve(msg *marotte.RPCResponse) (any, error) {
 		return map[string]any{"type": kind, "size": info.Size()}, nil
 	case "_kiro/fs/read_directory":
 		return c.listScratch(p.Path)
+	case "_kiro/search/text_search", "_kiro/search/find_files":
+		return c.search(msg)
 	case marotte.MethodElicitationCreate:
 		return marotte.ElicitationResult{
 			Action:  marotte.ElicitationActionAccept,

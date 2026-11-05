@@ -1,0 +1,26 @@
+{
+  "kiroCli": "3.0.0",
+  "source": "@kiro/agent/dist/server/acp-server.js: VZu (client provider), KWe (grep_search tool), qZu (rg --json parser), Rar (path mapping)",
+  "capability": {"clientCapabilities": {"_meta": {"kiro": {"textSearch": true}}}},
+  "method": "_kiro/search/text_search",
+  "requests": [
+    {"tool": {"query": "func Run", "includePattern": "marotte/internal/**/*.go"},
+     "params": {"sessionId": "sess_1", "pattern": "func Run", "caseSensitive": false, "includePattern": "marotte/internal/**/*.go"}},
+    {"tool": {"query": "TODO", "caseSensitive": true, "excludePattern": "**/*_test.go"},
+     "params": {"sessionId": "sess_1", "pattern": "TODO", "caseSensitive": true, "excludePattern": "**/*_test.go"}}
+  ],
+  "answer": {
+    "matches": [
+      {"filePath": "marotte/internal/run.go", "lineNumber": 10, "lineText": "// Run starts the loop.", "isContext": true},
+      {"filePath": "marotte/internal/run.go", "lineNumber": 12, "lineText": "func Run(ctx context.Context) error {", "isContext": false},
+      {"filePath": "data/notes/run.go", "lineNumber": 3, "lineText": "func Run() {}", "isContext": false}
+    ]
+  },
+  "kasAccepts": "any answer whose matches member is truthy, an empty array included; KAS returns it unchanged (no path remap, no cap)",
+  "kasFallsBack": ["a JSON-RPC error answer", "an answer with no matches member (metric textSearch.clientProvider.fault MalformedResponse)"],
+  "kasTimeout": "none: extMethod is sendRequest with no timeout or abort signal, so KAS waits for the answer however long it takes and a turn cancel does not end the wait",
+  "kasOwnRgArgs": ["--json", "-C", "2", "--max-count", "5", "--max-filesize", "1M", "--hidden", "--glob", "!.git", "--ignore-case unless caseSensitive", "--glob <includePattern>", "--glob !<excludePattern>", "--", "<pattern minus a lone trailing quote>", "<root>"],
+  "kasOwnCaps": {"files": 100, "matchesPerFile": 5, "contextLines": 2, "maxFileSize": "1M", "rgOutputBytes": 10485760, "budgetMs": 30000, "toolTextChars": 10000},
+  "fileRanking": "files ranked by match count descending then path ascending; entries within a file by line number",
+  "pathForm": "root-relative to the first root it resolves under; a file under a later root is prefixed with that root's base name when the bare relative path would resolve under the first root (Rar over MJ)"
+}

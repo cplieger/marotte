@@ -872,6 +872,7 @@ func (rt *Runtime) dispatchRequest(ctx context.Context, chatID marotte.ChatID, o
 	case rt.inbound.handleFSRequest(ctx, chatID, origin, msg),
 		rt.inbound.handleKiroFSRequest(ctx, chatID, origin, msg),
 		rt.inbound.handleKiroClientRequest(ctx, chatID, origin, msg),
+		rt.inbound.handleKiroSearchRequest(ctx, chatID, origin, msg),
 		rt.inbound.handleKiroSecretRequest(ctx, chatID, origin, msg):
 		return
 	case strings.HasPrefix(msg.Method, methodTermPrefix):

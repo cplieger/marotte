@@ -12,9 +12,9 @@ Reported as [kirodotdev/Kiro#11995](https://github.com/kirodotdev/Kiro/issues/11
 
 ### The agent stalls during a file search
 
-kiro-cli lists the workspace with ripgrep when the agent searches for files. When ripgrep fails, kiro-cli falls back to a slow listing with no time limit. Every chat and workflow waits while it runs, sometimes for minutes. ripgrep fails on a dangling symbolic link or a link loop anywhere in the workspace. It also fails on a tree too large to list in 30 seconds.
+kiro-cli runs its own ripgrep when the agent searches the workspace. When ripgrep fails, kiro-cli falls back to a slow listing with no time limit, and every chat and workflow its engine hosts waits while it runs, sometimes for over an hour. ripgrep fails on a dangling symbolic link or a link loop anywhere in the workspace, and on a tree too large to search in 30 seconds.
 
-Reported as [kirodotdev/Kiro#11957](https://github.com/kirodotdev/Kiro/issues/11957), open. marotte has no workaround. Remove dangling links and link loops under `/workspace`, which `find /workspace -xtype l` lists, and keep very large trees out of it.
+Reported as [kirodotdev/Kiro#11957](https://github.com/kirodotdev/Kiro/issues/11957), open. marotte runs the agent's `grep_search` and `file_search` itself, so kiro-cli's own search and its fallback never run. marotte searches the workspace and the additional directories with ripgrep, honours `.gitignore`, never follows symbolic links, and keeps ripgrep's results when it skips an unreadable path. A search that names a folder, such as `marotte/internal/**/*.go`, reads only that folder. Each search ends after 15 seconds, or when you stop the reply, and the agent receives what was found by then: at most 100 files for a text search.
 
 ### A reply hangs after a failed compaction
 

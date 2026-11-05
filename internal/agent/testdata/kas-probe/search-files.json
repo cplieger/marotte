@@ -1,0 +1,20 @@
+{
+  "kiroCli": "3.0.0",
+  "source": "@kiro/agent/dist/server/acp-server.js: BZu (client provider), GWe (file_search tool), S9o (query to glob), b9o (exclude), Rar (path mapping)",
+  "capability": {"clientCapabilities": {"_meta": {"kiro": {"findFiles": true}}}},
+  "method": "_kiro/search/find_files",
+  "requests": [
+    {"tool": {"query": "build.go"}, "params": {"sessionId": "sess_1", "pattern": "**/*build.go*", "maxResults": 11}},
+    {"tool": {"query": "build.go$"}, "params": {"sessionId": "sess_1", "pattern": "**/*build.go", "maxResults": 11}},
+    {"tool": {"query": "^marotte/internal"}, "params": {"sessionId": "sess_1", "pattern": "marotte/internal*", "maxResults": 11}},
+    {"tool": {"query": "x.go", "excludePattern": "**/vendor/**"}, "params": {"sessionId": "sess_1", "pattern": "**/*x.go*", "exclude": "**/vendor/**", "maxResults": 11}},
+    {"tool": {"query": "x.go", "includeIgnoredFiles": "yes"}, "params": {"sessionId": "sess_1", "pattern": "**/*x.go*", "maxResults": 11}}
+  ],
+  "answer": {"files": ["marotte/internal/kascap/build.go", "data/src/build.go"]},
+  "kasAccepts": "any answer whose files member is truthy, an empty array included; KAS returns it unchanged, then shows the first 10 and says more exist when it got 11",
+  "kasFallsBack": ["a JSON-RPC error answer", "an answer with no files member"],
+  "kasTimeout": "none, as for text_search",
+  "includeIgnoredFiles": "lost on the wire: b9o yields null for yes, and exclude: null ?? undefined drops the key, so the client cannot tell yes from no",
+  "kasOwnRgArgs": ["--files", "--max-depth", "50", "--follow", "--hidden", "--glob", "!.git", "--glob <pattern> unless **/*", "--glob !<exclude>", "--no-ignore when exclude is null", "<root>"],
+  "pathForm": "same as text_search"
+}

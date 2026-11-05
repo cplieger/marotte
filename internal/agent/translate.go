@@ -182,6 +182,9 @@ func (rt *Runtime) routeInboundRequest(ctx context.Context, chatID marotte.ChatI
 	if rt.inbound.handleKiroClientRequest(ctx, chatID, origin, msg) {
 		return true
 	}
+	if rt.inbound.handleKiroSearchRequest(ctx, chatID, origin, msg) {
+		return true
+	}
 	// Must be answered: KAS rethrows a store or delete failure into MCP connect.
 	if rt.inbound.handleKiroSecretRequest(ctx, chatID, origin, msg) {
 		return true

@@ -385,6 +385,8 @@ const cancelAttempts = 3
 // CancelPendingAsks answers every pending ask of chatID in scope with its kind's cancel answer, in ask order, and
 // settles each moot; the take decides each race with a card answer.
 func (b *bus) CancelPendingAsks(ctx context.Context, chatID marotte.ChatID, scope command.CancelScope) error {
+	// Every turn cancel and teardown passes here before its session/cancel.
+	b.searches.cancelChat(chatID)
 	for _, ref := range b.pendingPerms.askRefs(chatID, scope) {
 		if err := b.cancelAsk(ctx, chatID, ref); err != nil {
 			return err
