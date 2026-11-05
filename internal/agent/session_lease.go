@@ -14,14 +14,15 @@ import (
 // or writes sharedBridge.leased; session_lease_test.go fails the build on any other access.
 
 // leaseLife is the life an entry's leases are counted on: the chat's lifecycle, or runHostLife for a run host.
+// beginLease answers the life's context; a life that can end calls cut when it does, before the ending call returns.
 type leaseLife interface {
-	beginWork(kind workKind) (ctx context.Context, done func(), ok bool)
+	beginLease(cut context.CancelCauseFunc) (ctx context.Context, done func(), ok bool)
 }
 
 // runHostLife is a run host's life, which no close ends: it always admits, on the runtime's lifetime.
 type runHostLife struct{ ctx context.Context }
 
-func (l runHostLife) beginWork(workKind) (context.Context, func(), bool) {
+func (l runHostLife) beginLease(context.CancelCauseFunc) (context.Context, func(), bool) {
 	return l.ctx, func() {}, true
 }
 
@@ -44,13 +45,14 @@ func (sb *sharedBridge) use(ctx context.Context, fn func(ctx context.Context, s 
 	if s == nil {
 		return marotte.ErrSessionClosed
 	}
-	lifeCtx, done, ok := sb.life.beginWork(workSession)
+	child, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	lifeCtx, done, ok := sb.life.beginLease(cancel)
 	if !ok {
 		return marotte.ErrChatClosedDuringCall
 	}
 	defer done()
-	child, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
+	// The life's own end cuts child through beginLease; this carries the end of the life's parent, the runtime.
 	stop := context.AfterFunc(lifeCtx, func() { cancel(context.Cause(lifeCtx)) })
 	defer stop()
 	return closeCut(child, fn(child, s))

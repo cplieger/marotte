@@ -126,6 +126,8 @@ type chatLifecycle struct {
 	// fwdExits holds, per forward generation still running, the channel its
 	// goroutine closes on exit.
 	fwdExits map[uint64]chan struct{}
+	// leaseCuts holds each running session lease's cancel, by leaseSeq token (beginLease).
+	leaseCuts map[uint64]context.CancelCauseFunc
 	// quiet is closed once the life ended and none of its work runs (turn_life.go).
 	quiet chan struct{}
 	// ctx is the life's: cancelled with marotte.ErrChatClosedDuringCall when the life ends, and every wait of the
@@ -146,6 +148,8 @@ type chatLifecycle struct {
 	// nextSeq is the open sequence the newest record took; openLocked increments it
 	// before assigning, so the next record takes nextSeq+1.
 	nextSeq uint64
+	// leaseSeq is the last token beginLease issued; tokens start at 1.
+	leaseSeq uint64
 	// epoch names this lifecycle among the chat's; a fence from another epoch never holds. Re-minted when the life
 	// ends, so a surviving drain opens nothing.
 	epoch uint64
