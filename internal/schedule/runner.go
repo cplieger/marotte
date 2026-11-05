@@ -1,3 +1,4 @@
+// Package schedule launches a recipe at each due slot of its clock schedule.
 package schedule
 
 import (

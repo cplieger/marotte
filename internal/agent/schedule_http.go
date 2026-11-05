@@ -20,18 +20,18 @@ import (
 
 // scheduleView is a stored entry plus its resolved next run, computed server-side so the summary matches what will happen.
 type scheduleView struct {
-	NextRunAt  *time.Time    `json:"next_run_at,omitempty"`
-	LastRunAt  *time.Time    `json:"last_run_at,omitempty"`
-	WaitingFor *time.Time    `json:"waiting_for,omitempty"`
-	ID         string        `json:"id"`
-	Source     string        `json:"source"`
-	Name       string        `json:"name,omitempty"`
-	LastStatus string        `json:"last_status,omitempty"`
-	LastReason string        `json:"last_reason,omitempty"`
-	Model      string        `json:"model,omitempty"`
-	Effort     string        `json:"effort,omitempty"`
+	NextRunAt  *time.Time      `json:"next_run_at,omitempty"`
+	LastRunAt  *time.Time      `json:"last_run_at,omitempty"`
+	WaitingFor *time.Time      `json:"waiting_for,omitempty"`
+	ID         string          `json:"id"`
+	Source     string          `json:"source"`
+	Name       string          `json:"name,omitempty"`
+	LastStatus string          `json:"last_status,omitempty"`
+	LastReason string          `json:"last_reason,omitempty"`
+	Model      string          `json:"model,omitempty"`
+	Effort     string          `json:"effort,omitempty"`
 	Spec       launchrule.Spec `json:"spec"`
-	Enabled    bool          `json:"enabled"`
+	Enabled    bool            `json:"enabled"`
 }
 
 func (rr *runRoutes) registerSchedule(mux *http.ServeMux, write func(string, http.HandlerFunc)) {
@@ -81,11 +81,11 @@ func scheduleViewOf(e *schedule.Entry) scheduleView {
 // listing, as in handleLaunch, so no arbitrary file can be scheduled, and the model pick as at launch.
 func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Source  string        `json:"source"`
-		Model   string        `json:"model"`
-		Effort  string        `json:"effort"`
+		Source  string          `json:"source"`
+		Model   string          `json:"model"`
+		Effort  string          `json:"effort"`
 		Spec    launchrule.Spec `json:"spec"`
-		Enabled bool          `json:"enabled"`
+		Enabled bool            `json:"enabled"`
 	}
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
