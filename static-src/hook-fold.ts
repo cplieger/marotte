@@ -76,7 +76,7 @@ export function stampHookCard(card: HTMLElement, call: Partial<HookFacts>): void
 const REFUSED = new Set(["fail", "denied", "declined"]);
 
 /** What a group shows of its members: the rows, and the hooks folded into its badge. */
-export interface HookFold {
+interface HookFold {
   readonly rows: HTMLElement[];
   readonly folded: HTMLElement[];
 }
