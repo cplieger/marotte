@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -193,7 +193,7 @@ func TestEntryHeader_AnOversizeHeaderIsRefused(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, headerFileName), bloat, fileMode); err != nil {
 		t.Fatalf("write an oversize header: %v", err)
 	}
-	if _, err := h.Read(t.Context()); !errors.Is(err, atomicfile.ErrFileTooLarge) {
+	if _, err := h.Read(t.Context()); !errors.Is(err, filesafe.ErrFileTooLarge) {
 		t.Errorf("reading an oversize header answered %v, want ErrFileTooLarge", err)
 	}
 }

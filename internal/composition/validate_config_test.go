@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 // TestCheckDirWritable covers the probe's verdicts, including a teardown failure after a flushed
@@ -58,11 +58,11 @@ func TestCheckDirWritable(t *testing.T) {
 // TestCheckDirWritable_ProbeNameIsSweepable asserts that whatever name the writability probe creates,
 // sweepStaleTemps recognises it.
 func TestCheckDirWritable_ProbeNameIsSweepable(t *testing.T) {
-	name := atomicfile.TempName()
-	if !atomicfile.IsPackageTemp(name) {
-		t.Fatalf("atomicfile.TempName() = %q, which IsPackageTemp rejects", name)
+	name := filesafe.TempName()
+	if !filesafe.IsPackageTemp(name) {
+		t.Fatalf("filesafe.TempName() = %q, which IsPackageTemp rejects", name)
 	}
-	if atomicfile.IsPackageTemp(".marotte-probe-123") {
+	if filesafe.IsPackageTemp(".marotte-probe-123") {
 		t.Error("the retired app-invented probe name reads as sweepable; the sweep never reclaimed it")
 	}
 }

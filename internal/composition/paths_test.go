@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/envx/v2"
+	"github.com/cplieger/go/envx"
 	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/pinstall/v3"
 )

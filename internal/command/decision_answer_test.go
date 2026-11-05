@@ -13,8 +13,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 // Respond is the only method these handlers use; the rest satisfies the interface.

@@ -5,38 +5,35 @@ go 1.27.3
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
-	github.com/cplieger/go/filesafe v1.0.0-dev.1 // indirect
 	github.com/cplieger/go/httpclient v1.0.0-dev.3 // indirect
 	github.com/cplieger/go/jsonx v1.0.0-dev.2 // indirect
-	github.com/cplieger/go/ssrf v1.0.0-dev.1 // indirect
-	github.com/cplieger/go/textsafe v1.0.0-dev.1 // indirect
+	github.com/cplieger/go/scheduler v1.0.0-dev.1 // indirect
 	github.com/cplieger/go/urlform v1.0.0-dev.1 // indirect
-	github.com/cplieger/httpx/v5 v5.3.0 // indirect
-	github.com/cplieger/scheduler/v4 v4.3.0 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
+	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
 )
 
 require (
-	github.com/cplieger/atomicfile/v4 v4.2.0
-	github.com/cplieger/envx/v2 v2.1.0
-	github.com/cplieger/envx/yamlenv/v2 v2.3.0
 	github.com/cplieger/forgeapi v1.6.0-dev.2
-	github.com/cplieger/keyenc v1.1.0
-	github.com/cplieger/keylock v1.1.0-dev.1
-	github.com/cplieger/pathinside/v2 v2.1.0
-	github.com/cplieger/pinstall/v3 v3.2.0
-	github.com/cplieger/runesafe/v3 v3.2.0
-	github.com/cplieger/slogx v1.8.0
-	github.com/cplieger/sse v1.5.0
-	github.com/cplieger/ssrf/v4 v4.6.0
-	github.com/cplieger/toolbelt/v3 v3.14.0
-	github.com/cplieger/web-terminal-engine/v6 v6.4.0
-	github.com/cplieger/webhttp/v4 v4.1.0
-	github.com/cplieger/wiregen/v4 v4.0.0
+	github.com/cplieger/go/envx v1.0.0-dev.1
+	github.com/cplieger/go/filesafe v1.0.0-dev.1
+	github.com/cplieger/go/httpserver v1.0.0-dev.2
+	github.com/cplieger/go/keyenc v1.2.0-dev.1
+	github.com/cplieger/go/keylock v1.0.0-dev.1
+	github.com/cplieger/go/pathinside v1.0.0-dev.1
+	github.com/cplieger/go/slogx v1.0.0-dev.1
+	github.com/cplieger/go/sse v1.5.0-dev.4
+	github.com/cplieger/go/ssrf v1.0.0-dev.1
+	github.com/cplieger/go/textsafe v1.0.0-dev.1
+	github.com/cplieger/go/wiregen v1.0.0-dev.1
+	github.com/cplieger/go/yamlenv v1.0.0-dev.1
+	github.com/cplieger/pinstall/v3 v3.3.0-dev.1
+	github.com/cplieger/toolbelt/v3 v3.15.0-dev.2
+	github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.2
 	github.com/evanw/esbuild v0.28.2
 	github.com/klauspost/compress v1.20.3
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f

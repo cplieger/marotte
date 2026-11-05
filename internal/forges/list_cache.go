@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/keyenc"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
 )

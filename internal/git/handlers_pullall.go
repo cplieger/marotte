@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v4"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -95,7 +95,7 @@ func (h *Handler) handlePullAll(w http.ResponseWriter, r *http.Request) {
 	})
 	results, _ := v.([]pullResult)
 	// Treated as read-only by every singleflight sharer.
-	webhttp.WriteJSON(w, map[string]any{jsonKeyRepos: results})
+	httpserver.WriteJSON(w, map[string]any{jsonKeyRepos: results})
 }
 
 // Every exit carries a verdict, so the zero value is out_of_time rather than empty.

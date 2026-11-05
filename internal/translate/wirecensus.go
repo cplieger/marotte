@@ -15,8 +15,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // maxCensusObjectBytes skips the probe for an oversized `_meta.kiro` object, so a block
@@ -193,7 +193,7 @@ func censusMeta(label string, raw json.RawMessage, target reflect.Type, declined
 		}
 		slog.Warn("wire census: UNKNOWN _meta.kiro field dropped, KAS may have added one",
 			"frame", label,
-			"field", runesafe.SanitizeSingleLineBounded(name, maxCensusNameBytes),
+			"field", textsafe.SanitizeSingleLineBounded(name, maxCensusNameBytes),
 			"type", kind)
 	}
 }
@@ -216,7 +216,7 @@ func censusMeteringUnit(unit string) {
 	if unit == "" || unit == meteringUnitCredit || census.disabled() {
 		return
 	}
-	safe := runesafe.SanitizeSingleLineBounded(unit, maxCensusNameBytes)
+	safe := textsafe.SanitizeSingleLineBounded(unit, maxCensusNameBytes)
 	if !census.claimValue("meteringUsage.unit=" + safe) {
 		return
 	}
@@ -230,7 +230,7 @@ func censusWakeReason(reason string) {
 	if reason == "" || census.disabled() {
 		return
 	}
-	safe := runesafe.SanitizeSingleLineBounded(reason, maxCensusNameBytes)
+	safe := textsafe.SanitizeSingleLineBounded(reason, maxCensusNameBytes)
 	if !census.claimValue("agentInitiatedReason=" + safe) {
 		return
 	}
@@ -260,7 +260,7 @@ func censusUpdateKind(kind marotte.ACPUpdateKind) {
 	if _, named := knownUpdateKinds[kind]; named || census.disabled() {
 		return
 	}
-	safe := runesafe.SanitizeSingleLineBounded(string(kind), maxCensusNameBytes)
+	safe := textsafe.SanitizeSingleLineBounded(string(kind), maxCensusNameBytes)
 	if !census.claimValue("session/update.sessionUpdate=" + safe) {
 		return
 	}

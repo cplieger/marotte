@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/kascap"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/runesafe/v3"
 )
 
 func validatePromptPayload(cmd *marotte.ClientCommand) (marotte.PromptCommand, int, error) {
@@ -58,7 +58,7 @@ const maxDisplayLabelBytes = 256
 
 // displayLabel prepares a prompt's display label: one line, control runes removed, bounded.
 func displayLabel(s string) string {
-	return strings.TrimSpace(runesafe.SanitizeSingleLineBounded(s, maxDisplayLabelBytes))
+	return strings.TrimSpace(textsafe.SanitizeSingleLineBounded(s, maxDisplayLabelBytes))
 }
 
 // promptLabel is what names a chat from its first prompt: the display label, the text, or the

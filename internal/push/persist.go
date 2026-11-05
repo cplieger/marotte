@@ -15,7 +15,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -41,8 +41,8 @@ func (s *Service) loadKeys() {
 		s.healthy = false
 		return
 	}
-	if _, saveErr := atomicfile.WriteFile(context.Background(), s.keysPath(), data,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); saveErr != nil {
+	if _, saveErr := filesafe.WriteFile(context.Background(), s.keysPath(), data,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); saveErr != nil {
 		slog.Warn("push: persist VAPID keys failed", "error", saveErr)
 	}
 	ecdsaKey, decErr := s.decodeVAPIDPrivateKey()
@@ -216,8 +216,8 @@ func (s *Service) writeSubsSnapshot(subs []marotte.PushSubscription) {
 		slog.Error("push: marshal subscriptions", "error", err)
 		return
 	}
-	if _, saveErr := atomicfile.WriteFile(context.Background(), s.subsPath(), data,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); saveErr != nil {
+	if _, saveErr := filesafe.WriteFile(context.Background(), s.subsPath(), data,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); saveErr != nil {
 		slog.Warn("push: persist subscriptions failed", "error", saveErr)
 	}
 }

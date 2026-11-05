@@ -11,7 +11,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/kascap"

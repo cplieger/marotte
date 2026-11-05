@@ -9,7 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
 )
 
 func helloMux() http.Handler {
@@ -85,9 +85,9 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 // is rejected by the allowlist with baseline headers, the loopback carve-out keeps the
 // healthcheck, a forged loopback Host from a remote peer is rejected, and nil passes through.
 func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
-	policy, invalid := webhttp.ParseHostList([]string{"marotte.example.com"},
-		webhttp.WithLoopbackExempt(true),
-		webhttp.WithHostAllowlistError("",
+	policy, invalid := httpserver.ParseHostList([]string{"marotte.example.com"},
+		httpserver.WithLoopbackExempt(true),
+		httpserver.WithHostAllowlistError("",
 			"host not allowed. Add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
 		t.Fatalf("test allowlist has invalid entries: %v", invalid)
@@ -241,7 +241,7 @@ func TestBuildCSPPolicy_RealEmbeddedHTML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read static/index.html: %v", err)
 	}
-	if n := len(webhttp.InlineScriptHashes(html)); n != 0 {
+	if n := len(httpserver.InlineScriptHashes(html)); n != 0 {
 		t.Fatalf("static/index.html carries %d inline script(s), want 0", n)
 	}
 	staticFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: html}}

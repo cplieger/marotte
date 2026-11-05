@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notice"

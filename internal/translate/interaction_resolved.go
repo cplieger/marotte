@@ -3,8 +3,8 @@ package translate
 import (
 	"log/slog"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // KAS emits it for every approval it resolves; outcome "cancelled" means the asker ended and KAS
@@ -27,6 +27,6 @@ func (t *Translator) handleInteractionResolved(key marotte.ChatID, r *interactio
 	}
 	if !t.pendingPerms.PendingPermsWithdraw(key, r.ToolCallID) {
 		slog.Debug("interaction_resolved: no pending ask for the withdrawn tool call",
-			"chat_id", key, "tool_call_id", runesafe.SanitizeSingleLineBounded(r.ToolCallID, maxCensusNameBytes))
+			"chat_id", key, "tool_call_id", textsafe.SanitizeSingleLineBounded(r.ToolCallID, maxCensusNameBytes))
 	}
 }

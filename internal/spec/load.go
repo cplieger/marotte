@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -108,9 +108,9 @@ func loadDocs(ctx context.Context, r *os.Root, dir string, entries []fs.DirEntry
 
 func loadDoc(ctx context.Context, r *os.Root, p string, maxBytes int64) (marotte.SpecDoc, time.Time, error) {
 	doc := marotte.SpecDoc{File: path.Base(p), Role: roleOf(p)}
-	data, err := atomicfile.ReadBoundedInRoot(ctx, r, p, maxBytes)
+	data, err := filesafe.ReadBoundedInRoot(ctx, r, p, maxBytes)
 	switch {
-	case errors.Is(err, atomicfile.ErrFileTooLarge):
+	case errors.Is(err, filesafe.ErrFileTooLarge):
 		doc.TooLarge = true
 	case err != nil:
 		return marotte.SpecDoc{}, time.Time{}, err

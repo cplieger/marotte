@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // engineSlowRetryAfter is the Retry-After, in seconds, of a listing or a launch the engine did not answer in time.
@@ -173,7 +173,7 @@ func writeEngineSlow(w http.ResponseWriter, err error) bool {
 
 func writeTryLater(w http.ResponseWriter, reason, code string) {
 	w.Header().Set("Retry-After", strconv.Itoa(engineSlowRetryAfter))
-	webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSONWithCode(reason, code))
+	httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSONWithCode(reason, code))
 }
 
 // The 503s' machine reasons, so a client branches on them rather than on the sentence.

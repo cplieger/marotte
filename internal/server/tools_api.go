@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/httpapi"
-	"github.com/cplieger/webhttp/v4"
 )
 
 const toolsAPIPrefix = "/api/tools"
@@ -36,7 +36,7 @@ func (a *toolsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if engine == nil {
 		// httpapi's own policy, kept on the refusal too: this answer changes without a deploy.
 		w.Header().Set("Cache-Control", "no-store")
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
 			httpreply.ErrorJSONWithCode(down.Error(), errCodeToolsUnavailable))
 		return
 	}

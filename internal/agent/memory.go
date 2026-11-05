@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // memoryStoreCap is KAS's record cap and largest list page, so one page holds the store.
@@ -137,7 +137,7 @@ func writeMemoryErr(w http.ResponseWriter, err error) {
 	if _, ok := errors.AsType[*marotte.RPCError](err); ok && !marotte.ReplyUnread(err) {
 		text := rpcerr.Text(err)
 		if strings.Contains(text, "Memory is not enabled") {
-			webhttp.WriteJSONStatus(w, http.StatusConflict,
+			httpserver.WriteJSONStatus(w, http.StatusConflict,
 				httpreply.ErrorJSONWithCode("Memory is not available for this account.", memoryNotEnabledCode))
 			return
 		}
@@ -145,7 +145,7 @@ func writeMemoryErr(w http.ResponseWriter, err error) {
 		return
 	}
 	slog.Warn("memory op failed", "error", err)
-	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("memory request failed"))
+	httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("memory request failed"))
 }
 
 // memoryGonePrefix opens KAS's refusal to delete an id its store no longer holds, which kiro-cli's own TUI
@@ -167,7 +167,7 @@ func (st *Settings) handleMemoryCollection(w http.ResponseWriter, r *http.Reques
 		writeMemoryErr(w, err)
 		return
 	}
-	webhttp.WriteJSON(w, memoryListResponse{Memories: rows, Cap: memoryStoreCap})
+	httpserver.WriteJSON(w, memoryListResponse{Memories: rows, Cap: memoryStoreCap})
 }
 
 // handleMemoryOne serves one record by id (a title can repeat): GET with content, PATCH edits, DELETE removes.
@@ -206,7 +206,7 @@ func (st *Settings) handleMemoryOne(w http.ResponseWriter, r *http.Request) {
 			if err != nil && !memoryAlreadyGone(err) {
 				return memoryFailure(err)
 			}
-			return engineReply{write: webhttp.Ok, applied: true}
+			return engineReply{write: httpserver.Ok, applied: true}
 		})
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPatch, http.MethodDelete)
@@ -224,7 +224,7 @@ func (st *Settings) memoryOne(ctx context.Context, method string, params map[str
 		// KAS answered, so an update landed; only its record is unreadable.
 		return engineReply{err: err, write: func(w http.ResponseWriter) { writeMemoryErr(w, err) }, applied: true}
 	}
-	return engineReply{write: func(w http.ResponseWriter) { webhttp.WriteJSON(w, memoryOneResponse{Memory: row}) }, applied: true}
+	return engineReply{write: func(w http.ResponseWriter) { httpserver.WriteJSON(w, memoryOneResponse{Memory: row}) }, applied: true}
 }
 
 // memoryWrite runs a memory change as an engine mutation, so the list refetches on memories_changed once it lands.

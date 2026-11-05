@@ -15,8 +15,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 // TestSendFailureLogCarriesTheTagNotTheEndpoint pins that the send-failed warn names the

@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 const (

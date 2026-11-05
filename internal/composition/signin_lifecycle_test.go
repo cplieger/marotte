@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/chat"
-	"github.com/cplieger/slogx/capture"
 )
 
 // lockedBuffer is a log sink safe for the runtime's goroutines and the test reading it at once.

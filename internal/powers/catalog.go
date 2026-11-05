@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/go/textsafe"
 )
 
 // RegistryURL is the catalogue the Kiro IDE and `kiro-cli powers install` read.
@@ -359,7 +359,7 @@ func serverNames(m map[string]json.RawMessage) ([]string, bool) {
 	}
 	out := make([]string, 0, len(m))
 	for _, raw := range sortedNames(m) {
-		if name := strings.TrimSpace(runesafe.SanitizeSingleLineBounded(raw, maxServerNameBytes)); name != "" {
+		if name := strings.TrimSpace(textsafe.SanitizeSingleLineBounded(raw, maxServerNameBytes)); name != "" {
 			out = append(out, name)
 		}
 	}
@@ -367,5 +367,5 @@ func serverNames(m map[string]json.RawMessage) ([]string, bool) {
 }
 
 func field(s string) string {
-	return strings.TrimSpace(runesafe.SanitizeSingleLineBounded(s, maxFieldBytes))
+	return strings.TrimSpace(textsafe.SanitizeSingleLineBounded(s, maxFieldBytes))
 }

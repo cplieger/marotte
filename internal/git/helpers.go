@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // requirePOST writes a 405 if the method isn't POST and returns false.
@@ -16,7 +16,7 @@ func requirePOST(w http.ResponseWriter, r *http.Request) bool {
 	return httpreply.RequireMethod(w, r, http.MethodPost)
 }
 
-// decodePostBody enforces the JSON body cap (webhttp.MaxJSONBody) and decodes into v; on failure it
+// decodePostBody enforces the JSON body cap (httpserver.MaxJSONBody) and decodes into v; on failure it
 // writes a 400 with msg and returns false. Method checks are requirePOST's.
 func decodePostBody(w http.ResponseWriter, r *http.Request, v any, decodeErrMsg string) bool {
 	return httpreply.DecodeBody(w, r, v, decodeErrMsg)
@@ -35,10 +35,10 @@ func decodePostBodyOptional(w http.ResponseWriter, r *http.Request, v any) bool 
 // success.
 func writeCmdResult(w http.ResponseWriter, out string, err error) {
 	if err != nil {
-		webhttp.WriteJSON(w, httpreply.ErrorJSON(clientBlock(cmdFailure(out, err))))
+		httpserver.WriteJSON(w, httpreply.ErrorJSON(clientBlock(cmdFailure(out, err))))
 		return
 	}
-	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: clientBlock(out)})
+	httpserver.WriteJSON(w, map[string]string{jsonKeyOutput: clientBlock(out)})
 }
 
 // cmdFailure names WHY a git subprocess failed, for a caller composing several failures into one

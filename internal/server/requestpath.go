@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // apiPathPrefix is the subtree this guard covers: every route but the "/" SPA/static mount,
@@ -30,7 +30,7 @@ const msgNonCanonicalPath = "non-canonical request path"
 // trailing-slash redirect; register both spellings of any subtree route.
 func canonicalAPIPath(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		clean, canonical := webhttp.CanonicalRequestPath(r.URL.Path)
+		clean, canonical := httpserver.CanonicalRequestPath(r.URL.Path)
 		if !canonical && onAPISurface(r.URL.Path, clean) {
 			httpreply.BadRequest(w, msgNonCanonicalPath)
 			return

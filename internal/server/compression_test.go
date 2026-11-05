@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
 )
 
 // apiStack wraps mux in the production middleware stack, so a test answers what a browser gets.
@@ -17,7 +17,7 @@ func apiStack(t *testing.T, s *Server, mux *http.ServeMux) http.Handler {
 	t.Helper()
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
-	return webhttp.Chain(mux, s.middlewareStack(baseCSPPolicy, idem)...)
+	return httpserver.Chain(mux, s.middlewareStack(baseCSPPolicy, idem)...)
 }
 
 // gunzipped reads a gzip-coded response body back to its identity bytes.
@@ -37,7 +37,7 @@ func gunzipped(t *testing.T, rec *httptest.ResponseRecorder) []byte {
 	return body
 }
 
-// bigJSON is a JSON body comfortably over webhttp's 1 KiB gzip floor, shaped like a chat list.
+// bigJSON is a JSON body comfortably over httpserver's 1 KiB gzip floor, shaped like a chat list.
 func bigJSON() string {
 	return `{"chats":[` + strings.Repeat(`{"id":"c1","name":"a chat"},`, 200) + `{"id":"z"}]}`
 }

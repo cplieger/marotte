@@ -15,10 +15,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // --- /api/files/action (POST: mkdir, touch, delete, rename) ---
@@ -48,14 +48,14 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 
 	var body fileAction
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: action body too large",
-				"limit", webhttp.MaxJSONBody, "error", maxErr)
-			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+				"limit", httpserver.MaxJSONBody, "error", maxErr)
+			httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				httpreply.ErrorJSON("request body too large"))
 			return
 		}
@@ -79,11 +79,11 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Warn("filebrowse: action failed",
 			"action", logsafe.Field(body.Action), "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+		httpserver.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(body.Action+" failed"))
 		return
 	}
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }
 
 // refuseMountPoint writes the shared 403 for create/delete/rename/move
@@ -155,9 +155,9 @@ func actionDelete(_ context.Context, w http.ResponseWriter, _ fileAction, l loc,
 	// The mount's os.Root confines the unlink but follows an in-root symlink, so a multi-component
 	// rel could reach a different file than protectedDir judged. OpenParentInRoot descends refusing
 	// symlinks, so only the final element is named through the pinned parent.
-	// The parent's own RemoveAll, not atomicfile.RemoveFileInRoot, which refuses a non-regular
+	// The parent's own RemoveAll, not filesafe.RemoveFileInRoot, which refuses a non-regular
 	// entry and would make a symlink undeletable.
-	parent, base, err := atomicfile.OpenParentInRoot(l.m.root, l.rel())
+	parent, base, err := filesafe.OpenParentInRoot(l.m.root, l.rel())
 	if err != nil {
 		// os.Root.RemoveAll reports an already-absent path as success; a
 		// parent directory that is gone is the same answer to the caller.
@@ -224,7 +224,7 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	}
 	// One pinned parent serves both ends, since they share one directory; see actionDelete for why
 	// os.Root alone is not enough.
-	parent, base, err := atomicfile.OpenParentInRoot(l.m.root, l.rel())
+	parent, base, err := filesafe.OpenParentInRoot(l.m.root, l.rel())
 	if err != nil {
 		return err
 	}

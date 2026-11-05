@@ -27,7 +27,7 @@ type Handler struct {
 	backend signin.BackendID
 	// managedSettingsPath is the administrator's file the sign-in controls come from.
 	managedSettingsPath string
-	// trusted is the reverse-proxy set for webhttp.ClientIP in the login/logout audit logs. Nil logs the socket peer.
+	// trusted is the reverse-proxy set for httpserver.ClientIP in the login/logout audit logs. Nil logs the socket peer.
 	trusted []netip.Prefix
 	// apiKey: the engine is signed in by KIRO_API_KEY, which kiro-cli prefers to marotte's answer, so sign-in and
 	// sign-out here would change nothing the engine uses.

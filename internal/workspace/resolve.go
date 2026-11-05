@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/pathinside/v2"
+	"github.com/cplieger/go/pathinside"
 )
 
 // ResolveInsideAbs confines p to absWork, which must already be absolute. It is

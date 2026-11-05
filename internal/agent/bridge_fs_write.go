@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -43,7 +43,7 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, or
 	root, rel := target.root, target.rel
 
 	// Preserve an existing regular file's permission bits; a new file takes the directory's default.
-	var opts []atomicfile.Option
+	var opts []filesafe.Option
 	var restore os.FileMode
 	if info, statErr := root.Lstat(rel); statErr == nil && info.Mode().IsRegular() {
 		opts, restore = filemode.RewriteOptions(info.Mode().Perm())
@@ -58,7 +58,7 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, or
 
 	// One confined atomic write: either the old bytes or all the new ones. A directory, FIFO,
 	// device or socket at the target is refused up front.
-	if _, wErr := atomicfile.WriteFileInRoot(ctx, root, rel, []byte(p.Content), opts...); wErr != nil {
+	if _, wErr := filesafe.WriteFileInRoot(ctx, root, rel, []byte(p.Content), opts...); wErr != nil {
 		in.respondFSError(ctx, chatID, origin, msg, wErr)
 		return
 	}

@@ -6,7 +6,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
@@ -23,7 +23,7 @@ func kiroSettingsPath() string {
 // cachedBoolField reads a JSON boolean, costing one os.Stat once warm. Staleness checks mtime,
 // inode and size: kiro-cli publishes cli.json by rename, so no single signal catches every rewrite.
 type cachedBoolField struct {
-	id         atomicfile.FileIdentity
+	id         filesafe.FileIdentity
 	path       string
 	key        string
 	size       int64
@@ -74,7 +74,7 @@ func (c *cachedBoolField) get() bool {
 
 	// A file that changed again is stale in the safe direction: the next call re-reads.
 	c.mu.Lock()
-	c.value, c.id, c.size = parsed, atomicfile.Identify(info), info.Size()
+	c.value, c.id, c.size = parsed, filesafe.Identify(info), info.Size()
 	c.mu.Unlock()
 	return parsed
 }

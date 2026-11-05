@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/asidefile"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -724,7 +724,7 @@ func TestEntryLog_TheWholeLogCapRefusesBeforeTheWrite(t *testing.T) {
 	}
 	filler := entryOf(opened.Turn, "", "say-1", marotte.EntryKindText,
 		marotte.EntryText{Text: strings.Repeat("y", 400)})
-	if err := lg.Append(ctx, filler); !errors.Is(err, atomicfile.ErrFileTooLarge) {
+	if err := lg.Append(ctx, filler); !errors.Is(err, filesafe.ErrFileTooLarge) {
 		t.Fatalf("a write past the cap answered %v, want ErrFileTooLarge", err)
 	}
 	entries, err := turnRange(lg, opened.Turn, 0)

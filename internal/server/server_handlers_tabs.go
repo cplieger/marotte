@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // Read-only: every tab mutation rides POST /api/command (invariant 1).
@@ -29,7 +29,7 @@ func (s *Server) handleTabs(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.tabs == nil {
 		// Unwired: the empty collection at version 0, not 404, so a client can still boot.
-		webhttp.WriteJSON(w, marotte.TabList{Tabs: []marotte.TabSubject{}})
+		httpserver.WriteJSON(w, marotte.TabList{Tabs: []marotte.TabSubject{}})
 		return
 	}
 	open, version := s.tabs.List()
@@ -46,5 +46,5 @@ func (s *Server) handleTabs(w http.ResponseWriter, r *http.Request) {
 			Epoch:   s.agent.Epoch(),
 		}
 	}
-	webhttp.WriteJSON(w, out)
+	httpserver.WriteJSON(w, out)
 }

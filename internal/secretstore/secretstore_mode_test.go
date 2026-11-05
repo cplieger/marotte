@@ -54,7 +54,7 @@ func TestLoad_ModeIsVerifiedNotRequested(t *testing.T) {
 
 // TestLoad_RefusesAStoreWhoseModeItCannotVerify pins that an unverifiable 0600 FAILS the
 // open (the mode is these tokens' whole protection). A symlink at the name reaches the
-// branch here; a mode-widening filesystem reaches it via atomicfile.ErrModeNotStored.
+// branch here; a mode-widening filesystem reaches it via filesafe.ErrModeNotStored.
 func TestLoad_RefusesAStoreWhoseModeItCannotVerify(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(t.TempDir(), "planted.json")

@@ -11,11 +11,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/webhttp/v4"
 )
 
 func TestConfigFromEnv_Defaults(t *testing.T) {
@@ -120,7 +120,7 @@ func containsIP(prefixes []netip.Prefix, ipStr string) bool {
 // TestParseAllowedHosts pins the ALLOWED_HOSTS parser: unset or blank is an INACTIVE policy, valid
 // entries engage the gate.
 func TestParseAllowedHosts(t *testing.T) {
-	allows := func(t *testing.T, policy *webhttp.HostPolicy, host, remoteAddr string) bool {
+	allows := func(t *testing.T, policy *httpserver.HostPolicy, host, remoteAddr string) bool {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/x", nil)
 		if remoteAddr != "" {
@@ -311,7 +311,7 @@ func TestConfigFromEnv_TrustedProxies(t *testing.T) {
 	})
 }
 
-// TestTrustedProxies_ClientIPResolution asserts that the parsed set, fed to webhttp.ClientIP as server.go does,
+// TestTrustedProxies_ClientIPResolution asserts that the parsed set, fed to httpserver.ClientIP as server.go does,
 // resolves the real client only from a trusted peer.
 func TestTrustedProxies_ClientIPResolution(t *testing.T) {
 	const (
@@ -327,19 +327,19 @@ func TestTrustedProxies_ClientIPResolution(t *testing.T) {
 
 	t.Run("unconfigured: XFF ignored, socket peer wins", func(t *testing.T) {
 		trusted := parseTrustedProxies("")
-		if got := webhttp.ClientIP(newReq(), trusted...); got != peer {
+		if got := httpserver.ClientIP(newReq(), trusted...); got != peer {
 			t.Errorf("ClientIP unconfigured = %q, want socket peer %q", got, peer)
 		}
 	})
 	t.Run("configured, peer trusted: XFF client wins", func(t *testing.T) {
 		trusted := parseTrustedProxies("198.51.100.0/24")
-		if got := webhttp.ClientIP(newReq(), trusted...); got != xffClient {
+		if got := httpserver.ClientIP(newReq(), trusted...); got != xffClient {
 			t.Errorf("ClientIP trusted peer = %q, want XFF client %q", got, xffClient)
 		}
 	})
 	t.Run("configured, peer NOT trusted: XFF ignored", func(t *testing.T) {
 		trusted := parseTrustedProxies("10.0.0.0/8")
-		if got := webhttp.ClientIP(newReq(), trusted...); got != peer {
+		if got := httpserver.ClientIP(newReq(), trusted...); got != peer {
 			t.Errorf("ClientIP untrusted peer = %q, want socket peer %q", got, peer)
 		}
 	})

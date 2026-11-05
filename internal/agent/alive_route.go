@@ -3,8 +3,8 @@ package agent
 import (
 	"net/http"
 
-	"github.com/cplieger/sse"
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/sse"
 )
 
 // presenceTable is the push presence table: hub connect/disconnect events plus keepalive acks. *push.Presence satisfies it.
@@ -14,7 +14,7 @@ type presenceTable interface {
 }
 
 // aliveInvalidCode is answered when the SSE-Client header is absent or outside the tag grammar.
-const aliveInvalidCode webhttp.ErrorCode = "alive_invalid"
+const aliveInvalidCode httpserver.ErrorCode = "alive_invalid"
 
 // forwardPresence hands every presence event to the table WithPresence wired, or drops it when none was.
 func (b *bus) forwardPresence(ev *sse.PresenceEvent) {
@@ -27,8 +27,8 @@ func (b *bus) forwardPresence(ev *sse.PresenceEvent) {
 // in the table. Answers 204.
 func (rt *Runtime) handleAlive(w http.ResponseWriter, r *http.Request) {
 	tag := r.Header.Get(clientTagHeader)
-	if !webhttp.ValidRequestID(tag) {
-		webhttp.WriteError(w, r, http.StatusBadRequest, aliveInvalidCode,
+	if !httpserver.ValidRequestID(tag) {
+		httpserver.WriteError(w, r, http.StatusBadRequest, aliveInvalidCode,
 			"SSE-Client header absent or outside [A-Za-z0-9_-]{1,64}")
 		return
 	}

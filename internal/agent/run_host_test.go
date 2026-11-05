@@ -16,12 +16,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/slogx/capture"
 )
 
 type bufferedEvent struct {

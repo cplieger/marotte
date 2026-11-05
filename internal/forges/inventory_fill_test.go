@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 type fillCore struct {

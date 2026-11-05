@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/pathinside/v2"
+	"github.com/cplieger/go/pathinside"
 )
 
 // FuzzResolveInsideAbs fuzzes the production resolver against its three invariants: an

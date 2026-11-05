@@ -10,7 +10,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -70,9 +70,9 @@ func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, ori
 	defer target.release()
 	// No ignore filter here: KAS enforces the list. The bound comes from the open descriptor,
 	// a FIFO is refused, and every component resolves inside the root.
-	data, err := atomicfile.ReadBoundedInRoot(ctx, target.root, target.rel, fsReadCap)
+	data, err := filesafe.ReadBoundedInRoot(ctx, target.root, target.rel, fsReadCap)
 	if err != nil {
-		if errors.Is(err, atomicfile.ErrFileTooLarge) {
+		if errors.Is(err, filesafe.ErrFileTooLarge) {
 			err = fmt.Errorf("%w: %d", errCapExceeded, fsReadCap)
 		}
 		in.respondFSError(ctx, chatID, origin, msg, err)

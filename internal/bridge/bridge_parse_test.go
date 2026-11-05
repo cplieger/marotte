@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 // tooDeep is a JSON value nested past encoding/json's 10,000-level limit: valid JSON that Unmarshal refuses.

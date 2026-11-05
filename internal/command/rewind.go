@@ -13,7 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/keylock"
+	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"

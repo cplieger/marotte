@@ -12,7 +12,7 @@ import (
 	"testing"
 	"testing/synctest"
 
-	"github.com/cplieger/keylock"
+	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
 )

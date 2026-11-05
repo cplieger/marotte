@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"log/slog"
 
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
-	"github.com/cplieger/sse"
 )
 
 // mintPending bumps the workspace `pending` counter for one of the three pending stores, called

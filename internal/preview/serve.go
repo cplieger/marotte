@@ -117,7 +117,7 @@ func servePage(w http.ResponseWriter, r *http.Request, f *os.File) {
 }
 
 // setPreviewHeaders writes the preview policy over the global baseline, which
-// webhttp.SecurityHeaders sets before the handler and documents as overridable.
+// httpserver.SecurityHeaders sets before the handler and documents as overridable.
 // src is the granted folder as a CSP source, or "" when the request named none
 // worth trusting, in which case every list that would hold only it is 'none'.
 func setPreviewHeaders(h http.Header, src string) {

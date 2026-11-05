@@ -12,13 +12,13 @@ import (
 	"sync/atomic"
 	"syscall"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/webhttp/v4"
 )
 
 const port = "9847"
@@ -65,7 +65,7 @@ type Server struct {
 	// authUnavailable reads a latch, never a probe (see WithAuthUnavailable).
 	authUnavailable func() bool
 	// hostPolicy is the ALLOWED_HOSTS allowlist; nil or inactive accepts any Host.
-	hostPolicy *webhttp.HostPolicy
+	hostPolicy *httpserver.HostPolicy
 	// onListen fires once per successful bind, before serving: the evidence that this process
 	// serves its config dir.
 	onListen  func()
@@ -236,7 +236,7 @@ func WithTrustedProxies(trusted []netip.Prefix) Option {
 // WithHostPolicy sets the exact-match Host allowlist the security middleware
 // applies before the CSRF check — the anti-DNS-rebinding gate. A nil or inactive
 // policy accepts any Host.
-func WithHostPolicy(p *webhttp.HostPolicy) Option {
+func WithHostPolicy(p *httpserver.HostPolicy) Option {
 	return func(s *Server) { s.hostPolicy = p }
 }
 
@@ -329,8 +329,8 @@ func (s *Server) ListenAndServe() error {
 
 	// MaxHeaderValueCount is left at its default: a 431 is answered BELOW the middleware chain,
 	// with no access-log line, request id or client_ip.
-	handler := webhttp.Chain(mux, s.middlewareStack(cspPolicy, idem)...)
-	srv := webhttp.NewServer(handler)
+	handler := httpserver.Chain(mux, s.middlewareStack(cspPolicy, idem)...)
+	srv := httpserver.New(handler)
 	srv.Addr = ":" + listenPort
 
 	// Bound up front so port-in-use surfaces synchronously.
@@ -359,7 +359,7 @@ func (s *Server) ListenAndServe() error {
 
 	// The pre-drain hook keeps the agent-before-server order: readiness flips, the runtime stops
 	// bridges and streams, and only then does the HTTP drain run.
-	runErr := webhttp.Run(ctx, srv, ln, nil, webhttp.WithPreDrain(func(drainCtx context.Context) {
+	runErr := httpserver.Run(ctx, srv, ln, nil, httpserver.WithPreDrain(func(drainCtx context.Context) {
 		slog.Info("received signal, shutting down", "cause", context.Cause(ctx))
 		s.ready.Store(false)
 		// Run calls this hook SYNCHRONOUSLY before srv.Shutdown: drainCtx is passed on, never discarded.
@@ -375,7 +375,7 @@ func (s *Server) ListenAndServe() error {
 // public address warns once, because a reverse proxy missing from TRUSTED_PROXIES otherwise makes
 // every line log the proxy's address silently.
 func (s *Server) clientIP(r *http.Request) string {
-	res := webhttp.ResolveClient(r, s.trustedProxies...)
+	res := httpserver.ResolveClient(r, s.trustedProxies...)
 	if res.IgnoredPublic && s.ignoredPublicWarned.CompareAndSwap(false, true) {
 		slog.Warn("a peer outside TRUSTED_PROXIES forwarded a public client address; client_ip logs the peer instead",
 			"peer", res.Peer.String(),
@@ -399,21 +399,21 @@ func registerAPIFallback(mux *http.ServeMux) {
 // middlewareStack returns the middleware wrapping the route mux, OUTERMOST FIRST: access log,
 // recovery, security (CSP + ALLOWED_HOSTS + CSRF), Fetch Metadata, canonical path, compression,
 // dedup. A method so the ORDER, a security property, is assertable without a port.
-func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []webhttp.Middleware {
-	return []webhttp.Middleware{
-		webhttp.Logging(
+func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []httpserver.Middleware {
+	return []httpserver.Middleware{
+		httpserver.Logging(
 			// Skipped by path, or the long-lived stream logs one open-forever line.
-			webhttp.WithSkipPaths("/api/events"),
+			httpserver.WithSkipPaths("/api/events"),
 			// The shell PTY is silenced by RESPONSE, not path, so every handshake refusal keeps its line.
-			webhttp.WithSkipUpgrades(true),
+			httpserver.WithSkipUpgrades(true),
 			// /api/health is probed every 30s, so a healthy probe logs at Debug and only
 			// a failing one is surfaced.
-			webhttp.ProbeLogLevel("/api/health"),
-			webhttp.WithClientIPFunc(s.clientIP),
+			httpserver.ProbeLogLevel("/api/health"),
+			httpserver.WithClientIPFunc(s.clientIP),
 			// A preview path carries a 12h bearer token, so it logs as the route template.
-			webhttp.WithTemplatePathsUnder(preview.PathPrefix),
+			httpserver.WithTemplatePathsUnder(preview.PathPrefix),
 		),
-		webhttp.Recoverer(),
+		httpserver.Recoverer(),
 		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, s.hostPolicy, next) },
 		fetchMetadataGate,
 		// INSIDE the host and CSRF gates (their 403 is not shadowed), OUTSIDE the mux (ServeMux
@@ -436,7 +436,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return httpreply.DecodeBody(w, r, v, "bad request")
 }
 
-// A struct, not a map, so the key order matches webhttp.ReadinessHandler's byte for byte.
+// A struct, not a map, so the key order matches httpserver.ReadinessHandler's byte for byte.
 type healthBody struct {
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
@@ -450,7 +450,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	// "ok" would outlive a drain.
 	w.Header().Set("Cache-Control", "no-store")
 	unready := func(reason string) {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
 			Status: "unready",
 			Reason: reason,
 		})
@@ -470,5 +470,5 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		unready(reasonSignIn)
 		return
 	}
-	webhttp.WriteJSON(w, healthBody{Status: "ok"})
+	httpserver.WriteJSON(w, healthBody{Status: "ok"})
 }

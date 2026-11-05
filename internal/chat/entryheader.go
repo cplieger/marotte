@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -42,7 +42,7 @@ func (h EntryHeader) Read(ctx context.Context) (*marotte.Chat, error) {
 	if info.Size() > maxHeaderBytes {
 		return nil, errFileTooLarge("chat header "+h.root, info.Size(), maxHeaderBytes)
 	}
-	data, err := atomicfile.ReadBoundedFile(ctx, f, maxHeaderBytes)
+	data, err := filesafe.ReadBoundedFile(ctx, f, maxHeaderBytes)
 	if err != nil {
 		return nil, fmt.Errorf("chat header %s: %w", h.root, err)
 	}
@@ -53,16 +53,16 @@ func (h EntryHeader) Read(ctx context.Context) (*marotte.Chat, error) {
 	return &c, nil
 }
 
-// write replaces the header atomically through atomicfile (temp, fsync, rename, dir fsync). The directory is 0700:
+// write replaces the header atomically through filesafe (temp, fsync, rename, dir fsync). The directory is 0700:
 // a header carries the name, draft and attachment paths.
 func (h EntryHeader) write(ctx context.Context, c *marotte.Chat) error {
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	_, err = atomicfile.WriteFile(ctx, h.path(), data,
-		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode),
-		atomicfile.WithMaxBytes(maxHeaderBytes))
+	_, err = filesafe.WriteFile(ctx, h.path(), data,
+		filesafe.WithMode(fileMode), filesafe.WithMkdirMode(dirMode),
+		filesafe.WithMaxBytes(maxHeaderBytes))
 	if err != nil {
 		return fmt.Errorf("write chat header %s: %w", h.path(), err)
 	}

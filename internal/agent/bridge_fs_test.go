@@ -620,7 +620,7 @@ func TestRespondFSError_BoundsAndNormalizesTheLogAttribute(t *testing.T) {
 	if strings.ContainsRune(got, '\u202e') {
 		t.Errorf("fs failure log error attribute contains a bidi override: %q", got)
 	}
-	// logsafe.Field adds runesafe's "..." outside the cap, so a truncated attribute is MaxFieldBytes+3 bytes.
+	// logsafe.Field adds textsafe's "..." outside the cap, so a truncated attribute is MaxFieldBytes+3 bytes.
 	if maxLen := logsafe.MaxFieldBytes + len("..."); len(got) > maxLen {
 		t.Errorf("fs failure log error attribute length = %d, want at most %d bytes", len(got), maxLen)
 	}

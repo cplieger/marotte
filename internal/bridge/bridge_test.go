@@ -21,10 +21,10 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/kascap"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/modeltext"
-	"github.com/cplieger/slogx/capture"
 )
 
 func TestNewEngine_FieldsAndAccessors(t *testing.T) {

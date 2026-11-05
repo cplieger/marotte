@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/slogx/capture"
 )
 
 // Package-internal access is intentional: it is the only observable signal of Install/SetDebug, so

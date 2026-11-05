@@ -6,9 +6,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notice"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // approvalTypeTurn is the `_meta.kiro.type` marking a turn approval.
@@ -207,8 +207,8 @@ func permissionCommand(raw string) *marotte.PermissionCommand {
 	if len(clean) <= maxApprovalCommandBytes {
 		return &marotte.PermissionCommand{Text: clean}
 	}
-	head := runesafe.CapBytes(clean, maxApprovalCommandBytes/2)
-	tail := runesafe.CapBytesTail(clean, maxApprovalCommandBytes/2)
+	head := textsafe.CapBytes(clean, maxApprovalCommandBytes/2)
+	tail := textsafe.CapBytesTail(clean, maxApprovalCommandBytes/2)
 	return &marotte.PermissionCommand{Text: head, Tail: tail, OmittedBytes: len(clean) - len(head) - len(tail)}
 }
 

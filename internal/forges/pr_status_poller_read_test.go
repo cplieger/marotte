@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 // noticePoller is a push-only poller over the production source for recs, each

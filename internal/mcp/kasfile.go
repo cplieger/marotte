@@ -17,7 +17,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
@@ -211,8 +211,8 @@ func (s *Store) writeKASDoc(ctx context.Context, doc *kasDoc) error {
 	if err != nil {
 		return err
 	}
-	if _, err := atomicfile.WriteFile(ctx, s.kasPath, data,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
+	if _, err := filesafe.WriteFile(ctx, s.kasPath, data,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("%w: %w", errPersistWrite, err)
 	}
 	return nil

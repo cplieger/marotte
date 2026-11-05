@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"os/exec"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // Each key is a name kiro-cli or a marotte feature panel expects on PATH (the MCP add modal gates
@@ -35,5 +35,5 @@ func handleToolStatus(w http.ResponseWriter, r *http.Request) {
 		_, err := exec.LookPath(b)
 		out[b] = err == nil
 	}
-	webhttp.WriteJSON(w, out)
+	httpserver.WriteJSON(w, out)
 }

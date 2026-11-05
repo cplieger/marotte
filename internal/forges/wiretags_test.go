@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/go/wiregen"
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/marotte/internal/wirespec"
-	"github.com/cplieger/wiregen/v4"
 )
 
 // Both paths are read off a type rather than written as literals, so a moved

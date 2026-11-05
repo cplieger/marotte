@@ -19,11 +19,11 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"golang.org/x/sync/singleflight"
 )
 
-// maxBytes caps config.json reads, matching the HTTP path's webhttp.MaxJSONBody.
+// maxBytes caps config.json reads, matching the HTTP path's httpserver.MaxJSONBody.
 const maxBytes = 1 << 20
 
 const filename = "config.json"
@@ -31,10 +31,10 @@ const filename = "config.json"
 // Filename is the basename of marotte's config file (not kiro-cli's cli.json).
 const Filename = filename
 
-// Staleness is three legs, atomicfile.FileIdentity (mtime AND os.SameFile) plus size: neither pair
+// Staleness is three legs, filesafe.FileIdentity (mtime AND os.SameFile) plus size: neither pair
 // alone catches both a same-length rename within one tick and a different-length in-place rewrite.
 type cache struct {
-	id        atomicfile.FileIdentity
+	id        filesafe.FileIdentity
 	sfGroup   singleflight.Group
 	parsed    map[string]json.RawMessage
 	configDir string
@@ -86,7 +86,7 @@ func (c *cache) load() generation {
 // reload is the body of the singleflight slot: resolve the path, take the mtime/size fast
 // path, otherwise read and cache.
 func (c *cache) reload() generation {
-	// Absolute because atomicfile.OpenRegular requires it.
+	// Absolute because filesafe.OpenRegular requires it.
 	path, err := filepath.Abs(filepath.Join(c.configDir, filename))
 	if err != nil {
 		return generation{err: err}
@@ -118,7 +118,7 @@ func (c *cache) reload() generation {
 // symlink), and returns the FileInfo of the descriptor read. OpenRegular because os.Open
 // blocks forever on a FIFO, which inside the singleflight slot would wedge every reader.
 func readRegular(path string) (data []byte, info os.FileInfo, err error) {
-	f, info, err := atomicfile.OpenRegular(path)
+	f, info, err := filesafe.OpenRegular(path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -144,7 +144,7 @@ func (c *cache) store(data []byte, info os.FileInfo) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.data = data
-	c.id = atomicfile.Identify(info)
+	c.id = filesafe.Identify(info)
 	c.size = info.Size()
 	c.gen++
 	return c.gen
@@ -155,9 +155,9 @@ func (c *cache) store(data []byte, info os.FileInfo) uint64 {
 func (c *cache) forget() uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.data != nil || c.id != (atomicfile.FileIdentity{}) {
+	if c.data != nil || c.id != (filesafe.FileIdentity{}) {
 		c.data = nil
-		c.id = atomicfile.FileIdentity{}
+		c.id = filesafe.FileIdentity{}
 		c.size = 0
 		c.gen++
 	}

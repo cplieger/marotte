@@ -10,7 +10,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/go/textsafe"
 )
 
 // maxTextBytes bounds one error string on its way to a user surface: Details' last
@@ -211,6 +211,6 @@ func sanitize(s string, maxBytes int) string {
 		return ""
 	}
 	// Capped, not Bounded: Bounded puts the marker OUTSIDE the cap (n+3 bytes).
-	capped, _ := runesafe.SanitizeSingleLineCapped(s, maxBytes, "...")
+	capped, _ := textsafe.SanitizeSingleLineCapped(s, maxBytes, "...")
 	return capped
 }

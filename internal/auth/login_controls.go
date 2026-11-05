@@ -10,7 +10,7 @@ import (
 	"os"
 	"slices"
 
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
 )
 
 // managedSettingsPath is the administrator's file kiro-cli's login reads its sign-in controls from on Linux.
@@ -141,7 +141,7 @@ func (h *Handler) handleLoginOptions(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	webhttp.WriteJSON(w, readLoginOptions(h.managedSettingsPath))
+	httpserver.WriteJSON(w, readLoginOptions(h.managedSettingsPath))
 }
 
 // loginRefusal names why the administrator forbids a login request, empty when permitted, before a device code is

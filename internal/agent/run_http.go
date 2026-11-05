@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/apicaller"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -25,7 +26,6 @@ import (
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/workflow"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // handleRun serves GET /api/runs/{workflowId}: the run's full state. It grades a failed read two ways,
@@ -99,7 +99,7 @@ func writeInspectErr(w http.ResponseWriter, id string, err error) {
 	if !isRPCRefusal(err) || marotte.ReplyUnread(err) {
 		slog.Warn("workflow inspect did not reach the engine", "workflow_id", logsafe.Field(id),
 			"error", err, "detail", rpcerr.Details(err))
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway,
 			map[string]string{"error": "the workflow run could not be read"})
 		return
 	}
@@ -310,7 +310,7 @@ func (rr *runRoutes) handleStepTranscript(w http.ResponseWriter, r *http.Request
 		httpreply.InternalError(w, errors.New("step transcript unavailable"))
 		return
 	}
-	webhttp.WriteJSON(w, out)
+	httpserver.WriteJSON(w, out)
 }
 
 // handleTurnRange serves GET /api/runs/{id}/turns/{turn}?after=<seq>: one step turn's tail from the run's
@@ -347,7 +347,7 @@ func (rr *runRoutes) handleTurnRange(w http.ResponseWriter, r *http.Request) {
 		httpreply.NotFound(w, "this run has no turn with that id")
 		return
 	}
-	webhttp.WriteJSON(w, map[string]any{
+	httpserver.WriteJSON(w, map[string]any{
 		"entries":      nonNilRunEntries(entries),
 		"open_entries": nonNilOpenEntries(open),
 		"subject":      nonNilStamps(stamps),
@@ -400,7 +400,7 @@ func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, stamp := rr.runs.liveRunRowsStamped()
 	stamp.Epoch = rr.epoch()
-	webhttp.WriteJSON(w, marotte.LiveRunsResponse{Runs: rows, Subject: stamp})
+	httpserver.WriteJSON(w, marotte.LiveRunsResponse{Runs: rows, Subject: stamp})
 }
 
 // liveRunRows projects every held lease, shared by this route and the SSE connect so they agree. Cannot fail.
@@ -451,7 +451,7 @@ func (rr *runRoutes) handleRecipes(w http.ResponseWriter, r *http.Request) {
 		httpreply.InternalError(w, errors.New("recipe list unavailable"))
 		return
 	}
-	webhttp.WriteJSON(w, marotte.RecipesResponse{Recipes: recipes})
+	httpserver.WriteJSON(w, marotte.RecipesResponse{Recipes: recipes})
 }
 
 // handleLaunch serves POST /api/runs: one parentless run, 409 when the recipe already has a live run.
@@ -477,7 +477,7 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 				return engineReply{err: err, write: func(w http.ResponseWriter) { writeLaunchErr(w, req.Source, err) }}
 			}
 			body := marotte.RunLaunchedResponse{WorkflowID: id, Name: name}
-			return engineReply{write: func(w http.ResponseWriter) { webhttp.WriteJSON(w, body) }, applied: true}
+			return engineReply{write: func(w http.ResponseWriter) { httpserver.WriteJSON(w, body) }, applied: true}
 		},
 	})
 }
@@ -493,7 +493,7 @@ func writeLaunchErr(w http.ResponseWriter, source string, err error) {
 	slog.Warn("run launch failed", "source", logsafe.Field(source), "error", err, "detail", rpcerr.Details(err))
 	for _, lost := range []error{errLaunchUnconfirmed, errLaunchNewUnconfirmed} {
 		if errors.Is(err, lost) {
-			webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(lost.Error()))
+			httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(lost.Error()))
 			return
 		}
 	}
@@ -532,7 +532,7 @@ func (rr *runRoutes) handleControls(w http.ResponseWriter, r *http.Request) {
 		httpreply.NotFound(w, "run not found")
 		return
 	}
-	webhttp.WriteJSON(w, rr.runs.controls(id, &head))
+	httpserver.WriteJSON(w, rr.runs.controls(id, &head))
 }
 
 func (rr *runRoutes) handleExtend(w http.ResponseWriter, r *http.Request) {
@@ -584,7 +584,7 @@ func (rr *runRoutes) handleFinishLoop(w http.ResponseWriter, r *http.Request) {
 func (rr *runRoutes) writeRepeatResult(w http.ResponseWriter, verb, id string, err error) {
 	switch {
 	case err == nil:
-		webhttp.Ok(w)
+		httpserver.Ok(w)
 	case errors.Is(err, errRunHostStart):
 		slog.Warn("run control failed", "verb", verb, "workflow_id", logsafe.Field(id), "error", err)
 		httpreply.InternalError(w, errors.New(verb+" failed"))
@@ -625,7 +625,7 @@ func (rr *runRoutes) handleRetry(w http.ResponseWriter, r *http.Request) {
 		rr.writeControlErr(w, verbRetry, id, err)
 		return
 	}
-	webhttp.WriteJSON(w, out)
+	httpserver.WriteJSON(w, out)
 }
 
 // handleDelete serves DELETE /api/runs/{id}: removes the run from KAS and drops marotte's lease, timer and reason. Unrecoverable.
@@ -651,7 +651,7 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	err := rr.runs.answerInput(r.Context(), id, body.AskID, body.Text, apiCaller(r))
 	switch {
 	case err == nil:
-		webhttp.Ok(w)
+		httpserver.Ok(w)
 	case writeStatusErr(w, err):
 	case errors.Is(err, errStepUnrecorded):
 		// placeStepMessage logged the fault.
@@ -696,7 +696,7 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 			rr.writeStepErr(w, "message", id, nodePath, err)
 			return
 		}
-		webhttp.WriteJSON(w, out)
+		httpserver.WriteJSON(w, out)
 	case "steer-remove":
 		var body marotte.RunStepSteerRequest
 		if !httpreply.DecodeJSON(w, r, &body) {
@@ -706,13 +706,13 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 			rr.writeStepErr(w, "steer remove", id, nodePath, err)
 			return
 		}
-		webhttp.WriteJSON(w, map[string]string{"deleted": body.SteerID})
+		httpserver.WriteJSON(w, map[string]string{"deleted": body.SteerID})
 	case "steer-clear":
 		if err := rr.runs.clearStepSteers(r.Context(), id, nodePath); err != nil {
 			rr.writeStepErr(w, "steer clear", id, nodePath, err)
 			return
 		}
-		webhttp.Ok(w)
+		httpserver.Ok(w)
 	case "end":
 		rr.handleStepEnd(w, r, id, nodePath)
 	default:
@@ -734,7 +734,7 @@ func (rr *runRoutes) handleStepEnd(w http.ResponseWriter, r *http.Request, id, n
 		rr.writeStepErr(w, verbEndStep, id, nodePath, err)
 		return
 	}
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }
 
 // writeStatusErr answers an error that names its own status, with its machine reason as `code`,
@@ -749,7 +749,7 @@ func writeStatusErr(w http.ResponseWriter, err error) bool {
 		// `code`, the key a REST client's error reads its machine reason from.
 		body = httpreply.ErrorJSONWithCode(rpcerr.Text(err), reason)
 	}
-	webhttp.WriteJSONStatus(w, status, body)
+	httpserver.WriteJSONStatus(w, status, body)
 	return true
 }
 
@@ -883,23 +883,23 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		httpreply.Conflict(w, launchSessionUnavailableText)
 	case errors.Is(err, errRetrySlow):
 		slog.Warn("run control timed out loading the run's session", "verb", verb, "workflow_id", logsafe.Field(id))
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
 	case errors.Is(err, errRunDeleting):
 		httpreply.Conflict(w, "This run is already being deleted.")
 	case errors.Is(err, errDeleteUnconfirmed):
 		slog.Warn("run control sent but its answer was lost",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(deleteUnconfirmedText))
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(deleteUnconfirmedText))
 	case errors.Is(err, errRetryOutcomeUnknown):
 		slog.Warn("run control sent but not answered in time; it may still apply",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
-		webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout,
+		httpserver.WriteJSONStatus(w, http.StatusGatewayTimeout,
 			httpreply.ErrorJSONWithCode(errRetryOutcomeUnknown.Error(), stillApplyingCode))
 	case errors.Is(err, errRetryOutcomeUnreadable):
 		// KAS accepted the verb and only its report is unusable: 502, sending the reader to a refresh.
 		slog.Warn("run control landed but its report could not be read",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON(errRetryOutcomeUnreadable.Error()))
 	case errors.Is(err, workflow.ErrJustClaimed):
 		// KAS says "another process", but on one engine it queues a second claim and refuses only once the holder
@@ -910,7 +910,7 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 	case marotte.ReplyUnread(err):
 		slog.Warn("run control sent but its answer could not be read",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(controlUnreadText))
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(controlUnreadText))
 	case isRPCRefusal(err):
 		// KAS's sentence names the reason, and the fix is often the reader's.
 		slog.Info("run control refused by the workflow engine",
@@ -978,5 +978,5 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 		rr.writeControlErr(w, verb.name, id, err)
 		return
 	}
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }

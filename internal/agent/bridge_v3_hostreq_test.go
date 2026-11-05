@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/sse"
 )
 
 func openExternalURLMsg(t *testing.T, id int64, url string) *marotte.RPCResponse {

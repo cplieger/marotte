@@ -10,9 +10,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v3"
 )
 
 const jsonRPCVersion = "2.0"
@@ -520,7 +520,7 @@ func (e *Engine) Respond(ctx context.Context, id int64, result any, err error) e
 	resp := marotte.RPCResponseOut{JSONRPC: jsonRPCVersion, ID: id}
 	if err != nil {
 		code := marotte.RPCCodeInternal
-		msg := runesafe.SanitizeSingleLineBounded(err.Error(), maxRespondErrorBytes)
+		msg := textsafe.SanitizeSingleLineBounded(err.Error(), maxRespondErrorBytes)
 		if re, ok := errors.AsType[*marotte.RPCError](err); ok {
 			code = re.Code
 			msg = re.Message

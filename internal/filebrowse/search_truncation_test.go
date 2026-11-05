@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 // One rule in both directions: a part of the tree the search meant to read and could not marks the
@@ -198,11 +198,11 @@ func TestLogSearchReadError_ClassifiesLossVersusSkip(t *testing.T) {
 			why: "ordinary on a tree the agent is writing to",
 		},
 		"not a regular file": {
-			err: atomicfile.ErrNotRegular, wantLost: false,
+			err: filesafe.ErrNotRegular, wantLost: false,
 			why: "a FIFO or device node was never in scope",
 		},
 		"oversize file": {
-			err: atomicfile.ErrFileTooLarge, wantLost: true,
+			err: filesafe.ErrFileTooLarge, wantLost: true,
 			why: "the ceiling is a read bound, not a skip: a file over it is read to the ceiling and " +
 				"reported partial, so nothing may classify the sentinel as covered",
 		},

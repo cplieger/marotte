@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/go/textsafe"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -508,7 +508,7 @@ func TestDecodePostBodyOptional_EmptyBodyIgnored(t *testing.T) {
 // push/pull/stash against the wrong tree and answers 200. The status is what proves git
 // was never reached — writeCmdResult answers 200 either way, so only the decode refuses.
 func TestSyncHandlers_OversizeBodyRefusedBeforeGit(t *testing.T) {
-	body := `{"repo":"` + strings.Repeat("A", int(webhttp.MaxJSONBody)) + `"}`
+	body := `{"repo":"` + strings.Repeat("A", int(httpserver.MaxJSONBody)) + `"}`
 
 	tests := []struct {
 		handler func(h *Handler) http.HandlerFunc
@@ -529,7 +529,7 @@ func TestSyncHandlers_OversizeBodyRefusedBeforeGit(t *testing.T) {
 
 			if rec.Code != http.StatusRequestEntityTooLarge {
 				t.Errorf("%s with a %d-byte body (cap %d): code = %d, want %d",
-					tt.name, len(body), webhttp.MaxJSONBody, rec.Code, http.StatusRequestEntityTooLarge)
+					tt.name, len(body), httpserver.MaxJSONBody, rec.Code, http.StatusRequestEntityTooLarge)
 			}
 			if !strings.Contains(rec.Body.String(), "request body too large") {
 				t.Errorf("%s with an oversize body: body = %q, want it to name the refusal",
@@ -2312,7 +2312,7 @@ func FuzzIsValidGitRef(f *testing.F) {
 		if strings.Contains(data, "@{") {
 			t.Errorf("isValidGitRef(%q) = true, but contains %q", data, "@{")
 		}
-		if i := strings.IndexFunc(data, runesafe.IsUnsafeSingleLine); i != -1 {
+		if i := strings.IndexFunc(data, textsafe.IsUnsafeSingleLine); i != -1 {
 			t.Errorf("isValidGitRef(%q) = true, but holds an unsafe rune %q at %d", data, data[i], i)
 		}
 		for component := range strings.SplitSeq(data, "/") {
@@ -2944,7 +2944,7 @@ func TestHandleRemove_RefusesAnEscapingAncestor(t *testing.T) {
 
 // TestRemoveRepoDir_UnlinksASymlinkedRepo is the feature the lexical resolver
 // exists for, and the reason the parent's own RemoveAll is used rather than
-// atomicfile.RemoveFileInRoot: a repo the user symlinked into the workspace must
+// filesafe.RemoveFileInRoot: a repo the user symlinked into the workspace must
 // stay removable, as a LINK, without touching the tree it points at.
 func TestRemoveRepoDir_UnlinksASymlinkedRepo(t *testing.T) {
 	outside := t.TempDir()

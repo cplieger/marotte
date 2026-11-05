@@ -11,7 +11,7 @@ import (
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/creds"
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/toolbelt/v3"
 )

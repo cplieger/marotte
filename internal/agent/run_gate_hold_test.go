@@ -20,12 +20,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/signin"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
-	"github.com/cplieger/slogx/capture"
 )
 
 // The dimensions of the hold matrix. TestGateHold_EveryCell runs their full cross-product, and holdModel says what

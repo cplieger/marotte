@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/cplieger/pathinside/v2"
+	"github.com/cplieger/go/pathinside"
 )
 
 // errAdditionalDirectory is the class of every refusal AgentDirs.checkEntry returns; each wraps it

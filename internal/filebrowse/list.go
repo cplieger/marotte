@@ -13,9 +13,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // --- /api/files (GET directory listing) ---
@@ -57,12 +57,12 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, syscall.ENOTDIR) {
-			webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+			httpserver.WriteJSONStatus(w, http.StatusBadRequest,
 				httpreply.ErrorJSONWithCode("not a directory", codeNotADirectory))
 			return
 		}
 		slog.Warn("filebrowse: readdir failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+		httpserver.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(errReadFailed))
 		return
 	}
@@ -70,12 +70,12 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	f.Close()
 	if err != nil {
 		slog.Warn("filebrowse: readdir failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+		httpserver.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(errReadFailed))
 		return
 	}
 	files := listEntries(r.Context(), entries, l.abs, h.sensitive)
-	webhttp.WriteJSON(w, map[string]any{
+	httpserver.WriteJSON(w, map[string]any{
 		respPath:   reqPath,
 		"files":    files,
 		"writable": isWritable(l),
@@ -97,7 +97,7 @@ func (h *Handler) listMounts(w http.ResponseWriter) {
 		files = append(files, e)
 	}
 	slices.SortFunc(files, func(a, b fileEntry) int { return strings.Compare(a.Name, b.Name) })
-	webhttp.WriteJSON(w, map[string]any{
+	httpserver.WriteJSON(w, map[string]any{
 		respPath:   "/",
 		"files":    files,
 		"writable": false,

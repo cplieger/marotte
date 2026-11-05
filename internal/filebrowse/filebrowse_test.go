@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 func testDir(t *testing.T) (h *Handler, dir, prefix string) {
@@ -2479,8 +2479,8 @@ func TestHandleDownloadZip_WriterWithoutFlushSupport(t *testing.T) {
 
 func TestIsOutOfSpace_MatchesThroughAtomicfileWrapping(t *testing.T) {
 	wrapped := func(errno syscall.Errno) error {
-		return &atomicfile.WriteError{
-			Phase: atomicfile.PhaseTempWrite,
+		return &filesafe.WriteError{
+			Phase: filesafe.PhaseTempWrite,
 			Err:   &os.PathError{Op: "write", Path: "/mount/.atomicfile-1.tmp", Err: errno},
 		}
 	}
@@ -2494,11 +2494,11 @@ func TestIsOutOfSpace_MatchesThroughAtomicfileWrapping(t *testing.T) {
 		{"bare EDQUOT", syscall.EDQUOT, true},
 		{"PathError over ENOSPC", &os.PathError{Op: "write", Path: "/x", Err: syscall.ENOSPC}, true},
 		{"PathError over EDQUOT", &os.PathError{Op: "write", Path: "/x", Err: syscall.EDQUOT}, true},
-		{"atomicfile WriteError over ENOSPC", wrapped(syscall.ENOSPC), true},
-		{"atomicfile WriteError over EDQUOT", wrapped(syscall.EDQUOT), true},
+		{"filesafe WriteError over ENOSPC", wrapped(syscall.ENOSPC), true},
+		{"filesafe WriteError over EDQUOT", wrapped(syscall.EDQUOT), true},
 		{"fmt-wrapped ENOSPC", fmt.Errorf("copy failed: %w", wrapped(syscall.ENOSPC)), true},
 		{"another errno", &os.PathError{Op: "write", Path: "/x", Err: syscall.EACCES}, false},
-		{"atomicfile size refusal", atomicfile.ErrFileTooLarge, false},
+		{"filesafe size refusal", filesafe.ErrFileTooLarge, false},
 		{"plain error", errors.New("something else"), false},
 	}
 	for _, tc := range cases {
@@ -2515,12 +2515,12 @@ func TestIsOutOfSpace_MatchesThroughAtomicfileWrapping(t *testing.T) {
 func TestWriteFileError_Statuses(t *testing.T) {
 	h, dir, _ := testDir(t)
 	l := locAt(h, filepath.Join(dir, "f.txt"))
-	enospc := &atomicfile.WriteError{
-		Phase: atomicfile.PhaseTempWrite,
+	enospc := &filesafe.WriteError{
+		Phase: filesafe.PhaseTempWrite,
 		Err:   &os.PathError{Op: "write", Path: l.abs, Err: syscall.ENOSPC},
 	}
-	edquot := &atomicfile.WriteError{
-		Phase: atomicfile.PhaseTempWrite,
+	edquot := &filesafe.WriteError{
+		Phase: filesafe.PhaseTempWrite,
 		Err:   &os.PathError{Op: "write", Path: l.abs, Err: syscall.EDQUOT},
 	}
 	cases := []struct {
@@ -2529,8 +2529,8 @@ func TestWriteFileError_Statuses(t *testing.T) {
 		wantCode int
 		wantBody string
 	}{
-		{"symlink target", atomicfile.ErrSymlinkTarget, http.StatusBadRequest, "not a regular file"},
-		{"not regular", atomicfile.ErrNotRegular, http.StatusBadRequest, "not a regular file"},
+		{"symlink target", filesafe.ErrSymlinkTarget, http.StatusBadRequest, "not a regular file"},
+		{"not regular", filesafe.ErrNotRegular, http.StatusBadRequest, "not a regular file"},
 		{"volume full", enospc, http.StatusInsufficientStorage, errNoSpaceLeft},
 		{"quota exhausted", edquot, http.StatusInsufficientStorage, errNoSpaceLeft},
 		{"anything else", errors.New("disk on fire"), http.StatusInternalServerError, "write failed"},

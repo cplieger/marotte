@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -215,8 +215,8 @@ func readForInline(
 			"path", displayName, "size", info.Size(), "remaining_encoded", budget)
 		return inlinePayload{}, budgetSpentBlock(att.Path, isBinaryDoc)
 	}
-	data, err := atomicfile.ReadBoundedFile(ctx, f, MaxDocumentBytes)
-	if errors.Is(err, atomicfile.ErrFileTooLarge) {
+	data, err := filesafe.ReadBoundedFile(ctx, f, MaxDocumentBytes)
+	if errors.Is(err, filesafe.ErrFileTooLarge) {
 		slog.Warn("attachment: grew past the cap during the read",
 			"path", displayName, "cap", MaxDocumentBytes)
 		return inlinePayload{}, tooLargeFileBlock(att.Path, isImage)

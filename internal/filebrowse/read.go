@@ -15,9 +15,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v4"
 )
 
 const errReadFailed = "read failed"
@@ -53,11 +53,11 @@ func (h *Handler) handleRead(w http.ResponseWriter, r *http.Request, reqPath str
 		return
 	}
 	if looksBinary(data) {
-		webhttp.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
+		httpserver.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
 			FileRefusal{Error: "binary file", Code: refusalBinary})
 		return
 	}
-	webhttp.WriteJSON(w, FileRead{
+	httpserver.WriteJSON(w, FileRead{
 		Path:     reqPath,
 		FileID:   fileIDOf(data),
 		Modified: modifiedOf(info),
@@ -73,7 +73,7 @@ func (h *Handler) handleRead(w http.ResponseWriter, r *http.Request, reqPath str
 func writeStableError(w http.ResponseWriter, abs string, err error) {
 	if tl, ok := errors.AsType[*tooLargeError](err); ok {
 		size := tl.size
-		webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+		httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 			FileRefusal{Error: tooLargeSentence, Code: refusalTooLarge, Size: &size})
 		return
 	}
@@ -105,7 +105,7 @@ func (h *Handler) handleStat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out.Size, out.Modified, out.Large, out.Binary = rd.info.Size(), modifiedOf(rd.info), true, binary
-		webhttp.WriteJSON(w, out)
+		httpserver.WriteJSON(w, out)
 		return
 	}
 	data, info, err := readStable(r.Context(), rd.f)
@@ -113,7 +113,7 @@ func (h *Handler) handleStat(w http.ResponseWriter, r *http.Request) {
 		if tl, isTooLarge := errors.AsType[*tooLargeError](err); isTooLarge {
 			// Grew past the cap between the open and the read.
 			out.Size, out.Modified, out.Large = tl.size, modifiedOf(rd.info), true
-			webhttp.WriteJSON(w, out)
+			httpserver.WriteJSON(w, out)
 			return
 		}
 		writeOpenError(w, rd.abs, err)
@@ -124,7 +124,7 @@ func (h *Handler) handleStat(w http.ResponseWriter, r *http.Request) {
 	out.Modified = modifiedOf(info)
 	out.Binary = looksBinary(data)
 	out.UTF8 = utf8.Valid(data)
-	webhttp.WriteJSON(w, out)
+	httpserver.WriteJSON(w, out)
 }
 
 // --- GET /api/file/download ---
@@ -147,7 +147,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if q.Has("file_id") {
 		id, err := parseFileID(q.Get("file_id"))
 		if err != nil {
-			webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+			httpserver.WriteJSONStatus(w, http.StatusBadRequest,
 				FileRefusal{Error: errInvalidFileID.Error(), Code: refusalInvalidFileID})
 			return
 		}

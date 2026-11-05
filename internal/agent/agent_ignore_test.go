@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/slogx/capture"
 )
 
 // ignoreFrames is every ignore list the engine lane was sent, oldest first.

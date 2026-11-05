@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // The answers beyond the record's own states.
@@ -358,5 +358,5 @@ func (d *Dispatcher) ServeMergeStatus(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "invalid op_id")
 		return
 	}
-	webhttp.WriteJSON(w, d.merges.status(r.Context(), mergeKey{tangent: marotte.ChatID(id), op: op}))
+	httpserver.WriteJSON(w, d.merges.status(r.Context(), mergeKey{tangent: marotte.ChatID(id), op: op}))
 }

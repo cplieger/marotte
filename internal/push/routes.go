@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // RegisterRoutes wires /api/push/vapid-key, /api/push/subscribe, and
@@ -23,14 +23,14 @@ type vapidKeyResponse struct {
 }
 
 func (s *Service) handleVAPIDKey(w http.ResponseWriter, _ *http.Request) {
-	webhttp.WriteJSON(w, vapidKeyResponse{PublicKey: s.publicKey()})
+	httpserver.WriteJSON(w, vapidKeyResponse{PublicKey: s.publicKey()})
 }
 
 func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	var sub marotte.PushSubscription
 	if err := json.NewDecoder(r.Body).Decode(&sub); err != nil || sub.Endpoint == "" {
 		httpreply.BadRequest(w, "invalid subscription")
@@ -55,14 +55,14 @@ func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Subscribe(sub)
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }
 
 func (s *Service) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	var body struct {
 		Endpoint string `json:"endpoint"`
 	}
@@ -71,5 +71,5 @@ func (s *Service) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.unsubscribe(body.Endpoint)
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }

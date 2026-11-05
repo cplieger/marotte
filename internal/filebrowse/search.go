@@ -18,10 +18,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/textsearch"
-	"github.com/cplieger/webhttp/v4"
 )
 
 const (
@@ -43,7 +43,7 @@ const (
 	// maxSearchMatches caps the reply: past this a search is a listing the reader refines.
 	maxSearchMatches = 200
 	// searchReadDirChunk bounds one ReadDir call's allocation and gives cancellation somewhere to
-	// land; atomicfile.WalkDirInRoot's batch size. Contents mode reads candidates in batches of it.
+	// land; filesafe.WalkDirInRoot's batch size. Contents mode reads candidates in batches of it.
 	searchReadDirChunk = 256
 )
 
@@ -185,7 +185,7 @@ func (h *Handler) handleFilesSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	res := v.result(walk.truncated || ctx.Err() != nil)
 	res.RootIgnored = len(roots) > 0 && walk.hiddenRoots == len(roots)
-	webhttp.WriteJSON(w, res)
+	httpserver.WriteJSON(w, res)
 }
 
 // newSearchWalk is a walk holding mode's entry and directory budgets; the handler and the tests
@@ -200,7 +200,7 @@ func newSearchVisitor(ctx context.Context, w http.ResponseWriter, mode searchMod
 	if mode == modeContents {
 		// The needle is literal, so its spaces are part of it: only "" is no query.
 		if query == "" {
-			webhttp.WriteJSON(w, empty)
+			httpserver.WriteJSON(w, empty)
 			return nil, true
 		}
 		return newContentVisitor(ctx, query, caseSensitive), false
@@ -211,7 +211,7 @@ func newSearchVisitor(ctx context.Context, w http.ResponseWriter, mode searchMod
 		return nil, true
 	}
 	if nq.empty() && filter.empty() {
-		webhttp.WriteJSON(w, empty)
+		httpserver.WriteJSON(w, empty)
 		return nil, true
 	}
 	return newNameVisitor(nq), false

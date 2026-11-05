@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/asidefile"
 )
 
@@ -34,7 +34,7 @@ type file struct {
 }
 
 // Store persists run leases in one 0600 JSON file, rewritten atomically per mutation.
-// The zero value is usable and persists nothing. atomicfile verifies the 0600 on the
+// The zero value is usable and persists nothing. filesafe verifies the 0600 on the
 // written descriptor, so no EnforceFile pass by NAME is needed.
 type Store struct {
 	leases map[string]Lease
@@ -261,8 +261,8 @@ func (s *Store) persistLocked(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("encode run leases: %w", err)
 	}
-	if _, err := atomicfile.WriteFile(ctx, s.path, data,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
+	if _, err := filesafe.WriteFile(ctx, s.path, data,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("write %s: %w", s.path, err)
 	}
 	return nil

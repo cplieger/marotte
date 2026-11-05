@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
-	"github.com/cplieger/sse"
 )
 
 func entriesOfBroadcasts(t *testing.T, events []sse.ReplayEvent) []marotte.Entry {

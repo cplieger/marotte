@@ -8,6 +8,7 @@
 package wirespec
 
 import (
+	"github.com/cplieger/go/wiregen"
 	"github.com/cplieger/marotte/internal/auth"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/filebrowse"
@@ -16,7 +17,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp"
 	"github.com/cplieger/marotte/internal/server"
-	"github.com/cplieger/wiregen/v4"
 )
 
 // wireTypes is every Go type the generator emits a TypeScript declaration for.

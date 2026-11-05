@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 const kasLoggingBlock = `"logging":{"logDir":"/config/home/.kiro/logs/2026-10-05T01-02-03Z",` +

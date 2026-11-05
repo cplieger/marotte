@@ -9,11 +9,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/push"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // The browser-mode suite starts one beside whatever already holds the default port.
@@ -98,7 +98,7 @@ func (s *Server) registerTestHooks(mux *http.ServeMux) {
 				resp.Suppressed[kr.Kind] = pushP.Suppressed(kr.Kind)
 			}
 		}
-		webhttp.WriteJSON(w, resp)
+		httpserver.WriteJSON(w, resp)
 	})
 	mux.HandleFunc("POST /api/test/sse/close-after", func(w http.ResponseWriter, r *http.Request) {
 		var req closeAfterRequest
@@ -139,7 +139,7 @@ func (s *Server) registerPreviewTestHook(mux *http.ServeMux) {
 			httpreply.BadRequest(w, err.Error())
 			return
 		}
-		webhttp.WriteJSON(w, grant)
+		httpserver.WriteJSON(w, grant)
 	})
 	mux.HandleFunc("POST /api/test/preview-resolver", func(w http.ResponseWriter, r *http.Request) {
 		var req previewResolverRequest

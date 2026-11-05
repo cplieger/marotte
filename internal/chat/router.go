@@ -3,8 +3,8 @@ package chat
 import (
 	"net/http"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // router owns the chat package's HTTP handlers and delegates persistence to its *Store. Store.RegisterRoutes
@@ -33,5 +33,5 @@ func (rt *router) handleSearchAll(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	webhttp.WriteJSON(w, rt.store.searchAll(r.Context(), r.URL.Query().Get("q")))
+	httpserver.WriteJSON(w, rt.store.searchAll(r.Context(), r.URL.Query().Get("q")))
 }

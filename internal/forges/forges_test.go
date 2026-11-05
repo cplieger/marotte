@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/keyenc"
 )
 
 // TestKindHelpers locks in the Kind metadata.

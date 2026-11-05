@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v4"
 )
 
 const keySubcommand = "subcommand"
@@ -158,7 +158,7 @@ func (st *Settings) handleKnowledgeClear(w http.ResponseWriter, r *http.Request)
 			refusal := errors.New(cleanKnowledgeMsg(res.Message))
 			return engineReply{err: refusal, write: func(w http.ResponseWriter) { httpreply.ServerError(w, "clear failed", refusal) }}
 		}
-		return engineReply{write: webhttp.Ok, applied: true}
+		return engineReply{write: httpserver.Ok, applied: true}
 	})
 }
 
@@ -217,7 +217,7 @@ func (st *Settings) handleKnowledgeList(w http.ResponseWriter, r *http.Request) 
 		writeKnowledgeErr(w, err)
 		return
 	}
-	webhttp.WriteJSON(w, knowledgeListResponse{Contexts: ctxs})
+	httpserver.WriteJSON(w, knowledgeListResponse{Contexts: ctxs})
 }
 
 type knowledgeAddReq struct {
@@ -282,7 +282,7 @@ func (st *Settings) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request
 		if !res.Success {
 			return knowledgeNotFound(cleanKnowledgeMsg(res.Message))
 		}
-		return engineReply{write: webhttp.Ok, applied: true}
+		return engineReply{write: httpserver.Ok, applied: true}
 	})
 }
 
@@ -358,7 +358,7 @@ func knowledgeMessage(res *kasKnowledgeResult, err error) engineReply {
 
 func knowledgeConfirmed(res *kasKnowledgeResult) engineReply {
 	body := knowledgeMessageResponse{Message: res.Message}
-	return engineReply{write: func(w http.ResponseWriter) { webhttp.WriteJSON(w, body) }, applied: true}
+	return engineReply{write: func(w http.ResponseWriter) { httpserver.WriteJSON(w, body) }, applied: true}
 }
 
 func knowledgeNotFound(msg string) engineReply {
@@ -371,7 +371,7 @@ func knowledgeFailure(err error) engineReply {
 
 func writeKnowledgeErr(w http.ResponseWriter, err error) {
 	slog.Warn("knowledge op failed", "error", err)
-	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("knowledge request failed"))
+	httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("knowledge request failed"))
 }
 
 // Patterns carry no method, so each handler answers a refused method with 405 + Allow.

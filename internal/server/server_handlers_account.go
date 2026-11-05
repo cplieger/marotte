@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // accountUsageTTL bounds how often the footer fetch hits KAS (GetUsageLimits may be
@@ -31,7 +31,7 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.accountUsage == nil {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("account usage unavailable"))
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("account usage unavailable"))
 		return
 	}
 	c := &s.acctUsage
@@ -41,7 +41,7 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 		fresh := *c.data
 		c.mu.Unlock()
 		fresh.Stale = false
-		webhttp.WriteJSON(w, fresh)
+		httpserver.WriteJSON(w, fresh)
 		return
 	}
 	c.mu.Unlock()
@@ -54,11 +54,11 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 		if last != nil {
 			stale := *last
 			stale.Stale = true
-			webhttp.WriteJSON(w, stale)
+			httpserver.WriteJSON(w, stale)
 			return
 		}
 		slog.Warn("account usage fetch failed", "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("account usage unavailable"))
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("account usage unavailable"))
 		return
 	}
 
@@ -66,5 +66,5 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	c.data = usage
 	c.atNanos = time.Now().UnixNano()
 	c.mu.Unlock()
-	webhttp.WriteJSON(w, usage)
+	httpserver.WriteJSON(w, usage)
 }

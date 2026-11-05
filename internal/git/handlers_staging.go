@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v4"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -17,11 +17,11 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dir := h.repoDir(repoFromQuery(r))
 	if !IsRepo(ctx, dir) {
-		webhttp.WriteJSON(w, gitStatusResp{IsRepo: false, Files: []gitFile{}})
+		httpserver.WriteJSON(w, gitStatusResp{IsRepo: false, Files: []gitFile{}})
 		return
 	}
 	st := collectStatus(ctx, dir, h.timeouts, &h.fetchFlight, r.URL.Query().Get("quick") == "")
-	webhttp.WriteJSON(w, st)
+	httpserver.WriteJSON(w, st)
 }
 
 // doFetch=false skips the network fetch for the dashboard. The fetch runs BEFORE status, so
@@ -88,10 +88,10 @@ func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {
 	slog.Info("git stage", "repo", body.Repo, "files", len(files))
 	args := append([]string{subAdd, "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		webhttp.WriteJSON(w, httpreply.ErrorJSON(clientBlock(out)))
+		httpserver.WriteJSON(w, httpreply.ErrorJSON(clientBlock(out)))
 		return
 	}
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }
 
 func (h *Handler) handleUnstage(w http.ResponseWriter, r *http.Request) {
@@ -115,10 +115,10 @@ func (h *Handler) handleUnstage(w http.ResponseWriter, r *http.Request) {
 	slog.Info("git unstage", "repo", body.Repo, "files", len(files))
 	args := append([]string{subReset, refHEAD, "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		webhttp.WriteJSON(w, httpreply.ErrorJSON(clientBlock(out)))
+		httpserver.WriteJSON(w, httpreply.ErrorJSON(clientBlock(out)))
 		return
 	}
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }
 
 func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
@@ -168,8 +168,8 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(errs) > 0 {
-		webhttp.WriteJSON(w, httpreply.ErrorJSON(clientBlock(strings.Join(errs, "\n"))))
+		httpserver.WriteJSON(w, httpreply.ErrorJSON(clientBlock(strings.Join(errs, "\n"))))
 		return
 	}
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }

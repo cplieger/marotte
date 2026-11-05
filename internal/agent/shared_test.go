@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
-	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/sse"
 )
 
 // Call Shutdown to tear it down.

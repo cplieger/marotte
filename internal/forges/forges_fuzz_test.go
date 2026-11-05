@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/keyenc"
 )
 
 // FuzzMakeID asserts MakeID answers an id for any input and, for a valid kind

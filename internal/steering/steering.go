@@ -17,7 +17,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/workspace"
@@ -157,8 +157,8 @@ func (g *Generator) Generate(ctx context.Context) error {
 
 	// 0600 for a file listing the workspace layout and MCP server names; WithMkdirMode creates the
 	// parent narrowly (MkdirAll would widen it to 0755).
-	if _, err := atomicfile.WriteFile(ctx, steeringFile, content,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
+	if _, err := filesafe.WriteFile(ctx, steeringFile, content,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("steering: write %s: %w", steeringFile, err)
 	}
 	slog.Info("steering: wrote", "path", steeringFile, "bytes", len(content))
@@ -235,12 +235,12 @@ func (g *Generator) renderChat(forges ForgeSnapshot) string {
 	return b.String()
 }
 
-// Errors are log-and-omit. It opens with atomicfile.OpenRegular: a FIFO would hang Generate, which
+// Errors are log-and-omit. It opens with filesafe.OpenRegular: a FIFO would hang Generate, which
 // runs synchronously before every session door, and a symlinked README would copy whatever it names
 // (an MCP credential, measured) into authoritative agent context. Truncation is kept: only the head
 // matters.
 func readCappedFile(path string, limit int64) ([]byte, error) {
-	f, _, err := atomicfile.OpenRegular(path)
+	f, _, err := filesafe.OpenRegular(path)
 	if err != nil {
 		return nil, err
 	}

@@ -4,10 +4,10 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // kiroRescanPath is the loopback kiro-cli repair hook: it makes an install repaired INSIDE
@@ -62,7 +62,7 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ok, err := s.kiroRescan(r.Context())
 	if ok {
-		webhttp.WriteJSON(w, healthBody{Status: "ok"})
+		httpserver.WriteJSON(w, healthBody{Status: "ok"})
 		return
 	}
 	// Report the VERDICT, not err (which can name a volume path); the manager logged the fault.
@@ -77,14 +77,14 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 		errText = logsafe.Field(err.Error())
 	}
 	slog.Warn("kiro-cli rescan found no usable version", "reason", reason, "error", errText)
-	webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
+	httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
 		Status: "unready",
 		Reason: reason,
 	})
 }
 
 // loopbackOnly admits only requests whose socket peer AND Host are loopback and which carry
-// no proxy or browser provenance header (webhttp.LoopbackOnly): the gated endpoints spawn
+// no proxy or browser provenance header (httpserver.LoopbackOnly): the gated endpoints spawn
 // processes. The provenance deny closes a reverse proxy on the loopback interface, which
 // satisfies both other legs. surface names the refusing endpoint, since two mounts share it.
 func loopbackOnly(surface string, next http.Handler) http.Handler {
@@ -92,8 +92,8 @@ func loopbackOnly(surface string, next http.Handler) http.Handler {
 		// Log the refusal: both endpoints gate a process spawn, so it is worth a correlatable record.
 		slog.Warn("loopback-only endpoint refused: not a loopback caller",
 			"surface", surface, "remote", r.RemoteAddr, "host", logsafe.Field(r.Host))
-		webhttp.WriteJSONStatus(w, http.StatusForbidden,
+		httpserver.WriteJSONStatus(w, http.StatusForbidden,
 			httpreply.ErrorJSON(surface+" is loopback-only. Call it from inside the container"))
 	})
-	return webhttp.LoopbackOnly(refuse)(next)
+	return httpserver.LoopbackOnly(refuse)(next)
 }

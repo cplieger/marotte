@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // kiro-cli's own notification phrases (its OSC 9 text and its workflow transcript rows), so
@@ -209,7 +209,7 @@ func build(kind marotte.PushKind, t Target, phrase, detail string) marotte.Notif
 // clip makes s one sanitized line of at most n runes, whitespace runs collapsed, a cut
 // ending in the ellipsis.
 func clip(s string, n int) string {
-	s = strings.Join(strings.Fields(runesafe.SanitizeSingleLine(s)), " ")
+	s = strings.Join(strings.Fields(textsafe.SanitizeSingleLine(s)), " ")
 	if utf8.RuneCountInString(s) <= n {
 		return s
 	}

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 // fieldWithin runs Field on its own goroutine and fails if it has not returned inside budget:
@@ -51,8 +51,8 @@ func TestReadBytes_RefusesANonRegularFile(t *testing.T) {
 	}()
 	select {
 	case err := <-done:
-		if !errors.Is(err, atomicfile.ErrNotRegular) {
-			t.Errorf("readBytes over a FIFO = %v, want atomicfile.ErrNotRegular", err)
+		if !errors.Is(err, filesafe.ErrNotRegular) {
+			t.Errorf("readBytes over a FIFO = %v, want filesafe.ErrNotRegular", err)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("readBytes still blocked after 3s over a FIFO")

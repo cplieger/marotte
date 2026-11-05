@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/ssrf"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/ssrf/v4"
 )
 
 // authURLFor builds the consent URL KAS opens for a sign-in, the relay's trust anchor, the way KAS builds it.

@@ -15,11 +15,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/webhttp/v4"
 )
 
 const (
@@ -122,13 +122,13 @@ func (reg *mcpRegistry) handleReconnect(w http.ResponseWriter, r *http.Request) 
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, errMCPResetNoSession):
-		webhttp.WriteJSONStatus(w, http.StatusConflict,
+		httpserver.WriteJSONStatus(w, http.StatusConflict,
 			httpreply.ErrorJSON("No open chat uses this server yet; it connects when a chat that uses it starts."))
 	case errors.Is(err, errMCPResetNoEngine):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
 			httpreply.ErrorJSON("The agent engine is not running. Try again once it is back."))
 	default:
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("kiro-cli did not reset the server."))
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("kiro-cli did not reset the server."))
 	}
 }
 
@@ -327,7 +327,7 @@ func (reg *mcpRegistry) handleSignIn(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 		w.WriteHeader(http.StatusAccepted)
 	case errors.Is(err, errMCPResetNoEngine):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
 			httpreply.ErrorJSON("The agent engine is not running. Try again once it is back."))
 	default:
 		httpreply.Conflict(w, err.Error())

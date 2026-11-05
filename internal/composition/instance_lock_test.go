@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 const holdRootEnv = "MAROTTE_TEST_HOLD_ROOT"

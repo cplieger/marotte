@@ -12,10 +12,10 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/slogx/capture"
 )
 
 type testPush struct{}
@@ -292,7 +292,7 @@ func findSubstring(s, sub string) bool {
 }
 
 // TestHandleHealth_envelopeMatchesTheLibrary pins the two wire properties shared with
-// webhttp.ReadinessHandler: key order (a struct, since encoding/json sorts map keys) and
+// httpserver.ReadinessHandler: key order (a struct, since encoding/json sorts map keys) and
 // no-store (RFC 9111 would heuristically cache a 200).
 func TestHandleHealth_envelopeMatchesTheLibrary(t *testing.T) {
 	for _, tc := range []struct {

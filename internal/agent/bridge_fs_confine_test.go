@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 // escapeStage is one staged ancestor swap: work/sub/f.txt plus an outside file the agent must not reach.
@@ -103,7 +103,7 @@ func TestConfinedRead_RefusesAncestorSwap(t *testing.T) {
 			st.abs, leaked, outsideSecret)
 	}
 
-	got, err := atomicfile.ReadBoundedInRoot(t.Context(), st.root, st.rel, fsReadCap)
+	got, err := filesafe.ReadBoundedInRoot(t.Context(), st.root, st.rel, fsReadCap)
 	if err == nil {
 		t.Fatalf("ReadBoundedInRoot(root, %q) = (%q, nil), want an escape error", st.rel, got)
 	}
@@ -139,8 +139,8 @@ func TestConfinedWrite_RefusesAncestorSwap(t *testing.T) {
 		t.Fatalf("restore outside file: %v", err)
 	}
 
-	if _, err := atomicfile.WriteFileInRoot(t.Context(), st.root, st.rel, []byte("CONFINED"),
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o755)); err == nil {
+	if _, err := filesafe.WriteFileInRoot(t.Context(), st.root, st.rel, []byte("CONFINED"),
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o755)); err == nil {
 		t.Fatalf("WriteFileInRoot(root, %q) = nil, want an escape error", st.rel)
 	}
 	got, err := os.ReadFile(outsideFile)
@@ -158,7 +158,7 @@ func TestConfinedDelete_RefusesAncestorSwap(t *testing.T) {
 	outsideFile := filepath.Join(st.outside, "f.txt")
 
 	// Confined descent first, because the red check destroys the target.
-	if parent, base, err := atomicfile.OpenParentInRoot(st.root, st.rel); err == nil {
+	if parent, base, err := filesafe.OpenParentInRoot(st.root, st.rel); err == nil {
 		_ = parent.Close()
 		t.Fatalf("OpenParentInRoot(root, %q) = (%v, %q, nil), want a refusal at the "+
 			"symlinked component", st.rel, parent.Name(), base)
@@ -214,8 +214,8 @@ func TestConfinedRead_RefusesFIFO(t *testing.T) {
 		t.Fatalf("confine(%q) = %v, want nil", fifo, err)
 	}
 	root, rel := target.root, target.rel
-	_, err = atomicfile.ReadBoundedInRoot(t.Context(), root, rel, fsReadCap)
-	if !errors.Is(err, atomicfile.ErrNotRegular) {
+	_, err = filesafe.ReadBoundedInRoot(t.Context(), root, rel, fsReadCap)
+	if !errors.Is(err, filesafe.ErrNotRegular) {
 		t.Errorf("ReadBoundedInRoot(fifo) err = %v, want ErrNotRegular", err)
 	}
 }
@@ -234,9 +234,9 @@ func TestConfinedWrite_RefusesFIFO(t *testing.T) {
 		t.Fatalf("confine(%q) = %v, want nil", fifo, err)
 	}
 	root, rel := target.root, target.rel
-	_, err = atomicfile.WriteFileInRoot(t.Context(), root, rel, []byte("x"),
-		atomicfile.WithMkdirMode(0o755))
-	if !errors.Is(err, atomicfile.ErrNotRegular) {
+	_, err = filesafe.WriteFileInRoot(t.Context(), root, rel, []byte("x"),
+		filesafe.WithMkdirMode(0o755))
+	if !errors.Is(err, filesafe.ErrNotRegular) {
 		t.Errorf("WriteFileInRoot(fifo) err = %v, want ErrNotRegular", err)
 	}
 	fi, err := os.Lstat(fifo)
@@ -276,14 +276,14 @@ func TestConfinedWrite_SymlinkPlantedAfterConfineDoesNotReachVictim(t *testing.T
 		t.Fatalf("symlink target -> victim: %v", err)
 	}
 
-	_, err = atomicfile.WriteFileInRoot(t.Context(), root, rel, []byte("clobber"),
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o755))
+	_, err = filesafe.WriteFileInRoot(t.Context(), root, rel, []byte("clobber"),
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o755))
 	// A refusal or a write that replaced the link are both fine; the victim must not change.
 	if got, rErr := os.ReadFile(victim); rErr != nil || string(got) != "keep me" {
 		t.Errorf("victim after write (err = %v) = (%q, %v), want (%q, nil)",
 			err, got, rErr, "keep me")
 	}
-	if errors.Is(err, atomicfile.ErrSymlinkTarget) {
+	if errors.Is(err, filesafe.ErrSymlinkTarget) {
 		return // refused at the check; nothing else to assert
 	}
 	if err != nil {

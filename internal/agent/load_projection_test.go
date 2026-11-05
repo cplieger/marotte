@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/sse"
 )
 
 func replayUpdate(t *testing.T, kind marotte.ACPUpdateKind, text, sub string) json.RawMessage {

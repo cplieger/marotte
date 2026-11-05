@@ -9,10 +9,10 @@ import (
 	"math"
 	"reflect"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // v3Summarization is session_info_update's _meta.kiro.summarization block.
@@ -404,7 +404,7 @@ func logUnconsumedInfoKind(chatID marotte.ChatID, kind string) {
 		return
 	}
 	// The kind is backend-controlled, and a raw newline forges a log line.
-	safe := runesafe.SanitizeSingleLineBounded(kind, maxCensusNameBytes)
+	safe := textsafe.SanitizeSingleLineBounded(kind, maxCensusNameBytes)
 	if _, known := knownSessionInfoKinds[kind]; known {
 		slog.Debug("session_info_update: known kind carries nothing marotte consumes",
 			"chat_id", chatID, "kind", safe)

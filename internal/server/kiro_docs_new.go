@@ -19,10 +19,10 @@ import (
 	"unicode"
 	"unicode/utf16"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // kiroDocNewRequest is POST /api/workspace/kiro-docs/new's body; each kind reads only its fields.
@@ -112,7 +112,7 @@ func (s *Server) handleKiroDocNew(w http.ResponseWriter, r *http.Request) {
 		return kasAcceptsMatcher(r.Context(), re, subject, m)
 	})
 	if errors.Is(err, errKASRuntimeMissing) {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(msgNoKASRuntime))
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(msgNoKASRuntime))
 		return
 	}
 	if fe, isField := errors.AsType[fieldError](err); isField {
@@ -140,7 +140,7 @@ func (s *Server) handleKiroDocNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("kiro docs: created", "category", req.Category, "path", logsafe.Field(rel))
-	webhttp.WriteJSONStatus(w, http.StatusCreated, kiroDocNewResponse{
+	httpserver.WriteJSONStatus(w, http.StatusCreated, kiroDocNewResponse{
 		Path: strings.TrimPrefix(s.workDir, "/") + "/.kiro/" + rel,
 	})
 }

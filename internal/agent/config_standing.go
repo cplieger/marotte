@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // standingFetchTimeout bounds one workspace getState read.
@@ -164,5 +164,5 @@ func (c *configStanding) response() marotte.ConfigStandingResponse {
 }
 
 func (c *configStanding) handle(w http.ResponseWriter, _ *http.Request) {
-	webhttp.WriteJSON(w, c.response())
+	httpserver.WriteJSON(w, c.response())
 }

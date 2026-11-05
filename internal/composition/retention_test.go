@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/slogx/capture"
 )
 
 // TestChatRetention_ThreeLegs walks one config.json through the three states the retention read

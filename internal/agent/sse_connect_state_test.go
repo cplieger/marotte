@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/go/sse/ssetest"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/sse/ssetest"
 )
 
 // connectFrames runs one cold connect and returns its id-less frames in wire order; legacy omits SSE-Wire.

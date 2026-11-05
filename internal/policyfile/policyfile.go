@@ -16,8 +16,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/envx/yamlenv/v2"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/yamlenv"
 	"github.com/cplieger/marotte/internal/workspace"
 	"go.yaml.in/yaml/v3"
 )
@@ -247,12 +247,12 @@ func Load(path string) (*File, error) {
 	return &f, nil
 }
 
-// readPolicy returns abs's bytes, nil for a missing file. Through atomicfile.OpenRegular: a FIFO
+// readPolicy returns abs's bytes, nil for a missing file. Through filesafe.OpenRegular: a FIFO
 // at the name (the agent can write $HOME/.kiro) would block os.ReadFile forever, the size is
 // checked off the descriptor before reading, and a final-component symlink is refused as Save
 // refuses it.
 func readPolicy(abs string) ([]byte, error) {
-	fh, _, err := atomicfile.OpenRegular(abs)
+	fh, _, err := filesafe.OpenRegular(abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
@@ -260,7 +260,7 @@ func readPolicy(abs string) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = fh.Close() }()
-	data, err := atomicfile.ReadBoundedFile(context.Background(), fh, maxPolicyFileSize)
+	data, err := filesafe.ReadBoundedFile(context.Background(), fh, maxPolicyFileSize)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", filepath.Base(abs), err)
 	}
@@ -268,7 +268,7 @@ func readPolicy(abs string) ([]byte, error) {
 }
 
 // Save writes the file atomically (temp → fsync → rename → dir-fsync) via
-// cplieger/atomicfile, mode 0600 (policy is sensitive), creating parent dirs
+// cplieger/go/filesafe, mode 0600 (policy is sensitive), creating parent dirs
 // at 0700. A crash mid-write can never leave a truncated policy file (which
 // would silently drop every rule at the next KAS reload).
 func Save(ctx context.Context, path string, f *File) error {
@@ -281,9 +281,9 @@ func Save(ctx context.Context, path string, f *File) error {
 	}
 	// WithMaxBytes mirrors Load's size guard: Save can never persist a
 	// policy file its own Load would reject as oversize.
-	_, err = atomicfile.WriteFile(ctx, path, data,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700),
-		atomicfile.WithMaxBytes(maxPolicyFileSize))
+	_, err = filesafe.WriteFile(ctx, path, data,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700),
+		filesafe.WithMaxBytes(maxPolicyFileSize))
 	return err
 }
 

@@ -12,10 +12,10 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/turnlog"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // ProjectedTurn is one turn as the replay describes it, entries in KAS order with Seq
@@ -680,7 +680,7 @@ func (p *EntryProjection) closeTurn() {
 	reason, kind := c.Reason, c.FailureKind
 	if e := p.facts.engine; e != nil && reason == "" && marotte.SeverityOf(c.Outcome) == marotte.TurnSeverityBroken {
 		m := rpcerr.Mapped{ErrorType: e.ErrorType, RetryErrorType: e.RetryErrorType}
-		reason, _ = runesafe.SanitizeSingleLineCapped(rpcerr.Account(m, e.Message), maxDisplayErrorBytes, "...")
+		reason, _ = textsafe.SanitizeSingleLineCapped(rpcerr.Account(m, e.Message), maxDisplayErrorBytes, "...")
 		if m.ErrorType == rpcerr.ContextWindowExceededError {
 			kind = marotte.FailureKindContextLimit
 		}

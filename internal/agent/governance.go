@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // governanceWarmTimeout bounds the cold GET /api/governance: an observer pass's door plus the first push. A var so
@@ -290,7 +290,7 @@ func (st *Settings) warmGovernance(ctx context.Context) error {
 }
 
 func (st *Settings) handleGovernance(w http.ResponseWriter, r *http.Request) {
-	webhttp.WriteJSON(w, st.governanceState(r.Context()))
+	httpserver.WriteJSON(w, st.governanceState(r.Context()))
 }
 
 func (st *Settings) registerGovernanceRoutes(mux *http.ServeMux) {

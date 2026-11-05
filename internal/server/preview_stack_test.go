@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/preview"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // previewStack is the full middleware stack over a mux holding the preview
@@ -35,12 +35,12 @@ func previewStack(t *testing.T) (http.Handler, *preview.Handler, string) {
 	ph := preview.New(ws, filebrowse.Sensitive{}, signer, slog.New(slog.DiscardHandler))
 	mux := http.NewServeMux()
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("spa")) }))
-	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) { webhttp.Ok(w) })
+	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) { httpserver.Ok(w) })
 	ph.RegisterRoutes(mux)
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
 	s := &Server{}
-	return webhttp.Chain(mux, s.middlewareStack(baseCSPPolicy, idem)...), ph, filepath.Join(demo, "index.html")
+	return httpserver.Chain(mux, s.middlewareStack(baseCSPPolicy, idem)...), ph, filepath.Join(demo, "index.html")
 }
 
 func serveStack(h http.Handler, method, target, body string, hdr ...string) *httptest.ResponseRecorder {

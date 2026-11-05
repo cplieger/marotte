@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/memlimit"
 	"github.com/cplieger/marotte/internal/nodeopts"
@@ -62,8 +62,8 @@ func Update(ctx context.Context, configDir string, fn func(doc map[string]json.R
 	if err != nil {
 		return nil, err
 	}
-	res, err := atomicfile.WriteFile(ctx, path, append(pretty, '\n'),
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700))
+	res, err := filesafe.WriteFile(ctx, path, append(pretty, '\n'),
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700))
 	if err != nil {
 		return nil, err
 	}

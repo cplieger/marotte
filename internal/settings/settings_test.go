@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 func TestReadBytes_MissingFile(t *testing.T) {
@@ -239,7 +239,7 @@ func TestReadBytes_EqualLengthRenamePublishIsAMiss(t *testing.T) {
 
 	publish := func(content string) {
 		t.Helper()
-		if _, err := atomicfile.WriteFile(ctx, path, []byte(content), atomicfile.WithMode(0o600)); err != nil {
+		if _, err := filesafe.WriteFile(ctx, path, []byte(content), filesafe.WithMode(0o600)); err != nil {
 			t.Fatalf("publish %s: %v", content, err)
 		}
 		if err := os.Chtimes(path, fixed, fixed); err != nil {

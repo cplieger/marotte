@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 // realKey has the exact shape KAS derives (sha256("http://127.0.0.1:46877/mcp" + "|")).

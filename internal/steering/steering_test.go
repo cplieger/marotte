@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 func TestWriteTools(t *testing.T) {
@@ -754,7 +754,7 @@ func TestGenerate_ReturnsAFailedWriteWhileItsCtxIsLive(t *testing.T) {
 	}
 }
 
-// cancelAfterTheWritesCheck reads as live through atomicfile's first ctx check, then as cancelled:
+// cancelAfterTheWritesCheck reads as live through filesafe's first ctx check, then as cancelled:
 // a shutdown landing between that check and a failing write.
 type cancelAfterTheWritesCheck struct {
 	context.Context
@@ -768,7 +768,7 @@ func (c *cancelAfterTheWritesCheck) Err() error {
 	pc := make([]uintptr, 1)
 	if runtime.Callers(2, pc) == 1 {
 		frame, _ := runtime.CallersFrames(pc).Next()
-		c.checked.Store(strings.HasPrefix(frame.Function, "github.com/cplieger/atomicfile/v4."))
+		c.checked.Store(strings.HasPrefix(frame.Function, "github.com/cplieger/go/filesafe."))
 	}
 	return nil
 }
@@ -783,7 +783,7 @@ func TestGenerate_ReturnsAFailedWriteThatRacesACancel(t *testing.T) {
 	err := g.Generate(ctx)
 
 	if !ctx.checked.Load() {
-		t.Fatal("atomicfile never checked the ctx, so no cancellation raced the write")
+		t.Fatal("filesafe never checked the ctx, so no cancellation raced the write")
 	}
 	if !errors.Is(err, syscall.ENOTDIR) || errors.Is(err, context.Canceled) {
 		t.Errorf("Generate whose write failed as its ctx was cancelled returned %v, want the write's ENOTDIR", err)

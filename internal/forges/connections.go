@@ -18,9 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/logsafe"
 )
@@ -235,8 +235,8 @@ func newRecordsFile(configDir string) recordsFile {
 }
 
 func writeRecordsFile(ctx context.Context, path string, data []byte) error {
-	_, err := atomicfile.WriteFile(ctx, path, data,
-		atomicfile.WithMode(connectionsFileMode), atomicfile.WithMaxBytes(connectionsMaxBytes))
+	_, err := filesafe.WriteFile(ctx, path, data,
+		filesafe.WithMode(connectionsFileMode), filesafe.WithMaxBytes(connectionsMaxBytes))
 	return err
 }
 
@@ -298,12 +298,12 @@ func (f recordsFile) read() ([]connectionRecord, error) {
 }
 
 func (f recordsFile) readBytes() ([]byte, error) {
-	fh, _, err := atomicfile.OpenRegular(f.path)
+	fh, _, err := filesafe.OpenRegular(f.path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", f.path, err)
 	}
 	defer func() { _ = fh.Close() }()
-	data, err := atomicfile.ReadBoundedFile(context.Background(), fh, connectionsMaxBytes)
+	data, err := filesafe.ReadBoundedFile(context.Background(), fh, connectionsMaxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", f.path, err)
 	}

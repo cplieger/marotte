@@ -3,10 +3,10 @@ package auth
 import (
 	"net/http"
 
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/signin"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // WhoamiState discriminates /api/whoami's three answers; "could not ask" is its own state so the UI offers a retry,
@@ -54,11 +54,11 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.apiKey {
-		webhttp.WriteJSON(w, WhoamiResponse{State: whoamiSignedIn, Auth: textAPIKeyAuth, APIKey: true})
+		httpserver.WriteJSON(w, WhoamiResponse{State: whoamiSignedIn, Auth: textAPIKeyAuth, APIKey: true})
 		return
 	}
 	st := h.vault.Status(h.backend)
-	webhttp.WriteJSON(w, whoamiFrom(&st))
+	httpserver.WriteJSON(w, whoamiFrom(&st))
 }
 
 // whoamiFrom is a Status as the account menu reads it, every upstream string bounded to one line.
@@ -89,5 +89,5 @@ const maxIdentityFieldBytes = 256
 // identityText prepares one upstream identity string for a single-line UI row, mapping C0/C1, DEL and Bidi controls
 // to spaces since these are labels.
 func identityText(s string) string {
-	return runesafe.SanitizeSingleLineBounded(s, maxIdentityFieldBytes)
+	return textsafe.SanitizeSingleLineBounded(s, maxIdentityFieldBytes)
 }

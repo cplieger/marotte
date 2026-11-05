@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 // loadWithin runs Load on its own goroutine and fails if it has not returned
@@ -39,13 +39,13 @@ func TestLoad_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 	if err := syscall.Mkfifo(path, 0o600); err != nil {
 		t.Skipf("mkfifo unsupported here: %v", err)
 	}
-	if err := loadWithin(t, 3*time.Second, path); !errors.Is(err, atomicfile.ErrNotRegular) {
-		t.Errorf("Load over a FIFO = %v, want atomicfile.ErrNotRegular", err)
+	if err := loadWithin(t, 3*time.Second, path); !errors.Is(err, filesafe.ErrNotRegular) {
+		t.Errorf("Load over a FIFO = %v, want filesafe.ErrNotRegular", err)
 	}
 }
 
 // TestLoad_RefusesASymlink matches Save, which cannot write through one:
-// atomicfile's write entry points already refuse a symlink at the target, so a
+// filesafe's write entry points already refuse a symlink at the target, so a
 // policy marotte would not write is now one it will not read either.
 func TestLoad_RefusesASymlink(t *testing.T) {
 	dir := t.TempDir()
@@ -79,8 +79,8 @@ func TestLoad_BoundsTheFileBeforeAllocating(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(path); !errors.Is(err, atomicfile.ErrFileTooLarge) {
-		t.Errorf("Load over an oversize policy = %v, want atomicfile.ErrFileTooLarge", err)
+	if _, err := Load(path); !errors.Is(err, filesafe.ErrFileTooLarge) {
+		t.Errorf("Load over an oversize policy = %v, want filesafe.ErrFileTooLarge", err)
 	}
 }
 

@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workflow"
-	"github.com/cplieger/slogx/capture"
 )
 
 const (

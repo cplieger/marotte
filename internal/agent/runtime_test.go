@@ -92,7 +92,7 @@ func TestInterfaceSatisfaction(_ *testing.T) {
 }
 
 // TestShutdown_BoundsAWedgedHandler pins that a handler that never decrements inflight must not hold Shutdown, which
-// runs synchronously inside webhttp.Run's pre-drain hook.
+// runs synchronously inside httpserver.Run's pre-drain hook.
 func TestShutdown_BoundsAWedgedHandler(t *testing.T) {
 	h, _, _ := newTestHub()
 
