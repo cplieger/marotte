@@ -146,7 +146,7 @@ func (f *fakePowers) syncCount() int {
 
 func newPowersHub(t *testing.T, backend *fakePowers) (*Runtime, *fakeBridge) {
 	t.Helper()
-	h, _, br := newColdTestHub()
+	h, br := newColdTestHub()
 	h.powers.backend = backend
 	h.powers.adminKnown = func() bool { return true }
 	h.powers.refreshAdmin = func() {}
@@ -431,7 +431,7 @@ func TestHandlePowerVerbs_ARenderFailureStillConvergesAndSaysTheChangeWasMade(t 
 }
 
 func TestPowersRoutes_AnswerUnavailableWithNoBackend(t *testing.T) {
-	h, _, _ := newColdTestHub()
+	h, _ := newColdTestHub()
 	h.powers.backend = nil
 	for _, tc := range []struct {
 		handler func(http.ResponseWriter, *http.Request)
@@ -642,7 +642,7 @@ func TestPowers_TheLockKeepsInstalledServersOutOfEveryRender(t *testing.T) {
 
 func TestPowers_ServersStayOffUntilTheAdministratorRulesResolve(t *testing.T) {
 	backend := &fakePowers{}
-	h, _, _ := newColdTestHub()
+	h, _ := newColdTestHub()
 	h.powers.backend = backend
 	asked := 0
 	h.powers.refreshAdmin = func() { asked++ }
@@ -667,7 +667,7 @@ func TestPowers_ServersStayOffUntilTheAdministratorRulesResolve(t *testing.T) {
 
 func TestPowers_InstallWaitsForTheAdministratorRules(t *testing.T) {
 	backend := &fakePowers{}
-	h, _, br := newColdTestHub()
+	h, br := newColdTestHub()
 	h.powers.backend = backend
 	h.powers.refreshAdmin = func() {}
 	t.Cleanup(func() { shutdownHub(t, h) })

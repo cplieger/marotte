@@ -474,7 +474,7 @@ func (o *engineOwner) oomKillsSince(base oomBaseline) (uint64, bool) {
 // logExit writes the one engine exited line per generation; the Loki engine-crash alerts match its message and
 // ended_itself verbatim. container_oom_kills counts every process in the container the kernel killed for memory
 // during the engine's life, so it is coincident evidence, not proof the engine was the victim.
-func (o *engineOwner) logExit(
+func (*engineOwner) logExit(
 	info *bridge.ExitInfo, gen uint64, cause string, oomKills uint64, oomKnown bool, busy *engineBusy, logDir any,
 ) {
 	attrs := []any{

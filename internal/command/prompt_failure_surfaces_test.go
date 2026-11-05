@@ -98,8 +98,6 @@ func (*surfaceDeps) reservePromptOld(context.Context, marotte.ChatID, time.Durat
 	return AdmissionAcquired
 }
 
-func (*surfaceDeps) tryReserveOld(marotte.ChatID, marotte.TurnOpenSource) bool { return true }
-
 // onlyError fails when the run produced other than one error frame: a second frame
 // would mean two surfaces claiming one failure, which is what this file is about.
 func (d *surfaceDeps) onlyError(t *testing.T) marotte.ErrorPayload {

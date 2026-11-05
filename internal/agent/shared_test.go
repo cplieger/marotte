@@ -43,8 +43,9 @@ func newTestHubIn(workDir string, opts ...Option) (*Runtime, *testChatStore, *fa
 
 // newColdTestHub is newTestHub whose engine sends no governance profile, so the administrator rules stay unread
 // until a test resolves them.
-func newColdTestHub(opts ...Option) (*Runtime, *testChatStore, *fakeBridge) {
-	return newTestHubOn("/tmp/work", true, opts...)
+func newColdTestHub(opts ...Option) (*Runtime, *fakeBridge) {
+	h, _, br := newTestHubOn("/tmp/work", true, opts...)
+	return h, br
 }
 
 func newTestHubOn(workDir string, coldGovernance bool, opts ...Option) (*Runtime, *testChatStore, *fakeBridge) {

@@ -65,18 +65,6 @@ func (lc *chatLifecycle) holderSourceLocked() (marotte.TurnOpenSource, bool) {
 	return 0, false
 }
 
-// tryReserve takes the slot iff free and the life gate admits stamp, never waiting (recovery retry, merge).
-func (r *turnRegistry) tryReserve(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
-	lc, ok := r.tryLifecycleAt(chatID, stamp)
-	if !ok {
-		return command.Reservation{}, false
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	a := r.reserveLocked(lc, source, stamp, "")
-	return a.res, a.res.Token != 0
-}
-
 // tryReserveFenced takes the slot iff free and the fence holds, never waiting (a close's drain). The fence names a
 // life that existed, so a missing lifecycle refuses, and a held close refuses.
 func (r *turnRegistry) tryReserveFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) (command.Reservation, bool) {
