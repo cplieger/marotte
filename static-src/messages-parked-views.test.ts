@@ -807,6 +807,101 @@ describe("disposal", () => {
     }
   });
 
+  it("paints the incoming view before the least-recently-used parked view is disposed", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < messages.PARKED_VIEWS + 2; i++) {
+      ids.push(freshID("c-evict-late"));
+    }
+    seed(...ids.map((id) => oneTurn(id, `text of ${id}`)));
+    await flushed();
+    for (const id of ids.slice(1, -1)) {
+      switchTo(id);
+      await flushed();
+    }
+    const lru = ids[0] ?? "";
+    const last = ids[ids.length - 1] ?? "";
+    expect(messages.transcriptViewFor(lru), "the LRU view is still parked").not.toBeNull();
+
+    switchTo(last);
+    await flushed();
+    expect(viewOf(last).classList.contains("is-active")).toBe(true);
+    expect(viewOf(last).querySelectorAll(".turn").length).toBeGreaterThan(0);
+    expect(messages.transcriptViewFor(lru), "disposed in the paint's own task").not.toBeNull();
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(messages.transcriptViewFor(lru), "disposed in a later task").toBeNull();
+  });
+
+  it("keeps a view its exemption names past the budget, with its reading position", async () => {
+    const x = freshID("c-pend");
+    const others: string[] = [];
+    for (let i = 0; i < messages.PARKED_VIEWS + 1; i++) {
+      others.push(freshID("c-pend"));
+    }
+    const turns: Entry[][] = [];
+    for (let i = 0; i < 10; i++) {
+      const t = `${x}-t${String(i)}`;
+      turns.push([
+        turnOpen(t, i + 1, `prompt ${String(i)}`),
+        textEntry(t, 1, `reply ${String(i)}`),
+        turnClose(t, 2),
+      ]);
+    }
+    seed(settled(x, turns), ...others.map((id) => oneTurn(id, `text of ${id}`)));
+    await flushed();
+    const scroller = scroll.getScrollEl();
+    expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight + 150);
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
+    scroller.scrollTo({ top: 5, behavior: "instant" });
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("reading");
+    // A close of X pends: its rollback must find the view it parked.
+    const exempt = (
+      messages as unknown as {
+        setParkedViewExemption?: (pred: (chatID: string) => boolean) => void;
+      }
+    ).setParkedViewExemption;
+    exempt?.((chatID) => chatID === x);
+    try {
+      for (const id of others) {
+        switchTo(id);
+        await flushed();
+      }
+      await new Promise((r) => setTimeout(r, 0));
+      expect(messages.transcriptViewFor(x), "the pending close's view was evicted").not.toBeNull();
+
+      switchTo(x);
+      await flushed();
+      expect(scroll.readingState()).toBe("reading");
+      expect(Math.abs(scroller.scrollTop - 5)).toBeLessThanOrEqual(1);
+      expect(typeof exempt, "messages.setParkedViewExemption").toBe("function");
+    } finally {
+      exempt?.(() => false);
+    }
+  });
+
+  it("paints on the painted chat moving, not on the active chat moving", async () => {
+    const a = freshID("c-ptr");
+    const b = freshID("c-ptr");
+    seed(oneTurn(a, "text of a"), oneTurn(b, "text of b"));
+    await flushed();
+    expect(viewOf(a).classList.contains("is-active")).toBe(true);
+    // A switch's gesture: the reader is on B, A's transcript stays mounted until the activation.
+    store.setActive(b);
+    await flushed();
+    expect(viewOf(a).classList.contains("is-active"), "setActive repainted the transcript").toBe(
+      true,
+    );
+    expect(messages.transcriptViewFor(b), "setActive built B's view").toBeNull();
+
+    const setPainted = (store as unknown as { setPainted?: (id: string) => void }).setPainted;
+    expect(typeof setPainted, "store.setPainted").toBe("function");
+    setPainted?.(b);
+    await flushed();
+    expect(viewOf(b).classList.contains("is-active")).toBe(true);
+    expect(viewOf(a).classList.contains("is-active")).toBe(false);
+  });
+
   it("teardownAll with parked views leaves no DOM and no state", async () => {
     const a = freshID("c-td");
     const b = freshID("c-td");

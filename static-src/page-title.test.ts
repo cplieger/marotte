@@ -176,6 +176,38 @@ describe("the title bar's measured fit", () => {
     expect(heading.classList.contains("sr-only"), "the subtitle pushes it over").toBe(true);
   });
 
+  it("fits a changed title in the next frame, reading no width in the writer's task", async () => {
+    // A tab switch writes the title inside the click, beside the strip and the cover; a
+    // `scrollWidth` read there forces a layout of every write before it.
+    const heading = mountBar("390px");
+    const title = heading.querySelector<HTMLElement>(".titlebar-title");
+    expect(title).not.toBeNull();
+    const desc = Object.getOwnPropertyDescriptor(Element.prototype, "scrollWidth");
+    let reads = 0;
+    Object.defineProperty(title, "scrollWidth", {
+      configurable: true,
+      get(this: Element): number {
+        reads += 1;
+        return desc?.get?.call(this) as number;
+      },
+    });
+    onTestFinished(() => {
+      Reflect.deleteProperty(title as HTMLElement, "scrollWidth");
+    });
+
+    setPageTitle(LONG, "chat");
+    expect(reads, "no scrollWidth read in the task that wrote the title").toBe(0);
+
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    });
+    expect(heading.classList.contains("sr-only"), "clipped once the frame ran").toBe(true);
+  });
+
   it("writes a title for a caller with no bar mounted", () => {
     // The fit is a refinement over a laid-out bar, so no bar is not an error — unlike the WRITE,
     // which must fail loudly if its target is missing.

@@ -188,8 +188,13 @@ import {
   registerCloseGate,
   claimNavigation,
   navigationHeld,
+  setSettingsTab,
   _resetForTest,
 } from "./tabs.js";
+// The namespace, for the activation seam: a named import of an export a build lacks fails the
+// whole file's linking in Browser Mode rather than only the case that calls it.
+import * as tabsModule from "./tabs.js";
+import { pushRoute } from "./router.js";
 // The REAL freshness leaf: `viewStale` is what the dispatcher spends, so a case
 // that wants a FRESH view records a load the way `loadMessages` does rather than
 // faking the verdict. `chat` is the one kind whose ledger can answer "fresh" at all.
@@ -3775,5 +3780,44 @@ describe("in-place chat rename", () => {
     const items = vi.mocked(showContextMenu).mock.lastCall?.[0] ?? [];
     items.find((i) => i.label === "Rename\u2026")?.action();
     expect(row.querySelector(".tab-name-input")).not.toBeNull();
+  });
+});
+
+// The URL follows the tab the reader is shown. A switch defers its activation past the gesture's
+// frame, so `showView` (which re-runs on every emit) must not push the target's route before the
+// activation does, and the activation pushes it once.
+describe("routes follow the activation", () => {
+  it("a sub-tab change on the active settings tab pushes its route", async () => {
+    await openTab({ kind: "settings" });
+    vi.mocked(pushRoute).mockClear();
+
+    setSettingsTab("account");
+
+    expect(vi.mocked(pushRoute).mock.calls).toEqual([[{ kind: "settings", tab: "account" }]]);
+  });
+
+  it("a pending switch pushes no route until its activation runs, then pushes it once", async () => {
+    await openChats("a", "b");
+    vi.mocked(pushRoute).mockClear();
+
+    activateTab(chatID("a"));
+
+    expect(vi.mocked(pushRoute), "pushed while the activation is pending").not.toHaveBeenCalled();
+    tabsModule.flushActivationForTest();
+    expect(vi.mocked(pushRoute).mock.calls).toEqual([[{ kind: "chat", id: "a" }]]);
+  });
+
+  it("a route change on a target whose activation has run pushes the new route", async () => {
+    await openChats("a");
+    await openTab({ kind: "settings" });
+    activateTab(chatID("a"));
+    tabsModule.flushActivationForTest();
+    activateTab(tabIdFor("settings"));
+    tabsModule.flushActivationForTest();
+    vi.mocked(pushRoute).mockClear();
+
+    setSettingsTab("account");
+
+    expect(vi.mocked(pushRoute).mock.calls).toEqual([[{ kind: "settings", tab: "account" }]]);
   });
 });
