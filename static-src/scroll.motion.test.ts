@@ -1,6 +1,7 @@
 // The reading state follows the reader's own motion: an input only opens a gesture, the state changes by where the
 // scroller went, and nothing the platform or a timer does moves the reader between Following and Reading.
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { server } from "vitest/browser";
 import type * as Dom from "./dom.js";
 import type * as Skeleton from "./skeleton.js";
 import {
@@ -578,14 +579,18 @@ describe("the reader's own scroll event, whatever came with it", () => {
 describe("whose move it is, and which way", () => {
   type Kind = "wheel" | "touch" | "sideways touch" | "key" | "bar" | "none";
 
-  function reservesScrollbarGutter(): boolean {
+  /** The gutter a scroller styled as the scene's reserves: an engine with overlay scrollbars reserves none, and a
+   *  thumb press has nowhere to land. */
+  function sceneGutter(): number {
     const probe = document.createElement("div");
-    probe.style.cssText = "position:absolute;width:100px;height:100px;overflow-y:scroll;";
+    probe.style.cssText =
+      "position:absolute;width:100px;height:100px;overflow-y:auto;scrollbar-gutter:stable;";
     document.body.append(probe);
     const gutter = probe.offsetWidth - probe.clientWidth;
     probe.remove();
-    return gutter > 0;
+    return gutter;
   }
+  const hasGutter = sceneGutter() > 0;
 
   /** 3000px in a 400px scrollport, Following at the end (2600), or parked `at` px above it by the reader's own wheel
    *  tick. Parked at the end (0): a tick up 60px, then a collapse below that brings the end to them. */
@@ -640,8 +645,12 @@ describe("whose move it is, and which way", () => {
         document.dispatchEvent(
           new PointerEvent("pointermove", { clientX: gutterX, clientY: 200 + 20 * dir }),
         );
+        // An engine fires a thumb drag's `scrollend` at the release
+        // (https://developer.chrome.com/blog/scrollend-a-new-javascript-event); the glide's instant steps fired theirs
+        // while it was held.
         return () => {
           document.dispatchEvent(new PointerEvent("pointerup", { clientX: gutterX }));
+          wrap.dispatchEvent(new Event("scrollend"));
         };
       case "none":
         return () => undefined;
@@ -692,47 +701,45 @@ describe("whose move it is, and which way", () => {
     };
   const kinds: Kind[] = ["wheel", "touch", "key", "bar", "none"];
   const rows: Row[] = [
-    ...kinds
-      .filter((kind) => kind !== "bar" || reservesScrollbarGutter())
-      .flatMap((kind): Row[] => [
-        {
-          name: `${kind} up from the end`,
-          at: "following",
-          act: move(kind, -30),
-          state: "reading",
-        },
-        // 2px: 1px above the end is within the slack, so it is the end (the smallest Reading park).
-        {
-          name: `${kind} down onto the end from 2px`,
-          at: 2,
-          act: move(kind, "end"),
-          state: "following",
-        },
-        {
-          name: `${kind} down onto the end from 57px`,
-          at: 57,
-          act: move(kind, "end"),
-          state: "following",
-        },
-        { name: `${kind} down 20px of 57px`, at: 57, act: move(kind, 20), state: "reading" },
-        {
-          name: `${kind} down onto the end from 400px`,
-          at: 400,
-          act: move(kind, "end"),
-          state: "following",
-        },
-        { name: `${kind} up from 400px`, at: 400, act: move(kind, -30), state: "reading" },
-        ...(kind === "none"
-          ? []
-          : [
-              {
-                name: `${kind} down at the end`,
-                at: 0,
-                act: move(kind, "end"),
-                state: "following",
-              } as const,
-            ]),
-      ]),
+    ...kinds.flatMap((kind): Row[] => [
+      {
+        name: `${kind} up from the end`,
+        at: "following",
+        act: move(kind, -30),
+        state: "reading",
+      },
+      // 2px: 1px above the end is within the slack, so it is the end (the smallest Reading park).
+      {
+        name: `${kind} down onto the end from 2px`,
+        at: 2,
+        act: move(kind, "end"),
+        state: "following",
+      },
+      {
+        name: `${kind} down onto the end from 57px`,
+        at: 57,
+        act: move(kind, "end"),
+        state: "following",
+      },
+      { name: `${kind} down 20px of 57px`, at: 57, act: move(kind, 20), state: "reading" },
+      {
+        name: `${kind} down onto the end from 400px`,
+        at: 400,
+        act: move(kind, "end"),
+        state: "following",
+      },
+      { name: `${kind} up from 400px`, at: 400, act: move(kind, -30), state: "reading" },
+      ...(kind === "none"
+        ? []
+        : [
+            {
+              name: `${kind} down at the end`,
+              at: 0,
+              act: move(kind, "end"),
+              state: "following",
+            } as const,
+          ]),
+    ]),
     {
       name: "a sideways touch at the end",
       at: 0,
@@ -769,7 +776,7 @@ describe("whose move it is, and which way", () => {
     },
   ];
 
-  it.each(rows)("$name leaves the reader $state", async ({ at, act, state }) => {
+  async function leaves({ at, act, state }: Row): Promise<void> {
     const wrap = await start(at);
 
     await act(wrap);
@@ -781,7 +788,23 @@ describe("whose move it is, and which way", () => {
       state,
       hidden: state === "following",
     });
-  });
+  }
+
+  const isBar = (row: Row): boolean => row.name.startsWith("bar ");
+  it.each(rows.filter((row) => !isBar(row)))("$name leaves the reader $state", leaves);
+  it.skipIf(!hasGutter).each(rows.filter(isBar))("$name leaves the reader $state", leaves);
+
+  it.runIf(server.browser === "chromium")(
+    "runs the thumb rows in Chromium, whose scene scroller reserves a gutter",
+    async () => {
+      const wrap = await start("following");
+
+      const gutter = wrap.offsetWidth - wrap.clientWidth;
+
+      expect(gutter, "the scene's scroller reserves a gutter").toBeGreaterThan(0);
+      expect(sceneGutter(), "the probe the bar rows skip on").toBe(gutter);
+    },
+  );
 
   it.each<[string, (target: HTMLElement) => Promise<void>]>([
     [
