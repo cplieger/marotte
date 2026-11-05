@@ -198,12 +198,16 @@ func (rs *Runs) launchAs(
 	}
 	// After invoke, so a run that never started leaves no timer.
 	rs.armDeadline(rctx, wfID)
-	attrs := []any{"workflow_id", wfID, "recipe", recipe.Name}
+	logLaunched(wfID, recipe.Name, dropped)
+	return wfID, recipe.Name, nil
+}
+
+func logLaunched(wfID, recipe string, dropped []string) {
+	attrs := []any{"workflow_id", wfID, "recipe", recipe}
 	if len(dropped) > 0 {
 		attrs = append(attrs, "dropped_inputs", logsafe.Field(strings.Join(dropped, ",")))
 	}
 	slog.Info("workflow run launched", attrs...)
-	return wfID, recipe.Name, nil
 }
 
 // invokeFailed settles a launch whose invoke failed and returns its error. An unconfirmed (verdictOf) or
