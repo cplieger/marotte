@@ -34,26 +34,31 @@ describe("isRunnableShell", () => {
       text: "#!/usr/bin/env bash\nls",
       expected: false,
     },
-    // Any embedded terminator is a refusal: send() writes raw bytes, so a newline executes the line before it.
-    { name: "4-line script rejected", lang: "bash", text: "a\nb\nc\nd", expected: false },
-    { name: "3-line script rejected", lang: "bash", text: "a\nb\nc", expected: false },
-    { name: "2-line block rejected", lang: "bash", text: "cd /tmp\nls -la", expected: false },
+    // A multi-line block runs as one paste, so its line count does not matter.
+    { name: "4-line script accepted", lang: "bash", text: "a\nb\nc\nd", expected: true },
+    { name: "2-line block accepted", lang: "bash", text: "cd /tmp\nls -la", expected: true },
     {
-      name: "blank lines between commands do not make it single-line",
+      name: "blank lines between commands accepted",
       lang: "bash",
       text: "a\n\nb\n\nc",
-      expected: false,
+      expected: true,
     },
     {
-      name: "CRLF single line rejected (the CR is Enter to a PTY too)",
+      name: "CRLF line ends accepted",
       lang: "bash",
       text: "echo hi\r\necho bye",
+      expected: true,
+    },
+    {
+      name: "a multi-line shebang script rejected",
+      lang: "zsh",
+      text: "  #!/bin/zsh\nprint hi\n",
       expected: false,
     },
     {
-      name: "a lone CR rejected",
-      lang: "bash",
-      text: "echo hi\rrm -rf /tmp/x",
+      name: "a multi-line non-shell block rejected",
+      lang: "python",
+      text: "import os\nprint(os.getcwd())",
       expected: false,
     },
     {
@@ -283,13 +288,21 @@ describe("decorateStreamingCodeTail: a fence that has not closed", () => {
     expect(buttons[1]?.getAttribute("aria-label")).toBe("Run in shell");
   });
 
-  it("gives a multi-line block Copy only", () => {
+  it("gives a multi-line block the same Run button as a one-line block", () => {
     setShellRunCallback(vi.fn());
     const { root } = fixture("bash", "cd /tmp\nls -la");
     decorateCodeBlocks(root);
     const buttons = [...root.querySelectorAll<HTMLButtonElement>(".code-act-btn")];
-    expect(buttons).toHaveLength(1);
-    expect(buttons[0]?.getAttribute("data-tooltip")).toBe("Copy");
+    expect(buttons).toHaveLength(2);
+    expect(buttons[1]?.disabled).toBe(false);
+    expect(buttons[1]?.getAttribute("data-tooltip")).toBe("Run in shell");
+    expect(buttons[1]?.getAttribute("aria-label")).toBe("Run in shell");
+  });
+
+  it("withholds Run from a multi-line block that is still streaming", () => {
+    const { root } = fixture("bash", "cd /tmp\nls -la");
+    decorateStreamingCodeTail(root);
+    expect(root.querySelectorAll(".code-act-btn")).toHaveLength(1);
   });
 });
 
@@ -323,6 +336,10 @@ describe("Run never sends a character the reader cannot see", () => {
     { name: "a variation selector (U+FE0F)", text: "echo a\uFE0F" },
     { name: "a combining grapheme joiner (U+034F)", text: "echo a\u034F" },
     { name: "a Hangul filler (U+3164)", text: "echo \u3164" },
+    // CSS Text 3 section 4 renders a carriage return as a space, so it is no line end.
+    { name: "a lone carriage return (U+000D)", text: "echo hi\rrm -rf /tmp/x" },
+    { name: "a paste-end sequence on a later line", text: "echo a\n\u001B[201~rm x" },
+    { name: "a tab on a later line", text: "echo a\nls\t-la" },
   ];
 
   for (const tc of hidden) {
@@ -472,5 +489,90 @@ describe("Run on a line that is partly out of view", () => {
     expect(measure(runAt, runAt + 6)).toBeGreaterThan(one * 4);
     dlg?.querySelector<HTMLButtonElement>(".uip-ask-cancel")?.click();
     await new Promise((r) => setTimeout(r, 0));
+  });
+});
+
+describe("Run on a multi-line block", () => {
+  let style: HTMLStyleElement;
+  let host: HTMLElement | null = null;
+
+  beforeAll(() => {
+    style = mountAppCSS();
+  });
+
+  afterAll(() => {
+    style.remove();
+  });
+
+  afterEach(() => {
+    host?.remove();
+    host = null;
+  });
+
+  function mounted(text: string): HTMLElement {
+    const { root } = fixture("bash", text);
+    host = document.createElement("div");
+    host.className = "message";
+    host.style.width = "40rem";
+    host.appendChild(root);
+    document.body.appendChild(host);
+    decorateCodeBlocks(root);
+    return root;
+  }
+
+  function openAsk(): HTMLDialogElement | null {
+    return document.querySelector<HTMLDialogElement>("dialog.uip-ask[open]");
+  }
+
+  const block = "cd /tmp\nls -la";
+
+  it("asks first even when every line is in view, showing the whole block", async () => {
+    const run = vi.fn();
+    setShellRunCallback(run);
+    const root = mounted(block);
+    const pre = root.querySelector("pre");
+    expect(pre?.scrollWidth).toBeLessThanOrEqual(pre?.clientWidth ?? 0);
+    runButton(root)?.click();
+    expect(run).not.toHaveBeenCalled();
+    const dlg = openAsk();
+    expect(dlg).not.toBeNull();
+    expect(dlg?.querySelector(".uip-ask-msg")?.textContent).toContain(block);
+    dlg?.querySelector<HTMLButtonElement>(".uip-ask-cancel")?.click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
+  it("sends nothing when the reader cancels", async () => {
+    const run = vi.fn();
+    setShellRunCallback(run);
+    const root = mounted(block);
+    runButton(root)?.click();
+    openAsk()?.querySelector<HTMLButtonElement>(".uip-ask-cancel")?.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("sends the whole block once, as one command, when the reader confirms", async () => {
+    const run = vi.fn();
+    setShellRunCallback(run);
+    const root = mounted(`${block}\n`);
+    runButton(root)?.click();
+    const ok = openAsk()?.querySelector<HTMLButtonElement>(".uip-ask-ok");
+    expect(ok?.textContent).toBe("Run");
+    ok?.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith(block);
+  });
+
+  it("turns CRLF line ends into line feeds before it shows or sends the block", async () => {
+    const run = vi.fn();
+    setShellRunCallback(run);
+    const root = mounted("cd /tmp\r\nls -la\r\n");
+    runButton(root)?.click();
+    const dlg = openAsk();
+    expect(dlg?.querySelector(".uip-ask-msg")?.textContent).toContain(block);
+    dlg?.querySelector<HTMLButtonElement>(".uip-ask-ok")?.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(run).toHaveBeenCalledWith(block);
   });
 });
