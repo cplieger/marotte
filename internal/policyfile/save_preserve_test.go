@@ -686,6 +686,54 @@ func TestSave_RefusesAnEditThatWouldRetargetAnotherKeysAlias(t *testing.T) {
 	}
 }
 
+// TestSave_KeepsAnAliasToARedefinedAnchor pins the other half of the alias check: an alias binds
+// the latest anchor of its name before it, so a file that redefines an anchor on purpose saves.
+func TestSave_KeepsAnAliasToARedefinedAnchor(t *testing.T) {
+	t.Run("an edit", func(t *testing.T) {
+		const before = "a: &x 1\nb: *x\nc: &x 2\nd: *x\nrules:\n  - {capability: shell, effect: deny}\n  - {capability: write, effect: allow}\n"
+		path := filepath.Join(t.TempDir(), filename)
+		if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		f.Rules = f.Rules[1:]
+		if err := Save(t.Context(), path, f); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			B, D  int
+			Rules []Rule
+		}
+		if err := yaml.Unmarshal(got, &doc); err != nil || doc.B != 1 || doc.D != 2 || len(doc.Rules) != 1 || doc.Rules[0].Capability != "write" {
+			t.Errorf("saved file %q reads back as %+v (%v), want b 1, d 2 and the write rule", got, doc, err)
+		}
+	})
+	t.Run("no edit", func(t *testing.T) {
+		const before = "pre: &t false\nrules:\n    - {capability: shell, effect: deny, match: [&t true]}\n    - {capability: write, effect: allow}\nworkspaceTrusted: *t\n"
+		path := filepath.Join(t.TempDir(), filename)
+		if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if err := Save(t.Context(), path, f); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if got, err := os.ReadFile(path); err != nil || string(got) != before {
+			t.Errorf("file after a Save that changed nothing = %q (%v), want it unchanged", got, err)
+		}
+	})
+}
+
 // TestSave_CarriesAnExplicitTagFromTheJSONSibling pins that a tag written in permissions.json
 // stays in the permissions.yaml Save writes, and that the value reads back the same.
 func TestSave_CarriesAnExplicitTagFromTheJSONSibling(t *testing.T) {
