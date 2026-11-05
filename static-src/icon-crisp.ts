@@ -79,9 +79,29 @@ interface Motion {
 }
 
 function currentMotion(): Motion {
+  return motionOf(document.getAnimations());
+}
+
+/** The motion that can move icons inside `around`: every animation inside those boxes, and each ancestor's own (a
+ *  drawer's slide). A caller passes every box whose resize it answers, since a layout animation elsewhere in the view
+ *  moves them only by resizing one. Gecko's `Document.getAnimations()` visits every element of the document. */
+function motionAround(around: Iterable<Element>): Motion {
+  const anims: Animation[] = [];
+  const walked = new Set<Element>();
+  for (const box of around) {
+    anims.push(...box.getAnimations({ subtree: true }));
+    for (let e = box.parentElement; e !== null && !walked.has(e); e = e.parentElement) {
+      walked.add(e);
+      anims.push(...e.getAnimations());
+    }
+  }
+  return motionOf(anims);
+}
+
+function motionOf(anims: Iterable<Animation>): Motion {
   const movers: { el: Element; forever: boolean }[] = [];
   let reflowing = false;
-  for (const a of document.getAnimations()) {
+  for (const a of anims) {
     const fx = a.effect;
     if (a.playState !== "running" || !(fx instanceof KeyframeEffect) || fx.target === null) {
       continue;
@@ -262,8 +282,14 @@ export function snapIcons(root: ParentNode = document): number {
 }
 
 /** Snap, in one pass, every tier icon inside `rows` and every one inside `cards` whose nearest `skip` ancestor does not
- *  lie inside that card. Reads boxes and writes only `translate`; a no-op before `initIconCrisp`. */
-export function snapIconsIn(rows: Iterable<Element>, cards: Iterable<Element>, skip: string): void {
+ *  lie inside that card, declining under motion inside `cards` or `resized` (`motionAround`). Reads boxes and writes
+ *  only `translate`; a no-op before `initIconCrisp`. */
+export function snapIconsIn(
+  rows: Iterable<Element>,
+  cards: ReadonlySet<Element>,
+  skip: string,
+  resized: Iterable<Element> = [],
+): void {
   if (resize === undefined) {
     return;
   }
@@ -282,9 +308,7 @@ export function snapIconsIn(rows: Iterable<Element>, cards: Iterable<Element>, s
     }
   }
   if (icons.size > 0) {
-    const wasDeferred = deferred;
-    snapWith(icons, currentMotion());
-    deferred ||= wasDeferred;
+    snapWith(icons, motionAround(new Set([...cards, ...resized])));
   }
 }
 

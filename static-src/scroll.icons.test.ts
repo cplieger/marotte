@@ -201,6 +201,51 @@ describe("an icon below a transcript row that grows", () => {
     });
   });
 
+  it("holds them while the growth itself is animated, and snaps them once it lands", async () => {
+    await setDeviceScale(1.5);
+    const t = await transcript();
+    const moved = [t.later, t.next, t.footer];
+    const before = moved.map((s) => s.style.translate);
+
+    const growth = t.grow.animate([{ height: "40px" }, { height: "62.4px" }], {
+      duration: 10_000,
+      fill: "forwards",
+    });
+    growth.currentTime = 4321;
+    await frames(4);
+    const mid = moved.map((s, i) => s.style.translate === before[i]);
+    growth.finish();
+    await frames(3);
+
+    expect({ mid, landed: moved.map((s) => offPhase(s) <= 0.02) }).toEqual({
+      mid: [true, true, true],
+      landed: [true, true, true],
+    });
+  });
+
+  it("snaps them in the growth's delivery while a layout animation runs outside the transcript", async () => {
+    await setDeviceScale(1.5);
+    const t = await transcript();
+    const moved = [t.later, t.next, t.footer];
+    // A panel collapsing elsewhere on the page: it moves nothing inside the transcript.
+    const panel = document.createElement("div");
+    panel.style.cssText = "position:absolute;left:0;top:0;width:10px;height:40px;overflow:hidden;";
+    document.body.append(panel);
+    try {
+      panel.animate([{ height: "40px" }, { height: "0px" }], {
+        duration: 10_000,
+        fill: "forwards",
+      });
+
+      t.grow.style.height = "62.4px";
+      await frames(3);
+
+      expect(moved.map((s) => offPhase(s) <= 0.02)).toEqual([true, true, true]);
+    } finally {
+      panel.remove();
+    }
+  });
+
   it("snaps a row entering the band before the next frame's animation-frame callbacks", async () => {
     await setDeviceScale(1.5);
     const t = await transcript();

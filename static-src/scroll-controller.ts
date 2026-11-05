@@ -565,7 +565,10 @@ export class ScrollController {
     this.correct();
     this.floorAfter(false);
     if (from !== null) {
-      this.snapMoved(from);
+      this.snapMoved(
+        from,
+        entries.map((e) => e.target),
+      );
     }
     for (const cb of this.contentResizeListeners) {
       cb();
@@ -577,7 +580,7 @@ export class ScrollController {
 
   /** Re-snap the icons a layout move under `from` carried: the near band's rows at or after it, and their turns' own
    *  header and footer icons. A row outside the band is never read; its icons are not painted. */
-  private snapMoved(from: Element): void {
+  private snapMoved(from: Element, resized: readonly Element[]): void {
     const rows = this.inSnapReach(
       [...this.nearNow].filter(
         (box) =>
@@ -586,7 +589,7 @@ export class ScrollController {
       ),
     );
     if (rows.length > 0) {
-      snapIconsIn(rows, this.cardsOf(rows), SKIPPABLE);
+      snapIconsIn(rows, this.cardsOf(rows), SKIPPABLE, resized);
     }
   }
 
