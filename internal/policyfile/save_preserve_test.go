@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // kiroCLIFile is the shape kiro-cli keeps in a workspace-root permissions.yaml: its "Trust this
@@ -119,7 +119,7 @@ func TestSave_KeepsKeysAndCommentsItDoesNotOwn(t *testing.T) {
 	})
 }
 
-// todaysShape is yaml.v3's Marshal of a File holding one rule, the format a rules-only file keeps.
+// todaysShape is go-yaml's Marshal of a File holding one rule, the format a rules-only file keeps.
 const todaysShape = `rules:
     - capability: fs_write
       effect: allow
@@ -427,8 +427,8 @@ func TestSave_DocumentShapes(t *testing.T) {
 		})
 	}
 	for name, c := range map[string]struct{ before, want string }{
-		"a comment on the document end":                 {"rules: []\n... # end\n", "rules: []\n\n# end\n"},
-		"comments on and after the document end":        {"rules: []\n... # e\n# f\n", "rules: []\n\n# e\n# f\n"},
+		"a comment on the document end":                 {"rules: []\n... # end\n", "rules: []\n# end\n"},
+		"comments on and after the document end":        {"rules: []\n... # e\n# f\n", "rules: []\n# e\n# f\n"},
 		"a foot comment above a commented document end": {"next: 1\nrules: []\n# foot\n... # end\n", "next: 1\nrules: []\n# foot\n# end\n"},
 	} {
 		t.Run(name+" after a mapping keeps its comments", func(t *testing.T) {

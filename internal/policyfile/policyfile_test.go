@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/workspace"
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 func TestPathFor(t *testing.T) {

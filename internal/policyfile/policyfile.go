@@ -21,7 +21,7 @@ import (
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/go/yamlenv"
 	"github.com/cplieger/marotte/internal/workspace"
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // KAS reads the .yaml unless it is missing or blank, then the .json sibling. marotte writes the
@@ -225,7 +225,7 @@ func readPolicy(ctx context.Context, abs string) ([]byte, error) {
 
 // parse decodes data, read from the file called name, into its document node and its rules. doc
 // is nil for a blank file, and has Kind 0 for one holding only comments. The root must be a
-// mapping or null; yaml.v3 refuses a duplicated key.
+// mapping or null; go-yaml refuses a duplicated key.
 func parse(data []byte, name string) (doc *yaml.Node, f *File, err error) {
 	if strings.TrimSpace(string(data)) == "" {
 		return nil, &File{Rules: []Rule{}}, nil
@@ -276,7 +276,7 @@ func Save(ctx context.Context, path string, f *File) error {
 	if err != nil {
 		return err
 	}
-	// yaml.v3 drops the comment on a `...` line and every comment after one; the same document
+	// go-yaml drops the comment on a `...` line and every comment after one; the same document
 	// without its end markers parses with them.
 	if text := dropDocumentEnds(string(old)); text != string(old) {
 		old = []byte(text)
@@ -308,9 +308,9 @@ func Save(ctx context.Context, path string, f *File) error {
 
 // render writes rules into the parsed document doc of old, which holds no `...` line. A blank file
 // gets a fresh `rules:` document; one holding only comments, `---` or a directive keeps its text
-// above it, since yaml.v3 drops those from an empty document.
-// Stays on yaml.Marshal (unlimited width); on v4 an Encoder or Dump must pin WithV3Defaults and
-// WithLineWidth(-1), or it refolds kiro-cli's long values.
+// above it, since go-yaml drops those from an empty document.
+// Stays on yaml.Marshal, which is Dump with WithV3Defaults and WithLineWidth(-1): an Encoder or a
+// bare Dump wraps at 80 columns and would refold kiro-cli's long values.
 func render(old []byte, doc *yaml.Node, rules []Rule) ([]byte, error) {
 	fresh := &File{Rules: rules}
 	if doc == nil {
@@ -326,7 +326,7 @@ func render(old []byte, doc *yaml.Node, rules []Rule) ([]byte, error) {
 	}
 	root := doc.Content[0]
 	if root.Kind != yaml.MappingNode {
-		// A null root (`~`): parse refuses every other non-mapping root. yaml.v3 writes no line
+		// A null root (`~`): parse refuses every other non-mapping root. go-yaml writes no line
 		// comment on a root block mapping, so `~ # side` keeps its comment as a head line.
 		root = &yaml.Node{
 			Kind: yaml.MappingNode, Tag: "!!map",
@@ -346,7 +346,7 @@ func render(old []byte, doc *yaml.Node, rules []Rule) ([]byte, error) {
 			return nil, err
 		}
 		value.HeadComment, value.FootComment = prev.HeadComment, prev.FootComment
-		// yaml.v3 reads `rules: [] # x` onto the value and `rules: # x` over a block onto the key,
+		// go-yaml reads `rules: [] # x` onto the value and `rules: # x` over a block onto the key,
 		// and writes a key's line comment over `[]` onto the next key.
 		line := joinComments(" ", key.LineComment, prev.LineComment)
 		if len(rules) == 0 {
