@@ -635,7 +635,7 @@ describe("closing the last tab", () => {
     const onConfirm = vi.fn();
     beginRemove("op-held", {
       id: chatID("held"),
-      capturedTabIDs: [chatID("held")],
+      captured: tabServer.subjects().filter((s) => s.id === chatID("held")),
       onConfirm,
       rollback: vi.fn(),
     });
@@ -666,7 +666,7 @@ describe("closing the last tab", () => {
     await openChats("held", "mine");
     beginRemove("op-held", {
       id: chatID("held"),
-      capturedTabIDs: [chatID("held")],
+      captured: tabServer.subjects().filter((s) => s.id === chatID("held")),
       onConfirm: vi.fn(),
       rollback: vi.fn(),
     });
@@ -696,7 +696,7 @@ describe("closing the last tab", () => {
     const rollback = vi.fn();
     beginRemove("op-held", {
       id: chatID("held"),
-      capturedTabIDs: [chatID("held")],
+      captured: tabServer.subjects().filter((s) => s.id === chatID("held")),
       onConfirm: vi.fn(),
       rollback,
     });
@@ -3050,7 +3050,9 @@ describe("optimistic close: the reversible gesture", () => {
     expect(openers.chatShow).toHaveBeenCalledWith("b");
     // …and none of the chat's client state was torn down in between.
     expect(openers.chatClose).not.toHaveBeenCalled();
-    expect(vi.mocked(toastErrorFn)).toHaveBeenCalledWith("Could not close that tab");
+    expect(vi.mocked(toastErrorFn)).toHaveBeenCalledWith(
+      "Could not close that tab, so it was put back.",
+    );
   });
 
   it("a definitive refusal names the chat by the row's name at the gesture", async () => {
@@ -3064,7 +3066,9 @@ describe("optimistic close: the reversible gesture", () => {
 
     await closeTab(chatID("b"));
 
-    expect(notices).toEqual([["b", "Fix the parser", "Could not close that tab", "error"]]);
+    expect(notices).toEqual([
+      ["b", "Fix the parser", "Could not close that tab, so it was put back.", "error"],
+    ]);
   });
 
   it("a definitive refusal leaves a dirty editor's state untouched", async () => {

@@ -73,7 +73,7 @@ import {
   setTabPinned,
 } from "./tabs.js";
 import { getSessions } from "./store.js";
-import * as tabsSync from "./tabs-sync.js";
+import { removePendingFor } from "./tabs-sync.js";
 import { tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
 import { fx, installSwitchSuite, strip } from "./__test-helpers__/tab-switch-suite.js";
 import {
@@ -87,8 +87,9 @@ import type { Session } from "./types.js";
 
 installSwitchSuite();
 
+/** The rows on the strip, departing ones excluded: no stylesheet runs their exit. */
 function rowIDs(): string[] {
-  return [...document.querySelectorAll<HTMLElement>("#tab-list [data-tab-id]")].map(
+  return [...document.querySelectorAll<HTMLElement>("#tab-list [data-tab-id]:not(.exiting)")].map(
     (e) => e.dataset["tabId"] ?? "",
   );
 }
@@ -124,7 +125,9 @@ describe("a close shows at once", () => {
     expect(getActiveTabId()).toBe(ids["a"]);
     expect(fx.chat.show, "the successor was shown inside the click").not.toHaveBeenCalled();
     expect(pointers.painted).toBe("c");
-    expect(pointers.active, "the store's active chat followed store order").toBe("a");
+    expect(pointers.active, "the active chat is the MRU successor, not the store's first").toBe(
+      "a",
+    );
     await frame();
     expect(rowIDs()).not.toContain(c);
     expect(coverUp()).toBe(true);
@@ -136,22 +139,32 @@ describe("a close shows at once", () => {
   });
 });
 
+/** A strip three 20 px rows tall in a 24 px box, so it scrolls; removed after each case. */
+function scrollableStrip(): { list: HTMLElement; dispose: () => void } {
+  const style = document.createElement("style");
+  style.textContent =
+    "#tab-list{display:block;height:24px;overflow:auto} #tab-list .tab{display:block;height:20px}";
+  document.head.appendChild(style);
+  const list = document.getElementById("tab-list");
+  if (list === null) {
+    throw new Error("no #tab-list");
+  }
+  return { list, dispose: () => style.remove() };
+}
+
+/** End the exit of every departing row, as its animation would. */
+function endExits(): void {
+  for (const r of document.querySelectorAll<HTMLElement>("#tab-list .exiting")) {
+    r.dispatchEvent(new Event("animationend"));
+  }
+}
+
 describe("a refused close", () => {
   it("puts the row back at its index, pinned and active, with the put-back sentence and no Retry", async () => {
     const ids = await closing();
     const c = ids["c"] ?? "";
     await frame();
     const before = rowIDs();
-    const list = document.getElementById("tab-list");
-    if (list !== null) {
-      list.style.cssText = "height:24px;overflow:auto;display:block";
-      for (const r of list.querySelectorAll<HTMLElement>("[data-tab-id]")) {
-        r.style.cssText = "display:block;height:20px";
-      }
-      list.scrollTop = 12;
-    }
-    const scrolled = list?.scrollTop ?? 0;
-    expect(scrolled).toBeGreaterThan(0);
     const notices: unknown[][] = [];
     registerTabNotice((...args) => {
       notices.push(args);
@@ -170,7 +183,94 @@ describe("a refused close", () => {
     expect(getActiveTabId()).toBe(c);
     expect(pointers.active).toBe("c");
     expect(notices).toEqual([["c", "c", "Could not close that tab, so it was put back.", "error"]]);
-    expect(list?.scrollTop, "the strip's scroll offset").toBe(scrolled);
+  });
+
+  it("lifts the successor's cover when the refusal lands before the successor showed", async () => {
+    const ids = await closing();
+    tabServer.failNext("close_tab", 500);
+
+    await closeTab(ids["c"] ?? "");
+    await settleTabs();
+    await activationRan();
+
+    expect(fx.chat.show, "C's view is still the mounted one").not.toHaveBeenCalled();
+    expect(pointers.painted).toBe("c");
+    expect(coverUp(), "the cover held for A stood over C's own transcript").toBe(false);
+  });
+
+  it("keeps a row whose refusal lands during its exit", async () => {
+    const ids = await closing();
+    const c = ids["c"] ?? "";
+    await frame();
+    tabServer.holdResponses();
+    tabServer.failNext("close_tab", 500);
+
+    const done = closeTab(c);
+    await frame();
+    const node = document.querySelector<HTMLElement>(`#tab-list [data-tab-id="${c}"]`);
+    expect(node?.classList.contains("exiting")).toBe(true);
+    tabServer.releaseResponses();
+    await done;
+    await settleTabs();
+    await frame();
+    node?.dispatchEvent(new Event("animationend"));
+
+    expect(node?.isConnected, "the exit's end removed the restored row").toBe(true);
+    expect(node?.classList.contains("exiting")).toBe(false);
+    expect(rowIDs()).toContain(c);
+  });
+
+  it("restores the strip's scroll offset the removal clamped", async () => {
+    const ids = await closing();
+    const c = ids["c"] ?? "";
+    const { list, dispose } = scrollableStrip();
+    try {
+      await frame();
+      list.scrollTop = list.scrollHeight;
+      const bottom = list.scrollTop;
+      expect(bottom).toBeGreaterThan(20);
+      tabServer.holdResponses();
+      tabServer.failNext("close_tab", 500);
+
+      const done = closeTab(c);
+      await frame();
+      endExits();
+      expect(list.scrollTop, "the removal clamped the strip").toBeLessThan(bottom);
+      tabServer.releaseResponses();
+      await done;
+      await settleTabs();
+      await frame();
+
+      expect(rowIDs()).toContain(c);
+      expect(list.scrollTop, "the strip's scroll offset").toBe(bottom);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("leaves the strip where the reader scrolled it while the close was pending", async () => {
+    const ids = await closing();
+    const { list, dispose } = scrollableStrip();
+    try {
+      await frame();
+      list.scrollTop = list.scrollHeight;
+      tabServer.holdResponses();
+      tabServer.failNext("close_tab", 500);
+
+      const done = closeTab(ids["c"] ?? "");
+      await frame();
+      endExits();
+      list.dispatchEvent(new WheelEvent("wheel", { deltaY: -40 }));
+      list.scrollTop = 0;
+      tabServer.releaseResponses();
+      await done;
+      await settleTabs();
+      await frame();
+
+      expect(list.scrollTop).toBe(0);
+    } finally {
+      dispose();
+    }
   });
 });
 
@@ -179,20 +279,17 @@ describe("a pending close's view", () => {
   // unpark the view it closed with its scroll and reading state.
   it("is named pending while the close awaits its answer, and not once it is confirmed", async () => {
     const ids = await strip("a", "c");
-    const pending = (
-      tabsSync as unknown as {
-        removePendingFor?: (kind: string, ref: string) => boolean;
-      }
-    ).removePendingFor;
-    expect(typeof pending, "tabsSync.removePendingFor").toBe("function");
+    // Frames held too: the fake commits at dispatch, and its echo would confirm the close at once.
+    tabServer.setMode("manual");
     tabServer.holdResponses();
 
     const done = closeTab(ids["a"] ?? "");
-    expect(pending?.("chat", "a")).toBe(true);
-    expect(pending?.("chat", "c")).toBe(false);
+    expect(removePendingFor("chat", "a")).toBe(true);
+    expect(removePendingFor("chat", "c")).toBe(false);
     tabServer.releaseResponses();
     await done;
+    tabServer.flushFrames();
     await settleTabs();
-    expect(pending?.("chat", "a")).toBe(false);
+    expect(removePendingFor("chat", "a")).toBe(false);
   });
 });

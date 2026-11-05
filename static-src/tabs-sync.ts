@@ -9,7 +9,7 @@
 
 import { apiGetTyped } from "./api-client.js";
 import { observeStamp } from "./subject-versions.js";
-import type { TabSubject, TabsChangedPayload } from "./types.js";
+import type { TabKind, TabSubject, TabsChangedPayload } from "./types.js";
 import { decodeTabList } from "./wire/decoders.gen.js";
 
 /** How long a dispatched mutation stays correlatable: bounds the set for frames that never come
@@ -100,9 +100,10 @@ interface PendingRemoveSpec {
   /** The tab the close names. Presence of THIS id in an authoritative list is
    *  what settles a verifying op. */
   id: string;
-  /** Every tab id the reversible visual removal took out (the row and its
-   *  descendants). Keys the changed-upsert suppression and the snapshot filter. */
-  capturedTabIDs: readonly string[];
+  /** Every subject the reversible visual removal took out (the row and its
+   *  descendants). Their ids key the changed-upsert suppression and the snapshot
+   *  filter; their (kind, ref) answer `removePendingFor`. */
+  captured: readonly TabSubject[];
   /** The deferred client-local teardown. Runs exactly once, on confirmation. */
   onConfirm: () => void;
   /** Restore the captured subtree. Runs exactly once, on definitive failure or
@@ -129,7 +130,7 @@ interface PendingRemove {
   /** Gesture order; see PendingAdopt.seq. */
   seq: number;
   id: string;
-  capturedTabIDs: readonly string[];
+  captured: readonly TabSubject[];
   onConfirm: () => void;
   rollback: () => void;
   committedVersion?: number;
@@ -176,7 +177,7 @@ export function beginRemove(opID: string, spec: PendingRemoveSpec): void {
     state: "awaiting-response",
     seq: ++opSeq,
     id: spec.id,
-    capturedTabIDs: spec.capturedTabIDs,
+    captured: spec.captured,
     onConfirm: spec.onConfirm,
     rollback: spec.rollback,
     verifyAttempts: 0,
@@ -307,6 +308,17 @@ export function removesPending(): boolean {
   return false;
 }
 
+/** Whether a pending remove, in any state, took out the tab of `(kind, ref)`: the
+ *  row a rollback may still put back. */
+export function removePendingFor(kind: TabKind, ref: string): boolean {
+  for (const op of pendingOps.values()) {
+    if (op.kind === "remove" && op.captured.some((c) => c.kind === kind && c.ref === ref)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Register the removes-settled notification. Called once, from the composition
  *  root (tabs.ts). Last registration wins, like `registerTabsTarget`. */
 export function setOnRemovesSettled(fn: (() => void) | null): void {
@@ -381,7 +393,7 @@ function frameIsLocal(opID: string | undefined): boolean {
 function suppressChanged(changed: TabSubject): boolean {
   let capturedBy = -1;
   for (const op of pendingOps.values()) {
-    if (op.kind === "remove" && op.capturedTabIDs.includes(changed.id)) {
+    if (op.kind === "remove" && op.captured.some((c) => c.id === changed.id)) {
       capturedBy = Math.max(capturedBy, op.seq);
     }
   }
@@ -453,7 +465,7 @@ function overlayList(tabs: readonly TabSubject[], version: number): TabSubject[]
       op.kind === "remove" &&
       (op.committedVersion === undefined || op.committedVersion > version)
     ) {
-      out = out.filter((t) => !op.capturedTabIDs.includes(t.id));
+      out = out.filter((t) => !op.captured.some((c) => c.id === t.id));
     }
   }
   for (const op of pendingOps.values()) {

@@ -339,12 +339,25 @@ function scheduleEviction(): void {
   }, 0);
 }
 
+let parkedViewExempt: (chatID: string) => boolean = () => false;
+
+/** Keep every parked view `exempt` names past the budget: a view whose tab a rollback may put
+ *  back, which must unpark with its scroll. INJECTED by the composition root, since what is
+ *  pending lives in the tab layer above this one. Exempt views still count toward the budget. */
+export function setParkedViewExemption(exempt: (chatID: string) => boolean): void {
+  parkedViewExempt = exempt;
+}
+
 function evictParkedViews(): void {
   const parked = [...views.values()].filter((v) => v.parked);
-  for (let i = 0; i <= parked.length - 1 - PARKED_VIEWS; i++) {
-    const victim = parked[i];
-    if (victim !== undefined) {
+  let over = parked.length - PARKED_VIEWS;
+  for (const victim of parked) {
+    if (over <= 0) {
+      return;
+    }
+    if (!parkedViewExempt(victim.chatID)) {
       disposeChatView(victim.chatID);
+      over -= 1;
     }
   }
 }

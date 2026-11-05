@@ -862,12 +862,7 @@ describe("disposal", () => {
     scroller.dispatchEvent(new Event("scroll"));
     expect(scroll.readingState()).toBe("reading");
     // A close of X pends: its rollback must find the view it parked.
-    const exempt = (
-      messages as unknown as {
-        setParkedViewExemption?: (pred: (chatID: string) => boolean) => void;
-      }
-    ).setParkedViewExemption;
-    exempt?.((chatID) => chatID === x);
+    messages.setParkedViewExemption((chatID) => chatID === x);
     try {
       for (const id of others) {
         switchTo(id);
@@ -880,9 +875,8 @@ describe("disposal", () => {
       await flushed();
       expect(scroll.readingState()).toBe("reading");
       expect(Math.abs(scroller.scrollTop - 5)).toBeLessThanOrEqual(1);
-      expect(typeof exempt, "messages.setParkedViewExemption").toBe("function");
     } finally {
-      exempt?.(() => false);
+      messages.setParkedViewExemption(() => false);
     }
   });
 

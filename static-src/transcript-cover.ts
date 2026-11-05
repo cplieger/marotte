@@ -64,6 +64,14 @@ export function releaseCover(chatID: string): void {
   }
 }
 
+/** Lift a cover held for any chat but `chatID`: the reader came back to the mounted transcript
+ *  before the other chat showed. A cover `chatID` itself holds is still waiting on its paint. */
+export function releaseCoverExceptFor(chatID: string): void {
+  if (holder !== "" && holder !== chatID) {
+    dropCover();
+  }
+}
+
 /** Lift the cover whoever holds it: the view is not a chat, the strip went empty, or the load
  *  failed and the reader must reach what is painted instead. */
 export function dropCover(): void {

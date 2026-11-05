@@ -107,6 +107,21 @@ describe("A to B to C to D paints only D", () => {
     expect(fx.notices).toEqual([]);
   });
 
+  it("lifts B's cover when the reader comes back to the painted A before B showed", async () => {
+    const ids = await strip("a", "b");
+
+    clickRow(ids["b"] ?? "");
+    expect(coverUp()).toBe(true);
+    clickRow(ids["a"] ?? "");
+    expect(coverUp(), "A's transcript is still mounted, so nothing stands in for it").toBe(false);
+    await activationRan();
+
+    expect(callsFor(fx.chat.show, "b")).toBe(0);
+    expect(coverUp()).toBe(false);
+    expect(getActiveTabId()).toBe(ids["a"]);
+    expect(fx.notices).toEqual([]);
+  });
+
   it("aborts a load already in flight when the next click lands a frame later", async () => {
     const ids = await strip("a", "b", "c");
     const pageB = fx.chat.page("b");

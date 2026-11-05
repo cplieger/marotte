@@ -34,7 +34,8 @@ import {
 import { chatNotice } from "./notice-subject.js";
 import { applyRoute } from "./route-apply.js";
 import { markBootDone } from "./view-swap.js";
-import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
+import { ingestTabsChanged, listTabs, removePendingFor } from "./tabs-sync.js";
+import { setParkedViewExemption } from "./messages.js";
 import { onPopState } from "./router.js";
 import type { Route } from "./route-path.js";
 import { initModelPicker } from "./picker.js";
@@ -249,6 +250,8 @@ function init(): void {
   setOnScreen(targetOnScreen);
 
   registerCloseGate(confirmBusyClose);
+  // A refused close unparks the view it parked, with its scroll.
+  setParkedViewExemption((chatID) => removePendingFor("chat", chatID));
 
   // A cue that could not notify arms this; the reader's next click raises the browser
   // prompt, which needs a gesture.

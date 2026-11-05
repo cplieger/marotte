@@ -59,7 +59,12 @@ import {
   type SwitchOp,
   type SwitchVerdict,
 } from "./actions/tabs.js";
-import { dropCover, holdCover, moveFocusOffTranscript } from "./transcript-cover.js";
+import {
+  dropCover,
+  holdCover,
+  moveFocusOffTranscript,
+  releaseCoverExceptFor,
+} from "./transcript-cover.js";
 import { ActionError, retryNetwork, type ActionErrorLike } from "./actions/index.js";
 import { CLOSE_IMPACT_CHANGED, serverImpactOf } from "./actions/close-impact.js";
 import { newOpID } from "./transport.js";
@@ -86,7 +91,7 @@ import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
 import { MAX_CHAT_NAME_UNITS, downloadKiroSession, renameChat } from "./actions/chat.js";
-import { get, getActiveId, getPaintedId, getSessions, removeChat, setActive } from "./store.js";
+import { get, getActiveId, getPaintedId, removeChat, setActive } from "./store.js";
 import { relativeTime } from "./relative-time.js";
 import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info, error as toastError } from "./toast.js";
@@ -179,6 +184,16 @@ interface Internal {
   /** The DOM subscriber keys its no-op on this rather than on an empty store, because the two differ
    *  on exactly one transition: the one INTO empty. See the render effect. */
   everOpened: boolean;
+  /** The strip scroll a refused close puts back, written by the next renderDOM after the rows
+   *  return. */
+  stripRestore: StripScroll | null;
+  /** Bumped by every reader gesture that can scroll the strip. */
+  stripGestures: number;
+}
+
+interface StripScroll {
+  top: number;
+  left: number;
 }
 
 interface State {
@@ -193,6 +208,8 @@ const internal: Internal = {
   emptyDeferred: false,
   renderQueued: false,
   everOpened: false,
+  stripRestore: null,
+  stripGestures: 0,
 };
 
 /** Caller-supplied names keyed by `(kind, ref)`: a name arrives before the server mints an id, so
@@ -706,6 +723,8 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
     }
     if (ref !== getPaintedId() || (opts.again === true && !hasResidentTurns(ref))) {
       holdCover(ref);
+    } else {
+      releaseCoverExceptFor(ref);
     }
   } else {
     reselectPaintedChat();
@@ -1194,12 +1213,16 @@ interface CapturedClose {
   /** The active tab, when it was inside the subtree; "" otherwise. What a
    *  rollback re-activates. */
   activeTabID: string;
-  /** The store's active chat at gesture time, when the gesture moved it; ""
-   *  otherwise. The rollback's fallback when no tab re-activation happens. */
+  /** The store's active chat at gesture time, when it was a chat this close took out; ""
+   *  otherwise. Its draft owner when the strip emptied, and the sign that the rollback re-selects. */
   storeActive: string;
-  /** Set when the server ANSWERED an error: the framework's toast already ran,
-   *  so the rollback stays quiet. A verify-settled restore has no toast of its
-   *  own and says "not confirmed" instead. */
+  /** The strip's scroll at the gesture, read before any write of the close. */
+  stripScroll: StripScroll;
+  /** `internal.stripGestures` at the gesture: a later value means the reader scrolled the strip. */
+  stripGestures: number;
+  /** Set when the server ANSWERED an error: closeTab's refusal arm raises the
+   *  toast, so the rollback stays quiet. A verify-settled restore has no toast of
+   *  its own and says "not confirmed" instead. */
   refused: boolean;
 }
 
@@ -1310,20 +1333,27 @@ function captureClose(row: TabRow): CapturedClose {
       history.push({ id, after: activationHistory[at - 1] ?? "" });
     }
   }
+  const storeActive = getActiveId();
+  const list = $.tabList;
   return {
     rows,
     at: state.tabs.findIndex((t) => t.subject.id === row.subject.id),
     overrides,
     history,
     activeTabID: ids.has(state.active) ? state.active : "",
-    storeActive: "",
+    storeActive: rows.some((r) => r.subject.kind === "chat" && r.subject.ref === storeActive)
+      ? storeActive
+      : "",
+    stripScroll: { top: list.scrollTop, left: list.scrollLeft },
+    stripGestures: internal.stripGestures,
     refused: false,
   };
 }
 
 /** The REVERSIBLE half of a close, applied at gesture time: the subtree leaves the projection,
- *  row-scoped forgets run, activation falls back, and the store's active pointer moves with it.
- *  Nothing here destroys state a rollback cannot restore; that is confirmClose's and the server's. */
+ *  row-scoped forgets run, and the successor is selected; its view paints after the frame, so the
+ *  painted chat stays the closed one until then. Nothing here destroys state a rollback cannot
+ *  restore; that is confirmClose's and the server's. */
 function applyGestureRemoval(c: CapturedClose): void {
   const ids = new Set(c.rows.map((r) => r.subject.id));
   state.tabs = state.tabs.filter((t) => !ids.has(t.subject.id));
@@ -1331,35 +1361,15 @@ function applyGestureRemoval(c: CapturedClose): void {
     forgetRow(r);
   }
   if (c.activeTabID !== "") {
-    // Reversible: a chat successor's own activation moves the store pointer,
-    // and the empty strip renders the empty-state surface (the view effect).
     // scheduleEmpty defers itself while this remove is pending.
     activateSuccessor(true);
   }
-  syncStoreActive(c);
-  emit();
-}
-
-/** Move the store's active chat off a chat this close made tabless, as removeChat would at
- *  teardown. Run EARLY because the store row survives to onConfirm, and getActiveId() readers must
- *  never see a closed chat in the window. */
-function syncStoreActive(c: CapturedClose): void {
-  const closedRefs = new Set(
-    c.rows
-      .filter((r) => r.subject.kind === "chat" && tabIdFor("chat", r.subject.ref) === "")
-      .map((r) => r.subject.ref),
-  );
-  const active = getActiveId();
-  if (active === "" || !closedRefs.has(active)) {
-    return;
+  // The store row survives to onConfirm, and a reader acting for the user must never act for a
+  // chat whose tab is gone: a non-chat tab was shown, or the strip emptied.
+  if (c.storeActive !== "" && getActiveId() === c.storeActive) {
+    reselectPaintedChat();
   }
-  c.storeActive = active;
-  // The next chat that still HAS a tab, in store order — the tab set is the
-  // truth of "still around", since closed rows linger until confirmation.
-  const next =
-    getSessions().find((s) => !closedRefs.has(s.id) && tabIdFor("chat", s.id) !== "")?.id ?? "";
-  setActive(next);
-  retargetComposer(next);
+  emit();
 }
 
 /** The deferred client-local teardown, run once per closed row when the close is CONFIRMED
@@ -1409,17 +1419,21 @@ function rollbackClose(c: CapturedClose): void {
       restoreFailedSend(restoredChat, typed);
     }
   }
+  if (restorable.length > 0 && internal.stripGestures === c.stripGestures) {
+    internal.stripRestore = c.stripScroll;
+  }
   emit();
   if (c.activeTabID !== "" && hasRow(c.activeTabID)) {
     activateTabQuietly(c.activeTabID);
-  } else if (c.storeActive !== "" && getActiveId() === "") {
-    setActive(c.storeActive);
-    retargetComposer(c.storeActive);
+  } else if (c.storeActive !== "" && getActiveTabKind() !== "chat") {
+    reselectPaintedChat();
   }
   if (!c.refused) {
     notifyAboutRow(c.rows[0], "Close not confirmed, so the tab was restored.", "info");
   }
 }
+
+const CLOSE_PUT_BACK = "Could not close that tab, so it was put back.";
 
 /** Close a tab and its descendants as ONE server-side mutation, applied optimistically: reversible
  *  effects at the gesture, teardown on confirmation. A committed response feeds the pending-op
@@ -1445,7 +1459,7 @@ export async function closeTab(id: string, impact?: CloseImpact): Promise<void> 
   const captured = captureClose(row);
   beginRemove(opID, {
     id,
-    capturedTabIDs: captured.rows.map((r) => r.subject.id),
+    captured: captured.rows.map((r) => r.subject),
     onConfirm: () => {
       confirmClose(captured);
     },
@@ -1470,7 +1484,7 @@ export async function closeTab(id: string, impact?: CloseImpact): Promise<void> 
     const server = serverImpactOf(outcome.error);
     if (opFailed(opID)) {
       if (impact === undefined || server === undefined) {
-        notifyAboutRow(captured.rows[0], "Could not close that tab", "error");
+        notifyAboutRow(captured.rows[0], CLOSE_PUT_BACK, "error");
       } else {
         requestCloseTab(id, () => undefined, { sent: impact, server });
       }
@@ -1482,7 +1496,7 @@ export async function closeTab(id: string, impact?: CloseImpact): Promise<void> 
     // proves the close committed. The toast is this branch's: the action itself stays quiet.
     captured.refused = true;
     if (opFailed(opID)) {
-      notifyAboutRow(captured.rows[0], "Could not close that tab", "error");
+      notifyAboutRow(captured.rows[0], CLOSE_PUT_BACK, "error");
     }
     return;
   }
@@ -2217,11 +2231,35 @@ function showEmptySurface(): void {
   syncSidebarButtons(null);
 }
 
+/** The strips whose reader gestures `internal.stripGestures` counts. */
+const watchedStrips = new WeakSet<HTMLElement>();
+
+/** Count the gestures that scroll the strip: a wheel, a touch drag, a press on its scrollbar (the
+ *  list itself, not a row) and a key, whose roving focus scrolls a row into view. */
+function watchStripGestures(list: HTMLElement): void {
+  if (watchedStrips.has(list)) {
+    return;
+  }
+  watchedStrips.add(list);
+  const bump = (): void => {
+    internal.stripGestures += 1;
+  };
+  list.addEventListener("wheel", bump, { passive: true });
+  list.addEventListener("touchmove", bump, { passive: true });
+  list.addEventListener("keydown", bump);
+  list.addEventListener("pointerdown", (e) => {
+    if (e.target === list) {
+      bump();
+    }
+  });
+}
+
 function renderDOM(): void {
   const list = $.tabList;
   if (!list.hasAttribute("role")) {
     list.setAttribute("role", "tablist");
   }
+  watchStripGestures(list);
 
   const existing = new Map<string, HTMLElement>();
   for (const node of [...list.children]) {
@@ -2243,13 +2281,12 @@ function renderDOM(): void {
       if (parent !== undefined && activeIDs.has(parent)) {
         node.classList.add("exiting-merge");
       }
-      node.addEventListener(
-        "animationend",
-        () => {
+      node.addEventListener("animationend", () => {
+        // A row that came back during its exit (a refused close) reuses this node.
+        if (node.classList.contains("exiting")) {
           node.remove();
-        },
-        { once: true },
-      );
+        }
+      });
       existing.delete(id);
     }
   }
@@ -2269,6 +2306,7 @@ function renderDOM(): void {
       }
       node.classList.add("entering");
     } else {
+      node.classList.remove("exiting", "exiting-merge");
       const nameEl = node.querySelector(".tab-name");
       if (nameEl !== null && nameEl.textContent !== row.name) {
         nameEl.textContent = row.name;
@@ -2312,6 +2350,12 @@ function renderDOM(): void {
       node.dataset["parentId"] = row.subject.parent;
     }
     prev = node;
+  }
+  const restore = internal.stripRestore;
+  if (restore !== null) {
+    internal.stripRestore = null;
+    list.scrollTop = restore.top;
+    list.scrollLeft = restore.left;
   }
 }
 
@@ -2940,6 +2984,7 @@ export function _resetForTest(): void {
   internal.emptyDeferred = false;
   internal.renderQueued = false;
   internal.everOpened = false;
+  internal.stripRestore = null;
   nameOverrides.clear();
   activationHistory.length = 0;
   navigationSeq = 0;
