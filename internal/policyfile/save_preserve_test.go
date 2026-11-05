@@ -665,6 +665,7 @@ func TestSave_RefusesAnEditThatWouldRetargetAnotherKeysAlias(t *testing.T) {
 	for name, before := range map[string]string{
 		"workspaceTrusted": "pre: &t false\nrules:\n  - {capability: shell, effect: deny, match: [&t true]}\n  - {capability: write, effect: allow}\nworkspaceTrusted: *t\n",
 		"a policies entry": "pre: &a fs_read\nrules:\n  - {capability: &a shell, effect: deny}\n  - {capability: write, effect: allow}\npolicies:\n  allow: *a\n",
+		"a sequence anchor": "pre: &a [fs_read]\nrules:\n  - {capability: shell, effect: deny, match: &a [shell]}\n  - {capability: write, effect: allow}\npolicies: *a\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), filename)
