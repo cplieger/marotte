@@ -16,6 +16,7 @@ import {
   sessionBusy,
 } from "./store.js";
 import { clearTurnSigs } from "./store-signals.js";
+import { onHookVisibility } from "./hook-fold.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
@@ -410,6 +411,32 @@ function rebuildTurnBody(session: Session, t: Turn, body: HTMLElement): void {
 }
 
 /**
+ * Show hook status moved which hook entries draw a card (`entryRenders`), so the active view rebuilds every mounted
+ * body and a parked view is dropped, to be built afresh at its next activation.
+ */
+function redrawForHookVisibility(): void {
+  for (const view of [...views.values()]) {
+    if (view !== activeView) {
+      disposeChatView(view.chatID);
+      continue;
+    }
+    const session = get(view.chatID);
+    if (session === undefined) {
+      continue;
+    }
+    const byID = new Map(projectTurns(session).map((t) => [t.id, t]));
+    for (const [turnID, body] of mountedBodies(view)) {
+      const t = byID.get(turnID);
+      if (t !== undefined) {
+        rebuildTurnBody(session, t, body);
+      }
+    }
+    // The rail, the faces and the window read the same predicate.
+    bumpMessages(view.chatID, "shape");
+  }
+}
+
+/**
  * Resume every paused body of the unparked view, then drain buffered terminal output once. One projection for the
  * pass, rather than one per body.
  */
@@ -495,6 +522,7 @@ function svgTemplate(markup: string): () => Node {
 let mounted = false;
 
 initToolCallbacks({ refreshGroupHeader });
+onHookVisibility(redrawForHookVisibility);
 initTurnActionCallbacks({ svgTemplate });
 initBlockRenderer({
   pushEntryEffect,

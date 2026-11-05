@@ -1,10 +1,11 @@
 // Residency: which ENTRIES a paint may mount, one contiguous window of a turn's `seq` space
 // grown around the reader's position. Pure and DOM-free; which turns is the caller's policy.
 
-import { MessageRun, toolResultID } from "./entry-ids.js";
+import { MessageRun, callIDOfToolResult, toolResultID } from "./entry-ids.js";
+import { hookRenders, hookStatusShown } from "./hook-fold.js";
 import { isInternalToolTitle } from "./tool-schema.js";
 import { isWakingRow } from "./waking-rows.js";
-import type { Entry } from "./types.js";
+import type { Entry, EntryToolResult } from "./types.js";
 import { isSubagentFallback, payloadOf, type Turn } from "./turns.js";
 
 /**
@@ -107,9 +108,28 @@ export function entryRenders(e: Entry, lane: string, folds: TurnFolds): boolean 
       return !folds.fellBack.has(e.seq);
     case "model_fallback":
       return !isSubagentFallback(e);
+    case "tool_call":
+      return hookCallRenders(e, folds);
     default:
       return true;
   }
+}
+
+/** A hook call's card renders per `hookRenders` over its settled value; any other call renders. */
+function hookCallRenders(e: Entry, folds: TurnFolds): boolean {
+  const call = payloadOf(e, "tool_call");
+  if (call?.kind !== "hook") {
+    return true;
+  }
+  const result = folds.hookResults.get(e.id);
+  return hookRenders(
+    {
+      status: result?.status ?? call.status,
+      output: result?.output ?? call.output,
+      hook_trigger: call.hook_trigger,
+    },
+    hookStatusShown(),
+  );
 }
 
 /** The one entry of each folding kind that renders in a lane, by `seq`, -1 for none: the FIRST
@@ -125,20 +145,29 @@ export interface TurnFolds {
   readonly revert: number;
   readonly readDrop: ReadonlySet<string>;
   readonly fellBack: ReadonlySet<number>;
+  /** The settling `tool_result` of each hook call, keyed by the call's entry id; turn-wide like `readDrop`. */
+  readonly hookResults: ReadonlyMap<string, EntryToolResult>;
 }
 
 /** `entries`' folds per lane. Hoisted ONCE per turn per pass, since a long turn holds several
  *  plans; takes a `TurnState`'s entries or a `Turn`'s body alike. */
 export function foldsByLane(entries: readonly Entry[]): Map<string, TurnFolds> {
   const readDrop = readDrops(entries);
+  const hookResults = hookResultsOf(entries);
   const out = new Map<
     string,
-    { plan: number; revert: number; readDrop: ReadonlySet<string>; fellBack: Set<number> }
+    {
+      plan: number;
+      revert: number;
+      readDrop: ReadonlySet<string>;
+      fellBack: Set<number>;
+      hookResults: ReadonlyMap<string, EntryToolResult>;
+    }
   >();
   const fold = (lane: string) => {
     let f = out.get(lane);
     if (f === undefined) {
-      f = { plan: -1, revert: -1, readDrop, fellBack: new Set() };
+      f = { plan: -1, revert: -1, readDrop, fellBack: new Set(), hookResults };
       out.set(lane, f);
     }
     return f;
@@ -157,12 +186,35 @@ export function foldsByLane(entries: readonly Entry[]): Map<string, TurnFolds> {
       fold(lane).revert = e.seq;
     } else if (e.kind === "model_fallback" && prev !== undefined && fallsBackFrom(prev, e)) {
       fold(lane).fellBack.add(prev.seq);
+    } else if (e.kind === "tool_result" && hookResults.size > 0) {
+      // The result sits in its call's lane, which must then carry the map.
+      fold(lane);
     }
   }
   if (readDrop.size > 0 && !out.has("")) {
-    out.set("", { plan: -1, revert: -1, readDrop, fellBack: new Set() });
+    out.set("", { plan: -1, revert: -1, readDrop, fellBack: new Set(), hookResults });
   }
   return out;
+}
+
+const NO_RESULTS: ReadonlyMap<string, EntryToolResult> = new Map();
+
+/** Each hook call's settling result in `entries`, keyed by the call's entry id. */
+function hookResultsOf(entries: readonly Entry[]): ReadonlyMap<string, EntryToolResult> {
+  const hooks = new Set<string>();
+  let out: Map<string, EntryToolResult> | undefined;
+  for (const e of entries) {
+    if (payloadOf(e, "tool_call")?.kind === "hook") {
+      hooks.add(e.id);
+      continue;
+    }
+    const result = payloadOf(e, "tool_result");
+    const callID = result === undefined ? null : callIDOfToolResult(e.id);
+    if (result !== undefined && callID !== null && hooks.has(callID)) {
+      (out ??= new Map()).set(callID, result);
+    }
+  }
+  return out ?? NO_RESULTS;
 }
 
 /** Whether `fallback` names the move `prev` recorded as an unexplained re-pin. A sub-agent's
@@ -204,7 +256,13 @@ function readDrops(entries: readonly Entry[]): ReadonlySet<string> {
 }
 
 /** The folds of a lane that holds no folding kind. */
-export const NO_FOLDS: TurnFolds = { plan: -1, revert: -1, readDrop: NONE, fellBack: NO_SEQS };
+export const NO_FOLDS: TurnFolds = {
+  plan: -1,
+  revert: -1,
+  readDrop: NONE,
+  fellBack: NO_SEQS,
+  hookResults: NO_RESULTS,
+};
 
 /** `t`'s folds in `lane`. */
 export function turnFolds(t: Turn, lane: string): TurnFolds {
@@ -266,8 +324,9 @@ export function runCardOwners(turns: readonly Turn[], lane = ""): ReadonlyMap<st
  * the first drawn entry. The lane's first `plan` is resolved on arrival, in `seq` order.
  */
 export function rendersNothing(t: Turn, lane = ""): boolean {
-  // The whole body is read only for a dropped agent note, whose answer turns on entries anywhere in the body.
+  // The whole body is read only for a dropped agent note or a hook call, whose answers turn on entries anywhere in it.
   let readDrop: ReadonlySet<string> | undefined;
+  let hookResults: ReadonlyMap<string, EntryToolResult> | undefined;
   let plan = -1;
   for (const e of t.body) {
     if (plan < 0 && e.kind === "plan" && (e.lane ?? "") === lane) {
@@ -284,6 +343,10 @@ export function rendersNothing(t: Turn, lane = ""): boolean {
             readDrop:
               payloadOf(e, "steer")?.state === "dropped" ? (readDrop ??= readDrops(t.body)) : NONE,
             fellBack: NO_SEQS,
+            hookResults:
+              payloadOf(e, "tool_call")?.kind === "hook"
+                ? (hookResults ??= hookResultsOf(t.body))
+                : NO_RESULTS,
           });
     if (renders) {
       return false;

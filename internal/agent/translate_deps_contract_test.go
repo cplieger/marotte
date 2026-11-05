@@ -41,9 +41,11 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 		}
 	})
 
-	t.Run("IsHookStatusEnabled_returns_bool", func(t *testing.T) {
+	t.Run("HookTrigger_unknown_hook_is_a_miss", func(t *testing.T) {
 		r := newRoles(t)
-		_ = r.HookStatus.IsHookStatusEnabled()
+		if trigger, ok := r.HookTriggers.HookTrigger("never-listed#hook-0"); ok {
+			t.Errorf("HookTrigger(unlisted) = %q, want a miss", trigger)
+		}
 	})
 
 	t.Run("TerminalOutput_unknown_terminal_is_not_ok", func(t *testing.T) {

@@ -451,7 +451,7 @@ func (s *Store) searchable(ctx context.Context, chatID marotte.ChatID) (entries 
 		drawn = drawnSet(l.RailRows())
 		return nil
 	})
-	return entries, drawn, err
+	return s.searchView(entries), drawn, err
 }
 
 func drawnSet(rows []marotte.TurnSummary) map[string]struct{} {

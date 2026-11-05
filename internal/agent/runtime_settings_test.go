@@ -26,50 +26,13 @@ func setKiroSettings(t *testing.T, body string) {
 	t.Setenv("USERPROFILE", home)
 }
 
-func TestIsHookStatusEnabled_fileMissing(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	h, _, _ := newTestHub()
-	if !h.hookStatus.IsHookStatusEnabled() {
-		t.Error("missing cli.json: want default true")
-	}
-}
-
-func TestIsHookStatusEnabled_cases(t *testing.T) {
-	cases := []struct {
-		name    string
-		content string
-		want    bool
-	}{
-		{"invalid_outer_json", "{not json", true},
-		{"key_absent", `{}`, true},
-		{"key_not_bool", `{"hooks.showStatus":"yes"}`, true},
-		{"key_false", `{"hooks.showStatus":false}`, false},
-		{"key_true", `{"hooks.showStatus":true}`, true},
-		// encoding/json leaves *bool untouched for `null`, so false; kiro-cli never writes null.
-		{"key_null", `{"hooks.showStatus":null}`, false},
-		{"other_keys_only", `{"telemetry.enabled":true}`, true},
-		// The underscore key in marotte's own config must not decide this.
-		{"snake_case_key_ignored", `{"hooks_show_status":false}`, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			setKiroSettings(t, tc.content)
-			h, _, _ := newTestHub()
-			if got := h.hookStatus.IsHookStatusEnabled(); got != tc.want {
-				t.Errorf("content %q: got %v, want %v", tc.content, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestTranslateV3_HookUpdateFollowsKiroCliHookStatus(t *testing.T) {
+// Show hook status is applied when the transcript draws, so every hook is recorded whatever it says.
+func TestTranslateV3_HookUpdateRecordedInBothSwitchStates(t *testing.T) {
 	cases := map[string]struct {
 		content   string
 		wantCards int
 	}{
-		"switch_off": {content: `{"hooks.showStatus":false}`, wantCards: 0},
+		"switch_off": {content: `{"hooks.showStatus":false}`, wantCards: 1},
 		"switch_on":  {content: `{"hooks.showStatus":true}`, wantCards: 1},
 	}
 	for name, tc := range cases {

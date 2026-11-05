@@ -187,6 +187,7 @@ type EntryToolCall struct {
 	TerminalID     string           `json:"terminal_id,omitempty"`
 	SourcePath     string           `json:"source_path,omitempty"`
 	ClassifierNote string           `json:"classifier_note,omitempty"`
+	HookTrigger    string           `json:"hook_trigger,omitempty"`
 	Checkpoint     *ToolCheckpoint  `json:"checkpoint,omitempty"`
 	MCP            *MCPToolIdentity `json:"mcp,omitempty"`
 	Disclosed      *ToolDisclosed   `json:"disclosed,omitempty"`
@@ -632,6 +633,7 @@ func EntryToolCallOf(tc *ToolCall) EntryToolCall {
 		WorkflowID:     tc.WorkflowID,
 		TerminalID:     tc.TerminalID,
 		SourcePath:     tc.SourcePath,
+		HookTrigger:    tc.HookTrigger,
 		Checkpoint:     tc.Checkpoint,
 		MCP:            tc.MCP,
 		Disclosed:      tc.Disclosed,
@@ -666,6 +668,7 @@ func ToolCallOfEntry(e *EntryToolCall) ToolCall {
 		WorkflowID:     e.WorkflowID,
 		TerminalID:     e.TerminalID,
 		SourcePath:     e.SourcePath,
+		HookTrigger:    e.HookTrigger,
 		Checkpoint:     e.Checkpoint,
 		MCP:            e.MCP,
 		Disclosed:      e.Disclosed,

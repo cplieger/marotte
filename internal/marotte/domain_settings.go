@@ -131,4 +131,11 @@ type EffectiveSettings struct {
 	// refusal on Auto, which the withheld KIRO_FEATURE_MODEL_FALLBACK_AUTO_REFUSAL_ENABLED row leaves
 	// to kiro-cli's experiment default.
 	ModelFallback bool `json:"model_fallback_enabled"`
+	// HookStatusShown is kiro-cli's hooks.showStatus as its settings file holds it, default on,
+	// which the transcript applies when it draws hook cards. Read-only here: the Experimental
+	// switch writes it through PUT /api/kiro-settings.
+	HookStatusShown bool `json:"hook_status_shown"`
 }
+
+// KiroHookStatusKey is kiro-cli's Show hook status setting, the key EffectiveSettings.HookStatusShown mirrors.
+const KiroHookStatusKey = "hooks.showStatus"

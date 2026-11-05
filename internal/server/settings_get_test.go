@@ -448,6 +448,26 @@ type fakeKiroDefaults map[string]marotte.KiroDefault
 
 func (f fakeKiroDefaults) KiroDefaults() map[string]marotte.KiroDefault { return f }
 
+func (fakeKiroDefaults) HookStatusShown() bool { return true }
+
+// hookStatusOff is a kiro-cli whose hooks.showStatus is off.
+type hookStatusOff struct{ fakeKiroDefaults }
+
+func (hookStatusOff) HookStatusShown() bool { return false }
+
+func TestSettingsGet_HookStatusShownIsKiroCLIs(t *testing.T) {
+	if got := getEffectiveWith(t, seedConfig(t, `{}`), nil); !got.HookStatusShown {
+		t.Error("no reader: hook_status_shown = false, want kiro-cli's default true")
+	}
+	if got := getEffectiveWith(t, seedConfig(t, `{}`), hookStatusOff{}); got.HookStatusShown {
+		t.Error("hooks.showStatus off: hook_status_shown = true, want false")
+	}
+	// The unreadable-file path serves defaults and must still say what kiro-cli holds.
+	if got := getEffectiveWith(t, seedConfig(t, `{not json`), hookStatusOff{}); got.HookStatusShown {
+		t.Error("unreadable config, hooks.showStatus off: hook_status_shown = true, want false")
+	}
+}
+
 func getEffectiveWith(t *testing.T, dir string, defaults kiroDefaultsReader) marotte.EffectiveSettings {
 	t.Helper()
 	rec := httptest.NewRecorder()

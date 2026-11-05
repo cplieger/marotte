@@ -136,14 +136,15 @@ func newTurnRender(turn []marotte.Entry, woken *wakeFacts) turnRender {
 
 // writeSteer renders a steer unless another entry speaks for it: a wake that names it, or its read twin.
 func (r *turnRender) writeSteer(b *strings.Builder, e *marotte.Entry) {
-	if _, waker := r.woken.drawn[e.ID]; !waker && !r.readDropped(e) {
+	if _, waker := r.woken.drawn[e.ID]; !waker && !readDropped(r.readDrop, e) {
 		writeSteerMarkdown(b, e)
 	}
 }
 
-// readDropped reports a dropped agent note the turn also read; its read twin shares the id and still renders.
-func (r *turnRender) readDropped(e *marotte.Entry) bool {
-	if _, named := r.readDrop[e.ID]; !named {
+// readDropped reports a dropped agent note its turn also read (readDrop, from readDrops); its read twin shares the id
+// and still renders.
+func readDropped(readDrop map[string]struct{}, e *marotte.Entry) bool {
+	if _, named := readDrop[e.ID]; !named {
 		return false
 	}
 	var p marotte.EntrySteer

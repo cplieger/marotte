@@ -10,7 +10,7 @@ import (
 )
 
 // A size mismatch is a miss even when the mtime matches.
-func TestHookStatusCache_SizeTermInvalidates(t *testing.T) {
+func TestCachedBoolField_SizeTermInvalidates(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cli.json")
 	if err := os.WriteFile(path, []byte(`{"k":false}`), 0o600); err != nil {
@@ -32,9 +32,9 @@ func TestHookStatusCache_SizeTermInvalidates(t *testing.T) {
 	}
 }
 
-// TestHookStatusCache_EqualLengthRenamePublishInvalidates pins the os.SameFile leg: kiro-cli
+// TestCachedBoolField_EqualLengthRenamePublishInvalidates pins the os.SameFile leg: kiro-cli
 // publishes cli.json by rename (2.19.0), so an equal-length generation on the same mtime differs only by inode.
-func TestHookStatusCache_EqualLengthRenamePublishInvalidates(t *testing.T) {
+func TestCachedBoolField_EqualLengthRenamePublishInvalidates(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cli.json")
@@ -82,7 +82,7 @@ func TestHookStatusCache_EqualLengthRenamePublishInvalidates(t *testing.T) {
 	}
 }
 
-func TestHookStatusCache_BOMPrefixedFileIsRead(t *testing.T) {
+func TestCachedBoolField_BOMPrefixedFileIsRead(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cli.json")
 	if err := os.WriteFile(path, append([]byte{0xEF, 0xBB, 0xBF}, `{"k":false}`...), 0o600); err != nil {
 		t.Fatal(err)

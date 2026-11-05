@@ -32,7 +32,9 @@ func TestEffectiveSettings_EveryFieldIsSettable(t *testing.T) {
 	}
 	// Resolved per GET, never stored: from kiro-cli's own view (the server's fillKiroDefaults)
 	// and from the filesystem (AgentDirs.Assess).
-	resolved := map[string]struct{}{"kiro_defaults": {}, "additional_directories_refused": {}}
+	resolved := map[string]struct{}{
+		"kiro_defaults": {}, "additional_directories_refused": {}, "hook_status_shown": {},
+	}
 	rt := reflect.TypeFor[marotte.EffectiveSettings]()
 	for f := range rt.Fields() {
 		tag, _, _ := strings.Cut(f.Tag.Get("json"), ",")

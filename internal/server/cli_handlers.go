@@ -15,6 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/sanitize"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/version"
 )
 
@@ -202,6 +203,10 @@ func (s *Server) writeKiroSetting(w http.ResponseWriter, r *http.Request) {
 	httpserver.Ok(w)
 	if s.agent != nil {
 		s.agent.ReconcileSessionSettings(durable.Context(r.Context()))
+		// The effective settings mirror this key, so every tab rereads them.
+		if key == marotte.KiroHookStatusKey {
+			settings.Announce(durable.Context(r.Context()), s.configDir, s.agent.Broadcast)
+		}
 	}
 }
 

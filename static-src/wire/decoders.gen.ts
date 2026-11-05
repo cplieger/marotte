@@ -717,6 +717,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     debug_logs: reqBool(o, "debug_logs", "$.effective_settings"),
     high_throughput_optimizations: reqBool(o, "high_throughput_optimizations", "$.effective_settings"),
     model_fallback_enabled: reqBool(o, "model_fallback_enabled", "$.effective_settings"),
+    hook_status_shown: reqBool(o, "hook_status_shown", "$.effective_settings"),
   };
   return out;
 };
@@ -1343,6 +1344,10 @@ export const decodeEntryToolCall: Decoder<EntryToolCall> = (v) => {
   {
     const $v = own(o, "classifier_note");
     if ($v !== undefined && $v !== null) out.classifier_note = reqStr(o, "classifier_note", "$.entry_tool_call");
+  }
+  {
+    const $v = own(o, "hook_trigger");
+    if ($v !== undefined && $v !== null) out.hook_trigger = reqStr(o, "hook_trigger", "$.entry_tool_call");
   }
   {
     const $v = own(o, "checkpoint");
@@ -4428,6 +4433,10 @@ export const decodeToolCall: Decoder<ToolCall> = (v) => {
   {
     const $v = own(o, "classifier_note");
     if ($v !== undefined && $v !== null) out.classifier_note = reqStr(o, "classifier_note", "$.tool_call");
+  }
+  {
+    const $v = own(o, "hook_trigger");
+    if ($v !== undefined && $v !== null) out.hook_trigger = reqStr(o, "hook_trigger", "$.tool_call");
   }
   {
     const $v = own(o, "checkpoint");

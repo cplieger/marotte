@@ -209,6 +209,7 @@ func (rt *Runtime) onEngineReady(uint64) {
 		})
 	})
 	rt.standing.refetchSoon()
+	rt.hookTriggers.stale()
 	// A spawn moves the vault's Answerability silently (signin.Vault.EngineSpawned).
 	rt.runs.gateMoved()
 	// Off the supervisor: it must be back on the engine's end while the init's observer pass runs.

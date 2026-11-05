@@ -362,6 +362,27 @@ func TestEntryLog_StoreOpenCloserClosesEveryOrphanedTurn(t *testing.T) {
 	}
 }
 
+// A tool_call appended already settled (a hook's card) keeps its outcome through the store-open closer: only the call
+// still in flight gets an aborted result.
+func TestEntryLog_StoreOpenCloserLeavesSettledCallsAlone(t *testing.T) {
+	f := newLogFixture(t)
+	turn := f.prompt("one")
+	f.append(turn, "", "hook-1", marotte.EntryKindToolCall,
+		marotte.EntryToolCall{ID: "hook-1", Kind: marotte.ToolKindHook, Status: marotte.ToolCompleted})
+	f.append(turn, "", "cmd-1", marotte.EntryKindToolCall,
+		marotte.EntryToolCall{ID: "cmd-1", Status: marotte.ToolInProgress})
+
+	f.reopen()
+
+	entries := mustRange(t, f, turn)
+	wantShapes(t, entries, []string{
+		"0:/turn_open", "1:/tool_call", "2:/tool_call", "3:/tool_result", "4:/turn_close",
+	}, "the re-closed turn")
+	if got, want := entries[3].ID, marotte.ToolResultID("cmd-1"); got != want {
+		t.Errorf("the closer aborted %q, want only %q", got, want)
+	}
+}
+
 // The header's counters are caches recomputed from the log at open.
 func TestEntryLog_HeaderCountersAreRecomputedOnOpen(t *testing.T) {
 	f := newLogFixture(t)

@@ -46,6 +46,7 @@ const { buildSubagentCard } = await import("./fundamentals/subagent-block.js");
 const { buildAssistantBubble } = await import("./fundamentals/text-bubble.js");
 const { buildToolCard } = await import("./tool-card.js");
 const { buildToolGroupShell, groupBody, refreshGroupHeader } = await import("./tool-group.js");
+const { stampHookCard } = await import("./hook-fold.js");
 const { iconEl } = await import("./icon-el.js");
 const { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP, ICON_SEND } = await import("./icons.js");
 const { openModal } = await import("./modals.js");
@@ -233,8 +234,8 @@ function turn(...body: HTMLElement[]): HTMLElement {
   return t;
 }
 
-/** A finished turn: its fold, a tool group with two file edits, its footer's actions, in the
- *  shapes `turns.ts` and `fundamentals/turn-footer.ts` build. */
+/** A finished turn: its fold, an open tool group with two file edits and a folded passing guard listed under
+ *  them, its footer's actions, in the shapes `turns.ts` and `fundamentals/turn-footer.ts` build. */
 function plantTurn(): void {
   const shell = buildToolGroupShell();
   for (const path of ["static-src/app.ts", "README.md"]) {
@@ -250,6 +251,16 @@ function plantTurn(): void {
       }),
     );
   }
+  const guard = buildToolCard({
+    id: "hook-op-1",
+    title: "Hook fired: Destructive command guard",
+    kind: "hook",
+    status: "completed",
+    live: false,
+    sourcePath: ".kiro/hooks/destructive-guard.json",
+  });
+  stampHookCard(guard, { status: "completed", hook_trigger: "PreToolUse" });
+  groupBody(shell).appendChild(guard);
   const t = turn(buildReasoning("Read the two files first.", false, false).root, shell);
   refreshGroupHeader(shell);
 
@@ -1227,7 +1238,13 @@ const SURFACES: readonly Surface[] = [
       ".turn-footer .turn-action-btn",
       ".turn-rewind",
     ],
-    rows: [".tool-group-header", ".tool-header", "summary.reasoning-summary", ".tool-diff-stats"],
+    rows: [
+      ".tool-group-header",
+      ".tool-header",
+      "summary.reasoning-summary",
+      ".tool-diff-stats",
+      ".tool-hook-item",
+    ],
   },
   {
     name: "a turn's More menu",

@@ -84,7 +84,7 @@ type hostDouble interface {
 	pusher
 	sessionResolver
 	terminalReader
-	hookStatusReader
+	hookTriggers
 	modelCatalog
 	runOriginAccess
 	runBoundsAccess
@@ -117,7 +117,7 @@ func rolesOf(d hostDouble) *Roles {
 		Push:          d,
 		Sessions:      d,
 		Terminals:     d,
-		HookStatus:    d,
+		HookTriggers:  d,
 		Catalog:       d,
 		WorkDir:       d.WorkDir(),
 		MCP:           d.MCPRecorder(),

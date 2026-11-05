@@ -278,6 +278,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// the agent.
 	chat.WithLiveTurn(h.TurnLive)(chatStore)
 	chat.WithOpenTurns(h.OpenTurns)(chatStore)
+	chat.WithHookStatusShown(h.Config().HookStatusShown)(chatStore)
 	purgeScheduler, startKeepState, err := wireRetention(appCtx, cfg, chatStore, h,
 		retentionStores{tabs: tabStore, leases: leaseStore, reaper: sessionReaper})
 	if err != nil {

@@ -79,17 +79,7 @@ func (c *cachedBoolField) get() bool {
 	return parsed
 }
 
-// hookStatusCache caches hooks.showStatus from ~/.kiro/settings/cli.json.
-type hookStatusCache struct {
-	field *cachedBoolField
-}
-
-func newHookStatusCache(path string) *hookStatusCache {
-	return &hookStatusCache{field: newCachedBoolField(path, "hooks.showStatus", true)}
-}
-
-// IsHookStatusEnabled reads kiro-cli's hooks.showStatus setting, true on any error or when unset,
-// matching kiro-cli. marotte's own config uses different keys and holds no such entry.
-func (c *hookStatusCache) IsHookStatusEnabled() bool {
-	return c.field.get()
+// HookStatusShown reads kiro-cli's hooks.showStatus from its settings file, true when unset or unreadable.
+func (st *Settings) HookStatusShown() bool {
+	return st.lifecycle.kiroHookStatus.get()
 }

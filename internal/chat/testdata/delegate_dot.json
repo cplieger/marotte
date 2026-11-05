@@ -43,11 +43,11 @@
       "page_word": "stopped",
       "terminal": true,
       "sites": [
-        "internal/chat/entrylog.go:1063",
+        "internal/chat/entrylog.go:1088",
         "internal/translate/projection_entries.go:713",
         "internal/translate/streaming_tools.go:414",
         "internal/translate/wire_enums.go:35",
-        "internal/turnlog/turnlog.go:650"
+        "internal/turnlog/turnlog.go:656"
       ]
     },
     {
@@ -58,7 +58,7 @@
       "page_word": "succeeded",
       "terminal": true,
       "sites": [
-        "internal/translate/hook_status.go:85",
+        "internal/translate/hook_status.go:120",
         "internal/translate/wire_enums.go:33"
       ]
     },
@@ -70,7 +70,8 @@
       "page_word": "failed",
       "terminal": true,
       "sites": [
-        "internal/translate/hook_status.go:87",
+        "internal/translate/hook_status.go:122",
+        "internal/translate/hook_status.go:75",
         "internal/translate/wire_enums.go:34"
       ]
     },
@@ -122,9 +123,24 @@
       "status": "completed"
     },
     {
-      "site": "internal/chat/entrylog.go:1063",
+      "site": "internal/chat/entrylog.go:1088",
       "form": "status_field",
       "status": "aborted"
+    },
+    {
+      "site": "internal/chat/hook_visibility.go:245",
+      "form": "compare",
+      "status": "completed"
+    },
+    {
+      "site": "internal/chat/hook_visibility.go:259",
+      "form": "compare",
+      "status": "failed"
+    },
+    {
+      "site": "internal/chat/hook_visibility.go:261",
+      "form": "compare",
+      "status": "failed"
     },
     {
       "site": "internal/translate/engine_refusal.go:28",
@@ -132,13 +148,18 @@
       "status": "failed"
     },
     {
-      "site": "internal/translate/hook_status.go:85",
+      "site": "internal/translate/hook_status.go:120",
       "form": "return",
       "status": "completed"
     },
     {
-      "site": "internal/translate/hook_status.go:87",
+      "site": "internal/translate/hook_status.go:122",
       "form": "return",
+      "status": "failed"
+    },
+    {
+      "site": "internal/translate/hook_status.go:75",
+      "form": "status_assign",
       "status": "failed"
     },
     {
@@ -222,7 +243,7 @@
       "status": "pending"
     },
     {
-      "site": "internal/turnlog/turnlog.go:650",
+      "site": "internal/turnlog/turnlog.go:656",
       "form": "status_field",
       "status": "aborted"
     }

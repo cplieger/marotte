@@ -70,13 +70,15 @@ type Store struct {
 	epoch     func() string
 	live      func(chatID marotte.ChatID) bool
 	openTurns func(chatID marotte.ChatID) []OpenTurnTail
-	locks     sync.Map
-	logs      sync.Map
-	keep      keepSets
-	dequeued  dequeues
-	listScans listFlight
-	dir       string
-	index     searchIndex
+	// hookStatusShown is kiro-cli's hooks.showStatus; nil reads as its default, on.
+	hookStatusShown func() bool
+	locks           sync.Map
+	logs            sync.Map
+	keep            keepSets
+	dequeued        dequeues
+	listScans       listFlight
+	dir             string
+	index           searchIndex
 	// boot is minted once per process; a process-scope keep fact under another boot id is dead.
 	boot    string
 	fileCap chatFileCap
@@ -168,6 +170,12 @@ func WithLiveTurn(fn func(chatID marotte.ChatID) bool) StoreOption {
 // subject per open turn it serves.
 func WithOpenTurns(fn func(chatID marotte.ChatID) []OpenTurnTail) StoreOption {
 	return func(s *Store) { s.openTurns = fn }
+}
+
+// WithHookStatusShown registers the reader of kiro-cli's hooks.showStatus, so search skips the hooks the transcript
+// draws nothing for while it is off. Injected post-construction for the reason WithLiveTurn states.
+func WithHookStatusShown(fn func() bool) StoreOption {
+	return func(s *Store) { s.hookStatusShown = fn }
 }
 
 // isLiveChat reports whether the chat's own turn is open, a prompt is admitted and

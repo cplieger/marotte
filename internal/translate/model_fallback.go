@@ -39,6 +39,15 @@ func (k *modelFallbackFields) ofSubagent() bool {
 	return len(k.AgentSubtaskID) > 0 && k.AgentSubtaskID[0] == '"'
 }
 
+// subtask is the frame's agentSubtaskId, "" when absent or not a string.
+func (k *modelFallbackFields) subtask() string {
+	var id string
+	if json.Unmarshal(k.AgentSubtaskID, &id) != nil {
+		return ""
+	}
+	return id
+}
+
 // modelFallbackPayload is the decode door for both fallback kinds, shared by the live and replay
 // paths so the two payloads are byte-identical. It reports false for a frame the transcript does
 // not show, as the TUI drops it: a sub-agent's fallback, which never moves the chat's model, and a

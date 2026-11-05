@@ -1,5 +1,5 @@
 // Tool group: a collapsible container over consecutive tool calls, with a per-kind or mixed summary.
-// The box exists only FROM THE SECOND CALL: a one-member shell carries CLS_BARE and renders
+// The box exists only FROM THE SECOND ROW: a shell showing one row and no folded hook carries CLS_BARE and renders
 // pixel-identical to a standalone `.tool-call`. The shell is mounted on the FIRST card and gains
 // chrome by class, since re-seating a card replays its entry slide and drops focus; so the
 // `.tool-group` selector alone does not mean "two or more" (consult `groupIsBare`). Collapse is
@@ -12,6 +12,7 @@ import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
 import { outcomeIcon } from "./icons.js";
+import { foldGroupHooks, onHookVisibility, syncHookBadge, syncHookList } from "./hook-fold.js";
 import { setUserScrolledUp } from "./scroll.js";
 import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
@@ -21,8 +22,8 @@ import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclo
  *  it, so a close that leaves it off makes the next header click close the group again. */
 const CLS_COLLAPSED = "tool-group-collapsed";
 const CLS_USER_TOGGLED = "tool-group-user-toggled";
-/** A shell holding fewer than two members: no header, no group chrome. A pure
- *  function of the member count with ONE writer (refreshGroupHeader), so there is
+/** A shell showing fewer than two rows and no folded hook: no header, no group chrome. A pure
+ *  function of what `foldGroupHooks` leaves, with ONE writer (refreshGroupHeader), so there is
  *  no second flag or counter to keep in step. */
 const CLS_BARE = "tool-group-bare";
 
@@ -47,7 +48,7 @@ export function groupBody(group: HTMLElement): HTMLElement {
   return group.querySelector<HTMLElement>(":scope > .tool-group-body") ?? group;
 }
 
-/** Whether this shell is holding fewer than two members, so it renders as a plain
+/** Whether this shell shows fewer than two rows and no folded hook, so it renders as a plain
  *  card with no header. Read it rather than the `.tool-group` selector, which does
  *  not mean "a group of two or more". */
 export function groupIsBare(group: HTMLElement): boolean {
@@ -98,30 +99,44 @@ export function buildToolGroupShell(): HTMLDivElement {
  *  only here, via `ensureGroupDisclosure`), the summary and the verdict. Called after each append,
  *  on every status flip and on collapse toggle. */
 export function refreshGroupHeader(group: HTMLElement): void {
-  const calls = [
+  const members = [
     ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
   ] as HTMLElement[];
-  // The ONE writer of the bare class, a pure function of the member count. Above the summary-span
-  // guard, which would otherwise exempt a shell without a count span.
-  group.classList.toggle(CLS_BARE, calls.length < 2);
-  // Deliberately ABOVE the summary-span guard too, and for the same reason: it needs
-  // only `calls`, and a shell carrying no count span would otherwise never get its
-  // region. This is the ONE creation site.
-  ensureGroupDisclosure(group, calls);
+  // Every count below reads the rows alone: a folded hook is counted on the badge.
+  const { rows, folded } = foldGroupHooks(members);
+  // The ONE writer of the bare class. Above the summary-span guard, which would otherwise exempt a
+  // shell without a count span.
+  group.classList.toggle(CLS_BARE, rows.length < 2 && folded.length === 0);
+  group.hidden = rows.length === 0 && folded.length === 0;
+  // Deliberately ABOVE the summary-span guard too, and for the same reason: a shell carrying no
+  // count span would otherwise never get its region. This is the ONE creation site.
+  ensureGroupDisclosure(group, members);
+  syncHookList(groupBody(group), folded);
+  const headerRow = group.querySelector<HTMLElement>(":scope > .tool-group-header");
+  if (headerRow !== null) {
+    syncHookBadge(headerRow, folded.length);
+  }
   const header = group.querySelector(".tool-group-header .tool-group-count");
   if (header === null) {
     return;
   }
-  const counts = countOutcomes(calls);
+  const counts = countOutcomes(rows);
   // The summary states the aggregate FACT and names every non-clean population in
   // it, so a COLLAPSED group still says what happened. It never counts cards:
   // "Read 5 files" is right, "5 tool calls" is a bug.
-  const summary = summarize(calls) + namedCounts(counts);
+  const summary = summarize(rows) + namedCounts(counts);
   // No "(collapsed)" suffix: the group is one box whose chevron and
   // aria-expanded already carry the state, so the word restated the chrome.
   header.textContent = summary;
-  paintGroupOutcome(group, calls, counts);
+  paintGroupOutcome(group, rows, counts);
 }
+
+// A switch flip moves which members are rows on every mounted group at once.
+onHookVisibility(() => {
+  for (const group of document.querySelectorAll<HTMLElement>(".tool-group")) {
+    refreshGroupHeader(group);
+  }
+});
 
 /** Give a non-bare group its body region ONCE, in its FINAL open/closed state, so the state machine
  *  alone moves a fold afterwards. A non-bare → bare drop (`pruneEmptyContainers`) leaves the

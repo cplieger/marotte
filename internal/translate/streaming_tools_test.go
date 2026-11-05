@@ -47,20 +47,22 @@ type workDirDeps struct {
 
 func (d *workDirDeps) WorkDir() string { return d.workDir }
 
-// hookStatusDeps overrides IsHookStatusEnabled so the hooks.showStatus gate is
-// exercisable in both states (baseDeps hard-codes false).
-type hookStatusDeps struct {
+// hookTriggerDeps answers HookTrigger from a fixed table, as the agent's hook list cache would.
+type hookTriggerDeps struct {
 	*baseDeps
-	enabled bool
+	triggers map[string]string
 }
 
-func (d *hookStatusDeps) IsHookStatusEnabled() bool { return d.enabled }
+func (d *hookTriggerDeps) HookTrigger(hookID string) (string, bool) {
+	trigger, ok := d.triggers[hookID]
+	return trigger, ok
+}
 
 var (
 	_ lineRecorder = (*lineRec)(nil)
 	_ hostDouble   = (*lineDeps)(nil)
 	_ hostDouble   = (*workDirDeps)(nil)
-	_ hostDouble   = (*hookStatusDeps)(nil)
+	_ hostDouble   = (*hookTriggerDeps)(nil)
 )
 
 func newLineCaptureDeps() (*lineDeps, *lineRec, *[]marotte.ServerEvent) {
@@ -272,60 +274,6 @@ func closedChangedFiles(t *testing.T, deps *baseDeps, chatID marotte.ChatID) map
 		t.Fatalf("Close: %v", err)
 	}
 	return turnCloseOf(t, deps.chatEntries(chatID)).ChangedFiles
-}
-
-// TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting pins that a hook's
-// ask-permission card (kind "other", _meta.kiro.hookAsk) is NOT gated on hooks.showStatus:
-// suppressing it also drops the follow-up carrying the user's answer.
-func TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting(t *testing.T) {
-	hookAsk := map[string]any{
-		"toolCallId": "hook-ask-1",
-		"title":      "Run hook",
-		"kind":       "other",
-		"status":     "pending",
-		"_meta": map[string]any{"kiro": map[string]any{
-			"hookAsk": map[string]any{"kind": "pre-tool-use", "toolName": "fs_write", "reason": "guard"},
-		}},
-	}
-
-	t.Run("ShownWhenStatusDisabled", func(t *testing.T) {
-		base, events := newEventCaptureDeps()
-		deps := &hookStatusDeps{baseDeps: base, enabled: false}
-		tr := New(rolesOf(deps))
-		chatID := marotte.ChatID("c1")
-		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, hookAsk), FrameAttribution{})
-		if !hasEntryAppended(events, marotte.EntryKindToolCall) {
-			t.Error("hook-ask tool call appended no tool_call entry with hooks.showStatus off; want shown (the ask is ungated)")
-		}
-		if n := len(toolCallsOf(t, base.chatEntries(chatID))); n != 1 {
-			t.Errorf("sealed tool_call entries = %d, want 1 (the ask must be sealed so its answer update lands)", n)
-		}
-	})
-
-	t.Run("ShownWhenStatusEnabled", func(t *testing.T) {
-		base, events := newEventCaptureDeps()
-		deps := &hookStatusDeps{baseDeps: base, enabled: true}
-		tr := New(rolesOf(deps))
-		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, hookAsk), FrameAttribution{})
-		if !hasEntryAppended(events, marotte.EntryKindToolCall) {
-			t.Error("hook-ask tool call suppressed while hooks.showStatus on; want shown")
-		}
-	})
-
-	t.Run("NonHookAskShownWhenStatusDisabled", func(t *testing.T) {
-		base, events := newEventCaptureDeps()
-		deps := &hookStatusDeps{baseDeps: base, enabled: false}
-		tr := New(rolesOf(deps))
-		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
-			"toolCallId": "tc-1",
-			"title":      "readFile",
-			"kind":       "read",
-			"status":     "pending",
-		}), FrameAttribution{})
-		if !hasEntryAppended(events, marotte.EntryKindToolCall) {
-			t.Error("normal tool call suppressed with hooks.showStatus off; want shown (only hook-ask cards are gated)")
-		}
-	})
 }
 
 // TestHandleToolCall_DiffGate pins that HandleToolCall records line changes only when the

@@ -100,6 +100,9 @@ type ToolCall struct {
 	// ClassifierNote is _meta.kiro.trustClassifier's reason when the safety check handed the call
 	// to a person; one-way.
 	ClassifierNote string `json:"classifier_note,omitempty"`
+	// HookTrigger is a hook card's canonical trigger (CanonicalHookTrigger), empty when
+	// the hook list did not name it.
+	HookTrigger string `json:"hook_trigger,omitempty"`
 	// Checkpoint is KAS's snapshot mapping (_meta.kiro.checkpoint) for a call that
 	// wrote a file. Pointers sit ahead of the slices for govet fieldalignment.
 	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`

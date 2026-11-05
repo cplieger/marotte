@@ -1,0 +1,228 @@
+{
+  "doc": [
+    "The shared oracle for where a run of tool cards ends in a turn's own lane. The client half is",
+    "static-src/messages-blocks.ts indexGroups (through entryRenders, read off the rendered groups) and",
+    "the server half is internal/chat's toolCardRuns, which hiddenHookIDs filters find by. Each reader",
+    "builds its own entries from these cases.",
+    "",
+    "body lists the turn's entries after its turn_open, in order; lane is \"\" when absent. runs lists",
+    "the chat lane's tool-card runs in order, each by its call ids. lane_runs, when present, lists",
+    "each delegate lane's runs the same way, as that delegate's own page draws them; a delegate lane",
+    "with a tool call is always listed. later_wake, when present, is a turn_wake payload recorded in a",
+    "later turn of the same chat.",
+    "",
+    "Every tool call here is a plain command, so the cases measure boundaries alone; which hooks a",
+    "boundary hides is hook_visibility_test.go's."
+  ],
+  "cases": [
+    {
+      "name": "consecutive commands are one run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1", "c2"]]
+    },
+    {
+      "name": "prose ends a run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "x1", "kind": "text", "payload": { "text": "Now the tests." } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1"], ["c2"]]
+    },
+    {
+      "name": "results, binds, run names, deliveries, clears and reconciles end nothing",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "in_progress" } },
+        { "id": "c1:result", "kind": "tool_result", "payload": { "status": "completed" } },
+        { "id": "b1", "kind": "turn_bind", "payload": { "kas_message_id": "k-1" } },
+        { "id": "n1", "kind": "run_named", "payload": { "run": "wf_0123456789abcdef", "name": "publish-docs" } },
+        { "id": "d1", "kind": "steer_delivered", "payload": { "steer_id": "wfmsg-z", "read_ts": 1 } },
+        { "id": "k1", "kind": "steer_cleared", "payload": { "cause": "boundary", "session": "sess-a", "ids": ["notify-z"] } },
+        { "id": "r1", "kind": "reconciled", "payload": { "turn": "t-1" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1", "c2"]]
+    },
+    {
+      "name": "the reader's steer ends a run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "s1", "kind": "steer", "payload": { "text": "skip the race run", "origin": "user", "state": "read" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1"], ["c2"]]
+    },
+    {
+      "name": "a steer a delegate read still ends the chat's run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "s1", "kind": "steer", "lane": "sub-1", "payload": { "text": "skip the race run", "origin": "user", "state": "read" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1"], ["c2"]]
+    },
+    {
+      "name": "a step message a later wake draws does not end a run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "wfmsg-a", "kind": "steer", "payload": { "text": "step 2 is done", "origin": "step", "state": "read" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "later_wake": { "reason": "step_message", "run": "wf_0123456789abcdef", "steers": [{ "id": "wfmsg-a", "text": "step 2 is done" }] },
+      "runs": [["c1", "c2"]]
+    },
+    {
+      "name": "a row a later re-delivery draws does not end a run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "wfmsg-b", "kind": "steer", "payload": { "text": "step 3 is done", "origin": "step", "state": "read" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "later_wake": { "reason": "rewake", "steers": [{ "id": "wfmsg-b", "text": "step 3 is done" }] },
+      "runs": [["c1", "c2"]]
+    },
+    {
+      "name": "a later wake that draws no rows leaves the step message ending a run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "wfmsg-c", "kind": "steer", "payload": { "text": "step 4 is done", "origin": "step", "state": "read" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "later_wake": { "reason": "run_finished", "run": "wf_0123456789abcdef", "run_status": "completed", "steers": [{ "id": "wfmsg-c", "text": "step 4 is done" }] },
+      "runs": [["c1"], ["c2"]]
+    },
+    {
+      "name": "a dropped agent note the turn read does not end a run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "notify-a", "kind": "steer", "payload": { "text": "lint is clean", "origin": "agent", "state": "dropped" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } },
+        { "id": "wfmsg-d:delivered", "kind": "steer_delivered", "payload": { "steer_id": "wfmsg-d", "kas_id": "notify-a", "read_ts": 2 } }
+      ],
+      "runs": [["c1", "c2"]]
+    },
+    {
+      "name": "a dropped agent note nothing read ends a run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "notify-b", "kind": "steer", "payload": { "text": "lint is clean", "origin": "agent", "state": "dropped" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1"], ["c2"]]
+    },
+    {
+      "name": "only the newest rewind row ends a run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "rv1", "kind": "turn_revert", "payload": { "from": "t-0", "from_n": 1, "through": "t-0" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } },
+        { "id": "rv2", "kind": "turn_revert", "payload": { "from": "t-0", "from_n": 1, "through": "t-0" } },
+        { "id": "c3", "kind": "tool_call", "payload": { "id": "t-c3", "title": "go build", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1", "c2"], ["c3"]]
+    },
+    {
+      "name": "only the first plan ends a run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "p1", "kind": "plan", "payload": { "entries": [{ "content": "test", "priority": "medium", "status": "pending" }] } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } },
+        { "id": "p2", "kind": "plan", "payload": { "entries": [{ "content": "test", "priority": "medium", "status": "completed" }] } },
+        { "id": "c3", "kind": "tool_call", "payload": { "id": "t-c3", "title": "go build", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1"], ["c2", "c3"]]
+    },
+    {
+      "name": "the agent's acknowledgement ends a run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "a1", "kind": "steer_ack", "payload": { "steer_id": "s-0", "text": "skipping it" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1"], ["c2"]]
+    },
+    {
+      "name": "a delegate's prose does not end the chat's run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "x1", "lane": "sub-1", "kind": "text", "payload": { "text": "delegate" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1", "c2"]]
+    },
+    {
+      "name": "a re-pin and the fallback that explains it end a run once",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "m1", "kind": "model_switched", "payload": { "from": "model-a", "to": "model-b", "reason": "unavailable" } },
+        { "id": "f1", "kind": "model_fallback", "payload": { "from": "model-a", "to": "model-b", "trigger": "unavailable" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1"], ["c2"]]
+    },
+    {
+      "name": "a sub-agent's fallback an earlier build recorded does not end a run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "f1", "kind": "model_fallback", "payload": { "from": "model-a", "to": "model-b", "trigger": "unavailable", "subagent": true } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1", "c2"]]
+    },
+    {
+      "name": "a delegate's invocation opens its own box",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "i1", "kind": "tool_call", "payload": { "id": "t-i1", "title": "invokeSubAgent", "kind": "other", "status": "completed", "agent_subtask_id": "sub-1" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1"], ["c2"]]
+    },
+    {
+      "name": "engine bookkeeping neither joins nor ends a run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "q1", "kind": "tool_call", "payload": { "id": "t-q1", "title": "Fetching your cloud config", "kind": "other", "status": "in_progress" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1", "c2"]]
+    },
+    {
+      "name": "the reader's steer does not end a delegate's run",
+      "body": [
+        { "id": "d1", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "s1", "kind": "steer", "payload": { "text": "skip the race run", "origin": "user", "state": "read" } },
+        { "id": "d2", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [],
+      "lane_runs": { "sub-1": [["d1", "d2"]] }
+    },
+    {
+      "name": "a delegate's prose ends its own run and not the chat's",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "d1", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d1", "title": "ls", "kind": "execute", "status": "completed" } },
+        { "id": "x1", "lane": "sub-1", "kind": "text", "payload": { "text": "delegate" } },
+        { "id": "d2", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d2", "title": "cat go.mod", "kind": "execute", "status": "completed" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1", "c2"]],
+      "lane_runs": { "sub-1": [["d1"], ["d2"]] }
+    },
+    {
+      "name": "only a delegate's newest rewind row ends its run",
+      "body": [
+        { "id": "d1", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "v1", "lane": "sub-1", "kind": "turn_revert", "payload": { "from": "t-0", "from_n": 1, "through": "t-0" } },
+        { "id": "d2", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d2", "title": "go test", "kind": "execute", "status": "completed" } },
+        { "id": "v2", "lane": "sub-1", "kind": "turn_revert", "payload": { "from": "t-0", "from_n": 1, "through": "t-0" } },
+        { "id": "d3", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d3", "title": "go build", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [],
+      "lane_runs": { "sub-1": [["d1", "d2"], ["d3"]] }
+    }
+  ]
+}

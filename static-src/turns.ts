@@ -220,7 +220,8 @@ export function turnIsDrawn(t: TurnState): boolean {
       e.kind === "reconciled" ||
       e.kind === "steer_delivered" ||
       e.kind === "steer_cleared" ||
-      (e.kind === "steer" && isWakingRow(e))
+      (e.kind === "steer" && isWakingRow(e)) ||
+      isSubagentFallback(e)
     ) {
       continue;
     }

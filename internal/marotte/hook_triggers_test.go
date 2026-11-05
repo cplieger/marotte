@@ -31,12 +31,12 @@ func TestCanonicalHookTrigger(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
-			got, ok := canonicalHookTrigger(tc.in)
+			got, ok := CanonicalHookTrigger(tc.in)
 			if !ok {
-				t.Fatalf("canonicalHookTrigger(%q) reported unknown, want %q", tc.in, tc.want)
+				t.Fatalf("CanonicalHookTrigger(%q) reported unknown, want %q", tc.in, tc.want)
 			}
 			if got != tc.want {
-				t.Errorf("canonicalHookTrigger(%q) = %q, want %q", tc.in, got, tc.want)
+				t.Errorf("CanonicalHookTrigger(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}

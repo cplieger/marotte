@@ -22,7 +22,7 @@ interface DrawnCase {
   owner: "both" | "client";
   drawn: boolean;
   open: { source: TurnOpenSourceName; prompt?: EntryPrompt };
-  body: { kind: EntryKind; lane: string; agent_subtask_id?: string }[];
+  body: { kind: EntryKind; lane: string; agent_subtask_id?: string; subagent?: boolean }[];
   open_entries?: string[];
 }
 
@@ -46,7 +46,11 @@ function stateOf(c: DrawnCase): TurnState {
   ];
   for (const e of c.body) {
     const payload =
-      e.kind === "tool_call" ? { id: "act-1", agent_subtask_id: e.agent_subtask_id } : {};
+      e.kind === "tool_call"
+        ? { id: "act-1", agent_subtask_id: e.agent_subtask_id }
+        : e.kind === "model_fallback"
+          ? { from: "model-a", to: "model-b", trigger: "unavailable", subagent: e.subagent }
+          : {};
     entries.push(entryOf(e.kind, e.lane, entries.length, payload));
   }
   const openEntries = new Map<string, OpenEntry>();

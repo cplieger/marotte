@@ -62,9 +62,10 @@ type lifetime struct {
 	shutdownCancel context.CancelFunc
 	// workRoot is the kernel-confined handle on workDir (lifetime.confine), never closed. nil when workDir could
 	// not be opened; the fs handlers then refuse.
-	workRoot      *os.Root
-	kiroTelemetry *cachedBoolField
-	workDir       string
+	workRoot       *os.Root
+	kiroTelemetry  *cachedBoolField
+	kiroHookStatus *cachedBoolField
+	workDir        string
 	// uploadsDir is a root only the read verbs accept (lifetime.confine); "" grants nothing.
 	uploadsDir string
 	configDir  string
@@ -289,10 +290,10 @@ type Runtime struct {
 	sessionReaper *kirosession.Reaper
 	sessionRefs   func(context.Context) (map[string]struct{}, bool)
 	// sweepGate closes once this process serves its config dir, which the session sweep waits for. Nil: no gate.
-	sweepGate  <-chan struct{}
-	lines      *buffer.LineTracker
-	agentTerms *agentTerminals
-	hookStatus *hookStatusCache
+	sweepGate    <-chan struct{}
+	lines        *buffer.LineTracker
+	agentTerms   *agentTerminals
+	hookTriggers *hookTriggers
 
 	// tabs is the open-tab set and the membership coordinator; nil without a store (unavailable). Held only for retention.
 	tabs       *tabs.Store
@@ -442,10 +443,11 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		sse.WithPresence(func(ev sse.PresenceEvent) { sseP.forwardPresence(&ev) }),
 	)
 	lc := &lifetime{
-		workDir:       workDir,
-		uploadsDir:    marotte.DefaultUploadDir,
-		done:          make(chan struct{}),
-		kiroTelemetry: newCachedBoolField(kiroSettingsPath(), kiroTelemetryKey, kiroTelemetryDefault),
+		workDir:        workDir,
+		uploadsDir:     marotte.DefaultUploadDir,
+		done:           make(chan struct{}),
+		kiroTelemetry:  newCachedBoolField(kiroSettingsPath(), kiroTelemetryKey, kiroTelemetryDefault),
+		kiroHookStatus: newCachedBoolField(kiroSettingsPath(), marotte.KiroHookStatusKey, true),
 	}
 	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(ctx)
 	// Best-effort: an unopenable workDir fails closed at the handlers, not at construction.
@@ -486,7 +488,6 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		steeringIssues: &steeringIssues{},
 		versions:       &subject.Versions{},
 		digestSlots:    newDigestSemaphore(digestConcurrency),
-		hookStatus:     newHookStatusCache(kiroSettingsPath()),
 		chatHandlers:   make(map[string]chatHandler),
 		noopMethods:    make(map[string]struct{}),
 	}
@@ -598,6 +599,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	// After the literal: steerQueue is a value, so the copy the step side holds must carry steps.
 	runs.steers.queue = h.steerQueue
 	h.wireSteerRecords()
+	h.hookTriggers = newHookTriggers(lc.shutdownCtx, configP.hooksListRaw, lc.goUnlessDraining)
 	h.translator = translate.New(h.translateRoles())
 	runs.translate = h.translator
 	h.dispatcher = command.New()

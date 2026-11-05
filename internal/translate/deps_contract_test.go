@@ -89,8 +89,10 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		d.RecordFromDiffs("c1", nil, 0, "")
 	})
 
-	t.Run("IsHookStatusEnabled_returns_bool", func(t *testing.T) {
-		_ = d.IsHookStatusEnabled()
+	t.Run("HookTrigger_misses", func(t *testing.T) {
+		if trigger, ok := d.HookTrigger("h1"); ok {
+			t.Errorf("HookTrigger = %q, want a miss", trigger)
+		}
 	})
 
 	t.Run("IsScheduledRun_false_for_an_unmarked_run", func(t *testing.T) {

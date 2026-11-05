@@ -64,9 +64,11 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		ChatRetentionDays:     DefaultChatRetentionDays,
 		GuardPayloadLinks:     defaultGuardPayloadLinks,
 		HighThroughput:        defaultHighThroughput,
-		KnowledgeEnabled:      defaultKnowledgeEnabled,
-		ContentCollection:     DefaultContentCollectionEnabled,
-		MemoryMode:            DefaultMemoryMode,
+		// kiro-cli's own default for hooks.showStatus, until a reader says otherwise.
+		HookStatusShown:   true,
+		KnowledgeEnabled:  defaultKnowledgeEnabled,
+		ContentCollection: DefaultContentCollectionEnabled,
+		MemoryMode:        DefaultMemoryMode,
 		// The agent-capability defaults are kiro-cli's own; "" on a follow-kiro
 		// choice sends nothing, so kiro-cli's experiment decides.
 		SpecPlanning:              defaultSpecPlanning,
