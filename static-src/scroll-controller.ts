@@ -186,6 +186,9 @@ export class ScrollController {
   private topSentinel: HTMLElement | null = null;
   private topObserver: IntersectionObserver | null = null;
   private topNear = false;
+  /** Whether the reader moved since the view attached: until they do, the history edge asks for nothing, so opening a
+   *  chat costs one page. `fillViewport` and the explicit pagers do not wait for it. */
+  private edgeArmed = false;
 
   private readonly resumeBtn: () => HTMLElement;
   private readonly publishesGutter: boolean;
@@ -948,6 +951,7 @@ export class ScrollController {
    *  jump has landed, false when the reader's input or another jump took the scroller first. */
   jumpToOffset(px: number, behavior: "instant" | "smooth"): Promise<boolean> {
     this.dropMotion();
+    this.edgeArmed = true;
     const max = this.max();
     const landing = Math.max(0, Math.min(Math.round(px), max));
     this.setState(landing >= max - edgeSlack() ? "following" : "reading");
@@ -955,6 +959,7 @@ export class ScrollController {
     if (b === "instant" || Math.abs(landing - this.scrollEl.scrollTop) <= edgeSlack()) {
       this.writeTop(landing);
       this.retake();
+      this.pokeTop();
       return Promise.resolve(true);
     }
     const landed = this.openFlight();
@@ -966,6 +971,8 @@ export class ScrollController {
    *  reader Following rather than parking them on a guess. */
   jumpTo(target: HTMLElement, opts: ScrollIntoViewOptions = {}): void {
     this.dropMotion();
+    // A jump is the reader moving; a flight's held-back page is asked when it ends (`endFlight`).
+    this.edgeArmed = true;
     const behavior = this.behaviorFor(opts.behavior ?? "smooth");
     const before = this.scrollEl.scrollTop;
     target.scrollIntoView({ block: "start", ...opts, behavior });
@@ -989,6 +996,7 @@ export class ScrollController {
       this.noteOwnWrite();
     }
     this.retake();
+    this.pokeTop();
   }
 
   /** Where `target`'s landing stands now; a target rebuilt meanwhile (find re-marking its hits) is found through the
@@ -1119,6 +1127,7 @@ export class ScrollController {
     this.clearFloor();
     this.observeView(handle.el);
     this.attached = true;
+    this.edgeArmed = false;
     this.setState(handle.readingState);
     this.pendingRestore = handle;
   }
@@ -1189,6 +1198,7 @@ export class ScrollController {
     this.lastT = -1;
     this.rest = -1;
     this.topNear = false;
+    this.edgeArmed = false;
     this.setLoadMore(null, false);
     this.setState("following");
   }
@@ -1337,8 +1347,16 @@ export class ScrollController {
     this.pokeTop();
   }
 
+  /** The reader moved since the view attached; an edge already inside the lead owes its page from here on. */
+  private armEdge(): void {
+    if (!this.edgeArmed) {
+      this.edgeArmed = true;
+      this.pokeTop();
+    }
+  }
+
   private pokeTop(): void {
-    if (this.topNear) {
+    if (this.topNear && this.edgeArmed) {
       this.maybeLoadMore();
     }
   }
@@ -1470,6 +1488,7 @@ export class ScrollController {
   }
 
   private publishReaderGesture(): void {
+    this.armEdge();
     for (const cb of this.readerGestureListeners) {
       cb();
     }
@@ -1619,10 +1638,14 @@ export class ScrollController {
     const observer = new MutationObserver(() => {
       if (maybeEl(SKELETON_ID) === null) {
         this.endLoadPass();
-        // A short page may leave the edge inside the lead; an empty one stays quiet until the edge re-enters, or the
-        // same failing request would loop.
+        // A short page may leave the edge inside the lead, and before the reader moves only an underfilled window asks
+        // again; an empty one stays quiet until the edge re-enters, or the same failing request would loop.
         if (firstContent() !== ref) {
-          this.pokeTop();
+          if (this.edgeArmed) {
+            this.pokeTop();
+          } else {
+            this.fillViewport();
+          }
         }
       }
     });

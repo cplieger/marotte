@@ -5,7 +5,7 @@
 import { el } from "@cplieger/ui";
 import { chevronEl } from "../chevron.js";
 import { CHROME_ATTR } from "../chrome-attr.js";
-import { slideDetails, wireDetailsSlide } from "../disclosure-row.js";
+import { slideDetails, targetOpen, wireDetailsSlide } from "../disclosure-row.js";
 
 /** No `g` flag, so `test` stays stateless. */
 const SPACE = /\s/u;
@@ -130,7 +130,13 @@ export function buildReasoning(initial: string, live: boolean, open: boolean): R
         return;
       }
       collapsed = true;
-      slideDetails(root, false);
+      // A trace built closed has nothing to slide.
+      if (!targetOpen(root, root.open)) {
+        return;
+      }
+      // Detached or in a parked view nobody sees the slide, and measuring would force that view's layout.
+      const seen = root.isConnected && root.closest(".transcript-view:not(.is-active)") === null;
+      slideDetails(root, false, seen);
     },
   };
 }

@@ -61,7 +61,8 @@ function stepMessage(text: string): EntryTurnWake {
 function mountHeader(d: TurnHeaderData): HTMLElement {
   const header = buildTurnHeader(d);
   const text = requestText(header);
-  text.style.cssText = "white-space:pre-wrap;line-height:20px;max-height:20px;overflow:hidden";
+  // One line tall enough for an unstyled button (21 px in Chromium), so the first row shows whole.
+  text.style.cssText = "white-space:pre-wrap;line-height:24px;max-height:24px;overflow:hidden";
   const host = document.createElement("div");
   host.style.inlineSize = "600px";
   host.append(header);

@@ -92,7 +92,7 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
       toggle.setAttribute("aria-label", cut ? `${FOLD_LABEL}, message truncated` : FOLD_LABEL);
     },
     () => {
-      syncWakeRowRuns(header);
+      queueWakeRowSync(header);
     },
   );
 
@@ -170,7 +170,7 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     }
     text.hidden = d.wake.body === "";
     syncFullText(header, undefined);
-    syncWakeRowRuns(header);
+    queueWakeRowSync(header);
     return;
   }
   syncWakeLabel(header, undefined, undefined);
@@ -368,25 +368,56 @@ function wakeRunEl(
 
 /**
  * Make each re-delivery row's run button inert while the request text's clamp hides any of it, so it takes no focus,
- * and live while all of it shows. Runs after each header update and each clamp measurement; a fold change calls
- * it. With no layout to measure, a folded card keeps only the first row's live.
+ * and live while all of it shows. Queued after each header update, clamp measurement and fold change, and measured in
+ * the next frame for every queued header at once, so a paint forces no layout. With no layout to measure, a folded
+ * card keeps only the first row's live.
  */
-export function syncWakeRowRuns(header: HTMLElement): void {
-  const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
-  if (text === null) {
+export function queueWakeRowSync(header: HTMLElement): void {
+  if (wakeRowRuns(header).length === 0) {
     return;
   }
-  const clip = text.getBoundingClientRect();
-  const folded = text.closest(".turn[data-folded]") !== null;
-  const buttons = text.querySelectorAll<HTMLElement>('.turn-wake-row-run[role="button"]');
-  buttons.forEach((btn, i) => {
-    if (clip.height <= 0) {
-      btn.inert = folded && i > 0;
-      return;
+  wakeRowQueue.add(header);
+  if (!wakeRowFrame) {
+    wakeRowFrame = true;
+    requestAnimationFrame(flushWakeRowSync);
+  }
+}
+
+const wakeRowQueue = new Set<HTMLElement>();
+let wakeRowFrame = false;
+
+function wakeRowRuns(header: HTMLElement): NodeListOf<HTMLElement> {
+  return header.querySelectorAll<HTMLElement>(
+    ':scope > .turn-req > .turn-req-text .turn-wake-row-run[role="button"]',
+  );
+}
+
+function flushWakeRowSync(): void {
+  wakeRowFrame = false;
+  const headers = [...wakeRowQueue];
+  wakeRowQueue.clear();
+  // Every rect read before any `inert` write: interleaving forces a layout per header.
+  const writes: { btn: HTMLElement; inert: boolean }[] = [];
+  for (const header of headers) {
+    const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
+    if (text === null) {
+      continue;
     }
-    const box = btn.getBoundingClientRect();
-    btn.inert = box.top < clip.top - CLIP_EPSILON || box.bottom > clip.bottom + CLIP_EPSILON;
-  });
+    const folded = text.closest(".turn[data-folded]") !== null;
+    const clip = header.isConnected ? text.getBoundingClientRect() : undefined;
+    wakeRowRuns(header).forEach((btn, i) => {
+      if (clip === undefined || clip.height <= 0) {
+        writes.push({ btn, inert: folded && i > 0 });
+        return;
+      }
+      const box = btn.getBoundingClientRect();
+      const inert = box.top < clip.top - CLIP_EPSILON || box.bottom > clip.bottom + CLIP_EPSILON;
+      writes.push({ btn, inert });
+    });
+  }
+  for (const { btn, inert } of writes) {
+    btn.inert = inert;
+  }
 }
 
 /** Sub-pixel slack (px) for a run name whose box rounds onto the clip edge. */

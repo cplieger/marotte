@@ -1308,8 +1308,10 @@ describe("a large tool card below the streaming block", () => {
     }, true);
     await land();
 
-    // The history edge's report asks whatever the reader's position, which is what keeps the anchored
-    // pin — the geometry the defect needs — in place.
+    // The history edge's report asks whatever the reader's position once a gesture armed it; a request for the live
+    // edge arms it and keeps the anchored pin, the geometry the defect needs, in place.
+    scroll.scrollToBottom();
+    await land();
     scroll.noteHistoryEdge(true);
     await land();
 
@@ -3327,19 +3329,22 @@ describe("a parked view's restore under a platform reset", () => {
     }).toEqual({ loading: true, moved: 0, state: "reading" });
   });
 
-  it("keeps the reader's text still when an older page's skeleton lands above them on return", async () => {
+  it("asks for no older page and keeps the reader's text still when the view returns inside the history lead", async () => {
     const view = rowsView();
     skeleton.px = 200;
-    // The activation rewires pagination; with the reader inside the history lead the first delivery asks for a page,
-    // whose skeleton lands above them while the fetch is pending, and the pass compensates its height.
+    // The activation rewires pagination with the reader inside the history lead; until the reader moves, the
+    // re-shown view costs no page.
+    const load = vi.fn();
     const out = await movesAfterReturn(view, 500, () => {
-      scroll.setLoadMore(() => undefined, true);
+      scroll.setLoadMore(load, true);
+      scroll.noteHistoryEdge(true);
     });
 
     expect({
-      skeleton: document.getElementById("load-more-skeleton")?.getBoundingClientRect().height,
+      asks: load.mock.calls.length,
+      skeleton: document.getElementById("load-more-skeleton"),
       ...out,
-    }).toEqual({ skeleton: 200, moves: [], state: "reading" });
+    }).toEqual({ asks: 0, skeleton: null, moves: [], state: "reading" });
   });
 
   it("keeps the reader's text still when a row above them grows in the first frame after return", async () => {

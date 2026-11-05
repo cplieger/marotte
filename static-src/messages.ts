@@ -58,7 +58,7 @@ import type { ViewScrollState } from "./scroll-controller.js";
 import {
   buildTurnHeader,
   updateTurnHeader,
-  syncWakeRowRuns,
+  queueWakeRowSync,
   type TurnHeaderData,
 } from "./fundamentals/turn-header.js";
 import {
@@ -2000,7 +2000,7 @@ function setCardsFolded(items: readonly { card: HTMLElement; folded: boolean }[]
       card.toggleAttribute("data-folded", folded);
       const header = card.querySelector<HTMLElement>(":scope > .turn-header");
       if (header !== null) {
-        syncWakeRowRuns(header);
+        queueWakeRowSync(header);
         // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
         header
           .querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
