@@ -8,6 +8,7 @@ import { absoluteTime } from "./relative-time.js";
 import { forgetRun, noteRunChat } from "./run-store.js";
 import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
+import { formatShortDate } from "./locale-time.js";
 
 /**
  * Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (URL-keyed module map). The `.ts`
@@ -1950,13 +1951,7 @@ describe("history: the row's subtitle and time", () => {
     expect(recentTime.getAttribute("data-tooltip")).toBe(absoluteTime(recent));
     expect(recentTime.getAttribute("datetime")).toBe(new Date(recent).toISOString());
     const oldTime = rowOf("s:sess_old").querySelector<HTMLElement>("time.entry-time")!;
-    expect(oldTime.textContent).toBe(
-      new Date(old).toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      }),
-    );
+    expect(oldTime.textContent).toBe(formatShortDate(old, { year: true }));
     // Inside the open control, at the trailing end of the title line.
     expect(openBtn(rowOf("s:sess_recent")).contains(recentTime)).toBe(true);
   });

@@ -91,6 +91,7 @@ import { initTools, loadToolsList } from "./tools.js";
 import { byId } from "./dom.js";
 import { KEY_ATTR } from "./reconcile.js";
 import { join, split } from "@cplieger/keyenc";
+import { formatClock } from "./locale-time.js";
 
 // --- DOM fixture -------------------------------------------------------------
 
@@ -914,10 +915,7 @@ describe("GitHub's rate limit", () => {
     initWith(listWith([tool({ name: "gh" })]));
     mocks.sseHandlers.get("tool_job_changed")?.("", limited(true, "tj-rl-auth"));
 
-    const clock = new Date(RESET).toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const clock = formatClock(RESET);
     expect(mocks.toastError).toHaveBeenCalledWith(
       `GitHub's rate limit was reached. It resets at ${clock}.`,
     );
@@ -990,10 +988,7 @@ describe("GitHub's rate limit", () => {
       job: { ...job, rate_limit: { authenticated: false, secondary: true, reset_at: RESET } },
     });
 
-    const clock = new Date(RESET).toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const clock = formatClock(RESET);
     const text = `GitHub's secondary rate limit was reached. Try again after ${clock}.`;
     expect(mocks.rollingAppend).toHaveBeenCalledWith(`✗ update failed: ${text}`);
     expect(mocks.toastError).toHaveBeenCalledWith(text);

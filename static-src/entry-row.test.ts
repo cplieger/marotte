@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 import { entryRow, entryList, entrySkeleton, entryDetail } from "./entry-row.js";
+import { formatFullStamp } from "./locale-time.js";
 
 // What the builder enforces: door/inert branch, accessible name, badge cap, subtitle shapes, list roles, phrasing content.
 
@@ -98,7 +99,7 @@ describe("entryRow: the title line", () => {
     expect(time?.tagName).toBe("TIME");
     expect(time?.textContent).toBe("3 hours ago");
     expect(time?.getAttribute("datetime")).toBe(new Date(ms).toISOString());
-    expect(time?.getAttribute("data-tooltip")).toBe(new Date(ms).toLocaleString());
+    expect(time?.getAttribute("data-tooltip")).toBe(formatFullStamp(ms));
   });
 
   it("renders a borrowed count as a span with no tooltip and no datetime", () => {

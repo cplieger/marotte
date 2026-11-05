@@ -1,4 +1,5 @@
 import { el } from "@cplieger/ui";
+import { formatClock, formatShortDate } from "./locale-time.js";
 
 export const FB_ROW = "fb-row";
 /** A row mounted past the `FB_ENTER_ROWS`th row a render pass mounts carries this and skips the entry animation (19-files.css). */
@@ -76,12 +77,7 @@ export function formatSize(bytes: number): string {
 }
 
 export function formatDate(ms: number): string {
-  const d = new Date(ms);
-  return (
-    d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) +
-    " " +
-    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-  );
+  return `${formatShortDate(ms, { year: true })} ${formatClock(ms)}`;
 }
 
 /** The root listing: the synthetic list of granted mounts `/api/files` answers for "/". Every child path composes from it. */
