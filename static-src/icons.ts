@@ -115,7 +115,7 @@ export const ICON_CANCEL = svg(
   "ui",
   '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
 );
-// Transport, beside `ICON_CANCEL` and `ICON_PLAY`. Line art: an open chevron has no interior to become a sliver.
+// Transport, beside `ICON_CANCEL` and `ICON_RESUME`. Line art: an open chevron has no interior to become a sliver.
 // Left-pointing and doubled, clear of `.disclosure-chevron`.
 export const ICON_REWIND = svg("ui", '<path d="M11 18l-6-6 6-6M19 18l-6-6 6-6"/>');
 // Transport too: two filled bars as tall as `ICON_CANCEL`'s square, at its weight. Stroked hairlines read lighter
@@ -126,8 +126,8 @@ export const ICON_PAUSE = svg(
     '<rect x="13.5" y="6" width="4" height="12" rx="1" fill="currentColor" stroke="none"/>',
 );
 // The run dock's Resume: a filled triangle as tall as `ICON_CANCEL`'s square, so the three run verbs share one weight.
-// `ICON_PLAY` is the stroked outline the code block and the docs agent use. The `translate` seats the triangle's
-// centroid, not its box, on x=12.
+// `ICON_PLAY` is the stroked outline the code block and the docs agent use. The `translate` centres the triangle on
+// its mass rather than its box, so the shift is a group transform.
 export const ICON_RESUME = svg(
   "ui",
   '<g transform="translate(0.8 0)"><path d="M7 7.5Q7 6 8.33 6.69L17.17 11.31Q18.5 12 17.17 12.69L8.33 17.31Q7 18 7 16.5Z" fill="currentColor" stroke="none"/></g>',
