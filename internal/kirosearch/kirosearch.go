@@ -79,7 +79,7 @@ type FilesQuery struct {
 	MaxResults int
 }
 
-// Searcher runs the rg binary at Bin, each search within 15 s. An empty Bin finds nothing. Shown
+// Searcher runs the rg binary at Bin, each search within searchDeadline. An empty Bin finds nothing. Shown
 // is the session's roots answer paths are written against (displayPath); nil means the searched roots.
 type Searcher struct {
 	Bin   string

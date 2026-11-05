@@ -107,7 +107,6 @@ func TestKiroSearch_NoRipgrepAnswersEmpty(t *testing.T) {
 	}
 }
 
-// A turn cancel ends the chat's running search, which still answers with what it found.
 // stageBlockingRipgrep stages an rg that prints textMatchEvent, starts a child that would outlive
 // the search, writes the child's pid to pids and a line to ready, then waits: a search with a line
 // in ready is tracked and has its match in the pipe.
@@ -184,6 +183,7 @@ func awaitChildrenGone(t *testing.T, pids string) {
 	}
 }
 
+// A turn cancel ends the chat's running search, which still answers with what it found.
 func TestKiroSearch_TurnCancelEndsTheSearch(t *testing.T) {
 	ready, _ := stageBlockingRipgrep(t)
 	h, br := hubForFSTest(t, t.TempDir())

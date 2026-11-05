@@ -24,7 +24,7 @@ type searchCancels struct {
 	next    uint64
 }
 
-// trackedSearch is one running search: runID is the run whose step sent it, "" for the chat's own.
+// trackedSearch is one running search: runID is the run it belongs to, as inbound.searchRun decides.
 type trackedSearch struct {
 	origin acpResponder
 	cancel context.CancelCauseFunc

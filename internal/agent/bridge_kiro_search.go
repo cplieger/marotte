@@ -76,8 +76,9 @@ func (in *inbound) trackKiroSearch(chatID marotte.ChatID, origin acpResponder, m
 	}
 }
 
-// searchRun is the run whose step sent a search from sessionID, "" for the chat's own. A step of a
-// chat-parented run sends its requests on the chat's session, so the session id decides, not chatID.
+// searchRun is the run a search from sessionID belongs to: the step's run for a step session, else
+// the workflow id when chatID is a run: chat, else "". A step of a chat-parented run sends its
+// requests on the chat's session, so the session id decides first.
 func (in *inbound) searchRun(chatID marotte.ChatID, sessionID marotte.SessionID) string {
 	if wf, ok := in.stepRun(sessionID); ok {
 		return wf
