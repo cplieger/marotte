@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 const githubRepoRow = `[{"id":1,"name":"app","full_name":"alice/app","owner":{"login":"alice"},` +

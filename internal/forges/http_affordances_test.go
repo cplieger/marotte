@@ -12,7 +12,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 func affordedRepo(strategies ...string) forgeapi.RepoAffordances {

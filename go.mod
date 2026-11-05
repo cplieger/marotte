@@ -18,7 +18,7 @@ require (
 )
 
 require (
-	github.com/cplieger/forgeapi v1.6.0-dev.2
+	github.com/cplieger/forgeapi/v2 v2.0.0-dev.1
 	github.com/cplieger/go/envx v1.0.0-dev.1
 	github.com/cplieger/go/filesafe v1.0.0-dev.1
 	github.com/cplieger/go/httpserver v1.0.0-dev.2

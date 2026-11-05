@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // A cancel ends the grant with the library's Close (ADR-0099): the grant leaves
