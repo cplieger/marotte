@@ -14,8 +14,8 @@ github.com/cplieger/go/httpserver v1.0.0-dev.3 h1:cxmEdEXhRh591+2/lrhRlxn9cTenL7
 github.com/cplieger/go/httpserver v1.0.0-dev.3/go.mod h1:JEmYTXf41gzCh9IsslcEaAX8WMcHJBuqEiLEJCvoPUo=
 github.com/cplieger/go/jsonx v1.0.0-dev.2 h1:XP5vemRQ+PWJT+kX5aZtHm1U/aLi36sZPwgMSjMxaVI=
 github.com/cplieger/go/jsonx v1.0.0-dev.2/go.mod h1:ank2TTHUDI/GrTBZ/KAwU72ECOdrCCDDYqlRSuR/+BQ=
-github.com/cplieger/go/keyenc v1.2.0-dev.1 h1:n3EFRTPr1LBVvfjPeGxgE4VS009JNGdWtaBT2rAN6y0=
-github.com/cplieger/go/keyenc v1.2.0-dev.1/go.mod h1:YxYV/OxXxOyQetArMEAUl2IzU/AsH6vlgXvA0UUYASo=
+github.com/cplieger/go/keyenc v1.2.0-dev.2 h1:B6j+A7k9EHrAQrNX5KMo14lPsTwo/x7wQdI2AvS+6p8=
+github.com/cplieger/go/keyenc v1.2.0-dev.2/go.mod h1:YxYV/OxXxOyQetArMEAUl2IzU/AsH6vlgXvA0UUYASo=
 github.com/cplieger/go/keylock v1.0.0-dev.1 h1:4KT6TIuv44v7S9IAZQ+TMSFTujV5EQqYodesaeH7epg=
 github.com/cplieger/go/keylock v1.0.0-dev.1/go.mod h1:wV/zGnEWTzeH0tpTtcbpo62AGZSTfP+NC8QA3UwZbX4=
 github.com/cplieger/go/pathinside v1.0.0-dev.1 h1:iVkDRXYDDAgaTBm02ekQ+VH7KhXZTIpdpx8O9pGprY8=
@@ -24,8 +24,8 @@ github.com/cplieger/go/scheduler v1.0.0-dev.1 h1:SliSxE9oAN2UWDgvipCQIKK1JJkcGny
 github.com/cplieger/go/scheduler v1.0.0-dev.1/go.mod h1:2cQv1OLOFwmyVNBbR/ocU1I6Qbg46787ZS+a0xZKHJI=
 github.com/cplieger/go/slogx v1.0.0-dev.1 h1:oYkkLGxYkUHebk+OtaWVzD9NwPqTmq13HztG6NaArn4=
 github.com/cplieger/go/slogx v1.0.0-dev.1/go.mod h1:4v0aqEGWQ4ubxjIiddoMocANHMKB6SdYTgOWYaIUX6A=
-github.com/cplieger/go/sse v1.5.0-dev.4 h1:AfI2G8fLlBcxtzVkejcTGwuaTDDDuwReS0EjUeKOs+w=
-github.com/cplieger/go/sse v1.5.0-dev.4/go.mod h1:HcZuCzlMScYgpnNmUU4s296XHMoi+DqtRjKbyO8CRfw=
+github.com/cplieger/go/sse v1.5.0-dev.6 h1:RIH5ykO4hzNN+wUSVjuX071jRfRfU0zDeQjCX0fvyXQ=
+github.com/cplieger/go/sse v1.5.0-dev.6/go.mod h1:s1N2PX/+e6SCv/lehYQDeNZU4R6A127BBKjsaYZgA+Y=
 github.com/cplieger/go/ssrf v1.0.0-dev.1 h1:2wxKGOKp5sFwwJneaxOEOvFqlA7077nOWmaKm+9q5MU=
 github.com/cplieger/go/ssrf v1.0.0-dev.1/go.mod h1:/YuSCNO/nE8JB4PAw6FEA/A3AsqHLzcZckpLgQCMGnA=
 github.com/cplieger/go/textsafe v1.0.0-dev.1 h1:NqiLs9uk4eOoXXkTQo0O8lMtYddo3XZuCuyx/ruB66w=
