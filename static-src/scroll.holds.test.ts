@@ -758,6 +758,35 @@ describe("every owner move re-takes the text the reader sees", () => {
   });
 });
 
+describe("a press whose slide starts late", () => {
+  it("leaves the reader where they are while what they pressed opens above the reading line", async () => {
+    const wrap = await reset();
+    block(300);
+    const card = block(100);
+    block(3000);
+    await land();
+    await readAt(wrap, 280);
+    const top = wrap.scrollTop;
+    card.dispatchEvent(
+      new PointerEvent("pointerdown", { clientX: 30, clientY: 30, bubbles: true }),
+    );
+    scroll.pressHold();
+
+    // A slide whose first frames move nothing, as a disclosure's does while its start is pending.
+    const slide = card.animate([{ height: "100px" }, { height: "300px" }], {
+      duration: 200,
+      delay: 150,
+      fill: "forwards",
+    });
+    await slide.finished;
+    card.style.height = "300px";
+    slide.cancel();
+    await land();
+
+    expect(wrap.scrollTop - top).toBe(0);
+  });
+});
+
 describe("reduced motion", () => {
   afterEach(async () => {
     await resetA11yMedia();

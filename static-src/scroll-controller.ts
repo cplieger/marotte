@@ -643,10 +643,13 @@ export class ScrollController {
       end = this.scrollEl.scrollHeight - this.scrollEl.clientHeight;
     }
     if (this.scrollEl.scrollTop > end + 0.5 || (fits && this.scrollEl.scrollTop < end - 0.5)) {
+      const before = viewOffset(this.scope);
       this.scrollEl.scrollTo({ top: end, behavior: "instant" });
       this.noteOwnWrite();
       if (this.state === "reading" && this.press === null) {
         this.retake();
+      } else if (this.read !== null) {
+        this.read.base += viewOffset(this.scope) - before;
       }
     }
     if (this.lowerFrame === 0) {
@@ -817,7 +820,8 @@ export class ScrollController {
       if (this.press !== p) {
         return;
       }
-      p.still = this.pressResized ? 0 : p.still + 1;
+      // A slide the press started can sit pending, or in its delay, for frames that resize nothing.
+      p.still = this.pressResized || this.viewAnimating() ? 0 : p.still + 1;
       this.pressResized = false;
       p.frames++;
       if (p.still >= RESTORE_HOLD_FRAMES || p.frames >= RESTORE_MAX_FRAMES) {
@@ -826,6 +830,13 @@ export class ScrollController {
       }
       this.queuePress();
     });
+  }
+
+  /** Whether a finite animation runs in the view; an endless one (a spinner) never settles. */
+  private viewAnimating(): boolean {
+    return this.viewEl
+      .getAnimations({ subtree: true })
+      .some((a) => a.playState === "running" && a.effect?.getTiming().iterations !== Infinity);
   }
 
   private closePress(): void {

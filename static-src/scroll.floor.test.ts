@@ -440,6 +440,30 @@ describe("content above the reader changing during their gesture", () => {
     },
   );
 
+  it("keeps a Following reader Following when they move down after the owner's clamp in their gesture", async () => {
+    const { wrap, cards } = await floorScene([1000, 1000, 1000, 400]);
+    expect(wrap.scrollTop, "the premise: Following on the end").toBe(end(wrap));
+    wheel(wrap, -3);
+    expect(scroll.readerGestureOpen(), "the premise: the wheel opened a gesture").toBe(true);
+
+    setTimeout(() => {
+      cards[3]!.style.height = "100px";
+    }, 0);
+    await frames(3);
+    const clamped = { top: wrap.scrollTop, onEnd: wrap.scrollTop === end(wrap) };
+    setTimeout(() => {
+      cards[3]!.style.height = "400px";
+    }, 0);
+    await frames(3);
+    platformScroll(wrap, clamped.top + 100);
+    await frames(2);
+
+    expect({ onEnd: clamped.onEnd, state: scroll.readingState() }).toEqual({
+      onEnd: true,
+      state: "following",
+    });
+  });
+
   it("holds the text of a Reading reader in a gesture when a card above is removed", async () => {
     const { wrap, cards } = await floorScene([300, 1000, 1000]);
     await readAt(wrap, end(wrap) - 40);
