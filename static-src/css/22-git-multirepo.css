@@ -393,6 +393,7 @@
 }
 
 .git-branch-popover-row {
+  min-block-size: var(--row-tap-sm);
   appearance: none;
   background: transparent;
   border: 0;

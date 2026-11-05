@@ -2023,15 +2023,6 @@
   }
 }
 
-/* The prompt row's touch sizes, on the observed tier (pointer-tier.ts) because a
-   width query cannot reach an iPad. `:where()` keeps each selector at its base
-   specificity, so these win by coming later. */
-:where([data-pointer="coarse"]) {
-  .pill-ctx-row {
-    padding-block: var(--sp-1);
-  }
-}
-
 /* PHONE-SHAPED means narrow OR short (a media-query list is CSS's OR): a phone on
    its long edge is mostly wider than 48rem, so the narrow arm alone leaves the tier
    on screen in landscape. No reasoning tier on a phone at any level: the row is

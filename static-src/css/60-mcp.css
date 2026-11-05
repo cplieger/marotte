@@ -347,6 +347,8 @@
    filename in the header, or these stats — so a generic button beside them was a
    second affordance for one intent. The stats themselves are the button now. */
 .tool-diff-stats {
+  /* A row, not an expander: the stats sit flush under the tool header, so a 44px
+     expander on a 24px line would reach over the header (touch-targets.test.ts). */
   min-block-size: var(--row-tap-sm);
   border: none;
   background: none;

@@ -456,7 +456,7 @@
      * not fit truncates on its own line and the row never grows. Two rungs,
      * because a list carries either a title plus one line of metadata or a title
      * plus a description region, and a page picks one for every row it renders.
-     * POINTER-TIERED like --hit-floor. */
+     * One value on every tier: both rungs already clear the touch floor. */
     --row-h-2: 3.5rem;
     --row-h-3: 4.5rem;
 
@@ -474,8 +474,6 @@
   :root[data-pointer="coarse"] {
     --hit-floor: 2.75rem;
     --row-tap-line: var(--hit-floor);
-    --row-h-2: 3.75rem;
-    --row-h-3: 4.75rem;
   }
 
   /* NO-JS FALLBACK. A capability query cannot decide this tier: Chromium reports
@@ -486,8 +484,6 @@
     :root:not([data-pointer="fine"]) {
       --hit-floor: 2.75rem;
       --row-tap-line: var(--hit-floor);
-      --row-h-2: 3.75rem;
-      --row-h-3: 4.75rem;
     }
   }
 

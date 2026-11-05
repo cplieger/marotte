@@ -81,6 +81,7 @@ const { openMermaidOverlay } = await import("./mermaid-overlay.js");
 const { renderDiffPane } = await import("./diff-pane.js");
 const { renderConnectionTarget } = await import("./forge-auth-connection.js");
 const { setWorkspaceRoot, _resetForTest: resetWorkspaceRoot } = await import("./workspace.js");
+const { openBranchSwitcher } = await import("./git-branch-switcher.js");
 document.body.replaceChildren();
 
 let style: HTMLStyleElement;
@@ -586,6 +587,32 @@ function plantGitRepo(): void {
   ]);
   section.append(header, body);
   q("#git-changes-mount").appendChild(section);
+}
+
+/** The branch switcher opened from the repo head, its branches answered by a stubbed fetch. */
+function plantBranchSwitcher(): void {
+  show("git-view");
+  plantGitRepo();
+  const real = globalThis.fetch;
+  globalThis.fetch = (): Promise<Response> =>
+    Promise.resolve(
+      Response.json({
+        branches: [
+          { name: "main", current: true },
+          { name: "dev", current: false },
+          { name: "origin/dev", current: false },
+        ],
+      }),
+    );
+  const anchor = q(".git-repo-section-header");
+  openBranchSwitcher("demo", anchor);
+  teardown.push(() => {
+    globalThis.fetch = real;
+    // A second open from the same anchor closes it.
+    if (document.querySelector(".git-branch-popover") !== null) {
+      openBranchSwitcher("demo", anchor);
+    }
+  });
 }
 
 /** Two pull requests with their row actions, in the shape `git-prs-tab.ts` renders. */
@@ -1486,6 +1513,17 @@ const SURFACES: readonly Surface[] = [
       "#git-changes-mount .btn-small",
     ],
     rows: ["#git-changes-mount .git-repo-section-header", "#git-changes-mount .git-file-path"],
+  },
+  {
+    name: "the branch switcher",
+    sizes: TWO,
+    setup: plantBranchSwitcher,
+    controls: [".git-branch-popover-go"],
+    rows: [
+      ".git-branch-popover-row",
+      ".git-branch-popover-filter",
+      ".git-branch-popover-create-input",
+    ],
   },
   {
     name: "the git page's pull requests",

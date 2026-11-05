@@ -371,6 +371,19 @@ describe("no popup text is below the mobile floor on a coarse pointer", () => {
     expect(coarse).toEqual(fine);
   });
 
+  it("keeps the context card's read-only rows at their mouse spacing on a finger", () => {
+    // Its label and value rows are not targets, so touch has nothing to space.
+    const card = mount(POPUPS.find((p) => p.cls === "pill-context-content") as Popup);
+    const row = card.querySelector<HTMLElement>(".pill-ctx-row");
+    expect(row, "the fixture must render a context row").not.toBeNull();
+    const box = (tier: "fine" | "coarse"): string => {
+      document.documentElement.dataset["pointer"] = tier;
+      const cs = getComputedStyle(row as HTMLElement);
+      return `${cs.paddingBlockStart} ${cs.paddingBlockEnd} ${String((row as HTMLElement).getBoundingClientRect().height)}`;
+    };
+    expect(box("coarse")).toBe(box("fine"));
+  });
+
   it("keeps a caption UNDER its row, so it cannot outsize what it labels", () => {
     // The two rungs collapsing onto one value would make a card's captions the same size as its
     // rows — which is the hierarchy the size split carries. Measured on the model card, where a
