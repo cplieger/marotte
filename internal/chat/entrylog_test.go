@@ -120,7 +120,7 @@ func TestEntryLog_AMissingLogIsAChatOfZeroTurns(t *testing.T) {
 	}
 	f.reopen()
 
-	window, err := f.log.window(20, "")
+	window, err := f.log.window(20, "", noByteBound)
 	if err != nil {
 		t.Fatalf("window: %v", err)
 	}
@@ -483,7 +483,7 @@ func TestEntryLog_WindowPagesByTurn(t *testing.T) {
 		turns = append(turns, turn)
 	}
 
-	newest, err := f.log.window(2, "")
+	newest, err := f.log.window(2, "", noByteBound)
 	if err != nil {
 		t.Fatalf("window: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestEntryLog_WindowPagesByTurn(t *testing.T) {
 		t.Errorf("the newest page holds turns %v, want the last two", got)
 	}
 
-	older, err := f.log.window(2, turns[2])
+	older, err := f.log.window(2, turns[2], noByteBound)
 	if err != nil {
 		t.Fatalf("window before: %v", err)
 	}
@@ -505,7 +505,7 @@ func TestEntryLog_WindowPagesByTurn(t *testing.T) {
 		t.Errorf("the ?before page holds turns %v, want the first two", got)
 	}
 
-	if _, err := f.log.window(2, "t-nosuchturn"); err == nil {
+	if _, err := f.log.window(2, "t-nosuchturn", noByteBound); err == nil {
 		t.Error("a window before an unknown turn reported success")
 	}
 }
@@ -521,7 +521,7 @@ func TestEntryLog_WindowSkipsAForeignTurnInsideItsRange(t *testing.T) {
 	f.closeTurn(third, marotte.TurnOutcomeCompleted)
 	f.closeTurn(second, marotte.TurnOutcomeCompleted)
 
-	window, err := f.log.window(1, third)
+	window, err := f.log.window(1, third, noByteBound)
 	if err != nil {
 		t.Fatalf("window: %v", err)
 	}
@@ -821,7 +821,7 @@ func TestEntryLog_ARewriteMissingATurnOpenIsRefused(t *testing.T) {
 	turn := f.prompt("one")
 	f.append(turn, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "p"})
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
-	merged, err := f.log.window(10, "")
+	merged, err := f.log.window(10, "", noByteBound)
 	if err != nil {
 		t.Fatalf("read the whole log: %v", err)
 	}
@@ -864,7 +864,7 @@ func TestEntryLog_RewriteMakesTurnsContiguous(t *testing.T) {
 	f.closeTurn(second, marotte.TurnOutcomeCompleted)
 	f.closeTurn(first, marotte.TurnOutcomeCompleted)
 
-	merged, err := f.log.window(10, "")
+	merged, err := f.log.window(10, "", noByteBound)
 	if err != nil {
 		t.Fatalf("read the whole log: %v", err)
 	}
@@ -872,7 +872,7 @@ func TestEntryLog_RewriteMakesTurnsContiguous(t *testing.T) {
 		t.Fatalf("rewrite: %v", err)
 	}
 
-	after, err := f.log.window(10, "")
+	after, err := f.log.window(10, "", noByteBound)
 	if err != nil {
 		t.Fatalf("read the rewritten log: %v", err)
 	}

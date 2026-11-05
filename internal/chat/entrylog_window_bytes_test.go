@@ -2,12 +2,16 @@ package chat
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
+
+// noByteBound is the window bound for a test about turn selection, not bytes.
+const noByteBound = math.MaxInt64
 
 // bulkyTurns writes n closed turns, each carrying one text entry of about size bytes, and returns their ids oldest
 // first.

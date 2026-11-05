@@ -283,8 +283,13 @@ type logPage struct {
 	Live        bool
 }
 
-// page reads the newest `turns` whole turns, or the `turns` below `before`, with everything the
-// transcript GET serves beside them. False for a chat with no header; a `before` the log does not
+// pageBytes bounds a page's log bytes, which bound its JSON from above (previewEntries only shrinks payloads).
+// 1 MiB keeps a page near the cost of the 11 to 545 KB pages (11 to 100 ms server, one short client task), where 20
+// tool-heavy turns reached 5.7 MB and a 178 to 343 ms client ingest.
+const pageBytes = 1 << 20
+
+// page reads the window (EntryLog.window) of at most `turns` whole turns and pageBytes of log, newest or below
+// `before`, with everything the transcript GET serves beside them. False for a chat with no header; a `before` the log does not
 // hold is an error the handler answers 400.
 // The registry (Live and the open tails) is read BEFORE the chat's lock: its writers take the store
 // lock inside their own, so the reverse order deadlocks. The stamps are read under the lock with
@@ -318,7 +323,7 @@ func (s *Store) page(ctx context.Context, chatID marotte.ChatID, turns int, befo
 	if err != nil {
 		return nil, false, err
 	}
-	win, err := l.window(turns, before)
+	win, err := l.window(turns, before, pageBytes)
 	if err != nil {
 		return nil, false, err
 	}

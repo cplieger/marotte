@@ -80,10 +80,10 @@ func TestRevert_SkipRuleTakesTheWindowAndSparesTheCarrier(t *testing.T) {
 		if _, err := turnRange(f.log, c, 0); !errors.Is(err, ErrTurnNotInLog) {
 			t.Errorf("%s: TurnRange(%q) = %v, want ErrTurnNotInLog", when, c, err)
 		}
-		if _, err := f.log.window(10, c); err == nil {
+		if _, err := f.log.window(10, c, noByteBound); err == nil {
 			t.Errorf("%s: Window(10, %q) returned no error, want the refusal the route renders as 400", when, c)
 		}
-		w, err := f.log.window(10, "")
+		w, err := f.log.window(10, "", noByteBound)
 		if err != nil {
 			t.Fatalf("%s: Window(10, \"\"): %v", when, err)
 		}
@@ -356,7 +356,7 @@ func TestRevert_ASecondRevertsRecordIsVisible(t *testing.T) {
 		if records != 2 {
 			t.Errorf("%s: the surviving view holds %d turn_revert entries, want both records visible", when, records)
 		}
-		w, err := f.log.window(10, "")
+		w, err := f.log.window(10, "", noByteBound)
 		if err != nil {
 			t.Fatalf("%s: Window(10, \"\"): %v", when, err)
 		}
@@ -452,7 +452,7 @@ func TestRevert_BetweenTurnsAppendLandsInASurvivingTurn(t *testing.T) {
 	if !found(mustAll(t, f.log)) {
 		t.Error("All() does not hold the between-turns entry: it landed where no reader looks")
 	}
-	w, err := f.log.window(10, "")
+	w, err := f.log.window(10, "", noByteBound)
 	if err != nil {
 		t.Fatalf("Window(10, \"\"): %v", err)
 	}
@@ -534,7 +534,7 @@ func TestRevert_WindowReadsOnePreadPerRange(t *testing.T) {
 	}
 	t.Cleanup(func() { readEntries = restore })
 
-	w, err := f.log.window(10, "")
+	w, err := f.log.window(10, "", noByteBound)
 	if err != nil {
 		t.Fatalf("Window(10, \"\"): %v", err)
 	}
