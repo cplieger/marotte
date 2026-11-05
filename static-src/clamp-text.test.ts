@@ -26,7 +26,7 @@ const transcriptEl = document.createElement("div");
 transcriptEl.id = "messages";
 scrollerEl.appendChild(transcriptEl);
 
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { mountChatView, disposeChatView } = await import("./messages.js");
 
 function sealed(turnID: string, seq: number, kind: Entry["kind"], payload: unknown): Entry {
@@ -70,6 +70,7 @@ function paintTurns(chat: string, turnRows: Entry[][]): void {
     },
   ]);
   setActive(chat);
+  setPainted(chat);
   bumpMessages(chat, "load");
 }
 

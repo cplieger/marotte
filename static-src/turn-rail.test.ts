@@ -142,7 +142,7 @@ import {
 import type { TurnSummary } from "./rail-merge.js";
 import { apiGet } from "./api-client.js";
 import { loadOlderTurns } from "./store-load.js";
-import { setSessions, setActive, get } from "./store.js";
+import { setSessions, setActive, setPainted, get } from "./store.js";
 import type { Entry, Session, TurnState } from "./types.js";
 import { KEY_ATTR } from "@cplieger/ui";
 import type { TurnOutcome } from "./turns.js";
@@ -916,6 +916,7 @@ describe("the newest turn needs no fetch", () => {
       },
     ]);
     setActive("c-live");
+    setPainted("c-live");
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
 
     await loadTurnRail("c-live");
@@ -1086,6 +1087,7 @@ describe("which card a row jumps to", () => {
     await loadTurnRail("c-page-in");
     setSessions([paged("c-page-in", ["m8"], true)]);
     setActive("c-page-in");
+    setPainted("c-page-in");
     residentCard(1, "m8");
 
     let pendingWhileWaiting = false;
@@ -1124,6 +1126,7 @@ describe("which card a row jumps to", () => {
     await loadTurnRail("c-gone");
     setSessions([paged("c-gone", ["m2"], false)]);
     setActive("c-gone");
+    setPainted("c-gone");
     residentCard(1, "m2");
 
     marker(1).click();
@@ -1146,6 +1149,7 @@ describe("which card a row jumps to", () => {
     await loadTurnRail("c-overlap");
     setSessions([paged("c-overlap", ["m2"], true)]);
     setActive("c-overlap");
+    setPainted("c-overlap");
     const target = residentCard(2, "m2");
 
     // The FIRST jump's turn is off the resident window, so it holds inside the paging
@@ -1200,6 +1204,7 @@ describe("which card a row jumps to", () => {
     await loadTurnRail("c-double-click");
     setSessions([paged("c-double-click", ["m2"], true)]);
     setActive("c-double-click");
+    setPainted("c-double-click");
     residentCard(2, "m2");
     vi.mocked(loadOlderTurns).mockImplementation(async () => {
       const s = get("c-double-click");
@@ -1766,6 +1771,7 @@ describe("the mark is sticky", () => {
       },
     ]);
     setActive("c-frag");
+    setPainted("c-frag");
     vi.mocked(apiGet).mockResolvedValue({ turns: turns(6) });
     await loadTurnRail("c-frag");
     setResidentTurns([card("a5tail", 0), card("m6", 400)]);
@@ -2016,6 +2022,7 @@ describe("moving through the map", () => {
       },
     ]);
     setActive("c-busy");
+    setPainted("c-busy");
     // Every call's reading: a jump an earlier case left paging can call in after this one settles.
     const busyWhileWaiting: (string | null)[] = [];
     vi.mocked(loadOlderTurns).mockImplementation(async () => {

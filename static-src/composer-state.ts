@@ -112,7 +112,7 @@ export function restoreComposerState(chatID: string): void {
 
 /**
  * Point the composer at `chatID`, parking what it held first: save-and-restore as one call for sites that move the
- * active chat without `activateChatView` (`createSession`, `openTangentChat`, `removeChat`). Without it a keystroke
+ * active chat without `selectChat` (`createSession`, `openTangentChat`, `removeChat`). Without it a keystroke
  * in that window is filed under the chat the user just left. Idempotent, so it can run ahead of the activation. Text
  * typed with no chat open (it lives only in the box) becomes `chatID`'s draft unless that chat already has one.
  */

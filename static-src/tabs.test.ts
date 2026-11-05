@@ -3791,9 +3791,9 @@ describe("routes follow the activation", () => {
     await openTab({ kind: "settings" });
     vi.mocked(pushRoute).mockClear();
 
-    setSettingsTab("account");
+    setSettingsTab("tools");
 
-    expect(vi.mocked(pushRoute).mock.calls).toEqual([[{ kind: "settings", tab: "account" }]]);
+    expect(vi.mocked(pushRoute).mock.calls).toEqual([[{ kind: "settings", tab: "tools" }]]);
   });
 
   it("a pending switch pushes no route until its activation runs, then pushes it once", async () => {
@@ -3816,8 +3816,8 @@ describe("routes follow the activation", () => {
     tabsModule.flushActivationForTest();
     vi.mocked(pushRoute).mockClear();
 
-    setSettingsTab("account");
+    setSettingsTab("tools");
 
-    expect(vi.mocked(pushRoute).mock.calls).toEqual([[{ kind: "settings", tab: "account" }]]);
+    expect(vi.mocked(pushRoute).mock.calls).toEqual([[{ kind: "settings", tab: "tools" }]]);
   });
 });

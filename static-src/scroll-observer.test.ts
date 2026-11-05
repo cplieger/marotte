@@ -122,7 +122,7 @@ rootStyle.setProperty = (name: string, value: string | null, priority?: string):
   nativeSetProperty(name, value, priority);
 };
 
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { mountChatView } = await import("./messages.js");
 const scroll = await import("./scroll.js");
 const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
@@ -199,6 +199,7 @@ function paint(): void {
     },
   ]);
   setActive(id);
+  setPainted(id);
   bumpMessages(id, "load");
 }
 

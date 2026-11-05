@@ -21,8 +21,8 @@ let active = { id: "c1", name: "chat" };
 vi.mock("./store.js", async () => ({
   // The canonical mock, so an unreached name cannot fail the file at link time.
   ...(await import("./__test-helpers__/store-mock.js")).storeMock,
-  getActive: () => active,
-  getActiveId: () => active.id,
+  getPainted: () => active,
+  getPaintedId: () => active.id,
   get: getSession,
 }));
 vi.mock("./notice-subject.js", () => ({ chatNotice }));

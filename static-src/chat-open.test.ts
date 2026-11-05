@@ -89,13 +89,13 @@ vi.mock("./actions/chat.js", () => ({
 
 import * as store from "./store.js";
 import * as chat from "./chat.js";
-import { onBus } from "./bus.js";
+import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import { coverUp, held, mountShell } from "./__test-helpers__/tab-switch-mocks.js";
 import type { ResumableSession } from "./types.js";
 
 // Registered once, at chat.ts's import.
-const busHandler = vi.mocked(onBus).mock.calls.find(([name]) => name === "activate-chat")?.[1] as
+const busHandler = vi.mocked(onBus).mock.calls.find(([name]) => name === BUS_ACTIVATE_CHAT)?.[1] as
   ((p: { chatID: string; then?: () => void }) => void) | undefined;
 
 function setPainted(id: string): void {

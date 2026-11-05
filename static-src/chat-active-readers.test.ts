@@ -94,27 +94,21 @@ import * as store from "./store.js";
 import * as chat from "./chat.js";
 import { addAttachment } from "./attachments.js";
 import { makeSession } from "./__test-helpers__/model.js";
-
-// The seams this file needs, read off the namespaces so a missing one fails its own case only.
-function setPainted(id: string): void {
-  const fn = (store as unknown as { setPainted?: (id: string) => void }).setPainted;
-  expect(typeof fn, "store.setPainted").toBe("function");
-  fn?.(id);
-}
-function cancelActiveTurn(): void {
-  const fn = (chat as unknown as { cancelActiveTurn?: () => void }).cancelActiveTurn;
-  expect(typeof fn, "chat.cancelActiveTurn").toBe("function");
-  fn?.();
-}
+import { runAt, turnEntry } from "./__test-helpers__/run-order.js";
+import type { Session } from "./types.js";
 
 /** A switch from A to B between its gesture and its activation: B active, A still painted. */
 function inTheGap(busy: { a?: boolean; b?: boolean } = {}): void {
+  const running = (id: string): Partial<Session> => ({
+    thinking: true,
+    run: runAt(1, [turnEntry(`t-${id}`)], { cancel: `t-${id}` }),
+  });
   store.setSessions([
-    makeSession({ id: "a", name: "a", thinking: busy.a === true }),
-    makeSession({ id: "b", name: "b", thinking: busy.b === true }),
+    makeSession({ id: "a", name: "a", ...(busy.a === true ? running("a") : {}) }),
+    makeSession({ id: "b", name: "b", ...(busy.b === true ? running("b") : {}) }),
   ]);
   store.setActive("a");
-  setPainted("a");
+  store.setPainted("a");
   store.setActive("b");
 }
 
@@ -132,15 +126,15 @@ describe("readers in a switch's gap act on the chat the strip shows", () => {
 
   it("cancels nothing when the target is idle and the outgoing chat is busy", () => {
     inTheGap({ a: true });
-    cancelActiveTurn();
+    chat.cancelActiveTurn();
     expect(cancelDispatch).not.toHaveBeenCalled();
   });
 
   it("cancels the target's turn when the target is busy", () => {
     inTheGap({ b: true });
-    cancelActiveTurn();
+    chat.cancelActiveTurn();
     expect(cancelDispatch).toHaveBeenCalledTimes(1);
-    expect(cancelDispatch).toHaveBeenCalledWith({ chatID: "b" });
+    expect(cancelDispatch).toHaveBeenCalledWith({ chatID: "b", target: "t-b" });
   });
 
   it("attaches to the target chat without switching back to the painted one", async () => {

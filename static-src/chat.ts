@@ -7,6 +7,7 @@ import {
   get,
   watchSession,
   setActive,
+  setPainted,
   setModel,
   upsertHeader,
   activeSession,
@@ -69,13 +70,14 @@ import { $ } from "./dom.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { info } from "./toast.js";
 import { chatNotice, named, noticeSubject } from "./notice-subject.js";
-import { createChat, forkChat, setMode, type CreatedChat } from "./actions/chat.js";
+import { cancelTurn, createChat, forkChat, setMode, type CreatedChat } from "./actions/chat.js";
 import { newOpID } from "./transport.js";
 
 // --- Bus: activate chat from other modules without importing chat.ts ---
 
 onBus(BUS_ACTIVATE_CHAT, (p) => {
-  activateChatView(p.chatID);
+  selectChat(p.chatID);
+  showChatView(p.chatID);
   refreshChatView(p.chatID);
   if (p.then !== undefined) {
     p.then();
@@ -126,7 +128,7 @@ export function closeChatTab(id: string): void {
   dropDecisions(id);
   // A withheld agent-finished cue is keyed by chat id too.
   forgetDeferredCue(id);
-  // Before removeChat: the store reassigning the active chat repaints synchronously,
+  // Before removeChat: the store reassigning the painted chat repaints synchronously,
   // and a dead view still in the registry would be parked by that paint.
   disposeChatView(id);
   // The store row, whatever retention says. Under retention the record survives
@@ -142,7 +144,7 @@ export function closeChatTab(id: string): void {
 // --- Activation generation ---
 
 /**
- * Bumped by every activateChatView call, so a superseded activation of the SAME chat cannot
+ * Bumped by every showChatView call, so a superseded activation of the SAME chat cannot
  * paint its retry box over a loaded transcript (`getActiveId() !== id` catches other chats).
  */
 let activationGen = 0;
@@ -165,7 +167,8 @@ function paintChatLoadError(message: string, id: string): void {
   const box = el("div", { className: "load-error" }, el("span", {}, message));
   const btn = el("button", { type: "button", className: "btn-small" }, "Retry");
   btn.addEventListener("click", () => {
-    activateChatView(id);
+    selectChat(id);
+    showChatView(id);
     refreshChatView(id); // the fetch the dispatcher would have supplied
   });
   box.appendChild(btn);
@@ -180,24 +183,39 @@ async function healMissingChat(id: string, gen: number): Promise<void> {
   if (getActiveId() !== id || activationGen !== gen || get(id) === undefined) {
     return;
   }
-  activateChatView(id);
+  selectChat(id);
+  showChatView(id);
   refreshChatView(id);
 }
 
 /**
- * Point every per-chat view at `id` (a chat tab's `onShow`). Fetches NOTHING: `refreshRow`
- * calls `refreshChatView` right after.
+ * Put the reader on chat `id`: the store's active chat and the composer move to it. Reads no
+ * layout and paints nothing; `showChatView` mounts its transcript.
  */
-export function activateChatView(id: string): void {
+export function selectChat(id: string): void {
   // The save MUST precede setActive: it reads the outgoing chat's id, which nothing
   // can recover afterwards.
   saveComposerState();
+  setActive(id);
+  restoreComposerState(id);
+  const session = get(id);
+  if (session?.usage.context_size === 0 && session.model !== "") {
+    // setModel recomputes the derived usage.context_size; mutating `session.usage`
+    // directly writes to a reference subscribers never see.
+    setModel(id, session.model);
+  }
+}
+
+/**
+ * Mount chat `id`'s transcript and point every per-chat view at it (a chat tab's `onShow`).
+ * Fetches NOTHING: `refreshRow` calls `refreshChatView` right after.
+ */
+export function showChatView(id: string): void {
   const gen = ++activationGen;
   // Re-keyed before any branch can skip it, so no path inherits the previous chat's markers;
   // the refresh fetches the session-wide rail itself.
   pointTurnRail(id);
-  setActive(id);
-  restoreComposerState(id);
+  setPainted(id);
   ensureBound();
   clearChatLoadError();
   const session = get(id);
@@ -209,12 +227,6 @@ export function activateChatView(id: string): void {
     return;
   }
 
-  if (session.usage.context_size === 0 && session.model !== "") {
-    // setModel recomputes the derived usage.context_size; mutating `session.usage`
-    // directly writes to a reference subscribers never see.
-    setModel(id, session.model);
-  }
-
   // The view furniture stays ABOVE the arms: hoisting would add an uncoalesced
   // `/api/chats/{id}/turns` to every stale activation.
   if (!isEmptyChat(session) && !transcriptStale(session)) {
@@ -224,7 +236,7 @@ export function activateChatView(id: string): void {
 }
 
 /**
- * Bring the chat's DATA up to date: `refreshRow` calls this after `activateChatView`, and
+ * Bring the chat's DATA up to date: `refreshRow` calls this after `showChatView`, and
  * that hook's four direct callers call it themselves.
  */
 export function refreshChatView(id: string): void {
@@ -342,6 +354,16 @@ export function sendPrompt(text: string): Promise<SubmitResult> | undefined {
     return undefined;
   }
   return submitPrompt(chatID, text);
+}
+
+/** The composer's Esc: cancel what the active chat's run names (`run.cancel`), by id, so a stale press stops nothing else. */
+export function cancelActiveTurn(): void {
+  const chatID = getActiveId();
+  const target = chatID === "" ? undefined : get(chatID)?.run?.cancel;
+  if (target === undefined || target === "") {
+    return;
+  }
+  void cancelTurn.dispatch({ chatID, target });
 }
 
 const NEW_CHAT_NAME = "New conversation";
@@ -586,7 +608,8 @@ export async function openPreviousSession(
     // The user moved to another tab while the open was in flight, so the view stays theirs.
     return "opened";
   }
-  activateChatView(chatID);
+  selectChat(chatID);
+  showChatView(chatID);
   refreshChatView(chatID);
   return "opened";
 }

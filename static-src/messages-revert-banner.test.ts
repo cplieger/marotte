@@ -66,6 +66,7 @@ async function paint(chatID: string, entries: Entry[]): Promise<HTMLElement> {
   s.turn_count = 1;
   store.setSessions([s]);
   store.setActive(chatID);
+  store.setPainted(chatID);
   store.bumpMessages(chatID, "load");
   await Promise.resolve();
   const view = messages.transcriptViewFor(chatID);
@@ -83,6 +84,7 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
 });
 
 describe("rewinding to the same turn twice", () => {

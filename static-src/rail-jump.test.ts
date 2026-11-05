@@ -277,6 +277,7 @@ async function residentChat(n: number): Promise<void> {
 beforeEach(async () => {
   rail.resetTurnRail();
   store.setActive("");
+  store.setPainted("");
   store.setSessions([]);
   messagesEl.replaceChildren();
   wrap.scrollTop = 0;
@@ -362,6 +363,7 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
     await rail.loadTurnRail(chat);
     store.setSessions([session(chat, [4, 5, 6], true, 6)]);
     store.setActive(chat);
+    store.setPainted(chat);
     for (const n of [4, 5, 6]) {
       card(n, 200);
     }

@@ -129,6 +129,7 @@ function seed(...sessions: Session[]): void {
   const first = sessions[0];
   if (first !== undefined) {
     store.setActive(first.id);
+    store.setPainted(first.id);
     store.bumpMessages(first.id, "load");
   }
 }
@@ -181,6 +182,7 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
 });
 
 describe(

@@ -67,7 +67,7 @@ vi.mock("./api-client.js", async () => ({
 }));
 
 const { mountChatView, mountTurnBody, activeTranscriptView } = await import("./messages.js");
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { setTurnOpen, openForSearch, clearSearchOpened, resetFoldState } =
   await import("./fold-state.js");
 const { OVERSCAN_ENTRIES, RESIDENT_ENTRIES, RESIDENT_TOOL_CALLS } =
@@ -243,6 +243,7 @@ function activate(chatID: string, turnEntries: readonly (readonly Entry[])[], li
     },
   ]);
   setActive(chatID);
+  setPainted(chatID);
   // A same-id re-activation writes no signal the paint effect tracks; the bump
   // is what store-load.ts issues after every page mutation.
   bumpMessages(chatID);
@@ -343,6 +344,7 @@ beforeEach(() => {
   // between cases.
   setSessions([] as never);
   setActive("");
+  setPainted("");
 });
 
 // --- What residency is measured in --------------------------------------------

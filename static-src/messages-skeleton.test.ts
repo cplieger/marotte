@@ -23,7 +23,7 @@ vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m
 
 const { mountChatView, activeTranscriptView, teardownAll } = await import("./messages.js");
 const { CHAT_SKELETON_ID, chatSkeleton } = await import("./skeleton.js");
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 
 const messagesEl = document.getElementById("messages") as HTMLElement;
 
@@ -54,6 +54,7 @@ function activate(turnIDs: readonly string[]): void {
     },
   ] as never);
   setActive("c-1");
+  setPainted("c-1");
 }
 
 /** The cheapest drawn turn: an agent-initiated `turn_open`, one text entry, its close. */
@@ -73,7 +74,7 @@ beforeEach(() => {
   // painting into a detached view.
   teardownAll();
   activate([]);
-  // The active id survives across tests, so setActive alone is a no-op after the first.
+  // The painted id survives across tests, so setPainted alone is a no-op after the first.
   bumpMessages("c-1");
 });
 

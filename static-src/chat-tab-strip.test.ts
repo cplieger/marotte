@@ -115,6 +115,7 @@ vi.mock("./actions/chat.js", () => ({
   setMode: { dispatch: vi.fn() },
   forkChat: { dispatch: vi.fn() },
   createChat: { dispatch: vi.fn() },
+  cancelTurn: { dispatch: vi.fn() },
 }));
 
 import { installStoreSubscribers } from "./chat.js";

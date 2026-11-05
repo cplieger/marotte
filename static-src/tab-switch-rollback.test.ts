@@ -42,7 +42,7 @@ vi.mock("./api-client.js", () =>
 );
 
 import { ActionError } from "@cplieger/ui/actions";
-import { tabIdFor, getActiveTabId, hasTab, activateTab } from "./tabs.js";
+import { getActiveTabId, hasTab, activateTab } from "./tabs.js";
 import { removeChat } from "./store.js";
 import { tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
 import { until } from "./__test-helpers__/until.js";

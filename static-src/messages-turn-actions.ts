@@ -11,7 +11,7 @@ import { entryRenders, turnFolds } from "./block-window.js";
 import { MessageRun } from "./entry-ids.js";
 import { ICON_COPY, ICON_COPY_MD, ICON_LINK, ICON_MORE, ICON_TANGENT } from "./icons.js";
 import { blockquote } from "./message-quote.js";
-import { get, getActiveId } from "./store.js";
+import { get, getPaintedId } from "./store.js";
 import { chatNotice } from "./notice-subject.js";
 import { copyClipboard } from "./actions/messages.js";
 import { buildPath } from "./route-path.js";
@@ -183,7 +183,7 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
     );
     group.appendChild(
       makeBtn(ICON_LINK, "Copy link to this turn", (btn, fromMenu) => {
-        const chatID = getActiveId();
+        const chatID = getPaintedId();
         if (chatID !== "") {
           copyAndAnimate(btn, turnLink(chatID, current().n), fromMenu);
         }
@@ -466,7 +466,7 @@ export function footerActionsSlot(footer: HTMLElement): HTMLElement {
  * a compaction since the card's last paint leaves it nothing KAS can fork from. Files on disk stay as they are.
  */
 function branchFrom(turnID: string): void {
-  const chatID = getActiveId();
+  const chatID = getPaintedId();
   const session = get(chatID);
   if (session === undefined) {
     return;

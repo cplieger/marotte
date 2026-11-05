@@ -97,6 +97,7 @@ function stage(chatID: string, turnID: string, close?: Record<string, unknown>):
   s.turn_order.push(turnID);
   store.setSessions([s]);
   store.setActive(chatID);
+  store.setPainted(chatID);
 }
 
 function close(chatID: string, turnID: string, payload: Record<string, unknown>): void {
@@ -104,7 +105,7 @@ function close(chatID: string, turnID: string, payload: Record<string, unknown>)
 }
 
 let seq = 0;
-/** A fresh chat id: `setActive` is a no-op for the active id, so a reused one paints nothing. */
+/** A fresh chat id: `setPainted` is a no-op for the painted id, so a reused one paints nothing. */
 function nextChat(): string {
   seq += 1;
   return `cn${String(seq)}`;

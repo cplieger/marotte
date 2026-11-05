@@ -41,12 +41,13 @@ const {
 const { runCardOwners, setRunCardOwners, sliceTurn } = await import("./block-window.js");
 const { toolResultID } = await import("./entry-ids.js");
 const { clearAllEntrySigs, ensureToolCallSig, toolCallSigs } = await import("./store-signals.js");
-const { setActive } = await import("./store.js");
+const { setActive, setPainted } = await import("./store.js");
 const { tableObservationCount } = await import("./table-scroll.js");
 
 /** Part of the per-tool signal key, and the store's active chat: the live-anchor fallback scans only that chat. */
 const CHAT_ID = "c-blocks";
 setActive(CHAT_ID);
+setPainted(CHAT_ID);
 
 /** Reports of a changed follow anchor, which the scroller answers by re-reading its follow position. */
 let liveAnchorChanges = 0;

@@ -169,6 +169,7 @@ async function paint(
     }),
   ]);
   store.setActive(chatID);
+  store.setPainted(chatID);
   store.bumpMessages(chatID, "load");
   await Promise.resolve();
   const el = messages.transcriptViewFor(chatID);
@@ -193,6 +194,7 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
   openRunView.mockReset();
   names.clear();
   reads.length = 0;

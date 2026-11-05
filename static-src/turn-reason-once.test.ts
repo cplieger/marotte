@@ -35,7 +35,7 @@ vi.mock("./api-client.js", async () => ({
 }));
 
 const { mountChatView, activeTranscriptView } = await import("./messages.js");
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
 
 mountChatView();
@@ -161,6 +161,7 @@ async function mount(chatID: string, turnRows: Entry[][]): Promise<HTMLElement[]
     },
   ]);
   setActive(chatID);
+  setPainted(chatID);
   bumpMessages(chatID, "load");
   await until(() => cards().length === order.length, `${String(order.length)} cards for ${chatID}`);
   return cards();

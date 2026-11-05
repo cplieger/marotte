@@ -53,6 +53,7 @@ const {
 });
 
 let activeId = "";
+let paintedId = "";
 
 const messageVersions = new Map<string, { value: number }>();
 
@@ -88,6 +89,11 @@ vi.mock("./store.js", async () => {
     setActive: vi.fn((id: string) => {
       activeId = id;
     }),
+    getPaintedId: () => paintedId,
+    setPainted: vi.fn((id: string) => {
+      paintedId = id;
+    }),
+    isBusy: vi.fn(() => false),
     upsertHeader: vi.fn(),
     // The real predicate, transcribed: the model-picker branch keys on it, so a
     // stub returning a constant would send every fixture down one arm.
@@ -159,7 +165,7 @@ vi.mock("./picker.js", () => ({ showModelPicker: vi.fn(), hideModelPicker: vi.fn
 vi.mock("./messages.js", () => ({
   mountChatView: vi.fn(),
   setLoadMore: vi.fn(),
-  // activateChatView's success branch calls it, so it must exist.
+  // showChatView's success branch calls it, so it must exist.
   loadTurnRail: vi.fn(),
   pointTurnRail: vi.fn(),
   // No view here, so callers fall back to $.messages; a tab close disposes the chat's view.
@@ -220,11 +226,13 @@ vi.mock("./actions/chat.js", () => ({
   setMode: { dispatch: setModeDispatch },
   forkChat: { dispatch: forkDispatch },
   createChat: { dispatch: createDispatch },
+  cancelTurn: { dispatch: vi.fn() },
 }));
 
 import * as chatModule from "./chat.js";
 import {
-  activateChatView,
+  selectChat,
+  showChatView,
   refreshChatView,
   closeChatTab,
   createPlannerSession,
@@ -248,7 +256,7 @@ import {
 } from "./tabs.js";
 import { addAttachment, addAttachmentTo, unownedAttachmentPaths } from "./attachments.js";
 import { dropDecisions } from "./decision-dock.js";
-import { get, watchSession, removeChat, setActive, upsertHeader } from "./store.js";
+import { get, watchSession, removeChat, setActive, setPainted, upsertHeader } from "./store.js";
 import { transcriptStale } from "./store.js";
 import { loadList, loadMessages, loadOlderTurns, confirmChatExists } from "./store-load.js";
 import { loadTurnRail, pointTurnRail, setLoadMore, disposeChatView } from "./messages.js";
@@ -259,6 +267,12 @@ import { skeletonTiming } from "@cplieger/ui/skeleton";
 // No `closeChat`: a chat-tab close's process teardown is the server's `close_tab`.
 import { deleteChat } from "./actions/chat.js";
 
+/** A chat tab's `onShow`, as `app.ts` registers it. */
+function showChat(id: string): void {
+  selectChat(id);
+  showChatView(id);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(get).mockReturnValue(undefined);
@@ -266,6 +280,7 @@ beforeEach(() => {
   vi.mocked(loadMessages).mockResolvedValue(true);
   vi.mocked(transcriptStale).mockReturnValue(true);
   activeId = "";
+  paintedId = "";
 });
 
 describe("createPlannerSession", () => {
@@ -545,7 +560,7 @@ describe("the draft of a chat with no turns", () => {
   }
 
   /** Activate through the History row path, the one exported caller that reaches
-   *  activateChatView for a chat the store already holds. */
+   *  showChatView for a chat the store already holds. */
   function activate(): void {
     openPreviousSession({ chat_id: "c-empty", session_id: "s1", title: "t", updated_at: 1 });
   }
@@ -664,14 +679,14 @@ describe("the scroller on a chat switch", () => {
   }
 
   it("re-keys the rail before the transcript repaints", async () => {
-    // setActive repaints synchronously (the multiplexer swaps views); activation still owns
+    // setPainted repaints synchronously (the multiplexer swaps views); activation still owns
     // the rail, pointed before that frame.
     vi.mocked(get).mockReturnValue(chat([]));
     await activate();
     const rail = vi.mocked(pointTurnRail).mock.invocationCallOrder[0] ?? 0;
-    const active = vi.mocked(setActive).mock.invocationCallOrder[0] ?? 0;
+    const painted = vi.mocked(setPainted).mock.invocationCallOrder[0] ?? 0;
     expect(rail).toBeGreaterThan(0);
-    expect(rail).toBeLessThan(active);
+    expect(rail).toBeLessThan(painted);
   });
 
   it("points the rail on a chat that has messages, without waiting for the fetch", async () => {
@@ -683,10 +698,10 @@ describe("the scroller on a chat switch", () => {
   });
 
   it("points the rail for a chat the store holds no row for", () => {
-    // The re-point sits above the missing-row early return. Called by NAME: `activateChatView`
-    // IS the factory's registered hook.
+    // The re-point sits above the missing-row early return. `showChat` is the hook app.ts
+    // registers.
     vi.mocked(get).mockReturnValue(undefined);
-    activateChatView("c-1");
+    showChat("c-1");
     expect(pointTurnRail).toHaveBeenCalledWith("c-1");
   });
 });
@@ -708,7 +723,7 @@ describe("the transcript's loading skeleton", () => {
   // The pair the dispatcher runs: the activation points the views (and is what sets
   // the store's active chat, which the arm's own gate reads), the refresh fetches.
   async function activate(): Promise<void> {
-    activateChatView("c-1");
+    showChat("c-1");
     refreshChatView("c-1");
     await vi.waitFor(() => {
       expect(loadMessages).toHaveBeenCalledWith("c-1");
@@ -1007,7 +1022,7 @@ describe("a tab whose chat this device's store does not hold", () => {
     vi.mocked(get).mockReturnValue(undefined);
     vi.mocked(loadList).mockResolvedValue(false);
 
-    activateChatView("c-missing");
+    showChat("c-missing");
 
     expect(messagesEl.textContent).toContain("This conversation is not loaded yet.");
     expect(messagesEl.querySelector("button")?.textContent).toBe("Retry");
@@ -1015,10 +1030,14 @@ describe("a tab whose chat this device's store does not hold", () => {
 
   it("re-reads the chat list once and activates the chat when it arrives", async () => {
     // Absent on the first activation, present after the re-read.
-    vi.mocked(get).mockReturnValueOnce(undefined).mockReturnValue(loadedChat());
-    vi.mocked(loadList).mockResolvedValue(true);
+    let listed = false;
+    vi.mocked(get).mockImplementation(() => (listed ? loadedChat() : undefined));
+    vi.mocked(loadList).mockImplementation(() => {
+      listed = true;
+      return Promise.resolve(true);
+    });
 
-    activateChatView("c-missing");
+    showChat("c-missing");
 
     await vi.waitFor(() => {
       expect(loadMessages).toHaveBeenCalledWith("c-missing");
@@ -1031,7 +1050,7 @@ describe("a tab whose chat this device's store does not hold", () => {
     vi.mocked(get).mockReturnValue(undefined);
     vi.mocked(loadList).mockResolvedValue(true);
 
-    activateChatView("c-missing");
+    showChat("c-missing");
 
     await vi.waitFor(() => {
       expect(loadList).toHaveBeenCalledTimes(1);
@@ -1047,8 +1066,8 @@ describe("a tab whose chat this device's store does not hold", () => {
     vi.mocked(get).mockReturnValue(undefined);
     vi.mocked(loadList).mockResolvedValue(false);
 
-    activateChatView("c-missing");
-    activateChatView("c-missing");
+    showChat("c-missing");
+    showChat("c-missing");
 
     expect(messagesEl.querySelectorAll(".load-error")).toHaveLength(1);
   });
@@ -1140,7 +1159,7 @@ describe("restore: opening a closed conversation from History", () => {
     expect(vi.mocked(info)).toHaveBeenCalledWith(
       "Yesterday's work: That conversation is gone. It was ephemeral because retention is off.",
     );
-    // activateChatView never ran: no rail pointing, no fetch.
+    // showChatView never ran: no rail pointing, no fetch.
     expect(pointTurnRail).not.toHaveBeenCalled();
     expect(loadMessages).not.toHaveBeenCalled();
   });
@@ -1163,7 +1182,7 @@ describe("restore: opening a closed conversation from History", () => {
 // load; fresh means no message fetch, re-wired furniture, and the rail left to its own gate
 // (turn-rail.test.ts).
 
-describe("activateChatView routes on the staleness verdict", () => {
+describe("showChatView routes on the staleness verdict", () => {
   function loadedChat(id: string): never {
     return {
       id,
@@ -1194,7 +1213,7 @@ describe("activateChatView routes on the staleness verdict", () => {
     vi.mocked(get).mockReturnValue(loadedChat("c-fresh"));
     vi.mocked(transcriptStale).mockReturnValue(false);
 
-    activateChatView("c-fresh");
+    showChat("c-fresh");
 
     expect(loadMessages).not.toHaveBeenCalled();
     // The load-more hook is activation's, not the fetch's.
@@ -1209,7 +1228,7 @@ describe("activateChatView routes on the staleness verdict", () => {
     vi.mocked(get).mockReturnValue(loadedChat("c-whole"));
     vi.mocked(transcriptStale).mockReturnValue(false);
 
-    activateChatView("c-whole");
+    showChat("c-whole");
 
     expect(setLoadMore).toHaveBeenCalledWith(null, false);
   });
@@ -1228,7 +1247,7 @@ describe("activateChatView routes on the staleness verdict", () => {
     } as never);
     vi.mocked(transcriptStale).mockReturnValue(false);
 
-    activateChatView("c-paged");
+    showChat("c-paged");
 
     expect(setLoadMore).toHaveBeenCalledWith(expect.any(Function), true);
   });
@@ -1249,7 +1268,7 @@ describe("activateChatView routes on the staleness verdict", () => {
     vi.mocked(get).mockReturnValue(session as never);
     vi.mocked(transcriptStale).mockReturnValue(false);
     activeId = "c-paged";
-    activateChatView("c-paged");
+    showChat("c-paged");
     expect(setLoadMore).toHaveBeenLastCalledWith(expect.any(Function), true);
 
     session.has_more = false;
@@ -1273,7 +1292,7 @@ describe("activateChatView routes on the staleness verdict", () => {
     vi.mocked(transcriptStale).mockReturnValue(false);
     vi.mocked(loadOlderTurns).mockResolvedValue(true);
     activeId = "c-paged";
-    activateChatView("c-paged");
+    showChat("c-paged");
 
     const fetchOlder = vi.mocked(setLoadMore).mock.lastCall?.[0];
     fetchOlder?.();
@@ -1285,7 +1304,7 @@ describe("activateChatView routes on the staleness verdict", () => {
     vi.mocked(get).mockReturnValue(loadedChat("c-stale"));
     vi.mocked(transcriptStale).mockReturnValue(true);
 
-    activateChatView("c-stale");
+    showChat("c-stale");
     refreshChatView("c-stale");
 
     expect(loadMessages).toHaveBeenCalledWith("c-stale");
@@ -1301,7 +1320,7 @@ describe("activateChatView routes on the staleness verdict", () => {
     vi.mocked(get).mockReturnValue(emptyChat("c-empty-fresh"));
     vi.mocked(transcriptStale).mockReturnValue(false);
 
-    activateChatView("c-empty-fresh");
+    showChat("c-empty-fresh");
 
     expect(loadMessages).not.toHaveBeenCalled();
     expect(loadTurnRail).not.toHaveBeenCalled();
@@ -1333,12 +1352,12 @@ describe("activateChatView routes on the staleness verdict", () => {
     vi.mocked(get).mockReturnValue(loadedChat("c-gap"));
     vi.mocked(transcriptStale).mockReturnValue(false);
 
-    activateChatView("c-gap");
+    showChat("c-gap");
     refreshChatView("c-gap");
     expect(loadMessages).not.toHaveBeenCalled();
 
     vi.mocked(transcriptStale).mockReturnValue(true);
-    activateChatView("c-gap");
+    showChat("c-gap");
     refreshChatView("c-gap");
 
     expect(loadMessages).toHaveBeenCalledTimes(1);
@@ -1349,7 +1368,7 @@ describe("activateChatView routes on the staleness verdict", () => {
     vi.mocked(get).mockReturnValue(loadedChat("c-one-rail"));
     vi.mocked(transcriptStale).mockReturnValue(true);
 
-    activateChatView("c-one-rail");
+    showChat("c-one-rail");
     refreshChatView("c-one-rail");
     await vi.mocked(loadMessages).mock.results[0]?.value;
 
@@ -1373,7 +1392,7 @@ describe("activateChatView routes on the staleness verdict", () => {
     } as never);
     vi.mocked(transcriptStale).mockReturnValue(true);
 
-    activateChatView("c-other");
+    showChat("c-other");
     refreshChatView("c-bg");
 
     expect(loadMessages).toHaveBeenCalledWith("c-bg");
@@ -1415,7 +1434,7 @@ describe("the placeholder's own refusal, against the real container", () => {
     vi.mocked(transcriptStale).mockReturnValue(true);
     paintNow();
 
-    activateChatView("c-has-turns");
+    showChat("c-has-turns");
     refreshChatView("c-has-turns");
 
     expect(messagesEl.children).toHaveLength(1);
@@ -1430,7 +1449,7 @@ describe("the placeholder's own refusal, against the real container", () => {
     vi.mocked(transcriptStale).mockReturnValue(true);
     vi.mocked(loadMessages).mockResolvedValue(false);
 
-    activateChatView("c-failed");
+    showChat("c-failed");
     refreshChatView("c-failed");
     await vi.waitFor(() => {
       expect(messagesEl.querySelector(".load-error")).not.toBeNull();
@@ -1445,10 +1464,10 @@ describe("the placeholder's own refusal, against the real container", () => {
   });
 });
 
-// The three live direct callers of activateChatView bypass `refreshRow`, so each fetches
+// The three live direct callers of showChatView bypass `refreshRow`, so each fetches
 // itself.
 
-describe("every direct caller of activateChatView still fetches", () => {
+describe("every direct caller of showChatView still fetches", () => {
   function staleChat(id: string): never {
     return {
       id,
@@ -1467,7 +1486,7 @@ describe("every direct caller of activateChatView still fetches", () => {
     vi.mocked(get).mockReturnValue(undefined);
     vi.mocked(loadList).mockResolvedValue(false);
 
-    activateChatView("c-retry");
+    showChat("c-retry");
     vi.mocked(get).mockReturnValue(staleChat("c-retry"));
     vi.mocked(loadMessages).mockClear();
     messagesEl.querySelector<HTMLButtonElement>(".load-error button")?.click();
@@ -1484,7 +1503,7 @@ describe("every direct caller of activateChatView still fetches", () => {
       return true;
     });
 
-    activateChatView("c-healed");
+    showChat("c-healed");
 
     await vi.waitFor(() => {
       expect(loadMessages).toHaveBeenCalledWith("c-healed");

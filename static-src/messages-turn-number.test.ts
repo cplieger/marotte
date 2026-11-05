@@ -75,7 +75,7 @@ function agentTurn(n: number): Entry[] {
 }
 
 let seq = 0;
-/** `setActive` is a no-op for the active id, so each case gets a fresh one. */
+/** `setPainted` is a no-op for the painted id, so each case gets a fresh one. */
 function nextChat(): string {
   seq += 1;
   return `n${String(seq)}`;
@@ -130,6 +130,7 @@ async function paint(
     },
   ]);
   store.setActive(id);
+  store.setPainted(id);
   store.bumpMessages(id, "load");
   await until(
     () => cards().length === order.length,

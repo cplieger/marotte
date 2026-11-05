@@ -1088,12 +1088,12 @@ async function pageIn(s: TurnSummary): Promise<boolean> {
 /** Page backwards until the target turn is in the store, through the one older-page door. A page that moves nothing
  *  or a spent wall-clock budget ends it; `?before=<turn_id>` pages by whole turns. */
 async function loadUntilResident(s: TurnSummary, deadline: number): Promise<boolean> {
-  const [{ getActive }, { loadOlderTurns }] = await Promise.all([
+  const [{ getPainted }, { loadOlderTurns }] = await Promise.all([
     import("./store.js"),
     import("./store-load.js"),
   ]);
   for (;;) {
-    const session = getActive();
+    const session = getPainted();
     if (session?.id !== chatID) {
       return false;
     }

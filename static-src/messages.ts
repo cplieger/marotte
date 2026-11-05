@@ -6,9 +6,9 @@ import { stampFindUnit } from "./find-unit.js";
 import { turnRevision } from "./turn-revision.js";
 import {
   get,
-  getActive,
-  getActiveId,
-  watchActiveId,
+  getPainted,
+  getPaintedId,
+  watchPaintedId,
   messagesVersionOf,
   renderCauseOf,
   bumpMessages,
@@ -368,7 +368,7 @@ export function disposeChatView(chatID: string): void {
   views.delete(chatID);
   if (activeView === view) {
     activeView = null;
-    lastActiveId = undefined;
+    lastPaintedId = undefined;
   }
 }
 
@@ -516,7 +516,7 @@ function disposeEntryEffects(turnID: string, seqs: Iterable<number>): void {
  */
 const appendNewIds = new Set<string>();
 let lastNewestTurnID: string | undefined;
-let lastActiveId: string | undefined;
+let lastPaintedId: string | undefined;
 
 /** The newest resident turn id, where the next arrival walk starts; `turn_order` is file order. */
 function newestTurnID(s: Session): string | undefined {
@@ -599,9 +599,9 @@ export function mountChatView(): void {
   registerEvictionExemption((chatID) => views.has(chatID));
   // Page unload is the one moment every view goes away; close/delete/LRU dispose per view.
   registerCleanup(teardownAll);
-  // Inputs: which chat is active, and that chat's transcript version. Header-only updates bump no version.
+  // Inputs: which chat is painted, and that chat's transcript version. Header-only updates bump no version.
   effect(() => {
-    const id = watchActiveId();
+    const id = watchPaintedId();
     touch(messagesVersionOf(id));
     paint();
   });
@@ -654,7 +654,7 @@ function refreshResumeLabel(): void {
   if (readingState() === "following") {
     return;
   }
-  const session = getActive();
+  const session = getPainted();
   const behind = reachableEntries - followBaseline;
   if (behind > 0) {
     setResumeLabel(`${String(behind)} new block${behind === 1 ? "" : "s"}`);
@@ -1095,21 +1095,21 @@ function clearArrivedPin(chatID: string, anchor: ResidencyAnchor | undefined): v
 let paintMountedCards = false;
 
 function paint(): void {
-  const session = getActive();
+  const session = getPainted();
   if (session === undefined) {
-    // Touch the views only when there is genuinely no active chat: an empty reconcile during a chat switch, then a
+    // Touch the views only when there is genuinely no painted chat: an empty reconcile during a chat switch, then a
     // re-populate, flashes.
-    if (getActiveId() === "") {
+    if (getPaintedId() === "") {
       // Hide without disposing: the last-tab window can reopen this chat. Disposal belongs to close/delete.
       pruneDeadViews();
       if (activeView !== null) {
         parkView(activeView);
       }
-      lastActiveId = undefined;
+      lastPaintedId = undefined;
     }
     return;
   }
-  const isChatSwitch = lastActiveId !== session.id;
+  const isChatSwitch = lastPaintedId !== session.id;
   let unparked = false;
   if (isChatSwitch) {
     pruneDeadViews();
@@ -1195,7 +1195,7 @@ function paint(): void {
   reachableEntries = entryCount(turns);
   refreshResumeLabel();
   lastNewestTurnID = newestTurnID(session);
-  lastActiveId = session.id;
+  lastPaintedId = session.id;
   if (unparked && activeView !== null) {
     // The DOM is at the store's state; now the paused effects come back.
     resumeView(activeView, session);
@@ -1279,9 +1279,9 @@ function windowPass(trigger: PassTrigger = "scroll"): void {
     }
     readerMoved = false;
   }
-  const session = getActive();
+  const session = getPainted();
   const turns = lastTurns;
-  if (session === undefined || session.id !== lastActiveId || turns.length === 0) {
+  if (session === undefined || session.id !== lastPaintedId || turns.length === 0) {
     return;
   }
   // A filling body reports coordinates for a partial range; the builder's settle runs the skipped pass. A live-edge
@@ -1404,7 +1404,7 @@ function rewindConfirmation(target: EntryPrompt, discarded: readonly Turn[]): Co
  *  button; this is the second gate. A revert that lands while its chat is still active puts the prompt's
  *  text (never its attachments) in the composer, unless the composer already holds text. */
 async function handleRewindClick(target: EntryPrompt): Promise<void> {
-  const session = getActive();
+  const session = getPainted();
   if (session === undefined) {
     return;
   }
@@ -1422,7 +1422,7 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
     return;
   }
   const outcome = await rewindChat.dispatch({ chatID: session.id, messageID: target.id }).outcome;
-  if (outcome.status !== "success" || getActiveId() !== session.id) {
+  if (outcome.status !== "success" || getPaintedId() !== session.id) {
     return;
   }
   const input = $.promptInput;
@@ -1438,7 +1438,7 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
  * no such turn.
  */
 export async function rewindLatestTurn(chatID: string): Promise<boolean> {
-  const session = getActive();
+  const session = getPainted();
   if (session?.id !== chatID) {
     return false;
   }
@@ -1466,7 +1466,7 @@ export function teardownAll(): void {
   resetBlockRenders();
   resetScrollState();
   resetTurnRail();
-  lastActiveId = undefined;
+  lastPaintedId = undefined;
   lastNewestTurnID = undefined;
 }
 
@@ -1793,7 +1793,7 @@ function collectWindowMove(
     return true;
   }
   const live = turnIsLive(t);
-  // The pass's own chat, never `getActiveId()`, since the closure runs at a later frame.
+  // The pass's own chat, never `getPaintedId()`, since the closure runs at a later frame.
   changes.push(() => {
     // Re-checked when it runs: a newer plan's pass has already applied itself.
     const now = wantedWindow.get(t.id);
@@ -1855,7 +1855,7 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
       return;
     }
     const open = card.hasAttribute("data-folded");
-    const chatID = getActiveId();
+    const chatID = getPaintedId();
     if (chatID !== "") {
       setTurnOpen(chatID, t.id, open);
     }
@@ -2025,7 +2025,7 @@ function offersCompact(t: Turn): boolean {
   if (closeOfBody(t.body)?.failure_kind !== "context_limit") {
     return false;
   }
-  const s = get(getActiveId());
+  const s = get(getPaintedId());
   if (s?.turn_order[s.turn_order.length - 1] !== t.id) {
     return false;
   }
@@ -2044,7 +2044,7 @@ function syncCompactAction(card: HTMLElement, t: Turn): void {
   if (existing !== null) {
     return;
   }
-  const chatID = getActiveId();
+  const chatID = getPaintedId();
   const btn = el(
     "button",
     { type: "button", className: "btn-small", [CHROME_ATTR]: "" },
@@ -2155,7 +2155,7 @@ function buildTurn(t: Turn): HTMLElement {
   // After the footer, which holds Rewind; the face's order is independent since it anchors on the notice.
   mountRewind(card, t);
   syncTurnNotice(card, t);
-  syncTurnCloseNotes(card, t, getActiveId());
+  syncTurnCloseNotes(card, t, getPaintedId());
   syncTurnFace(card, t);
   syncTurnBodyless(card);
   paintMountedCards = true;
@@ -2183,7 +2183,7 @@ function updateTurn(card: HTMLElement, t: Turn): void {
     // the fold pass's `mountHeadRange`.
     const range = bodyRange(t, plan);
     heldMutation(() => {
-      updateAssistantBody(body, t, getActiveId(), turnIsLive(t), range);
+      updateAssistantBody(body, t, getPaintedId(), turnIsLive(t), range);
       // What is mounted, not the plan: a plan the deferred fold pass has not applied would price away mounted rows.
       syncSpacers(body, t, mountedWindow(t.id) ?? range);
     });
@@ -2191,7 +2191,7 @@ function updateTurn(card: HTMLElement, t: Turn): void {
   mountTurnFooter(card, t);
   mountRewind(card, t);
   syncTurnNotice(card, t);
-  syncTurnCloseNotes(card, t, getActiveId());
+  syncTurnCloseNotes(card, t, getPaintedId());
   syncTurnBodyless(card);
   syncTurnFace(card, t);
 }
@@ -2273,7 +2273,7 @@ function startFirstSlice(body: HTMLElement, t: Turn, range: EntryRange): void {
   const take = Math.min(BUILD_BATCH_ENTRIES, Math.max(0, paintSyncEntries));
   const to = Math.min(range.to, range.from + take);
   heldMutation(() => {
-    buildAssistantBody(body, t, getActiveId(), turnIsLive(t), { from: range.from, to });
+    buildAssistantBody(body, t, getPaintedId(), turnIsLive(t), { from: range.from, to });
     syncSpacers(body, t, { from: range.from, to });
   });
   paintSyncEntries -= to - range.from;
@@ -2318,7 +2318,7 @@ function drainColdBuilds(): void {
   if (coldBuilds.size === 0) {
     return;
   }
-  const chatID = getActiveId();
+  const chatID = getPaintedId();
   for (const id of [...coldBuilds]) {
     // The entry stays until the build settles, keeping `hasPendingBuild` true across the yield.
     void yieldToBrowser()
@@ -2385,7 +2385,7 @@ function buildOrJoin(chatID: string, turnID: string, want: EntryRange): Promise<
 
 async function buildTurnBodyBatches(chatID: string, turnID: string): Promise<void> {
   for (;;) {
-    const session = getActive();
+    const session = getPainted();
     if (session?.id !== chatID) {
       return;
     }
@@ -2470,7 +2470,7 @@ function headerData(t: Turn): TurnHeaderData {
     attachments: t.trigger?.attachments ?? [],
     wake: t.wake === undefined ? undefined : wakeLine(t.wake),
     onOpenRun: (run) => {
-      openNoteRun(getActiveId(), run.id, run.named ? run.name : undefined);
+      openNoteRun(getPaintedId(), run.id, run.named ? run.name : undefined);
     },
   };
 }

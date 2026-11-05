@@ -248,6 +248,7 @@ async function paint(list: readonly Chat[]): Promise<HTMLElement[]> {
   const views: HTMLElement[] = [];
   for (const [i, chat] of list.entries()) {
     store.setActive(`closed-${String(i)}`);
+    store.setPainted(`closed-${String(i)}`);
     await until(
       () => cards(messages.activeTranscriptView()).length === chat.length,
       `chat ${String(i)}'s ${String(chat.length)} cards`,

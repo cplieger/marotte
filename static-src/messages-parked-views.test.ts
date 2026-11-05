@@ -151,12 +151,14 @@ function seed(...sessions: Session[]): void {
   const first = sessions[0];
   if (first !== undefined) {
     store.setActive(first.id);
+    store.setPainted(first.id);
     store.bumpMessages(first.id, "load");
   }
 }
 
 function switchTo(chatID: string): void {
   store.setActive(chatID);
+  store.setPainted(chatID);
 }
 
 function viewOf(chatID: string): HTMLElement {
@@ -186,6 +188,7 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
   // Production never scrolls the document (`#app` is fixed); `.focus()` here would, pushing rows out of
   // `content-visibility` relevance so the find walker misses them in the next case.
   window.scrollTo(0, 0);
@@ -399,6 +402,7 @@ describe("park → grow → unpark", { timeout: testTimeoutFor(FRAME_BUDGET_MS) 
 
     // No active chat while the session stays in the store: the paint must hide, never dispose.
     store.setActive("");
+    store.setPainted("");
     await flushed();
     expect(view.isConnected).toBe(true);
     expect(view.classList.contains("is-active")).toBe(false);
@@ -894,9 +898,7 @@ describe("disposal", () => {
     );
     expect(messages.transcriptViewFor(b), "setActive built B's view").toBeNull();
 
-    const setPainted = (store as unknown as { setPainted?: (id: string) => void }).setPainted;
-    expect(typeof setPainted, "store.setPainted").toBe("function");
-    setPainted?.(b);
+    store.setPainted(b);
     await flushed();
     expect(viewOf(b).classList.contains("is-active")).toBe(true);
     expect(viewOf(a).classList.contains("is-active")).toBe(false);

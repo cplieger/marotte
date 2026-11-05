@@ -102,6 +102,7 @@ describe("a parked view's open tail", { timeout: testTimeoutFor(FRAME_BUDGET_MS)
     const activeChat = streaming(b);
     store.setSessions([parkedChat.chat, activeChat.chat]);
     store.setActive(a);
+    store.setPainted(a);
     store.bumpMessages(a, "load");
 
     store.openEntry(a, open(parkedChat.turn, "say-a", "hello"));
@@ -116,6 +117,7 @@ describe("a parked view's open tail", { timeout: testTimeoutFor(FRAME_BUDGET_MS)
     expect(liveText(a)).toContain("hell");
 
     store.setActive(b);
+    store.setPainted(b);
     await flushed();
     expect(viewOf(a).classList.contains("is-active")).toBe(false);
     // The control's own precondition: B is ACTIVE and holds a live tail, so the delta driven into
@@ -171,6 +173,7 @@ describe("a detached render's open tail", { timeout: testTimeoutFor(FRAME_BUDGET
     const { chat, turn } = streaming(c);
     store.setSessions([chat]);
     store.setActive(c);
+    store.setPainted(c);
     store.bumpMessages(c, "load");
 
     const laneGone = "lane-disposed";

@@ -26,52 +26,32 @@ function makeSession(chatID: string): Session {
   };
 }
 
-// The seams this file pins, read off the namespace so a missing one fails its own case only.
-type PaintedSeams = {
-  getPaintedId: () => string;
-  watchPaintedId: () => string;
-  getPainted: () => Session | undefined;
-  setPainted: (id: string) => void;
-};
-const seams = store as unknown as Partial<PaintedSeams>;
-
-function painted(): PaintedSeams {
-  for (const k of ["getPaintedId", "watchPaintedId", "getPainted", "setPainted"] as const) {
-    expect(typeof seams[k], `store.${k}`).toBe("function");
-  }
-  return seams as PaintedSeams;
-}
-
 beforeEach(() => {
   store.setSessions([makeSession("a"), makeSession("b"), makeSession("c")]);
   store.setActive("a");
-  if (typeof seams.setPainted === "function") {
-    seams.setPainted("a");
-  }
+  store.setPainted("a");
 });
 
 describe("the active and painted chat pointers", () => {
   it("moves only the active chat on setActive, and only the painted chat on setPainted", () => {
-    const p = painted();
     store.setActive("b");
     expect(store.getActiveId()).toBe("b");
-    expect(p.getPaintedId()).toBe("a");
-    expect(p.getPainted()?.id).toBe("a");
-    p.setPainted("b");
-    expect(p.getPaintedId()).toBe("b");
-    expect(p.getPainted()?.id).toBe("b");
+    expect(store.getPaintedId()).toBe("a");
+    expect(store.getPainted()?.id).toBe("a");
+    store.setPainted("b");
+    expect(store.getPaintedId()).toBe("b");
+    expect(store.getPainted()?.id).toBe("b");
   });
 
   it("re-runs a watchPaintedId effect on setPainted and not on setActive", () => {
-    const p = painted();
     const seen: string[] = [];
     const stop = effect(() => {
-      seen.push(p.watchPaintedId());
+      seen.push(store.watchPaintedId());
     });
     try {
       store.setActive("b");
       expect(seen, "an effect on the painted chat re-ran on setActive").toEqual(["a"]);
-      p.setPainted("b");
+      store.setPainted("b");
       expect(seen).toEqual(["a", "b"]);
     } finally {
       stop();
@@ -79,16 +59,14 @@ describe("the active and painted chat pointers", () => {
   });
 
   it("moves the painted chat to the active chat when removeChat drops the painted chat", () => {
-    const p = painted();
     store.setActive("b"); // a switch's gesture: B is active, A still painted
     store.removeChat("a");
     expect(store.getActiveId()).toBe("b");
-    expect(p.getPaintedId(), "the painted pointer names a removed row").toBe("b");
+    expect(store.getPaintedId(), "the painted pointer names a removed row").toBe("b");
   });
 
   it("keeps the painted chat when removeChat drops another chat", () => {
-    const p = painted();
     store.removeChat("c");
-    expect(p.getPaintedId()).toBe("a");
+    expect(store.getPaintedId()).toBe("a");
   });
 });

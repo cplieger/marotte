@@ -42,7 +42,7 @@ messagesEl.id = "messages";
 scrollerEl.appendChild(messagesEl);
 
 const { RESIDENT_ENTRIES, OVERSCAN_ENTRIES } = await import("./block-window.js");
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { openEntry, applyDelta, appendEntry } = await import("./store.js");
 const { mountChatView, mountTurnBody, activeTranscriptView, teardownAll } =
   await import("./messages.js");
@@ -270,6 +270,7 @@ function activate(chat: string, turnEntries: readonly (readonly Entry[])[], live
     },
   ]);
   setActive(chat);
+  setPainted(chat);
   bumpMessages(chat, "load");
 }
 
@@ -373,6 +374,7 @@ beforeEach(() => {
   resetFoldState();
   setSessions([]);
   setActive("");
+  setPainted("");
 });
 
 describe("a cold load of a 700-entry turn mounts a WINDOW", () => {

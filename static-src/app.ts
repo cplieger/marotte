@@ -4,7 +4,7 @@
 // The server is the source of truth: a prompt posts a command and SSE drives rendering.
 
 import type { ServerEvent } from "./types.js";
-import { get, getActiveId, getSessions } from "./store.js";
+import { getActiveId, getSessions } from "./store.js";
 import { effect } from "@cplieger/ui";
 import { mountLiveRegions } from "@cplieger/ui/announce";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_RECONCILE } from "./bus.js";
@@ -74,7 +74,9 @@ import {
   createSession,
   sendPrompt,
   installStoreSubscribers,
-  activateChatView,
+  selectChat,
+  showChatView,
+  cancelActiveTurn,
   refreshChatView,
   closeChatTab,
   chatTabDot,
@@ -119,7 +121,6 @@ import "./handlers/system-notice.js";
 import { initPushMessages } from "./handlers/push-message.js";
 import { registerNotificationOpener } from "./notification-open.js";
 import { initLaunchQueue } from "./share-target.js";
-import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
 import { installLinkGuard, setLinkCopyCallback } from "./link-guard.js";
@@ -162,7 +163,10 @@ function init(): void {
   // registering here keeps the factory out of a cycle.
   registerTabOpeners({
     chat: {
-      show: activateChatView,
+      show: (id) => {
+        selectChat(id);
+        showChatView(id);
+      },
       refresh: refreshChatView,
       close: closeChatTab,
       dot: chatTabDot,
@@ -450,15 +454,7 @@ function setupInput(): void {
       }
       return sendPrompt(text);
     },
-    () => {
-      // Cancel what the server names (`run.cancel`), by id, so a stale press stops nothing else.
-      const chatID = getActiveId();
-      const target = chatID === "" ? undefined : get(chatID)?.run?.cancel;
-      if (target === undefined) {
-        return;
-      }
-      void cancelTurn.dispatch({ chatID, target });
-    },
+    cancelActiveTurn,
     stagedAttachment,
     () => {
       if (getActiveId() !== "") {

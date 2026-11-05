@@ -2,9 +2,9 @@
 // the previous one. A real browser exposes no layout counter, so a pending MutationObserver record stands for dirty
 // layout; a style recalculation with no DOM write behind it (a `:hover` change) is not seen.
 
-export type LayoutAccessKind = "read" | "write";
+type LayoutAccessKind = "read" | "write";
 
-export interface LayoutAccess {
+interface LayoutAccess {
   readonly kind: LayoutAccessKind;
   /** The reader or writer's name, `getBoundingClientRect` or `scrollTop=`. */
   readonly what: string;
