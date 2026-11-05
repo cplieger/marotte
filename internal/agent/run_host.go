@@ -128,14 +128,12 @@ func (rs *Runs) launchAs(
 		// A manual run yields to its recipe's next slot.
 		o.slotAt = rs.manualSlot(recipe.Source)
 	}
-	var dropped []string
-	if o.origin == runlease.OriginScheduled {
-		inputs, dropped = declaredInputs(inputs, recipe.Inputs)
-	}
 	if bErr := rs.recipeIdle(cctx, recipe.Name); bErr != nil {
 		return "", "", unanswered(ctx, bErr)
 	}
+	var dropped []string
 	if o.origin == runlease.OriginScheduled {
+		inputs, dropped = declaredInputs(inputs, recipe.Inputs)
 		// Before the door: KAS's reset reconnects unconditionally, so a reset after the host's acquire began a fresh
 		// connect would connect twice and close the good one.
 		rs.resetFailedMCP(cctx)
