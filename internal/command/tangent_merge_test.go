@@ -51,6 +51,13 @@ type mergeHost struct {
 	evMu     sync.Mutex
 }
 
+func (h *mergeHost) ReserveTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if h.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
 func (h *mergeHost) tryReserveOld(chatID marotte.ChatID, _ marotte.TurnOpenSource) bool {
 	return !h.busy[chatID]
 }
@@ -864,11 +871,6 @@ func TestTangentMerges_PublishesOnlyTheOutcomeItCommitted(t *testing.T) {
 	if len(frames) != 1 || frames[0].Type != marotte.EventTangentMerged {
 		t.Errorf("merge frames = %+v, want the committed tangent_merged alone", frames)
 	}
-}
-
-func (r *mergeHost) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
-	ok := r.tryReserveOld(chatID, source)
-	return testReservation(chatID, ok), ok
 }
 
 func (r *promptParamsBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {

@@ -154,7 +154,7 @@ func TestAfterTurnClose_AGraceClosedPromptsDrainNeverFiresOnElapsedTime(t *testi
 			t.Fatalf("drained %d times with KAS still reporting the session busy, want none", n)
 		}
 		if h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
-			t.Fatal("TryReserveTurn acquired with KAS still reporting the session busy, want refused")
+			t.Fatal("tryReserve acquired with KAS still reporting the session busy, want refused")
 		}
 		if !strings.Contains(logs.String(), "the chat's prompts wait for it") {
 			t.Errorf("logs = %s, want the stuck hold logged", logs.String())
@@ -218,7 +218,7 @@ func TestAfterTurnClose_ATeardownEndsAGraceClosedPromptsHoldWithoutADrain(t *tes
 
 		h.coord.turns.sealPosition("c1", gen)
 		if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
-			t.Error("TryReserveTurn refused once the session's forward exited, want admitted")
+			t.Error("tryReserve refused once the session's forward exited, want admitted")
 		}
 	})
 }
@@ -370,7 +370,7 @@ func TestReserveTurnForPrompt_AKASHoldAnswersStartingAtTheBudget(t *testing.T) {
 			t.Errorf("ReserveTurnForPrompt during a KAS hold = %v, want AdmissionStarting", got)
 		}
 		if h.coord.tryReserveNow("c1", marotte.TurnSourceRevert) {
-			t.Error("TryReserveTurn(revert) during a KAS hold acquired, want refused")
+			t.Error("tryReserve(revert) during a KAS hold acquired, want refused")
 		}
 	})
 }
@@ -573,7 +573,7 @@ func TestCmdPrompt_ARunReportedDuringAGraceCloseHoldsAdmission(t *testing.T) {
 		// Errorf: the close is parked on release, which a Fatal here would leave blocked.
 		if h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 			h.coord.releaseHeld("c1")
-			t.Error("TryReserveTurn acquired after KAS reported a run during the grace close, want refused")
+			t.Error("tryReserve acquired after KAS reported a run during the grace close, want refused")
 		}
 		done := make(chan *httptest.ResponseRecorder, 1)
 		go func() {
@@ -626,7 +626,7 @@ func TestCmdPrompt_ARunReportedAfterTheHoldEndsHoldsAdmission(t *testing.T) {
 		// Errorf: the drain is parked on release, which a Fatal here would leave blocked.
 		if h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 			h.coord.releaseHeld("c1")
-			t.Error("TryReserveTurn acquired after KAS reported a run, want refused")
+			t.Error("tryReserve acquired after KAS reported a run, want refused")
 		}
 		done := make(chan *httptest.ResponseRecorder, 1)
 		go func() {
@@ -789,13 +789,13 @@ func TestAfterTurnClose_AnEarlierGraceClosesWaitLeavesALaterHoldInPlace(t *testi
 		close(release)
 		synctest.Wait()
 		if h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
-			t.Fatal("TryReserveTurn acquired with KAS still running the wire turn's cancelled execution, want refused")
+			t.Fatal("tryReserve acquired with KAS still running the wire turn's cancelled execution, want refused")
 		}
 
 		h.coord.WireTurnActivity("c1", false)
 		synctest.Wait()
 		if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
-			t.Error("TryReserveTurn refused once KAS reported the session idle, want the hold ended")
+			t.Error("tryReserve refused once KAS reported the session idle, want the hold ended")
 		}
 	})
 }

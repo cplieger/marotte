@@ -170,8 +170,22 @@ func (*benchDeps) reservePromptOld(context.Context, marotte.ChatID, time.Duratio
 
 func (*benchDeps) tryReserveOld(marotte.ChatID, marotte.TurnOpenSource) bool { return true }
 
+func (d *benchDeps) ReserveTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if d.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
 func (d *benchDeps) tryReserveIdleOld(marotte.ChatID, marotte.TurnOpenSource) bool {
 	return !d.holderOpen
+}
+
+func (d *benchDeps) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, _ marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if d.holderOpen {
+		return IdleTurnOpen, Reservation{}
+	}
+	return IdleAcquired, testReservation(chatID, true)
 }
 
 func (*benchDeps) tryReserveFencedOld(marotte.ChatID, marotte.TurnOpenSource, TurnFence) bool {
@@ -380,11 +394,6 @@ func promptRolesOf(d hostDouble) *promptRoles {
 func (r *benchDeps) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, _ uint64, _ string) (AdmissionOutcome, Reservation) {
 	out := r.reservePromptOld(ctx, chatID, wait)
 	return out, testReservation(chatID, out == AdmissionAcquired)
-}
-
-func (r *benchDeps) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
-	ok := r.tryReserveOld(chatID, source)
-	return testReservation(chatID, ok), ok
 }
 
 func (r *benchDeps) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {

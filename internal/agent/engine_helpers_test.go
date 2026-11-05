@@ -44,6 +44,10 @@ type fakeEngineSource struct {
 	withheld bool
 	// cliPath is what CLIPath answers; empty is the default path.
 	cliPath string
+	// noGovernance makes the default observer fakes withhold the governance frame (fakeBridge.noGovernance).
+	noGovernance bool
+	// account is the profile the default observer fakes report (reportAccount).
+	account fakeAccount
 	// exitHook stands in for the runtime's exit hook on a source with no runtime (an owner fixture).
 	exitHook func(gen uint64)
 	rt       *Runtime
@@ -113,6 +117,14 @@ func (s *fakeEngineSource) sessions() sessionFactory {
 }
 
 // fakeSourceOf is the fake engine source h was built on.
+// reportAccount is kiro-cli reporting p as the account's profile: pushed now, and at every later observer door, as
+// KAS reports the one account profile at each.
+func reportAccount(t *testing.T, h *Runtime, p marotte.GovernanceStatePayload) {
+	t.Helper()
+	fakeSourceOf(t, h).account.set(p)
+	h.config.SetGovernance(t.Context(), p)
+}
+
 func fakeSourceOf(tb testing.TB, h *Runtime) *fakeEngineSource {
 	tb.Helper()
 	src, ok := h.engine.source.(*fakeEngineSource)
@@ -377,7 +389,12 @@ func (s *fakeEngineSource) observerFactory() sessionFactory {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.observer == nil {
-		s.observer = func() engineSession { return newFakeBridge() }
+		cold := s.noGovernance
+		s.observer = func() engineSession {
+			b := newFakeBridge()
+			b.noGovernance, b.account = cold, &s.account
+			return b
+		}
 	}
 	return s.observer
 }
@@ -543,8 +560,10 @@ func (b *fakeBridge) startSendLands(method string) bool {
 // oneObserver makes every later observer pass of h open on one fake, which a door reopens after each pass's close.
 func oneObserver(t testing.TB, h *Runtime) *fakeBridge {
 	t.Helper()
+	src := fakeSourceOf(t, h)
 	o := newFakeBridge()
-	fakeSourceOf(t, h).setObserver(func() engineSession { return o })
+	o.account = &src.account
+	src.setObserver(func() engineSession { return o })
 	return o
 }
 

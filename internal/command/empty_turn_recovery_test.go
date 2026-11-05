@@ -79,6 +79,20 @@ func (o *recoveryOutcome) tryReserveIdleOld(c marotte.ChatID, s marotte.TurnOpen
 	return o.tryReserveOld(c, s)
 }
 
+func (o *recoveryOutcome) ReserveTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if o.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
+func (o *recoveryOutcome) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if o.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
 func (o *recoveryOutcome) tryReserveFencedOld(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
 	return o.tryReserveOld(c, s)
 }
@@ -338,11 +352,6 @@ func TestRecoverEmptyTurn_TheRetryDrainsUnderTheSteerLockBeforeItsPrompt(t *test
 func (r *recoveryOutcome) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, _ uint64, _ string) (AdmissionOutcome, Reservation) {
 	out := r.reservePromptOld(ctx, chatID, wait)
 	return out, testReservation(chatID, out == AdmissionAcquired)
-}
-
-func (r *recoveryOutcome) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
-	ok := r.tryReserveOld(chatID, source)
-	return testReservation(chatID, ok), ok
 }
 
 func (r *recoveryOutcome) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {

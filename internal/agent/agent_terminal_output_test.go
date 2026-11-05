@@ -415,9 +415,20 @@ func withTerminalGroupGrace(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { terminalGroupGrace = prev })
 }
 
+// Not parallel-safe: it writes a package var.
+func withTerminalDrainGrace(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := terminalDrainGrace
+	terminalDrainGrace = d
+	t.Cleanup(func() { terminalDrainGrace = prev })
+}
+
 func TestTerminalGroupGrace_IsTwoSeconds(t *testing.T) {
 	if terminalGroupGrace != 2*time.Second {
 		t.Errorf("terminalGroupGrace = %v, want 2s (the same bound as terminalDrainGrace)", terminalGroupGrace)
+	}
+	if terminalDrainGrace != 2*time.Second {
+		t.Errorf("terminalDrainGrace = %v, want 2s (cmd.WaitDelay's bound)", terminalDrainGrace)
 	}
 }
 
@@ -425,6 +436,8 @@ func TestTerminalGroupGrace_IsTwoSeconds(t *testing.T) {
 // is what releases the pump and lets the exit broadcast.
 func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *testing.T) {
 	logs := captureLogs(t) // not parallel: swaps the slog default
+	withTerminalDrainGrace(t, 500*time.Millisecond)
+	withTerminalGroupGrace(t, 500*time.Millisecond)
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	// The head prints and exits; `sleep` inherits the write end past the grace.
 	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1,
@@ -435,8 +448,8 @@ func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *te
 	waitClosed(t, term.done, "terminal exit")
 	elapsed := time.Since(start)
 
-	// Bounded by ONE grace: a regression to sequencing the group wait and the drain shows here (~2s vs ~4s).
-	if elapsed > terminalDrainGrace+time.Second {
+	// Bounded by ONE grace: sequencing the group wait and the drain pays both.
+	if elapsed >= terminalDrainGrace+terminalGroupGrace {
 		t.Errorf("exit took %v, want it bounded near ONE %v grace: either the reader was "+
 			"never force-closed, or the group wait and the drain were sequenced rather "+
 			"than overlapped and a backgrounded daemon now pays both", elapsed, terminalDrainGrace)

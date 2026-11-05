@@ -29,10 +29,11 @@ const (
 
 var errRefusedRootDelete = errors.New("refusing to delete the workspace or an additional directory itself")
 
-// kiroFSParams is the `path` of `{sessionId, path}`, shared by all three verbs. KAS sends the
-// path already absolute, so the confinement re-checks a claim.
+// kiroFSParams is `{sessionId, path}`, shared by all three verbs. KAS sends the path already
+// absolute, so the confinement re-checks a claim.
 type kiroFSParams struct {
-	Path string `json:"path"`
+	Path      string            `json:"path"`
+	SessionID marotte.SessionID `json:"sessionId"`
 }
 
 // kiroStatBody answers `_kiro/fs/stat`. `size` is required by KAS's
@@ -82,14 +83,14 @@ func (in *inbound) handleKiroFSRequest(_ context.Context, chatID marotte.ChatID,
 	return true
 }
 
-// kiroFSPath decodes the request's path. Each verb confines it to a root and a root-relative
-// name, never an absolute path, so the verdict and the operation share a handle.
-func kiroFSPath(msg *marotte.RPCResponse) (string, error) {
+// Each verb confines the path to a root and a root-relative name, never an absolute path, so
+// the verdict and the operation share a handle.
+func kiroFSPath(msg *marotte.RPCResponse) (kiroFSParams, error) {
 	var p kiroFSParams
 	if err := parseRequest(msg, &p); err != nil {
-		return "", fmt.Errorf("decode %s params: %w", msg.Method, err)
+		return kiroFSParams{}, fmt.Errorf("decode %s params: %w", msg.Method, err)
 	}
-	return p.Path, nil
+	return p, nil
 }
 
 func (in *inbound) kiroFSReadablePath(ctx context.Context, msg *marotte.RPCResponse) (fsTarget, error) {
@@ -97,11 +98,16 @@ func (in *inbound) kiroFSReadablePath(ctx context.Context, msg *marotte.RPCRespo
 	if err != nil {
 		return fsTarget{}, err
 	}
-	return in.lifetime.confine(ctx, p, fsRead)
+	return in.lifetime.confine(ctx, p.Path, fsRead)
 }
 
 func (in *inbound) respondKiroFSStat(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
-	target, err := in.kiroFSReadablePath(ctx, msg)
+	p, err := kiroFSPath(msg)
+	if err != nil {
+		in.respondFSError(ctx, chatID, origin, msg, err)
+		return
+	}
+	target, err := in.confineRead(ctx, p.SessionID, p.Path)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
@@ -178,7 +184,7 @@ func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatI
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	target, err := in.lifetime.confine(ctx, p, fsWrite)
+	target, err := in.lifetime.confine(ctx, p.Path, fsWrite)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return

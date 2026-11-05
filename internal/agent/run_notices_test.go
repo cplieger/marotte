@@ -295,7 +295,8 @@ func TestTurnClosed_LeavesAChatHoldingNoNoticeAlone(t *testing.T) {
 		Closer: closerWireEnd, Stop: marotte.StopReasonCancelled, Turn: turnID,
 	})
 
-	if awaitCall(t, br, marotte.MethodSessionSteerClear) {
+	joinInflight(t, h)
+	if slices.Contains(br.callLog(), marotte.MethodSessionSteerClear) {
 		t.Errorf("_session/steer/clear went out for a chat holding no run notice: %v", br.callLog())
 	}
 }

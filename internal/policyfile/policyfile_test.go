@@ -1,8 +1,6 @@
 package policyfile
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,62 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/workspace"
 )
-
-func TestWorkspaceHash(t *testing.T) {
-	// Mirrors KAS computeWorkspaceHash(normalizePath(abs)) on Linux:
-	// hex(sha256(abs))[:16].
-	dir := "/tmp/vk-ws"
-	want := hex.EncodeToString(func() []byte { s := sha256.Sum256([]byte(dir)); return s[:] }())[:16]
-	if got := workspaceHash(dir); got != want {
-		t.Errorf("WorkspaceHash(%q) = %q, want %q", dir, got, want)
-	}
-	if len(workspaceHash("/x")) != 16 {
-		t.Errorf("hash length != 16")
-	}
-	// A relative KIRO_WORK_DIR is resolved against the process cwd BEFORE it is
-	// hashed, so it lands on the same directory KAS computes for the absolute
-	// form. Asserting only that the hash is non-empty would pass for a hash of
-	// the relative text itself, which is the divergence that writes
-	// workspace-scope rules where KAS never reads them.
-	t.Run("a relative work dir hashes as its absolute form", func(t *testing.T) {
-		base := t.TempDir()
-		t.Chdir(base)
-		want := workspaceHash(filepath.Join(base, "rel"))
-		if got := workspaceHash("rel"); got != want {
-			t.Errorf("WorkspaceHash(%q) = %q, want %q (the hash of %q)",
-				"rel", got, want, filepath.Join(base, "rel"))
-		}
-	})
-}
-
-// TestWorkspaceHashGolden pins workspaceHash to a hardcoded value for the real
-// default workspace root (/workspace, KIRO_WORK_DIR's default). This is the
-// KAS-agreement contract: marotte must write workspace-scope permissions.yaml
-// under workspace-roots/<this hash>/ or KAS silently never reads the rules
-// (they persist but are never enforced). The literal is hex(sha256("/workspace"))[:16];
-// any change to the canonicalization or the hash breaks this test loudly
-// rather than diverging from KAS in silence.
-func TestWorkspaceHashGolden(t *testing.T) {
-	const golden = "c52ddf65534b7b46" // hex(sha256("/workspace"))[:16]
-	if got := workspaceHash("/workspace"); got != golden {
-		t.Errorf("WorkspaceHash(%q) = %q, want golden %q", "/workspace", got, golden)
-	}
-	// Non-canonical spellings of the SAME root must canonicalize (absolute,
-	// cleaned, no trailing slash) to the identical hash — otherwise a stray
-	// trailing slash or "/a/../b" form in KIRO_WORK_DIR would strand
-	// workspace-scope rules in a directory KAS never reads.
-	for _, variant := range []string{
-		"/workspace/",       // trailing slash
-		"/workspace/.",      // "." segment
-		"/workspace//",      // duplicate + trailing slash
-		"/tmp/../workspace", // ".." segment
-	} {
-		if got := workspaceHash(variant); got != golden {
-			t.Errorf("WorkspaceHash(%q) = %q, want %q (must canonicalize to /workspace)", variant, got, golden)
-		}
-	}
-}
 
 func TestPathFor(t *testing.T) {
 	home := "/home/u/.kiro"
@@ -75,7 +20,7 @@ func TestPathFor(t *testing.T) {
 		t.Errorf("user path = %q, err = %v", up, err)
 	}
 	wp, err := PathFor(ScopeWorkspace, Roots{KiroHome: home, WorkDir: wd})
-	wantWP := filepath.Join(home, "workspace-roots", workspaceHash(wd), "permissions.yaml")
+	wantWP := filepath.Join(home, "workspace-roots", workspace.SessionsBucket(wd), "permissions.yaml")
 	if err != nil || wp != wantWP {
 		t.Errorf("workspace path = %q, want %q, err = %v", wp, wantWP, err)
 	}

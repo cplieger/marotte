@@ -98,8 +98,6 @@ func (*surfaceDeps) reservePromptOld(context.Context, marotte.ChatID, time.Durat
 	return AdmissionAcquired
 }
 
-func (*surfaceDeps) tryReserveOld(marotte.ChatID, marotte.TurnOpenSource) bool { return true }
-
 // onlyError fails when the run produced other than one error frame: a second frame
 // would mean two surfaces claiming one failure, which is what this file is about.
 func (d *surfaceDeps) onlyError(t *testing.T) marotte.ErrorPayload {
@@ -494,11 +492,6 @@ func TestReportPromptFailure_OtherFailuresStillCountAsPromptFailed(t *testing.T)
 func (r *surfaceDeps) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, _ uint64, _ string) (AdmissionOutcome, Reservation) {
 	out := r.reservePromptOld(ctx, chatID, wait)
 	return out, testReservation(chatID, out == AdmissionAcquired)
-}
-
-func (r *surfaceDeps) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
-	ok := r.tryReserveOld(chatID, source)
-	return testReservation(chatID, ok), ok
 }
 
 func (r *surfaceDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {

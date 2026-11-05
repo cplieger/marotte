@@ -48,6 +48,21 @@ func sidecarExitOf(state *os.ProcessState) string {
 	return fmt.Sprintf("exit_code=%d", state.ExitCode())
 }
 
+// deathSignalOf is the signal state's process died of, or caught and exited 128+N for, the shell convention kiro-cli
+// follows; 0 for any other end.
+func deathSignalOf(state *os.ProcessState) syscall.Signal {
+	if state == nil {
+		return 0
+	}
+	if ws, ok := state.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return ws.Signal()
+	}
+	if code := state.ExitCode(); code > 128 && code <= 128+64 {
+		return syscall.Signal(code - 128)
+	}
+	return 0
+}
+
 // reapProcess reaps the kiro-cli process's group, then the node engine's: on 2.18.0 a head-only kill left the kiro-cli
 // process and its node child alive at about 250 MB (procgroup.Kill), and the node engine leads its own group
 // (sweepEngineGroups). stdin is already closed. endedItself is endedOnItsOwn's answer from before that close.
@@ -74,6 +89,9 @@ func (e *Engine) reapProcess(endedItself bool) {
 	waitErr := e.cmd.Wait()
 	e.mu.Lock()
 	e.sidecarExit = sidecarExitOf(e.cmd.ProcessState)
+	if endedItself {
+		e.sidecarSignal = deathSignalOf(e.cmd.ProcessState)
+	}
 	e.mu.Unlock()
 	if endedItself {
 		// The wait status is the only record of why.

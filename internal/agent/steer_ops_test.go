@@ -476,6 +476,7 @@ func TestSteerRecords_ABridgeDeathCollectsOutstandingAndWaitingRows(t *testing.T
 // A teardown landing while a delete's clear is in flight ends the op as chat_gone,
 // and nothing about the chat is noted or broadcast after it.
 func TestCmdSteerRemove_ATeardownUnderTheClearWritesNothing(t *testing.T) {
+	shortenSteerLockWait(t)
 	s, _, br := steerOpsHub(t)
 	s.bind()
 	s.steer("steer-a", "a")

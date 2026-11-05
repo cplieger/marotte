@@ -63,6 +63,12 @@ func unanswered(ctx context.Context, err error) error {
 	return err
 }
 
+var errLaunchUnconfirmed = errors.New("the run was created and its start was sent, but the answer was lost or " +
+	"could not be read, so whether it started is unknown. Open the run from History to see where it is")
+
+var errLaunchNewUnconfirmed = errors.New("the engine's answer to the launch was lost or could not be read, " +
+	"so a run may have been created. Check History before launching again")
+
 // launchTimeout bounds the launch: the host session's door, `workflow/new` and `invoke`, extended through an engine
 // stall (engineOwner.stallAware). A var so a test can shorten it.
 var launchTimeout = 120 * time.Second
@@ -92,6 +98,9 @@ func (rs *Runs) LaunchScheduled(
 		err = fmt.Errorf("%w: %w", schedule.ErrNoRunCanStart, err)
 	case errors.Is(err, errEngineSlow):
 		err = fmt.Errorf("%w: %w", schedule.ErrEngineBusy, err)
+	case errors.Is(err, errLaunchUnconfirmed):
+		// The runner records any error as a failed slot; the run may be running, and its ending settles the row.
+		err = nil
 	}
 	return id, name, err
 }
@@ -151,6 +160,9 @@ func (rs *Runs) launchAs(
 	})
 	if err != nil {
 		sb.closeOwned(rs.bridges.closeSession)
+		if ctx.Err() == nil && (verdictOf(err) == kasUnconfirmed || isCtxErr(err)) {
+			err = fmt.Errorf("%w: %w", errLaunchNewUnconfirmed, err)
+		}
 		return "", "", err
 	}
 	if !rs.bridges.insert(runChatID(wfID), sb) {
@@ -176,20 +188,30 @@ func (rs *Runs) launchAs(
 	rs.router.registerOwner(wfID, parent)
 	if _, err := rs.write(rctx, a, sb, wfID, methodKiroWorkflowInvoke,
 		map[string]any{keyWorkflowID: wfID}, mutationDrive); err != nil {
-		// Created but never started; the row grantLease wrote names this run, so it gets the failure. The invoke may
-		// have ended on the launch's deadline, which would refuse these writes too.
-		err = fmt.Errorf("workflow invoke: %w", err)
-		fctx := durable.Context(rctx)
-		rs.recordScheduleOutcome(fctx, schedule.Run{ScheduleID: o.scheduleRow().ID, ScheduleLife: o.scheduleRow().Life, WorkflowID: wfID},
-			schedule.Outcome{Status: schedule.StatusFailed, Reason: schedule.ReasonText(err.Error())})
-		rs.releaseLease(fctx, wfID)
-		rs.coord.closeBridge(fctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
-		return wfID, recipe.Name, err
+		return wfID, recipe.Name, rs.invokeFailed(durable.Context(rctx), wfID, recipe.Name, o, err)
 	}
 	// After invoke, so a run that never started leaves no timer.
 	rs.armDeadline(rctx, wfID)
 	slog.Info("workflow run launched", "workflow_id", wfID, "recipe", recipe.Name)
 	return wfID, recipe.Name, nil
+}
+
+// invokeFailed settles a launch whose invoke failed and returns its error. An unconfirmed (verdictOf) or
+// deadline-outlived answer may have started the run, so it keeps its lease, route and bridge under an armed deadline (errLaunchUnconfirmed); a
+// refusal records the schedule failure on the row grantLease wrote and releases the run.
+func (rs *Runs) invokeFailed(ctx context.Context, wfID, recipe string, o launchOrigin, err error) error {
+	err = fmt.Errorf("workflow invoke: %w", err)
+	if verdictOf(err) == kasUnconfirmed || isCtxErr(err) {
+		rs.armDeadline(ctx, wfID)
+		slog.Warn("a workflow run's start was sent but its answer was lost; kept as launched",
+			"workflow_id", wfID, "recipe", recipe, "error", err)
+		return fmt.Errorf("%w: %w", errLaunchUnconfirmed, err)
+	}
+	rs.recordScheduleOutcome(ctx, schedule.Run{ScheduleID: o.scheduleRow().ID, ScheduleLife: o.scheduleRow().Life, WorkflowID: wfID},
+		schedule.Outcome{Status: schedule.StatusFailed, Reason: schedule.ReasonText(err.Error())})
+	rs.releaseLease(ctx, wfID)
+	rs.coord.closeBridge(ctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
+	return err
 }
 
 // runStop is who a stop tells KAS asked. The zero value attributes nothing: an attributed stop tells the agent the user stopped it.
@@ -454,10 +476,10 @@ var errRetryOutcomeUnknown = errors.New(
 	"kiro-cli has not answered the retry yet and may still be running it. The run updates when it does",
 )
 
-// errRetryOutcomeUnreadable reports a retry KAS accepted whose report was unreadable. The run may be
+// errRetryOutcomeUnreadable reports a retry KAS may have taken whose report was lost or unreadable. The run may be
 // executing, so the remedy is refreshing, not retrying.
 var errRetryOutcomeUnreadable = errors.New(
-	"the retry was accepted but its report could not be read, so which steps it reset " +
+	"the retry was sent but its report was lost or could not be read, so which steps it reset " +
 		"is unknown. Refresh the run to see where it is",
 )
 
@@ -555,9 +577,7 @@ func (rs *Runs) retryCall(
 	none := marotte.RunRetriedResponse{}
 	rs.retries.mark(workflowID, time.Now())
 	resp, err := host.call(ctx, rs, workflowID, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
-	if err != nil && ctx.Err() == nil &&
-		(errors.Is(err, marotte.ErrReplyUndecoded) || errors.Is(err, marotte.ErrFrameTooLarge)) {
-		// An answer arrived and could not be read, so KAS may have taken the verb.
+	if err != nil && ctx.Err() == nil && verdictOf(err) == kasUnconfirmed {
 		return none, fmt.Errorf("%w: %w", errRetryOutcomeUnreadable, err)
 	}
 	if err != nil {
@@ -645,6 +665,10 @@ func (rs *Runs) updateNodeStatus(ctx context.Context, host *drivenHost, workflow
 		"nodeId":      nodeID,
 	})
 	if err != nil {
+		if marotte.ReplyUnread(err) {
+			// KAS may have ended the step and re-driven the run, so it is bounded as an end that took.
+			rs.armDeadline(ctx, workflowID)
+		}
 		return err
 	}
 	if refusal := stepStatusRefusal(resp); refusal != "" {
@@ -1012,7 +1036,7 @@ func (rs *Runs) workflowNew(
 		WorkflowID string `json:"workflowId"`
 	}
 	if err := json.Unmarshal(resp.Result, &res); err != nil || res.WorkflowID == "" {
-		return "", errors.New("workflow new: reply carried no workflowId")
+		return "", fmt.Errorf("%w: workflow new: reply carried no workflowId", errLaunchNewUnconfirmed)
 	}
 	return res.WorkflowID, nil
 }

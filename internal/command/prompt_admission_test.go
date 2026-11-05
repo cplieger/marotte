@@ -155,6 +155,20 @@ func (a *scriptedAdmission) tryReserveIdleOld(c marotte.ChatID, s marotte.TurnOp
 	return a.tryReserveOld(c, s)
 }
 
+func (a *scriptedAdmission) ReserveTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if a.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
+func (a *scriptedAdmission) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if a.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
 func (a *scriptedAdmission) tryReserveFencedOld(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
 	return a.tryReserveOld(c, s)
 }
@@ -630,11 +644,6 @@ func (l *promptJoin) join() { l.wg.Wait() }
 func (r *scriptedAdmission) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, _ uint64, _ string) (AdmissionOutcome, Reservation) {
 	out := r.reservePromptOld(ctx, chatID, wait)
 	return out, testReservation(chatID, out == AdmissionAcquired)
-}
-
-func (r *scriptedAdmission) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
-	ok := r.tryReserveOld(chatID, source)
-	return testReservation(chatID, ok), ok
 }
 
 func (r *scriptedAdmission) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {

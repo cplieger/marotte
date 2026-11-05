@@ -192,6 +192,8 @@ func spawnIgnoreRuntime(t *testing.T, body string) (*Runtime, string) {
 	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil),
 		newTestChatStore(), WithConfigDir(dir))
 	t.Cleanup(func() { shutdownHub(t, h) })
+	// The boot's own observer door reads the same settings and logs the same Warns, so it ends before a test captures.
+	settleBoot(t, h)
 	return h, dir
 }
 

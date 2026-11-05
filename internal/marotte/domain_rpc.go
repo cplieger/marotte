@@ -100,6 +100,10 @@ var ErrSessionBusy = errors.New("session busy")
 // transient failure because the two want opposite actions: a retry on a dead engine only burns time.
 var ErrBridgeExited = errors.New("ACP bridge exited")
 
+// ErrNotWritten is wrapped into a request's error when the engine ended before the request's whole frame reached
+// kiro-cli, so kiro-cli never saw it. An ErrBridgeExited without it may hide a request kiro-cli took.
+var ErrNotWritten = errors.New("the request was not written to kiro-cli")
+
 // ErrFrameTooLarge is the sentinel a Call returns (wrapped in a NON-retryable TransportError) when a
 // stdout frame exceeded the engine's cap and was dropped with this call's answer possibly inside it.
 // The engine and session live, so nothing is torn down; the text is user-facing. Not retryable: the
@@ -109,6 +113,12 @@ var ErrFrameTooLarge = errors.New("a message from kiro-cli was too large to read
 // ErrReplyUndecoded is the sentinel a Call returns, beside its -32700 *RPCError, when this call's answer arrived but
 // could not be decoded. Unlike a -32700 kiro-cli sends, it does not mean the request was refused: it may have taken effect.
 var ErrReplyUndecoded = errors.New("kiro-cli's answer arrived but could not be decoded")
+
+// ReplyUnread reports an answer that arrived but could not be read (undecoded or oversize), so kiro-cli may have
+// taken the call. A -32700 kiro-cli itself sends carries no ErrReplyUndecoded and stays a refusal.
+func ReplyUnread(err error) bool {
+	return errors.Is(err, ErrReplyUndecoded) || errors.Is(err, ErrFrameTooLarge)
+}
 
 // ErrBridgeNotStarted is the sentinel every write on an engine returns when there is no process to
 // write to: Start has not run, or it failed.

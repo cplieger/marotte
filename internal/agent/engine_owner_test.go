@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -294,6 +295,47 @@ func TestEngineExit_LogsOneLineWithTheSidecarStatus(t *testing.T) {
 	clean := exitFixture(t, nil, nil)
 	if clean["ended_itself"] != false {
 		t.Errorf("a stop's exit line = %v, want ended_itself=false", clean)
+	}
+}
+
+// An engine another process stopped is not a crash, and a crash stays one: a non-zero exit of its own, a SIGSEGV or a
+// SIGABRT, or a SIGKILL unless the container's OOM count is known and unchanged.
+func TestEngineExit_ACauseForAStopMarotteDidNotSend(t *testing.T) {
+	noOOM := func() (uint64, bool) { return 0, true }
+	oomUnknown := func() (uint64, bool) { return 0, false }
+	for name, tc := range map[string]struct {
+		info bridge.ExitInfo
+		oom  func() (uint64, bool)
+		want string
+	}{
+		"SIGTERM":                    {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGTERM}, want: "external_stop"},
+		"SIGINT":                     {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGINT}, want: "external_stop"},
+		"SIGHUP":                     {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGHUP}, want: "external_stop"},
+		"SIGKILL":                    {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGKILL}, oom: noOOM, want: "external_stop"},
+		"SIGKILL beside an OOM kill": {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGKILL}, oom: oomStep(), want: "crash"},
+		"SIGKILL, OOM count unknown": {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGKILL}, oom: oomUnknown, want: "crash"},
+		"SIGSEGV":                    {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGSEGV}, want: "crash"},
+		"SIGABRT":                    {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarSignal: syscall.SIGABRT}, want: "crash"},
+		"a non-zero exit":            {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarExit: "exit_code=1"}, want: "crash"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			line := exitFixture(t, &tc.info, tc.oom)
+			if line["cause"] != tc.want || line["ended_itself"] != true {
+				t.Errorf("exit line = %v, want cause=%s ended_itself=true", line, tc.want)
+			}
+		})
+	}
+}
+
+func oomStep() func() (uint64, bool) {
+	var mu sync.Mutex
+	n := uint64(0)
+	return func() (uint64, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		v := n
+		n = 1
+		return v, true
 	}
 }
 

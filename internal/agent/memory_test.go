@@ -105,7 +105,19 @@ func TestWriteMemoryErr_ClassifiesTheFailure(t *testing.T) {
 			http.StatusBadRequest, "no memory with id",
 		},
 		{
+			"a parse error KAS itself sends keeps KAS's words", &marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "Parse error"},
+			http.StatusBadRequest, "Parse error",
+		},
+		{
 			"a transport fault is generic", errors.New("bridge exited: /config/home/secret path"),
+			http.StatusBadGateway, "memory request failed",
+		},
+		{
+			"an undecoded answer is not a refusal", undecodedReply(),
+			http.StatusBadGateway, "memory request failed",
+		},
+		{
+			"an oversize answer is not a refusal", &marotte.TransportError{Err: marotte.ErrFrameTooLarge},
 			http.StatusBadGateway, "memory request failed",
 		},
 	}

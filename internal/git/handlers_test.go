@@ -1070,13 +1070,14 @@ sleep 30`)
 // wall clock. The fake reports past several stall windows and succeeds.
 func TestRunTransfer_ProgressKeepsASlowTransferAlive(t *testing.T) {
 	prev := cloneStallTimeout
-	cloneStallTimeout = 150 * time.Millisecond
+	cloneStallTimeout = 400 * time.Millisecond
 	t.Cleanup(func() { cloneStallTimeout = prev })
 	work := t.TempDir()
+	// 16 lines 50ms apart outlast the stall budget twice over, with each gap far inside it under load.
 	stageFakeGitExiting(t, `i=0
-while [ $i -lt 8 ]; do
-  echo "Receiving objects: ${i}0%" >&2
-  sleep 0.1
+while [ $i -lt 16 ]; do
+  echo "Receiving objects: ${i}%" >&2
+  sleep 0.05
   i=$((i+1))
 done`, 0)
 
@@ -1086,8 +1087,8 @@ done`, 0)
 	if err != nil {
 		t.Fatalf("slow-but-alive transfer: err = %v (out %q), want success", err, out)
 	}
-	if len(lines) < 8 {
-		t.Errorf("onProgress saw %d lines, want all 8", len(lines))
+	if len(lines) < 16 {
+		t.Errorf("onProgress saw %d lines, want all 16", len(lines))
 	}
 }
 

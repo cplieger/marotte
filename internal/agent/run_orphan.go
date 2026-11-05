@@ -333,7 +333,7 @@ var errInspectUndecoded = errors.New("a run's inspect reply could not be decoded
 func (rs *Runs) readInspect(ctx context.Context, workflowID string) (inspectRunState, json.RawMessage, error) {
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
-		slog.Warn("could not read a paused run's state, so it is left alone",
+		slog.Warn("could not read a run's state",
 			"workflow_id", workflowID, "error", err)
 		return inspectRunState{}, nil, err
 	}

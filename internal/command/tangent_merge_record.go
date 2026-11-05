@@ -213,23 +213,22 @@ func (m *tangentMerges) reconcile(ctx context.Context, parent marotte.ChatID, de
 
 // deliver sends the findings under p.MessageID and answers "" once KAS holds them, or the failure
 // the user reads; settled is false when ctx ended before either was known. The findings are the parent record's
-// across its lives, so a close of the parent is waited out and the delivery lands in its next life; a try that met
-// no close counts, and the prompt is retried once when the parent's turn ends between two counted tries.
+// across its lives, so a close of the parent is waited out and the delivery lands in its next life; a try that waited
+// out no close counts, and the prompt is retried once when the parent's turn ends between two counted tries.
 func (m *tangentMerges) deliver(ctx context.Context, parent marotte.ChatID, p *marotte.PromptCommand) (failure string, settled bool) {
 	for tries := 0; tries < 2; {
 		if _, err := m.roles.admission.AwaitNoClose(ctx, parent); err != nil {
 			return "", false
 		}
-		if res, ok := m.roles.admission.TryReserveTurn(parent, marotte.TurnSourcePrompt, m.roles.admission.LifeStamp()); ok {
-			turnID, err := startPrompt(ctx, m.roles, parent, p, &launch{res: res, awaited: true})
-			switch {
-			case parentGone(err):
-				return mergeParentGone, true
-			case err != nil:
-				slog.Warn("tangent merge: the findings prompt could not open", "parent", parent, keyError, err)
-				return deliveryFailure(""), true
+		out, res := m.roles.admission.ReserveTurn(ctx, parent, marotte.TurnSourcePrompt, m.roles.admission.LifeStamp(), AdmissionWait)
+		if out == IdleClosed {
+			if !m.closeMet(ctx, parent) {
+				tries++
 			}
-			return m.awaitReceipt(ctx, parent, turnID)
+			continue
+		}
+		if out == IdleAcquired {
+			return m.prompt(ctx, parent, p, res)
 		}
 		if m.closeMet(ctx, parent) {
 			continue
@@ -251,6 +250,19 @@ func (m *tangentMerges) deliver(ctx context.Context, parent marotte.ChatID, p *m
 		tries++
 	}
 	return deliveryFailure(""), true
+}
+
+// prompt opens the findings prompt on the parent's reserved slot res and awaits KAS's receipt.
+func (m *tangentMerges) prompt(ctx context.Context, parent marotte.ChatID, p *marotte.PromptCommand, res Reservation) (failure string, settled bool) {
+	turnID, err := startPrompt(ctx, m.roles, parent, p, &launch{res: res, awaited: true})
+	switch {
+	case parentGone(err):
+		return mergeParentGone, true
+	case err != nil:
+		slog.Warn("tangent merge: the findings prompt could not open", "parent", parent, keyError, err)
+		return deliveryFailure(""), true
+	}
+	return m.awaitReceipt(ctx, parent, turnID)
 }
 
 // closeMet reports whether a try met a close of the parent, which it then waits out; such a try does not count.

@@ -18,9 +18,9 @@ func (r *turnRegistry) testLifecycle(chatID marotte.ChatID) *chatLifecycle {
 	return lc
 }
 
-// tryReserveNow is TryReserveTurn with a stamp taken now, for a test that needs only the verdict.
+// tryReserveNow is turnRegistry.tryReserve with a stamp taken now, for a test that needs only the verdict.
 func (bc *bridgeCoordinator) tryReserveNow(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
-	_, ok := bc.TryReserveTurn(chatID, source, bc.LifeStamp())
+	_, ok := bc.turns.tryReserve(chatID, source, bc.LifeStamp())
 	return ok
 }
 

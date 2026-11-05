@@ -130,14 +130,23 @@ func (rt *Runtime) ReserveTurnForPrompt(
 	return rt.coord.ReserveTurnForPrompt(ctx, chatID, wait, stamp, messageID)
 }
 
-// TryReserveTurn takes the chat's admission slot iff it is free.
-func (rt *Runtime) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
-	return rt.coord.TryReserveTurn(chatID, source, stamp)
-}
-
 // TryReserveIdleTurn takes the chat's admission slot iff no turn is open and nothing holds it.
 func (rt *Runtime) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
 	return rt.coord.TryReserveIdleTurn(chatID, source, stamp)
+}
+
+// ReserveIdleTurn takes the chat's admission slot once no turn holds it, waiting up to wait for a transient holder.
+func (rt *Runtime) ReserveIdleTurn(
+	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration,
+) (command.IdleAdmission, command.Reservation) {
+	return rt.coord.ReserveIdleTurn(ctx, chatID, source, stamp, wait)
+}
+
+// ReserveTurn takes the chat's admission slot, waiting up to wait for a holder that is not a running turn.
+func (rt *Runtime) ReserveTurn(
+	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration,
+) (command.IdleAdmission, command.Reservation) {
+	return rt.coord.ReserveTurn(ctx, chatID, source, stamp, wait)
 }
 
 // TryReserveTurnFenced takes the chat's admission slot iff it is free and no turn

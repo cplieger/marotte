@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -108,7 +109,7 @@ func (s *Session) callable() error {
 		return marotte.ErrSessionClosing
 	case stateClosed:
 		if s.engine.readerExited.Load() {
-			return &marotte.TransportError{Err: errBridgeExited, Retryable: true}
+			return &marotte.TransportError{Err: fmt.Errorf("%w: %w", errBridgeExited, marotte.ErrNotWritten), Retryable: true}
 		}
 		return marotte.ErrSessionClosed
 	}
@@ -434,6 +435,14 @@ func (s *Session) sendClose() error {
 	case err == nil:
 		s.settle()
 		return nil
+	case marotte.ReplyUnread(err):
+		// KAS may have closed it, so this is no refusal: custody re-sends, and a re-sent close is answered {} either way.
+		slog.Warn("a session's close answer could not be read; the close is re-sent",
+			"session_id", s.id, "role", s.role, "error", err)
+		s.Release()
+		s.noteMiss(err)
+		s.startCustody(true)
+		return marotte.ErrSessionClosing
 	case resp != nil && resp.Error != nil:
 		// Any error reply is a refusal, whatever its code: KAS may still hold the session live.
 		if s.reopen() {

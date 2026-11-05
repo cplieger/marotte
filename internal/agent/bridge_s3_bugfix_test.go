@@ -22,6 +22,8 @@ func hubWithBridge(t *testing.T, workDir string, br engineSession) *Runtime {
 	factory := func() engineSession { return br }
 	h := newRuntimeOn(t.Context(), workDir, fakeEngineOf(factory, nil), cs)
 	cs.wire(h)
+	// Shutdown drains the agent terminals, whose exit watchers read the terminal graces a later test sets.
+	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true

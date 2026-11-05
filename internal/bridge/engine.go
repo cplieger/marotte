@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/cplieger/marotte/internal/kascap"
@@ -96,7 +97,10 @@ type ExitInfo struct {
 	// SidecarExit is the kiro-cli acp process's own status ("exit_code=N" or "signal=NAME"); its node child's status
 	// never reaches marotte, so it names no cause.
 	SidecarExit string
-	Uptime      time.Duration
+	// SidecarSignal is the signal that ended the kiro-cli process before marotte signalled it, from a signalled wait
+	// status or the 128+N exit kiro-cli makes of a signal it catches (SIGTERM is 143); 0 when none did.
+	SidecarSignal syscall.Signal
+	Uptime        time.Duration
 	// RSSPeakMiB is the node engine's highest sampled resident set high-water mark (VmHWM), 0 when never sampled.
 	RSSPeakMiB int
 	// HeapLimitMiB is the engine's effective JavaScript heap limit, 0 when unknown.
@@ -173,8 +177,10 @@ type Engine struct {
 	lastFrame atomic.Int64
 	heapMiB   int
 	// rssPeakMiB and heapLimitMiB are the memory sampler's record for ExitInfo. Guarded by mu.
-	rssPeakMiB          int
-	heapLimitMiB        int
+	rssPeakMiB   int
+	heapLimitMiB int
+	// sidecarSignal is ExitInfo.SidecarSignal. Guarded by mu.
+	sidecarSignal       syscall.Signal
 	generation          uint64
 	stopOnce            sync.Once
 	exitOnce            sync.Once
@@ -260,6 +266,7 @@ func (e *Engine) exitInfoLocked() ExitInfo {
 	info := ExitInfo{
 		Reason:            e.exitReason,
 		SidecarExit:       e.sidecarExit,
+		SidecarSignal:     e.sidecarSignal,
 		RSSPeakMiB:        e.rssPeakMiB,
 		HeapLimitMiB:      e.heapLimitMiB,
 		JSHeapOOM:         e.jsHeapOOM.Load(),

@@ -16,6 +16,18 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
+// tryReserve takes the slot iff free and the life gate admits stamp, never waiting: a probe of who holds the slot.
+func (r *turnRegistry) tryReserve(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
+	lc, ok := r.tryLifecycleAt(chatID, stamp)
+	if !ok {
+		return command.Reservation{}, false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	a := r.reserveLocked(lc, source, stamp, "")
+	return a.res, a.res.Token != 0
+}
+
 // Not parallel-safe.
 func shrinkAdmissionWait(t *testing.T, d time.Duration) {
 	t.Helper()
@@ -676,7 +688,7 @@ func TestTryReserve_BesideAWireTurn(t *testing.T) {
 				h.coord.releaseHeld("c1")
 			}
 			if got != tc.wantBare {
-				t.Errorf("TryReserveTurn = %t, want %t", got, tc.wantBare)
+				t.Errorf("tryReserve = %t, want %t", got, tc.wantBare)
 			}
 			got = h.coord.tryReserveFencedNow("c1", marotte.TurnSourcePrompt, command.TurnFence{})
 			if got {

@@ -30,7 +30,7 @@ var frameTooLargeResp = &marotte.RPCResponse{
 }
 
 // errWriteFenced refuses a frame once the read loop exited: nothing is left to read it, so it is never written.
-var errWriteFenced = errors.New("ACP bridge exited before the frame was written")
+var errWriteFenced = fmt.Errorf("ACP bridge exited before the frame was written: %w", marotte.ErrNotWritten)
 
 // pendingReply is the answer to one of marotte's requests plus the position of its lane when it arrived: the
 // response skips the frames queued before it, so the position is captured with it.
@@ -144,19 +144,27 @@ func (e *Engine) closePending() int {
 // entry is dropped: its caller is gone and nothing is left to close on an ended engine.
 func (e *Engine) failPending(resp *marotte.RPCResponse, match func(id int64, entry *pendingEntry) bool) int {
 	e.pendingMu.Lock()
-	defer e.pendingMu.Unlock()
 	n := 0
+	var lates []func(*marotte.RPCResponse)
 	for id, entry := range e.pending {
 		if !match(id, entry) {
 			continue
 		}
 		delete(e.pending, id)
 		if entry.abandoned {
+			// The real answer can no longer reach the hook, so an unread one stands in for it.
+			if entry.late != nil && unreadResp(resp) {
+				lates = append(lates, entry.late)
+			}
 			continue
 		}
 		n++
 		// A failure carries the lane's position too, so a settle does not wait for a position the dropped frame took.
 		entry.ch <- pendingReply{resp: resp, seq: entry.lane.position()}
+	}
+	e.pendingMu.Unlock()
+	for _, late := range lates {
+		e.goBackground(func() { late(resp) })
 	}
 	return n
 }
@@ -166,6 +174,12 @@ func matchAll(int64, *pendingEntry) bool { return true }
 // undecodedResp is what a pending request gets when its response arrived but could not be decoded.
 var undecodedResp = &marotte.RPCResponse{
 	Error: &marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "marotte could not decode kiro-cli's answer"},
+}
+
+// unreadResp reports a sentinel for an answer that arrived but could not be read, so kiro-cli may have acted on the
+// request; a late hook must not read its Error as a refusal.
+func unreadResp(resp *marotte.RPCResponse) bool {
+	return resp == undecodedResp || resp == frameTooLargeResp
 }
 
 // reportUndecodedFrame settles what a frame that fits but fails to decode concerned, judged from its head: a request is
@@ -588,22 +602,32 @@ func (e *Engine) writeFrameIf(data []byte, commit func() error) (refused, err er
 		if err == nil && n == chunkLen {
 			continue
 		}
-		reason := exitWriteFailed
-		switch {
-		case errors.Is(err, os.ErrDeadlineExceeded):
-			// writeWatched logged which bound reaped it.
-			reason = ExitStdinStalled
-		case err == nil:
-			err = fmt.Errorf("short write to ACP stdin: %d of %d bytes", off, len(data))
-			slog.Error("ACP write: short write left a partial frame in kiro-cli's stdin; reaping the agent engine",
-				"wrote_bytes", off, "frame_bytes", len(data))
-		default:
-			slog.Error("ACP write failed; reaping the agent engine", "wrote_bytes", off, "frame_bytes", len(data), "error", err)
-		}
-		e.fail(reason)
-		return nil, fmt.Errorf("%w: %w", errBridgeExited, err)
+		return nil, e.failWrite(err, off, len(data))
 	}
 	return nil, nil
+}
+
+// failWrite reaps the engine after a failed or short stdin write that left off of total bytes written, and returns
+// the write's error.
+func (e *Engine) failWrite(err error, off, total int) error {
+	reason := exitWriteFailed
+	switch {
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		// writeWatched logged which bound reaped it.
+		reason = ExitStdinStalled
+	case err == nil:
+		err = fmt.Errorf("short write to ACP stdin: %d of %d bytes", off, total)
+		slog.Error("ACP write: short write left a partial frame in kiro-cli's stdin; reaping the agent engine",
+			"wrote_bytes", off, "frame_bytes", total)
+	default:
+		slog.Error("ACP write failed; reaping the agent engine", "wrote_bytes", off, "frame_bytes", total, "error", err)
+	}
+	e.fail(reason)
+	if off < total {
+		// The frame's closing newline never went out, so kiro-cli read no request.
+		return fmt.Errorf("%w: %w: %w", errBridgeExited, marotte.ErrNotWritten, err)
+	}
+	return fmt.Errorf("%w: %w", errBridgeExited, err)
 }
 
 // deadlineWriter is the part of a stdin handle a write deadline needs: cmd.StdinPipe's *os.File has it, the test

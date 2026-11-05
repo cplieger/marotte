@@ -53,7 +53,7 @@ func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
 	t.Run("a reservation with no prompt id is named by its admission", func(t *testing.T) {
 		rt, cs, _ := newTestHub()
 		seedChat(t, cs, "c1")
-		res, ok := rt.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt, rt.coord.LifeStamp())
+		res, ok := rt.coord.turns.tryReserve("c1", marotte.TurnSourcePrompt, rt.coord.LifeStamp())
 		if !ok {
 			t.Fatal("reserve refused")
 		}
@@ -62,7 +62,7 @@ func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
 	t.Run("a released reservation stops nothing", func(t *testing.T) {
 		rt, cs, _ := newTestHub()
 		seedChat(t, cs, "c1")
-		res, _ := rt.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt, rt.coord.LifeStamp())
+		res, _ := rt.coord.turns.tryReserve("c1", marotte.TurnSourcePrompt, rt.coord.LifeStamp())
 		rt.coord.ReleaseTurnReservation(res)
 		if got := turnsOf(rt, "c1"); len(got) != 0 {
 			t.Errorf("turns = %+v, want none", got)

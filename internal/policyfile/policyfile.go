@@ -1,14 +1,12 @@
 // Package policyfile reads and writes kiro-cli's native Cedar permission files for the user and
 // workspace scopes, under kiro-cli's state directory: <kiroHome>/settings/permissions.yaml and
-// <kiroHome>/workspace-roots/<workspaceHash>/permissions.yaml. KAS also writes the user file
+// <kiroHome>/workspace-roots/<workspace.SessionsBucket>/permissions.yaml. KAS also writes the user file
 // for a user-scope consent, and hot-reloads both, so a write reaches every live session. Load
 // accepts block YAML or JSON; Save writes block YAML (KAS 2.12).
 package policyfile
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -20,6 +18,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/envx/yamlenv/v2"
+	"github.com/cplieger/marotte/internal/workspace"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -116,27 +115,6 @@ func ValidEffect(effect string) bool {
 	return effect == EffectAllow || effect == EffectDeny || effect == EffectAsk
 }
 
-// workspaceHash mirrors KAS's computeWorkspaceHash on Linux: the first 16 hex chars of sha256 over
-// the canonicalized root (absolute, cleaned, no trailing slash), matching KAS's path.resolve. A
-// divergent hash would write workspace rules to a directory KAS never reads.
-func workspaceHash(workDir string) string {
-	sum := sha256.Sum256([]byte(canonicalWorkDir(workDir)))
-	return hex.EncodeToString(sum[:])[:16]
-}
-
-// canonicalWorkDir reduces workDir to its absolute, cleaned form (filepath.Abs
-// then filepath.Clean, applied exactly once). filepath.Abs already Cleans on
-// success — collapsing ".", "..", duplicate slashes, and any trailing slash;
-// the explicit Clean guards the error branch (Abs only fails for a relative
-// workDir when the process cwd is unavailable) so the fallback stays canonical.
-func canonicalWorkDir(workDir string) string {
-	abs, err := filepath.Abs(workDir)
-	if err != nil {
-		return filepath.Clean(workDir)
-	}
-	return filepath.Clean(abs)
-}
-
 // Roots are the two filesystem roots a permissions.yaml path resolves against. A struct because a
 // transposition of two path strings would write a security policy under the wrong root with nothing
 // to detect it.
@@ -159,7 +137,7 @@ func PathFor(scope string, roots Roots) (string, error) {
 		return filepath.Join(roots.KiroHome, "settings", filename), nil
 	case ScopeWorkspace:
 		return filepath.Join(roots.KiroHome, "workspace-roots",
-			workspaceHash(roots.WorkDir), filename), nil
+			workspace.SessionsBucket(roots.WorkDir), filename), nil
 	default:
 		return "", errInvalidScope
 	}
