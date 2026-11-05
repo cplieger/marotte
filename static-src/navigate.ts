@@ -70,7 +70,7 @@ export async function openSpec(dir: string, chatID?: string): Promise<void> {
   const existing = tabIdFor("spec", dir);
   if (existing !== "" && parent !== "" && parentChatRef(existing) === "") {
     await setTabParent(existing, parent);
-    activateTab(existing);
+    void activateTab(existing);
     return;
   }
   await openTab(

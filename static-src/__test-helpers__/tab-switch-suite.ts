@@ -18,6 +18,7 @@ import {
   type ChatOpenerFake,
 } from "./tab-switch-mocks.js";
 import { recordNotices, type Notice } from "./switch-notices.js";
+import { dropCover } from "../transcript-cover.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 
@@ -67,6 +68,9 @@ export async function strip(...refs: string[]): Promise<Record<string, string>> 
   pointers.active = first;
   pointers.painted = first;
   resident.add(first);
+  // The fake opener mounts nothing, so the paint that would release the first chat's cover is
+  // stood in for here.
+  dropCover();
   vi.clearAllMocks();
   return Object.fromEntries(refs.map((r) => [r, tabIdFor("chat", r)]));
 }

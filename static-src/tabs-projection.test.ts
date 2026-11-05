@@ -234,6 +234,9 @@ function registerOpeners(): void {
 /** Two channels: injected openers, or the singletons' lazy loaders (for settings, its REFRESH via
  *  the gate). */
 async function expectActivated(kind: TabKind, ref: string): Promise<void> {
+  // The activation half runs in a task after the frame that painted the strip.
+  await paint();
+  await new Promise((r) => setTimeout(r, 0));
   if (kind === "chat" || kind === "editor" || kind === "run") {
     expect(shown.at(-1)).toEqual({ kind, ref, rowPresent: true });
     return;

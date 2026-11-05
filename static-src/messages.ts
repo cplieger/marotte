@@ -320,8 +320,23 @@ function activateView(chatID: string): boolean {
   if (unparking) {
     setResumeLabel(view.resumeLabel);
   }
-  evictParkedViews();
+  scheduleEviction();
   return unparking;
+}
+
+let evictionQueued = false;
+
+/** Dispose the over-budget parked views in a later task, so tearing down an LRU view never sits
+ *  between the incoming view and its first paint. One task per burst of activations. */
+function scheduleEviction(): void {
+  if (evictionQueued) {
+    return;
+  }
+  evictionQueued = true;
+  setTimeout(() => {
+    evictionQueued = false;
+    evictParkedViews();
+  }, 0);
 }
 
 function evictParkedViews(): void {

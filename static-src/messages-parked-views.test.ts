@@ -796,6 +796,8 @@ describe("disposal", () => {
       switchTo(id);
       await flushed();
     }
+    // Eviction runs in the task after the paint.
+    await new Promise((r) => setTimeout(r, 0));
 
     // Five chats visited: the first is past the parked budget of three and its container is gone.
     expect(messages.transcriptViewFor(first)).toBeNull();

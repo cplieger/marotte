@@ -289,12 +289,24 @@ function registerOpeners(): void {
 
 // --- Openers the cases below drive ---
 
-/** Open a chat tab for `ref`. Awaited, because the row lands with the frame. */
-function openChat(
+/** Open a chat tab for `ref`. Awaited, because the row lands with the frame, and its activation
+ *  runs and settles before the case goes on, as a visit the reader waited out. */
+async function openChat(
   ref: string,
   opts: { activate?: boolean; parent?: string; owns?: boolean } = {},
 ): Promise<OpenTabOutcome> {
-  return openTab({ kind: "chat", ref, ...opts });
+  const outcome = await openTab({ kind: "chat", ref, ...opts });
+  await visited();
+  return outcome;
+}
+
+/** Run the deferred activation half now and let its refresh settle, inside the task, so no strip
+ *  frame paints in between. */
+async function visited(): Promise<void> {
+  tabsModule.flushActivationForTest();
+  // The settle is the refresh promise's reaction, a microtask or two behind it.
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 /** The projection's id for a chat, read back rather than composed. */
@@ -476,7 +488,7 @@ describe("closeTab", () => {
   ])("$desc", async ({ setup, activate, close, expectActive, expectHas, expectGone }) => {
     expect.assertions(1 + expectHas.length + expectGone.length);
     await openChats(...setup);
-    activateTab(chatID(activate));
+    await activateTab(chatID(activate));
     await closeTab(chatID(close));
     expect(getActiveTabId()).toBe(expectActive === "" ? "" : chatID(expectActive));
     for (const ref of expectHas) {
@@ -720,7 +732,7 @@ describe("activateTab", () => {
   ])("$desc", async ({ target, expectActive }) => {
     expect.assertions(1);
     await openChats("a", "b");
-    activateTab(chatID(target));
+    await activateTab(chatID(target));
     expect(getActiveTabId()).toBe(chatID(expectActive));
   });
 
@@ -736,7 +748,7 @@ describe("activateTab", () => {
     const sidebar = $.sidebar;
     sidebar.classList.add("open");
 
-    activateTab(chatID("b"));
+    await activateTab(chatID("b"));
 
     expect(getActiveTabId()).toBe(chatID("b"));
     expect(sidebar.classList.contains("open")).toBe(false);
@@ -809,9 +821,10 @@ describe("MRU activation history", () => {
     await openChats("first", "a");
     await openChat("p");
     await openTab({ kind: "chat", ref: "c", parent: chatID("p") });
+    await visited();
     // History: [c, p, a, first]. Re-activating the parent puts it at the head, so
     // the subtree holds the two most recent entries.
-    activateTab(chatID("p"));
+    await activateTab(chatID("p"));
 
     await closeTab(chatID("p"));
 
@@ -838,7 +851,7 @@ describe("MRU activation history", () => {
   it("closing a non-active tab leaves active alone", async () => {
     expect.assertions(2);
     await openChats("a", "b", "c", "d");
-    activateTab(chatID("b")); // history [b, d, c, a]
+    await activateTab(chatID("b")); // history [b, d, c, a]
 
     await closeTab(chatID("d"));
     expect(getActiveTabId()).toBe(chatID("b"));
@@ -853,7 +866,7 @@ describe("MRU activation history", () => {
   it("is not affected by a reorder", async () => {
     expect.assertions(2);
     await openChats("a", "b", "c");
-    activateTab(chatID("a")); // history [a, c, b]
+    await activateTab(chatID("a")); // history [a, c, b]
     commitDrop?.([chatID("b"), chatID("a"), chatID("c")]);
     await settleTabs();
     expect(await rowRefs()).toEqual(["b", "a", "c"]);
@@ -867,7 +880,7 @@ describe("MRU activation history", () => {
   it("hands over to the most recent survivor when another device closes the active tab", async () => {
     expect.assertions(2);
     await openChats("a", "b", "c");
-    activateTab(chatID("b")); // history [b, c, a]
+    await activateTab(chatID("b")); // history [b, c, a]
 
     tabServer.closeRemotely(chatID("b"));
     await settleTabs();
@@ -884,7 +897,8 @@ describe("MRU activation history", () => {
     await openChats("first", "a");
     await openChat("p");
     await openTab({ kind: "chat", ref: "c", parent: chatID("p") });
-    activateTab(chatID("p")); // history [p, c, a, first]
+    await visited();
+    await activateTab(chatID("p")); // history [p, c, a, first]
 
     tabServer.closeRemotely(chatID("p"));
     await settleTabs();
@@ -897,8 +911,8 @@ describe("MRU activation history", () => {
   it("a refused close restores the closed tab's place in the history", async () => {
     expect.assertions(4);
     await openChats("a", "b", "c");
-    activateTab(chatID("b"));
-    activateTab(chatID("a")); // history [a, b, c]
+    await activateTab(chatID("b"));
+    await activateTab(chatID("a")); // history [a, b, c]
     tabServer.failNext("close_tab");
 
     // Non-active, so the rollback restores the row without moving the active tab.
@@ -950,8 +964,8 @@ describe("MRU activation history", () => {
     expect.assertions(5);
     await openChat("first", { activate: false });
     await openChats("a", "b", "c"); // history [c, b, a]
-    activateTab(chatID("a"));
-    activateTab(chatID("b")); // history [b, a, c] — `c` is the tail, behind `a`
+    await activateTab(chatID("a"));
+    await activateTab(chatID("b")); // history [b, a, c] — `c` is the tail, behind `a`
     tabServer.failNext("close_tab");
     tabServer.holdResponses();
 
@@ -992,6 +1006,7 @@ describe("MRU activation history", () => {
     await openChat("a");
     await openChat("p");
     await openTab({ kind: "chat", ref: "c", parent: chatID("p") });
+    await visited();
     await openChat("b"); // history [b, c, p, a] — the pair, adjacent, mid-history
     await openChat("d", { activate: false });
     tabServer.failNext("close_tab");
@@ -999,7 +1014,7 @@ describe("MRU activation history", () => {
 
     const closing = closeTab(chatID("p"));
     // The reader's gesture inside the window, synchronous: history [d, b, a].
-    activateTab(chatID("d"));
+    await activateTab(chatID("d"));
     tabServer.releaseResponses();
     await closing;
     expect(hasTab("chat", "p")).toBe(true);
@@ -1025,7 +1040,7 @@ describe("MRU activation history", () => {
 
     const closing = closeTab(chatID("c")); // anchored on `s`
     tabServer.closeRemotely(chatID("s")); // and `s` goes, mid-window
-    activateTab(chatID("d")); // history [d, b, a]
+    await activateTab(chatID("d")); // history [d, b, a]
     tabServer.releaseResponses();
     await closing;
     expect(hasTab("chat", "c")).toBe(true);
@@ -1071,6 +1086,7 @@ describe("a resync that drops the active tab", () => {
     const ids = await openChats("a", "c", "b"); // history [b, c, a]
 
     await resyncWithout(ids["b"] ?? "");
+    await visited();
 
     expect(getActiveTabId()).toBe(ids["c"]);
     expect(openers.chatShow).toHaveBeenLastCalledWith("c");
@@ -2787,7 +2803,9 @@ describe("the file browser is multi-instance", () => {
   it("falls back to the MOST RECENT browser when the active tab is not one", async () => {
     expect.assertions(1);
     await openTab({ kind: "files", ref: "/a" });
+    await visited();
     await openTab({ kind: "files", ref: "/b" });
+    await visited();
     await settleTabs();
     await openChat("c-1");
     expect(filesTabForRoute("/somewhere/else")).toEqual({
@@ -3018,11 +3036,12 @@ describe("optimistic close: the reversible gesture", () => {
   it("a definitive refusal restores the chat row in place, re-activates it, and toasts", async () => {
     expect.assertions(6);
     await openChats("a", "b", "c");
-    activateTab(chatID("b"));
+    await activateTab(chatID("b"));
     vi.mocked(openers.chatShow).mockClear();
     tabServer.failNext("close_tab");
 
     await closeTab(chatID("b"));
+    await visited();
 
     expect(hasTab("chat", "b")).toBe(true);
     expect(await rowRefs()).toEqual(["a", "b", "c"]);
@@ -3380,6 +3399,7 @@ describe("optimistic close: the last tab and the empty-state surface", () => {
     const input = $.promptInput;
     input.value = "half a thought";
     await closing;
+    await visited();
 
     // The subtree is back, re-activated, and the typed text was filed as the
     // restored chat's draft through the failed-send primitive (which writes the
@@ -3408,6 +3428,7 @@ describe("optimistic close: the last tab and the empty-state surface", () => {
 describe("the freshness dispatcher", () => {
   it("refreshes the row an activation activated, after its onShow", async () => {
     await openEditorView("/w/a.ts");
+    await visited();
     expect(openers.editorRefresh).toHaveBeenCalledWith("/w/a.ts");
     // The kind's VIEW activation first, then the data half: a refresh that ran
     // ahead of the show would fetch into a surface pointing at another subject.
@@ -3425,16 +3446,19 @@ describe("the freshness dispatcher", () => {
 
   it("the already-active early return runs neither half", async () => {
     await openEditorView("/w/a.ts");
+    await visited();
     openers.editorShow.mockClear();
     openers.editorRefresh.mockClear();
-    activateTab(tabIdFor("editor", "/w/a.ts"));
+    await activateTab(tabIdFor("editor", "/w/a.ts"));
     expect(openers.editorShow).not.toHaveBeenCalled();
     expect(openers.editorRefresh).not.toHaveBeenCalled();
   });
 
   it("refreshActiveView refreshes the active row and no other", async () => {
     await openEditorView("/w/a.ts");
+    await visited();
     await openEditorView("/w/b.ts");
+    await visited();
     openers.editorRefresh.mockClear();
     refreshActiveView();
     expect(openers.editorRefresh.mock.calls).toEqual([["/w/b.ts"]]);
@@ -3445,6 +3469,7 @@ describe("the freshness dispatcher", () => {
   // URL could move through from here.
   it("refreshActiveView emits nothing and pushes no route", async () => {
     await openEditorView("/w/a.ts");
+    await visited();
     await paint();
     const version = tabSetVersion();
     const painted = $.tabList.innerHTML;
@@ -3791,6 +3816,7 @@ describe("in-place chat rename", () => {
 describe("routes follow the activation", () => {
   it("a sub-tab change on the active settings tab pushes its route", async () => {
     await openTab({ kind: "settings" });
+    tabsModule.flushActivationForTest();
     vi.mocked(pushRoute).mockClear();
 
     setSettingsTab("tools");

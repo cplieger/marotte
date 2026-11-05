@@ -505,7 +505,7 @@ export async function createSession(initialPrompt?: string): Promise<string> {
     addAttachment(path);
   }
   if (tabID !== "") {
-    activateTab(tabID);
+    void activateTab(tabID);
   }
   if (sends) {
     void submitPrompt(id, initialPrompt);
@@ -550,7 +550,7 @@ export async function openTangentChat(parentChatID: string, atMessageID?: string
   const shown = navigationHeld(ticket);
   if (shown) {
     if (tabID !== "") {
-      activateTab(tabID);
+      void activateTab(tabID);
     } else {
       // No tab to activate, so the store pointer and the composer move by hand.
       setActive(id);
@@ -577,7 +577,7 @@ export async function switchSession(id: string): Promise<OpenTabOutcome | "activ
     if (id === getActiveId() && getActiveTabId() === tabID) {
       return "activated";
     }
-    activateTab(tabID);
+    void activateTab(tabID);
     return "activated";
   }
   // No tab. The caller has already established the chat EXISTS, and only the router
@@ -623,7 +623,7 @@ export async function attachPathsToActiveChat(paths: readonly string[]): Promise
   }
   const tabID = tabIdFor("chat", id);
   if (tabID !== "" && getActiveTabId() !== tabID) {
-    activateTab(tabID);
+    void activateTab(tabID);
   }
   for (const p of paths) {
     addAttachment(p);
