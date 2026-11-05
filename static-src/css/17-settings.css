@@ -1573,6 +1573,10 @@ select.native-rule-effect:focus-visible {
   color: var(--c-yellow);
   background: color-mix(in srgb, var(--c-yellow) 20%, transparent);
 }
+.eff-evaluate {
+  color: var(--c-blue);
+  background: color-mix(in srgb, var(--c-blue) 18%, transparent);
+}
 
 .native-rule-cap {
   flex: none;

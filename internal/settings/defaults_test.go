@@ -102,7 +102,9 @@ func TestEffective_AutoCompactionDefaultsAndInvalidPctReadsAsDefault(t *testing.
 	}{
 		{stored: `50`, want: 50},
 		{stored: `65`, want: 65},
-		{stored: `90`, want: 90},
+		{stored: `80`, want: 80},
+		{stored: `85`, want: 80, reject: true},
+		{stored: `90`, want: 80, reject: true},
 		{stored: `47`, want: 80, reject: true},
 		{stored: `92`, want: 80, reject: true},
 		{stored: `83`, want: 80, reject: true},
@@ -135,7 +137,9 @@ func TestValidateCompactionPatch(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "neither key", patch: map[string]json.RawMessage{KeyTheme: json.RawMessage(`"dark"`)}},
-		{name: "valid pct", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`85`)}},
+		{name: "valid pct", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`75`)}},
+		{name: "pct 85", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`85`)}, wantErr: true},
+		{name: "pct 90", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`90`)}, wantErr: true},
 		{name: "valid switch", patch: map[string]json.RawMessage{KeyAutoCompactionEnabled: json.RawMessage(`false`)}},
 		{name: "pct 95", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`95`)}, wantErr: true},
 		{name: "pct 83", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`83`)}, wantErr: true},

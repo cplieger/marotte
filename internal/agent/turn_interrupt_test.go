@@ -48,7 +48,7 @@ func endFirstRun(br *fakeBridge, answer chan struct{}) {
 	br.mu.Lock()
 	session := br.sessionID
 	br.mu.Unlock()
-	br.deliver(newTurnStartMsg())
+	br.deliver(br.promptTurnStartMsg())
 	br.deliver(newSessionChunkMsg(session, "Tidied."))
 	br.deliver(newTurnEndMsg("end_turn"))
 	close(answer)
@@ -117,7 +117,7 @@ func assertClosesClean(t *testing.T, br *fakeBridge, cs *testChatStore, turn str
 	br.mu.Lock()
 	session := br.sessionID
 	br.mu.Unlock()
-	br.deliver(newTurnStartMsg())
+	br.deliver(br.promptTurnStartMsg())
 	br.deliver(newSessionChunkMsg(session, "Renamed."))
 	br.deliver(newTurnEndMsg("end_turn"))
 	close(answer)
@@ -208,7 +208,7 @@ func TestCompactionReap_AnExpiryOutlivingAnEmptyTurnLeavesItsRetryAlone(t *testi
 		h.coord.CompactionFailed("c1", first.ID(), "compaction failed")
 		time.Sleep(compactionFailedTurnBudget)
 		<-block.entered
-		br.deliver(newTurnStartMsg())
+		br.deliver(br.promptTurnStartMsg())
 		br.deliver(newTurnEndMsg("end_turn"))
 		close(answerFirst)
 		synctest.Wait()
@@ -231,67 +231,6 @@ func TestCompactionReap_AnExpiryOutlivingAnEmptyTurnLeavesItsRetryAlone(t *testi
 	})
 }
 
-// kiro-cli's tool-use filter notice names the turn it ended: once that turn closed and the user's next prompt was
-// sent, the interrupt reaches neither.
-func TestInterruptTurn_ATurnThatClosedLeavesTheNextPromptAlone(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h, cs, br, first, answerFirst, prompted := interruptHub(t)
-		endFirstRun(br, answerFirst)
-		second, answerSecond := sendSecondPrompt(t, h, br)
-
-		h.coord.InterruptTurn("c1", first, interruptReasonForTest)
-		synctest.Wait()
-
-		assertPromptLive(t, h, cs, second, prompted(), 1)
-		assertClosesClean(t, br, cs, second, answerSecond)
-	})
-}
-
-// interruptReasonForTest is the translator's filter reason, which this package cannot import.
-const interruptReasonForTest = "Stopped by kiro-cli's tool-use security filter"
-
-// The filter notice during a notification re-wake ends the re-wake's turn only: the user's prompt waiting behind it
-// holds the bridge, and is sent once the re-wake's run ends.
-func TestInterruptTurn_ARewakeTurnLeavesThePromptWaitingBehindIt(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h, cs, br := newTestHub()
-		defer shutdownHub(t, h)
-		countDrains(h)
-		prompted := promptCalls(br)
-		answer := make(chan struct{})
-		defer close(answer)
-		br.mu.Lock()
-		br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: answer}
-		br.mu.Unlock()
-		release := admitPromptBehindSteerLock(t, h, cs, secondPrompt)
-		prompt, ok := h.coord.PromptTurn("c1")
-		if !ok {
-			t.Fatal("Setup: the admitted prompt has no turn")
-		}
-		rewake := ""
-		for _, s := range []sendGateStep{kasActive, kasTurnStart, gateRelease, kasReply} {
-			s.apply(t, h, release, &rewake)
-			synctest.Wait()
-		}
-
-		h.coord.InterruptTurn("c1", rewake, interruptReasonForTest)
-		synctest.Wait()
-		assertPromptLive(t, h, cs, prompt.ID(), prompted(), 0)
-		if got := h.coord.turns.interruptCause(mustTurn(t, h, rewake)); got != interruptReasonForTest {
-			t.Errorf("the re-wake's interrupt cause = %q, want %q", got, interruptReasonForTest)
-		}
-
-		for _, s := range []sendGateStep{kasIdleReport, kasTurnEnd} {
-			s.apply(t, h, release, &rewake)
-			synctest.Wait()
-		}
-		assertPromptLive(t, h, cs, prompt.ID(), prompted(), 1)
-		if _, closed := closeOfTurn(t, logOf(t, cs, "c1"), rewake); !closed {
-			t.Error("the re-wake's turn is still open after its turn_end")
-		}
-	})
-}
-
 // turnByID reports the live turn the id names, or false when the chat holds none
 // under it or it is finalizing.
 func (r *turnRegistry) turnByID(chatID marotte.ChatID, turnID string) (*activeTurn, bool) {
@@ -303,52 +242,6 @@ func (r *turnRegistry) turnByID(chatID marotte.ChatID, turnID string) (*activeTu
 		return nil, false
 	}
 	return t, true
-}
-
-func mustTurn(t *testing.T, h *Runtime, turn string) *activeTurn {
-	t.Helper()
-	live, ok := h.coord.turns.turnByID("c1", turn)
-	if !ok {
-		t.Fatalf("turn %q is not live", turn)
-	}
-	return live
-}
-
-// An interrupt trips the named turn's own prompt call with no cause, so it concludes `interrupted`; a turn with no
-// prompt call, or one already interrupted, only keeps its first cause.
-func TestInterruptTurn_TripsOnlyTheNamedTurnsOwnCall(t *testing.T) {
-	t.Run("a prompt turn", func(t *testing.T) {
-		h, cs, _ := newTestHub()
-		seedChat(t, cs, "c1")
-		pctx, cancel := context.WithCancelCause(context.Background())
-		t.Cleanup(func() { cancel(nil) })
-		id, _ := h.stagePromptTurnCalling(t, "c1", cancel)
-		t.Cleanup(func() { h.ReleaseTurn("c1", id) })
-
-		h.coord.InterruptTurn("c1", id, "first")
-		if got := context.Cause(pctx); got != context.Canceled {
-			t.Errorf("prompt context cause = %v, want context.Canceled, so the turn concludes interrupted", got)
-		}
-		h.coord.InterruptTurn("c1", id, "second")
-		if got := h.coord.turns.interruptCause(mustTurn(t, h, id)); got != "first" {
-			t.Errorf("interrupt cause = %q, want the first claim %q", got, "first")
-		}
-	})
-	t.Run("a turn with no prompt call", func(t *testing.T) {
-		h, cs, _ := newTestHub()
-		seedChat(t, cs, "c1")
-		h.coord.turns.ensureTestLife("c1")
-		wire := h.coord.openWireTurn(t.Context(), "c1", true)
-		if wire == nil {
-			t.Fatal("Setup: the agent's turn did not open")
-		}
-		id := wire.ID
-
-		h.coord.InterruptTurn("c1", id, "first")
-		if got := h.coord.turns.interruptCause(mustTurn(t, h, id)); got != "first" {
-			t.Errorf("interrupt cause = %q, want %q", got, "first")
-		}
-	})
 }
 
 // A stop during a notification re-wake targets that turn: the user's prompt waiting behind it is sent once the

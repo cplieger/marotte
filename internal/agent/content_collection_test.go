@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -149,5 +151,105 @@ func TestGovernanceLockChange_ReachesTheEngineReadableOrNot(t *testing.T) {
 				t.Errorf("the engine holds content collection applied = %v known = %v, want the organization's off, confirmed", applied, known)
 			}
 		})
+	}
+}
+
+// shareRecorder is a source that records every kiro-cli content-collection write, failing each while fail is set.
+type shareRecorder struct {
+	noEngine
+	fail   error
+	writes []bool
+}
+
+func (r *shareRecorder) ShareContent(_ context.Context, enabled bool) error {
+	r.writes = append(r.writes, enabled)
+	return r.fail
+}
+
+func TestKiroShare_WritesWhatMovedAndEverySpawn(t *testing.T) {
+	src := &shareRecorder{}
+	enabled, readable := false, true
+	k := kiroShare{resolve: func(context.Context) (bool, bool) { return enabled, readable }}
+	step := func(what string, force bool, want ...bool) {
+		t.Helper()
+		before := len(src.writes)
+		k.assert(t.Context(), src, force)
+		if got := src.writes[before:]; !slices.Equal(got, want) {
+			t.Errorf("%s: kiro-cli writes = %v, want %v", what, got, want)
+		}
+	}
+	step("first sync", false, false)
+	step("unchanged sync", false)
+	step("spawn", true, false)
+	enabled = true
+	step("sync after the switch moved", false, true)
+	enabled, readable = false, false
+	step("sync over an unreadable document", false)
+	step("spawn over an unreadable document", true, false)
+	enabled, readable = true, true
+	src.fail = errors.New("kiro-cli down")
+	step("failed write", false, true)
+	src.fail = nil
+	step("sync after a failed write", false, true)
+	step("unchanged sync after the retry landed", false)
+}
+
+// sharingEngineSource is a fake engine that also writes kiro-cli's switch, recording how many engines existed then.
+type sharingEngineSource struct {
+	*fakeEngineSource
+	mu       sync.Mutex
+	writes   []bool
+	atEngine []int
+}
+
+var _ ContentSharer = (*sharingEngineSource)(nil)
+
+func (s *sharingEngineSource) ShareContent(_ context.Context, enabled bool) error {
+	s.fakeEngineSource.mu.Lock()
+	engines := len(s.engines)
+	s.fakeEngineSource.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.writes = append(s.writes, enabled)
+	s.atEngine = append(s.atEngine, engines)
+	return nil
+}
+
+func (s *sharingEngineSource) recorded() (writes []bool, atEngine []int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.writes), slices.Clone(s.atEngine)
+}
+
+// The relay copies kiro-cli's switch into the engine it spawns, so marotte's value must be there before the spawn.
+func TestEngineSpawn_WritesKiroCLIsContentSwitchFirst(t *testing.T) {
+	dir := t.TempDir()
+	src := &sharingEngineSource{fakeEngineSource: fakeEngineOf(nil, nil)}
+	cs := newTestChatStore()
+	h := New(context.Background(), "/tmp/work", src, cs, WithConfigDir(dir))
+	src.fakeEngineSource.mu.Lock()
+	src.rt = h
+	src.fakeEngineSource.mu.Unlock()
+	h.runs.cancelRetryBase = time.Hour
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	if bootComing(h) {
+		if err := awaitBoot(h); err != nil {
+			t.Fatalf("Setup: boot: %v", err)
+		}
+	}
+	if !awaitEngine(h) {
+		t.Fatal("Setup: the engine never became ready")
+	}
+	writes, atEngine := src.recorded()
+	if !slices.Equal(writes, []bool{false}) || !slices.Equal(atEngine, []int{0}) {
+		t.Fatalf("at the first spawn kiro-cli writes = %v at engine counts %v, want [false] before any engine", writes, atEngine)
+	}
+
+	rewriteConfigByHand(t, dir, `{"content_collection_enabled":true}`)
+	h.ReconcileSessionSettings(t.Context())
+	h.ReconcileSessionSettings(t.Context())
+	if writes, _ := src.recorded(); !slices.Equal(writes, []bool{false, true}) {
+		t.Errorf("after the user opted in and two reconciles kiro-cli writes = %v, want [false true]", writes)
 	}
 }

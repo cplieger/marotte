@@ -43,9 +43,9 @@
       "page_word": "stopped",
       "terminal": true,
       "sites": [
-        "internal/chat/entrylog.go:1061",
-        "internal/translate/projection_entries.go:669",
-        "internal/translate/streaming_tools.go:395",
+        "internal/chat/entrylog.go:1063",
+        "internal/translate/projection_entries.go:713",
+        "internal/translate/streaming_tools.go:414",
         "internal/translate/wire_enums.go:35",
         "internal/turnlog/turnlog.go:650"
       ]
@@ -112,19 +112,24 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/entry_merge.go:1025",
+      "site": "internal/agent/entry_merge.go:996",
       "form": "compare",
       "status": "aborted"
     },
     {
-      "site": "internal/agent/entry_merge.go:1025",
+      "site": "internal/agent/entry_merge.go:996",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/chat/entrylog.go:1061",
+      "site": "internal/chat/entrylog.go:1063",
       "form": "status_field",
       "status": "aborted"
+    },
+    {
+      "site": "internal/translate/engine_refusal.go:28",
+      "form": "compare",
+      "status": "failed"
     },
     {
       "site": "internal/translate/hook_status.go:85",
@@ -137,47 +142,47 @@
       "status": "failed"
     },
     {
-      "site": "internal/translate/projection_entries.go:669",
+      "site": "internal/translate/projection_entries.go:713",
       "form": "status_field",
       "status": "aborted"
     },
     {
-      "site": "internal/translate/streaming_tools.go:370",
+      "site": "internal/translate/streaming_tools.go:389",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:394",
+      "site": "internal/translate/streaming_tools.go:413",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:395",
+      "site": "internal/translate/streaming_tools.go:414",
       "form": "status_assign",
       "status": "aborted"
     },
     {
-      "site": "internal/translate/streaming_tools.go:416",
+      "site": "internal/translate/streaming_tools.go:436",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:432",
+      "site": "internal/translate/streaming_tools.go:450",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:432",
+      "site": "internal/translate/streaming_tools.go:450",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:454",
+      "site": "internal/translate/streaming_tools.go:472",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:62",
+      "site": "internal/translate/streaming_tools.go:59",
       "form": "compare",
       "status": "pending"
     },

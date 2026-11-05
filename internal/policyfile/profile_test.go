@@ -10,6 +10,7 @@ import (
 func TestPresetIDs_MatchKAS(t *testing.T) {
 	want := []string{
 		"allow-all",
+		"approve-for-me",
 		"dev-shell",
 		"edit-workspace",
 		"read-all",
@@ -17,12 +18,12 @@ func TestPresetIDs_MatchKAS(t *testing.T) {
 		"read-workspace",
 	}
 	got := []string{
-		PresetAllowAll, presetDevShell, presetEditWorkspace,
+		PresetAllowAll, presetApproveForMe, presetDevShell, presetEditWorkspace,
 		presetReadAll, presetReadOnlyShell, PresetReadWorkspace,
 	}
 	slices.Sort(got)
 	if !slices.Equal(got, want) {
-		t.Errorf("preset ids = %v, want %v (KAS 2.19.1 PRESET_REGISTRY)", got, want)
+		t.Errorf("preset ids = %v, want %v (KAS 2.37.1 preset registry)", got, want)
 	}
 }
 
@@ -31,7 +32,7 @@ func TestPresetIDs_MatchKAS(t *testing.T) {
 // start a session at all.
 func TestProfiles_OnlyNameKnownPresets(t *testing.T) {
 	known := []string{
-		PresetAllowAll, presetDevShell, presetEditWorkspace,
+		PresetAllowAll, presetApproveForMe, presetDevShell, presetEditWorkspace,
 		presetReadAll, presetReadOnlyShell, PresetReadWorkspace,
 	}
 	for _, p := range Profiles() {
@@ -52,7 +53,7 @@ func TestProfiles_OnlyNameKnownPresets(t *testing.T) {
 // without naming any of them, so a set comparison is the wrong test there and the
 // right one is that it grants the umbrella.
 func TestProfiles_AreAMonotonicLadder(t *testing.T) {
-	order := []string{ProfileGuarded, ProfileReadOnly, ProfileTrusted}
+	order := []string{ProfileGuarded, ProfileReadOnly, ProfileTrusted, ProfileDelegated}
 	var prev []string
 	for _, id := range order {
 		p, ok := ProfileFor(id)
@@ -69,12 +70,31 @@ func TestProfiles_AreAMonotonicLadder(t *testing.T) {
 		}
 		prev = p.Presets
 	}
+	if p, _ := ProfileFor(ProfileDelegated); !slices.Contains(p.Presets, presetApproveForMe) {
+		t.Errorf("delegated = %v, want approve-for-me, the preset that hands asks to the classifier", p.Presets)
+	}
 	yolo, ok := ProfileFor(ProfileUnrestricted)
 	if !ok {
 		t.Fatal("ProfileFor(unrestricted) missing")
 	}
 	if !slices.Contains(yolo.Presets, PresetAllowAll) {
 		t.Errorf("unrestricted = %v, want the allow-all umbrella", yolo.Presets)
+	}
+}
+
+// TestProfileReadOnly_SendsNoShellPreset keeps every shell command asking under Read-only.
+// KAS's read-only-shell allows `git status > <path>` (a redirect is never checked against
+// fs_write), `git log --output=<path>`, a redirect into ~/.kiro/agents/ past the kiro scope,
+// and `git status` in a repo whose core.fsmonitor runs a program: each writes or executes.
+func TestProfileReadOnly_SendsNoShellPreset(t *testing.T) {
+	p, ok := ProfileFor(ProfileReadOnly)
+	if !ok {
+		t.Fatal("ProfileFor(read-only) missing")
+	}
+	for _, shell := range []string{presetReadOnlyShell, presetDevShell, PresetAllowAll} {
+		if slices.Contains(p.Presets, shell) {
+			t.Errorf("read-only sends %v; preset %q auto-allows shell commands that write files and run repo-configured programs", p.Presets, shell)
+		}
 	}
 }
 

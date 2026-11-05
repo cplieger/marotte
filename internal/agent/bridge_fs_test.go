@@ -419,8 +419,8 @@ func TestHandleFSRequest_DispatchesFSRead(t *testing.T) {
 	}
 }
 
-// A missing file gets a graceful not-found error.
-func TestRespondFSRead_MissingFileRespondsGracefully(t *testing.T) {
+// A missing file answers in KAS's not-found dialect, so a create's undo snapshot reads as empty.
+func TestRespondFSRead_MissingFileSaysPathDoesNotExist(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	id := int64(901)
 	msg := &marotte.RPCResponse{
@@ -430,8 +430,8 @@ func TestRespondFSRead_MissingFileRespondsGracefully(t *testing.T) {
 	}
 	h.inbound.respondFSRead(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
-	if br.response.err == nil {
-		t.Errorf("respondFSRead(missing file) err = nil, want a not-found error")
+	if err := br.response.err; err == nil || !strings.HasPrefix(err.Error(), kasNotFoundPrefix) {
+		t.Errorf("respondFSRead(missing file) err = %v, want a message starting %q", err, kasNotFoundPrefix)
 	}
 }
 

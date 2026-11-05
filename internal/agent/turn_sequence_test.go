@@ -44,7 +44,7 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	defer h.ReleaseTurn(chatID, epoch)
 
 	queued := []marotte.Notification{
-		{Msg: newTurnStartMsg(), Seq: 1},
+		{Msg: newPromptTurnStartMsg(epoch), Seq: 1},
 		{Msg: newChunkMsg("the whole reply"), Seq: 2},
 		{Msg: newTurnEndMsg("refusal"), Seq: 3},
 	}
@@ -241,8 +241,9 @@ func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 	}
 }
 
-// A zero-content auto-wake can bind the pre-open and close it with end_turn and nothing emitted, satisfying the gate's
-// first three clauses. Only the later-turn clause saves the prompt, once its own turn_start has folded.
+// A prompt KAS ended with nothing emitted satisfies the gate's first three clauses; when KAS starts a turn of its own
+// before the response's position, only the later-turn clause keeps the retry from aborting it, once that turn_start
+// has folded.
 func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -252,10 +253,6 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	gen := h.coord.turns.attachForwardNow(chatID).gen
 	preOpen, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, preOpen)
-
-	// The auto-wake's brackets mis-bind and close the pre-open; the prompted turn's bracket is still queued.
-	h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: newTurnStartMsg(), Seq: 1})
-	h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 2})
 
 	var openedAfterAtSettle bool
 	settled := make(chan struct{})
@@ -267,20 +264,23 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	}()
 	waitForParkedSettle(t, h.coord.turns, chatID, preOpen, 4)
 
-	h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: newTurnStartMsg(), Seq: 3})
-	h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 4})
+	for i, msg := range []*marotte.RPCResponse{
+		newPromptTurnStartMsg(preOpen), newTurnEndMsg("end_turn"), newTurnStartMsg(), newTurnEndMsg("end_turn"),
+	} {
+		h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: msg, Seq: uint64(i + 1)})
+	}
 	<-settled
 
 	if !openedAfterAtSettle {
-		t.Error("the settle returned before the folder consumed the prompted turn's bracket, so " +
-			"the empty-turn gate read no-later-turn and would re-send an answered prompt")
+		t.Error("the settle returned before the folder consumed KAS's own turn_start, so " +
+			"the empty-turn gate read no-later-turn and would re-send the prompt over KAS's turn")
 	}
 	result, err := h.AwaitTurn(ctx, chatID, preOpen)
 	if err != nil {
 		t.Fatalf("AwaitTurn: %v", err)
 	}
 	if !result.WireEnded || !result.EmittedNothing {
-		t.Errorf("the mis-bound pre-open = {wire:%v empty:%v}, want both true — the fixture is not "+
+		t.Errorf("the empty prompt turn = {wire:%v empty:%v}, want both true — the fixture is not "+
 			"reproducing the chain the fourth clause exists for", result.WireEnded, result.EmittedNothing)
 	}
 }

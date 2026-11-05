@@ -39,7 +39,6 @@ type steerEvent uint8
 
 const (
 	evBind          steerEvent = iota // a turn becomes own
-	evRevise                          // own moves to another turn on the same execution
 	evSteer                           // a user steer is routed
 	evDeleteQueued                    // delete a row KAS holds, alone or as a probe member
 	evDeleteWaiting                   // delete a row waiting behind the probe
@@ -103,8 +102,6 @@ func channelRule(c channelState, ev steerEvent) chanRule { //nolint:gocyclo // o
 	switch ev {
 	case evBind:
 		return pick(c, cOpen, cImpossible, cImpossible, cImpossible)
-	case evRevise:
-		return pick(c, cImpossible, cKeep, cKeep, cKeep)
 	case evSteer:
 		return pick(c, cKeep, cKeep, cProbing, cKeep)
 	case evDeleteQueued:
@@ -156,7 +153,7 @@ func rowRuleFor(s rowState, ev steerEvent) rowRule { //nolint:gocyclo // one fla
 		return rKeep
 	}
 	switch ev {
-	case evBind, evRevise:
+	case evBind:
 		return rKeep
 	case evSteer:
 		// A turn end re-routes a cleared row into a turn the prompt holds; an unsent one goes via parked.

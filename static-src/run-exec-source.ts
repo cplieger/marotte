@@ -31,9 +31,9 @@ import {
 } from "./exec-view/model.js";
 import {
   lastTailLine,
+  watchFence,
   watchResult,
   watchSummary,
-  watchTailFence,
   type WatchResult,
 } from "./watch-result.js";
 import { defaultFailureReason, isBroken } from "./turn-severity.js";
@@ -289,6 +289,16 @@ function stepFacts(
       add("Exit", String(watch.exitCode));
     }
     add("Output file", watch.outputFile, true);
+  } else if (watch?.kind === "github-pr") {
+    add("Pull request", watch.url, true);
+    add(
+      "Merge state",
+      watch.mergeState === "UNKNOWN" ? undefined : watch.mergeState?.toLowerCase(),
+    );
+    if (watch.passing !== undefined && watch.pending !== undefined) {
+      add("Checks", `${String(watch.passing)} passing, ${String(watch.pending)} pending`);
+    }
+    add("Head", watch.headSha ?? undefined, true);
   }
   // Last, and monospace: it is the handle for the step's own session rather than something a reader
   // acts on, so it sits below the facts that describe the work.
@@ -296,33 +306,12 @@ function stepFacts(
   return facts;
 }
 
-/** KAS records a paused step's success or error at once but applies it only when its run loop
- *  settles (kirodotdev/Kiro#11733): once every running step stops, or on the next resume. Only a
- *  running or paused run says which, so any other status labels nothing. */
-function pendingEndOf(node: RunNode, run: ClassifiedRunStatus): ExecNode["pendingEnd"] {
-  if (node.status !== "paused" || (run !== "running" && run !== "paused")) {
-    return undefined;
-  }
-  const status =
-    node.completionSignal === "success"
-      ? "completed"
-      : node.completionSignal === "error"
-        ? "failed"
-        : undefined;
-  if (status === undefined) {
-    return undefined;
-  }
-  const word = status === "completed" ? "Done" : "Failed";
-  const when = run === "paused" ? "the run resumes" : "the run's other steps finish";
-  return { status, text: `${word}, applies when ${when}` };
-}
-
 function subtitleOf(
   node: RunNode,
   kind: ExecKind,
   plan: PlanEntry | undefined,
   watch: WatchResult | undefined,
-  pendingEnd: ExecNode["pendingEnd"],
+  done: boolean,
 ): string {
   const bits: string[] = [];
   if (kind === "repeat") {
@@ -342,7 +331,8 @@ function subtitleOf(
     if (watch !== undefined) {
       bits.push(watchSummary(watch));
     } else {
-      bits.push(plan?.watch === undefined ? "polls" : `polls ${truncate(plan.watch, 60)}`);
+      const verb = done ? "polled" : "polls";
+      bits.push(plan?.watch === undefined ? verb : `${verb} ${truncate(plan.watch, 60)}`);
     }
   } else if (kind === "step") {
     if (node.agentName !== undefined && node.agentName !== "") {
@@ -357,10 +347,8 @@ function subtitleOf(
       bits.push(`${String(n)} ${n === 1 ? "retry" : "retries"}`);
     }
   }
-  // Kiro's step detail: a recorded end, else a pause's reason, else a retry wait's, verbatim.
-  if (pendingEnd !== undefined) {
-    bits.push(pendingEnd.text);
-  } else if (node.status === "paused" && node.pauseReason !== undefined) {
+  // Kiro's step detail: a pause's reason, else a retry wait's, verbatim.
+  if (node.status === "paused" && node.pauseReason !== undefined) {
     bits.push(`Paused: ${truncate(node.pauseReason, 80)}`);
   } else if (node.status === "running" && node.retryReason !== undefined) {
     bits.push(`Retrying: ${truncate(node.retryReason, 80)}`);
@@ -534,10 +522,6 @@ function toNode(
   if (work && endable(node, ctx)) {
     out.endable = true;
   }
-  const pendingEnd = work ? pendingEndOf(node, ctx.run) : undefined;
-  if (pendingEnd !== undefined) {
-    out.pendingEnd = pendingEnd;
-  }
   if (pass !== undefined) {
     out.pass = pass;
   }
@@ -564,7 +548,7 @@ function toNode(
     kind === "watch" && node.capturedOutput !== undefined
       ? watchResult(node.capturedOutput)
       : undefined;
-  const sub = subtitleOf(node, kind, plan, watch, pendingEnd);
+  const sub = subtitleOf(node, kind, plan, watch, settled(state));
   if (sub !== "") {
     out.subtitle = sub;
   }
@@ -584,7 +568,9 @@ function toNode(
   }
   // An idle-timeout record says only what the subtitle already does, so it shows no Output box.
   if (watch?.kind === "process") {
-    out.output = watchTailFence(watch.tail);
+    out.output = watchFence(watch.tail, "text");
+  } else if (watch?.kind === "github-pr" && node.capturedOutput !== undefined) {
+    out.output = watchFence(node.capturedOutput, "json");
   } else if (watch === undefined && node.capturedOutput !== undefined) {
     out.output = node.capturedOutput;
   }

@@ -696,3 +696,30 @@ func TestValidateKeyPairs_valueLengthBoundary(t *testing.T) {
 			maxValue+1, err.Error(), "value too long")
 	}
 }
+
+func TestValidate_VersionNegotiation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   versionNegotiation
+		wantErr bool
+	}{
+		{name: "absent", value: ""},
+		{name: "auto", value: "auto"},
+		{name: "legacy", value: "legacy"},
+		{name: "capitalised", value: "Legacy", wantErr: true},
+		{name: "leadingSpace", value: " legacy", wantErr: true},
+		{name: "unknown", value: "pin", wantErr: true},
+		{name: "protocolVersion", value: "2026-07-28", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &Server{Transport: TransportStdio, Name: "ok", Command: "npx", VersionNegotiation: tc.value}
+			err := validate(srv)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("Validate(version_negotiation %q) = %v, want error %t", tc.value, err, tc.wantErr)
+			}
+			if err != nil && (len(fieldErrors(err)) != 1 || fieldErrors(err)[0].Field != fieldVersionNegotiation) {
+				t.Errorf("Validate(version_negotiation %q) fields = %+v, want one %q error", tc.value, fieldErrors(err), fieldVersionNegotiation)
+			}
+		})
+	}
+}

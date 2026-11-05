@@ -118,7 +118,6 @@ const FULL: TurnSummaryData = {
   delegateMs: 9000,
   credits: 1.5,
   models: ["claude-opus-4.5", "claude-sonnet-4.5"],
-  throughput: { estimated_tokens: 4000, active_streaming_ms: 20_000 },
   steering: ["file:///workspace/.kiro/steering/web.md", LONG_STEER],
   contextBreakdown: {
     total_chars: 141_883,
@@ -188,7 +187,7 @@ describe("the open panel's lines", () => {
         const value = footer.querySelector(".turn-info-value") as Element;
         return Math.round(box(value, footer).x);
       };
-      // The widest label the builder writes ("Output (estimated)") against a one-row panel.
+      // The widest label the builder writes ("Added this turn") against a one-row panel.
       expect(valueX(FULL)).toBe(valueX({ outcome: "completed", elapsedMs: 1000 }));
     });
   }

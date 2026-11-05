@@ -1371,3 +1371,60 @@ func TestImport_UnchangedBlockReRendersADriftedFile(t *testing.T) {
 		t.Error("re-importing the unchanged block left agent-mail missing from KAS's file")
 	}
 }
+
+func stdioWithNegotiation(v versionNegotiation) *Server {
+	return &Server{Transport: TransportStdio, Name: "local", Command: "npx", Enabled: true, VersionNegotiation: v}
+}
+
+func TestCreate_KeepsVersionNegotiation(t *testing.T) {
+	s := newTestStore(t)
+	got, err := s.Create(t.Context(), stdioWithNegotiation(versionNegotiationLegacy))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got.VersionNegotiation != versionNegotiationLegacy {
+		t.Errorf("Create returned version_negotiation %q, want legacy", got.VersionNegotiation)
+	}
+	if stored := s.get(t.Context(), got.ID); stored == nil || stored.VersionNegotiation != versionNegotiationLegacy {
+		t.Errorf("stored = %+v, want version_negotiation legacy", stored)
+	}
+}
+
+func TestUpdate_VersionNegotiationReplacesAndClears(t *testing.T) {
+	s := newTestStore(t)
+	orig, err := s.Create(t.Context(), stdioWithNegotiation(versionNegotiationAuto))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := s.update(t.Context(), orig.ID, stdioWithNegotiation(versionNegotiationLegacy)); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := s.get(t.Context(), orig.ID); got == nil || got.VersionNegotiation != versionNegotiationLegacy {
+		t.Fatalf("after Update, record = %+v, want version_negotiation legacy", got)
+	}
+	if _, err := s.update(t.Context(), orig.ID, stdioWithNegotiation("")); err != nil {
+		t.Fatalf("clearing Update: %v", err)
+	}
+	if got := s.get(t.Context(), orig.ID); got == nil || got.VersionNegotiation != "" {
+		t.Errorf("after a clearing Update, record = %+v, want no version_negotiation", got)
+	}
+}
+
+func TestPersist_VersionNegotiationRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	kas := filepath.Join(dir, "kas-mcp.json")
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := s.Create(t.Context(), stdioWithNegotiation(versionNegotiationLegacy)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	reloaded, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
+	if err != nil {
+		t.Fatalf("reload New: %v", err)
+	}
+	if list := reloaded.list(t.Context()); len(list) != 1 || list[0].VersionNegotiation != versionNegotiationLegacy {
+		t.Errorf("reloaded = %+v, want version_negotiation legacy", list)
+	}
+}

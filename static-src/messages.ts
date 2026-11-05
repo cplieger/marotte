@@ -63,6 +63,7 @@ import {
   turnCloseOf,
   turnLedger,
   turnAnchorID,
+  turnBoundText,
   turnFailureText,
   type Turn,
 } from "./turns.js";
@@ -1663,8 +1664,9 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
 }
 
 /**
- * Mount or refresh the failure notice: one card-level row saying why the turn ended badly, tinted by severity.
- * Card-level so it survives a stub with no body; `syncTurnFace`'s anchor keeps it last before the ledger.
+ * Mount or refresh the outcome notice: one card-level row saying why the turn ended badly, or which bound cut a
+ * completed turn short, tinted by severity. Card-level so it survives a stub with no body; `syncTurnFace`'s anchor
+ * keeps it last before the ledger.
  */
 function syncTurnNotice(card: HTMLElement, t: Turn): void {
   syncNoticeText(card, t);
@@ -1711,13 +1713,15 @@ function syncCompactAction(card: HTMLElement, t: Turn): void {
 }
 
 function syncNoticeText(card: HTMLElement, t: Turn): void {
-  const text = turnFailureText(t);
+  const failure = turnFailureText(t);
+  const text = failure !== "" ? failure : turnBoundText(t);
   const existing = card.querySelector<HTMLElement>(":scope > .turn-notice");
   if (text === "") {
     existing?.remove();
     return;
   }
-  const severity = severityOf(t.outcome);
+  // A bound's line rides a `clean` grade, so it takes the stop ink: the base ink is the failure red.
+  const severity = failure === "" ? "stopped" : severityOf(t.outcome);
   if (existing !== null) {
     if (existing.textContent !== text) {
       existing.textContent = text;
@@ -2198,17 +2202,18 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
     truncated: led.truncated,
     asks: led.asks,
     requestIds: led.requestIds,
-    throughput: led.throughput,
+    firstOutput: led.firstOutput,
     recoveries: led.recoveries,
     steering: led.steering,
     engineErrorClass: led.engineErrorClass,
     contextBreakdown: led.contextBreakdown,
   };
   const existing = card.querySelector<HTMLDivElement>(":scope > .turn-footer");
-  // One predicate, `earnsTurnFooter`; the markdown join is ordered last, so it runs only for a ledger-less turn.
+  const settled = t.outcome !== "running";
   const keep = earnsTurnFooter(data, {
     rewindable: t.rewindTo !== undefined,
-    settledProse: t.outcome !== "running" && turnMarkdown(t).trim() !== "",
+    branchable: settled && t.branchFrom !== undefined,
+    settledProse: settled && turnMarkdown(t).trim() !== "",
   });
   if (!keep) {
     existing?.remove();

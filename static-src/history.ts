@@ -6,6 +6,7 @@ import { el, signal, subscribe, effect } from "@cplieger/ui";
 import { skeletonTiming } from "@cplieger/ui/skeleton";
 import { $ } from "./dom.js";
 import {
+  activeChatRef,
   descendantChatsOf,
   hasTab,
   setHistoryTab as setHistoryTabRoute,
@@ -32,7 +33,7 @@ import { searchChats } from "./actions/chat-search.js";
 import { openChatFindAt } from "./find-in-chat.js";
 import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
 import type { Nouns } from "./textsearch/copy.js";
-import type { CloseImpact, Match } from "./wire/types.gen.js";
+import type { CloseImpact, Match, RunStandingKind } from "./wire/types.gen.js";
 import { openRunView } from "./run-view.js";
 import { runChatID } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
@@ -50,7 +51,7 @@ import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
 import type { PageFind } from "./find-registry.js";
 import type { ResumableSession, SessionListResponse, WorkflowRun } from "./types.js";
-import { classifyRunStatus, type ClassifiedRunStatus } from "./run-status.js";
+import { classifyRunStatus, runStatusTerminal, type ClassifiedRunStatus } from "./run-status.js";
 
 const HISTORY_TABS: readonly HistoryTab[] = ["chats", "runs"] as const;
 
@@ -102,7 +103,15 @@ function chatFacts(s: ResumableSession): string[] {
   return facts;
 }
 
-/** What marotte did when a bound stopped it, the recipe when the label differs, the duration, and the launching chat. */
+/** A live run's position, in the run tab's words; the node id is shown as the run tab labels it. */
+const STANDING_TEXT: Readonly<Record<RunStandingKind, (node: string) => string>> = {
+  step: (node) => `at ${node}`,
+  watch: (node) => `waiting on ${node}`,
+  pass_limit: (node) => `${node} reached its pass limit`,
+};
+
+/** What marotte did when a bound stopped it, the recipe when the label differs, where a live run stands, a
+ *  finished run's duration, and the launching chat. */
 function runSub(r: WorkflowRun, endReason: string): string {
   const parts: string[] = [];
   const reason = END_REASON_TEXT[endReason];
@@ -113,10 +122,15 @@ function runSub(r: WorkflowRun, endReason: string): string {
   if (recipe !== "" && recipe !== r.name) {
     parts.push(recipe);
   }
+  if (r.standing !== undefined) {
+    parts.push(STANDING_TEXT[r.standing.kind](r.standing.node));
+  }
   // From creation, not `started_at`: KAS restamps that each time it resumes a run, which would drop every
-  // stretch before the last resume.
+  // stretch before the last resume. Finished runs only: a live row's `updated_at` is its last (re)start.
+  const status = classifyRunStatus(r.status);
+  const ended = status !== undefined && runStatusTerminal(status);
   const started = r.started_at === undefined ? 0 : (r.created_at ?? r.started_at);
-  if (started > 0 && r.updated_at > started) {
+  if (ended && started > 0 && r.updated_at > started) {
     parts.push(formatDuration(r.updated_at - started));
   }
   const parent = r.parent_chat_name ?? "";
@@ -801,11 +815,11 @@ function buildDeleteButton(row: HistoryRow, refresh: () => void): HTMLElement | 
 
 // Search is a second mode, not a filter: the list is the newest N sessions while search reads every chat file.
 
-/** The tab opens first, awaited: the switch clears the transcript's box. A chat that did not open
- *  gets no find. */
+/** The tab opens first, awaited: the switch clears the transcript's box. A chat that did not open,
+ *  or that the reader left for another tab meanwhile, gets no find. */
 async function openMatch(match: Match, query: string): Promise<void> {
   const outcome = await openChatTab(match.id, match.name);
-  if (outcome === "opened" && match.best !== undefined) {
+  if (outcome === "opened" && match.best !== undefined && activeChatRef() === match.id) {
     openChatFindAt(query, match.best);
   }
 }

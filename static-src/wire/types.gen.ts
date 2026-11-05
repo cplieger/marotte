@@ -8,11 +8,15 @@ export type CatalogState = "ready" | "empty" | "unavailable";
 
 export type ContentKind = "text" | "binary" | "not_utf8" | "too_large";
 
+export type ContextResetCause = "session_missing" | "load_failed" | "empty_retry";
+
 export type DecisionKind = "permission" | "elicitation" | "user_input";
+
+export type DenialBasis = "unparseable" | "cedar-unavailable" | "not-loaded" | "permissions-invalid";
 
 export type EngineState = "starting" | "ready" | "restarting" | "down";
 
-export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "reconciled" | "turn_close";
+export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "context_reset" | "reconciled" | "turn_close";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed";
 
@@ -52,6 +56,8 @@ export type RefusalCode = "changed" | "too_large" | "binary" | "invalid_file_id"
 
 export type RegistryFailureReason = "rate_limited" | "rejected" | "unavailable";
 
+export type RejectionNote = "reason" | "plan_edits";
+
 export type RunAskBlocker = "stopping" | "pending" | "branch_running" | "unsettled" | "settling";
 
 export type RunAskRefusal = "ask_stopping" | "ask_pending" | "ask_stale" | "ask_gone" | "ask_branch_running" | "ask_unsettled" | "ask_settling" | "ask_unreadable" | "ask_unnamed" | "run_answer_pending";
@@ -61,6 +67,8 @@ export type RunAskText = "asked" | "last_message" | "unseen";
 export type RunNodeStatus = "pending" | "running" | "paused" | "completed" | "failed" | "aborted" | "skipped";
 
 export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "loop_iteration" | "watch_poll" | "paused" | "steps_queued";
+
+export type RunStandingKind = "step" | "watch" | "pass_limit";
 
 export type RunStatus = "running" | "paused" | "completed" | "failed" | "aborted" | "cancelled";
 
@@ -746,6 +754,11 @@ export interface EffectiveSettings {
  */
   output_style: string;
   /**
+ * WorkflowLaunch is "when-asked", "large-tasks" or "delegate-all", KAS's workflowLaunch
+ * values; it applies only while WorkflowsEnabled is on.
+ */
+  workflow_launch: string;
+  /**
  * AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
  * which is what enforces it; marotte runs no matcher of its own. The default is
  * EMPTY (settings.DefaultAgentIgnoreFiles), and an absent key must still not
@@ -766,7 +779,7 @@ export interface EffectiveSettings {
  */
   chat_retention_days: number;
   /**
- * AutoCompactPct is 50..90 in steps of 5; any other stored value reads as
+ * AutoCompactPct is 50..80 in steps of 5; any other stored value reads as
  * settings.DefaultAutoCompactPct (80).
  */
   auto_compact_pct: number;
@@ -847,6 +860,19 @@ export interface EffectiveSettings {
   model_fallback_enabled: boolean;
 }
 
+/** ElicitationEnumOption is one titled choice: Const is the value answered, Title its label. */
+export interface ElicitationEnumOption {
+  const: string;
+  title: string;
+}
+
+/** ElicitationItemsSchema lists a multi-select's choices, untitled in Enum or titled in AnyOf. */
+export interface ElicitationItemsSchema {
+  type?: string;
+  enum?: string[];
+  anyOf?: ElicitationEnumOption[];
+}
+
 /**
  * ElicitationNeededPayload is the SSE payload for type="elicitation_needed".
  * Mirrors PermissionNeededPayload's role: it carries everything the
@@ -856,6 +882,11 @@ export interface EffectiveSettings {
  */
 export interface ElicitationNeededPayload {
   requested_schema?: ElicitationRequestSchema;
+  /**
+ * MCPTool is the asking server and tool, read from the turn's tool call ToolCallID names;
+ * nil when no open MCP call has that id.
+ */
+  mcp_tool?: MCPToolIdentity;
   mode?: string;
   message?: string;
   url?: string;
@@ -870,21 +901,29 @@ export interface ElicitationNeededPayload {
 }
 
 /**
- * ElicitationPropertySchema describes one field in an elicitation form.
- * Type is the discriminator ("string" | "number" | "integer" |
- * "boolean" | "array"); the other fields are populated as relevant to
- * that type. Unset fields are omitted on the wire.
+ * ElicitationPropertySchema is one field of MCP 2025-11-25's restricted primitive schema
+ * (https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation): a string,
+ * number, integer or boolean; a single-select string with Enum (EnumNames its legacy labels)
+ * or titled OneOf options; or a multi-select array whose Items list the choices. Type is the
+ * discriminator and unset fields are omitted on the wire.
  */
 export interface ElicitationPropertySchema {
   default?: unknown;
   minLength?: number;
   maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  minItems?: number;
+  maxItems?: number;
+  items?: ElicitationItemsSchema;
   type: string;
   title?: string;
   description?: string;
   format?: string;
   pattern?: string;
   enum?: string[];
+  enumNames?: string[];
+  oneOf?: ElicitationEnumOption[];
 }
 
 /**
@@ -1001,6 +1040,14 @@ export interface EntryCompaction {
 /** EntryCompactionFailed is the compaction_failed payload. */
 export interface EntryCompactionFailed {
   reason: string;
+}
+
+/**
+ * EntryContextReset is the context_reset payload: the chat moved to a new engine session that
+ * holds none of the turns above this entry, so the agent does not remember them.
+ */
+export interface EntryContextReset {
+  cause: ContextResetCause;
 }
 
 /**
@@ -1247,6 +1294,7 @@ export interface EntryToolCall {
   workflow_id?: string;
   terminal_id?: string;
   source_path?: string;
+  classifier_note?: string;
   checkpoint?: ToolCheckpoint;
   mcp?: MCPToolIdentity;
   disclosed?: ToolDisclosed;
@@ -1261,6 +1309,8 @@ export interface EntryToolCall {
   output_bytes?: number;
   has_full?: boolean;
   declined?: boolean;
+  /** ClassifierApproved and ClassifierNote are ToolCall's. */
+  classifier_approved?: boolean;
 }
 
 /**
@@ -1290,6 +1340,7 @@ export interface EntryToolResult {
   output?: string;
   terminal_id?: string;
   workflow_id?: string;
+  classifier_note?: string;
   output_spans?: TextSpan[];
   diffs?: ToolDiff[];
   locations?: ToolLocation[];
@@ -1297,6 +1348,8 @@ export interface EntryToolResult {
   output_bytes?: number;
   has_full?: boolean;
   declined?: boolean;
+  /** ClassifierApproved and ClassifierNote are ToolCall's. */
+  classifier_approved?: boolean;
 }
 
 /**
@@ -1330,8 +1383,8 @@ export interface EntryTurnClose {
  * for a class rpcerr.KnownClass names: an unmapped error's class is minified.
  */
   engine_error_class?: string;
-  /** Throughput is KAS's streaming estimate for the turn's model output. */
-  throughput?: TurnThroughput;
+  /** FirstOutput is KAS's measure of the wait before the turn's first displayed output. */
+  first_output?: TurnFirstOutput;
   /** RequestIDs are the backend request ids of the turn's model calls. */
   request_ids?: string[];
   /** Recoveries are KAS's names for the turn's recoveries; an open vocabulary. */
@@ -1359,6 +1412,8 @@ export interface EntryTurnOpen {
   run?: string;
   node_path?: string;
   session_id?: string;
+  /** KASTurnID is KAS's id for the turn, from the bracket that opened a wire turn or from the replay. */
+  kas_turn_id?: string;
   /** N is the transcript ordinal the appender assigns at open, from 1. */
   n: number;
 }
@@ -1408,8 +1463,8 @@ export interface ErrorPayload {
   /** OpID is the client-minted op_id of the command this failure ends, when it carried one. */
   op_id?: string;
   /**
- * TurnScoped reports that this failure finalized a turn whose entry log now carries
- * the same text durably, so the reason is already in that turn's card. A property of the EMISSION,
+ * TurnScoped reports that a turn's entry log now carries this failure's text durably, so the
+ * reason is already in that turn's card; the turn need not have ended. A property of the EMISSION,
  * not of the Code: the recovery's reopen failure shares ErrCodeRecoveryFailed with
  * the retry turn's abandon and closes no turn, so no per-code answer fits. Absent
  * means NO, the safe direction — report the failure rather than trust an inline row
@@ -1978,13 +2033,10 @@ export interface LiveRun {
   workflow_id: string;
   chat_id: string;
   /**
- * Executing reports whether THIS PROCESS holds a deadline for the run. NOT
- * `status` and none of KAS's five, because serving one would mean an `inspect` per
- * lease on the client's boot path (runlease.Lease.Deadline owns the answer).
- * //
- * It can read false while KAS says running — a lease read back from disk is
- * parked, and `set_step_status` advances a step without re-arming — and both are
- * accepted: the client corrects itself on the run's next progress frame.
+ * Executing reports whether THIS PROCESS holds a deadline for the run (runlease.Lease.Deadline),
+ * not KAS's status, which would cost a `_kiro/workflow/list` call on every client connect. It can
+ * read false while KAS says running (a lease read back from disk is parked; `set_step_status`
+ * advances a step without re-arming); the client corrects itself on the run's next progress frame.
  */
   executing: boolean;
 }
@@ -2057,10 +2109,13 @@ export interface MCPFailedPayload {
 
 /**
  * MCPOAuthPayload is the payload for type="mcp_oauth_needed", emitted when kiro-cli reports a server failed for
- * want of sign-in. It carries no URL: the user starts a sign-in from the server's row.
+ * want of sign-in, and again when a Sign in kiro-cli refused leaves it waiting. It carries no URL: the user starts a
+ * sign-in from the server's row.
  */
 export interface MCPOAuthPayload {
   server: string;
+  /** Error is why kiro-cli refused the last Sign in, absent when none was refused. */
+  error?: string;
 }
 
 /**
@@ -2072,7 +2127,10 @@ export interface MCPSignInOpenPayload {
   url: string;
 }
 
-/** MCPToolIdentity names the MCP server and tool behind a tool call or a permission request. */
+/**
+ * MCPToolIdentity names the MCP server and tool KAS reports behind a permission request or a
+ * tool call; both halves are set or the value is nil.
+ */
 export interface MCPToolIdentity {
   server_name: string;
   tool_name: string;
@@ -2313,6 +2371,17 @@ export interface PendingSnapshotPayload {
 }
 
 /**
+ * PermissionCommand is the command an ask would run, display-treated with its line breaks
+ * kept: whole in Text, or past the cap its head in Text and its tail in Tail, with
+ * OmittedBytes left out between them.
+ */
+export interface PermissionCommand {
+  text: string;
+  tail?: string;
+  omitted_bytes?: number;
+}
+
+/**
  * PermissionConsent is what one permission ask is about. A compound command asks once per
  * part it has not approved, and Subject is that part. Subject and Folder are display-treated
  * copies of what an always answer saves, which only the server holds.
@@ -2351,11 +2420,20 @@ export interface PermissionNeededPayload {
  * saves a rule for this capability.
  */
   consent?: PermissionConsent;
+  /** Command is the command a shell, hook or watch ask would run, absent on any other ask. */
+  command?: PermissionCommand;
   /**
  * AlwaysAllowBlocked names why the card must not offer to persist a rule for this
  * command. Empty means the offer stands.
  */
   always_allow_blocked?: AlwaysAllowBlock;
+  /** RejectionNote names the note the card offers with reject_once; empty means none. */
+  rejection_note?: RejectionNote;
+  /**
+ * ClassifierNote is _meta.kiro.trustClassifier's reason: Kiro's safety check did not clear the
+ * call and handed it to a person. Unattended runs refuse such an ask.
+ */
+  classifier_note?: string;
   options: PermissionOption[];
   /** Locations are the workspace-relative paths the tool call touches. */
   locations?: string[];
@@ -2380,11 +2458,6 @@ export interface PermissionNeededPayload {
  * person must answer: the card says so, and unattended runs refuse it.
  */
   admin_required?: boolean;
-  /**
- * AcceptsRejectionReason marks an ask whose deny can carry a note for the
- * agent: the ordinary tool approval offering a reject_once option.
- */
-  accepts_rejection_reason?: boolean;
 }
 
 /** PermissionOption is one selectable response in a permission dialog. */
@@ -2398,17 +2471,6 @@ export interface PermissionOption {
 export interface PermissionWatch {
   workflow_id: string;
   node_id: string;
-}
-
-/**
- * PermissionsChangedPayload is the SSE payload for type="permissions_changed"
- * (translated from _kiro/policy/changed). Clients refetch GET /api/permissions
- * on receipt. Status is "success" or "failed"; Errors carries any non-fatal
- * warnings or the fatal parse error.
- */
-export interface PermissionsChangedPayload {
-  status?: string;
-  errors?: PolicyErrorItem[];
 }
 
 /** PlanEntry is one item in an agent-authored plan. */
@@ -2462,6 +2524,11 @@ export interface PolicyRule {
   source: string;
   match?: string[];
   exclude?: string[];
+  /**
+ * Editable is stamped by GET /api/permissions from policyfile.Editable: the rule table's
+ * controls can write this row. KAS never sends it.
+ */
+  editable: boolean;
 }
 
 /**
@@ -2504,6 +2571,12 @@ export interface PolicyView {
  * cautious to permissive.
  */
   profiles: SecurityProfile[];
+  /**
+ * LoadErrors are the rules KAS skipped or failed to load at the reading pass's door
+ * (session/new _meta.policyErrors); empty, never null, when it reported none or the view
+ * fell back to the files.
+ */
+  load_errors: PolicyErrorItem[];
   available: boolean;
 }
 
@@ -3046,6 +3119,15 @@ export interface RunRetriedResponse {
   /** Status is the run's status after the reset, as KAS reports it. */
   status: string;
   retried_node_ids: string[];
+}
+
+/**
+ * RunStanding is where a running or paused run stands, from KAS's list row. Node is a bare
+ * node id; for pass_limit it is the repeat at its cap.
+ */
+export interface RunStanding {
+  node: string;
+  kind: RunStandingKind;
 }
 
 /**
@@ -3942,6 +4024,11 @@ export interface ToolCall {
  */
   source_path?: string;
   /**
+ * ClassifierNote is _meta.kiro.trustClassifier's reason when the safety check handed the call
+ * to a person; one-way.
+ */
+  classifier_note?: string;
+  /**
  * Checkpoint is KAS's snapshot mapping (_meta.kiro.checkpoint) for a call that
  * wrote a file. Pointers sit ahead of the slices for govet fieldalignment.
  */
@@ -3954,8 +4041,9 @@ export interface ToolCall {
  */
   disclosed?: ToolDisclosed;
   /**
- * Denial is KAS's reason for a call the Cedar policy refused (_meta.kiro.policyDenial),
- * so a refusal reads as one rather than as a tool failure.
+ * Denial is why Kiro's permission check refused the call: a rule's verdict
+ * (_meta.kiro.policyDenial) or a recognised rule-less refusal, so a refusal reads as
+ * one rather than as a tool failure.
  */
   denial?: ToolDenial;
   /** Offload is set once KAS offloaded the full output to a file; one-way. */
@@ -3991,6 +4079,11 @@ export interface ToolCall {
  * The reason is the tool's own Output.
  */
   declined?: boolean;
+  /**
+ * ClassifierApproved is _meta.kiro.trustClassifierApproved: Kiro's safety check let the call
+ * run with no ask. One-way.
+ */
+  classifier_approved?: boolean;
 }
 
 /**
@@ -4031,11 +4124,13 @@ export interface ToolDenial {
   resource: string;
   scope: string;
   source: string;
+  /** Basis says why a refusal names no rule; empty for a rule's denial. */
+  basis?: DenialBasis;
 }
 
 /**
- * ToolDenialRule is the Cedar rule that produced a denial. Effect is "deny" or
- * "ask" (an unanswered ask that timed out reaches here as a denial).
+ * ToolDenialRule is the Cedar rule that produced a denial. Effect is "deny", "ask" (an
+ * unanswered ask that timed out reaches here as a denial) or "evaluate" (a trust-classifier block).
  */
 export interface ToolDenialRule {
   capability: string;
@@ -4056,8 +4151,9 @@ export interface ToolDiff {
 }
 
 /**
- * ToolDisclosed identifies a skill or steering document loaded into context by
- * the agent's own `disclose_context` call. Type is "skill" or "steering".
+ * ToolDisclosed identifies a skill or steering document loaded into context by a
+ * `disclose_context` action the agent started, directly or through `load_resource`.
+ * Type is "skill" or "steering".
  */
 export interface ToolDisclosed {
   type: string;
@@ -4197,6 +4293,7 @@ export interface ToolProgressPayload {
   terminal_id?: string;
   agent_subtask_id?: string;
   workflow_id?: string;
+  classifier_note?: string;
   /**
  * OutputSpans style the WHOLE output at absolute offsets, so they are sent entire
  * whenever they change. Empty for output carrying no escape sequence.
@@ -4222,6 +4319,8 @@ export interface ToolProgressPayload {
  * it ever sends is true.
  */
   declined?: boolean;
+  /** ClassifierApproved is one-way like Declined; ClassifierNote is sent once, on the frame that sets it. */
+  classifier_approved?: boolean;
 }
 
 /**
@@ -4251,6 +4350,17 @@ export interface TurnClosedPayload {
 }
 
 /**
+ * TurnFirstOutput is the wait before a turn's first displayed output, in whole ms from KAS's
+ * stamps: Total from the prompt's arrival, Setup until the first model request left, Model from
+ * then to the model's first token. Setup and Model are 0 when KAS's stamps could not place them.
+ */
+export interface TurnFirstOutput {
+  total_ms: number;
+  setup_ms?: number;
+  model_ms?: number;
+}
+
+/**
  * TurnOpenedPayload is the payload for type="turn_opened": the turn_open entry as
  * appended, the first frame of every turn.
  */
@@ -4259,23 +4369,10 @@ export interface TurnOpenedPayload {
   entry: Entry;
 }
 
-/**
- * TurnThroughput is KAS's estimate of a turn's streamed model output: tokens
- * estimated from characters, over the time chunks were actually arriving.
- */
-export interface TurnThroughput {
-  estimated_tokens: number;
-  active_streaming_ms: number;
-}
-
-/**
- * Usage is a chat's last-known context and billing snapshot. SummarizationThresholdPct 0
- * means UNKNOWN, and the client applies its own fallback.
- */
+/** Usage is a chat's last-known context and billing snapshot. */
 export interface Usage {
   metering_items?: MeteringItem[];
   context_pct: number;
-  summarization_threshold_pct?: number;
   context_size: number;
   credits: number;
   last_turn_ms: number;
@@ -4366,6 +4463,8 @@ export interface WhoamiResponse {
  * report idle whatever the run did.
  */
 export interface WorkflowRun {
+  /** Standing is where a running or paused run stands; absent on a finished run. */
+  standing?: RunStanding;
   workflow_id: string;
   /** Name is what to DISPLAY (RunDisplayName), not the recipe; "" when nothing names the run. */
   name: string;

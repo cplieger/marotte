@@ -2,6 +2,7 @@ package translate
 
 import (
 	"encoding/json"
+	"math"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
@@ -29,25 +30,47 @@ func (b *pendingInteractionBlock) askOptions() []turnlog.AskOption {
 	return out
 }
 
-type turnThroughput struct {
-	EstimatedTokens   *int64   `json:"estimatedTokens"`
-	ActiveStreamingMs *float64 `json:"activeStreamingMs"`
+// infoKindTurnTiming replays a turn's first-output stamps, and arrives live only when KAS could not persist them.
+const infoKindTurnTiming = "turn_timing"
+
+// acpTurnTiming is _meta.kiro.ttft: KAS's epoch-ms stamps for the turn's first displayed chunk.
+// Its agentOutput interval list is not read: the turn's tool cards show that window.
+type acpTurnTiming struct {
+	PromptReceivedAt     *float64 `json:"promptReceivedAt"`
+	ModelRequestSentAt   *float64 `json:"modelRequestSentAt"`
+	FirstTokenReceivedAt *float64 `json:"firstTokenReceivedAt"`
+	FirstChunkEmittedAt  *float64 `json:"firstChunkEmittedAt"`
 }
 
-// summary is the throughput in the turn log's vocabulary, nil when the frame
-// carried neither member.
-func (p *turnThroughput) summary() *marotte.TurnThroughput {
-	if p == nil || (p.EstimatedTokens == nil && p.ActiveStreamingMs == nil) {
+// firstOutputFrom is the stamps as spans, nil unless the prompt's arrival and the first chunk
+// are both stamped and ordered. A split is kept only when its own stamps fall in order inside
+// that wait, so a skewed stamp withholds a span rather than inventing one.
+func firstOutputFrom(t *acpTurnTiming) *marotte.TurnFirstOutput {
+	if t == nil || !stamped(t.PromptReceivedAt) || !stamped(t.FirstChunkEmittedAt) {
 		return nil
 	}
-	var tp marotte.TurnThroughput
-	if p.EstimatedTokens != nil && *p.EstimatedTokens > 0 {
-		tp.EstimatedTokens = *p.EstimatedTokens
+	start, shown := *t.PromptReceivedAt, *t.FirstChunkEmittedAt
+	if start > shown {
+		return nil
 	}
-	if p.ActiveStreamingMs != nil && *p.ActiveStreamingMs > 0 {
-		tp.ActiveStreamingMs = *p.ActiveStreamingMs
+	fo := &marotte.TurnFirstOutput{TotalMs: int64(shown - start)}
+	if !stamped(t.ModelRequestSentAt) {
+		return fo
 	}
-	return &tp
+	sent := *t.ModelRequestSentAt
+	if start <= sent && sent <= shown {
+		fo.SetupMs = int64(sent - start)
+	}
+	if stamped(t.FirstTokenReceivedAt) {
+		if first := *t.FirstTokenReceivedAt; sent <= first && first <= shown {
+			fo.ModelMs = int64(first - sent)
+		}
+	}
+	return fo
+}
+
+func stamped(v *float64) bool {
+	return v != nil && *v > 0 && !math.IsInf(*v, 0) && !math.IsNaN(*v)
 }
 
 // KAS sends each as its id string; an object form is read for its id.

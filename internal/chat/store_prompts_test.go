@@ -110,7 +110,7 @@ func TestStore_PromptTexts_InTurnOrder(t *testing.T) {
 	}
 }
 
-func TestStore_RewindTarget_ResolvesThePromptsTurnAndItsBind(t *testing.T) {
+func TestStore_PromptTarget_ResolvesThePromptsTurnAndItsBind(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id marotte.ChatID = "c1"
 	recordSession(t, s, id, "sess-1")
@@ -120,20 +120,20 @@ func TestStore_RewindTarget_ResolvesThePromptsTurnAndItsBind(t *testing.T) {
 	t2 := promptTurn(t, s, id, "u2", "second")
 	closeTurn(t, s, id, t2, marotte.TurnOutcomeCompleted)
 
-	got, found, err := s.RewindTarget(t.Context(), id, "u1")
+	got, found, err := s.PromptTarget(t.Context(), id, "u1")
 	if err != nil || !found {
-		t.Fatalf("RewindTarget(u1) = found %v, err %v; want found", found, err)
+		t.Fatalf("PromptTarget(u1) = found %v, err %v; want found", found, err)
 	}
-	if want := (marotte.RewindTarget{Turn: t1, KASMessageID: "kas-1"}); !reflect.DeepEqual(got, want) {
-		t.Errorf("RewindTarget(u1) = %+v, want %+v", got, want)
+	if want := (marotte.PromptTarget{Turn: t1, KASMessageID: "kas-1"}); !reflect.DeepEqual(got, want) {
+		t.Errorf("PromptTarget(u1) = %+v, want %+v", got, want)
 	}
 
-	got, found, err = s.RewindTarget(t.Context(), id, "u2")
+	got, found, err = s.PromptTarget(t.Context(), id, "u2")
 	if err != nil || !found {
-		t.Fatalf("RewindTarget(u2) = found %v, err %v; want found", found, err)
+		t.Fatalf("PromptTarget(u2) = found %v, err %v; want found", found, err)
 	}
-	if want := (marotte.RewindTarget{Turn: t2}); !reflect.DeepEqual(got, want) {
-		t.Errorf("RewindTarget(u2) = %+v, want %+v (a turn with no bind has no KAS id)", got, want)
+	if want := (marotte.PromptTarget{Turn: t2}); !reflect.DeepEqual(got, want) {
+		t.Errorf("PromptTarget(u2) = %+v, want %+v (a turn with no bind has no KAS id)", got, want)
 	}
 }
 
@@ -168,7 +168,7 @@ func TestStore_PromptReceipt_IsBoundOnlyWhenATurnOfThatPromptWasBound(t *testing
 // The cut un-says the runs its entries launched: a run launched in the target turn or
 // after it is named, one launched before the target turn is not, and a run is named
 // once however many tool entries carry its id.
-func TestStore_RewindTarget_NamesTheRunsTheCutLaunched(t *testing.T) {
+func TestStore_PromptTarget_NamesTheRunsTheCutLaunched(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id marotte.ChatID = "c1"
 	recordSession(t, s, id, "sess-1")
@@ -179,27 +179,27 @@ func TestStore_RewindTarget_NamesTheRunsTheCutLaunched(t *testing.T) {
 	launchRun(t, s, id, t2, "call-2", "wf-inside")
 	closeTurn(t, s, id, t2, marotte.TurnOutcomeCompleted)
 
-	got, found, err := s.RewindTarget(t.Context(), id, "u2")
+	got, found, err := s.PromptTarget(t.Context(), id, "u2")
 	if err != nil || !found {
-		t.Fatalf("RewindTarget(u2) = found %v, err %v; want found", found, err)
+		t.Fatalf("PromptTarget(u2) = found %v, err %v; want found", found, err)
 	}
 	if want := []string{"wf-inside"}; !slices.Equal(got.LaunchedRuns, want) {
-		t.Errorf("RewindTarget(u2).LaunchedRuns = %v, want %v: only the run the cut un-says", got.LaunchedRuns, want)
+		t.Errorf("PromptTarget(u2).LaunchedRuns = %v, want %v: only the run the cut un-says", got.LaunchedRuns, want)
 	}
 
-	got, found, err = s.RewindTarget(t.Context(), id, "u1")
+	got, found, err = s.PromptTarget(t.Context(), id, "u1")
 	if err != nil || !found {
-		t.Fatalf("RewindTarget(u1) = found %v, err %v; want found", found, err)
+		t.Fatalf("PromptTarget(u1) = found %v, err %v; want found", found, err)
 	}
 	if want := []string{"wf-before", "wf-inside"}; !slices.Equal(got.LaunchedRuns, want) {
-		t.Errorf("RewindTarget(u1).LaunchedRuns = %v, want %v: a cut at the first turn un-says both", got.LaunchedRuns, want)
+		t.Errorf("PromptTarget(u1).LaunchedRuns = %v, want %v: a cut at the first turn un-says both", got.LaunchedRuns, want)
 	}
 }
 
 // run_workflow and inspect_workflow answer identically on the wire, so a run launched
 // before the cut and inspected inside it is mentioned on both sides; the cut un-says
 // the inspection, never the launch.
-func TestStore_RewindTarget_ARunReMentionedAfterTheCutIsNotNamed(t *testing.T) {
+func TestStore_PromptTarget_ARunReMentionedAfterTheCutIsNotNamed(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id marotte.ChatID = "c1"
 	recordSession(t, s, id, "sess-1")
@@ -210,12 +210,12 @@ func TestStore_RewindTarget_ARunReMentionedAfterTheCutIsNotNamed(t *testing.T) {
 	launchRun(t, s, id, t2, "call-2", "wf-before")
 	closeTurn(t, s, id, t2, marotte.TurnOutcomeCompleted)
 
-	got, found, err := s.RewindTarget(t.Context(), id, "u2")
+	got, found, err := s.PromptTarget(t.Context(), id, "u2")
 	if err != nil || !found {
-		t.Fatalf("RewindTarget(u2) = found %v, err %v; want found", found, err)
+		t.Fatalf("PromptTarget(u2) = found %v, err %v; want found", found, err)
 	}
 	if len(got.LaunchedRuns) != 0 {
-		t.Errorf("RewindTarget(u2).LaunchedRuns = %v, want none: wf-before was launched in turn 1 and only inspected in turn 2", got.LaunchedRuns)
+		t.Errorf("PromptTarget(u2).LaunchedRuns = %v, want none: wf-before was launched in turn 1 and only inspected in turn 2", got.LaunchedRuns)
 	}
 }
 
@@ -223,7 +223,7 @@ func TestStore_RewindTarget_ARunReMentionedAfterTheCutIsNotNamed(t *testing.T) {
 // turn_open and the tool_result carrying the workflow id lands after it. The launch is
 // where the call was issued, and the revert's window takes whole turns, so that turn
 // survives with its tail and its run stops nothing.
-func TestStore_RewindTarget_AStraddlersLaunchIsBeforeTheCut(t *testing.T) {
+func TestStore_PromptTarget_AStraddlersLaunchIsBeforeTheCut(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id marotte.ChatID = "c1"
 	recordSession(t, s, id, "sess-1")
@@ -246,12 +246,12 @@ func TestStore_RewindTarget_AStraddlersLaunchIsBeforeTheCut(t *testing.T) {
 	launchRun(t, s, id, t2, "call-2", "wf-inside")
 	closeTurn(t, s, id, t2, marotte.TurnOutcomeCompleted)
 
-	got, found, err := s.RewindTarget(t.Context(), id, "u2")
+	got, found, err := s.PromptTarget(t.Context(), id, "u2")
 	if err != nil || !found {
-		t.Fatalf("RewindTarget(u2) = found %v, err %v; want found", found, err)
+		t.Fatalf("PromptTarget(u2) = found %v, err %v; want found", found, err)
 	}
 	if want := []string{"wf-inside"}; !slices.Equal(got.LaunchedRuns, want) {
-		t.Errorf("RewindTarget(u2).LaunchedRuns = %v, want %v: wf-straddle's tool_call precedes the cut", got.LaunchedRuns, want)
+		t.Errorf("PromptTarget(u2).LaunchedRuns = %v, want %v: wf-straddle's tool_call precedes the cut", got.LaunchedRuns, want)
 	}
 }
 
@@ -270,7 +270,7 @@ func launchRun(t *testing.T, s *Store, id marotte.ChatID, turn, callID, workflow
 	}
 }
 
-func TestStore_RewindTarget_OnlyATurnOpensPromptResolves(t *testing.T) {
+func TestStore_PromptTarget_OnlyATurnOpensPromptResolves(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id marotte.ChatID = "c1"
 	t1 := promptTurn(t, s, id, "u1", "first")
@@ -282,17 +282,17 @@ func TestStore_RewindTarget_OnlyATurnOpensPromptResolves(t *testing.T) {
 	closeTurn(t, s, id, t1, marotte.TurnOutcomeCompleted)
 
 	for _, promptID := range []string{"nope", "a1", t1, t1 + ":bind", "kas-1", ""} {
-		got, found, err := s.RewindTarget(t.Context(), id, promptID)
+		got, found, err := s.PromptTarget(t.Context(), id, promptID)
 		if err != nil {
-			t.Fatalf("RewindTarget(%q): %v", promptID, err)
+			t.Fatalf("PromptTarget(%q): %v", promptID, err)
 		}
-		if found || !reflect.DeepEqual(got, marotte.RewindTarget{}) {
-			t.Errorf("RewindTarget(%q) = %+v found=%v, want not found", promptID, got, found)
+		if found || !reflect.DeepEqual(got, marotte.PromptTarget{}) {
+			t.Errorf("PromptTarget(%q) = %+v found=%v, want not found", promptID, got, found)
 		}
 	}
 }
 
-func TestStore_RewindTarget_ABindFromARetiredSessionYieldsNoKASID(t *testing.T) {
+func TestStore_PromptTarget_ABindFromARetiredSessionYieldsNoKASID(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id marotte.ChatID = "c1"
 	recordSession(t, s, id, "sess-1")
@@ -304,20 +304,20 @@ func TestStore_RewindTarget_ABindFromARetiredSessionYieldsNoKASID(t *testing.T) 
 	bindTurn(t, s, id, t2, "kas-2", "sess-2")
 	closeTurn(t, s, id, t2, marotte.TurnOutcomeCompleted)
 
-	got, found, err := s.RewindTarget(t.Context(), id, "u1")
+	got, found, err := s.PromptTarget(t.Context(), id, "u1")
 	if err != nil || !found {
-		t.Fatalf("RewindTarget(u1) = found %v, err %v; want found", found, err)
+		t.Fatalf("PromptTarget(u1) = found %v, err %v; want found", found, err)
 	}
-	if want := (marotte.RewindTarget{Turn: t1}); !reflect.DeepEqual(got, want) {
-		t.Errorf("RewindTarget(u1) = %+v, want %+v (kas-1 was minted by sess-1, which is retired)", got, want)
+	if want := (marotte.PromptTarget{Turn: t1}); !reflect.DeepEqual(got, want) {
+		t.Errorf("PromptTarget(u1) = %+v, want %+v (kas-1 was minted by sess-1, which is retired)", got, want)
 	}
 
-	got, found, err = s.RewindTarget(t.Context(), id, "u2")
+	got, found, err = s.PromptTarget(t.Context(), id, "u2")
 	if err != nil || !found {
-		t.Fatalf("RewindTarget(u2) = found %v, err %v; want found", found, err)
+		t.Fatalf("PromptTarget(u2) = found %v, err %v; want found", found, err)
 	}
-	if want := (marotte.RewindTarget{Turn: t2, KASMessageID: "kas-2"}); !reflect.DeepEqual(got, want) {
-		t.Errorf("RewindTarget(u2) = %+v, want %+v (the current session's bind stands)", got, want)
+	if want := (marotte.PromptTarget{Turn: t2, KASMessageID: "kas-2"}); !reflect.DeepEqual(got, want) {
+		t.Errorf("PromptTarget(u2) = %+v, want %+v (the current session's bind stands)", got, want)
 	}
 }
 
@@ -332,7 +332,7 @@ func retryTurn(t *testing.T, s *Store, id marotte.ChatID, promptID, text string)
 	return opened.Turn
 }
 
-func TestStore_RewindTarget_AnEmptyRetryCutsAtTheFirstAttemptWithTheRetrysBind(t *testing.T) {
+func TestStore_PromptTarget_AnEmptyRetryCutsAtTheFirstAttemptWithTheRetrysBind(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id marotte.ChatID = "c1"
 	recordSession(t, s, id, "sess-1")
@@ -344,16 +344,16 @@ func TestStore_RewindTarget_AnEmptyRetryCutsAtTheFirstAttemptWithTheRetrysBind(t
 	bindTurn(t, s, id, t2, "kas-2", "sess-2")
 	closeTurn(t, s, id, t2, marotte.TurnOutcomeCompleted)
 
-	got, found, err := s.RewindTarget(t.Context(), id, "u1")
+	got, found, err := s.PromptTarget(t.Context(), id, "u1")
 	if err != nil || !found {
-		t.Fatalf("RewindTarget(u1) = found %v, err %v; want found", found, err)
+		t.Fatalf("PromptTarget(u1) = found %v, err %v; want found", found, err)
 	}
-	if want := (marotte.RewindTarget{Turn: t1, KASMessageID: "kas-2"}); !reflect.DeepEqual(got, want) {
-		t.Errorf("RewindTarget(u1) = %+v, want %+v (the cut drops both attempts; kas-2 is the one bind on the current session)", got, want)
+	if want := (marotte.PromptTarget{Turn: t1, KASMessageID: "kas-2"}); !reflect.DeepEqual(got, want) {
+		t.Errorf("PromptTarget(u1) = %+v, want %+v (the cut drops both attempts; kas-2 is the one bind on the current session)", got, want)
 	}
 }
 
-func TestStore_RewindTarget_AnUnboundFirstAttemptStillLeadsTheCut(t *testing.T) {
+func TestStore_PromptTarget_AnUnboundFirstAttemptStillLeadsTheCut(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id marotte.ChatID = "c1"
 	recordSession(t, s, id, "sess-1")
@@ -363,20 +363,20 @@ func TestStore_RewindTarget_AnUnboundFirstAttemptStillLeadsTheCut(t *testing.T) 
 	bindTurn(t, s, id, t2, "kas-2", "sess-1")
 	closeTurn(t, s, id, t2, marotte.TurnOutcomeCompleted)
 
-	got, found, err := s.RewindTarget(t.Context(), id, "u1")
+	got, found, err := s.PromptTarget(t.Context(), id, "u1")
 	if err != nil || !found {
-		t.Fatalf("RewindTarget(u1) = found %v, err %v; want found", found, err)
+		t.Fatalf("PromptTarget(u1) = found %v, err %v; want found", found, err)
 	}
-	if want := (marotte.RewindTarget{Turn: t1, KASMessageID: "kas-2"}); !reflect.DeepEqual(got, want) {
-		t.Errorf("RewindTarget(u1) = %+v, want %+v (a later attempt never moves the cut past the first)", got, want)
+	if want := (marotte.PromptTarget{Turn: t1, KASMessageID: "kas-2"}); !reflect.DeepEqual(got, want) {
+		t.Errorf("PromptTarget(u1) = %+v, want %+v (a later attempt never moves the cut past the first)", got, want)
 	}
 }
 
-func TestStore_RewindTarget_NoHeaderIsChatNotFound(t *testing.T) {
+func TestStore_PromptTarget_NoHeaderIsChatNotFound(t *testing.T) {
 	s, _ := newTestStore(t)
-	_, found, err := s.RewindTarget(t.Context(), "c-missing", "u1")
+	_, found, err := s.PromptTarget(t.Context(), "c-missing", "u1")
 	if found || err == nil {
-		t.Errorf("RewindTarget(no header) = found %v, err %v; want an error and not found", found, err)
+		t.Errorf("PromptTarget(no header) = found %v, err %v; want an error and not found", found, err)
 	}
 }
 

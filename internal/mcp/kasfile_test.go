@@ -646,3 +646,18 @@ func TestReadKASDoc_RefusedSaveAnswers409WithTheHint(t *testing.T) {
 		t.Errorf("body = %s, want the hint", rec.Body.String())
 	}
 }
+
+func TestRenderKASServers_CarriesVersionNegotiation(t *testing.T) {
+	got := renderKASServers([]*Server{
+		{Name: "local", Transport: TransportStdio, Command: "npx", VersionNegotiation: versionNegotiationLegacy},
+		{Name: "remote", Transport: transportHTTP, URL: "https://mcp.example.test", VersionNegotiation: versionNegotiationLegacy},
+		{Name: "catalog", Transport: transportRegistry, VersionNegotiation: versionNegotiationLegacy},
+	}, kasRenderPolicy{})
+	for _, name := range []string{"local", "remote", "catalog"} {
+		t.Run(name, func(t *testing.T) {
+			if v := got[name].VersionNegotiation; v != "legacy" {
+				t.Errorf("rendered versionNegotiation = %q, want %q", v, "legacy")
+			}
+		})
+	}
+}

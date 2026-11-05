@@ -20,10 +20,6 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID marotte.Ch
 	if json.Unmarshal(raw, &chunk) != nil || chunk.Content.Type != marotte.ContentTypeText || chunk.Content.Text == "" {
 		return
 	}
-	// Before the fold target is read: a revision re-targets routing to a new wire_turn_start turn.
-	if chunk.Meta.Kiro.AgentInitiated && !attr.Step {
-		t.bracket.ReviseTurnBinding(ctx, chatID)
-	}
 	turn, sc, ok := t.foldTarget(ctx, chatID, attr)
 	if !ok {
 		return
@@ -32,37 +28,28 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID marotte.Ch
 		t.recordWake(ctx, chatID, turn, chunk.Meta.Kiro.AgentInitiatedReason)
 	}
 	t.workflowMessageWoke(ctx, chatID, attr, chunk.Meta.Kiro.AgentInitiatedReason)
+	turn.NoteFirstOutput(firstOutputFrom(chunk.Meta.Kiro.TTFT))
 	lane := chunk.Meta.Kiro.AgentSubtaskID
 	sayID := cmp.Or(chunk.Meta.Kiro.ReplayID, chunk.Meta.Kiro.MessageID)
 
-	// kiro-cli's security-filter notice (no prompt response is coming), detected before the steer
-	// filter; skipped for a step frame (the run ceiling covers it).
-	interrupted := !isReasoning && !attr.Step && isInterruptSentinel(chunk.Content.Text)
-
 	// A refusal-tagged chunk is the turn's EXPLANATION, never prose, on either stream: the tag is
-	// turn-level. `interrupted` is text-only, so the two rules stay independent.
-	if t.markRefusal(ctx, sc, turn, chatID, &chunk, lane, interrupted) {
+	// turn-level.
+	if t.markRefusal(ctx, sc, turn, &chunk, lane) {
 		return
 	}
 
 	// Markers are stripped from text only: KAS reads acks from text entries.
 	if isReasoning {
-		ok = t.foldDelta(ctx, sc, turn, lane, sayID, chunk.Content.Text, true)
+		t.foldDelta(ctx, sc, turn, lane, sayID, chunk.Content.Text, true)
 	} else {
-		ok = t.foldText(ctx, sc, turn, chatID, lane, sayID, attr, chunk.Content.Text)
+		t.foldText(ctx, sc, turn, chatID, lane, sayID, attr, chunk.Content.Text)
 	}
-	if !ok {
-		return
-	}
-
-	// Last: the notice must be in the log and on the wire before the turn ends.
-	t.interruptIfFiltered(chatID, turn.ID(), interrupted)
 }
 
 // foldText folds a text delta with its steer ack markers stripped, filing each span of prose and
 // each ack in stream order: an ack seals the lane, so prose the stream put after a marker opens
 // the say's next segment. The carry is cleared before the chunk's own folds and stored after the
-// last, so no seal they trigger releases bytes that belong after it. False when a fold failed.
+// last, so no seal they trigger releases bytes that belong after it.
 func (t *Translator) foldText(
 	ctx context.Context,
 	sc entryScope,
@@ -71,30 +58,28 @@ func (t *Translator) foldText(
 	lane, sayID string,
 	attr FrameAttribution,
 	text string,
-) bool {
+) {
 	carry, sealed, err := turn.TakeCarry(ctx, lane, sayID)
 	t.publishSealed(ctx, sc, sealed)
 	if err != nil {
 		appendFailed(sc, "text delta", err)
-		return false
+		return
 	}
 	texts, acks, held := splitSteerAcks(carry, text)
-	ok := true
 	for i, seg := range texts {
-		if seg != "" && !t.foldDelta(ctx, sc, turn, lane, sayID, seg, false) {
-			ok = false
+		if seg != "" {
+			t.foldDelta(ctx, sc, turn, lane, sayID, seg, false)
 		}
 		if i < len(acks) {
 			t.appendSteerAck(ctx, chatID, lane, attr, acks[i])
 		}
 	}
 	turn.SetSteerCarry(lane, sayID, held)
-	return ok
 }
 
 // foldDelta folds one text or reasoning delta into lane's open entry and announces it, with
-// whatever the fold sealed ahead of it. False when the append failed.
-func (t *Translator) foldDelta(ctx context.Context, sc entryScope, turn *turnlog.Turn, lane, sayID, delta string, isReasoning bool) bool {
+// whatever the fold sealed ahead of it.
+func (t *Translator) foldDelta(ctx context.Context, sc entryScope, turn *turnlog.Turn, lane, sayID, delta string, isReasoning bool) {
 	var sealed []turnlog.Sealed
 	var err error
 	if isReasoning {
@@ -105,10 +90,9 @@ func (t *Translator) foldDelta(ctx context.Context, sc entryScope, turn *turnlog
 	t.publishSealed(ctx, sc, sealed)
 	if err != nil {
 		appendFailed(sc, "text delta", err)
-		return false
+		return
 	}
 	t.publishOpen(ctx, sc, turn, lane, delta)
-	return true
 }
 
 // markRefusal seals lane and latches the turn's refusal when chunk carries _meta.kiro.refusal,
@@ -119,10 +103,8 @@ func (t *Translator) markRefusal(
 	ctx context.Context,
 	sc entryScope,
 	turn *turnlog.Turn,
-	chatID marotte.ChatID,
 	chunk *acpChunkWire,
 	lane string,
-	interrupted bool,
 ) bool {
 	refusal := refusalInfo(chunk)
 	if refusal == nil {
@@ -137,19 +119,7 @@ func (t *Translator) markRefusal(
 	}
 	// First-wins: a second tagged chunk cannot relabel the turn.
 	turn.SetRefusal(refusal)
-	t.interruptIfFiltered(chatID, turn.ID(), interrupted)
 	return true
-}
-
-// interruptIfFiltered ends the turn when the chunk was kiro-cli's tool-use filter notice; one
-// owner for both the fold and the refusal branch.
-func (t *Translator) interruptIfFiltered(chatID marotte.ChatID, turnID string, interrupted bool) {
-	if !interrupted {
-		return
-	}
-	slog.Warn("kiro-cli interrupted its own tool use; ending the turn",
-		"chat_id", chatID, "turn", turnID, "reason", interruptReason)
-	t.turnInterrupt.InterruptTurn(chatID, turnID, interruptReason)
 }
 
 // appendSteerAck records a steer whose ack marker just closed: the read, then the agent's

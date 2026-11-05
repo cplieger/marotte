@@ -28,7 +28,10 @@ var unheldSites = map[string]struct {
 		"it claims the turn's cause and cancels that turn's prompt context, after at most one stall sample; " +
 			"the held prompt goroutine closes", 1,
 	},
-	"agent_terminal.go (agentTerminals).awaitExit":      {"a process-group observation its caller joins", 1},
+	"agent_terminal.go (agentTerminals).awaitExit": {"a process-group observation its caller joins", 1},
+	"turn_finalize.go (bridgeCoordinator).awaitAbandonedAnswer": {
+		"a lifecycle watch its caller cancels and joins before returning", 1,
+	},
 	"turn_finalize.go (bridgeCoordinator).publishClose": {"a fixture with no lifetime", 1},
 	"bridge_coord.go (bridgeCoordinator).Notify":        {"a push once draining, which push.Close in Shutdown owns", 1},
 	"engine_calls.go (engineOwner).observe":             {"drainSession only answers its pass's requests", 1},

@@ -18,6 +18,8 @@ func FuzzClassifyStderrLevel(f *testing.F) {
 	f.Add(`{"level":""}`)
 	f.Add("FATAL: out of memory")
 	f.Add("debug[subsystem]: msg")
+	f.Add("[ERROR] (node:42) [DEP0040] DeprecationWarning: msg")
+	f.Add("[x (node:) : ")
 
 	f.Fuzz(func(t *testing.T, line string) {
 		lvl := classifyStderrLevel(line)

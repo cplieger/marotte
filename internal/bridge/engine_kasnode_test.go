@@ -25,6 +25,7 @@ func kasNodeFixture(t *testing.T, version string) (cli, node string) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("KIRO_RUNTIME_DIR", "")
 	for _, name := range []string{kasnode.NodePathVar, kasnode.LaunchVar} {
 		t.Setenv(name, "")
 		if err := os.Unsetenv(name); err != nil {
@@ -115,6 +116,83 @@ func TestProcessEnv_TheSettingNamesTheLauncher(t *testing.T) {
 	}
 }
 
+// runtimeDirFixture moves kasNodeFixture's node into a KIRO_RUNTIME_DIR entry laid out as kiro-cli 3.0.0 unpacks it
+// (<version>-<16 hex>/node, no node.sha256), with its .complete marker when complete is set. It returns the node.
+func runtimeDirFixture(t *testing.T, dataNode string, complete bool) string {
+	t.Helper()
+	rt := t.TempDir()
+	t.Setenv("KIRO_RUNTIME_DIR", rt)
+	entry := filepath.Join(rt, "3.0.0-0123456789abcdef")
+	if err := os.MkdirAll(entry, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	node := filepath.Join(entry, "node")
+	if err := os.Rename(dataNode, node); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(dataNode + ".sha256"); err != nil {
+		t.Fatal(err)
+	}
+	if complete {
+		if err := os.WriteFile(filepath.Join(entry, ".complete"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return node
+}
+
+// With KIRO_RUNTIME_DIR set kiro-cli runs the node of its runtime entry, which carries no node.sha256; the launch
+// checks that node against the hash in the binary.
+func TestProcessEnv_TheLauncherRunsTheRuntimeDirNode(t *testing.T) {
+	t.Run("a complete entry", func(t *testing.T) {
+		cli, dataNode := kasNodeFixture(t, kasnode.ValidatedNodeVersion)
+		node := runtimeDirFixture(t, dataNode, true)
+		logs := capture.Default(t)
+		e := kasNodeEngine(t, cli, true)
+		want := []string{kasnode.NodePathVar + "=" + fakeLauncher, kasnode.LaunchVar + "=" + node}
+		if got := launcherEnv(e.processEnv()); !slices.Equal(got, want) {
+			t.Errorf("launcher variables = %q, want %q", got, want)
+		}
+		if n := logs.CountLevel(slog.LevelWarn, "high throughput"); n != 0 {
+			t.Errorf("%d high throughput warnings, want none", n)
+		}
+	})
+	t.Run("an entry still unpacking", func(t *testing.T) {
+		cli, dataNode := kasNodeFixture(t, kasnode.ValidatedNodeVersion)
+		runtimeDirFixture(t, dataNode, false)
+		logs := capture.Default(t)
+		e := kasNodeEngine(t, cli, true)
+		if got := launcherEnv(e.processEnv()); len(got) != 0 {
+			t.Errorf("launcher variables = %q, want none before the entry is complete", got)
+		}
+		if !logs.AttrContains("starting without the high throughput optimizations", "reason", "has not extracted its node yet") {
+			t.Error("the warning's reason does not say the node is not extracted yet")
+		}
+	})
+	t.Run("another kiro-cli's entry", func(t *testing.T) {
+		cli, dataNode := kasNodeFixture(t, kasnode.ValidatedNodeVersion)
+		runtimeDirFixture(t, dataNode, true)
+		if err := os.WriteFile(cli, []byte(strings.Repeat("a", 64)+kasnode.NodePathVar+"KIRO_KAS_SERVER_PATH"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cliNodeHashes.Lock()
+		delete(cliNodeHashes.m, cli)
+		cliNodeHashes.Unlock()
+		logs := capture.Default(t)
+		e := kasNodeEngine(t, cli, true)
+		if got := launcherEnv(e.processEnv()); len(got) != 0 {
+			t.Errorf("launcher variables = %q, want none for a node this kiro-cli does not bundle", got)
+		}
+		if !logs.AttrContains("starting without the high throughput optimizations", "reason", "is not the node this kiro-cli bundles") {
+			t.Error("the warning's reason does not say the node is not this kiro-cli's")
+		}
+		// A runtime entry has no node.sha256, so the reason must not quote one.
+		if logs.AttrContains("starting without the high throughput optimizations", "reason", "node.sha256") {
+			t.Error("the warning's reason quotes a node.sha256 for a runtime entry, which has none")
+		}
+	})
+}
+
 // Each failed check starts the stock engine and logs one WARN naming why.
 func TestProcessEnv_AFailedCheckStartsTheStockEngine(t *testing.T) {
 	for _, tc := range []struct {
@@ -134,7 +212,7 @@ func TestProcessEnv_AFailedCheckStartsTheStockEngine(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			reason: []string{"is not the node this kiro-cli bundles"},
+			reason: []string{"is not the node this kiro-cli bundles", "node.sha256 " + strings.Repeat("0", 64)},
 		},
 		{
 			name: "no node extracted yet", version: kasnode.ValidatedNodeVersion,

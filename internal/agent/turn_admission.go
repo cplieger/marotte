@@ -439,7 +439,7 @@ func (lc *chatLifecycle) awaitKASIdle(ctx context.Context, fence command.TurnFen
 	for {
 		lc.mu.Lock()
 		callable, changed := lc.kas.may().sessionCall, lc.changed
-		superseded := lc.own != nil || lc.pending != nil || !lc.fenceHoldsLocked(fence)
+		superseded := lc.holdSupersededLocked(fence)
 		lc.mu.Unlock()
 		switch {
 		case superseded:
@@ -454,6 +454,34 @@ func (lc *chatLifecycle) awaitKASIdle(ctx context.Context, fence command.TurnFen
 				"chat_id", lc.chatID, "waited", kasHoldWarnAfter)
 		case <-ctx.Done():
 			return false
+		}
+	}
+}
+
+// holdSupersededLocked reports that a close's between-turns wait no longer owns the chat: a turn opened, whose own
+// close drains, or a teardown re-fenced the chat.
+func (lc *chatLifecycle) holdSupersededLocked(fence command.TurnFence) bool {
+	return lc.own != nil || lc.pending != nil || !lc.fenceHoldsLocked(fence)
+}
+
+// cancelWhenSuperseded cancels with errHoldSuperseded once holdSupersededLocked holds, or returns when ctx ends.
+func (r *turnRegistry) cancelWhenSuperseded(ctx context.Context, chatID marotte.ChatID, fence command.TurnFence, cancel context.CancelCauseFunc) {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return
+	}
+	for {
+		lc.mu.Lock()
+		superseded, changed := lc.holdSupersededLocked(fence), lc.changed
+		lc.mu.Unlock()
+		if superseded {
+			cancel(errHoldSuperseded)
+			return
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return
 		}
 	}
 }
@@ -484,8 +512,7 @@ func (bc *bridgeCoordinator) AwaitPromptSend(ctx context.Context, chatID marotte
 
 // awaitPromptSend is AwaitPromptSend's wait, answering the fold-opened turn it claimed for the caller to close before
 // the prompt can own the chat, or the write's commit once the send may go. A run KAS starts while the send is on the
-// wire is still not seen: KAS offers no execution token to make the handoff atomic, so its turn_start binds
-// provisionally (ReviseTurnBinding).
+// wire is told apart by its turn_start, which does not echo this turn's tag (bindPending).
 func (r *turnRegistry) awaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) (*activeTurn, func() error, error) {
 	lc, ok := r.lookup(chatID)
 	if !ok {

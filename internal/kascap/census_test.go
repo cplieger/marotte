@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
 // Spelled as a flag rather than the repo's UPDATE_GOLDEN env gate because regenerating this fixture
@@ -122,14 +124,8 @@ type bundle struct {
 	path string
 }
 
-// forEachBundle runs check as a subtest against every bundle bundles returns. A bundle missing from
-// ~/.local/share/kiro-cli/kas/ is unpacked as below; `env -u` keeps an inherited KIRO_KAS_* path or
-// KIRO_HOME from pointing the scratch engine at another tree.
-//
-//	curl -fsSLO https://desktop-release.q.us-east-1.amazonaws.com/<version>/kirocli-x86_64-linux.zip
-//	unzip -q kirocli-x86_64-linux.zip
-//	env -u KIRO_KAS_SERVER_PATH -u KIRO_KAS_NODE_PATH -u KIRO_HOME HOME=<scratch> ./kirocli/bin/kiro-cli acp --agent-engine v3 --auth-method client </dev/null
-//	env -u KIRO_HOME HOME=<scratch> go test ./internal/kascap/
+// forEachBundle runs check as a subtest against every bundle bundles returns; CONTRIBUTING.md says how
+// to unpack a missing one.
 func forEachBundle(t *testing.T, check func(t *testing.T, b bundle)) {
 	t.Helper()
 	for _, b := range bundles(t, activeKASVersion(t)) {
@@ -140,17 +136,13 @@ func forEachBundle(t *testing.T, check func(t *testing.T, b bundle)) {
 // bundleRel is the agent server's path inside a kas/<version>-<hash>/ runtime tree.
 var bundleRel = filepath.Join("node_modules", "@kiro", "agent", "dist", "server", "acp-server.js")
 
-// bundles returns the pinned agent server from the local kiro-cli data dir; else, on a pull request
-// that changes the pin, the one inside each changed archive (bundle_fetch_test.go); else it skips.
+// bundles returns the pinned agent server kiro-cli unpacked on this machine
+// (workspace.KASLookup.Find); else, on a pull request that changes the pin, the one inside each
+// changed archive (bundle_fetch_test.go); else it skips.
 func bundles(t *testing.T, active string) []bundle {
 	t.Helper()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skipf("no home directory, so no local agent-server bundle: %v", err)
-	}
-	if matches := globBundle(t, home, active); len(matches) > 0 {
-		slices.Sort(matches)
-		read := pristineBundle(matches[0])
+	if local := workspace.KASLookupFromEnv().Find(active).Server; local != "" {
+		read := pristineBundle(local)
 		raw, err := os.ReadFile(read)
 		if err != nil {
 			t.Fatalf("read bundle %s: %v", read, err)
@@ -162,21 +154,11 @@ func bundles(t *testing.T, active string) []bundle {
 		fetchedBundles = append(fetchedBundles, fetchedBundle(t, active, arch))
 	}
 	if len(fetchedBundles) == 0 {
-		t.Skipf(`no agent-server bundle for kiro-cli %s under %s.
-It is fetched only on a pull request that changes the pin; elsewhere unpack it as
-forEachBundle's doc describes.`, active, filepath.Join(home, ".local", "share", "kiro-cli", "kas"))
+		t.Skipf(`no agent-server bundle for kiro-cli %s under KIRO_RUNTIME_DIR (%q) or kiro-cli's data dir
+(~/.local/share/kiro-cli/kas/). It is fetched only on a pull request that changes the pin;
+elsewhere unpack it as CONTRIBUTING.md's census paragraph describes.`, active, os.Getenv("KIRO_RUNTIME_DIR"))
 	}
 	return fetchedBundles
-}
-
-func globBundle(t *testing.T, home, active string) []string {
-	t.Helper()
-	pattern := filepath.Join(home, ".local", "share", "kiro-cli", "kas", active+"-*", bundleRel)
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		t.Fatalf("glob %s: %v", pattern, err)
-	}
-	return matches
 }
 
 // pristineBundle returns path's .orig sibling when one exists, else path: local kiro-cli patches
@@ -232,34 +214,69 @@ func fakeBundle(t *testing.T, active, content string) string {
 		t.Fatalf("write %s: %v", path, err)
 	}
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("KIRO_RUNTIME_DIR", "")
 	return path
 }
 
-// jsFuncBody returns the balanced-brace run starting at the brace at index open, so a sweep can be
-// scoped to ONE function of the bundle.
-func jsFuncBody(src string, open int) string {
+// TestBundles_FindsTheRuntimeDirEntry reads the bundle from kiro-cli's runtime dir, where kiro-cli
+// 3.0.0 unpacks it when KIRO_RUNTIME_DIR is set.
+func TestBundles_FindsTheRuntimeDirEntry(t *testing.T) {
+	const active = "9.9.9"
+	rt := t.TempDir()
+	entry := filepath.Join(rt, active+"-0000000000000000")
+	path := filepath.Join(entry, "kas", bundleRel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	for p, content := range map[string]string{path: "runtime-dir", filepath.Join(entry, ".complete"): ""} {
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("KIRO_RUNTIME_DIR", rt)
+
+	// In a subtest, so a lookup that misses the entry skips only the subtest and fails here.
+	var got []bundle
+	t.Run("lookup", func(t *testing.T) { got = bundles(t, active) })
+	want := []bundle{{name: "local", src: "runtime-dir", path: path}}
+	if !slices.Equal(got, want) {
+		t.Errorf("bundles(%q) = %+v, want %+v (the runtime-dir entry)", active, got, want)
+	}
+}
+
+// jsBracketed returns the balanced `{...}` or `[...]` run opening at index open; strings are skipped.
+func jsBracketed(src string, open int) string {
 	depth := 0
 	for i := open; i < len(src); i++ {
 		switch c := src[i]; c {
 		case '"', '\'', '`':
-			for i++; i < len(src); i++ {
-				if src[i] == '\\' {
-					i++
-					continue
-				}
-				if src[i] == c {
-					break
-				}
-			}
-		case '{':
+			i = jsStringEnd(src, i)
+		case '{', '[':
 			depth++
-		case '}':
+		case '}', ']':
 			if depth--; depth == 0 {
 				return src[open : i+1]
 			}
 		}
 	}
 	return ""
+}
+
+// jsStringEnd returns the index of the quote closing the string opening at i.
+func jsStringEnd(src string, i int) int {
+	q := src[i]
+	for i++; i < len(src); i++ {
+		switch src[i] {
+		case '\\':
+			i++
+		case q:
+			return i
+		}
+	}
+	return i
 }
 
 // discoverOne returns the single group-1 match of re and fails unless there is exactly one, for
@@ -333,7 +350,7 @@ of parameters. Re-read the pattern rather than regenerating the fixture.`,
 			name, name)
 	}
 	param := src[loc[2]:loc[3]]
-	body := jsFuncBody(src, loc[1]-1)
+	body := jsBracketed(src, loc[1]-1)
 	if body == "" {
 		t.Fatalf("resolveCapabilities (%s): unbalanced braces from its declaration", name)
 	}
@@ -368,7 +385,7 @@ func initScopeKeys(t *testing.T, src string) []string {
 func bindingScope(src string, pos int) string {
 	floor := max(0, pos-bindingScopeReach)
 	for open := strings.LastIndexByte(src[:pos], '{'); open >= floor; open = strings.LastIndexByte(src[:open], '{') {
-		if body := jsFuncBody(src, open); body != "" && open+len(body) > pos {
+		if body := jsBracketed(src, open); body != "" && open+len(body) > pos {
 			return src[pos : open+len(body)]
 		}
 	}
@@ -527,12 +544,13 @@ inverts how send reads on this row.`, key, activeKASVersion(t), key)
 }
 
 // featureEnvRe matches every KIRO_FEATURE_*_ENABLED, KIRO_FEATURE_*_CONFIG (a JSON
-// config arm) and KIRO_DISABLE_* literal in the bundle. derivedGateRe matches the
+// config arm) and KIRO_DISABLE_* literal in the bundle, and KIRO_TRUST_CLASSIFIER_MODE, the one
+// named switch KAS reads outside its env provider. derivedGateRe matches the
 // experiment-gate helper's settingKey, whose env name the bundle builds at runtime
 // (camelCase to SCREAMING_SNAKE, KIRO_FEATURE_ prefix, _ENABLED suffix), so it never
 // appears as a literal.
 var (
-	featureEnvRe  = regexp.MustCompile(`\bKIRO_(?:FEATURE_[A-Z0-9_]+_(?:ENABLED|CONFIG)|DISABLE_[A-Z0-9_]+)\b`)
+	featureEnvRe  = regexp.MustCompile(`\bKIRO_(?:FEATURE_[A-Z0-9_]+_(?:ENABLED|CONFIG)|DISABLE_[A-Z0-9_]+|TRUST_CLASSIFIER_MODE)\b`)
 	derivedGateRe = regexp.MustCompile(`settingKey:"([A-Za-z][A-Za-z0-9]*)"`)
 	camelBoundary = regexp.MustCompile(`([a-z0-9])([A-Z])`)
 )
@@ -579,10 +597,36 @@ func TestEnvironmentArmCensus(t *testing.T) {
 	})
 }
 
+// trustClassifierReaderRe is KAS's whole reader of the classifier gate: the variable held in a
+// const, then read off process.env, trimmed, lower-cased and compared with "enforce".
+var trustClassifierReaderRe = regexp.MustCompile(
+	`([A-Za-z_$][\w$]*)="KIRO_TRUST_CLASSIFIER_MODE";function [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*=process\.env\)\{return [A-Za-z_$][\w$]*\[([A-Za-z_$][\w$]*)\]\?\.trim\(\)\.toLowerCase\(\)==="enforce"`,
+)
+
+// TestTrustClassifierGateMatchesBundle pins the value marotte's row sends against the bundle's
+// reader: a renamed variable or another accepted value would leave the row inert.
+func TestTrustClassifierGateMatchesBundle(t *testing.T) {
+	forEachBundle(t, func(t *testing.T, b bundle) {
+		m := trustClassifierReaderRe.FindStringSubmatch(b.src)
+		if m == nil || m[1] != m[2] {
+			t.Fatalf("kiro-cli %s has no reader comparing KIRO_TRUST_CLASSIFIER_MODE with \"enforce\"; re-read the gate and the row's value",
+				activeKASVersion(t))
+		}
+		for _, row := range table {
+			if row.key == "KIRO_TRUST_CLASSIFIER_MODE" && row.value != "enforce" {
+				t.Errorf("the row sends %#v; kiro-cli %s accepts only \"enforce\"", row.value, activeKASVersion(t))
+			}
+		}
+	})
+}
+
 func TestBundleEnvArms_DerivesTheGateHelperName(t *testing.T) {
 	got := bundleEnvArms(`x="KIRO_FEATURE_AUTH_EXPIRY_RETRY_ENABLED";lkr({settingKey:"unifiedAgent"});"KIRO_DISABLE_RECAP";` +
-		`y=process.env.KIRO_FEATURE_X_CONFIG;` + "`KIRO_FEATURE_${n}`")
-	want := []string{"KIRO_DISABLE_RECAP", "KIRO_FEATURE_AUTH_EXPIRY_RETRY_ENABLED", "KIRO_FEATURE_UNIFIED_AGENT_ENABLED", "KIRO_FEATURE_X_CONFIG"}
+		`y=process.env.KIRO_FEATURE_X_CONFIG;N="KIRO_TRUST_CLASSIFIER_MODE";` + "`KIRO_FEATURE_${n}`")
+	want := []string{
+		"KIRO_DISABLE_RECAP", "KIRO_FEATURE_AUTH_EXPIRY_RETRY_ENABLED", "KIRO_FEATURE_UNIFIED_AGENT_ENABLED", "KIRO_FEATURE_X_CONFIG",
+		"KIRO_TRUST_CLASSIFIER_MODE",
+	}
 	if !slices.Equal(got, want) {
 		t.Errorf("bundleEnvArms = %q, want %q", got, want)
 	}

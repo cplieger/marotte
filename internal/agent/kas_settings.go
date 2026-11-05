@@ -43,6 +43,13 @@ func sessionFeatures(d settings.Document) marotte.SessionFeatures {
 	if d.Into(settings.KeyWorkflowsEnabled, &workflows) {
 		f.Workflows = workflows
 	}
+	// Read only while workflows are on, so a change with them off reloads no chat.
+	if f.Workflows {
+		f.WorkflowLaunch = settingString(d, settings.KeyWorkflowLaunch, settings.ValidWorkflowLaunch)
+		if f.WorkflowLaunch == "" {
+			f.WorkflowLaunch = settings.DefaultWorkflowLaunch
+		}
+	}
 	f.WorkValidation = settingString(d, settings.KeyWorkValidation, settings.ValidFeatureChoice)
 	return f
 }
@@ -74,8 +81,7 @@ func settingBool(d settings.Document, key string) bool {
 	return d.Into(key, &b) && b
 }
 
-// settingString reads a string setting, the zero value for absent or invalid; every caller's zero value is its
-// default.
+// settingString reads a string setting, the zero value for absent or invalid.
 func settingString(d settings.Document, key string, valid func(string) bool) string {
 	var v string
 	if d.Into(key, &v) && valid(v) {
@@ -96,12 +102,6 @@ func autoCompactionPolicy(d settings.Document) (enabled bool, pct int) {
 		pct = p
 	}
 	return enabled, pct
-}
-
-// sessionDisablesAutoCompaction is the session-door value: KAS's own compaction goes off when
-// marotte must be the only compactor (point above 80, which KAS would pre-empt) or nothing may compact.
-func sessionDisablesAutoCompaction(enabled bool, pct int) bool {
-	return !enabled || pct > settings.DefaultAutoCompactPct
 }
 
 // kiroTelemetryKey is the kiro-cli setting the Data sharing switch writes. Nothing seeds it, so

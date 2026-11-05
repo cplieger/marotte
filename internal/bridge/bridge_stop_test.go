@@ -47,7 +47,7 @@ func callAtAsync(t *testing.T, b *Engine) <-chan callAtResult {
 	t.Helper()
 	done := make(chan callAtResult, 1)
 	go func() {
-		_, seq, err := b.request(t.Context(), b.engineLane, "", marotte.MethodPrompt, map[string]any{}, nil, nil)
+		_, seq, _, err := b.request(t.Context(), b.engineLane, "", marotte.MethodPrompt, map[string]any{}, nil, nil)
 		done <- callAtResult{err: err, seq: seq}
 	}()
 	return done

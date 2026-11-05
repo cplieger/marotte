@@ -70,11 +70,11 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		if r == nil {
 			t.Fatal("MCPRecorder() returned nil")
 		}
-		r.RecordConnected(ctx, "test-server", marotte.MCPSource{}, nil, nil, nil, nil)
+		r.RecordSessionStatus(ctx, "s1", MCPSessionStatus{Servers: []MCPServerReport{{Name: "test-server", State: MCPReportConnected}}})
 	})
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
-		d.PendingPermsAdd(42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nopOrigin{})
+		d.PendingPermsAdd(ctx, 42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nopOrigin{})
 	})
 
 	t.Run("Notify_does_not_panic", func(t *testing.T) {

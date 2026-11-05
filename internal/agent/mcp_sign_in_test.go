@@ -5,13 +5,27 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
+
+// sessionOf is the session signInHub reports name's frames in, one per server so each frame leaves the others' standing.
+func sessionOf(name string) marotte.SessionID { return marotte.SessionID("sess-" + name) }
+
+// awaitingSignIn is name waiting for sign-in as its session reports it.
+func awaitingSignIn(name string, src marotte.MCPSource) translate.MCPServerReport {
+	return translate.MCPServerReport{
+		Name: name, Source: src, State: translate.MCPReportNeedsAuth,
+		AuthorizationURL: "https://provider.example/passive",
+	}
+}
 
 // signInHub is a runtime with a ready engine whose store holds names, each waiting for sign-in.
 func signInHub(t *testing.T, names ...string) (*Runtime, *fakeBridge) {
@@ -21,7 +35,7 @@ func signInHub(t *testing.T, names ...string) (*Runtime, *fakeBridge) {
 		t.Fatal("the engine never became ready")
 	}
 	for _, n := range names {
-		h.mcpRegistry.RecordOAuth(t.Context(), n, marotte.MCPSource{})
+		reportMCP(t, h, sessionOf(n), awaitingSignIn(n, marotte.MCPSource{}))
 	}
 	return h, fakeSourceOf(t, h).lane
 }
@@ -43,10 +57,16 @@ func awaitResets(t *testing.T, lane *fakeBridge, n int) {
 	}
 }
 
-func slotServer(h *Runtime) string {
+// standingSignIn is the server whose sign-in stands in any view, "" when none does.
+func standingSignIn(h *Runtime) string {
 	h.mcpRegistry.mu.RLock()
 	defer h.mcpRegistry.mu.RUnlock()
-	return h.mcpRegistry.signIn.server
+	for _, v := range h.mcpRegistry.views {
+		if v.signIn != nil {
+			return v.signIn.server
+		}
+	}
+	return ""
 }
 
 func rowOf(t *testing.T, h *Runtime, name string) mcpServerRuntime {
@@ -74,11 +94,11 @@ func TestSignIn_SendsStartOAuthOnce(t *testing.T) {
 		t.Errorf("resets sent = %d, want exactly 1", n)
 	}
 	p := lane.paramsFor(methodV3MCPResetServer)
-	if p[keyServerName] != "linear" || p[keyStartOAuth] != true {
-		t.Errorf("reset params = %v, want serverName linear and startOAuth true", p)
+	if p[keyServerName] != "linear" || p[keyStartOAuth] != true || p[marotte.KeySessionID] != sessionOf("linear") {
+		t.Errorf("reset params = %v, want serverName linear, startOAuth true and linear's session", p)
 	}
-	if got := slotServer(h); got != "linear" {
-		t.Errorf("slot = %q after the reset answered, want it held until the server reports", got)
+	if got := standingSignIn(h); got != "linear" {
+		t.Errorf("standing sign-in = %q after the reset answered, want it kept until the server reports", got)
 	}
 }
 
@@ -96,23 +116,23 @@ func TestReconnect_SendsNoStartOAuth(t *testing.T) {
 // KAS's startOAuth discards every stored credential, so only a server waiting for sign-in may take one.
 func TestSignIn_RefusesAConnectedServer(t *testing.T) {
 	cases := map[string]struct {
-		record func(ctx context.Context, h *Runtime)
+		record func(t *testing.T, h *Runtime)
 		want   string
 	}{
 		"connected": {
-			record: func(ctx context.Context, h *Runtime) {
-				h.mcpRegistry.RecordConnected(ctx, "linear", marotte.MCPSource{}, nil, nil, nil, nil)
+			record: func(t *testing.T, h *Runtime) {
+				reportMCP(t, h, sessionOf("linear"), connectedMCP("linear", marotte.MCPSource{}))
 			},
 			want: errSignInConnected.Error(),
 		},
 		"failed for another reason": {
-			record: func(ctx context.Context, h *Runtime) {
-				h.mcpRegistry.RecordInitFailure(ctx, "linear", marotte.MCPSource{}, "boom")
+			record: func(t *testing.T, h *Runtime) {
+				reportMCP(t, h, sessionOf("linear"), failedMCP("linear", marotte.MCPSource{}, "boom"))
 			},
 			want: errSignInNotNeeded.Error(),
 		},
 		"not reported at all": {
-			record: func(context.Context, *Runtime) {},
+			record: func(*testing.T, *Runtime) {},
 			want:   errSignInNotNeeded.Error(),
 		},
 	}
@@ -122,7 +142,7 @@ func TestSignIn_RefusesAConnectedServer(t *testing.T) {
 			if !awaitEngine(h) {
 				t.Fatal("the engine never became ready")
 			}
-			tc.record(t.Context(), h)
+			tc.record(t, h)
 
 			code, body := postSignIn(h, "linear")
 
@@ -133,8 +153,8 @@ func TestSignIn_RefusesAConnectedServer(t *testing.T) {
 			if n := countCalls(fakeSourceOf(t, h).lane, methodV3MCPResetServer); n != 0 {
 				t.Errorf("resets sent = %d, want none", n)
 			}
-			if got := slotServer(h); got != "" {
-				t.Errorf("slot = %q after a refusal, want free", got)
+			if got := standingSignIn(h); got != "" {
+				t.Errorf("standing sign-in = %q after a refusal, want none", got)
 			}
 		})
 	}
@@ -167,8 +187,9 @@ func TestSignIn_RefusesAnUnknownServer(t *testing.T) {
 	}
 }
 
-// openExternalUrl names no server, so a second concurrent sign-in would make its consent page unattributable.
-func TestSignIn_OneSlotPerEngine(t *testing.T) {
+// openExternalUrl names no server or session, so a second concurrent sign-in, in any session, would make its consent
+// page unattributable.
+func TestSignIn_OneSignInAcrossSessions(t *testing.T) {
 	h, lane := signInHub(t, "linear", "github")
 	if code, _ := postSignIn(h, "linear"); code != http.StatusAccepted {
 		t.Fatalf("first sign-in = %d, want 202", code)
@@ -176,8 +197,8 @@ func TestSignIn_OneSlotPerEngine(t *testing.T) {
 
 	code, body := postSignIn(h, "github")
 
-	if code != http.StatusConflict || !strings.Contains(body, errSignInSlotTaken.Error()) {
-		t.Errorf("second server's sign-in = %d %s, want 409 slot taken", code, body)
+	if code != http.StatusConflict || !strings.Contains(body, errAnotherSignInStands.Error()) {
+		t.Errorf("second server's sign-in = %d %s, want 409 another sign-in stands", code, body)
 	}
 	awaitResets(t, lane, 1)
 	joinInflight(t, h)
@@ -186,7 +207,7 @@ func TestSignIn_OneSlotPerEngine(t *testing.T) {
 	}
 }
 
-// fakeClock is a settable clock for the slot's deadline.
+// fakeClock is a settable clock for the standing sign-in's deadline.
 type fakeClock struct {
 	t  time.Time
 	mu sync.Mutex
@@ -204,8 +225,8 @@ func (c *fakeClock) advance(d time.Duration) {
 	c.mu.Unlock()
 }
 
-// A slot whose server never reported is taken over once KAS's own connect ceiling has passed.
-func TestSignIn_SlotExpiresAtDeadline(t *testing.T) {
+// A standing sign-in whose server never reported is taken over once KAS's own connect ceiling has passed.
+func TestSignIn_TheStandingSignInExpiresAtItsDeadline(t *testing.T) {
 	h, lane := signInHub(t, "linear", "github")
 	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
 	h.mcpRegistry.mu.Lock()
@@ -215,33 +236,34 @@ func TestSignIn_SlotExpiresAtDeadline(t *testing.T) {
 		t.Fatalf("first sign-in = %d, want 202", code)
 	}
 
-	clock.advance(signInSlotTTL - time.Second)
+	clock.advance(signInTTL - time.Second)
 	if code, _ := postSignIn(h, "github"); code != http.StatusConflict {
 		t.Fatalf("sign-in a second before the deadline = %d, want 409", code)
 	}
 	if _, ok := h.mcpRegistry.claimSignInURL(t.Context(), "https://p.example/a?state=s"); !ok {
 		t.Error("a consent URL before the deadline was not claimed")
 	}
-	h.mcpRegistry.RecordOAuth(t.Context(), "linear", marotte.MCPSource{})
+	reportMCP(t, h, sessionOf("linear"), awaitingSignIn("linear", marotte.MCPSource{}))
 	if code, _ := postSignIn(h, "linear"); code != http.StatusAccepted {
 		t.Fatalf("re-sign-in = %d, want 202", code)
 	}
-	clock.advance(signInSlotTTL)
+	clock.advance(signInTTL)
 	if _, ok := h.mcpRegistry.claimSignInURL(t.Context(), "https://p.example/a?state=s"); ok {
-		t.Error("a consent URL after the deadline was claimed by an expired slot")
+		t.Error("a consent URL after the deadline was claimed by an expired sign-in")
 	}
 
 	if code, body := postSignIn(h, "github"); code != http.StatusAccepted {
 		t.Errorf("sign-in after the deadline = %d %s, want 202", code, body)
 	}
 	awaitResets(t, lane, 3)
-	if got := slotServer(h); got != "github" {
-		t.Errorf("slot = %q, want github's", got)
+	if got := standingSignIn(h); got != "github" {
+		t.Errorf("standing sign-in = %q, want github's", got)
 	}
 }
 
-// A reset the engine refuses ends the sign-in at once, and the row says why.
-func TestSignIn_EngineErrorReleasesTheSlot(t *testing.T) {
+// A reset the engine refuses ends the sign-in at once; the server still waits, so the row says why and offers Sign in
+// again.
+func TestSignIn_EngineErrorEndsTheStandingSignIn(t *testing.T) {
 	h, lane := signInHub(t, "linear")
 	lane.setCallRPCErr(methodV3MCPResetServer, &marotte.RPCError{Code: -32603, Message: "MCP governance is disabled by your organization"})
 
@@ -251,22 +273,101 @@ func TestSignIn_EngineErrorReleasesTheSlot(t *testing.T) {
 	awaitResets(t, lane, 1)
 	joinInflight(t, h)
 
-	if got := slotServer(h); got != "" {
-		t.Errorf("slot = %q after a refused reset, want free", got)
+	if got := standingSignIn(h); got != "" {
+		t.Errorf("standing sign-in = %q after a refused reset, want none", got)
 	}
 	row := rowOf(t, h, "linear")
-	if row.State != mcpStateFailed || !strings.Contains(row.Error, "MCP governance is disabled") {
-		t.Errorf("row = %+v, want failed with the engine's reason", row)
+	if row.State != mcpStateOAuth || !strings.Contains(row.Error, "MCP governance is disabled") {
+		t.Errorf("row = %+v, want needs_auth with the engine's reason", row)
 	}
-	if len(eventsOfType(h, marotte.EventMCPFailed)) == 0 {
-		t.Error("no mcp_failed reached the clients")
+	needed := eventsOfType(h, marotte.EventMCPOAuthNeeded)
+	if len(needed) == 0 || !strings.Contains(string(needed[len(needed)-1].Payload), "MCP governance is disabled") {
+		t.Errorf("mcp_oauth_needed = %+v, want the last one carrying the engine's reason", needed)
 	}
+	if code, body := postSignIn(h, "linear"); code != http.StatusAccepted {
+		t.Errorf("retry = %d %s, want 202", code, body)
+	}
+	awaitResets(t, lane, 2)
+	joinInflight(t, h)
+}
+
+// A refused Sign in in a waiting session leaves the row on that session even while another has the server
+// connected: the row keeps the reason and a retry goes back to the waiting session.
+func TestSignIn_ARefusedSignInLeavesTheWaitingSessionRetryable(t *testing.T) {
+	h := newHubWithMCPConfig(t, enabledConfig("linear"))
+	if !awaitEngine(h) {
+		t.Fatal("the engine never became ready")
+	}
+	lane := fakeSourceOf(t, h).lane
+	reportMCP(t, h, "sess-a", connectedMCP("linear", marotte.MCPSource{}))
+	reportMCP(t, h, "sess-b", awaitingSignIn("linear", marotte.MCPSource{}))
+	lane.setCallRPCErr(methodV3MCPResetServer, &marotte.RPCError{Code: -32603, Message: "listener busy"})
+	if code, body := postSignIn(h, "linear"); code != http.StatusAccepted {
+		t.Fatalf("sign-in = %d %s, want 202", code, body)
+	}
+	awaitResets(t, lane, 1)
+	joinInflight(t, h)
+
+	if row := rowOf(t, h, "linear"); row.State != mcpStateOAuth || !strings.Contains(row.Error, "listener busy") {
+		t.Errorf("row = %+v, want needs_auth with the engine's reason", row)
+	}
+	if code, body := postSignIn(h, "linear"); code != http.StatusAccepted {
+		t.Fatalf("retry = %d %s, want 202", code, body)
+	}
+	awaitResets(t, lane, 2)
+	joinInflight(t, h)
+	if p := lane.paramsFor(methodV3MCPResetServer); p[marotte.KeySessionID] != marotte.SessionID("sess-b") || p[keyStartOAuth] != true {
+		t.Errorf("retry params = %v, want startOAuth in sess-b", p)
+	}
+}
+
+// A refusal's reason stands until the waiting session reports something else or a new Sign in starts.
+func TestSignIn_ARefusalsReasonEndsWithTheNextStatusOrClaim(t *testing.T) {
+	refuse := func(t *testing.T) (*Runtime, *fakeBridge) {
+		t.Helper()
+		h, lane := signInHub(t, "linear")
+		lane.setCallRPCErr(methodV3MCPResetServer, &marotte.RPCError{Code: -32603, Message: "refused"})
+		if code, _ := postSignIn(h, "linear"); code != http.StatusAccepted {
+			t.Fatalf("sign-in = %d, want 202", code)
+		}
+		awaitResets(t, lane, 1)
+		joinInflight(t, h)
+		if row := rowOf(t, h, "linear"); row.Error == "" {
+			t.Fatalf("row = %+v, want the refusal's reason", row)
+		}
+		return h, lane
+	}
+	t.Run("the same wait reported again keeps it", func(t *testing.T) {
+		h, _ := refuse(t)
+		reportMCP(t, h, sessionOf("linear"), awaitingSignIn("linear", marotte.MCPSource{}))
+		if row := rowOf(t, h, "linear"); row.State != mcpStateOAuth || row.Error == "" {
+			t.Errorf("row = %+v, want needs_auth still with the reason", row)
+		}
+	})
+	t.Run("a connect clears it", func(t *testing.T) {
+		h, _ := refuse(t)
+		reportMCP(t, h, sessionOf("linear"), connectedMCP("linear", marotte.MCPSource{}))
+		reportMCP(t, h, sessionOf("linear"), awaitingSignIn("linear", marotte.MCPSource{}))
+		if row := rowOf(t, h, "linear"); row.State != mcpStateOAuth || row.Error != "" {
+			t.Errorf("row = %+v, want needs_auth with no reason", row)
+		}
+	})
+	t.Run("a new sign-in clears it", func(t *testing.T) {
+		h, _ := refuse(t)
+		if _, err := h.mcpRegistry.claimSignIn(t.Context(), "linear"); err != nil {
+			t.Fatalf("claimSignIn = %v", err)
+		}
+		if row := rowOf(t, h, "linear"); row.Error != "" {
+			t.Errorf("row = %+v after a new claim, want no reason", row)
+		}
+		h.mcpRegistry.dropSession(t.Context(), sessionOf("linear"))
+	})
 }
 
 // A foreign row keeps its provenance through a refused sign-in.
 func TestSignIn_EngineErrorKeepsAForeignRowsOrigin(t *testing.T) {
 	h, lane := signInHub(t, "mine")
-	h.mcpRegistry.RecordOAuth(t.Context(), "theirs", marotte.MCPSource{Origin: "workspace", Root: "/w"})
+	reportMCP(t, h, sessionOf("theirs"), awaitingSignIn("theirs", marotte.MCPSource{Origin: "workspace", Root: "/w"}))
 	lane.setCallRPCErr(methodV3MCPResetServer, &marotte.RPCError{Code: -32603, Message: "no such server"})
 
 	if code, _ := postSignIn(h, "theirs"); code != http.StatusAccepted {
@@ -275,8 +376,8 @@ func TestSignIn_EngineErrorKeepsAForeignRowsOrigin(t *testing.T) {
 	awaitResets(t, lane, 1)
 	joinInflight(t, h)
 
-	if row := rowOf(t, h, "theirs"); row.State != mcpStateFailed || row.Origin != marotte.OriginWorkspace || row.OriginRoot != "/w" {
-		t.Errorf("row = %+v, want failed and still the workspace's", row)
+	if row := rowOf(t, h, "theirs"); row.State != mcpStateOAuth || row.Error == "" || row.Origin != marotte.OriginWorkspace || row.OriginRoot != "/w" {
+		t.Errorf("row = %+v, want needs_auth with the reason and still the workspace's", row)
 	}
 }
 
@@ -287,67 +388,230 @@ func TestSignIn_WithNoEngineIsUnavailable(t *testing.T) {
 	h := newRuntimeOn(context.Background(), "/tmp/work", src, cs, WithMCPConfig(enabledConfig("linear")))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	h.mcpRegistry.RecordOAuth(t.Context(), "linear", marotte.MCPSource{})
+	reportMCP(t, h, sessionOf("linear"), awaitingSignIn("linear", marotte.MCPSource{}))
 
 	if code, _ := postSignIn(h, "linear"); code != http.StatusServiceUnavailable {
 		t.Errorf("sign-in = %d, want 503", code)
 	}
-	if got := slotServer(h); got != "" {
-		t.Errorf("slot = %q with no engine, want free", got)
+	if got := standingSignIn(h); got != "" {
+		t.Errorf("standing sign-in = %q with no engine, want none", got)
 	}
 }
 
-// The slot ends with the next status KAS reports for its server, whatever it is.
-func TestSignIn_TerminalStatusReleasesTheSlot(t *testing.T) {
-	cases := map[string]func(ctx context.Context, r *mcpRegistry, name string){
-		"connected": func(ctx context.Context, r *mcpRegistry, name string) {
-			r.RecordConnected(ctx, name, marotte.MCPSource{}, nil, nil, nil, nil)
+// A sign-in ends with the next status its session reports for its server, whatever it is but connecting, and with
+// its session or the engine.
+func TestSignIn_TerminalStatusEndsTheStandingSignIn(t *testing.T) {
+	cases := map[string]func(t *testing.T, h *Runtime, name string){
+		"connected": func(t *testing.T, h *Runtime, name string) {
+			reportMCP(t, h, sessionOf(name), connectedMCP(name, marotte.MCPSource{}))
 		},
-		"waiting for sign-in again": func(ctx context.Context, r *mcpRegistry, name string) {
-			r.RecordOAuth(ctx, name, marotte.MCPSource{})
+		"waiting for sign-in again": func(t *testing.T, h *Runtime, name string) {
+			reportMCP(t, h, sessionOf(name), awaitingSignIn(name, marotte.MCPSource{}))
 		},
-		"failed": func(ctx context.Context, r *mcpRegistry, name string) {
-			r.RecordInitFailure(ctx, name, marotte.MCPSource{}, "timed out")
+		"failed": func(t *testing.T, h *Runtime, name string) {
+			reportMCP(t, h, sessionOf(name), failedMCP(name, marotte.MCPSource{}, "timed out"))
 		},
-		"disabled, marotte's own": func(ctx context.Context, r *mcpRegistry, name string) {
-			r.RecordDisabled(ctx, name, marotte.MCPSource{})
+		"disabled, marotte's own": func(t *testing.T, h *Runtime, name string) {
+			reportMCP(t, h, sessionOf(name), disabledMCP(name, marotte.MCPSource{}))
 		},
-		"disabled, a workspace's": func(ctx context.Context, r *mcpRegistry, name string) {
-			r.RecordDisabled(ctx, name, marotte.MCPSource{Origin: "workspace", Root: "/w"})
+		"disabled, a workspace's": func(t *testing.T, h *Runtime, name string) {
+			reportMCP(t, h, sessionOf(name), disabledMCP(name, marotte.MCPSource{Origin: "workspace", Root: "/w"}))
 		},
-		"the engine ended": func(ctx context.Context, r *mcpRegistry, _ string) {
-			r.clearAll(ctx)
+		"left out of its session's frame": func(t *testing.T, h *Runtime, name string) {
+			reportMCP(t, h, sessionOf(name))
+		},
+		"its session ended": func(t *testing.T, h *Runtime, name string) {
+			h.mcpRegistry.dropSession(t.Context(), sessionOf(name))
+		},
+		"the engine ended": func(t *testing.T, h *Runtime, _ string) {
+			h.mcpRegistry.clearAll(t.Context())
 		},
 	}
 	for name, report := range cases {
 		t.Run(name, func(t *testing.T) {
 			h, _ := signInHub(t, "linear", "github")
-			if _, err := h.mcpRegistry.claimSignIn("linear"); err != nil {
+			if _, err := h.mcpRegistry.claimSignIn(t.Context(), "linear"); err != nil {
 				t.Fatalf("claimSignIn = %v", err)
 			}
 			if name != "the engine ended" {
-				report(t.Context(), h.mcpRegistry, "github")
-				if got := slotServer(h); got != "linear" {
-					t.Fatalf("another server's status freed the slot (slot = %q)", got)
+				report(t, h, "github")
+				if got := standingSignIn(h); got != "linear" {
+					t.Fatalf("another session's status ended the sign-in (standing sign-in = %q)", got)
 				}
 			}
 
-			report(t.Context(), h.mcpRegistry, "linear")
+			report(t, h, "linear")
 
-			if got := slotServer(h); got != "" {
-				t.Errorf("slot = %q after the server reported, want free", got)
+			if got := standingSignIn(h); got != "" {
+				t.Errorf("standing sign-in = %q after the server reported, want none", got)
 			}
 		})
 	}
 }
 
-// The consent URL KAS opens under a held slot belongs to that server's row, and no chat banner is raised.
+// A connecting report is the sign-in's own reconnect, so the sign-in and its record stand through it.
+func TestSignIn_AConnectingReportKeepsTheSignIn(t *testing.T) {
+	h, _ := signInHub(t, "linear")
+	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "linear"); err != nil {
+		t.Fatalf("claimSignIn = %v", err)
+	}
+	const consent = "https://provider.example/authorize?state=s"
+	if _, ok := h.mcpRegistry.claimSignInURL(t.Context(), consent); !ok {
+		t.Fatal("claimSignInURL refused the standing sign-in's URL")
+	}
+
+	reportMCP(t, h, sessionOf("linear"), translate.MCPServerReport{Name: "linear", State: translate.MCPReportConnecting})
+
+	if got := standingSignIn(h); got != "linear" {
+		t.Errorf("standing sign-in = %q after a connecting report, want linear's", got)
+	}
+	if row := rowOf(t, h, "linear"); row.State != mcpStateSigningIn || row.OAuthURL != consent {
+		t.Errorf("row = %+v, want signing_in on the consent URL", row)
+	}
+}
+
+// A sign-in is filed under the session that binds its server, so a later session for the same server neither
+// carries nor ends it, and the sign-in leaves no engine-wide trace once its session ends.
+func TestSignIn_LivesOnTheBindingSessionsView(t *testing.T) {
+	h, lane := signInHub(t, "linear")
+	reportMCP(t, h, "sess-later", awaitingSignIn("linear", marotte.MCPSource{}))
+	if code, _ := postSignIn(h, "linear"); code != http.StatusAccepted {
+		t.Fatalf("sign-in = %d, want 202", code)
+	}
+	awaitResets(t, lane, 1)
+	joinInflight(t, h)
+	if p := lane.paramsFor(methodV3MCPResetServer); p[marotte.KeySessionID] != sessionOf("linear") {
+		t.Errorf("reset session = %v, want the oldest binding session %s", p[marotte.KeySessionID], sessionOf("linear"))
+	}
+
+	reportMCP(t, h, "sess-later", connectedMCP("linear", marotte.MCPSource{}))
+	if got := standingSignIn(h); got != "linear" {
+		t.Fatalf("a later session's frame ended the sign-in (standing sign-in = %q)", got)
+	}
+
+	h.mcpRegistry.dropSession(t.Context(), sessionOf("linear"))
+	if got := standingSignIn(h); got != "" {
+		t.Errorf("standing sign-in = %q after its session ended, want none", got)
+	}
+	if code, body := postSignIn(h, "linear"); code != http.StatusConflict || !strings.Contains(body, errSignInConnected.Error()) {
+		t.Errorf("sign-in after the later session connected = %d %s, want 409 connected", code, body)
+	}
+}
+
+// KAS keeps one instance per declaration: a session holding another declaration of the name stays waiting while
+// the other is connected, and only a sign-in in that session connects it. The row offers that sign-in whichever
+// session is older, and the reset goes to the waiting session.
+func TestSignIn_GoesToTheSessionWaitingWhileAnotherIsConnected(t *testing.T) {
+	cases := map[string]struct{ older, newer translate.MCPServerReport }{
+		"the older session waits": {
+			older: awaitingSignIn("linear", marotte.MCPSource{}), newer: connectedMCP("linear", marotte.MCPSource{}),
+		},
+		"the newer session waits": {
+			older: connectedMCP("linear", marotte.MCPSource{}), newer: awaitingSignIn("linear", marotte.MCPSource{}),
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHubWithMCPConfig(t, enabledConfig("linear"))
+			if !awaitEngine(h) {
+				t.Fatal("the engine never became ready")
+			}
+			lane := fakeSourceOf(t, h).lane
+			reportMCP(t, h, "sess-older", tc.older)
+			reportMCP(t, h, "sess-newer", tc.newer)
+			waiting := marotte.SessionID("sess-older")
+			if tc.newer.State == translate.MCPReportNeedsAuth {
+				waiting = "sess-newer"
+			}
+			if got := rowOf(t, h, "linear").State; got != mcpStateOAuth {
+				t.Errorf("row state = %q, want %q so the row offers Sign in", got, mcpStateOAuth)
+			}
+
+			if code, body := postSignIn(h, "linear"); code != http.StatusAccepted {
+				t.Fatalf("sign-in = %d %s, want 202", code, body)
+			}
+			awaitResets(t, lane, 1)
+			joinInflight(t, h)
+
+			if p := lane.paramsFor(methodV3MCPResetServer); p[marotte.KeySessionID] != waiting || p[keyStartOAuth] != true {
+				t.Errorf("reset params = %v, want startOAuth in the waiting session %s", p, waiting)
+			}
+		})
+	}
+}
+
+// A sign-in whose session never reported again leaves signing_in once its deadline passes: the row offers Sign in
+// again and a paste for the dead consent URL is not relayed.
+func TestSignIn_AnExpiredSignInReturnsItsServerToNeedsAuth(t *testing.T) {
+	h, lane := signInHub(t, "linear")
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	h.mcpRegistry.mu.Lock()
+	h.mcpRegistry.now = clock.now
+	h.mcpRegistry.mu.Unlock()
+	if code, _ := postSignIn(h, "linear"); code != http.StatusAccepted {
+		t.Fatalf("sign-in = %d, want 202", code)
+	}
+	awaitResets(t, lane, 1)
+	if _, ok := h.mcpRegistry.claimSignInURL(t.Context(), "https://provider.example/authorize?state=s"); !ok {
+		t.Fatal("claimSignInURL refused the standing sign-in's URL")
+	}
+	if row := rowOf(t, h, "linear"); row.State != mcpStateSigningIn {
+		t.Fatalf("row = %+v, want signing_in before the deadline", row)
+	}
+
+	clock.advance(signInTTL)
+
+	if _, err := h.mcpRegistry.beginOAuthRelay(t.Context(), "linear", "s"); !errors.Is(err, errRelayNoFlow) {
+		t.Errorf("relay after the deadline = %v, want errRelayNoFlow", err)
+	}
+	if row := rowOf(t, h, "linear"); row.State != mcpStateOAuth || row.OAuthURL != "" {
+		t.Errorf("row = %+v, want needs_auth with no consent URL", row)
+	}
+	if code, body := postSignIn(h, "linear"); code != http.StatusAccepted {
+		t.Errorf("sign-in after the deadline = %d %s, want 202", code, body)
+	}
+	awaitResets(t, lane, 2)
+	joinInflight(t, h)
+}
+
+// The deadline ends a sign-in by itself, with no frame and no request, and the clients hear the server needs a
+// sign-in again. The bubble's clock moves only once every goroutine waits, so the URL is claimed before the deadline
+// however slow the runner is.
+func TestSignIn_TheDeadlineEndsTheSignInWithNoFrame(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, lane := signInHub(t, "linear")
+		if code, _ := postSignIn(h, "linear"); code != http.StatusAccepted {
+			t.Fatalf("sign-in = %d, want 202", code)
+		}
+		awaitResets(t, lane, 1)
+		if _, ok := h.mcpRegistry.claimSignInURL(t.Context(), "https://provider.example/authorize?state=s"); !ok {
+			t.Fatal("claimSignInURL refused the standing sign-in's URL")
+		}
+		before := h.bus.fanout.Position().Head
+
+		time.Sleep(signInTTL)
+		synctest.Wait()
+
+		if !slices.Contains(extractTypes(t, bufferedSince(h, before)), string(marotte.EventMCPOAuthNeeded)) {
+			t.Errorf("no mcp_oauth_needed past the deadline; row = %+v", rowOf(t, h, "linear"))
+		}
+		if row := rowOf(t, h, "linear"); row.State != mcpStateOAuth || row.OAuthURL != "" {
+			t.Errorf("row = %+v past the deadline, want needs_auth with no consent URL", row)
+		}
+		if got := standingSignIn(h); got != "" {
+			t.Errorf("standing sign-in = %q past the deadline, want none", got)
+		}
+		joinInflight(t, h)
+	})
+}
+
+// The consent URL KAS opens while a sign-in stands belongs to that server's row, and no chat banner is raised.
 func TestOpenExternalURL_ClaimedBySignInRecordsTheAnchor(t *testing.T) {
 	const consent = "https://provider.example/authorize?state=s1&redirect_uri=http%3A%2F%2F127.0.0.1%3A4000%2Foauth%2Fcallback"
 	h, _, lane := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
-	h.mcpRegistry.RecordOAuth(t.Context(), "theirs", marotte.MCPSource{Origin: "workspace", Root: "/w"})
-	if _, err := h.mcpRegistry.claimSignIn("theirs"); err != nil {
+	reportMCP(t, h, sessionOf("theirs"), awaitingSignIn("theirs", marotte.MCPSource{Origin: "workspace", Root: "/w"}))
+	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "theirs"); err != nil {
 		t.Fatalf("claimSignIn = %v", err)
 	}
 	before := h.bus.fanout.Position().Head
@@ -395,8 +659,8 @@ func awaitLaneAnswer(t *testing.T, lane *fakeBridge, id int64) fakeResponse {
 	}
 }
 
-// A sign-in whose reset is still unanswered when the server reports and a second Sign in takes the slot ends with that
-// status: its late failure leaves the second sign-in's slot and row alone.
+// A sign-in whose reset is still unanswered when the server reports and a second Sign in then stands ends with that
+// status: its late failure leaves the second sign-in and its row alone.
 func TestSignIn_AnEarlierAttemptsLateFailureLeavesTheNextOneAlone(t *testing.T) {
 	h, lane := signInHub(t, "linear")
 	late := make(chan struct{})
@@ -422,7 +686,7 @@ func TestSignIn_AnEarlierAttemptsLateFailureLeavesTheNextOneAlone(t *testing.T) 
 		t.Fatalf("first sign-in = %d %s, want 202", code, body)
 	}
 	awaitResets(t, lane, 1)
-	h.mcpRegistry.RecordOAuth(t.Context(), "linear", marotte.MCPSource{})
+	reportMCP(t, h, sessionOf("linear"), awaitingSignIn("linear", marotte.MCPSource{}))
 	if code, body := postSignIn(h, "linear"); code != http.StatusAccepted {
 		t.Fatalf("second sign-in = %d %s, want 202", code, body)
 	}
@@ -430,8 +694,8 @@ func TestSignIn_AnEarlierAttemptsLateFailureLeavesTheNextOneAlone(t *testing.T) 
 	close(late)
 	joinInflight(t, h)
 
-	if got := slotServer(h); got != "linear" {
-		t.Errorf("slot = %q after the first attempt failed late, want the second attempt's kept", got)
+	if got := standingSignIn(h); got != "linear" {
+		t.Errorf("standing sign-in = %q after the first attempt failed late, want the second attempt's kept", got)
 	}
 	if row := rowOf(t, h, "linear"); row.State != mcpStateOAuth || row.Error != "" {
 		t.Errorf("row = %+v, want it waiting for the second sign-in, not failed", row)

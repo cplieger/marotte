@@ -163,7 +163,8 @@ func TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver(t *testing.T) {
 func TestTranslateACPEvent_HandlerTableIsIDAware(t *testing.T) {
 	const method = "_kiro/mcp/status" // a notification handler in the table
 	params := mustJSON(t, map[string]any{
-		"servers": []map[string]any{{"name": "github", "status": "connected"}},
+		"sessionId": "s1",
+		"servers":   []map[string]any{{"name": "github", "status": "connected"}},
 	})
 
 	t.Run("a notification still reaches its handler", func(t *testing.T) {

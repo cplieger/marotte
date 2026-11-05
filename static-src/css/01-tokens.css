@@ -328,10 +328,10 @@
      * below the L19 body no shadow can reach 1.15:1. */
     --c-well: color-mix(in oklch, oklch(0% 0 none) 55%, transparent);
 
-    /* A previewed page's canvas: white in BOTH themes, because a page that sets
-     * no background was written against a browser's white default and is
-     * unreadable on a dark one. Hence a seed outside the theme ramp. */
-    --c-preview-canvas: oklch(100% 0 none);
+    /* The canvas under content written against a browser's white default (a
+     * previewed page, an agent's SVG): white in BOTH themes, because such content
+     * is unreadable on a dark surface. Hence a seed outside the theme ramp. */
+    --c-foreign-canvas: oklch(100% 0 none);
 
     /* ---- The band, TINTED by an outcome --------------------------------- *
      * A stopped or broken turn's footer says so in hue. It used to be a

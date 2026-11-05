@@ -31,9 +31,6 @@ func (o *engineOwner) callRawAt(ctx context.Context, label, method string, param
 	if resp == nil {
 		return nil, at, errors.New(label + ": nil response")
 	}
-	if resp.Error != nil {
-		return nil, at, fmt.Errorf("%s: %w", label, resp.Error)
-	}
 	return resp.Result, at, nil
 }
 
@@ -154,9 +151,6 @@ func observerCall(ctx context.Context, s engineSession, label, method string, ex
 	}
 	if resp == nil {
 		return nil, errors.New(label + ": nil response")
-	}
-	if resp.Error != nil {
-		return nil, fmt.Errorf("%s: %w", label, resp.Error)
 	}
 	return resp.Result, nil
 }

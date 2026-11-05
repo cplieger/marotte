@@ -1265,8 +1265,8 @@
   },
   "footer > span.turn-actions-buttons": {
     "where": {
-      "by": "actions",
-      "in": "actions"
+      "by": "outcome",
+      "in": "completed, cancelled, interrupted, failed, refused, unknown, empty"
     },
     "style": {
       "align-items": "center",
@@ -1299,8 +1299,8 @@
   },
   "footer > span.turn-actions-buttons > details.turn-actions-more": {
     "where": {
-      "by": "actions",
-      "in": "actions"
+      "by": "outcome",
+      "in": "completed, cancelled, interrupted, failed, refused, unknown, empty"
     },
     "style": {
       "bottom": {
@@ -1388,8 +1388,8 @@
   },
   "footer > span.turn-actions-buttons > details.turn-actions-more > summary.turn-action-btn.turn-action-more[More turn actions]": {
     "where": {
-      "by": "actions",
-      "in": "actions"
+      "by": "outcome",
+      "in": "completed, cancelled, interrupted, failed, refused, unknown, empty"
     },
     "style": {
       "align-items": "center",
@@ -1498,8 +1498,8 @@
   },
   "footer > span.turn-actions-buttons > details.turn-actions-more > summary.turn-action-btn.turn-action-more[More turn actions]::after": {
     "where": {
-      "by": "actions",
-      "in": "actions"
+      "by": "outcome",
+      "in": "completed, cancelled, interrupted, failed, refused, unknown, empty"
     },
     "style": {
       "bottom": {
@@ -1587,8 +1587,8 @@
   },
   "footer > span.turn-actions-buttons > details.turn-actions-more > span.turn-actions-group": {
     "where": {
-      "by": "actions",
-      "in": "actions"
+      "by": "outcome",
+      "in": "completed, cancelled, interrupted, failed, refused, unknown, empty"
     },
     "style": {
       "align-items": "center",
@@ -3256,6 +3256,592 @@
     "where": {
       "by": "actions",
       "in": "actions"
+    },
+    "style": {
+      "box-sizing": "border-box",
+      "display": {
+        "by": "width",
+        "is": {
+          "1280": "none"
+        }
+      },
+      "min-block-size": {
+        "by": "width",
+        "is": {
+          "1280": "0px"
+        }
+      },
+      "min-height": {
+        "by": "width",
+        "is": {
+          "1280": "0px"
+        }
+      },
+      "min-inline-size": {
+        "by": "width",
+        "is": {
+          "1280": "0px"
+        }
+      },
+      "min-width": {
+        "by": "width",
+        "is": {
+          "1280": "0px"
+        }
+      },
+      "scrollbar-width": "thin",
+      "text-wrap-mode": {
+        "by": "width",
+        "is": {
+          "320": "nowrap",
+          "390": "nowrap"
+        }
+      }
+    }
+  },
+  "footer > span.turn-actions-buttons > details.turn-actions-more > span.turn-actions-group > button.turn-action-btn[Branch from here]": {
+    "where": {
+      "by": "outcome",
+      "in": "completed, cancelled, interrupted, failed, refused, unknown, empty"
+    },
+    "style": {
+      "-webkit-tap-highlight-color": "rgba(0, 0, 0, 0)",
+      "-webkit-text-fill-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "-webkit-text-stroke-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "align-items": "center",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "border-block-end-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-block-end-style": "none",
+      "border-block-end-width": "0px",
+      "border-block-start-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-block-start-style": "none",
+      "border-block-start-width": "0px",
+      "border-bottom-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-bottom-left-radius": "4px",
+      "border-bottom-right-radius": "4px",
+      "border-bottom-style": "none",
+      "border-bottom-width": "0px",
+      "border-end-end-radius": "4px",
+      "border-end-start-radius": "4px",
+      "border-inline-end-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-inline-end-style": "none",
+      "border-inline-end-width": "0px",
+      "border-inline-start-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-inline-start-style": "none",
+      "border-inline-start-width": "0px",
+      "border-left-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-left-style": "none",
+      "border-left-width": "0px",
+      "border-right-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-right-style": "none",
+      "border-right-width": "0px",
+      "border-start-end-radius": "4px",
+      "border-start-start-radius": "4px",
+      "border-top-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-top-left-radius": "4px",
+      "border-top-right-radius": "4px",
+      "border-top-style": "none",
+      "border-top-width": "0px",
+      "bottom": {
+        "by": "width",
+        "is": {
+          "1280": "0px"
+        }
+      },
+      "caret-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "column-gap": {
+        "by": "width",
+        "is": {
+          "320": "8px",
+          "390": "8px"
+        }
+      },
+      "column-rule-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "cursor": "pointer",
+      "display": {
+        "by": "width",
+        "is": {
+          "320": "inline-flex",
+          "390": "inline-flex",
+          "1280": "flex"
+        }
+      },
+      "font-family": "system-ui, sans-serif",
+      "inset-block-end": {
+        "by": "width",
+        "is": {
+          "1280": "0px"
+        }
+      },
+      "inset-block-start": {
+        "by": "width",
+        "is": {
+          "1280": "0px"
+        }
+      },
+      "inset-inline-start": {
+        "by": "width",
+        "is": {
+          "1280": "0px"
+        }
+      },
+      "isolation": "isolate",
+      "justify-content": {
+        "by": "width",
+        "is": {
+          "320": "flex-start",
+          "390": "flex-start",
+          "1280": "center"
+        }
+      },
+      "left": {
+        "by": "width",
+        "is": {
+          "1280": "0px"
+        }
+      },
+      "min-block-size": {
+        "by": "width",
+        "is": {
+          "320": "44px",
+          "390": "44px",
+          "1280": "24px"
+        }
+      },
+      "min-height": {
+        "by": "width",
+        "is": {
+          "320": "44px",
+          "390": "44px",
+          "1280": "24px"
+        }
+      },
+      "min-inline-size": "24px",
+      "min-width": "24px",
+      "outline-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "padding-block-end": "0px",
+      "padding-block-start": "0px",
+      "padding-bottom": "0px",
+      "padding-inline-end": {
+        "by": "width",
+        "is": {
+          "320": "8px",
+          "390": "8px",
+          "1280": "0px"
+        }
+      },
+      "padding-inline-start": {
+        "by": "width",
+        "is": {
+          "320": "8px",
+          "390": "8px",
+          "1280": "0px"
+        }
+      },
+      "padding-left": {
+        "by": "width",
+        "is": {
+          "320": "8px",
+          "390": "8px",
+          "1280": "0px"
+        }
+      },
+      "padding-right": {
+        "by": "width",
+        "is": {
+          "320": "8px",
+          "390": "8px",
+          "1280": "0px"
+        }
+      },
+      "padding-top": "0px",
+      "position": "relative",
+      "row-gap": {
+        "by": "width",
+        "is": {
+          "320": "8px",
+          "390": "8px"
+        }
+      },
+      "row-rule-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "scrollbar-width": "thin",
+      "text-decoration-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "text-emphasis-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "top": {
+        "by": "width",
+        "is": {
+          "1280": "0px"
+        }
+      },
+      "touch-action": "manipulation",
+      "transition-behavior": "normal, normal, normal",
+      "transition-delay": "0s, 0s, 0s",
+      "transition-duration": "0.1s, 0.1s, 0.1s",
+      "transition-property": "background, box-shadow, color",
+      "transition-timing-function": "cubic-bezier(0.2, 0, 0, 1), cubic-bezier(0.2, 0, 0, 1), cubic-bezier(0.2, 0, 0, 1)"
+    }
+  },
+  "footer > span.turn-actions-buttons > details.turn-actions-more > span.turn-actions-group > button.turn-action-btn[Branch from here]::after": {
+    "where": {
+      "by": "outcome",
+      "in": "completed, cancelled, interrupted, failed, refused, unknown, empty"
+    },
+    "style": {
+      "-webkit-tap-highlight-color": "rgba(0, 0, 0, 0)",
+      "-webkit-text-fill-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "-webkit-text-stroke-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-block-end-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-block-start-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-bottom-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-inline-end-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-inline-start-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-left-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-right-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "border-top-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "bottom": {
+        "by": "width",
+        "is": {
+          "320": "min(0px, 50% - 22px)",
+          "390": "min(0px, 50% - 22px)",
+          "1280": "0px"
+        }
+      },
+      "caret-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "column-rule-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "content": "\"\"",
+      "cursor": "pointer",
+      "display": "block",
+      "font-family": "system-ui, sans-serif",
+      "inset-block-end": {
+        "by": "width",
+        "is": {
+          "320": "min(0px, 50% - 22px)",
+          "390": "min(0px, 50% - 22px)",
+          "1280": "0px"
+        }
+      },
+      "inset-block-start": {
+        "by": "width",
+        "is": {
+          "320": "min(0px, 50% - 22px)",
+          "390": "min(0px, 50% - 22px)",
+          "1280": "0px"
+        }
+      },
+      "inset-inline-start": {
+        "by": "width",
+        "is": {
+          "320": "min(0px, 50% - 22px)",
+          "390": "min(0px, 50% - 22px)",
+          "1280": "0px"
+        }
+      },
+      "left": {
+        "by": "width",
+        "is": {
+          "320": "min(0px, 50% - 22px)",
+          "390": "min(0px, 50% - 22px)",
+          "1280": "0px"
+        }
+      },
+      "outline-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "position": "absolute",
+      "row-rule-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "text-decoration-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "text-emphasis-color": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "top": {
+        "by": "width",
+        "is": {
+          "320": "min(0px, 50% - 22px)",
+          "390": "min(0px, 50% - 22px)",
+          "1280": "0px"
+        }
+      },
+      "z-index": "-1"
+    }
+  },
+  "footer > span.turn-actions-buttons > details.turn-actions-more > span.turn-actions-group > button.turn-action-btn[Branch from here] > svg.ic-ui": {
+    "where": {
+      "by": "outcome",
+      "in": "completed, cancelled, interrupted, failed, refused, unknown, empty"
+    },
+    "style": {
+      "box-sizing": "border-box",
+      "fill": "none",
+      "flex-shrink": "0",
+      "scrollbar-width": "thin",
+      "stroke": {
+        "by": "theme",
+        "is": {
+          "dark": "oklch(0.882 0.04 273.9)",
+          "light": "oklch(0.337 0.02 273.9)"
+        }
+      },
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round"
+    }
+  },
+  "footer > span.turn-actions-buttons > details.turn-actions-more > span.turn-actions-group > button.turn-action-btn[Branch from here] > svg.ic-ui > line": {
+    "where": {
+      "by": "outcome",
+      "in": "completed, cancelled, interrupted, failed, refused, unknown, empty"
+    },
+    "style": {
+      "box-sizing": "border-box",
+      "scrollbar-width": "thin",
+      "vector-effect": "non-scaling-stroke"
+    }
+  },
+  "footer > span.turn-actions-buttons > details.turn-actions-more > span.turn-actions-group > button.turn-action-btn[Branch from here] > svg.ic-ui > circle": {
+    "where": {
+      "by": "outcome",
+      "in": "completed, cancelled, interrupted, failed, refused, unknown, empty"
+    },
+    "style": {
+      "box-sizing": "border-box",
+      "cx": "18px",
+      "cy": "6px",
+      "r": "3px",
+      "scrollbar-width": "thin",
+      "vector-effect": "non-scaling-stroke"
+    }
+  },
+  "footer > span.turn-actions-buttons > details.turn-actions-more > span.turn-actions-group > button.turn-action-btn[Branch from here] > svg.ic-ui > circle:2": {
+    "where": {
+      "by": "outcome",
+      "in": "completed, cancelled, interrupted, failed, refused, unknown, empty"
+    },
+    "style": {
+      "box-sizing": "border-box",
+      "cx": "6px",
+      "cy": "18px",
+      "r": "3px",
+      "scrollbar-width": "thin",
+      "vector-effect": "non-scaling-stroke"
+    }
+  },
+  "footer > span.turn-actions-buttons > details.turn-actions-more > span.turn-actions-group > button.turn-action-btn[Branch from here] > svg.ic-ui > path": {
+    "where": {
+      "by": "outcome",
+      "in": "completed, cancelled, interrupted, failed, refused, unknown, empty"
+    },
+    "style": {
+      "box-sizing": "border-box",
+      "d": "path(\"M 18 9 A 9 9 0 0 1 9 18\")",
+      "scrollbar-width": "thin",
+      "vector-effect": "non-scaling-stroke"
+    }
+  },
+  "footer > span.turn-actions-buttons > details.turn-actions-more > span.turn-actions-group > button.turn-action-btn[Branch from here] > span.turn-action-label": {
+    "where": {
+      "by": "outcome",
+      "in": "completed, cancelled, interrupted, failed, refused, unknown, empty"
     },
     "style": {
       "box-sizing": "border-box",

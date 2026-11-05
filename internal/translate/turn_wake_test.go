@@ -480,10 +480,10 @@ func TestTurnWake_AMessageOlderThanThePreviousTurnIsNotTheWaker(t *testing.T) {
 
 func TestTurnWake_AStepsOwnWakeWritesNothingInTheChat(t *testing.T) {
 	h := newWakeHarness(t)
+	pauseStep(t, h.tr, nil)
 	h.tr.HandleWorkflowMessage(t.Context(), testChat, workflowNotify("parent", wakeChatSession, testStep, "info", "take option B"))
 	attr := testStepAttr()
-	turnStartOn(t, h.tr, attr)
-	wakeChunk(t, h.tr, "send-message-wake", attr)
+	resumeStep(t, h.tr)
 
 	if w := h.wakes(); len(w) != 0 {
 		t.Errorf("chat turn_wake entries = %+v, want none: the wake was the step's", w)

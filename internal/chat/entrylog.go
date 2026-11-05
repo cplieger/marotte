@@ -265,6 +265,7 @@ type TurnSpec struct {
 	Run       string
 	NodePath  string
 	SessionID string
+	KASTurnID string
 }
 
 // OpenTurn appends a turn_open and returns it; its ID is the turn id every later entry and closer carries. n is the
@@ -288,6 +289,7 @@ func (l *EntryLog) openTurnWithOrdinalLocked(ctx context.Context, spec *TurnSpec
 		Run:       spec.Run,
 		NodePath:  spec.NodePath,
 		SessionID: spec.SessionID,
+		KASTurnID: spec.KASTurnID,
 		N:         ordinal,
 	})
 	if err != nil {
@@ -1259,12 +1261,7 @@ func (l *EntryLog) RailRows() []marotte.TurnSummary {
 	defer l.mu.Unlock()
 	order := l.survivingOrderLocked()
 	names := l.runNamesOf(order)
-	claimed := map[string]struct{}{}
-	for _, id := range order {
-		for _, c := range l.turns[id].claims {
-			claimed[c] = struct{}{}
-		}
-	}
+	claimed := l.claimedSteersLocked(order)
 	rows := make([]marotte.TurnSummary, 0, len(order))
 	for _, id := range order {
 		st := l.turns[id]
@@ -1357,14 +1354,27 @@ func (l *EntryLog) NewestRevert() (string, bool) {
 	return l.newestRevert, l.newestRevert != ""
 }
 
+// claimedSteersLocked is the set of steer ids the wakes among order draw, which their own turns then do not.
+func (l *EntryLog) claimedSteersLocked(order []string) map[string]struct{} {
+	claimed := map[string]struct{}{}
+	for _, id := range order {
+		for _, c := range l.turns[id].claims {
+			claimed[c] = struct{}{}
+		}
+	}
+	return claimed
+}
+
 // readPosition is the chat's read position: the 1-based file-order index, among every turn the log holds, of its
-// newest closed, surviving, non-carrier turn; 0 for none. A later turn has a larger index, and a rewind or a merge
-// never lowers a turn's index, because neither removes a turn from the order.
+// newest closed, surviving, non-carrier turn that has a rail row; 0 for none. A turn the transcript does not draw
+// never counts, so it lights no unread cue. A later turn has a larger index, and a rewind or a merge never lowers a
+// turn's index, because neither removes a turn from the order.
 func (l *EntryLog) readPosition() uint64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	claimed := l.claimedSteersLocked(l.survivingOrderLocked())
 	for n := uint64(len(l.order)); n > 0; n-- {
-		if st := l.turns[l.order[n-1]]; st.closed && !st.carrier && !st.reverted {
+		if st := l.turns[l.order[n-1]]; st.closed && !st.carrier && !st.reverted && st.drawn(claimed) {
 			return n
 		}
 	}

@@ -361,11 +361,16 @@ func TestBuildPromptBlocks_MentionSpecCarriesItsDocumentsInOrder(t *testing.T) {
 	}
 }
 
-// mcpPool is the engine's MCP pool as one session reads it: it answers getResource for its own servers.
+// mcpPool is one session's MCP servers: it answers getResource for its own servers.
 type mcpPool struct {
 	contents map[string]string
+	// refusals answers a server with KAS's typed refusal of that class.
+	refusals map[string]string
+	session  marotte.SessionID
 	calls    []map[string]any
 }
+
+func (p *mcpPool) SessionID() marotte.SessionID { return p.session }
 
 func (p *mcpPool) Call(_ context.Context, method string, params any) (*marotte.RPCResponse, error) {
 	m, _ := params.(map[string]any)
@@ -374,6 +379,10 @@ func (p *mcpPool) Call(_ context.Context, method string, params any) (*marotte.R
 		return nil, fmt.Errorf("unexpected method %s", method)
 	}
 	server, _ := m["serverName"].(string)
+	if class, ok := p.refusals[server]; ok {
+		data := fmt.Sprintf(`{"errorType":%q,"sessionId":%q,"serverName":%q}`, class, p.session, server)
+		return nil, &marotte.RPCError{Code: -32602, Message: "refused", Data: json.RawMessage(data)}
+	}
 	result, ok := p.contents[server]
 	if !ok {
 		return nil, &marotte.RPCError{Code: -32602, Message: "unknown MCP server " + server}
@@ -426,6 +435,35 @@ func TestBuildPromptBlocks_MentionMCPReadsTheDestinationBridgesPool(t *testing.T
 	}
 }
 
+// The read is addressed to the prompt's own session, and KAS's two typed refusals name the cause.
+func TestMentionMCP_SendsSessionIDAndNamesTheRefusal(t *testing.T) {
+	pool := &mcpPool{
+		session:  "sess_a",
+		contents: map[string]string{"docs": `{"contents":[{"uri":"d://x","text":"body"}]}`},
+		refusals: map[string]string{
+			"theirs": "McpServerNotDeclaredError",
+			"down":   "McpServerNotConnectedError",
+			"odd":    "SomeOtherError",
+		},
+	}
+	if _, err := mentionMCP(t.Context(), "docs:d://x", pool); err != nil {
+		t.Fatalf("mentionMCP(docs) error = %v", err)
+	}
+	if len(pool.calls) != 1 || pool.calls[0]["sessionId"] != marotte.SessionID("sess_a") {
+		t.Errorf("getResource params = %v, want sessionId sess_a", pool.calls)
+	}
+	for server, want := range map[string]string{
+		"theirs": "this chat's agent does not use the MCP server theirs",
+		"down":   "the MCP server down is not connected",
+		"odd":    "the MCP server could not be read",
+	} {
+		_, err := mentionMCP(t.Context(), server+":x://y", pool)
+		if err == nil || err.Error() != want {
+			t.Errorf("mentionMCP(%s) error = %v, want %q", server, err, want)
+		}
+	}
+}
+
 func TestBuildPromptBlocks_MentionMCPWithoutABridgeSendsAReason(t *testing.T) {
 	token := "#[[mcp:github:gh://issues/7]]"
 
@@ -475,6 +513,8 @@ func TestBuildPromptBlocks_SeveralOversizedMCPResourcesEachFitTheItemCap(t *test
 
 // stalledPool never answers: each read waits until its context ends.
 type stalledPool struct{ calls int }
+
+func (*stalledPool) SessionID() marotte.SessionID { return "s1" }
 
 func (p *stalledPool) Call(ctx context.Context, _ string, _ any) (*marotte.RPCResponse, error) {
 	p.calls++

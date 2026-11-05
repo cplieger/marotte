@@ -153,6 +153,33 @@ describe("draft text across a chat switch", () => {
         text: "the new chat's first line",
       });
     });
+
+    // The empty state: no chat owns the box, so the restore would write the new chat's empty draft over the text.
+    it("hands text typed with no chat open to the chat it opens", () => {
+      type("typed while the chat was created");
+      expect(mockDispatch).not.toHaveBeenCalled();
+
+      retargetComposer("c2");
+
+      expect(input().value).toBe("typed while the chat was created");
+      expect(composerDraft("c2")).toBe("typed while the chat was created");
+      expect(mockDispatch).toHaveBeenLastCalledWith({
+        chatID: "c2",
+        text: "typed while the chat was created",
+      });
+    });
+
+    it("leaves a draft the chat already holds in place of the box's text", () => {
+      restoreComposerState("c2");
+      type("c2's own draft");
+      saveComposerState();
+      input().value = "typed with no chat open";
+
+      retargetComposer("c2");
+
+      expect(input().value).toBe("c2's own draft");
+      expect(composerDraft("c2")).toBe("c2's own draft");
+    });
   });
 
   it("empties the box for a chat with no draft rather than leaving it alone", () => {

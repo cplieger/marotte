@@ -573,10 +573,28 @@ export function refreshActiveView(): void {
   }
 }
 
+/** Advanced by every navigation request and by every user move to a different tab, never by a
+ *  move the app made on its own (`activateTabQuietly`'s callers). */
+let navigationSeq = 0;
+
+/** Claim the view for a request that resolves later (a create, a fork, an open). The ticket stays
+ *  held until the user moves to another tab or a later request claims; `navigationHeld` says
+ *  whether the reply may still take the view. */
+export function claimNavigation(): number {
+  return ++navigationSeq;
+}
+
+export function navigationHeld(ticket: number): boolean {
+  return ticket === navigationSeq;
+}
+
 /** Activate an existing tab, and reveal it: this is the reader picking a
  *  destination. Every gesture door lands here — a row tap, Enter on a focused
  *  row, and `openTab`, which is what the five singleton buttons dispatch. */
 export function activateTab(id: string): void {
+  if (state.active !== id && rowOfID(id) !== undefined) {
+    navigationSeq++;
+  }
   revealActiveView();
   activateTabQuietly(id);
 }
@@ -655,8 +673,9 @@ export function adoptSubject(subject: TabSubject, name?: string): void {
  *  the chat), a different fact from a network that failed to answer. */
 export type OpenTabOutcome = "opened" | "not-found" | "failed";
 
-/** Open a tab for something that already exists, and activate it. Resolves with the row in the
- *  projection, adopted from the RESPONSE, so no frame round trip sits in the gesture's path.
+/** Open a tab for something that already exists, and activate it unless the user moved to another
+ *  tab or asked for another navigation meanwhile. Resolves with the row in the projection, adopted
+ *  from the RESPONSE, so no frame round trip sits in the gesture's path.
  *
  *  Never rejects: a refused open leaves the strip as it was and has raised its toast, except a 404
  *  under `quietNotFound`. A 404 answers `not-found`, any other failure `failed`. */
@@ -668,6 +687,7 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
     // beat and then snapping.
     nameOverrides.set(subjectKey(args.kind, ref), args.name);
   }
+  const ticket = args.activate === false ? 0 : claimNavigation();
   const opID = newOpID();
   markLocalOp(opID);
   beginAdopt(opID);
@@ -709,7 +729,7 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
   const reply = outcome.value;
   adoptSubject(reply.subject);
   adoptCommitted(opID, reply.subject, reply.version, reply.created);
-  if (args.activate !== false) {
+  if (args.activate !== false && navigationHeld(ticket)) {
     activateTab(reply.subject.id);
   }
   return "opened";
@@ -2515,6 +2535,7 @@ export function _resetForTest(): void {
   internal.everOpened = false;
   nameOverrides.clear();
   activationHistory.length = 0;
+  navigationSeq = 0;
   lastAnnouncedTab = "";
   // Re-register the target: a test that reset tabs-sync dropped it.
   registerTabsTarget(target);

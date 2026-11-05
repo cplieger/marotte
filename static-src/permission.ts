@@ -5,10 +5,14 @@
 import type {
   AlwaysAllowBlock,
   ApprovalFile,
+  EntryToolCall,
   PermissionConsent,
   PermissionNeededPayload,
   PermissionOption,
 } from "./types.js";
+import type { PermissionCommand, RejectionNote } from "./wire/types.gen.js";
+import { decodeToolCallBulk } from "./wire/decoders.gen.js";
+import { apiGetTyped } from "./api-client.js";
 import { el } from "@cplieger/ui";
 import { formatMCPToolName } from "./tool-schema.js";
 import { openChange } from "./navigate.js";
@@ -17,8 +21,6 @@ import { get } from "./store.js";
 import { payloadOf } from "./turns.js";
 import { ICON_DIFF } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-
-const PREVIEW_CHAR_CAP = 500;
 
 /** One answer to a permission ask. `fileDecisions` rides only a turn approval; `rejectionReason`
  *  only a deny of an ask that accepts a note; `alwaysResource` only an always answer, as the
@@ -46,19 +48,22 @@ export function buildPermissionCard(
   if (files.length > 0) {
     return buildTurnApprovalCard(payload, files, onSelect);
   }
-  // Resolved HERE, at render time, rather than when the ask was enqueued: a queued permission can
-  // be built long after it arrived, and the tool call carrying the input may not have been ingested
-  // yet at that point.
-  return buildToolPermissionCard(
-    payload,
-    lookupToolInput(chatID, payload.tool_call_id ?? ""),
-    onSelect,
-  );
+  return buildToolPermissionCard(chatID, payload, onSelect);
 }
 
-/** The agent's own arguments for the tool it is asking to run — the thing the user is actually
- *  approving. Walks back from the newest turn because the ask is about the turn in flight. */
-function lookupToolInput(chatID: string, toolCallID: string): unknown {
+/** Each mounted tool card's refill of what it shows from the store's tool call. */
+const inputRefills = new WeakMap<HTMLElement, () => void>();
+
+/** Re-read the store's tool call behind a card built by `buildPermissionCard` and refill, in
+ *  place, the nodes showing its input; a card with none is left alone. The dock calls it while
+ *  the card's chat changes, since the input can land after the card was built. */
+export function refreshPermissionCard(card: HTMLElement): void {
+  inputRefills.get(card)?.();
+}
+
+/** The store's tool call an ask is about, whose input is what the user is actually approving.
+ *  Walks back from the newest turn because the ask is about the turn in flight. */
+function lookupToolCall(chatID: string, toolCallID: string): EntryToolCall | undefined {
   if (toolCallID === "") {
     return undefined;
   }
@@ -76,7 +81,7 @@ function lookupToolInput(chatID: string, toolCallID: string): unknown {
       const e = t.entries[j];
       const call = e === undefined ? undefined : payloadOf(e, "tool_call");
       if (call?.id === toolCallID) {
-        return call.input;
+        return call;
       }
     }
   }
@@ -84,8 +89,8 @@ function lookupToolInput(chatID: string, toolCallID: string): unknown {
 }
 
 function buildToolPermissionCard(
+  chatID: string,
   payload: PermissionNeededPayload,
-  input: unknown,
   onSelect: SelectFn,
 ): HTMLElement {
   const title = payload.title ?? "Tool";
@@ -94,11 +99,15 @@ function buildToolPermissionCard(
 
   const body = el("div", { className: "approval-body" });
   const mcp = payload.mcp_tool;
+  const command = isModeSwitch || mcp !== undefined ? undefined : payload.command;
+  // The box below is the one statement of a command, whole; the title repeats it cut.
   const heading = isModeSwitch
     ? "Switch session mode"
     : mcp !== undefined
       ? formatMCPToolName(mcp.tool_name)
-      : title;
+      : command !== undefined
+        ? "Run this command"
+        : title;
   body.appendChild(el("strong", null, heading));
 
   if (isModeSwitch) {
@@ -125,6 +134,14 @@ function buildToolPermissionCard(
         { className: "approval-origin approval-admin" },
         "Your administrator requires approval for this",
       ),
+    );
+  }
+
+  // Kiro's safety check did not clear the call; its reason says why a person is asked.
+  const classifierNote = payload.classifier_note ?? "";
+  if (classifierNote !== "") {
+    body.appendChild(
+      el("div", { className: "approval-origin approval-classifier" }, classifierNote),
     );
   }
 
@@ -183,12 +200,15 @@ function buildToolPermissionCard(
     body.appendChild(list);
   }
 
-  const preview = formatInputPreview(input);
-  if (preview !== "") {
-    body.appendChild(el("pre", { className: "approval-input" }, preview));
+  const inputSlot = el("div", { className: "approval-tool-input" });
+  body.appendChild(inputSlot);
+  if (command !== undefined) {
+    appendCommandBox(body, command);
   }
+  const refill = bindToolInput(inputSlot, chatID, toolCallID, command !== undefined);
 
-  const note = payload.accepts_rejection_reason === true ? buildRejectionNote() : null;
+  const noteKind = payload.rejection_note;
+  const note = noteKind === undefined ? null : buildRejectionNote(noteKind);
   const actions = el("div", { className: "approval-actions" });
   const chooserSlot = el("div", { className: "always-choice-slot" });
   const consent = payload.consent;
@@ -231,6 +251,12 @@ function buildToolPermissionCard(
         toggleAlwaysChooser(chooserSlot, btn, opt, consent, "user", onSelect);
       });
     } else {
+      if (opt.kind === "reject_once" && noteKind === "plan_edits" && note !== null) {
+        // The note turns this deny into a request for edits, so the label says so while it has text.
+        note.addEventListener("input", () => {
+          btn.textContent = note.value.trim() === "" ? opt.name : "Request edits";
+        });
+      }
       btn.addEventListener("click", () => {
         // Only a reject_once answer carries the note: KAS ignores one anywhere else.
         const reason = opt.kind === "reject_once" ? (note?.value.trim() ?? "") : "";
@@ -259,17 +285,95 @@ function buildToolPermissionCard(
   if (!isModeSwitch && !adminAsk) {
     card.appendChild(buildPolicyPointer());
   }
+  inputRefills.set(card, refill);
   return card;
 }
 
-function buildRejectionNote(): HTMLTextAreaElement {
+/** Fill `slot` with what the store's tool call says about the ask's input, and return the refill
+ *  that redoes it only when that changed: the cwd line beside a command, or else the input
+ *  preview and a statement when part of it is not shown. A `has_full` call is a preview whose cut
+ *  may be the input, so its persisted whole is fetched once and replaces it on landing. */
+function bindToolInput(
+  slot: HTMLElement,
+  chatID: string,
+  toolCallID: string,
+  withCommand: boolean,
+): () => void {
+  let whole: { input: unknown } | null = null;
+  let fetched = false;
+  let shown: { input: unknown; gap: boolean } | null = null;
+  const refill = (): void => {
+    const call = lookupToolCall(chatID, toolCallID);
+    const input = whole === null ? call?.input : whole.input;
+    const gap =
+      !withCommand &&
+      (call?.truncated?.input_bytes !== undefined || (call?.has_full === true && whole === null));
+    if (shown !== null && shown.input === input && shown.gap === gap) {
+      return;
+    }
+    shown = { input, gap };
+    slot.replaceChildren(...toolInputNodes(input, gap, withCommand));
+    if (call?.has_full === true && !withCommand && !fetched) {
+      fetched = true;
+      void apiGetTyped(
+        `/api/chats/${encodeURIComponent(chatID)}/tools/${encodeURIComponent(toolCallID)}`,
+        decodeToolCallBulk,
+      ).then((bulk) => {
+        if (bulk !== null) {
+          whole = { input: bulk.input };
+          refill();
+        }
+      });
+    }
+  };
+  refill();
+  return refill;
+}
+
+function toolInputNodes(input: unknown, gap: boolean, withCommand: boolean): HTMLElement[] {
+  if (withCommand) {
+    const cwd = commandCwd(input);
+    return cwd === ""
+      ? []
+      : [el("div", { className: "approval-origin approval-cwd" }, `in ${cwd}`)];
+  }
+  const nodes: HTMLElement[] = [];
+  const preview = formatInputPreview(input);
+  if (preview !== "") {
+    nodes.push(el("pre", { className: "approval-input" }, preview));
+  }
+  if (gap) {
+    nodes.push(
+      el(
+        "p",
+        { className: "approval-hint approval-input-gap" },
+        "Part of this tool's input is too large to show. Deny it unless you can vouch for all of it.",
+      ),
+    );
+  }
+  return nodes;
+}
+
+const REJECTION_NOTE_COPY: Record<RejectionNote, { placeholder: string; ariaLabel: string }> = {
+  reason: {
+    placeholder: "Optional: tell the agent why you're denying",
+    ariaLabel: "Reason for denying (optional)",
+  },
+  plan_edits: {
+    placeholder: "Optional: type the edits you want",
+    ariaLabel: "Edits you want (optional)",
+  },
+};
+
+function buildRejectionNote(kind: RejectionNote): HTMLTextAreaElement {
+  const copy = REJECTION_NOTE_COPY[kind];
   const note = el("textarea", {
     className: "approval-reason",
     rows: 1,
     maxLength: REJECTION_REASON_MAX,
-    placeholder: "Optional: tell the agent why you're denying",
+    placeholder: copy.placeholder,
   }) as HTMLTextAreaElement;
-  note.setAttribute("aria-label", "Reason for denying (optional)");
+  note.setAttribute("aria-label", copy.ariaLabel);
   return note;
 }
 
@@ -433,9 +537,61 @@ function buildGroupRow(g: ActionGroup, keep: Map<string, boolean>): HTMLElement 
   return row;
 }
 
+/** The command an ask would run, whole; past the server's cap, its head and tail around a count of
+ *  what is left out, so a suffix is always on screen. A count with no text is a command the connect
+ *  snapshot dropped to fit its frame. */
+function appendCommandBox(body: HTMLElement, command: PermissionCommand): void {
+  const box = el("pre", { className: "approval-input" }, command.text);
+  const omitted = command.omitted_bytes ?? 0;
+  if (omitted <= 0) {
+    body.appendChild(box);
+    return;
+  }
+  box.append(
+    el(
+      "span",
+      { className: "approval-omitted" },
+      `… ${omitted.toLocaleString()} bytes not shown …`,
+    ),
+    command.tail ?? "",
+  );
+  body.append(
+    box,
+    el(
+      "p",
+      { className: "approval-hint" },
+      command.text === "" && (command.tail ?? "") === ""
+        ? "This command is not shown because too many approvals are waiting. Deny it unless you can vouch for it."
+        : "The middle of this command is too long to show. Deny it unless you can vouch for all of it.",
+    ),
+  );
+}
+
+/** The directory the store's tool call runs its command in, "" when it names none. */
+function commandCwd(input: unknown): string {
+  if (typeof input !== "object" || input === null) {
+    return "";
+  }
+  const cwd: unknown = (input as Record<string, unknown>)["cwd"];
+  return typeof cwd === "string" ? displayLines(cwd) : "";
+}
+
+// C0 but LF, DEL, C1, the Bidi_Control runes and U+2028/9: runesafe's IsUnsafeSingleLine set minus LF.
+const UNSAFE_BUT_LF =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029]/g;
+
+/** The server's displayLines for text the ask does not carry: KAS's ask holds no tool input, so
+ *  the store's copy reaches this card untreated. CRLF becomes LF and every other unsafe rune a
+ *  space, so a reversed span shows in reading order. */
+function displayLines(s: string): string {
+  return s.replaceAll("\r\n", "\n").replace(UNSAFE_BUT_LF, " ");
+}
+
 /** Turn a tool input (usually an object, sometimes raw JSON string or undefined) into a
- *  user-readable preview string. Returns "" if there is nothing meaningful to show — caller
- *  skips the preview block entirely. */
+ *  user-readable preview string, whole and defused: the box bounds its height and the server
+ *  bounds the input. Returns "" if there is nothing meaningful to show — caller skips the
+ *  preview block. */
 function formatInputPreview(input: unknown): string {
   if (input === undefined || input === null) {
     return "";
@@ -458,12 +614,7 @@ function formatInputPreview(input: unknown): string {
     // eslint-disable-next-line @typescript-eslint/no-base-to-string
     text = String(input);
   }
-
-  if (text.length > PREVIEW_CHAR_CAP) {
-    const remainder = text.length - PREVIEW_CHAR_CAP;
-    text = text.slice(0, PREVIEW_CHAR_CAP) + `\n… (${String(remainder)} more characters)`;
-  }
-  return text;
+  return displayLines(text);
 }
 
 /** A Record over the union rather than a switch, so adding a server-side code without deciding what
@@ -480,8 +631,37 @@ function buildAlwaysAllowNote(blocked: AlwaysAllowBlock): HTMLElement {
 
 const ALWAYS_KINDS = new Set(["allow_always", "reject_always"]);
 
-/** First words a pattern must not generalise from: the command they run is the next word. */
-const WRAPPER_COMMANDS = new Set(["sudo", "doas", "env"]);
+/** Words a pattern must not generalise from: they run another command named later in the line, so
+ *  `<wrapper> *` would allow every command, not one tool. */
+const WRAPPER_COMMANDS = new Set([
+  "sudo",
+  "doas",
+  "env",
+  "time",
+  "command",
+  "nohup",
+  "npx",
+  "bunx",
+  "uvx",
+  "timeout",
+  "nice",
+  "xargs",
+]);
+
+/** `<first> <second>` pairs that run any program named after them, so `<first> <second> *` would
+ *  allow every command; `<first> *` stays offered, named as what it is. */
+const RUNNER_SUBCOMMANDS = new Set([
+  "npm exec",
+  "npm x",
+  "pnpm exec",
+  "pnpm dlx",
+  "yarn dlx",
+  "yarn exec",
+  "bun x",
+  "uv run",
+  "uv tool",
+  "pipx run",
+]);
 
 interface AlwaysPattern {
   readonly resource: string;
@@ -502,11 +682,16 @@ function isPattern(resource: string): boolean {
   return resource.includes("*");
 }
 
+/** A second word a `<first> <second> *` row may name: the kiro-cli TUI's subcommand class. It can
+ *  never hold the subject's `...` cut marker or a defused character, so the row names the raw words. */
+const SUBCOMMAND_WORD = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
 /** The patterns an always answer can save for one ask, narrowest first: the exact subject, the
- *  kiro-cli TUI's `<first word> *` for a shell command or the server's folder for a path, then
- *  the whole capability. A resource two of these produce is offered once, under the broader
- *  name. The subject and folder are sent back verbatim: the server maps them to the raw text KAS
- *  asked about, which these display copies may have cut or defused. */
+ *  kiro-cli TUI's `<first word> <subcommand> *` and `<first word> *` for a shell command or the
+ *  server's folder for a path, then the whole capability. A resource two of these produce is
+ *  offered once, under the broader name. The subject and folder are sent back verbatim: the
+ *  server maps them to the raw text KAS asked about, which these display copies may have cut or
+ *  defused. */
 function alwaysPatterns(consent: PermissionConsent): AlwaysPattern[] {
   const subject = consent.subject.trim();
   const covers = new Map<string, string>();
@@ -523,6 +708,14 @@ function alwaysPatterns(consent: PermissionConsent): AlwaysPattern[] {
     !first.includes("=") &&
     !WRAPPER_COMMANDS.has(first)
   ) {
+    const second = words[1] ?? "";
+    if (
+      SUBCOMMAND_WORD.test(second) &&
+      !WRAPPER_COMMANDS.has(second) &&
+      !RUNNER_SUBCOMMANDS.has(`${first} ${second}`)
+    ) {
+      covers.set(`${first} ${second} *`, `any ${first} ${second} command`);
+    }
     covers.set(`${first} *`, `any ${first} command`);
   }
   const folder = consent.folder?.trim() ?? "";

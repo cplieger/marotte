@@ -4,12 +4,11 @@
 // earlier (typed-commands.ts).
 
 import { newMessageID } from "./transport.js";
-import { getCurrentModel } from "./session-context.js";
+import { get as getSession } from "./store.js";
 import { sendPrompt as sendPromptAction } from "./actions/chat.js";
 
 /** Options for the low-level prompt sender. */
 interface SendPromptOpts {
-  model?: string;
   attachments?: readonly unknown[];
   /** Reuse a specific user-message id instead of minting a fresh one: submit.ts
    *  passes a failed attempt's id so its retry addresses the same message. */
@@ -36,7 +35,8 @@ export async function sendPromptTo(
     chatID,
     text,
     messageID: opts.messageID ?? newMessageID(),
-    model: opts.model ?? getCurrentModel(),
+    // The chat's own model: a pick made in another chat never rides this one's prompt.
+    model: getSession(chatID)?.model ?? "",
     ...(opts.attachments !== undefined ? { attachments: opts.attachments } : {}),
     ...(opts.displayText !== undefined ? { displayText: opts.displayText } : {}),
   });

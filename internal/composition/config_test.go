@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/webhttp/v4"
 )
@@ -598,23 +599,18 @@ func TestLogBridgeEnvPosture(t *testing.T) {
 	}
 }
 
-func TestConfigFromEnv_KASNodePathResolvesAsKiroCLIDoes(t *testing.T) {
-	cases := []struct {
-		name, override, dataHome, home, want string
-	}{
-		{"override_wins", "/opt/node", "/data", "/home/u", "/opt/node"},
-		{"xdg_data_home", "", "/data", "/home/u", "/data/kiro-cli/node"},
-		{"home_fallback", "", "", "/home/u", "/home/u/.local/share/kiro-cli/node"},
-		{"neither", "", "", "", ""},
+func TestConfigFromEnv_KASLookupReadsKiroCLIsVariables(t *testing.T) {
+	t.Setenv("KIRO_KAS_NODE_PATH", "/opt/node")
+	t.Setenv("KIRO_RUNTIME_DIR", "/config/home/.cache/kiro-cli-runtime")
+	t.Setenv("XDG_DATA_HOME", "/data")
+	t.Setenv("HOME", "/home/u")
+	want := workspace.KASLookup{
+		NodeOverride: "/opt/node",
+		RuntimeDir:   "/config/home/.cache/kiro-cli-runtime",
+		DataHome:     "/data",
+		Home:         "/home/u",
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("KIRO_KAS_NODE_PATH", tc.override)
-			t.Setenv("XDG_DATA_HOME", tc.dataHome)
-			t.Setenv("HOME", tc.home)
-			if got := ConfigFromEnv().KASNodePath; got != tc.want {
-				t.Errorf("KASNodePath = %q, want %q", got, tc.want)
-			}
-		})
+	if got := ConfigFromEnv().KASLookup; got != want {
+		t.Errorf("KASLookup = %+v, want %+v", got, want)
 	}
 }

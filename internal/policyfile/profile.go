@@ -18,16 +18,19 @@ const (
 	presetReadAll       = "read-all"
 	presetEditWorkspace = "edit-workspace"
 	presetDevShell      = "dev-shell"
+	presetApproveForMe  = "approve-for-me"
 	PresetAllowAll      = "allow-all"
 )
 
 // Profile ids: marotte's own persisted vocabulary, a POSTURE rather than KAS's preset rule bundles.
 // The ladder mirrors KiroCrew's four levels with adjective names: guarded, read-only, trusted,
-// unrestricted. The loosest level is not time-boxed, by decision: it stays on until changed.
+// unrestricted, plus delegated, which hands Trusted's asks to KAS's trust classifier. The loosest
+// level is not time-boxed, by decision: it stays on until changed.
 const (
 	ProfileGuarded      = "guarded"
 	ProfileReadOnly     = "read-only"
 	ProfileTrusted      = "trusted"
+	ProfileDelegated    = "delegated"
 	ProfileUnrestricted = "unrestricted"
 	// ProfileCustom sends NO presets, so the files are the whole policy and an EMPTY
 	// one makes the agent ask even to read a file. The Customize button copies the
@@ -57,10 +60,11 @@ var profiles = []Profile{
 	},
 	{
 		// read-all grants fs_read OUTSIDE the workspace (an SSH key, a sibling project) and is
-		// bundled with web access; a read-only profile that prompted for reads would contradict
-		// itself, so the picker's description says where it reaches.
+		// bundled with web access, so the picker's description says where it reaches. No shell
+		// preset: read-only-shell's commands can write through a redirect or git --output and
+		// run a repository's core.fsmonitor, so every command asks.
 		ID:      ProfileReadOnly,
-		Presets: []string{PresetReadWorkspace, presetReadOnlyShell, presetReadAll},
+		Presets: []string{PresetReadWorkspace, presetReadAll},
 	},
 	{
 		// Edit inside the workspace and run ordinary development commands. The
@@ -73,10 +77,20 @@ var profiles = []Profile{
 		},
 	},
 	{
-		// capability: all. Not silence: the kiro scope still denies writes under
-		// ~/.kiro/settings and still asks before writing .git/**, .kiro/agents/**,
-		// .kiro/hooks/** and .vscode/**, because deny and ask both beat allow and
-		// that scope sits above every file. The UI says so beside the option.
+		// Trusted plus approve-for-me (evaluate all): KAS's trust classifier answers the requests no rule
+		// settles; an ask rule (the kiro scope's .git/** and .kiro/agents/** writes) still asks. Allow beats
+		// evaluate within one evaluation, so Trusted's grants never become classifier calls. The engine's KIRO_TRUST_CLASSIFIER_MODE=enforce row is what lets the preset load.
+		ID: ProfileDelegated,
+		Presets: []string{
+			PresetReadWorkspace, presetReadOnlyShell, presetReadAll,
+			presetEditWorkspace, presetDevShell, presetApproveForMe,
+		},
+	},
+	{
+		// capability: all. The kiro scope still denies file-tool writes under ~/.kiro/settings
+		// and asks before file-tool writes to .git/**, .kiro/agents/**, .kiro/hooks/** and
+		// .vscode/**, because deny and ask both beat allow. KAS never checks a shell redirect's
+		// target against that scope, so a shell command writes any of them unprompted.
 		ID:      ProfileUnrestricted,
 		Presets: []string{PresetAllowAll},
 	},

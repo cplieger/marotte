@@ -146,46 +146,36 @@ func rpcErr(message, data string) error {
 	return e
 }
 
-func TestClassify(t *testing.T) {
+// TestClassify_PassesOtherFailuresThrough: a failure no sentinel names comes back as the very error KAS sent.
+func TestClassify_PassesOtherFailuresThrough(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name string
 		err  error
-		want bool
+		name string
 	}{
-		{"nil", nil, false},
+		{name: "nil", err: nil},
 		{
-			// Measured: message is the literal "Internal error" and the classifier's text is in data.
-			"an unregistered verb",
-			rpcErr("Internal error", `{"details":"[PersistenceClassification] Ext method _kiro/workflow/nope has no persistence classification"}`),
-			true,
+			name: "an unclassified ext method",
+			err: rpcErr("Internal error",
+				`{"details":"[PersistenceClassification] Ext method _kiro/workflow/nope has no persistence classification"}`),
 		},
-		{"a real failure with details", rpcErr("Internal error", `{"details":"workflow not found"}`), false},
-		{"a param error with no data at all", rpcErr("workspacePaths is not iterable", ""), false},
-		{"a plain error", errors.New("boom"), false},
 		{
-			// An error that merely QUOTES the marker in its own text is a failure.
-			"a failure quoting the marker in its message",
-			errors.New("workflow inspect call: _kiro/workflow/inspect has no persistence classification"),
-			false,
+			name: "an unknown run",
+			err: rpcErr("Workflow 'wf_1' is not registered and has no persisted state in any known workspace.",
+				`{"details":"x","errorType":"WorkflowNotFoundError"}`),
+		},
+		{name: "a param error with no data at all", err: rpcErr("workspacePaths is not iterable", "")},
+		{name: "a plain error", err: errors.New("boom")},
+		{
+			name: "a failure quoting the claim marker in its message",
+			err:  errors.New("workflow inspect call: run was just claimed by another process"),
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			got := Classify(c.err)
-			if isUnknown := errors.Is(got, ErrUnknownMethod); isUnknown != c.want {
-				t.Errorf("errors.Is(Classify(%v), ErrUnknownMethod) = %v, want %v", c.err, isUnknown, c.want)
-			}
-			if c.err == nil {
-				if got != nil {
-					t.Errorf("Classify(nil) = %v, want nil", got)
-				}
-				return
-			}
-			// The original stays reachable so a caller can report what KAS said.
-			if !errors.Is(got, c.err) {
-				t.Errorf("Classify(%v) = %v, want the original error still unwrappable", c.err, got)
+			if got := Classify(c.err); got != c.err {
+				t.Errorf("Classify(%v) = %v, want the same error back", c.err, got)
 			}
 		})
 	}

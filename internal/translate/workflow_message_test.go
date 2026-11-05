@@ -104,10 +104,11 @@ func TestWorkflowMessage_BufferedStepMessagesAreOneRowEach(t *testing.T) {
 	}
 }
 
-// A parent's message to an idle step waits at its send, KAS wakes the step with it, and the wake turn's first frame on
+// A parent's message to a paused step waits at its send, KAS wakes the step with it, and the wake turn's first frame on
 // the step's session settles it delivered in both logs.
-func TestWorkflowMessage_ParentToAnIdleStepIsDeliveredByItsWake(t *testing.T) {
+func TestWorkflowMessage_ParentToAPausedStepIsDeliveredByItsWake(t *testing.T) {
 	deps, tr := messageDeps(t)
+	pauseStep(t, tr, nil)
 	tr.HandleWorkflowMessage(t.Context(), testChat,
 		workflowNotify("parent", testParent, testStep, "info", "also check the tests"))
 
@@ -128,8 +129,7 @@ func TestWorkflowMessage_ParentToAnIdleStepIsDeliveredByItsWake(t *testing.T) {
 	}
 
 	attr := testStepAttr()
-	turnStartOn(t, tr, attr)
-	wakeChunk(t, tr, "send-message-wake", attr)
+	resumeStep(t, tr)
 
 	if d := deliveredOf(t, deps.runEntries(testWfRun, attr.NodePath)); len(d) != 1 || d[0].SteerID != step[0].ID || d[0].Cleared {
 		t.Errorf("step stamps = %+v, want the message delivered at the wake", d)
@@ -139,7 +139,9 @@ func TestWorkflowMessage_ParentToAnIdleStepIsDeliveredByItsWake(t *testing.T) {
 	}
 }
 
-func TestWorkflowMessage_ParentToABusyStepIsDeliveredAtItsTakeUp(t *testing.T) {
+// KAS buffers a parent's message to a running step whether or not an execution is live (kiro-cli 2.37.0
+// deliverSendMessageAdmitted), so only a take-up delivers it.
+func TestWorkflowMessage_ParentToARunningStepIsDeliveredAtItsTakeUp(t *testing.T) {
 	deps, tr := messageDeps(t)
 	tr.HandleWorkflowMessage(t.Context(), testChat,
 		workflowNotify("parent", testParent, testStep, "info", "also check the tests"))

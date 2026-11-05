@@ -56,6 +56,9 @@ type EffectiveSettings struct {
 	// OutputStyle is a KAS output style id (GET /api/config-template output_styles);
 	// "default" is never sent.
 	OutputStyle string `json:"output_style"`
+	// WorkflowLaunch is "when-asked", "large-tasks" or "delegate-all", KAS's workflowLaunch
+	// values; it applies only while WorkflowsEnabled is on.
+	WorkflowLaunch string `json:"workflow_launch"`
 	// AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
 	// which is what enforces it; marotte runs no matcher of its own. The default is
 	// EMPTY (settings.DefaultAgentIgnoreFiles), and an absent key must still not
@@ -70,7 +73,7 @@ type EffectiveSettings struct {
 	// Zero is the most destructive value in the document, so absent must never
 	// resolve to it.
 	ChatRetentionDays int `json:"chat_retention_days"`
-	// AutoCompactPct is 50..90 in steps of 5; any other stored value reads as
+	// AutoCompactPct is 50..80 in steps of 5; any other stored value reads as
 	// settings.DefaultAutoCompactPct (80).
 	AutoCompactPct int `json:"auto_compact_pct"`
 	// TerminalCommandTimeoutMs is the shell tool's default timeout in ms; 0 is

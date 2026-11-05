@@ -871,3 +871,63 @@ func TestRunLog_RefusesAWorkflowIDThatIsNotAPlainName(t *testing.T) {
 		t.Errorf("run root holds %d entries after the refusals, want none", len(entries))
 	}
 }
+
+// A step's last words with no send_message call are its trailing prose run: KAS continues a refused reply on the
+// fallback model, so an applied fallback sits inside the run, and a decline, a tool call or a delegate's entry ends it.
+func TestLastWords_TakesTheTrailingProseRunAcrossAnAppliedFallback(t *testing.T) {
+	text := func(s string) entryRow {
+		return entryRow{kind: marotte.EntryKindText, payload: marotte.EntryText{Text: s}}
+	}
+	applied := entryRow{kind: marotte.EntryKindModelFallback, payload: marotte.EntryModelFallback{
+		From: "opus-5", To: "sonnet-5", Scope: marotte.ModelFallbackScopeSession, Trigger: "refusal",
+	}}
+	declined := entryRow{kind: marotte.EntryKindModelFallback, payload: marotte.EntryModelFallback{
+		From: "opus-5", Trigger: "availability", Reason: "noServedTarget",
+	}}
+	targetless := entryRow{kind: marotte.EntryKindModelFallback, payload: marotte.EntryModelFallback{From: "opus-5", Trigger: "refusal"}}
+	declinedTarget := entryRow{kind: marotte.EntryKindModelFallback, payload: marotte.EntryModelFallback{
+		From: "opus-5", To: "sonnet-5", Trigger: "refusal", Reason: "noServedTarget",
+	}}
+	subagent := entryRow{kind: marotte.EntryKindModelFallback, payload: marotte.EntryModelFallback{
+		From: "opus-5", Trigger: "availability", Reason: "noServedTarget", Subagent: true,
+	}}
+	call := entryRow{kind: marotte.EntryKindToolCall, payload: marotte.EntryToolCall{ID: "c1", Title: "Read", Kind: marotte.ToolKindRead}}
+	result := entryRow{kind: marotte.EntryKindToolResult, payload: marotte.EntryToolResult{Status: marotte.ToolCompleted}}
+	delegate := entryRow{kind: marotte.EntryKindText, lane: "sub-1", payload: marotte.EntryText{Text: "A delegate's report."}}
+	sent := entryRow{kind: marotte.EntryKindToolCall, payload: marotte.EntryToolCall{
+		ID: "c2", Title: "Send Message", Kind: marotte.ToolKindOther,
+		Input: json.RawMessage(`{"message":"Which branch?","severity":"warning"}`),
+	}}
+	cases := []struct {
+		name string
+		rows []entryRow
+		want string
+	}{
+		{
+			"an applied fallback joins the refused text to its continuation",
+			[]entryRow{call, result, text("Here is the first half"), applied, text(" and the second half.")},
+			"Here is the first half\n\nand the second half.",
+		},
+		{"a decline ends the run", []entryRow{text("a"), declined, text("b")}, "b"},
+		{"a fallback with neither target nor reason ends the run", []entryRow{text("a"), targetless, text("b")}, "b"},
+		{"a decline naming a target ends the run", []entryRow{text("a"), declinedTarget, text("b")}, "b"},
+		{"a sub-agent's fallback stays inside the run", []entryRow{text("a"), subagent, text("b")}, "a\n\nb"},
+		{"a tool call before the fallback ends the run", []entryRow{text("a"), call, result, applied, text("b")}, "b"},
+		{"a delegate's text is not the step's", []entryRow{text("a"), call, delegate, result}, "a"},
+		{"a delegate's entry ends the run", []entryRow{text("a"), delegate, text("b")}, "b"},
+		{"blank text neither joins nor ends the run", []entryRow{text("a"), text("  "), applied, text("b")}, "a\n\nb"},
+		{"a send_message call outranks any prose", []entryRow{text("a"), sent, text("b"), applied, text("c")}, "Which branch?"},
+		{"no prose", []entryRow{call, result}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			turn := []marotte.Entry{entryOf(t, "t1", 0, marotte.EntryKindTurnOpen, "t1:open", "", marotte.EntryTurnOpen{})}
+			for i, r := range c.rows {
+				turn = append(turn, entryOf(t, "t1", uint64(i+1), r.kind, r.id, r.lane, r.payload))
+			}
+			if got := lastWords(turn); got != c.want {
+				t.Errorf("lastWords = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

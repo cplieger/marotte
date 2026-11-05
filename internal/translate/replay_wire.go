@@ -23,11 +23,19 @@ type replayInfoKiro struct {
 	SummaryMessage *struct {
 		Content string `json:"content"`
 	} `json:"summaryMessage"`
-	TurnEnd             *turnEndBlock             `json:"turnEnd"`
+	TurnEnd *turnEndBlock `json:"turnEnd"`
+	// TurnID, ExecutionID, UserMessageTag, Timestamp and BoundarySource ride the replayed brackets;
+	// UserMessageTag only turn_start. BoundarySource is "recovered" on a bracket KAS synthesized
+	// because its record holds none, such as the cancelled end of a turn cut by an engine death.
+	TurnID              string                    `json:"turnId"`
+	ExecutionID         string                    `json:"executionId"`
+	UserMessageTag      string                    `json:"userMessageTag"`
+	Timestamp           string                    `json:"timestamp"`
+	BoundarySource      string                    `json:"boundarySource"`
 	DisplayError        *displayErrorBlock        `json:"displayError"`
 	PendingInteraction  *pendingInteractionBlock  `json:"pendingInteraction"`
 	InteractionResolved *interactionResolvedBlock `json:"interactionResolved"`
-	Throughput          *turnThroughput           `json:"throughput"`
+	TTFT                *acpTurnTiming            `json:"ttft"`
 	modelFallbackFields
 	ContextBreakdown    json.RawMessage     `json:"contextBreakdown"`
 	Kind                string              `json:"kind"`

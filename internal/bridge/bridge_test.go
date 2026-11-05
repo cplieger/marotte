@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -1361,6 +1362,25 @@ func TestClassifyStderrLevel(t *testing.T) {
 		{"json_without_level_field_is_info", `{"msg":"hello"}`, slog.LevelInfo},
 		{"plain_error_keyword_is_error", "error: boom", slog.LevelError},
 		{"plain_no_keyword_is_info", "all good here", slog.LevelInfo},
+		{
+			"node_warning_under_kas_error_tag_is_warn",
+			"[ERROR] (node:1648854) ExperimentalWarning: SQLite is an experimental feature and might change at any time",
+			slog.LevelWarn,
+		},
+		{
+			"node_warning_with_code_is_warn",
+			"[ERROR] (node:42) [DEP0040] DeprecationWarning: The `punycode` module is deprecated.", slog.LevelWarn,
+		},
+		{
+			"node_warning_untagged_is_warn", "(node:42) Warning: Closing file descriptor 3 on garbage collection",
+			slog.LevelWarn,
+		},
+		{"node_error_under_kas_error_tag_is_error", "[ERROR] (node:42) Error: boom", slog.LevelError},
+		{"warning_name_mid_line_is_error", "[ERROR] crash: (node:42) ExperimentalWarning: x", slog.LevelError},
+		{
+			"node_trace_hint_is_info",
+			"(Use `node --trace-warnings ...` to show where the warning was created)", slog.LevelInfo,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2203,24 +2223,20 @@ func TestSessionDoorCarriesDisableAutoCompaction(t *testing.T) {
 	}
 }
 
-func TestAutoCompactionDisabled_ReportsTheSentValue(t *testing.T) {
-	for _, disabled := range []bool{false, true} {
-		dir := t.TempDir()
-		scriptPath := filepath.Join(dir, "fake-kiro-cli")
-		if err := os.WriteFile(scriptPath, []byte(sessionDoorScript), 0o755); err != nil {
-			t.Fatalf("write fake script: %v", err)
+// TestSessionDoorCarriesCompactionThreshold pins SessionOpts.AutoCompactionThreshold on both verbs: KAS reads it
+// from the load request alone, so a load door without it resumes the session at 80.
+func TestSessionDoorCarriesCompactionThreshold(t *testing.T) {
+	for _, method := range []string{"session/new", "session/load"} {
+		opts := &marotte.SessionOpts{Model: "m", AutoCompactionThreshold: 60}
+		if method == "session/load" {
+			opts.SessionID = "sess_resume_door"
 		}
-		t.Setenv("HOME", t.TempDir())
-		t.Setenv("RPC_CAPTURE", filepath.Join(t.TempDir(), "rpc.jsonl"))
-		b := NewEngine(scriptPath, dir)
-		s, err := openSessionOn(t, b, &marotte.SessionOpts{Model: "m", DisableAutoCompaction: disabled})
-		if err != nil {
-			t.Fatalf("open session: %v", err)
+		settings := metaKiroSettings(t, captureRequest(t, method, opts))
+		got, ok := settings["compaction"].(map[string]any)
+		if !ok || got["enabled"] != true || got["autoCompactionThreshold"] != float64(60) {
+			t.Errorf("%s with AutoCompactionThreshold=60 sent compaction=%v, want {\"autoCompactionThreshold\":60,\"enabled\":true}",
+				method, settings["compaction"])
 		}
-		if got := s.AutoCompactionDisabled(); got != disabled {
-			t.Errorf("AutoCompactionDisabled() after a door with DisableAutoCompaction=%v = %v", disabled, got)
-		}
-		b.Stop()
 	}
 }
 
@@ -2461,75 +2477,53 @@ func TestApplySessionResult_TakesFlatMetaTitle(t *testing.T) {
 	}
 }
 
-// TestApplySessionResult_TakesFlatMetaContextUsage pins the threshold at flat `_meta.contextUsage`; nested yields
-// nothing, and the sibling truncationThreshold must decode.
-func TestApplySessionResult_TakesFlatMetaContextUsage(t *testing.T) {
-	cases := []struct {
-		name string
-		body string
-		want float64
+// TestSessionLoad_WarnsOnAThresholdKASDidNotTake pins the echo check: KAS answers a threshold it did not take with a
+// silent 80, so a load result disagreeing with the door's threshold logs. Only flat `_meta.contextUsage` is the wire
+// shape, and a door that sent none has nothing to compare.
+func TestSessionLoad_WarnsOnAThresholdKASDidNotTake(t *testing.T) {
+	for name, tc := range map[string]struct {
+		sent     int
+		result   string
+		wantWarn bool
 	}{
-		{
-			name: "flat _meta.contextUsage is adopted",
-			body: `{"sessionId":"s1","_meta":{"id":"s1","contextUsage":{"summarizationThreshold":80,"truncationThreshold":95}}}`,
-			want: 80,
+		"80 after a door that sent 60": {
+			sent:     60,
+			result:   `{"sessionId":"s","_meta":{"contextUsage":{"summarizationThreshold":80,"truncationThreshold":95}}}`,
+			wantWarn: true,
 		},
-		{
-			name: "nested _meta.kiro.contextUsage is NOT the wire shape",
-			body: `{"sessionId":"s1","_meta":{"kiro":{"contextUsage":{"summarizationThreshold":80,"truncationThreshold":95}}}}`,
+		"a matching 60 is silent": {
+			sent:     60,
+			result:   `{"sessionId":"s","_meta":{"contextUsage":{"summarizationThreshold":60,"truncationThreshold":95}}}`,
+			wantWarn: false,
 		},
-		{
-			name: "absent _meta leaves the threshold unknown",
-			body: `{"sessionId":"s1"}`,
+		"nested _meta.kiro.contextUsage is not the wire shape": {
+			sent:     60,
+			result:   `{"sessionId":"s","_meta":{"kiro":{"contextUsage":{"summarizationThreshold":80}}}}`,
+			wantWarn: false,
 		},
-		{
-			name: "a block carrying only truncationThreshold adopts nothing",
-			body: `{"sessionId":"s1","_meta":{"contextUsage":{"truncationThreshold":95}}}`,
+		"an absent threshold is not a disagreement": {
+			sent:     60,
+			result:   `{"sessionId":"s","_meta":{"contextUsage":{"truncationThreshold":95}}}`,
+			wantWarn: false,
 		},
-		{
-			name: "non-integer percentages survive the decode",
-			body: `{"sessionId":"s1","_meta":{"contextUsage":{"summarizationThreshold":80.5,"truncationThreshold":95.25}}}`,
-			want: 80.5,
+		"a door that sent no threshold compares nothing": {
+			sent:     0,
+			result:   `{"sessionId":"s","_meta":{"contextUsage":{"summarizationThreshold":80}}}`,
+			wantWarn: false,
 		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var r sessionCreated
-			if err := json.Unmarshal([]byte(tc.body), &r); err != nil {
-				t.Fatalf("unmarshal session result: %v", err)
-			}
-			b := newTestSession()
-			b.mu.Lock()
-			b.applySessionResultLocked(&r, "")
-			b.mu.Unlock()
-			if got := b.SummarizationThreshold(); got != tc.want {
-				t.Errorf("SummarizationThreshold() = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-// TestApplySessionResult_KeepsSummarizationThresholdOnAbsent pins that only a resume carries it, so a zero would never heal.
-func TestApplySessionResult_KeepsSummarizationThresholdOnAbsent(t *testing.T) {
-	cases := map[string]string{
-		"no contextUsage block at all": `{"sessionId":"s1","_meta":{"title":"x"}}`,
-		"a block with absent members":  `{"sessionId":"s1","_meta":{"contextUsage":{}}}`,
-		"a block whose members are 0":  `{"sessionId":"s1","_meta":{"contextUsage":{"summarizationThreshold":0,"truncationThreshold":0}}}`,
-		"an explicitly null block":     `{"sessionId":"s1","_meta":{"contextUsage":null}}`,
-	}
-	for name, body := range cases {
+	} {
 		t.Run(name, func(t *testing.T) {
-			var r sessionCreated
-			if err := json.Unmarshal([]byte(body), &r); err != nil {
-				t.Fatalf("unmarshal session result: %v", err)
+			c := capture.Default(t)
+			b := NewEngine("/nonexistent", "/work")
+			if _, _, err := runLoadSessionOpts(t, b,
+				&marotte.SessionOpts{SessionID: "acp-session-xyz", AutoCompactionThreshold: tc.sent},
+				&marotte.RPCResponse{Result: json.RawMessage(tc.result)}); err != nil {
+				t.Fatalf("loadSession returned error: %v", err)
 			}
-			b := newTestSession()
-			b.mu.Lock()
-			b.summarizationPct = 80
-			b.applySessionResultLocked(&r, "")
-			b.mu.Unlock()
-			if got := b.SummarizationThreshold(); got != 80 {
-				t.Errorf("SummarizationThreshold() = %v, want 80", got)
+			got := c.CountExact("session resolved a compaction threshold other than the one marotte sent; "+
+				"the chat compacts at a point its setting did not choose") > 0
+			if got != tc.wantWarn {
+				t.Errorf("warn logged = %v, want %v", got, tc.wantWarn)
 			}
 		})
 	}
@@ -2886,24 +2880,29 @@ This is a WIRE change, not a refactor. If it is deliberate, regenerate with:
 	}
 }
 
-func TestInitialize_RetainsKiroAgentCapabilities(t *testing.T) {
-	b := NewEngine("/nonexistent", "/work")
-	resp := &marotte.RPCResponse{Result: json.RawMessage(`{
-		"agentCapabilities":{"_meta":{"kiro":{
-			"extensionMethods":["_kiro/one","_kiro/two"],
-			"replayMarking":true
-		}}}
-	}`)}
-	if _, err := driveSessionCall(t, b, resp, false, b.initialize); err != nil {
-		t.Fatalf("initialize = %v, want nil", err)
+// A shape change in a field marotte never reads must not fail every engine start.
+func TestInitialize_IgnoresUnreadCapabilityShapes(t *testing.T) {
+	cases := []struct {
+		name, kiro, wantLogDir string
+	}{
+		{
+			name:       "unread fields of an unexpected type",
+			kiro:       `{"extensionMethods":{"x":1},"replayMarking":"yes","logging":{"logDir":"/k"}}`,
+			wantLogDir: "/k",
+		},
+		{name: "a block that is not an object", kiro: `[]`, wantLogDir: ""},
 	}
-
-	got := b.agentKiro.Load()
-	if !slices.Equal(got.ExtensionMethods, []string{"_kiro/one", "_kiro/two"}) {
-		t.Errorf("ExtensionMethods = %v, want [_kiro/one _kiro/two]", got.ExtensionMethods)
-	}
-	if !got.ReplayMarking {
-		t.Error("ReplayMarking = false, want true")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewEngine("/nonexistent", "/work")
+			resp := &marotte.RPCResponse{Result: json.RawMessage(`{"agentCapabilities":{"_meta":{"kiro":` + tc.kiro + `}}}`)}
+			if _, err := driveSessionCall(t, b, resp, false, b.initialize); err != nil {
+				t.Fatalf("initialize = %v, want nil", err)
+			}
+			if got := b.KASLogDir(); got != tc.wantLogDir {
+				t.Errorf("KASLogDir() = %q, want %q", got, tc.wantLogDir)
+			}
+		})
 	}
 }
 
@@ -2914,9 +2913,8 @@ func TestInitialize_MissingKiroAgentCapabilitiesIsZeroValue(t *testing.T) {
 		t.Fatalf("initialize = %v, want nil", err)
 	}
 
-	got := b.agentKiro.Load()
-	if len(got.ExtensionMethods) != 0 || got.ReplayMarking {
-		t.Errorf("capabilities = %+v, want zero value", got)
+	if got := b.KASLogDir(); got != "" {
+		t.Errorf("KASLogDir() = %q, want empty", got)
 	}
 }
 
@@ -3014,5 +3012,74 @@ func TestApplySessionResult_TakesFlatTitleSetByUser(t *testing.T) {
 				t.Errorf("SessionTitleSetByUser() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// KAS spreads policyErrors flat on both doors' _meta, only when it skipped a rule.
+func TestSessionDoor_KeepsPolicyErrors(t *testing.T) {
+	const withErrors = `{"sessionId":"s1","_meta":{"policyErrors":[` +
+		`{"scope":"user","source":"/k/settings/permissions.yaml","message":"unknown capability 'teleport'"},` +
+		`{"scope":"workspace","message":"parse error","fatal":true}]}}`
+	want := []marotte.PolicyErrorItem{
+		{Scope: "user", Source: "/k/settings/permissions.yaml", Message: "unknown capability 'teleport'"},
+		{Scope: "workspace", Message: "parse error", Fatal: true},
+	}
+	t.Run("the new door", func(t *testing.T) {
+		var r sessionCreated
+		if err := json.Unmarshal([]byte(withErrors), &r); err != nil {
+			t.Fatalf("unmarshal session result: %v", err)
+		}
+		b := newTestSession()
+		b.mu.Lock()
+		b.applySessionResultLocked(&r, "")
+		b.mu.Unlock()
+		got := b.PolicyErrors()
+		if !slices.Equal(got, want) {
+			t.Fatalf("PolicyErrors() = %+v, want %+v", got, want)
+		}
+		got[0].Message = "mutated"
+		if b.PolicyErrors()[0].Message != want[0].Message {
+			t.Error("PolicyErrors() returned the session's own slice, want a copy")
+		}
+	})
+	t.Run("the load door", func(t *testing.T) {
+		b := newTestSession()
+		b.adoptLoadedSession("m", &marotte.RPCResponse{Result: []byte(withErrors)})
+		if got := b.PolicyErrors(); !slices.Equal(got, want) {
+			t.Errorf("PolicyErrors() after load = %+v, want %+v", got, want)
+		}
+	})
+	t.Run("none reported", func(t *testing.T) {
+		b := newTestSession()
+		b.adoptLoadedSession("m", &marotte.RPCResponse{Result: []byte(`{"_meta":{"title":"X"}}`)})
+		if got := b.PolicyErrors(); len(got) != 0 {
+			t.Errorf("PolicyErrors() = %+v, want none", got)
+		}
+	})
+}
+
+// TestSessionDoor_DeclaresAutomaticTurnProfilingForChatsOnly pins the declaration on both verbs of a chat session and
+// on no other role: KAS forgets it on a load without it, and a host's or observer's turns render nowhere.
+func TestSessionDoor_DeclaresAutomaticTurnProfilingForChatsOnly(t *testing.T) {
+	roles := []marotte.SessionRole{marotte.SessionRoleChat, marotte.SessionRoleHost, marotte.SessionRoleObserver, ""}
+	want := map[string]any{"ttft": true, "contextBreakdown": "detailed"}
+	for _, method := range []string{"session/new", "session/load"} {
+		for _, role := range roles {
+			opts := &marotte.SessionOpts{Model: "m", Role: role}
+			if method == "session/load" {
+				opts.SessionID = "sess_resume_door"
+			}
+			kiro := digObject(t, "the session door", captureRequest(t, method, opts), "params", "_meta", "kiro")
+			got, present := kiro["automaticTurnProfiling"]
+			if role != marotte.SessionRoleChat {
+				if present {
+					t.Errorf("%s for role %q declared automaticTurnProfiling = %v, want none", method, role, got)
+				}
+				continue
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("%s for a chat declared automaticTurnProfiling = %v, want %v", method, got, want)
+			}
+		}
 	}
 }

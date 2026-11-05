@@ -130,9 +130,9 @@ var deleteOutcomes = []deleteOutcome{
 	{
 		name: "refused", after: "open", wantErr: true,
 		arm: func(g *deleteGate, _ *fakeBridge, _ *stepScript) {
-			g.outcome = deleteAnswer(&marotte.RPCResponse{Error: &marotte.RPCError{
+			g.outcome = deleteAnswer(refusedCall(&marotte.RPCError{
 				Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"the run cannot be deleted now"}`),
-			}}, nil)
+			}))
 		},
 	},
 	{

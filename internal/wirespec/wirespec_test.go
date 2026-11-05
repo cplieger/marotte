@@ -34,6 +34,7 @@ var emptySignalPayloads = []string{
 	"MCPConfigChangedPayload",
 	"MCPPoolChangedPayload",
 	"MemoriesChangedPayload",
+	"PermissionsChangedPayload",
 	"PowersChangedPayload",
 	"RecipesChangedPayload",
 	"SlashCommandsChangedPayload",

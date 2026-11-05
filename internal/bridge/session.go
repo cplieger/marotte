@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,7 +48,9 @@ type Session struct {
 	// catalog is the unfiltered advertised set: Models and ApplyServedModels derive from it, so a deprecated model the
 	// account holds still counts for entitlement.
 	catalog atomic.Pointer[[]marotte.SessionModel]
-	modelID marotte.ModelID
+	// abandoned is the last prompt abandoned after its write, until AwaitAbandonedPrompt spends it.
+	abandoned *abandonedPrompt
+	modelID   marotte.ModelID
 	// thinking is the session's last reported thinking value ("on", "off", or "" when untoggleable or unreported).
 	thinking    string
 	role        marotte.SessionRole
@@ -60,17 +63,21 @@ type Session struct {
 	effortLevel string
 	// lastErr is custody's latest miss, for the held report.
 	lastErr string
+	// workflowLaunchWant is the door's wanted workflowLaunch value, immutable after construction; empty asserts
+	// nothing. workflowLaunch is the value the session last reported, meaningful only while workflowLaunchOffered.
+	workflowLaunchWant string
+	workflowLaunch     string
+	// policyErrors are the rules KAS skipped at the door (flat `_meta.policyErrors`).
+	policyErrors []marotte.PolicyErrorItem
 	// spawn is this session's door input, immutable after the door.
 	spawn kascap.SessionSpawn
 	// loadSeq is the lane position the session/load response arrived at (SessionLoadSeq).
 	loadSeq uint64
 	// heldGen identifies the armed held clock, so a stopped clock's callback does nothing.
-	heldGen uint64
-	// summarizationPct is the summarization threshold the session reported; 0 until a load result carries one.
-	summarizationPct float64
-	state            sessionState
-	mu               sync.Mutex
-	titleSetByUser   bool
+	heldGen        uint64
+	state          sessionState
+	mu             sync.Mutex
+	titleSetByUser bool
 	// supervised records that the session accepted `autopilot: off`, not that the chat asked.
 	supervised bool
 	// closeAsked is a close that arrived during the door; the door releases what KAS created instead of opening it.
@@ -81,6 +88,11 @@ type Session struct {
 	reported bool
 	// reapOnSettle reaps the session's files once its release settles: a session/new its door abandoned.
 	reapOnSettle bool
+	// workflowLaunchRefused latches once a set_config_option did not confirm workflowLaunchWant, so a KAS that
+	// keeps reporting another value is asked once per session, not on every frame. workflowLaunchOffered is
+	// whether the session's last report carried the option at all.
+	workflowLaunchOffered bool
+	workflowLaunchRefused bool
 }
 
 // SessionID returns the session's ACP id.
@@ -139,7 +151,48 @@ func (s *Session) PromptAt(ctx context.Context, params any, commit func() error)
 	if err := s.callable(); err != nil {
 		return nil, 0, err
 	}
-	return s.engine.request(ctx, s.lane, s.id, marotte.MethodPrompt, params, nil, commit)
+	p := &abandonedPrompt{done: make(chan struct{})}
+	resp, seq, abandoned, err := s.engine.request(ctx, s.lane, s.id, marotte.MethodPrompt, params, p.answer, commit)
+	if abandoned {
+		s.mu.Lock()
+		s.abandoned = p
+		s.mu.Unlock()
+	}
+	return resp, seq, err
+}
+
+// abandonedPrompt is a written session/prompt whose caller gave up: KAS keeps streaming its execution's frames, and
+// its answer, at lane position seq, is the last of them.
+type abandonedPrompt struct {
+	done chan struct{}
+	seq  uint64
+}
+
+// answer is the prompt's late hook; the engine calls it at most once.
+func (p *abandonedPrompt) answer(_ *marotte.RPCResponse, seq uint64) {
+	p.seq = seq
+	close(p.done)
+}
+
+// AwaitAbandonedPrompt waits for the answer to the session's last session/prompt abandoned after its write, returning
+// the lane position it arrived at. It returns false at once when none is outstanding, and when ctx ends or the session
+// closes first (its engine's exit closes it, and drops the abandoned entry unanswered). Either way the record is
+// spent, so the next call waits for nothing.
+func (s *Session) AwaitAbandonedPrompt(ctx context.Context) (uint64, bool) {
+	s.mu.Lock()
+	p := s.abandoned
+	s.abandoned = nil
+	s.mu.Unlock()
+	if p == nil {
+		return 0, false
+	}
+	select {
+	case <-p.done:
+		return p.seq, true
+	case <-ctx.Done():
+	case <-s.closeDone:
+	}
+	return 0, false
 }
 
 // doorSetConfig is a session/set_config_option the door itself makes while the session is opening.
@@ -192,9 +245,6 @@ func (s *Session) SupervisedApplied() bool {
 	return s.supervised
 }
 
-// AutoCompactionDisabled reports whether this session opened with KAS compaction off: KAS froze the door's value.
-func (s *Session) AutoCompactionDisabled() bool { return s.spawn.DisableAutoCompaction }
-
 // SessionTitle returns KAS's title for the live session: "New Session" on creation, the stored title on load. Not
 // authoritative: the caller adopts it only for a default-named chat, and focus_update outranks it.
 func (s *Session) SessionTitle() string {
@@ -210,12 +260,12 @@ func (s *Session) SessionTitleSetByUser() bool {
 	return s.titleSetByUser
 }
 
-// SummarizationThreshold returns the percentage at which the session summarizes its context, from session/load's
-// flat `_meta.contextUsage`; 0 when none carried it.
-func (s *Session) SummarizationThreshold() float64 {
+// PolicyErrors returns a copy of the rules KAS reported skipping or failing to load when the
+// session opened; nil when it reported none.
+func (s *Session) PolicyErrors() []marotte.PolicyErrorItem {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.summarizationPct
+	return slices.Clone(s.policyErrors)
 }
 
 // Modes returns the session modes from the door. Frozen; callers must not mutate it.
@@ -356,6 +406,59 @@ func (s *Session) ensureThinking(ctx context.Context, choice string) error {
 	s.mu.Unlock()
 	return nil
 }
+
+// HealWorkflowLaunch records the workflowLaunch value a config_option_update offered and asserts the door's wanted
+// value when it differs. After one failed or unconfirmed assert the session sends no more, and returns nil.
+func (s *Session) HealWorkflowLaunch(ctx context.Context, reported string) error {
+	if err := s.callable(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.workflowLaunch, s.workflowLaunchOffered = reported, true
+	s.mu.Unlock()
+	return s.ensureWorkflowLaunch(ctx)
+}
+
+// recordWorkflowLaunch records the workflowLaunch option a door result carries, or that it carries none.
+func (s *Session) recordWorkflowLaunch(result json.RawMessage) {
+	value, offered := marotte.WorkflowLaunchReported(result)
+	s.mu.Lock()
+	s.workflowLaunch, s.workflowLaunchOffered = value, offered
+	s.mu.Unlock()
+}
+
+func (s *Session) ensureWorkflowLaunch(ctx context.Context) error {
+	s.mu.Lock()
+	want, reported := s.workflowLaunchWant, s.workflowLaunch
+	skip := want == "" || !s.workflowLaunchOffered || reported == want || s.workflowLaunchRefused
+	s.mu.Unlock()
+	if skip {
+		return nil
+	}
+	resp, err := s.doorSetConfig(ctx, map[string]any{
+		marotte.KeySessionID: s.id,
+		keyConfigID:          marotte.ConfigOptionWorkflowLaunch,
+		keyConfigValue:       want,
+	})
+	var confirmed string
+	if err == nil && resp != nil {
+		confirmed, _ = marotte.WorkflowLaunchReported(resp.Result)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if confirmed == want {
+		s.workflowLaunch = want
+		return nil
+	}
+	s.workflowLaunchRefused = true
+	if err == nil {
+		err = fmt.Errorf("%w: reply reports %q", errWorkflowLaunchUnconfirmed, confirmed)
+	}
+	return err
+}
+
+// errWorkflowLaunchUnconfirmed is a set_config_option reply that does not report the workflowLaunch value sent.
+var errWorkflowLaunchUnconfirmed = errors.New("bridge: kiro-cli did not confirm the workflow use value")
 
 // ObserveThinking records a thinking value from the config_option_update channel the session forwards unread. Empty
 // is ignored.

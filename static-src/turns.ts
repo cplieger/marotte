@@ -21,9 +21,14 @@ import type {
   OpenEntry,
   ToolKind,
   TurnState,
-  TurnThroughput,
 } from "./types.js";
-import type { ContextBreakdown, EntryTurnWake, TurnOutcome, WakeSteer } from "./wire/types.gen.js";
+import type {
+  ContextBreakdown,
+  EntryTurnWake,
+  TurnFirstOutput,
+  TurnOutcome,
+  WakeSteer,
+} from "./wire/types.gen.js";
 
 /** A turn's result, as scannable colour down the transcript. Re-exported from the generated wire
  *  types (the rule exists in both languages). `running` is the member no `turn_close` carries: a
@@ -47,6 +52,12 @@ export function payloadOf<K extends EntryKind>(e: Entry, kind: K): EntryPayload[
 /** Whether `e` is a sub-agent's `model_fallback`, which never moves the chat's model and is not shown. */
 export function isSubagentFallback(e: Entry): boolean {
   return payloadOf(e, "model_fallback")?.subagent === true;
+}
+
+/** Whether `e` is a `model_fallback` that moved its turn to a model: a decline (a `reason`) moved nothing. */
+export function appliedFallback(e: Entry): boolean {
+  const p = payloadOf(e, "model_fallback");
+  return p !== undefined && (p.to ?? "") !== "" && (p.reason ?? "") === "";
 }
 
 /** The entry as a discriminated union, so a dispatcher's switch is total by type.
@@ -89,11 +100,13 @@ export function closeOfBody(body: readonly Entry[]): EntryTurnClose | undefined 
 
 // --- The projection ---
 
-/** The two store fields a projection reads, structurally, so this pure module needs
+/** The store fields a projection reads, structurally, so this pure module needs
  *  no `Session`. */
 export interface TurnSource {
   readonly turns: ReadonlyMap<string, TurnState>;
   readonly turn_order: readonly string[];
+  /** The entry the newest compaction summarized through. */
+  readonly compaction_watermark?: string;
 }
 
 export interface Turn {
@@ -120,6 +133,10 @@ export interface Turn {
    *  message and everything after, so keeping turn N means addressing N+1's prompt. Undefined on the
    *  last turn and when the next turn has no prompt. */
   rewindTo: EntryPrompt | undefined;
+  /** This turn's own prompt, which a branch from its footer forks after: KAS keeps the addressed
+   *  turn through its end. Undefined when the turn has no prompt, and on a turn at or before the one
+   *  holding the compaction watermark, because KAS forks only the messages a compaction left. */
+  branchFrom: EntryPrompt | undefined;
   /** What started an agent-initiated turn: its first lane-`""` `turn_wake`, with every run the chat's
    *  `run_named` entries name filled in (`namedWake`). Undefined for a prompt turn. */
   wake?: EntryTurnWake | undefined;
@@ -218,14 +235,15 @@ export function turnIsDrawn(t: TurnState): boolean {
   return false;
 }
 
-/** The `Turn` one source turn projects to. `rewindTo` is the CALLER's, because the two
- *  projections resolve it from different things: the whole pass reads the next drawn turn
- *  off the list it is building, a keyed read walks the source from the turn's own index. */
+/** The `Turn` one source turn projects to. `rewindTo` and `summarized` are the CALLER's, because
+ *  the two projections resolve them from different things: the whole pass reads the list it is
+ *  building, a keyed read walks the source from the turn's own index. */
 function turnOf(
   id: string,
   state: TurnState,
   open: EntryTurnOpen,
   rewindTo: EntryPrompt | undefined,
+  summarized: boolean,
   names: () => ReadonlyMap<string, string>,
 ): Turn {
   const body = state.entries.slice(1);
@@ -240,6 +258,7 @@ function turnOf(
     ts: state.entries[0]?.ts ?? 0,
     outcome: closeOfBody(body)?.outcome ?? "running",
     rewindTo,
+    branchFrom: summarized ? undefined : open.prompt,
   };
 }
 
@@ -248,7 +267,8 @@ function turnOf(
 export function projectTurns(src: TurnSource): Turn[] {
   const turns: Turn[] = [];
   const names = lazyRunNames(src);
-  for (const id of src.turn_order) {
+  const summarizedThrough = watermarkTurnAt(src, 0);
+  for (const [i, id] of src.turn_order.entries()) {
     const state = src.turns.get(id);
     if (state === undefined) {
       continue;
@@ -257,7 +277,7 @@ export function projectTurns(src: TurnSource): Turn[] {
     if (open === undefined || !turnIsDrawn(state)) {
       continue;
     }
-    turns.push(turnOf(id, state, open, undefined, names));
+    turns.push(turnOf(id, state, open, undefined, i <= summarizedThrough, names));
   }
   for (let i = 0; i < turns.length; i++) {
     const t = turns[i];
@@ -283,12 +303,31 @@ export function projectTurn(src: TurnSource, turnID: string): Turn | undefined {
   if (open === undefined || !turnIsDrawn(state)) {
     return undefined;
   }
-  return turnOf(turnID, state, open, nextTrigger(src, at), lazyRunNames(src));
+  const summarized = watermarkTurnAt(src, at) >= 0;
+  return turnOf(turnID, state, open, nextTrigger(src, at), summarized, lazyRunNames(src));
 }
 
 function lazyRunNames(src: TurnSource): () => ReadonlyMap<string, string> {
   let names: ReadonlyMap<string, string> | undefined;
   return () => (names ??= runNamesOf(src));
+}
+
+/** The `turn_order` index, at or after `from`, of the turn holding the compaction watermark, or -1.
+ *  A watermark in no resident turn is older than all of them, because the window is a contiguous
+ *  tail, so -1 leaves every resident turn branchable. */
+function watermarkTurnAt(src: TurnSource, from: number): number {
+  const watermark = src.compaction_watermark ?? "";
+  if (watermark === "") {
+    return -1;
+  }
+  for (let i = from; i < src.turn_order.length; i++) {
+    const id = src.turn_order[i];
+    const state = id === undefined ? undefined : src.turns.get(id);
+    if (state?.entries.some((e) => e.id === watermark) === true) {
+      return i;
+    }
+  }
+  return -1;
 }
 
 /** The trigger of the first DRAWN turn after `at` in file order — a rewind from turn N's
@@ -336,7 +375,7 @@ interface TurnLedger {
   endedAt: number;
   /** The wire's stop reason verbatim, and whether the model stopped at a bound. "" and
    *  `false` mean NOTHING STAMPED THEM. A `string`, because the upstream vocabulary is
-   *  OPEN: a reader renders it and `outcome` is what it decides on. */
+   *  OPEN: a reader renders it, and `outcome` and `truncated` are what it decides on. */
   stopReasonRaw: string;
   truncated: boolean;
   /** How the turn's asks were answered, off each `tool_result.interaction`. Partial
@@ -344,11 +383,11 @@ interface TurnLedger {
   asks: Partial<Record<AskBucket, number>>;
   /** The rest are `turn_close`'s verbatim; empty or undefined means KAS sent none. */
   requestIds: string[];
-  throughput: TurnThroughput | undefined;
   recoveries: string[];
   steering: string[];
   engineErrorClass: string;
   contextBreakdown: ContextBreakdown | undefined;
+  firstOutput: TurnFirstOutput | undefined;
 }
 
 /** Tool kinds that mean "a command ran". `execute` and `shell` are the two KAS
@@ -377,11 +416,11 @@ export function turnLedger(t: Turn): TurnLedger {
     truncated: close?.truncated ?? false,
     asks: {},
     requestIds: close?.request_ids ?? [],
-    throughput: close?.throughput,
     recoveries: close?.recoveries ?? [],
     steering: close?.steering ?? [],
     engineErrorClass: close?.engine_error_class ?? "",
     contextBreakdown: close?.context_breakdown,
+    firstOutput: close?.first_output,
   };
   const delegateCalls = new Set<string>();
   const noteModel = (m: string): void => {
@@ -461,4 +500,20 @@ export function turnFailureText(t: Turn): string {
   }
   const reason = (closeOfBody(t.body)?.failure_reason ?? "").trim();
   return reason !== "" ? reason : defaultFailureReason(t.outcome);
+}
+
+const BOUND_TEXT = new Map<string, string>([
+  ["max_tokens", "The answer was cut off at the output limit."],
+  ["max_turn_requests", "The turn stopped at its request limit."],
+]);
+
+/** What a turn the model stopped at a bound SAYS beside its clean grade; "" for any other turn.
+ *  `truncated` decides and the raw stop reason only names the bound, so a reason outside the two
+ *  known bounds still speaks. */
+export function turnBoundText(t: Turn): string {
+  const close = closeOfBody(t.body);
+  if (close?.truncated !== true) {
+    return "";
+  }
+  return BOUND_TEXT.get(close.stop_reason_raw ?? "") ?? "The turn stopped at a limit.";
 }

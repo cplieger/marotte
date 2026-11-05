@@ -143,12 +143,21 @@ describe("an always option opens a chooser instead of answering", () => {
     expect(coversOf(card, "*")).toBe(covers);
   });
 
-  it("does not generalise from a wrapper command", () => {
-    const { card } = mount(
-      ask({ consent: { capability: "shell", subject: "sudo apt-get install x" } }),
-    );
+  it.each([
+    "sudo apt-get install x",
+    "time make build",
+    "command rm -rf x",
+    "nohup server start",
+    "npx eslint fix",
+    "bunx tsc build",
+    "uvx ruff",
+    "timeout 60 rm -rf x",
+    "nice make build",
+    "xargs rm -f",
+  ])("does not generalise from the wrapper command in %s", (subject) => {
+    const { card } = mount(ask({ consent: { capability: "shell", subject } }));
     button(card, "Always allow").click();
-    expect(patterns(card)).toEqual(["sudo apt-get install x", "*"]);
+    expect(patterns(card)).toEqual([subject, "*"]);
   });
 
   it("does not generalise a single-word command", () => {
@@ -162,6 +171,67 @@ describe("an always option opens a chooser instead of answering", () => {
     button(card, "Always allow").click();
     expect(patterns(card)).toEqual(["echo *", "*"]);
     expect(coversOf(card, "echo *")).toBe("any echo command");
+  });
+
+  it("offers the subcommand width between the exact command and the first-word pattern", () => {
+    const { card } = mount(ask({ consent: { capability: "shell", subject: "git stash pop" } }));
+    button(card, "Always allow").click();
+    expect(patterns(card)).toEqual(["git stash pop", "git stash *", "git *", "*"]);
+    expect(coversOf(card, "git stash *")).toBe("any git stash command");
+  });
+
+  it("answers the always option with the subcommand pattern", () => {
+    const { card, answers } = mount(
+      ask({ consent: { capability: "shell", subject: "git stash pop" } }),
+    );
+    button(card, "Always allow").click();
+    [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][1]?.click();
+
+    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: "git stash *" }]);
+  });
+
+  it.each([
+    ["git -C /r status", ["git -C /r status", "git *", "*"]],
+    ["cat a.txt", ["cat a.txt", "cat *", "*"]],
+    ["make build:prod", ["make build:prod", "make *", "*"]],
+    ["git 2stash x", ["git 2stash x", "git *", "*"]],
+  ])(
+    "does not offer a subcommand width when the second word of %s is not a plain name",
+    (subject, want) => {
+      const { card } = mount(ask({ consent: { capability: "shell", subject } }));
+      button(card, "Always allow").click();
+      expect(patterns(card)).toEqual(want);
+    },
+  );
+
+  it("does not offer a subcommand width when the second word is a wrapper", () => {
+    const { card } = mount(ask({ consent: { capability: "shell", subject: "watch sudo ls" } }));
+    button(card, "Always allow").click();
+    expect(patterns(card)).toEqual(["watch sudo ls", "watch *", "*"]);
+  });
+
+  it.each([
+    ["npm exec eslint .", "npm"],
+    ["npm x eslint .", "npm"],
+    ["pnpm exec tsc", "pnpm"],
+    ["pnpm dlx create-vite app", "pnpm"],
+    ["yarn dlx cowsay hi", "yarn"],
+    ["yarn exec tsc", "yarn"],
+    ["bun x prettier .", "bun"],
+    ["uv run pytest", "uv"],
+    ["uv tool run ruff", "uv"],
+    ["pipx run black .", "pipx"],
+  ])("does not offer a subcommand width for the program runner in %s", (subject, first) => {
+    const { card } = mount(ask({ consent: { capability: "shell", subject } }));
+    button(card, "Always allow").click();
+    expect(patterns(card)).toEqual([subject, `${first} *`, "*"]);
+  });
+
+  it("offers a subject that already is its subcommand pattern once, as that pattern", () => {
+    const { card } = mount(ask({ consent: { capability: "shell", subject: "git stash *" } }));
+    button(card, "Always allow").click();
+    expect(patterns(card)).toEqual(["git stash *", "git *", "*"]);
+    expect(coversOf(card, "git stash *")).toBe("any git stash command");
   });
 
   it("names a subject carrying * as a pattern and does not generalise from a * in its first word", () => {

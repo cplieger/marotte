@@ -56,11 +56,6 @@ func FuzzHandleAssistantChunk_SteerAcksIgnoreChunking(f *testing.F) {
 			t.Skip()
 		}
 		chunks := cutSteerChunks(text, cuts, ids)
-		for _, c := range chunks {
-			if isInterruptSentinel(c.text) {
-				t.Skip()
-			}
-		}
 		var lead []steerChunk
 		if opening {
 			lead = []steerChunk{{text: "Opening. ", id: true}}

@@ -16,15 +16,26 @@ func countEvents(events *[]marotte.ServerEvent, typ marotte.EventType) int {
 	return n
 }
 
-// TestHandlePolicyChanged pins that a _kiro/policy/changed notification
-// broadcasts one global (empty chatID) permissions_changed event carrying the
-// status — the signal the client refetches GET /api/permissions on.
+// TestHandlePolicyChanged pins one global (empty chatID) permissions_changed nudge with an empty
+// payload, the signal a loaded panel refetches on, and the errors handed to governance.
 func TestHandlePolicyChanged(t *testing.T) {
 	deps, events := newEventCaptureDeps()
+	var govErrs []marotte.PolicyErrorItem
+	var govCalls int
+	deps.onPolicyChanged = func(errs []marotte.PolicyErrorItem, reloaded bool) {
+		govCalls++
+		govErrs = errs
+		if !reloaded {
+			t.Error("governance got reloaded=false for a policy/changed")
+		}
+	}
 	tr := New(rolesOf(deps))
 
 	tr.HandlePolicyChanged(t.Context(), marotte.ChatID("c1"), &marotte.RPCResponse{
-		Params: mustJSON(t, map[string]any{"sessionId": "sess-1", "status": "success"}),
+		Params: mustJSON(t, map[string]any{
+			"sessionId": "sess-1", "status": "success",
+			"errors": []map[string]any{{"scope": "user", "message": "unknown capability"}},
+		}),
 	})
 
 	if countEvents(events, marotte.EventPermissionsChanged) != 1 {
@@ -37,10 +48,12 @@ func TestHandlePolicyChanged(t *testing.T) {
 		if e.ChatID != "" {
 			t.Errorf("event ChatID = %q, want empty (policy is global)", e.ChatID)
 		}
-		p, ok := e.Payload.(marotte.PermissionsChangedPayload)
-		if !ok || p.Status != "success" {
-			t.Errorf("payload = %+v (ok=%v)", e.Payload, ok)
+		if _, ok := e.Payload.(marotte.PermissionsChangedPayload); !ok {
+			t.Errorf("payload = %#v, want the PermissionsChangedPayload nudge", e.Payload)
 		}
+	}
+	if govCalls != 1 || len(govErrs) != 1 || govErrs[0].Message != "unknown capability" {
+		t.Errorf("governance got %d calls with %+v, want one with the notification's error", govCalls, govErrs)
 	}
 }
 

@@ -62,7 +62,7 @@ func TestAskAnswer_GoesBackOnTheBridgeTheAskArrivedOn(t *testing.T) {
 			h, _, _ := newTestHub()
 			origin, current := newFakeBridge(), newFakeBridge()
 			h.insertBridgeNow("c1", testBridge(current, bridgeIdle))
-			askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(tc.event, "c1", tc.payload), origin))
+			askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(tc.event, "c1", tc.payload), origin))
 
 			if rec := postCmd(t, h, tc.cmd(askID)); rec.Code != http.StatusOK {
 				t.Fatalf("%s answer code = %d (%s), want 200", name, rec.Code, rec.Body.String())
@@ -82,7 +82,7 @@ func TestAskAnswer_ADeliveredAnswerSettlesItOnceAsTheUsers(t *testing.T) {
 	h, _, _ := newTestHub()
 	origin := newFakeBridge()
 	h.insertBridgeNow("c1", testBridge(origin, bridgeIdle))
-	askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
+	askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 		marotte.UserInputNeededPayload{}), origin))
 	head := h.bus.fanout.Position().Head
 
@@ -111,7 +111,7 @@ func TestAskAnswer_ToABridgeThatEndedSinceTheClaimSettlesItEnded(t *testing.T) {
 	h, _, _ := newTestHub()
 	ended := &exitedBridge{fakeBridge: newFakeBridge()}
 	h.insertBridgeNow("c1", testBridge(ended, bridgeIdle))
-	askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
+	askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 		marotte.UserInputNeededPayload{}), ended))
 	head := h.bus.fanout.Position().Head
 	logs := captureLogs(t)
@@ -149,7 +149,7 @@ func TestAskAnswer_AnEndDuringTheWriteSettlesItEndedOnce(t *testing.T) {
 	h, _, _ := newTestHub()
 	br := &endingBridge{fakeBridge: newFakeBridge(), h: h}
 	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
-	askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
+	askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 		marotte.UserInputNeededPayload{}), br))
 	head := h.bus.fanout.Position().Head
 
@@ -176,7 +176,7 @@ func TestAskAnswer_AFailedWriteOnALiveBridgeRefusesTheAnswerAndReoffersTheAsk(t 
 			live := &droppingBridge{fakeBridge: newFakeBridge()}
 			h.insertBridgeNow("c1", testBridge(live, bridgeIdle))
 			h.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
-			askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(tc.event, "c1", tc.payload), live))
+			askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(tc.event, "c1", tc.payload), live))
 			head := h.bus.fanout.Position().Head
 
 			rec := postCmd(t, h, tc.cmd(askID))
@@ -210,24 +210,17 @@ func TestAskAnswer_AFailedWriteOnALiveBridgeRefusesTheAnswerAndReoffersTheAsk(t 
 // discharge the chat's wait; the transition that won owns the card and the chat's status.
 func TestAskAnswer_AnAskSettledDuringTheWriteRefusesTheAnswerAsWithdrawn(t *testing.T) {
 	transitions := map[string]func(h *Runtime, origin acpResponder){
-		"turnCancel": func(h *Runtime, _ acpResponder) {
-			h.bus.ClearPendingInputAsks("c1", command.ScopeChatSession)
-		},
 		"bridgeEnded": func(h *Runtime, origin acpResponder) { h.bus.endAsksOf(origin) },
 	}
 	for name, tc := range askFamilies() {
 		for transition, settle := range transitions {
-			if transition == "turnCancel" && tc.event == marotte.EventPermissionNeeded {
-				// A cancel answers a permission ask itself, and skips one a card claimed first.
-				continue
-			}
 			t.Run(name+"_"+transition, func(t *testing.T) {
 				h, _, _ := newTestHub()
 				br := &duringWriteBridge{fakeBridge: newFakeBridge()}
 				br.during = func() { settle(h, br) }
 				h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 				h.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
-				askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(tc.event, "c1", tc.payload), br))
+				askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(tc.event, "c1", tc.payload), br))
 
 				rec := postCmd(t, h, tc.cmd(askID))
 
@@ -262,11 +255,8 @@ func TestAskAnswer_ATerminalTransitionDuringTheWriteSettlesTheClaimOnce(t *testi
 		transition func(h *Runtime) bool
 		want       []marotte.SettledBy
 	}{
-		"turnCancel": {
-			transition: func(h *Runtime) bool { h.bus.ClearPendingInputAsks("c1", command.ScopeChatAndRuns); return true },
-		},
 		"runFinished": {
-			transition: func(h *Runtime) bool { h.bus.ClearPendingPermsForRun(workflowID); return true },
+			transition: func(h *Runtime) bool { h.bus.ClearPendingPermsForRun(context.Background(), workflowID); return true },
 		},
 		"kasWithdrew": {
 			transition: func(h *Runtime) bool { return h.bus.PendingPermsWithdraw("c1", toolCallID) },
@@ -299,7 +289,7 @@ func TestAskAnswer_ATerminalTransitionDuringTheWriteSettlesTheClaimOnce(t *testi
 					transitioned = tc.transition(h)
 				}
 				h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
-				askID := requestIDOf(t, h.bus.PendingPermsAdd(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
+				askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 					marotte.UserInputNeededPayload{ToolCallID: toolCallID, RunID: workflowID}), br))
 				head := h.bus.fanout.Position().Head
 

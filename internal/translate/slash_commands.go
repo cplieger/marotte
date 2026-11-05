@@ -52,7 +52,7 @@ func ReadSlashCatalog(update json.RawMessage) (cmds []marotte.SlashCommand, ok b
 	}
 	nonPrompt := make(map[string]bool, len(frame.AvailableCommands))
 	for i := range frame.AvailableCommands {
-		if c := &frame.AvailableCommands[i]; c.Meta.Kiro.Type != "prompt" {
+		if c := &frame.AvailableCommands[i]; c.Meta.Kiro.Type != kasCommandPrompt {
 			nonPrompt[c.Name] = true
 		}
 	}
@@ -88,13 +88,16 @@ func slashCommandOf(c *kasAvailableCommand, kind marotte.SlashCommandKind) (maro
 	return cmd, true
 }
 
+// kasCommandPrompt is the entry type of a saved prompt in KAS's command catalog.
+const kasCommandPrompt = "prompt"
+
 // slashKind maps KAS's entry type onto a menu kind; keep is false for a kind
 // that reaches the model as prose (skill, custom agent, the other workflow verbs).
 func slashKind(c *kasAvailableCommand) (marotte.SlashCommandKind, bool) {
 	switch c.Meta.Kiro.Type {
 	case "steering":
 		return marotte.SlashKindSteering, true
-	case "prompt":
+	case kasCommandPrompt:
 		return marotte.SlashKindPrompt, true
 	case "workflow":
 		return marotte.SlashKindGoal, c.Meta.Kiro.CommandID == "goal"

@@ -98,8 +98,8 @@ func TestHandleSessionInfoUpdate_AStepsAskStaysOffTheChatsTurn(t *testing.T) {
 	}
 }
 
-// The live turn_completion's request ids, throughput and recoveries, and the
-// steering KAS added, reach the turn's turn_close.
+// The live turn_completion's request ids and recoveries, and the steering KAS
+// added, reach the turn's turn_close.
 func TestHandleSessionInfoUpdate_CompletionFactsReachTheTurnClose(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -116,7 +116,6 @@ func TestHandleSessionInfoUpdate_CompletionFactsReachTheTurnClose(t *testing.T) 
 		"status":              "success",
 		"requestIds":          []string{"req-1", "req-2"},
 		"recoveries":          []string{"empty"},
-		"throughput":          map[string]any{"estimatedTokens": 420, "activeStreamingMs": 3000, "chunks": 9},
 	}), FrameAttribution{})
 	if _, err := turn.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}); err != nil {
 		t.Fatalf("close: %v", err)
@@ -135,9 +134,6 @@ func TestHandleSessionInfoUpdate_CompletionFactsReachTheTurnClose(t *testing.T) 
 	}
 	if want := []string{"empty"}; !slices.Equal(footer.Recoveries, want) {
 		t.Errorf("recoveries = %v, want %v", footer.Recoveries, want)
-	}
-	if want := (marotte.TurnThroughput{EstimatedTokens: 420, ActiveStreamingMs: 3000}); footer.Throughput == nil || *footer.Throughput != want {
-		t.Errorf("throughput = %+v, want %+v", footer.Throughput, want)
 	}
 	if want := []string{"file:///workspace/.kiro/steering/go.md"}; !slices.Equal(footer.Steering, want) {
 		t.Errorf("steering = %v, want %v", footer.Steering, want)
@@ -206,7 +202,6 @@ func TestEntryProjection_ReplaysTheTurnFacts(t *testing.T) {
 			"promptTurnSummaries": []any{map[string]any{"unit": "credit", "usage": 0.25}},
 			"requestIds":          []string{"req-9"},
 			"recoveries":          []string{"streamError"},
-			"throughput":          map[string]any{"estimatedTokens": 80, "activeStreamingMs": 400},
 		}),
 		turnEndFrame(t, "end_turn"),
 	})
@@ -222,9 +217,6 @@ func TestEntryProjection_ReplaysTheTurnFacts(t *testing.T) {
 	if !slices.Equal(footer.RequestIDs, []string{"req-9"}) || !slices.Equal(footer.Recoveries, []string{"streamError"}) {
 		t.Errorf("request_ids = %v, recoveries = %v, want the replayed completion's", footer.RequestIDs, footer.Recoveries)
 	}
-	if want := (marotte.TurnThroughput{EstimatedTokens: 80, ActiveStreamingMs: 400}); footer.Throughput == nil || *footer.Throughput != want {
-		t.Errorf("throughput = %+v, want %+v", footer.Throughput, want)
-	}
 	if !slices.Equal(footer.Steering, []string{"file:///w/.kiro/steering/a.md"}) {
 		t.Errorf("steering = %v, want the replayed inclusion", footer.Steering)
 	}
@@ -235,6 +227,7 @@ func TestEntryProjection_ReplaysTheTurnFacts(t *testing.T) {
 func TestEntryProjection_NamesAKnownEngineClass(t *testing.T) {
 	for _, tt := range []struct{ errorType, want string }{
 		{errorType: "ModelThrottleError", want: "ModelThrottleError"},
+		{errorType: "CredentialAbsentError", want: "CredentialAbsentError"},
 		{errorType: "ye"},
 	} {
 		t.Run(tt.errorType, func(t *testing.T) {

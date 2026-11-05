@@ -6,7 +6,7 @@ import { el, bindList, effect, signal } from "@cplieger/ui";
 import { $, setControlBusy } from "./dom.js";
 import { reconcile } from "./reconcile.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";
-import { isSafeURL } from "./url-safety.js";
+import { isHttpURL } from "./url-safety.js";
 import { onSSE } from "./bus.js";
 import { GOVERNANCE_UNAVAILABLE, governanceReasonKind, onGovernanceChange } from "./governance.js";
 import type { GovernanceMCPRegistry, GovernanceStatePayload } from "./types.js";
@@ -483,7 +483,7 @@ export function renderForeignMeta(st: RuntimeStatus): string {
     case "connected":
       return "Connected. Its tools are available to the agent";
     case "needs_auth":
-      return "Waiting for sign-in";
+      return signInWaitPhrase(st);
     case "signing_in":
       return "Signing in";
     case "disabled":
@@ -828,13 +828,17 @@ export function credentialSummary(s: Server): string {
   return parts.length === 0 ? "no credentials" : parts.join(", ");
 }
 
+function signInWaitPhrase(st: RuntimeStatus & { state: "needs_auth" }): string {
+  return st.error === undefined ? "Waiting for sign-in" : `Sign-in failed. ${st.error}`;
+}
+
 /** `connected` and `idle` get none: the dot says so, and a phrase would push the rest out of the track. */
 function statePhrase(st: RuntimeStatus): string {
   if (st.state === "failed") {
     return st.error === "" ? "Failed to start" : `Failed to start. ${st.error}`;
   }
   if (st.state === "needs_auth") {
-    return "Waiting for sign-in";
+    return signInWaitPhrase(st);
   }
   if (st.state === "signing_in") {
     return "Signing in";
@@ -882,7 +886,7 @@ function applyPrewarm(
 
 /** A link, never window.open: the consent URL arrives over SSE, which is no user gesture. */
 function renderOAuthPill(url: string): HTMLAnchorElement {
-  const safe = isSafeURL(url);
+  const safe = isHttpURL(url);
   return el(
     "a",
     {
@@ -1176,7 +1180,12 @@ export function initMCP(): void {
     mcpState.refetchStatus();
   });
   onSSE("mcp_oauth_needed", (_chat, p) => {
-    mcpState.setStatusFromEvent(p.server, { name: p.server, state: "needs_auth" });
+    if (p.error === undefined || p.error === "") {
+      mcpState.setStatusFromEvent(p.server, { name: p.server, state: "needs_auth" });
+      return;
+    }
+    showToast(signInFailureText(p.server, p.error), "error");
+    mcpState.setStatusFromEvent(p.server, { name: p.server, state: "needs_auth", error: p.error });
   });
   onSSE("mcp_sign_in_open", (_chat, p) => {
     mcpState.setStatusFromEvent(p.server, {
@@ -1229,6 +1238,11 @@ export function announceMCPFailure(server: string, reason: string, prevState: Ru
     return;
   }
   showToast(mcpFailureText(server, reason), "error");
+}
+
+/** The toast for a Sign in kiro-cli refused; the server still waits, so its row offers Sign in again. */
+function signInFailureText(server: string, reason: string): string {
+  return `Signing in to "${server}" failed: ${reason.trim()}`;
 }
 
 /** kiro-cli's own text separates "command not found" from a timeout. It can be empty, so the fallback names the server. */

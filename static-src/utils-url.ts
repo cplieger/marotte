@@ -10,7 +10,7 @@ import { additionalDirectories, workspaceRootOrDefault } from "./workspace.js";
 /** URL safety predicate for a rendered href/src: http, https and mailto are the only absolute
  *  schemes; scheme-less resolves against the document. Strips every C0 control THEN trims, at least
  *  what the WHATWG URL parser strips before reading a scheme (else `\x01javascript:` stays live). */
-export function isSafeUrl(url: string): boolean {
+export function isHttpMailtoOrRelativeURL(url: string): boolean {
   const cleaned = url
     // eslint-disable-next-line no-control-regex
     .replace(/[\x00-\x1f]/g, "")
@@ -30,7 +30,7 @@ const EXFIL_B64_RE = /[A-Za-z0-9+/]{40,}={0,2}|[A-Za-z0-9+/]{39}=|[A-Za-z0-9+/]{
 /** Whether a link that LEAVES the origin carries an encoded payload in its query or fragment: a
  *  200+ char query, 21+ consecutive %XX escapes, a 40+ base64 run, or a credential marker. A
  *  heuristic ceiling: no host or shape waiver, since a waived shape is an injected prompt's channel.
- *  Path and subdomain are untested, a known hole. Normalizes as `isSafeUrl`. */
+ *  Path and subdomain are untested, a known hole. Normalizes as `isHttpMailtoOrRelativeURL`. */
 export function exfilShaped(url: string): boolean {
   const cleaned = url
     // eslint-disable-next-line no-control-regex

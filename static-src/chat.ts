@@ -24,6 +24,8 @@ import {
   openTab,
   adoptSubject,
   activateTab,
+  claimNavigation,
+  navigationHeld,
   tabIdFor,
   getActiveTabId,
   renameTab,
@@ -48,7 +50,12 @@ import {
   transcriptViewFor,
   disposeChatView,
 } from "./messages.js";
-import { addAttachment, unownedAttachmentPaths } from "./attachments.js";
+import {
+  addAttachment,
+  addAttachmentTo,
+  toAttached,
+  unownedAttachmentPaths,
+} from "./attachments.js";
 import {
   saveComposerState,
   restoreComposerState,
@@ -57,12 +64,12 @@ import {
   flushComposerDraft,
   dropComposerState,
 } from "./composer-state.js";
-import { setCurrentModel, getLastModel } from "./session-context.js";
+import { getLastModel } from "./session-context.js";
 import { refreshContextUI } from "./context-ui.js";
 import { $ } from "./dom.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { info } from "./toast.js";
-import { named, noticeSubject } from "./notice-subject.js";
+import { chatNotice, named, noticeSubject } from "./notice-subject.js";
 import { createChat, forkChat, setMode, type CreatedChat } from "./actions/chat.js";
 import { newOpID } from "./transport.js";
 
@@ -360,27 +367,28 @@ function seedChat(header: ChatHeader): void {
 }
 
 /**
- * Adopt the tab a creating command opened server-side: paint it, hand the pending-op
- * machine what committed, activate. The reply carries the committed subject; with none,
- * the op is retired.
+ * Adopt the tab a creating command opened server-side: paint it and hand the pending-op machine
+ * what committed. Answers the tab id, or "" when the reply carried no subject and the op was retired.
  */
-function adoptCreatedTab(opID: string, created: CreatedChat): void {
+function adoptCreatedTab(opID: string, created: CreatedChat): string {
   const subject = created.subject;
   if (subject === undefined) {
     opFailed(opID);
-    return;
+    return "";
   }
   adoptSubject(subject, created.chat.name === "" ? NEW_CHAT_NAME : created.chat.name);
   adoptCommitted(opID, subject, created.version, true);
-  activateTab(subject.id);
+  return subject.id;
 }
 
 /**
  * Create a new chat and open its tab, resolving to the id or "" when refused. Files staged
- * with no chat move to it; a non-empty initialPrompt or files send at once. Every caller
- * awaits or detaches explicitly: a bare `void` then `getActiveId()` reads the PREVIOUS chat.
+ * with no chat move to it; a non-empty initialPrompt or files send at once. The tab takes the
+ * view only if the user made no navigation since the call; the store's active chat equals the
+ * id after the await iff it did. Every caller awaits or detaches explicitly.
  */
 export async function createSession(initialPrompt?: string): Promise<string> {
+  const ticket = claimNavigation();
   const model = getLastModel();
   // Minted here, never inside run(), which retries would re-run (a second chat per gesture).
   // Registered BEFORE the dispatch so the tabs frame correlates.
@@ -397,52 +405,81 @@ export async function createSession(initialPrompt?: string): Promise<string> {
   }
   seedChat(created.chat);
   const id = created.chat.id;
+  const tabID = adoptCreatedTab(opID, created);
+  const sends = initialPrompt !== undefined && (initialPrompt !== "" || carried.length > 0);
+  if (!navigationHeld(ticket)) {
+    // The user moved on, so the composer on screen is another chat's: the carried files and the
+    // prompt go to the new chat by id.
+    if (sends) {
+      void submitPrompt(id, initialPrompt, { attachments: carried.map(toAttached) });
+    } else {
+      for (const path of carried) {
+        addAttachmentTo(id, path);
+      }
+    }
+    return id;
+  }
   setActive(id);
-  // The composer is THIS chat's from here, so text typed during the round trip is not filed
-  // under the chat just left.
+  // Ahead of the activation, whose save would drop what the empty composer held: the retarget
+  // hands its text to this chat, and the files follow.
   retargetComposer(id);
   for (const path of carried) {
     addAttachment(path);
   }
-  // The reply carries the tab the create opened server-side, so the row is painted and
-  // ACTIVATED from the response, with no second round trip.
-  adoptCreatedTab(opID, created);
-
-  if (initialPrompt !== undefined && (initialPrompt !== "" || carried.length > 0)) {
-    setCurrentModel(model);
-    sendPrompt(initialPrompt);
+  if (tabID !== "") {
+    activateTab(tabID);
+  }
+  if (sends) {
+    void submitPrompt(id, initialPrompt);
   }
   return id;
 }
 
+const FRESH_TANGENT_NOTICE =
+  "This tangent started without the parent conversation, so the agent has none of its context.";
+
 /**
  * Open a TANGENT off `parentChatID` as a SUB-TAB: `chat.fork` binds it to KAS's
- * `session/fork`, so nothing is copied or synced. `TabSubject.Parent` is set once, making a
- * cycle unrepresentable.
+ * `session/fork`, so nothing is copied or synced. It forks at the head, or after the turn
+ * `atMessageID` opened. `TabSubject.Parent` is set once, making a cycle unrepresentable. The
+ * sub-tab takes the view only if the user made no navigation since the call.
  */
-export async function openTangentChat(parentChatID: string): Promise<void> {
+export async function openTangentChat(parentChatID: string, atMessageID?: string): Promise<void> {
   if (parentChatID === "" || get(parentChatID) === undefined) {
     return;
   }
-  const model = get(parentChatID)?.model ?? getLastModel();
+  const ticket = claimNavigation();
   // The fork creates the chat and MINTS its id, so the sub-tab can only open once the
   // reply lands.
   const opID = newOpID();
   beginAdopt(opID);
-  const created = await forkChat.dispatch({ opID, parentChatID });
+  const created = await forkChat.dispatch({
+    opID,
+    parentChatID,
+    ...(atMessageID === undefined ? {} : { messageID: atMessageID }),
+  });
   if (created === null) {
     opFailed(opID);
     return;
   }
   seedChat(created.chat);
   const id = created.chat.id;
-  setActive(id);
-  // The tangent is the active chat now, so the composer must be its own first.
-  retargetComposer(id);
   // The reply's subject already carries the PARENT the coordinator nested the tangent
-  // under, so adopting it paints the sub-tab and activates it with no second POST.
-  adoptCreatedTab(opID, created);
-  setCurrentModel(model);
+  // under, so adopting it paints the sub-tab with no second POST.
+  const tabID = adoptCreatedTab(opID, created);
+  if (navigationHeld(ticket)) {
+    if (tabID !== "") {
+      activateTab(tabID);
+    } else {
+      // No tab to activate, so the store pointer and the composer move by hand.
+      setActive(id);
+      retargetComposer(id);
+    }
+  }
+  // After the activation, so the notice offers Open only when the tangent is off screen.
+  if (created.fresh) {
+    chatNotice(id, FRESH_TANGENT_NOTICE, "warning");
+  }
 }
 
 /**
@@ -494,6 +531,13 @@ export async function attachPathsToActiveChat(paths: readonly string[]): Promise
     if (id === "") {
       return;
     }
+    if (getActiveId() !== id) {
+      // The user moved on while the chat was created, so the files wait on it unseen.
+      for (const p of paths) {
+        addAttachmentTo(id, p);
+      }
+      return;
+    }
   }
   const tabID = tabIdFor("chat", id);
   if (tabID !== "" && getActiveTabId() !== tabID) {
@@ -538,6 +582,10 @@ export async function openPreviousSession(
   if (outcome !== "opened") {
     // The framework's error surface has already spoken; the row stays.
     return "failed";
+  }
+  if (tabIdFor("chat", chatID) !== getActiveTabId()) {
+    // The user moved to another tab while the open was in flight, so the view stays theirs.
+    return "opened";
   }
   activateChatView(chatID);
   refreshChatView(chatID);

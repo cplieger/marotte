@@ -22,6 +22,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/git"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/workspace"
 )
@@ -68,7 +69,7 @@ var lineRangeRe = regexp.MustCompile(`^(.+):(\d+)-(\d+)$`)
 // A reference that fails to resolve still sends a block carrying its reason, so the prompt never
 // fails on one. Each item is rendered as soon as it resolves, so at most one unbounded body is held
 // at a time.
-func mentionBlocks(ctx context.Context, text string, ws Workspace, mcp bridgeCaller) []map[string]any {
+func mentionBlocks(ctx context.Context, text string, ws Workspace, mcp SessionCaller) []map[string]any {
 	matches := mentionRe.FindAllStringSubmatch(text, -1)
 	var resolve [][]string
 	seen := make(map[string]struct{}, len(matches))
@@ -147,7 +148,7 @@ func textResourceBlock(uri, text string) map[string]any {
 	}
 }
 
-func resolveMention(ctx context.Context, provider, query string, ws Workspace, mcp bridgeCaller) ([]mentionPart, error) {
+func resolveMention(ctx context.Context, provider, query string, ws Workspace, mcp SessionCaller) ([]mentionPart, error) {
 	switch provider {
 	case "file":
 		return mentionFile(ctx, query, ws)
@@ -523,10 +524,10 @@ func mentionSteering(ctx context.Context, query string, ws Workspace) ([]mention
 	return []mentionPart{fixedText("## Included Rules (workspace:" + rel + ")\n\n"), flexText(text)}, nil
 }
 
-// mentionMCP reads through the prompt's own bridge, so the server is resolved
-// in that chat's pool; a server the pool lacks is KAS's refusal. It has no
-// template arm: the composer writes a template already filled.
-func mentionMCP(ctx context.Context, query string, mcp bridgeCaller) ([]mentionPart, error) {
+// mentionMCP reads in the prompt's own session, so KAS resolves the server among
+// that session's bindings and names a server it lacks. It has no template arm:
+// the composer writes a template already filled.
+func mentionMCP(ctx context.Context, query string, mcp SessionCaller) ([]mentionPart, error) {
 	server, uri, ok := strings.Cut(query, ":")
 	if !ok || server == "" || uri == "" {
 		return nil, errors.New("expected server:uri")
@@ -534,14 +535,27 @@ func mentionMCP(ctx context.Context, query string, mcp bridgeCaller) ([]mentionP
 	if mcp == nil {
 		return nil, errors.New("MCP is not available")
 	}
-	resp, err := mcp.Call(ctx, marotte.MethodMCPGetResource, map[string]any{"serverName": server, keyURI: uri})
+	resp, err := mcp.Call(ctx, marotte.MethodMCPGetResource, sessionParams(mcp, map[string]any{"serverName": server, keyURI: uri}))
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return nil, fmt.Errorf("this prompt's MCP reads took longer than %s", mentionMCPBudget)
+	}
+	if m, ok := rpcerr.MappedOf(err); ok {
+		switch m.ErrorType {
+		case rpcerr.McpServerNotDeclaredError:
+			return nil, fmt.Errorf("this chat's agent does not use the MCP server %s", server)
+		case rpcerr.McpServerNotConnectedError:
+			return nil, fmt.Errorf("the MCP server %s is not connected", server)
+		}
 	}
 	if err != nil || resp == nil {
 		return nil, errors.New("the MCP server could not be read")
 	}
-	raw := resp.Result
+	return mcpResourceParts(server, uri, resp.Result)
+}
+
+// mcpResourceParts is a resources/read result as the mention's text: each text content inline, each blob named
+// by its type.
+func mcpResourceParts(server, uri string, raw json.RawMessage) ([]mentionPart, error) {
 	var res struct {
 		Contents []struct {
 			Text     *string `json:"text"`

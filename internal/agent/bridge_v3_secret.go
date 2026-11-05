@@ -1,8 +1,9 @@
 // `_kiro/secret/{get,store,delete}`, answered from internal/secretstore. KAS keeps MCP OAuth
 // results only in memory and asks the client to hold them, gated on
 // `_meta.kiro.secretStorage`, declared only when a store exists: KAS rethrows a store failure
-// into MCP connect. Keys and values are never logged; one store serves the engine's
-// every session because KAS's key namespace is global.
+// into MCP connect. Values are never logged; log lines carry the key, KAS's digest of the
+// server config, which names no credential. One store serves the engine's every session
+// because KAS's key namespace is global.
 
 package agent
 
@@ -14,6 +15,20 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/secretstore"
 )
+
+// openSecretStore opens the one store every engine generation's sessions share, nil without a config dir or when
+// it cannot open: then the engine is not offered `_meta.kiro.secretStorage` and MCP OAuth re-registers per spawn.
+func openSecretStore(configDir string) *secretstore.Store {
+	if configDir == "" {
+		return nil
+	}
+	s, err := secretstore.New(configDir)
+	if err != nil {
+		slog.Error("secretstore: open failed; MCP credentials will not persist", "error", err)
+		return nil
+	}
+	return s
+}
 
 // secretKeyParams is the shape of a get/delete request: `{key}`.
 type secretKeyParams struct {

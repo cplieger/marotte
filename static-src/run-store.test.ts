@@ -1431,9 +1431,9 @@ describe("the retry ladder behind a run read that produced nothing", () => {
   });
 
   it("still climbs for a 503, and the line it gives up on names that status", async () => {
-    // The skip is narrow to ONE status rather than to any failure carrying one: a 503 is an engine
-    // with no workflow verbs, which says nothing about whether this run exists, so it keeps the
-    // bounded ladder it is the reason for.
+    // The skip is narrow to ONE status rather than to any failure carrying one: a 503 is the server
+    // starting up or shutting down, which says nothing about whether this run exists, so it keeps
+    // the bounded ladder.
     vi.useFakeTimers();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     responses = [undefined, undefined, undefined, undefined];

@@ -83,17 +83,14 @@ func userNameTooLong(name string) bool {
 	return len(utf16.Encode([]rune(name))) > marotte.MaxUserChatNameUnits
 }
 
-// RenameOutcome reads a _kiro/session/rename reply: an RPC error, an in-band error
-// or {success:false} are all failures.
+// RenameOutcome reads a _kiro/session/rename reply: a call error (the engine's in-band
+// refusal arrives as one) or {success:false} is a failure.
 func RenameOutcome(resp *marotte.RPCResponse, err error) error {
 	if err != nil {
 		return err
 	}
 	if resp == nil {
 		return errRenameRefused
-	}
-	if resp.Error != nil {
-		return resp.Error
 	}
 	return RenameResultOutcome(resp.Result)
 }

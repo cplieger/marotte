@@ -18,9 +18,18 @@ A change to how chats or settings are stored adds no migration code, compatibili
 
 ## Checks
 
-The census tests in `internal/kascap` compare the capability table with kiro-cli's own agent-server bundle under `~/.local/share/kiro-cli/kas/`. On a pull request that changes `KIRO_CLI_VERSION` or a `KIRO_CLI_SHA256` digest, CI downloads each release archive whose pin changed, x86_64 and aarch64 alike, checks its sha256, reads the agent server out of it and runs them against each. Every other CI run skips them.
+The census tests in `internal/kascap` compare the capability table with kiro-cli's own agent-server bundle, which they read from `$KIRO_RUNTIME_DIR`, else `~/.local/share/kiro-cli/kas/`. On a pull request that changes `KIRO_CLI_VERSION` or a `KIRO_CLI_SHA256` digest, CI downloads each release archive whose pin changed, x86_64 and aarch64 alike, checks its sha256, reads the agent server out of it and runs them against each. Every other CI run skips them.
 
 After a change to that package, run `go test -v ./internal/kascap/` on a machine with the pinned kiro-cli, and check that no census test reports SKIP. A failure prints the `-update` command, and every line it adds is a capability to judge.
+
+To unpack a pinned kiro-cli that is not installed, run it once against a scratch home. `env -u` keeps an inherited `KIRO_KAS_*` path, `KIRO_RUNTIME_DIR` or `KIRO_HOME` from pointing it at another tree, and keeps a kiro-cli of another version from pruning the live runtime directory:
+
+```sh
+curl -fsSLO https://desktop-release.q.us-east-1.amazonaws.com/<version>/kirocli-x86_64-linux.zip
+unzip -q kirocli-x86_64-linux.zip
+env -u KIRO_KAS_SERVER_PATH -u KIRO_KAS_NODE_PATH -u KIRO_RUNTIME_DIR -u KIRO_HOME HOME=<scratch> ./kirocli/bin/kiro-cli acp --agent-engine v3 </dev/null
+env -u KIRO_RUNTIME_DIR -u KIRO_HOME HOME=<scratch> go test ./internal/kascap/
+```
 
 The `e2e-sse` test project runs against a real server binary and skips unless `SSE_FIXTURE` names one, which CI never sets. After a change to the SSE stream or the sync digest, build that binary and run the project:
 

@@ -35,8 +35,9 @@ import {
   type ToolRenderInfo,
 } from "./tool-schema.js";
 import type { ToolDenial, ToolInteraction, ToolOffload } from "./types.js";
+import type { DenialBasis } from "./wire/types.gen.js";
 import { buildPath } from "./route-path.js";
-import { interactionFact } from "./interaction.js";
+import { askBucket, interactionFact } from "./interaction.js";
 import { el } from "@cplieger/ui";
 
 /** Build a tool-call element. Does not append it to the DOM. */
@@ -79,6 +80,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     // Never cleared: the wire field is `omitempty`, so absence means unchanged.
     node.dataset["declined"] = "1";
   }
+  stampRejection(node, opts.interaction);
   if (info.mcp !== null) {
     node.dataset["mcpServer"] = info.mcp.server_name;
   }
@@ -148,6 +150,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   wireFileLink(node, info.filePath, depth1 === "diff");
   syncOffloadLink(node, opts.offload);
   syncInteractionFact(node, opts.interaction);
+  syncClassifierMarks(node, opts.classifierApproved === true, opts.classifierNote ?? "");
 
   // An edit's diff IS its depth 1, so it is inserted here, not deferred.
   const resting = depth1 === "diff" ? restingDiff(opts, info) : null;
@@ -199,18 +202,55 @@ export function syncInteractionFact(
   if (interaction === undefined) {
     return;
   }
+  stampRejection(card, interaction);
   const text = interactionFact(interaction);
   const summary = card.querySelector(".tool-summary");
   if (summary === null) {
     return;
   }
-  let line = summary.querySelector<HTMLElement>(":scope > .tool-fact");
+  let line = summary.querySelector<HTMLElement>(":scope > .tool-fact:not(.tool-classifier-note)");
   if (line === null) {
     line = el("div", { className: "tool-fact" });
-    summary.appendChild(line);
+    // Before a classifier note already mounted, so the line order matches a card built with both.
+    summary.insertBefore(line, summary.querySelector(":scope > .tool-classifier-note"));
   }
   if (line.textContent !== text) {
     line.textContent = text;
+  }
+}
+
+/** Kiro's safety check on a card: a header badge once it let the call run with no ask, and its reason
+ *  as a line once it handed the call to a person. Both one-way, like their fields. */
+export function syncClassifierMarks(card: HTMLElement, approved: boolean, note: string): void {
+  const header = card.querySelector(".tool-header");
+  if (approved && header !== null && header.querySelector(".tool-classifier-badge") === null) {
+    const title = header.querySelector(".tool-title");
+    const badge = el(
+      "span",
+      { className: "tool-classifier-badge", [CHROME_ATTR]: "" },
+      "Approved by Kiro's safety check",
+    );
+    if (title !== null) {
+      title.after(badge);
+    } else {
+      header.appendChild(badge);
+    }
+  }
+  const summary = card.querySelector(".tool-summary");
+  if (
+    note !== "" &&
+    summary !== null &&
+    summary.querySelector(":scope > .tool-classifier-note") === null
+  ) {
+    summary.appendChild(el("div", { className: "tool-fact tool-classifier-note" }, note));
+  }
+}
+
+/** Stamp a call the user rejected at its prompt, for `applyOutcome` on the update path,
+ *  which only has the DOM. One-way, like the field. */
+function stampRejection(card: HTMLElement, interaction: ToolInteraction | undefined): void {
+  if (interaction !== undefined && askBucket(interaction) === "rejected") {
+    card.dataset["rejected"] = "1";
   }
 }
 
@@ -398,9 +438,12 @@ export function applyOutcome(
   // A policy refusal is its OWN state, not a failure. Read from the dataset too, for
   // the update path, which only has the DOM.
   const denied = info.denial !== null || node.dataset["denied"] === "1";
-  // A DECLINED call ran correctly and refused: neither success nor failure. The DOM is
-  // its one source. `denied` outranks it, because that command never ran.
-  const declined = node.dataset["declined"] === "1";
+  // DECLINED is neither success nor failure, from either cause: the tool ran correctly
+  // and refused, or the user rejected it at its prompt, which KAS settles `failed` or a
+  // stop `aborted`. The DOM is its one source. `denied` outranks it.
+  const declined =
+    node.dataset["declined"] === "1" ||
+    (node.dataset["rejected"] === "1" && (status === "failed" || status === "aborted"));
   const state: OutcomeState = denied
     ? "denied"
     : declined
@@ -584,12 +627,11 @@ const DEFERRED_PARTS: readonly DeferredPart[] = [
  *  then fetches its bulk in ONE request and repaints; a `null` bulk is not retried. */
 function detailsBody(node: HTMLDivElement, ctx: DeferredCtx): () => void {
   const { opts, depth1 } = ctx;
-  let built = false;
   return () => {
-    if (built) {
+    if (builtDetails.has(node)) {
       return;
     }
-    built = true;
+    builtDetails.add(node);
     const details = node.querySelector<HTMLElement>(".tool-details");
     if (details === null) {
       return;
@@ -600,7 +642,7 @@ function detailsBody(node: HTMLDivElement, ctx: DeferredCtx): () => void {
       opts.live && opts.input !== undefined
         ? `<pre class="tool-input">${escText(JSON.stringify(opts.input, null, 2))}</pre>`
         : "";
-    const head = denialBlock(opts.denial) + inputBlock;
+    const head = denialBlock(opts.denial ?? heldDenials.get(node)) + inputBlock;
     if (head !== "") {
       details.insertAdjacentHTML("afterbegin", head);
     }
@@ -623,18 +665,67 @@ function detailsBody(node: HTMLDivElement, ctx: DeferredCtx): () => void {
   };
 }
 
+/** Cards whose details region `detailsBody` has filled. */
+const builtDetails = new WeakSet<HTMLElement>();
+/** A denial adopted after the build, for a details region first opened later. */
+const heldDenials = new WeakMap<HTMLElement, ToolDenial>();
+
+/** Mark a mounted card refused by a denial that arrived after its build (a terminal
+ *  frame's), so it paints `denied` and its details carry the denial block once. Call it
+ *  before `applyOutcome`, which reads the stamp. Idempotent. */
+export function adoptDenial(node: HTMLElement, denial: ToolDenial): void {
+  if (node.dataset["denied"] === "1") {
+    return;
+  }
+  node.dataset["denied"] = "1";
+  const details = node.querySelector(".tool-details");
+  if (details === null) {
+    return;
+  }
+  heldDenials.set(node, denial);
+  node.dataset["disclosable"] = "1";
+  if (builtDetails.has(node)) {
+    details.insertAdjacentHTML("afterbegin", denialBlock(denial));
+  }
+  refreshToolDisclosure(node);
+}
+
+/** Why a refusal names no rule, in the reader's words. */
+const DENIAL_REASONS: Record<DenialBasis, string> = {
+  unparseable:
+    "Kiro could not parse this command to check it against your permissions, so it did not run.",
+  "cedar-unavailable": "Kiro's permission engine failed to load, so every call is refused.",
+  "not-loaded": "No permission policy is loaded, so every call is refused.",
+  "permissions-invalid": "A permissions file failed to parse, so every call is refused.",
+};
+
 /** The rule that refused the call, and where it lives: the user owns the policy. */
 function denialBlock(d: ToolDenial | undefined): string {
   if (d === undefined) {
     return "";
   }
-  const rows: string[] = [
-    `<div class="tool-denial-row"><span>Capability</span><code>${escText(d.capability)}</code></div>`,
-  ];
+  const rows: string[] = [];
+  if (d.basis !== undefined) {
+    rows.push(
+      `<div class="tool-denial-row"><span>Reason</span><div>${escText(DENIAL_REASONS[d.basis])}</div></div>`,
+    );
+  }
+  if (d.capability !== "") {
+    rows.push(
+      `<div class="tool-denial-row"><span>Capability</span><code>${escText(d.capability)}</code></div>`,
+    );
+  }
   if (d.resource !== "") {
     rows.push(
       `<div class="tool-denial-row"><span>Resource</span><code>${escText(d.resource)}</code></div>`,
     );
+  }
+  if (d.rule?.effect === "evaluate") {
+    // The rationale is already the call's output; the rule and its source would read as a user's rule.
+    rows.push(
+      `<div class="tool-denial-row"><span>Reason</span><div>Blocked by Kiro's safety check</div></div>`,
+    );
+    return `<div class="tool-denial" ${CHROME_ATTR}>${rows.join("")}</div>`;
   }
   if (d.rule !== undefined) {
     const patterns = [

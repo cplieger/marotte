@@ -359,7 +359,6 @@ func (rs *Runs) rawInspect(ctx context.Context, workflowID string) (json.RawMess
 	var res workflow.InspectResult
 	if json.Unmarshal(raw, &res) == nil && res.State != nil {
 		rs.seedRouterSteps(workflowID, res.State)
-		rs.signals.observe(workflowID, res.State)
 	}
 	return raw, nil
 }

@@ -69,12 +69,13 @@ func (t *Translator) handleCompactionFailed(ctx context.Context, chatID marotte.
 		}) {
 		return
 	}
-	// Turn-scoped: the turn holding this entry grades as failed.
+	// TurnScoped though no turn ends here: the entry just appended shows detail in its turn's card, which is all the
+	// client's on-screen suppression needs.
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
 		Code: marotte.ErrCodeCompactionFailed, Message: detail, TurnScoped: true,
 	}))
-	// A compaction failure does not prove the turn ended: the host bounds the silence of the turn it was recorded
-	// in, then interrupts it; recorded between turns, it bounds none.
+	// A compaction failure does not prove the turn ended; CompactionFailed decides whether the host bounds it.
+	// Recorded between turns, it names no turn to bound.
 	if turnID != "" {
 		t.turnInterrupt.CompactionFailed(chatID, turnID, detail)
 	}

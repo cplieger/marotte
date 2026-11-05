@@ -44,6 +44,7 @@ vi.mock("./decision-dock.js", () => ({
 // the block dispatcher and the store, neither of which this suite stages.
 vi.mock("./find-in-chat.js", () => ({ openChatFindAt: noop }));
 vi.mock("./tabs.js", () => ({
+  activeChatRef: () => "",
   descendantChatsOf: () => [],
   hasTab: () => false,
   // The pane's route sync: a no-op here, because no tab is open to point.

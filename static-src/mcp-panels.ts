@@ -239,6 +239,9 @@ function formCarry(existing: Server | null): Partial<Server> {
   if (existing?.timeout_ms !== undefined) {
     out.timeout_ms = existing.timeout_ms;
   }
+  if (existing?.version_negotiation !== undefined) {
+    out.version_negotiation = existing.version_negotiation;
+  }
   if (existing?.oauth_client_metadata_url !== undefined) {
     out.oauth_client_metadata_url = existing.oauth_client_metadata_url;
   }

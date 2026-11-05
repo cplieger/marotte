@@ -29,7 +29,7 @@ func (rt *Runtime) initDispatch() {
 	// The request-shaped asks, behind both doors (routeInboundRequest, dispatchRequest).
 	rt.askHandlers = map[string]askHandler{
 		// Refused on a short budget for a scheduled run.
-		marotte.MethodRequestPermission: rt.runs.permissionWithUnattendedFloor(rt.askReportsStepProgress(rt.turnApprovalExpectsRestores(rt.translator.HandlePermissionRequest))),
+		marotte.MethodRequestPermission: rt.runs.permissionWithUnattendedFloor(rt.askReportsStepProgress(rt.translator.HandlePermissionRequest)),
 		marotte.MethodElicitationCreate: rt.askReportsStepProgress(rt.translator.HandleElicitationCreate),
 		// Gated on the _meta.kiro.userInput initialize capability (bridge.go).
 		marotte.MethodKiroUserInput: rt.askReportsStepProgress(rt.translator.HandleUserInput),
@@ -104,8 +104,8 @@ func (rt *Runtime) initDispatch() {
 		// The metadata channels.
 		marotte.ACPUpdateSessionInfo: rt.translator.HandleSessionInfoUpdate,
 		marotte.ACPUpdateUsage:       ignoreAttribution(rt.translator.HandleUsageUpdate),
-		// The only frame telling marotte that KAS moved the effort level itself.
-		marotte.ACPUpdateConfigOption: rt.coord.healEffort(rt.translator.HandleConfigOptionUpdate),
+		// The only frame telling marotte that KAS moved the effort level, or offered workflowLaunch, itself.
+		marotte.ACPUpdateConfigOption: rt.coord.healWorkflowLaunch(rt.coord.healEffort(rt.translator.HandleConfigOptionUpdate)),
 		// The slash-menu catalog; any session's own frame feeds it.
 		marotte.ACPUpdateAvailableCommands: rt.translator.HandleAvailableCommandsUpdate,
 	}
@@ -217,44 +217,19 @@ func (rt *Runtime) askReportsStepProgress(inner askHandler) askHandler {
 	}
 }
 
-// turnApprovalExpectsRestores marks a turn approval's session as restoring before the ask reaches
-// anyone who could answer it, so no restore can arrive unmarked.
-func (rt *Runtime) turnApprovalExpectsRestores(inner askHandler) askHandler {
-	return func(ctx context.Context, chatID marotte.ChatID, origin translate.AskOrigin, msg *marotte.RPCResponse) {
-		var params struct {
-			SessionID string `json:"sessionId"`
-			Meta      struct {
-				Kiro struct {
-					Type string `json:"type"`
-				} `json:"kiro"`
-			} `json:"_meta"`
-		}
-		if json.Unmarshal(msg.Params, &params) == nil && params.Meta.Kiro.Type == approvalTypeTurn {
-			rt.coord.turns.expectRestores(chatID, params.SessionID)
-		}
-		inner(ctx, chatID, origin, msg)
-	}
-}
-
 func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
-	var env struct {
-		Params translate.ACPSessionUpdateEnvelope `json:"params"`
-	}
-	if json.Unmarshal(msg.Params, &env.Params) != nil || env.Params.Update == nil {
-		return
-	}
-	var base translate.ACPSessionUpdateBase
-	if json.Unmarshal(env.Params.Update, &base) != nil {
+	env, base, ok := translate.DecodeSessionUpdate(msg.Params)
+	if !ok {
 		return
 	}
 
 	// The one shared classifier, so a step frame classifies the same through either door.
-	attr := rt.translator.Attribute(chatID, env.Params.SessionID, base.Meta.Kiro.Workflow)
+	attr := rt.translator.Attribute(chatID, env.SessionID, base.Meta.Kiro.Workflow)
 
 	// A replayed frame is history: live handlers would open a phantom turn nothing ends. The gate is per frame, since current-state frames are untagged.
 	if base.Meta.Kiro.Replay {
 		// A load in flight consumes the frame; otherwise it is dropped.
-		if !rt.replay.ingestReplayFrame(chatID, base.Kind, env.Params.Update) {
+		if !rt.replay.ingestReplayFrame(chatID, base.Kind, env.Update) {
 			slog.Debug("session/update: dropping replayed frame, no load in flight",
 				"chat_id", chatID, "kind", base.Kind)
 		}
@@ -265,15 +240,16 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatI
 	rt.translator.ReportStepProgress(attr)
 	rt.reportStepHeadway(attr, base.Kind)
 	if attr.Step {
-		rt.runs.askTurnEdge(attr.RunID, env.Params.SessionID, base.Edge())
+		rt.runs.askTurnEdge(attr.RunID, env.SessionID, base.Edge())
 	}
 
-	// Unhandled kinds fall through, user_message_chunk deliberately: marotte persists user messages itself.
-	fn, ok := rt.sessionUpdateHandlers()[base.Kind]
-	if !ok {
+	// The decode reported an unnamed kind, so a miss is a named kind this door does not consume,
+	// user_message_chunk deliberately: marotte persists user messages itself.
+	fn, handled := rt.sessionUpdateHandlers()[base.Kind]
+	if !handled {
 		return
 	}
-	fn(ctx, chatID, env.Params.Update, attr)
+	fn(ctx, chatID, env.Update, attr)
 }
 
 // reportStepHeadway refills a run's heal budget (Runs.healHeadway) on a step's model output. Only output kinds count:
@@ -291,25 +267,19 @@ func (rt *Runtime) reportStepHeadway(attr translate.FrameAttribution, kind marot
 // handleRunStepFrame is a parentless run host session's session/update door: every frame is a step's of the hosted
 // run, folded into the run record. Replayed frames are dropped.
 func (rt *Runtime) handleRunStepFrame(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
-	var env struct {
-		Params translate.ACPSessionUpdateEnvelope `json:"params"`
-	}
-	if json.Unmarshal(msg.Params, &env.Params) != nil || env.Params.Update == nil {
+	env, base, ok := translate.DecodeSessionUpdate(msg.Params)
+	if !ok || base.Meta.Kiro.Replay {
 		return
 	}
-	var base translate.ACPSessionUpdateBase
-	if json.Unmarshal(env.Params.Update, &base) != nil || base.Meta.Kiro.Replay {
-		return
-	}
-	attr := rt.translator.StepAttribution(workflowIDOf(chatID), env.Params.SessionID, base.Meta.Kiro.Workflow)
+	attr := rt.translator.StepAttribution(workflowIDOf(chatID), env.SessionID, base.Meta.Kiro.Workflow)
 	rt.translator.ReportStepProgress(attr)
 	rt.reportStepHeadway(attr, base.Kind)
-	rt.runs.askTurnEdge(workflowIDOf(chatID), env.Params.SessionID, base.Edge())
-	fn, ok := rt.runStepHandlers[base.Kind]
-	if !ok {
+	rt.runs.askTurnEdge(workflowIDOf(chatID), env.SessionID, base.Edge())
+	fn, handled := rt.runStepHandlers[base.Kind]
+	if !handled {
 		return
 	}
-	fn(ctx, chatID, env.Params.Update, attr)
+	fn(ctx, chatID, env.Update, attr)
 }
 
 type sessionUpdateHandler = func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr translate.FrameAttribution)

@@ -9,6 +9,8 @@ import { effect, el } from "@cplieger/ui";
 
 import { isToolDone, commandTitle, toolTitleText, type ToolKind } from "./tool-schema.js";
 import {
+  adoptDenial,
+  syncClassifierMarks,
   buildToolCard,
   insertDiffPreview,
   expandToolDetails,
@@ -594,6 +596,9 @@ export function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: st
   if (tc.declined === true) {
     el.dataset["declined"] = "1";
   }
+  if (tc.denial !== undefined) {
+    adoptDenial(el, tc.denial);
+  }
   // Status is applied last: the bare-disclosure predicate reads `.tool-output` back from the DOM, and a terminal
   // frame often carries both. The output check below trims, like the predicate.
   if (tc.output !== undefined && tc.output.trim() !== "") {
@@ -604,6 +609,7 @@ export function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: st
   }
   syncOffloadLink(el, tc.offload);
   syncInteractionFact(el, tc.interaction);
+  syncClassifierMarks(el, tc.classifier_approved === true, tc.classifier_note ?? "");
   if (tc.status !== undefined) {
     applyStatusUpdate(el, tc.status);
     if (isToolDone(tc.status)) {

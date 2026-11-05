@@ -24,6 +24,7 @@ const KIND_SET: Record<EntryKind, true> = {
   plan: true,
   compaction: true,
   compaction_failed: true,
+  context_reset: true,
   safety_blocked: true,
   model_switched: true,
   model_routed: true,

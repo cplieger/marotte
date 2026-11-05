@@ -35,6 +35,10 @@ export interface BuildToolCardOpts {
   /** The tool RAN CORRECTLY AND REFUSED; `status` stays `completed` and the reason is
    *  the tool's own `output`. */
   declined?: boolean;
+  /** Kiro's safety check let the call run with no ask. */
+  classifierApproved?: boolean;
+  /** Why Kiro's safety check handed the call to a person. */
+  classifierNote?: string;
   /** The workspace-relative file a hook card's hook is defined in. */
   sourcePath?: string;
   /** `input`, `output` and `diffs` are a PREVIEW of `GET /api/chats/{id}/tools/{id}`;
@@ -103,6 +107,12 @@ export function toolCardOptsFor(tc: ToolCall, live: boolean, chatID = ""): Build
   }
   if (tc.declined === true) {
     opts.declined = true;
+  }
+  if (tc.classifier_approved === true) {
+    opts.classifierApproved = true;
+  }
+  if (tc.classifier_note !== undefined && tc.classifier_note !== "") {
+    opts.classifierNote = tc.classifier_note;
   }
   if (tc.source_path !== undefined && tc.source_path !== "") {
     opts.sourcePath = tc.source_path;

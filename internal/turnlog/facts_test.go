@@ -95,18 +95,16 @@ func TestAbortedResultCarriesTheAnswer(t *testing.T) {
 	}
 }
 
-// The turn_close carries every completion frame's facts: request ids and
-// recoveries once each, tokens and streaming time summed, steering once each.
+// The turn_close carries every completion frame's facts: request ids,
+// recoveries and steering once each.
 func TestCloseCarriesTheCompletionFacts(t *testing.T) {
 	ctx := t.Context()
 	turn, rec := open(t)
 	turn.NoteTurnCompletion(&Completion{
 		RequestIDs: []string{"r1", "r2"}, Recoveries: []string{"empty"},
-		Throughput: &marotte.TurnThroughput{EstimatedTokens: 100, ActiveStreamingMs: 1000},
 	})
 	turn.NoteTurnCompletion(&Completion{
 		RequestIDs: []string{"r2", "r3", ""}, Recoveries: []string{"empty", "truncation"},
-		Throughput: &marotte.TurnThroughput{EstimatedTokens: 50, ActiveStreamingMs: 500},
 	})
 	turn.NoteTurnCompletion(&Completion{})
 	turn.NoteSteering([]string{"file:///w/.kiro/steering/a.md", "file:///w/.kiro/steering/a.md"})
@@ -122,9 +120,6 @@ func TestCloseCarriesTheCompletionFacts(t *testing.T) {
 	}
 	if want := []string{"empty", "truncation"}; !slices.Equal(footer.Recoveries, want) {
 		t.Errorf("recoveries = %v, want %v", footer.Recoveries, want)
-	}
-	if want := (marotte.TurnThroughput{EstimatedTokens: 150, ActiveStreamingMs: 1500}); footer.Throughput == nil || *footer.Throughput != want {
-		t.Errorf("throughput = %+v, want %+v", footer.Throughput, want)
 	}
 	if want := []string{"file:///w/.kiro/steering/a.md", "file:///w/.kiro/steering/b.md"}; !slices.Equal(footer.Steering, want) {
 		t.Errorf("steering = %v, want %v", footer.Steering, want)
@@ -151,6 +146,26 @@ func TestCloseCarriesTheNewestContextBreakdown(t *testing.T) {
 	}
 }
 
+// The close carries the turn's first wait before output: a later stamp (a steer's continuation)
+// does not replace it, and a nil note does not clear it.
+func TestCloseCarriesTheFirstFirstOutput(t *testing.T) {
+	turn, rec := open(t)
+	turn.NoteFirstOutput(nil)
+	turn.NoteFirstOutput(&marotte.TurnFirstOutput{TotalMs: 4200, SetupMs: 900, ModelMs: 2800})
+	turn.NoteFirstOutput(&marotte.TurnFirstOutput{TotalMs: 99})
+	turn.NoteFirstOutput(nil)
+	rec.seal(turn.Close(t.Context(), marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}))
+
+	var footer marotte.EntryTurnClose
+	if err := json.Unmarshal(rec.entries[0].Payload, &footer); err != nil {
+		t.Fatalf("parse turn_close: %v", err)
+	}
+	want := marotte.TurnFirstOutput{TotalMs: 4200, SetupMs: 900, ModelMs: 2800}
+	if footer.FirstOutput == nil || *footer.FirstOutput != want {
+		t.Errorf("first_output = %+v, want the first stamp %+v", footer.FirstOutput, want)
+	}
+}
+
 // A turn with no completion facts closes with none, so the footer shows no rows.
 func TestCloseWithoutCompletionFactsCarriesNone(t *testing.T) {
 	turn, rec := open(t)
@@ -159,7 +174,7 @@ func TestCloseWithoutCompletionFactsCarriesNone(t *testing.T) {
 	if err := json.Unmarshal(rec.entries[0].Payload, &footer); err != nil {
 		t.Fatalf("parse turn_close: %v", err)
 	}
-	if footer.Throughput != nil || footer.RequestIDs != nil || footer.Recoveries != nil || footer.Steering != nil {
+	if footer.ContextBreakdown != nil || footer.FirstOutput != nil || footer.RequestIDs != nil || footer.Recoveries != nil || footer.Steering != nil {
 		t.Errorf("an empty turn's footer carries %+v, want no completion facts", footer)
 	}
 }

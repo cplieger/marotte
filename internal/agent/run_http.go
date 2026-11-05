@@ -28,7 +28,7 @@ import (
 	"github.com/cplieger/webhttp/v4"
 )
 
-// handleRun serves GET /api/runs/{workflowId}: the run's full state. It grades a failed read three ways,
+// handleRun serves GET /api/runs/{workflowId}: the run's full state. It grades a failed read two ways,
 // since the client treats 404 as final.
 func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -91,16 +91,9 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	httpreply.WriteRawJSON(w, out)
 }
 
-// writeInspectErr grades a failed `inspect` three ways, since a client treats 404 as final: the engine
-// missing (503), the engine unreached (502), the engine answering that it has no such run (404).
+// writeInspectErr grades a failed `inspect` two ways, since a client treats 404 as final: the engine
+// unreached (502), the engine answering that it has no such run (404).
 func writeInspectErr(w http.ResponseWriter, id string, err error) {
-	if errors.Is(err, workflow.ErrUnknownMethod) {
-		slog.Warn("workflow inspect: engine not available on this kiro-cli",
-			"workflow_id", logsafe.Field(id), "detail", rpcerr.Details(err))
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
-			map[string]string{"error": "the workflow engine is not available on this kiro-cli build"})
-		return
-	}
 	// Only KAS's own *marotte.RPCError is the engine answering; anything else, an unread answer included, says
 	// nothing about whether the run exists, so it is not a 404.
 	if !isRPCRefusal(err) || marotte.ReplyUnread(err) {
@@ -435,8 +428,7 @@ func (rs *Runs) liveRunRowsStamped() ([]marotte.LiveRun, *marotte.SubjectStamp) 
 func (rr *runRoutes) head(ctx context.Context, workflowID string) (runHead, error) {
 	raw, err := rr.runs.rawInspect(ctx, workflowID)
 	if err != nil {
-		// Both mean no status to gate on.
-		if errors.Is(err, workflow.ErrUnknownMethod) || workflowNotFound(err) {
+		if workflowNotFound(err) {
 			return runHead{}, nil
 		}
 		return runHead{}, err

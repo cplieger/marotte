@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/tabs"
 )
@@ -120,7 +122,20 @@ func TestRewindChat_AStalledEngineAnswersStillApplyingAndTheRevertIsRecorded(t *
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	openChat(t, h, "c1")
+	// The close's drain briefly holds the admission slot after the turn closed, which the rewind's idle reservation
+	// would read as a turn open: wait for it.
+	drained := make(chan struct{}, 1)
+	drain := h.coord.drainAfterClose
+	h.coord.drainAfterClose = func(ctx context.Context, chatID marotte.ChatID, cf command.CloseFacts, ends command.EndFacts) {
+		drain(ctx, chatID, cf, ends)
+		drained <- struct{}{}
+	}
 	runPrompt(t, h, cs, "c1", "m-1")
+	select {
+	case <-drained:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Setup: the prompt's close never drained")
+	}
 	br.setCallResult(marotte.MethodCheckpointRevertMultiple, json.RawMessage(`{"success":true}`))
 	release := holdCall(t, br, marotte.MethodCheckpointRevertMultiple)
 

@@ -12,27 +12,17 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/toolbelt/v3"
 )
 
 type manifestSaveFixture struct {
-	handler     http.Handler
-	logs        *bytes.Buffer
-	tools       *toolsSlot
-	agentWrites *capturedWriteHooks
-	manifest    string
-	mu          sync.Mutex
-	kinds       []string
-}
-
-type capturedWriteHooks struct {
-	hooks map[string]agent.WriteHook
-}
-
-func (c *capturedWriteHooks) SetWriteHook(path string, hook agent.WriteHook) {
-	c.hooks[path] = hook
+	handler  http.Handler
+	logs     *bytes.Buffer
+	tools    *toolsSlot
+	manifest string
+	mu       sync.Mutex
+	kinds    []string
 }
 
 func newManifestSaveFixture(t *testing.T, initial string) *manifestSaveFixture {
@@ -63,9 +53,7 @@ func newManifestSaveFixture(t *testing.T, initial string) *manifestSaveFixture {
 		t.Fatalf("Setup: start the tools slot: %v", err)
 	}
 	t.Cleanup(fx.tools.Close)
-	fx.agentWrites = &capturedWriteHooks{hooks: map[string]agent.WriteHook{}}
-	files, err := filebrowse.New(filebrowse.NewSensitive(dir), []string{dir},
-		wireToolsManifestHook(fx.tools, fx.agentWrites))
+	files, err := filebrowse.New(filebrowse.NewSensitive(dir), []string{dir}, toolsManifestSaveHook(fx.tools))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,54 +142,5 @@ func TestToolsManifestSave_ValidSaveStartsAnEngineABadManifestKeptDown(t *testin
 		t.Errorf("Inventory() on the engine the save started: %v", err)
 	} else if len(inv.Tools) != 0 {
 		t.Errorf("Inventory().Tools on the engine the save started = %v, want the saved empty manifest", inv.Tools)
-	}
-}
-
-func TestToolsManifestAgentWrite_RefusesABadManifestAndAValidOneStartsTheEngine(t *testing.T) {
-	fx := newManifestSaveFixture(t, `{"version":1,"tools":{}}`)
-	hook, ok := fx.agentWrites.hooks[fx.manifest]
-	if !ok || hook.Check == nil || hook.Saved == nil {
-		t.Fatalf("agent write hooks = %v, want a Check and a Saved registered at %s", fx.agentWrites.hooks, fx.manifest)
-	}
-
-	err := hook.Check([]byte(`{"version":3,"tools":{}}`))
-	if err == nil || !strings.Contains(err.Error(), "tools.json was not saved: manifest version 3") {
-		t.Errorf("agent Check(version 3 manifest) = %v, want the parse error naming the version", err)
-	}
-	valid := []byte(`{"version":2,"tools":{}}`)
-	if err := hook.Check(valid); err != nil {
-		t.Fatalf("agent Check(valid manifest) = %v, want nil", err)
-	}
-	if err := os.WriteFile(fx.manifest, valid, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	hook.Saved()
-
-	if engine, reason := fx.tools.Engine(); engine == nil {
-		t.Errorf("Engine() after an agent write of a valid manifest = (nil, %v), want the engine up without a restart", reason)
-	}
-}
-
-func TestToolsManifestAgentWrite_ARestoredBadManifestTakesTheEngineDownWithItsReason(t *testing.T) {
-	fx := newManifestSaveFixture(t, `{"version":2,"tools":{}}`)
-	hook := fx.agentWrites.hooks[fx.manifest]
-	if engine, reason := fx.tools.Engine(); engine == nil {
-		t.Fatalf("Setup: Engine() over a valid manifest = (nil, %v), want the engine up", reason)
-	}
-	if err := os.WriteFile(fx.manifest, []byte(`{"version":3,"tools":{}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	hook.Saved()
-
-	engine, reason := fx.tools.Engine()
-	if engine != nil {
-		t.Fatal("Engine() after a restore put back a version-3 manifest = a live engine, want down")
-	}
-	if reason == nil || !strings.Contains(reason.Error(), "tools.json is invalid: manifest version 3") {
-		t.Errorf("Engine() reason after the restore = %v, want it to say tools.json is invalid: manifest version 3", reason)
-	}
-	if recs := loggedManifestRefusals(t, fx.logs); len(recs) != 1 || recs[0]["path"] != fx.manifest {
-		t.Errorf("ERROR records naming the unusable tools.json = %v, want one naming %s", recs, fx.manifest)
 	}
 }

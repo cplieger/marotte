@@ -89,6 +89,42 @@ func TestHandleMemoryOne_DeleteByID(t *testing.T) {
 	}
 }
 
+func TestHandleMemoryOne_DeleteOfAGoneIDIsDone(t *testing.T) {
+	cases := []struct {
+		name     string
+		refusal  *marotte.RPCError
+		wantCode int
+	}{
+		{
+			// The wire shape KAS's ACP layer gives a thrown InvalidMemoryCommandError.
+			"an id KAS no longer holds", &marotte.RPCError{
+				Code: -32603, Message: "Internal error",
+				Data: json.RawMessage(`{"details":"no memory with id \"m9\" to delete."}`),
+			}, http.StatusOK,
+		},
+		{
+			"any other refusal still fails", &marotte.RPCError{
+				Code: -32603, Message: "Internal error",
+				Data: json.RawMessage(`{"details":"'id' or 'title' is required for delete."}`),
+			}, http.StatusBadRequest,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			br.callRPCErrs = map[string]*marotte.RPCError{methodKiroMemoryDelete: tc.refusal}
+			req := httptest.NewRequest(http.MethodDelete, "/api/memory/m9", nil)
+			req.SetPathValue("id", "m9")
+			rec := httptest.NewRecorder()
+			h.config.handleMemoryOne(rec, req)
+			if rec.Code != tc.wantCode {
+				t.Errorf("DELETE = %d, want %d (%s)", rec.Code, tc.wantCode, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestWriteMemoryErr_ClassifiesTheFailure(t *testing.T) {
 	cases := []struct {
 		name     string

@@ -254,7 +254,7 @@ func TestCall_FrameTooLargeIsNonRetryableAndNamed(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := b.request(t.Context(), b.engineLane, "", marotte.MethodPrompt, nil, nil, nil)
+		_, _, _, err := b.request(t.Context(), b.engineLane, "", marotte.MethodPrompt, nil, nil, nil)
 		done <- err
 	}()
 	waitPending(t, b, 1)

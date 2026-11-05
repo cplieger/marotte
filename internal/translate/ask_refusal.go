@@ -10,14 +10,15 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// refuseAsk answers a server-to-client ask whose params did not decode, on the session it
-// arrived on. KAS's sendRequest has no timeout, so not answering strands the tool batch. The answer is the
-// kind's own fail-closed RESULT, never a JSON-RPC error: KAS's turn-approval path fails OPEN on an
-// error, applying every unreviewed write. Nothing decoded from the frame is logged (untrusted text).
+// refuseAsk answers a server-to-client ask marotte will not show (its params did not decode, or
+// cause names what else it refused), on the session it arrived on. KAS's sendRequest has no
+// timeout, so not answering strands the tool batch. The answer is the kind's own fail-closed
+// RESULT, never a JSON-RPC error: KAS's turn-approval path fails OPEN on an error, applying every
+// unreviewed write. Nothing decoded from the frame is logged (untrusted text).
 func refuseAsk(
 	ctx context.Context, chatID marotte.ChatID, origin AskOrigin, method string, requestID int64, result any, cause error,
 ) {
-	slog.Warn("ask params did not decode, answering fail-closed",
+	slog.Warn("ask refused before it was shown, answering fail-closed",
 		"method", method, "request_id", requestID, "chat_id", chatID, "error", cause)
 	if err := origin.Respond(ctx, requestID, result, nil); err != nil {
 		slog.Warn("fail-closed ask answer not delivered",

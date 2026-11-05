@@ -660,8 +660,7 @@
                     <output id="auto-compact-pct-value" for="auto-compact-pct">80%</output>
                     <span class="settings-save-status hidden" data-save-status="auto_compact_pct" aria-live="polite"></span>
                   </div>
-                  <input type="range" id="auto-compact-pct" min="50" max="90" step="5" value="80" aria-describedby="auto-compact-warning">
-                  <p class="section-hint hidden" id="auto-compact-warning">Above 80%, compaction can fail on models with a smaller context window, because too little room is left to run it.</p>
+                  <input type="range" id="auto-compact-pct" min="50" max="80" step="5" value="80">
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -770,7 +769,21 @@
                     <span class="section-option-label">Workflows</span>
                     <span class="settings-save-status hidden" data-save-status="workflows_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint" id="flag-workflows-hint">On: the agent hands work to workflows that run in the background while you keep chatting. Off: it uses subagents instead and waits for each to finish before it continues. Runs you start from Docs &gt; Workflows work either way. On by default.</p>
+                  <p class="section-hint" id="flag-workflows-hint">On: the agent can start workflows that run in the background while you keep chatting, and Workflow use says when. Off: it uses subagents instead and waits for each to finish before it continues. Runs you start from Docs &gt; Workflows work either way. On by default.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed" id="workflow-launch-row">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="workflow-launch">Workflow use</label>
+                    <span class="settings-save-status hidden" data-save-status="workflow_launch" aria-live="polite"></span>
+                  </div>
+                  <select id="workflow-launch" class="rf-select" aria-describedby="workflow-launch-hint">
+                    <option value="when-asked" selected>Only when asked</option>
+                    <option value="large-tasks">Only for large tasks</option>
+                    <option value="delegate-all">As much as possible</option>
+                  </select>
+                  <p class="section-hint" id="workflow-launch-hint">When the agent starts a workflow on its own. Only when asked: it does the work in the chat unless you ask for a workflow. Only for large tasks: it starts one for multi-step work or work that would fill the chat's context. As much as possible: it hands reading code, writing it, testing and review to workflows. Chats started on an older kiro-cli keep handing all work to workflows. Only when asked by default.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -967,7 +980,7 @@
                     <span class="section-option-label">Wait for MCP servers before a prompt</span>
                     <span class="settings-save-status hidden" data-save-status="mcp_wait_for_ready" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">When on, a message waits until your MCP servers have connected, so their tools work from the first message. Off by default, and a server still connecting after 60 seconds makes that message fail and names the server.</p>
+                  <p class="section-hint">When on, a message waits until your MCP servers have connected, so their tools work from the first message. Off by default. Each server gets its connect timeout, 60 seconds unless its config sets another, up to 10 minutes. A server still connecting after that makes the message fail and names the server. A Power's server is the exception, and the message goes on without its tools and shows a warning.</p>
                 </div>
               </div>
             </div>
@@ -1013,6 +1026,7 @@
                   <select id="native-rule-effect" class="rf-select">
                     <option value="ask" selected>Ask</option>
                     <option value="allow">Allow</option>
+                    <option value="evaluate">Kiro's safety check decides</option>
                     <option value="deny">Deny</option>
                   </select>
                 </label>
@@ -1069,7 +1083,7 @@
                 <h2 class="section-title">Scheduled runs</h2>
                 <span class="settings-save-status hidden" data-save-status="scheduled_auto_approve" aria-live="polite"></span>
               </div>
-              <p class="section-hint">Scheduled workflows run with nobody watching, so by default a request that needs approval is refused after 3 minutes and the run stops instead of waiting forever. Turn this on to approve those requests automatically, one at a time and never saved as rules.</p>
+              <p class="section-hint">Scheduled workflows run with nobody watching, so by default a request that needs approval is refused after 3 minutes and the run stops instead of waiting forever. Turn this on to approve those requests automatically, one at a time and never saved as rules. A request your organization requires a person to approve, or that Kiro's safety check handed to a person, is still refused.</p>
               <div class="section-option">
                 <label class="toggle">
                   <input type="checkbox" id="scheduled-auto-approve-checkbox" aria-label="Approve tool requests in scheduled runs instead of refusing them">

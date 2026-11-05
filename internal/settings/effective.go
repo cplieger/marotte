@@ -28,17 +28,17 @@ const DefaultContentCollectionEnabled = false
 // the user makes, never the reading of an absent key.
 const defaultGuardPayloadLinks = true
 
-// DefaultAutoCompactPct is the point at which marotte adds nothing to KAS's own 80/95, which
-// is why an invalid stored value reads as it.
+// DefaultAutoCompactPct is KAS's own default threshold, which is why an invalid stored value
+// reads as it.
 const (
 	DefaultAutoCompactionEnabled = true
 	DefaultAutoCompactPct        = 80
 )
 
 // ValidAutoCompactPct reports whether pct is a value the slider can produce:
-// 50..90 in steps of 5.
+// 50..80 in steps of 5. KAS fails a session door whose threshold is above 80.
 func ValidAutoCompactPct(pct int) bool {
-	return pct >= 50 && pct <= 90 && pct%5 == 0
+	return pct >= 50 && pct <= 80 && pct%5 == 0
 }
 
 // DefaultNotifyPRStatus is OFF while its siblings are ON: a PR's CI verdict is already on the
@@ -73,6 +73,7 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		SpecPlanningAskFirst:      defaultSpecPlanningAskFirst,
 		SteeringReminders:         defaultSteeringReminders,
 		WorkflowsEnabled:          DefaultWorkflowsEnabled,
+		WorkflowLaunch:            DefaultWorkflowLaunch,
 		ModelFallback:             defaultModelFallback,
 		WorkValidation:            defaultWorkValidation,
 		CloudFormationSafetyCheck: defaultCloudFormationSafety,
@@ -187,6 +188,9 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeyAutoDelegation: func(r json.RawMessage) error {
 			return decodeChecked(&out.AutoDelegation, r, KeyAutoDelegation, ValidFeatureChoice)
 		},
+		KeyWorkflowLaunch: func(r json.RawMessage) error {
+			return decodeChecked(&out.WorkflowLaunch, r, KeyWorkflowLaunch, ValidWorkflowLaunch)
+		},
 		KeyOutputStyle: func(r json.RawMessage) error {
 			return decodeChecked(&out.OutputStyle, r, KeyOutputStyle, ValidOutputStyle)
 		},
@@ -209,7 +213,7 @@ func decodeAutoCompactPct(dst *int, raw json.RawMessage) error {
 		return err
 	}
 	if !ValidAutoCompactPct(pct) {
-		return fmt.Errorf("settings: %s %d is not 50..90 in steps of 5", KeyAutoCompactPct, pct)
+		return fmt.Errorf("settings: %s %d is not 50..80 in steps of 5", KeyAutoCompactPct, pct)
 	}
 	*dst = pct
 	return nil

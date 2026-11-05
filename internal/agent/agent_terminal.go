@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"slices"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -553,7 +552,8 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 		Cwd     string `json:"cwd"`
 		// Args is a pointer so an explicit `[]` stays distinct from an omitted field.
 		Args *[]string `json:"args"`
-		// Env is the ACP terminal/create env array (KAS zEnvVariable {name,value}).
+		// Env is KAS's own (KIRO_SESSION_ID, AWS_SDK_UA_APP_ID): its shell tool takes no env,
+		// so no name here is the model's choice and the array passes unscreened.
 		Env             []termEnvVar `json:"env"`
 		OutputByteLimit int          `json:"outputByteLimit"`
 	}
@@ -565,16 +565,6 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 		at.failCreate(ctx, chatID, origin, msg, params.Command, "command is required")
 		return
 	}
-	// Screened before anything is created, so a refusal needs no teardown (agent_terminal_env.go).
-	if blocked := screenAgentEnv(params.Env, operatorAllowedEnv()); len(blocked) > 0 {
-		slog.Warn("refused an agent terminal that redirects execution through the environment",
-			"chat_id", chatID, "command", params.Command, "variables", strings.Join(blocked, ","))
-		at.fail(ctx, chatID, origin, msg, "refusing to set "+strings.Join(blocked, ", ")+
-			": these variables change what a program executes, so they are not accepted from the agent."+
-			" Pass the setting on the command itself, or have the operator allow the name via "+envAllowVar)
-		return
-	}
-
 	limit := outputBufferLimit
 	if params.OutputByteLimit > 0 && params.OutputByteLimit < limit {
 		limit = params.OutputByteLimit

@@ -381,9 +381,8 @@ const forgotten = new Set<string>();
 const answeredCause = new Map<string, string>();
 
 /** The ladder behind a run read that produced nothing: three attempts at 1s doubling, one per
- *  workflow id. Bounded because a failed read is not always transient — `handleRun` answers 503
- *  for `workflow.ErrUnknownMethod`, an engine with no workflow support at all, which no number
- *  of attempts can talk into describing a run. */
+ *  workflow id. Bounded because a failed read does not always clear within a few seconds, such as
+ *  the server's startup/shutdown 503 (`runtime-health.ts`). */
 const RUN_RETRY_LIMIT = 3;
 const RUN_RETRY_BASE_MS = 1000;
 

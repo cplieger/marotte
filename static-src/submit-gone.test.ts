@@ -39,7 +39,10 @@ vi.mock("./actions/chat.js", () => ({
   steerChat: { dispatch: mockSteer },
   queuePrompt: { dispatch: mockQueue },
 }));
-vi.mock("./typed-commands.js", () => ({ handleTypedCommand: mockTypedCommand }));
+vi.mock("./typed-commands.js", () => ({
+  handleTypedCommand: mockTypedCommand,
+  terminalCommandRefusal: () => null,
+}));
 vi.mock("./slash-menu.js", () => ({ invokesCatalogCommand: mockInvokesCatalog }));
 vi.mock("./attachments.js", () => ({
   takeAttachments: mockTakeAttachments,

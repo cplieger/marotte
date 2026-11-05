@@ -36,7 +36,6 @@ const registeredEvents = [
   "open_external_url",
   "pending_snapshot",
   "permission_needed",
-  "permissions_changed",
   "policy_error",
   "run_asks",
   "run_finished",

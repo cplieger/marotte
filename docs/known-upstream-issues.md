@@ -4,11 +4,11 @@ This page lists the upstream issues that affect marotte and is updated when one 
 
 ## Agent engine
 
-### Chats in modes other than Default wait for each other
+### Chats in Plan, Autonomous, a spec mode or an agent wait for each other
 
-Only chats in Default mode run their replies side by side. A reply in Default v2, Plan, Autonomous, a spec mode or an agent waits while any other reply outside Default mode runs, in any chat. The chat shows it is working, and the wait can last minutes. A workflow step woken by a message joins the same wait. If Kiro routes your Default chats to Default v2 for your account, they wait too, and marotte cannot tell.
+Chats in Default and Default v2 run their replies side by side. A reply in Plan, Autonomous, a spec mode or an agent waits while any other such reply runs, in any chat. The waiting chat says which chat it waits for, and the wait can last minutes. A workflow step woken by a message can join the same wait.
 
-Reported as [kirodotdev/Kiro#11995](https://github.com/kirodotdev/Kiro/issues/11995), open. marotte has no workaround. Try Default mode for chats you want to run side by side.
+Reported as [kirodotdev/Kiro#11995](https://github.com/kirodotdev/Kiro/issues/11995), open. kiro-cli 2.37.0 lets Default v2 replies run side by side, and the other modes still wait. marotte has no workaround. Use Default or Default v2 for chats you want to run side by side.
 
 ### The agent stalls during a file search
 
@@ -66,7 +66,7 @@ Reported as [kirodotdev/Kiro#12011](https://github.com/kirodotdev/Kiro/issues/12
 
 The agent can hand work to subagents in a chat with **Workflows** switched off in Settings, in Plan, Autonomous and the spec modes whatever that switch says, and inside a workflow step. A message you send while it works then reaches every subagent that runs later in that reply. A subagent can stop its own task to answer it.
 
-Reported as [kirodotdev/Kiro#11240](https://github.com/kirodotdev/Kiro/issues/11240), open. marotte has no workaround. With **Workflows** on, the default, a chat in any other mode hands work to workflows instead of subagents, and this does not happen. In the cases above, wait for the reply to finish before you send guidance meant only for the main agent.
+Reported as [kirodotdev/Kiro#11240](https://github.com/kirodotdev/Kiro/issues/11240), open. marotte has no workaround. With **Workflows** on, the default, a chat in any other mode has no subagent tool, and this does not happen. In the cases above, wait for the reply to finish before you send guidance meant only for the main agent.
 
 ### A failed hook shows as completed
 

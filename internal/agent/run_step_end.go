@@ -46,7 +46,6 @@ func (rs *Runs) endStepAsked(ctx context.Context, workflowID string, req *runReq
 		return err
 	}
 	return rs.controlSerialized(ctx, workflowID, func(cctx context.Context) error {
-		rs.signals.forget(workflowID, req.path)
 		return rs.updateNodeStatus(cctx, host, workflowID, nodeID, req.status)
 	})
 }

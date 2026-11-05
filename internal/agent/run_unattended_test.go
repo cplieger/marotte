@@ -351,6 +351,7 @@ func TestOptionIDByKind_MatchesTheKindExactly(t *testing.T) {
 func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 	for name, tc := range map[string]struct {
 		options     string
+		meta        string
 		wantOpt     string
 		wantOutcome string
 		wantReason  string
@@ -367,6 +368,14 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 			options:     `[{"optionId":"accept","kind":"allow_once"}]`,
 			wantOutcome: string(marotte.StopReasonCancelled),
 		},
+		// KAS hands a plan's deny note to the next approved plan's steps as the user's correction.
+		"a plan approval is refused with no note": {
+			options: `[{"optionId":"accept","kind":"allow_once"},
+				{"optionId":"reject","kind":"reject_once"}]`,
+			meta:        `,"_meta":{"kiro":{"toolId":"update_workflow","workflowPlan":{}}}`,
+			wantOpt:     "reject",
+			wantOutcome: "selected",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
@@ -378,7 +387,7 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 				marotte.PermissionNeededPayload{RequestID: id}), br)
 
 			h.runs.answerUnattended(chatID, br, id, schedule.Run{ScheduleID: "sched-1", WorkflowID: "wf_1"}, askName{tool: "execute_bash"},
-				[]byte(`{"options":`+tc.options+`}`))
+				[]byte(`{"options":`+tc.options+tc.meta+`}`))
 
 			select {
 			case <-br.done:
@@ -452,6 +461,76 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 	if outcome.Outcome.OptionID != "reject" {
 		t.Errorf("optionId = %q, want %q: an administrator ask was auto-approved with nobody watching",
 			outcome.Outcome.OptionID, "reject")
+	}
+}
+
+// With the switch on, an ask Kiro's safety check handed to a person is still refused, and the row says who
+// asked; the same ask without the stamp is approved.
+func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
+	for _, tc := range []struct {
+		name, meta, wantOption string
+	}{
+		{name: "handed_over", meta: `,"_meta":{"kiro":{"trustClassifier":{"decision":"prompt","reason":"Kiro's safety check flagged this"}}}`, wantOption: "reject"},
+		{name: "unstamped", wantOption: "accept"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			body, err := json.Marshal(map[string]any{settings.KeyScheduledAutoApprove: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
+			chatID := runChatID("wf_classifier")
+			h.bridge.mgr.insert(chatID, testBridge(br, bridgeIdle))
+			st, err := schedule.NewStore(t.TempDir())
+			if err != nil {
+				t.Fatalf("schedule.NewStore: %v", err)
+			}
+			entry := schedule.Entry{Source: "bundled://nightly", Enabled: true, Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2}}
+			if pErr := st.Put(t.Context(), &entry); pErr != nil {
+				t.Fatalf("Put schedule: %v", pErr)
+			}
+			h.runs.schedules = st
+			run := schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_classifier"}
+			if rErr := st.RecordStart(t.Context(), run); rErr != nil {
+				t.Fatalf("RecordStart: %v", rErr)
+			}
+			id := int64(4243)
+			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+				marotte.PermissionNeededPayload{RequestID: id}), br)
+
+			h.runs.answerUnattended(chatID, br, id, run, askName{tool: "fs_write"}, []byte(
+				`{"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}]`+tc.meta+`}`,
+			))
+
+			select {
+			case <-br.done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the floor answered nothing")
+			}
+			br.respMu.Lock()
+			got := br.response
+			br.respMu.Unlock()
+			outcome, ok := got.result.(*marotte.PermissionOutcome)
+			if !ok {
+				t.Fatalf("answered with %T (%v), want a permission outcome", got.result, got.result)
+			}
+			if outcome.Outcome.OptionID != tc.wantOption {
+				t.Errorf("optionId = %q, want %q", outcome.Outcome.OptionID, tc.wantOption)
+			}
+			if tc.wantOption != "reject" {
+				return
+			}
+			rows := st.List()
+			const wantReason = "Kiro's safety check asked a person to approve fs_write with nobody watching. " +
+				"Approve it in a chat, or add a permission rule to allow it"
+			if len(rows) != 1 || rows[0].LastStatus != schedule.StatusFailed || rows[0].LastReason != wantReason {
+				t.Errorf("schedule rows = %+v, want one failed row reading %q", rows, wantReason)
+			}
+		})
 	}
 }
 

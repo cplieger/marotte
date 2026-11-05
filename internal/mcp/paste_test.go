@@ -1069,3 +1069,37 @@ func TestEditDistance(t *testing.T) {
 		})
 	}
 }
+
+func TestImport_ConsumesVersionNegotiation(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	got := decodeImport(t, postImport(t, mux, `{
+	  "mcpServers": {"github": {"command":"npx","versionNegotiation":"legacy"}}
+	}`))
+
+	if len(got.Results) != 1 || got.Results[0].Outcome != importCreated {
+		t.Fatalf("results = %#v, want the server created", got.Results)
+	}
+	if joined := strings.Join(got.Notes, "\n"); strings.Contains(joined, "versionNegotiation") {
+		t.Errorf("notes = %q, want no ignored-key note for a field the record carries", joined)
+	}
+	stored := s.list(t.Context())
+	if len(stored) != 1 || stored[0].VersionNegotiation != versionNegotiationLegacy {
+		t.Errorf("stored = %+v, want version_negotiation legacy", stored)
+	}
+	if v := readKASServers(t, s.kasPath)["github"]["versionNegotiation"]; v != "legacy" {
+		t.Errorf("KAS file versionNegotiation = %v, want legacy", v)
+	}
+}
+
+func TestImport_UnknownVersionNegotiationIsRefusedNamingTheField(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	rec := postImport(t, mux, `{"mcpServers": {"github": {"command":"npx","versionNegotiation":"pin"}}}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "version_negotiation") {
+		t.Errorf("import = %d %s, want 400 naming version_negotiation", rec.Code, rec.Body.String())
+	}
+	if n := len(s.list(t.Context())); n != 0 {
+		t.Errorf("stored = %d, want nothing installed", n)
+	}
+}

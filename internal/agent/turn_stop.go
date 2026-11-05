@@ -80,6 +80,17 @@ func (r *turnRegistry) releaseStop(stop *command.TurnStop) {
 	}
 }
 
+// ownStopped reports whether a stop was requested while the chat's current turn was open.
+func (r *turnRegistry) ownStopped(chatID marotte.ChatID) bool {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.own != nil && lc.stoppedAfterLocked(lc.own.ID)
+}
+
 // RequestStop records a stop for cause and captures what it targets (requestStop).
 func (bc *bridgeCoordinator) RequestStop(chatID marotte.ChatID, cause marotte.TurnStopCause) *command.TurnStop {
 	return bc.turns.requestStop(chatID, cause)

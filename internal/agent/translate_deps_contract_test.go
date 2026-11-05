@@ -59,12 +59,14 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 		if r.MCP == nil {
 			t.Fatal("MCP role is nil")
 		}
-		r.MCP.RecordConnected(t.Context(), "test-server", marotte.MCPSource{}, nil, nil, nil, nil)
+		r.MCP.RecordSessionStatus(t.Context(), "s1", translate.MCPSessionStatus{
+			Servers: []translate.MCPServerReport{{Name: "test-server", State: translate.MCPReportConnected}},
+		})
 	})
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
 		r := newRoles(t)
-		r.PendingPerms.PendingPermsAdd(42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nil)
+		r.PendingPerms.PendingPermsAdd(t.Context(), 42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nil)
 	})
 
 	t.Run("Notify_does_not_panic", func(t *testing.T) {

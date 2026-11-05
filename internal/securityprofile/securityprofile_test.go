@@ -57,6 +57,28 @@ func TestCustomize_SwitchesToCustomWithThePresetsInForce(t *testing.T) {
 	}
 }
 
+// Customize from Delegated keeps the classifier: the approve-for-me preset's evaluate rule is copied
+// into the user file rather than dropped as a rule the file cannot hold.
+func TestCustomize_CopiesEvaluateRule(t *testing.T) {
+	s, userPath := storeOver(t, []marotte.PolicyRule{
+		{Capability: "fs_write", Effect: "allow", Scope: "session", Source: "preset:edit-workspace", Match: []string{"/w/**"}},
+		{Capability: "all", Effect: "evaluate", Scope: "session", Source: "preset:approve-for-me"},
+	})
+	if err := s.Select(t.Context(), policyfile.ProfileDelegated); err != nil {
+		t.Fatalf("Setup: Select(delegated) = %v", err)
+	}
+	if err := s.Customize(t.Context()); err != nil {
+		t.Fatalf("Customize = %v", err)
+	}
+	f, err := policyfile.Load(userPath)
+	if err != nil {
+		t.Fatalf("load the user file: %v", err)
+	}
+	if !slices.ContainsFunc(f.Rules, func(r policyfile.Rule) bool { return r.Capability == "all" && r.Effect == "evaluate" }) {
+		t.Errorf("user file rules = %+v, want the all evaluate rule kept", f.Rules)
+	}
+}
+
 // No preset rule in force cannot be told from a session not yet started.
 func TestCustomize_RefusesWithoutALivePolicy(t *testing.T) {
 	for _, tc := range []struct {
@@ -160,5 +182,39 @@ func TestCustomize_AStaleRequestAfterTheSwitchLeavesTheUserFileAlone(t *testing.
 
 	if got, err := os.ReadFile(userPath); err != nil || !bytes.Equal(got, want) {
 		t.Errorf("a stale Customize rewrote the user file (err %v):\n%s\nwant\n%s", err, got, want)
+	}
+}
+
+// The rollback after a failed persist writes back the whole file, not just its rules: a
+// `policies:` reference dropped here would narrow grants with no message.
+func TestCustomize_AFailedPersistRestoresTheUserFileWithItsOtherKeys(t *testing.T) {
+	s, userPath := storeOver(t, []marotte.PolicyRule{
+		{Capability: "fs_read", Effect: "allow", Scope: "session", Source: "preset:read-workspace", Match: []string{"/w/**"}},
+	})
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("policies:\n  - dev-shell\nrules:\n  - capability: shell\n    effect: ask\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.ConfigDir, "config.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Customize(t.Context())
+	if err == nil || errors.Is(err, ErrRestoreFailed) {
+		t.Fatalf("Customize = %v, want the persist error with the file restored", err)
+	}
+
+	got, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(got, []byte("dev-shell")) {
+		t.Errorf("restored user file lost its policies key:\n%s", got)
+	}
+	f, err := policyfile.Load(userPath)
+	if err != nil || len(f.Rules) != 1 || f.Rules[0].Capability != "shell" {
+		t.Errorf("restored rules = %+v (err %v), want only the original shell rule", f, err)
 	}
 }

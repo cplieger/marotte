@@ -93,7 +93,7 @@ type activeTurn struct {
 	// retention: a result a waiter still holds a handle for is never evicted.
 	holds  int
 	Source marotte.TurnOpenSource
-	// acked is whether a wire turn_start bound to this turn, provisional for an acknowledgeable source; reviseLocked re-targets it.
+	// acked is whether a wire turn_start bound to this turn: for an acknowledgeable source, one echoing its id as the tag.
 	acked bool
 	// bracketed is whether a wire turn_start opened this wire turn, so its turn_end is owed; a fold opens one with no
 	// bracket, which may never close, and admission must not refuse a prompt beside it (bracketedWireLocked).
@@ -136,9 +136,6 @@ type chatLifecycle struct {
 	// changed is closed and replaced on every state change, under mu. A channel, not a Cond, which would re-take the
 	// lock the finalize needs.
 	changed chan struct{}
-	// restoreSession is the session whose writes are KAS applying or rolling back reviewed changes
-	// (expectRestores), "" for none.
-	restoreSession string
 	// admissionMessage is the prompt message id of the held reservation, "" for none.
 	admissionMessage string
 	// closedIDs are the ids of the life's newest finished turns, a ring at closedAt: a prompt's reply settles right
@@ -401,7 +398,6 @@ func (lc *chatLifecycle) awaitNotFinalizing(ctx context.Context) bool {
 // nil), every other source to own. Caller holds mu and checked the slot.
 func (lc *chatLifecycle) openLocked(chatID marotte.ChatID, opened *marotte.Entry, source marotte.TurnOpenSource, model string, log *turnlog.Turn) *activeTurn {
 	lc.nextSeq++
-	lc.restoreSession = ""
 	t := &activeTurn{
 		Opened: time.Now(),
 		Model:  model,
@@ -651,7 +647,7 @@ func (lc *chatLifecycle) finishLocked(t *activeTurn, result marotte.TurnResult) 
 		}
 		lc.retained[t.ID] = t
 	}
-	// A pending turn from a revised binding is still owed a bracket.
+	// A sent prompt a wire turn took own from is still owed its bracket.
 	if lc.own != nil || lc.pending != nil {
 		lc.setStateLocked(turnOpen)
 		return false
@@ -766,49 +762,6 @@ func (r *turnRegistry) isOpen(chatID marotte.ChatID, turnID string) bool {
 	defer lc.mu.Unlock()
 	t := lc.liveLocked(turnID)
 	return !lc.ended && t != nil && !t.finalizing
-}
-
-// expectRestores marks session's writes on chatID as KAS putting files back until the chat's next
-// turn opens. KAS raises a turn approval once the turn's own writes are done, and refuses a rewind
-// mid-turn, so until then the session's writes are KAS applying that review or that revert. A run
-// chat opens no turns that would end the window, so it is never marked.
-func (r *turnRegistry) expectRestores(chatID marotte.ChatID, session string) {
-	r.markRestores(chatID, session, true)
-}
-
-// expectRevertRestores is expectRestores for a rewind, declined while a turn is open: KAS refuses
-// that revert, so a mark would cover the open turn's own writes.
-func (r *turnRegistry) expectRevertRestores(chatID marotte.ChatID, session string) {
-	r.markRestores(chatID, session, false)
-}
-
-func (r *turnRegistry) markRestores(chatID marotte.ChatID, session string, overOpenTurn bool) {
-	if session == "" || workflowIDOf(chatID) != "" {
-		return
-	}
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	if !overOpenTurn && (lc.own != nil || lc.pending != nil) {
-		return
-	}
-	lc.restoreSession = session
-}
-
-func (r *turnRegistry) restoring(chatID marotte.ChatID, session string) bool {
-	if session == "" {
-		return false
-	}
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return false
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	return lc.restoreSession == session
 }
 
 // stoppedAfter reports whether a stop was requested after the named turn opened,
@@ -987,24 +940,9 @@ func (r *turnRegistry) interrupt(chatID marotte.ChatID, turnID string, cause mar
 	return true
 }
 
-// interruptTurn claims cause on the named live, unclaimed turn and returns the turn's own prompt cancel (nil when
-// it has none), false when the turn is gone, finalizing or already interrupted.
-func (r *turnRegistry) interruptTurn(chatID marotte.ChatID, turnID string, cause marotte.InterruptCause) (context.CancelCauseFunc, bool) {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return nil, false
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	t := lc.liveLocked(turnID)
-	if t == nil {
-		return nil, false
-	}
-	return lc.interruptLocked(t, cause)
-}
-
-// interruptLocked is interruptTurn's claim on a turn the caller already validated, in the caller's section: the
-// cancel it returns is t's own, so calling it after t closed cannot reach the turn that replaced it. Caller holds mu.
+// interruptLocked claims cause on a turn the caller already validated, in the caller's section, false when it is
+// finalizing or already interrupted: the cancel it returns is t's own, so calling it after t closed cannot reach the
+// turn that replaced it. Caller holds mu.
 func (*chatLifecycle) interruptLocked(t *activeTurn, cause marotte.InterruptCause) (context.CancelCauseFunc, bool) {
 	if t.finalizing || t.Interrupt != "" {
 		return nil, false

@@ -414,6 +414,20 @@ describe("chat.create", () => {
     const sent = mockSend.mock.calls.at(-1)?.[0] as { payload: Record<string, unknown> };
     expect(sent.payload).toEqual({ op_id: "op-1" });
   });
+
+  it("reads a fork's fresh outcome as a tangent that holds no conversation", async () => {
+    const { forkChat } = await import("./chat.js");
+    const fork = async (outcome: string): Promise<boolean | undefined> => {
+      mockSend.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        body: { ok: true, chat: header, outcome },
+      });
+      return (await forkChat.dispatch({ opID: `op-${outcome}`, parentChatID: "c-parent" }))?.fresh;
+    };
+    expect(await fork("fresh")).toBe(true);
+    expect(await fork("forked")).toBe(false);
+  });
 });
 
 // No chat.resolve_pending_change test: a turn's writes are approved through

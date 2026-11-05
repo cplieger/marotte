@@ -25,7 +25,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
-	"github.com/cplieger/marotte/internal/secretstore"
 	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/subject"
@@ -219,6 +218,8 @@ type bus struct {
 	stageStatusDesc func(marotte.ChatID, string)
 	// retractPush drops a held push whose ask was settled (bridgeCoordinator.RetractPush).
 	retractPush func(subj marotte.PushSubject, ask string)
+	// ownStopped reports a stop requested during the chat's current turn (turnRegistry.ownStopped).
+	ownStopped func(marotte.ChatID) bool
 	// legacyConnects and v3Connects count connects by wire generation; a legacy one (no SSE-Wire header) is an
 	// old bundle still running. Observability only.
 	legacyConnects atomic.Uint64
@@ -290,10 +291,6 @@ type Runtime struct {
 	lines      *buffer.LineTracker
 	agentTerms *agentTerminals
 	hookStatus *hookStatusCache
-
-	// secrets holds the credentials KAS asks marotte to persist (bridge_v3_secret.go), one store since KAS's key
-	// namespace is global. Nil reports "absent".
-	secrets *secretstore.Store
 
 	// tabs is the open-tab set and the membership coordinator; nil without a store (unavailable). Held only for retention.
 	tabs       *tabs.Store
@@ -529,7 +526,14 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		sseP.Broadcast(c, marotte.NewEvent(marotte.EventConfigStandingChanged, "", marotte.ConfigStandingChangedPayload{}))
 	})
 	h.runRoutes = &runRoutes{runs: runs, epoch: h.Epoch}
-	h.mcpRegistry = newMCPRegistry(h.engine, sseP, lc, h.mcpConfig)
+	h.mcpRegistry = newMCPRegistry(h.engine, sseP, lc, h.mcpConfig, func(c marotte.ChatID) (marotte.SessionID, bool) {
+		if b := bridgeP.mgr.get(c); b != nil {
+			return b.SessionID(), true
+		}
+		return "", false
+	}, configP.setMCPRegistry)
+	runs.dropMCPSessions = h.mcpRegistry.dropSessions
+	runs.resetFailedMCP = h.mcpRegistry.resetFailedForLaunch
 	h.powers = &powersSurface{
 		backend: h.powersBackend, engine: h.engine,
 		broadcast: sseP.Broadcast,
@@ -551,13 +555,12 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		h.engine.poke()
 		h.coord.releaseIfUnheld(chatID)
 	}
-	bridgeP.mgr.revertStarting = h.coord.turns.expectRevertRestores
 	h.coord.reconcileSessions = func(ctx context.Context, deadline time.Time) {
 		h.reconcileSessionSettings(ctx, "session settings", deadline)
 	}
-	h.coord.autoCompact = newAutoCompactor(h.coord, h.compactionPolicy)
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
 	sseP.retractPush = h.coord.retractPush
+	sseP.ownStopped = h.coord.turns.ownStopped
 	// Built here because coord and the ignore matcher do not exist at the literal. Workspace-global: the
 	// orchestrator and its subagents write one spec from several sessions.
 	h.specs = spec.NewNotifier(specChangedWindow, func(dir string) {
@@ -567,6 +570,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		lifetime: lc, coord: h.coord,
 		bus: sseP, specs: h.specs,
 		signIns: h.mcpRegistry, stepRun: h.router.StepRun,
+		secrets: openSecretStore(lc.configDir),
 	}
 	h.shellMgr = newShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
@@ -598,15 +602,6 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.registerCommandHandlers()
 	runs.runEnded = h.membership.WakeRetention
 	h.initDispatch()
-	if lc.configDir != "" {
-		// Best-effort: without a store, bridges do not declare `_meta.kiro.secretStorage` and MCP OAuth re-registers.
-		secrets, err := secretstore.New(lc.configDir)
-		if err != nil {
-			slog.Error("secretstore: open failed; MCP credentials will not persist", "error", err)
-		} else {
-			h.secrets = secrets
-		}
-	}
 	h.signin.onChange(h.onSignInChange)
 	runs.gate.wire(h.signin.answerability())
 	h.signin.onAnswerability(runs.gateMoved)
@@ -624,15 +619,12 @@ func (rt *Runtime) MCPRegistry() RouteRegistrar { return rt.mcpRegistry }
 // EngineReady is closed once the first agent engine is ready; it never closes when none can start.
 func (rt *Runtime) EngineReady() <-chan struct{} { return rt.engine.firstReady }
 
-// MCPSnapshot returns a stable-ordered snapshot of connected MCP servers only.
+// MCPSnapshot returns, sorted by name, every MCP server some session has connected, whatever its row shows.
 func (rt *Runtime) MCPSnapshot() []marotte.MCPSnapshotServer {
-	snap := rt.mcpRegistry.snapshot()
-	out := make([]marotte.MCPSnapshotServer, 0, len(snap))
-	for i := range snap {
-		if snap[i].State != mcpStateConnected {
-			continue
-		}
-		out = append(out, marotte.MCPSnapshotServer{Name: snap[i].Name})
+	names := rt.mcpRegistry.connectedNames()
+	out := make([]marotte.MCPSnapshotServer, 0, len(names))
+	for _, n := range names {
+		out = append(out, marotte.MCPSnapshotServer{Name: n})
 	}
 	return out
 }
@@ -949,10 +941,4 @@ func (rt *Runtime) liveSessionIDs() []string {
 // owner. While config.json cannot be read it answers the last readable generation, or the defaults when none was.
 func (rt *Runtime) configDocument(ctx context.Context) (configDocument, docSource) {
 	return rt.configDoc.read(ctx, rt.lifecycle.configDir, readConfigDocument)
-}
-
-// compactionPolicy is marotte's own compactor's switch and point, from the same document a session door reads.
-func (rt *Runtime) compactionPolicy(ctx context.Context) (enabled bool, pct int) {
-	doc, _ := rt.configDocument(ctx)
-	return doc.session.autoCompactEnabled, doc.session.autoCompactPct
 }

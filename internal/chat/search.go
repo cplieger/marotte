@@ -441,8 +441,8 @@ func entrySegments(e *marotte.Entry, t *searchTurn, names map[string]string) []s
 		return turnWakeSegments(e.Payload, names)
 	case marotte.EntryKindTurnBind, marotte.EntryKindSteerAck, marotte.EntryKindCompaction,
 		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched, marotte.EntryKindSteerDelivered,
-		marotte.EntryKindSteerCleared, marotte.EntryKindRunNamed:
-		// A compaction summary restates history searchable at its source; bind and switch render no text. An ack's words
+		marotte.EntryKindSteerCleared, marotte.EntryKindRunNamed, marotte.EntryKindContextReset:
+		// A compaction summary restates history searchable at its source; bind, switch and reset render no text. An ack's words
 		// are the one rendered prose left out of the index.
 		return nil
 	}

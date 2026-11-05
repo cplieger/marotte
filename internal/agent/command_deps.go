@@ -220,16 +220,14 @@ func (rt *Runtime) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpe
 	return rt.coord.AdmissionHolderSource(chatID)
 }
 
-// PreSendCompact runs the compaction policy's before-a-send trigger.
-func (rt *Runtime) PreSendCompact(ctx context.Context, chatID marotte.ChatID, sb command.Bridge) {
-	entry, _ := sb.(*sharedBridge)
-	rt.coord.autoCompact.preSend(ctx, chatID, entry)
-}
-
 // AbandonInFlightTurn finalizes a turn that failed before it could end.
 func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string, kind marotte.FailureKind, seq uint64) {
 	rt.coord.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason, kind, seq)
 }
+
+// ProviderUnreachable returns the vault's reason while the identity provider gives the engine's account no usable
+// renewal.
+func (rt *Runtime) ProviderUnreachable() (string, bool) { return rt.signin.providerDown() }
 
 var _ command.SessionRenamer = (*Runtime)(nil)
 

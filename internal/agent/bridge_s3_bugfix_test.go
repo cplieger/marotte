@@ -363,48 +363,34 @@ func TestTerminalEnv_PopulatesCommandEnv_M1(t *testing.T) {
 	}
 }
 
-// TestTermCreate_RefusesExecutionRedirectingEnv is the wiring test for the env guard: an error
-// answer and NO terminal created.
-func TestTermCreate_RefusesExecutionRedirectingEnv(t *testing.T) {
+// TestTermCreate_PassesKASEnvVerbatim sends KAS's captured env plus a pager name and
+// requires every pair to reach the command unrefused.
+func TestTermCreate_PassesKASEnvVerbatim(t *testing.T) {
 	work := t.TempDir()
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, work, br)
-	env := []map[string]string{{"name": "LD_PRELOAD", "value": "/tmp/evil.so"}}
-	msg := termCreateMsg(t, 1, "sh", []string{"-c", "true"}, env)
-
-	h.translateACPEvent("c1", h.originOf("c1"), msg)
-
-	h.agentTerms.mu.Lock()
-	live := len(h.agentTerms.terms)
-	h.agentTerms.mu.Unlock()
-	if live != 0 {
-		t.Errorf("a terminal was created despite a refused environment (%d live); "+
-			"the screen must run before anything is spawned", live)
+	env := []map[string]string{
+		{"name": "KIRO_SESSION_ID", "value": "sess_test"},
+		{"name": "AWS_SDK_UA_APP_ID", "value": "kiro-agent"},
+		{"name": "GIT_PAGER", "value": "less"},
 	}
-	resp, ok := br.lastResponse()
-	if !ok {
-		t.Fatal("terminal/create went unanswered; the agent would block on a request nothing will answer")
-	}
-	if resp.err == nil {
-		t.Fatalf("terminal/create was answered with a success (%v), want an error naming the variable", resp.result)
-	}
-	if !strings.Contains(resp.err.Error(), "LD_PRELOAD") {
-		t.Errorf("refusal %q does not name LD_PRELOAD; the agent cannot tell what to drop", resp.err)
-	}
-}
-
-// TestTermCreate_AllowsInertPagerEnv pins that `GIT_PAGER=cat` passes.
-func TestTermCreate_AllowsInertPagerEnv(t *testing.T) {
-	work := t.TempDir()
-	br := newRecordingTermBridge()
-	h := hubWithBridge(t, work, br)
-	env := []map[string]string{{"name": "GIT_PAGER", "value": "cat"}}
-	msg := termCreateMsg(t, 1, "sh", []string{"-c", "true"}, env)
+	msg := termCreateMsg(t, 1, "sh",
+		[]string{"-c", `printf '%s|%s|%s' "$KIRO_SESSION_ID" "$AWS_SDK_UA_APP_ID" "$GIT_PAGER" > envout.txt`}, env)
 
 	h.translateACPEvent("c1", h.originOf("c1"), msg)
 
 	term := singleTerm(t, h)
 	waitClosed(t, term.done, "terminal")
+	if resp, ok := br.lastResponse(); !ok || resp.err != nil {
+		t.Fatalf("terminal/create answered ok=%v err=%v, want a success", ok, resp.err)
+	}
+	data, err := os.ReadFile(filepath.Join(work, "envout.txt"))
+	if err != nil {
+		t.Fatalf("env output file missing: %v", err)
+	}
+	if want := "sess_test|kiro-agent|less"; string(data) != want {
+		t.Errorf("command saw %q, want %q", string(data), want)
+	}
 }
 
 // termEnv layers requested vars over os.Environ and returns nil when none are requested.
@@ -428,5 +414,29 @@ func TestTermEnv(t *testing.T) {
 	}
 	if !found {
 		t.Error("termEnv missing MAROTTE_A=1")
+	}
+}
+
+// lastValueFor answers what the child sees for name: os/exec keeps the last value.
+func lastValueFor(env []string, name string) string {
+	prefix := name + "="
+	value := ""
+	for _, entry := range env {
+		if v, ok := strings.CutPrefix(entry, prefix); ok {
+			value = v
+		}
+	}
+	return value
+}
+
+// TestTermEnv_LocalePinBeatsAnAgentSuppliedLocale pins ordering, not membership.
+func TestTermEnv_LocalePinBeatsAnAgentSuppliedLocale(t *testing.T) {
+	env := termEnv([]termEnvVar{{Name: termLocaleEnvVar, Value: "hostile"}})
+
+	want := termLocaleEnv()[0]
+	got := termLocaleEnvVar + "=" + lastValueFor(env, termLocaleEnvVar)
+	if got != want {
+		t.Errorf("termEnv(%s=hostile) leaves %q in force, want %q: os/exec keeps the last value, so the pin must be appended AFTER the agent's pairs",
+			termLocaleEnvVar, got, want)
 	}
 }

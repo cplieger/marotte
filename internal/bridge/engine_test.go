@@ -230,9 +230,16 @@ func TestEngine_StderrFlagsTheExitRecord(t *testing.T) {
 		line          string
 		heap, timeout bool
 	}{
-		"a heap-limit death":  {line: "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory", heap: true},
-		"the relay's timeout": {line: "error: timed out writing to the v3 engine's stdin", timeout: true},
-		"anything else":       {line: "warn: something happened"},
+		"a heap-limit death": {line: "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory", heap: true},
+		// marotte keeps the previous kiro-cli as a fallback, so either release's stall line can reach it.
+		"the relay's no-progress stall": {
+			line: "error: timed out writing to the v3 engine's stdin: no progress for 15 seconds", timeout: true,
+		},
+		"the previous relay's fixed timeout": {
+			line: "error: timed out writing to the v3 engine's stdin after 2 seconds", timeout: true,
+		},
+		"the relay's slow-write progress line": {line: "slow write to the v3 engine's stdin is still in progress"},
+		"anything else":                        {line: "warn: something happened"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := NewEngine("/nonexistent", "/work")

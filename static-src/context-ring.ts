@@ -3,14 +3,8 @@
 
 import { signal } from "@cplieger/ui";
 
-/**
- * The percentage at which KAS summarizes. Used only for a chat whose session never loaded: session/new and the usage
- * channel carry no threshold.
- */
-export const KAS_SUMMARIZATION_PCT = 80;
-
-/** The slider value at which marotte adds nothing to KAS's own compaction. */
-export const DEFAULT_AUTO_COMPACT_PCT = 80;
+/** The slider's default, KAS's own threshold; it seeds the policy until the first settings payload. */
+const DEFAULT_AUTO_COMPACT_PCT = 80;
 
 /** How far below T the fill stops being green, and how far below T it is fully
  *  red, so red always arrives BEFORE the band. */
@@ -40,19 +34,14 @@ export interface CompactionPoint {
 }
 
 /**
- * The effective compaction point: at the default slider value KAS's reported threshold decides, otherwise marotte's
- * value. Switched off: no band, and the ramp keys on the window's end.
+ * The effective compaction point: the slider's value, which every session door sends as KAS's threshold. Switched off:
+ * no band, and the ramp keys on the window's end.
  */
-export function compactionPoint(
-  policy: CompactionPolicy,
-  reportedPct: number | undefined,
-): CompactionPoint {
+export function compactionPoint(policy: CompactionPolicy): CompactionPoint {
   if (!policy.enabled) {
     return { band: null, t: NO_COMPACTION_T };
   }
-  const t =
-    policy.pct === DEFAULT_AUTO_COMPACT_PCT ? (reportedPct ?? KAS_SUMMARIZATION_PCT) : policy.pct;
-  return { band: t, t };
+  return { band: policy.pct, t: policy.pct };
 }
 
 /** One decimal: two nearby percentages resolve to different strokes. */

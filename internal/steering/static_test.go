@@ -206,6 +206,28 @@ func TestWriteRuntime_UnsetHomeIsNeitherListedNorPinned(t *testing.T) {
 
 // A value carrying a backtick would close the code span it is quoted in, so
 // the variable is dropped rather than rendered.
+func TestWriteRuntime_NamesTheRuntimeDirAndItsRule(t *testing.T) {
+	t.Run("set", func(t *testing.T) {
+		fakeEnv(t, map[string]string{"HOME": "/h", "KIRO_RUNTIME_DIR": "/h/.cache/kiro-cli-runtime"})
+		var b strings.Builder
+		writeRuntime(&b, "/cfg", "/cfg/tools")
+		out := b.String()
+		for _, want := range []string{"`KIRO_RUNTIME_DIR=/h/.cache/kiro-cli-runtime`", "with `KIRO_RUNTIME_DIR` unset"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("writeRuntime output missing %q:\n%s", want, out)
+			}
+		}
+	})
+	t.Run("unset", func(t *testing.T) {
+		fakeEnv(t, map[string]string{"HOME": "/h"})
+		var b strings.Builder
+		writeRuntime(&b, "/cfg", "/cfg/tools")
+		if out := b.String(); strings.Contains(out, "KIRO_RUNTIME_DIR") {
+			t.Errorf("writeRuntime named KIRO_RUNTIME_DIR, which was unset:\n%s", out)
+		}
+	})
+}
+
 func TestWriteRuntime_BacktickInValueDropsTheVariable(t *testing.T) {
 	fakeEnv(t, map[string]string{
 		"HOME":   "/h",

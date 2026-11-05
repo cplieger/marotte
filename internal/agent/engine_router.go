@@ -118,16 +118,19 @@ func (r *engineRouter) seedSteps(workflowID string, stepSessionIDs []string) {
 	}
 }
 
-// forgetWorkflow drops workflowID's owner row and its step rows.
-func (r *engineRouter) forgetWorkflow(workflowID string) {
+// forgetWorkflow drops workflowID's owner row and its step rows, returning the step sessions it forgot.
+func (r *engineRouter) forgetWorkflow(workflowID string) []marotte.SessionID {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.owner, workflowID)
+	var steps []marotte.SessionID
 	for sid, wf := range r.steps {
 		if wf == workflowID {
 			delete(r.steps, sid)
+			steps = append(steps, sid)
 		}
 	}
+	return steps
 }
 
 // StepRun reports the run a step session belongs to.

@@ -58,6 +58,25 @@ func (t Transport) valid() bool {
 	}
 }
 
+// versionNegotiation is KAS's per-server versionNegotiation, the closed set of its mcp.json enum.
+type versionNegotiation string
+
+// versionNegotiationAuto and versionNegotiationLegacy are the two values KAS accepts.
+const (
+	versionNegotiationAuto   versionNegotiation = "auto"
+	versionNegotiationLegacy versionNegotiation = "legacy"
+)
+
+// valid reports whether v is unset or one of KAS's values, compared exactly because KAS does not trim.
+func (v versionNegotiation) valid() bool {
+	switch v {
+	case "", versionNegotiationAuto, versionNegotiationLegacy:
+		return true
+	default:
+		return false
+	}
+}
+
 // secretMask references the shared marotte.secretMask constant.
 const secretMask = marotte.SecretMask
 
@@ -76,10 +95,15 @@ type Server struct {
 	OAuthRedirectURI       string    `json:"oauth_redirect_uri,omitempty"`
 	ID                     serverID  `json:"id"`
 	Transport              Transport `json:"transport"`
-	Args                   []string  `json:"args,omitempty"`
-	Env                    []keyPair `json:"env,omitempty"`
-	Headers                []keyPair `json:"headers,omitempty"`
-	DisabledTools          []string  `json:"disabled_tools,omitempty"`
+	// VersionNegotiation empty leaves KAS's `auto`, which starts a stdio server once to send
+	// server/discover and again for the real connection. `legacy` uses the initialize handshake
+	// and starts it once, and fails a server that speaks only the 2026-07-28 protocol. Written
+	// only by a paste or a raw-JSON edit.
+	VersionNegotiation versionNegotiation `json:"version_negotiation,omitempty"`
+	Args               []string           `json:"args,omitempty"`
+	Env                []keyPair          `json:"env,omitempty"`
+	Headers            []keyPair          `json:"headers,omitempty"`
+	DisabledTools      []string           `json:"disabled_tools,omitempty"`
 	// OAuthScopes is KAS's oauthScopes (remote only), sent space-joined as the registration scope and used for the
 	// authorization request when the server names none itself.
 	OAuthScopes []string `json:"oauth_scopes,omitempty"`

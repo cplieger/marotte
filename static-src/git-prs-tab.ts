@@ -6,7 +6,7 @@ import { join, split } from "@cplieger/keyenc";
 import { apiGet, apiGetTyped } from "./api-client.js";
 import { BUS_RECONCILE, onBus, onSSE } from "./bus.js";
 import { setBusy } from "./dom.js";
-import { isSafeURL } from "./url-safety.js";
+import { isHttpURL } from "./url-safety.js";
 import { presentedTag } from "./sse-adapter.js";
 import { observeStamp } from "./subject-versions.js";
 import { observePRView, VIEW_PAGE } from "./git-prs-watch.js";
@@ -2114,7 +2114,7 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   const opened = (pr: PR): void => {
     setStatus(`Opened pull request #${String(pr.number)}.`, "ok");
     const url = pr.url ?? "";
-    if (status !== null && isSafeURL(url)) {
+    if (status !== null && isHttpURL(url)) {
       status.append(
         " ",
         el(

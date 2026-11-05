@@ -136,11 +136,14 @@ type ResumeSessionCommand struct {
 }
 
 // ForkChatCommand is the payload for type="fork_chat": a TANGENT that starts with the parent's
-// conversation behind it and diverges, nothing syncing the two afterwards. The new chat's id is
-// minted server-side and returned.
+// conversation up to its head or up to a named turn, and diverges, nothing syncing the two
+// afterwards. The new chat's id is minted server-side and returned.
 type ForkChatCommand struct {
 	ParentChatID ChatID `json:"parent_chat_id"`
 	Title        string `json:"title,omitempty"`
+	// MessageID, when set, is the user prompt whose turn the tangent ends after (Branch from
+	// here); empty forks at the head.
+	MessageID string `json:"message_id,omitempty"`
 	// OpID correlates every attempt of one fork; without it a retry would fork
 	// again, producing a second session and chat. See CreateChatCommand.OpID.
 	OpID string `json:"op_id,omitempty"`
@@ -148,8 +151,8 @@ type ForkChatCommand struct {
 
 // ForkOutcomeFresh and ForkOutcomeForked are the two paths fork_chat can take.
 // `forked` means KAS returned a session id carrying the parent's context;
-// `fresh` means no usable forked session was returned. The tangent opens either
-// way, but only a forked session inherits context.
+// `fresh` means the tangent holds none of the parent's conversation: a head
+// fork KAS refused, or a forked session retired before its history loaded.
 const (
 	ForkOutcomeForked = "forked"
 	ForkOutcomeFresh  = "fresh"
@@ -197,12 +200,14 @@ const MaxRejectionReasonRunes = 1000
 
 // ElicitationResponseCommand is the payload for type="elicitation_response".
 // RequestID echoes the elicitation_needed event. Action is "accept" | "decline"
-// | "cancel"; Content carries the filled form values on accept only, forwarded
-// verbatim to kiro-cli.
+// | "cancel"; Content carries the filled form values on accept only. Content is
+// decoded and re-encoded, never relayed as bytes: kiro-cli answers nothing to a
+// line holding a lone surrogate escape or an invalid UTF-8 byte, and decoding
+// turns both into U+FFFD.
 type ElicitationResponseCommand struct {
-	Action    string          `json:"action"`
-	Content   json.RawMessage `json:"content,omitempty"`
-	RequestID int64           `json:"request_id"`
+	Content   map[string]any `json:"content,omitempty"`
+	Action    string         `json:"action"`
+	RequestID int64          `json:"request_id"`
 }
 
 // UserInputActionAnswered and UserInputActionDismissed are the accepted actions

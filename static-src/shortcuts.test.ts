@@ -62,15 +62,16 @@ afterEach(() => {
 describe("the sheet's content", () => {
   it("covers every chord keys.ts registers, and invents none", () => {
     // "Elsewhere" is the authored group for bindings no register() call owns. The Composer group
-    // also carries prompt-input.ts's authored Shift+Enter and Ctrl+Up rows.
+    // also carries prompt-input.ts's authored Shift+Enter, Esc and Ctrl+Up rows.
+    const authored = [
+      "Shift+Enter=New line, continuing a list item",
+      "Esc=Cancel the running turn",
+      "Ctrl+↑=Rewind to your last prompt and edit it, from an empty message box",
+    ];
     const generated = sheetGroups()
       .filter((g) => g.name !== "Elsewhere")
       .flatMap((g) => g.rows.flatMap((r) => r.chords.map((c) => `${c.join("+")}=${r.description}`)))
-      .filter(
-        (pair) =>
-          pair !== "Shift+Enter=New line, continuing a list item" &&
-          pair !== "Ctrl+↑=Rewind to your last prompt and edit it, from an empty message box",
-      );
+      .filter((pair) => !authored.includes(pair));
     expect(generated.slice().sort()).toEqual(registryPairs().slice().sort());
   });
 
@@ -103,11 +104,12 @@ describe("the sheet's content", () => {
     expect(sheetGroups().map((g) => g.name)).toEqual(["Chats", "Panels", "Composer", "Elsewhere"]);
   });
 
-  it("lists Shift+Enter and Ctrl+Up beside the composer's registered chord", () => {
+  it("lists the composer's own keys beside its registered chord", () => {
     const composer = sheetGroups().find((g) => g.name === "Composer");
     expect(composer?.rows.map((r) => [r.description, r.chords])).toEqual([
       ["Send message", [["Ctrl", "Enter"]]],
       ["New line, continuing a list item", [["Shift", "Enter"]]],
+      ["Cancel the running turn", [["Esc"]]],
       ["Rewind to your last prompt and edit it, from an empty message box", [["Ctrl", "↑"]]],
     ]);
   });

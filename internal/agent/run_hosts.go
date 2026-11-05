@@ -8,6 +8,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // errRunHostStart marks a run whose launching session could not be loaded: a server fault, answered 500 without
@@ -204,7 +205,7 @@ func (rs *Runs) write(
 		return nil, err
 	}
 	m.replied(resp, err, laneRef{session: sb.responder()}, seq)
-	return resp, runCallErr(resp, err)
+	return resp, workflow.Classify(err)
 }
 
 // stopVerb writes a stop verb (pause, cancel) for workflowID positioned on the lane its lifecycle frames reach: the
@@ -222,7 +223,7 @@ func (rs *Runs) stopVerb(ctx context.Context, workflowID, method string, params 
 	m := rs.mutations.enter(workflowID, mutationStop, gen)
 	resp, seq, err := h.CallAt(ctx, method, params)
 	m.replied(resp, err, laneRef{gen: gen}, seq)
-	return runCallErr(resp, err)
+	return workflow.Classify(err)
 }
 
 // residentOwner is the resident session the run's frames route to, with no load.

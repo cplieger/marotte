@@ -17,6 +17,8 @@ import (
 // sign-in around initialize, and an unanswered ask holds the next session door. It lives as long as the engine, which
 // Shutdown stops before it joins the lanes.
 func (rt *Runtime) attachEngineLane(h engineHandle, gen uint64) {
+	// Before the engine can ask: its sign-in state in memory dies with the previous engine, as KAS's own does.
+	rt.inbound.secrets.ForgetSignInState()
 	rt.lifecycle.goLaneUnlessDraining(func() {
 		lane := laneRef{gen: gen}
 		for n := range h.EngineNotifCh() {
@@ -210,12 +212,8 @@ func (rt *Runtime) engineNotification(msg *marotte.RPCResponse) {
 // engineSessionUpdate takes a step's session/update: a replay frame to its transcript read, a live one to its run's
 // record when the run's owner is not resident.
 func (rt *Runtime) engineSessionUpdate(ctx context.Context, msg *marotte.RPCResponse) {
-	var env translate.ACPSessionUpdateEnvelope
-	if json.Unmarshal(msg.Params, &env) != nil || env.Update == nil {
-		return
-	}
-	var base translate.ACPSessionUpdateBase
-	if json.Unmarshal(env.Update, &base) != nil {
+	env, base, ok := translate.DecodeSessionUpdate(msg.Params)
+	if !ok {
 		return
 	}
 	if base.Meta.Kiro.Replay {
@@ -271,12 +269,8 @@ func (rt *Runtime) observerForward(s engineSession) error {
 }
 
 func (rt *Runtime) observerUpdate(msg *marotte.RPCResponse) {
-	var env translate.ACPSessionUpdateEnvelope
-	if json.Unmarshal(msg.Params, &env) != nil || env.Update == nil {
-		return
-	}
-	var base translate.ACPSessionUpdateBase
-	if json.Unmarshal(env.Update, &base) == nil && base.Kind == marotte.ACPUpdateAvailableCommands {
+	env, base, ok := translate.DecodeSessionUpdate(msg.Params)
+	if ok && base.Kind == marotte.ACPUpdateAvailableCommands {
 		rt.applySlashCommands(env.Update)
 	}
 }

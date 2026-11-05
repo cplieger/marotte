@@ -61,6 +61,8 @@ type AccountUsageProvider interface {
 // consent prompt), and the rule writer is a file write KAS hot-reloads.
 type policyProvider interface {
 	PolicyList(ctx context.Context, scope string) ([]marotte.PolicyRule, error)
+	// PolicyListing is PolicyList plus the rules KAS reported skipping at the same pass's door.
+	PolicyListing(ctx context.Context, scope string) ([]marotte.PolicyRule, []marotte.PolicyErrorItem, error)
 	PolicyExplain(ctx context.Context, req marotte.PolicyExplainRequest) (*marotte.PolicyExplainResult, error)
 }
 

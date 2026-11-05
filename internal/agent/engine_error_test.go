@@ -92,3 +92,33 @@ func TestAbandonInFlightTurn_ClosesOnACancelledContextWithASeq(t *testing.T) {
 		t.Errorf("turn_close = %+v, want the failure closer's close", closes)
 	}
 }
+
+// A prompt failing inside the execution gets a reply with no class, so the awaited result carries the class the
+// turn's display_error named, whichever closer wins.
+func TestCloseTurn_ResultCarriesTheLatchedEngineClass(t *testing.T) {
+	closers := map[string]func(h *Runtime, id string){
+		"wire turn_end": func(h *Runtime, _ string) {
+			h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError)
+		},
+		"prompt failure": func(h *Runtime, id string) {
+			h.coord.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the prompt failed", "", 0)
+		},
+	}
+	for name, closeIt := range closers {
+		t.Run(name, func(t *testing.T) {
+			h, _, _ := newTestHub()
+			id, log := streamingPromptTurn(t, h, "c1", "half an answer")
+			log.SetEngineError(marotte.EngineError{Message: "Authentication failed. Please sign in again.", ErrorType: "CredentialAbsentError"})
+
+			closeIt(h, id)
+
+			result, err := h.coord.AwaitTurn(t.Context(), "c1", id)
+			if err != nil {
+				t.Fatalf("AwaitTurn = %v, want the closed turn's result", err)
+			}
+			if result.EngineErrorType != "CredentialAbsentError" {
+				t.Errorf("EngineErrorType = %q, want CredentialAbsentError", result.EngineErrorType)
+			}
+		})
+	}
+}

@@ -69,7 +69,7 @@ func (s *Server) writeCustomizeError(ctx context.Context, w http.ResponseWriter,
 			"the user permissions file is at its rule limit. Remove a rule from the table and try again")
 	case errors.Is(err, securityprofile.ErrRestoreFailed):
 		s.agent.Broadcast(durable.Context(ctx), marotte.NewEvent(marotte.EventPermissionsChanged, "",
-			marotte.PermissionsChangedPayload{Status: "failed"}))
+			marotte.PermissionsChangedPayload{}))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(
 			"the profile could not be applied and the copied rules could not be taken back out. "+
 				"Check permissions.yaml under ~/.kiro/settings",

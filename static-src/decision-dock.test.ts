@@ -46,7 +46,8 @@ import { clampObservationCount } from "./clamp-text.js";
 // Read directly (`loadCSS` globs `*.css`; MANIFEST has no extension): its file order is a cascade fact for the
 // reduced-motion disarm below.
 import cssManifest from "./css/MANIFEST?raw";
-import { setSessions, setActive } from "./store.js";
+import { appendEntry, setSessions, setActive } from "./store.js";
+import { makeEntry, makeSession, makeToolCall, makeTurn } from "./__test-helpers__/model.js";
 import type { PermissionNeededPayload, Session } from "./types.js";
 import type { PermissionAnswer } from "./permission.js";
 import { _resetRunAsksForTest, applyRunAsks } from "./run-asks.js";
@@ -265,6 +266,35 @@ describe("the queue", () => {
     pushPerm("c1", 7);
     pushPerm("c1", 7);
     expect(liveDepth()?.classList.contains("hidden")).toBe(true);
+  });
+});
+
+describe("a permission card's tool input", () => {
+  it("fills in place when the tool call lands after the card", () => {
+    setSessions([makeSession({ id: "c1", turns: [makeTurn({ id: "t-1" })] }), session("c2")]);
+    pushDecision({
+      kind: "permission",
+      chatID: "c1",
+      requestID: 5,
+      payload: perm({ request_id: 5, title: "Write a.md", kind: "edit", tool_call_id: "tc-9" }),
+      submit: deliveredHere("c1", "permission", 5),
+    });
+    const card = liveCard();
+    expect(card?.querySelector(".approval-input")).toBeNull();
+
+    appendEntry(
+      "c1",
+      makeEntry({
+        id: "tc-9",
+        turn: "t-1",
+        seq: 1,
+        kind: "tool_call",
+        payload: makeToolCall({ id: "tc-9", input: { path: "a.md" } }),
+      }),
+    );
+
+    expect(liveCard()).toBe(card);
+    expect(card?.querySelector(".approval-input")?.textContent).toBe('{\n  "path": "a.md"\n}');
   });
 });
 

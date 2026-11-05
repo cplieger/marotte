@@ -18,12 +18,13 @@ import {
 import { copyClipboard } from "./actions/messages.js";
 import { downloadChatExport } from "./chat-export.js";
 import { buildPath } from "./route-path.js";
-import { ICON_COMPACT, ICON_EXPORT, ICON_LINK } from "./icons.js";
+import { ICON_COMPACT, ICON_EXPORT, ICON_LINK, ICON_TANGENT_ROW } from "./icons.js";
 import { openFilePicker } from "./files-picker.js";
 import { uploadLimitHint } from "./upload-policy.js";
 import { openTangentChat } from "./chat.js";
 import { mergeTangentChat } from "./tangent-merge.js";
 import { submitPrompt } from "./submit.js";
+import { compactRefusal } from "./typed-commands.js";
 import * as toast from "./toast.js";
 import { chatNotice } from "./notice-subject.js";
 import type { InterruptMode, Session } from "./types.js";
@@ -34,8 +35,6 @@ const ICON_ATTACH =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>';
 const ICON_GOAL =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>';
-const ICON_TANGENT =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>';
 const ICON_MERGE =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>';
 const ICON_SESSION =
@@ -199,7 +198,7 @@ const TANGENT_HINT_EMPTY = "Send a message first. A tangent inherits the convers
  *  (`errForkParentUnknown`), and the failure would arrive after the sub-tab opened. */
 function tangentRow(): HTMLElement {
   const { row, btn, hint } = actionRow({
-    icon: ICON_TANGENT,
+    icon: ICON_TANGENT_ROW,
     name: "Start a tangent",
     hint: TANGENT_HINT,
     onClick: () => {
@@ -284,8 +283,9 @@ const COMPACT_HINT_BUSY = "Wait for this turn to finish, or cancel it, then comp
 
 /**
  * Compact this chat's context (the action `/compact` dispatches). Disabled for the two
- * states `CmdCompact` refuses, no live session and a turn in flight. Reports no completion:
- * the server broadcasts `compaction_started` and persists a `compacted` row.
+ * refusals the client can see, no conversation yet and a turn in flight; the server's 409
+ * covers the rest. Reports no completion: the server broadcasts `compaction_started` and
+ * persists a `compacted` row.
  */
 function compactRow(): HTMLElement {
   const { row, btn, hint } = actionRow({
@@ -299,16 +299,9 @@ function compactRow(): HTMLElement {
         toast.error("Send a message first, then compact the conversation");
         return;
       }
-      if (isEmptyChat(session)) {
-        chatNotice(session.id, "Send a message first, then compact the conversation", "error");
-        return;
-      }
-      if (isBusy(session.id)) {
-        chatNotice(
-          session.id,
-          "Wait for this turn to finish, then compact the conversation",
-          "error",
-        );
+      const refusal = compactRefusal(session);
+      if (refusal !== null) {
+        chatNotice(session.id, refusal, "error");
         return;
       }
       collapseAll();

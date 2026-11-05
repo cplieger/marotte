@@ -7,6 +7,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync"
 
@@ -55,7 +56,8 @@ type loadProjection struct {
 	sessionID string
 	// snapshot is the newest turn_revert id at open, or empty; the swap refuses a log reverted since.
 	snapshot string
-	// frames counts ingested replay frames: many frames and zero turns is a decoding bug.
+	// frames counts ingested replay frames. Two readers: many frames and zero turns is a decoding bug, and zero
+	// frames for a session the log holds turns of is a lost record (errReplayRestoredNothing).
 	frames int
 	// drain is the completion condition shared with the step route. Last for govet fieldalignment.
 	drain replayDrain
@@ -67,6 +69,34 @@ const (
 	settleOnFrame = "frame"
 	settleOnExit  = "exit"
 )
+
+// errReplayRestoredNothing is a load that replayed no frame for a session the chat holds surviving turns of: KAS
+// answers a load of a session whose record is gone by creating a blank one under the same id, so the load succeeds
+// and the agent holds none of those turns. The swap refuses it and writes nothing.
+var errReplayRestoredNothing = errors.New("session/load restored none of the turns this chat holds for the session")
+
+// holdsTurnsOf reports whether a turn_bind naming session sits in a turn absent from reverted: a prompt the session
+// was sent and the chat still shows. Replayed turns carry no bind, so a session only resumed from kiro-cli is not
+// counted until its first prompt here.
+func holdsTurnsOf(entries []marotte.Entry, reverted map[string]struct{}, session string) bool {
+	if session == "" {
+		return false
+	}
+	for i := range entries {
+		e := &entries[i]
+		if e.Kind != marotte.EntryKindTurnBind {
+			continue
+		}
+		if _, gone := reverted[e.Turn]; gone {
+			continue
+		}
+		var bind marotte.EntryTurnBind
+		if json.Unmarshal(e.Payload, &bind) == nil && bind.SessionID == session {
+			return true
+		}
+	}
+	return false
+}
 
 // OpenReplayProjection starts a projection before a session/load, snapshotting the newest
 // turn_revert; its swap settles settled. An open one is discarded: only a re-load reaches this twice.
@@ -180,6 +210,11 @@ func (rp *replay) swapProjectedTranscript(chatID marotte.ChatID, lp *loadProject
 			if readErr != nil {
 				return false, readErr
 			}
+			// Frames, never projected turns: a decoding regression that yields frames but no turns must not retire
+			// every session it loads.
+			if lp.frames == 0 && holdsTurnsOf(entries, reverted, lp.sessionID) {
+				return false, errReplayRestoredNothing
+			}
 			return swapMerged(ctx, &swapRequest{
 				Log:       l,
 				Header:    h,
@@ -196,6 +231,11 @@ func (rp *replay) swapProjectedTranscript(chatID marotte.ChatID, lp *loadProject
 		err = rp.underLifecycle(ctx, chatID, swap)
 	} else {
 		err = swap()
+	}
+	if errors.Is(err, errReplayRestoredNothing) {
+		slog.Warn("session/load replayed nothing for a session this chat holds turns of; the agent's record of it is gone",
+			"chat_id", chatID, "acp_session", lp.sessionID)
+		return err
 	}
 	if err != nil {
 		slog.Error("replay projection: swap failed", "chat_id", chatID, "error", err)

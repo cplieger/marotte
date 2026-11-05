@@ -128,14 +128,14 @@ func rewindReqConfirmed(t *testing.T, chatID marotte.ChatID, messageID string, c
 	}
 }
 
-// rewindStore is the in-memory store with a scripted log: RewindTarget answers from
+// rewindStore is the in-memory store with a scripted log: PromptTarget answers from
 // targets (a prompt id the log holds, and the turn it opened), Revert records the
 // turns it was asked to revert to and answers the record plus the carrier it minted.
 // The real store's resolution over turn_open and turn_bind entries is internal/chat's
 // to pin; what this file pins is what the command does with the answer.
 type rewindStore struct {
 	*testsupport.InMemoryChatStore
-	targets  map[string]marotte.RewindTarget
+	targets  map[string]marotte.PromptTarget
 	reverted []string
 	// minted, when set, is the carrier's turn_open and turn_close the store reports
 	// as freshly written, which the command must announce ahead of the record.
@@ -145,7 +145,7 @@ type rewindStore struct {
 	order *[]string
 }
 
-func (s *rewindStore) RewindTarget(_ context.Context, _ marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error) {
+func (s *rewindStore) PromptTarget(_ context.Context, _ marotte.ChatID, promptID string) (marotte.PromptTarget, bool, error) {
 	target, ok := s.targets[promptID]
 	return target, ok, nil
 }
@@ -205,7 +205,7 @@ func runsOf(err error) []LiveRunRef {
 // reader decides: unconfirmed, the command names the run and reverts nothing.
 func TestCmdRewindChat_A409NamesTheLiveRunsTheCutLaunchedAndRecordsNothing(t *testing.T) {
 	store := seedRewindChat(t, false)
-	store.targets["u2"] = marotte.RewindTarget{Turn: "t2", LaunchedRuns: []string{"wf-1"}}
+	store.targets["u2"] = marotte.PromptTarget{Turn: "t2", LaunchedRuns: []string{"wf-1"}}
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, b, b)
 	runs := &rewindRuns{live: map[string]string{"wf-1": "code-review"}}
@@ -233,7 +233,7 @@ func TestCmdRewindChat_ConfirmedStopsTheRunsBeforeTheRevertAndCutsOnce(t *testin
 	var order []string
 	store := seedRewindChat(t, false)
 	store.order = &order
-	store.targets["u2"] = marotte.RewindTarget{Turn: "t2", LaunchedRuns: []string{"wf-1", "wf-2"}}
+	store.targets["u2"] = marotte.PromptTarget{Turn: "t2", LaunchedRuns: []string{"wf-1", "wf-2"}}
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1", order: &order}
 	host := idleHost(store, b, b)
 	runs := &rewindRuns{live: map[string]string{"wf-1": "code-review", "wf-2": "docs-sweep"}, order: &order}
@@ -263,7 +263,7 @@ func TestCmdRewindChat_ARunOutsideTheCutIsNeitherCancelledNorNamed(t *testing.T)
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := seedRewindChat(t, false)
-			store.targets["u2"] = marotte.RewindTarget{Turn: "t2", LaunchedRuns: tc.launched}
+			store.targets["u2"] = marotte.PromptTarget{Turn: "t2", LaunchedRuns: tc.launched}
 			b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 			host := idleHost(store, b, b)
 			runs := &rewindRuns{live: map[string]string{"wf-0": "code-review"}}
@@ -292,13 +292,13 @@ func seedRewindChat(t *testing.T, bound bool) *rewindStore {
 	t.Helper()
 	store := &rewindStore{
 		InMemoryChatStore: testsupport.NewInMemoryChatStore(),
-		targets: map[string]marotte.RewindTarget{
+		targets: map[string]marotte.PromptTarget{
 			"u1": {Turn: "t1"},
 			"u2": {Turn: "t2"},
 		},
 	}
 	if bound {
-		store.targets["u2"] = marotte.RewindTarget{Turn: "t2", KASMessageID: "kas-2"}
+		store.targets["u2"] = marotte.PromptTarget{Turn: "t2", KASMessageID: "kas-2"}
 	}
 	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.RecordSession("sess-1")

@@ -683,20 +683,26 @@ export const loadSessions = apiAction<
   error: "Could not load previous sessions",
 });
 
+/** A created tangent. `fresh` is the reply's `outcome: "fresh"`: the tangent holds none of the
+ *  parent's conversation. */
+export interface ForkedChat extends CreatedChat {
+  fresh: boolean;
+}
+
 // The server makes the parent's session resident and calls `session/fork`; nothing is copied
-// client-side.
-// `outcome` is informational; `opID` stops a retry forking twice.
+// client-side. `messageID` forks after that prompt's turn instead of at the head; a branch the
+// agent refuses fails rather than opening fresh. `opID` stops a retry forking twice.
 
 export const forkChat = defineAction<
-  { opID: string; parentChatID: string; title?: string },
-  CreatedChat | null
+  { opID: string; parentChatID: string; title?: string; messageID?: string },
+  ForkedChat | null
 >({
   name: "chat.fork",
   networkMode: "always",
   idempotencyKey: true,
   retryable: retryUnlessStill,
   retry: RETRY_STANDARD,
-  run: async ({ opID, parentChatID, title }, signal, ctx) => {
+  run: async ({ opID, parentChatID, title, messageID }, signal, ctx) => {
     const r = await transportSend(
       {
         type: "fork_chat",
@@ -704,6 +710,7 @@ export const forkChat = defineAction<
           parent_chat_id: parentChatID,
           op_id: opID,
           ...(title === undefined ? {} : { title }),
+          ...(messageID === undefined ? {} : { message_id: messageID }),
         },
         ...(ctx?.idempotencyKey === undefined
           ? {}
@@ -711,12 +718,13 @@ export const forkChat = defineAction<
       },
       { signal, reportSendState: false },
     );
-    return chatFromReply(r, signal, "start a tangent");
+    const created = chatFromReply(r, signal, "start a tangent");
+    return { ...created, fresh: (r.body as Record<string, unknown>)["outcome"] === "fresh" };
   },
-  error: (_args, err) =>
+  error: ({ messageID }, err) =>
     mayStillApply(err)
       ? "Still starting the tangent; its tab appears when kiro-cli answers"
-      : `Could not start a tangent: ${err.message}`,
+      : `${messageID === undefined ? "Could not start a tangent" : "Could not branch from this turn"}: ${err.message}`,
 });
 
 /** Whether a stop's answer says it stopped nothing (`responseSkipped`, internal/command). */

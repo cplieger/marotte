@@ -232,18 +232,6 @@ describe("a paused step's end buttons", () => {
     expect(m.dispatched).toEqual([]);
   });
 
-  it("puts the end KAS already recorded first, and redraws when that record moves", () => {
-    const view = buildStepEndView("wf");
-    const withEnd = (status: "completed" | "failed"): ExecNode => ({
-      ...paused(),
-      pendingEnd: { status, text: "applies later" },
-    });
-    expect(names(view.current(withEnd("failed")))).toEqual(["Mark step failed", "Mark step done"]);
-    const done = view.current(withEnd("completed"));
-    expect(names(done)).toEqual(["Mark step done", "Mark step failed"]);
-    expect(view.current(paused())).toBe(done);
-  });
-
   it("hands back the same buttons while the shown step holds, and new ones for another", () => {
     const view = buildStepEndView("wf");
     const first = view.current(paused());

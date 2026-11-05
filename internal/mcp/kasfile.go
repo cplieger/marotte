@@ -40,15 +40,16 @@ const kasFileMaxBytes = 4 << 20
 // Deliberately absent: `cwd` (no field for it, and HealKASConfig reverts a hand-added one).
 type kasServer struct {
 	// Type is emitted for a registry entry only, where it is the declaration.
-	Type          string            `json:"type,omitempty"`
-	Command       string            `json:"command,omitempty"`
-	Args          []string          `json:"args,omitempty"`
-	Env           map[string]string `json:"env,omitempty"`
-	URL           string            `json:"url,omitempty"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	OAuth         *kasOAuth         `json:"oauth,omitempty"`
-	OAuthScopes   []string          `json:"oauthScopes,omitempty"`
-	DisabledTools []string          `json:"disabledTools,omitempty"`
+	Type               string            `json:"type,omitempty"`
+	Command            string            `json:"command,omitempty"`
+	Args               []string          `json:"args,omitempty"`
+	Env                map[string]string `json:"env,omitempty"`
+	URL                string            `json:"url,omitempty"`
+	VersionNegotiation string            `json:"versionNegotiation,omitempty"`
+	Headers            map[string]string `json:"headers,omitempty"`
+	OAuth              *kasOAuth         `json:"oauth,omitempty"`
+	OAuthScopes        []string          `json:"oauthScopes,omitempty"`
+	DisabledTools      []string          `json:"disabledTools,omitempty"`
 	// Timeout is milliseconds, and it is both KAS's connect timeout and the
 	// budget a waitForReady server gets inside a prompt. Zero is KAS's default.
 	Timeout int `json:"timeout,omitempty"`
@@ -81,10 +82,11 @@ func renderKASServers(servers []*Server, policy kasRenderPolicy) map[string]kasS
 			continue
 		}
 		entry := kasServer{
-			DisabledTools: s.DisabledTools,
-			Timeout:       s.TimeoutMS,
-			WaitForReady:  policy.waitAll || s.WaitForReady,
-			Disabled:      !s.Enabled,
+			DisabledTools:      s.DisabledTools,
+			Timeout:            s.TimeoutMS,
+			WaitForReady:       policy.waitAll || s.WaitForReady,
+			VersionNegotiation: string(s.VersionNegotiation),
+			Disabled:           !s.Enabled,
 		}
 		switch s.Transport {
 		case TransportStdio:

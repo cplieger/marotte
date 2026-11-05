@@ -37,7 +37,7 @@ var leaseKinds = map[string]string{
 	"closeOwned": "closer",
 	"attach":     "attach",
 	"holds":      "fact", "hasSession": "fact", "open": "fact", "endedOnItsOwn": "fact", "sessionDeadLocked": "fact",
-	"SessionID": "fact", "autoCompactionDisabled": "fact", "observeEffort": "fact", "observeThinking": "fact",
+	"SessionID": "fact", "awaitAbandonedPrompt": "fact", "observeEffort": "fact", "observeThinking": "fact",
 }
 
 // sessionTypes are the package's interfaces whose method set holds an engine call on a session; the census derives
@@ -70,6 +70,8 @@ var sessionTakers = map[string]string{
 	"bridgeCoordinator.goForward":                 "the forward",
 	"bridgeCoordinator.goRunForward":              "the forward",
 	"bridgeCoordinator.forwardAt":                 "the forward",
+	"bridgeCoordinator.drainLane":                 "the forward",
+	"closeBlankLoad":                              "door step",
 	"guardSession":                                "decorator",
 	"newHostRelay":                                "decorator",
 	"Runtime.closeSession":                        "the closer",
@@ -82,7 +84,7 @@ var sessionTakers = map[string]string{
 // recordSessionWriters are the only functions that write a chat record's session id: the door's record and detach,
 // the empty-turn refresh's lease, and the two record creations, which run before the chat has a life.
 var recordSessionWriters = map[string][]string{
-	"agent":   {"bridgeCoordinator.detachSession", "bridgeCoordinator.persistNewSessionMetadata", "bridgeCoordinator.refreshForRetry"},
+	"agent":   {"bridgeCoordinator.detachRetried", "bridgeCoordinator.persistNewSessionMetadata", "bridgeCoordinator.retireSession"},
 	"command": {"cmdResumeSession", "forkCreate"},
 }
 

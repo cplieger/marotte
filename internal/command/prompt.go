@@ -247,6 +247,7 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, res Reservati
 		return
 	}
 	deliverParkedSteers(callCtx, roles, chatID, retryTurn)
+	setPromptMeta(callCtx, params, roles.workspace.ConfigDir, p, retryTurn)
 	reply, retryErr := sendTurnPrompt(callCtx, roles.sendGate, sb2, params, turn)
 	roles.turnOutcome.EndPromptCall(turn)
 	if retryErr != nil {
@@ -256,10 +257,15 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, res Reservati
 			// Suppressed on a cancel, the reader's own Stop and the chat's close included. The abandon above
 			// already stamped the reason on the retry's turn_close.
 			logPromptFailure("retry prompt failed", chatID, retryErr)
+			g := gradeFailedTurn(ctx, roles, chatID, retryTurn, retryErr, reason)
+			code := marotte.ErrCodeRecoveryFailed
+			if g.auth {
+				code = marotte.ErrCodeAuthTokenUnavailable
+			}
 			roles.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
-				Code:       marotte.ErrCodeRecoveryFailed,
-				Message:    "Retry prompt failed: " + reason,
-				TurnScoped: true,
+				Code:       code,
+				Message:    "Retry prompt failed: " + g.reason,
+				TurnScoped: g.onCard,
 			}))
 		}
 		return
@@ -551,12 +557,6 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, res 
 	defer cancelPrompt(nil)
 	turn := TurnRef{Chat: chatID, Turn: turnID}
 
-	// Before StartTurn so a pre-send compaction is not timed as the turn. Not on
-	// the empty-turn retry, which reaches StartTurn on its own path: this prompt
-	// just ran the check.
-	if roles.compactor != nil {
-		roles.compactor.PreSendCompact(callCtx, chatID, sb)
-	}
 	// At bridge-ready, so the model and credit baseline are captured with the bridge live and the
 	// session open is not timed.
 	if !roles.turnOutcome.StartTurn(callCtx, turn, cancelPrompt) {
@@ -581,7 +581,7 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, res 
 	deliverParkedSteers(callCtx, roles, chatID, turnID)
 	slog.Info("prompt", "chat_id", chatID, "len", len(p.Text))
 	start := time.Now()
-	promptParams, inlinedImage := buildPromptParams(callCtx, roles.workspace, sb, p, historyInlineImages(callCtx, roles.chats, chatID))
+	promptParams, inlinedImage := buildPromptParams(callCtx, roles.workspace, sb, p, turnID, historyInlineImages(callCtx, roles.chats, chatID))
 	reply, err := sendTurnPrompt(callCtx, roles.sendGate, sb, promptParams, turn)
 	roles.turnOutcome.EndPromptCall(turn)
 	elapsed := time.Since(start)
@@ -710,30 +710,55 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID marotte
 		return
 	}
 	logPromptFailure("prompt failed", chatID, err, "elapsed", elapsed)
-	// An auth failure is the one prompt failure whose remedy is not "send
-	// again", so it routes through a different code.
-	code := marotte.ErrCodePromptFailed
-	if classifyPromptFailure(err) == classAuth {
-		code = marotte.ErrCodeAuthTokenUnavailable
-		if roles.auth != nil {
-			roles.auth.record(err)
-		}
-	}
 	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason, kind, seq)
-	// The reason the turn_close carries, which is the engine's own sentence when its
-	// turn_end closed the turn first, so the off-screen toast says what the card says.
-	if result, aErr := roles.turnOutcome.AwaitTurn(ctx, chatID, turnID); aErr == nil && result.Reason != "" {
-		reason = result.Reason
+	g := gradeFailedTurn(ctx, roles, chatID, turnID, err, reason)
+	code := marotte.ErrCodePromptFailed
+	if g.auth {
+		code = marotte.ErrCodeAuthTokenUnavailable
 	}
-	// Turn-scoped: the card says it durably, and a toast for the chat on screen
-	// would be a second copy of it.
 	roles.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID,
-		marotte.ErrorPayload{Code: code, Message: reason, TurnScoped: true}))
+		marotte.ErrorPayload{Code: code, Message: g.reason, TurnScoped: g.onCard}))
 }
 
-// buildPromptParams constructs the full session/prompt parameter map and
+// failedTurnGrade is how a failed prompt's error frame reports it.
+type failedTurnGrade struct {
+	reason string
+	// auth: a refused credential, the one failure whose remedy is not "send again".
+	auth bool
+	// onCard: reason is the text the turn's card carries (ErrorPayload.TurnScoped).
+	onCard bool
+}
+
+// gradeFailedTurn reads the close of turnID, already abandoned for err, and grades it: reason is
+// what its turn_close carries (fallback when it carries none), so a toast says what the card
+// says, and a refused credential latches AuthReadiness. A failure inside the execution names its
+// class only on the turn.
+func gradeFailedTurn(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string, err error, fallback string) failedTurnGrade {
+	g := failedTurnGrade{reason: fallback, onCard: true}
+	result, aErr := roles.turnOutcome.AwaitTurn(ctx, chatID, turnID)
+	if aErr == nil && result.Reason != "" {
+		g.reason = result.Reason
+	}
+	if classifyPromptFailure(err) != classAuth && (aErr != nil || !authClass(result.EngineErrorType)) {
+		return g
+	}
+	// KAS grades every refused credential ask as unauthenticated, so only the vault knows the provider was
+	// down; the card then carries KAS's sign-in sentence, which the vault's reason replaces.
+	if roles.signIn != nil {
+		if why, down := roles.signIn.ProviderUnreachable(); down {
+			return failedTurnGrade{reason: why}
+		}
+	}
+	g.auth = true
+	if roles.auth != nil {
+		roles.auth.record(err)
+	}
+	return g
+}
+
+// buildPromptParams constructs the full session/prompt parameter map for turnID's prompt and
 // reports whether this prompt contains an inlined image.
-func buildPromptParams(ctx context.Context, ws Workspace, sb SessionCaller, p *marotte.PromptCommand, historyImages int) (map[string]any, bool) {
+func buildPromptParams(ctx context.Context, ws Workspace, sb SessionCaller, p *marotte.PromptCommand, turnID string, historyImages int) (map[string]any, bool) {
 	blocks := BuildPromptBlocks(ctx, p.Text, p.Attachments, historyImages, ws, sb)
 	params := sessionParams(sb, map[string]any{
 		marotte.KeyPrompt: blocks,
@@ -743,22 +768,29 @@ func buildPromptParams(ctx context.Context, ws Workspace, sb SessionCaller, p *m
 	if p.MessageID != "" {
 		params["messageId"] = p.MessageID
 	}
-	if meta := kascap.PromptMeta(promptFacts(ctx, ws.ConfigDir, p)); len(meta) > 0 {
+	setPromptMeta(ctx, params, ws.ConfigDir, p, turnID)
+	return params, inlineImageBlockCount(blocks) > 0
+}
+
+// setPromptMeta writes params' _meta for turnID's prompt, replacing any earlier attempt's: the tag names the
+// turn whose turn_start binds it, so a retry turn re-sending the same params needs its own.
+func setPromptMeta(ctx context.Context, params map[string]any, configDir string, p *marotte.PromptCommand, turnID string) {
+	delete(params, "_meta")
+	if meta := kascap.PromptMeta(promptFacts(ctx, configDir, p, turnID)); len(meta) > 0 {
 		params["_meta"] = map[string]any{"kiro": meta}
 	}
-	return params, inlineImageBlockCount(blocks) > 0
 }
 
 // promptFacts withholds the output style when it is the default, unset or not shaped like an id,
 // and from a prompt an agent reads (p.ForAgent). An id KAS does not serve rides; KAS reads it as
 // default.
-func promptFacts(ctx context.Context, configDir string, p *marotte.PromptCommand) *kascap.Prompt {
+func promptFacts(ctx context.Context, configDir string, p *marotte.PromptCommand, turnID string) *kascap.Prompt {
 	var style string
 	read := !p.ForAgent && configDir != "" && settings.FieldInto(ctx, configDir, settings.KeyOutputStyle, &style)
 	if !read || !settings.ValidOutputStyle(style) || style == settings.OutputStyleDefault {
 		style = ""
 	}
-	return &kascap.Prompt{OutputStyle: style, Label: p.DisplayText}
+	return &kascap.Prompt{OutputStyle: style, Label: p.DisplayText, Tag: turnID}
 }
 
 func promptParamsInlineImage(params map[string]any) bool {
@@ -787,8 +819,8 @@ const (
 	// Non-retryable by construction: the payload is what was refused.
 	classRejected
 	// classAuth is the backend refusing the token rather than the
-	// request. cmdPrompt sends marotte.ErrCodeAuthTokenUnavailable for
-	// it, the only code the client routes to a Sign in CTA.
+	// request. gradeFailedTurn owns when it sends marotte.ErrCodeAuthTokenUnavailable,
+	// the only code the client routes to a Sign in CTA.
 	classAuth
 )
 
@@ -810,13 +842,15 @@ var validationErrorNames = []string{
 }
 
 // authErrorNames are the backend's own names for a request refused because
-// the credential was not usable, measured off the KAS 2.20.0 bundle.
+// the credential was not usable; kascap.TestAuthClassesMatchBundle pins them
+// to the pinned bundle's auth classes.
 //
 // ModelRegistryAccessDeniedError is deliberately absent: upstream tells
 // that user the account lacks model access, which no sign-in fixes.
 var authErrorNames = []string{
 	"TokenInvalidError",
 	"TokenExpiredError",
+	"CredentialAbsentError",
 	"AuthRefreshFailedError",
 	"ModelRegistryUnauthenticatedError",
 	"AccessDeniedError",
@@ -880,10 +914,15 @@ func classifyMapped(m rpcerr.Mapped) promptFailureClass {
 	if m.RetryErrorType == rpcerr.RetryThrottling {
 		return classThrottled
 	}
-	if slices.Contains(authErrorNames, m.ErrorType) {
+	if authClass(m.ErrorType) {
 		return classAuth
 	}
 	return classFatal
+}
+
+// authClass reports whether name is a KAS class for a refused credential.
+func authClass(name string) bool {
+	return slices.Contains(authErrorNames, name)
 }
 
 // contextWindowExceeded reports a turn that overflowed the model's context

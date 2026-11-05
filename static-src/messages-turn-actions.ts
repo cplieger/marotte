@@ -4,14 +4,15 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
 import type { Turn } from "./turns.js";
-import { payloadOf } from "./turns.js";
+import { payloadOf, projectTurn } from "./turns.js";
 import { wakeText } from "./turn-wake.js";
 import { sentBy } from "./sent-by.js";
 import { entryRenders, turnFolds } from "./block-window.js";
 import { MessageRun } from "./entry-ids.js";
-import { ICON_COPY, ICON_COPY_MD, ICON_LINK } from "./icons.js";
+import { ICON_COPY, ICON_COPY_MD, ICON_LINK, ICON_TANGENT } from "./icons.js";
 import { blockquote } from "./message-quote.js";
-import { getActiveId } from "./store.js";
+import { get, getActiveId } from "./store.js";
+import { chatNotice } from "./notice-subject.js";
 import { copyClipboard } from "./actions/messages.js";
 import { buildPath } from "./route-path.js";
 import { el } from "@cplieger/ui";
@@ -119,7 +120,8 @@ function copyAndAnimate(btn: HTMLButtonElement, text: string, announce = false):
 
 /**
  * Mount the action buttons into the footer once and refresh the turn the handlers read. Buttons appear only once
- * the turn settles with something to copy; every action, Copy included, sits inside the collapsible group.
+ * the turn settles: the copy actions when it wrote prose, Branch when it can be branched from. Every action sits
+ * inside the collapsible group.
  */
 export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t: Turn): void {
   // Before every early return, and idempotent.
@@ -128,7 +130,8 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
   if (footer.querySelector(":scope > .turn-actions-buttons") !== null) {
     return;
   }
-  if (t.outcome === "running" || turnMarkdown(t).trim() === "") {
+  const hasProse = turnMarkdown(t).trim() !== "";
+  if (t.outcome === "running" || (!hasProse && t.branchFrom === undefined)) {
     return;
   }
 
@@ -164,24 +167,33 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
 
   // Inline on desktop, behind one native <details> on phone; one set of buttons serves both.
   const group = el("span", { className: "turn-actions-group" });
-  group.appendChild(
-    makeBtn(ICON_COPY, "Copy as text", (btn, fromMenu) => {
-      copyAndAnimate(btn, turnCopyText(card, current()), fromMenu);
-    }),
-  );
-  group.appendChild(
-    makeBtn(ICON_COPY_MD, "Copy as markdown", (btn, fromMenu) => {
-      copyAndAnimate(btn, turnCopyMarkdown(current()), fromMenu);
-    }),
-  );
-  group.appendChild(
-    makeBtn(ICON_LINK, "Copy link to this turn", (btn, fromMenu) => {
-      const chatID = getActiveId();
-      if (chatID !== "") {
-        copyAndAnimate(btn, turnLink(chatID, current().n), fromMenu);
-      }
-    }),
-  );
+  if (hasProse) {
+    group.appendChild(
+      makeBtn(ICON_COPY, "Copy as text", (btn, fromMenu) => {
+        copyAndAnimate(btn, turnCopyText(card, current()), fromMenu);
+      }),
+    );
+    group.appendChild(
+      makeBtn(ICON_COPY_MD, "Copy as markdown", (btn, fromMenu) => {
+        copyAndAnimate(btn, turnCopyMarkdown(current()), fromMenu);
+      }),
+    );
+    group.appendChild(
+      makeBtn(ICON_LINK, "Copy link to this turn", (btn, fromMenu) => {
+        const chatID = getActiveId();
+        if (chatID !== "") {
+          copyAndAnimate(btn, turnLink(chatID, current().n), fromMenu);
+        }
+      }),
+    );
+  }
+  if (t.branchFrom !== undefined) {
+    group.appendChild(
+      makeBtn(ICON_TANGENT, "Branch from here", () => {
+        branchFrom(current().id);
+      }),
+    );
+  }
 
   const more = el("details", {
     className: "turn-actions-more",
@@ -208,6 +220,28 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
   } else {
     footer.appendChild(slot);
   }
+}
+
+/**
+ * Open a tangent holding the conversation through `turnID`. The turn is re-projected from the live session, because
+ * a compaction since the card's last paint leaves it nothing KAS can fork from. Files on disk stay as they are.
+ */
+function branchFrom(turnID: string): void {
+  const chatID = getActiveId();
+  const session = get(chatID);
+  if (session === undefined) {
+    return;
+  }
+  const at = projectTurn(session, turnID)?.branchFrom;
+  if (at === undefined) {
+    chatNotice(
+      chatID,
+      "This turn was summarized or rewound since it was shown, so there is nothing to branch from.",
+    );
+    return;
+  }
+  // Lazy: chat.ts imports messages.ts, which imports this module.
+  void import("./chat.js").then(({ openTangentChat }) => openTangentChat(chatID, at.id));
 }
 
 /** The full URL of one turn: the chat's route plus `#turn-<n>`. */

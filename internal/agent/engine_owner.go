@@ -63,6 +63,8 @@ type engineHooks struct {
 	// in the fingerprint.
 	resolve func(ctx context.Context, path string) engineSpec
 	spawned func()
+	// contentCollection resolves the value kiro-cli's own switch is kept on (kiroShare).
+	contentCollection func(ctx context.Context) (enabled, readable bool)
 	// options are the bridge options of one generation (router, exit hook, detach handler); attach starts the
 	// engine lane's consumer before Start writes initialize.
 	options func(gen uint64) []bridge.Option
@@ -139,6 +141,7 @@ type engineOwner struct {
 	latest      map[marotte.EngineReason]string
 	resolveLock surfaceLock
 	liveLock    surfaceLock
+	share       kiroShare
 	live        engineLive
 	oomBaseline oomBaseline
 	gen         uint64
@@ -173,6 +176,7 @@ func newEngineOwner(source EngineSource, lt *lifetime, hooks *engineHooks) *engi
 		pending:    map[uint64]interruptSet{},
 		state:      marotte.EngineStarting,
 	}
+	o.share.resolve = hooks.contentCollection
 	o.since = o.now()
 	o.boot = o.since.UnixMilli()
 	o.unavailable = source.Installed() == nil && source.CLIPath() == ""
@@ -300,6 +304,7 @@ func (o *engineOwner) spawn(ctx context.Context) (engineHandle, uint64, error) {
 		}
 		slog.Warn("engine starting while config.json cannot be read", "generation", gen, "settings", from)
 	}
+	o.share.assert(ctx, o.source, true)
 	opts := o.hooks.options(gen)
 	var h engineHandle
 	if sp, ok := o.source.(engineSpawner); ok {

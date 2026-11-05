@@ -51,6 +51,8 @@ vi.mock("./store.js", () => ({
 
 // The send is the subject; the event was only ever a proxy for it.
 let submits = 0;
+let cancelled = vi.fn();
+let mod: typeof ModPromptInput;
 
 /** Press Enter with an explicit IME state. `keyCode` is set through the init dict, because a
  *  KeyboardEvent derives it from `key` otherwise. */
@@ -76,6 +78,7 @@ beforeEach(async () => {
   vi.resetModules();
   bootSeq++;
   submits = 0;
+  cancelled = vi.fn();
   document.body.innerHTML = `
     <form id="prompt-form">
       <div id="prompt-box">
@@ -84,15 +87,12 @@ beforeEach(async () => {
       <button id="midturn-send-btn" type="button" hidden></button>
       <button id="send-btn" type="submit"></button>
     </form>`;
-  const mod = (await import(
+  mod = (await import(
     /* @vite-ignore */ `./prompt-input.ts?boot=${bootSeq}`
   )) as typeof ModPromptInput;
-  mod.initPromptInput(
-    () => {
-      submits += 1;
-    },
-    () => undefined,
-  );
+  mod.initPromptInput(() => {
+    submits += 1;
+  }, cancelled);
   // A send needs text: every case below asks whether Enter reached the send, so an empty box would
   // make a blocked Enter and a delivered one indistinguishable.
   (document.getElementById("prompt-input") as HTMLTextAreaElement).value = "hello";
@@ -180,7 +180,7 @@ describe("resetting a stuck composition", () => {
     expect(submits).toBe(1);
   });
 
-  it("leaves a plain Escape propagating, so pills and the dock still close", () => {
+  it("leaves a plain Escape propagating with no turn running, so an open card still closes", () => {
     const input = document.getElementById("prompt-input") as HTMLTextAreaElement;
     let reachedDocument = false;
     document.addEventListener("keydown", (e) => {
@@ -190,6 +190,32 @@ describe("resetting a stuck composition", () => {
     });
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(reachedDocument).toBe(true);
+  });
+});
+
+describe("Escape during a turn", () => {
+  it.each([
+    [
+      "compositionstart",
+      () => {
+        compose("compositionstart");
+        return {};
+      },
+    ],
+    ["keyCode 229", () => ({ keyCode: 229 })],
+  ] as const)("leaves the turn running when Escape belongs to a composition (%s)", (_, arrange) => {
+    mod.setSendState({ kind: "streaming" });
+    const init = arrange();
+    const input = document.getElementById("prompt-input") as HTMLTextAreaElement;
+    const e = new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    input.dispatchEvent(e);
+    expect(cancelled).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
   });
 });
 

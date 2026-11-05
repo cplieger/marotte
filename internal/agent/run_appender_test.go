@@ -275,3 +275,29 @@ func TestStepNoteText_KeepsAnIncludedStepsPathUnambiguous(t *testing.T) {
 		t.Errorf("refusal note = %q, want it to name the step's path", got)
 	}
 }
+
+func TestRunOpenTurn_AnswersOnlyAnOpenTurnAndOpensNone(t *testing.T) {
+	const id = "wf_1"
+	path := []string{"wf_1", "build"}
+	nodePath := workflow.PathKey(path)
+	h, _, _ := runLoggingHub(t)
+
+	if _, ok := h.runs.RunOpenTurn(id, nodePath); ok {
+		t.Fatal("RunOpenTurn answered a turn before the step started")
+	}
+	if h.runs.log.turn(id, nodePath) != nil {
+		t.Fatal("RunOpenTurn opened a turn")
+	}
+
+	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: "step-session-1"}, "")
+	got, ok := h.runs.RunOpenTurn(id, nodePath)
+	if !ok || got != h.runs.log.turn(id, nodePath) {
+		t.Errorf("RunOpenTurn = %p, %v, want the step's open turn", got, ok)
+	}
+
+	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
+	joinInflight(t, h)
+	if _, ok := h.runs.RunOpenTurn(id, nodePath); ok {
+		t.Error("RunOpenTurn answered the step's closed turn")
+	}
+}

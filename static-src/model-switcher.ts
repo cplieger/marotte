@@ -15,7 +15,7 @@ import { $, setBusy } from "./dom.js";
 import { humanName, rateLabel } from "./strings.js";
 import { switchModel } from "./actions/chat.js";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui/roving-focus";
-import { setCurrentModel, setLastModel, getLastEffortFor } from "./session-context.js";
+import { setLastModel, getLastEffortFor } from "./session-context.js";
 import {
   refreshPickerIfVisible,
   getCachedModels,
@@ -486,7 +486,6 @@ export function initModelSwitcher(): void {
 }
 
 function applyLocalModel(modelID: string): void {
-  setCurrentModel(modelID);
   setLastModel(modelID);
   const session = getActive();
   if (session !== undefined) {

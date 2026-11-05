@@ -139,13 +139,13 @@ reads off the same object: ResolvedKnowledgeConfig.resolve reads
 indexType, includePatterns, excludePatterns, maxFiles and chunking and
 never touches enabled, so sending {"enabled": false} withdraws the tool
 without disturbing how the store is built.`,
-	"setting.toolSearch": `WITHHELD. KAS defers every MCP tool behind tool_load/tool_call with no gate,
+	"setting.toolSearch": `WITHHELD. KAS defers every MCP tool behind tool_load or load_resource, then tool_call, with no gate,
 and the only member it still reads here is neverDefer, a list of server::tool ids
 kept in the always-loaded belt (session tool assembly, 2.31.0 @11,676,859).
 marotte offers no control for it: kiro-cli's own TUI writes no neverDefer either
 (its toolSearch.* keys map enabled, minPct and minTokens, none read by KAS), the
 key rides initialize so any change needs a new process, and what it saves is one
-tool_load call per server per session.`,
+load call per server per session.`,
 	"setting.workflows": `_meta.kiro.settings.workflows gates the agent's workflow TOOLS the
 same way: resolveWorkflows resolves an absent key to false, and KAS then
 withholds every agent-side workflow tool (its run tool, its chat workflow
@@ -495,8 +495,7 @@ watching at a bump. And this key is in neither the isSettingEnabled nor the
 isFeatureEnabled population, so the census cannot see it and will not list it in
 unclaimed.txt: this row is the only record it exists.`,
 	"setting.disableAutoCompaction": `SENT, value-gated, on the session door only. The chat's compaction
-policy (auto_compaction_enabled, auto_compact_pct) sets it true when the switch is
-off or the point is above 80%, where marotte compacts the chat itself; every other
+policy (auto_compaction_enabled) sets it true when the switch is off; every other
 session sends false.
 
 resolveDisableAutoCompaction reads three inputs, the session call's own _meta, the
@@ -512,28 +511,22 @@ context-overflow recovery go with it, so an overflow fails the turn with
 ContextWindowExceededError (-32000) and internal/command names the Compact button.
 In-chat subagents share the parent's session services, so they run without
 compaction too; nothing marotte can call compacts a subagent.`,
-	"setting.compaction": `WITHHELD because there is nothing to send TO. KAS declares the object in
-its own settings schema — CompactionSettingSchema, with excludePercent and
-excludeMessages — validates it, and reads neither member anywhere. Measured on the
-stock 2.19.2 bundle: excludePercent has exactly one occurrence, its own
-declaration, and the object itself has zero reads in all three of KAS's reader
-shapes (isSettingEnabled, isFeatureEnabled, and a .data.<key> resolver).
+	"setting-object.compaction": `SENT on both session doors while the compaction switch is on, as
+{enabled: true, autoCompactionThreshold: auto_compact_pct}; withheld (KAS's default,
+80) while it is off, where disableAutoCompaction already short-circuits KAS's
+summarization node, so a slider move then reloads no chat. KAS reads it through its
+own resolver, not isSettingEnabled: without enabled === true the threshold reads as
+the default, silently. A cold load resolves the threshold from the load request
+alone (the session record stores none), so a load that omits the row resumes at 80. Its
+validator throws -32602 on a value outside 0..80 (initialize advertises
+autoCompactionThreshold {min, max, default}), so a narrowed range fails every chat
+door: the slider stays at 50..80. excludePercent and excludeMessages, the object's
+other members, are declared in KAS's schema with no reader and stay unsent; marotte
+once shipped Settings controls writing them and a context-ring wedge drawn from one,
+and both are gone.
 
-This row is here because the ABSENCE of a record is what let two Settings controls
-survive a capability audit. marotte shipped "Keep last N exchanges" and "Context
-buffer (%)" writing kiro-cli's compaction.excludeMessages and
-compaction.excludeContextWindowPercent, and the context ring drew its compaction
-threshold from the second one — a wedge positioned by a number that governs
-nothing. Both fields and the wedge are gone. A row saying "declared upstream with
-zero readers, so there is nothing to send and nothing to withhold" is the honest
-record, and it keeps unclaimed.txt meaningful by claiming the key.
-
-Five sibling keys are in the same state and share this row's reasoning rather than
-getting one each: thinking, tangentMode, checkpoint, _subagent and _delegate are
-all declared in KAS's schema with zero readers. chat.enableCheckpoint's marotte
-toggle is deleted; chat.enableTodoList's went too, and its todoList key left the
-schema at 2.27.0. _subagent's former counterpart, subagentOrchestration, has
-no reader either, so this table sends neither.`,
+thinking, tangentMode, checkpoint, _subagent and _delegate are declared in KAS's
+schema with zero readers, so this table has no row for them.`,
 	"setting-object.memory": `SENT on both session doors, from the Memory dropdown (settings.KeyMemoryMode),
 always explicit. KAS reads it through U$ (data.memory), not isSettingEnabled, so its
 value is {mode, reflection} and not the {enabled} object. mode is disabled, read_only
@@ -686,7 +679,8 @@ Subagent delegation v2; no marotte surface depends on which version runs.`,
 	"env.KIRO_FEATURE_CONSOLIDATE_DISCLOSURES_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 The consolidate_disclosures experiment (default off). On, load_resource replaces
-disclose_context, kiro_powers and tool_load in the tool belt; the tool cards render either belt.`,
+disclose_context, kiro_powers and tool_load in the tool belt; marotte's tool cards and
+environment steering read either belt.`,
 	"env.KIRO_FEATURE_KIRO_INFRA_SAFETY_MONITOR_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 The Infrastructure-Safety monitor arm. The infraSafetyMonitor settings row
@@ -768,6 +762,12 @@ marotte does not enable sessionRecap, so there is no recap to disable.`,
 (decision: pin only where a marotte setting owns the behaviour).
 The kill switch of the next-message suggestion call. marotte does not enable
 _suggestedPrompts, so there is no suggestion call to disable.`,
+	"env-mode.KIRO_TRUST_CLASSIFIER_MODE": `SENT as "enforce" on every engine. It opens KAS's trust classifier, which
+answers a tool call no rule settles only where an effect: evaluate rule matches: the
+approve-for-me preset of the Approve for me profile, or a user, workspace or organization
+evaluate rule, which KAS skips with a warning while the mode is off. Inert without such a rule
+(no classifier call is made), and read once per process, so a per-profile value would need an
+engine restart on every picker change.`,
 	"env-json.KIRO_FEATURE_CASCADE_CONFIG": `SENT only when the user has chosen "Auto model routing" (auto_routing); unset withholds it,
 so the cascade_config experiment decides as in kiro-cli's own TUI. Auto routing moves a chat on
 Auto up a model category mid-session. The env JSON outranks the experiment and REPLACES its whole
@@ -789,8 +789,21 @@ the experiment and replaces its whole config, so "on" runs KAS's default categor
 steering, tool definitions, MCP tools, conversation and tool output, plus their 12 largest items
 with names and inclusion kinds under "detailed") and adds it to that turn's turn_completion, which
 it also persists on usage_summary so it replays. KAS resets prompt profiling per execution, so a
-prompt without the key gets no breakdown. translate.contextBreakdownFrom keeps it on the turn's
+prompt without the key gets no breakdown; a turn KAS starts on its own takes its mode from
+automaticTurnProfiling instead. translate.contextBreakdownFrom keeps it on the turn's
 turn_close for the turn footer's info panel.`,
+	"object.automaticTurnProfiling": `SENT on both doors of a chat session, never a run host's or an observer's (their turns
+render nowhere). KAS gives the turns it starts on its own (a send_message or workflow-complete wake, a notification
+re-wake) the profiling the session's clients declared here, and none without it, since no prompt of theirs carries
+the per-prompt keys. It carries what a chat prompt carries (TestAutomaticTurnProfiling_MatchesAChatPrompt), so such a
+turn's info panel shows the same first output and context breakdown. KAS keys it by session and client and forgets
+it on an all-false declaration, so a load without it would withdraw it. A step session never gets it: marotte opens
+none, and KAS does not inherit a declaration from the parent.`,
+	"capability.ttft": `SENT on every chat prompt, never on a run step's (a step turn renders no info panel). KAS
+stamps the turn's first displayed chunk with when the prompt arrived, when the first model request
+left, when the model's first token came back and when that chunk left; it persists the stamps and
+replays them as turn_timing. translate.firstOutputFrom keeps three spans on turn_close.first_output
+for the info panel's Time section. Asked per prompt because KAS resets prompt profiling per execution.`,
 	"text.displayText": `SENT on a message to a paused run step (an answer or a resume), carrying the words as typed.
 KAS hands it to the step runner, which stores it as the step's user row label (persistStepUserMessage),
 so every client of the step session shows the user's words; without it KAS keeps a label only when
@@ -798,6 +811,11 @@ its prompt resolver expanded a /name template. SENT on a chat prompt marotte wro
 behalf (a spec Run, a deferral, a tangent merge) carrying its label: KAS
 stores it on the user message and its replay gives the label as the message text, as the TUI's
 tangent merge relies on. A typed chat prompt never sends it.`,
+	"text.userMessageTag": `SENT on every chat prompt as the marotte turn id the prompt opened, never on a
+step message. KAS stores it verbatim on the user row and on the turn_start that runs the prompt
+(extractUserMessageTag; 1 to 256 characters) and echoes it on that turn_start live and on replay, so
+the bracket names the turn it opens: a turn_start with another tag or none is an agent run and
+never binds the waiting prompt, and the replay merge pairs a turn on the tag it echoes.`,
 	"enum.outputStyle": `SENT on a prompt when the user picked a non-default output style (output_style).
 KAS maps the id to a style instruction for THAT turn only (an unknown id reads as default, and a
 continuation or agent-initiated prompt gets none), so it rides every user prompt rather than a
@@ -812,6 +830,12 @@ _kiro/configuration/getState also lists the items another layer displaced or
 switched off (agents, workflows, steering docs, MCP servers), each with the
 layer that decided it. The Docs tab and MCP cards badge them; without it a
 replaced agent looks loaded and a disabled server looks configured.`,
+	"capability.sessionScopedMcpStatus": `SENT on the engine's initialize. KAS reads
+clientMeta.sessionScopedMcpStatus === true and then sends each session only its own MCP
+servers, its subagent scopes included, and its own connect failures, instead of the union
+of every session's servers re-sent to all of them on any change. It also stops re-sending
+at a session's close, so marotte keeps one view per session and drops it when the session
+ends (internal/agent/mcp_registry.go).`,
 	"text.overrideSessionId": `SENT on session/new with the id marotte minted (ids.NewSessionID). KAS takes it
 as the new session's id (newSessionAdmitted: overrideSessionId ?? a fresh
 "sess_" UUID), so every frame it sends for the session, the ones before the

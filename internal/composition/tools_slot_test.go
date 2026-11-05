@@ -107,6 +107,29 @@ func TestToolsSlot_ManifestChangedAfterCloseStartsNothing(t *testing.T) {
 	}
 }
 
+func TestToolsSlot_ManifestChangedOverABadManifestTakesTheEngineDownWithItsReason(t *testing.T) {
+	fx := newManifestSaveFixture(t, `{"version":2,"tools":{}}`)
+	if engine, reason := fx.tools.Engine(); engine == nil {
+		t.Fatalf("Setup: Engine() over a valid manifest = (nil, %v), want the engine up", reason)
+	}
+	if err := os.WriteFile(fx.manifest, []byte(`{"version":3,"tools":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fx.tools.manifestChanged()
+
+	engine, reason := fx.tools.Engine()
+	if engine != nil {
+		t.Fatal("Engine() after a version-3 manifest landed = a live engine, want down")
+	}
+	if reason == nil || !strings.Contains(reason.Error(), "tools.json is invalid: manifest version 3") {
+		t.Errorf("Engine() reason = %v, want it to say tools.json is invalid: manifest version 3", reason)
+	}
+	if recs := loggedManifestRefusals(t, fx.logs); len(recs) != 1 || recs[0]["path"] != fx.manifest {
+		t.Errorf("ERROR records naming the unusable tools.json = %v, want one naming %s", recs, fx.manifest)
+	}
+}
+
 func TestToolsSlot_StartRetriesARefusalWhoseManifestWasRepairedMeanwhile(t *testing.T) {
 	configDir, toolsDir := fitTree(t)
 	manifest := filepath.Join(configDir, "tools.json")

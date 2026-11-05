@@ -1,12 +1,8 @@
 package agent
 
-// A binding must be revisable: `agentInitiated` rides content frames, never the
-// bracket, so a prompted turn_start cannot be told from an agent-initiated one.
-
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
@@ -30,14 +26,14 @@ func (r *turnRegistry) withLifecycle(ctx context.Context, chatID marotte.ChatID,
 // errNoLife is withLifecycle's answer for a chat with no lifecycle: it was closed and forgotten.
 var errNoLife = fmt.Errorf("the chat has no live turn state: %w", marotte.ErrChatClosedDuringCall)
 
-// bindPending binds a turn_start to the pending prompt turn when its session/prompt went out (awaitsSend), answering
-// its id. If not, it claims the own turn the bracket supersedes, an acked one (bound, or a wire turn, fold-opened
-// included) or any own beside a bindable prompt, for the caller to close. Neither means open a turn. It waits out
-// finalizing; "" and nil when ctx died.
-func (r *turnRegistry) bindPending(ctx context.Context, chatID marotte.ChatID) (bound string, lost *activeTurn) {
+// bindPending binds a turn_start to the pending prompt turn when its session/prompt went out (awaitsSend) and the
+// bracket's tag is that turn's id, answering its id. If not, it claims the own turn the bracket supersedes, an acked
+// one (bound, or a wire turn, fold-opened included) or any own beside a bindable prompt, for the caller to close.
+// Neither means open a turn. It waits out finalizing; "" and nil when ctx died.
+func (r *turnRegistry) bindPending(ctx context.Context, chatID marotte.ChatID, tag string) (bound string, lost *activeTurn) {
 	err := r.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
 		p, o := lc.pending, lc.own
-		unbindable := p == nil || p.acked || p.finalizing || p.awaitsSend()
+		unbindable := p == nil || p.acked || p.finalizing || p.awaitsSend() || tag != p.ID
 		if (unbindable && o != nil && o.acked) || (!unbindable && o != nil && o != p) {
 			// withLifecycle waited out a finalizing own, so o is unclaimed and the claim holds.
 			lc.claimIfLocked(o, nil)
@@ -88,26 +84,4 @@ func (r *turnRegistry) promptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 		return lc.own.Log, true
 	}
 	return nil, false
-}
-
-// revisableLocked reports the provisionally bound prompt turn a frame carrying
-// agentInitiated re-targets, nil when the chat holds none. Caller holds mu.
-func (lc *chatLifecycle) revisableLocked() *activeTurn {
-	pre := lc.own
-	if pre == nil || !pre.acked || !pre.Source.Acknowledgeable() || pre.finalizing {
-		return nil
-	}
-	return pre
-}
-
-// reviseLocked re-targets routing after the agent turn's turn_open was appended and opened as own: the prompt's
-// turn drops back to pending, owed its bracket. Sealed entries stay. Caller holds mu.
-func (lc *chatLifecycle) reviseLocked(pre, agent *activeTurn) {
-	agent.acked = true
-	agent.bracketed = true
-	agent.Opened = pre.Opened
-	pre.acked = false
-	lc.pending = pre
-	slog.Info("a frame revised a provisional turn binding to agent-initiated",
-		"chat_id", pre.Chat, "prompt_turn", pre.ID, "agent_turn", agent.ID)
 }

@@ -14,18 +14,36 @@ import (
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
-// fsReadCap caps text reads at 8 MiB: every KAS read_file and str_replace pre-read.
+// fsReadCap caps text reads at 8 MiB: every KAS read_file and str_replace pre-read, and the
+// delete_file undo snapshot, so a delete over it is refused.
 const fsReadCap = 8 << 20
 
 // fsWriteCap caps one write at 4 MiB; KAS composes every structured edit into a whole-file
 // fs/write_text_file here.
 const fsWriteCap = 4 << 20
 
-// Routine fs rejections, logged at Debug.
+const noUndoAdvice = "If it should be removed, delete it with a shell command instead (that keeps no undo copy)"
+
+// Routine fs rejections, logged at Debug. The no-undo pair follows KAS's own too-large
+// delete_file text, which KAS prefixes with the path.
 var (
-	errCapExceeded    = errors.New("file exceeds byte cap")
-	errRejectedByUser = errors.New("change rejected by user")
+	errCapExceeded     = errors.New("file exceeds byte cap")
+	errRejectedByUser  = errors.New("change rejected by user")
+	errNoUndoDirectory = errors.New("not deleted: delete_file keeps an undo copy of everything it deletes, " +
+		"and a directory cannot have one. " + noUndoAdvice)
+	errNoUndoTooLarge = fmt.Errorf("not deleted: delete_file keeps an undo copy of everything it deletes, "+
+		"and this file is too large for one (over the %d MiB limit). %s", fsReadCap>>20, noUndoAdvice)
 )
+
+// kasNotFoundPrefix opens every not-found answer. KAS's not-found predicate (FileNotFoundError,
+// code ENOENT, or a message starting "Path does not exist") sees only a wire error's message, and
+// it decides whether a create's undo snapshot reads as empty and a revert of a gone file succeeds.
+const kasNotFoundPrefix = "Path does not exist: "
+
+type notFoundError struct{ err error }
+
+func (e notFoundError) Error() string { return kasNotFoundPrefix + e.err.Error() }
+func (e notFoundError) Unwrap() error { return e.err }
 
 // errNoWorkRoot means the workspace could not be opened as a confined root. Not routine.
 var errNoWorkRoot = errors.New("workspace is not open for confined access")
@@ -36,18 +54,21 @@ func (lt *lifetime) resolveInsideWorkDir(p string) (string, error) {
 	return workspace.ResolveInsideAbs(lt.workDir, p)
 }
 
-// fsAccess is what a verb does at a path. Only a read reaches the uploads folder.
+// fsAccess is what a verb does at a path. Only a read reaches the uploads folder; only an
+// unlink leaves the final component unresolved, so it removes a symlink and never its target.
 type fsAccess int
 
 const (
 	fsWrite fsAccess = iota
 	fsRead
+	fsUnlink
 )
 
 // fsTarget is a path confined to one root: every operation goes through root with rel, so each
 // component is re-resolved per operation and an agent swapping an ancestor for a symlink between
 // verdict and operation reaches nothing outside it. A symlink staying inside the root is still
-// followed; delete descends with atomicfile.OpenParentInRoot instead. The caller runs release.
+// followed, the final component included except for fsUnlink; delete then pins the name's
+// ancestors with atomicfile.OpenParentInRoot. The caller runs release.
 type fsTarget struct {
 	root *os.Root
 	rel  string
@@ -73,7 +94,11 @@ func (lt *lifetime) confine(ctx context.Context, p string, access fsAccess) (fsT
 	if access == fsRead && lt.uploadsDir != "" {
 		roots = append(roots, lt.uploadsDir)
 	}
-	won, rel, err := workspace.ConfineAnyAbs(roots, p)
+	confineAny := workspace.ConfineAnyAbs
+	if access == fsUnlink {
+		confineAny = workspace.ConfineNameAnyAbs
+	}
+	won, rel, err := confineAny(roots, p)
 	if err != nil {
 		return fsTarget{}, err
 	}
@@ -90,9 +115,12 @@ func (lt *lifetime) confine(ctx context.Context, p string, access fsAccess) (fsT
 	return fsTarget{root: root, rel: rel, opened: true}, nil
 }
 
-// respondFSError answers an fs request with a JSON-RPC error and logs it: routine
-// rejections at Debug, real failures at Warn.
+// respondFSError answers an fs request with a JSON-RPC error, a missing path in KAS's not-found
+// wording, and logs it: routine rejections at Debug, real failures at Warn.
 func (in *inbound) respondFSError(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse, err error) {
+	if errors.Is(err, os.ErrNotExist) {
+		err = notFoundError{err}
+	}
 	safe := logsafe.Field(err.Error())
 	if fsErrorIsRoutine(err) {
 		slog.Debug("fs request denied", "chat_id", chatID, "method", msg.Method, "error", safe)
@@ -106,8 +134,12 @@ func fsErrorIsRoutine(err error) bool {
 	if err == nil {
 		return false
 	}
-	return errors.Is(err, errCapExceeded) ||
-		errors.Is(err, errRejectedByUser)
+	// A not-found is KAS probing: every create reads the path first for its undo snapshot.
+	return errors.Is(err, os.ErrNotExist) ||
+		errors.Is(err, errCapExceeded) ||
+		errors.Is(err, errRejectedByUser) ||
+		errors.Is(err, errNoUndoDirectory) ||
+		errors.Is(err, errNoUndoTooLarge)
 }
 
 func (in *inbound) respondBridge(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse, result any, err error) {

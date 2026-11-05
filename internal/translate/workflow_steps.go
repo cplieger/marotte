@@ -162,20 +162,37 @@ func (s *stepRegistry) refFor(sessionID string) stepRef {
 // forgetRun drops every step session of a terminated run. Only on a TERMINAL
 // `run_complete` (the caller gates; see ForgetRunSteps): `paused` arrives on the same
 // frame, and wiping then empties the registry MID-RUN, losing the resumed run's asks.
-func (s *stepRegistry) forgetRun(workflowID string) {
+func (s *stepRegistry) forgetRun(workflowID string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	forgot := make([]string, 0, len(s.byRun[workflowID]))
 	for id := range s.byRun[workflowID] {
 		delete(s.byID, id)
+		forgot = append(forgot, id)
 	}
 	delete(s.byRun, workflowID)
+	return forgot
+}
+
+// sessionAt answers the step session recorded at workflowID's nodePath, "" for none.
+func (s *stepRegistry) sessionAt(workflowID, nodePath string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for id := range s.byRun[workflowID] {
+		if s.byID[id].NodePath == nodePath {
+			return id
+		}
+	}
+	return ""
 }
 
 // ForgetRunSteps drops the step sessions of a run that has ENDED. Exported because the
 // status gate is `internal/agent`'s, made in the same branch as `forgetBounds`. Both
 // `record` doors refuse an empty id, so no guard is needed.
 func (t *Translator) ForgetRunSteps(workflowID string) {
-	t.steps.forgetRun(workflowID)
+	for _, session := range t.steps.forgetRun(workflowID) {
+		t.wakes.forget(session)
+	}
 	t.wakeMem.forgetRun(workflowID)
 }
 

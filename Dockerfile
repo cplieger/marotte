@@ -231,6 +231,12 @@ ENV GOPATH="/config/tools/go"
 ENV GOBIN="/config/tools/bin"
 ENV HOME="/config/home"
 ENV KIRO_HOME="/config/home/.kiro"
+# pinstall never rewrites a version directory, so kiro-cli's per-session binary copy protects nothing.
+ENV KIRO_SKIP_BINARY_PINNING=1
+# kiro-cli unpacks node, the agent server and the terminal UI here and deletes every
+# other version's copy at each start, so a child running another kiro-cli version
+# unsets it.
+ENV KIRO_RUNTIME_DIR="/config/home/.cache/kiro-cli-runtime"
 # Unset, glibc's C locale makes git octal-escape non-ASCII paths. C.UTF-8 is a
 # glibc built-in, so no locales package is needed.
 ENV LANG="C.UTF-8"

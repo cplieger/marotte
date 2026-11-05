@@ -3,7 +3,7 @@
 // on `Chat.QueuedPrompts`, so every device draws the same rows.
 
 import { sendPromptTo } from "./chat-commands.js";
-import { handleTypedCommand } from "./typed-commands.js";
+import { handleTypedCommand, terminalCommandRefusal } from "./typed-commands.js";
 import { newMessageID } from "./transport.js";
 import {
   takeAttachments,
@@ -93,9 +93,18 @@ function settled(send: Send): void {
 
 /** Sends a prompt on an idle chat, or the interrupt mode's busy verb on a busy one. Conversion runs
  *  both ways (409-busy → busy verb, `no_turn` → prompt) on a shared budget; a hard failure
- *  restores text and attachments under the same message id. */
-export async function submitPrompt(chatID: string, text: string): Promise<SubmitResult> {
-  if (chatID === "" || !isSendable(text, hasAttachments())) {
+ *  restores text and attachments under the same message id. `opts.attachments` is for a send not
+ *  drawn from the live composer: it is sent in place of the pill row, which is left untouched. */
+export async function submitPrompt(
+  chatID: string,
+  text: string,
+  opts: { attachments?: readonly AttachedFile[] } = {},
+): Promise<SubmitResult> {
+  const named = opts.attachments;
+  if (
+    chatID === "" ||
+    !isSendable(text, named === undefined ? hasAttachments() : named.length > 0)
+  ) {
     return "failed";
   }
   // A new attempt IS the retry, so a stale "no agent" verdict goes now (nothing on the failure path
@@ -107,21 +116,23 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
   if (handleTypedCommand(chatID, text)) {
     return "sent";
   }
-  // Held before the attachments are taken, so a busy chat keeps its pill row. The
-  // text goes back once the composer's own clear (after this synchronous prefix) has run.
+  const refusal = invokesCatalogCommand(text) ? null : terminalCommandRefusal(text);
+  if (refusal !== null) {
+    chatNotice(chatID, refusal.notice);
+    return refusal.keepText ? holdText(chatID, text) : "sent";
+  }
+  // Held before the attachments are taken, so a busy chat keeps its pill row.
   const reason = isBusy(chatID) ? promptOnlyReason(text) : null;
   if (reason !== null) {
     chatNotice(chatID, reason);
-    await Promise.resolve();
-    restoreFailedSend(chatID, text);
-    return "held";
+    return holdText(chatID, text);
   }
   const send: TypedSend = {
     kind: "typed",
     chatID,
     text,
     messageID: messageIDFor(chatID, text),
-    attachments: takeAttachments(),
+    attachments: named ?? takeAttachments(),
     // Read BEFORE the await: this is the attachment state the send is taking with
     // it, and recordFailure hands the token back so a restore into a state that was
     // dropped meanwhile (the chat was closed) is refused rather than recreating it.
@@ -131,6 +142,14 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
   return whileInFlight(send, (s) =>
     isBusy(chatID) ? busy(s, CONVERT_BUDGET) : prompt(s, CONVERT_BUDGET),
   );
+}
+
+/** Hands `text` back to the composer once its own clear, after submitPrompt's synchronous
+ *  prefix, has run. */
+async function holdText(chatID: string, text: string): Promise<"held"> {
+  await Promise.resolve();
+  restoreFailedSend(chatID, text);
+  return "held";
 }
 
 /** Sends a message marotte writes on the user's behalf, labelled `displayText` in the transcript:

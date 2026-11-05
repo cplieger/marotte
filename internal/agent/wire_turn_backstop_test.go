@@ -404,7 +404,7 @@ func TestKASIdle_ALateEndLeavesTheDrainedPromptToReachKAS(t *testing.T) {
 					return steer(method, p)
 				}
 				return json.RawMessage(`{"stopReason":"end_turn"}`), []*marotte.RPCResponse{
-					newTurnStartMsg(), newSessionChunkMsg("", "on it"), newTurnEndMsg("end_turn"),
+					newPromptTurnStartMsg(promptTagOf(p)), newSessionChunkMsg("", "on it"), newTurnEndMsg("end_turn"),
 				}, true
 			}
 			send(t, h, newSessionChunkMsg("", "reading the notification"))

@@ -1066,6 +1066,71 @@ describe("applyPage decides whose has_more is the answer", () => {
     expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2"]);
   });
 
+  it("keeps a turn that OPENED during the flight on a first open, nothing held", async () => {
+    const s = seedSession("c1");
+    answerPage("c1", {
+      entries: [turnOpen("t7", 7), turnOpen("t8", 8)],
+      has_more: true,
+      header: { turn_count: 8 },
+    });
+    const answer = mockApiGetTyped.getMockImplementation();
+    mockApiGetTyped.mockImplementationOnce((...args: unknown[]) => {
+      seedTurn(s, "t9", [turnOpen("t9", 9)]);
+      return answer?.(...args);
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.turn_order).toEqual(["t7", "t8", "t9"]);
+  });
+
+  it("keeps an arrival when the held window does not overlap the page", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    answerPage("c1", {
+      entries: [turnOpen("t8", 8), turnOpen("t9", 9)],
+      has_more: true,
+      header: { turn_count: 9 },
+    });
+    const answer = mockApiGetTyped.getMockImplementation();
+    mockApiGetTyped.mockImplementationOnce((...args: unknown[]) => {
+      seedTurn(s, "t10", [turnOpen("t10", 10)]);
+      return answer?.(...args);
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.turn_order).toEqual(["t8", "t9", "t10"]);
+  });
+
+  it("keeps every arrival on a page that holds no turns at all", async () => {
+    const s = seedSession("c1");
+    answerPage("c1", { header: { turn_count: 0 } });
+    const answer = mockApiGetTyped.getMockImplementation();
+    mockApiGetTyped.mockImplementationOnce((...args: unknown[]) => {
+      seedTurn(s, "t1", [turnOpen("t1", 1)]);
+      return answer?.(...args);
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.turn_order).toEqual(["t1"]);
+    expect(sessions.get("c1")?.turn_count).toBe(1);
+  });
+
+  it("keeps an older turn seated during the flight once, not as an arrival too", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", { entries: [turnOpen("t2", 2)], header: { turn_count: 2 } });
+    const answer = mockApiGetTyped.getMockImplementation();
+    mockApiGetTyped.mockImplementationOnce((...args: unknown[]) => {
+      // An older-page prepend lands while the newest page is in flight.
+      seedTurn(s, "t1", [turnOpen("t1", 1)]);
+      s.turn_order = ["t1", "t2"];
+      return answer?.(...args);
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2"]);
+  });
+
   it("REPLACES the window when the page overlaps nothing it holds", async () => {
     // No overlap means the window moved out from under what is held, and then the page replaces,
     // which is the honest answer.
@@ -1091,6 +1156,51 @@ describe("applyPage decides whose has_more is the answer", () => {
     await loadMessages("c1");
     expect(sessions.get("c1")?.turn_count).toBe(5);
     expect(sessions.get("c1")?.has_more).toBe(true);
+  });
+
+  it("keeps the count a turn that opened during the flight raised", async () => {
+    const s = seedSession("c1", { turn_count: 1 });
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    answerPage("c1", { entries: [turnOpen("t1", 1)], header: { turn_count: 1 } });
+    const answer = mockApiGetTyped.getMockImplementation();
+    mockApiGetTyped.mockImplementationOnce((...args: unknown[]) => {
+      seedTurn(s, "t2", [turnOpen("t2", 2)]);
+      s.turn_count = 2;
+      return answer?.(...args);
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2"]);
+    expect(sessions.get("c1")?.turn_count).toBe(2);
+  });
+
+  it("an older page keeps the count a turn opened during its flight", async () => {
+    const s = seedSession("c1", { turn_count: 2 });
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", { entries: [turnOpen("t1", 1)], header: { turn_count: 2 } });
+    const answer = mockApiGetTyped.getMockImplementation();
+    mockApiGetTyped.mockImplementationOnce((...args: unknown[]) => {
+      seedTurn(s, "t3", [turnOpen("t3", 3)]);
+      s.turn_count = 3;
+      return answer?.(...args);
+    });
+
+    await loadMessages("c1", "t2");
+    expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2", "t3"]);
+    expect(sessions.get("c1")?.turn_count).toBe(3);
+  });
+
+  it("a newest page after a rewind still lowers the count", async () => {
+    const s = seedSession("c1", { turn_count: 5 });
+    seedTurn(s, "t5", [turnOpen("t5", 5)]);
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1), turnOpen("t2", 2)],
+      header: { turn_count: 2 },
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2"]);
+    expect(sessions.get("c1")?.turn_count).toBe(2);
   });
 });
 

@@ -13,6 +13,7 @@ import {
   projectTurn,
   projectTurns,
   turnAnchorID,
+  turnBoundText,
   turnCloseOf,
   turnFailureText,
   turnIsDrawn,
@@ -495,6 +496,46 @@ describe("projectTurns", () => {
       expect(turns[0]?.rewindTo?.id).toBe("m-3");
     });
   });
+
+  describe("branchFrom", () => {
+    // KAS keeps the addressed turn through its end, so a branch from turn N names N's own prompt.
+    function three(watermark?: string): TurnSource {
+      const s = src(
+        ["t1", state([turnOpen("t1", 1, { prompt: "m-1" }), textEntry("t1", 1)])],
+        ["t2", state([turnOpen("t2", 2, { prompt: "m-2" }), textEntry("t2", 1)])],
+        ["t3", state([turnOpen("t3", 3, { prompt: "m-3" }), textEntry("t3", 1)])],
+      );
+      return watermark === undefined ? s : { ...s, compaction_watermark: watermark };
+    }
+
+    it("is the turn's own prompt, and absent on an agent-initiated turn", () => {
+      const turns = projectTurns(
+        src(
+          ["t1", state([turnOpen("t1", 1, { prompt: "m-1" })])],
+          ["t2", state([turnOpen("t2", 2), textEntry("t2", 1)])],
+        ),
+      );
+      expect(turns[0]?.branchFrom?.id).toBe("m-1");
+      expect(turns[1]?.branchFrom).toBeUndefined();
+    });
+
+    it("branchFrom is undefined at and before the turn holding the compaction watermark", () => {
+      const source = three("t2-e1");
+      const whole = projectTurns(source);
+      expect(whole.map((t) => t.branchFrom?.id)).toEqual([undefined, undefined, "m-3"]);
+      expect(["t1", "t2", "t3"].map((id) => projectTurn(source, id)?.branchFrom?.id)).toEqual([
+        undefined,
+        undefined,
+        "m-3",
+      ]);
+    });
+
+    it("a watermark outside the resident window leaves every resident turn branchable", () => {
+      const source = three("older-entry");
+      expect(projectTurns(source).map((t) => t.branchFrom?.id)).toEqual(["m-1", "m-2", "m-3"]);
+      expect(projectTurn(source, "t1")?.branchFrom?.id).toBe("m-1");
+    });
+  });
 });
 
 // --- ONE turn of the source -------------------------------------------------
@@ -659,7 +700,6 @@ describe("turnLedger", () => {
       oneTurn([
         closeEntry("t1", 1, {
           request_ids: ["r1"],
-          throughput: { estimated_tokens: 10, active_streaming_ms: 5 },
           recoveries: ["empty"],
           steering: ["file:///a.md"],
           engine_error_class: "ModelOverloaded",
@@ -667,7 +707,6 @@ describe("turnLedger", () => {
       ]),
     );
     expect(led.requestIds).toEqual(["r1"]);
-    expect(led.throughput).toEqual({ estimated_tokens: 10, active_streaming_ms: 5 });
     expect(led.recoveries).toEqual(["empty"]);
     expect(led.steering).toEqual(["file:///a.md"]);
     expect(led.engineErrorClass).toBe("ModelOverloaded");
@@ -935,5 +974,36 @@ describe("turnFailureText", () => {
     const t = oneTurn([textEntry("t1", 1)]);
     expect(t.outcome).toBe("running");
     expect(turnFailureText(t)).toBe("");
+  });
+});
+
+describe("turnBoundText", () => {
+  function textOf(close: Partial<EntryTurnClose>): string {
+    return turnBoundText(oneTurn([textEntry("t1", 1), closeEntry("t1", 2, close)]));
+  }
+
+  it("names the output limit on a turn cut off at max_tokens", () => {
+    expect(textOf({ outcome: "completed", stop_reason_raw: "max_tokens", truncated: true })).toBe(
+      "The answer was cut off at the output limit.",
+    );
+  });
+
+  it("names the request limit on a turn stopped at max_turn_requests", () => {
+    expect(
+      textOf({ outcome: "completed", stop_reason_raw: "max_turn_requests", truncated: true }),
+    ).toBe("The turn stopped at its request limit.");
+  });
+
+  it("still speaks for a truncated turn whose bound it cannot name", () => {
+    // The stop reason is an OPEN vocabulary, so truncation alone must not fall silent.
+    expect(textOf({ outcome: "completed", stop_reason_raw: "constructor", truncated: true })).toBe(
+      "The turn stopped at a limit.",
+    );
+  });
+
+  it("says nothing for a clean turn, a bound reason not marked truncated, or a running turn", () => {
+    expect(textOf({ outcome: "completed", stop_reason_raw: "end_turn" })).toBe("");
+    expect(textOf({ outcome: "completed", stop_reason_raw: "max_tokens" })).toBe("");
+    expect(turnBoundText(oneTurn([textEntry("t1", 1)]))).toBe("");
   });
 });

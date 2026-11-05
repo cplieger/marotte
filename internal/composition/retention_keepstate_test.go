@@ -693,10 +693,12 @@ func TestRetention_KeepState(t *testing.T) {
 			writeFixture(t, header, "{not json")
 			b.runStart(t, "wf_1", sess("c-launch"))
 			b.waitKey(t, "c-launch", runKey("wf_1"), true)
+			// The lease is written after the launcher's key, and must name c-by before its header reads again.
+			waitFor(t, "the run's lease holding c-by in doubt", func() bool {
+				l, held := b.leases.Get("wf_1")
+				return held && slices.Contains(l.KeepChats, "c-by")
+			})
 			writeFixture(t, header, string(saved))
-			if l, held := b.leases.Get("wf_1"); !held || !slices.Contains(l.KeepChats, "c-by") {
-				t.Fatalf("Setup: the run's lease does not hold c-by in doubt: %+v", l)
-			}
 
 			b.personClose(t, "c-by")
 

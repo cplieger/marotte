@@ -48,6 +48,11 @@ func writeRuntime(b *strings.Builder, configDir, toolsDir string) {
 		}
 		b.WriteString("\n")
 	}
+	if rt := envSpan("KIRO_RUNTIME_DIR"); rt != "" {
+		b.WriteString("- " + rt + " holds kiro-cli's unpacked runtime (node, the agent server, the terminal UI), ")
+		b.WriteString("and every kiro-cli start deletes every other version's runtime there: run any other kiro-cli ")
+		b.WriteString("version with `KIRO_RUNTIME_DIR` unset, or its first start deletes the live engine's runtime\n")
+	}
 	onPath := writePath(b, toolsDir)
 	var rest []string
 	for _, name := range []string{"GOPATH", "GOBIN", "LANG", "TZ"} {

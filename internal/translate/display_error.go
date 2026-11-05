@@ -16,7 +16,7 @@ type displayErrorBlock struct {
 	RetryErrorType string `json:"retryErrorType"`
 }
 
-// displayErrorMCPConnection is the MCP connect failure KAS broadcasts to every
+// displayErrorMCPConnection is the MCP connect failure KAS sends the failing
 // session; _kiro/mcp/status already reports it with the server's name.
 const displayErrorMCPConnection = "mcp_connection_error"
 

@@ -12,7 +12,7 @@ import (
 // to parse before it reaches the mode enforcement.
 func seedStoreFile(t *testing.T, path string) {
 	t.Helper()
-	seeded := `{"secrets":{"k":"` + base64.StdEncoding.EncodeToString([]byte("v")) + `"}}`
+	seeded := `{"secrets":{"` + realKey + `":"` + base64.StdEncoding.EncodeToString([]byte("v")) + `"}}`
 	if err := os.WriteFile(path, []byte(seeded), 0o600); err != nil {
 		t.Fatalf("seed store: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestLoad_ModeIsVerifiedNotRequested(t *testing.T) {
 	if got := fi.Mode().Perm(); got != 0o600 {
 		t.Errorf("store mode = %v, want 0600: load did not enforce the mode it reported", got)
 	}
-	if v, ok := s.Get("k"); !ok || v != "v" {
+	if v, ok := s.Get(realKey); !ok || v != "v" {
 		t.Errorf("Get() = (%q, %v), want (\"v\", true): enforcing the mode must not lose the contents", v, ok)
 	}
 }

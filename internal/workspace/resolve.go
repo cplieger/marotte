@@ -24,7 +24,7 @@ func ResolveInsideAbs(absWork, p string) (string, error) {
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(absWork, p)
 	}
-	return confine(absWork, p)
+	return confine(absWork, p, true)
 }
 
 // ConfineAnyAbs confines p to the FIRST of roots that contains it, answering which root
@@ -32,6 +32,16 @@ func ResolveInsideAbs(absWork, p string) (string, error) {
 // absolute; "" is an inert placeholder. An absolute p tries each root in order (failing
 // with roots[0]'s error); a relative p resolves against roots[0] only.
 func ConfineAnyAbs(roots []string, p string) (root, rel string, err error) {
+	return confineAny(roots, p, true)
+}
+
+// ConfineNameAnyAbs is ConfineAnyAbs with p's final component left unresolved, for an operation
+// on the name itself: an in-root symlink answers as the link, wherever it points.
+func ConfineNameAnyAbs(roots []string, p string) (root, rel string, err error) {
+	return confineAny(roots, p, false)
+}
+
+func confineAny(roots []string, p string, followFinal bool) (root, rel string, err error) {
 	if p == "" {
 		return "", "", errors.New("empty path")
 	}
@@ -39,11 +49,11 @@ func ConfineAnyAbs(roots []string, p string) (root, rel string, err error) {
 		return "", "", errors.New("no roots configured")
 	}
 	if !filepath.IsAbs(p) {
-		return confineRel(roots[0], filepath.Join(roots[0], p))
+		return confineRel(roots[0], filepath.Join(roots[0], p), followFinal)
 	}
 	var firstErr error
 	for _, r := range roots {
-		won, name, cErr := confineRel(r, p)
+		won, name, cErr := confineRel(r, p, followFinal)
 		if cErr == nil {
 			return won, name, nil
 		}
@@ -55,8 +65,8 @@ func ConfineAnyAbs(roots []string, p string) (root, rel string, err error) {
 }
 
 // confineRel is confine answering the root-relative name instead of the path.
-func confineRel(absRoot, p string) (root, rel string, err error) {
-	resolved, err := confine(absRoot, p)
+func confineRel(absRoot, p string, followFinal bool) (root, rel string, err error) {
+	resolved, err := confine(absRoot, p, followFinal)
 	if err != nil {
 		return "", "", err
 	}
@@ -68,18 +78,24 @@ func confineRel(absRoot, p string) (root, rel string, err error) {
 }
 
 // The boundary is one pathinside.Root built before any comparison, so no predicate pair can be
-// transposed. Both callers share this body so a symlink-escape fix cannot miss a copy.
-func confine(absRoot, p string) (string, error) {
+// transposed. Every caller shares this body so a symlink-escape fix cannot miss a copy. With
+// followFinal false only the parent is resolved, so the answer names p's own final entry.
+func confine(absRoot, p string, followFinal bool) (string, error) {
 	root := pathinside.Root(absRoot)
 	clean := filepath.Clean(p)
 	if !root.Contains(clean) {
 		return "", errors.New("path escapes workspace")
 	}
-	if resolved, resErr := filepath.EvalSymlinks(clean); resErr == nil {
-		if !root.Contains(resolved) {
-			return "", fmt.Errorf("path %q escapes workspace via symlink", p)
+	if followFinal {
+		if resolved, resErr := filepath.EvalSymlinks(clean); resErr == nil {
+			if !root.Contains(resolved) {
+				return "", fmt.Errorf("path %q escapes workspace via symlink", p)
+			}
+			return resolved, nil
 		}
-		return resolved, nil
+	} else if clean == filepath.Clean(absRoot) {
+		// The root's parent lies outside it, so the parent check below would refuse the root.
+		return clean, nil
 	}
 	parent, err := filepath.EvalSymlinks(filepath.Dir(clean))
 	if err != nil {

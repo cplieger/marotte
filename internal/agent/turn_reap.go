@@ -15,7 +15,8 @@ const compactionFailedTurnBudget = 60 * time.Second
 const compactionStallCeiling = 120 * time.Second
 
 // CompactionFailed bounds the named turn, which the failure was recorded in, since it may never get its response.
-// Backend activity and live tools restart the silence budget. A turn no longer own is not armed.
+// Backend activity and live tools restart the silence budget. A turn no longer own is not armed, nor one with no
+// prompt call (a wake turn): the reap ends a turn only by cancelling that call, and no other closer reads its cause.
 func (bc *bridgeCoordinator) CompactionFailed(chatID marotte.ChatID, turnID, detail string) {
 	lc, ok := bc.turns.lookup(chatID)
 	if !ok {
@@ -25,6 +26,10 @@ func (bc *bridgeCoordinator) CompactionFailed(chatID marotte.ChatID, turnID, det
 	defer lc.mu.Unlock()
 	if lc.own == nil || lc.own.ID != turnID || lc.own.finalizing {
 		slog.Debug("compaction reap: the turn is not open", "chat_id", chatID, "turn", turnID)
+		return
+	}
+	if lc.own.cancel == nil {
+		slog.Debug("compaction reap: the turn has no prompt call", "chat_id", chatID, "turn", turnID)
 		return
 	}
 	// The chain's origin, set once so it survives every re-arm: live tools are judged against it, and a per-arm cutoff
@@ -95,6 +100,11 @@ func (bc *bridgeCoordinator) expireCompactionReap(chatID marotte.ChatID, turnID 
 		return
 	}
 	turn.reapTimer = nil
+	if turn.cancel == nil {
+		lc.mu.Unlock()
+		slog.Debug("compaction reap: the prompt call already returned", "chat_id", chatID, "turn", turnID)
+		return
+	}
 	// Claimed in the section that validated the turn, so a close and a new prompt after the unlock meet only
 	// this turn's own cancel.
 	cancel, claimed := lc.interruptLocked(turn, marotte.InterruptCause(detail))
@@ -105,7 +115,8 @@ func (bc *bridgeCoordinator) expireCompactionReap(chatID marotte.ChatID, turnID 
 	}
 	slog.Warn("the turn stayed silent after a failed compaction; interrupting it",
 		"chat_id", chatID, "turn", turnID, "budget", compactionFailedTurnBudget)
-	tripPromptCall(chatID, turnID, cancel)
+	// No cause, so the turn concludes `interrupted`.
+	cancel(nil)
 }
 
 func compactionReapVerdictLocked(lc *chatLifecycle, turnID string, armID, seq, gen uint64) (*activeTurn, compactionReapVerdict) {

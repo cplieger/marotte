@@ -61,6 +61,7 @@ export function makeTurn(over: TurnOverrides = {}): Turn {
     ts: 0,
     outcome: "completed",
     rewindTo: undefined,
+    branchFrom: undefined,
     openEntries: new Map(),
     ...rest,
     body: entries,

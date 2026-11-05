@@ -12,8 +12,8 @@ import (
 	"github.com/cplieger/envx/v2"
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/filebrowse"
-	"github.com/cplieger/marotte/internal/kasnode"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/webhttp/v4"
@@ -31,9 +31,9 @@ type Config struct {
 	KiroCLIVersion     string
 	KiroCLISHA256      string
 	KiroCLISHA256ARM64 string
-	// KASNodePath is the node binary kiro-cli runs KAS on, resolved as kiro-cli resolves it:
-	// KIRO_KAS_NODE_PATH, else the embedded copy in kiro-cli's data dir. It may not exist yet.
-	KASNodePath string
+	// KASLookup is the environment kiro-cli finds its KAS runtime from; a reader resolves it per
+	// use (KASLookup.Find), because the runtime is unpacked at the engine's first start.
+	KASLookup workspace.KASLookup
 	// Tools is the tools engine's and the kiro-cli install's root (bin/, opt/, npm/, python/,
 	// kiro-cli-versions/) on the persistent volume, with the server's verdict on it.
 	Tools toolsRoot
@@ -95,7 +95,7 @@ func ConfigFromEnv() Config {
 		KiroCLISHA256ARM64:  envx.String("KIRO_CLI_SHA256_ARM64"),
 		VapidSub:            cmp.Or(envx.String("VAPID_SUBJECT"), "mailto:marotte@noreply.invalid"),
 		Tools:               paths.tools,
-		KASNodePath:         cmp.Or(envx.String("KIRO_KAS_NODE_PATH"), kasnode.EmbeddedNodePath(os.Getenv("XDG_DATA_HOME"), os.Getenv("HOME"))),
+		KASLookup:           workspace.KASLookupFromEnv(),
 		ToolCatalogPath:     cmp.Or(envx.String("MAROTTE_TOOL_CATALOG"), "/opt/marotte/tool-catalog.json"),
 		ToolCatalogURL:      cmp.Or(envx.String("MAROTTE_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
 		ToolCatalogRefresh:  toolbelt.DefaultCatalogRefresh,

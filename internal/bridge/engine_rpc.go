@@ -41,11 +41,11 @@ type pendingReply struct {
 
 // pendingEntry is one request awaiting its response. lane is the lane whose positions the reply is stamped with. A
 // caller whose ctx ended marks an entry with a late hook abandoned instead of deleting it, and the reply goes to the
-// hook on its own goroutine.
+// hook on its own goroutine with its lane position.
 type pendingEntry struct {
 	ch        chan pendingReply
 	lane      *lane
-	late      func(resp *marotte.RPCResponse)
+	late      func(resp *marotte.RPCResponse, seq uint64)
 	sessionID marotte.SessionID
 	abandoned bool
 }
@@ -145,7 +145,11 @@ func (e *Engine) closePending() int {
 func (e *Engine) failPending(resp *marotte.RPCResponse, match func(id int64, entry *pendingEntry) bool) int {
 	e.pendingMu.Lock()
 	n := 0
-	var lates []func(*marotte.RPCResponse)
+	type lateCall struct {
+		late func(*marotte.RPCResponse, uint64)
+		seq  uint64
+	}
+	var lates []lateCall
 	for id, entry := range e.pending {
 		if !match(id, entry) {
 			continue
@@ -154,7 +158,7 @@ func (e *Engine) failPending(resp *marotte.RPCResponse, match func(id int64, ent
 		if entry.abandoned {
 			// The real answer can no longer reach the hook, so an unread one stands in for it.
 			if entry.late != nil && unreadResp(resp) {
-				lates = append(lates, entry.late)
+				lates = append(lates, lateCall{late: entry.late, seq: entry.lane.position()})
 			}
 			continue
 		}
@@ -163,8 +167,8 @@ func (e *Engine) failPending(resp *marotte.RPCResponse, match func(id int64, ent
 		entry.ch <- pendingReply{resp: resp, seq: entry.lane.position()}
 	}
 	e.pendingMu.Unlock()
-	for _, late := range lates {
-		e.goBackground(func() { late(resp) })
+	for _, c := range lates {
+		e.goBackground(func() { c.late(resp, c.seq) })
 	}
 	return n
 }
@@ -283,7 +287,7 @@ func (e *Engine) deliverResponse(msg *marotte.RPCResponse) {
 	e.pendingMu.Unlock()
 	if entry.late != nil {
 		late := entry.late
-		e.goBackground(func() { late(msg) })
+		e.goBackground(func() { late(msg, reply.seq) })
 	}
 }
 
@@ -378,7 +382,7 @@ func logReadError(err error) {
 }
 
 // register adds a pending entry for id on l, owned by sessionID ("" for the engine).
-func (e *Engine) register(id int64, l *lane, sessionID marotte.SessionID, late func(*marotte.RPCResponse)) *pendingEntry {
+func (e *Engine) register(id int64, l *lane, sessionID marotte.SessionID, late func(*marotte.RPCResponse, uint64)) *pendingEntry {
 	entry := &pendingEntry{ch: make(chan pendingReply, 1), lane: l, sessionID: sessionID, late: late}
 	e.pendingMu.Lock()
 	e.pending[id] = entry
@@ -415,24 +419,21 @@ func (e *Engine) callAt(
 	if method == marotte.MethodPrompt {
 		return nil, 0, errPromptNotACall
 	}
-	return e.request(ctx, l, sessionID, method, params, late, nil)
+	var lateAt func(*marotte.RPCResponse, uint64)
+	if late != nil {
+		lateAt = func(resp *marotte.RPCResponse, _ uint64) { late(resp) }
+	}
+	resp, seq, _, err := e.request(ctx, l, sessionID, method, params, lateAt, nil)
+	return resp, seq, err
 }
 
 // request writes one request positioned on l and waits for its outcome. Once written, every engine-side outcome (the
 // response, an oversize failure, the exit path) arrives through the entry and carries l's position. A commit that
-// refuses the write is answered as is, with nothing written.
+// refuses the write is answered as is, with nothing written. abandoned reports that ctx ended after the write with a
+// late hook set, so the answer, if KAS sends one, goes to late.
 func (e *Engine) request(
-	ctx context.Context, l *lane, sessionID marotte.SessionID, method string, params any, late func(*marotte.RPCResponse),
-	commit func() error,
-) (*marotte.RPCResponse, uint64, error) {
-	resp, seq, _, err := e.send(ctx, l, sessionID, method, params, late, commit)
-	return resp, seq, err
-}
-
-// send is request plus whether ctx abandoned the request after it was written, so its reply goes to late.
-func (e *Engine) send(
-	ctx context.Context, l *lane, sessionID marotte.SessionID, method string, params any, late func(*marotte.RPCResponse),
-	commit func() error,
+	ctx context.Context, l *lane, sessionID marotte.SessionID, method string, params any,
+	late func(*marotte.RPCResponse, uint64), commit func() error,
 ) (resp *marotte.RPCResponse, seq uint64, abandoned bool, err error) {
 	if cErr := ctx.Err(); cErr != nil {
 		return nil, 0, false, cErr

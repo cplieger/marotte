@@ -1,5 +1,5 @@
 import { effect, el, signal, touch } from "@cplieger/ui";
-import { exfilShaped, isSafeUrl } from "./utils-url.js";
+import { exfilShaped, isHttpMailtoOrRelativeURL } from "./utils-url.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
 
 /** Marks both forms of a guarded link, so a switch flip finds every one. Empty: the address lives in `payloadUrls`. */
@@ -110,7 +110,7 @@ export function reformPayloadLinks(root: ParentNode): void {
       }
     } else if (on && node.tagName === "A") {
       reseat(node, withheldButton(url), url);
-    } else if (!on && node.tagName === "BUTTON" && isSafeUrl(url)) {
+    } else if (!on && node.tagName === "BUTTON" && isHttpMailtoOrRelativeURL(url)) {
       const a = linkAnchor();
       a.setAttribute("href", url);
       reseat(node, a, url);

@@ -33,6 +33,9 @@ export function tabsMock(): Record<string, unknown> {
 
     adoptSubject: vi.fn(),
     activateTab: vi.fn(),
+    claimNavigation: vi.fn(() => 0),
+    // Held: no user move since the claim, so a late open takes the view.
+    navigationHeld: vi.fn(() => true),
     activateRestoredTab: vi.fn(),
     refreshActiveView: vi.fn(),
     paintProvisionalTabs: vi.fn(),

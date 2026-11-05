@@ -104,7 +104,10 @@ func (s *Server) handleKiroDocNew(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "unknown document kind")
 		return
 	}
-	re := kasRegExp{node: s.kasNode}
+	var re kasRegExp
+	if s.kasNode != nil {
+		re.node = s.kasNode()
+	}
 	doc, err := build(&req, func(subject marotte.HookMatcherSubject, m string) (bool, error) {
 		return kasAcceptsMatcher(r.Context(), re, subject, m)
 	})

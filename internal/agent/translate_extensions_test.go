@@ -22,7 +22,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 	}{
 		{
 			name:   "ConnectedRecordsServer",
-			params: map[string]any{"servers": []map[string]any{{"name": "github", "status": "connected"}}},
+			params: map[string]any{"sessionId": "s1", "servers": []map[string]any{{"name": "github", "status": "connected"}}},
 			wantSnap: func(t *testing.T, snap []mcpServerRuntime) {
 				t.Helper()
 				if len(snap) != 1 || snap[0].Name != "github" {
@@ -35,7 +35,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 		},
 		{
 			name:   "FailedRecordsError",
-			params: map[string]any{"servers": []map[string]any{{"name": "broken", "status": "failed", "errorMessage": "connection refused"}}},
+			params: map[string]any{"sessionId": "s1", "servers": []map[string]any{{"name": "broken", "status": "failed", "errorMessage": "connection refused"}}},
 			wantSnap: func(t *testing.T, snap []mcpServerRuntime) {
 				t.Helper()
 				if len(snap) != 1 || snap[0].State != mcpStateFailed {
@@ -50,7 +50,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 		{
 			// The status entry's URL belongs to an attempt whose listener KAS closed, so it is no relay anchor.
 			name:   "FailedWithAuthURLWaitsForSignInWithNoURL",
-			params: map[string]any{"servers": []map[string]any{{"name": "linear", "status": "failed", "authorizationUrl": "https://oauth.example/authorize"}}},
+			params: map[string]any{"sessionId": "s1", "servers": []map[string]any{{"name": "linear", "status": "failed", "authorizationUrl": "https://oauth.example/authorize"}}},
 			wantSnap: func(t *testing.T, snap []mcpServerRuntime) {
 				t.Helper()
 				if len(snap) != 1 || snap[0].State != mcpStateOAuth || snap[0].OAuthURL != "" {

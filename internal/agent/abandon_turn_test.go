@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // closeOf returns the chat's one turn_close, failing on none or several: two closes are two footers for one turn.
@@ -87,38 +88,31 @@ func TestAbandonInFlightTurn_CarriesTheCallersReason(t *testing.T) {
 	}
 }
 
-// TestAbandonInFlightTurn_StashedReasonBeatsTheCallers pins that the cause InterruptTurn
-// stashed (a tool-use security-filter stop) wins over the caller's fallout error.
+// TestAbandonInFlightTurn_StashedReasonBeatsTheCallers pins that a cause already stashed on the
+// turn (an engine restart's) wins over the caller's fallout error.
 func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 
-	const stashed = "Stopped by kiro-cli's tool-use security filter"
+	const stashed = "The agent engine restarted to apply: Debug logs"
 	const callers = "The turn was cancelled before the agent answered."
 
-	// Interrupt through the coordinator so the wiring is exercised; the cause lands on the open turn.
-	pctx, cancel := context.WithCancelCause(context.Background())
+	_, cancel := context.WithCancelCause(context.Background())
 	t.Cleanup(func() { cancel(nil) })
 	id, log := h.stagePromptTurnCalling(t, "c1", cancel)
-	h.coord.WireTurnStart(ctx, "c1")
+	h.coord.WireTurnStart(ctx, "c1", translate.TurnStartFrame{Tag: id})
 	if _, err := log.TextDelta(ctx, "", "say-1", "about to call a tool"); err != nil {
 		t.Fatalf("TextDelta: %v", err)
 	}
-
-	h.coord.InterruptTurn("c1", id, stashed)
-
-	// The prompt context must be dead, or the blocked Call never returns and the chat stays busy.
-	select {
-	case <-pctx.Done():
-	default:
-		t.Error("InterruptTurn left the prompt context live")
+	if !h.coord.turns.interrupt("c1", id, stashed) {
+		t.Fatal("Setup: the cause was not stashed on the open turn")
 	}
 
 	h.AbandonInFlightTurn(ctx, "c1", id, marotte.StopReasonInterrupted, callers, "", 0)
 
 	if got := closeOf(t, cs, "c1").FailureReason; got != stashed {
 		t.Errorf("failure_reason = %q, want the stashed %q — the caller's %q describes "+
-			"the RPC failure the filter caused, not the stop itself", got, stashed, callers)
+			"the RPC failure the restart caused, not the stop itself", got, stashed, callers)
 	}
 }
 

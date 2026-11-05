@@ -88,6 +88,7 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 		Enabled:                in.Enabled,
 		WaitForReady:           in.WaitForReady,
 		TimeoutMS:              in.TimeoutMS,
+		VersionNegotiation:     in.VersionNegotiation,
 		CreatedAt:              now,
 		UpdatedAt:              now,
 	}
@@ -312,6 +313,7 @@ func (s *Store) update(ctx context.Context, id serverID, in *Server) (*Server, e
 		Enabled:                in.Enabled,
 		WaitForReady:           in.WaitForReady,
 		TimeoutMS:              in.TimeoutMS,
+		VersionNegotiation:     in.VersionNegotiation,
 		CreatedAt:              existing.CreatedAt,
 		UpdatedAt:              time.Now().UnixMilli(),
 	}

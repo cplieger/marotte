@@ -147,16 +147,12 @@ describe("the compaction point handed to the ring", () => {
     return (mocks.updateContextBar.mock.lastCall?.[0] as { compaction: unknown }).compaction;
   }
 
-  it("takes KAS's reported threshold at the default value", () => {
-    refreshContextUI(
-      session({
-        usage: { ...session().usage, summarization_threshold_pct: 75 },
-      }),
-    );
-    expect(handed()).toEqual({ band: 75, t: 75 });
+  it("at 80 the band sits at 80", () => {
+    refreshContextUI(session());
+    expect(handed()).toEqual({ band: 80, t: 80 });
   });
 
-  it("takes the slider's value anywhere else", () => {
+  it("takes the slider's value below the default", () => {
     compactionPolicy.value = { enabled: true, pct: 60 };
     refreshContextUI(session());
     expect(handed()).toEqual({ band: 60, t: 60 });

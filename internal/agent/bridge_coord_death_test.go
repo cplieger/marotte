@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strconv"
 	"strings"
@@ -99,18 +98,18 @@ func TestBridgeEnd_RetiresTheAsksItCarriedAsEnded(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			successor := newFakeBridge()
-			oldPerm := requestIDOf(t, h.bus.PendingPermsAdd(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+			oldPerm := requestIDOf(t, h.bus.pendingPerms.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 				marotte.PermissionNeededPayload{RunID: "wf_1", NodeID: "a"}), br))
-			oldQuestion := requestIDOf(t, h.bus.PendingPermsAdd(8, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
+			oldQuestion := requestIDOf(t, h.bus.pendingPerms.add(8, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 				marotte.UserInputNeededPayload{}), br))
 			succIDs := []int64{9, 10}
 			if engineExited {
 				// A new generation: 7 again for the same kind, 8 for another.
 				succIDs = []int64{7, 8}
 			}
-			succPerm := requestIDOf(t, h.bus.PendingPermsAdd(succIDs[0], marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+			succPerm := requestIDOf(t, h.bus.pendingPerms.add(succIDs[0], marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 				marotte.PermissionNeededPayload{Options: []marotte.PermissionOption{{OptionID: "allow"}}}), successor))
-			succElicit := requestIDOf(t, h.bus.PendingPermsAdd(succIDs[1], marotte.NewEvent(marotte.EventElicitationNeeded, "c1",
+			succElicit := requestIDOf(t, h.bus.pendingPerms.add(succIDs[1], marotte.NewEvent(marotte.EventElicitationNeeded, "c1",
 				marotte.ElicitationNeededPayload{}), successor))
 			registered := engineSession(successor)
 			if engineExited {
@@ -170,7 +169,7 @@ func TestChatTeardown_RetiresTheBridgesAsksAsEnded(t *testing.T) {
 			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
-			askID := requestIDOf(t, h.bus.PendingPermsAdd(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+			askID := requestIDOf(t, h.bus.pendingPerms.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 				marotte.PermissionNeededPayload{}), guardSession(br)))
 			head := h.bus.fanout.Position().Head
 
@@ -187,30 +186,4 @@ func TestChatTeardown_RetiresTheBridgesAsksAsEnded(t *testing.T) {
 			}
 		})
 	}
-}
-
-func mcpStatusFrame(t *testing.T, uris map[string]string) *marotte.RPCResponse {
-	t.Helper()
-	servers := []map[string]any{}
-	for name, uri := range uris {
-		servers = append(servers, map[string]any{
-			"name": name, "status": "connected",
-			"resources": []map[string]any{{"name": uri, "uri": uri}},
-		})
-	}
-	params, err := json.Marshal(map[string]any{"servers": servers})
-	if err != nil {
-		t.Fatalf("marshal status frame: %v", err)
-	}
-	return &marotte.RPCResponse{Method: methodV3MCPStatus, Params: params}
-}
-
-func poolBody(t *testing.T, h *Runtime, query string) string {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	h.mcpRegistry.handlePool(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/pool"+query, nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /api/mcp/pool%s status = %d, want 200", query, rec.Code)
-	}
-	return strings.TrimSpace(rec.Body.String())
 }

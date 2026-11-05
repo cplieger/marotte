@@ -60,7 +60,6 @@ const (
 	statusPaused      = "paused"
 	statusCompleted   = "completed"
 	signalSuccess     = "success"
-	signalError       = "error"
 	attentionQuestion = "question"
 )
 

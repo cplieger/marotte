@@ -259,7 +259,7 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 func wireEndUnderTheClear(stop string) func(t *testing.T, s *steerHarness, br *fakeBridge) {
 	return func(t *testing.T, s *steerHarness, br *fakeBridge) {
 		id, _ := s.h.stagePromptTurn(t, "c1")
-		s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+		s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
 		s.steer("steer-a", "a")
 		s.steer("steer-b", "b")
 		br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
@@ -303,7 +303,7 @@ func TestCmdCancel_TheSendNowRowOpensTheNextTurnWithNoNotReadNote(t *testing.T) 
 		s.h.coord.recordSteer(ctx, chatID, id, steer)
 	}
 	id, _ := s.h.stagePromptTurn(t, "c1")
-	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
 	s.steer("steer-a", "first")
 	s.steer("steer-b", "second")
 
@@ -339,7 +339,7 @@ func TestCmdCancel_TheSendNowRowOpensTheNextTurnWithNoNotReadNote(t *testing.T) 
 func TestCmdCancel_ALeadWhoseResendOpenedBeforeTheStopIsNotCancelled(t *testing.T) {
 	s, cs, br := steerOpsHub(t)
 	id, _ := s.h.stagePromptTurn(t, "c1")
-	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
 	s.steer("steer-a", "first")
 	s.steer("steer-b", "second")
 	resendRuns := make(chan struct{})
@@ -382,8 +382,8 @@ func TestCmdCancel_ALeadWhoseResendOpenedBeforeTheStopIsNotCancelled(t *testing.
 // "Not read" note for either.
 func TestSteerRead_ACombinedResendReadAfterTheLedgerForgotItNamesItsRows(t *testing.T) {
 	s, cs, br := steerOpsHub(t)
-	s.h.stagePromptTurn(t, "c1")
-	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+	id, _ := s.h.stagePromptTurn(t, "c1")
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
 	s.steer("steer-a", "a")
 	s.steer("steer-b", "b")
 	s.steer("steer-c", "c")
@@ -727,7 +727,7 @@ func TestSendQueuedNow_StopsTheTurnAndItsCloseSendsThatRowFirst(t *testing.T) {
 		s.h.coord.recordSteer(ctx, chatID, id, steer)
 	}
 	id, _ := s.h.stagePromptTurn(t, "c1")
-	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
 	s.steer("steer-a", "use tabs")
 	seedQueue(t, cs, "c1",
 		marotte.QueuedPrompt{ID: "m-q1", Text: "first"},
@@ -769,7 +769,7 @@ func TestSendQueuedNow_TheUnreadSteerRidesIntoTheMarkedRowsTurn(t *testing.T) {
 		s.h.coord.recordSteer(ctx, chatID, id, steer)
 	}
 	id, _ := s.h.stagePromptTurn(t, "c1")
-	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
 	s.steer("steer-a", "use tabs")
 	seedQueue(t, cs, "c1",
 		marotte.QueuedPrompt{ID: "m-q1", Text: "first"},
@@ -778,11 +778,11 @@ func TestSendQueuedNow_TheUnreadSteerRidesIntoTheMarkedRowsTurn(t *testing.T) {
 	// The bridge records the call before it runs this hook, so the test waits on hooked, not on the call.
 	hooked := make(chan struct{})
 	var hookDone sync.Once
-	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+	br.onCall = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method != marotte.MethodPrompt {
 			return nil, nil, false
 		}
-		s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+		s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(promptTagOf(params)))
 		s.h.translateACPEvent("c1", s.h.originOf("c1"), injectedMsg(s.kasID("steer-a"), "use tabs"))
 		hookDone.Do(func() { close(hooked) })
 		return json.RawMessage(`{"stopReason":"end_turn"}`), nil, true

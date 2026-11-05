@@ -14,29 +14,24 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// cancelDeps answers CancelPendingPermissions with err, recording the scope and whether the context it was handed
+// cancelDeps answers CancelPendingAsks with err, recording the scope and whether the context it was handed
 // was still live once the caller's had ended.
 type cancelDeps struct {
 	*closeDeps
-	err         error
-	onCancel    func()
-	scopes      []CancelScope
-	ctxLive     bool
-	killed      int
-	inputClears []CancelScope
+	err      error
+	onCancel func()
+	scopes   []CancelScope
+	ctxLive  bool
+	killed   int
 }
 
-func (d *cancelDeps) CancelPendingPermissions(ctx context.Context, _ marotte.ChatID, scope CancelScope) error {
+func (d *cancelDeps) CancelPendingAsks(ctx context.Context, _ marotte.ChatID, scope CancelScope) error {
 	d.scopes = append(d.scopes, scope)
 	if d.onCancel != nil {
 		d.onCancel()
 	}
 	d.ctxLive = ctx.Err() == nil
 	return d.err
-}
-
-func (d *cancelDeps) ClearPendingInputAsks(_ marotte.ChatID, scope CancelScope) {
-	d.inputClears = append(d.inputClears, scope)
 }
 
 func (d *cancelDeps) KillForTurn(turn TurnRef) {
@@ -69,14 +64,16 @@ func runCancel(t *testing.T, ctx context.Context, d *cancelDeps) error {
 func TestCancel_AnswersTheChatSessionScopeThenSessionCancel(t *testing.T) {
 	b := &cancelBridge{}
 	d := newCancelDeps(b)
+	notifiedAtAnswers := -1
+	d.onCancel = func() { notifiedAtAnswers = len(b.notified) }
 	if err := runCancel(t, t.Context(), d); err != nil {
 		t.Fatalf("cmdCancel: %v", err)
 	}
 	if len(d.scopes) != 1 || d.scopes[0] != ScopeChatSession {
-		t.Errorf("permission scopes = %v, want [ScopeChatSession]", d.scopes)
+		t.Errorf("ask scopes = %v, want [ScopeChatSession]", d.scopes)
 	}
-	if len(d.inputClears) != 1 || d.inputClears[0] != ScopeChatSession {
-		t.Errorf("input clears = %v, want [ScopeChatSession]", d.inputClears)
+	if notifiedAtAnswers != 0 {
+		t.Errorf("%d notifications were written before the asks were answered, want none", notifiedAtAnswers)
 	}
 	if len(b.notified) != 1 || b.notified[0] != marotte.MethodCancel {
 		t.Errorf("notifications = %v, want [%s]", b.notified, marotte.MethodCancel)
@@ -96,7 +93,7 @@ func TestCancel_CallerContextCancelledAfterTheTakeStillAnswersAndCancels(t *test
 		t.Fatalf("cmdCancel: %v", err)
 	}
 	if !d.ctxLive {
-		t.Error("the permission answers ran on the caller's cancelled context")
+		t.Error("the ask answers ran on the caller's cancelled context")
 	}
 	if len(b.live) != 1 || !b.live[0] {
 		t.Errorf("session/cancel contexts live = %v, want [true]", b.live)
@@ -135,8 +132,8 @@ func TestCancel_AnUndeliveredAnswerIsBadGatewayAndSendsNoSessionCancel(t *testin
 	if len(b.notified) != 0 {
 		t.Errorf("notifications = %v, want none", b.notified)
 	}
-	if d.killed != 0 || len(d.inputClears) != 0 {
-		t.Errorf("KillForTurn = %d, input clears = %v; want neither while the reply goes on", d.killed, d.inputClears)
+	if d.killed != 0 {
+		t.Errorf("KillForTurn = %d, want 0 while the reply goes on", d.killed)
 	}
 }
 
@@ -164,7 +161,7 @@ func TestCloseTeardown_UndeliveredAnswerStillTearsDown(t *testing.T) {
 	closeChatTeardown(t.Context(), d, d, d, "c1", &chat.Claim{})
 
 	if len(d.scopes) != 1 || d.scopes[0] != ScopeChatAndRuns {
-		t.Errorf("permission scopes = %v, want [ScopeChatAndRuns]", d.scopes)
+		t.Errorf("ask scopes = %v, want [ScopeChatAndRuns]", d.scopes)
 	}
 	if len(b.notified) != 0 {
 		t.Errorf("notifications = %v, want none", b.notified)
@@ -182,7 +179,7 @@ func TestCloseTeardown_UndeliveredAnswerStillTearsDown(t *testing.T) {
 func assertAnswersBeforeCancel(t *testing.T, d *cancelDeps, b *cancelBridge, notifiedAtAnswers int) {
 	t.Helper()
 	if len(d.scopes) != 1 || d.scopes[0] != ScopeChatAndRuns {
-		t.Errorf("permission scopes = %v, want [ScopeChatAndRuns]", d.scopes)
+		t.Errorf("ask scopes = %v, want [ScopeChatAndRuns]", d.scopes)
 	}
 	if notifiedAtAnswers != 0 {
 		t.Errorf("%d notifications were written before the asks were answered, want none", notifiedAtAnswers)

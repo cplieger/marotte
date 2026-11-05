@@ -66,6 +66,12 @@ func applyDelta(before marotte.ToolCall, d *marotte.ToolProgressPayload) marotte
 	if d.Declined {
 		out.Declined = true
 	}
+	if d.ClassifierApproved {
+		out.ClassifierApproved = true
+	}
+	if d.ClassifierNote != "" {
+		out.ClassifierNote = d.ClassifierNote
+	}
 	return out
 }
 
@@ -99,7 +105,7 @@ func TestToolCallDelta_RoundTripsOverAFoldSequence(t *testing.T) {
 }
 
 func foldStep(rt *rapid.T, tc *marotte.ToolCall) {
-	switch rapid.IntRange(0, 9).Draw(rt, "step") {
+	switch rapid.IntRange(0, 10).Draw(rt, "step") {
 	case 0:
 		// The commonest frame: a status transition and nothing else.
 		tc.Status = rapid.SampledFrom([]marotte.ToolStatus{
@@ -157,6 +163,11 @@ func foldStep(rt *rapid.T, tc *marotte.ToolCall) {
 	case 9:
 		// One-way: a step finding it already set proves the fold never carries a clear.
 		tc.Declined = true
+	case 10:
+		tc.ClassifierApproved = true
+		if tc.ClassifierNote == "" {
+			tc.ClassifierNote = rapid.StringMatching(`[a-z]{1,8}`).Draw(rt, "classifierNote")
+		}
 	}
 }
 

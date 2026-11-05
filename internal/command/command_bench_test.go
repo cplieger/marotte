@@ -62,8 +62,8 @@ func (*benchDeps) Revert(context.Context, marotte.ChatID, string, string) (*maro
 	return &marotte.Entry{Kind: marotte.EntryKindTurnRevert}, nil, nil
 }
 
-func (*benchDeps) RewindTarget(context.Context, marotte.ChatID, string) (marotte.RewindTarget, bool, error) {
-	return marotte.RewindTarget{}, false, nil
+func (*benchDeps) PromptTarget(context.Context, marotte.ChatID, string) (marotte.PromptTarget, bool, error) {
+	return marotte.PromptTarget{}, false, nil
 }
 
 func (*benchDeps) PromptReceipt(context.Context, marotte.ChatID, string) (marotte.PromptReceipt, error) {
@@ -103,9 +103,7 @@ func (*benchDeps) CallBudget(ctx context.Context, d time.Duration) (context.Cont
 
 func (*benchDeps) closeBridgeOld(context.Context, marotte.ChatID, marotte.TurnOutcome) {}
 
-func (*benchDeps) ClearPendingInputAsks(marotte.ChatID, CancelScope) {}
-
-func (*benchDeps) CancelPendingPermissions(context.Context, marotte.ChatID, CancelScope) error {
+func (*benchDeps) CancelPendingAsks(context.Context, marotte.ChatID, CancelScope) error {
 	return nil
 }
 
@@ -124,6 +122,10 @@ func (nopReply) Respond(context.Context, any) (AnswerOutcome, error) { return An
 
 func (*benchDeps) PendingPermission(marotte.ChatID, int64) (marotte.PermissionNeededPayload, bool) {
 	return marotte.PermissionNeededPayload{}, false
+}
+
+func (*benchDeps) PendingElicitation(marotte.ChatID, int64) (marotte.ElicitationNeededPayload, bool) {
+	return marotte.ElicitationNeededPayload{}, false
 }
 
 func (*benchDeps) EnsureCustomProfile(context.Context) error { return nil }
@@ -268,7 +270,6 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 
 	d.Broadcast(t.Context(), marotte.ServerEvent{})
 	d.closeBridgeOld(t.Context(), "x", marotte.TurnOutcomeCancelled)
-	d.ClearPendingInputAsks("x", ScopeChatSession)
 	d.TakePendingPerm("x", 0, marotte.DecisionKindPermission, marotte.SettledByUser)
 	d.InflightAdd(1)
 	d.InflightDone()
@@ -300,7 +301,6 @@ func TestBenchDeps_Contract(t *testing.T) {
 	t.Run("no_panic_zero_value_calls", func(t *testing.T) {
 		d.Broadcast(t.Context(), marotte.ServerEvent{})
 		d.closeBridgeOld(t.Context(), "x", marotte.TurnOutcomeCancelled)
-		d.ClearPendingInputAsks("x", ScopeChatSession)
 		d.TakePendingPerm("x", 0, marotte.DecisionKindPermission, marotte.SettledByUser)
 		d.InflightAdd(1)
 		d.InflightDone()

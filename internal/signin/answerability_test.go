@@ -86,6 +86,31 @@ func TestAnswer_ATransientFailureIsRetriedThenMarksTheProviderUnreachable(t *tes
 	edges.waitFor(t, ProviderUnreachable)
 }
 
+// The reason is the backend's own unreachable refusal, the one the engine was given, and only while the vault
+// holds the record unreachable.
+func TestUnreachableReason_NamesTheBackendsRefusalOnlyWhileTheProviderIsUnreachable(t *testing.T) {
+	fb := newFake(nil, "cb", "_test/auth/token")
+	h := newHarness(t, fb)
+	if why, ok := h.v.UnreachableReason("nope"); ok {
+		t.Errorf("UnreachableReason(unknown backend) = %q, true; want false", why)
+	}
+	if why, ok := h.v.UnreachableReason("cb"); ok {
+		t.Errorf("UnreachableReason with no record = %q, true; want false: a sign-in fixes it", why)
+	}
+	h.signIn(fb, approval{cred: credOf(t, staleAccount(h, "alice"))})
+	if why, ok := h.v.UnreachableReason("cb"); ok {
+		t.Errorf("UnreachableReason while answerable = %q, true; want false", why)
+	}
+	fb.setRefresh(func(context.Context, fakeCred) (fakeCred, error) { return fakeCred{}, errNetworkDown })
+	if _, rerr := h.answer("cb"); rerr == nil {
+		t.Fatal("a renewal that never succeeded was answered")
+	}
+	why, ok := h.v.UnreachableReason("cb")
+	if !ok || why != "cb: unreachable" {
+		t.Errorf("UnreachableReason after the window = %q, %v; want the backend's refusal %q, true", why, ok, "cb: unreachable")
+	}
+}
+
 func TestAnswer_ARetryThatSucceedsInsideTheWindowIsServed(t *testing.T) {
 	fb := newFake(nil, "cb", "_test/auth/token")
 	h := newHarness(t, fb)

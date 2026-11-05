@@ -586,14 +586,14 @@ func (rs *Runs) forgetBounds(ctx context.Context, workflowID string) {
 	rs.clearCancelRetries(workflowID)
 	rs.clearExecuted(workflowID)
 	// The run's request-shaped asks live in the decision tracker; its step asks ended with the lease.
-	rs.clearRunPerms(workflowID)
+	rs.clearRunPerms(ctx, workflowID)
 }
 
-func (rs *Runs) clearRunPerms(workflowID string) {
+func (rs *Runs) clearRunPerms(ctx context.Context, workflowID string) {
 	if rs.perms == nil {
 		return
 	}
-	rs.perms.ClearPendingPermsForRun(workflowID)
+	rs.perms.ClearPendingPermsForRun(ctx, workflowID)
 }
 
 // claimHeal takes one automatic-resume attempt, false once spent: a heal and a pause can drive each
@@ -912,9 +912,6 @@ func (rs *Runs) observeStart(ctx context.Context, chatID marotte.ChatID, msg *ma
 // translates. A non-terminal run_complete (an onMaxIterations pause) keeps the arm.
 func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	f := decodeLifecycleFrame(msg)
-	if f.WorkflowID != "" && (f.Status.Terminal() || f.Status == marotte.RunStatusPaused) {
-		rs.signals.runStopped(f.WorkflowID)
-	}
 	if f.WorkflowID != "" && f.Status.Terminal() {
 		// Before HandleRunComplete: the client repaints on its `run_finished` invalidation.
 		rs.closeRun(ctx, f.WorkflowID, string(f.Status))

@@ -131,8 +131,13 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	if reason == "" && kind == "" {
 		reason, kind = engineAccount(t, stop)
 	}
+	var answerWait time.Duration
+	if tc.Closer == closerPromptFailure && graceClosed(tc.Closer, stop) {
+		answerWait = command.CancelGrace
+	}
 	result, outcome := bc.closeTurn(ctx, t, stop, reason, kind, tc.Closer)
 	cf := bc.closeFactsOf(t, tc.Closer, outcome)
+	cf.answerWait = answerWait
 	bc.turns.finish(t, result)
 	bc.publishClose(t, cf)
 	return true
@@ -156,7 +161,6 @@ func (bc *bridgeCoordinator) publishClose(t *activeTurn, cf closeFacts) {
 	if bc.onTurnClosed != nil {
 		bc.onTurnClosed(t.Chat, t.ID)
 	}
-	bc.autoCompact.noteTurnClosed(t.Chat)
 	// The tail is the life's work: a turn closed once its life ended runs none.
 	lifeCtx, done, ok := t.lc.beginWork(workTail)
 	if !ok {
@@ -195,18 +199,19 @@ func engineAccount(t *activeTurn, stop marotte.StopReason) (string, marotte.Fail
 }
 
 // closeFacts is what a won close hands its pipeline: the outcome, the fence naming the turn, a death's forwarder
-// exit, and whether no one asked for the stop (command.CloseFacts.Unattended).
+// exit, whether no one asked for the stop (command.CloseFacts.Unattended), and, when the cancel grace gave up on the
+// turn's prompt call, how long to wait for the answer KAS may still send (awaitAbandonedAnswer; zero waits for none).
 type closeFacts struct {
 	exit       <-chan struct{}
 	outcome    marotte.TurnOutcome
 	fence      command.TurnFence
+	answerWait time.Duration
 	unattended bool
 }
 
 // afterTurnClose runs the between-turns follow-ups in order: the wait for KAS to go idle (every later step is a
-// session call), the steer ends and stale run notices, a model switch (it changes the compaction's window), the
-// compaction (a queued prompt would abort it upstream), then the drain graded by the close's outcome. Nothing once
-// shutdown began. A turn_end is not KAS's boundary: KAS 2.37.1 continues the session/prompt while unread steering
+// session call), the steer ends and stale run notices, a model switch, then the drain graded by the close's outcome.
+// Nothing once shutdown began. A turn_end is not KAS's boundary: KAS 2.37.1 continues the session/prompt while unread steering
 // remains, and a clear before its idle report empties the buffer under that continuation. So the steer settle
 // waits for idle and is skipped when a turn opens first, whose close resolves the end; a death settles at once.
 // ctx is lc's life context, and each step first checks the life still stands, so no step begins once it ended.
@@ -253,15 +258,16 @@ func (bc *bridgeCoordinator) resolveCloseEnds(ctx context.Context, lc *chatLifec
 	return bc.resolveEnds(ctx, lc.chatID, cf.fence)
 }
 
-// betweenTurns waits for KAS to go idle, runs atIdle once, applies a parked model and runs the turn-end compaction,
-// then releases the close's KAS hold if it started one (claimTurn), so a waiting prompt cannot reach the session
-// before them; a release refused because KAS reported a run meanwhile repeats the wait. It answers the rows queued
-// under the hold, false when the wait stood down (a turn opened, a teardown, shutdown), which ends the hold with no
-// drain and skips atIdle.
+// betweenTurns waits for KAS to go idle, then for an abandoned prompt's answer, runs atIdle once and applies a parked
+// model, then releases the close's KAS hold if it started one (claimTurn), so a waiting prompt cannot reach the
+// session before them; a release refused because KAS reported a run meanwhile repeats the wait. It answers the rows
+// queued under the hold, false when a wait stood down (a turn opened, a teardown, shutdown), which ends the hold with
+// no drain and skips atIdle.
 func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle, cf closeFacts, atIdle func()) ([]string, bool) {
 	chatID := lc.chatID
 	for {
-		if !lc.awaitKASIdle(ctx, cf.fence) {
+		if !lc.awaitKASIdle(ctx, cf.fence) ||
+			cf.answerWait > 0 && !bc.awaitAbandonedAnswer(ctx, chatID, cf.fence, cf.answerWait) {
 			lc.kasStep(kasStandDownOwn, cf.fence.Seq)
 			return nil, false
 		}
@@ -272,13 +278,55 @@ func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle
 		if bc.applyPendingModel != nil && !lc.endedNow() {
 			bc.applyPendingModel(ctx, chatID)
 		}
-		if !lc.endedNow() {
-			bc.autoCompact.afterTurn(ctx, chatID)
-		}
 		if drain, rows := lc.kasStep(kasReleaseOwn, cf.fence.Seq); drain {
 			return rows, true
 		}
 	}
+}
+
+// errAbandonedAnswerLate ends the wait for a cancelled prompt's answer: KAS owes none, so the chat must not wedge.
+var errAbandonedAnswerLate = errors.New("kiro-cli did not answer the cancelled prompt within the cancel grace")
+
+// errHoldSuperseded ends the wait for a cancelled prompt's answer where awaitKASIdle would stand down.
+var errHoldSuperseded = errors.New("a turn opened or the chat was re-fenced")
+
+// awaitAbandonedAnswer waits until the answer to the prompt the cancel grace abandoned, and every frame KAS wrote
+// before it, are folded. KAS writes that answer after the cancelled execution's other frames, its idle report
+// included, so releasing the hold on the report alone can let the next prompt own the chat and take a trailing
+// turn_completion's credits and request ids. Bounded by wait from the idle report; false where awaitKASIdle stands
+// down.
+func (bc *bridgeCoordinator) awaitAbandonedAnswer(
+	lifeCtx context.Context, chatID marotte.ChatID, fence command.TurnFence, wait time.Duration,
+) bool {
+	sb := bc.bridge.mgr.get(chatID)
+	if sb == nil {
+		return true
+	}
+	held, cancel := context.WithCancelCause(lifeCtx)
+	ctx, stop := context.WithTimeoutCause(held, wait, errAbandonedAnswerLate)
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		bc.turns.cancelWhenSuperseded(ctx, chatID, fence, cancel)
+	}()
+	defer func() {
+		stop()
+		cancel(nil)
+		<-watched
+	}()
+	if seq, answered := sb.awaitAbandonedPrompt(ctx); answered {
+		if bc.turns.awaitPosition(ctx, chatID, seq) {
+			return true
+		}
+	} else if ctx.Err() == nil {
+		return true
+	}
+	if errors.Is(context.Cause(ctx), errAbandonedAnswerLate) {
+		slog.Warn("kiro-cli sent no answer to a cancelled prompt within the cancel grace; the chat's prompts go ahead",
+			"chat_id", chatID, "grace", wait)
+		return true
+	}
+	return false
 }
 
 func (bc *bridgeCoordinator) draining() bool {
@@ -350,12 +398,16 @@ func (bc *bridgeCoordinator) closeTurn(ctx context.Context, t *activeTurn, stop 
 	// The push reads the turn_close's outcome, so a silent end_turn graded `empty` is not a clean finish.
 	concluded := c.WithContent(t.Log.Emitted())
 	bc.pushTurnOutcome(ctx, chatID, concluded, statusDesc)
+	var engineClass string
+	if e := t.Log.EngineError(); e != nil {
+		engineClass = e.ErrorType
+	}
 	return marotte.TurnResult{
-		Stop:           stop,
-		Interrupt:      bc.turns.interruptCause(t),
-		Reason:         c.Reason,
-		EmittedNothing: !t.Log.Emitted(),
-		WireEnded:      closer == closerWireEnd,
+		Stop:            stop,
+		Reason:          c.Reason,
+		EmittedNothing:  !t.Log.Emitted(),
+		WireEnded:       closer == closerWireEnd,
+		EngineErrorType: engineClass,
 	}, concluded.Outcome
 }
 

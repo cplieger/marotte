@@ -40,6 +40,7 @@ vi.mock("./api-client.js", () => ({
   apiGetTyped: vi.fn(),
 }));
 vi.mock("./governance.js", () => ({
+  onGovernanceChange: vi.fn(),
   paintSettingLocks: vi.fn(),
   writeSwitch: (input: HTMLInputElement, value: boolean) => {
     input.checked = value;

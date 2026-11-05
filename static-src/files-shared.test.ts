@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 import { formatSize, joinPath, parentPath, sortEntries } from "./files-shared.js";
-import { isSafeUrl } from "./utils-url.js";
+import { isHttpMailtoOrRelativeURL } from "./utils-url.js";
 
 describe("formatSize", () => {
   const cases: [number, string][] = [
@@ -60,7 +60,7 @@ describe("parentPath", () => {
   }
 });
 
-describe("isSafeUrl", () => {
+describe("isHttpMailtoOrRelativeURL", () => {
   const safe: string[] = [
     "https://example.com",
     "http://localhost:8080/path",
@@ -73,7 +73,7 @@ describe("isSafeUrl", () => {
 
   for (const url of safe) {
     it(`allows safe URL: "${url}"`, () => {
-      expect(isSafeUrl(url)).toBe(true);
+      expect(isHttpMailtoOrRelativeURL(url)).toBe(true);
     });
   }
 
@@ -104,7 +104,7 @@ describe("isSafeUrl", () => {
   for (const [url, desc] of unsafe) {
     // eslint-disable-next-line no-control-regex -- defensive check
     it(`blocks unsafe URL (${desc}): "${url.replace(/[\x00-\x1f]/g, "·")}"`, () => {
-      expect(isSafeUrl(url)).toBe(false);
+      expect(isHttpMailtoOrRelativeURL(url)).toBe(false);
     });
   }
 });
@@ -168,13 +168,13 @@ describe("sortEntries", () => {
   });
 });
 
-describe("isSafeUrl property-based", () => {
+describe("isHttpMailtoOrRelativeURL property-based", () => {
   const blockedPrefixes = ["javascript:", "vbscript:", "data:", "file:"] as const;
 
   it("no false negatives: blocked prefix + suffix is always rejected", () => {
     fc.assert(
       fc.property(fc.constantFrom(...blockedPrefixes), fc.string(), (prefix, suffix) => {
-        expect(isSafeUrl(prefix + suffix)).toBe(false);
+        expect(isHttpMailtoOrRelativeURL(prefix + suffix)).toBe(false);
       }),
       { numRuns: 500 },
     );
@@ -191,7 +191,7 @@ describe("isSafeUrl property-based", () => {
 
     fc.assert(
       fc.property(lead, fc.constantFrom(...blockedPrefixes), fc.string(), (pre, prefix, suffix) => {
-        expect(isSafeUrl(pre + prefix + suffix)).toBe(false);
+        expect(isHttpMailtoOrRelativeURL(pre + prefix + suffix)).toBe(false);
       }),
       { numRuns: 500 },
     );
@@ -208,7 +208,7 @@ describe("isSafeUrl property-based", () => {
 
     fc.assert(
       fc.property(scheme, fc.string(), (s, rest) => {
-        expect(isSafeUrl(`${s}:${rest}`)).toBe(false);
+        expect(isHttpMailtoOrRelativeURL(`${s}:${rest}`)).toBe(false);
       }),
       { numRuns: 1000 },
     );
@@ -221,7 +221,7 @@ describe("isSafeUrl property-based", () => {
 
     fc.assert(
       fc.property(fc.constantFrom("", "/", "./", "../", "#", "?", "//"), tail, (prefix, rest) => {
-        expect(isSafeUrl(prefix + rest)).toBe(true);
+        expect(isHttpMailtoOrRelativeURL(prefix + rest)).toBe(true);
       }),
       { numRuns: 1000 },
     );

@@ -153,12 +153,16 @@ func (sb *sharedBridge) SessionID() marotte.SessionID {
 	return s.SessionID()
 }
 
-// autoCompactionDisabled reports the disableAutoCompaction value KAS froze for the entry's session.
-func (sb *sharedBridge) autoCompactionDisabled() bool {
+// awaitAbandonedPrompt waits for KAS's answer to the entry's abandoned prompt (bridge.Session.AwaitAbandonedPrompt);
+// false with no session.
+func (sb *sharedBridge) awaitAbandonedPrompt(ctx context.Context) (uint64, bool) {
 	sb.mu.Lock()
 	s := sb.leased
 	sb.mu.Unlock()
-	return s != nil && s.AutoCompactionDisabled()
+	if s == nil {
+		return 0, false
+	}
+	return s.AwaitAbandonedPrompt(ctx)
 }
 
 // observeEffort and observeThinking record a level the session reported.
@@ -184,7 +188,6 @@ func (sb *sharedBridge) observeThinking(value string) {
 
 func (sb *sharedBridge) Call(ctx context.Context, method string, params any) (resp *marotte.RPCResponse, err error) {
 	err = sb.use(ctx, func(ctx context.Context, s engineSession) error {
-		sb.beforeCall(method, s.SessionID())
 		var cErr error
 		resp, cErr = s.Call(ctx, method, params)
 		return cErr
@@ -194,7 +197,6 @@ func (sb *sharedBridge) Call(ctx context.Context, method string, params any) (re
 
 func (sb *sharedBridge) CallAt(ctx context.Context, method string, params any) (resp *marotte.RPCResponse, seq uint64, err error) {
 	err = sb.use(ctx, func(ctx context.Context, s engineSession) error {
-		sb.beforeCall(method, s.SessionID())
 		var cErr error
 		resp, seq, cErr = s.CallAt(ctx, method, params)
 		return cErr

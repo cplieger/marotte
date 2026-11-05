@@ -71,8 +71,8 @@ type Server struct {
 	onListen  func()
 	configDir string
 	workDir   string
-	// kasNode is the node binary KAS runs on; "" means it cannot be located.
-	kasNode string
+	// kasNode resolves the node binary KAS runs on; nil or "" means it cannot be located.
+	kasNode func() string
 	// sensitive is the file browser's deny list; the zero value is the one rooted at /config.
 	sensitive filebrowse.Sensitive
 	// heldKiroPrefs keeps the user's value of each kiro-cli setting a lock pins.
@@ -219,9 +219,10 @@ func WithSpecApprovals(st *specapproval.Store) Option {
 	}
 }
 
-// WithKASNode sets the node binary KAS runs on, which compiles hook matchers exactly as KAS
-// will. Unset, a hook with a matcher cannot be created.
-func WithKASNode(path string) Option { return func(s *Server) { s.kasNode = path } }
+// WithKASNode sets how the node binary KAS runs on is found, which compiles hook matchers exactly
+// as KAS will. It is called per request, because kiro-cli names its runtime entry only at its first
+// start. Unset, a hook with a matcher cannot be created.
+func WithKASNode(node func() string) Option { return func(s *Server) { s.kasNode = node } }
 
 // WithWorkDir sets the workspace directory served by the file handler and git endpoints.
 func WithWorkDir(d string) Option { return func(s *Server) { s.workDir = d } }

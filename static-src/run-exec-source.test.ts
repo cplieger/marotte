@@ -572,7 +572,59 @@ describe("runToExec reads what nothing read before", () => {
     expect(watch?.output).toBe("```text\nok\nFAIL x\n```");
   });
 
-  it("keeps a watch capture that is not KAS's record verbatim", () => {
+  it("reads a settled github-pr watch's activity payload", () => {
+    const payload = JSON.stringify(
+      {
+        url: "https://github.com/o/r/pull/7",
+        state: "OPEN",
+        newComments: [],
+        newReviews: [{ id: 1, author: { login: "rev" }, body: "fix it", state: "COMMENTED" }],
+        excludedComments: [],
+        excludedReviews: [],
+        inlineComments: [],
+        excludedInlineComments: [],
+        inlineCommentsFetch: "ok",
+        backlog: { remaining: 0 },
+        headSha: "abc123",
+        mergeable: "CONFLICTING",
+        mergeStateStatus: "DIRTY",
+        newFailedChecks: [],
+        passingCheckCount: 4,
+        pendingCheckCount: 1,
+      },
+      null,
+      2,
+    );
+    const run = runToExec(
+      stateWith({
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [
+          {
+            nodeId: "wait",
+            type: "watch",
+            status: "completed",
+            children: [],
+            capturedOutput: payload,
+          },
+        ],
+      }),
+      [{ nodeId: "wait", type: "watch", agentName: "github-pr" }],
+      NO_ASKS,
+    );
+    const watch = run.nodes[0];
+    expect(watch?.subtitle).toBe("merge conflict \u00b7 1 review");
+    const facts = Object.fromEntries((watch?.facts ?? []).map((f) => [f.label, f.value]));
+    expect(facts["Pull request"]).toBe("https://github.com/o/r/pull/7");
+    expect(facts["Merge state"]).toBe("dirty");
+    expect(facts["Checks"]).toBe("4 passing, 1 pending");
+    expect(facts["Head"]).toBe("abc123");
+    expect(watch?.output).toBe("```json\n" + payload + "\n```");
+    expect(watch?.capture).toBe("");
+  });
+
+  it("keeps a settled watch's undecoded capture verbatim and words its poll as past", () => {
     const run = runToExec(
       stateWith({
         nodeId: "wf_1",
@@ -592,7 +644,7 @@ describe("runToExec reads what nothing read before", () => {
       NO_ASKS,
     );
     expect(run.nodes[0]?.output).toBe("merged");
-    expect(run.nodes[0]?.subtitle).toBe("polls");
+    expect(run.nodes[0]?.subtitle).toBe("polled");
   });
 
   // Four more fields with zero render sites before the exec view.
@@ -987,49 +1039,6 @@ describe("a step's detail line", () => {
       NO_ASKS,
     );
     expect(paused.nodes[0]?.subtitle).toBe("Paused: Step paused.");
-  });
-});
-
-describe("a paused step whose end KAS recorded but has not applied", () => {
-  const pendingOf = (signal: string | undefined, run = "running", status = "paused") => {
-    const extra = signal === undefined ? {} : { completionSignal: signal };
-    const out = runToExec(
-      {
-        ...stateWith(step("gate", status, { pauseReason: "Waiting for input.", ...extra })),
-        status: run,
-      } as RunState,
-      undefined,
-      NO_ASKS,
-    );
-    return out.nodes[0];
-  };
-
-  it.each([
-    ["success", "completed", "Done, applies when the run's other steps finish"],
-    ["error", "failed", "Failed, applies when the run's other steps finish"],
-  ])("labels a recorded %s as an end pending on the run's other steps", (signal, status, text) => {
-    const n = pendingOf(signal);
-    expect(n?.pendingEnd).toEqual({ status, text });
-    expect(n?.subtitle).toBe(text);
-    expect(n?.state).toBe("waiting");
-  });
-
-  it("says a paused run applies it on resume", () => {
-    expect(pendingOf("success", "paused")?.pendingEnd?.text).toBe(
-      "Done, applies when the run resumes",
-    );
-  });
-
-  it.each([
-    ["no signal", undefined, "running", "paused"],
-    ["a question's signal", "need_input", "running", "paused"],
-    ["a finished run", "success", "cancelled", "paused"],
-    ["a run status marotte does not know", "success", "unknown", "paused"],
-    ["a running step", "success", "running", "running"],
-  ])("labels nothing for %s", (_name, signal, run, status) => {
-    const n = pendingOf(signal, run, status);
-    expect(n?.pendingEnd).toBeUndefined();
-    expect(n?.subtitle ?? "").not.toContain("applies when");
   });
 });
 

@@ -15,6 +15,7 @@ let listReply: ListReply;
 let oneReply: ListReply;
 let confirmAnswer = true;
 const deleted: string[] = [];
+const refusedDeletes = new Set<string>();
 const updated: { id: string; edit: unknown }[] = [];
 
 vi.mock("./api-client.js", async (importOriginal) => ({
@@ -33,7 +34,7 @@ vi.mock("./actions/memory.js", async (importOriginal) => ({
   deleteMemory: {
     dispatch: vi.fn(async (args: { id: string }) => {
       deleted.push(args.id);
-      return undefined;
+      return refusedDeletes.has(args.id) ? null : undefined;
     }),
   },
   updateMemory: {
@@ -106,6 +107,7 @@ beforeEach(() => {
   panel = document.createElement("div");
   document.body.appendChild(panel);
   deleted.length = 0;
+  refusedDeletes.clear();
   updated.length = 0;
   confirmAnswer = true;
   vi.mocked(confirm).mockClear();
@@ -248,6 +250,24 @@ describe("bulk delete", () => {
     await settle();
     expect(vi.mocked(confirm).mock.calls[0]?.[0]).toContain("Delete all 5 memories");
     expect(deleted.sort()).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("stops at a refused record and shows what is left, still selected", async () => {
+    await mount();
+    for (const id of ["a", "c", "e"]) {
+      panel.querySelector<HTMLInputElement>(`[data-memory-id="${id}"] .memories-select`)?.click();
+    }
+    refusedDeletes.add("c");
+    listReply = ok({
+      memories: [record("c", null, "Loose"), record("e", "workspace", "Local")],
+      cap: 1000,
+    });
+    button("Delete selected").click();
+    await settle();
+    expect(deleted).toEqual(["a", "c"]);
+    expect(titlesIn("Unscoped")).toEqual(["Loose"]);
+    expect(titlesIn("workspace")).toEqual(["Local"]);
+    expect(button("Delete selected").textContent).toBe("Delete selected (2)");
   });
 });
 

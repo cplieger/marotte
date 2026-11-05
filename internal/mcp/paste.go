@@ -33,7 +33,7 @@ const (
 var pasteServerKeys = []string{
 	"args", "command", "disabled", "disabledTools",
 	"env", "headers", "name", "oauth", "oauthScopes", "prewarm", "timeout", "type", "url",
-	"waitForReady",
+	"versionNegotiation", "waitForReady",
 }
 
 // Each is accepted with a note naming why, so a block carrying one installs instead of erroring,
@@ -89,17 +89,18 @@ type pasteOAuth struct {
 // KeyPairs, so they are decoded from the raw bytes to keep the README's order (a Go map would
 // discard it, and the order is what the user reads in the form).
 type pasteServer struct {
-	OAuth         *pasteOAuth `json:"oauth"`
-	Command       *string     `json:"command"`
-	URL           *string     `json:"url"`
-	Type          *string     `json:"type"`
-	Disabled      *bool       `json:"disabled"`
-	Prewarm       *bool       `json:"prewarm"`
-	WaitForReady  *bool       `json:"waitForReady"`
-	Timeout       *int        `json:"timeout"`
-	Args          []string    `json:"args"`
-	DisabledTools []string    `json:"disabledTools"`
-	OAuthScopes   []string    `json:"oauthScopes"`
+	OAuth              *pasteOAuth `json:"oauth"`
+	Command            *string     `json:"command"`
+	URL                *string     `json:"url"`
+	Type               *string     `json:"type"`
+	VersionNegotiation *string     `json:"versionNegotiation"`
+	Disabled           *bool       `json:"disabled"`
+	Prewarm            *bool       `json:"prewarm"`
+	WaitForReady       *bool       `json:"waitForReady"`
+	Timeout            *int        `json:"timeout"`
+	Args               []string    `json:"args"`
+	DisabledTools      []string    `json:"disabledTools"`
+	OAuthScopes        []string    `json:"oauthScopes"`
 }
 
 // Two shapes are accepted, because a user pastes whatever the README gave them: a `mcpServers`
@@ -214,6 +215,9 @@ func translateServer(rawName string, obj map[string]json.RawMessage, raw json.Ra
 	if spec.Timeout != nil {
 		sv.TimeoutMS = *spec.Timeout
 	}
+	if spec.VersionNegotiation != nil {
+		sv.VersionNegotiation = versionNegotiation(*spec.VersionNegotiation)
+	}
 	switch transport {
 	case TransportStdio:
 		sv.Command = strings.TrimSpace(*spec.Command)
@@ -223,18 +227,27 @@ func translateServer(rawName string, obj map[string]json.RawMessage, raw json.Ra
 		sv.Prewarm = prewarmFor(&spec, sv.Command)
 		noteStdioOAuthKeys(where, obj, req)
 	case transportHTTP, transportSSE:
-		sv.URL = strings.TrimSpace(*spec.URL)
-		if sv.Headers, err = decodeOrderedPairs(where+"headers", obj["headers"]); err != nil {
+		if err := fillRemote(sv, &spec, where, obj["headers"]); err != nil {
 			return nil, err
 		}
-		if spec.OAuth != nil {
-			sv.OAuthClientID = strings.TrimSpace(spec.OAuth.ClientID)
-			sv.OAuthClientMetadataURL = strings.TrimSpace(spec.OAuth.ClientMetadataURL)
-			sv.OAuthRedirectURI = strings.TrimSpace(spec.OAuth.RedirectURI)
-		}
-		sv.OAuthScopes = trimmedScopes(spec.OAuthScopes)
 	}
 	return sv, nil
+}
+
+// fillRemote sets a url server's address, headers and OAuth client from its block.
+func fillRemote(sv *Server, spec *pasteServer, where string, headers json.RawMessage) error {
+	sv.URL = strings.TrimSpace(*spec.URL)
+	var err error
+	if sv.Headers, err = decodeOrderedPairs(where+"headers", headers); err != nil {
+		return err
+	}
+	if spec.OAuth != nil {
+		sv.OAuthClientID = strings.TrimSpace(spec.OAuth.ClientID)
+		sv.OAuthClientMetadataURL = strings.TrimSpace(spec.OAuth.ClientMetadataURL)
+		sv.OAuthRedirectURI = strings.TrimSpace(spec.OAuth.RedirectURI)
+	}
+	sv.OAuthScopes = trimmedScopes(spec.OAuthScopes)
+	return nil
 }
 
 // noteStdioOAuthKeys reports the OAuth keys a local server's block carries, which translateServer drops.

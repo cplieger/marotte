@@ -161,6 +161,13 @@ func TestClassifyPromptFailure(t *testing.T) {
 			}),
 			want: classAuth,
 		},
+		"a credential the host never returned names its class": {
+			err: rpcErr(t, kasServerError, "Authentication failed. Please sign in again.", rpcerr.Mapped{
+				ErrorType:      "CredentialAbsentError",
+				RetryErrorType: "CLIENT_ERROR",
+			}),
+			want: classAuth,
+		},
 		// ModelRegistryAccessDeniedError is left out: no sign-in fixes missing model access.
 		"an entitlement refusal is not auth": {
 			err: rpcErr(t, kasServerError, "…this account does not have access to them.", rpcerr.Mapped{

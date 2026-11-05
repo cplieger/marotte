@@ -22,7 +22,6 @@ var _ translate.RunAppender = (*Runs)(nil)
 // RunNodeStart opens the step path's turn and announces its turn_open under the
 // run scope; a path already open appends nothing.
 func (rs *Runs) RunNodeStart(ctx context.Context, step *translate.RunStep, chatID marotte.ChatID) {
-	rs.signals.nodeStarted(step.RunID, step.NodePath)
 	if rs.log == nil {
 		return
 	}
@@ -41,7 +40,6 @@ func (rs *Runs) RunNodeStart(ctx context.Context, step *translate.RunStep, chatI
 // the close sealed.
 func (rs *Runs) RunNodeComplete(ctx context.Context, runID string, path []string, status, reason string) {
 	nodePath := workflow.PathKey(path)
-	rs.signals.nodeStopped(runID, nodePath, status)
 	if rs.log == nil {
 		return
 	}
@@ -189,6 +187,15 @@ func (rs *Runs) RunFoldTarget(ctx context.Context, step *translate.RunStep, chat
 		translate.PublishAppended(ctx, rs.bus, "", step.RunID, opened)
 	}
 	return t, true
+}
+
+// RunOpenTurn answers the step path's open turn, never opening one.
+func (rs *Runs) RunOpenTurn(runID, nodePath string) (*turnlog.Turn, bool) {
+	if rs.log == nil {
+		return nil, false
+	}
+	t := rs.log.turn(runID, nodePath)
+	return t, t != nil
 }
 
 // RunAppendAfterClosed files an entry after the path's newest closed turn and announces it; no closed turn is an error.
