@@ -18,7 +18,7 @@ import (
 	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/tabs"
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 const port = "9847"
@@ -59,7 +59,7 @@ type Server struct {
 	kiroDocs *docsCache
 	tools    toolsSource
 	// kiroReady is the install manager's readiness verdict, re-read per /api/health.
-	kiroReady func() (bool, pinstall.Reason)
+	kiroReady func() (bool, pin.Reason)
 	// kiroRescan re-derives the active version from disk; nil leaves the repair route unmounted.
 	kiroRescan func(context.Context) (bool, error)
 	// authUnavailable reads a latch, never a probe (see WithAuthUnavailable).
@@ -172,7 +172,7 @@ func WithKiroCLI(resolvePath func() string, resolveEnv func() []string) Option {
 
 // WithKiroReady sets the kiro-cli readiness verdict /api/health reports. Unset
 // leaves the probe reflecting only that the listener is up.
-func WithKiroReady(ready func() (bool, pinstall.Reason)) Option {
+func WithKiroReady(ready func() (bool, pin.Reason)) Option {
 	return func(s *Server) { s.kiroReady = ready }
 }
 

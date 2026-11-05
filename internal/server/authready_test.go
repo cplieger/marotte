@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 // TestAuthReasonIsTheClientContract pins the sign-in reason literal and that it lacks the
@@ -30,11 +30,11 @@ func TestAuthReasonIsTheClientContract(t *testing.T) {
 // TestHealthReportsTheSignInLeg pins that readiness reports a dead sign-in, behind the
 // kiro-cli leg, by reading a value rather than probing (no process-launch lever).
 func TestHealthReportsTheSignInLeg(t *testing.T) {
-	ready := func() (bool, pinstall.Reason) { return true, pinstall.ReasonReady }
-	installing := func() (bool, pinstall.Reason) { return false, pinstall.ReasonInstalling }
+	ready := func() (bool, pin.Reason) { return true, pin.ReasonReady }
+	installing := func() (bool, pin.Reason) { return false, pin.ReasonInstalling }
 
 	tests := map[string]struct {
-		kiroReady  func() (bool, pinstall.Reason)
+		kiroReady  func() (bool, pin.Reason)
 		wireAuth   bool
 		authFailed bool
 		wantStatus int
@@ -108,7 +108,7 @@ func TestHealthReportsTheSignInLeg(t *testing.T) {
 // fixed literal: kiro-cli's error can name a path on the volume.
 func TestHealthNeverLeaksTheAuthFailureReason(t *testing.T) {
 	s := &Server{
-		kiroReady:       func() (bool, pinstall.Reason) { return true, pinstall.ReasonReady },
+		kiroReady:       func() (bool, pin.Reason) { return true, pin.ReasonReady },
 		authUnavailable: func() bool { return true },
 	}
 	s.ready.Store(true)

@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/agent"
+	"github.com/cplieger/marotte/internal/kirorelease"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/signin"
 	kirosignin "github.com/cplieger/marotte/internal/signin/kiro"
-	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/pinstall/v3/kirocli"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 // The layout facts marotte brings to the install: where the convenience symlinks go, and
@@ -49,7 +49,7 @@ type kiroRuntime struct {
 	// ready is the /api/health verdict plus the library's TYPED reason, or nil when this
 	// app does not own the install and readiness stays pure-listener. The wording an
 	// operator reads is applied at the HTTP boundary.
-	ready func() (bool, pinstall.Reason)
+	ready func() (bool, pin.Reason)
 	// rescan re-derives the active version from disk without downloading, or nil when there
 	// is no manager. It backs the loopback repair hook.
 	rescan func(context.Context) (bool, error)
@@ -67,7 +67,7 @@ type kiroRuntime struct {
 // is no readiness gate, so /api/health reflects only that the listener is up.
 func unmanagedKiroRuntime() kiroRuntime {
 	return kiroRuntime{
-		cliPath: func() string { return kirocli.Name },
+		cliPath: func() string { return kirorelease.Name },
 		version: func() string { return "" },
 		// Non-nil on purpose: cliPath, env and stop are called unconditionally, so only
 		// ready and rescan may be nil, and their nil-ness is what MEANS "no manager".
@@ -84,7 +84,7 @@ func unavailableKiroRuntime() kiroRuntime {
 		cliPath: func() string { return "" },
 		version: func() string { return "" },
 		env:     func() []string { return nil },
-		ready:   func() (bool, pinstall.Reason) { return false, pinstall.ReasonUnavailable },
+		ready:   func() (bool, pin.Reason) { return false, pin.ReasonUnavailable },
 		stop:    func() {},
 	}
 }
@@ -106,7 +106,7 @@ func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 			"hint", "expected outside the container (bare `go run`); in the image entrypoint.sh exports KIRO_CLI_VERSION and both digests")
 		return unmanagedKiroRuntime()
 	}
-	mgr, err := pinstall.New(kiroInstallConfig(cfg, toolsDir))
+	mgr, err := pin.New(kiroInstallConfig(cfg, toolsDir))
 	if err != nil {
 		slog.Error("kiro-cli install manager could not be built from the exported pins; no version can be installed, so chats stay unavailable",
 			"error", err,
@@ -116,7 +116,7 @@ func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 	return managedKiroRuntime(ctx, mgr)
 }
 
-func managedKiroRuntime(ctx context.Context, mgr *pinstall.Manager) kiroRuntime {
+func managedKiroRuntime(ctx context.Context, mgr *pin.Manager) kiroRuntime {
 	ensureCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	installed := make(chan struct{})
@@ -132,7 +132,7 @@ func managedKiroRuntime(ctx context.Context, mgr *pinstall.Manager) kiroRuntime 
 	}()
 	return kiroRuntime{
 		cliPath: mgr.Path,
-		version: func() string { return activeVersion(mgr) },
+		version: mgr.Version,
 		env:     mgr.PathEnv,
 		ready:   mgr.Ready,
 		rescan: func(rctx context.Context) (bool, error) {
@@ -158,35 +158,32 @@ func managedKiroRuntime(ctx context.Context, mgr *pinstall.Manager) kiroRuntime 
 	}
 }
 
-// activeVersion is the version mgr runs, which is the retained predecessor after a failed install.
-func activeVersion(mgr *pinstall.Manager) string {
-	if st, ok := mgr.Active(); ok {
-		return st.ActiveVersion
-	}
-	return ""
-}
-
 // kiroStopGrace bounds how long shutdown waits for the background install to notice
 // cancellation. Generous, because expiring it means giving up on a guarantee.
 const kiroStopGrace = 5 * time.Second
 
-// kiroInstallConfig is marotte's whole deployment of the kiro-cli release (pins, tools tree, local
-// policy) over kirocli.Release()'s profile. A function so the namespace test builds a manager from
-// the exact production configuration.
-func kiroInstallConfig(cfg *Config, root string) *pinstall.Config {
-	return &pinstall.Config{
-		Release: kirocli.Release(),
-		Version: cfg.KiroCLIVersion,
+// kiroInstallConfig is marotte's whole install of the kiro-cli release: kirorelease's profile, the
+// pins, the tools tree and local policy. A function so the namespace test builds a manager from the
+// exact production configuration.
+func kiroInstallConfig(cfg *Config, root string) *pin.Config {
+	return &pin.Config{
+		Name:        kirorelease.Name,
+		URLTemplate: kirorelease.URLTemplate,
+		ArchTokens:  kirorelease.ArchTokens(),
+		ArtifactDir: kirorelease.ArtifactDir,
+		ProbeArgs:   kirorelease.ProbeArgs(),
+		Notice:      kirorelease.Notice,
+		Version:     cfg.KiroCLIVersion,
 		Digests: map[string]string{
 			"amd64": cfg.KiroCLISHA256,
 			"arm64": cfg.KiroCLISHA256ARM64,
 		},
-		Root:    root,
-		LinkDir: kiroLinkDir,
-		Assert:  kiroSettings(),
-		Purge:   kiroLegacyPurge(),
+		Root:       root,
+		LinkDir:    kiroLinkDir,
+		Assertions: kiroSettings(),
+		Purge:      kiroLegacyPurge(),
 		// Untrusted stays unset: healBootModes has removed group and other write from this root before
-		// this runs, and pinstall's custody check judges the writers left, so Untrusted would only add
+		// this runs, and pin's custody check judges the writers left, so Untrusted would only add
 		// a digest-verified reinstall at every start. TrustedUIDs is a fact about the volume's ACL,
 		// empty by default.
 		TrustedUIDs: cfg.TrustedInstallUIDs,
@@ -197,23 +194,24 @@ func kiroInstallConfig(cfg *Config, root string) *pinstall.Config {
 // promoted dispatchers and the orphan staging trees. Three named targets rather than a `kiro-cli*`
 // prefix, because the toolbelt engine co-owns the directory and a prefix sweep took its live
 // symlink.
-func kiroLegacyPurge() *pinstall.Purge {
-	return &pinstall.Purge{
-		Names:       kirocli.ShellEraDispatchers(),
+func kiroLegacyPurge() *pin.Purge {
+	return &pin.Purge{
+		Names:       kirorelease.ShellEraDispatchers(),
 		StagePrefix: legacyStagePrefix,
 		Marker:      legacyPurgeMarker,
 	}
 }
 
-// kiroSettings is the kiro-cli settings marotte owns, re-asserted on every start, best-effort. A
-// key the user can change must never be here, or every restart overwrites the choice: those are
-// seeded where unset (server.SeedKiroSettings). app.disableAutoupdates is absent because
-// kirocli.Release() declares it Mandatory.
-func kiroSettings() []pinstall.Assertion {
-	return []pinstall.Assertion{
+// kiroSettings is the kiro-cli settings marotte owns, re-asserted on every start. The auto-update
+// gate is the one Required entry; the others are best-effort. A key the user can change must never
+// be here, or every restart overwrites the choice: those are seeded where unset
+// (server.SeedKiroSettings).
+func kiroSettings() []pin.Assertion {
+	return []pin.Assertion{
+		kirorelease.AutoUpdateGate(),
 		// marotte owns chat retention end to end, so kiro-cli's competing purge is pinned
-		// off: 0 = never. Raw because the value is not a boolean.
-		kirocli.SettingRaw("cleanup.periodDays", "0"),
+		// off: 0 = never.
+		kirorelease.Setting("cleanup.periodDays", "0"),
 	}
 }
 

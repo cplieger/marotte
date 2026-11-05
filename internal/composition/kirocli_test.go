@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/signin"
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 // TestStartKiroCLIShapes pins the runtimes startKiroCLI returns for a configuration it cannot
@@ -25,7 +25,7 @@ func TestStartKiroCLIShapes(t *testing.T) {
 		wantPath  string
 		wantGate  bool
 		wantReady bool
-		reason    pinstall.Reason
+		reason    pin.Reason
 		rescan    bool
 	}{
 		"no pins resolves the bare name and installs nothing": {
@@ -40,7 +40,7 @@ func TestStartKiroCLIShapes(t *testing.T) {
 			cfg:      Config{KiroCLIVersion: "2.14.2", KiroCLISHA256: "not-a-digest", Tools: toolsRoot{dir: t.TempDir()}},
 			wantPath: "",
 			wantGate: true,
-			reason:   pinstall.ReasonUnavailable,
+			reason:   pin.ReasonUnavailable,
 		},
 		"a rejected tools dir reports unready": {
 			cfg: Config{
@@ -49,13 +49,13 @@ func TestStartKiroCLIShapes(t *testing.T) {
 			},
 			wantPath: "",
 			wantGate: true,
-			reason:   pinstall.ReasonUnavailable,
+			reason:   pin.ReasonUnavailable,
 		},
 		"no pins and a rejected tools dir report unready": {
 			cfg:      Config{Tools: checkToolsRoot("MAROTTE_TOOLS_DIR", filepath.Join(t.TempDir(), "a:b"))},
 			wantPath: "",
 			wantGate: true,
-			reason:   pinstall.ReasonUnavailable,
+			reason:   pin.ReasonUnavailable,
 		},
 	}
 	for name, tc := range tests {
@@ -124,7 +124,7 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 			kiro.ready != nil, kiro.rescan != nil)
 	}
 	deadline := time.Now().Add(20 * time.Second)
-	var reason pinstall.Reason
+	var reason pin.Reason
 	for {
 		ok, why := kiro.ready()
 		if ok {
@@ -146,29 +146,34 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 	}
 }
 
-// TestKiroSettingsLeavesTheIntegrityGateToTheManager asserts that app.disableAutoupdates is not in the list,
-// because kirocli.Release() declares it Mandatory.
-func TestKiroSettingsLeavesTheIntegrityGateToTheManager(t *testing.T) {
+// TestKiroSettingsRequiresOnlyTheAutoUpdateGate asserts that app.disableAutoupdates is listed once,
+// set to true, as the only Required assertion: kiro-cli updating itself would replace the binary
+// whose digest was verified, and a best-effort setting must never gate readiness.
+func TestKiroSettingsRequiresOnlyTheAutoUpdateGate(t *testing.T) {
 	settings := kiroSettings()
-	if len(settings) == 0 {
-		t.Fatal("no kiro-cli settings configured; kiro-cli's own chat purge would stay on")
+	if len(settings) < 2 {
+		t.Fatal("kiro-cli settings hold no best-effort entry; kiro-cli's own chat purge would stay on")
 	}
 	seen := map[string]bool{}
 	for _, a := range settings {
-		if a.Name == "app.disableAutoupdates" {
-			t.Error("app.disableAutoupdates is listed as a best-effort assertion; the release profile owns it as Mandatory")
-		}
 		if seen[a.Name] {
 			t.Errorf("setting %q is listed twice", a.Name)
 		}
 		seen[a.Name] = true
-		if a.Required {
-			t.Errorf("setting %q is marked Required; only the profile's own mandatory assertion may gate readiness", a.Name)
+		gate := a.Name == "app.disableAutoupdates"
+		if a.Required != gate {
+			t.Errorf("setting %q has Required = %v, want %v: only the auto-update gate withholds readiness", a.Name, a.Required, gate)
+		}
+		if gate && !slices.Equal(a.Args, []string{"settings", "app.disableAutoupdates", "true"}) {
+			t.Errorf("the auto-update gate has argv %v, want settings app.disableAutoupdates true", a.Args)
 		}
 		want := []string{"settings", a.Name}
 		if len(a.Args) != 3 || !slices.Equal(a.Args[:2], want) || a.Args[2] == "" {
 			t.Errorf("setting %q has argv %v, want %v plus a non-empty value", a.Name, a.Args, want)
 		}
+	}
+	if !seen["app.disableAutoupdates"] {
+		t.Error("app.disableAutoupdates is missing; a kiro-cli that can update itself would stay ready")
 	}
 }
 
@@ -261,9 +266,9 @@ func TestManagedKiroRuntime_ActivationReachesTheSeed(t *testing.T) {
 		installCfg := kiroInstallConfig(&cfg, toolsDir)
 		installCfg.URLTemplate = mirror.URL + "/{version}/kiro-cli.zip"
 		installCfg.MaxAttempts = 1
-		mgr, err := pinstall.New(installCfg)
+		mgr, err := pin.New(installCfg)
 		if err != nil {
-			t.Fatalf("Setup: pinstall.New: %v", err)
+			t.Fatalf("Setup: pin.New: %v", err)
 		}
 		// Not t.Context(): the manager and the seed must outlive the t.Cleanup teardown.
 		kiro := managedKiroRuntime(context.Background(), mgr)
@@ -272,7 +277,7 @@ func TestManagedKiroRuntime_ActivationReachesTheSeed(t *testing.T) {
 		stopSeed := startKiroSettingsSeed(context.Background(), kiro.installed, func(context.Context) { close(seeded) })
 		t.Cleanup(stopSeed)
 
-		waitKiroReason(t, &kiro, pinstall.ReasonUnavailable)
+		waitKiroReason(t, &kiro, pin.ReasonUnavailable)
 		select {
 		case <-kiro.installed:
 			t.Fatal("Setup: installed was closed although the only install attempt failed")
@@ -382,7 +387,7 @@ func pinnedKiroConfig(toolsDir, version string) Config {
 	}
 }
 
-func waitKiroReason(t *testing.T, kiro *kiroRuntime, want pinstall.Reason) {
+func waitKiroReason(t *testing.T, kiro *kiroRuntime, want pin.Reason) {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
 	for {

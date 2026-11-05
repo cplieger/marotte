@@ -9,14 +9,14 @@ import (
 	"path/filepath"
 
 	"github.com/cplieger/marotte/internal/filemode"
+	"github.com/cplieger/marotte/internal/kirorelease"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/workspace"
-	"github.com/cplieger/pinstall/v3/kirocli"
 )
 
-// kiroCLIVersionsDir is pinstall's install root below its Config.Root: the release name plus
+// kiroCLIVersionsDir is pin's install root below its Config.Root: the release name plus
 // "-versions".
-const kiroCLIVersionsDir = kirocli.Name + "-versions"
+const kiroCLIVersionsDir = kirorelease.Name + "-versions"
 
 // engineRootDirs are the folders below the tools dir that toolbelt's root-integrity check judges,
 // beside the config and tools dirs (its docs/configuration.md "Root integrity check").

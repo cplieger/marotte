@@ -12,7 +12,7 @@ import (
 
 	"github.com/cplieger/go/envx"
 	"github.com/cplieger/marotte/internal/workspace"
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 func envSource(vars map[string]string) envx.Source {
@@ -523,8 +523,8 @@ func TestToolsRoot_ARejectedFolderIsOffAtEveryConsumer(t *testing.T) {
 			if kiro.ready == nil || kiro.rescan != nil || kiro.cliPath() != "" {
 				t.Fatal("startKiroCLI did not return the unavailable runtime")
 			}
-			if ready, reason := kiro.ready(); ready || reason != pinstall.ReasonUnavailable {
-				t.Errorf("kiro-cli ready() = (%v, %s), want (false, %s)", ready, reason, pinstall.ReasonUnavailable)
+			if ready, reason := kiro.ready(); ready || reason != pin.ReasonUnavailable {
+				t.Errorf("kiro-cli ready() = (%v, %s), want (false, %s)", ready, reason, pin.ReasonUnavailable)
 			}
 			if _, err := buildToolsEngine(cfg, testRuntime(t), nil); !errors.Is(err, errToolsDirUnusable) {
 				t.Errorf("buildToolsEngine = %v, want errToolsDirUnusable", err)

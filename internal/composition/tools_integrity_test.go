@@ -164,12 +164,14 @@ func TestWireToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 				return []string{toolsDir}
 			},
 		},
+		// The engine judges every directory above a managed root, so the tools dir below the
+		// config dir is unfit too.
 		"a group-writable config dir": {
-			plant: func(t *testing.T, configDir, _ string) []string {
+			plant: func(t *testing.T, configDir, toolsDir string) []string {
 				if err := os.Chmod(configDir, 0o775); err != nil {
 					t.Fatal(err)
 				}
-				return []string{configDir}
+				return []string{configDir, toolsDir}
 			},
 		},
 	}
@@ -236,6 +238,35 @@ func TestBootTightensEveryRootTheEngineJudges(t *testing.T) {
 	t.Cleanup(healed.Close)
 	if engine, reason := healed.Engine(); engine == nil {
 		t.Errorf("no engine after healBootModes: %v", reason)
+	}
+}
+
+// TestBootLeavesAnotherOwnersRootToTheOperator pins what healBootModes does not repair: a managed
+// directory another account owns stays unfit after the heal, so the engine slot stays degraded and
+// the refusal names that directory for the operator to chown.
+func TestBootLeavesAnotherOwnersRootToTheOperator(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("handing a directory to another uid needs root")
+	}
+	configDir, toolsDir := fitTree(t)
+	bin := filepath.Join(toolsDir, "bin")
+	mkdirMode(t, bin, 0o755)
+	if err := os.Chown(bin, 65501, -1); err != nil {
+		t.Fatal(err)
+	}
+	healBootModes(configDir, toolsDir, "", "")
+
+	logs := captureDefaultLogger(t)
+	cfg := &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}, ToolCatalogPath: filepath.Join(t.TempDir(), "absent.json")}
+	tools, err := wireToolsEngine(cfg, testRuntime(t), nil)
+	if err != nil {
+		t.Fatalf("wireToolsEngine over another owner's bin = %v, want the degraded slot", err)
+	}
+	if engine, _ := tools.Engine(); engine != nil {
+		t.Fatal("an engine came up over a bin another account owns")
+	}
+	if got := loggedUnfitPaths(t, logs); !slices.Contains(got, bin) {
+		t.Errorf("the refusal named %v, want %s among them", got, bin)
 	}
 }
 

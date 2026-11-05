@@ -195,7 +195,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Only the minimal runtime surface is baked; everything else (Node, Python, Go,
 # Java, Rust, LSPs) is installed on demand by the tools engine into its tools
 # folder (/config/tools unless MAROTTE_TOOLS_DIR moves it).
-# git serves gitexec, file history and forges; unzip the kiro-cli installer;
+# git serves gitexec, file history and forges; unzip is for agents;
 # xz-utils .tar.xz tool archives; jq entrypoint.sh. kiro-cli is downloaded at first
 # boot because its licence forbids baking it. PKG_REFRESH busts this layer's cache, or `apt-get upgrade` never reruns and the
 # image ships stale packages. The `echo` is required: BuildKit keys a RUN only on
@@ -232,7 +232,7 @@ ENV GOPATH="/config/tools/go"
 ENV GOBIN="/config/tools/bin"
 ENV HOME="/config/home"
 ENV KIRO_HOME="/config/home/.kiro"
-# pinstall never rewrites a version directory, so kiro-cli's per-session binary copy protects nothing.
+# pin never rewrites a version directory, so kiro-cli's per-session binary copy protects nothing.
 ENV KIRO_SKIP_BINARY_PINNING=1
 # kiro-cli unpacks node, the agent server and the terminal UI here and deletes every
 # other version's copy at each start, so a child running another kiro-cli version

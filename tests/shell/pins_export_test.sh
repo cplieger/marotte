@@ -117,18 +117,17 @@ grep -Eq '^ENV KIRO_RUNTIME_DIR="/' "$DOCKERFILE" \
   && ok "the image sets an absolute KIRO_RUNTIME_DIR, so kiro-cli keeps only the running version's runtime" \
   || no "runtime dir" "the Dockerfile sets no absolute KIRO_RUNTIME_DIR; each kiro-cli version's ~425 MB runtime then stays in the data dir"
 
-# pinstall's version directories are never rewritten, so kiro-cli's per-session copy of the binary
+# pin's version directories are never rewritten, so kiro-cli's per-session copy of the binary
 # under the data dir's run/ protects nothing and costs a copy per version.
 grep -Eq '^ENV KIRO_SKIP_BINARY_PINNING=1$' "$DOCKERFILE" \
   && ok "the image sets KIRO_SKIP_BINARY_PINNING=1, so kiro-cli copies no binary into its data dir" \
   || no "binary pinning" "the Dockerfile does not set KIRO_SKIP_BINARY_PINNING=1; each TUI start then copies the ~219 MB kiro-cli binary into ~/.local/share/kiro-cli/run/"
 
-# --- pinstall.Config.Untrusted stays unset -------------------------------------
-# kirocli.go's Config literal says why. Untrusted is pinstall v2's name for v1's Tainted, so
-# grepping Tainted would pass vacuously.
+# --- pin.Config.Untrusted stays unset ------------------------------------------
+# kirocli.go's Config literal says why.
 grep -q 'Untrusted:' "$KIROCLI_GO" \
-  && no "Untrusted set" "internal/composition/kirocli.go now sets pinstall.Config.Untrusted, which reinstalls kiro-cli (about 140 MB) at every start; change the reason beside the Config literal first" \
-  || ok "the Go side leaves pinstall.Config.Untrusted unset"
+  && no "Untrusted set" "internal/composition/kirocli.go now sets pin.Config.Untrusted, which reinstalls kiro-cli (about 140 MB) at every start; change the reason beside the Config literal first" \
+  || ok "the Go side leaves pin.Config.Untrusted unset"
 
 # KIRO_CLI_TOOLS_TAINTED is web-terminal-kiro's shell-to-Go hand-off for that field. A half-wired
 # copy is silent: an export nothing reads looks like a guard, and a read nothing exports is always

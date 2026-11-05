@@ -7,7 +7,7 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 // kiroRescanPath is the loopback kiro-cli repair hook: it makes an install repaired INSIDE
@@ -27,7 +27,7 @@ const (
 	// reasonUnavailable is also the fallback for a rescan with no verdict and for a reason a
 	// future library adds: an unnamed state still blocks chats.
 	reasonUnavailable = "kiro-cli unavailable"
-	// reasonSettings is pinstall.ReasonAssertion: the required app.disableAutoupdates could not
+	// reasonSettings is pin.ReasonAssertion: the required app.disableAutoupdates could not
 	// be asserted, so the binary may replace itself and invalidate the verified digest.
 	reasonSettings = "kiro-cli required settings not enforced"
 )
@@ -35,17 +35,17 @@ const (
 // kiroReasonText renders the install manager's typed reason as the reason
 // /api/health and the repair hook serve. ReasonReady maps to "", which the
 // health envelope omits.
-func kiroReasonText(why pinstall.Reason) string {
+func kiroReasonText(why pin.Reason) string {
 	switch why {
-	case pinstall.ReasonReady:
+	case pin.ReasonReady:
 		return ""
-	case pinstall.ReasonInstalling:
+	case pin.ReasonInstalling:
 		return reasonInstalling
-	case pinstall.ReasonRetrying:
+	case pin.ReasonRetrying:
 		return reasonRetrying
-	case pinstall.ReasonUnavailable:
+	case pin.ReasonUnavailable:
 		return reasonUnavailable
-	case pinstall.ReasonAssertion:
+	case pin.ReasonAssertion:
 		return reasonSettings
 	}
 	return reasonUnavailable
@@ -68,7 +68,7 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 	// Report the VERDICT, not err (which can name a volume path); the manager logged the fault.
 	reason := reasonUnavailable
 	if s.kiroReady != nil {
-		if _, why := s.kiroReady(); why != pinstall.ReasonReady {
+		if _, why := s.kiroReady(); why != pin.ReasonReady {
 			reason = kiroReasonText(why)
 		}
 	}

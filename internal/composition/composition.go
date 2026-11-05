@@ -692,6 +692,7 @@ func buildToolsEngine(cfg *Config, h *agent.Runtime,
 		Seed:                toolbelt.DefaultSeed(),
 		System:              []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
 		GitHubToken:         githubToken,
+		TrustedUIDs:         cfg.TrustedInstallUIDs,
 		OnJobChanged: func(j *toolbelt.Job) {
 			h.Broadcast(context.Background(), marotte.NewEvent(marotte.EventToolJobChanged, "",
 				marotte.ToolJobChangedPayload{Job: j}))
