@@ -215,6 +215,7 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
     jq \
     libatomic1 \
     openssh-client \
+    ripgrep \
     tini \
     unzip \
     xz-utils \
