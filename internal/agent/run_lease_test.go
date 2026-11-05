@@ -71,7 +71,7 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_sched")
 
-		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"}, marotte.RunDefaults{}, slot); err != nil {
+		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"}, nil, marotte.RunDefaults{}, slot); err != nil {
 			t.Fatalf("LaunchScheduled: %v", err)
 		}
 		l, ok := h.runs.lease("wf_sched")
@@ -251,7 +251,7 @@ func TestLaunchScheduled_ACallerCancelOnceTheRunExistsStillLaunchesIt(t *testing
 	}
 	before := time.Now()
 
-	id, _, err := h.runs.LaunchScheduled(ctx, entry.Source, entry.Row(), marotte.RunDefaults{}, before.Add(time.Hour))
+	id, _, err := h.runs.LaunchScheduled(ctx, entry.Source, entry.Row(), nil, marotte.RunDefaults{}, before.Add(time.Hour))
 	if id != "wf_1" || err != nil {
 		t.Errorf("LaunchScheduled = %q, %v; want wf_1 started", id, err)
 	}
@@ -301,7 +301,7 @@ func TestLaunchScheduled_ACallerCancelOnceTheRunExistsKeepsTheLaunchDeadline(t *
 	}
 	done := make(chan answer, 1)
 	go func() {
-		id, _, lErr := h.runs.LaunchScheduled(ctx, entry.Source, entry.Row(), marotte.RunDefaults{},
+		id, _, lErr := h.runs.LaunchScheduled(ctx, entry.Source, entry.Row(), nil, marotte.RunDefaults{},
 			time.Now().Add(time.Hour))
 		done <- answer{id: id, err: lErr}
 	}()
@@ -337,7 +337,7 @@ func TestLaunchScheduled_AFailedInvokeNamesTheRunWithItsFailure(t *testing.T) {
 	delete(br.callResults, methodKiroWorkflowInvoke)
 	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errHoldFault}
 
-	id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), marotte.RunDefaults{},
+	id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), nil, marotte.RunDefaults{},
 		time.Now().Add(time.Hour))
 	if id != "wf_1" || !errors.Is(err, errHoldFault) {
 		t.Errorf("LaunchScheduled = %q, %v; want wf_1 with the invoke failure", id, err)
@@ -598,7 +598,7 @@ func TestLaunchScheduled_ARunOfARecreatedScheduleLeavesTheNewRowAlone(t *testing
 		return nil, nil, false
 	}
 
-	id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), marotte.RunDefaults{}, time.Now().Add(time.Hour))
+	id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
 	if id != "wf_1" || err != nil {
 		t.Fatalf("LaunchScheduled = %q, %v; want wf_1 started", id, err)
 	}

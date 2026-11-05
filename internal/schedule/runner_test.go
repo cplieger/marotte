@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -40,6 +41,7 @@ type fakeLauncher struct {
 	deadlines []time.Time
 	// defaults records the model and effort each launch carried.
 	defaults []marotte.RunDefaults
+	inputs   []map[string]string
 	err      error
 	// during runs inside each launch, so a test can move the runner's clock while the launch holds the sweep.
 	during func(source string)
@@ -48,7 +50,7 @@ type fakeLauncher struct {
 }
 
 func (f *fakeLauncher) LaunchScheduled(
-	_ context.Context, source string, row Row, defaults marotte.RunDefaults, deadline time.Time,
+	_ context.Context, source string, row Row, inputs map[string]string, defaults marotte.RunDefaults, deadline time.Time,
 ) (string, string, error) {
 	if f.during != nil {
 		f.during(source)
@@ -56,6 +58,7 @@ func (f *fakeLauncher) LaunchScheduled(
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.defaults = append(f.defaults, defaults)
+	f.inputs = append(f.inputs, inputs)
 	f.sources = append(f.sources, source)
 	f.schedules = append(f.schedules, row.ID)
 	f.deadlines = append(f.deadlines, deadline)
@@ -149,6 +152,27 @@ func TestSweep_SendsTheSchedulesModelPick(t *testing.T) {
 	l.mu.Unlock()
 	if want := []marotte.RunDefaults{{Model: "opus", Effort: "high"}}; !slices.Equal(got, want) {
 		t.Errorf("launch defaults = %+v, want %+v", got, want)
+	}
+}
+
+func TestFirePassesInputs(t *testing.T) {
+	due := at(2026, time.August, 4, 2, 0)
+	st, l, r := newFixture(t, due.Add(30*time.Second))
+	e := st.List()[0]
+	e.Inputs = map[string]string{"lane": "fast", "cap": "3"}
+	if err := st.Put(t.Context(), &e); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	r.sweep(t.Context())
+
+	l.mu.Lock()
+	got := slices.Clone(l.inputs)
+	l.mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("launches = %d, want 1", len(got))
+	}
+	if want := map[string]string{"lane": "fast", "cap": "3"}; !maps.Equal(got[0], want) {
+		t.Errorf("launch inputs = %v, want %v", got[0], want)
 	}
 }
 

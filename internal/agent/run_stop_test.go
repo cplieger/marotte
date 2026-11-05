@@ -235,7 +235,7 @@ func TestLaunch_OnlyAScheduledRunSendsALabel(t *testing.T) {
 	t.Run("scheduled", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_sched")
-		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"}, marotte.RunDefaults{}, time.Now().Add(time.Hour)); err != nil {
+		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"}, nil, marotte.RunDefaults{}, time.Now().Add(time.Hour)); err != nil {
 			t.Fatalf("LaunchScheduled: %v", err)
 		}
 		if got := br.paramsFor(methodKiroWorkflowNew)["runLabel"]; got != "publish · scheduled" {

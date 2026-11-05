@@ -56,7 +56,7 @@ func TestLaunch_AnInvokeWhoseAnswerWasUnreadKeepsItsLease(t *testing.T) {
 			h, br, st, entry := nightlyLaunch(t)
 			br.setCallErr(methodKiroWorkflowInvoke, callErr)
 
-			id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), marotte.RunDefaults{},
+			id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), nil, marotte.RunDefaults{},
 				time.Now().Add(time.Hour))
 			// The runner records a slot failed on any error (schedule.Runner.settle), so a run that may be running
 			// is reported launched.
@@ -77,7 +77,7 @@ func TestLaunch_AnInvokeWhoseAnswerWasUnreadKeepsItsLease(t *testing.T) {
 		br.setCallRPCErr(methodKiroWorkflowInvoke,
 			&marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "Parse error"})
 
-		id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), marotte.RunDefaults{},
+		id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), nil, marotte.RunDefaults{},
 			time.Now().Add(time.Hour))
 		if id != "wf_1" || err == nil || errors.Is(err, errLaunchUnconfirmed) {
 			t.Errorf("LaunchScheduled = %q, %v; want wf_1 refused", id, err)
@@ -137,7 +137,7 @@ func TestLaunch_ANewWhoseAnswerWasUnreadSendsTheReaderToHistory(t *testing.T) {
 			h, br, _, entry := nightlyLaunch(t)
 			arm(br)
 
-			id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), marotte.RunDefaults{},
+			id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), nil, marotte.RunDefaults{},
 				time.Now().Add(time.Hour))
 			if id != "" || !errors.Is(err, errLaunchNewUnconfirmed) || errors.Is(err, schedule.ErrEngineBusy) {
 				t.Errorf("LaunchScheduled = %q, %v; want no id, errLaunchNewUnconfirmed and no engine-busy retry", id, err)

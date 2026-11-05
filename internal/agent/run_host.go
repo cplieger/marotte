@@ -19,6 +19,7 @@ import (
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
@@ -81,10 +82,11 @@ func (rs *Runs) launch(
 }
 
 // LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window and backstop.
-// The sign-in gate's refusal wraps schedule.ErrNoRunCanStart; an engine that did not answer before the run was
-// created wraps schedule.ErrEngineBusy.
+// Only the inputs the recipe declares are sent; the caller's map is not modified. The sign-in gate's refusal wraps
+// schedule.ErrNoRunCanStart; an engine that did not answer before the run was created wraps schedule.ErrEngineBusy.
 func (rs *Runs) LaunchScheduled(
-	ctx context.Context, source string, row schedule.Row, defaults marotte.RunDefaults, slotAt time.Time,
+	ctx context.Context, source string, row schedule.Row, inputs map[string]string, defaults marotte.RunDefaults,
+	slotAt time.Time,
 ) (id, name string, err error) {
 	// The schedule runner outlives Shutdown, so a launch is held on inflight and refused once draining.
 	release, ok := rs.lifecycle.enterUnlessDraining()
@@ -92,7 +94,7 @@ func (rs *Runs) LaunchScheduled(
 		return "", "", errRuntimeDraining
 	}
 	defer release()
-	id, name, err = rs.launchAs(ctx, source, nil, defaults, scheduledLaunch(row, slotAt))
+	id, name, err = rs.launchAs(ctx, source, inputs, defaults, scheduledLaunch(row, slotAt))
 	switch {
 	case errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown):
 		err = fmt.Errorf("%w: %w", schedule.ErrNoRunCanStart, err)
@@ -125,6 +127,10 @@ func (rs *Runs) launchAs(
 	if o.origin == runlease.OriginManual && !isAgentSource(source) {
 		// A manual run yields to its recipe's next slot.
 		o.slotAt = rs.manualSlot(recipe.Source)
+	}
+	var dropped []string
+	if o.origin == runlease.OriginScheduled {
+		inputs, dropped = declaredInputs(inputs, recipe.Inputs)
 	}
 	if bErr := rs.recipeIdle(cctx, recipe.Name); bErr != nil {
 		return "", "", unanswered(ctx, bErr)
@@ -192,8 +198,16 @@ func (rs *Runs) launchAs(
 	}
 	// After invoke, so a run that never started leaves no timer.
 	rs.armDeadline(rctx, wfID)
-	slog.Info("workflow run launched", "workflow_id", wfID, "recipe", recipe.Name)
+	logLaunched(wfID, recipe.Name, dropped)
 	return wfID, recipe.Name, nil
+}
+
+func logLaunched(wfID, recipe string, dropped []string) {
+	attrs := []any{"workflow_id", wfID, "recipe", recipe}
+	if len(dropped) > 0 {
+		attrs = append(attrs, "dropped_inputs", logsafe.Field(strings.Join(dropped, ",")))
+	}
+	slog.Info("workflow run launched", attrs...)
 }
 
 // invokeFailed settles a launch whose invoke failed and returns its error. An unconfirmed (verdictOf) or
@@ -212,6 +226,19 @@ func (rs *Runs) invokeFailed(ctx context.Context, wfID, recipe string, o launchO
 	rs.releaseLease(ctx, wfID)
 	rs.coord.closeBridge(ctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
 	return err
+}
+
+func declaredInputs(inputs, declared map[string]string) (kept map[string]string, dropped []string) {
+	kept = make(map[string]string, len(inputs))
+	for k, v := range inputs {
+		if _, ok := declared[k]; ok {
+			kept[k] = v
+		} else {
+			dropped = append(dropped, k)
+		}
+	}
+	slices.Sort(dropped)
+	return kept, dropped
 }
 
 // runStop is who a stop tells KAS asked. The zero value attributes nothing: an attributed stop tells the agent the user stopped it.

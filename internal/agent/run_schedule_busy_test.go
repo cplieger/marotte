@@ -39,7 +39,7 @@ func TestLaunchScheduled_TellsABusyEngineFromAFailure(t *testing.T) {
 				_, _, err = h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
 			} else {
 				_, _, err = h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "s1"},
-					marotte.RunDefaults{}, time.Now().Add(time.Hour))
+					nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
 			}
 			if err == nil {
 				t.Fatal("the launch succeeded")
@@ -56,7 +56,7 @@ func TestLaunchScheduled_TellsABusyEngineFromAFailure(t *testing.T) {
 		launchableRecipe(br, "wf_new")
 		ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
 		defer cancel()
-		_, _, err := h.runs.LaunchScheduled(ctx, "bundled://publish", schedule.Row{ID: "s1"}, marotte.RunDefaults{}, time.Now().Add(time.Hour))
+		_, _, err := h.runs.LaunchScheduled(ctx, "bundled://publish", schedule.Row{ID: "s1"}, nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
 		if err == nil || errors.Is(err, schedule.ErrEngineBusy) {
 			t.Errorf("LaunchScheduled = %v, want a failure that is not the engine's", err)
 		}
