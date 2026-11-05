@@ -19,7 +19,7 @@ import (
 )
 
 // Runs owns the workflow-run surface: launch, cancel, retry, the durable lease, the deadline and turn-cap
-// arms, and the schedule store. It holds collaborators, not a *Runtime; `mu` guards bounds.
+// arms, and the launch-rule store. It holds collaborators, not a *Runtime; `mu` guards bounds.
 type Runs struct {
 	chats       runChatReader
 	translate   runTranslator
@@ -27,6 +27,7 @@ type Runs struct {
 	bus         runBroadcaster
 	launchRules *launchrule.Store `wiring:"optional"`
 	leases      *runlease.Store   `wiring:"optional"`
+	eventRules  eventRuleChecker  `wiring:"optional"`
 	// log is the run record: one entry log per run under <configDir>/runs, its open step turns and hosts.
 	log     *runLog `wiring:"optional"`
 	bridges *bridgeManager

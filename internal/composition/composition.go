@@ -236,6 +236,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	forgeNotify := &forgeNotifier{hub: h}
 	forgesManager := forges.NewManager(cfg.ConfigDir, forgeNotify.notify)
 	forgesManager.Load(ctx)
+	h.SetEventRuleChecker(forgesManager)
 
 	tools, err := wireToolsEngine(cfg, h, githubTokenFor(forgesManager))
 	if err != nil {

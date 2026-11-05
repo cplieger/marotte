@@ -109,7 +109,7 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 		r.sweep(t.Context())
 		e := st.Clocks()[0].Rule
 		e.Enabled = false
-		if _, err := st.Replace(t.Context(), e.ID, &e); err != nil {
+		if _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
 			t.Fatalf("Replace: %v", err)
 		}
 		r.sweep(t.Context())
@@ -315,7 +315,7 @@ func TestSweep_AScheduleChangedMidSweepDoesNotLaunch(t *testing.T) {
 		{name: "disabled", change: func(t *testing.T, st *launchrule.Store, b *launchrule.Rule) {
 			off := *b
 			off.Enabled = false
-			if _, err := st.Replace(t.Context(), b.ID, &off); err != nil {
+			if _, err := st.Replace(t.Context(), b.ID, &off, 0); err != nil {
 				t.Errorf("Replace: %v", err)
 			}
 		}},

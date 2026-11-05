@@ -215,7 +215,7 @@ func TestEventSpecValidation(t *testing.T) {
 			_, createErr := st.Create(t.Context(), eventRule("bundled://x", spec))
 			spec = runSpec()
 			tc.edit(spec)
-			_, replaceErr := st.Replace(t.Context(), existing.ID, eventRule("bundled://x", spec))
+			_, replaceErr := st.Replace(t.Context(), existing.ID, eventRule("bundled://x", spec), 0)
 			for verb, err := range map[string]error{"Create": createErr, "Replace": replaceErr} {
 				if tc.want == "" {
 					if err != nil {
@@ -359,14 +359,14 @@ func TestReplaceAndDelete(t *testing.T) {
 	}
 	edit := clockRule("bundled://x")
 	edit.Enabled = false
-	got, err := st.Replace(t.Context(), r.ID, edit)
+	got, err := st.Replace(t.Context(), r.ID, edit, 0)
 	if err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 	if got.ID != r.ID || got.Enabled {
 		t.Errorf("Replace = %+v, want id %q disabled", got, r.ID)
 	}
-	if _, err := st.Replace(t.Context(), "missing", edit); !errors.Is(err, ErrNotFound) {
+	if _, err := st.Replace(t.Context(), "missing", edit, 0); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Replace(missing) error = %v, want ErrNotFound", err)
 	}
 	if err := st.Delete(t.Context(), r.ID); err != nil {
@@ -432,7 +432,7 @@ func TestClientCannotWriteCursor(t *testing.T) {
 		if err != nil {
 			t.Fatalf("DecodeRule: %v", err)
 		}
-		if _, err := st.Replace(t.Context(), r.ID, &edit); err != nil {
+		if _, err := st.Replace(t.Context(), r.ID, &edit, 0); err != nil {
 			t.Fatalf("Replace: %v", err)
 		}
 		if !bytes.Equal(before, readFile(t, statePath(dir, r.ID))) {
@@ -567,7 +567,7 @@ func TestUnreadableStateFileBlocksRule(t *testing.T) {
 			if err := reloaded.WriteState(t.Context(), r.ID, &State{}); err == nil {
 				t.Errorf("WriteState overwrote an unreadable state file")
 			}
-			if _, err := reloaded.Replace(t.Context(), r.ID, eventRule("bundled://a", runSpec())); err != nil {
+			if _, err := reloaded.Replace(t.Context(), r.ID, eventRule("bundled://a", runSpec()), 0); err != nil {
 				t.Errorf("Replace of a blocked rule: %v", err)
 			}
 			if got := readFile(t, path); string(got) != body {
@@ -639,7 +639,7 @@ func TestClockRuleAnchorSurvivesReload(t *testing.T) {
 	reloaded.now = func() time.Time { return created.Add(48 * time.Hour) }
 	edit := clockRule("bundled://x")
 	edit.When.Clock.Hour = 4
-	if _, err := reloaded.Replace(t.Context(), r.ID, edit); err != nil {
+	if _, err := reloaded.Replace(t.Context(), r.ID, edit, 0); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 	got, ok := openStore(t, dir).Clock(r.ID)
@@ -836,7 +836,7 @@ func TestEditKeepsTheWaitOnlyForTheSameSlot(t *testing.T) {
 			}
 			edit := r.clone()
 			tc.edit(&edit)
-			if _, err := st.Replace(t.Context(), r.ID, &edit); err != nil {
+			if _, err := st.Replace(t.Context(), r.ID, &edit, 0); err != nil {
 				t.Fatalf("Replace: %v", err)
 			}
 			got, _ := st.Clock(r.ID)

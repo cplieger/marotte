@@ -1,5 +1,5 @@
 // Workflow-schedule wire types. Hand-declared beside the feature (the forge-types.ts precedent)
-// rather than generated: the schedule surface is three endpoints and one record.
+// rather than generated: the surface is the launch-rule endpoints and one record.
 
 /** Recurrence frequency; mirrors internal/launchrule.Freq. */
 export type ScheduleFreq = "minutely" | "hourly" | "daily" | "weekly" | "monthly";
@@ -35,8 +35,9 @@ export interface ScheduleSpec {
   minute: number;
 }
 
-/** One schedule as the server renders it, next run already resolved. */
+/** One recipe's clock rule as the schedule form reads it, next run already resolved. */
 export interface ScheduleView {
+  /** The rule's server-minted id, which a save of this rule sends back. */
   id: string;
   source: string;
   /** The recipe's name when the schedule was saved. */
@@ -46,7 +47,7 @@ export interface ScheduleView {
   /** RFC3339; the server computes this so the client never does. */
   next_run_at?: string;
   last_run_at?: string;
-  /** How the last slot ended; mirrors internal/schedule.status. */
+  /** How the last slot ended; mirrors internal/launchrule.OutcomeStatus. */
   last_status?: "started" | "completed" | "failed" | "unknown" | "skipped";
   /** Why, as plain text for a person to read. */
   last_reason?: string;
@@ -59,4 +60,34 @@ export interface ScheduleView {
 
 export interface SchedulesResponse {
   schedules: ScheduleView[];
+}
+
+/** A launch rule's row; mirrors internal/launchrule.Status. */
+interface LaunchRuleStatus {
+  anchor?: string;
+  last_run_at?: string;
+  waiting_for?: string;
+  last_run_id?: string;
+  last_status?: ScheduleView["last_status"];
+  last_reason?: string;
+}
+
+/** One launch rule as GET /api/launch-rules renders it. An event rule's `when` is opaque here. */
+export interface LaunchRuleView {
+  id: string;
+  source: string;
+  name?: string;
+  enabled: boolean;
+  model?: string;
+  effort?: string;
+  when: { clock?: ScheduleSpec; event?: unknown };
+  next_run_at?: string;
+  /** Absent, with `error` set, when the rule's state file would not load. */
+  status?: LaunchRuleStatus;
+  error?: string;
+  held: number;
+}
+
+export interface LaunchRulesResponse {
+  rules: LaunchRuleView[];
 }

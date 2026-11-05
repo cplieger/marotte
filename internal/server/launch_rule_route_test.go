@@ -13,10 +13,10 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
-// TestScheduleDelete_ThroughTheRequestPathGuard drives the agent's real schedule routes behind
+// TestLaunchRuleDelete_ThroughTheRequestPathGuard drives the agent's real launch-rule routes behind
 // canonicalAPIPath with the id the list answered, escaped as the client's encodeURIComponent does.
 // One seeded rule is a recipe under /workspace: its source is an absolute path.
-func TestScheduleDelete_ThroughTheRequestPathGuard(t *testing.T) {
+func TestLaunchRuleDelete_ThroughTheRequestPathGuard(t *testing.T) {
 	for name, source := range map[string]string{
 		"workspace recipe": "/workspace/.kiro/workflows/weekly-smoke.workflow.json",
 		"bundled recipe":   "bundled://release-notes",
@@ -32,31 +32,31 @@ func TestScheduleDelete_ThroughTheRequestPathGuard(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("Create: %v", err)
 			}
-			h := canonicalAPIPath(scheduleMux(t, st))
+			h := canonicalAPIPath(launchRuleMux(t, st))
 
-			list := do(h, http.MethodGet, "/api/schedules")
+			list := do(h, http.MethodGet, "/api/launch-rules")
 			var got struct {
-				Schedules []struct {
+				Rules []struct {
 					ID string `json:"id"`
-				} `json:"schedules"`
+				} `json:"rules"`
 			}
-			if err := json.Unmarshal(list.Body.Bytes(), &got); err != nil || len(got.Schedules) != 1 {
-				t.Fatalf("GET /api/schedules = %d %s, want the one seeded row", list.Code, list.Body.String())
+			if err := json.Unmarshal(list.Body.Bytes(), &got); err != nil || len(got.Rules) != 1 {
+				t.Fatalf("GET /api/launch-rules = %d %s, want the one seeded rule", list.Code, list.Body.String())
 			}
 
-			id := got.Schedules[0].ID
-			rec := do(h, http.MethodDelete, "/api/schedules/"+url.PathEscape(id))
+			id := got.Rules[0].ID
+			rec := do(h, http.MethodDelete, "/api/launch-rules/"+url.PathEscape(id))
 			if rec.Code != http.StatusOK {
-				t.Fatalf("DELETE /api/schedules/{%q} = %d %s, want 200", id, rec.Code, rec.Body.String())
+				t.Fatalf("DELETE /api/launch-rules/{%q} = %d %s, want 200", id, rec.Code, rec.Body.String())
 			}
 			if left := st.List(); len(left) != 0 {
-				t.Errorf("the row survived its delete: %+v", left)
+				t.Errorf("the rule survived its delete: %+v", left)
 			}
 		})
 	}
 }
 
-func scheduleMux(t *testing.T, st *launchrule.Store) *http.ServeMux {
+func launchRuleMux(t *testing.T, st *launchrule.Store) *http.ServeMux {
 	t.Helper()
 	chats, err := chat.NewStore(filepath.Join(t.TempDir(), "chats"))
 	if err != nil {

@@ -198,7 +198,7 @@ async function refreshAutoApprove(read: () => Promise<EffectiveSettings | null>)
   }
 }
 
-/** Schedules by recipe source. One per recipe, matching the single-run rule. */
+/** Clock rules by recipe source; the schedule form edits a recipe's first one. */
 let schedules = new Map<string, ScheduleView>();
 
 async function refreshSchedules(): Promise<void> {
@@ -208,7 +208,9 @@ async function refreshSchedules(): Promise<void> {
   }
   const next = new Map<string, ScheduleView>();
   for (const v of d.schedules) {
-    next.set(v.source, v);
+    if (!next.has(v.source)) {
+      next.set(v.source, v);
+    }
   }
   schedules = next;
   paint();
@@ -278,7 +280,10 @@ function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
         // server's sentence.
         onSave: (spec: ScheduleSpec, enabled: boolean, defaults: RunDefaults) => {
           void (async () => {
-            if ((await saveSchedule.dispatch({ source, spec, enabled, ...defaults })) === null) {
+            const id = view === undefined ? {} : { id: view.id };
+            if (
+              (await saveSchedule.dispatch({ ...id, source, spec, enabled, ...defaults })) === null
+            ) {
               return;
             }
             close();

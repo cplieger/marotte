@@ -145,7 +145,7 @@ func TestSweep_SendsTheSchedulesModelPick(t *testing.T) {
 	st, l, r := newFixture(t, due.Add(30*time.Second))
 	e := st.Clocks()[0].Rule
 	e.Model, e.Effort = "opus", "high"
-	if _, err := st.Replace(t.Context(), e.ID, &e); err != nil {
+	if _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 	r.sweep(t.Context())
@@ -163,7 +163,7 @@ func TestFirePassesInputs(t *testing.T) {
 	st, l, r := newFixture(t, due.Add(30*time.Second))
 	e := st.Clocks()[0].Rule
 	e.Inputs = map[string]string{"lane": "fast", "cap": "3"}
-	if _, err := st.Replace(t.Context(), e.ID, &e); err != nil {
+	if _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 	r.sweep(t.Context())
@@ -257,7 +257,7 @@ func TestSweep_SkipsDisabled(t *testing.T) {
 	st, l, r := newFixture(t, due.Add(30*time.Second))
 	e := st.Clocks()[0].Rule
 	e.Enabled = false
-	if _, err := st.Replace(t.Context(), e.ID, &e); err != nil {
+	if _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 	r.sweep(t.Context())
@@ -484,12 +484,12 @@ func TestSweep_HoldsASlotWhileNoRunCanStart(t *testing.T) {
 		r.sweep(t.Context())
 		e := st.Clocks()[0].Rule
 		e.Enabled = false
-		if _, err := st.Replace(t.Context(), e.ID, &e); err != nil {
+		if _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
 			t.Fatalf("Replace: %v", err)
 		}
 		r.sweep(t.Context())
 		e.Enabled = true
-		if _, err := st.Replace(t.Context(), e.ID, &e); err != nil {
+		if _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
 			t.Fatalf("Replace: %v", err)
 		}
 		logs := captureLogs(t)

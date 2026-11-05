@@ -40,6 +40,28 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string { return e.msg }
 
+// ForgeCheckError is a forge's refusal of an event rule at save. Unavailable means the forge could not answer
+// now, so the same save may pass later; otherwise the rule cannot be watched as written.
+type ForgeCheckError struct {
+	Text        string
+	Unavailable bool
+}
+
+func (e *ForgeCheckError) Error() string { return e.Text }
+
+// DropError refuses an edit that would drop the rule's held events until the edit confirms their count.
+type DropError struct {
+	Held int
+}
+
+func (e *DropError) Error() string {
+	noun := "events"
+	if e.Held == 1 {
+		noun = "event"
+	}
+	return fmt.Sprintf("This change drops %d held %s. Send it again with `confirm_drop: %d`", e.Held, noun, e.Held)
+}
+
 func invalid(format string, args ...any) error {
 	return &ValidationError{msg: fmt.Sprintf(format, args...)}
 }
@@ -83,8 +105,9 @@ const (
 	maxInputValueBytes = 4096
 )
 
-// normalize validates r and fills its event spec's defaults, in place.
-func (r *Rule) normalize() error {
+// Normalize validates r and fills its event spec's defaults, in place; a refusal is a *ValidationError. The store
+// normalizes every rule it writes, so a caller needs this only to check a rule before other work.
+func (r *Rule) Normalize() error {
 	if r.Source == "" {
 		return invalid("source is required")
 	}

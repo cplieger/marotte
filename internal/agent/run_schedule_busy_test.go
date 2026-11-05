@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -64,18 +65,30 @@ func TestLaunchScheduled_TellsABusyEngineFromAFailure(t *testing.T) {
 	})
 }
 
-// The row's wait reaches the client as waiting_for, and only while there is one.
-func TestScheduleView_CarriesTheWaitOnTheEngine(t *testing.T) {
+// The row's wait reaches the client as status.waiting_for, and only while there is one.
+func TestLaunchRuleView_CarriesTheWaitOnTheEngine(t *testing.T) {
 	due := time.Date(2026, time.August, 4, 2, 0, 0, 0, time.UTC)
-	e := launchrule.Clock{
+	r := launchrule.Rule{
 		Source: "bundled://nightly", Enabled: true,
 		When: launchrule.When{Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}},
 	}
-	if v := scheduleViewOf(&e); v.WaitingFor != nil {
-		t.Errorf("waiting_for = %v on a row with no wait", *v.WaitingFor)
+	waitOf := func(st launchrule.State) any {
+		raw, err := json.Marshal(launchRuleViewOf(&r, &st, nil))
+		if err != nil {
+			t.Fatalf("encode the view: %v", err)
+		}
+		var v struct {
+			Status map[string]any `json:"status"`
+		}
+		if err := json.Unmarshal(raw, &v); err != nil {
+			t.Fatalf("decode %s: %v", raw, err)
+		}
+		return v.Status["waiting_for"]
 	}
-	e.WaitingFor = due
-	if v := scheduleViewOf(&e); v.WaitingFor == nil || !v.WaitingFor.Equal(due) {
-		t.Errorf("waiting_for = %v, want %v", v.WaitingFor, due)
+	if got := waitOf(launchrule.State{}); got != nil {
+		t.Errorf("waiting_for = %v on a row with no wait", got)
+	}
+	if got := waitOf(launchrule.State{Status: launchrule.Status{WaitingFor: due}}); got != due.Format(time.RFC3339) {
+		t.Errorf("waiting_for = %v, want %v", got, due.Format(time.RFC3339))
 	}
 }

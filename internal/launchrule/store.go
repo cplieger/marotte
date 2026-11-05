@@ -68,7 +68,7 @@ func (s *Store) loadRules() error {
 			return fmt.Errorf("%s: rule %d has a malformed or repeated id", s.path, i)
 		}
 		seen[r.ID] = true
-		if err := r.normalize(); err != nil {
+		if err := r.Normalize(); err != nil {
 			return fmt.Errorf("%s: rule %s: %w", s.path, r.ID, err)
 		}
 	}
@@ -101,7 +101,7 @@ func (s *Store) Get(id string) (Rule, bool) {
 // *ValidationError and writes nothing.
 func (s *Store) Create(ctx context.Context, in *Rule) (Rule, error) {
 	r := in.clone()
-	if err := r.normalize(); err != nil {
+	if err := r.Normalize(); err != nil {
 		return Rule{}, err
 	}
 	s.mu.Lock()
@@ -127,11 +127,13 @@ func (s *Store) Create(ctx context.Context, in *Rule) (Rule, error) {
 	return r.clone(), nil
 }
 
-// Replace validates in and stores it in place of the rule id names, keeping that id. ErrNotFound when no rule has
-// it; a refusal is a *ValidationError and writes nothing.
-func (s *Store) Replace(ctx context.Context, id string, in *Rule) (Rule, error) {
+// Replace validates in and stores it in place of the rule id names, keeping that id. An edit that changes an
+// event rule's connection, repo or kind starts its state over (cursor, queue, launched, superseded) and keeps its
+// status; while that would drop held events it is refused with a *DropError unless confirmDrop is their count.
+// ErrNotFound when no rule has the id; a refusal is a *ValidationError or *DropError and writes nothing.
+func (s *Store) Replace(ctx context.Context, id string, in *Rule, confirmDrop int) (Rule, error) {
 	r := in.clone()
-	if err := r.normalize(); err != nil {
+	if err := r.Normalize(); err != nil {
 		return Rule{}, err
 	}
 	s.mu.Lock()
@@ -141,16 +143,49 @@ func (s *Store) Replace(ctx context.Context, id string, in *Rule) (Rule, error) 
 		return Rule{}, ErrNotFound
 	}
 	r.ID = id
+	rs := s.states[id]
+	rebaseline := population(&s.rules[i]) != population(&r)
+	if rebaseline {
+		if held := heldOf(rs); held > 0 && held != confirmDrop {
+			return Rule{}, &DropError{Held: held}
+		}
+	}
 	next := slices.Clone(s.rules)
 	next[i] = r
 	if err := s.persistLocked(ctx, next); err != nil {
 		return Rule{}, err
 	}
 	s.rules = next
+	if rebaseline {
+		s.rebaselineLocked(ctx, &r, rs)
+	}
 	if r.When.Clock != nil {
 		s.dropStaleWaitLocked(ctx, &r)
 	}
 	return r.clone(), nil
+}
+
+func heldOf(rs *ruleState) int {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.unreadable != nil {
+		return 0
+	}
+	return rs.state.Held()
+}
+
+// rebaselineLocked starts r's state over for its new population; a file that would not load stays untouched. A
+// failed write is logged, since the definitions already hold the edit.
+func (s *Store) rebaselineLocked(ctx context.Context, r *Rule, rs *ruleState) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.unreadable != nil {
+		return
+	}
+	st := State{Status: rs.state.Status, Population: population(r), Attempts: slices.Clone(rs.state.Attempts)}
+	if err := s.writeStateLocked(ctx, r.ID, rs, &st); err != nil {
+		slog.Error("launch rules: an edited rule's held events were not dropped", "rule", r.ID, "error", err)
+	}
 }
 
 // dropStaleWaitLocked clears a clock rule's wait on the engine unless the edited rule, enabled, still waits for

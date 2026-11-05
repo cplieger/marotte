@@ -788,6 +788,44 @@ describe("the Schedule form", () => {
     expect(btn.getAttribute("aria-expanded")).toBe("true");
   });
 
+  it("passes the existing clock rule's id on save", async () => {
+    vi.mocked(saveSchedule.dispatch).mockClear();
+    schedulesReply = {
+      schedules: [
+        {
+          id: "r-nightly",
+          source: "bundled://nightly",
+          enabled: true,
+          spec: { freq: "daily", hour: 3, minute: 0 },
+        },
+      ],
+    };
+    recipesReply = { recipes: [recipe("nightly")] };
+    const panel = await render();
+    await vi.waitFor(() => {
+      expect(panel.querySelector(".recipe-sched-btn.on")).not.toBeNull();
+    });
+    panel.querySelector<HTMLButtonElement>(".recipe-sched-btn")?.click();
+    clickSave();
+    await vi.waitFor(() => {
+      expect(vi.mocked(saveSchedule.dispatch)).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(saveSchedule.dispatch).mock.calls[0]?.[0]).toMatchObject({
+      id: "r-nightly",
+      source: "bundled://nightly",
+    });
+  });
+
+  it("sends no id for a recipe with no clock rule yet", async () => {
+    vi.mocked(saveSchedule.dispatch).mockClear();
+    await openSchedule();
+    clickSave();
+    await vi.waitFor(() => {
+      expect(vi.mocked(saveSchedule.dispatch)).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(saveSchedule.dispatch).mock.calls[0]?.[0]).not.toHaveProperty("id");
+  });
+
   it("closes once the save lands", async () => {
     vi.mocked(saveSchedule.dispatch).mockImplementationOnce(
       (async () => ({})) as unknown as typeof saveSchedule.dispatch,

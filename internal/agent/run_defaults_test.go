@@ -15,7 +15,7 @@ import (
 )
 
 // runDefaultsHub is a hub whose live catalog offers opus (with tiers) and auto (none), with
-// one launchable recipe and a schedule store behind the run routes.
+// one launchable recipe and a launch-rule store behind the run routes.
 func runDefaultsHub(t *testing.T) (*Runtime, *fakeBridge, *http.ServeMux) {
 	t.Helper()
 	h, _, br := newTestHub()
@@ -169,16 +169,16 @@ func TestLaunchRoute_ChecksThePickAgainstTheTemplateWithNoLiveCatalog(t *testing
 	})
 }
 
-// A schedule stores its pick, shows it, keeps it across a restart, and refuses an unknown one
+// A clock rule stores its pick, shows it, keeps it across a restart, and refuses an unknown one
 // at save time without touching the stored row.
-func TestScheduleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
+func TestLaunchRuleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
 	h, _, mux := runDefaultsHub(t)
-	const spec = `"spec":{"freq":"daily","hour":2,"minute":0}`
-	rec := postRoute(t, mux, "/api/schedules", `{"source":"bundled://publish","model":"opus","effort":"high",`+spec+`,"enabled":true}`)
+	const spec = `"when":{"clock":{"freq":"daily","hour":2,"minute":0}}`
+	rec := postRoute(t, mux, "/api/launch-rules", `{"source":"bundled://publish","model":"opus","effort":"high",`+spec+`,"enabled":true}`)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("POST /api/schedules = %d %s, want 200", rec.Code, rec.Body.String())
+		t.Fatalf("POST /api/launch-rules = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	var view scheduleView
+	var view launchRuleView
 	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
 		t.Fatalf("decode %s: %v", rec.Body.String(), err)
 	}
@@ -186,9 +186,9 @@ func TestScheduleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
 		t.Errorf("saved view model/effort = %q/%q, want opus/high", view.Model, view.Effort)
 	}
 
-	rec = postRoute(t, mux, "/api/schedules", `{"source":"bundled://publish","model":"gpt-9",`+spec+`,"enabled":true}`)
+	rec = postRoute(t, mux, "/api/launch-rules", `{"source":"bundled://publish","model":"gpt-9",`+spec+`,"enabled":true}`)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(errorText(t, rec), `"gpt-9" is not offered`) {
-		t.Errorf("POST /api/schedules with an unknown model = %d %s, want 400 naming it", rec.Code, rec.Body.String())
+		t.Errorf("POST /api/launch-rules with an unknown model = %d %s, want 400 naming it", rec.Code, rec.Body.String())
 	}
 
 	list := h.runs.launchRules.Clocks()
