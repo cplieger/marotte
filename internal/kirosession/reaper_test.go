@@ -731,3 +731,41 @@ func TestRunStates_AnUnlistableRunsDirIsAnError(t *testing.T) {
 		t.Errorf("RunStates() = %v, nil; want an error for a runs directory whose listing fails with ELOOP", got)
 	}
 }
+
+func TestWorkspacePaths(t *testing.T) {
+	sessions := t.TempDir()
+	record := func(t *testing.T, id, body string) {
+		t.Helper()
+		dir := filepath.Join(sessions, "0123456789abcdef", id)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, sessionRecordName), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record(t, "sess_two", `{"workspacePaths":["/workspace","/data"]}`)
+	record(t, "sess_relative", `{"workspacePaths":["/workspace","data"]}`)
+	record(t, "sess_empty", `{"workspacePaths":[]}`)
+	record(t, "sess_garbled", `{`)
+	tests := map[string]struct {
+		id     string
+		want   []string
+		wantOK bool
+	}{
+		"the recorded roots, in order": {"sess_two", []string{"/workspace", "/data"}, true},
+		"a relative root":              {"sess_relative", nil, false},
+		"no roots":                     {"sess_empty", nil, false},
+		"an undecodable record":        {"sess_garbled", nil, false},
+		"no record":                    {"sess_absent", nil, false},
+		"a glob-shaped id":             {"*", nil, false},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, ok := WorkspacePaths(sessions, tc.id)
+			if ok != tc.wantOK || !slices.Equal(got, tc.want) {
+				t.Errorf("WorkspacePaths(%q) = (%q, %v), want (%q, %v)", tc.id, got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}

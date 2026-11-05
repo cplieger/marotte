@@ -255,3 +255,39 @@ func TestKiroSearch_SessionEndEndsTheSearch(t *testing.T) {
 	awaitReturn(t, search, "the session's end")
 	awaitChildrenGone(t, pids)
 }
+
+// KAS resolves an answer's paths against the roots its session opened with, so a session opened
+// with a directory marotte no longer grants still has its paths written for those roots, and the
+// directory is not searched.
+func TestKiroSearch_PathsFollowTheSessionsOwnRoots(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	work, notes := t.TempDir(), filepath.Join(t.TempDir(), "notes")
+	if err := os.Mkdir(notes, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	record := filepath.Join(home, ".kiro", "sessions", "0123456789abcdef", "sess_old", "session.json")
+	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record, mustJSON(t, map[string]any{"workspacePaths": []string{work, notes}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cwds := filepath.Join(t.TempDir(), "cwds")
+	stageRipgrep(t, `pwd >> `+cwds+`
+printf '%s\n' '{"type":"match","data":{"path":{"text":"./notes/x.md"},"lines":{"text":"hit\n"},"line_number":1}}'`)
+	h, br := hubForFSTest(t, work)
+
+	h.inbound.respondKiroSearch(t.Context(), "c1", h.originOf("c1"),
+		kiroSearchMsg(t, 1, methodKiroTextSearch, map[string]any{"sessionId": "sess_old", "pattern": "hit", "caseSensitive": false}))
+	got, err := awaitSearchAnswer(t, br)
+
+	// "notes/x.md" alone would name notes/x.md in KAS's second root.
+	want := `{"matches":[{"filePath":"` + filepath.Base(work) + `/notes/x.md","lineText":"hit","lineNumber":1,"isContext":false}]}`
+	if err != nil || got != want {
+		t.Errorf("answer = (%s, %v), want (%s, nil)", got, err, want)
+	}
+	if raw, _ := os.ReadFile(cwds); strings.TrimSpace(string(raw)) != work {
+		t.Errorf("rg ran in %q, want only the workspace %q: the other root is no longer granted", raw, work)
+	}
+}

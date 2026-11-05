@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -114,6 +115,23 @@ func readSessionRecord(sessionDir string) (workspacePaths []string, workflowID s
 		return nil, "", false
 	}
 	return rec.WorkspacePaths, rec.Meta.Kiro.Workflow.WorkflowID, true
+}
+
+// WorkspacePaths is the workspace roots KAS recorded for sessionID under sessionsDir, in its
+// order: the session's cwd, then its additional directories. ok is false for a malformed id and
+// when no record names an absolute root list.
+func WorkspacePaths(sessionsDir, sessionID string) (paths []string, ok bool) {
+	if !validSessionID(sessionID) {
+		return nil, false
+	}
+	dirs, _ := filepath.Glob(filepath.Join(sessionsDir, "*", sessionID))
+	for _, dir := range dirs {
+		paths, _, ok := readSessionRecord(dir)
+		if ok && len(paths) > 0 && !slices.ContainsFunc(paths, func(p string) bool { return !filepath.IsAbs(p) }) {
+			return paths, true
+		}
+	}
+	return nil, false
 }
 
 // Reap removes all on-disk state for a single session id, immediately and

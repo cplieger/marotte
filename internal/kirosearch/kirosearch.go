@@ -79,9 +79,18 @@ type FilesQuery struct {
 	MaxResults int
 }
 
-// Searcher runs the rg binary at Bin, each search within 15 s. An empty Bin finds nothing.
+// Searcher runs the rg binary at Bin, each search within 15 s. An empty Bin finds nothing. Shown
+// is the session's roots answer paths are written against (displayPath); nil means the searched roots.
 type Searcher struct {
-	Bin string
+	Bin   string
+	Shown []string
+}
+
+func (s Searcher) shown(searched []string) []string {
+	if s.Shown != nil {
+		return s.Shown
+	}
+	return searched
 }
 
 // Text searches roots for q.Pattern and returns the entries of the 100 files with the most matching
@@ -129,7 +138,7 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 	out := make([]Match, 0, maxTextEntries)
 	for _, f := range files {
 		slices.SortStableFunc(f.entries, func(a, b Match) int { return cmp.Compare(a.LineNumber, b.LineNumber) })
-		shown := displayPath(f.abs, roots)
+		shown := displayPath(f.abs, s.shown(roots))
 		for _, e := range f.entries {
 			if len(out) == maxTextEntries {
 				return out
@@ -253,7 +262,7 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 			if len(out) == limit {
 				return out
 			}
-			out = append(out, displayPath(abs, roots))
+			out = append(out, displayPath(abs, s.shown(roots)))
 		}
 	}
 	return out

@@ -428,6 +428,21 @@ func TestSearch_RealRGHonoursGitignoreOutsideARepository(t *testing.T) {
 	})
 }
 
+// Answer paths are written against Shown, the session's roots, when it is set.
+func TestFiles_ShownRootsWriteThePaths(t *testing.T) {
+	work := filepath.Join(t.TempDir(), "w")
+	if err := os.Mkdir(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := fakeRG(t, `echo ./notes/x.md`)
+
+	got := Searcher{Bin: bin, Shown: []string{work, "/d/notes"}}.Files(t.Context(), []string{work}, FilesQuery{Pattern: "**/*", MaxResults: 11})
+
+	if want := []string{"w/notes/x.md"}; !slices.Equal(got, want) {
+		t.Errorf("Files = %q, want %q", got, want)
+	}
+}
+
 // Expected values follow KAS 3.0.0's Rar and MJ (testdata kas-probe search-text.json pathForm).
 func TestDisplayPath(t *testing.T) {
 	roots := []string{"/w", "/d/notes"}
