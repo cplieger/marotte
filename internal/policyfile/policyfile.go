@@ -296,12 +296,12 @@ func Save(ctx context.Context, path string, f *File) error {
 	// An edit that breaks the document (an alias into a dropped rule), would read back with other
 	// rules, or retargets any alias to an earlier anchor of the same name fails here, not at KAS's
 	// next reload.
-	if err := readsBack(data, filepath.Base(path), f.Rules); err != nil {
-		return err
+	if backErr := readsBack(data, filepath.Base(path), f.Rules); backErr != nil {
+		return backErr
 	}
 	if doc != nil {
-		if err := aliasesHold(doc); err != nil {
-			return fmt.Errorf("refusing to write %s: %w", filepath.Base(path), err)
+		if aliasErr := aliasesHold(doc); aliasErr != nil {
+			return fmt.Errorf("refusing to write %s: %w", filepath.Base(path), aliasErr)
 		}
 	}
 	// WithMaxBytes mirrors Load's size guard: Save can never persist a
