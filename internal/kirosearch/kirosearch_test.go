@@ -2,6 +2,7 @@ package kirosearch
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/cplieger/go/slogx/capture"
 )
 
 // fakeRG writes an executable sh script standing in for rg. The script runs with an empty
@@ -227,6 +230,121 @@ func TestFiles_StopsAtMaxResults(t *testing.T) {
 
 	if len(got) != 11 {
 		t.Errorf("len(Files) = %d, want maxResults 11", len(got))
+	}
+}
+
+func warnings(logs *capture.Recorder) []string {
+	var out []string
+	for _, r := range logs.Records() {
+		if r.Level >= slog.LevelWarn {
+			out = append(out, r.Message)
+		}
+	}
+	return out
+}
+
+// rg refuses a pattern its regex engines cannot compile (exit 2, no output); KAS's own search then
+// looks for the literal text.
+func TestText_UncompilablePatternSearchesTheLiteral(t *testing.T) {
+	root := t.TempDir()
+	bin := fakeRG(t, `case " $* " in
+*" --fixed-strings "*) printf '%s\n' '`+matchLine("./a.go", "func Run() {}", 4)+`' ;;
+*) echo 'rg: regex parse error:' >&2; exit 2 ;;
+esac`)
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "func Run("})
+
+	want := []Match{{FilePath: "a.go", LineNumber: 4, LineText: "func Run() {}"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("Text = %+v, want %+v", got, want)
+	}
+}
+
+func TestText_RealRGFindsAnUncompilablePatternAsText(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"a.go": "package a\n\nfunc Run() {}\n", "b.go": "package b\n"})
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "func Run(", CaseSensitive: true})
+
+	if !slices.ContainsFunc(got, func(m Match) bool { return m.FilePath == "a.go" && m.LineNumber == 3 && !m.IsContext }) {
+		t.Errorf("Text = %+v, want the match a.go:3", got)
+	}
+}
+
+// rg exiting 2 having searched nothing for any other reason is a failure worth a warning.
+func TestText_RefusedSearchWarns(t *testing.T) {
+	logs := capture.Default(t)
+	bin := fakeRG(t, `echo "rg: error parsing glob '{a': unclosed alternate group" >&2
+exit 2`)
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{t.TempDir()}, TextQuery{Pattern: "x", IncludePattern: "{a"})
+
+	if got == nil || len(got) != 0 {
+		t.Errorf("Text = %#v, want an empty non-nil slice", got)
+	}
+	if len(warnings(logs)) != 1 {
+		t.Errorf("warnings = %q, want one for the refused search", warnings(logs))
+	}
+}
+
+// rg closing its output and then exiting 0 is a clean search, not a failure.
+func TestFiles_CleanExitAfterTheOutputClosesLogsNoWarning(t *testing.T) {
+	logs := capture.Default(t)
+	bin := fakeRG(t, `echo ./a.go
+exec 1>&-
+/bin/sleep 0.2`)
+
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{t.TempDir()}, FilesQuery{Pattern: "**/*", MaxResults: 11})
+
+	if want := []string{"a.go"}; !slices.Equal(got, want) {
+		t.Errorf("Files = %q, want %q", got, want)
+	}
+	if w := warnings(logs); len(w) != 0 {
+		t.Errorf("warnings = %q, want none", w)
+	}
+}
+
+func TestText_OutputCapLogsNoWarning(t *testing.T) {
+	logs := capture.Default(t)
+	bin := fakeRG(t, `/usr/bin/yes '`+strings.Repeat("x", 4000)+`' | /usr/bin/head -c `+strconv.Itoa(maxOutputBytes+1<<20)+`
+/bin/sleep 60`)
+
+	start := time.Now()
+	Searcher{Bin: bin}.Text(t.Context(), []string{t.TempDir()}, TextQuery{Pattern: "x"})
+
+	if took := time.Since(start); took > killWait+time.Second {
+		t.Errorf("Text took %v, want it to stop at the output cap", took)
+	}
+	if w := warnings(logs); len(w) != 0 {
+		t.Errorf("warnings = %q, want none: the cap is a limit, not a failure", w)
+	}
+}
+
+func TestText_EndedContextLogsNoWarning(t *testing.T) {
+	logs := capture.Default(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	Searcher{Bin: fakeRG(t, "exit 0")}.Text(ctx, []string{t.TempDir()}, TextQuery{Pattern: "x"})
+
+	if w := warnings(logs); len(w) != 0 {
+		t.Errorf("warnings = %q, want none for a search whose caller left", w)
+	}
+}
+
+// One rg JSON line past maxLineBytes is skipped, and the lines after it are still read.
+func TestText_OverLongLineIsSkipped(t *testing.T) {
+	root := t.TempDir()
+	bin := fakeRG(t, `/usr/bin/head -c `+strconv.Itoa(maxLineBytes+1)+` /dev/zero
+echo
+printf '%s\n' '`+matchLine("./b.go", "later", 2)+`'`)
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "later"})
+
+	want := []Match{{FilePath: "b.go", LineNumber: 2, LineText: "later"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("Text = %+v, want %+v", got, want)
 	}
 }
 

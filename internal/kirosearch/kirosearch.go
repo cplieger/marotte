@@ -7,6 +7,7 @@ package kirosearch
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -42,7 +43,8 @@ const (
 )
 
 const (
-	// maxLineBytes bounds one rg JSON line; --max-filesize 1M bounds a matched line, plus its escaping.
+	// maxLineBytes bounds one rg output line. A --json match event carries every submatch of its
+	// line, so --max-filesize does not bound it; a longer line is skipped.
 	maxLineBytes   = 4 << 20
 	maxStderrBytes = 64 << 10
 	// killWait bounds Wait after the group's SIGKILL, for a child still holding the pipes.
@@ -98,7 +100,7 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.deadline())
 	defer cancel()
-	args := []string{"--json", "-C", "2", "--max-count", maxCountArg, "--max-filesize", "1M", "--hidden", "--glob", "!.git"}
+	args := []string{"--json", "--engine", "auto", "-C", "2", "--max-count", maxCountArg, "--max-filesize", "1M", "--hidden", "--glob", "!.git"}
 	if !q.CaseSensitive {
 		args = append(args, "--ignore-case")
 	}
@@ -170,7 +172,7 @@ type rgEvent struct {
 func (s Searcher) textRoot(ctx context.Context, root string, args []string) []*fileHits {
 	byPath := map[string]*fileHits{}
 	var order []*fileHits
-	s.run(ctx, root, args, func(line []byte) bool {
+	onLine := func(line []byte) bool {
 		var ev rgEvent
 		if json.Unmarshal(line, &ev) != nil || (ev.Type != "match" && ev.Type != "context") {
 			return true
@@ -194,8 +196,27 @@ func (s Searcher) textRoot(ctx context.Context, root string, args []string) []*f
 			f.matchCount++
 		}
 		return true
-	})
+	}
+	refusal := s.run(ctx, root, args, onLine)
+	if refusal != "" && regexRefused(refusal) {
+		// KAS 3.0.0's own search escapes a pattern its regex engine rejects and finds the literal.
+		refusal = s.run(ctx, root, append([]string{"--fixed-strings"}, args...), onLine)
+	}
+	logRefusal(root, refusal)
 	return order
+}
+
+// regexRefused reports whether rg's stderr names a pattern no regex engine could compile.
+func regexRefused(stderr string) bool {
+	return strings.Contains(stderr, "regex parse error") || strings.Contains(stderr, "regex could not be compiled") ||
+		strings.Contains(stderr, "compiled regex exceeds size limit")
+}
+
+func logRefusal(root, stderr string) {
+	if stderr != "" {
+		first, _, _ := strings.Cut(stderr, "\n")
+		slog.Warn("search: ripgrep exited 2 having searched nothing", "root", root, "stderr", first)
+	}
 }
 
 // Files lists the files under roots matching q.Pattern, at most q.MaxResults, the first root's
@@ -247,19 +268,20 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 
 func (s Searcher) filesRoot(ctx context.Context, root string, args []string, limit int) []string {
 	var found []string
-	s.run(ctx, root, args, func(line []byte) bool {
+	logRefusal(root, s.run(ctx, root, args, func(line []byte) bool {
 		if len(line) > 0 {
 			found = append(found, filepath.Join(root, string(line)))
 		}
 		return len(found) < limit
-	})
+	}))
 	return found
 }
 
 // run streams rg's stdout lines, under root, to line until it returns false, ctx ends, or the
-// output passes maxOutputBytes, then kills rg's process group. Every failure is logged and leaves
-// the lines already read with the caller.
-func (s Searcher) run(ctx context.Context, root string, args []string, line func([]byte) bool) {
+// output passes maxOutputBytes, then kills rg's process group. It returns rg's stderr when rg
+// exited 2 having written no line, so searched nothing; every other failure is logged here. The
+// lines already read stay with the caller.
+func (s Searcher) run(ctx context.Context, root string, args []string, line func([]byte) bool) (refusal string) {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	cmd := exec.CommandContext(runCtx, s.Bin, args...) //nolint:gosec // G204: Bin is the image's rg (systembin); request fields are arguments after rg's own flags, never a shell
@@ -271,40 +293,94 @@ func (s Searcher) run(ctx context.Context, root string, args []string, line func
 	stderr := procout.NewBuffer(maxStderrBytes)
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
+	if err == nil {
+		err = cmd.Start()
+	}
 	if err != nil {
-		slog.Warn("search: ripgrep could not be started", "error", err)
-		return
-	}
-	if err = cmd.Start(); err != nil {
-		slog.Warn("search: ripgrep could not be started", "error", err)
-		return
-	}
-	sc := bufio.NewScanner(io.LimitReader(stdout, maxOutputBytes))
-	sc.Buffer(make([]byte, 0, 64<<10), maxLineBytes)
-	stoppedEarly := false
-	for sc.Scan() {
-		if !line(sc.Bytes()) {
-			stoppedEarly = true
-			break
+		if ctx.Err() != nil {
+			slog.Debug("search: deadline or cancel reached before ripgrep started", "root", root, "reason", context.Cause(ctx))
+		} else {
+			slog.Warn("search: ripgrep could not be started", "error", err)
 		}
+		return ""
 	}
-	// A full pipe would block rg forever once the reads stop, so the group is killed before Wait.
-	stop()
+	out := &io.LimitedReader{R: stdout, N: maxOutputBytes}
+	read := readLines(out, line)
+	capped := out.N <= 0
+	if read.stopped || read.err != nil || capped {
+		// A full pipe would block rg forever once the reads stop, so the group is killed before Wait.
+		// After a natural EOF rg is exiting, and a kill then would turn a clean exit into a failure.
+		stop()
+	}
 	err = cmd.Wait()
+	if read.skipped > 0 {
+		slog.Debug("search: skipped ripgrep output lines over the line cap", "root", root, "lines", read.skipped)
+	}
 	var exitErr *exec.ExitError
 	switch {
 	case err == nil:
 	case ctx.Err() != nil:
 		slog.Debug("search: deadline or cancel reached; returning partial results", "root", root, "reason", context.Cause(ctx))
-	case stoppedEarly || sc.Err() != nil:
+	case read.stopped:
+	case read.err != nil:
+		slog.Debug("search: reading ripgrep's output failed; returning what it found", "root", root, "error", read.err)
+	case capped:
+		slog.Debug("search: ripgrep's output reached its cap; returning what it found", "root", root)
 	case errors.As(err, &exitErr) && exitErr.ExitCode() == 1:
+	case errors.As(err, &exitErr) && exitErr.ExitCode() == 2 && read.lines+read.skipped == 0:
+		return cmp.Or(stderr.String(), "(no stderr)")
 	case errors.As(err, &exitErr) && exitErr.ExitCode() == 2:
-		// rg's exit 2 is "some paths were unreadable", with every other result valid. KAS's own rg
-		// path rejects it, which is the walker fallback this package replaces.
+		// rg's exit 2 after output is "some paths were unreadable", with every other result valid.
+		// KAS's own rg path rejects it, which is the walker fallback this package replaces.
 		slog.Debug("search: ripgrep skipped unreadable paths; results kept", "root", root,
 			"errors", strings.Count(stderr.String(), "\n"))
 	default:
 		slog.Warn("search: ripgrep failed; returning what it found", "root", root, "error", err)
+	}
+	return ""
+}
+
+type readResult struct {
+	err     error
+	lines   int
+	skipped int
+	stopped bool
+}
+
+// readLines calls line with each line of r, without its '\n', until line returns false or r
+// ends. A line over maxLineBytes is skipped and reading goes on, which bufio.Scanner cannot do.
+func readLines(r io.Reader, line func([]byte) bool) readResult {
+	br := bufio.NewReaderSize(r, 64<<10)
+	var res readResult
+	var buf []byte
+	tooLong := false
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if !tooLong && len(buf)+len(chunk) > maxLineBytes {
+			tooLong, buf = true, buf[:0]
+		} else if !tooLong {
+			buf = append(buf, chunk...)
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		switch {
+		case tooLong:
+			res.skipped++
+		case len(buf) > 0:
+			res.lines++
+			if !line(bytes.TrimSuffix(buf, []byte("\n"))) {
+				res.stopped = true
+				return res
+			}
+		}
+		tooLong, buf = false, buf[:0]
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				res.err = err
+			}
+			return res
+		}
 	}
 }
 
