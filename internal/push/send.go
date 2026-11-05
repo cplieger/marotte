@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v3"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -579,13 +579,13 @@ func encryptPayload(sub marotte.PushSubscription, payload []byte) ([]byte, error
 	return body, nil
 }
 
-// pushTruncMarker marks a trimmed title or body. runesafe's Capped pair charges
+// pushTruncMarker marks a trimmed title or body. textsafe's Capped pair charges
 // it INSIDE the byte cap, so a trimmed field's total — marker included — never
 // exceeds the budget fitToCap hands it.
 const pushTruncMarker = "..."
 
 // fitToCap trims the body, then (only if an empty body still overflows) the title, until
-// the marshaled payload fits pushBodyCap, and reports whether it trimmed. runesafe's
+// the marshaled payload fits pushBodyCap, and reports whether it trimmed. textsafe's
 // Capped pair never splits a rune and charges the marker inside the cap.
 func fitToCap(in *marotte.NotificationPayload) (fit marotte.NotificationPayload, truncated bool) {
 	n := *in
@@ -596,11 +596,11 @@ func fitToCap(in *marotte.NotificationPayload) (fit marotte.NotificationPayload,
 		over := marshaledLen(&n) - pushBodyCap
 		switch {
 		case len(n.Body) > over:
-			n.Body, _ = runesafe.SanitizeCapped(n.Body, len(n.Body)-over, pushTruncMarker)
+			n.Body, _ = textsafe.SanitizeCapped(n.Body, len(n.Body)-over, pushTruncMarker)
 		case n.Body != "":
 			n.Body = "" // too small to absorb the overflow; drop it
 		case len(n.Title) > over:
-			n.Title, _ = runesafe.SanitizeSingleLineCapped(n.Title, len(n.Title)-over, pushTruncMarker)
+			n.Title, _ = textsafe.SanitizeSingleLineCapped(n.Title, len(n.Title)-over, pushTruncMarker)
 		default:
 			n.Title = "" // pathological: cap below the JSON envelope size
 		}

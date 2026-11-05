@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/schedule"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // scheduleView is a stored entry plus its resolved next run, computed server-side so the summary matches what will happen.
@@ -49,7 +49,7 @@ func (rr *runRoutes) handleScheduleList(w http.ResponseWriter, _ *http.Request) 
 	for i := range entries {
 		out = append(out, scheduleViewOf(&entries[i]))
 	}
-	webhttp.WriteJSON(w, map[string]any{"schedules": out})
+	httpserver.WriteJSON(w, map[string]any{"schedules": out})
 }
 
 // An uncomputable spec yields none, so the row still renders.
@@ -86,7 +86,7 @@ func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		Spec    schedule.Spec `json:"spec"`
 		Enabled bool          `json:"enabled"`
 	}
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpreply.BadRequest(w, "invalid schedule payload")
 		return
@@ -119,7 +119,7 @@ func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("schedule saved", "id", entry.ID(), "recipe", logsafe.Field(recipe.Name),
 		"freq", logsafe.Field(string(entry.Spec.Freq)), "enabled", entry.Enabled)
-	webhttp.WriteJSON(w, scheduleViewOf(&entry))
+	httpserver.WriteJSON(w, scheduleViewOf(&entry))
 }
 
 // handleScheduleDelete: DELETE /api/schedules/{id}.
@@ -134,5 +134,5 @@ func (rr *runRoutes) handleScheduleDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 	slog.Info("schedule deleted", "id", logsafe.Field(id))
-	webhttp.WriteJSON(w, map[string]any{"ok": true})
+	httpserver.WriteJSON(w, map[string]any{"ok": true})
 }

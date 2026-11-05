@@ -18,12 +18,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/steering"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // Document categories, matching the page's sub-tabs. Wire values the client keys tabs off.
@@ -126,7 +126,7 @@ func (s *Server) handleKiroDocs(w http.ResponseWriter, r *http.Request) {
 	if res.Docs == nil {
 		res.Docs = []KiroDoc{}
 	}
-	webhttp.WriteJSON(w, res)
+	httpserver.WriteJSON(w, res)
 }
 
 func (s *Server) collectKiroDocs(ctx context.Context) KiroDocsResponse {

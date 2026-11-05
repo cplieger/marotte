@@ -19,7 +19,7 @@ import (
 	"testing"
 	"unicode/utf16"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/textsearch"
 )
 
@@ -1039,7 +1039,7 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 		}
 		root := h.mounts[0].root
 
-		data, err := atomicfile.ReadBoundedInRoot(t.Context(), root, "decoy.txt", maxSearchFileSize)
+		data, err := filesafe.ReadBoundedInRoot(t.Context(), root, "decoy.txt", maxSearchFileSize)
 		if err != nil || !strings.Contains(string(data), secret) {
 			t.Fatalf("confined read of a symlink = %q, %v; want the target's bytes", data, err)
 		}

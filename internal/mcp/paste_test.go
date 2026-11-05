@@ -617,7 +617,7 @@ func TestImport_UnchangedEntryDoesNotRewriteTheAgentsFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-stat kas file: %v", err)
 	}
-	// atomicfile renames a fresh inode into place, so a skipped write is visible
+	// filesafe renames a fresh inode into place, so a skipped write is visible
 	// as an unchanged mtime AND unchanged bytes.
 	if !after.ModTime().Equal(before.ModTime()) {
 		t.Errorf("kas file was rewritten for a no-op (mtime %v -> %v)",

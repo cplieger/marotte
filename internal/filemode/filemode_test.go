@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 // TestEnforceFile_VerifiesTheModeItStored asserts that the returned mode is an observation of the file, not an
@@ -172,13 +172,13 @@ func TestEnforceFile_ReportsAMissingFileAsNotExist(t *testing.T) {
 	}
 }
 
-// TestEnforceMode_SentinelIsTheLibrarysOwn asserts that a refused mode arrives as atomicfile.ErrModeNotStored,
+// TestEnforceMode_SentinelIsTheLibrarysOwn asserts that a refused mode arrives as filesafe.ErrModeNotStored,
 // which the call sites match.
 func TestEnforceMode_SentinelIsTheLibrarysOwn(t *testing.T) {
-	if atomicfile.ErrModeNotStored == nil {
-		t.Fatal("atomicfile.ErrModeNotStored is nil")
+	if filesafe.ErrModeNotStored == nil {
+		t.Fatal("filesafe.ErrModeNotStored is nil")
 	}
-	if errors.Is(atomicfile.ErrModeNotStored, os.ErrPermission) {
+	if errors.Is(filesafe.ErrModeNotStored, os.ErrPermission) {
 		t.Error("ErrModeNotStored matches os.ErrPermission; the two failures must stay distinguishable")
 	}
 }
@@ -205,7 +205,7 @@ func TestRewriteOptions(t *testing.T) {
 				return
 			}
 			path := filepath.Join(t.TempDir(), "f")
-			if _, err := atomicfile.WriteFile(t.Context(), path, []byte("x"), opts...); err != nil {
+			if _, err := filesafe.WriteFile(t.Context(), path, []byte("x"), opts...); err != nil {
 				t.Fatalf("WriteFile with RewriteOptions(%#o): %v", tc.perm, err)
 			}
 			info, err := os.Stat(path)
@@ -223,7 +223,7 @@ func TestRewriteOptions(t *testing.T) {
 // staged writes alike: a mode reported as widen until a chmod takes, a chmod that fails (chmodErr)
 // or does not take (stuck), a staged file that widens once written (widenOnWrite), and a failing
 // stat, write, commit or discard of a staged file. A failed discard leaves the staged file in
-// place, as atomicfile's failed removal does. notDurable makes a commit rename but report its
+// place, as filesafe's failed removal does. notDurable makes a commit rename but report its
 // directory unsynced, and syncErr fails SyncDir.
 type fakeDisk struct {
 	Disk
@@ -745,7 +745,7 @@ func TestRemoveDurably(t *testing.T) {
 	}
 }
 
-// TestStage_DiscardAfterAFailedCommitRemovesTheStagedFile: atomicfile's Cleanup does nothing once
+// TestStage_DiscardAfterAFailedCommitRemovesTheStagedFile: filesafe's Cleanup does nothing once
 // Commit was called and its own removal is best effort, so Discard must remove by name.
 func TestStage_DiscardAfterAFailedCommitRemovesTheStagedFile(t *testing.T) {
 	dir := t.TempDir()
@@ -779,8 +779,8 @@ func TestStage_ARefusedModeIsNotPrivate(t *testing.T) {
 		name        string
 		wantPrivate bool
 	}{
-		{name: "mode_not_stored", err: &atomicfile.WriteError{Phase: atomicfile.PhaseTempCreate, Err: atomicfile.ErrModeNotStored}, wantPrivate: true},
-		{name: "io_error", err: &atomicfile.WriteError{Phase: atomicfile.PhaseTempCreate, Err: syscall.EIO}},
+		{name: "mode_not_stored", err: &filesafe.WriteError{Phase: filesafe.PhaseTempCreate, Err: filesafe.ErrModeNotStored}, wantPrivate: true},
+		{name: "io_error", err: &filesafe.WriteError{Phase: filesafe.PhaseTempCreate, Err: syscall.EIO}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := modeRefusal("/x/f.json", tc.err)

@@ -25,7 +25,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/asidefile"
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/logsafe"
@@ -1089,7 +1089,7 @@ func (l *EntryLog) synthesizeCloseLocked(ctx context.Context, turn, model string
 }
 
 // Rewrite replaces the log with entries, the merge swap's store half: turns contiguous, seq renumbered from 0 per
-// turn, renamed into place through atomicfile. Turns not each led by their own turn_open are refused with the log
+// turn, renamed into place through filesafe. Turns not each led by their own turn_open are refused with the log
 // untouched (groupByTurn). Nothing on the header is stamped.
 func (l *EntryLog) Rewrite(ctx context.Context, entries []marotte.Entry) error {
 	l.mu.Lock()
@@ -1114,8 +1114,8 @@ func (l *EntryLog) Rewrite(ctx context.Context, entries []marotte.Entry) error {
 }
 
 func (l *EntryLog) writeRewriteLocked(ctx context.Context, groups [][]marotte.Entry) error {
-	pending, err := atomicfile.NewPendingFile(ctx, l.path(),
-		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode))
+	pending, err := filesafe.NewPendingFile(ctx, l.path(),
+		filesafe.WithMode(fileMode), filesafe.WithMkdirMode(dirMode))
 	if err != nil {
 		return fmt.Errorf("entry log: stage rewrite of %s: %w", l.path(), err)
 	}

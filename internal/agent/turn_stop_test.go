@@ -13,9 +13,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 // A short grace for the call-grace rows; each runs in a bubble, so it is exact.

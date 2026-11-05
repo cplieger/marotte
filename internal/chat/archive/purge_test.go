@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 // TestPurge_RetentionCutoff asserts that chats last used before (now - maxAge) are purged, newer ones survive.

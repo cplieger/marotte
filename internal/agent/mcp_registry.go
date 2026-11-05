@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/webhttp/v4"
 )
 
 type mcpServerState = marotte.MCPServerState
@@ -632,7 +632,7 @@ func (reg *mcpRegistry) handlePool(w http.ResponseWriter, r *http.Request) {
 	if out == nil {
 		out = []poolServerJSON{}
 	}
-	webhttp.WriteJSON(w, map[string][]poolServerJSON{"servers": out})
+	httpserver.WriteJSON(w, map[string][]poolServerJSON{"servers": out})
 }
 
 // anchorSignInURL records a consent URL no Sign in claimed and returns when KAS stops waiting for its callback. A
@@ -836,7 +836,7 @@ func (reg *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	for i := range snap {
 		out[i] = statusServer(snap[i])
 	}
-	webhttp.WriteJSON(w, mcpStatusResponse{Servers: out})
+	httpserver.WriteJSON(w, mcpStatusResponse{Servers: out})
 }
 
 // startNotifier runs the one goroutine that drains notifyCh and calls onChange after a short

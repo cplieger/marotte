@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // The action segment and query parameter the repository routes read.
@@ -134,7 +134,7 @@ func (h *HTTPHandler) handleRepoList(w http.ResponseWriter, r *http.Request, rh 
 		writeOpsError(w, r, err)
 		return
 	}
-	webhttp.WriteJSON(w, page)
+	httpserver.WriteJSON(w, page)
 }
 
 type createPRBody struct {
@@ -161,10 +161,10 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 			writeOpsError(w, r, err)
 			return
 		}
-		webhttp.WriteJSON(w, page)
+		httpserver.WriteJSON(w, page)
 	case http.MethodPost:
 		var params createPRBody
-		webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+		httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
 			httpreply.BadRequest(w, "invalid json")
 			return
@@ -178,7 +178,7 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		h.mutated(rh, ref)
-		webhttp.WriteJSON(w, prWire(&created))
+		httpserver.WriteJSON(w, prWire(&created))
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
@@ -211,7 +211,7 @@ func handlePRDetail(w http.ResponseWriter, r *http.Request, core forgeapi.Core, 
 		folded := commitChecksWire(&checks)
 		detail.Checks = &folded
 	}
-	webhttp.WriteJSON(w, detail)
+	httpserver.WriteJSON(w, detail)
 }
 
 // Marotte's own refusals on the merge route, in the forge error envelope.
@@ -255,7 +255,7 @@ func (h *HTTPHandler) handleMerge(w http.ResponseWriter, r *http.Request, rh *re
 			writeOpsError(w, r, statusErr)
 			return
 		}
-		webhttp.WriteJSON(w, mergeStatusWire(&status))
+		httpserver.WriteJSON(w, mergeStatusWire(&status))
 		return
 	}
 	req, ok := mergeRequestOf(w, r, rh.family)
@@ -268,7 +268,7 @@ func (h *HTTPHandler) handleMerge(w http.ResponseWriter, r *http.Request, rh *re
 		return
 	}
 	cycle := h.mutated(rh, ref)
-	webhttp.WriteJSON(w, MergeResult{Outcome: mergeOutcomeWire(&outcome), CycleID: cycle})
+	httpserver.WriteJSON(w, MergeResult{Outcome: mergeOutcomeWire(&outcome), CycleID: cycle})
 }
 
 // mergeRequestOf reads the merge body, answering the refusal itself and false
@@ -276,7 +276,7 @@ func (h *HTTPHandler) handleMerge(w http.ResponseWriter, r *http.Request, rh *re
 // spelling are the library's to check.
 func mergeRequestOf(w http.ResponseWriter, r *http.Request, family forgeapi.Family) (forgeapi.MergeRequest, bool) {
 	var body mergeBody
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeMergeRefusal(w, http.StatusBadRequest, codeMergeInvalid,
 			"the body must be {intent, strategy?, head_sha, auto?, delete_branch?}")
@@ -301,7 +301,7 @@ func mergeRequestOf(w http.ResponseWriter, r *http.Request, family forgeapi.Fami
 }
 
 func writeMergeRefusal(w http.ResponseWriter, status int, code, msg string) {
-	webhttp.WriteJSONStatus(w, status, httpreply.ErrorJSONWithCode(msg, code))
+	httpserver.WriteJSONStatus(w, status, httpreply.ErrorJSONWithCode(msg, code))
 }
 
 // handlePRAction serves the per-PR mutations, all POST-only: close and reopen
@@ -336,7 +336,7 @@ func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, rh 
 		return
 	}
 	cycle := h.mutated(rh, ref)
-	webhttp.WriteJSON(w, PRChanged{PR: prWire(&row), CycleID: cycle})
+	httpserver.WriteJSON(w, PRChanged{PR: prWire(&row), CycleID: cycle})
 }
 
 // handlePRRerun re-runs a PR's failed CI pinned to `?head_sha=`, the head the
@@ -353,7 +353,7 @@ func (h *HTTPHandler) handlePRRerun(w http.ResponseWriter, r *http.Request, rh *
 		h.poller.refill(rh.id, ref.ID, pr.Number)
 	}
 	h.askCycle()
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }
 
 func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, rh *readHandle, ref forgeapi.RepoRef, tail string) {
@@ -385,10 +385,10 @@ func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Reque
 			writeOpsError(w, r, err)
 			return
 		}
-		webhttp.WriteJSON(w, issueListWire(&page))
+		httpserver.WriteJSON(w, issueListWire(&page))
 	case http.MethodPost:
 		var params createIssueBody
-		webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+		httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
 			httpreply.BadRequest(w, "invalid json")
 			return
@@ -401,7 +401,7 @@ func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		h.mutated(rh, ref)
-		webhttp.WriteJSON(w, issueWire(&created))
+		httpserver.WriteJSON(w, issueWire(&created))
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
@@ -430,7 +430,7 @@ func (h *HTTPHandler) handleIssueAction(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	h.mutated(rh, ref)
-	webhttp.WriteJSON(w, issueWire(&closed))
+	httpserver.WriteJSON(w, issueWire(&closed))
 }
 
 // handleChecks answers the folded CI verdict of `?ref=`, a branch or a SHA. The
@@ -445,7 +445,7 @@ func handleChecks(w http.ResponseWriter, r *http.Request, core forgeapi.Checks, 
 		writeOpsError(w, r, err)
 		return
 	}
-	webhttp.WriteJSON(w, commitChecksWire(&checks))
+	httpserver.WriteJSON(w, commitChecksWire(&checks))
 }
 
 // Releases is an optional role, so a client without it answers errNotSupported.
@@ -473,7 +473,7 @@ func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, rh 
 		writeOpsError(w, r, err)
 		return
 	}
-	webhttp.WriteJSON(w, releaseListWire(&page))
+	httpserver.WriteJSON(w, releaseListWire(&page))
 }
 
 type createReleaseBody struct {
@@ -487,7 +487,7 @@ type createReleaseBody struct {
 
 func (h *HTTPHandler) createRelease(w http.ResponseWriter, r *http.Request, rh *readHandle, rel forgeapi.Releases, ref forgeapi.RepoRef) {
 	var params createReleaseBody
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
 		httpreply.BadRequest(w, "invalid json")
 		return
@@ -501,7 +501,7 @@ func (h *HTTPHandler) createRelease(w http.ResponseWriter, r *http.Request, rh *
 		return
 	}
 	h.mutated(rh, ref)
-	webhttp.WriteJSON(w, releaseWire(&created))
+	httpserver.WriteJSON(w, releaseWire(&created))
 }
 
 // A mutation of the repository evicts the cached answer with its lists.
@@ -515,7 +515,7 @@ func (h *HTTPHandler) handleAffordances(w http.ResponseWriter, r *http.Request, 
 		writeOpsError(w, r, err)
 		return
 	}
-	webhttp.WriteJSON(w, aff)
+	httpserver.WriteJSON(w, aff)
 }
 
 // Labels is an optional role, so a client without it answers errNotSupported.
@@ -539,5 +539,5 @@ func handleLabels(w http.ResponseWriter, r *http.Request, core forgeapi.Core, re
 		writeOpsError(w, r, err)
 		return
 	}
-	webhttp.WriteJSON(w, labelListWire(&page))
+	httpserver.WriteJSON(w, labelListWire(&page))
 }

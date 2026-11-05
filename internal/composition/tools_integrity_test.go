@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp/prewarm"
-	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/toolbelt/v3"
 )
 

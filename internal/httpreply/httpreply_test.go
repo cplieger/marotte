@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 func captureSlog(t *testing.T) *bytes.Buffer {
@@ -222,13 +222,13 @@ func TestDecodeBodyOptional_RefusesAnOversizeBody(t *testing.T) {
 	var got struct {
 		Repo string `json:"repo"`
 	}
-	body := `{"repo":"` + strings.Repeat("A", int(webhttp.MaxJSONBody)) + `"}`
+	body := `{"repo":"` + strings.Repeat("A", int(httpserver.MaxJSONBody)) + `"}`
 	buf := captureSlog(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/git/push", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
 	if DecodeBodyOptional(rec, req, &got) {
-		t.Fatalf("DecodeBodyOptional(%d-byte body, cap %d) = true, want false", len(body), webhttp.MaxJSONBody)
+		t.Fatalf("DecodeBodyOptional(%d-byte body, cap %d) = true, want false", len(body), httpserver.MaxJSONBody)
 	}
 	if got.Repo != "" {
 		t.Errorf("DecodeBodyOptional(oversize) left repo = %q, want it empty", got.Repo)

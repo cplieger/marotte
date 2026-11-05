@@ -14,17 +14,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/go/sse"
+	"github.com/cplieger/go/sse/ssetest"
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/subject"
-	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/sse"
-	"github.com/cplieger/sse/ssetest"
 )
 
-// The transport is github.com/cplieger/sse's and tested there; these pin marotte's layer: emit and chat
+// The transport is github.com/cplieger/go/sse's and tested there; these pin marotte's layer: emit and chat
 // topics, the frame-cap substitute, the handshake, the initial-state hook, the draining gate.
 
 func TestEmit_AppendsToReplayBuffer(t *testing.T) {

@@ -100,7 +100,7 @@ func (m *Manager) check(ctx context.Context, id string, budget time.Duration) (c
 // settle installs next, through commit on wctx when the records file must
 // change. A failed write installs fallback instead, so the live row never claims
 // more than the files hold, and answers what it installed. A write that failed
-// because ctx ended installs nothing and answers false: a failed atomicfile
+// because ctx ended installs nothing and answers false: a failed filesafe
 // write published nothing, since its rename is the last step that can fail.
 func (m *Manager) settle(ctx, wctx context.Context, cur, next *connection) (*connection, bool) {
 	if next.persisted() {

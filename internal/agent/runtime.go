@@ -15,7 +15,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/keylock"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/keylock"
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
@@ -30,8 +32,6 @@ import (
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/sse"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // The client watchdog is three of them and liveness.AliveWindow two. A var only for tests.
@@ -204,7 +204,7 @@ type bridges struct {
 	mgr *bridgeManager
 }
 
-// bus groups SSE transport, replay and pending permissions: cplieger/sse plus chat-topic filtering and pending replay.
+// bus groups SSE transport, replay and pending permissions: cplieger/go/sse plus chat-topic filtering and pending replay.
 type bus struct {
 	fanout       *sse.Hub
 	pendingPerms *pendingPermsTracker
@@ -648,7 +648,7 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/command", rt.lifecycle.admitUnlessDraining(rt.dispatcher))
 	// Behind the same drain gate, under a RouteTimeout so a resolution parked on a lock frees its slot.
 	mux.Handle("POST /api/sync", rt.lifecycle.admitUnlessDraining(
-		webhttp.RouteTimeout(rt.bus.fanout.DigestHandler(rt.resolveDigest), digestTimeout, "digest timed out"),
+		httpserver.RouteTimeout(rt.bus.fanout.DigestHandler(rt.resolveDigest), digestTimeout, "digest timed out"),
 	))
 	// Not drain-gated: a late receipt changes nothing.
 	mux.HandleFunc("POST /api/events/alive", rt.handleAlive)
@@ -674,7 +674,7 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 
 // Shutdown drains in-flight prompts and stops the agent engine, bounded by ctx. The engine stops before the
 // inflight wait, since a stuck Call returns only through the engine's teardown. ctx is the only bound:
-// webhttp.Run's pre-drain hook is synchronous. The error names the first wait to exceed it.
+// httpserver.Run's pre-drain hook is synchronous. The error names the first wait to exceed it.
 func (rt *Runtime) Shutdown(ctx context.Context) error {
 	slog.Info("agent runtime draining")
 	rt.lifecycle.drainGate.Lock()
@@ -824,7 +824,7 @@ func awaitBounded(ctx context.Context, what string, wait func()) error {
 		wait()
 	}()
 	// AwaitDone: a bare select would sometimes report a just-finished wait as hung.
-	if webhttp.AwaitDone(ctx, done) {
+	if httpserver.AwaitDone(ctx, done) {
 		return nil
 	}
 	return fmt.Errorf("%s still running: %w", what, ctx.Err())
@@ -853,7 +853,7 @@ func (rt *Runtime) HoldUnlessDraining() (release func(), ok bool) {
 
 // refuseWhenDraining answers 503 once Shutdown flips draining, holding nothing: for the event stream, which Shutdown
 // ends after its inflight wait, so it must not be admitted (admitUnlessDraining). A route wrapper, so health,
-// version and static stay up; webhttp's own gate flips later, at srv.Shutdown.
+// version and static stay up; httpserver's own gate flips later, at srv.Shutdown.
 func (rt *Runtime) refuseWhenDraining(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if rt.lifecycle.draining.Load() {
@@ -865,7 +865,7 @@ func (rt *Runtime) refuseWhenDraining(next http.Handler) http.Handler {
 }
 
 func writeShuttingDown(w http.ResponseWriter) {
-	webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("shutting down"))
+	httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("shutting down"))
 }
 
 // sweepSessionsInterval is how often the orphan-session sweep runs after

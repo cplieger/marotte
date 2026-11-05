@@ -3,8 +3,8 @@ package translate
 import (
 	"log/slog"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // displayErrorBlock is the kind=="display_error" sub-block: the engine's own
@@ -30,7 +30,7 @@ func (t *Translator) handleDisplayError(chatID marotte.ChatID, d *displayErrorBl
 		slog.Debug("display_error: MCP connect failure, reported by _kiro/mcp/status", "chat_id", chatID)
 		return
 	}
-	msg, _ := runesafe.SanitizeSingleLineCapped(d.Message, maxDisplayErrorBytes, "...")
+	msg, _ := textsafe.SanitizeSingleLineCapped(d.Message, maxDisplayErrorBytes, "...")
 	if msg == "" {
 		return
 	}

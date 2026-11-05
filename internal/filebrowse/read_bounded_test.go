@@ -10,7 +10,7 @@ import (
 
 // TestReadFile_Fifo_DoesNotHang covers a capability the hand-rolled read did not have.
 // open(2) on a FIFO with no writer blocks indefinitely, so a named pipe placed under a
-// granted browse root could wedge the handler goroutine forever. atomicfile's confined
+// granted browse root could wedge the handler goroutine forever. filesafe's confined
 // read opens non-blocking and refuses anything that is not a regular file, so this is a
 // prompt 400 instead.
 func TestReadFile_Fifo_DoesNotHang(t *testing.T) {

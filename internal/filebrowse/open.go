@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // readable is a file opened for a read route. The caller closes f.
@@ -79,14 +79,14 @@ func writeOpenError(w http.ResponseWriter, abs string, err error) {
 		writeChanged(w, "")
 	default:
 		slog.Warn("filebrowse: read failed", "path", logsafe.Field(abs), "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(errReadFailed))
+		httpserver.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(errReadFailed))
 	}
 }
 
 // writeChanged answers a read that could not hold the file still, or whose identity is not
 // the one the client asked for; id is the current identity when one was read.
 func writeChanged(w http.ResponseWriter, id string) {
-	webhttp.WriteJSONStatus(w, http.StatusConflict, FileRefusal{
+	httpserver.WriteJSONStatus(w, http.StatusConflict, FileRefusal{
 		Error:  "This file is changing too fast to show. Download it instead.",
 		Code:   refusalChanged,
 		FileID: id,

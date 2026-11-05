@@ -17,19 +17,19 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/apicaller"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // maxCommandBody caps the whole POST /api/command envelope: the largest
 // payload is a prompt's text at MaxPromptBytes (512 KiB) plus path-only
 // attachment metadata, so 1 MiB is ~2x headroom.
-const maxCommandBody = webhttp.MaxJSONBody
+const maxCommandBody = httpserver.MaxJSONBody
 
 // Handler is the signature for a command handler function. It returns its
 // outcome rather than writing to an http.ResponseWriter: the dispatcher
@@ -223,20 +223,20 @@ func writeError(w http.ResponseWriter, err error) {
 		resp.Impact = se.impact
 		resp.CurrentHash = se.currentHash
 	}
-	webhttp.WriteJSONStatus(w, statusOf(err), resp)
+	httpserver.WriteJSONStatus(w, statusOf(err), resp)
 }
 
 // maxCallerLabelRunes caps an API caller's label, which the turn header draws on one line beside "Sent by".
 const maxCallerLabelRunes = 64
 
 // commandCaller is who sent a command: nil for marotte's own page, whose label, if any, is ignored, else the API
-// caller with label as one line of at most maxCallerLabelRunes: unsafe runes blanked (runesafe.SanitizeSingleLine),
+// caller with label as one line of at most maxCallerLabelRunes: unsafe runes blanked (textsafe.SanitizeSingleLine),
 // runs of spaces collapsed to one and the ends trimmed before the cut, so leading blanks never spend the cap.
 func commandCaller(r *http.Request, label string) *marotte.Caller {
 	if !apicaller.Is(r) {
 		return nil
 	}
-	one := strings.Join(strings.Fields(runesafe.SanitizeSingleLine(label)), " ")
+	one := strings.Join(strings.Fields(textsafe.SanitizeSingleLine(label)), " ")
 	return &marotte.Caller{Label: strings.TrimSpace(truncateRunes(one, maxCallerLabelRunes))}
 }
 
@@ -253,13 +253,13 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	webhttp.LimitBody(w, r, maxCommandBody)
+	httpserver.LimitBody(w, r, maxCommandBody)
 	var cmd marotte.ClientCommand
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("command body too large",
 				"limit", maxCommandBody, keyError, maxErr)
-			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				errorResponse{Error: "request body too large"})
 			return
 		}
@@ -287,7 +287,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if body == nil {
 		body = responseOK
 	}
-	webhttp.WriteJSON(w, body)
+	httpserver.WriteJSON(w, body)
 	// After the write, so a fan-out cannot sit between the handler and the ack.
 	d.noteAnswer(r.Context(), &cmd)
 }

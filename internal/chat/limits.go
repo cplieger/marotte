@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/memlimit"
 )
 
@@ -41,8 +41,8 @@ func resolveChatFileCap() chatFileCap {
 	return chatFileCap(capBytes)
 }
 
-// errFileTooLarge reports a read refused on size. The streaming header paths wrap atomicfile.ErrFileTooLarge, so one
+// errFileTooLarge reports a read refused on size. The streaming header paths wrap filesafe.ErrFileTooLarge, so one
 // errors.Is answers every size refusal here.
 func errFileTooLarge(label string, size, capBytes int64) error {
-	return fmt.Errorf("%s: %w: %d bytes (max %d)", label, atomicfile.ErrFileTooLarge, size, capBytes)
+	return fmt.Errorf("%s: %w: %d bytes (max %d)", label, filesafe.ErrFileTooLarge, size, capBytes)
 }

@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/sse"
 )
 
 // Without it the connect is a v2 bundle, which still needs numeric floor/head on `connected` and

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/sse/ssetest"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/sse/ssetest"
 )
 
 func dataFrames(t *testing.T, body string) []ssetest.Frame {

@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/envx/v2"
+	"github.com/cplieger/go/envx"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/marotte/internal/workspace"

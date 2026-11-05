@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/procgroup"
-	"github.com/cplieger/runesafe/v3"
 )
 
 const (
@@ -271,5 +271,5 @@ func lastLine(s string) string {
 	if line == "" {
 		return "the command failed with no output"
 	}
-	return runesafe.SanitizeSingleLineBounded(line, maxFieldBytes)
+	return textsafe.SanitizeSingleLineBounded(line, maxFieldBytes)
 }

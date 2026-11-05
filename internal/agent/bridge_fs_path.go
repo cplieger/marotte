@@ -68,7 +68,7 @@ const (
 // component is re-resolved per operation and an agent swapping an ancestor for a symlink between
 // verdict and operation reaches nothing outside it. A symlink staying inside the root is still
 // followed, the final component included except for fsUnlink; delete then pins the name's
-// ancestors with atomicfile.OpenParentInRoot. The caller runs release.
+// ancestors with filesafe.OpenParentInRoot. The caller runs release.
 type fsTarget struct {
 	root *os.Root
 	rel  string

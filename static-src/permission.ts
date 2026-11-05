@@ -576,7 +576,7 @@ function commandCwd(input: unknown): string {
   return typeof cwd === "string" ? displayLines(cwd) : "";
 }
 
-// C0 but LF, DEL, C1, the Bidi_Control runes and U+2028/9: runesafe's IsUnsafeSingleLine set minus LF.
+// C0 but LF, DEL, C1, the Bidi_Control runes and U+2028/9: textsafe's IsUnsafeSingleLine set minus LF.
 const UNSAFE_BUT_LF =
   // eslint-disable-next-line no-control-regex
   /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029]/g;

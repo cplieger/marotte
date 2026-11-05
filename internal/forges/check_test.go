@@ -18,7 +18,7 @@ import (
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/creds"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 const ghID = "github:github.com"
@@ -126,7 +126,7 @@ func TestCheck_ACallerCancelWritesNoVerdict(t *testing.T) {
 }
 
 // heldWrites holds each of m's records writes until release closes or the
-// write's context ends, as atomicfile's last check before its rename does, and
+// write's context ends, as filesafe's last check before its rename does, and
 // signals each write it holds on entered.
 func heldWrites(t *testing.T, m *Manager) (entered <-chan struct{}, release chan struct{}) {
 	t.Helper()

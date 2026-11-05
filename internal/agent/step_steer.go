@@ -10,7 +10,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/keylock"
+	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"

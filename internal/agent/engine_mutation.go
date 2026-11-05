@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // clientAnswerBudget is how long a mutating handler waits on the engine before it answers still_applying: below
@@ -95,7 +95,7 @@ func (lt *lifetime) answerEngineMutation(w http.ResponseWriter, r *http.Request,
 	} else {
 		slog.Warn("an engine change has not answered in time; telling the client it is still applying", "verb", m.verb)
 	}
-	webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout, httpreply.ErrorJSONWithCode(
+	httpserver.WriteJSONStatus(w, http.StatusGatewayTimeout, httpreply.ErrorJSONWithCode(
 		"kiro-cli has not answered yet and may still apply the change; the list updates when it does",
 		stillApplyingCode,
 	))

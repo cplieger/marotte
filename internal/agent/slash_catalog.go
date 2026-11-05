@@ -7,9 +7,9 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/webhttp/v4"
 )
 
 var (
@@ -105,12 +105,12 @@ func (s *steeringIssues) snapshot() map[string][]marotte.SteeringIssue {
 // handleSlashCommands: GET /api/slash-commands.
 func (rt *Runtime) handleSlashCommands(w http.ResponseWriter, _ *http.Request) {
 	cmds, ready := rt.slash.snapshot()
-	webhttp.WriteJSON(w, marotte.SlashCommandsResponse{Commands: cmds, Ready: ready})
+	httpserver.WriteJSON(w, marotte.SlashCommandsResponse{Commands: cmds, Ready: ready})
 }
 
 // handleSteeringIssues: GET /api/steering/issues.
 func (rt *Runtime) handleSteeringIssues(w http.ResponseWriter, _ *http.Request) {
-	webhttp.WriteJSON(w, marotte.SteeringIssuesResponse{Issues: rt.steeringIssues.snapshot()})
+	httpserver.WriteJSON(w, marotte.SteeringIssuesResponse{Issues: rt.steeringIssues.snapshot()})
 }
 
 // applySlashCommands takes an observer pass's available_commands_update, the menu's seed before any chat opened.

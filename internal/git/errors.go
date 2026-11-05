@@ -9,8 +9,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v4"
 )
 
 const (
@@ -44,7 +44,7 @@ func writeGitError(w http.ResponseWriter, kind errorKind, detail string) {
 	if detail != "" {
 		resp["detail"] = detail
 	}
-	webhttp.WriteJSON(w, resp)
+	httpserver.WriteJSON(w, resp)
 }
 
 // --- git show error classification ---

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 // UnmarshalJSON validates the transport field at the JSON parse boundary, rejecting an unknown value early
@@ -77,8 +77,8 @@ func (s *Store) persist(ctx context.Context) error {
 	if prevErr != nil && !errors.Is(prevErr, os.ErrNotExist) {
 		return fmt.Errorf("%w: read the previous record: %w", errPersistWrite, prevErr)
 	}
-	if _, err := atomicfile.WriteFile(ctx, s.path, data,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
+	if _, err := filesafe.WriteFile(ctx, s.path, data,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("%w: %w", errPersistWrite, err)
 	}
 	policy, _ := s.renderPolicy(ctx)
@@ -101,8 +101,8 @@ func (s *Store) restoreRecord(ctx context.Context, prev []byte, existed bool) er
 		}
 		return nil
 	}
-	if _, err := atomicfile.WriteFile(context.WithoutCancel(ctx), s.path, prev,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
+	if _, err := filesafe.WriteFile(context.WithoutCancel(ctx), s.path, prev,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("%w: restore the record a failed save replaced: %w", errPersistWrite, err)
 	}
 	return nil

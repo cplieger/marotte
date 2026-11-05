@@ -16,12 +16,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/workspace"
-	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/webhttp/v4"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -78,7 +78,7 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 		snap = h.awaitStatusAll(r, key, running, wait)
 		_, running = h.statusCache.read(key)
 	}
-	webhttp.WriteJSON(w, statusAllResp{
+	httpserver.WriteJSON(w, statusAllResp{
 		Repos:    snap.rows(),
 		AgeMS:    snap.age().Milliseconds(),
 		Scanning: running != nil,
@@ -224,7 +224,7 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 	for i, d := range discovered {
 		repos[i] = d.Name
 	}
-	webhttp.WriteJSON(w, map[string]any{jsonKeyRepos: repos})
+	httpserver.WriteJSON(w, map[string]any{jsonKeyRepos: repos})
 }
 
 // handleShow serves a file's CONTENT at a git ref — the base side of the
@@ -271,9 +271,9 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 			// Absent at ref: empty content renders as an all-add diff, and the marker stops the
 			// base pane being captioned with the ref. Emitted only here, so its presence is the
 			// answer.
-			webhttp.WriteJSON(w, ShowResponse{Absent: true})
+			httpserver.WriteJSON(w, ShowResponse{Absent: true})
 		case errors.Is(err, errBlobTooLarge):
-			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				ShowRefusal{Error: "revision too large to diff", Code: showTooLarge})
 		default:
 			slog.Warn("git show failed", "repo", logsafe.Field(dir), "ref", ref, "path", logsafe.Field(file), "error", logsafe.Field(err.Error()), "out", logField(stderr))
@@ -285,13 +285,13 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	// blob into U+FFFD text the diff pane cannot tell from the real bytes.
 	switch {
 	case bytes.IndexByte(blob[:min(len(blob), binarySniffN)], 0) >= 0:
-		webhttp.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
+		httpserver.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
 			ShowRefusal{Error: "binary revision", Code: showBinary})
 	case !utf8.Valid(blob):
-		webhttp.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
+		httpserver.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
 			ShowRefusal{Error: "revision is not UTF-8 text", Code: showNotUTF8})
 	default:
-		webhttp.WriteJSON(w, ShowResponse{Content: string(blob)})
+		httpserver.WriteJSON(w, ShowResponse{Content: string(blob)})
 	}
 }
 
@@ -335,7 +335,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	out, err := gitCmd(ctx, dir, "log", ref, "--oneline", "-20", "--no-decorate")
 	if err != nil {
 		slog.Debug("git log failed", "repo", logsafe.Field(dir), "ref", ref, "error", logsafe.Field(err.Error()), "out", logField(out))
-		webhttp.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0, "commit_url_prefix": ""})
+		httpserver.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0, "commit_url_prefix": ""})
 		return
 	}
 	// Not pinned to []string{} the way `branches` is: a successful git log means at
@@ -363,7 +363,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	webhttp.WriteJSON(w, map[string]any{
+	httpserver.WriteJSON(w, map[string]any{
 		"entries":           lines,
 		"remote":            remote,
 		"behind":            behind,
@@ -399,7 +399,7 @@ func (h *Handler) handleBranchCommits(w http.ResponseWriter, r *http.Request) {
 	subjects := []string{}
 	if err != nil {
 		slog.Debug("git branch commits failed", "repo", logsafe.Field(dir), "range", logsafe.Field(rng), "error", logsafe.Field(err.Error()), "out", logField(out))
-		webhttp.WriteJSON(w, map[string]any{"subjects": subjects})
+		httpserver.WriteJSON(w, map[string]any{"subjects": subjects})
 		return
 	}
 	for line := range strings.SplitSeq(out, "\n") {
@@ -408,7 +408,7 @@ func (h *Handler) handleBranchCommits(w http.ResponseWriter, r *http.Request) {
 			subjects = append(subjects, clientLine(line))
 		}
 	}
-	webhttp.WriteJSON(w, map[string]any{"subjects": subjects})
+	httpserver.WriteJSON(w, map[string]any{"subjects": subjects})
 }
 
 // pullRequestRef is the commit a forge compares for ref: origin's copy when one exists, since the
@@ -429,7 +429,7 @@ func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
 	dir := h.repoDir(repoFromQuery(r))
 	out, err := gitCmd(r.Context(), dir, "branch", "-a", "--format=%(refname:short)\t%(HEAD)")
 	if err != nil {
-		webhttp.WriteJSON(w, map[string]any{"branches": []any{}, "current": ""})
+		httpserver.WriteJSON(w, map[string]any{"branches": []any{}, "current": ""})
 		return
 	}
 	type branchEntry struct {
@@ -452,7 +452,7 @@ func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
 			current = name
 		}
 	}
-	webhttp.WriteJSON(w, map[string]any{"branches": branches, "current": current})
+	httpserver.WriteJSON(w, map[string]any{"branches": branches, "current": current})
 }
 
 func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
@@ -516,11 +516,11 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Error("git remove: failed", "repo", body.Repo, "error", err)
-		webhttp.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
+		httpserver.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
 		return
 	}
 	slog.Info("git remove", "repo", body.Repo)
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }
 
 // removeRepoDir unlinks dir through a parent pinned inside a confined root on the workspace, never
@@ -536,7 +536,7 @@ func (h *Handler) removeRepoDir(dir string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %w", errUnsafeRepoPath, err)
 	}
-	parent, base, err := atomicfile.OpenParentInRoot(root, rel)
+	parent, base, err := filesafe.OpenParentInRoot(root, rel)
 	if err != nil {
 		// A gone parent is the same answer as a gone path. Only not-exist: a component
 		// refused for being a symlink or non-directory is a real failure.

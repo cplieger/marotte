@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/pathinside/v2"
 	"golang.org/x/sync/singleflight"
 )
 

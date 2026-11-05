@@ -7,10 +7,10 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notice"
-	"github.com/cplieger/sse"
 )
 
 func settledEvents(t *testing.T, events []sse.ReplayEvent) []marotte.DecisionSettledPayload {

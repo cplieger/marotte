@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // shutdownBudget bounds one PTY teardown, above the engine's 5s reap ceiling so expiry means a real hang.
@@ -97,7 +97,7 @@ func (sm *shellManager) handleWS(w http.ResponseWriter, r *http.Request) {
 // POST because it destroys running processes.
 func (sm *shellManager) handleRestart(w http.ResponseWriter, _ *http.Request) {
 	sm.restart()
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }
 
 // ReadShell answers a `#` terminal reference from the handler as it stands: current() would swap out a just-exited shell and lose its final output.

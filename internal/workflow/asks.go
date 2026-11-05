@@ -3,7 +3,7 @@ package workflow
 import (
 	"cmp"
 
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 

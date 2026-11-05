@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 func writeConfig(t *testing.T, dir, body string) {
@@ -189,8 +189,8 @@ func TestUpdate_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 	select {
 	case err := <-done:
 		// Named: the refusal must come from the file's KIND.
-		if !errors.Is(err, atomicfile.ErrNotRegular) {
-			t.Errorf("Update over a FIFO = %v, want atomicfile.ErrNotRegular", err)
+		if !errors.Is(err, filesafe.ErrNotRegular) {
+			t.Errorf("Update over a FIFO = %v, want filesafe.ErrNotRegular", err)
 		}
 		if !errors.Is(err, ErrUnreadable) {
 			t.Errorf("Update over a FIFO = %v, want it to match ErrUnreadable too", err)

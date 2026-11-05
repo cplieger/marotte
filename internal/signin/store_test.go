@@ -16,7 +16,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 func fileMode(t *testing.T, path string) os.FileMode {

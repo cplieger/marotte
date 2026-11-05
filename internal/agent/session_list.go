@@ -12,10 +12,10 @@ import (
 	"slices"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // sessionListTimeout bounds the round-trip, which may wait for the engine to be ready (configTemplateTimeout's value).
@@ -73,7 +73,7 @@ func (rt *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	withParentNames(runs, rt.chatStore.List(r.Context()))
 	out.Sessions = rows
 	out.Runs = runs
-	webhttp.WriteJSON(w, out)
+	httpserver.WriteJSON(w, out)
 }
 
 func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]marotte.ChatID) ([]marotte.ResumableSession, error) {
@@ -172,7 +172,7 @@ func toResumable(claimed map[string]marotte.ChatID, rows []kasSessionRow) []maro
 			CreatedAt:   parseKASTime(row.Meta.Kiro.CreatedAt),
 			AgentMode:   row.Meta.Kiro.AgentMode,
 			Status:      row.Meta.Kiro.Status,
-			Description: runesafe.SanitizeSingleLineBounded(row.Meta.Kiro.Description, maxSessionDescBytes),
+			Description: textsafe.SanitizeSingleLineBounded(row.Meta.Kiro.Description, maxSessionDescBytes),
 			ChatID:      string(chatID),
 		})
 	}

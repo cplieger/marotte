@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 // TestLoggingReaders_StayQuietWhenTheirCtxEnded pins that a reader whose ctx ended logs nothing: the

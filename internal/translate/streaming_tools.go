@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/sanitize"
 	"github.com/cplieger/marotte/internal/turnlog"
-	"github.com/cplieger/pathinside/v2"
 )
 
 // HandleToolCall appends a tool_call entry in the lane fixed for the call's whole life:

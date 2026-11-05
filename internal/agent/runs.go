@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/keylock"
+	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"

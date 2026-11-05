@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v4"
 	"golang.org/x/sys/unix"
 )
 
@@ -100,7 +100,7 @@ func writePageError(w http.ResponseWriter, err error) {
 		httpreply.InternalError(w, err)
 		return
 	}
-	webhttp.WriteJSONStatus(w, pe.status, httpreply.ErrorJSON(pe.msg))
+	httpserver.WriteJSONStatus(w, pe.status, httpreply.ErrorJSON(pe.msg))
 }
 
 type page struct {
@@ -251,7 +251,7 @@ func (h *Handler) handleGrant(w http.ResponseWriter, r *http.Request) {
 		writePageError(w, err)
 		return
 	}
-	webhttp.WriteJSON(w, g)
+	httpserver.WriteJSON(w, g)
 }
 
 func (h *Handler) handleStamp(w http.ResponseWriter, r *http.Request) {
@@ -269,7 +269,7 @@ func (h *Handler) handleStamp(w http.ResponseWriter, r *http.Request) {
 		httpreply.ServerError(w, "the folder could not be read", err)
 		return
 	}
-	webhttp.WriteJSON(w, marotte.PreviewStamp{
+	httpserver.WriteJSON(w, marotte.PreviewStamp{
 		Stamp: stamp, Entries: n, Truncated: truncated, Epoch: h.signer.currentEpoch(),
 	})
 }

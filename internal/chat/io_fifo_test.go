@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -55,8 +55,8 @@ func TestGet_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 		_, err := s.load(t.Context(), id)
 		return err
 	})
-	if !errors.Is(err, atomicfile.ErrNotRegular) {
-		t.Errorf("load over a FIFO = %v, want atomicfile.ErrNotRegular", err)
+	if !errors.Is(err, filesafe.ErrNotRegular) {
+		t.Errorf("load over a FIFO = %v, want filesafe.ErrNotRegular", err)
 	}
 	// The public read reports absence rather than wedging.
 	if ok := withinBudgetGet(t, s, id); ok {

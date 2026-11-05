@@ -11,11 +11,11 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // --- /api/file/upload (POST multipart into a target directory) ---
@@ -32,7 +32,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: upload too large",
 				"limit", maxUploadSize, "error", err)
-			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				httpreply.ErrorJSON("upload too large"))
 		} else if errors.Is(err, context.Canceled) {
 			slog.Debug("filebrowse: upload cancelled by client")
@@ -58,7 +58,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// mount itself (rel "."), created at boot by ensureUploadDir.
 	if err := dirLoc.m.root.MkdirAll(dirLoc.rel(), 0o755); err != nil {
 		slog.Warn("filebrowse: upload mkdir failed", "path", dirLoc.abs, "error", err)
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+		httpserver.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON("upload failed"))
 		return
 	}
@@ -76,7 +76,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if err := refuseIfCannotFit(batchBytes, dirLoc); err != nil {
 		slog.Warn("filebrowse: upload refused, not enough space",
 			"dir", dirLoc.abs, "batch_bytes", batchBytes, "error", err)
-		webhttp.WriteJSONStatus(w, http.StatusInsufficientStorage,
+		httpserver.WriteJSONStatus(w, http.StatusInsufficientStorage,
 			uploadErrorJSON(errNoSpaceLeft, nil))
 		return
 	}
@@ -87,7 +87,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("filebrowse: upload",
 		"dir", dirLoc.abs, "count", len(uploaded), "bytes", totalBytes)
-	webhttp.WriteJSON(w, map[string]any{"ok": true, "uploaded": uploaded})
+	httpserver.WriteJSON(w, map[string]any{"ok": true, "uploaded": uploaded})
 }
 
 // respondUploadError maps a writeUploads failure: invalid filename 400, an over-cap file 413 (never
@@ -95,27 +95,27 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 // batch is not rolled back (each file is whole or absent).
 func respondUploadError(w http.ResponseWriter, dir string, uploaded []string, err error) {
 	if errors.Is(err, errInvalidFilename) {
-		webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+		httpserver.WriteJSONStatus(w, http.StatusBadRequest,
 			uploadErrorJSON(err.Error(), uploaded))
 		return
 	}
-	if errors.Is(err, atomicfile.ErrFileTooLarge) {
+	if errors.Is(err, filesafe.ErrFileTooLarge) {
 		slog.Warn("filebrowse: upload too large",
 			"limit", maxUploadSize, "uploaded", len(uploaded), "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+		httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 			uploadErrorJSON("upload too large", uploaded))
 		return
 	}
 	if isOutOfSpace(err) {
 		slog.Warn("filebrowse: upload failed, out of space",
 			"dir", dir, "uploaded", len(uploaded), "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusInsufficientStorage,
+		httpserver.WriteJSONStatus(w, http.StatusInsufficientStorage,
 			uploadErrorJSON(errNoSpaceLeft, uploaded))
 		return
 	}
 	slog.Warn("filebrowse: upload write failed",
 		"dir", dir, "uploaded", len(uploaded), "error", logsafe.Field(err.Error()))
-	webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+	httpserver.WriteJSONStatus(w, http.StatusInternalServerError,
 		uploadErrorJSON("upload failed", uploaded))
 }
 
@@ -186,8 +186,8 @@ func writeOneUpload(ctx context.Context, dest loc, fh *multipart.FileHeader) (n 
 
 	// The per-file cap is WithMaxBytes's below, which rejects rather than truncates.
 	cr := &countingReader{r: &ctxReader{ctx: ctx, r: src}}
-	if _, werr := atomicfile.WriteReaderInRoot(ctx, dest.m.root, dest.rel(), cr,
-		atomicfile.WithMaxBytes(maxUploadSize)); werr != nil {
+	if _, werr := filesafe.WriteReaderInRoot(ctx, dest.m.root, dest.rel(), cr,
+		filesafe.WithMaxBytes(maxUploadSize)); werr != nil {
 		return cr.n, werr
 	}
 	return cr.n, nil

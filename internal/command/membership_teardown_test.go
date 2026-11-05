@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/tabs"
-	"github.com/cplieger/slogx/capture"
 )
 
 // loggingTabs logs each Close into the event log, and can make Close of named tabs answer nothing.

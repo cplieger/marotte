@@ -11,8 +11,8 @@ import (
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/families"
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // detectBudget bounds one detection, which asks up to three families in turn.
@@ -48,14 +48,14 @@ func (h *HTTPHandler) handleDetect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body detectBody
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpreply.BadRequest(w, "invalid json")
 		return
 	}
 	rec, err := body.record()
 	if err != nil {
-		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeWebBaseInvalid))
+		httpserver.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeWebBaseInvalid))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), detectBudget)
@@ -65,7 +65,7 @@ func (h *HTTPHandler) handleDetect(w http.ResponseWriter, r *http.Request) {
 		writeOpsError(w, r, err)
 		return
 	}
-	webhttp.WriteJSON(w, Detection{Kind: detectedKind(family, rec.Host)})
+	httpserver.WriteJSON(w, Detection{Kind: detectedKind(family, rec.Host)})
 }
 
 // No client is kept: families.Open closes the candidates it rejects and detect closes the one that

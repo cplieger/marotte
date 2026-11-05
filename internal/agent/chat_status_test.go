@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/sse"
 )
 
 // Merge is MergeStamped without the stamp.

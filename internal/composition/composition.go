@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/auth"
 	"github.com/cplieger/marotte/internal/chat"
@@ -498,12 +498,12 @@ func sweepStaleTemps(ctx context.Context, configDir, workDir string) {
 	const tempMaxAge = time.Hour
 	for _, sweep := range []struct {
 		dir  string
-		opts []atomicfile.Option
+		opts []filesafe.Option
 	}{
-		{configDir, []atomicfile.Option{atomicfile.WithRecursive(true)}},
+		{configDir, []filesafe.Option{filesafe.WithRecursive(true)}},
 		{workDir, nil},
 	} {
-		res, err := atomicfile.CleanupStaleTemps(ctx, sweep.dir, tempMaxAge, sweep.opts...)
+		res, err := filesafe.CleanupStaleTemps(ctx, sweep.dir, tempMaxAge, sweep.opts...)
 		if err != nil {
 			slog.Debug("stale temp cleanup failed", "dir", sweep.dir, "error", err)
 		}

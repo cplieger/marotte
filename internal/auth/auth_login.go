@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/signin"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // Empty passes for the default Builder ID flow. An attacker-controlled start URL would hand away
@@ -52,15 +52,15 @@ func validateRegion(v string) error {
 // parseLoginRequest decodes and validates the POST body, writing the error response itself and returning
 // ok=false. An empty body (the default Builder ID flow) yields zero values and ok=true.
 func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region string, ok bool) {
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	var body struct {
 		Provider string `json:"provider"`
 		Region   string `json:"region"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			slog.Warn("login: body exceeds limit", "limit_bytes", webhttp.MaxJSONBody)
-			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge, httpreply.ErrorJSON("request too large"))
+			slog.Warn("login: body exceeds limit", "limit_bytes", httpserver.MaxJSONBody)
+			httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge, httpreply.ErrorJSON("request too large"))
 			return "", "", false
 		}
 		slog.Warn("login: decode body", "error", err)
@@ -96,9 +96,9 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	// Audit trail; client_ip is webhttp.ClientIP's spoof-safe host.
+	// Audit trail; client_ip is httpserver.ClientIP's spoof-safe host.
 	slog.Info("login: request received",
-		"client_ip", webhttp.ClientIP(r, h.trusted...),
+		"client_ip", httpserver.ClientIP(r, h.trusted...),
 		"user_agent", logsafe.Field(r.Header.Get("User-Agent")))
 	if h.apiKey {
 		httpreply.Conflict(w, textAPIKeyActive)
@@ -109,7 +109,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if msg := h.loginRefusal(provider); msg != "" {
-		webhttp.WriteJSONStatus(w, http.StatusForbidden, httpreply.ErrorJSON(msg))
+		httpserver.WriteJSONStatus(w, http.StatusForbidden, httpreply.ErrorJSON(msg))
 		return
 	}
 	pending, err := h.vault.StartSignIn(r.Context(), h.backend, signin.FlowParams{
@@ -117,7 +117,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 	switch {
 	case err == nil:
-		webhttp.WriteJSON(w, LoginResponse{URL: pending.VerificationURL, Code: pending.UserCode, Attempt: pending.Attempt})
+		httpserver.WriteJSON(w, LoginResponse{URL: pending.VerificationURL, Code: pending.UserCode, Attempt: pending.Attempt})
 	case errors.Is(err, signin.ErrSignInInProgress):
 		httpreply.Conflict(w, "login in progress")
 	case errors.Is(err, signin.ErrInvalidParams):
@@ -126,7 +126,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		httpreply.Conflict(w, "the sign-in was cancelled")
 	default:
 		slog.Warn("login: the sign-in could not start", "error", err)
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(signInErrorText(err)))
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(signInErrorText(err)))
 	}
 }
 

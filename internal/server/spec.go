@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/specapproval"
-	"github.com/cplieger/webhttp/v4"
 )
 
 const headerIfNoneMatch = "If-None-Match"
@@ -56,11 +56,11 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 	if ifNoneMatchHolds(r, etag) {
 		// The 200's Content-Type, so the compressor names Accept-Encoding in the 304's Vary as it
 		// would in the 200's (RFC 9110 section 15.4.5); net/http drops the type itself on a 304.
-		webhttp.JSONHeaders(w)
+		httpserver.JSONHeaders(w)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	webhttp.WriteJSON(w, sp)
+	httpserver.WriteJSON(w, sp)
 }
 
 // specETag is the weak tag (RFC 9110 section 8.8.1) of the hex sha256 over each doc's NAME and

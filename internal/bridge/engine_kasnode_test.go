@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/kasnode"
-	"github.com/cplieger/slogx/capture"
 )
 
 const fakeLauncher = "/app/marotte"

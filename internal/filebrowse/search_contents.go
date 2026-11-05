@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/parallel"
 	"github.com/cplieger/marotte/internal/textsearch"
@@ -182,7 +182,7 @@ func (v *contentVisitor) readCandidate(dir *os.File, c searchCandidate) candidat
 		return candidateRead{unread: logSearchReadError(c.abs, err)}
 	}
 	if !info.Mode().IsRegular() {
-		err = fmt.Errorf("%w: %s (type %s)", atomicfile.ErrNotRegular, c.abs, info.Mode().Type())
+		err = fmt.Errorf("%w: %s (type %s)", filesafe.ErrNotRegular, c.abs, info.Mode().Type())
 		return candidateRead{unread: logSearchReadError(c.abs, err)}
 	}
 	return v.readHits(f, c.abs, info.Size())
@@ -246,7 +246,7 @@ func logSearchReadError(abs string, err error) (lost bool) {
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return false
-	case errors.Is(err, fs.ErrNotExist), errors.Is(err, atomicfile.ErrNotRegular), isSwapRefusal(err):
+	case errors.Is(err, fs.ErrNotExist), errors.Is(err, filesafe.ErrNotRegular), isSwapRefusal(err):
 		slog.Debug("filebrowse: search skipped file", "path", logsafe.Field(abs), "error", logsafe.Field(err.Error()))
 		return false
 	default:

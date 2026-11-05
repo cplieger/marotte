@@ -15,13 +15,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/webhttp/v4"
 )
 
 func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +94,7 @@ func steeringDoc(ctx context.Context, path string) (content, etag string, err er
 	if err != nil {
 		return "", "", err
 	}
-	f, info, err := atomicfile.OpenRegular(abs)
+	f, info, err := filesafe.OpenRegular(abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", steeringAbsentETag, nil
@@ -102,7 +102,7 @@ func steeringDoc(ctx context.Context, path string) (content, etag string, err er
 		return "", "", err
 	}
 	defer func() { _ = f.Close() }()
-	data, err := atomicfile.ReadBoundedFile(ctx, f, maxSteeringBytes)
+	data, err := filesafe.ReadBoundedFile(ctx, f, maxSteeringBytes)
 	if err != nil {
 		return "", "", err
 	}
@@ -122,7 +122,7 @@ func handleSteeringGet(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 	w.Header().Set(headerETag, etag)
-	webhttp.WriteJSON(w, steeringDocBody{Content: content, ETag: etag})
+	httpserver.WriteJSON(w, steeringDocBody{Content: content, ETag: etag})
 }
 
 // steeringWriteAllowed gates a save on the caller's If-Match token, the document's whole
@@ -130,8 +130,8 @@ func handleSteeringGet(w http.ResponseWriter, r *http.Request, path string) {
 // strongly against the stored document's, whatever coding the caller's GET was answered in.
 func steeringWriteAllowed(w http.ResponseWriter, r *http.Request, path string) bool {
 	if len(entityTags(r.Header, headerIfMatch)) == 0 {
-		webhttp.WriteJSONStatus(w, http.StatusPreconditionRequired,
-			webhttp.ErrorResponse{Error: msgSteeringIfMatchRequired})
+		httpserver.WriteJSONStatus(w, http.StatusPreconditionRequired,
+			httpserver.ErrorResponse{Error: msgSteeringIfMatchRequired})
 		return false
 	}
 	content, etag, err := steeringDoc(r.Context(), path)
@@ -142,7 +142,7 @@ func steeringWriteAllowed(w http.ResponseWriter, r *http.Request, path string) b
 	if ifMatchHolds(r, etag) {
 		return true
 	}
-	webhttp.WriteJSONStatus(w, http.StatusConflict, steeringConflictBody{
+	httpserver.WriteJSONStatus(w, http.StatusConflict, steeringConflictBody{
 		Error:   msgSteeringConflict,
 		ETag:    etag,
 		Content: content,
@@ -162,7 +162,7 @@ func savedSteeringETag(r *http.Request, path string) string {
 }
 
 func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	var body struct {
 		Content string `json:"content"`
 	}
@@ -179,7 +179,7 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 			httpreply.InternalError(w, err)
 			return
 		}
-		webhttp.WriteJSON(w, steeringSaveBody{OK: true, ETag: steeringAbsentETag})
+		httpserver.WriteJSON(w, steeringSaveBody{OK: true, ETag: steeringAbsentETag})
 		return
 	}
 	if r.Context().Err() != nil {
@@ -187,8 +187,8 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 	}
 	// A non-nil error means the content did NOT land (500); res.Durable==false means it landed
 	// with the dir fsync unconfirmed (the library already warned).
-	res, err := atomicfile.WriteFile(r.Context(), path, []byte(body.Content),
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700))
+	res, err := filesafe.WriteFile(r.Context(), path, []byte(body.Content),
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700))
 	if err != nil {
 		httpreply.InternalError(w, err)
 		return
@@ -197,7 +197,7 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 		slog.Warn("steering: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
 			"path", path)
 	}
-	webhttp.WriteJSON(w, steeringSaveBody{OK: true, ETag: savedSteeringETag(r, path)})
+	httpserver.WriteJSON(w, steeringSaveBody{OK: true, ETag: savedSteeringETag(r, path)})
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -223,10 +223,10 @@ func handleSettingsGet(w http.ResponseWriter, dirs settings.AgentDirs, defaults 
 		slog.Warn("settings: serving defaults, stored config unreadable", "path", path, "error", logsafe.Field(err.Error()))
 		effective := settings.EffectiveDefaults()
 		fillKiroDefaults(&effective, defaults)
-		webhttp.WriteJSON(w, effective)
+		httpserver.WriteJSON(w, effective)
 		return
 	}
-	webhttp.WriteJSON(w, effectiveOf(stored, path, dirs, defaults))
+	httpserver.WriteJSON(w, effectiveOf(stored, path, dirs, defaults))
 }
 
 // GET and the PATCH answer share this resolution, so a save never paints settings a later GET
@@ -273,7 +273,7 @@ func readStoredSettings(path string) (map[string]json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, info, err := atomicfile.OpenRegular(abs)
+	f, info, err := filesafe.OpenRegular(abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return map[string]json.RawMessage{}, nil
@@ -319,7 +319,7 @@ func mergeSettingsPatch(dirs settings.AgentDirs, patch map[string]json.RawMessag
 // handleSettingsWrite merges the patch into config.json and answers the effective settings of
 // the document it committed, resolved as a GET resolves it.
 func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	var patch map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		httpreply.BadRequest(w, "invalid json")
@@ -381,7 +381,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 		httpreply.ServerError(w, "config.json could not be saved", err)
 		return
 	}
-	webhttp.WriteJSON(w, answer)
+	httpserver.WriteJSON(w, answer)
 	// Durable: the write landed, so a closed tab must not leave bridges on the old values.
 	s.agent.ReconcileSessionSettings(durable.Context(r.Context()))
 }

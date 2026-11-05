@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/cplieger/go/wiregen"
 	"github.com/cplieger/marotte/internal/wirespec"
-	"github.com/cplieger/wiregen/v4"
 )
 
 func main() {

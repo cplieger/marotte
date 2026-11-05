@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 // TestSessionStartTimeout_KeepsEngineAndCoTenants: a session/new past its budget fails that door only; a co-tenant's

@@ -135,7 +135,7 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 		if strings.ContainsAny(title, "\n\x1b") {
 			t.Errorf("Title = %q carries a newline or ESC; want single-line", title)
 		}
-		// The bound plus runesafe's three-byte truncation marker.
+		// The bound plus textsafe's three-byte truncation marker.
 		if maxLen := len("Hook fired: ") + maxDisplayTextBytes + len("..."); len(title) > maxLen {
 			t.Errorf("len(Title) = %d, want <= %d", len(title), maxLen)
 		}

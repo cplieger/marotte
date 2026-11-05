@@ -8,7 +8,7 @@ import (
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/creds"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 const dotcomPAT = "ghp-dotcom-token"

@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/pathinside/v2"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/pathinside"
 )
 
 // OpenRegular, not os.Open: open(2) on a FIFO blocks with no deadline (go1.27.0), and the agent's
@@ -18,7 +18,7 @@ func openChatFile(path, label string) (*os.File, os.FileInfo, error) {
 	if !filepath.IsAbs(clean) || pathinside.HasDotDot(clean) {
 		return nil, nil, fmt.Errorf("%s: rejected unsafe path %q", label, path)
 	}
-	return atomicfile.OpenRegular(clean)
+	return filesafe.OpenRegular(clean)
 }
 
 // writeHeadroomFraction is how close to the cap a successful append may land before it is reported: the last tenth of

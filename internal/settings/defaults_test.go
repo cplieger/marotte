@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 func TestEffectiveKeys_AreAllKnown(t *testing.T) {

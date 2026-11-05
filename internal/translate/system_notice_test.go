@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 func systemNotifyFrame(t *testing.T, level, message string) *marotte.RPCResponse {

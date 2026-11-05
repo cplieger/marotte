@@ -12,10 +12,10 @@ import (
 	"slices"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // The client's CATALOG_REQUEST_TIMEOUT_MS (static-src/model-catalog.ts) must stay longer: move them
@@ -82,7 +82,7 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 	// One read for both lists and their version.
 	stamp.Epoch = rt.Epoch()
 	out.response.Subject = stamp
-	webhttp.WriteJSON(w, withCatalogVerdict(out))
+	httpserver.WriteJSON(w, withCatalogVerdict(out))
 }
 
 // readTemplate reads and decodes `_kiro/config/template`; a failed read or decode is an

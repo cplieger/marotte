@@ -28,7 +28,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/filemode"
 )
 
@@ -105,7 +105,7 @@ func (s *Store) load() error {
 	}
 	// EnforceFile reads a FIFO's bits as compliant; OpenRegular refuses non-regular files and
 	// returns the descriptor the bytes are read from, so the object judged is the object read.
-	fh, _, err := atomicfile.OpenRegular(s.path)
+	fh, _, err := filesafe.OpenRegular(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -115,7 +115,7 @@ func (s *Store) load() error {
 	defer func() { _ = fh.Close() }()
 	// ReadBoundedFile checks the size BEFORE allocating, so the bound holds against a file the
 	// agent's shell can grow.
-	data, err := atomicfile.ReadBoundedFile(context.Background(), fh, maxFileBytes)
+	data, err := filesafe.ReadBoundedFile(context.Background(), fh, maxFileBytes)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", fileName, err)
 	}
@@ -249,9 +249,9 @@ func (s *Store) persistLocked(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", fileName, err)
 	}
-	if _, err := atomicfile.WriteFile(ctx, s.path, data,
-		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode),
-		atomicfile.WithMaxBytes(maxFileBytes)); err != nil {
+	if _, err := filesafe.WriteFile(ctx, s.path, data,
+		filesafe.WithMode(fileMode), filesafe.WithMkdirMode(dirMode),
+		filesafe.WithMaxBytes(maxFileBytes)); err != nil {
 		return fmt.Errorf("write %s: %w", fileName, err)
 	}
 	return nil

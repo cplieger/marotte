@@ -313,7 +313,7 @@ func TestSteeringETag_MovesWithTheDocument(t *testing.T) {
 	}
 }
 
-// largeSteeringDoc is over webhttp's 1 KiB gzip floor once wrapped in the GET's JSON.
+// largeSteeringDoc is over httpserver's 1 KiB gzip floor once wrapped in the GET's JSON.
 var largeSteeringDoc = strings.Repeat("Always answer in French, and keep it short.\n", 40)
 
 // steeringThroughGzip serves /api/steering on the production stack and answers each request as

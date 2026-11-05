@@ -6,11 +6,11 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // KAS self-reorients, so no context-recovery prompt is injected. Inside a turn the entry seals
@@ -58,7 +58,7 @@ const maxCompactionDetailBytes = 200
 
 func (t *Translator) handleCompactionFailed(ctx context.Context, chatID marotte.ChatID, errMsg string) {
 	detail := cmp.Or(errMsg, "compaction failed")
-	detail = runesafe.SanitizeSingleLineBounded(detail, maxCompactionDetailBytes)
+	detail = textsafe.SanitizeSingleLineBounded(detail, maxCompactionDetailBytes)
 	// A refused append means the chat is gone: no banner for a chat nobody holds.
 	turnID := ""
 	if !t.appendLaneless(durable.Context(ctx), chatID, marotte.EntryKindCompactionFailed,

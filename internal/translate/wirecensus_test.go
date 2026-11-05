@@ -172,7 +172,7 @@ func TestCensusMeta_SanitizesTheFieldName(t *testing.T) {
 	if !strings.Contains(out, "UNKNOWN") {
 		t.Fatalf("the field was not reported at all: %s", out)
 	}
-	// The escaped form slog renders an unsanitized newline as; runesafe makes it a space.
+	// The escaped form slog renders an unsanitized newline as; textsafe makes it a space.
 	if strings.Contains(out, `\n`) {
 		t.Errorf("an unsanitized newline reached the log line: %q", out)
 	}
@@ -574,7 +574,7 @@ func TestCensusUpdateKind_SanitizesTheKind(t *testing.T) {
 	if !strings.Contains(out, "UNKNOWN session/update kind") {
 		t.Fatalf("the kind was not reported at all: %s", out)
 	}
-	// slog's TextHandler escapes a raw newline itself; runesafe makes it a space.
+	// slog's TextHandler escapes a raw newline itself; textsafe makes it a space.
 	if strings.Contains(out, `\n`) || strings.Count(out, "\n") != 1 {
 		t.Errorf("an unsanitized newline reached the log: %q", out)
 	}
@@ -585,7 +585,7 @@ func TestCensusUpdateKind_SanitizesTheKind(t *testing.T) {
 	if got, err := strconv.Unquote(logged); err == nil {
 		logged = got
 	}
-	// runesafe appends its "..." cut marker outside the cap.
+	// textsafe appends its "..." cut marker outside the cap.
 	if limit := maxCensusNameBytes + len("..."); len(logged) > limit {
 		t.Errorf("kind attribute is %d bytes, want at most %d: %q", len(logged), limit, logged)
 	}

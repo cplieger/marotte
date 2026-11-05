@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 // A size mismatch is a miss even when the mtime matches.
@@ -24,7 +24,7 @@ func TestHookStatusCache_SizeTermInvalidates(t *testing.T) {
 	c := newCachedBoolField(path, "k", false)
 	// A matching identity with a different size isolates the size term, which catches a same-tick in-place rewrite.
 	c.value = true
-	c.id = atomicfile.Identify(info)
+	c.id = filesafe.Identify(info)
 	c.size = info.Size() + 1
 
 	if got := c.get(); got != false {
@@ -45,7 +45,7 @@ func TestHookStatusCache_EqualLengthRenamePublishInvalidates(t *testing.T) {
 
 	publish := func(content string) {
 		t.Helper()
-		if _, err := atomicfile.WriteFile(ctx, path, []byte(content), atomicfile.WithMode(0o600)); err != nil {
+		if _, err := filesafe.WriteFile(ctx, path, []byte(content), filesafe.WithMode(0o600)); err != nil {
 			t.Fatalf("publish %s: %v", content, err)
 		}
 		if err := os.Chtimes(path, fixed, fixed); err != nil {

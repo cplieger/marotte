@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 // newWithin runs New on its own goroutine and fails if it has not returned inside budget:
@@ -37,8 +37,8 @@ func TestNew_RefusesAFifoInsteadOfBlockingTheBoot(t *testing.T) {
 		t.Skipf("mkfifo unsupported here: %v", err)
 	}
 	err := newWithin(t, 3*time.Second, dir)
-	if !errors.Is(err, atomicfile.ErrNotRegular) {
-		t.Errorf("New over a FIFO = %v, want atomicfile.ErrNotRegular", err)
+	if !errors.Is(err, filesafe.ErrNotRegular) {
+		t.Errorf("New over a FIFO = %v, want filesafe.ErrNotRegular", err)
 	}
 }
 
@@ -75,7 +75,7 @@ func TestNew_BoundsTheFileBeforeAllocating(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(dir); !errors.Is(err, atomicfile.ErrFileTooLarge) {
-		t.Errorf("New over an oversize store = %v, want atomicfile.ErrFileTooLarge", err)
+	if _, err := New(dir); !errors.Is(err, filesafe.ErrFileTooLarge) {
+		t.Errorf("New over an oversize store = %v, want filesafe.ErrFileTooLarge", err)
 	}
 }

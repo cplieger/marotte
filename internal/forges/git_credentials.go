@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 // scrubCleartext is scrubGitCredentials for a path that must not fail on it.
@@ -58,7 +58,7 @@ func scrubGitCredentials(ctx context.Context, host string) error {
 	if len(kept) == 0 {
 		return os.Remove(credFile)
 	}
-	_, err = atomicfile.WriteFile(ctx, credFile,
-		[]byte(strings.Join(kept, "\n")+"\n"), atomicfile.WithMode(0o600))
+	_, err = filesafe.WriteFile(ctx, credFile,
+		[]byte(strings.Join(kept, "\n")+"\n"), filesafe.WithMode(0o600))
 	return err
 }

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/webhttp/v4"
 )
 
 type switchableTools struct {
@@ -90,7 +90,7 @@ func TestToolsAPI_ServesAnEngineThatCameUpAfterTheRoutesWereMounted(t *testing.T
 	}
 }
 
-// httpapi writes its error bodies with its own webhttp major, so a toolbelt on another major
+// httpapi writes its error bodies with its own httpserver major, so a toolbelt on another major
 // than the access log's reads a context key Logging never set.
 func TestToolsAPI_AnErrorBodyServedThroughTheMiddlewareStackCarriesTheRequestID(t *testing.T) {
 	dir := t.TempDir()
@@ -104,7 +104,7 @@ func TestToolsAPI_AnErrorBodyServedThroughTheMiddlewareStackCarriesTheRequestID(
 	mux.Handle(toolsAPIPrefix+"/", api)
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
-	h := webhttp.Chain(mux, (&Server{}).middlewareStack(baseCSPPolicy, idem)...)
+	h := httpserver.Chain(mux, (&Server{}).middlewareStack(baseCSPPolicy, idem)...)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, toolsAPIPrefix+"/jobs/no-such-job/cancel", http.NoBody))
@@ -112,13 +112,13 @@ func TestToolsAPI_AnErrorBodyServedThroughTheMiddlewareStackCarriesTheRequestID(
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("POST cancel of an unknown job = %d %s, want 404", rec.Code, rec.Body.String())
 	}
-	var body webhttp.ErrorResponse
+	var body httpserver.ErrorResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode %q: %v", rec.Body.String(), err)
 	}
-	logged := rec.Header().Get(webhttp.HeaderRequestID)
+	logged := rec.Header().Get(httpserver.HeaderRequestID)
 	if logged == "" {
-		t.Fatalf("the response carries no %s header, so the access log minted no id", webhttp.HeaderRequestID)
+		t.Fatalf("the response carries no %s header, so the access log minted no id", httpserver.HeaderRequestID)
 	}
 	if body.RequestID != logged {
 		t.Errorf("error body request_id = %q, want the access log's %q (body %s)", body.RequestID, logged, strings.TrimSpace(rec.Body.String()))

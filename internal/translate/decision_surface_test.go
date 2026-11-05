@@ -6,8 +6,8 @@ import (
 	"testing"
 	"unicode"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // A DECISION SURFACE is a payload a human reads to make an approval choice (permission card,
@@ -32,7 +32,7 @@ func assertNeutralizedOnTheWire(t *testing.T, what string, payload any) {
 		t.Fatalf("%s: unmarshal payload: %v", what, err)
 	}
 	for _, r := range flatten(decoded) {
-		if runesafe.IsBidiControl(r) {
+		if textsafe.IsBidiControl(r) {
 			t.Errorf("%s: U+%04X survived to the wire; payload=%s", what, r, wire)
 		}
 		if unicode.IsControl(r) {
@@ -121,7 +121,7 @@ func TestPermissionCard_NeutralizesADeceptiveCommandOnTheWire(t *testing.T) {
 		t.Fatal("Command = nil, want the ask's command")
 	}
 	for _, r := range got.Command.Text + got.Command.Tail {
-		if runesafe.IsBidiControl(r) || (unicode.IsControl(r) && r != '\n') {
+		if textsafe.IsBidiControl(r) || (unicode.IsControl(r) && r != '\n') {
 			t.Errorf("Command carries U+%04X; Text = %q", r, got.Command.Text)
 		}
 	}
@@ -133,7 +133,7 @@ func TestPermissionCard_NeutralizesADeceptiveCommandOnTheWire(t *testing.T) {
 }
 
 // TestPermissionCard_LeavesLegitimateTitlesByteIdentical pins that pure RTL and unmarked
-// mixed text pass untouched (runesafe v1.4.2).
+// mixed text pass untouched (textsafe v1.4.2).
 func TestPermissionCard_LeavesLegitimateTitlesByteIdentical(t *testing.T) {
 	for _, title := range []string{
 		"Write config.tf",

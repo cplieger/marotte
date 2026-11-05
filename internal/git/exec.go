@@ -15,10 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/sanitize"
 	"github.com/cplieger/marotte/internal/systembin"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // errGitUnavailable is gitCmd's named refusal when the git binary is absent
@@ -100,16 +100,16 @@ func clientBlock(s string) string {
 	if len(out) <= maxClientOutputBytes {
 		return out
 	}
-	return runesafe.CapBytes(out, maxClientOutputBytes) + clientOutputTruncated
+	return textsafe.CapBytes(out, maxClientOutputBytes) + clientOutputTruncated
 }
 
 // clientLine prepares a single-line value a human makes a decision from — a
 // remote URL — for a client: redact, flatten, cap.
 //
-// One pass, for logField's reason: runesafe's single-line preset replaces rather
+// One pass, for logField's reason: textsafe's single-line preset replaces rather
 // than deletes.
 func clientLine(s string) string {
-	return runesafe.SanitizeSingleLineBounded(redactCredentials(s), maxRemoteURLBytes)
+	return textsafe.SanitizeSingleLineBounded(redactCredentials(s), maxRemoteURLBytes)
 }
 
 // redactCredentials strips credentials from git output, repeating until chained userinfo

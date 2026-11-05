@@ -16,7 +16,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/spec"
 )
@@ -199,9 +199,9 @@ func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatI
 		return
 	}
 	// A lost delete race is unrecoverable, so the parent is pinned with
-	// atomicfile.OpenParentInRoot (Lstat each component, refuse symlinks, os.SameFile), and only
+	// filesafe.OpenParentInRoot (Lstat each component, refuse symlinks, os.SameFile), and only
 	// the final element is unlinked; root.Remove would follow an in-root link.
-	parent, base, err := atomicfile.OpenParentInRoot(root, rel)
+	parent, base, err := filesafe.OpenParentInRoot(root, rel)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
@@ -241,7 +241,7 @@ func undoCopyRefusal(parent *os.Root, base string, info os.FileInfo) error {
 	if !info.Mode().IsRegular() {
 		return nil
 	}
-	f, fi, err := atomicfile.OpenRegularInRootNoFollow(parent, base)
+	f, fi, err := filesafe.OpenRegularInRootNoFollow(parent, base)
 	if err != nil {
 		return fmt.Errorf("not deleted: delete_file cannot read it for its undo copy: %w", err)
 	}

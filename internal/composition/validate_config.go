@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/pathinside/v2"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/pathinside"
 )
 
 // validateConfig performs fail-fast checks so a misconfiguration is a clear startup error naming
@@ -68,7 +68,7 @@ func spellings(dir string) []string {
 }
 
 // checkDirWritable verifies dir exists, is a directory and accepts a real write via
-// atomicfile.ProbeWritable, whose temp shape sweepStaleTemps reclaims. A directory that never
+// filesafe.ProbeWritable, whose temp shape sweepStaleTemps reclaims. A directory that never
 // accepted a write is fatal; a close or remove failure after a flushed write only warns, since the
 // directory is usable.
 func checkDirWritable(ctx context.Context, dir, envVar string) error {
@@ -81,7 +81,7 @@ func checkDirWritable(ctx context.Context, dir, envVar string) error {
 	}
 	// Stat mode bits can lie (NFS, FUSE, volume permissions), so only a real write proves it.
 	// WithMode matches the private writes this directory holds.
-	res, err := atomicfile.ProbeWritable(ctx, dir, atomicfile.WithMode(0o600))
+	res, err := filesafe.ProbeWritable(ctx, dir, filesafe.WithMode(0o600))
 	if err != nil {
 		// Not a verdict on the directory: the probe was never attempted, so
 		// writability is unproven and this stays fatal.

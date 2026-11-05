@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 // unreadReplies are the two answers that reach marotte and cannot be read: KAS may have acted on the request.

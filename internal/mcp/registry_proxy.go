@@ -20,10 +20,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v4"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -154,13 +154,13 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Warn("mcp: registry search failed",
 			"q", logsafe.Field(q), "limit", limit, "error", err)
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway, classifyRegistryFailure(err))
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway, classifyRegistryFailure(err))
 		return
 	}
 	slog.Debug("mcp: registry search",
 		"q", logsafe.Field(q), "limit", limit, "results", len(result.Servers),
 		"filtered", result.Filtered, "truncated", result.Truncated, "cached", cached)
-	webhttp.WriteJSON(w, result)
+	httpserver.WriteJSON(w, result)
 }
 
 // RegistrySearchFailure is the 502 body. Error stays the fixed sentinel,

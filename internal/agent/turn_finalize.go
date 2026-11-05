@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -17,7 +18,6 @@ import (
 	"github.com/cplieger/marotte/internal/sanitize"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/turnlog"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // turnCloser names the local step ending a turn rather than a stop reason.
@@ -70,7 +70,7 @@ func reasonFor(o marotte.TurnOutcome, supplied string) string {
 	if reason == "" {
 		return ""
 	}
-	capped, _ := runesafe.SanitizeSingleLineCapped(sanitize.Output(reason), maxReasonBytes, "...")
+	capped, _ := textsafe.SanitizeSingleLineCapped(sanitize.Output(reason), maxReasonBytes, "...")
 	return capped
 }
 

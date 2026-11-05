@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
 )
 
 const shellContentType = "text/html; charset=utf-8"
@@ -31,7 +31,7 @@ var stampedFont = regexp.MustCompile(`\.[0-9a-f]{8}\.[^./]+$`)
 // anchored so a hand-authored asset never gets a year-long cache.
 var contentHashedAsset = regexp.MustCompile(`^chunks/[^/]+-[A-Z0-9]{8}\.js(\.map)?$`)
 
-// assetCachePolicy is the per-asset Cache-Control policy webhttp.StaticHandler asks
+// assetCachePolicy is the per-asset Cache-Control policy httpserver.StaticHandler asks
 // for. assetPath is normalized: no leading slash, "index.html" for a root request.
 func assetCachePolicy(assetPath string) string {
 	switch {
@@ -76,7 +76,7 @@ func reportMissingTerminalFonts(staticFS fs.FS) {
 // HTML is no-store. The fallback WRITES the shell rather than calling http.ServeFileFS, whose
 // serveFile 301s every path ending "/index.html" to "./" (net/http fs.go:686-689, go1.27.0).
 func spaHandler(staticFS fs.FS) http.Handler {
-	static, err := webhttp.StaticHandler(staticFS, webhttp.WithStaticCacheControl(assetCachePolicy))
+	static, err := httpserver.StaticHandler(staticFS, httpserver.WithStaticCacheControl(assetCachePolicy))
 	if err != nil {
 		// An unreadable embedded FS is a build defect, not a runtime condition.
 		panic("server: static handler: " + err.Error())

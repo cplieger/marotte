@@ -9,11 +9,11 @@ import (
 	"os"
 	"unicode/utf8"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // errStaleWrite is the sentence on a refused stale save.
@@ -44,7 +44,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc, hook SaveHook) {
 	// Pinned once: the stale read, the mode carry-over, the write and the chmod all name
 	// the basename through this root, so an ancestor swapped for a symlink after the policy
 	// check cannot redirect any of them.
-	parent, base, err := atomicfile.OpenParentInRoot(l.m.root, l.rel())
+	parent, base, err := filesafe.OpenParentInRoot(l.m.root, l.rel())
 	if err != nil {
 		writeFileError(w, l, err)
 		return
@@ -64,13 +64,13 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc, hook SaveHook) {
 	// A rename publishes a new inode, so an existing regular file's bits are
 	// carried across or a save would flatten a 0o755 script; a new file passes
 	// no mode and the directory decides.
-	var opts []atomicfile.Option
+	var opts []filesafe.Option
 	var restore os.FileMode
 	if statErr == nil && existing.Mode().IsRegular() {
 		opts, restore = filemode.RewriteOptions(existing.Mode().Perm())
 	}
 	data := []byte(body.Content)
-	if _, err := atomicfile.WriteFileInRoot(r.Context(), parent, base, data, opts...); err != nil {
+	if _, err := filesafe.WriteFileInRoot(r.Context(), parent, base, data, opts...); err != nil {
 		writeFileError(w, l, err)
 		return
 	}
@@ -84,18 +84,18 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc, hook SaveHook) {
 	if hook.Saved != nil {
 		hook.Saved()
 	}
-	webhttp.WriteJSON(w, FileWriteResult{OK: true, FileID: fileIDOf(data), Size: int64(len(data))})
+	httpserver.WriteJSON(w, FileWriteResult{OK: true, FileID: fileIDOf(data), Size: int64(len(data))})
 }
 
 // decodeWriteBody reads and validates the PUT body before anything on disk is opened.
 func decodeWriteBody(w http.ResponseWriter, r *http.Request, l loc) (writeBody, bool) {
-	webhttp.LimitBody(w, r, writeBodyLimit)
+	httpserver.LimitBody(w, r, writeBodyLimit)
 	var body writeBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: write body too large",
 				"path", logsafe.Field(l.abs), "limit", writeBodyLimit, "error", logsafe.Field(maxErr.Error()))
-			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				FileRefusal{Error: "file too large", Code: refusalTooLarge})
 			return writeBody{}, false
 		}
@@ -104,14 +104,14 @@ func decodeWriteBody(w http.ResponseWriter, r *http.Request, l loc) (writeBody, 
 	}
 	if body.FileID != nil {
 		if _, err := parseFileID(*body.FileID); err != nil {
-			webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+			httpserver.WriteJSONStatus(w, http.StatusBadRequest,
 				FileRefusal{Error: errInvalidFileID.Error(), Code: refusalInvalidFileID})
 			return writeBody{}, false
 		}
 	}
 	if len(body.Content) > WholeFileMax {
 		size := int64(len(body.Content))
-		webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+		httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 			FileRefusal{Error: "file too large", Code: refusalTooLarge, Size: &size})
 		return writeBody{}, false
 	}
@@ -135,18 +135,18 @@ func refusedBySaveHook(w http.ResponseWriter, l loc, hook SaveHook, content []by
 // A full volume gets its own status and message.
 func writeFileError(w http.ResponseWriter, l loc, err error) {
 	switch {
-	case errors.Is(err, atomicfile.ErrSymlinkTarget), errors.Is(err, atomicfile.ErrNotRegular):
+	case errors.Is(err, filesafe.ErrSymlinkTarget), errors.Is(err, filesafe.ErrNotRegular):
 		slog.Warn("filebrowse: refused a write onto a non-regular target",
 			"path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
 		httpreply.BadRequest(w, "not a regular file")
 	case isOutOfSpace(err):
 		slog.Warn("filebrowse: write failed, out of space",
 			"path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusInsufficientStorage,
+		httpserver.WriteJSONStatus(w, http.StatusInsufficientStorage,
 			httpreply.ErrorJSON(errNoSpaceLeft))
 	default:
 		slog.Warn("filebrowse: write failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+		httpserver.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON("write failed"))
 	}
 }
@@ -156,12 +156,12 @@ func writeFileError(w http.ResponseWriter, l loc, err error) {
 // Not locked: the compare-then-write race needs cross-process locking, which the single atomic
 // writer does not warrant. An absent file is not stale.
 func staleWriteAllowed(w http.ResponseWriter, r *http.Request, l loc, parent *os.Root, base, want string) bool {
-	f, _, err := atomicfile.OpenRegularInRootNoFollow(parent, base)
+	f, _, err := filesafe.OpenRegularInRootNoFollow(parent, base)
 	if errors.Is(err, fs.ErrNotExist) {
 		return true
 	}
 	if err != nil {
-		if errors.Is(err, atomicfile.ErrRaced) {
+		if errors.Is(err, filesafe.ErrRaced) {
 			writeChanged(w, "")
 			return false
 		}
@@ -175,7 +175,7 @@ func staleWriteAllowed(w http.ResponseWriter, r *http.Request, l loc, parent *os
 		// stale save the editor offers Overwrite and Download for.
 		if tl, ok := errors.AsType[*tooLargeError](err); ok {
 			size := tl.size
-			webhttp.WriteJSONStatus(w, http.StatusConflict, FileRefusal{
+			httpserver.WriteJSONStatus(w, http.StatusConflict, FileRefusal{
 				Error: errStaleWrite, Code: refusalChanged, ContentKind: contentTooLarge, Size: &size,
 			})
 			return false
@@ -189,7 +189,7 @@ func staleWriteAllowed(w http.ResponseWriter, r *http.Request, l loc, parent *os
 	}
 	slog.Info("filebrowse: refused a stale write",
 		"path", logsafe.Field(l.abs), "expected", logsafe.Field(want), "actual", got)
-	webhttp.WriteJSONStatus(w, http.StatusConflict, staleRefusal(current, got))
+	httpserver.WriteJSONStatus(w, http.StatusConflict, staleRefusal(current, got))
 	return false
 }
 

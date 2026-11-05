@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 func pendingCall(e *Engine, id int64, sessionID marotte.SessionID) chan pendingReply {

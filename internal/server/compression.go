@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/preview"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // streamPaths answer with writes that must reach the client as they happen, so the compressor
@@ -28,8 +28,8 @@ func isCompressSkipped(r *http.Request) bool {
 	return false
 }
 
-// compressJSON gzips JSON answers (webhttp's default types and 1 KiB floor) for a client that
+// compressJSON gzips JSON answers (httpserver's default types and 1 KiB floor) for a client that
 // offers gzip.
-func compressJSON() webhttp.Middleware {
-	return webhttp.Gzip(webhttp.WithGzipSkip(isCompressSkipped))
+func compressJSON() httpserver.Middleware {
+	return httpserver.Gzip(httpserver.WithGzipSkip(isCompressSkipped))
 }

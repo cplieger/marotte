@@ -14,9 +14,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cplieger/go/ssrf"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/ssrf/v4"
 )
 
 // pushDebounce is the per-subject quiet window; pushBodyCap caps title+body so an

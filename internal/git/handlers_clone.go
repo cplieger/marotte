@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/workspace"
-	"github.com/cplieger/webhttp/v4"
 )
 
 func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
@@ -302,13 +302,13 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	remote, err := gitCmd(r.Context(), dir, subRemote, "get-url", remoteOrigin)
 	if err != nil || remote == "" {
 		slog.Warn("git reclone: origin lookup failed", "repo", body.Repo, "error", err)
-		webhttp.WriteJSON(w, httpreply.ErrorJSON("no origin remote"))
+		httpserver.WriteJSON(w, httpreply.ErrorJSON("no origin remote"))
 		return
 	}
 	// The origin URL came from git config and may name another transport, so handleClone's scheme
 	// allowlist is re-applied BEFORE the delete.
 	if !isAllowedRemoteScheme(remote) {
-		webhttp.WriteJSON(w, httpreply.ErrorJSON("origin has unsupported scheme for re-clone"))
+		httpserver.WriteJSON(w, httpreply.ErrorJSON("origin has unsupported scheme for re-clone"))
 		return
 	}
 	slog.Info("git reclone starting", "repo", body.Repo)
@@ -320,7 +320,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Error("git reclone: remove failed", "repo", body.Repo, "error", rmErr)
-		webhttp.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
+		httpserver.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
 		return
 	}
 	// `--`: a prior malicious clone could have stored a `-flag` origin.

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // fakeBackend is a device-flow backend whose Poll blocks until the test approves or fails it.
@@ -437,7 +437,7 @@ func TestWhoamiFrom_SanitizesAndBoundsEveryIdentityString(t *testing.T) {
 			t.Errorf("%s = %d bytes, want <= %d", name, len(v), maxIdentityFieldBytes+3)
 		}
 		for _, r := range v {
-			if runesafe.IsBidiControl(r) {
+			if textsafe.IsBidiControl(r) {
 				t.Errorf("%s = %q still carries U+%04X", name, v, r)
 			}
 		}

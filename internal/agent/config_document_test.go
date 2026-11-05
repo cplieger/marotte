@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/slogx/capture"
 )
 
 // docAt is the readable document config.json in dir holds now.

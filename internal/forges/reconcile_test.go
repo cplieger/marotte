@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 func TestReconcileGit_HealsALostEntryAtLoadAndEachPass(t *testing.T) {

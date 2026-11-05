@@ -17,8 +17,8 @@ import (
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/creds"
-	"github.com/cplieger/keyenc"
-	"github.com/cplieger/keylock"
+	"github.com/cplieger/go/keyenc"
+	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/logsafe"
 )
 

@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/steering"
-	"github.com/cplieger/slogx/capture"
 )
 
 func TestRegenerateSteering(t *testing.T) {

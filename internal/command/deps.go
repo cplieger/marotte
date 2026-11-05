@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workspace"
@@ -395,7 +395,7 @@ var errAttachmentOutsideRoots = errors.New("attachment path is outside the allow
 // openAttachment opens the regular file p names under the attachment roots and
 // returns it with its descriptor's FileInfo and its absolute path. The caller
 // closes f. A refused path wraps errAttachmentOutsideRoots; a FIFO, device or
-// directory is atomicfile.ErrNotRegular, and the open never blocks on one.
+// directory is filesafe.ErrNotRegular, and the open never blocks on one.
 func (w Workspace) openAttachment(p string) (f *os.File, info os.FileInfo, abs string, err error) {
 	root, name, err := workspace.ConfineAnyAbs(w.attachmentRoots(), p)
 	if err != nil {
@@ -423,7 +423,7 @@ func openConfined(root, name string) (*os.File, os.FileInfo, error) {
 		return nil, nil, err
 	}
 	defer r.Close()
-	return atomicfile.OpenRegularInRoot(r, name)
+	return filesafe.OpenRegularInRoot(r, name)
 }
 
 // lifecycleAccess is the process-lifetime seam: the context a turn runs under, and

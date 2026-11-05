@@ -7,8 +7,8 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/signin"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // provider is the token_provider class KAS reads governance from: Enterprise is
@@ -56,7 +56,7 @@ func validRecord(r *record) error {
 			return fmt.Errorf("kiro: a %s record needs a profile ARN", r.Provider)
 		}
 	default:
-		return fmt.Errorf("kiro: unknown provider %q", runesafe.SanitizeSingleLineBounded(string(r.Provider), 32))
+		return fmt.Errorf("kiro: unknown provider %q", textsafe.SanitizeSingleLineBounded(string(r.Provider), 32))
 	}
 	if err := validRegion(r.Region); err != nil {
 		return err
@@ -81,7 +81,7 @@ func validRecord(r *record) error {
 
 // displayable reports whether s survives single-line sanitizing unchanged within n bytes.
 func displayable(s string, n int) bool {
-	return len(s) <= n && runesafe.SanitizeSingleLineBounded(s, n) == s
+	return len(s) <= n && textsafe.SanitizeSingleLineBounded(s, n) == s
 }
 
 // validStartURL accepts an https URL with a host and no userinfo, which some HTTP clients would

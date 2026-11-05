@@ -9,14 +9,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/envx/v2"
+	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // Config holds all environment/flag values needed to build the app.
@@ -52,7 +52,7 @@ type Config struct {
 	// resolve before it replaces the current one — the embedded
 	// required-tools.txt, injected by main.
 	ToolCatalogRequire []string
-	// TrustedProxies are the reverse-proxy prefixes whose X-Forwarded-For webhttp may trust, from
+	// TrustedProxies are the reverse-proxy prefixes whose X-Forwarded-For httpserver may trust, from
 	// TRUSTED_PROXIES. Empty trusts nothing and logs the unspoofable socket peer.
 	TrustedProxies []netip.Prefix
 	// TrustedInstallUIDs names identities whose write access to the kiro-cli install tree does not
@@ -63,7 +63,7 @@ type Config struct {
 	// HostPolicy is the exact-match Host allowlist from ALLOWED_HOSTS, the anti-DNS-rebinding gate
 	// applied before the CSRF check. Unset = inactive, any Host accepted (the server warns at
 	// listen time).
-	HostPolicy *webhttp.HostPolicy
+	HostPolicy *httpserver.HostPolicy
 	// BridgeEnvAllow re-permits names the bridge's credential screen would drop, from
 	// bridge.EnvAllowVar. Nil is the shipped and right configuration.
 	BridgeEnvAllow map[string]struct{}
@@ -182,7 +182,7 @@ func browseRoots(workDir, configDir, raw string) []string {
 // Unset yields nil. LENIENT and fail-SAFE: a malformed entry is logged and skipped, falling back to
 // the socket peer, never trusting a forwarded header.
 func parseTrustedProxies(raw string) []netip.Prefix {
-	prefixes, invalid := webhttp.ParseCIDRs(strings.Split(raw, ","))
+	prefixes, invalid := httpserver.ParseCIDRs(strings.Split(raw, ","))
 	if len(invalid) > 0 {
 		slog.Warn("config: ignoring malformed TRUSTED_PROXIES entries (want CIDR or IP)",
 			"entries", invalid)
@@ -202,14 +202,14 @@ func parseTrustedInstallUIDs(raw string) []int {
 	return uids
 }
 
-// parseAllowedHosts parses ALLOWED_HOSTS into a webhttp.HostPolicy, the exact-Host gate that closes
+// parseAllowedHosts parses ALLOWED_HOSTS into a httpserver.HostPolicy, the exact-Host gate that closes
 // the DNS-rebinding hole CSRF alone leaves open (CWE-346). The loopback carve-out is enabled and
 // the 403 names ALLOWED_HOSTS; malformed entries are dropped. Unset or blank is an INACTIVE policy;
 // an all-invalid list is an active EMPTY one that fails closed, warned by name.
-func parseAllowedHosts(raw string) *webhttp.HostPolicy {
-	policy, invalid := webhttp.ParseHostList(strings.Split(raw, ","),
-		webhttp.WithLoopbackExempt(true),
-		webhttp.WithHostAllowlistError("",
+func parseAllowedHosts(raw string) *httpserver.HostPolicy {
+	policy, invalid := httpserver.ParseHostList(strings.Split(raw, ","),
+		httpserver.WithLoopbackExempt(true),
+		httpserver.WithHostAllowlistError("",
 			"host not allowed. Add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
 		slog.Warn("config: dropping malformed ALLOWED_HOSTS entries; they cannot match any browser-sent Host",

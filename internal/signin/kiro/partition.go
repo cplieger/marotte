@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/signin"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // User text for a refused region; the first %q is the sanitized region.
@@ -127,7 +127,7 @@ func partitionOf(region string) *partition {
 }
 
 func safeRegion(region string) string {
-	return runesafe.SanitizeSingleLineBounded(region, maxRegionBytes)
+	return textsafe.SanitizeSingleLineBounded(region, maxRegionBytes)
 }
 
 func regionRefusal(text string, cause error) error {

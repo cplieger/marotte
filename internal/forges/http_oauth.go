@@ -11,9 +11,9 @@ import (
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/creds"
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // DeviceFlowResponse is a started device grant as a client renders it. The
@@ -95,7 +95,7 @@ func (h *HTTPHandler) handleDeviceGrant(w http.ResponseWriter, r *http.Request) 
 
 func (h *HTTPHandler) handleGrantStart(w http.ResponseWriter, r *http.Request, kind Kind) {
 	var body grantBody
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		httpreply.BadRequest(w, "invalid json")
 		return
@@ -112,7 +112,7 @@ func (h *HTTPHandler) handleGrantStart(w http.ResponseWriter, r *http.Request, k
 		writeGrantStartError(w, r, err)
 		return
 	}
-	webhttp.WriteJSON(w, DeviceFlowResponse{
+	httpserver.WriteJSON(w, DeviceFlowResponse{
 		UserCode: started.UserCode, VerificationURI: started.VerificationURI, GrantID: started.GrantID,
 		Interval:  int(started.Interval / time.Second),
 		ExpiresIn: int(time.Until(started.Expires).Round(time.Second) / time.Second),
@@ -149,11 +149,11 @@ func writeGrantStartError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	switch {
 	case errors.Is(err, errTooManyGrants):
-		webhttp.WriteJSONStatus(w, http.StatusTooManyRequests, httpreply.ErrorJSON(err.Error()))
+		httpserver.WriteJSONStatus(w, http.StatusTooManyRequests, httpreply.ErrorJSON(err.Error()))
 	case errors.Is(err, errClientIDNeeded), errors.Is(err, errClientIDPublic):
-		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeClientIDInvalid))
+		httpserver.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeClientIDInvalid))
 	case errors.Is(err, errWebBaseInvalid):
-		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeWebBaseInvalid))
+		httpserver.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeWebBaseInvalid))
 	case errors.Is(err, errHostInvalid):
 		httpreply.BadRequest(w, err.Error())
 	case writeMutationError(w, err):
@@ -176,7 +176,7 @@ func (h *HTTPHandler) handleGrantPoll(w http.ResponseWriter, r *http.Request) {
 	if err == nil && g.Done {
 		res := h.completeGrant(r.Context(), deadline, &g)
 		if r.Context().Err() == nil {
-			webhttp.WriteJSON(w, res)
+			httpserver.WriteJSON(w, res)
 		}
 		return
 	}
@@ -187,7 +187,7 @@ func (h *HTTPHandler) handleGrantPoll(w http.ResponseWriter, r *http.Request) {
 		writeGrantPollError(w, r, err)
 		return
 	}
-	webhttp.WriteJSON(w, PollResult{Status: statePending})
+	httpserver.WriteJSON(w, PollResult{Status: statePending})
 }
 
 // The forge has spent the device code and the registry has forgotten the
@@ -214,7 +214,7 @@ func (h *HTTPHandler) completeGrant(ctx context.Context, deadline time.Time, g *
 // grant survives is a non-2xx, which the client backs off from and polls again.
 func writeGrantPollError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, errGrantNotFound) {
-		webhttp.WriteJSON(w, PollResult{Status: statusError, Error: err.Error(), Code: codeGrantNotFound})
+		httpserver.WriteJSON(w, PollResult{Status: statusError, Error: err.Error(), Code: codeGrantNotFound})
 		return
 	}
 	ferr, ok := errors.AsType[*forgeapi.Error](err)
@@ -229,7 +229,7 @@ func writeGrantPollError(w http.ResponseWriter, r *http.Request, err error) {
 	case forgeapi.CodeGrantExpired:
 		status = grantExpired
 	}
-	webhttp.WriteJSON(w, PollResult{Status: status, Error: logsafe.Field(ferr.Error()), Code: ferr.Code})
+	httpserver.WriteJSON(w, PollResult{Status: status, Error: logsafe.Field(ferr.Error()), Code: ferr.Code})
 }
 
 // It answers 204 whether or not the id named one, so a repeated cancel is not an error.
@@ -246,7 +246,7 @@ func grantIDOf(w http.ResponseWriter, r *http.Request) (string, bool) {
 	var body struct {
 		GrantID string `json:"grant_id"`
 	}
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpreply.BadRequest(w, "invalid json")
 		return "", false

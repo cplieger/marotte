@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // unattendedApprovalBudget is how long a scheduled run's request waits before refusal: 180s, as KiroCrew's
@@ -370,7 +370,7 @@ func credentialFreeSubject(s string) string {
 // safeToolName defuses a wire name for a one-line surface: the model composes titles. Replacing rather than
 // deleting keeps legitimate names byte-identical and makes bidi reversal visible.
 func safeToolName(s string) string {
-	return runesafe.SanitizeSingleLineBounded(s, maxToolNameBytes)
+	return textsafe.SanitizeSingleLineBounded(s, maxToolNameBytes)
 }
 
 // consentScopeAdministration is the `_meta.kiro.consent.scope` KAS stamps on an administrator ask.

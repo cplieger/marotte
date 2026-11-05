@@ -12,9 +12,9 @@ import (
 	"testing"
 	"testing/synctest"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/slogx/capture"
 )
 
 // admitPromptBehindSteerLock opens c1's bridge and posts a prompt that is admitted and acknowledged while the steer

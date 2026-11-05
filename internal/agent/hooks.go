@@ -17,10 +17,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // hookCallTimeout bounds a list or setEnabled round-trip, the wait for the engine included, extended through an
@@ -183,7 +183,7 @@ func (st *Settings) handleHooksList(w http.ResponseWriter, r *http.Request) {
 	slices.SortStableFunc(out, func(a, b hookInfo) int {
 		return hookScopeRank(a.Scope) - hookScopeRank(b.Scope)
 	})
-	webhttp.WriteJSON(w, hooksListResponse{Hooks: out})
+	httpserver.WriteJSON(w, hooksListResponse{Hooks: out})
 }
 
 // hookScopeRank orders hook scopes for the dashboard: workspace first.
@@ -225,7 +225,7 @@ func (st *Settings) handleHookSetEnabled(w http.ResponseWriter, r *http.Request)
 			if !res.Success {
 				return engineReply{write: func(w http.ResponseWriter) { writeHookResultErr(w, res) }}
 			}
-			return engineReply{write: webhttp.Ok, applied: true}
+			return engineReply{write: httpserver.Ok, applied: true}
 		},
 	})
 }
@@ -273,7 +273,7 @@ func writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
 // The engine runs with no chat open, so there is no "open a chat first" case.
 func writeHookErr(w http.ResponseWriter, err error) {
 	slog.Warn("hooks op failed", "error", err)
-	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("hooks request failed"))
+	httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("hooks request failed"))
 }
 
 // There is deliberately no trigger route: it would restore the executeHook shell path.
