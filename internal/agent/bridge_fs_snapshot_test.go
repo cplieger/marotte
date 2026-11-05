@@ -48,6 +48,9 @@ func newSnapshotFixture(t *testing.T) *snapshotFixture {
 	if err := os.Symlink(f.outside, filepath.Join(f.runA, "edit-snapshot-r2.md")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink("workflow-state.json", filepath.Join(f.runA, "edit-snapshot-r3.md")); err != nil {
+		t.Fatal(err)
+	}
 	f.h, f.br = hubForFSTest(t, work)
 	f.h.router.seedSteps("wf_a", []string{"sess_step_a"})
 	f.h.router.seedSteps("wf_b", []string{"sess_step_b"})
@@ -159,6 +162,10 @@ func TestRespondFSRead_TheSnapshotGrantGoesNoFurther(t *testing.T) {
 			name: "a snapshot name linking out of the run", session: "sess_step_a",
 			path: func(f *snapshotFixture) string { return filepath.Join(f.runA, "edit-snapshot-r2.md") },
 		},
+		{
+			name: "a snapshot name linking to its run's state file", session: "sess_step_a",
+			path: func(f *snapshotFixture) string { return filepath.Join(f.runA, "edit-snapshot-r3.md") },
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newSnapshotFixture(t)
@@ -190,6 +197,15 @@ func TestRespondFSRead_TheSnapshotGrantGoesNoFurther(t *testing.T) {
 		}
 		if got, err := f.read(t, "sess_step_a", filepath.Join(f.runA, "edit-snapshot-r1.md"), nil); err == nil {
 			t.Errorf("read through a linked workflows directory = %q, want refused", got)
+		}
+	})
+	t.Run("a stat of a snapshot name linking to its run's state file", func(t *testing.T) {
+		f := newSnapshotFixture(t)
+		f.h.inbound.respondKiroFSStat(t.Context(), "c1", f.h.originOf("c1"),
+			fsMsg(t, methodKiroFSStat, "sess_step_a", filepath.Join(f.runA, "edit-snapshot-r3.md"), nil))
+		<-f.br.done
+		if f.br.response.err == nil {
+			t.Errorf("stat through an in-run link = %+v, want refused", f.br.response.result)
 		}
 	})
 	t.Run("a write over the snapshot", func(t *testing.T) {

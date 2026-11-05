@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,11 +30,12 @@ func (in *inbound) confineRead(ctx context.Context, sessionID marotte.SessionID,
 	if openErr != nil {
 		return fsTarget{}, err
 	}
-	if !linkFreeBelow(root, home, dir) {
+	name := filepath.Base(p)
+	if !linkFreeBelow(root, home, dir) || !regularOrAbsent(root, name) {
 		_ = root.Close()
 		return fsTarget{}, err
 	}
-	return fsTarget{root: root, rel: filepath.Base(p), opened: true}, nil
+	return fsTarget{root: root, rel: name, opened: true}, nil
 }
 
 // linkFreeBelow reports that root, opened at dir, is the directory dir names with no symlink between home and it.
@@ -57,7 +59,18 @@ func linkFreeBelow(root *os.Root, home, dir string) bool {
 		return false
 	}
 	named, err := os.Lstat(want)
-	return err == nil && named.IsDir() && os.SameFile(opened, named)
+	return err == nil && os.SameFile(opened, named)
+}
+
+// regularOrAbsent reports that name in root is no link or other non-regular file. The read and the stat follow a link
+// that stays in root, so a snapshot name linking to the run's state file would expose a file the grant does not cover.
+// An absent name passes, so its read answers not found.
+func regularOrAbsent(root *os.Root, name string) bool {
+	info, err := root.Lstat(name)
+	if err != nil {
+		return errors.Is(err, os.ErrNotExist)
+	}
+	return info.Mode().IsRegular()
 }
 
 // snapshotDir reports KIRO_HOME and the run directory p names an edit snapshot file in, when that run is
