@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { setUserScrolledUp } from "./scroll.js";
 import {
   buildToolGroupShell,
   groupBody,
@@ -370,7 +371,8 @@ describe("grouping rules for failures", () => {
     // A refusal is a SETTLE, like a stop: it does not block the fold.
     const g = groupWith(card("read", "ok"), card("read", "declined"));
     autoCollapseGroup(g);
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(g.classList.contains("tool-group-collapsed")).toBe(true);
+    expect(header(g).getAttribute("aria-expanded")).toBe("false");
   });
 
   it("collapses a superseded run of two or more, and NEVER a bare one-call run", () => {
@@ -378,17 +380,19 @@ describe("grouping rules for failures", () => {
     // to bring it back.
     const lone = groupWith(card("read", "ok"));
     autoCollapseGroup(lone);
-    expect(lone.classList.contains("tool-group-auto-collapsed")).toBe(false);
+    expect(lone.classList.contains("tool-group-collapsed")).toBe(false);
 
     const pair = groupWith(card("read", "ok"), card("read", "ok"));
     autoCollapseGroup(pair);
-    expect(pair.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(pair.classList.contains("tool-group-collapsed")).toBe(true);
+    expect(header(pair).getAttribute("aria-expanded")).toBe("false");
   });
 
   it("collapses a superseded group holding a failure like any other, its header naming the failure", () => {
     const g = groupWith(card("read", "ok"), card("read", "fail"));
     autoCollapseGroup(g);
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(g.classList.contains("tool-group-collapsed")).toBe(true);
+    expect(header(g).getAttribute("aria-expanded")).toBe("false");
     expect(g.querySelector(".tool-group-count")?.textContent).toContain("1 failed");
     expect(g.dataset["outcome"]).toBe("fail");
   });
@@ -396,21 +400,90 @@ describe("grouping rules for failures", () => {
   it("DOES collapse a superseded group holding a stop", () => {
     const g = groupWith(card("read", "ok"), card("read", "warn"));
     autoCollapseGroup(g);
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(g.classList.contains("tool-group-collapsed")).toBe(true);
+    expect(header(g).getAttribute("aria-expanded")).toBe("false");
   });
 
   it("does not collapse a superseded group while a member still runs", () => {
     const g = groupWith(card("read", "ok"), card("read", "running"));
     (groupBody(g).lastElementChild as HTMLElement).dataset["startMs"] = "1";
     autoCollapseGroup(g);
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
+    expect(g.classList.contains("tool-group-collapsed")).toBe(false);
+    expect(header(g).getAttribute("aria-expanded")).toBe("true");
   });
 
   it("does not re-collapse a group the reader has toggled", () => {
-    const g = groupWith(card("read", "ok"));
-    g.classList.add("tool-group-user-toggled");
+    // Two members: a bare group is refused before the toggle is read.
+    const g = groupWith(card("read", "ok"), card("read", "ok"));
+    header(g).click();
+    header(g).click();
     autoCollapseGroup(g);
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
+    expect(g.classList.contains("tool-group-collapsed")).toBe(false);
+    expect(header(g).getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
+function header(g: HTMLElement): HTMLElement {
+  return g.querySelector<HTMLElement>(":scope > .tool-group-header") as HTMLElement;
+}
+
+/** What the reader is shown: the header's state and whether the body region is hidden. */
+function shown(g: HTMLElement): { expanded: string | null; hidden: string | null; inert: boolean } {
+  const body = groupBody(g);
+  return {
+    expanded: header(g).getAttribute("aria-expanded"),
+    hidden: body.getAttribute("aria-hidden"),
+    inert: body.inert,
+  };
+}
+
+const OPEN = { expanded: "true", hidden: "false", inert: false };
+const CLOSED = { expanded: "false", hidden: "true", inert: true };
+
+describe("one header click flips what the reader sees", () => {
+  it("opens a group the live fold closed, and the next click closes it", () => {
+    const g = groupWith(card("hook", "ok"), card("execute", "ok"));
+    autoCollapseGroup(g);
+    expect(shown(g)).toEqual(CLOSED);
+
+    header(g).click();
+    expect(shown(g)).toEqual(OPEN);
+    header(g).click();
+    expect(shown(g)).toEqual(CLOSED);
+    header(g).click();
+    expect(shown(g)).toEqual(OPEN);
+  });
+
+  it("opens a group born folded, and the next click closes it", () => {
+    const g = buildToolGroupShell();
+    groupBody(g).append(card("hook", "ok"), card("execute", "ok"));
+    document.body.appendChild(g);
+    setGroupSuperseded(g, true);
+    refreshGroupHeader(g);
+    expect(shown(g)).toEqual(CLOSED);
+
+    header(g).click();
+    expect(shown(g)).toEqual(OPEN);
+    header(g).click();
+    expect(shown(g)).toEqual(CLOSED);
+  });
+
+  it("parks the reader on each open and on no close", () => {
+    const g = groupWith(card("read", "ok"), card("read", "ok"));
+    autoCollapseGroup(g);
+    header(g).click();
+    expect(vi.mocked(setUserScrolledUp).mock.calls).toEqual([[true]]);
+    header(g).click();
+    expect(vi.mocked(setUserScrolledUp).mock.calls).toEqual([[true]]);
+    header(g).click();
+    expect(vi.mocked(setUserScrolledUp).mock.calls).toEqual([[true], [true]]);
+  });
+
+  it("closes an open group on the first click", () => {
+    const g = groupWith(card("read", "ok"), card("read", "ok"));
+    expect(shown(g)).toEqual(OPEN);
+    header(g).click();
+    expect(shown(g)).toEqual(CLOSED);
   });
 });
 
@@ -444,7 +517,7 @@ describe("a superseded run is born collapsed rather than folded", () => {
     // committed rather than being the end point of one.
     expect(body.style.height).toBe("0px");
     expect(body.getAttribute("aria-hidden")).toBe("true");
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(g.classList.contains("tool-group-collapsed")).toBe(true);
     expect(g.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("false");
     g.remove();
   });
@@ -458,7 +531,8 @@ describe("a superseded run is born collapsed rather than folded", () => {
     setGroupSuperseded(g, true);
     autoCollapseGroup(g);
     expect(groupBody(g).getAnimations()).toHaveLength(1);
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(g.classList.contains("tool-group-collapsed")).toBe(true);
+    expect(header(g).getAttribute("aria-expanded")).toBe("false");
     g.remove();
   });
 
@@ -474,7 +548,7 @@ describe("a superseded run is born collapsed rather than folded", () => {
     refreshGroupHeader(g);
 
     expect(groupIsBare(g)).toBe(true);
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
+    expect(g.classList.contains("tool-group-collapsed")).toBe(false);
     // No controller was created, so nothing pinned the region's height and the card
     // still has a box.
     expect(groupBody(g).style.height).toBe("");

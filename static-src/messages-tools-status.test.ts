@@ -157,7 +157,7 @@ describe("a group whose members ran LIVE and then settled", () => {
 
     autoCollapseGroup(group);
 
-    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(group.classList.contains("tool-group-collapsed")).toBe(true);
     expect(group.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("false");
     group.remove();
   });
@@ -178,7 +178,7 @@ describe("a group whose members ran LIVE and then settled", () => {
     );
     autoCollapseGroup(group);
 
-    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(group.classList.contains("tool-group-collapsed")).toBe(true);
     expect(group.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("false");
     expect(group.querySelector(".tool-group-count")?.textContent).toContain("1 failed");
     group.remove();

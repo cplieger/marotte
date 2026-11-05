@@ -17,8 +17,9 @@ import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
 
+/** The body is closed, whoever closed it: the header click toggles it, and find-in-chat's reveal reads
+ *  it, so a close that leaves it off makes the next header click close the group again. */
 const CLS_COLLAPSED = "tool-group-collapsed";
-const CLS_AUTO_COLLAPSED = "tool-group-auto-collapsed";
 const CLS_USER_TOGGLED = "tool-group-user-toggled";
 /** A shell holding fewer than two members: no header, no group chrome. A pure
  *  function of the member count with ONE writer (refreshGroupHeader), so there is
@@ -151,10 +152,10 @@ function bornCollapsed(group: HTMLElement, calls: HTMLElement[]): boolean {
   return true;
 }
 
-/** The AUTO-collapsed marking: one writer for the class and the header state. The caller refreshes
- *  the summary: this runs inside `refreshGroupHeader`, which would re-enter. */
+/** The auto-collapse marking, shared by the born-folded and live paths. The caller refreshes the
+ *  summary: this runs inside `refreshGroupHeader`, which would re-enter. */
 function markAutoCollapsed(group: HTMLElement): void {
-  group.classList.add(CLS_AUTO_COLLAPSED);
+  group.classList.add(CLS_COLLAPSED);
   group.querySelector<HTMLElement>(".tool-group-header")?.setAttribute("aria-expanded", "false");
 }
 
@@ -357,29 +358,19 @@ function dedup(arr: string[]): string[] {
 
 // --- Collapse / expand ---
 
-function onHeaderClick(group: HTMLDivElement, _header: HTMLDivElement): void {
-  // No bare guard here, unlike both collapse paths below, and the asymmetry is
-  // not an oversight: a bare header is `display: none`, so it is out of the
-  // accessibility tree and out of tab order and this handler is unreachable.
+function onHeaderClick(group: HTMLDivElement, header: HTMLDivElement): void {
+  // No bare guard, unlike `autoCollapseGroup`: a bare header is `display: none`, so this is unreachable on one.
   group.classList.add(CLS_USER_TOGGLED);
-  const wasAuto = group.classList.contains(CLS_AUTO_COLLAPSED);
-  if (wasAuto) {
-    group.classList.remove(CLS_AUTO_COLLAPSED);
-  }
-  group.classList.toggle(CLS_COLLAPSED);
-  const collapsedNow = group.classList.contains(CLS_COLLAPSED);
-  // Drive the body region's disclosure to match the class-derived state
-  // (preserving the existing model, where a click on an AUTO-collapsed group
-  // converts it to a USER collapse and it stays closed).
+  const collapsedNow = group.classList.toggle(CLS_COLLAPSED);
   const ctl = groupCtls.get(group);
   if (collapsedNow) {
     ctl?.close();
   } else {
     ctl?.open();
   }
-  _header.setAttribute("aria-expanded", collapsedNow ? "false" : "true");
+  header.setAttribute("aria-expanded", collapsedNow ? "false" : "true");
   refreshGroupHeader(group);
-  if (!collapsedNow || wasAuto) {
+  if (!collapsedNow) {
     setUserScrolledUp(true);
   }
 }
@@ -396,15 +387,11 @@ export function autoCollapseGroup(group: HTMLElement): void {
   }
   const ctl = groupCtls.get(group);
   if (ctl === undefined) {
-    // No region, so no class: a CLS_AUTO_COLLAPSED group with an open body is unactionable. Unreachable
+    // No region, so nothing to close: a collapsed class over an open body would be unactionable. Unreachable
     // through `refreshGroupHeader`; agreement with `ensureGroupDisclosure`.
     return;
   }
-  if (
-    group.classList.contains(CLS_AUTO_COLLAPSED) ||
-    group.classList.contains(CLS_USER_TOGGLED) ||
-    group.classList.contains(CLS_COLLAPSED)
-  ) {
+  if (group.classList.contains(CLS_USER_TOGGLED) || group.classList.contains(CLS_COLLAPSED)) {
     return;
   }
   const calls = [

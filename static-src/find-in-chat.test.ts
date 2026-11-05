@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./scroll.js", () => ({
   jumpTo: vi.fn(),
+  // A tool group's header parks the reader when it opens.
+  setUserScrolledUp: vi.fn(),
   // Inert: these tests drive re-runs through the module's own paths.
   onTranscriptMutate: vi.fn(() => () => undefined),
 }));
@@ -533,6 +535,12 @@ describe("Ctrl-F overlay", () => {
 // Server-hit navigation: when the walker marked nothing but the server found the text, stepping reveals the hit.
 
 import { createDisclosure } from "@cplieger/ui/disclosure";
+import {
+  autoCollapseGroup,
+  buildToolGroupShell,
+  groupBody,
+  refreshGroupHeader,
+} from "./tool-group.js";
 import type { Session } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Tally } from "./textsearch/copy.js";
@@ -1060,6 +1068,54 @@ describe("server-hit navigation", () => {
       expect(card?.querySelector("mark.find-hit-current")).not.toBeNull();
     });
     expect(countText()).toBe("1 of 1");
+  });
+
+  it("opens the tool group the transcript folded to reach a hit inside it", async () => {
+    stageChat(["u1"]);
+    const row = mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row"></div>`,
+    ).querySelector(".msg-row") as HTMLElement;
+    const group = buildToolGroupShell();
+    row.appendChild(group);
+    for (const [entryID, output] of [
+      ["e1", "bump the retry backoff to 30s"],
+      ["e2", "left alone"],
+    ] as const) {
+      const call = document.createElement("div");
+      call.className = "tool-call";
+      call.dataset["entryId"] = entryID;
+      call.innerHTML = `<div class="tool-summary">
+                          <span class="tool-title">Read notes</span>
+                          <button type="button" class="tool-disclosure"></button>
+                        </div>
+                        <div class="tool-details"><div class="tool-output">${output}</div></div>`;
+      groupBody(group).appendChild(call);
+      wireToolCard(call);
+    }
+    refreshGroupHeader(group);
+    autoCollapseGroup(group);
+    const head = group.querySelector(":scope > .tool-group-header");
+    expect(head?.getAttribute("aria-expanded")).toBe("false");
+    stageHits([
+      serverHit({
+        entry_id: "e1",
+        excerpt: "bump the retry backoff to 30s",
+        segment_kind: "tool_output",
+        offset: 9,
+        segment_len: 29,
+      }),
+    ]);
+
+    await openAndSearch("retry");
+    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
+
+    typeAndEnter("retry");
+    await vi.waitFor(() => {
+      expect(group.querySelector("mark.find-hit-current")).not.toBeNull();
+    });
+    expect(head?.getAttribute("aria-expanded")).toBe("true");
+    expect(groupBody(group).inert).toBe(false);
   });
 
   // tool_diff: the card is the target, the mini-diff the walk, and the notice has three states.
@@ -2121,10 +2177,12 @@ describe("server-hit navigation", () => {
     ]);
 
     await openAndSearch("retry");
-    for (const id of ["e1", "e2"]) {
+    for (const [i, id] of ["e1", "e2"].entries()) {
       typeAndEnter("retry");
       await vi.waitFor(() => {
         expect(vi.mocked(chatSearch.revealHitTurn).mock.lastCall?.[1].entry_id).toBe(id);
+        // The step's last write: an Enter pressed before it lands is dropped as busy.
+        expect(countText()).toMatch(new RegExp(`^${String(i + 1)} of 3 \u00b7 `, "u"));
       });
     }
     // The engine marks its first match current on its own, so that is not asserted.

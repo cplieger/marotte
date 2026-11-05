@@ -74,7 +74,7 @@ describe("a11y: tool-group header keyboard and aria", () => {
     expect(header.getAttribute("aria-expanded")).toBe("true");
 
     autoCollapseGroup(group);
-    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(group.classList.contains("tool-group-collapsed")).toBe(true);
     expect(header.getAttribute("aria-expanded")).toBe("false");
 
     document.body.removeChild(group);

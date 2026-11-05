@@ -1246,7 +1246,7 @@ describe("the auto-collapse registry: which arrivals close a tool group", () => 
       text("t", 3, "and so"),
     ]);
     const group = r.body.querySelector(".tool-group") as HTMLElement;
-    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(group.classList.contains("tool-group-collapsed")).toBe(true);
     expect(group.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -1256,14 +1256,15 @@ describe("the auto-collapse registry: which arrivals close a tool group", () => 
       callEntry("t", 2, toolCall("tool-b")),
     ]);
     const group = r.body.querySelector(".tool-group") as HTMLElement;
-    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(false);
+    expect(group.classList.contains("tool-group-collapsed")).toBe(false);
+    expect(group.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("leaves a BARE group open, because its body region IS the lone card", () => {
     const r = render([callEntry("t", 1, toolCall("tool-a")), text("t", 2, "and so")]);
     const group = r.body.querySelector(".tool-group") as HTMLElement;
     expect(group.classList.contains("tool-group-bare")).toBe(true);
-    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(false);
+    expect(group.classList.contains("tool-group-collapsed")).toBe(false);
   });
 });
 
