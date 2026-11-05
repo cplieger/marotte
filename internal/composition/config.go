@@ -57,8 +57,9 @@ type Config struct {
 	TrustedProxies []netip.Prefix
 	// TrustedInstallUIDs names identities whose write access to the tools tree does not fail the
 	// kiro-cli install's custody check or the tools engine's integrity check, from
-	// TRUSTED_INSTALL_UIDS. Empty (the default) refuses any tree another identity can write. Never compiled in: only the deployment knows which account
-	// is already as privileged as this process.
+	// TRUSTED_INSTALL_UIDS. Empty (the default) refuses any tree another identity can write.
+	// Never compiled in: only the deployment knows which account is already as privileged as
+	// this process.
 	TrustedInstallUIDs []int
 	// HostPolicy is the exact-match Host allowlist from ALLOWED_HOSTS, the anti-DNS-rebinding gate
 	// applied before the CSRF check. Unset = inactive, any Host accepted (the server warns at

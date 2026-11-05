@@ -270,6 +270,34 @@ func TestBootLeavesAnotherOwnersRootToTheOperator(t *testing.T) {
 	}
 }
 
+// TestBootTrustsAnOwnerTheOperatorListed is the other half: the same plant with that uid in
+// TRUSTED_INSTALL_UIDS brings the engine up, so the list reaches the engine and not only kiro-cli.
+func TestBootTrustsAnOwnerTheOperatorListed(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("handing a directory to another uid needs root")
+	}
+	configDir, toolsDir := fitTree(t)
+	bin := filepath.Join(toolsDir, "bin")
+	mkdirMode(t, bin, 0o755)
+	if err := os.Chown(bin, 65501, -1); err != nil {
+		t.Fatal(err)
+	}
+	healBootModes(configDir, toolsDir, "", "")
+
+	captureDefaultLogger(t)
+	cfg := &Config{
+		ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}, ToolCatalogPath: filepath.Join(t.TempDir(), "absent.json"),
+		TrustedInstallUIDs: []int{65501},
+	}
+	tools, err := wireToolsEngine(cfg, testRuntime(t), nil)
+	if err != nil {
+		t.Fatalf("wireToolsEngine with the owner listed = %v, want an engine", err)
+	}
+	if engine, _ := tools.Engine(); engine == nil {
+		t.Fatal("TRUSTED_INSTALL_UIDS did not reach the engine: it refused a bin the operator trusted")
+	}
+}
+
 // TestAppShutdownToleratesTheDegradedEngine asserts that no toolbelt method is nil-receiver safe, so Shutdown
 // must skip the nil engine.
 func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {

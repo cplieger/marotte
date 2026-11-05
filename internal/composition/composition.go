@@ -824,8 +824,9 @@ func logRootIntegrityRefusal(err error) {
 		"Settings -> Tools says why",
 		"finding_count", len(refusal.Findings),
 		"hint", "the check reports only and never repairs: fix the paths above from inside the container "+
-			"(chmod g-w,o-w on a writable dir; replace a symlinked root with a real directory), then save "+
-			"tools.json in Settings -> Tools or restart")
+			"(chown a dir another account owns; setfacl -b a dir with an ACL grant; chmod g-w,o-w a writable dir; "+
+			"replace a symlinked root with a real directory), or list the account in TRUSTED_INSTALL_UIDS, then "+
+			"save tools.json in Settings -> Tools or restart")
 }
 
 // warnIfNoLSPEnabled nudges when no language server is enabled: kiro-cli scans PATH at
