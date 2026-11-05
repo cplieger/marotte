@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { setUserScrolledUp } from "./scroll.js";
 import {
   buildToolGroupShell,
   groupBody,
@@ -407,10 +408,77 @@ describe("grouping rules for failures", () => {
   });
 
   it("does not re-collapse a group the reader has toggled", () => {
-    const g = groupWith(card("read", "ok"));
-    g.classList.add("tool-group-user-toggled");
+    // Two members: a bare group is refused before the toggle is read.
+    const g = groupWith(card("read", "ok"), card("read", "ok"));
+    header(g).click();
+    header(g).click();
     autoCollapseGroup(g);
     expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
+    expect(header(g).getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
+function header(g: HTMLElement): HTMLElement {
+  return g.querySelector<HTMLElement>(":scope > .tool-group-header") as HTMLElement;
+}
+
+/** What the reader is shown: the header's state and whether the body region is hidden. */
+function shown(g: HTMLElement): { expanded: string | null; hidden: string | null; inert: boolean } {
+  const body = groupBody(g);
+  return {
+    expanded: header(g).getAttribute("aria-expanded"),
+    hidden: body.getAttribute("aria-hidden"),
+    inert: body.inert,
+  };
+}
+
+const OPEN = { expanded: "true", hidden: "false", inert: false };
+const CLOSED = { expanded: "false", hidden: "true", inert: true };
+
+describe("one header click flips what the reader sees", () => {
+  it("opens a group the live fold closed, and the next click closes it", () => {
+    const g = groupWith(card("hook", "ok"), card("execute", "ok"));
+    autoCollapseGroup(g);
+    expect(shown(g)).toEqual(CLOSED);
+
+    header(g).click();
+    expect(shown(g)).toEqual(OPEN);
+    header(g).click();
+    expect(shown(g)).toEqual(CLOSED);
+    header(g).click();
+    expect(shown(g)).toEqual(OPEN);
+  });
+
+  it("opens a group born folded, and the next click closes it", () => {
+    const g = buildToolGroupShell();
+    groupBody(g).append(card("hook", "ok"), card("execute", "ok"));
+    document.body.appendChild(g);
+    setGroupSuperseded(g, true);
+    refreshGroupHeader(g);
+    expect(shown(g)).toEqual(CLOSED);
+
+    header(g).click();
+    expect(shown(g)).toEqual(OPEN);
+    header(g).click();
+    expect(shown(g)).toEqual(CLOSED);
+  });
+
+  it("parks the reader on each open and on no close", () => {
+    const g = groupWith(card("read", "ok"), card("read", "ok"));
+    autoCollapseGroup(g);
+    header(g).click();
+    expect(vi.mocked(setUserScrolledUp).mock.calls).toEqual([[true]]);
+    header(g).click();
+    expect(vi.mocked(setUserScrolledUp).mock.calls).toEqual([[true]]);
+    header(g).click();
+    expect(vi.mocked(setUserScrolledUp).mock.calls).toEqual([[true], [true]]);
+  });
+
+  it("closes an open group on the first click", () => {
+    const g = groupWith(card("read", "ok"), card("read", "ok"));
+    expect(shown(g)).toEqual(OPEN);
+    header(g).click();
+    expect(shown(g)).toEqual(CLOSED);
   });
 });
 
