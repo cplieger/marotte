@@ -6,7 +6,7 @@ import "context"
 // lifetime. A test that exercises a close builds its entry through openBridge instead, with a real lifecycle.
 type admitAllLife struct{}
 
-func (admitAllLife) beginWork(workKind) (context.Context, func(), bool) {
+func (admitAllLife) beginLease(context.CancelCauseFunc) (context.Context, func(), bool) {
 	return context.Background(), func() {}, true
 }
 

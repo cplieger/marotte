@@ -10,10 +10,11 @@ import (
 )
 
 // A chatLifecycle is the chat's life. Every goroutine that works for the life (its session door, its forward, each
-// turn-close tail, each later rehydrate sweep, each session lease) is started through beginWork, which counts it and
-// refuses once the life ended. A close ends the life at its commit (ChatHold.Commit); the teardown then waits until
-// the count is zero (awaitQuiet) before it forgets any of the chat's state or releases the gate hold. With the gate
-// admitting no new life while a hold stands, no work of one life runs while another life of the chat exists.
+// turn-close tail, each later rehydrate sweep) is started through beginWork, and each session lease through beginLease;
+// both count it and refuse once the life ended. A close ends the life at its commit (ChatHold.Commit); the teardown
+// then waits until the count is zero (awaitQuiet) before it forgets any of the chat's state or releases the gate hold.
+// With the gate admitting no new life while a hold stands, no work of one life runs while another life of the chat
+// exists.
 
 // workKind names one kind of the life's work, counted apart so a stuck teardown names what it waits for.
 type workKind uint8
@@ -50,17 +51,38 @@ func (r *turnRegistry) newLifecycle(chatID marotte.ChatID, stamp uint64) *chatLi
 // beginWork counts one goroutine of the life's work of kind, answering the life's context and the idempotent done
 // the goroutine calls when it returns; false once the life ended, when the caller starts nothing.
 func (lc *chatLifecycle) beginWork(kind workKind) (context.Context, func(), bool) {
+	return lc.begin(kind, nil)
+}
+
+// beginLease is beginWork for one session lease, whose own context cut cancels: the life's end calls cut before
+// it returns, so no check on the lease's context passes once a close committed. A lease's context derives from its
+// caller's, and context.AfterFunc on the life's would cut it later, on another goroutine.
+func (lc *chatLifecycle) beginLease(cut context.CancelCauseFunc) (context.Context, func(), bool) {
+	return lc.begin(workSession, cut)
+}
+
+func (lc *chatLifecycle) begin(kind workKind, cut context.CancelCauseFunc) (context.Context, func(), bool) {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	if lc.ended {
 		return nil, func() {}, false
 	}
 	lc.work[kind]++
+	var token uint64
+	if cut != nil {
+		if lc.leaseCuts == nil {
+			lc.leaseCuts = make(map[uint64]context.CancelCauseFunc)
+		}
+		lc.leaseSeq++
+		token = lc.leaseSeq
+		lc.leaseCuts[token] = cut
+	}
 	var once sync.Once
 	return lc.ctx, func() {
 		once.Do(func() {
 			lc.mu.Lock()
 			lc.work[kind]--
+			delete(lc.leaseCuts, token)
 			lc.quietIfDoneLocked()
 			lc.wakeLocked()
 			lc.mu.Unlock()
@@ -68,8 +90,8 @@ func (lc *chatLifecycle) beginWork(kind workKind) (context.Context, func(), bool
 	}, true
 }
 
-// endLifeLocked ends the life: every fence taken before it stops holding, its context is cancelled with
-// marotte.ErrChatClosedDuringCall, and no new work starts. Idempotent. Caller holds mu.
+// endLifeLocked ends the life: every fence taken before it stops holding, its context and every running lease's are
+// cancelled with marotte.ErrChatClosedDuringCall, and no new work starts. Idempotent. Caller holds mu.
 func (lc *chatLifecycle) endLifeLocked(epochs func() uint64) {
 	if lc.ended {
 		return
@@ -77,6 +99,9 @@ func (lc *chatLifecycle) endLifeLocked(epochs func() uint64) {
 	lc.ended = true
 	lc.epoch = epochs()
 	lc.cancel(marotte.ErrChatClosedDuringCall)
+	for _, cut := range lc.leaseCuts {
+		cut(marotte.ErrChatClosedDuringCall)
+	}
 	lc.quietIfDoneLocked()
 	lc.wakeLocked()
 }

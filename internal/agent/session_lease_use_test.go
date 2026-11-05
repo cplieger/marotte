@@ -38,13 +38,13 @@ func TestSessionLease_ARefusedLeaseRunsNothing(t *testing.T) {
 	}
 }
 
-// lockProbeLife records whether its entry's mutex was free while beginWork ran.
+// lockProbeLife records whether its entry's mutex was free while beginLease ran.
 type lockProbeLife struct {
 	sb   *sharedBridge
 	free *bool
 }
 
-func (l lockProbeLife) beginWork(workKind) (context.Context, func(), bool) {
+func (l lockProbeLife) beginLease(context.CancelCauseFunc) (context.Context, func(), bool) {
 	if l.sb.mu.TryLock() {
 		*l.free = true
 		l.sb.mu.Unlock()
@@ -52,7 +52,7 @@ func (l lockProbeLife) beginWork(workKind) (context.Context, func(), bool) {
 	return context.Background(), func() {}, true
 }
 
-func TestSessionLease_UseHoldsNoLockAcrossBeginWork(t *testing.T) {
+func TestSessionLease_UseHoldsNoLockAcrossBeginLease(t *testing.T) {
 	free := false
 	life := &lockProbeLife{free: &free}
 	sb := newSharedBridge(life)
@@ -62,7 +62,7 @@ func TestSessionLease_UseHoldsNoLockAcrossBeginWork(t *testing.T) {
 		t.Fatalf("use = %v", err)
 	}
 	if !free {
-		t.Errorf("beginWork ran with the entry's mutex held, want the two locks taken one after the other")
+		t.Errorf("beginLease ran with the entry's mutex held, want the two locks taken one after the other")
 	}
 }
 
@@ -111,5 +111,35 @@ func TestSessionLease_TheCommitCutsARunningLease(t *testing.T) {
 	lc.mu.Unlock()
 	if n != 0 {
 		t.Errorf("session work after the cut call returned = %d, want 0", n)
+	}
+}
+
+// The commit has cut a running lease by the time it returns, so a check the lease makes after the commit fails.
+func TestSessionLease_TheCommitHasCutTheLeaseWhenItReturns(t *testing.T) {
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	const chatID marotte.ChatID = "chat-cut-sync"
+	sb := newSharedBridge(h.coord.turns.testLifecycle(chatID))
+	sb.attach(newFakeBridge())
+	leased, proceed := make(chan context.Context, 1), make(chan struct{})
+	returned := make(chan error, 1)
+	go func() {
+		returned <- sb.use(context.Background(), func(ctx context.Context, _ engineSession) error {
+			leased <- ctx
+			<-proceed
+			return ctx.Err()
+		})
+	}()
+	ctx := <-leased
+
+	h.HoldChat(chatID).Commit()
+	cause := context.Cause(ctx)
+	close(proceed)
+
+	if !errors.Is(cause, marotte.ErrChatClosedDuringCall) {
+		t.Errorf("the lease's cause when the commit returned = %v, want ErrChatClosedDuringCall", cause)
+	}
+	if err := <-returned; !errors.Is(err, marotte.ErrChatClosedDuringCall) {
+		t.Errorf("use = %v, want the close's cut", err)
 	}
 }
