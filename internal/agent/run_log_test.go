@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -929,5 +930,51 @@ func TestLastWords_TakesTheTrailingProseRunAcrossAnAppliedFallback(t *testing.T)
 				t.Errorf("lastWords = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// A step's hook_update on a parentless run's host session lands in entries.jsonl as the chat's
+// hook card, and survives the step's turn closing.
+func TestRunLog_RecordsAStepsHook(t *testing.T) {
+	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
+	update, _ := json.Marshal(map[string]any{
+		"sessionUpdate": "session_info_update",
+		"_meta": map[string]any{"kiro": map[string]any{
+			"kind": "hook_update",
+			"hook": map[string]any{
+				"hookId": "h1", "operationId": "op-1", "name": "lint", "status": "completed",
+				"output": map[string]any{"result": map[string]any{"output": "2 errors\n", "exitCode": 1}},
+			},
+			"workflow": map[string]any{
+				"workflowId": "wf_1", "nodeId": "review", "nodePath": []any{"root", "review"}, "type": "step",
+			},
+		}},
+	})
+	params, _ := json.Marshal(map[string]any{"sessionId": "sess_step", "update": json.RawMessage(update)})
+	h.handleRunStepFrame(t.Context(), runChatID("wf_1"), &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params})
+	h.runs.RunNodeComplete(t.Context(), "wf_1", reviewSegments, "completed", "")
+
+	var hooks []marotte.EntryToolCall
+	for _, e := range runLogEntries(t, h.runs.log, "wf_1") {
+		if e.Kind != marotte.EntryKindToolCall {
+			continue
+		}
+		var c marotte.EntryToolCall
+		if err := json.Unmarshal(e.Payload, &c); err != nil {
+			t.Fatalf("decode tool_call %s: %v", e.Payload, err)
+		}
+		hooks = append(hooks, c)
+	}
+	if len(hooks) != 1 {
+		t.Fatalf("run log tool_call entries = %+v, want the step's one hook card", hooks)
+	}
+	got := hooks[0]
+	if got.ID != "hook-op-1" || got.Kind != marotte.ToolKindHook || got.Title != "Hook fired: lint" ||
+		got.Status != marotte.ToolFailed || got.Output != "2 errors\n" {
+		t.Errorf("run log hook card = %+v, want hook-op-1, kind hook, Hook fired: lint, failed, its output", got)
+	}
+	kinds, _ := runTurnsAt(t, h, reviewPath)
+	if len(kinds) != 1 || !slices.Contains(kinds[0], marotte.EntryKindToolCall) {
+		t.Errorf("review step turns = %v, want the hook card inside its one turn", kinds)
 	}
 }
