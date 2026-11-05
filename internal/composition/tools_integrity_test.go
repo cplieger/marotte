@@ -328,8 +328,10 @@ func TestBootFollowsTheTrustListOverAnACLGrant(t *testing.T) {
 			configDir, toolsDir := fitTree(t)
 			bin := filepath.Join(toolsDir, "bin")
 			mkdirMode(t, bin, 0o755)
-			if err := unix.Setxattr(bin, "system.posix_acl_access", posixACLGrant(65501), 0); err != nil {
+			if err := unix.Setxattr(bin, "system.posix_acl_access", posixACLGrant(65501), 0); errors.Is(err, unix.ENOTSUP) {
 				t.Skipf("this filesystem takes no POSIX ACL: %v", err)
+			} else if err != nil {
+				t.Fatalf("writing the ACL fixture: %v", err)
 			}
 			captureDefaultLogger(t)
 			cfg := &Config{

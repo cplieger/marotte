@@ -828,7 +828,8 @@ func logRootIntegrityRefusal(err error) {
 			"a group- or world-writable dir, and replace a symlink or a non-directory with a real directory; on the "+
 			"host, strip an ACL grant (setfacl -b for a POSIX list, the host's NFSv4 ACL tool on ZFS or NFS; the "+
 			"image ships neither). A user you trust that owns or can write a dir can go in TRUSTED_INSTALL_UIDS "+
-			"instead, which only a restart reads; it never clears a group writer, a symlink or a non-directory")
+			"instead, which only a restart reads; it never clears a group writer, or a managed dir that is itself "+
+			"a symlink or a non-directory")
 }
 
 // warnIfNoLSPEnabled nudges when no language server is enabled: kiro-cli scans PATH at
