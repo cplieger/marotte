@@ -41,3 +41,14 @@ func TestSessionsBucketGolden(t *testing.T) {
 		}
 	}
 }
+
+// KAS's bucket for several roots hashes them sorted and joined by NUL: a run opened on /workspace
+// with /data lands in the bucket of "/data\x00/workspace", whatever order the roots came in.
+func TestSessionsBucketOfSeveralRoots(t *testing.T) {
+	const golden = "1eb541da4f91b9f3"
+	for _, roots := range [][]string{{"/workspace", "/data"}, {"/data/", "/workspace"}} {
+		if got := SessionsBucket(roots...); got != golden {
+			t.Errorf("SessionsBucket(%q) = %q, want %q", roots, got, golden)
+		}
+	}
+}

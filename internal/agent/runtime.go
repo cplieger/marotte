@@ -221,7 +221,7 @@ type bus struct {
 	retractPush func(subj marotte.PushSubject, ask string)
 	// ownStopped reports a stop requested during the chat's current turn (turnRegistry.ownStopped).
 	ownStopped func(marotte.ChatID) bool
-	// searches is each chat's running grep_search and file_search, ended by its turn cancel.
+	// searches is the running grep_search and file_search calls, ended by a turn cancel, a run's end or their session's.
 	searches searchCancels
 	// legacyConnects and v3Connects count connects by wire generation; a legacy one (no SSE-Wire header) is an
 	// old bundle still running. Observability only.

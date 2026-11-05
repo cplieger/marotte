@@ -6,7 +6,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl && rm -rf /var/lib/apt/lists/*
+    ca-certificates curl ripgrep && rm -rf /var/lib/apt/lists/*
 
 # renovate: datasource=golang-version depName=golang
 ARG GO_VERSION=1.27.3
@@ -30,6 +30,11 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
+
+# The real-ripgrep search tests run here against Debian's rg, the one the final
+# stage installs: the CI test runner has no rg and skips them.
+RUN CGO_ENABLED=0 KIROSEARCH_REQUIRE_RG=1 GOPROXY=off \
+    go test -count=1 -run RealRG ./internal/kirosearch/
 
 # The baked tool catalog is the first-boot/offline fallback; the engine
 # refreshes it at boot and daily. The verify pass fails the build unless every

@@ -8,6 +8,7 @@ import (
 	"regexp"
 
 	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workspace"
 )
@@ -87,6 +88,12 @@ func (in *inbound) snapshotDir(sessionID marotte.SessionID, p string) (home, dir
 	if err != nil {
 		return "", "", false
 	}
-	dir = filepath.Join(home, "sessions", workspace.SessionsBucket(in.lifetime.workDir), "workflows", wf)
+	sessions := filepath.Join(home, "sessions")
+	// KAS keeps the run's directory in the bucket of all its roots, which its step session records.
+	roots, ok := kirosession.WorkspacePaths(sessions, string(sessionID))
+	if !ok {
+		roots = []string{in.lifetime.workDir}
+	}
+	dir = filepath.Join(sessions, workspace.SessionsBucket(roots...), "workflows", wf)
 	return home, dir, filepath.Dir(p) == dir
 }

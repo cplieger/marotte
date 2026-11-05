@@ -7,6 +7,7 @@ package kirosearch
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -26,10 +27,11 @@ import (
 	"github.com/cplieger/marotte/internal/procout"
 )
 
-// defaultDeadline bounds one search across every root. Measured on a 1.18-million-file workspace (warm
-// cache): a full file listing took 1.2 s and an unscoped text search 24.5 s, against KAS's own 30 s
-// rg budget. 15 s returns every scoped search whole and an unscoped one partial.
-const defaultDeadline = 15 * time.Second
+// searchDeadline bounds one search across every root; a var so tests can shorten it. Measured on a
+// 1.18-million-file workspace (warm cache): a full file listing took 1.2 s and an unscoped text
+// search 24.5 s, against KAS's own 30 s rg budget. 15 s returns every scoped search whole and an
+// unscoped one partial.
+var searchDeadline = 15 * time.Second
 
 // KAS 3.0.0's own caps (kGo, DGo, OGo and UZu in acp-server.js), so an answer holds what KAS's
 // own rg would have returned.
@@ -42,7 +44,8 @@ const (
 )
 
 const (
-	// maxLineBytes bounds one rg JSON line; --max-filesize 1M bounds a matched line, plus its escaping.
+	// maxLineBytes bounds one rg output line. A --json match event carries every submatch of its
+	// line, so --max-filesize does not bound it; a longer line is skipped.
 	maxLineBytes   = 4 << 20
 	maxStderrBytes = 64 << 10
 	// killWait bounds Wait after the group's SIGKILL, for a child still holding the pipes.
@@ -76,17 +79,18 @@ type FilesQuery struct {
 	MaxResults int
 }
 
-// Searcher runs the rg binary at Bin. An empty Bin finds nothing. A zero Deadline means 15 s.
+// Searcher runs the rg binary at Bin, each search within searchDeadline. An empty Bin finds nothing. Shown
+// is the session's roots answer paths are written against (displayPath); nil means the searched roots.
 type Searcher struct {
-	Bin      string
-	Deadline time.Duration
+	Bin   string
+	Shown []string
 }
 
-func (s Searcher) deadline() time.Duration {
-	if s.Deadline > 0 {
-		return s.Deadline
+func (s Searcher) shown(searched []string) []string {
+	if s.Shown != nil {
+		return s.Shown
 	}
-	return defaultDeadline
+	return searched
 }
 
 // Text searches roots for q.Pattern and returns the entries of the 100 files with the most matching
@@ -96,9 +100,9 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 	if s.Bin == "" || q.Pattern == "" || len(roots) == 0 {
 		return []Match{}
 	}
-	ctx, cancel := context.WithTimeout(ctx, s.deadline())
+	ctx, cancel := context.WithTimeout(ctx, searchDeadline)
 	defer cancel()
-	args := []string{"--json", "-C", "2", "--max-count", maxCountArg, "--max-filesize", "1M", "--hidden", "--glob", "!.git"}
+	args := []string{"--json", "--engine", "auto", "-C", "2", "--max-count", maxCountArg, "--max-filesize", "1M", "--hidden", "--no-require-git", "--glob", "!.git"}
 	if !q.CaseSensitive {
 		args = append(args, "--ignore-case")
 	}
@@ -134,7 +138,7 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 	out := make([]Match, 0, maxTextEntries)
 	for _, f := range files {
 		slices.SortStableFunc(f.entries, func(a, b Match) int { return cmp.Compare(a.LineNumber, b.LineNumber) })
-		shown := displayPath(f.abs, roots)
+		shown := displayPath(f.abs, s.shown(roots))
 		for _, e := range f.entries {
 			if len(out) == maxTextEntries {
 				return out
@@ -170,7 +174,7 @@ type rgEvent struct {
 func (s Searcher) textRoot(ctx context.Context, root string, args []string) []*fileHits {
 	byPath := map[string]*fileHits{}
 	var order []*fileHits
-	s.run(ctx, root, args, func(line []byte) bool {
+	onLine := func(line []byte) bool {
 		var ev rgEvent
 		if json.Unmarshal(line, &ev) != nil || (ev.Type != "match" && ev.Type != "context") {
 			return true
@@ -194,8 +198,27 @@ func (s Searcher) textRoot(ctx context.Context, root string, args []string) []*f
 			f.matchCount++
 		}
 		return true
-	})
+	}
+	refusal := s.run(ctx, root, args, onLine)
+	if refusal != "" && regexRefused(refusal) {
+		// KAS 3.0.0's own search escapes a pattern its regex engine rejects and finds the literal.
+		refusal = s.run(ctx, root, append([]string{"--fixed-strings"}, args...), onLine)
+	}
+	logRefusal(root, refusal)
 	return order
+}
+
+// regexRefused reports whether rg's stderr names a pattern no regex engine could compile.
+func regexRefused(stderr string) bool {
+	return strings.Contains(stderr, "regex parse error") || strings.Contains(stderr, "regex could not be compiled") ||
+		strings.Contains(stderr, "compiled regex exceeds size limit")
+}
+
+func logRefusal(root, stderr string) {
+	if stderr != "" {
+		first, _, _ := strings.Cut(stderr, "\n")
+		slog.Warn("search: ripgrep exited 2 having searched nothing", "root", root, "stderr", first)
+	}
 }
 
 // Files lists the files under roots matching q.Pattern, at most q.MaxResults, the first root's
@@ -210,9 +233,9 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 	if s.Bin == "" || len(roots) == 0 {
 		return []string{}
 	}
-	ctx, cancel := context.WithTimeout(ctx, s.deadline())
+	ctx, cancel := context.WithTimeout(ctx, searchDeadline)
 	defer cancel()
-	args := []string{"--files", "--max-depth", maxDepthArg, "--hidden", "--glob", "!.git"}
+	args := []string{"--files", "--max-depth", maxDepthArg, "--hidden", "--no-require-git", "--glob", "!.git"}
 	if q.Pattern != "" && q.Pattern != "**/*" {
 		args = append(args, "--glob", q.Pattern)
 	}
@@ -228,7 +251,7 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 			continue
 		}
 		wg.Go(func() {
-			perRoot[i] = s.filesRoot(ctx, root, append(slices.Clone(args), dir), limit)
+			perRoot[i] = s.filesRoot(ctx, root, append(slices.Clone(args), "--", dir), limit)
 		})
 	}
 	wg.Wait()
@@ -239,7 +262,7 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 			if len(out) == limit {
 				return out
 			}
-			out = append(out, displayPath(abs, roots))
+			out = append(out, displayPath(abs, s.shown(roots)))
 		}
 	}
 	return out
@@ -247,19 +270,29 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 
 func (s Searcher) filesRoot(ctx context.Context, root string, args []string, limit int) []string {
 	var found []string
-	s.run(ctx, root, args, func(line []byte) bool {
+	refusal := s.run(ctx, root, args, func(line []byte) bool {
 		if len(line) > 0 {
 			found = append(found, filepath.Join(root, string(line)))
 		}
 		return len(found) < limit
 	})
+	switch {
+	case strings.Contains(refusal, "error parsing glob"):
+		logRefusal(root, refusal)
+	case refusal != "":
+		// A --files walk that finds no file writes nothing, so this exit 2 can be a walk that met
+		// unreadable paths; --json always ends with a summary line, so Text never gets here.
+		slog.Debug("search: ripgrep found no file and skipped unreadable paths", "root", root,
+			"errors", strings.Count(refusal, "\n"))
+	}
 	return found
 }
 
 // run streams rg's stdout lines, under root, to line until it returns false, ctx ends, or the
-// output passes maxOutputBytes, then kills rg's process group. Every failure is logged and leaves
-// the lines already read with the caller.
-func (s Searcher) run(ctx context.Context, root string, args []string, line func([]byte) bool) {
+// output passes maxOutputBytes, then kills rg's process group. It returns rg's stderr when rg
+// exited 2 having written no line; every other failure is logged here. The lines already read
+// stay with the caller.
+func (s Searcher) run(ctx context.Context, root string, args []string, line func([]byte) bool) (refusal string) {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	cmd := exec.CommandContext(runCtx, s.Bin, args...) //nolint:gosec // G204: Bin is the image's rg (systembin); request fields are arguments after rg's own flags, never a shell
@@ -271,47 +304,120 @@ func (s Searcher) run(ctx context.Context, root string, args []string, line func
 	stderr := procout.NewBuffer(maxStderrBytes)
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
+	if err == nil {
+		err = cmd.Start()
+	}
 	if err != nil {
-		slog.Warn("search: ripgrep could not be started", "error", err)
-		return
-	}
-	if err = cmd.Start(); err != nil {
-		slog.Warn("search: ripgrep could not be started", "error", err)
-		return
-	}
-	sc := bufio.NewScanner(io.LimitReader(stdout, maxOutputBytes))
-	sc.Buffer(make([]byte, 0, 64<<10), maxLineBytes)
-	stoppedEarly := false
-	for sc.Scan() {
-		if !line(sc.Bytes()) {
-			stoppedEarly = true
-			break
+		if ctx.Err() != nil {
+			slog.Debug("search: deadline or cancel reached before ripgrep started", "root", root, "reason", context.Cause(ctx))
+		} else {
+			slog.Warn("search: ripgrep could not be started", "error", err)
 		}
+		return ""
 	}
-	// A full pipe would block rg forever once the reads stop, so the group is killed before Wait.
-	stop()
+	out := &io.LimitedReader{R: stdout, N: maxOutputBytes}
+	read := readLines(out, line)
+	read.capped = out.N <= 0
+	if read.stopped || read.err != nil || read.capped {
+		// A full pipe would block rg forever once the reads stop, so the group is killed before Wait.
+		// After a natural EOF rg is exiting, and a kill then would turn a clean exit into a failure.
+		stop()
+	}
 	err = cmd.Wait()
-	var exitErr *exec.ExitError
+	if read.skipped > 0 {
+		slog.Debug("search: skipped ripgrep output lines over the line cap", "root", root, "lines", read.skipped)
+	}
+	return exitRefusal(ctx, root, err, read, stderr.String())
+}
+
+// exitRefusal logs how rg's run ended, and returns its stderr when rg exited 2 having written no
+// line.
+func exitRefusal(ctx context.Context, root string, err error, read readResult, stderr string) string {
+	code := -1
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+		code = exitErr.ExitCode()
+	}
 	switch {
 	case err == nil:
 	case ctx.Err() != nil:
 		slog.Debug("search: deadline or cancel reached; returning partial results", "root", root, "reason", context.Cause(ctx))
-	case stoppedEarly || sc.Err() != nil:
-	case errors.As(err, &exitErr) && exitErr.ExitCode() == 1:
-	case errors.As(err, &exitErr) && exitErr.ExitCode() == 2:
-		// rg's exit 2 is "some paths were unreadable", with every other result valid. KAS's own rg
-		// path rejects it, which is the walker fallback this package replaces.
+	case read.stopped:
+	case read.err != nil:
+		slog.Debug("search: reading ripgrep's output failed; returning what it found", "root", root, "error", read.err)
+	case read.capped:
+		slog.Debug("search: ripgrep's output reached its cap; returning what it found", "root", root)
+	case code == 1:
+	case code == 2 && read.lines+read.skipped == 0:
+		return cmp.Or(stderr, "(no stderr)")
+	case code == 2:
+		// rg's exit 2 after output is "some paths were unreadable", with every other result valid.
+		// KAS's own rg path rejects it, which is the walker fallback this package replaces.
 		slog.Debug("search: ripgrep skipped unreadable paths; results kept", "root", root,
-			"errors", strings.Count(stderr.String(), "\n"))
+			"errors", strings.Count(stderr, "\n"))
 	default:
 		slog.Warn("search: ripgrep failed; returning what it found", "root", root, "error", err)
+	}
+	return ""
+}
+
+type readResult struct {
+	err     error
+	lines   int
+	skipped int
+	stopped bool
+	capped  bool
+}
+
+// readLines calls line with each line of r, without its '\n', until line returns false or r
+// ends. A line over maxLineBytes is skipped and reading goes on, which bufio.Scanner cannot do.
+func readLines(r io.Reader, line func([]byte) bool) readResult {
+	br := bufio.NewReaderSize(r, 64<<10)
+	var res readResult
+	var buf []byte
+	for {
+		var tooLong bool
+		var err error
+		buf, tooLong, err = readLine(br, buf)
+		switch {
+		case tooLong:
+			res.skipped++
+		case len(buf) > 0:
+			res.lines++
+			if !line(bytes.TrimSuffix(buf, []byte("\n"))) {
+				res.stopped = true
+				return res
+			}
+		}
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				res.err = err
+			}
+			return res
+		}
+	}
+}
+
+// readLine reads one line of br into buf, reporting tooLong, with buf emptied, for a line over
+// maxLineBytes.
+func readLine(br *bufio.Reader, buf []byte) (out []byte, tooLong bool, err error) {
+	buf = buf[:0]
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if !tooLong && len(buf)+len(chunk) > maxLineBytes {
+			tooLong, buf = true, buf[:0]
+		} else if !tooLong {
+			buf = append(buf, chunk...)
+		}
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			return buf, tooLong, err
+		}
 	}
 }
 
 // scope is the directory, relative to root, rg searches for glob: the glob's leading literal
 // directories, so rg skips every other subtree (a --glob filters names but still descends every
-// directory). ok is false when that directory is absent, so no file under root can match. A
-// prefix reached through a symlink falls back to all of root, which rg walks without following it.
+// directory). ok is false when no file under root can match: the directory is absent, or reached
+// through a symlink, which rg does not follow. A prefix it cannot resolve falls back to all of root.
 func scope(root, glob string) (dir string, ok bool) {
 	if !strings.Contains(glob, "/") || strings.HasPrefix(glob, "/") {
 		return ".", true
@@ -335,8 +441,11 @@ func scope(root, glob string) (dir string, ok bool) {
 	}
 	resolved, err := filepath.EvalSymlinks(want)
 	realRoot, rootErr := filepath.EvalSymlinks(root)
-	if err != nil || rootErr != nil || resolved != filepath.Join(realRoot, rel) {
+	if err != nil || rootErr != nil {
 		return ".", true
+	}
+	if resolved != filepath.Join(realRoot, rel) {
+		return "", false
 	}
 	return rel, true
 }

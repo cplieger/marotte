@@ -308,9 +308,10 @@ func TestHealBudget_AStopTheDiskRefusedIsStillAnnounced(t *testing.T) {
 	if got, want := frames.sent(), []stopFrame{{chat: parkChat, stopped: true}}; !slices.Equal(got, want) {
 		t.Errorf("paused frames = %+v, want %+v", got, want)
 	}
-	if !strings.Contains(logs.String(), "a run marotte stopped resuming could not be recorded as such") {
-		t.Error("the failed stop write logged no warning")
-	}
+	// The stop's frame goes out inside the failed write, before its warning is logged.
+	waitUntil(t, "the failed stop write's warning", func() bool {
+		return strings.Contains(logs.String(), "a run marotte stopped resuming could not be recorded as such")
+	})
 }
 
 // A person's pause of a stopped run keeps it paused, and KAS's frame for it can precede the cleared stop, so the

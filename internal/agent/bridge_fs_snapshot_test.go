@@ -17,6 +17,7 @@ type snapshotFixture struct {
 	h       *Runtime
 	br      *respondingBridge
 	home    string
+	work    string
 	runA    string
 	runB    string
 	outside string
@@ -27,7 +28,7 @@ func newSnapshotFixture(t *testing.T) *snapshotFixture {
 	tmp := canonDir(t, t.TempDir())
 	t.Setenv("HOME", tmp)
 	work := canonDir(t, t.TempDir())
-	f := &snapshotFixture{home: filepath.Join(tmp, ".kiro"), outside: filepath.Join(tmp, "outside.txt")}
+	f := &snapshotFixture{home: filepath.Join(tmp, ".kiro"), work: work, outside: filepath.Join(tmp, "outside.txt")}
 	workflows := filepath.Join(f.home, "sessions", workspace.SessionsBucket(work), "workflows")
 	f.runA, f.runB = filepath.Join(workflows, "wf_a"), filepath.Join(workflows, "wf_b")
 	for path, body := range map[string]string{
@@ -252,4 +253,33 @@ func TestRespondFSRead_TheSnapshotGrantGoesNoFurther(t *testing.T) {
 			t.Errorf("read_directory of its run's directory = %+v, want refused", f.br.response.result)
 		}
 	})
+}
+
+// KAS keeps a run's directory in the bucket of all the run's roots, so a run with an additional
+// directory has it outside the workspace's own bucket; the step's session record names those roots.
+func TestRespondFSRead_AStepReadsItsSnapshotUnderAllItsRunsRoots(t *testing.T) {
+	f := newSnapshotFixture(t)
+	extra := canonDir(t, t.TempDir())
+	sessions := filepath.Join(f.home, "sessions")
+	run := filepath.Join(sessions, workspace.SessionsBucket(f.work, extra), "workflows", "wf_c")
+	for path, body := range map[string]string{
+		filepath.Join(run, "edit-snapshot-r1.md"): "run c's snapshot\n",
+		filepath.Join(sessions, workspace.SessionsBucket(f.work, extra), "sess_step_c", "session.json"): string(
+			mustJSON(t, map[string]any{"workspacePaths": []string{f.work, extra}}),
+		),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.h.router.seedSteps("wf_c", []string{"sess_step_c"})
+
+	got, err := f.read(t, "sess_step_c", filepath.Join(run, "edit-snapshot-r1.md"), nil)
+
+	if err != nil || got != "run c's snapshot\n" {
+		t.Errorf("read of its run's snapshot = %q, %v; want the snapshot", got, err)
+	}
 }
