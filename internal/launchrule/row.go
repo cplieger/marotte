@@ -58,8 +58,8 @@ type Run struct {
 	WorkflowID string
 }
 
-// Clock is a clock rule with its row. Err is the rule's *UnreadableStateError when its state file would not
-// load, and Status is then zero: such a rule must not fire, since its anchor is unknown.
+// Clock is a clock rule with its row. Err is what State answers for a blocked rule (refused at load, or its state
+// file would not load), and Status is then zero: such a rule must not fire.
 type Clock struct {
 	Err error
 	Rule
@@ -101,14 +101,14 @@ func (s *Store) Clock(id string) (Clock, bool) {
 func clockOf(r *Rule, rs *ruleState) Clock {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	if rs.unreadable != nil {
-		return Clock{Rule: *r, Err: rs.unreadable}
+	if err := rs.blocked(); err != nil {
+		return Clock{Rule: *r, Err: err}
 	}
 	return Clock{Rule: *r, Status: rs.state.Status}
 }
 
 // UpdateClock applies set to the clock rule row names and writes that rule's state file when set reports a
-// change. ErrNotFound when no clock rule has the id, the rule's *UnreadableStateError when its file would not load.
+// change. ErrNotFound when no clock rule has the id, what State answers when the rule is blocked.
 func (s *Store) UpdateClock(ctx context.Context, row Row, set func(st *Status) bool) error {
 	s.mu.Lock()
 	i := s.indexLocked(row.ID)
@@ -123,8 +123,8 @@ func (s *Store) UpdateClock(ctx context.Context, row Row, set func(st *Status) b
 	if rs.gone {
 		return ErrNotFound
 	}
-	if rs.unreadable != nil {
-		return rs.unreadable
+	if err := rs.blocked(); err != nil {
+		return err
 	}
 	st := rs.state.clone()
 	if !set(&st.Status) {

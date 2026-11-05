@@ -2,7 +2,7 @@
 // recurrence math and next_run_at.
 
 import { join as joinKey } from "@cplieger/keyenc";
-import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { ActionError, apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import type {
   LaunchRulesResponse,
   LaunchRuleView,
@@ -30,6 +30,7 @@ function scheduleViewOf(r: LaunchRuleView): ScheduleView | null {
     ...(r.name === undefined ? {} : { name: r.name }),
     ...(r.model === undefined ? {} : { model: r.model }),
     ...(r.effort === undefined ? {} : { effort: r.effort }),
+    ...(r.inputs === undefined ? {} : { inputs: r.inputs }),
     ...(r.next_run_at === undefined ? {} : { next_run_at: r.next_run_at }),
     ...(st?.last_run_at === undefined ? {} : { last_run_at: st.last_run_at }),
     ...(status === undefined ? {} : { last_status: status }),
@@ -56,12 +57,18 @@ export const loadSchedules = apiAction<
   error: "Could not load schedules",
 });
 
-/** Create a recipe's clock rule, or replace the one `id` names. A refused model pick shows the
- *  server's sentence. A create while one for the same recipe is in flight joins it, because a
- *  second POST would mint a second rule the form never shows. */
+/** Create a recipe's clock rule, or replace the one `id` names, answering the stored rule. A
+ *  refused model pick shows the server's sentence. A create while one for the same recipe is in
+ *  flight joins it, because a second POST would mint a second rule the form never shows. */
 export const saveSchedule = apiAction<
-  { id?: string; source: string; spec: ScheduleSpec; enabled: boolean } & RunDefaults,
-  LaunchRuleView
+  {
+    id?: string;
+    source: string;
+    spec: ScheduleSpec;
+    enabled: boolean;
+    inputs?: Record<string, string>;
+  } & RunDefaults,
+  ScheduleView
 >({
   name: "schedules.save",
   dedupe: (a) => (a.id === undefined ? joinKey("new", a.source) : joinKey("rule", a.id)),
@@ -74,9 +81,17 @@ export const saveSchedule = apiAction<
       enabled: a.enabled,
       ...(a.model === undefined ? {} : { model: a.model }),
       ...(a.effort === undefined ? {} : { effort: a.effort }),
+      ...(a.inputs === undefined ? {} : { inputs: a.inputs }),
       when: { clock: a.spec },
     },
   }),
+  decode: (data) => {
+    const v = scheduleViewOf(data as LaunchRuleView);
+    if (v === null) {
+      throw new ActionError("the server answered a rule with no clock");
+    }
+    return v;
+  },
   error: (_args, err) => serverSentence(err) ?? "Could not save the schedule",
 });
 

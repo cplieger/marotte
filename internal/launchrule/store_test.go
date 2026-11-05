@@ -355,7 +355,6 @@ func TestFixedInputNamedLikeEventInputRefused(t *testing.T) {
 func TestMalformedFileIsAnError(t *testing.T) {
 	cases := map[string]string{
 		"not json":          `{"rules": [`,
-		"an invalid rule":   `[{"id":"a","source":"bundled://a","enabled":true,"when":{}}]`,
 		"a rule with no id": `[{"source":"bundled://a","enabled":true,"when":{"clock":{"freq":"daily","hour":1,"minute":0}}}]`,
 		"a duplicate id": `[{"id":"a","source":"bundled://a","enabled":true,"when":{"clock":{"freq":"daily","hour":1,"minute":0}}},` +
 			`{"id":"a","source":"bundled://b","enabled":true,"when":{"clock":{"freq":"daily","hour":1,"minute":0}}}]`,
@@ -372,6 +371,61 @@ func TestMalformedFileIsAnError(t *testing.T) {
 			}
 			if got := readRules(t, dir); string(got) != body {
 				t.Errorf("NewStore rewrote the malformed file: %s", got)
+			}
+		})
+	}
+}
+
+// A rule this build refuses (one a newer build wrote, say) blocks itself alone: the other rules load and run, and
+// the refused one is listed with its error, never fires, and can be replaced or deleted.
+func TestRefusedStoredRuleBlocksOnlyItself(t *testing.T) {
+	const refused, valid = "AAAAAAAAAAAAAAAAAAAAAA", "AQAAAAAAAAAAAAAAAAAAAA"
+	clock := `"when":{"clock":{"freq":"daily","hour":1,"minute":0}}`
+	body := `[{"id":"` + refused + `","source":"bundled://a","enabled":true,"when":{"clock":{"freq":"minutely","interval":1,"hour":0,"minute":0}}},` +
+		`{"id":"` + valid + `","source":"bundled://b","enabled":true,` + clock + `}]`
+	for _, end := range []string{"delete", "replace"} {
+		t.Run(end, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, rulesFileName), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			st := openStore(t, dir)
+			if got := st.List(); len(got) != 2 || got[0].ID != refused || got[1].ID != valid {
+				t.Fatalf("List = %+v, want the refused rule then the valid one", got)
+			}
+			if _, err := st.State(refused); err == nil || !strings.Contains(err.Error(), "interval") {
+				t.Errorf("State(refused) error = %v, want the refusal naming interval", err)
+			}
+			if _, err := st.State(valid); err != nil {
+				t.Errorf("State(valid) error = %v, want nil", err)
+			}
+			byID := map[string]Clock{}
+			for _, c := range st.Clocks() {
+				byID[c.ID] = c
+			}
+			if byID[refused].Err == nil || byID[valid].Err != nil {
+				t.Errorf("Clocks errors = refused %v, valid %v; want the refused one blocked only", byID[refused].Err, byID[valid].Err)
+			}
+			if err := st.UpdateClock(t.Context(), Row{ID: refused}, func(*Status) bool { return true }); err == nil {
+				t.Error("UpdateClock(refused) = nil, want the refusal")
+			}
+			if end == "delete" {
+				if err := st.Delete(t.Context(), refused); err != nil {
+					t.Fatalf("Delete(refused): %v", err)
+				}
+				if got := openStore(t, dir).List(); len(got) != 1 || got[0].ID != valid {
+					t.Errorf("after Delete and a reload, List = %+v, want only the valid rule", got)
+				}
+				return
+			}
+			if _, err := st.Replace(t.Context(), refused, clockRule("bundled://a"), 0); err != nil {
+				t.Fatalf("Replace(refused): %v", err)
+			}
+			if _, err := st.State(refused); err != nil {
+				t.Errorf("State after Replace error = %v, want nil", err)
+			}
+			if err := st.UpdateClock(t.Context(), Row{ID: refused}, func(*Status) bool { return true }); err != nil {
+				t.Errorf("UpdateClock after Replace = %v, want nil", err)
 			}
 		})
 	}

@@ -7,7 +7,12 @@ import { onBus, onSSE, BUS_CATALOG_MODELS, BUS_RUNS_CHANGED } from "./bus.js";
 import { reconcile } from "./reconcile.js";
 import { loadRecipes, loadRuns, launchRun, cancelRun } from "./actions/runs.js";
 import { loadSchedules, saveSchedule, deleteSchedule } from "./actions/schedules.js";
-import { buildSchedulePicker, defaultSpec, summaryLine } from "./schedule-picker.js";
+import {
+  buildSchedulePicker,
+  defaultSpec,
+  offerScheduleRemove,
+  summaryLine,
+} from "./schedule-picker.js";
 import {
   buildRunDefaultsPicker,
   type RunDefaults,
@@ -213,6 +218,9 @@ async function refreshSchedules(): Promise<void> {
     }
   }
   schedules = next;
+  if (scheduleForm !== null && schedules.has(scheduleForm.source)) {
+    offerScheduleRemove(scheduleForm.picker);
+  }
   paint();
 }
 
@@ -233,6 +241,9 @@ function syncSchedule(row: HTMLElement, r: Recipe): void {
 
 /** The open schedule form's Model and Effort selects; one popup of the group is open at a time. */
 let schedulePicks: RunDefaultsPicker | null = null;
+
+/** The open schedule form, so a list that lands after it opened can offer its Remove. */
+let scheduleForm: { readonly source: string; readonly picker: HTMLElement } | null = null;
 
 function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
   let popup: ReturnType<typeof createPopup> | null = null;
@@ -263,46 +274,55 @@ function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
       },
     });
     schedulePicks = picks;
-    body.appendChild(
-      buildSchedulePicker({
-        spec: view?.spec ?? defaultSpec(),
-        enabled: view?.enabled ?? false,
-        exists: view !== undefined,
-        autoApprove,
-        picks,
-        onOpenPermissions: () => {
+    const picker = buildSchedulePicker({
+      spec: view?.spec ?? defaultSpec(),
+      enabled: view?.enabled ?? false,
+      exists: view !== undefined,
+      autoApprove,
+      picks,
+      onOpenPermissions: () => {
+        close();
+        void openSettingsView("permissions");
+      },
+      // Closed only once saved: a refused pick leaves the reader's edits on the form beside the
+      // server's sentence. The rule is looked up at save, not at open: a list that lands while
+      // the form is open names the rule to replace, and a POST then would add a second one.
+      onSave: (spec: ScheduleSpec, enabled: boolean, defaults: RunDefaults) => {
+        void (async () => {
+          const current = schedules.get(source);
+          const saved = await saveSchedule.dispatch({
+            ...(current === undefined ? {} : { id: current.id }),
+            ...(current?.inputs === undefined ? {} : { inputs: current.inputs }),
+            source,
+            spec,
+            enabled,
+            ...defaults,
+          });
+          if (saved === null) {
+            return;
+          }
           close();
-          void openSettingsView("permissions");
-        },
-        // Closed only once saved: a refused pick leaves the reader's edits on the form beside the
-        // server's sentence. The rule is looked up at save, not at open: a list that lands while
-        // the form is open names the rule to replace, and a POST then would add a second one.
-        onSave: (spec: ScheduleSpec, enabled: boolean, defaults: RunDefaults) => {
-          void (async () => {
-            const current = schedules.get(source);
-            const id = current === undefined ? {} : { id: current.id };
-            if (
-              (await saveSchedule.dispatch({ ...id, source, spec, enabled, ...defaults })) === null
-            ) {
-              return;
-            }
-            close();
-            await refreshSchedules();
-          })();
-        },
-        onRemove: () => {
-          close();
-          void (async () => {
-            const current = schedules.get(source);
-            if (current !== undefined) {
-              await deleteSchedule.dispatch(current.id);
-            }
-            await refreshSchedules();
-          })();
-        },
-        onClose: close,
-      }),
-    );
+          // Kept before the refresh: a failed list read would otherwise leave no id, and the next
+          // Save would mint a second rule.
+          schedules.set(source, saved);
+          paint();
+          await refreshSchedules();
+        })();
+      },
+      onRemove: () => {
+        close();
+        void (async () => {
+          const current = schedules.get(source);
+          if (current !== undefined) {
+            await deleteSchedule.dispatch(current.id);
+          }
+          await refreshSchedules();
+        })();
+      },
+      onClose: close,
+    });
+    scheduleForm = { source, picker };
+    body.appendChild(picker);
     popup.show();
     open = true;
   });

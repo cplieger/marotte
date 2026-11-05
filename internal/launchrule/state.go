@@ -74,11 +74,21 @@ func (e *UnreadableStateError) Unwrap() error { return e.Err }
 // ruleState is one rule's state and the mutex its file's writes run under.
 type ruleState struct {
 	unreadable error
-	state      State
-	mu         sync.Mutex
+	// refused is the load-time refusal of the rule's definition, cleared by a Replace that stores a valid one.
+	refused error
+	state   State
+	mu      sync.Mutex
 	// gone is set, under mu, once the rule is out of the definitions, so no write after it recreates the file
 	// Delete removes.
 	gone bool
+}
+
+// blocked is why the rule may neither fire nor have its state read or written, nil when it may; rs.mu is held.
+func (rs *ruleState) blocked() error {
+	if rs.refused != nil {
+		return rs.refused
+	}
+	return rs.unreadable
 }
 
 // removeFile is a test seam for a state file removal that fails.
@@ -97,13 +107,15 @@ func (s *Store) statePath(ruleID string) string {
 	return filepath.Join(s.dir, stateDirName, ruleID+".json")
 }
 
-// loadStates reads every rule's state file and removes those whose rule is gone, which a Delete whose removal
-// failed leaves behind.
-func (s *Store) loadStates() {
+// loadStates reads every rule's state file, blocks each rule refused names, and removes the files whose rule is
+// gone, which a Delete whose removal failed leaves behind.
+func (s *Store) loadStates(refused map[string]error) {
 	s.states = make(map[string]*ruleState, len(s.rules))
 	for i := range s.rules {
 		r := &s.rules[i]
-		s.states[r.ID] = s.readState(r)
+		rs := s.readState(r)
+		rs.refused = refused[r.ID]
+		s.states[r.ID] = rs
 	}
 	entries, err := os.ReadDir(filepath.Join(s.dir, stateDirName))
 	if err != nil {
@@ -153,8 +165,8 @@ func parseState(data []byte) (State, error) {
 	return st, nil
 }
 
-// State returns a copy of the rule's state: ErrNotFound for no such rule, an *UnreadableStateError for a rule
-// whose file would not load.
+// State returns a copy of the rule's state: ErrNotFound for no such rule, the refusal of a rule this build
+// refused at load, an *UnreadableStateError for a rule whose file would not load.
 func (s *Store) State(ruleID string) (State, error) {
 	rs, err := s.ruleState(ruleID)
 	if err != nil {
@@ -162,14 +174,14 @@ func (s *Store) State(ruleID string) (State, error) {
 	}
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	if rs.unreadable != nil {
-		return State{}, rs.unreadable
+	if err := rs.blocked(); err != nil {
+		return State{}, err
 	}
 	return rs.state.clone(), nil
 }
 
 // WriteState replaces the rule's state file with in, touching no other file. ErrNotFound for no such rule; a
-// rule whose file would not load refuses with its *UnreadableStateError, so its file is never overwritten.
+// blocked rule refuses with what State answers, so its file is never overwritten.
 func (s *Store) WriteState(ctx context.Context, ruleID string, in *State) error {
 	rs, err := s.ruleState(ruleID)
 	if err != nil {
@@ -180,8 +192,8 @@ func (s *Store) WriteState(ctx context.Context, ruleID string, in *State) error 
 	if rs.gone {
 		return ErrNotFound
 	}
-	if rs.unreadable != nil {
-		return rs.unreadable
+	if err := rs.blocked(); err != nil {
+		return err
 	}
 	st := in.clone()
 	return s.writeStateLocked(ctx, ruleID, rs, &st)

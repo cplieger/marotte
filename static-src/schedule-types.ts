@@ -56,6 +56,8 @@ export interface ScheduleView {
   /** The run's model and effort pick, sent at each fire; absent is Default. */
   model?: string;
   effort?: string;
+  /** Fixed inputs sent with each fire; a save sends them back, since the server stores the rule whole. */
+  inputs?: Record<string, string>;
 }
 
 export interface SchedulesResponse {
@@ -80,6 +82,7 @@ export interface LaunchRuleView {
   enabled: boolean;
   model?: string;
   effort?: string;
+  inputs?: Record<string, string>;
   when: { clock?: ScheduleSpec; event?: unknown };
   next_run_at?: string;
   /** Absent, with `error` set, when the rule's state file would not load. */

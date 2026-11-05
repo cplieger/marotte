@@ -39,40 +39,45 @@ type Store struct {
 	mu     sync.Mutex
 }
 
-// NewStore opens (or starts) the store at <dir>/launch-rules.json. A file that does not parse, or holds a rule
-// the store would refuse, is an error rather than a silent reset of the operator's rules.
+// NewStore opens (or starts) the store at <dir>/launch-rules.json. A file that does not parse, or holds a
+// malformed or repeated id, is an error rather than a silent reset of the operator's rules. A rule the store would
+// refuse loads blocked, alone: it never fires, its state reads as the refusal, and it can be replaced or deleted.
 func NewStore(dir string) (*Store, error) {
 	s := &Store{dir: dir, path: filepath.Join(dir, rulesFileName), now: time.Now}
-	if err := s.loadRules(); err != nil {
+	refused, err := s.loadRules()
+	if err != nil {
 		return nil, err
 	}
-	s.loadStates()
+	s.loadStates(refused)
 	return s, nil
 }
 
-func (s *Store) loadRules() error {
+// loadRules reads the definitions and returns the refusal of each rule Normalize refuses, by id.
+func (s *Store) loadRules() (map[string]error, error) {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("read %s: %w", s.path, err)
+		return nil, fmt.Errorf("read %s: %w", s.path, err)
 	}
 	if err := json.Unmarshal(data, &s.rules); err != nil {
-		return fmt.Errorf("parse %s: %w", s.path, err)
+		return nil, fmt.Errorf("parse %s: %w", s.path, err)
 	}
 	seen := make(map[string]bool, len(s.rules))
+	refused := map[string]error{}
 	for i := range s.rules {
 		r := &s.rules[i]
 		if !validID(r.ID) || seen[r.ID] {
-			return fmt.Errorf("%s: rule %d has a malformed or repeated id", s.path, i)
+			return nil, fmt.Errorf("%s: rule %d has a malformed or repeated id", s.path, i)
 		}
 		seen[r.ID] = true
 		if err := r.Normalize(); err != nil {
-			return fmt.Errorf("%s: rule %s: %w", s.path, r.ID, err)
+			refused[r.ID] = fmt.Errorf("this build refuses the stored rule: %w", err)
+			slog.Error("launch rule blocked: this build refuses it", "rule", r.ID, "error", err)
 		}
 	}
-	return nil
+	return refused, nil
 }
 
 // List returns a copy of every rule, in creation order.
@@ -160,6 +165,9 @@ func (s *Store) Replace(ctx context.Context, id string, in *Rule, confirmDrop in
 		return Rule{}, err
 	}
 	s.rules = next
+	rs.mu.Lock()
+	rs.refused = nil
+	rs.mu.Unlock()
 	if rebaseline {
 		s.rebaselineLocked(ctx, &r, rs)
 	}
@@ -172,7 +180,7 @@ func (s *Store) Replace(ctx context.Context, id string, in *Rule, confirmDrop in
 func heldOf(rs *ruleState) int {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	if rs.unreadable != nil {
+	if rs.blocked() != nil {
 		return 0
 	}
 	return rs.state.Held()
@@ -183,7 +191,7 @@ func heldOf(rs *ruleState) int {
 func (s *Store) rebaselineLocked(ctx context.Context, r *Rule, rs *ruleState) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	if rs.unreadable != nil {
+	if rs.blocked() != nil {
 		return
 	}
 	st := State{Status: rs.state.Status, Population: population(r), Attempts: slices.Clone(rs.state.Attempts)}
@@ -199,7 +207,7 @@ func (s *Store) dropStaleWaitLocked(ctx context.Context, r *Rule) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	wait := rs.state.Status.WaitingFor
-	if rs.unreadable != nil || wait.IsZero() {
+	if rs.blocked() != nil || wait.IsZero() {
 		return
 	}
 	if due, err := NextRun(*r.When.Clock, rs.state.Status.Anchor); r.Enabled && err == nil && due.Equal(wait) {

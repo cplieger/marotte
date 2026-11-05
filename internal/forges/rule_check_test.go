@@ -186,3 +186,16 @@ func TestSaveReadsOnePageOfTheKindsList(t *testing.T) {
 		}
 	}
 }
+
+// launchrule keeps its own copy of the forge kinds a connection id may name; every kind here must pass it.
+func TestEveryForgeKindIsAnEventRuleConnection(t *testing.T) {
+	for _, kind := range allKinds() {
+		rule := launchrule.Rule{Source: "bundled://nightly", When: launchrule.When{Event: &launchrule.EventSpec{
+			Connection: MakeID(kind, "git.example.org"), Repo: "cplieger/animap", Kind: launchrule.KindRunConcluded,
+			Filter: launchrule.Filter{Result: []string{"success"}},
+		}}}
+		if err := rule.Normalize(); err != nil {
+			t.Errorf("a %s connection's run_concluded rule: Normalize = %v, want nil", kind, err)
+		}
+	}
+}

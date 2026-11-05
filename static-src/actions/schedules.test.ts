@@ -101,6 +101,38 @@ describe("saveSchedule", () => {
     ]);
   });
 
+  it("sends a clock rule's fixed inputs, and no inputs key without them", async () => {
+    answer(view);
+    await saveSchedule.dispatch({
+      id: "r1",
+      source: "bundled://nightly",
+      spec: daily,
+      enabled: true,
+      inputs: { tag: "v1" },
+    });
+    await saveSchedule.dispatch({ source: "bundled://nightly", spec: daily, enabled: true });
+    const [kept, none] = calls();
+    expect(kept?.body).toMatchObject({ inputs: { tag: "v1" } });
+    expect(none?.body).not.toHaveProperty("inputs");
+  });
+
+  it("answers the saved rule as the form reads it", async () => {
+    answer({ ...view, id: "minted", inputs: { tag: "v1" }, next_run_at: "2026-11-06T02:00:00Z" });
+    const got = await saveSchedule.dispatch({
+      source: "bundled://nightly",
+      spec: daily,
+      enabled: true,
+    });
+    expect(got).toEqual({
+      id: "minted",
+      source: "bundled://nightly",
+      enabled: true,
+      spec: daily,
+      inputs: { tag: "v1" },
+      next_run_at: "2026-11-06T02:00:00Z",
+    });
+  });
+
   it("encodes the id into the path", async () => {
     answer(view);
     await saveSchedule.dispatch({
@@ -123,6 +155,7 @@ describe("loadSchedules", () => {
           name: "nightly",
           enabled: true,
           model: "opus",
+          inputs: { tag: "v1" },
           when: { clock: daily },
           next_run_at: "2026-11-06T02:00:00Z",
           status: {
@@ -162,6 +195,7 @@ describe("loadSchedules", () => {
           enabled: true,
           spec: daily,
           model: "opus",
+          inputs: { tag: "v1" },
           next_run_at: "2026-11-06T02:00:00Z",
           last_run_at: "2026-11-05T02:00:00Z",
           last_status: "completed",
