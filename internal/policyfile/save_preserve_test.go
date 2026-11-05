@@ -426,6 +426,17 @@ func TestSave_DocumentShapes(t *testing.T) {
 			}
 		})
 	}
+	for name, c := range map[string]struct{ before, want string }{
+		"a comment on the document end":                 {"rules: []\n... # end\n", "rules: []\n\n# end\n"},
+		"comments on and after the document end":        {"rules: []\n... # e\n# f\n", "rules: []\n\n# e\n# f\n"},
+		"a foot comment above a commented document end": {"next: 1\nrules: []\n# foot\n... # end\n", "next: 1\nrules: []\n# foot\n# end\n"},
+	} {
+		t.Run(name+" after a mapping keeps its comments", func(t *testing.T) {
+			if got := saveOne(t, c.before, func(*File) {}); got != c.want {
+				t.Errorf("saved file = %q, want %q", got, c.want)
+			}
+		})
+	}
 	t.Run("a file with no rules key gains one after its other keys", func(t *testing.T) {
 		got := saveOne(t, "workspaceTrusted: true\n", addShell)
 		if got != "workspaceTrusted: true\nrules:\n    - capability: shell\n      effect: ask\n" {
@@ -445,6 +456,16 @@ func TestSave_DocumentShapes(t *testing.T) {
 			t.Errorf("saved file is not block YAML\n%s", got)
 		}
 	})
+}
+
+func TestRulesNode_RefusesAnItemThatIsNotARule(t *testing.T) {
+	var prev yaml.Node
+	if err := yaml.Unmarshal([]byte("[not a rule]"), &prev); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rulesNode(prev.Content[0], []Rule{{Capability: "shell", Effect: EffectAsk}}); err == nil {
+		t.Error("rulesNode over an undecodable item returned nil")
+	}
 }
 
 func TestSave_NeverOverwritesAFileLoadRefuses(t *testing.T) {

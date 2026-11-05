@@ -3,7 +3,7 @@
 // <kiroHome>/workspace-roots/<workspace.SessionsBucket>/permissions.yaml. KAS also writes the user file
 // for a user-scope consent, and hot-reloads both, so a write reaches every live session. Load
 // accepts block YAML or JSON; Save writes new and changed rules as block YAML (KAS 2.12) and keeps
-// the rest as written.
+// the other keys, their order and comments.
 package policyfile
 
 import (
@@ -276,6 +276,14 @@ func Save(ctx context.Context, path string, f *File) error {
 	if err != nil {
 		return err
 	}
+	// yaml.v3 drops the comment on a `...` line and every comment after one; the same document
+	// without its end markers parses with them.
+	if text := dropDocumentEnds(string(old)); text != string(old) {
+		old = []byte(text)
+		if doc, _, err = parse(old, name); err != nil {
+			return err
+		}
+	}
 	if name == jsonFilename && doc != nil {
 		// Load read the .json sibling: path is written fresh from its content, all block YAML since
 		// JSON holds no comments, and the .json is left alone; KAS reads the .yaml over it from now on.
@@ -298,9 +306,9 @@ func Save(ctx context.Context, path string, f *File) error {
 	return err
 }
 
-// render writes rules into the parsed document doc of old. A blank file gets a fresh `rules:`
-// document; one holding only comments, `---` or a directive keeps its text above it, since
-// yaml.v3 drops those from an empty document.
+// render writes rules into the parsed document doc of old, which holds no `...` line. A blank file
+// gets a fresh `rules:` document; one holding only comments, `---` or a directive keeps its text
+// above it, since yaml.v3 drops those from an empty document.
 // Stays on yaml.Marshal (unlimited width); on v4 an Encoder or Dump must pin WithV3Defaults and
 // WithLineWidth(-1), or it refolds kiro-cli's long values.
 func render(old []byte, doc *yaml.Node, rules []Rule) ([]byte, error) {
@@ -313,7 +321,7 @@ func render(old []byte, doc *yaml.Node, rules []Rule) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		head := strings.TrimRight(dropDocumentEnds(string(old)), " \t\r\n") + "\n"
+		head := strings.TrimRight(string(old), " \t\r\n") + "\n"
 		return append([]byte(head), out...), nil
 	}
 	root := doc.Content[0]
@@ -369,10 +377,11 @@ func rulesNode(prev *yaml.Node, rules []Rule) (*yaml.Node, error) {
 	if prev != nil && prev.Kind == yaml.SequenceNode {
 		for _, item := range prev.Content {
 			var r Rule
-			if item.Decode(&r) == nil {
-				k := exact(&r)
-				kept[k] = append(kept[k], item)
+			if err := item.Decode(&r); err != nil {
+				return nil, err
 			}
+			k := exact(&r)
+			kept[k] = append(kept[k], item)
 		}
 	}
 	want := map[string]int{}
@@ -409,8 +418,9 @@ func emptyRoot(n *yaml.Node) bool {
 	return n.Kind == yaml.ScalarNode && n.Tag == "!!null" && n.Value == "" && n.Style&yaml.TaggedStyle == 0
 }
 
-// dropDocumentEnds removes each `...` line, keeping a comment on it: yaml.v3 reads content after
-// a document end as a second document. An empty root holds no scalar such a line could sit in.
+// dropDocumentEnds removes each `...` line, keeping a comment on it. In a document parse accepts,
+// such a line at column 0 is always a document end: a quoted scalar refuses it and a block scalar
+// under a top-level key is indented.
 func dropDocumentEnds(text string) string {
 	var kept []string
 	for line := range strings.SplitSeq(text, "\n") {
