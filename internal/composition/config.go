@@ -15,8 +15,8 @@ import (
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workspace"
-	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/toolbelt/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 // Config holds all environment/flag values needed to build the app.
@@ -55,10 +55,11 @@ type Config struct {
 	// TrustedProxies are the reverse-proxy prefixes whose X-Forwarded-For httpserver may trust, from
 	// TRUSTED_PROXIES. Empty trusts nothing and logs the unspoofable socket peer.
 	TrustedProxies []netip.Prefix
-	// TrustedInstallUIDs names identities whose write access to the kiro-cli install tree does not
-	// invalidate pinstall's custody, from TRUSTED_INSTALL_UIDS. Empty (the default) refuses any
-	// tree another identity can write. Never compiled in: only the deployment knows which account
-	// is already as privileged as this process.
+	// TrustedInstallUIDs names identities whose write access to the tools tree does not fail the
+	// kiro-cli install's custody check or the tools engine's integrity check, from
+	// TRUSTED_INSTALL_UIDS. Empty (the default) refuses any tree another identity can write.
+	// Never compiled in: only the deployment knows which account is already as privileged as
+	// this process.
 	TrustedInstallUIDs []int
 	// HostPolicy is the exact-match Host allowlist from ALLOWED_HOSTS, the anti-DNS-rebinding gate
 	// applied before the CSRF check. Unset = inactive, any Host accepted (the server warns at
@@ -193,7 +194,7 @@ func parseTrustedProxies(raw string) []netip.Prefix {
 // Unset yields nil, fully enforcing. Each entry ASSERTS the uid is already as privileged as this
 // process. Malformed entries drop with one warning that reports a count, never the values.
 func parseTrustedInstallUIDs(raw string) []int {
-	uids, rejected := pinstall.ParseIdentities(raw)
+	uids, rejected := pin.ParseIdentities(raw)
 	if rejected > 0 {
 		slog.Warn("config: ignoring unusable TRUSTED_INSTALL_UIDS entries (want whole numbers above 0)",
 			"invalid_count", rejected,

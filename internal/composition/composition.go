@@ -692,6 +692,7 @@ func buildToolsEngine(cfg *Config, h *agent.Runtime,
 		Seed:                toolbelt.DefaultSeed(),
 		System:              []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
 		GitHubToken:         githubToken,
+		TrustedUIDs:         cfg.TrustedInstallUIDs,
 		OnJobChanged: func(j *toolbelt.Job) {
 			h.Broadcast(context.Background(), marotte.NewEvent(marotte.EventToolJobChanged, "",
 				marotte.ToolJobChangedPayload{Job: j}))
@@ -822,9 +823,13 @@ func logRootIntegrityRefusal(err error) {
 	slog.Warn("tools engine disabled: marotte is running without the tools subsystem; "+
 		"Settings -> Tools says why",
 		"finding_count", len(refusal.Findings),
-		"hint", "the check reports only and never repairs: fix the paths above from inside the container "+
-			"(chmod g-w,o-w on a writable dir; replace a symlinked root with a real directory), then save "+
-			"tools.json in Settings -> Tools or restart")
+		"hint", "the check reports only and never repairs. Fix each path above, then save tools.json in "+
+			"Settings -> Tools or restart: inside the container, chown a dir another account owns, chmod g-w,o-w "+
+			"a group- or world-writable dir, and replace a symlink or a non-directory with a real directory; on the "+
+			"host, strip an ACL grant (setfacl -b for a POSIX list, the host's NFSv4 ACL tool on ZFS or NFS; the "+
+			"image ships neither). A user you trust that owns or can write a dir can go in TRUSTED_INSTALL_UIDS "+
+			"instead, which only a restart reads; it never clears a group writer, or a managed dir that is itself "+
+			"a symlink or a non-directory")
 }
 
 // warnIfNoLSPEnabled nudges when no language server is enabled: kiro-cli scans PATH at

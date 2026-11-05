@@ -77,7 +77,7 @@ Settings in the compose `environment:` block are read at start, so recreate the 
 | --- | --- | --- |
 | `ALLOWED_HOSTS` | Hostnames and IPs you open marotte at, comma-separated. Any other address gets `403`. | _(unset)_ |
 | `TRUSTED_PROXIES` | Address ranges of your reverse proxy, so the logs record the real client address. | _(unset)_ |
-| `TRUSTED_INSTALL_UIDS` | User IDs that may write to the tools folder (`MAROTTE_TOOLS_DIR`, by default `/config/tools`) without marotte refusing to install kiro-cli. Only for shared or network volumes. | _(unset)_ |
+| `TRUSTED_INSTALL_UIDS` | User IDs that may write to the tools folder (`MAROTTE_TOOLS_DIR`, by default `/config/tools`) without marotte refusing to install kiro-cli or start the tools engine. Only for shared or network volumes. | _(unset)_ |
 | `MAROTTE_BROWSE_ROOTS` | Extra folders the file browser shows, colon-separated absolute paths. | _(unset)_ |
 | `MAROTTE_ALLOW_BRIDGE_ENV` | Variable names that look like credentials but should still reach kiro-cli, comma-separated. | _(unset)_ |
 | `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` flags for the agent engine. | _(unset)_ |
@@ -110,7 +110,7 @@ Docker checks `/api/health` every 30 seconds. The container shows healthy once m
 
 - The container restarts in a loop with `failed to create required directories`. The host folders are missing or belong to another user. Repeat steps 1 and 2 of the quick start.
 - Health stays at `kiro-cli install retrying` or `kiro-cli unavailable`. The download failed. marotte tries four times, then waits for a container restart.
-- The logs say a folder under `/config` "can be modified by" another account. This happens on shared or network volumes. See `TRUSTED_INSTALL_UIDS` in [Configuration](docs/configuration.md#trusted-install-accounts-trusted_install_uids).
+- The logs say a folder under `/config` or the tools folder "can be modified by" or "is owned by" another account. This happens on shared or network volumes. Fix an owner from inside the container with `chown`. Remove an access-control-list grant on the host, because the image has no ACL tools: `setfacl -b` for a POSIX list, or the host's NFSv4 ACL tool on ZFS or NFS. Then restart, or see `TRUSTED_INSTALL_UIDS` in [Configuration](docs/configuration.md#trusted-install-accounts-trusted_install_uids).
 - Health shows `sign-in required`. A chat's last turn failed because marotte is not signed in to Kiro, or Kiro refused the sign-in. Sign in from the account menu. The next turn that succeeds clears it.
 - The page answers `403`. The address you typed is not in `ALLOWED_HOSTS`.
 - The container restarts in a loop with `another marotte instance holds this folder`. Two marotte containers share a volume, a `KIRO_HOME` or a tools folder. The log line names the folder. Give each container its own, or stop the other one.

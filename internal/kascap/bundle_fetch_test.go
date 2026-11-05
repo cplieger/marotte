@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/pinstall/v3/kirocli"
+	"github.com/cplieger/marotte/internal/kirorelease"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -211,13 +211,12 @@ func pinnedDigest(t *testing.T, arch string) string {
 // against the pinned digest, and reads the agent server, the node and the acp engine fallback out of its
 // kiro-cli binary. err is the agent server's failure, nodeErr the node's.
 func fetchKAS(ctx context.Context, version, arch, digest string) (res fetchResult) {
-	rel := kirocli.Release()
-	token, ok := rel.ArchTokens[arch]
+	token, ok := kirorelease.ArchTokens()[arch]
 	if !ok {
 		res.err = fmt.Errorf("kiro-cli publishes no build for %s", arch)
 		return res
 	}
-	res.url = strings.NewReplacer("{version}", version, "{arch}", token).Replace(rel.URLTemplate)
+	res.url = strings.NewReplacer("{version}", version, "{arch}", token).Replace(kirorelease.URLTemplate)
 
 	dir, err := os.MkdirTemp("", "kascap-kas-*")
 	if err != nil {

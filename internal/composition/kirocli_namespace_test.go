@@ -1,8 +1,8 @@
 package composition
 
 // Two engines write into the same tools tree, and only the namespace split keeps them from deleting
-// each other's installs: toolbelt owns bin/, opt/, npm/ and python/; pinstall owns
-// kiro-cli-versions/.
+// each other's installs: the toolbelt engine owns bin/, opt/, npm/ and python/; its pin package
+// owns kiro-cli-versions/.
 
 import (
 	"os"
@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 // The pin these tests install, and the toolbelt tool name that collides with it.
@@ -40,7 +40,7 @@ func newNSEnv(t *testing.T) *nsEnv {
 	return &nsEnv{t: t, tools: tools, witness: filepath.Join(tools, "foreign-was-run")}
 }
 
-func (e *nsEnv) config() *pinstall.Config {
+func (e *nsEnv) config() *pin.Config {
 	return kiroInstallConfig(&Config{
 		KiroCLIVersion:     nsVersion,
 		KiroCLISHA256:      strings.Repeat("a", 64),
@@ -48,11 +48,11 @@ func (e *nsEnv) config() *pinstall.Config {
 	}, e.tools)
 }
 
-func (e *nsEnv) manager() *pinstall.Manager {
+func (e *nsEnv) manager() *pin.Manager {
 	e.t.Helper()
-	mgr, err := pinstall.New(e.config())
+	mgr, err := pin.New(e.config())
 	if err != nil {
-		e.t.Fatalf("pinstall.New from the app's own config: %v", err)
+		e.t.Fatalf("pin.New from the app's own config: %v", err)
 	}
 	return mgr
 }
