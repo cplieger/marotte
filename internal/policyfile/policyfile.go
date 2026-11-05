@@ -19,7 +19,7 @@ import (
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/go/yamlenv"
 	"github.com/cplieger/marotte/internal/workspace"
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // KAS reads the .yaml unless it is missing or blank, then the .json sibling. marotte writes the
