@@ -1,6 +1,6 @@
 // The reading state follows the reader's own motion: an input only opens a gesture, the state changes by where the
 // scroller went, and nothing the platform or a timer does moves the reader between Following and Reading.
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { server } from "vitest/browser";
 import type * as Dom from "./dom.js";
 import type * as Skeleton from "./skeleton.js";
@@ -13,6 +13,7 @@ import {
   touchEvent,
   wheel,
 } from "./__test-helpers__/scroll-scene.js";
+import { clearDeviceScale, setDeviceScale } from "./__test-helpers__/device-scale.js";
 
 vi.mock("./dom.js", async (importOriginal) => {
   const { domProxy: proxy } = await import("./__test-helpers__/scroll-scene.js");
@@ -793,6 +794,69 @@ describe("whose move it is, and which way", () => {
   const isBar = (row: Row): boolean => row.name.startsWith("bar ");
   it.each(rows.filter((row) => !isBar(row)))("$name leaves the reader $state", leaves);
   it.skipIf(!hasGutter).each(rows.filter(isBar))("$name leaves the reader $state", leaves);
+
+  describe("a no-input move 1px a frame (selection or middle-click autoscroll, a script)", () => {
+    afterEach(async () => {
+      await clearDeviceScale();
+    });
+
+    /** 60 steps of 1px a frame, each its own instant scroll; with `ends` off no `scrollend` reaches the scroller. */
+    async function crawl(wrap: HTMLElement, dir: -1 | 1, ends: boolean): Promise<void> {
+      const swallow = (e: Event): void => {
+        e.stopPropagation();
+      };
+      if (!ends) {
+        document.addEventListener("scrollend", swallow, true);
+      }
+      try {
+        for (let i = 0; i < 60; i++) {
+          platformScroll(wrap, wrap.scrollTop + dir);
+          await frames(1);
+        }
+      } finally {
+        document.removeEventListener("scrollend", swallow, true);
+      }
+    }
+
+    it.each([0.67, 1, 1.5, 2].flatMap((dpr) => [true, false].map((ends) => [dpr, ends] as const)))(
+      "up from the end at DPR %f (scrollend per step: %s) parks the reader, and a growth below writes nothing",
+      async (dpr, ends) => {
+        await setDeviceScale(dpr);
+        const { wrap, clock } = await followingWithClock();
+        const writes = recordWrites(wrap);
+
+        await crawl(wrap, -1, ends);
+        await closeGesture();
+        const moved = { writes: [...writes], ...landing(wrap) };
+        clock.style.height = "40px";
+        await land(400);
+
+        expect({ moved, after: { writes, ...landing(wrap) } }).toEqual({
+          moved: { writes: [], scrollTop: 2540, state: "reading", hidden: false },
+          after: { writes: [], scrollTop: 2540, state: "reading", hidden: false },
+        });
+      },
+    );
+
+    it.each([0.67, 1, 1.5, 2].flatMap((dpr) => [true, false].map((ends) => [dpr, ends] as const)))(
+      "down onto the end from 60px at DPR %f (scrollend per step: %s) rejoins Following",
+      async (dpr, ends) => {
+        await setDeviceScale(dpr);
+        const wrap = await start(60);
+        const writes = recordWrites(wrap);
+
+        await crawl(wrap, 1, ends);
+        await closeGesture();
+
+        expect({ writes, ...landing(wrap) }).toEqual({
+          writes: [],
+          scrollTop: 2600,
+          state: "following",
+          hidden: true,
+        });
+      },
+    );
+  });
 
   it.runIf(server.browser === "chromium")(
     "runs the thumb rows in Chromium, whose scene scroller reserves a gutter",

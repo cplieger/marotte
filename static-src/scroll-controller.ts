@@ -113,6 +113,9 @@ export class ScrollController {
   private ownWriteGen = 0;
   /** The previous scroll event's clamped position (-1 = none yet). */
   private lastT = -1;
+  /** Where the owner last placed or counted the reader (-1 = none): its last write or skipped write, or the last
+   *  scroll event it attributed. Dropped events leave it, so sub-slack steps add up to a reader move. */
+  private rest = -1;
 
   private flight: {
     timer: ReturnType<typeof setTimeout>;
@@ -310,10 +313,14 @@ export class ScrollController {
     }
     if (this.flight !== null) {
       this.flight.seen++;
+      this.rest = t;
       return;
     }
     if (this.settle !== null) {
       this.settleStep();
+      if (this.state === "reading") {
+        this.rest = this.clampedTop();
+      }
       return;
     }
     // A clamp: with native anchoring off and the floor held, only a growing scrollport moves the scroller up onto
@@ -323,15 +330,20 @@ export class ScrollController {
       if (this.gesture.isOpen()) {
         this.gesture.noteScroll();
       }
+      // A Following reader keeps the follow position as its rest, so a first 1px step up taken here still counts.
+      if (this.state === "reading") {
+        this.rest = t;
+      }
       return;
     }
     if (!this.gesture.isOpen()) {
-      if (prev < 0 || Math.abs(t - prev) < slack) {
+      const near = (p: number): boolean => p < 0 || Math.abs(t - p) < slack;
+      if (prev < 0 || (near(prev) && near(this.rest))) {
         return;
       }
       this.gesture.openAimless();
       if (this.read !== null) {
-        this.read.base = prev;
+        this.read.base = this.state === "following" && this.rest >= 0 ? this.rest : prev;
       }
     }
     this.gesture.noteScroll();
@@ -358,6 +370,7 @@ export class ScrollController {
       }
     }
     read.last = { t: now, pin, max };
+    this.rest = now;
     this.retake();
     this.publishReaderGesture();
   }
@@ -463,6 +476,7 @@ export class ScrollController {
   private writeTop(target: number): boolean {
     const t = Math.max(0, Math.min(Math.round(target), this.max()));
     if (Math.abs(t - this.scrollEl.scrollTop) <= edgeSlack()) {
+      this.rest = t;
       return false;
     }
     this.scrollEl.scrollTo({ top: t, behavior: "instant" });
@@ -490,6 +504,7 @@ export class ScrollController {
   private noteOwnWrite(): void {
     this.ownWrite = this.clampedTop();
     this.lastT = this.ownWrite;
+    this.rest = this.ownWrite;
     const gen = ++this.ownWriteGen;
     this.gesture.noteOwnWrite();
     requestAnimationFrame(() => {
@@ -1086,6 +1101,7 @@ export class ScrollController {
     this.clearFloor();
     this.attached = false;
     this.lastT = -1;
+    this.rest = -1;
     this.onLoadMore = null;
     this.hasMoreMessages = false;
     this.disconnectView();
@@ -1101,6 +1117,7 @@ export class ScrollController {
     this.cancelFollowFrame();
     this.anchor = null;
     this.lastT = -1;
+    this.rest = -1;
     this.topNear = false;
     this.setLoadMore(null, false);
     this.setState("following");
